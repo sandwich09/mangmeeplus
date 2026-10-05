@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import { createLineAiInputEvidence, extractValueCandidates, type LineAiTurnRequest, type ToolResult } from '@watchdog-bms/contracts';
 import type { IModelProvider, ProviderInput, ProviderOutput } from '../infrastructure/provider/provider.port';
 import { runSemanticTurnV2 } from './semantic-turn-v2';
+import { buildCapabilityHelp } from './response-composer.agent';
 
 function baseUserContext(permissions: string[] = ['expense.read']) {
   return { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
@@ -52,8 +53,8 @@ describe('item 6: an uncovered product-help question is terminal, and still help
     assert.notEqual(coverage?.status, 'needs_user');
     assert.equal(coverage?.reasonCode, 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE');
     // Must still help: name that system setup is done on the web, not just list read capabilities.
-    assert.ok(result.replyText.includes('หน้าเว็บ'), result.replyText);
-    assert.ok(result.replyText.includes('การตั้งค่าระบบ'), result.replyText);
+    assert.equal(result.replyText, 'ยังไม่มีคู่มือที่ตรวจสอบแล้วสำหรับคำถามเฉพาะนี้ค่ะ การตั้งค่าระบบ เช่น หมวดหมู่ค่าใช้จ่ายหรือลายเซ็นอนุมัติ ทำได้ที่หน้าเว็บของบริษัทค่ะ ส่วนความสามารถปัจจุบันที่ยืนยันได้:\n'
+      + buildCapabilityHelp('th', { permissions: request.userContext.permissions, entitledFeatureKeys: [] }));
   });
 
   it('same outcome in English, still naming the web app for setup', async () => {
@@ -71,8 +72,66 @@ describe('item 6: an uncovered product-help question is terminal, and still help
     const coverage = result.semanticCoverage?.[0];
     assert.equal(coverage?.status, 'unsupported');
     assert.equal(coverage?.reasonCode, 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE');
-    assert.ok(result.replyText.includes('web app'), result.replyText);
+    assert.equal(result.replyText, "A reviewed guide for this specific question is not available yet. System setup — such as expense categories or an approval signature — is done on the company's web app. Current capabilities:\n"
+      + buildCapabilityHelp('en', { permissions: request.userContext.permissions, entitledFeatureKeys: [] }));
   });
+});
+
+describe('current capability questions', () => {
+  for (const kind of ['help', 'general'] as const) {
+    for (const messageText of ['ทำอะไรได้บ้าง', 'ช่วยอะไรได้บ้าง', 'น้องทำอะไรได้', 'มีความสามารถอะไร',
+      'น้องมั่งมีทำอะไรได้บ้างคะ', 'น้องมั่งมีช่วยอะไรฉันได้บ้าง', 'ทำไรได้บ้าง', 'มีฟีเจอร์อะไรบ้าง',
+      'what can you do', 'What can you help me with?', 'What are your capabilities?']) {
+      it(`${kind}: ${messageText} gets only the current list without a model`, async () => {
+        const request: LineAiTurnRequest = {
+          requestId: 'req-capability', webhookEventId: 'event-capability', messageText, messagePreviewHash: 'a'.repeat(16),
+          semanticSubrequests: [{ index: 0, kind, goal: 'Describe current capabilities', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+          userContext: baseUserContext(),
+        };
+        const result = await runSemanticTurnV2({ req: request, provider: neverCalledProvider(),
+          draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+          async invoke(): Promise<ToolResult> { throw new Error('capability help must not call a tool'); },
+        });
+        assert.equal(result.replyText, buildCapabilityHelp(/[ก-๙]/u.test(messageText) ? 'th' : 'en',
+          { permissions: request.userContext.permissions, entitledFeatureKeys: [] }));
+        assert.deepEqual(result.semanticCoverage, [{ index: 0, status: 'handled' }]);
+      });
+    }
+  }
+});
+
+it('answers a capability clause and still executes the independent monthly read', async () => {
+  const help = 'ทำอะไรได้บ้าง', read = 'เดือนนี้ใช้ไปเท่าไหร่', messageText = `${help} แล้ว${read}`;
+  const evidence = await createLineAiInputEvidence({ turnKey: 'cap-read',
+    parts: [{ partId: 'text', rawText: messageText, eventIdHash: 'b'.repeat(64), acceptedAtMs: Date.now() }] });
+  assert.ok(evidence);
+  const part = evidence.inputEvidence.parts[0]!;
+  const ref = (span: string) => [{ partId: part.partId, rawSha256: part.rawSha256,
+    startUtf16: messageText.indexOf(span), endUtf16: messageText.indexOf(span) + span.length }];
+  const invoked: string[] = [];
+  const source = { id: 'expense-summary', label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary',
+    permissionChecked: true as const, asOf: '2026-09-28T00:00:00.000Z' };
+  const replies = [JSON.stringify({ calls: [{ index: 1, toolName: 'expense.list_recent', input: { fromDate: '2026-09-01', toDate: '2026-09-28' } }] }),
+    JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'untrusted capability prose' },
+      { index: 1, status: 'handled', text: 'ยอดรวม 1,000 บาทค่ะ', sourceRefIds: [source.id] }] })];
+  const result = await runSemanticTurnV2({ req: {
+    requestId: 'req-cap-read', webhookEventId: 'event-cap-read', messageText, messagePreviewHash: 'a'.repeat(16),
+    inputEvidence: evidence.inputEvidence, valueCandidates: extractValueCandidates(messageText, '2026-09-28'),
+    semanticSubrequests: [
+      { index: 0, kind: 'help', goal: help, requiredEvidence: [], dependsOn: [], evidenceRefs: ref(help), requestedFilters: {} },
+      { index: 1, kind: 'read', goal: read, requiredEvidence: [], dependsOn: [], evidenceRefs: ref(read),
+        requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28' } },
+    ], userContext: baseUserContext(),
+  }, provider: { async generateText() { assert.ok(replies.length); return { ok: true, text: replies.shift()! }; } },
+  draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+  async invoke(meta): Promise<ToolResult> { invoked.push(meta.name); return { toolName: meta.name, status: 'ok', sourceRefs: [source],
+    asOf: source.asOf, facts: [], data: { total: 3, items: [], summary: { totalAmount: '1000' } } }; },
+  });
+  assert.deepEqual(invoked, ['expense.list_recent']);
+  assert.deepEqual(result.semanticCoverage?.map(item => item.status), ['handled', 'handled']);
+  assert.ok(result.replyText.includes(buildCapabilityHelp('th', { permissions: ['expense.read'], entitledFeatureKeys: [] })));
+  assert.match(result.replyText, /1,000/);
+  assert.doesNotMatch(result.replyText, /ยังไม่มีคู่มือ|untrusted capability prose/);
 });
 
 describe('item 6: an uncitable read answer is terminal, and tries the deterministic fallback first', () => {
