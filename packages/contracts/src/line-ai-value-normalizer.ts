@@ -916,8 +916,10 @@ export function unresolvedMonthName(text: string, periods: LineAiPeriodCandidate
   }
   for (const match of text.matchAll(/(?:เดือน|\bmonth\b)\s*([0-9๐-๙]{1,4})(?![0-9๐-๙])/giu)) {
     const start = (match.index ?? 0) + match[0].lastIndexOf(match[1]!);
-    const month = Number(mapThaiDigits(match[1]!));
-    if ((month < 1 || month > 12) && !coveredAt(start)) return match[1]!;
+    // A month number no candidate covers: out of 1–12, or a month that has not come yet (spec §4.3:
+    // "เดือน 12 ปี 2569" asked in September is answered by naming it, never by reading this month).
+    // A count is not a month: "3 เดือนล่าสุด" and "เดือน 8-10" are covered by their own candidates.
+    if (!coveredAt(start)) return match[1]!;
   }
   // A separated full month-like word can also be a typo without the word เดือน before it.
   for (const match of text.matchAll(/(?:^|[\s,(]|และ\s*)([ก-๙]{5,14}?)(?=$|\s|และ|[),/.!?]|ปี\s*\d)/gu)) {
