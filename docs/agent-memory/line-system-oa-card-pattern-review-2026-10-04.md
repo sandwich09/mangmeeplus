@@ -209,3 +209,21 @@ Still true from before: background notification pushes (the web bell's LINE copi
 
 - 2026-10-05, after the implementation: (1) the PDF/file result as the review card and `failed_flex` for a pushed message land from their own lane; (2) the gallery helper's deviation list decides any renderer tuning; (3) acceptance on a real LINE client — bubble width, corner radius, font, line height, the pictures loading from the web host — is the step no local check replaces; (4) the owner's answers to the open questions above. Production promotion needs the owner's explicit go.
 - (History) Give the complete Markdown handoff to the owner. Recipient can implement the already-authorized plan while preserving the locked baseline and existing changes. Verify the eight card contexts, canonical fallback/postbacks/multipart, tenant-safe direct reimbursement links and native payload/visual parity. Keep local evidence distinct from actual LINE client/publication acceptance.
+
+## Round 3 after the owner's evening tests on LINE UAT (2026-10-05, 17:47–21:15)
+
+Owner's words, in order: two screenshots with no text at 17:47 and 17:49 (the reply to a photo of a bill already kept was still the card from before the design; "เทียบค่าใช้จ่าย กค. สค. กย." was asked back about its period); 19:05 on the comparison answer "เอา % ออกเถอะ งง ไม่สวยด้วย" and "อันดับ 1 อะไรไม่ต้อง บอกประมาณว่า เดือนไหนเทียบกับเดือนไหน อะไรมากกว่า น้อยกว่าเท่าไหร่ แล้วสรุปค่าใช้จ่ายที่น่าสนใจว่าเป็นค่าอะไร", with "งานใบเบิกด้วย"; 19:55 "ทำไมทำช้าจัง งานไม่เยอะนี่นา"; 20:38 "สวยแล้ว แต่เปรียบเทียบค่าใช้จ่าย อ่านช้ามาก".
+
+What was built and put on UAT (run ids in `docs/runbooks/cloud-environment-operations.md`):
+
+- 2d (18:24): month abbreviations typed with a final dot only ("กค. สค. กย.").
+- 2e (18:37): "รูปนี้ตรงกับบิลที่เก็บไว้แล้ว" as a row card of the locked design in every state of the kept bill; comparison and glued month forms, an era year without a month, "ทั้งปี", quarters in words.
+- 2f (20:19): the comparison is every period's total, each period against the one before it in one sentence, and what each period spent the most on; no percentage or multiple unless asked; a card of rows when the turn is one comparison; the grouped summary without a share.
+- 2g (20:38): the claims batch (several payout accounts, claims held by a duplicate), its own memory `docs/agent-memory/reimbursement-multi-payout-accounts.md`.
+- 2h (21:15): a plain comparison of expenses is routed in code, with no model call; timing lines for the routing stage.
+
+Decisions the controller made and told the owner: a card row shows one short value (an amount with a count beside it breaks across two lines), so the comparison's period rows and the summary's group rows show the amount and the sentence keeps the count; the "interesting expenses" of a comparison are each period's largest group; a percentage is said only to a reader who asks for one.
+
+Left on purpose (the owner's scope rule): per-group differences in a comparison; a card of rows for six or more grouped periods (it stays sentences); the two seconds of the routing stage before the model call (measured first, by the new timing lines); the AgentCore round trip of a turn that does no model work (about 1.6 s).
+
+Process notes: the full 17-step verification (about seven minutes) ran before every round; every new card body was accepted by LINE's validator from the UAT host before it went out; `main` stayed frozen from each prepare to its acceptance.

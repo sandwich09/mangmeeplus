@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { ForbiddenException } from '@nestjs/common';
 import assert from 'node:assert/strict';
 import { canAdvertiseReceiptCapture, createLineAiInputEvidence, LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
-import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, lineIntakeOfferedToolNames, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages, validLineAiReadMemoryEntries } from './process-line-webhook.use-case';
+import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, lineIntakeOfferedToolNames, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages, validLineAiReadMemoryEntries, businessDocumentOutcome, formatBusinessDocumentReply, ocrGovernanceClarifyOutcome } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
 import { ROLE_GRANTS } from '../../../auth/permission-registry';
@@ -13,7 +13,7 @@ import { ReceiptOcrApplyService } from '../../../expenses/application/services/r
 import { TH_SME_EXPENSE_CATEGORIES_V1 } from '../../../expenses/application/services/expense-category-bootstrap.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
-import { buildLineAssistantTextCardMessage, isCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader } from '../../domain/logic/line-business-card.logic';
+import { buildLineAssistantTextCardMessage, isCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LINE_SENT_DOCUMENT_OUTCOMES } from '../../domain/logic/line-business-card.logic';
 import { isLineSystemCard, readLineSystemCard } from '../../domain/logic/line-system-card.fixture';
 import { lineMessagePreview } from '../../domain/logic/line-message-preview.logic';
 import { STAFF_CONTACT_COMMAND } from '../../domain/logic/line-staff-menu.logic';
@@ -5821,6 +5821,124 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
       await flow.deliverCompletedReply({ ...BASE_EVENT, messageText: 'ยกเลิกรายการล่าสุด', lineMessageId: 'line-message-1' }, 'ยกเลิกรายการแล้วค่ะ', 'company-1', ACCESS);
       await flow.deliverCompletedReply(bind({ ...BASE_EVENT, messageText: 'ยกเลิก' }), 'ยกเลิกรายการแล้วค่ะ', 'company-1', ACCESS);
       assert.deepEqual(sent.map((message) => [isLineSystemCard(message), message.contents?.header?.contents?.[0]?.text]), [[false, 'ข้อมูลจากน้องมั่งมี'], [false, 'ข้อมูลจากน้องมั่งมี']]);
+    });
+  });
+
+  // Owner 2026-10-05, real LINE: right after the designed scanning card, the reply to a photo was still on
+  // the green card from before the design. A photo or a file carries no words to head a card, so its
+  // reply stands under "เอกสารที่ส่งมา" and a fixed phrase for what became of the document — chosen by the
+  // code that sends the reply, never by a model and never cut out of the reply's text.
+  describe('a bound chat\'s replies to a photo or a file', () => {
+    const ACCESS = { permissions: ['line.ai.query', 'expense.receipt.line_upload'], roles: [] };
+    const PHOTO = { webhookEventId: 'evt-photo', lineUserId: 'line-user-secret', replyToken: 'reply-photo', messagingChannelId: 'msg-channel-1',
+      lineMessageId: 'line-photo-1', messageType: 'image' as const };
+    function seam() {
+      const { prisma } = makePrisma();
+      const h = makeUseCase(prisma, { permissions: ACCESS.permissions });
+      const flow = h.useCase as any;
+      const sent: any[] = [];
+      flow.deliverRequiredMessages = async (_event: unknown, messages: any[]) => { sent.push(...messages); };
+      flow.sendMessages = async (_event: unknown, messages: any[]) => { sent.push(...messages); return 'ok'; };
+      const bind = <T extends object>(event: T): T => { flow.boundConversations.set(event, { owner: { companyId: 'company-1', userId: 'user-1' }, id: 'conversation', epoch: 1 }); return event; };
+      return { flow, sent, bind };
+    }
+    const CLARIFY = '🤔 รูปนี้เป็นอะไรคะ ตอบเลขข้อได้เลยนะคะ\n1) ใบเสร็จ/เอกสารค่าใช้จ่ายรายการเดียวที่ต้องการบันทึก\n2) ภาพประกอบคำถาม ไม่ต้องบันทึก';
+
+    it('each outcome has its own fixed second line under "เอกสารที่ส่งมา"; a reply that names none is a result of the read', async () => {
+      assert.deepEqual(LINE_SENT_DOCUMENT_OUTCOMES, {
+        kept: 'ตรงกับบิลที่เก็บไว้แล้ว', unread: 'อ่านข้อมูลไม่ได้', notExpense: 'ไม่ใช่เอกสารค่าใช้จ่าย', notTaken: 'ยังรับเอกสารนี้ไม่ได้',
+        question: 'ขอข้อมูลเพิ่ม', reading: 'กำลังอ่านเอกสาร', stored: 'เก็บไว้แล้ว', result: 'ผลการอ่านเอกสาร',
+      });
+      for (const [outcome, phrase] of [...Object.entries(LINE_SENT_DOCUMENT_OUTCOMES), [undefined, 'ผลการอ่านเอกสาร']] as const) {
+        const { flow, sent, bind } = seam();
+        const reply = '📷 น้องยังรับรูปจาก LINE ไม่สำเร็จค่ะ ยังไม่ได้บันทึกรายการใด ๆ จากรูปนี้นะคะ รบกวนส่งรูปเดิมอีกครั้งค่ะ';
+        await flow.deliverReply(bind({ ...PHOTO }), reply, undefined, undefined, outcome);
+        assert.equal(sent.length, 1, String(outcome));
+        const card = readLineSystemCard(sent[0]);
+        assert.deepEqual(card.header, ['เอกสารที่ส่งมา', phrase], String(outcome));
+        assert.deepEqual([card.prose, card.rows, card.actions], [[reply], [], []], String(outcome));
+        // The heading is never a piece of the reply, and the reply is untouched: stored, and the fallback.
+        assert.equal(sent[0].canonicalText, reply);
+        assert.equal(isCompleteLineBusinessAnswerPresentation(sent[0]), true, String(outcome));
+        assert.match(card.mascot, /system-card-mascot-general-/u);
+      }
+    });
+
+    it('a question keeps its lines and its quick reply; a file is headed the same way', async () => {
+      const { flow, sent, bind } = seam();
+      const quickReply = { items: [{ type: 'action', action: { type: 'message', label: 'จ่ายแล้ว', text: 'จ่ายแล้ว' } }] };
+      await flow.deliverReply(bind({ ...PHOTO, messageType: 'file' as const, fileName: 'bill.pdf' }), CLARIFY, quickReply, undefined, 'question');
+      const card = readLineSystemCard(sent[0]);
+      assert.deepEqual(card.header, ['เอกสารที่ส่งมา', 'ขอข้อมูลเพิ่ม']);
+      assert.deepEqual(card.prose, [CLARIFY]);
+      assert.deepEqual(sent[0].quickReply, quickReply);
+    });
+
+    it('a completed reply: its state badge leads, its link is a button with its own name, the completion menu rides', async () => {
+      const { flow, sent, bind } = seam();
+      const link = 'https://app.example.com/companies/company-1/expenses/signatures?signatureId=s1';
+      const reply = `✍️ รับรูปลายเซ็นแล้ว และบันทึกเป็นลายเซ็นประจำตัวให้แล้ว\nสถานะ: ใช้ลงนามเอกสารได้ทันที ไม่ต้องรออนุมัติ\n\nเปิดดูลายเซ็น:\n${link}`;
+      await flow.deliverCompletedReply(bind({ ...PHOTO }), reply, 'company-1', ACCESS, undefined, undefined, 'stored');
+      const card = readLineSystemCard(sent[0]);
+      assert.deepEqual(card.header, ['เอกสารที่ส่งมา', 'เก็บไว้แล้ว']);
+      assert.deepEqual(card.prose, ['✍️ รับรูปลายเซ็นแล้ว และบันทึกเป็นลายเซ็นประจำตัวให้แล้ว\nสถานะ: ใช้ลงนามเอกสารได้ทันที ไม่ต้องรออนุมัติ']);
+      assert.deepEqual(card.actions, [{ type: 'uri', label: 'เปิดดูลายเซ็น', uri: link }]);
+      assert.doesNotMatch(JSON.stringify(sent[0].contents), /ข้อมูลจากน้องมั่งมี|#15803D/u, 'not the green card from before the design');
+      assert.equal(sent[0].canonicalText, reply);
+      assert.ok(sent[0].quickReply?.items.length > 0);
+    });
+
+    it('stays what it was for a chat that is not bound, and for a reply whose link is not a page of this company', async () => {
+      const { flow, sent, bind } = seam();
+      await flow.deliverReply({ ...PHOTO }, CLARIFY, undefined, undefined, 'question');
+      await flow.deliverCompletedReply({ ...PHOTO }, CLARIFY, 'company-1', ACCESS, undefined, undefined, 'question');
+      assert.equal(sent[0].type, 'text');
+      assert.equal(sent[0].text, CLARIFY);
+      assert.deepEqual([isLineSystemCard(sent[1]), sent[1].contents?.header?.contents?.[0]?.text], [false, 'ข้อมูลจากน้องมั่งมี']);
+      sent.length = 0;
+      await flow.deliverReply(bind({ ...PHOTO }), '🔗 กรุณาเชื่อมต่อบัญชีก่อน: https://liff.line.me/1234-abcd', undefined, undefined, 'notTaken');
+      assert.deepEqual(sent, [{ type: 'text', text: '🔗 กรุณาเชื่อมต่อบัญชีก่อน: https://liff.line.me/1234-abcd' }]);
+    });
+
+    it('what the reader found decides the heading of a document that is not a receipt — from the same classification as its sentence', () => {
+      const classified = (over: Record<string, unknown>) => ({ contentKind: 'DOCUMENT', documentFamily: 'COMMERCIAL_DOCUMENT', documentKind: 'QUOTATION',
+        businessDirection: 'PURCHASE_EXPENSE', transactionState: 'QUOTED', evidenceRoles: [], confidence: 0.9, evidenceSignals: [], amountSignals: [],
+        settlementSignals: [], missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false, ...over }) as any;
+      for (const [over, kept, outcome, sentence] of [
+        [{ documentKind: 'NON_FINANCIAL_IMAGE' }, false, 'notExpense', /^ภาพนี้ไม่ใช่เอกสารค่าใช้จ่ายค่ะ/u],
+        [{ documentKind: 'APPOINTMENT_CARD' }, false, 'notExpense', /นัดหมาย/u],
+        [{ documentKind: 'QUOTATION' }, false, 'notExpense', /^ใบนี้เป็นใบเสนอราคาค่ะ/u],
+        [{ documentKind: 'PURCHASE_ORDER' }, false, 'notExpense', /^ใบนี้เป็นใบสั่งซื้อค่ะ/u],
+        [{ documentKind: 'DELIVERY_NOTE' }, false, 'notExpense', /^ใบนี้เป็นใบส่งของค่ะ/u],
+        // Kept as a draft the reader can finish: the card must not say "not a document of an expense" above it.
+        [{ documentKind: 'QUOTATION' }, true, 'result', /^ใบนี้เป็นใบเสนอราคาค่ะ/u],
+        [{ documentKind: 'SUPPLIER_INVOICE_OR_BILL' }, false, 'result', /^ใบนี้เป็นใบแจ้งหนี้/u],
+        [{ documentKind: 'TRANSFER_SLIP' }, false, 'result', /^พบสลิปโอนเงินค่ะ/u],
+        [{ documentKind: 'MARKETPLACE_ORDER' }, false, 'result', /^พบหลักฐานคำสั่งซื้อค่ะ/u],
+        [{ documentKind: 'ORDER_OR_CHECK_BILL' }, false, 'result', /เช็กบิล/u],
+        [{ documentKind: 'NEEDS_REVIEW' }, false, 'result', /^ยังไม่แน่ใจว่าเป็นเอกสารประเภทใดค่ะ/u],
+        [{ contentKind: 'UNREADABLE' }, false, 'unread', /ยังอ่านเอกสารนี้ได้ไม่ชัด/u],
+        [{ contentKind: 'MULTI_DOCUMENT' }, false, 'notTaken', /พบเอกสารมากกว่า 1 ฉบับ/u],
+      ] as const) {
+        const classification = classified(over);
+        assert.equal(businessDocumentOutcome(classification, kept), outcome, JSON.stringify(over));
+        assert.match(formatBusinessDocumentReply(classification, 'https://app.example.com', 'company-1'), sentence, JSON.stringify(over));
+      }
+      assert.equal(businessDocumentOutcome(null), 'question', 'no classification: the reply is the numbered question');
+    });
+
+    it('a picture kept but not read says so; the numbered question alone is a question', () => {
+      for (const [code, readFailed, outcome, sentence] of [
+        ['AI_MONTHLY_BUDGET_EXCEEDED', true, 'unread', /^💚 รับรูปไว้แล้วค่ะ แต่เครดิตสำหรับการอ่านเอกสารไม่พอ จึงยังไม่ได้อ่าน/u],
+        ['OCR_MONTHLY_LIMIT_EXCEEDED', false, 'unread', /รับรูปไว้แล้วค่ะ แต่เครดิตสำหรับการอ่านเอกสารไม่พอ/u],
+        ['OCR_FEATURE_DISABLED', false, 'unread', /^บริษัทปิดการอ่านเอกสารด้วย AI ไว้ค่ะ/u],
+        ['OCR_PROVIDER_ERROR', true, 'unread', /^📷 น้องอ่านรูปนี้ไม่สำเร็จค่ะ/u],
+        ['OCR_REQUEST_ALREADY_ADMITTED', true, 'question', /^✅ ระบบรับคำขออ่านเอกสารนี้ไว้แล้วค่ะ/u],
+        [undefined, false, 'question', /^🤔 รูปนี้เป็นอะไรคะ/u],
+      ] as const) {
+        assert.equal(ocrGovernanceClarifyOutcome(code, readFailed), outcome, String(code));
+        assert.match(formatOcrGovernanceClarifyReply(code, readFailed), sentence, String(code));
+      }
     });
   });
 
