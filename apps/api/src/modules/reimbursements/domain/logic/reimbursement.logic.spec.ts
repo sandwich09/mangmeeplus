@@ -55,6 +55,8 @@ import {
   planSubmitPayout,
   payoutSubmitToken,
   sealPayoutDestination,
+  sealClaimPayoutDestination,
+  claimPayoutFingerprint,
   submitPayoutColumns,
 } from './payout-destination.logic';
 // Whose turn it is at the pay step (its own import, apart from the block above).
@@ -1152,6 +1154,10 @@ describe('payout: sealing an account (one place on write)', () => {
   const key = Buffer.alloc(32, 3);
   const typed = { payoutKind: 'BANK_ACCOUNT' as const, bankName: ' ธนาคารกสิกรไทย ', accountName: ' นาย สมชาย ใจดี ', accountNumber: '012-3-45678-9' };
 
+  it('pins the existing SELF account fingerprint byte for byte', () => {
+    assert.equal(sealPayoutDestination(typed, key)!.fingerprint, '20a6ace167d863136527d7e43f213416a03e78d79799cf16b2bb2b2360c29042');
+  });
+
   it('stores a last 4 that is always the tail of what a reveal decrypts, leading zeros included', () => {
     for (const accountNumber of ['012-3-45678-9', '000123456789012', '0000001234', '100000', '0812345678']) {
       const sealed = sealPayoutDestination({ ...typed, accountNumber }, key)!;
@@ -1205,6 +1211,58 @@ describe('payout: sealing an account (one place on write)', () => {
     });
     assert.equal((nested.payments as any[])[0].paidAt, paidAt, 'a date is a value, not a bag of keys');
     assert.equal(JSON.stringify(nested).includes('0123456789'), false);
+  });
+});
+
+describe('payout: claim holder fingerprint', () => {
+  const key = Buffer.alloc(32, 3);
+  const account = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' };
+  const holder = { holderType: 'THIRD_PARTY' as const, holderNote: 'คู่สมรสของผู้เบิก' };
+
+  it('keeps the pinned v1 fingerprint for explicit and implicit SELF claims', () => {
+    const golden = '20a6ace167d863136527d7e43f213416a03e78d79799cf16b2bb2b2360c29042';
+    for (const input of [account, { ...account, holderType: 'SELF' as const, holderNote: ' ' }]) {
+      const sealed = sealClaimPayoutDestination(input, key)!;
+      assert.equal(sealed.fingerprint, golden);
+      assert.equal(sealed.holderType, 'SELF');
+      assert.equal(sealed.holderNote, null);
+    }
+  });
+
+  it('distinguishes THIRD_PARTY from SELF for the same account', () => {
+    assert.notEqual(sealClaimPayoutDestination({ ...account, ...holder }, key)!.fingerprint, sealPayoutDestination(account, key)!.fingerprint);
+  });
+
+  it('changes the claim fingerprint when the third-party note changes', () => {
+    const first = sealClaimPayoutDestination({ ...account, ...holder }, key)!;
+    const changed = sealClaimPayoutDestination({ ...account, ...holder, holderNote: 'ช่างรับเหมาที่สำรองจ่ายค่าวัสดุ' }, key)!;
+    assert.notEqual(first.fingerprint, changed.fingerprint);
+  });
+
+  it('ignores random ciphertext and trims the third-party note', () => {
+    const first = sealClaimPayoutDestination({ ...account, ...holder }, key)!;
+    const again = sealClaimPayoutDestination({ ...account, ...holder, holderNote: ` ${holder.holderNote} ` }, key)!;
+    assert.notEqual(first.accountNumberEncrypted, again.accountNumberEncrypted);
+    assert.equal(first.fingerprint, again.fingerprint);
+    assert.equal(again.holderNote, holder.holderNote);
+  });
+
+  it('derives the direct claim fingerprint from the stored v1 fingerprint without a number', () => {
+    const saved = sealPayoutDestination(account, key)!;
+    const direct = sealClaimPayoutDestination({ ...account, ...holder }, key)!;
+    assert.equal(claimPayoutFingerprint(saved.fingerprint, holder, key), direct.fingerprint);
+    assert.equal(claimPayoutFingerprint(saved.fingerprint, { holderType: 'SELF' }, key), saved.fingerprint);
+    assert.notEqual(claimPayoutFingerprint(saved.fingerprint, holder, Buffer.alloc(32, 4)), direct.fingerprint);
+  });
+
+  it('refuses invalid holder facts or malformed accounts before sealing', () => {
+    for (const input of [
+      { ...account, holderType: 'THIRD_PARTY' as const },
+      { ...account, holderType: 'SELF' as const, holderNote: holder.holderNote },
+      { ...account, ...holder, holderNote: 'เลขบัญชี 0123456789' },
+      { ...account, ...holder, accountNumber: '12345' },
+    ]) assert.equal(sealClaimPayoutDestination(input, key), null);
+    assert.equal(sealClaimPayoutDestination(undefined, key), null);
   });
 });
 

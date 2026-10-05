@@ -8,10 +8,12 @@
 import { createHash, createHmac } from 'node:crypto';
 import {
   invalidPayoutDestinationField,
+  invalidPayoutHolderField,
   looksLikeAccountNumber,
   normalizePayoutAccountNumber,
   reimbursementPaymentRule,
   type PayoutDestinationInput,
+  type PayoutHolderFacts,
   type ReimbursementPayoutKind,
   type ReimbursementPayoutMethod,
   type ReimbursementPayoutNotReadyReason,
@@ -61,6 +63,40 @@ export function payoutFingerprint(
   return createHmac('sha256', key)
     .update(JSON.stringify(['reimbursement-payout-destination:v1', destination.payoutKind, destination.bankName ?? '', destination.accountName, destination.accountNumber]))
     .digest('hex');
+}
+
+/** A saved account keeps its v1 account fingerprint, regardless of whose account it is. A claim
+ * also binds the holder facts, using only that stored fingerprint: no number needs to be opened.
+ * SELF preserves the existing fingerprint byte for byte.
+ */
+export function claimPayoutFingerprint(accountFingerprint: string, holder: PayoutHolderFacts, key: Buffer): string {
+  if (holder.holderType === 'SELF') return accountFingerprint;
+  return createHmac('sha256', key)
+    .update(JSON.stringify(['reimbursement-payout-holder:v1', accountFingerprint, holder.holderType, holder.holderNote?.trim() ?? '']))
+    .digest('hex');
+}
+
+export type SealedClaimPayoutDestination = SealedPayoutDestination & {
+  holderType: PayoutHolderFacts['holderType'];
+  holderNote: string | null;
+};
+
+/** Explicit claim accounts only. Existing default-account callers continue using the v1 sealer. */
+export function sealClaimPayoutDestination(
+  input: (Partial<PayoutDestinationInput> & Partial<PayoutHolderFacts>) | null | undefined,
+  key: Buffer,
+): SealedClaimPayoutDestination | null {
+  if (!input) return null;
+  const holder = { holderType: input.holderType === undefined ? 'SELF' as const : input.holderType, holderNote: input.holderNote };
+  if (invalidPayoutHolderField(holder)) return null;
+  const account = sealPayoutDestination(input, key);
+  if (!account) return null;
+  return {
+    ...account,
+    holderType: holder.holderType,
+    holderNote: holder.holderType === 'THIRD_PARTY' ? holder.holderNote!.trim() : null,
+    fingerprint: claimPayoutFingerprint(account.fingerprint, holder, key),
+  };
 }
 
 /**

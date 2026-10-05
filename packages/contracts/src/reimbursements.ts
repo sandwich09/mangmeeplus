@@ -282,6 +282,8 @@ export type ReimbursementPaymentDestinationSummary = {
   bankName?: string;
   accountName: string;
   accountLast4: string;
+  holderType?: ReimbursementPayoutHolderType;
+  holderNote?: string;
 };
 
 export type ReimbursementPaymentSummary = {
@@ -984,6 +986,8 @@ export type ApproveReimbursementInput = {
    * transfer, and it must be the claim's current version. Cash and legacy claims take none.
    */
   payoutVerifiedVersion?: number;
+  /** Explicit acceptance of a third-party account, in addition to the version attestation. */
+  payoutThirdPartyAccepted?: boolean;
 };
 
 export type RejectReimbursementInput = {
@@ -1509,6 +1513,7 @@ export type RequestReimbursementPayoutCorrectionInput = {
  */
 export type SubmitReimbursementPayoutCorrectionInput = (
   | { mode: 'CASH' }
+  | { mode: 'SAVED'; savedAccountId: string }
   | {
     mode: 'DEFAULT';
     /** `payoutCorrectionActions.requesterDefault.token` of the default account the page showed. */
@@ -1525,6 +1530,9 @@ export type SubmitReimbursementPayoutCorrectionInput = (
     mode: 'SPECIFIED';
     /** Also make it the requester's default account. */
     saveAsDefault?: boolean;
+    saveForLater?: boolean;
+    holderType?: ReimbursementPayoutHolderType;
+    holderNote?: string;
   } & PayoutDestinationInput)
 ) & {
   /**
@@ -1544,6 +1552,8 @@ export type ReimbursementPayoutCorrectionAccount = {
   bankName?: string;
   accountName?: string;
   accountLast4?: string;
+  holderType?: ReimbursementPayoutHolderType;
+  holderNote?: string;
   version?: number;
 };
 
@@ -1778,8 +1788,61 @@ export type ReimbursementPaymentSourceRef = {
 /** A subset of the payment methods on purpose: no new enum value. */
 export type ReimbursementPayoutMethod = 'BANK_TRANSFER' | 'CASH';
 export type ReimbursementPayoutKind = 'BANK_ACCOUNT' | 'PROMPTPAY_PHONE';
-/** Where a claim's account came from: the requester's default, typed by the requester, or typed by whoever prepared the claim for them. */
-export type ReimbursementPayoutSource = 'DEFAULT_ACCOUNT' | 'REQUESTER' | 'PREPARER';
+export type ReimbursementPayoutHolderType = 'SELF' | 'THIRD_PARTY';
+/** Where a claim's account came from: the default, a saved account, or whoever typed it. */
+export type ReimbursementPayoutSource = 'DEFAULT_ACCOUNT' | 'SAVED_ACCOUNT' | 'REQUESTER' | 'PREPARER';
+
+export const PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH = 40;
+export const PAYOUT_HOLDER_NOTE_MIN_LENGTH = 2;
+export const PAYOUT_HOLDER_NOTE_MAX_LENGTH = 200;
+export const PAYOUT_SAVED_ACCOUNT_LIMIT = 20;
+
+export type PayoutHolderFacts = {
+  holderType: ReimbursementPayoutHolderType;
+  holderNote?: string;
+};
+
+/** Holder facts are stated by a person, never inferred from the account name. */
+export function invalidPayoutHolderField(input: Partial<PayoutHolderFacts> | null | undefined): 'holderType' | 'holderNote' | null {
+  if (input?.holderType !== 'SELF' && input?.holderType !== 'THIRD_PARTY') return 'holderType';
+  if (input.holderNote !== undefined && typeof input.holderNote !== 'string') return 'holderNote';
+  const note = input.holderNote?.trim() ?? '';
+  if (input.holderType === 'SELF') return note ? 'holderNote' : null;
+  return note.length < PAYOUT_HOLDER_NOTE_MIN_LENGTH || note.length > PAYOUT_HOLDER_NOTE_MAX_LENGTH || looksLikeAccountNumber(note)
+    ? 'holderNote' : null;
+}
+
+/** A private optional label still must not carry an account number. */
+export function invalidSavedPayoutAccountLabel(label: unknown): 'label' | null {
+  if (label === undefined) return null;
+  if (typeof label !== 'string') return 'label';
+  return label.trim().length > PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH || looksLikeAccountNumber(label) ? 'label' : null;
+}
+
+/** Shared by forms, claim print, notices and LINE; notes are excluded from short notices. */
+export const REIMBURSEMENT_PAYOUT_HOLDER_WORDS = {
+  self: 'บัญชีของฉันเอง',
+  requesterSelf: 'บัญชีของผู้เบิกเอง',
+  thirdParty: 'บัญชีของบุคคลอื่น',
+  noteLabel: 'เป็นบัญชีของใคร และเกี่ยวข้องอย่างไร',
+  noteExample: 'เช่น ช่างรับเหมาที่สำรองจ่ายค่าวัสดุ หรือคู่สมรสของผู้เบิก',
+  noteInvalid: 'ระบุว่าเป็นบัญชีของใคร และเกี่ยวข้องอย่างไร (2 ถึง 200 ตัวอักษร)',
+  noteContainsAccountNumber: 'อย่าพิมพ์เลขบัญชีในช่องนี้ เพราะเมื่อใช้บัญชีนี้ในใบเบิก ทุกคนที่เปิดใบเบิกจะเห็นข้อความนี้',
+  thirdPartyAcceptance: 'ฉันตรวจบัญชีนี้แล้ว และยอมรับให้คืนเงินของใบนี้เข้าบัญชีของบุคคลอื่นตามที่ระบุ',
+  thirdPartyAcceptanceRequired: 'ติ๊กยอมรับการคืนเงินเข้าบัญชีของบุคคลอื่นก่อนอนุมัติ',
+  thirdPartyApprovalNotice: 'ใบนี้คืนเงินเข้าบัญชีของบุคคลอื่น จึงต้องผ่านผู้อนุมัติก่อนจ่ายทุกครั้ง',
+  thirdPartySelfAttestation: 'ผู้เบิกยืนยันบัญชีของบุคคลอื่นด้วยตนเอง',
+} as const;
+
+export function payoutHolderChoiceLabel(holderType: ReimbursementPayoutHolderType, forSelf: boolean): string {
+  return holderType === 'THIRD_PARTY' ? REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdParty
+    : forSelf ? REIMBURSEMENT_PAYOUT_HOLDER_WORDS.self : REIMBURSEMENT_PAYOUT_HOLDER_WORDS.requesterSelf;
+}
+
+/** Existing claims and self accounts gain no new line. */
+export function payoutHolderLine(account: { holderType?: ReimbursementPayoutHolderType | null; holderNote?: string | null }): string | null {
+  return account.holderType === 'THIRD_PARTY' ? `${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdParty}: ${account.holderNote?.trim() ?? ''}` : null;
+}
 
 // Source: Bank of Thailand financial institution directory, checked 2026-09-23.
 export const THAI_BANK_NAMES = [
@@ -1883,6 +1946,26 @@ export function maskedPayoutAccount(account: {
   return account.payoutKind === 'PROMPTPAY_PHONE' ? `พร้อมเพย์เบอร์${masked}` : `${account.bankName ?? ''} เลขบัญชี${masked}`.trim();
 }
 
+/** Short account text for notices and LINE: holder flag only, never the holder note. */
+export function maskedPayoutAccountWithHolder(account: Parameters<typeof maskedPayoutAccount>[0] & { holderType?: ReimbursementPayoutHolderType | null }): string {
+  const masked = maskedPayoutAccount(account);
+  return account.holderType === 'THIRD_PARTY' ? `${masked} (${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdParty})` : masked;
+}
+
+/** Saved accounts are private to their member; the label is never copied into a claim. */
+export type SavedPayoutAccountSummary = PayoutHolderFacts & {
+  id: string;
+  label?: string;
+  payoutKind: ReimbursementPayoutKind;
+  bankName?: string;
+  accountName: string;
+  accountLast4: string;
+  createdAt: string;
+};
+
+export type SavedPayoutAccountListResponse = { accounts: SavedPayoutAccountSummary[]; limit: number };
+export type AddSavedPayoutAccountInput = PayoutDestinationInput & PayoutHolderFacts & { label?: string };
+
 /** A member's default payout account as every screen sees it: never the full number. */
 export type MemberPayoutAccountSummary = {
   userId: string;
@@ -1913,10 +1996,14 @@ export type PayoutAccountReveal = { accountNumber: string };
 export type ReimbursementPayoutInput =
   | { mode: 'DEFAULT' }
   | { mode: 'CASH' }
+  | { mode: 'SAVED'; savedAccountId: string }
   | ({
     mode: 'SPECIFIED';
     /** Also make it the requester's default account; the claim then follows that default. */
     saveAsDefault?: boolean;
+    saveForLater?: boolean;
+    holderType?: ReimbursementPayoutHolderType;
+    holderNote?: string;
   } & PayoutDestinationInput);
 
 export type ReimbursementPayoutNotReadyReason = 'payout_method_required' | 'payout_destination_required';
@@ -1932,6 +2019,10 @@ export type ReimbursementPayoutSummary = {
   bankName?: string;
   accountName?: string;
   accountLast4?: string;
+  holderType?: ReimbursementPayoutHolderType;
+  holderNote?: string;
+  /** Draft only: this account requires approval even below the policy's amount threshold. */
+  approvalRequiredForThirdParty?: true;
   /** The claim's own snapshot version. Absent for cash, and while a draft still follows the default. */
   version?: number;
   source?: ReimbursementPayoutSource;
@@ -1973,6 +2064,8 @@ export type ReimbursementPayoutVersionSummary = {
   bankName?: string;
   accountName: string;
   accountLast4: string;
+  holderType?: ReimbursementPayoutHolderType;
+  holderNote?: string;
   source: ReimbursementPayoutSource;
   /** Who typed or set the account, when it was not the requester. The name is absent when it cannot be resolved. */
   enteredByUserId?: string;

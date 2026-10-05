@@ -1,6 +1,61 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { reimbursementDuplicateBlockNotice } from './reimbursements.js';
+import * as payout from './reimbursements.js';
+
+test('saved payout holder facts validate type, trimmed note bounds and SELF absence', () => {
+  for (const input of [null, undefined, {}, { holderType: 'OTHER' }, { holderType: 1 }]) {
+    assert.equal(payout.invalidPayoutHolderField(input as never), 'holderType');
+  }
+  for (const holderNote of [undefined, '', ' ', ' ก ', 'ก'.repeat(201), 123]) {
+    assert.equal(payout.invalidPayoutHolderField({ holderType: 'THIRD_PARTY', holderNote } as never), 'holderNote');
+  }
+  for (const holderNote of [' กก ', 'ก'.repeat(200), 'คู่สมรสของผู้เบิก']) {
+    assert.equal(payout.invalidPayoutHolderField({ holderType: 'THIRD_PARTY', holderNote }), null);
+  }
+  for (const holderNote of [undefined, '', ' ']) assert.equal(payout.invalidPayoutHolderField({ holderType: 'SELF', holderNote }), null);
+  for (const holderNote of ['คู่สมรส', 123, null]) {
+    assert.equal(payout.invalidPayoutHolderField({ holderType: 'SELF', holderNote } as never), 'holderNote');
+  }
+});
+
+test('saved payout notes and labels reject every account-number form the shared guard recognizes', () => {
+  for (const text of ['เลขบัญชี 0123456789', '081 234 5678', '123-4-56789-0', '๑๒๓๔๕๖', '123.4.56789.0', '123/4/56789/0']) {
+    assert.equal(payout.invalidPayoutHolderField({ holderType: 'THIRD_PARTY', holderNote: text }), 'holderNote', text);
+    assert.equal(payout.invalidSavedPayoutAccountLabel(text), 'label', text);
+  }
+  for (const text of ['คู่สมรสของผู้เบิก', 'ใบ RB-202609-0003', 'ยอด 1500000 บาท']) {
+    assert.equal(payout.invalidPayoutHolderField({ holderType: 'THIRD_PARTY', holderNote: text }), null, text);
+    assert.equal(payout.invalidSavedPayoutAccountLabel(text), null, text);
+  }
+});
+
+test('saved payout labels are optional, trimmed, bounded and never coerced', () => {
+  for (const label of [undefined, '', ' ', ' ก ', ` ${'ก'.repeat(40)} `]) assert.equal(payout.invalidSavedPayoutAccountLabel(label), null);
+  for (const label of ['ก'.repeat(41), null, 123, {}]) assert.equal(payout.invalidSavedPayoutAccountLabel(label), 'label');
+  assert.equal(payout.PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH, 40);
+  assert.equal(payout.PAYOUT_HOLDER_NOTE_MIN_LENGTH, 2);
+  assert.equal(payout.PAYOUT_HOLDER_NOTE_MAX_LENGTH, 200);
+  assert.equal(payout.PAYOUT_SAVED_ACCOUNT_LIMIT, 20);
+});
+
+test('payout holder words use the form actor, hide legacy lines and flag masked notices without the note', () => {
+  assert.equal(payout.REIMBURSEMENT_PAYOUT_HOLDER_WORDS.noteContainsAccountNumber,
+    'อย่าพิมพ์เลขบัญชีในช่องนี้ เพราะเมื่อใช้บัญชีนี้ในใบเบิก ทุกคนที่เปิดใบเบิกจะเห็นข้อความนี้');
+  assert.equal(payout.payoutHolderChoiceLabel('SELF', true), 'บัญชีของฉันเอง');
+  assert.equal(payout.payoutHolderChoiceLabel('SELF', false), 'บัญชีของผู้เบิกเอง');
+  assert.equal(payout.payoutHolderChoiceLabel('THIRD_PARTY', true), 'บัญชีของบุคคลอื่น');
+  assert.equal(payout.payoutHolderChoiceLabel('THIRD_PARTY', false), 'บัญชีของบุคคลอื่น');
+  assert.equal(payout.payoutHolderLine({}), null);
+  assert.equal(payout.payoutHolderLine({ holderType: 'SELF' }), null);
+  const thirdParty = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountLast4: '6789', holderType: 'THIRD_PARTY' as const, holderNote: 'คู่สมรสของผู้เบิก' };
+  assert.equal(payout.payoutHolderLine(thirdParty), 'บัญชีของบุคคลอื่น: คู่สมรสของผู้เบิก');
+  assert.equal(payout.maskedPayoutAccountWithHolder(thirdParty), `${payout.maskedPayoutAccount(thirdParty)} (บัญชีของบุคคลอื่น)`);
+  assert.equal(payout.maskedPayoutAccountWithHolder({ ...thirdParty, holderType: 'SELF' }), payout.maskedPayoutAccount(thirdParty));
+  assert.equal(payout.maskedPayoutAccountWithHolder({ payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' }), 'พร้อมเพย์เบอร์ลงท้าย 5678');
+  assert.doesNotMatch(payout.maskedPayoutAccountWithHolder(thirdParty), /คู่สมรส|0123456789/);
+  for (const word of Object.values(payout.REIMBURSEMENT_PAYOUT_HOLDER_WORDS)) assert.doesNotMatch(word, /[a-zA-Z_]/);
+});
 
 test('confirmed receipt guidance gives the actual cancellation or payment-void path, never duplicate clearance', () => {
   const reasons = ['EXPENSE_CONFIRMED_DUPLICATE', 'ATTACHMENT_CHECKSUM'];
