@@ -177,12 +177,24 @@ export class ExpenseGetDetailTool implements ErpReadToolPort<{ expenseId?: strin
     if (!expenseId) return unavailable(this.toolName, asOf, 'EXPENSE_ID_REQUIRED');
     return safely(this.toolName, asOf, 'EXPENSE_NOT_FOUND', async () => {
       const expense = await this.getExpense.execute(toCtx(ctx), expenseId);
+      const recorded = expense.payments.filter((payment) => payment.status === 'RECORDED');
       return {
         toolName: this.toolName, status: 'ok', asOf,
         data: {
           id: expense.id, expenseNumber: expense.expenseNumber, status: expense.status,
           captureSource: expense.captureSource, branchId: expense.branchId,
           vendorName: expense.vendorNameSnapshot, vendorDocumentNumber: expense.vendorDocumentNumber,
+          // What the record and payment cards print beside the amounts (design lock contexts 5 and 7): the
+          // category's name, why a closed record was closed, and the recorded payments as a card can state
+          // them — how many, the company's day of the latest, and each way paid (null where none was
+          // recorded). A payment's bank reference is never projected.
+          categoryName: await this.getExpense.categoryName(toCtx(ctx), expense),
+          rejectReason: expense.rejectReason ?? null, voidReason: expense.voidReason ?? null,
+          payments: {
+            count: recorded.length,
+            lastPaidOn: recorded.length ? civilDate(new Date(Math.max(...recorded.map((payment) => payment.paidAt.getTime())))) : null,
+            methods: [...new Set(recorded.map((payment) => payment.paymentMethod ?? null))],
+          },
           expenseDate: expense.expenseDate.toISOString(), dueDate: expense.dueDate?.toISOString() ?? null,
           currency: expense.currency, vatMode: expense.vatMode, inputVatClaimStatus: expense.inputVatClaimStatus,
           subtotalAmount: expense.subtotalAmount, discountAmount: expense.discountAmount,

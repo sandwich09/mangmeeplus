@@ -99,23 +99,78 @@ describe('LINE ERP core detail tools', () => {
     assert.deepEqual((result.data as any).totalsByCurrency, [{ currency: 'THB', outstandingAmount: '50.00', count: 2 }]);
   });
 
+  const expenseRecord = (over: Record<string, unknown> = {}) => ({
+    id: 'e1', expenseNumber: 'EXP-1', status: 'CONFIRMED', captureSource: 'WEB', branchId: 'b1',
+    vendorNameSnapshot: 'ร้าน A', vendorDocumentNumber: 'R1', expenseDate: new Date('2026-07-01'), dueDate: null,
+    currency: 'THB', vatMode: 'NO_VAT', inputVatClaimStatus: 'NOT_CLAIMABLE', subtotalAmount: '50', discountAmount: '0',
+    taxableAmount: '50', vatAmount: '0', whtAmount: '0', grandTotalAmount: '50', netPayableAmount: '50', paidAmount: '0',
+    outstandingAmount: '50', paymentStatus: 'UNPAID', duplicateStatus: 'CLEAR', taxEvidenceStatus: 'NOT_REQUIRED', postingStatus: 'NOT_POSTED',
+    expenseCategoryId: null, rejectReason: null, voidReason: null, bankAccountRef: null,
+    lines: [], attachments: [{ id: 'private-file' }], duplicateCandidates: [], substituteReceiptEvidence: null, payments: [],
+    ...over,
+  });
+
   it('returns bounded expense detail and relies on source ABAC', async () => {
     let forwardedCtx: any;
-    const tool = new ExpenseGetDetailTool({ execute: async (sourceCtx: any) => {
-      forwardedCtx = sourceCtx;
-      return {
-        id: 'e1', expenseNumber: 'EXP-1', status: 'CONFIRMED', captureSource: 'WEB', branchId: 'b1',
-        vendorNameSnapshot: 'ร้าน A', vendorDocumentNumber: 'R1', expenseDate: new Date('2026-07-01'), dueDate: null,
-        currency: 'THB', vatMode: 'NO_VAT', inputVatClaimStatus: 'NOT_CLAIMABLE', subtotalAmount: '50', discountAmount: '0',
-        taxableAmount: '50', vatAmount: '0', whtAmount: '0', grandTotalAmount: '50', netPayableAmount: '50', paidAmount: '0',
-        outstandingAmount: '50', paymentStatus: 'UNPAID', duplicateStatus: 'CLEAR', taxEvidenceStatus: 'NOT_REQUIRED', postingStatus: 'NOT_POSTED',
-        lines: [], attachments: [{ id: 'private-file' }], duplicateCandidates: [], substituteReceiptEvidence: null,
-      };
-    } } as any);
+    const tool = new ExpenseGetDetailTool({
+      execute: async (sourceCtx: any) => { forwardedCtx = sourceCtx; return expenseRecord(); },
+      categoryName: async () => null,
+    } as any);
     const result = await tool.execute(ctx, { expenseId: 'e1' });
     assert.deepEqual(forwardedCtx.scopes.branchIds, ['b1']);
     assert.equal((result.data as any).attachmentCount, 1);
     assert.equal((result.data as any).attachments, undefined);
+    // A record with no category, no reason and no payment says so plainly: null and zero, nothing invented.
+    assert.equal((result.data as any).categoryName, null);
+    assert.deepEqual((result.data as any).payments, { count: 0, lastPaidOn: null, methods: [] });
+  });
+
+  // Design lock contexts 5 and 7: what the record and payment cards print, from the one
+  // permission-checked read of that record.
+  it('projects the category name, the close reason and the recorded payments — never a bank reference', async () => {
+    const categoryCalls: any[] = [];
+    const tool = new ExpenseGetDetailTool({
+      execute: async () => expenseRecord({
+        expenseCategoryId: 'cat-1', status: 'REJECTED', rejectReason: 'เอกสารประกอบไม่ครบ', paymentStatus: 'PARTIALLY_PAID',
+        paidAmount: '30', outstandingAmount: '20', bankAccountRef: '123-4-56789-0', paymentMethod: 'CASH', paidAt: new Date('2026-09-01T00:00:00.000Z'),
+        payments: [
+          { id: 'p1', status: 'RECORDED', paymentMethod: 'CASH', paidAt: new Date('2026-09-01T00:00:00.000Z'), bankAccountRef: null, amount: '10' },
+          // Recorded late in the evening in Bangkok: 17:30 UTC on the 3rd is the 4th there.
+          { id: 'p2', status: 'RECORDED', paymentMethod: 'BANK_TRANSFER', paidAt: new Date('2026-09-03T17:30:00.000Z'), bankAccountRef: '123-4-56789-0', amount: '20' },
+          { id: 'p3', status: 'RECORDED', paymentMethod: 'CASH', paidAt: new Date('2026-09-02T00:00:00.000Z'), bankAccountRef: null, amount: '5' },
+          // A cancelled payment is not a payment: it gives no date and no method.
+          { id: 'p4', status: 'VOIDED', paymentMethod: 'CHEQUE', paidAt: new Date('2026-09-09T00:00:00.000Z'), bankAccountRef: '999-9-99999-9', amount: '99' },
+        ],
+      }),
+      categoryName: async (sourceCtx: any, expense: any) => { categoryCalls.push([sourceCtx.companyId, expense.expenseCategoryId]); return 'ค่าอุปกรณ์สำนักงาน'; },
+    } as any);
+    const result = await tool.execute(ctx, { expenseId: 'e1' });
+    const data = result.data as any;
+    assert.equal(data.categoryName, 'ค่าอุปกรณ์สำนักงาน');
+    assert.deepEqual(categoryCalls, [['c1', 'cat-1']], 'the name is read for this company and this record only');
+    assert.equal(data.rejectReason, 'เอกสารประกอบไม่ครบ');
+    assert.equal(data.voidReason, null);
+    assert.deepEqual(data.payments, { count: 3, lastPaidOn: '2026-09-04', methods: ['CASH', 'BANK_TRANSFER'] });
+    assert.doesNotMatch(JSON.stringify(result), /56789|99999|bankAccountRef|CHEQUE|2026-09-09/);
+  });
+
+  it('keeps a payment with no recorded method as unknown instead of naming one', async () => {
+    const tool = new ExpenseGetDetailTool({
+      execute: async () => expenseRecord({ payments: [{ id: 'p1', status: 'RECORDED', paymentMethod: null, paidAt: new Date('2026-09-01T00:00:00.000Z') }] }),
+      categoryName: async () => null,
+    } as any);
+    assert.deepEqual(((await tool.execute(ctx, { expenseId: 'e1' })).data as any).payments, { count: 1, lastPaidOn: '2026-09-01', methods: [null] });
+  });
+
+  it('keeps a refused or missing record distinct from a found one', async () => {
+    const refused = new ExpenseGetDetailTool({ execute: async () => { throw new ForbiddenException('Access denied'); }, categoryName: async () => 'x' } as any);
+    const denied = await refused.execute(ctx, { expenseId: 'e1' });
+    assert.equal(denied.status, 'forbidden');
+    assert.equal(denied.data, undefined);
+    const missing = new ExpenseGetDetailTool({ execute: async () => { throw new NotFoundException('gone'); }, categoryName: async () => 'x' } as any);
+    const notFound = await missing.execute(ctx, { expenseId: 'e1' });
+    assert.deepEqual(notFound.data, { found: false });
+    assert.equal(notFound.errorCode, 'EXPENSE_NOT_FOUND');
   });
 
   it('returns reimbursement summary/detail without attachment ids or approver identities', async () => {
