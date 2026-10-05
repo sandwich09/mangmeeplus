@@ -48,6 +48,8 @@ import {
   validateRequestFields,
   validateLines,
   requiresApproval,
+  thirdPartyPayoutApprovalRequired,
+  payoutCorrectionApprovalRequired,
   computeReceiptRequirement,
   isLineEvidenced,
   claimSnapshotFields,
@@ -336,7 +338,10 @@ export class GetReimbursementDetailUseCase {
     );
     // What "ส่งอนุมัติ" would freeze right now. The page sends this back with the submit, and a
     // submit whose own answer differs is refused: nobody sends a claim to an account they did not see.
-    const submitToken = req.status === 'DRAFT' ? payoutSubmitToken(req.id, await this.repo.planSubmitPayout(req)) : undefined;
+    const submitPlan = req.status === 'DRAFT' ? await this.repo.planSubmitPayout(req) : undefined;
+    const submitToken = submitPlan ? payoutSubmitToken(req.id, submitPlan) : undefined;
+    const approvalRequiredForThirdParty = submitPlan && !('error' in submitPlan) && submitPlan.payoutMethod === 'BANK_TRANSFER' && submitPlan.thirdParty === true
+      && thirdPartyPayoutApprovalRequired(req.amount, (await loadReimbursementPolicy(this.repo, ctx.companyId)).approvalRequiredFromAmount, true);
     // Payout spec §22: the requester changed their default after sending this claim. The claim keeps
     // what it froze, and the requester alone is told, from fingerprints that stay on the server.
     const defaultAccountChanged = req.requesterUserId === ctx.userId && detail.payout?.source === 'DEFAULT_ACCOUNT'
@@ -366,7 +371,7 @@ export class GetReimbursementDetailUseCase {
       ...(payoutCorrectionHistory && { payoutCorrectionHistory }),
       // The button is offered exactly when the reveal endpoint would answer.
       ...(payout && { payout: {
-        ...payout, ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
+        ...payout, ...(approvalRequiredForThirdParty && { approvalRequiredForThirdParty: true as const }), ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
         canRevealAccountNumber: await claimPayoutRevealGroup(ctx, req, this.repo, approvalActions) !== null,
       } }),
       ...(legacyPayoutDefault && { legacyPayoutDefault }),
@@ -616,7 +621,10 @@ export class SubmitReimbursementUseCase {
     }
 
     const now = new Date();
-    const humanApprovalRequired = requiresApproval(req.amount, policy.approvalRequiredFromAmount);
+    const payoutPlan = await this.repo.planSubmitPayout(req);
+    const thirdParty = !('error' in payoutPlan) && payoutPlan.payoutMethod === 'BANK_TRANSFER' && payoutPlan.thirdParty === true;
+    const approvalFloor = thirdPartyPayoutApprovalRequired(req.amount, policy.approvalRequiredFromAmount, thirdParty);
+    const humanApprovalRequired = requiresApproval(req.amount, policy.approvalRequiredFromAmount) || approvalFloor;
     const roleKey = policy.defaultApproverRole ?? 'MANAGER';
     let approverUserId: string | undefined;
     let submissionRoute: Awaited<ReturnType<ListReimbursementApproverOptionsUseCase['resolveSubmissionRoute']>> | undefined;
@@ -647,6 +655,7 @@ export class SubmitReimbursementUseCase {
       policyVersion: policyRecord?.updatedAt.toISOString() ?? 'default:v1',
       approvalRequiredFromAmount: policy.approvalRequiredFromAmount,
       requiresApproval: humanApprovalRequired,
+      ...(approvalFloor && { approvalFloor: 'THIRD_PARTY_PAYOUT' as const }),
       route: submissionRoute ? {
         mode: approverModeForRole(submissionRoute.responsibilityRole),
         roleKey: submissionRoute.responsibilityRole,
@@ -707,7 +716,7 @@ export class SubmitReimbursementUseCase {
         assignedApproverUserIdsJson: submissionRoute!.recipientUserIds,
       } }),
       // The claim's own copy is frozen in this transaction; from here on nothing reads the default.
-      payout: { actorUserId: ctx.userId, frozenAt: now, seenToken: input?.payoutSubmitToken, snapshotHash },
+      payout: { actorUserId: ctx.userId, frozenAt: now, seenToken: input?.payoutSubmitToken, expectedThirdParty: thirdParty, snapshotHash },
       request: {
         status: initialStatus,
         submittedAt: now,
@@ -1345,10 +1354,12 @@ export async function payoutCorrectionActionsOf(
       submitModes: [
         ...(account && token ? ['DEFAULT' as const] : []),
         ...(typingRefused ? [] : ['SPECIFIED' as const]),
+        ...(req.requesterUserId === ctx.userId && ctx.permissions.includes('reimbursement.create') ? ['SAVED' as const] : []),
         'CASH' as const,
         ...(payoutCorrectionRoundStart(req)?.payoutMethod ? ['PREVIOUS' as const] : []),
       ],
       ...(typingRefused && { specifiedRefusal: 'REQUESTER_NOT_ACTIVE' as const }),
+      ...(!payoutCorrectionApprovalRequired(req) && { thirdPartyRefusal: 'APPROVAL_NOT_REQUIRED' as const }),
     }),
   };
 }

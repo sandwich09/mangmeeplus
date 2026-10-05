@@ -405,3 +405,23 @@ describe('payout correction DTOs', () => {
     }
   });
 });
+
+describe('multi payout 2a DTOs', () => {
+  it('takes a SAVED id alone and refuses missing ids, unknown modes and mixed account fields', async () => {
+    const output = await pipe.transform({ payout: { mode: 'SAVED', savedAccountId: 'saved-1' } }, { type: 'body', metatype: UpdateReimbursementDraftDto });
+    assert.equal(output.payout.savedAccountId, 'saved-1');
+    for (const payout of [{ mode: 'SAVED' }, { mode: 'SAVED', savedAccountId: '' }, { mode: 'SAVED', savedAccountId: 1 }, { mode: 'SAVED', savedAccountId: 'saved-1', accountName: 'สมชาย' }, { mode: 'UNKNOWN' }, { mode: 'CASH', savedAccountId: 'saved-1' }]) await rejects(UpdateReimbursementDraftDto, { payout });
+  });
+  it('takes typed holder facts and saveForLater, and a strictly boolean approval acceptance', async () => {
+    await pipe.transform({ payout: { mode: 'SPECIFIED', holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก', saveForLater: true } }, { type: 'body', metatype: UpdateReimbursementDraftDto });
+    await pipe.transform({ payoutThirdPartyAccepted: true }, { type: 'body', metatype: ApproveReimbursementDto });
+    for (const payoutThirdPartyAccepted of ['true', 1, null]) await rejects(ApproveReimbursementDto, { payoutThirdPartyAccepted });
+  });
+});
+
+it('multi payout 2b: correction DTO takes saved ids and holder facts but refuses mixed modes', async () => {
+  const body = (_type: any, input: any) => pipe.transform(input, { type: 'body', metatype: SubmitPayoutCorrectionDto });
+  await body(SubmitPayoutCorrectionDto, { mode: 'SAVED', savedAccountId: 'saved-1', expectedUpdatedAt: '2026-10-05T01:00:00Z' });
+  await body(SubmitPayoutCorrectionDto, { mode: 'SPECIFIED', holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก', saveForLater: true });
+  for (const input of [{ mode: 'SAVED' }, { mode: 'SAVED', savedAccountId: 'saved-1', accountName: 'สมชาย' }, { mode: 'PREVIOUS', holderType: 'SELF' }, { mode: 'CASH', savedAccountId: 'saved-1' }]) await rejects(SubmitPayoutCorrectionDto, input);
+});

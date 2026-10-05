@@ -890,3 +890,9 @@ describe('who may open a payment slip', () => {
     }
   });
 });
+
+it('multi payout 2a: all five saved routes have operation summaries', () => {
+  for (const handler of ['listSavedOwn', 'addSavedOwn', 'deleteSavedOwn', 'revealSavedOwn', 'makeSavedDefaultOwn'] as const) {
+    assert.ok(Reflect.getMetadata('swagger/apiOperation', ReimbursementPayoutController.prototype[handler])?.summary, handler);
+  }
+});

@@ -93,7 +93,7 @@ import {
   readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan,
   writeMemberPayoutAccount, type DraftPayoutChange, type MemberPayoutAccountRecord,
   addSavedPayoutAccount, deleteSavedPayoutAccount, listSavedPayoutAccounts, makeSavedPayoutAccountDefault,
-  readSavedPayoutAccount, readSavedPayoutAccountForCopy, readSavedPayoutSecret,
+  readSavedPayoutAccount, readSavedPayoutAccountForCopy, readSavedPayoutSecret, readClaimPayoutHolderType,
   type SavedPayoutAccountRecord, type SavedPayoutAccountWrite,
 } from './reimbursement-payout';
 // The payment step's side of the payout (kept as its own imports, apart from the block above).
@@ -105,7 +105,7 @@ import {
 // The claim page's account history (its own import too, for the same reason).
 import { readClaimPayoutVersions } from './reimbursement-payout';
 // The payout account correction round (payout spec §14).
-import { PAYOUT_CORRECTION_STEP_REASON, payoutCorrectionFacts, payoutCorrectionPhase, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../domain/logic/reimbursement.logic';
+import { PAYOUT_CORRECTION_STEP_REASON, payoutCorrectionFacts, payoutCorrectionPhase, payoutCorrectionRoundStart, payoutCorrectionSourceStep, payoutCorrectionApprovalRequired } from '../domain/logic/reimbursement.logic';
 import { hasPayoutSnapshot } from '../domain/logic/payout-destination.logic';
 import { freezePayoutCorrection, type CorrectionPayoutWrite } from './reimbursement-payout';
 import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
@@ -987,6 +987,7 @@ export class PrismaReimbursementRepository {
       actorUserId: string;
       frozenAt: Date;
       seenToken?: unknown;
+      expectedThirdParty?: boolean;
       snapshotHash: (columns: SubmitPayoutColumns) => string;
     };
     onSubmittedPersisted?: (tx: any, result: {
@@ -1447,6 +1448,10 @@ export class PrismaReimbursementRepository {
     });
   }
 
+  findClaimPayoutHolderType(claim: Parameters<typeof readClaimPayoutHolderType>[1]) {
+    return readClaimPayoutHolderType(this.prisma.client, claim);
+  }
+
   findMemberPayoutAccount(companyId: string, userId: string): Promise<MemberPayoutAccountRecord | null> {
     return readMemberPayoutAccount(this.prisma.client, companyId, userId);
   }
@@ -1569,6 +1574,14 @@ export class PrismaReimbursementRepository {
   /** Friendly preflight of the payout proof that `recordPaymentAtomic` repeats under the payment lock. */
   assertPaymentPayoutUsable(request: ReimbursementRequestRecord, plan: PaymentPayoutPlan): Promise<void> {
     return assertPaymentPayoutUsable(this.prisma.client, request, plan);
+  }
+
+  /** Shared preflight and locked proof; replay comparisons run before this guard. */
+  async assertPaymentRecordInput(request: { companyId: string; currency: string }, input: { currency?: string; bankAccountId?: string }, client: any = this.prisma.client): Promise<void> {
+    if (input.currency !== undefined && input.currency !== request.currency) throw new ConflictException('payment_currency_mismatch');
+    if (input.bankAccountId !== undefined && !await client.bankAccount.findFirst({
+      where: { id: input.bankAccountId, companyId: request.companyId, status: 'ACTIVE' }, select: { id: true },
+    })) throw new ConflictException('payment_source_bank_account_invalid');
   }
 
   /** A recorded payment's account as a payment request states it: see `isSamePaymentRequest`. */
@@ -1806,6 +1819,7 @@ export class PrismaReimbursementRepository {
     comment?: string;
     /** "ตรวจบัญชีแล้ว": the account version the approver looked at. */
     payoutVerifiedVersion?: unknown;
+    payoutThirdPartyAccepted?: unknown;
     financeRequestPatch: Record<string, unknown>;
     onDecisionPersisted: (tx: any) => Promise<void>;
   }): Promise<{ request: ReimbursementRequestRecord; resumed: boolean; approvalStepId: string }> {
@@ -1857,7 +1871,7 @@ export class PrismaReimbursementRepository {
       if (step.status !== 'PENDING') throw new ConflictException('stale_approval_snapshot');
       // Same transaction as the decision: an approval of a transfer claim cannot exist without it.
       await attestClaimPayout(tx, request, {
-        verifiedVersion: data.payoutVerifiedVersion, actorUserId: data.actorUserId, verifiedAt: data.decidedAt, approvalStepId: step.id,
+        verifiedVersion: data.payoutVerifiedVersion, thirdPartyAccepted: data.payoutThirdPartyAccepted, actorUserId: data.actorUserId, verifiedAt: data.decidedAt, approvalStepId: step.id,
       });
 
       const changedStep = await tx.reimbursementApprovalStep.updateMany({
@@ -2912,12 +2926,14 @@ export class PrismaReimbursementRepository {
       this.assertDecisionBranch(request.branchId, data.scopes);
 
       // First what commits with the choice: a default account set here is the one copied below.
-      await data.payout.onPersisted?.(tx, data.requestId);
+      if (data.payout.write.mode === 'DEFAULT') await data.payout.onPersisted?.(tx, data.requestId);
       const columns = await freezePayoutCorrection(tx, request, {
         write: data.payout.write, frozenAt: data.submittedAt,
         seenDefaultToken: data.seenDefaultToken, defaultSetInThisTransaction: data.defaultSetInThisTransaction,
         previous: payoutCorrectionRoundStart(request),
+        approvalRequired: payoutCorrectionApprovalRequired(request),
       });
+      if (data.payout.write.mode !== 'DEFAULT') await data.payout.onPersisted?.(tx, data.requestId);
       // The same claim with the account it has now: nothing else of it moved, so nothing else of the hash does.
       const snapshotHash = computeSnapshotHash(claimSnapshotFields({ ...request, ...columns }, request.approvalPolicySnapshotJson));
 
@@ -3002,6 +3018,7 @@ export class PrismaReimbursementRepository {
     comment?: string;
     /** "ตรวจบัญชีแล้ว": the account version the approver looked at. */
     payoutVerifiedVersion?: unknown;
+    payoutThirdPartyAccepted?: unknown;
     onApprovedPersisted: (tx: any, approvalStepId: string) => Promise<void>;
   }): Promise<ReimbursementRequestRecord> {
     const client = this.prisma.client as any;
@@ -3029,7 +3046,7 @@ export class PrismaReimbursementRepository {
         throw new ForbiddenException('self_approval_denied');
       }
       await attestClaimPayout(tx, request, {
-        verifiedVersion: data.payoutVerifiedVersion, actorUserId: data.actorUserId, verifiedAt: data.decidedAt, approvalStepId: step.id,
+        verifiedVersion: data.payoutVerifiedVersion, thirdPartyAccepted: data.payoutThirdPartyAccepted, actorUserId: data.actorUserId, verifiedAt: data.decidedAt, approvalStepId: step.id,
       });
       const decided = await tx.reimbursementApprovalStep.updateMany({
         where: { ...where, id: step.id, status: 'PENDING', requestSnapshotHash: storedHash },
@@ -3522,6 +3539,8 @@ export class PrismaReimbursementRepository {
       });
       if (!request) throw new NotFoundException('Reimbursement request not found');
       if (request.paymentStatus === 'PAID') throw new ConflictException('reimbursement_payment_already_recorded');
+      if (data.bankAccountId !== undefined) await tx.$executeRaw`SELECT 1 FROM "BankAccount" WHERE "id" = ${data.bankAccountId} AND "companyId" = ${data.companyId} FOR SHARE`;
+      await this.assertPaymentRecordInput(request, data, tx);
       if (request.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
       // Its status refuses the payment anyway (payout spec §14.7); this says why in the payer's words.
       if (payoutCorrectionPhase(request)) throw new ConflictException('payout_correction_in_progress');

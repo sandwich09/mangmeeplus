@@ -146,3 +146,32 @@ test('executive owner sheet uses one Thai churn definition and shared column/fil
   const { PLAN_TIER_PRESETS } = await import('./plan-term.js');
   for (const key of Object.keys(PLAN_TIER_PRESETS)) assert.doesNotMatch(words.executivePlanLabel(key), /[A-Za-z_]/);
 });
+test('multi payout 2a: preparer draft notice flags another holder without the private note', () => {
+  const notice = payout.reimbursementPayoutAnsweredForRequesterNotice(undefined, 'วิภา', { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountLast4: '6789', holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก' } as any, { draft: true });
+  assert.match(notice.body, /\(บัญชีของบุคคลอื่น\)/);
+  assert.doesNotMatch(notice.body, /คู่สมรส/);
+});
+
+test('multi payout 2b: paid notices flag the holder while retaining the existing digit budget', () => {
+  const paid = { paymentMethod: 'BANK_TRANSFER', paidAmount: '500', currency: 'THB', slipCount: 1, payoutDestination: { payoutKind: 'BANK_ACCOUNT', accountLast4: '6789', holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก' } };
+  assert.match(payout.reimbursementPaidNotice(paid as any), /บัญชีลงท้าย 6789 \(บัญชีของบุคคลอื่น\)/);
+  assert.doesNotMatch(payout.reimbursementPaidNotice(paid as any), /คู่สมรส|0123456789/);
+  assert.equal(payout.reimbursementPaymentHowText({ ...paid, payoutDestination: { ...paid.payoutDestination, holderType: 'SELF' } } as any), 'โอนเข้าบัญชีลงท้าย 6789');
+});
+
+test('multi payout 2b: correction notice titles and bodies flag the account without its note', () => {
+  const holder = { holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก' };
+  for (const notice of [(payout.reimbursementPayoutAnswerNotice as any)('NEW_ACCOUNT', holder), (payout.reimbursementPayoutSentBackNotice as any)('ACCOUNT', 'ACCOUNT_NUMBER_WRONG', undefined, holder)]) {
+    assert.match(notice.title, /\(บัญชีของบุคคลอื่น\)/);
+    assert.match(notice.body, /\(บัญชีของบุคคลอื่น\)/);
+    assert.doesNotMatch(JSON.stringify(notice), /คู่สมรส|0123456789/);
+  }
+});
+
+test('multi payout 2b: a requester deliberately using another holder is told to correct mistakes', () => {
+  const notice = payout.reimbursementPayoutAnsweredForRequesterNotice('NEW_ACCOUNT', 'วิภา', { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', accountLast4: '6789', holderType: 'THIRD_PARTY' });
+  assert.match(notice.title, /\(บัญชีของบุคคลอื่น\)/);
+  assert.match(notice.body, /ถ้าไม่ถูกต้อง แก้ได้ทันที/);
+  assert.doesNotMatch(notice.body, /ถ้าไม่ใช่บัญชีของคุณ/);
+  assert.equal(payout.REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE, 'กรอกบัญชีรับเงินคืนของใบนี้ หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย');
+});

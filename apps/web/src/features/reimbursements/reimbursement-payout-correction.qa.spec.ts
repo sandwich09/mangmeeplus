@@ -834,7 +834,7 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
     assert.equal(heading(html), 'แก้บัญชีรับเงินแทนผู้เบิก');
     assert.equal(heading(form(withDefault(phaseA())).html), 'แก้บัญชีรับเงิน');
     assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', KEEP]);
-    assert.ok(texts.includes('กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย'));
+    assert.ok(texts.includes('กรอกบัญชีรับเงินคืนของใบนี้ หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย'));
     assert.ok(texts.includes('บันทึกเป็นบัญชีประจำของผู้เบิก'));
   });
 

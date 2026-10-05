@@ -88,6 +88,7 @@ function fakeRepo(req: any, opts: {
     return { attachmentId, source: opts.slipSource ?? 'UPLOAD', uploadedByUserId: actorUserId, declarationWithdrawn: opts.slipSource === 'SIGNED_COPY' };
   };
   const repo = {
+    assertPaymentRecordInput: (request: any, input: any) => new PrismaReimbursementRepository({ client: { bankAccount: { findFirst: async () => ({ id: input.bankAccountId }) } } } as any, {} as any).assertPaymentRecordInput(request, input),
     lastPayment: undefined as any,
     lastResolve: undefined as any,
     slipChecks: [] as any[],
@@ -3135,5 +3136,19 @@ it('the locked duplicate override also refuses confirmed own expenses before its
     await assert.rejects(call, (error: any) => error.getStatus() === 422 && error.getResponse().code === 'duplicate_confirmed');
     assert.equal(JSON.stringify([h.request, h.candidates]), before);
     assert.equal(audits, 0);
+  }
+});
+
+it('multi payout 2b: refuses currency and foreign/inactive source banks before reserving a number', async () => {
+  for (const input of [{ currency: 'USD' }, { bankAccountId: 'foreign' }, { bankAccountId: 'inactive' }, { bankAccountId: 'missing' }]) {
+    const req = financeReviewedRequest();
+    const repo = fakeRepo(req);
+    const real = new PrismaReimbursementRepository({ client: { bankAccount: { findFirst: async () => null } } } as any, {} as any);
+    repo.assertPaymentRecordInput = (claim: any, body: any) => real.assertPaymentRecordInput(claim, body);
+    let reserved = 0;
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, { execute: async () => { reserved++; return { id: 'number', documentNumber: 'PAY-1' }; } } as any, commit, fakeDetailEvidence as any);
+    await assert.rejects(() => uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00Z', ...input }), input.currency ? /payment_currency_mismatch/ : /payment_source_bank_account_invalid/);
+    assert.equal(reserved, 0);
+    assert.equal(req.paymentStatus, 'UNPAID');
   }
 });

@@ -105,6 +105,7 @@ export type ReimbursementPolicySnapshotV1 = {
   policyVersion: string;
   approvalRequiredFromAmount: string;
   requiresApproval: boolean;
+  approvalFloor?: 'THIRD_PARTY_PAYOUT';
   route: null | {
     mode: 'MANAGER_ROLE' | 'OWNER_ROLE' | 'CUSTOM_ROLE';
     roleKey: string;
@@ -346,7 +347,7 @@ export type ReimbursementPaymentFacts = {
   currency: string;
   slipCount: number;
   /** The account the payer confirmed the transfer into; absent when none was confirmed. */
-  payoutDestination?: { payoutKind?: string | null; accountLast4?: string | null } | null;
+  payoutDestination?: { payoutKind?: string | null; accountLast4?: string | null; holderType?: ReimbursementPayoutHolderType } | null;
 };
 
 /**
@@ -356,7 +357,7 @@ export type ReimbursementPaymentFacts = {
  */
 export function reimbursementPaymentHowText(payment: Pick<ReimbursementPaymentFacts, 'paymentMethod' | 'payoutDestination'>): string {
   const destination = payment.payoutDestination;
-  if (destination) return `โอนเข้า${destination.payoutKind === 'PROMPTPAY_PHONE' ? 'พร้อมเพย์เบอร์' : 'บัญชี'}${maskedPayoutAccountNumber(destination.accountLast4 ?? '')}`;
+  if (destination) return `โอนเข้า${maskedPayoutAccountWithHolder({ payoutKind: destination.payoutKind === 'PROMPTPAY_PHONE' ? 'PROMPTPAY_PHONE' : 'BANK_ACCOUNT', accountLast4: destination.accountLast4, holderType: destination.holderType }).replace(/^เลขบัญชี/, 'บัญชี')}`;
   return Object.hasOwn(REIMBURSEMENT_PAYMENT_METHOD_LABELS, payment.paymentMethod)
     ? REIMBURSEMENT_PAYMENT_METHOD_LABELS[payment.paymentMethod as ReimbursementPaymentMethod] : '';
 }
@@ -1291,18 +1292,19 @@ export function reimbursementPayoutRoundApproves(answer: ReimbursementPayoutRoun
  */
 export function reimbursementPayoutSentBackNotice(
   held: ReimbursementPayoutHeld, reasonCode: ReimbursementPayoutCorrectionReason, payoutKind?: ReimbursementPayoutKind | null,
+  holder?: { holderType?: ReimbursementPayoutHolderType | null },
 ): { title: string; body: string } {
   const words = PAYOUT_ROUND_HELD_WORDS[held];
-  return { title: words.noticeTitle, body: `เหตุผล: ${reimbursementPayoutCorrectionReasonLabel(reasonCode, payoutKind)} · เปิดใบเบิกเพื่อ${words.ask}` };
+  return { title: withPayoutHolderFlag(words.noticeTitle, holder), body: withPayoutHolderFlag(`เหตุผล: ${reimbursementPayoutCorrectionReasonLabel(reasonCode, payoutKind)} · เปิดใบเบิกเพื่อ${words.ask}`, holder) };
 }
 
 /**
  * The approvers' notice of an answer (spec §17.3): the title is the claim's status label, which the
  * template follows with the claim number; the body goes after the amount.
  */
-export function reimbursementPayoutAnswerNotice(answer: ReimbursementPayoutRoundAnswer | null | undefined): { title: string; body: string } {
+export function reimbursementPayoutAnswerNotice(answer: ReimbursementPayoutRoundAnswer | null | undefined, holder?: { holderType?: ReimbursementPayoutHolderType | null }): { title: string; body: string } {
   const words = payoutRoundApprovalWords(answer);
-  return { title: words.status, body: `รอคุณตรวจและอนุมัติ${words.approves}` };
+  return { title: withPayoutHolderFlag(words.status, holder), body: withPayoutHolderFlag(`รอคุณตรวจและอนุมัติ${words.approves}`, holder) };
 }
 
 type PayoutRoundHeldTexts = Record<
@@ -1468,22 +1470,22 @@ export const REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER: Partial<Record<R
 export function reimbursementPayoutAnsweredForRequesterNotice(
   answer: ReimbursementPayoutRoundAnswer | null | undefined,
   byName: string | null | undefined,
-  given: { payoutMethod?: string | null; payoutKind?: ReimbursementPayoutKind | null; bankName?: string | null; accountLast4?: string | null } | null | undefined,
+  given: { payoutMethod?: string | null; payoutKind?: ReimbursementPayoutKind | null; bankName?: string | null; accountLast4?: string | null; holderType?: ReimbursementPayoutHolderType } | null | undefined,
   facts: { draft?: boolean; alsoSavedAsDefault?: boolean } = {},
 ): { title: string; body: string } {
   const did = typeof answer === 'string' && Object.hasOwn(PAYOUT_ROUND_ANSWER_WORDS, answer) ? PAYOUT_ROUND_ANSWER_WORDS[answer].did : 'เลือกวิธีรับเงินคืน';
-  const account = given?.payoutMethod === 'BANK_TRANSFER' && given.accountLast4 ? maskedPayoutAccount(given) : undefined;
+  const account = given?.payoutMethod === 'BANK_TRANSFER' && given.accountLast4 ? maskedPayoutAccountWithHolder(given) : undefined;
   const holds = account ?? (given?.payoutMethod === 'CASH' ? 'รับเป็นเงินสด' : facts.draft ? 'ยังไม่ได้ระบุวิธีรับเงินคืน' : undefined);
   const next = facts.draft
     ? 'เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แจ้งผู้จัดทำใบเบิก'
-    : `เปิดใบเบิกเพื่อตรวจ ${account ? 'ถ้าไม่ใช่บัญชีของคุณ' : 'ถ้าไม่ถูกต้อง'} แก้ได้ทันที`;
+    : `เปิดใบเบิกเพื่อตรวจ ${account && given?.holderType !== 'THIRD_PARTY' ? 'ถ้าไม่ใช่บัญชีของคุณ' : 'ถ้าไม่ถูกต้อง'} แก้ได้ทันที`;
   return {
-    title: `${payoutRoundDoer({ onBehalf: true, byName }).who}${did}ในใบเบิกของคุณ`,
+    title: withPayoutHolderFlag(`${payoutRoundDoer({ onBehalf: true, byName }).who}${did}ในใบเบิกของคุณ`, given ?? undefined),
     body: `${holds ? `${holds} · ` : ''}${next}${facts.alsoSavedAsDefault ? ' · บันทึกบัญชีนี้เป็นบัญชีรับเงินคืนประจำของคุณด้วย' : ''}`,
   };
 }
 
-export const REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE = 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย';
+export const REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE = 'กรอกบัญชีรับเงินคืนของใบนี้ หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย';
 
 /** What the preparer is told about the requester's notice, by the kind of save. */
 export function reimbursementPayoutOnBehalfNotice(inDraft = false): string {
@@ -1609,6 +1611,8 @@ export type ReimbursementPayoutCorrectionActions = {
    * typed on their behalf would be on the claim without anyone being told (`payout_account_member_not_active`).
    */
   specifiedRefusal?: 'REQUESTER_NOT_ACTIVE';
+  /** This frozen policy has no approval step: typed/saved choices must be own accounts. */
+  thirdPartyRefusal?: 'APPROVAL_NOT_REQUIRED';
 };
 
 /**
@@ -1976,8 +1980,12 @@ export function maskedPayoutAccount(account: {
 
 /** Short account text for notices and LINE: holder flag only, never the holder note. */
 export function maskedPayoutAccountWithHolder(account: Parameters<typeof maskedPayoutAccount>[0] & { holderType?: ReimbursementPayoutHolderType | null }): string {
-  const masked = maskedPayoutAccount(account);
-  return account.holderType === 'THIRD_PARTY' ? `${masked} (${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdParty})` : masked;
+  return withPayoutHolderFlag(maskedPayoutAccount(account), account);
+}
+
+/** The same short flag on sentences that name an account without its digits. */
+export function withPayoutHolderFlag(text: string, account?: { holderType?: ReimbursementPayoutHolderType | null }): string {
+  return account?.holderType === 'THIRD_PARTY' ? `${text} (${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdParty})` : text;
 }
 
 /** Saved accounts are private to their member; the label is never copied into a claim. */

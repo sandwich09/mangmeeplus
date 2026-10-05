@@ -54,6 +54,11 @@ export function requiresApproval(amount: string, approvalRequiredFromAmount: str
   return d(amount).gte(d(approvalRequiredFromAmount));
 }
 
+/** The same approval floor for the draft warning and submit routing. */
+export function thirdPartyPayoutApprovalRequired(amount: string, threshold: string, thirdParty: boolean): boolean {
+  return thirdParty && !requiresApproval(amount, threshold);
+}
+
 // ---- Lines (1 ใบเบิก หลายรายการ) ----
 
 export const REIMBURSEMENT_MAX_LINES = 50;
@@ -418,6 +423,11 @@ export function payoutCorrectionSourceStep<Step extends { id: string; status: st
   return steps
     .filter((step) => step.invalidatedReason === PAYOUT_CORRECTION_STEP_REASON && !!step.invalidatedAt && step.invalidatedAt.getTime() >= since)
     .sort((a, b) => b.invalidatedAt!.getTime() - a.invalidatedAt!.getTime())[0];
+}
+
+/** The frozen policy decides for current claims; legacy rounds retain their recorded approval route. */
+export function payoutCorrectionApprovalRequired(claim: Parameters<typeof payoutCorrectionSourceStep>[0] & { approvalPolicySnapshotJson?: unknown }): boolean {
+  return parseReimbursementPolicySnapshot(claim.approvalPolicySnapshotJson)?.requiresApproval ?? !!payoutCorrectionSourceStep(claim);
 }
 
 /**

@@ -226,12 +226,14 @@ export function defaultChangedSinceSubmit(
  * refused. Cash claims and legacy claims have no account to attest. Null means the approval may go on.
  */
 export function payoutAttestationError(
-  claim: { payoutMethod?: string | null; payoutDestinationVersion?: number | null; payoutFingerprint?: string | null },
+  claim: { payoutMethod?: string | null; payoutDestinationVersion?: number | null; payoutFingerprint?: string | null; holderType?: string | null },
   verifiedVersion: unknown,
-): 'payout_verification_required' | 'payout_destination_changed' | null {
+  thirdPartyAccepted?: unknown,
+): 'payout_verification_required' | 'payout_destination_changed' | 'payout_third_party_acceptance_required' | null {
   if (claim.payoutMethod !== 'BANK_TRANSFER' || !hasPayoutSnapshot(claim)) return null;
   if (verifiedVersion === undefined || verifiedVersion === null) return 'payout_verification_required';
-  return verifiedVersion === claim.payoutDestinationVersion ? null : 'payout_destination_changed';
+  if (verifiedVersion !== claim.payoutDestinationVersion) return 'payout_destination_changed';
+  return claim.holderType === 'THIRD_PARTY' && thirdPartyAccepted !== true ? 'payout_third_party_acceptance_required' : null;
 }
 
 // ---- The payer's confirmation at the payment step ----
@@ -332,6 +334,7 @@ export type PayoutDestinationVersionRow = {
   fingerprint: string;
   source: ReimbursementPayoutSource;
   frozenAt?: Date | null;
+  holderType?: string | null;
 };
 
 export type SubmitPayoutPlan =
@@ -344,6 +347,7 @@ export type SubmitPayoutPlan =
     fingerprint: string;
     /** COPY_DEFAULT: a new frozen copy of the default; FREEZE: the draft's own row; REUSE: an unchanged frozen version. */
     action: 'COPY_DEFAULT' | 'FREEZE' | 'REUSE';
+    thirdParty?: true;
   };
 
 /**
@@ -371,7 +375,7 @@ export function planSubmitPayout(
   if (claim.payoutMethod === 'CASH') return { payoutMethod: 'CASH', followsDefault: false };
   const own = versions.find((row) => row.version === claim.payoutDestinationVersion);
   if (!own) return { error: 'payout_destination_required' };
-  return { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: own.version, fingerprint: own.fingerprint, action: own.frozenAt ? 'REUSE' : 'FREEZE' };
+  return { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: own.version, fingerprint: own.fingerprint, action: own.frozenAt ? 'REUSE' : 'FREEZE', ...(own.holderType === 'THIRD_PARTY' && { thirdParty: true as const }) };
 }
 
 export type FrozenPayoutPlan = Exclude<SubmitPayoutPlan, { error: unknown }>;
