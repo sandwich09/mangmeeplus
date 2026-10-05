@@ -21,6 +21,8 @@ export type AgentCoreInvokeInput = {
   qualifier?: string;
   attachments?: ReadonlyArray<{ attachmentId: string; mimeType: string; kind: string; sha256: string }>;
   conversationContext?: LineAiConversationContext;
+  openClarifications?: LineAiTurnRequest['openClarifications'];
+  resolvedClarificationIds?: LineAiTurnRequest['resolvedClarificationIds'];
   inputEvidence?: LineAiTurnRequest['inputEvidence'];
   contractCapabilities?: LineAiTurnRequest['contractCapabilities'];
   budgetGrantV2?: LineAiTurnRequest['budgetGrantV2'];

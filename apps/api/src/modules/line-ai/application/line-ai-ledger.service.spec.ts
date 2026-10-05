@@ -636,3 +636,25 @@ describe('LineAiLedgerService on real Redis Streams', { skip: !redisTestUrl }, (
     });
   });
 });
+
+describe('read period clarification round trip', () => {
+  it('stores only a read ask-back marker and returns it only to the asker', async () => {
+    const { service } = makeService();
+    const coverage = [{ index: 0, status: 'needs_user', reasonCode: 'READ_FILTER_NOT_UNDERSTOOD', question: 'ปีไหนคะ' }] as const;
+    const sub = { index: 0, kind: 'read', goal: 'สรุปค่าใช้จ่ายเดือนสิงหาคม', requiredEvidence: [], requestedFilters: {}, dependsOn: [] };
+    const items = service.coverageToSubRequests(undefined, [...coverage], [sub] as any);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.reasonCode, 'READ_FILTER_NOT_UNDERSTOOD');
+    await service.appendSubRequests({ companyId: 'c1', chatKey: 'group1', userId: 'asker', turnId: 't1', webhookEventId: 'e1', items, now: NOW });
+    const open = await service.openWaitingUser('c1', 'group1', 'asker', NOW);
+    assert.equal(open[0]?.reasonCode, 'READ_FILTER_NOT_UNDERSTOOD');
+    assert.equal(open[0]?.text, sub.goal);
+    assert.equal(open[0]?.clarifyForIntent, undefined);
+    assert.deepEqual(await service.openWaitingUser('c1', 'group1', 'other', NOW), []);
+    for (const kind of ['write', 'file', 'public', 'general', 'help']) {
+      assert.deepEqual(service.coverageToSubRequests(undefined, [...coverage], [{ ...sub, kind }] as any), []);
+    }
+    assert.equal(service.coverageToSubRequests([{ request: 'ถามอื่น', verdict: 'needs_user', question: 'อะไรคะ', reason: 'READ_FILTER_NOT_UNDERSTOOD' }])[0]?.reasonCode, undefined,
+      'legacy prose is not a server-observed read marker');
+  });
+});
