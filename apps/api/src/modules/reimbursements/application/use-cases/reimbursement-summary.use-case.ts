@@ -1,13 +1,13 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import {
-  THAI_SYSTEM_ROLE_NAMES, civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL,
+  reimbursementDuplicateWait, THAI_SYSTEM_ROLE_NAMES, civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL,
   type RequestContext, type ReimbursementAiSummary,
 } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import {
-  ageHours, isSlaRisk, d, decStr, currentDesk, approvalWaitStartedAt, payoutCorrectionPhase, payoutCorrectionRequesterDesk,
+  claimDuplicateReasons, ageHours, isSlaRisk, d, decStr, currentDesk, approvalWaitStartedAt, payoutCorrectionPhase, payoutCorrectionRequesterDesk,
 } from '../../domain/logic/reimbursement.logic';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 
@@ -195,6 +195,8 @@ export class GetReimbursementApprovalBacklogUseCase {
       // Being cancelled: approval and payment are refused meanwhile, so it waits for no approver and no payer
       // (audit B3). The web's desk rule (`currentDesk`) says the same of it.
       if (row.cancellationPendingAt) return desk('status_pending');
+      const cancellation = reimbursementDuplicateWait({ status: row.status, duplicateReasons: claimDuplicateReasons(row), currentDesk: currentDesk({ status: row.status, financeReviewStatus: row.financeReviewStatus }) });
+      if (cancellation) return { key: `confirmed_duplicate:${cancellation.actor}`, kind: 'payment', label: cancellation.actor, note: cancellation.waiting };
       if (row.status !== 'PENDING_APPROVAL') {
         return currentDesk({ status: row.status, financeReviewStatus: row.financeReviewStatus })?.kind === 'FINANCE' ? desk('finance') : desk('payment');
       }

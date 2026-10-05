@@ -21,7 +21,7 @@ import {
 } from './reimbursements.api';
 import { POLICY_TAB_LABEL, CLAIM_SIGN_LABEL, claimDeskText, claimSignAction, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
-  activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, duplicateCanBeCleared, errorText, isMissingSavedSignatureError,
+  activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, duplicateCanBeCleared, duplicateNoticeForViewer, paymentVoidedMessage, errorText, isMissingSavedSignatureError,
   isStaleApprovalError, opensPaymentFormOnArrival, signedCopyMoveConfirmText, type JourneyAction, type JourneyStepState,
 } from './reimbursements.logic';
 import {
@@ -186,7 +186,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
    * changed (BUG-7). A failed re-read keeps what the action returned: a frozen assignee may lose
    * read permission the moment they decide. `handled` takes errors that open their own dialog.
    */
-  const act = async (key: string, fn: () => Promise<any>, success: string, handled?: (e: unknown) => boolean) => {
+  const act = async (key: string, fn: () => Promise<any>, success: string | ((latest: any) => string), handled?: (e: unknown) => boolean) => {
     const before = signature(detail);
     setBusyAction(key); setActionError(null);
     let ok = false;
@@ -199,13 +199,14 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       // The claim moved on: a form of the correction round left open is for the claim as it was. Without this, a
       // send-back form opened beside "อนุมัติ" was open again at the pay step the approval led to.
       setCorrectionForm(null);
-      toast.success(success);
+      if (typeof success === 'string') toast.success(success);
     } catch (e) {
       dialogOpened = handled?.(e) ?? false;
       if (!dialogOpened) setActionError(errorText(e));
     }
     try { latest = await getReimbursement(companyId, requestId); } catch { /* keep what is on screen */ }
     const shown = latest ?? detail;
+    if (ok && typeof success === 'function') toast.success(success(shown));
     if (latest) setDetail(latest);
     setBusyAction(null);
     if ((!ok && !dialogOpened) || signature(shown) !== before) setFocusTick((tick) => tick + 1);
@@ -228,7 +229,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       () => approveReimbursement(companyId, requestId, undefined, target.approvalSnapshotHash, verified ?? undefined),
       // In a payout round the same call approves what was answered alone, and the claim is back at its pay step: said of
       // that thing, a new account, the account the claim had, a first one, or cash.
-      target.payoutCorrectionPhase ? `อนุมัติ${reimbursementPayoutRoundApproves(target.payoutCorrectionAnswer)}แล้ว ใบกลับไปรอจ่ายเงินคืน` : 'อนุมัติคำขอเรียบร้อยแล้ว',
+      target.payoutCorrectionPhase ? (latest) => `อนุมัติ${reimbursementPayoutRoundApproves(target.payoutCorrectionAnswer)}แล้ว ${latest?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') ? duplicateNoticeForViewer(latest, permissions, userId) : 'ใบกลับไปรอจ่ายเงินคืน'}` : 'อนุมัติคำขอเรียบร้อยแล้ว',
       (e) => { stale = !review && isStaleApprovalError(e); return stale; },
     );
     if (stale) {
@@ -269,11 +270,12 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
    * A form of a correction round was taken by the API. Its answer is the claim without this viewer's flags, so
    * the claim is read again; a read that fails keeps the answer, which at least says where the claim stands now.
    */
-  const afterCorrection = async (answered: any, success: string) => {
+  const afterCorrection = async (answered: any, success: string | ((latest: any) => string)) => {
     setCorrectionForm(null); setActionError(null);
-    toast.success(success);
+    if (typeof success === 'string') toast.success(success);
     let latest = Array.isArray(answered?.lines) ? answered : null;
     try { latest = await getReimbursement(companyId, requestId); } catch { /* keep what the call answered */ }
+    if (typeof success === 'function') toast.success(success(latest ?? answered));
     if (latest) setDetail(latest);
     setFocusTick((tick) => tick + 1);
   };
@@ -541,6 +543,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           {payOpen && step.actions.includes('pay') && (
             <div className="border-t border-gray-100 pt-3">
               <PaymentForm companyId={companyId} request={detail} onCancel={() => setPayOpen(false)} onDone={() => void afterPayment()}
+                onClaimChanged={(latest) => { setPayOpen(false); setDetail(latest); setFocusTick(tick => tick + 1); }}
                 // A file already on the claim is opened before it is chosen as the slip (the pay queue's dialog uses the same handler).
                 onOpenFile={(choice) => void openSlipChoice(detail.id, choice)} />
             </div>
@@ -560,9 +563,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
                 onCancel={() => setCorrectionForm(null)} onConflict={(claimChanged) => afterCorrectionConflict('correct-payout', claimChanged)}
                 // A claim nobody has to approve is ready for payment in the same call (spec §14.5).
                 // Otherwise it waits for its approvers, who approve what was answered: said by the answer the API returned.
-                onDone={(answered) => void afterCorrection(answered, answered?.status === 'READY_FOR_PAYMENT'
-                  ? `${PAYOUT_CORRECTION_SAVE_LABEL}แล้ว ใบกลับไปรอจ่ายเงินคืน`
-                  : `${PAYOUT_CORRECTION_SAVE_LABEL}แล้ว รอผู้อนุมัติอนุมัติ${reimbursementPayoutRoundApproves(answered?.payoutCorrectionAnswer)}`)} />
+                onDone={(answered) => void afterCorrection(answered, (latest) => `${PAYOUT_CORRECTION_SAVE_LABEL}แล้ว ${latest?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE')
+                  ? duplicateNoticeForViewer(latest, permissions, userId)
+                  : latest?.status === 'READY_FOR_PAYMENT' ? 'ใบกลับไปรอจ่ายเงินคืน'
+                    : `รอผู้อนุมัติอนุมัติ${reimbursementPayoutRoundApproves(latest?.payoutCorrectionAnswer)}`}`)} />
             </div>
           )}
           {approverHelp && step.actions.includes('submit') && (
@@ -640,13 +644,13 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       />}
       {confirmDialog}
       {voidingPayment && <VoidPaymentDialog
-        payment={voidingPayment}
+        payment={voidingPayment} claim={detail}
         busy={busyAction === 'void-payment'}
         error={actionError}
         onClose={() => setVoidingPayment(null)}
         onConfirm={async (reason) => {
           if ((await act('void-payment', () => voidReimbursementPayment(companyId, requestId, voidingPayment.id, reason),
-            'ยกเลิกการจ่ายแล้ว ใบเบิกกลับไปรอจ่าย คุณสามารถบันทึกจ่ายใหม่หรือยกเลิกคำขอต่อได้')).ok) setVoidingPayment(null);
+            (latest) => paymentVoidedMessage(latest, permissions, userId))).ok) setVoidingPayment(null);
         }}
       />}
       {staleReview && <StaleApprovalDialog
