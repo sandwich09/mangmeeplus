@@ -342,8 +342,8 @@ describe('the full number: offered only when the server allows it, never in the 
 
     const api = read('./reimbursement-payout.api.ts');
     assert.deepEqual([...api.matchAll(/export function (\w+)/g)].map((match) => match[1]).sort(),
-      ['deleteMyPayoutAccount', 'getMemberPayoutAccount', 'getMyPayoutAccount', 'revealClaimPayoutAccount', 'revealMyPayoutAccount', 'setMemberPayoutAccount', 'setMyPayoutAccount']);
-    assert.equal(api.match(/\/reveal/g)?.length, 2, 'two reveal calls: my own default account and a claim');
+      ['addMySavedPayoutAccount', 'deleteMyPayoutAccount', 'deleteMySavedPayoutAccount', 'getMemberPayoutAccount', 'getMyPayoutAccount', 'getMySavedPayoutAccounts', 'makeMySavedPayoutAccountDefault', 'revealClaimPayoutAccount', 'revealMyPayoutAccount', 'revealMySavedPayoutAccount', 'setMemberPayoutAccount', 'setMyPayoutAccount']);
+    assert.equal(api.match(/\/reveal/g)?.length, 3, 'three audited reveal calls: my default, saved account and a claim');
     // The reveal is a POST the server audits; nothing about an account ever rides in a URL.
     assert.doesNotMatch(api, /\?|accountNumber/);
   });
@@ -446,7 +446,7 @@ describe('the receiving choice on the claim form', () => {
     assert.equal(page.match(/setMyPayoutAccount\(/g)?.length, 2, 'the own default, and its absence when the read fails');
     assert.match(page, /forSelf=\{requesterUserId === userId\}\s+defaultAccount=\{requesterUserId === userId \? myPayoutAccount : null\}/);
     // Choosing another requester starts the receiving choice over.
-    assert.match(page, /setRequesterUserId\(event\.target\.value\);[^\n]*setPayout\(emptyClaimPayoutForm\(\)\);/);
+    assert.match(page, /setRequesterUserId\(event\.target\.value\);[^\n]*setPayout\(resetClaimPayoutForRequester\);/);
     assert.equal(page.match(/\.\.\.\(payoutInput && \{ payout: payoutInput \}\)/g)?.length, 2, 'create and update both carry the choice');
   });
 
@@ -461,7 +461,7 @@ describe('the receiving choice on the claim form', () => {
     assert.match(page, /useEffect\(\(\) => \{\s+setMaySaveAsDefault\(false\);/);
     assert.match(page, /if \(!forSelf && !canEditEmployees\) return;/);
     assert.match(page, /canSaveAsDefault=\{maySaveAsDefault\}/);
-    assert.match(page, /const payoutInput = claimPayoutInput\(payout, maySaveAsDefault\);/);
+    assert.match(page, /const payoutInput = claimPayoutInput\(payout, maySaveAsDefault, requesterUserId === userId\);/);
     assert.doesNotMatch(page, /canSaveAsDefault=\{requesterUserId === userId/);
 
     // Not offered: no box, no tick made for the person, and a tick left over from before is not sent.

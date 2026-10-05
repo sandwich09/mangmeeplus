@@ -8,9 +8,9 @@ import { reimbursementPayoutOnBehalfNotice, REIMBURSEMENT_PAYOUT_TYPING_ON_BEHAL
 // Every screen here shows the last 4 digits; the full number appears only after "แสดงเลขบัญชี",
 // which the server answers for the account's own reveal group and records each time.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
-import { maskedPayoutAccount, type MemberPayoutAccountSummary, type ReimbursementLegacyPayoutDefault, type ReimbursementPayoutSummary } from '@watchdog-bms/contracts';
+import { payoutHolderChoiceLabel, payoutHolderLine, REIMBURSEMENT_PAYOUT_HOLDER_WORDS as HOLDER_WORDS, PAYOUT_HOLDER_NOTE_MAX_LENGTH, type PayoutHolderFacts, type SavedPayoutAccountSummary, maskedPayoutAccount, type MemberPayoutAccountSummary, type ReimbursementLegacyPayoutDefault, type ReimbursementPayoutSummary } from '@watchdog-bms/contracts';
 // The pay step's line as the claim's own requester reads it (its own import, apart from the line above).
 import { REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -26,11 +26,12 @@ import {
 } from './reimbursement-payout.api';
 import {
   BANK_OPTIONS, LEGACY_ASK_REQUESTER_NOTE, LEGACY_DEFAULT_LABEL, OTHER_BANK, PAYER_CONFIRMATION_TEXT, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT,
-  chooseClaimPayoutMode, claimCashNote, claimPayoutHistory, claimPayoutView, emptyPayoutAccountForm,
+  savedPayoutAccountTitle, setClaimPayoutHolder, setClaimPayoutSaving, chooseClaimPayoutMode, claimCashNote, claimPayoutHistory, claimPayoutView, emptyPayoutAccountForm,
   memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutCorrectionCardNote, payoutDefaultChangedHint, payoutRoundTexts, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
   type ClaimPayoutForm, type PaymentFormConfirmation, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
 // What the number of an account is called, by its kind (its own import, apart from the block above).
+import { REIMBURSEMENT_SAVED_PAYOUT_WORDS as SAVED_PAYOUT_WORDS } from '@watchdog-bms/contracts';
 import { isPayoutRevealDenied, payoutNumberWords } from './reimbursement-payout.logic';
 
 /**
@@ -45,19 +46,22 @@ export const labelClass = 'mb-1.5 block text-xs font-semibold text-gray-600';
 export const choiceClass = 'flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700';
 
 /** Bank, account name and number. The number stays text from the first keystroke: leading zeros are part of it. */
-export function PayoutAccountFields({ value, onChange, disabled = false, invalidField }: {
+export function PayoutAccountFields({ value, onChange, disabled = false, invalidField, accountNameHint }: {
   value: PayoutAccountForm;
   onChange: (next: PayoutAccountForm) => void;
   disabled?: boolean;
   invalidField?: string;
+  accountNameHint?: string;
 }) {
+  const fieldsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (invalidField) fieldsRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(); }, [invalidField]);
   const set = (patch: Partial<PayoutAccountForm>) => onChange({ ...value, ...patch });
   const promptPay = value.payoutKind === 'PROMPTPAY_PHONE';
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div ref={fieldsRef} className="grid gap-3 sm:grid-cols-2 [&_.mangmee-input]:min-h-11">
       <div>
         <label className={labelClass}>ประเภทบัญชี *</label>
-        <ThemedSelect aria-label="ประเภทบัญชี" className={inputClass} value={value.payoutKind} disabled={disabled}
+        <ThemedSelect aria-label="ประเภทบัญชี" aria-invalid={invalidField === 'payoutKind'} className={inputClass} value={value.payoutKind} disabled={disabled}
           onChange={(event) => set({ payoutKind: event.target.value === 'PROMPTPAY_PHONE' ? 'PROMPTPAY_PHONE' : 'BANK_ACCOUNT' })}>
           {Object.entries(PAYOUT_KIND_TEXT).map(([kind, text]) => <option key={kind} value={kind}>{text}</option>)}
         </ThemedSelect>
@@ -65,7 +69,7 @@ export function PayoutAccountFields({ value, onChange, disabled = false, invalid
       {!promptPay && (
         <div>
           <label className={labelClass}>ธนาคาร *</label>
-          <ThemedSelect aria-label="ธนาคาร" aria-invalid={invalidField === 'bankName'} className={inputClass} value={value.bankChoice} disabled={disabled}
+          <ThemedSelect aria-label="ธนาคาร" aria-invalid={invalidField === 'bankName' && value.bankChoice !== OTHER_BANK} className={inputClass} value={value.bankChoice} disabled={disabled}
             onChange={(event) => set({ bankChoice: event.target.value })}>
             <option value="">เลือกธนาคาร</option>
             {BANK_OPTIONS.map((bank) => <option key={bank} value={bank}>{bank}</option>)}
@@ -84,7 +88,7 @@ export function PayoutAccountFields({ value, onChange, disabled = false, invalid
         <label className={labelClass}>ชื่อบัญชี *</label>
         <input aria-label="ชื่อบัญชี" aria-invalid={invalidField === 'accountName'} className={inputClass} maxLength={140} disabled={disabled}
           autoComplete="off" value={value.accountName} onChange={(event) => set({ accountName: event.target.value })} />
-        <p className="mt-1 text-xs text-gray-500">ตามที่ธนาคารแสดง ผู้อนุมัติจะเทียบชื่อนี้กับชื่อผู้เบิก</p>
+        <p className="mt-1 text-xs text-gray-500">{accountNameHint ?? 'ตามที่ธนาคารแสดง ผู้อนุมัติจะเทียบชื่อนี้กับชื่อผู้เบิก'}</p>
       </div>
       <div className="sm:col-span-2">
         <label className={labelClass}>{promptPay ? 'เบอร์พร้อมเพย์ *' : 'เลขบัญชี *'}</label>
@@ -100,11 +104,43 @@ export function PayoutAccountFields({ value, onChange, disabled = false, invalid
   );
 }
 
+/** Holder facts are shared by the saved-account form and a typed claim account. Defaults stay own-only. */
+export function PayoutHolderFields({ value, onChange, forSelf, disabled = false, invalidField }: {
+  value: PayoutHolderFacts; onChange: (next: PayoutHolderFacts) => void; forSelf: boolean; disabled?: boolean; invalidField?: string;
+}) {
+  const groupName = useId();
+  const fieldsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (invalidField) fieldsRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(); }, [invalidField]);
+  return <div ref={fieldsRef} className="space-y-3 [overflow-wrap:anywhere]">
+    <div role="radiogroup" aria-label={SAVED_PAYOUT_WORDS.holder} className="space-y-2">
+      {(['SELF', 'THIRD_PARTY'] as const).map(holderType => <label key={holderType} className={cx(choiceClass, value.holderType === holderType && 'border-brand-300 bg-brand-25')}>
+        <input type="radio" name={groupName} className="mt-0.5 h-5 w-5 shrink-0" disabled={disabled} checked={value.holderType === holderType}
+          aria-invalid={invalidField === 'holderType'} onChange={() => onChange({ holderType })} />
+        <span>{payoutHolderChoiceLabel(holderType, forSelf)}</span>
+      </label>)}
+    </div>
+    {value.holderType === 'THIRD_PARTY' && <label className={labelClass}>{HOLDER_WORDS.noteLabel} *
+      <textarea aria-label={HOLDER_WORDS.noteLabel} aria-invalid={invalidField === 'holderNote'} className={cx(inputClass, 'mt-1.5 min-h-24 w-full')} maxLength={PAYOUT_HOLDER_NOTE_MAX_LENGTH}
+        disabled={disabled} placeholder={HOLDER_WORDS.noteExample} value={value.holderNote ?? ''} onChange={event => onChange({ ...value, holderNote: event.target.value })} />
+    </label>}
+  </div>;
+}
+
+/** Same facts in the list and radio choice; ordinal keeps even equal masked accounts distinguishable. */
+export function SavedPayoutAccountDetails({ account, index }: { account: SavedPayoutAccountSummary; index: number }) {
+  return <span className="block min-w-0 space-y-1 [overflow-wrap:anywhere]">
+    <span className="block font-semibold text-gray-900">{savedPayoutAccountTitle(account, index)}</span>
+    <span className="block text-sm">{maskedPayoutAccount(account)}</span>
+    <span className="block text-sm">{account.accountName}</span>
+    {account.holderType === 'THIRD_PARTY' && <><MangmeeBadge tone="amber">{HOLDER_WORDS.thirdParty}</MangmeeBadge><span className="block text-sm">{payoutHolderLine(account)}</span></>}
+  </span>;
+}
+
 /**
  * The masked account with "แสดงเลขบัญชี". The number is fetched on demand and never kept past this card. What the number
  * is called follows the kind of account: a PromptPay destination is a phone number, "เบอร์พร้อมเพย์".
  */
-function AccountNumberReveal({ masked, payoutKind, revealKey, canReveal, onReveal, last4 }: {
+export function AccountNumberReveal({ masked, payoutKind, revealKey, canReveal, onReveal, last4 }: {
   masked: string;
   payoutKind?: string | null;
   /** What the number belongs to: the claim and its account version, or the default as last saved. */
@@ -321,9 +357,9 @@ export function MemberPayoutAccountLine({ companyId, memberUserId }: { companyId
 
 /**
  * "รับเงินคืนทาง" on the claim form. A claim follows the requester's default account unless it says
- * otherwise; the account is always the requester's, also when someone else prepares the claim.
+ * otherwise. Holder facts say whether a selected account belongs to the requester or another person.
  */
-export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccount, current, canSaveAsDefault, payoutAccountHref, invalidField }: {
+export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccount, current, canSaveAsDefault, payoutAccountHref, invalidField, savedAccounts = [], savedAccountsLoading = false, savedAccountsError, onReloadSaved }: {
   value: ClaimPayoutForm;
   onChange: (next: ClaimPayoutForm) => void;
   /** The person filling the form is the requester. */
@@ -336,6 +372,10 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
   canSaveAsDefault: boolean;
   payoutAccountHref: string;
   invalidField?: string;
+  savedAccounts?: SavedPayoutAccountSummary[];
+  savedAccountsLoading?: boolean;
+  savedAccountsError?: string | null;
+  onReloadSaved?: () => void;
 }) {
   const hasOwnAccount = !!current && !current.followsDefault && current.payoutMethod === 'BANK_TRANSFER';
   const choose = (mode: ClaimPayoutForm['mode']) => onChange(chooseClaimPayoutMode(value, mode, { canSaveAsDefault, forSelf, hasNoDefault: defaultAccount === null }));
@@ -353,6 +393,9 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
       </span>
     </label>
   );
+  const selectedHolder = value.mode === 'SPECIFIED' ? value.holder
+    : value.mode === 'SAVED' && forSelf ? savedAccounts.find(account => account.id === value.savedAccountId)
+      : value.mode === 'KEEP' ? current : null;
   return (
     <MangmeeCard className="p-4 [overflow-wrap:anywhere]">
       <h3 className="text-sm font-bold text-gray-900">รับเงินคืนทาง</h3>
@@ -361,22 +404,36 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
         {forSelf && defaultAccount && setByOtherLine(defaultAccount) && (
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{setByOtherLine(defaultAccount)} ตรวจว่าเป็นบัญชีของคุณ</p>
         )}
+        {forSelf && savedAccounts.map((account, index) => <label key={account.id} className={cx(choiceClass, value.mode === 'SAVED' && value.savedAccountId === account.id && 'border-brand-300 bg-brand-25')}>
+          <input type="radio" name="claim-payout-mode" className="mt-0.5 h-5 w-5 shrink-0" checked={value.mode === 'SAVED' && value.savedAccountId === account.id}
+            onChange={() => onChange({ ...value, mode: 'SAVED', savedAccountId: account.id })} />
+          <SavedPayoutAccountDetails account={account} index={index} />
+        </label>)}
+        {forSelf && savedAccountsLoading && <LoadingState label={SAVED_PAYOUT_WORDS.loading} />}
+        {forSelf && savedAccountsError && <ErrorState description={savedAccountsError} onRetry={onReloadSaved} />}
         {option('CASH', PAYOUT_METHOD_TEXT.CASH!)}
-        {hasOwnAccount && option('KEEP', 'ใช้บัญชีที่ระบุไว้ในใบนี้', `${payoutAccountLine(current)}${current?.accountName ? ` · ${current.accountName}` : ''}`)}
+        {hasOwnAccount && option('KEEP', 'ใช้บัญชีที่ระบุไว้ในใบนี้', `${payoutAccountLine(current)}${current?.accountName ? ` · ${current.accountName}` : ''}${current && payoutHolderLine(current) ? ` · ${payoutHolderLine(current)}` : ''}`)}
         {option('SPECIFIED', hasOwnAccount ? 'ระบุบัญชีใหม่สำหรับใบนี้' : 'ระบุบัญชีสำหรับใบนี้',
           forSelf ? null : REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE)}
       </div>
+      {selectedHolder?.holderType === 'THIRD_PARTY' && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{HOLDER_WORDS.thirdPartyApprovalNotice}</p>}
       {!forSelf && <p className="mt-3 text-sm text-gray-600">{reimbursementPayoutOnBehalfNotice(true)}</p>}
       {value.mode === 'SPECIFIED' && (
         <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
-          <PayoutAccountFields value={value.account} onChange={(account) => onChange({ ...value, account })} invalidField={invalidField} />
-          {canSaveAsDefault && (
+          <PayoutAccountFields value={value.account} onChange={(account) => onChange({ ...value, account })} invalidField={invalidField} accountNameHint={SAVED_PAYOUT_WORDS.accountNameHint} />
+          <PayoutHolderFields value={value.holder ?? { holderType: 'SELF' }} onChange={holder => onChange(setClaimPayoutHolder(value, holder))} forSelf={forSelf} invalidField={invalidField} />
+          {canSaveAsDefault && value.holder?.holderType !== 'THIRD_PARTY' && (
             <label className="flex min-h-11 items-start gap-3 text-sm text-gray-700">
               <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={value.saveAsDefault}
-                onChange={(event) => onChange({ ...value, saveAsDefault: event.target.checked })} />
+                onChange={(event) => onChange(setClaimPayoutSaving(value, 'saveAsDefault', event.target.checked))} />
               <span>{forSelf ? 'บันทึกเป็นบัญชีประจำของฉัน' : 'บันทึกเป็นบัญชีประจำของผู้เบิก'}</span>
             </label>
           )}
+          {forSelf && <label className="flex min-h-11 items-start gap-3 text-sm text-gray-700">
+            <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={value.saveForLater === true}
+              onChange={event => onChange(setClaimPayoutSaving(value, 'saveForLater', event.target.checked))} />
+            <span>{SAVED_PAYOUT_WORDS.saveForLater}</span>
+          </label>}
         </div>
       )}
       {forSelf && <Link href={payoutAccountHref} className="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-brand-700 underline underline-offset-4">จัดการบัญชีรับเงินคืนของฉัน</Link>}

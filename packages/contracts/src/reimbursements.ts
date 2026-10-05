@@ -1844,6 +1844,34 @@ export function payoutHolderLine(account: { holderType?: ReimbursementPayoutHold
   return account.holderType === 'THIRD_PARTY' ? `${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdParty}: ${account.holderNote?.trim() ?? ''}` : null;
 }
 
+// Words added by the saved-account screens, shared by their rows, forms and refusals.
+export const REIMBURSEMENT_SAVED_PAYOUT_WORDS = {
+  title: 'บัญชีอื่นที่บันทึกไว้', row: 'บัญชีที่บันทึกไว้', add: 'เพิ่มบัญชี',
+  empty: 'ยังไม่มีบัญชีอื่นที่บันทึกไว้', loading: 'กำลังโหลดบัญชีที่บันทึกไว้...',
+  label: 'ชื่อเรียก (ไม่บังคับ)', holder: 'เจ้าของบัญชี',
+  labelInvalid: `ชื่อเรียกต้องไม่เกิน ${PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH} ตัวอักษร และไม่ใส่เลขบัญชี กรุณาแก้ชื่อเรียก`,
+  limit: `บันทึกบัญชีอื่นได้ไม่เกิน ${PAYOUT_SAVED_ACCOUNT_LIMIT} บัญชี หากครบแล้วให้ลบบัญชีที่ไม่ใช้ก่อนเพิ่มบัญชีใหม่`,
+  makeDefault: 'ตั้งเป็นบัญชีประจำ', saved: 'เพิ่มบัญชีแล้ว', removed: 'ลบบัญชีที่บันทึกไว้แล้ว', madeDefault: 'ตั้งเป็นบัญชีประจำแล้ว',
+  deleteTitle: 'ลบบัญชีที่บันทึกไว้', deleteNotice: 'บัญชีนี้จะหายจากรายการ ใบเบิกที่บันทึกหรือส่งไปแล้วจะยังใช้บัญชีของใบนั้นตามเดิม',
+  saveForLater: 'บันทึกบัญชีนี้ไว้ใช้ครั้งหน้า', choose: 'กรุณาเลือกวิธีรับเงินคืนของใบนี้',
+  notFound: 'ไม่พบบัญชีที่เลือกในรายการแล้ว กรุณาโหลดรายการล่าสุดและเลือกวิธีรับเงินคืนใหม่',
+  accountNameHint: 'กรอกชื่อตามที่ธนาคารแสดง เพื่อให้ผู้อนุมัติตรวจบัญชีที่เลือก',
+};
+export const REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS = {
+  payout_saved_account_not_found: REIMBURSEMENT_SAVED_PAYOUT_WORDS.notFound,
+  payout_saved_account_limit: REIMBURSEMENT_SAVED_PAYOUT_WORDS.limit,
+  payout_saved_account_duplicate: 'บันทึกบัญชีนี้ไว้แล้ว กรุณาเลือกบัญชีจากรายการเดิม',
+  payout_saved_account_is_default: 'บัญชีนี้เป็นบัญชีประจำอยู่แล้ว กรุณาใช้บัญชีประจำหรือเพิ่มบัญชีอื่น',
+  payout_default_must_be_own: 'บัญชีประจำต้องเป็นบัญชีของตัวเอง กรุณาใช้บัญชีนี้เฉพาะใบเบิกหรือเลือกบัญชีของตัวเอง',
+  payout_holder_type_invalid: 'กรุณาเลือกเจ้าของบัญชีจากตัวเลือกที่แสดง',
+  payout_holder_note_invalid: `${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.noteInvalid} ${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.noteContainsAccountNumber}`,
+  payout_saved_account_label_invalid: REIMBURSEMENT_SAVED_PAYOUT_WORDS.labelInvalid,
+  payout_third_party_acceptance_required: REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdPartyAcceptanceRequired,
+  payout_third_party_needs_approval: 'ใบนี้ใช้บัญชีของบุคคลอื่นไม่ได้เพราะไม่มีขั้นอนุมัติ เลือกบัญชีของตัวเองหรือเงินสด หรือยกเลิกใบนี้แล้วส่งใบใหม่',
+  payment_currency_mismatch: 'สกุลเงินที่จ่ายไม่ตรงกับใบเบิก กรุณาใช้สกุลเงินเดียวกับใบเบิก',
+  payment_source_bank_account_invalid: 'บัญชีที่ใช้จ่ายไม่พร้อมใช้งานในบริษัทนี้ กรุณาโหลดข้อมูลล่าสุดและเลือกบัญชีที่ใช้จ่ายใหม่',
+};
+
 // Source: Bank of Thailand financial institution directory, checked 2026-09-23.
 export const THAI_BANK_NAMES = [
   'ธนาคารกรุงเทพ', 'ธนาคารกสิกรไทย', 'ธนาคารกรุงไทย', 'ธนาคารไทยพาณิชย์',
