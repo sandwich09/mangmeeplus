@@ -2,7 +2,8 @@ import { AI_BUDGET_REFUSAL_CODES, parseLineAiAnswerCardLayout, type AiBudgetScop
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
 import { lineSystemCardAvailable, type LineSystemCard, type LineSystemCardIcon, type LineSystemCardRow } from './line-system-card.logic';
-import { drawLineSystemCard, LINE_SYSTEM_CARD_BUTTONS_MAX } from './line-system-card-limits.logic';
+import { drawLineSystemCard, LINE_SYSTEM_CARD_BUTTONS_MAX, lineSystemCardPillHolds } from './line-system-card-limits.logic';
+import type { ReceiptProgress } from './line-receipt-status.logic';
 import {
   EMPLOYEE_DOOR_COMMAND,
   PACKAGE_CHANGE_COMMAND,
@@ -549,6 +550,51 @@ export function buildExpenseDraftReviewCard(
     // The button as a line too: a text delivery still carries the way in.
     canonicalText: canonicalText.includes(actionUrl) ? canonicalText : `${canonicalText}\nเปิดดูรายการ: ${actionUrl}`,
     contents,
+  });
+}
+
+/** The first header line of every card that answers a photo or a file the reader sent: the words the
+ *  locked scanning card already uses. The second line names the outcome; code picks it from the kind
+ *  of reply, never a model, and it is never cut out of the reply's text (owner 2026-10-05). */
+export const LINE_SENT_DOCUMENT_CARD_CONTEXT = 'เอกสารที่ส่งมา';
+
+/** What the reply "this picture is a bill already kept" is written from. A fact the record does not
+ *  hold is left out: `total` is the amount with its unit, absent when the record has no amount yet. */
+export type LineKeptReceiptFacts = { expenseId: string; vendor?: string | null; total?: string | null; progress: ReceiptProgress };
+
+/**
+ * A photo that is, byte for byte, a bill already kept (owner 2026-10-05: this reply was still on the
+ * green card from before the design): a row card like the receipt review card. The seller, the total on
+ * the emphasised row, the state the kept bill is in, what is left to do as a note, and the one button
+ * that opens that bill. Rows come from the record's own facts, never read back out of the sentence;
+ * `canonicalText` is the reply exactly as it was sent before — the fallback and the stored answer.
+ *
+ * `undefined` where the card cannot be drawn whole (no https base for the pictures, a fact longer than
+ * a row holds, no page of this company to open): the caller sends the reply as it did before.
+ */
+export function buildKeptReceiptCard(
+  canonicalText: string,
+  facts: LineKeptReceiptFacts,
+  webBaseUrl: string | undefined,
+  companyId: string,
+): LineReplyMessage | undefined {
+  const actionUrl = safeTenantLink(webBaseUrl, companyId, `/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(facts.expenseId)}`);
+  const { state, next, tone } = facts.progress;
+  const rows: LineSystemCardRow[] = [
+    ...(facts.vendor?.trim() ? [{ label: 'ผู้ขาย', value: facts.vendor.trim() }] : []),
+    ...(facts.total?.trim() ? [{ label: 'ยอดรวม', value: facts.total.trim(), total: true }] : []),
+    // The state is a pill where a pill holds it whole; a longer one is printed as words, never cut.
+    { label: 'สถานะ', value: state, ...(lineSystemCardPillHolds(state) ? { pill: tone } : {}) },
+  ];
+  const notes = next?.trim() ? [next.trim()] : [];
+  if (!actionUrl || !systemCardHolds(rows, notes)) return undefined;
+  const contents = drawLineSystemCard({
+    mascot: 'general', header: { lines: [LINE_SENT_DOCUMENT_CARD_CONTEXT, 'ตรงกับบิลที่เก็บไว้แล้ว'] }, rows, notes,
+    button: { action: { type: 'uri', label: 'เปิดใบเสร็จเดิม', uri: actionUrl }, icon: 'receipt' },
+  }, webBaseUrl);
+  // The notification reads as it did: the reply without its link line.
+  return contents && asCompleteLineCard({
+    type: 'flex', altText: preview(splitReplyLinks(canonicalText, webBaseUrl, companyId).body, 400) || 'บิลที่เก็บไว้แล้ว', canonicalText, contents,
   });
 }
 
