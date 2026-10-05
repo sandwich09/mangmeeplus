@@ -1453,6 +1453,29 @@ export type LineDraftUpdatePreview = {
   expiresAt: string;
 };
 
+/** What the two buttons under a preview mean, in one place: the gateway's preview text ends with it
+ *  and the API's confirm card prints it, so the sentence and the card cannot say different things. */
+export const LINE_DRAFT_UPDATE_CONFIRM_HINT = 'กด [ยืนยัน] เพื่อบันทึก หรือ [ยกเลิก] ถ้ายังไม่แก้ค่ะ — ยังไม่ได้บันทึกอะไรจนกว่าจะกดยืนยันนะคะ';
+
+/** The locked design's "แก้ไขค่าใช้จ่าย" header: the context, then the state the edit is really in.
+ *  Here, because the API's cards and the gateway's `edit_command` layout must name a state alike. */
+export const LINE_DRAFT_UPDATE_CARD_CONTEXT = 'แก้ไขค่าใช้จ่าย';
+export const LINE_DRAFT_UPDATE_CARD_STATES = {
+  preview: 'รอยืนยัน',
+  applied: 'แก้ไขแล้ว',
+  cancelled: 'ยกเลิกแล้ว',
+  /** The reply asks for the one thing it could not tell: which line, which record, which figure. */
+  needs_input: 'ขอข้อมูลเพิ่ม',
+  /** Everything else that ends with the record as it was: expired, changed, refused, not allowed. */
+  unchanged: 'ยังไม่ได้แก้ไข',
+} as const;
+export type LineDraftUpdateCardState = keyof typeof LINE_DRAFT_UPDATE_CARD_STATES;
+
+/** The refusals that are a question back to the user; the rest leave the record as it was. */
+export function lineDraftUpdateBlockedState(reason: string): LineDraftUpdateCardState {
+  return ['ambiguous_line', 'ambiguous_record', 'ungrounded_value', 'invalid_patch'].includes(reason) ? 'needs_input' : 'unchanged';
+}
+
 /** The confirm/cancel beat. It carries an INTENT and nothing else — no preview id, no expense id,
  *  no company id — because the server re-derives all of them from the chat that is answering. */
 export type LineDraftUpdatePostback = {
@@ -1856,7 +1879,77 @@ export type LineAiAnswerCard = {
   /** Spec §13: one state badge rendered as its own row above the body. Additive — a card without
    *  one renders exactly as it did before, and an older gateway never sends one. */
   badge?: string;
+  /** The locked System OA card design. Additive: absent, the card is its `text` as before. */
+  layout?: LineAiAnswerCardLayout;
 };
+
+/**
+ * What a structured answer shows on the locked System OA card (docs/specs/
+ * line-system-oa-card-design-lock-spec-th.md) instead of a paragraph: two header lines and
+ * `label : value` rows. The trusted gateway fills it from ONE successful, permission-checked tool
+ * result — never from model text, and it is never Flex JSON. `text` stays the canonical answer: it is
+ * the notification, the fallback, and what is sent wherever this cannot be drawn.
+ */
+export const LINE_AI_ANSWER_CARD_CONTEXTS = ['expense_summary', 'open_work', 'expense_record', 'payment', 'edit_command'] as const;
+export type LineAiAnswerCardContext = (typeof LINE_AI_ANSWER_CARD_CONTEXTS)[number];
+export type LineAiAnswerCardRow = {
+  label: string;
+  value: string;
+  /** The one figure the card is about. */
+  emphasis?: 'total';
+  /** The value is a state, drawn as a pill. */
+  tone?: 'ok' | 'pending' | 'closed';
+};
+export type LineAiAnswerCardLayout = {
+  context: LineAiAnswerCardContext;
+  /** Exactly two lines: the context, then the state or period. */
+  header: [string, string];
+  /** Empty for `edit_command`, whose body is the card's `text`. */
+  rows: LineAiAnswerCardRow[];
+  banner?: { tone: 'ok' | 'pending'; text: string };
+  notes?: string[];
+  /** Words of the card's one button. Where it leads is the card's `webLink`, which the API checks. */
+  linkLabel?: string;
+};
+
+const CARD_ROW_TONES = ['ok', 'pending', 'closed'] as const;
+// eslint-disable-next-line no-control-regex
+const CARD_LINE_REFUSED = /[\u0000-\u001f\u007f]|https?:\/\//iu;
+/** One line a card may print: bounded, no control character, and never a link. */
+const cardLine = (value: unknown, max: number): value is string => typeof value === 'string'
+  && value.trim().length > 0 && Array.from(value).length <= max && !CARD_LINE_REFUSED.test(value);
+
+/** Receiver-boundary validator: every receiver re-parses and drops what does not parse, so a card
+ *  with a malformed layout is simply its `text`. Exact keys, bounded strings, allowlisted enums. */
+export function parseLineAiAnswerCardLayout(value: unknown): LineAiAnswerCardLayout | undefined {
+  if (!recordValue(value) || !exactKeys(value, ['context', 'header', 'rows', 'banner', 'notes', 'linkLabel'])) return undefined;
+  const { context, header, rows, banner, notes, linkLabel } = value;
+  if (!(LINE_AI_ANSWER_CARD_CONTEXTS as readonly unknown[]).includes(context)) return undefined;
+  if (!Array.isArray(header) || header.length !== 2 || !header.every((line) => cardLine(line, 40))) return undefined;
+  if (!Array.isArray(rows) || rows.length > 16 || (context === 'edit_command') !== (rows.length === 0)) return undefined;
+  for (const row of rows) {
+    if (!recordValue(row) || !exactKeys(row, ['label', 'value', 'emphasis', 'tone'])
+      || !cardLine(row['label'], 40) || !cardLine(row['value'], 200)
+      || (row['emphasis'] !== undefined && row['emphasis'] !== 'total')
+      || (row['tone'] !== undefined && !(CARD_ROW_TONES as readonly unknown[]).includes(row['tone']))) return undefined;
+  }
+  if (banner !== undefined && (!recordValue(banner) || !exactKeys(banner, ['tone', 'text'])
+    || (banner['tone'] !== 'ok' && banner['tone'] !== 'pending') || !cardLine(banner['text'], 120))) return undefined;
+  if (notes !== undefined && (!Array.isArray(notes) || notes.length > 4 || !notes.every((note) => cardLine(note, 300)))) return undefined;
+  if (linkLabel !== undefined && !cardLine(linkLabel, 40)) return undefined;
+  return {
+    context: context as LineAiAnswerCardContext,
+    header: [header[0] as string, header[1] as string],
+    rows: (rows as Array<Record<string, unknown>>).map((row) => ({
+      label: row['label'] as string, value: row['value'] as string,
+      ...(row['emphasis'] === 'total' ? { emphasis: 'total' as const } : {}),
+      ...(row['tone'] !== undefined ? { tone: row['tone'] as LineAiAnswerCardRow['tone'] } : {}),
+    })),
+    ...(banner !== undefined ? { banner: { tone: (banner as Record<string, unknown>)['tone'] as 'ok' | 'pending', text: (banner as Record<string, unknown>)['text'] as string } } : {}),
+    ...(notes !== undefined && (notes as string[]).length ? { notes: [...notes as string[]] } : {}),
+    ...(linkLabel !== undefined ? { linkLabel: linkLabel as string } : {}),
+  };
+}
 
 export type LineAiAnswerPresentation = {
   kind: 'answer_cards';
