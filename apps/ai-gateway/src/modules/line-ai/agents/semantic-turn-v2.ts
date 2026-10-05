@@ -29,6 +29,12 @@ import { completeReimbursementDraftInput } from './reimbursement-draft-input';
 
 const logger = new Logger('SemanticTurnV2');
 
+// Match only a capability question, not a specific how-to or an independent business clause.
+// The API's menu matcher is API-local; semantic turns use this clause's quoted input evidence.
+function isCurrentCapabilityQuestion(text: string): boolean {
+  return /^(?:(?:น้อง(?:มั่งมี)?|มั่งมี|คุณ|ระบบ)?(?:ทำ(?:อะไร|ไร)ได้(?:บ้าง)?|ช่วย(?:อะไร|ไร)(?:ฉัน|ผม|เรา)?ได้(?:บ้าง)?|มี(?:ความสามารถ|ฟีเจอร์)อะไร(?:บ้าง)?)(?:ครับ|ค่ะ|คะ|นะคะ|หน่อย)?|what\s+can\s+you\s+(?:do|help(?:\s+me)?\s+with)|what\s+are\s+your\s+(?:capabilities|abilities))(?:[?？!。.]*)$/iu.test(text.trim().replace(/(?<=[ก-๙])\s+(?=[ก-๙])/gu, ''));
+}
+
 // Spec §8 row 1 ("อ่านข้อมูลไม่ได้ ฝั่งระบบ"): system-side, terminal, no retry invitation, no dead
 // end. Reused for every forced/compose give-up below so none of them lingers as a phantom
 // `needs_user` question (R-L2/R-L3) — a control round or a composer that never produced a usable
@@ -620,9 +626,11 @@ export async function runSemanticTurnV2(input: {
   const entitledFeatureKeys = req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys;
   const itemText = new Map<number, string>();
   const scopePolicyForcedIndices = new Set<number>();
+  const capabilityIndices = new Set<number>();
   for (const item of inventory) {
     const text = evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText);
     itemText.set(item.index, text);
+    if ((item.kind === 'help' || item.kind === 'general') && isCurrentCapabilityQuestion(text)) capabilityIndices.add(item.index);
     const override = scopePolicyOverride(text, item.kind, req.userContext.permissions, entitledFeatureKeys, language, item.toolHint);
     if (override) {
       forced.set(item.index, { status: 'unsupported', reasonCode: override.reasonCode, text: override.text });
@@ -1017,7 +1025,7 @@ export async function runSemanticTurnV2(input: {
   // whatever compose says — asking the model for it only cost the turn its 20 s deadline (NAT-04).
   const draftWrites = new Set(inventory.filter(item => item.kind === 'write' && results.some(entry => entry.index === item.index
     && entry.result.status === 'ok' && object(entry.result.data) && object(entry.result.data.reimbursementDraft))).map(item => item.index));
-  const needsComposition = inventory.some(item => item.kind !== 'help' && !forced.has(item.index) && !questions.has(item.index)
+  const needsComposition = inventory.some(item => item.kind !== 'help' && !capabilityIndices.has(item.index) && !forced.has(item.index) && !questions.has(item.index)
     && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index) && !draftWrites.has(item.index)
     && !emptyBacklogText.has(item.index));
   for (let attempt = 0; needsComposition && attempt < 2; attempt++) {
@@ -1138,6 +1146,10 @@ export async function runSemanticTurnV2(input: {
     else if (item.kind === 'read' && answer.reasonCode === 'SEMANTIC_ANSWER_UNAVAILABLE' && comparisonByIndex.has(item.index)) {
       answer = { index: item.index, status: 'handled', text: expensePeriodComparisonReplyText(comparisonByIndex.get(item.index)!),
         reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED', sourceRefIds: good.flatMap(result => result.sourceRefs.map(sourceId)) };
+      modelComposed = false;
+    }
+    else if (capabilityIndices.has(item.index)) {
+      answer = { index: item.index, status: 'handled', text: capabilityHelp };
       modelComposed = false;
     }
     // E4 (tuning-6a, run 5 dead ends: T-005-a t3 "ทำไมเดือนนี้ค้างจ่ายเยอะจังคะ", T-015-a t1 "ทำไมมี
