@@ -25,7 +25,7 @@ Owner confirmed both cards received and actions working; supplemental acceptance
 
 ## LINE card rounds 2026-10-05 afternoon — UAT only (current for UAT)
 
-After the last row below, UAT serves `main` `ea5a98344` (LINE System OA cards parts 1 and 2a) and no longer the `2aa87ac68` of the section that follows. Production is NOT touched by these rounds: it serves the morning release plus another session's hotfix `0c6e888a8` (`20261005T060824Z-6f2c3d60`, 13:19 Bangkok). Every run used the local Kamal path from the clean controller worktree; GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok. Owner's words: "เร่งแก้ของ ไลน์หน่อยได้ไหม จะได้ทดสอบจริงบน line uat" (UAT only; Production needs his own go).
+After the last row below, UAT serves `main` `8edb735ec` (LINE System OA cards parts 1 and 2a, and the assistant round 2b) and no longer the `2aa87ac68` of the section that follows. Production is NOT touched by these rounds: it serves the morning release plus another session's hotfix `0c6e888a8` (`20261005T060824Z-6f2c3d60`, 13:19 Bangkok). Every run used the local Kamal path from the clean controller worktree; GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok. Owner's words: "เร่งแก้ของ ไลน์หน่อยได้ไหม จะได้ทดสอบจริงบน line uat" (UAT only; Production needs his own go).
 
 | Env | Operation | Source (main) | Result | Seconds |
 |---|---|---|---|---|
@@ -36,6 +36,9 @@ After the last row below, UAT serves `main` `ea5a98344` (LINE System OA cards pa
 | UAT | `20261005T083915Z-f63676fe` (preflight) | controller at `ea5a98344` | PREFLIGHT_PASSED_NO_DEPLOYMENT 15:39. | 12.4 |
 | UAT | `20261005T084047Z-d5c616e7` (prepare only) | `ea5a98344` (#1015 twin = develop `2b30ab1ba` via #1014: LINE cards part 2a, row cards and named buttons) | PREPARED_NO_DEPLOYMENT 15:48. | 430.0 |
 | UAT | `20261005T084812Z-4694f13f` (prepared by `d5c616e7`) | `ea5a98344` | ACCEPTED_LINE_DEFERRED 15:54, smoke, 12/12 phases, no migration (database phase 62.4 s, rollout 98.3 s), AgentCore `kamal_uat_a` v54, signature verified, 2 SSM sessions closed. | 363.1 |
+| UAT | `20261005T092229Z-071239f5` (preflight) | controller at `8edb735ec` | PREFLIGHT_PASSED_NO_DEPLOYMENT 16:22. | 11.8 |
+| UAT | `20261005T092247Z-b0b6152d` (prepare only) | `8edb735ec` (#1017 twin = develop `cf13b7607` via #1016: periods as people say them, a reply completes the question, every month in a comparison, no bare text) | PREPARED_NO_DEPLOYMENT 16:29. | 399.9 |
+| UAT | `20261005T092928Z-8c27754e` (prepared by `b0b6152d`) | `8edb735ec` | ACCEPTED_LINE_DEFERRED 16:37, smoke, 12/12 phases, no migration (database phase 71.0 s, rollout 255.4 s), AgentCore `kamal_uat_b` v55, signature verified, 2 SSM sessions closed. The full 17-step verification of this exact tree passed afterwards (16:38–16:44). | 480.2 |
 
 **Stopped UAT hosts stop a release at the first step, and the agent cannot start them.** The deploy role (`mangmee-kamal-uat`) and the dev profile have no `ec2:StartInstances`; only the owner's own profile does, and the controller does not use it. Ask the owner to start the two hosts, then run the read-only preflight again before preparing.
 
