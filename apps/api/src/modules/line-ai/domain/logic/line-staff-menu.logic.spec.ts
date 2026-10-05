@@ -431,14 +431,18 @@ describe('LINE staff menu', () => {
     const rendered = JSON.stringify(card);
     assert.match(rendered, /contact@mangmeeplus.com/);
     assert.match(rendered, /098-256-5628/);
-    assert.match(rendered, /tel:0982565628/);
     assert.match(rendered, /https:\/\/official\.mangmeeplus\.com\//);
     assert.match(rendered, /clipboardText/);
     assert.equal(rendered.includes('mailto:'), false);
-    // The contact-card button opens the staff OA; typing the same label keeps the existing support route.
-    assert.deepEqual((card.contents as any).footer.contents.at(-1).action, {
-      type: 'uri', label: 'ติดต่อเจ้าหน้าที่', uri: 'https://lin.ee/UU9pbOI',
-    });
+    // Owner 2026-10-05: the number stays as text above; the button that carried it is "ติดต่อทีมงาน" and
+    // opens the staff OA, and the separate "ติดต่อเจ้าหน้าที่" button to the same OA is gone.
+    assert.ok((card.contents as any).body.contents.some((row: any) => row.text === '📱 098-256-5628'), 'the number is still text on the card');
+    assert.equal(rendered.includes('tel:'), false, 'no call button');
+    assert.deepEqual((card.contents as any).footer.contents.map((button: any) => button.action), [
+      { type: 'clipboard', label: 'คัดลอกอีเมล', clipboardText: 'contact@mangmeeplus.com' },
+      { type: 'uri', label: 'ติดต่อทีมงาน', uri: 'https://lin.ee/UU9pbOI' },
+      { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://official.mangmeeplus.com/' },
+    ]);
     assert.equal(staffMenuCommand('ติดต่อเจ้าหน้าที่'), 'staff_contact', 'typed support remains available');
   });
 
@@ -757,8 +761,12 @@ describe('promotion menu (rich menu v2 ver2)', () => {
       { type: 'uri', label: 'เปิดร้านใหม่', uri: 'https://liff.line.me/1234567890-abcdef/signup' });
 
     const employee = actions('employee');
-    assert.equal(employee.filter((action: any) => action.type === 'uri' && !action.uri.includes('official.')).length, 0,
+    assert.equal(employee.filter((action: any) => action.type === 'uri' && !action.uri.includes('official.') && action.uri !== STAFF_OA_URL).length, 0,
       'the package page is the owner\'s to open');
+    // Owner 2026-10-05: "คุยกับทีมงาน" opens the staff OA itself, for every reader of the card.
+    for (const audience of ['owner', 'employee', 'stranger'] as const) {
+      assert.deepEqual(actions(audience).at(-1), { type: 'uri', label: 'คุยกับทีมงาน', uri: 'https://lin.ee/UU9pbOI' }, audience);
+    }
     assert.match(JSON.stringify(buildPromotionCard('employee')), /เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจ/);
     // Glossary 2026-09-29: no English on a customer card.
     assert.match(JSON.stringify(buildPromotionCard('owner')), /🎁 แพ็กเกจที่เหมาะกับร้านคุณ/);
