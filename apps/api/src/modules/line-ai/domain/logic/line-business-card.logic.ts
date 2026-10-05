@@ -324,40 +324,58 @@ const thaiWords = new Intl.Segmenter('th', { granularity: 'word' });
 const thaiGraphemes = new Intl.Segmenter('th', { granularity: 'grapheme' });
 const graphemeCount = (value: string) => [...thaiGraphemes.segment(value.trim())].length;
 
+// Thai is written without spaces, and the word list that finds its words cuts finer than a reader
+// does: ค่า|ใช้|จ่าย, วัน|นี้, ใบ|เสร็จ. A heading broken there reads as a mistake, so a line never ends
+// on a word that only begins a name, never starts with one that only ends a phrase, and never cuts
+// the few names below. Not a grammar: a list of the breaks that looked wrong.
+const NEVER_ENDS_A_LINE = new Set(['ค่า', 'ใบ', 'การ', 'ความ', 'ผู้', 'นัก', 'ราย', 'ยอด', 'เท่า', 'แจ้ง', 'ขั้น', 'อย่าง', 'รอ', 'ที่', 'ของ', 'ใน', 'กับ', 'และ', 'หรือ', 'จาก', 'ถึง', 'ไม่', 'จะ']);
+const NEVER_STARTS_A_LINE = new Set(['นี้', 'นั้น', 'ๆ', 'ค่ะ', 'คะ', 'ครับ', 'จ้า', 'จ้ะ', 'นะ', 'จัง', 'เลย', 'ไหร่', 'ไร', 'ไง', 'หน่อย', 'ไป', 'มา']);
+const KEPT_WHOLE = ['ค่าใช้จ่าย', 'ใช้จ่าย', 'เบิกจ่าย', 'ใบกำกับภาษี', 'แพ็กเกจ', 'เจ้าหน้าที่', 'ณ ที่จ่าย'];
+
+/** The places a heading may be broken, as the two lines each break would give. */
+function headerSplits(text: string): Array<readonly [string, string]> {
+  const pieces = [...thaiWords.segment(text)];
+  const kept = KEPT_WHOLE.flatMap((name) => [...text.matchAll(new RegExp(name, 'gu'))].map((match) => [match.index, match.index + name.length] as const));
+  const splits: Array<readonly [string, string]> = [];
+  const thai = /[\u0E00-\u0E7F]/u.test(text);
+  for (let index = 1; index < pieces.length; index += 1) {
+    const at = pieces[index]!.index, before = pieces[index - 1]!.segment, after = pieces[index]!.segment;
+    if (kept.some(([start, end]) => at > start && at < end)) continue;
+    // A space the writer typed is a place to break — except, in a Thai sentence, between two words in
+    // Latin letters ("service charge" is one name there). Elsewhere the two lists decide.
+    if (thai && !before.trim() && /[A-Za-z]$/u.test(pieces[index - 2]?.segment ?? '') && /^[A-Za-z]/u.test(after)) continue;
+    if (thai && !after.trim() && /[A-Za-z]$/u.test(before) && /^[A-Za-z]/u.test(pieces[index + 1]?.segment ?? '')) continue;
+    if (before.trim() && after.trim() && (NEVER_ENDS_A_LINE.has(before) || NEVER_STARTS_A_LINE.has(after))) continue;
+    const first = text.slice(0, at).trim(), second = text.slice(at).trim();
+    if (first && second) splits.push([first, second]);
+  }
+  return splits;
+}
+
 /**
  * The two header lines of an answer: the reader's own words (design lock §7: the header says what
  * was answered; a short question may be the heading, a long one is shortened). A short message is
- * split at the word boundary that makes the two lines most even; one that has no boundary stands
- * under `ข้อความของคุณ`; a long one keeps its beginning and ends in an ellipsis, in the quieter style.
+ * broken where its two lines come out most even; one that has no place to break stands under
+ * `ข้อความของคุณ`; a long one keeps its beginning and ends in an ellipsis, in the quieter style.
  * Nothing is rephrased, so no heading can say something the reader did not.
  */
 export function lineAnswerCardHeader(question: string | undefined): LineSystemCard['header'] | undefined {
   const text = (question ?? '').replace(/\s+/gu, ' ').trim();
   if (!text) return undefined;
-  const pieces = [...thaiWords.segment(text)].map((piece) => piece.segment);
-  const splits = pieces.slice(1).map((_, index) => [pieces.slice(0, index + 1).join('').trim(), pieces.slice(index + 1).join('').trim()] as const)
-    .filter(([first, second]) => first && second);
+  const splits = headerSplits(text);
   const even = splits.filter(([first, second]) => graphemeCount(first) <= HEADER_LINE_GRAPHEMES && graphemeCount(second) <= HEADER_LINE_GRAPHEMES)
     .sort((a, b) => Math.abs(graphemeCount(a[0]) - graphemeCount(a[1])) - Math.abs(graphemeCount(b[0]) - graphemeCount(b[1])))[0];
   if (even) return { lines: [even[0], even[1]], question: true };
   if (graphemeCount(text) <= HEADER_LINE_GRAPHEMES) return { lines: ['ข้อความของคุณ', text] };
-  // Whole words while they fit; a single word longer than a line is cut inside, there is no other way.
-  const take = (from: string[], max: number): string => {
-    let line = '';
-    while (from.length && graphemeCount(line + from[0]!) <= max) line += from.shift()!;
-    if (!line.trim() && from.length) {
-      const letters = [...thaiGraphemes.segment(from[0]!)].map((piece) => piece.segment);
-      line = letters.slice(0, max).join('');
-      from[0] = letters.slice(max).join('');
-    }
-    return line.trim();
-  };
-  const rest = [...pieces];
-  const first = take(rest, QUIET_HEADER_LINE_GRAPHEMES);
-  while (rest.length && !rest[0]!.trim()) rest.shift();
-  const whole = rest.join('').trim();
-  const second = graphemeCount(whole) <= QUIET_HEADER_LINE_GRAPHEMES ? whole : `${take(rest, QUIET_HEADER_LINE_GRAPHEMES - 1)}…`;
-  return second ? { lines: [first, second], question: true, quiet: true } : undefined;
+  // The longest beginning that fits the first line, then as much of the rest as the second holds.
+  const first = splits.filter(([line]) => graphemeCount(line) <= QUIET_HEADER_LINE_GRAPHEMES).at(-1);
+  const cut = (value: string, max: number) => [...thaiGraphemes.segment(value)].slice(0, max).map((piece) => piece.segment).join('').trim();
+  const head = first?.[0] ?? cut(text, QUIET_HEADER_LINE_GRAPHEMES);
+  const rest = first?.[1] ?? text.slice(head.length).trim();
+  if (!rest) return undefined;
+  if (graphemeCount(rest) <= QUIET_HEADER_LINE_GRAPHEMES) return { lines: [head, rest], question: true, quiet: true };
+  const tail = headerSplits(rest).filter(([line]) => graphemeCount(line) <= QUIET_HEADER_LINE_GRAPHEMES - 1).at(-1)?.[0] ?? cut(rest, QUIET_HEADER_LINE_GRAPHEMES - 1);
+  return { lines: [head, `${tail}…`], question: true, quiet: true };
 }
 
 /**
@@ -405,6 +423,70 @@ export type LineExpenseDraftCardFacts = {
   rows: LineSystemCardRow[];
   notes: string[];
 };
+
+/** The record EXISTS but is unconfirmed — the same state the canonical reply's header prints
+ *  ("บันทึก…เบื้องต้นแล้ว (รอตรวจสอบ)"), said once on the card, and never by a model. */
+export const EXPENSE_DRAFT_CARD_NOTE = 'รายการนี้เป็นร่าง ยังไม่ได้ยืนยันรายการ';
+
+/** The header's first line of the review card: a receipt is called a receipt, a typed note a draft,
+ *  and any other paper simply a document — the row below it names the kind. */
+export function expenseDraftCardSubject(sourceDocumentType: string | null | undefined, textOnly = false): string {
+  return textOnly ? 'ร่างค่าใช้จ่าย' : sourceDocumentType === 'RECEIPT' ? 'ข้อมูลใบเสร็จ' : 'ข้อมูลเอกสาร';
+}
+
+/** What a producer of a draft's review card knows, each value already in the words it would print
+ *  (a formatted date, an amount with its unit). A value that is missing or blank has no row. */
+export type LineExpenseDraftCardValues = {
+  expenseId: string;
+  /** `ข้อมูลใบเสร็จ` for a receipt, `ข้อมูลเอกสาร` for another paper, `ร่างค่าใช้จ่าย` for a typed note. */
+  subject: string;
+  vendor?: string | null;
+  item?: string | null;
+  date?: string | null;
+  documentNumber?: string | null;
+  documentType?: string | null;
+  category?: string | null;
+  total?: string | null;
+  vat?: string | null;
+  withholdingTax?: string | null;
+  otherCharges?: string | null;
+  /** The record's own state in words (`EXPENSE_STATUS_LABELS`). */
+  status: string;
+  /** What the reply says before its facts, and after them; each is a note, word for word. */
+  notesBefore?: ReadonlyArray<string | null | undefined>;
+  notesAfter?: ReadonlyArray<string | null | undefined>;
+};
+
+/**
+ * The review card's rows, in the locked design's order and under its names, for every producer of a
+ * draft's card (the photo terminal, the file result): ONE place decides what a row is called and
+ * where it stands, so two producers cannot draw the same record two ways. A value nobody grounded is
+ * left out — never a placeholder. The state is always the last row, as a pending pill.
+ */
+export function expenseDraftCardFactsFrom(values: LineExpenseDraftCardValues): LineExpenseDraftCardFacts {
+  const row = (label: string, value: string | null | undefined, extra: Partial<LineSystemCardRow> = {}): LineSystemCardRow[] =>
+    value?.trim() ? [{ label, value: value.trim(), ...extra }] : [];
+  const notes = (entries: ReadonlyArray<string | null | undefined> = []) => entries.map((entry) => entry?.trim()).filter((entry): entry is string => !!entry);
+  const vendor = values.vendor?.trim();
+  return {
+    expenseId: values.expenseId,
+    subject: values.subject,
+    rows: [
+      ...row('ผู้ขาย / ร้านค้า', vendor),
+      ...row('รายการ', values.item?.trim() !== vendor ? values.item : undefined),
+      ...row('วันที่เอกสาร', values.date),
+      ...row('เลขเอกสาร', values.documentNumber),
+      ...row('ประเภทเอกสาร', values.documentType),
+      ...row('หมวดค่าใช้จ่าย', values.category),
+      ...row('ยอดรวม', values.total, { total: true }),
+      ...row('VAT', values.vat),
+      ...row('ภาษีหัก ณ ที่จ่าย', values.withholdingTax),
+      ...row('ค่าบริการอื่นๆ', values.otherCharges),
+      { label: 'สถานะเอกสาร', value: values.status, pill: 'pending' },
+    ],
+    notes: [...notes(values.notesBefore), EXPENSE_DRAFT_CARD_NOTE, ...notes(values.notesAfter)],
+  };
+}
 
 /** §10.1: the capture terminal as the locked review card — the review mascot, the facts as
  *  `label : value` rows, the draft's notes, and the one button that opens the record for review.

@@ -159,7 +159,7 @@ import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer,
 import { buildEventDiscountCard, EVENT_DISCOUNT_MEMBER_REPLY, isMangmeeDiscountQuestion } from '../../domain/logic/line-event-discount.logic';
 import { BillingService } from '../../../billing/application/billing.service';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -1607,12 +1607,6 @@ export function formatPaypersReply(
   return parts.join('\n');
 }
 
-/** The header's first line of the review card: a receipt is called a receipt, a typed note a draft,
- *  and any other paper simply a document — the row below it names the kind. */
-function expenseDraftCardSubject(options: PaypersReplyOptions): string {
-  return options.textOnly ? 'ร่างค่าใช้จ่าย' : options.sourceDocumentType === 'RECEIPT' ? 'ข้อมูลใบเสร็จ' : 'ข้อมูลเอกสาร';
-}
-
 /** The §10.1 review card states the SAME grounded values `formatPaypersReply` prints, read once by
  *  `paypersReplyFacts`, in the locked design's order. A value the capture did not ground is OMITTED —
  *  the card leaves the row out rather than repeating the text reply's 'ยังไม่ระบุ' placeholder as if it
@@ -1623,40 +1617,24 @@ function expenseDraftCardFacts(
   options: PaypersReplyOptions & { status?: string | null; item?: string | null; lead?: string; tail?: string } = {},
 ): LineExpenseDraftCardFacts {
   const facts = paypersReplyFacts(options);
-  const vendor = options.fields?.vendorName?.trim();
-  const item = options.item?.trim();
-  const documentNumber = scrubRecordIdentifier(options.fields?.documentNumber ?? null, 40);
-  const status = (EXPENSE_STATUS_LABELS as Record<string, string>)[options.status ?? ''] ?? EXPENSE_STATUS_LABELS.NEEDS_REVIEW;
-  const row = (label: string, value: string | null | undefined, extra: Partial<LineExpenseDraftCardFacts['rows'][number]> = {}) =>
-    value ? [{ label, value, ...extra }] : [];
-  return {
+  return expenseDraftCardFactsFrom({
     expenseId,
-    subject: expenseDraftCardSubject(options),
-    rows: [
-      ...row('ผู้ขาย / ร้านค้า', vendor),
-      ...row('รายการ', item && item !== vendor ? item : undefined),
-      ...row('วันที่เอกสาร', facts.dateLine),
-      ...row('เลขเอกสาร', documentNumber),
-      ...row('ประเภทเอกสาร', facts.docType),
-      ...row('หมวดค่าใช้จ่าย', options.categoryName?.trim()),
-      ...row('ยอดรวม', facts.amount && `${facts.amount} ${facts.foreignCurrency ?? 'บาท'}`, { total: true }),
-      ...row('VAT', facts.vat && `${facts.vat} บาท`),
-      ...row('ภาษีหัก ณ ที่จ่าย', facts.wht && `${facts.wht} บาท`),
-      ...row('ค่าบริการอื่นๆ', facts.otherCharges),
-      { label: 'สถานะเอกสาร', value: status, pill: 'pending' },
-    ],
-    notes: [
-      ...(options.lead?.trim() ? [options.lead.trim()] : []),
-      EXPENSE_DRAFT_CARD_NOTE,
-      ...(facts.itemBlock ? [facts.itemBlock.join('\n')] : []),
-      ...[facts.textOnlyNote, facts.duplicateNote, facts.addressAsk, facts.currencyNote, options.tail?.trim()].filter((note): note is string => !!note),
-    ],
-  };
+    subject: expenseDraftCardSubject(options.sourceDocumentType, options.textOnly),
+    vendor: options.fields?.vendorName,
+    item: options.item,
+    date: facts.dateLine,
+    documentNumber: scrubRecordIdentifier(options.fields?.documentNumber ?? null, 40),
+    documentType: facts.docType,
+    category: options.categoryName,
+    total: facts.amount && `${facts.amount} ${facts.foreignCurrency ?? 'บาท'}`,
+    vat: facts.vat && `${facts.vat} บาท`,
+    withholdingTax: facts.wht && `${facts.wht} บาท`,
+    otherCharges: facts.otherCharges,
+    status: (EXPENSE_STATUS_LABELS as Record<string, string>)[options.status ?? ''] ?? EXPENSE_STATUS_LABELS.NEEDS_REVIEW,
+    notesBefore: [options.lead],
+    notesAfter: [facts.itemBlock?.join('\n'), facts.textOnlyNote, facts.duplicateNote, facts.addressAsk, facts.currencyNote, options.tail],
+  });
 }
-
-/** The record EXISTS but is unconfirmed — the same state the canonical reply's header prints
- *  ("บันทึก…เบื้องต้นแล้ว (รอตรวจสอบ)"), said once, here, and never by a model. */
-const EXPENSE_DRAFT_CARD_NOTE = 'รายการนี้เป็นร่าง ยังไม่ได้ยืนยันรายการ';
 
 export function isGroundedReceiptFollowUp(text: string): boolean {
   const normalized = normalizeLineText(text).toLocaleLowerCase('th-TH');
@@ -2500,8 +2478,11 @@ export class ProcessLineWebhookUseCase {
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     text: string,
     quickReply?: LineReplyMessage['quickReply'],
+    /** This same reply as a card of the locked System OA design, when its builder could draw it whole.
+     *  The card carries `text` as its canonical text, so `text` is still what is stored and what falls back. */
+    designed?: LineReplyMessage,
   ): Promise<void> {
-    const result = await this.deliverMessages(event, [{
+    const result = await this.deliverMessages(event, [designed ?? {
       ...(this.boundConversations.has(event) ? { type: 'text' as const, text } : this.lineReply.buildTextMessage(text)),
       ...(quickReply ? { quickReply } : {}),
     }]);
@@ -3766,9 +3747,7 @@ export class ProcessLineWebhookUseCase {
           : 'ร่างใบเบิกนี้หมดอายุหรือเปลี่ยนไปแล้วค่ะ ยังไม่ได้สร้างใบเบิก';
       }
     }
-    const designed = editState && buildDraftUpdateOutcomeCard(editState, text, this.config.webBaseUrl, ctx.companyId);
-    if (designed) await this.deliverRequiredMessages(event, [designed]);
-    else await this.deliverReply(event, text);
+    await this.deliverReply(event, text, undefined, editState && buildDraftUpdateOutcomeCard(editState, text, this.config.webBaseUrl, ctx.companyId));
     await this.persistIntakeTurn({ event, userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: normalizeLineText(event.messageText), replyText: text, intent: reply === 'cancel' ? 'CORRECTION' : 'CLARIFY' });
     await this.updateEventLog(event.webhookEventId, reply === 'cancel' ? 'pending_work_cancelled' : 'pending_work_reviewed', undefined, ctx.companyId);

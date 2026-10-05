@@ -2,6 +2,7 @@ import { evaluateEntitledFeatureKeys } from '../../../employee-access/applicatio
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { deliveryHash } from '../../domain/logic/line-delivery-plan.logic';
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
+import { readLineSystemCard } from '../../domain/logic/line-system-card.fixture';
 import { admitCompanyOcr } from '../company-ocr-governance';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -3069,8 +3070,14 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
     const reply: any = h.sentMessages[0]?.[0];
     assert.equal(reply?.type, 'flex', 'a card, as production sent it');
-    assert.doesNotMatch(JSON.stringify(reply.contents.body), /https?:\/\//u, 'no raw link in the card body');
-    assert.match(JSON.stringify(reply.contents.footer), /expense-1/u, 'the draft link rides on the button');
+    // Design lock context 6: in a bound chat the plan sends the locked review card itself.
+    const card = readLineSystemCard(reply);
+    assert.deepEqual(card.header, ['ข้อมูลใบเสร็จ', 'รอตรวจสอบ']);
+    assert.ok(card.texts.every((text) => !/https?:\/\//u.test(text)), 'no raw link in any text of the card');
+    assert.equal(card.actions.length, 1);
+    assert.match(card.actions[0]!.uri ?? '', /expense-1/u, 'the draft link rides on the button');
+    assert.match(reply.canonicalText, /^🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว \(รอตรวจสอบ\)[\s\S]*\/companies\/company-1\/expenses\/expense-1$/u,
+      'the reply that was sent before is the card\'s canonical text and its fallback');
   });
 
   it('two unclear photos: files are named by order and time, buttons send their own words, and a tap picks the right one', async () => {
