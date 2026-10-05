@@ -377,7 +377,7 @@ for (const [name, card] of [
   ['main menu', buildStaffMainMenu(STAFF_MENU)],
   ['services', buildServiceEntitlementMessage(null)],
   ['receipt prompt', buildReceiptCapturePrompt(STAFF_MENU)],
-  ['pending approvals', buildPendingApprovalCard(STAFF_MENU, { reimbursement: { total: 1, items: ['RB-1 · 100.00 บาท'] } })],
+  ['pending approvals', buildPendingApprovalCard(STAFF_MENU, { reimbursement: { total: 1, items: [{ title: 'RB-1', detail: '100.00 บาท' }] } })],
   ['reimbursement payer question', buildReimbursementPayerClarificationMessage()],
   ['reimbursement handoff', buildReimbursementHandoffMessage('https://app.example.com', 'company')],
 ] as const) it(`freezes the ${name} card of a bound chat as its own words, never LINE_PLAN_CANONICAL_TEXT_REQUIRED`, async () => {

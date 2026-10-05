@@ -15,6 +15,7 @@ import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/
 import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { buildLineAssistantTextCardMessage, isCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LINE_SENT_DOCUMENT_OUTCOMES } from '../../domain/logic/line-business-card.logic';
 import { isLineSystemCard, readLineSystemCard } from '../../domain/logic/line-system-card.fixture';
+import { lineSystemCardTexts } from '../../domain/logic/line-system-card.logic';
 import { lineMessagePreview } from '../../domain/logic/line-message-preview.logic';
 import { STAFF_CONTACT_COMMAND } from '../../domain/logic/line-staff-menu.logic';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
@@ -3624,16 +3625,40 @@ describe('ProcessLineWebhookUseCase', () => {
 
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-counts', messageText: 'รายการรออนุมัติ' });
 
-    const lines = (sentMessages[0]?.contents.body.contents as any[]).map((line) => line.text);
+    // Owner 2026-10-06 (Production): the card of the locked design, not the plain one from before it.
+    const lines = lineSystemCardTexts(sentMessages[0]?.contents);
     assert.equal(sentMessages[0]?.altText, 'รายการรออนุมัติ 2 รายการ');
+    const asOf = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric' }).format(new Date());
     assert.deepEqual(lines, [
-      '✅ รายการรออนุมัติ',
-      'มี 2 รายการรอคุณอนุมัติ',
-      'คำขอเบิกเงิน (2)',
-      '• RB-0007 · สมชาย · 1,130.00 บาท',
-      '• RB-0008 · มานี · 250.50 บาท',
-      'เปิดในเว็บเพื่อดูรายละเอียดและยืนยันอย่างปลอดภัย',
+      // Two queues are this member's and one could not be read: the count is a floor, and the card says which.
+      'รายการรออนุมัติ', 'พบอย่างน้อย 2 รายการ',
+      'เลขที่ใบเบิก', ':', 'RB-0007\nสมชาย · 1,130.00 บาท',
+      'เลขที่ใบเบิก', ':', 'RB-0008\nมานี · 250.50 บาท',
+      'ต้องทำ', ':', 'ตรวจสอบและอนุมัติในเว็บ',
+      'ข้อมูล ณ', ':', asOf,
+      'ตรวจเฉพาะรายการรออนุมัติ ตามสิทธิ์ของคุณ',
+      'ยังอ่านใบขอซื้อ/ใบสั่งซื้อไม่ได้ เปิดดูในเว็บได้เลย',
+      'ดูใบเบิกรออนุมัติในเว็บ', 'ดูใบขอซื้อ/ใบสั่งซื้อในเว็บ',
     ]);
+  });
+
+  it('answers a claims approver with nothing waiting on the locked card: what was read, when, and the way to the page', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, sentMessages } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'reimbursement.approve'],
+      approvalQueues: { reimbursement: { execute: async () => [] } },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-none', messageText: 'รายการรออนุมัติ' });
+
+    const lines = lineSystemCardTexts(sentMessages[0]?.contents);
+    assert.deepEqual([...lines.slice(0, 4), ...lines.slice(5)], [
+      'ใบเบิกรออนุมัติ', 'ไม่พบรายการ', 'ข้อมูล ณ', ':',
+      'ตรวจเฉพาะใบเบิกที่รอคุณอนุมัติ ตามสิทธิ์ของคุณ', 'ดูใบเบิกรออนุมัติในเว็บ',
+    ]);
+    assert.match(lines[4]!, /^\d{1,2} \S+ 25\d\d$/u);
+    assert.equal(JSON.stringify(sentMessages[0]).includes('✅'), false);
+    assert.ok(JSON.stringify(sentMessages[0]).includes('reimbursements?tab=approvals'));
   });
 
   it('delivers the receipt prompt as a Flex card', async () => {
