@@ -49,7 +49,7 @@ import {
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
 import { aiSelectableExpenseCategories } from '../../../expenses/application/services/expense-category-bootstrap.service';
 import { LINE_RECENT_CAPTURE_WINDOW_MS, listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
-import { namesLineMedia, receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/line-receipt-status.logic';
+import { namesLineMedia, receiptProgress, receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/line-receipt-status.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type { ExpenseRecord } from '../../../expenses/domain/models/expense.model';
 import { pickLineDefaultBranchId } from '../../../expenses/domain/logic/line-receipt-branch.logic';
@@ -160,7 +160,7 @@ import { buildEventDiscountCard, EVENT_DISCOUNT_MEMBER_REPLY, isMangmeeDiscountQ
 import { BillingService } from '../../../billing/application/billing.service';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { lineSystemCardTexts } from '../../domain/logic/line-system-card.logic';
-import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildLineSystemTextCardMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, buildKeptReceiptCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildLineSystemTextCardMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -8557,13 +8557,20 @@ export class ProcessLineWebhookUseCase {
         || !isBranchInScope(ctx.scopes ?? {}, exact.branchId)
         || exact.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) continue;
       this.rememberReceiptDeliverySource(event, ctx, exact);
-      await this.deliverCompletedReply(event, [
+      const total = `${moneyLabel(exact.grandTotalAmount)} บาท`;
+      const keptReply = [
         '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ',
         ...(exact.vendorNameSnapshot ? [`ผู้ขาย – ${exact.vendorNameSnapshot}`] : []),
-        `ยอดรวม – ${moneyLabel(exact.grandTotalAmount)} บาท`,
+        `ยอดรวม – ${total}`,
         `สถานะ – ${receiptProgressLabel(exact.status, exact.aiVerificationStatus)}`,
         `เปิดใบเสร็จเดิม: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${exact.id}`)}`,
-      ].join('\n'), companyId, access);
+      ].join('\n');
+      // The same reply as a row card of the locked design, from the same facts. A bill not read yet
+      // holds no amount (the record's 0), so its card has no total row; the sentence is as it was.
+      await this.deliverCompletedReply(event, keptReply, companyId, access, undefined, buildKeptReceiptCard(keptReply, {
+        expenseId: exact.id, vendor: exact.vendorNameSnapshot, ...(Number(toMoney4(exact.grandTotalAmount)) !== 0 ? { total } : {}),
+        progress: receiptProgress(exact.status, exact.aiVerificationStatus),
+      }, this.config.webBaseUrl, companyId));
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
     }

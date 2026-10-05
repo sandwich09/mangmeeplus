@@ -8306,14 +8306,67 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     assert.match(JSON.stringify(h.sends[1]), /รูปนี้ตรงกับบิลที่เก็บไว้แล้ว/);
     const card = h.sends[1][0];
     assert.equal(card.type, 'flex');
-    assert.equal(card.contents.header.backgroundColor, '#15803D');
-    assert.match(JSON.stringify(card.contents.body), /ยอดรวม – 120\.00 บาท/);
-    assert.match(JSON.stringify(card.contents.body), /รอคุณตรวจสอบและยืนยัน/);
-    assert.doesNotMatch(JSON.stringify(card.contents.body), /https?:|saved-expense|ข้อมูลที่ยังต้องตอบ/);
-    assert.equal(card.contents.footer.contents[0].action.label, 'เปิดใบเสร็จเดิม');
-    assert.match(card.contents.footer.contents[0].action.uri, /\/companies\/company-1\/expenses\/saved-expense$/);
-    assert.match(card.canonicalText, /\/companies\/company-1\/expenses\/saved-expense/);
+    // Owner 2026-10-05: this reply was still on the green card from before the design. It is a row card
+    // of the locked design, like the receipt review card, from the kept bill's own facts.
+    const kept = readLineSystemCard(card);
+    assert.deepEqual(kept.header, ['เอกสารที่ส่งมา', 'ตรงกับบิลที่เก็บไว้แล้ว']);
+    assert.deepEqual(kept.rows, [['ยอดรวม', ':', '120.00 บาท'], ['สถานะ', ':', 'บันทึกแบบร่างแล้ว']], 'this bill has no seller yet: no seller row');
+    assert.deepEqual(kept.totals, ['ยอดรวม']);
+    assert.deepEqual(kept.notes, ['รอคุณตรวจสอบและยืนยัน']);
+    assert.ok(kept.texts.every((text) => !/https?:|saved-expense|ข้อมูลที่ยังต้องตอบ|ข้อมูลจากน้องมั่งมี|\p{Extended_Pictographic}/u.test(text)), kept.texts.join(' | '));
+    assert.deepEqual(kept.actions.map((action) => action.label), ['เปิดใบเสร็จเดิม']);
+    assert.match(kept.actions[0]!.uri ?? '', /\/companies\/company-1\/expenses\/saved-expense$/);
+    // The reply itself is word for word what it was: the stored answer and the text fallback.
+    assert.equal(card.canonicalText, ['📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ', 'ยอดรวม – 120.00 บาท', 'สถานะ – บันทึกแบบร่างแล้ว รอคุณตรวจสอบและยืนยัน',
+      'เปิดใบเสร็จเดิม: https://app.example.com/companies/company-1/expenses/saved-expense'].join('\n'));
     assert.equal(h.counts().draftStarts, 0);
+  });
+
+  it('the kept bill\'s own seller, amount and state reach that card — and a bill not read yet shows no amount', async () => {
+    for (const [change, rows, notes, sentence] of [
+      [{ status: 'CONFIRMED', vendorNameSnapshot: 'Starbucks Coffee', grandTotalAmount: '170.0000' },
+        [['ผู้ขาย', ':', 'Starbucks Coffee'], ['ยอดรวม', ':', '170.00 บาท'], ['สถานะ', ':', 'ยืนยันรายการแล้ว']], [],
+        '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ\nผู้ขาย – Starbucks Coffee\nยอดรวม – 170.00 บาท\nสถานะ – ยืนยันรายการแล้ว\n'],
+      [{ status: 'VOIDED', vendorNameSnapshot: 'Starbucks Coffee', grandTotalAmount: '170.0000' },
+        [['ผู้ขาย', ':', 'Starbucks Coffee'], ['ยอดรวม', ':', '170.00 บาท'], ['สถานะ', ':', 'ยกเลิกรายการแล้ว']], [],
+        '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ\nผู้ขาย – Starbucks Coffee\nยอดรวม – 170.00 บาท\nสถานะ – ยกเลิกรายการแล้ว\n'],
+      [{ status: 'REJECTED', grandTotalAmount: '170.0000' },
+        [['ยอดรวม', ':', '170.00 บาท'], ['สถานะ', ':', 'รายการไม่ผ่านการตรวจ']], [],
+        '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ\nยอดรวม – 170.00 บาท\nสถานะ – รายการไม่ผ่านการตรวจ\n'],
+      // Still being read, or read without success: the record holds no amount (its 0). The sentence is as
+      // it always was; the card has no total row, and never an empty one.
+      [{ status: 'EXTRACTING', grandTotalAmount: '0' }, [['สถานะ', ':', 'กำลังอ่านใบเสร็จ']], [],
+        '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ\nยอดรวม – 0.00 บาท\nสถานะ – กำลังอ่านใบเสร็จ\n'],
+      [{ status: 'NEEDS_REVIEW', aiVerificationStatus: 'FAILED', grandTotalAmount: '0.0000' }, [['สถานะ', ':', 'เก็บภาพแล้ว']], ['แต่อ่านข้อมูลไม่สำเร็จ'],
+        '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ\nยอดรวม – 0.00 บาท\nสถานะ – เก็บภาพแล้ว แต่อ่านข้อมูลไม่สำเร็จ\n'],
+    ] as const) {
+      const h = receiptHarness();
+      await h.useCase.executeReceiptUpload(h.event());
+      Object.assign(h.expense(), change);
+      await h.useCase.executeReceiptUpload(h.event('same-photo-again', 'new-message-id'));
+      const [message] = h.sends[1];
+      const card = readLineSystemCard(message);
+      assert.deepEqual([card.header, card.rows, card.notes], [['เอกสารที่ส่งมา', 'ตรงกับบิลที่เก็บไว้แล้ว'], rows, notes], change.status);
+      assert.ok(message.canonicalText.startsWith(sentence), `${change.status}: ${message.canonicalText}`);
+      assert.equal(h.counts().initialized, 1, 'the kept bill is opened, not captured again');
+    }
+  });
+
+  it('with several bills holding the same bytes, the card is of the first one that is the sender\'s own capture in this chat', async () => {
+    const h = receiptHarness();
+    await h.useCase.executeReceiptUpload(h.event());
+    const own = h.expense();
+    const repo = (h.useCase as any).expenseRepo;
+    repo.findExpenseIdsByAttachmentChecksum = async () => ['someone-elses', 'another-chats', own.id, 'a-later-own-copy'];
+    repo.findById = async (_companyId: string, id: string) => id === 'someone-elses' ? { ...own, id, createdByUserId: 'someone-else', vendorNameSnapshot: 'private seller' }
+      : id === 'another-chats' ? { ...own, id, vendorNameSnapshot: 'private seller', sourceChannelMetadataJson: { chatKeyHash: 'different-chat' } }
+        : { ...own, id, vendorNameSnapshot: id === own.id ? 'Starbucks Coffee' : 'a later copy' };
+    await h.useCase.executeReceiptUpload(h.event('same-photo-again', 'new-message-id'));
+    assert.equal(h.sends[1].length, 1, 'one card, of one bill');
+    const card = readLineSystemCard(h.sends[1][0]);
+    assert.deepEqual(card.rows[0], ['ผู้ขาย', ':', 'Starbucks Coffee']);
+    assert.match(card.actions[0]!.uri ?? '', /\/expenses\/saved-expense$/);
+    assert.doesNotMatch(JSON.stringify(h.sends[1]), /private seller|a later copy|someone-elses|another-chats/u);
   });
 
   it('lists current saved products and charges once without replaying old OCR items', async () => {
