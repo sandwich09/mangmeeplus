@@ -5,7 +5,9 @@
  */
 import { createHmac } from 'node:crypto';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
-import { buildLineSystemCardBubble, lineSystemCardAvailable, type LineSystemCard } from './line-system-card.logic';
+import type { LineSystemCard } from './line-system-card.logic';
+import { drawLineSystemCard } from './line-system-card-limits.logic';
+import { lineMessagePreview } from './line-message-preview.logic';
 
 export type LineBufferTextItem = {
   kind: 'text' | 'command';
@@ -79,7 +81,10 @@ export const LINE_WAIT_STATUS_SLOW_DELAY_MS = 55_000;
 export const LINE_LOADING_RESTART_DELAY_MS = 300;
 /** A second best-effort keepalive covers slow device delivery clearing the first restart. */
 export const LINE_LOADING_KEEPALIVE_DELAY_MS = 1_300;
-export const LINE_MEDIA_RECEIVED_TEXT = 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ปกติไม่เกิน 1 นาที เสร็จแล้วน้องจะสรุปให้เลยนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ';
+/** Design lock 2026-10-04 §8: the scanning context names no time nobody knows — not on the card, and
+ *  not in this sentence, which is the card's canonical text and what is sent where the card cannot be
+ *  drawn. (It used to promise "ปกติไม่เกิน 1 นาที".) Same shape as the file sentence below. */
+export const LINE_MEDIA_RECEIVED_TEXT = 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ';
 /**
  * §17.1 / capture appendix §3: a `file` message is a DOCUMENT, and its read is async — so the
  * acknowledgement may neither call it a รูป nor promise the one-minute turnaround the photo lane
@@ -173,9 +178,10 @@ function scanningCard(what: string, text: string): NonNullable<LineWaitStage['ca
 
 /** A waiting bubble as it is sent: the stage's card where LINE can fetch its pictures, its sentence otherwise. */
 export function lineWaitStageMessage(stage: LineWaitStage, webBaseUrl: string | undefined): LineReplyMessage {
-  if (!stage.card || !lineSystemCardAvailable(webBaseUrl)) return { type: 'text', text: stage.text.slice(0, 5000) };
+  const contents = stage.card && drawLineSystemCard({ ...stage.card, textStyle: 'waiting' }, webBaseUrl);
+  if (!stage.card || !contents) return { type: 'text', text: stage.text.slice(0, 5000) };
   const said = [stage.card.banner?.text, stage.card.text].filter(Boolean).join(' ');
-  return { type: 'flex', altText: said, canonicalText: stage.text, contents: buildLineSystemCardBubble({ ...stage.card, textStyle: 'waiting' }, webBaseUrl) };
+  return { type: 'flex', altText: lineMessagePreview(said), canonicalText: stage.text, contents };
 }
 
 /**

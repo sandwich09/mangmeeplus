@@ -134,9 +134,14 @@ describe('capacity rules', () => {
 });
 
 describe('waiting feedback microcopy', () => {
-  it('keeps the receipt acknowledgement truthful and sets a time expectation', () => {
-    assert.match(LINE_MEDIA_RECEIVED_TEXT, /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
-    assert.match(LINE_MEDIA_RECEIVED_TEXT, /ไม่เกิน 1 นาที/, 'the ack says how long a read normally takes');
+  it('keeps the receipt acknowledgement truthful, and promises no time nobody knows (design lock §8)', () => {
+    assert.match(LINE_MEDIA_RECEIVED_TEXT, /ได้รับรูปแล้ว.*กำลังอ่านเอกสารอยู่.*สรุปให้ทางแชตนี้.*คุยกับน้องต่อได้เลย/);
+    // The sentence is the scanning card's canonical text: what a notification shows and what is sent
+    // where the card cannot be drawn. The lock bans a duration or a percentage there as on the card.
+    for (const types of [['image'], ['file'], ['image', 'image'], ['file', 'file', 'file'], ['image', 'file']] as Array<Array<'image' | 'file'>>) {
+      assert.doesNotMatch(lineMediaGroupAckText(types), /นาที|วินาที|ชั่วโมง|%|เปอร์เซ็นต์/u, types.join('+'));
+    }
+    for (const text of [LINE_MEDIA_SLOW_STATUS_TEXT, LINE_SLOW_TURN_STATUS_TEXT]) assert.doesNotMatch(text, /นาที|วินาที|ชั่วโมง|%|เปอร์เซ็นต์/u);
   });
 
   // UAT 2026-09-29 "ส่งรูปที่ 2 ต่อกันแล้วเงียบไป": a burst is acknowledged once, by count, on arrival.
@@ -146,7 +151,7 @@ describe('waiting feedback microcopy', () => {
     const burst = lineMediaGroupAckText(['image', 'image']);
     assert.match(burst, /^ได้รับรูปแล้ว 2 รูปค่ะ/);
     assert.match(burst, /ทีละรูปตามลำดับ.*ครบทุกรูป.*คุยกับน้องต่อได้เลยค่ะ$/);
-    assert.doesNotMatch(burst, /1 นาที/, 'a queue of reads cannot keep the one-minute promise');
+    assert.doesNotMatch(burst, /นาที/, 'no acknowledgement names a time');
     assert.match(lineMediaGroupAckText(['file', 'file', 'file']), /^ได้รับไฟล์แล้ว 3 ไฟล์ค่ะ/);
     const mixed = lineMediaGroupAckText(['image', 'file']);
     assert.match(mixed, /^ได้รับรูป 1 รูปและไฟล์ 1 ไฟล์แล้วค่ะ/, 'a file is never called a รูป (§17.1)');
@@ -184,7 +189,7 @@ describe('scanning card — the media acknowledgement on the locked design', () 
 
   it('one picture: two header lines, what is being read, and where the result will come', () => {
     const stage = lineMediaGroupAckStage(['image']);
-    assert.equal(stage.text, LINE_MEDIA_RECEIVED_TEXT, 'the sentence that was sent before is still the canonical text');
+    assert.equal(stage.text, LINE_MEDIA_RECEIVED_TEXT, 'the acknowledgement sentence is the card\'s canonical text');
     assert.deepEqual(stage.card, {
       mascot: 'scanning', header: { lines: ['เอกสารที่ส่งมา', 'กำลังสแกน'] },
       banner: { tone: 'scanning', text: 'กำลังอ่านข้อมูลจากรูป' },
