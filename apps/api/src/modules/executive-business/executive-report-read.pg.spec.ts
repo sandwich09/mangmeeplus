@@ -64,6 +64,8 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
   const contactReader = () => reader(['system.executive.read', 'system.executive.contact.read']);
 
   // ── Fixtures: the smallest rows each source table accepts ──
+  // The build now stores an unlabelled company as CUSTOMER. The read side still tells a stored profile without a label apart, so the fixture takes the label off again.
+  const unlabel = () => client.executiveCompanyProfile.updateMany({ where: { companyId: 'u-unlabelled' }, data: { reportClassification: null } });
   const company = (id: string, data: Record<string, unknown> = {}) =>
     client.company.create({ data: { id, name: `ร้าน ${id}`, createdAt: at('2026-08-10T02:00:00Z'), ...data } });
   const chiangMai = { line1: '1 ถนนลับ', subdistrict: 'ศรีภูมิ', district: 'เมืองเชียงใหม่', province: 'จังหวัดเชียงใหม่', postalCode: '50200' };
@@ -167,6 +169,7 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     const unbuilt = await report.context(reader());
     assert.deepEqual([unbuilt.build, unbuilt.months, unbuilt.builtMonths], [null, null, []]);
     const first = await build.rebuild(FIRST_BUILD);
+    await unlabel();
     assert.equal(first.status, 'BUILT');
     firstBuildId = (first as { buildId: string }).buildId;
 
@@ -260,6 +263,7 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     await client.auditLog.create({ data: { action: 'system.partner_company.update', targetType: 'company', targetId: 'c-a', requestId: 'r', result: 'SUCCESS' } });
 
     const second = await build.rebuild(NOW);
+    await unlabel();
     assert.deepEqual([second.status, (second as { kind: string }).kind], ['BUILT', 'FULL']);
   });
 
@@ -657,6 +661,7 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     try {
       const billing = new BillingCashMovementsService({ client } as never, { billingMode: 'live', stripeAccountId: STRIPE } as never);
       assert.equal((await new ExecutiveReportBuildUseCase({ client } as never, billing).rebuild(clock)).status, 'BUILT');
+      await unlabel();
       const after = await report.overview(reader(), { month: '2026-09', buildId: before.build.id });
       await assert.rejects(() => report.export(reader(['system.executive.read', 'system.executive.export']), { reportKey: 'overview', month: '2026-09', filters: {}, buildId: before.build.id, format: 'xlsx', includeContacts: false }), error => codeOf(error) === 'EXECUTIVE_SNAPSHOT_EXPIRED');
       assert.deepEqual([after.buildChanged, after.build.monthRevision, after.build.monthRevisedAt, valueOf(after.metrics.netReceiptsSatang)],
@@ -703,6 +708,7 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     try {
       await client.company.update({ where: { id: 'c-a' }, data: { reportClassification: 'TEST' } });
       const built = await build.rebuild(now); assert.equal((built as { kind: string }).kind, 'HOURLY'); clock = now;
+      await unlabel();
       const range = await report.overview(reader(), { from: '2026-08', to: '2026-09' });
       const august = await client.executiveCompanyMonth.findFirstOrThrow({ where: { month: '2026-08', companyId: 'c-a' } });
       assert.notEqual(august.buildId, range.build.id);
