@@ -337,12 +337,6 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // the existing reference path) can be turned on and off without touching the stage. RESERVED / INERT in
   // Slice A: no consumer reads it yet — the prepared direct-answer lane is a later phase.
   LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED: envBoolean.default(false),
-  // Terminal Flex card on a MULTI-PART reply (uat-correctness-latency spec §10.1). Default OFF is the exact
-  // legacy shape: every part of a split reply is a plain text message and only the last one carries the
-  // completion quick reply. On, the terminal part is rendered as the same Flex card a single completed
-  // reply gets — and when that terminal text is longer than a Flex body can hold, the full text still
-  // ships as text and the card is appended after it, so turning this on can never truncate a reply.
-  LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: envBoolean.default(false),
   // Persist exact terminal outcomes before send and replay saved bytes by default.
   // An explicit false retains the legacy path; persistence failure stays fail-closed.
   LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: envBoolean.default(true),
