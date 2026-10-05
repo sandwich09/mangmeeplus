@@ -352,6 +352,8 @@ export type LineAiTurnRequest = {
   valueCandidates?: LineAiTurnValueCandidates;
   /** Item 10F: the chat's open waiting_user ledger entries (bounded). DATA, never instructions. */
   openClarifications?: LineAiOpenClarification[];
+  /** Offered questions this intake resolved; context only, never write authority. */
+  resolvedClarificationIds?: string[];
   /** Optional additive prepared plan the API forwarded (latency/autonomy §7). Untrusted model
    *  advice with no authority; every receiver re-parses it with `parseLineAiPreparedPlan`. Absent
    *  from an older API caller — the gateway/runtime then falls back to full orchestration. */
@@ -511,7 +513,7 @@ export function parseLineAiTaskProjection(value: unknown): LineAiTaskProjectionV
 }
 
 /** Strict semantic plan parser: all proposals are bounded, indexed, and bound to original evidence. */
-export function parseLineAiSemanticSubrequests(value: unknown, messageText: string, evidence?: LineAiInputEvidenceV2): LineAiSemanticSubrequestV2[] | undefined {
+export function parseLineAiSemanticSubrequests(value: unknown, messageText: string, evidence?: LineAiInputEvidenceV2, originalClarifications?: readonly LineAiOpenClarification[]): LineAiSemanticSubrequestV2[] | undefined {
   if (!Array.isArray(value) || value.length < 1 || value.length > 8) return undefined;
   const parsed: LineAiSemanticSubrequestV2[] = [];
   for (let i = 0; i < value.length; i += 1) {
@@ -541,7 +543,8 @@ export function parseLineAiSemanticSubrequests(value: unknown, messageText: stri
     if (raw['entityReference'] !== undefined) {
       const ref = raw['entityReference'];
       if (!recordValue(ref) || !exactKeys(ref, ['kind', 'value']) || ref['kind'] !== 'user_text'
-        || typeof ref['value'] !== 'string' || ref['value'].length > 160 || !messageText.includes(ref['value'])) return undefined;
+        || typeof ref['value'] !== 'string' || ref['value'].length > 160 || (!messageText.includes(ref['value']) && !(['read', 'general', 'help'].includes(String(raw['kind']))
+          && originalClarifications?.some(entry => entry.text.includes(ref['value'] as string))))) return undefined;
       entityReference = { kind: 'user_text', value: ref['value'] };
     }
     // tuning-7b (K1): an invalid toolHint drops ONLY the hint, never the whole subrequest — it is
@@ -1969,6 +1972,8 @@ export type LineAiOpenClarification = {
   /** Canonical subject of the original request, when known. */
   subject?: LineAiBusinessSubject;
   askedAt: string;
+  /** Server-observed read ask-back; never mutation authority. */
+  reasonCode?: 'READ_FILTER_NOT_UNDERSTOOD';
   /** Intake route the ORIGINAL request was on, when it was an intake clarify. The dispatcher
    *  inherits it deterministically instead of trusting the model to re-read the original text. */
   clarifyForIntent?: LineIntakeRouteIntent;
@@ -1988,6 +1993,35 @@ export type LineAiOpenClarification = {
     mimeType: string;
   };
 };
+
+/** Read-only grounding selects answered entries, or the sole open question when no ids were emitted. */
+export function lineAiReplyClarifications(open: readonly LineAiOpenClarification[] | undefined, ids?: readonly string[]): LineAiOpenClarification[] {
+  return (open ?? []).filter(entry => ids ? ids.includes(entry.id) : open?.length === 1);
+}
+
+/** AgentCore is a separate JSON boundary; keep the existing question data bounded on that hop. */
+export function parseLineAiOpenClarifications(value: unknown): LineAiOpenClarification[] | undefined {
+  if (!Array.isArray(value) || value.length > 5) return undefined;
+  const out: LineAiOpenClarification[] = [];
+  for (const item of value) {
+    if (!recordValue(item) || typeof item['id'] !== 'string' || !item['id'] || item['id'].length > 200
+      || typeof item['text'] !== 'string' || item['text'].length > 12000
+      || typeof item['question'] !== 'string' || item['question'].length > 2000
+      || typeof item['askedAt'] !== 'string' || !Number.isFinite(Date.parse(item['askedAt']))) return undefined;
+    const clarifyForIntent = asIntakeRouteIntent(item['clarifyForIntent']);
+    const candidates = item['candidateExpenseIds'];
+    const media = item['pendingMedia'];
+    if (item['clarifyForIntent'] !== undefined && !clarifyForIntent
+      || candidates !== undefined && (!Array.isArray(candidates) || candidates.length > 5 || candidates.some(id => typeof id !== 'string' || !id || id.length > 200))
+      || media !== undefined && (!recordValue(media) || ['pendingMediaId', 'attachmentId', 'mimeType'].some(key => typeof media[key] !== 'string' || !media[key] || String(media[key]).length > 200))) return undefined;
+    out.push({ id: item['id'], text: item['text'], question: item['question'], askedAt: item['askedAt'],
+      ...(LINE_AI_BUSINESS_SUBJECTS.includes(item['subject'] as LineAiBusinessSubject) ? { subject: item['subject'] as LineAiBusinessSubject } : {}),
+      ...(item['reasonCode'] === 'READ_FILTER_NOT_UNDERSTOOD' ? { reasonCode: item['reasonCode'] } : {}),
+      ...(clarifyForIntent ? { clarifyForIntent } : {}), ...(candidates ? { candidateExpenseIds: [...candidates as string[]] } : {}),
+      ...(media ? { pendingMedia: { pendingMediaId: (media as Record<string, string>)['pendingMediaId']!, attachmentId: (media as Record<string, string>)['attachmentId']!, mimeType: (media as Record<string, string>)['mimeType']! } } : {}) });
+  }
+  return out;
+}
 
 // ── Item 10F: per-sub-request coverage (critic verdicts) ─────────────────────
 

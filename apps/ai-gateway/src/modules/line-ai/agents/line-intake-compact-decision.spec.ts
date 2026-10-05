@@ -800,3 +800,19 @@ describe('tuning-5b: confidence floor, why/compare/advice guard, and derived sub
     assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['groupBy'], 'category', 'grouping itself is untouched');
   });
 });
+
+describe('clarification read filter grounding', () => {
+  it('grounds the selected original period and name at askedAt without granting write authority', async () => {
+    const text = 'เอาช่วงนั้นค่ะ';
+    const original = { id: 'q1', text: 'สรุปค่าใช้จ่ายเดือนที่แล้วของร้านสมใจ', question: 'ช่วงเดิมใช่ไหมคะ', askedAt: '2026-09-27T04:00:00.000Z' };
+    const created = await fixture(text);
+    const originalPeriod = extractValueCandidates(original.text, '2026-09-27').periods![0]!;
+    const filters = { fromDate: originalPeriod.fromDate, toDate: originalPeriod.toDate, vendorName: 'ร้านสมใจ' };
+    const input = { raw: decision(text, filters), messageText: text, inputEvidence: created.inputEvidence,
+      enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th' };
+    const parsed = parseLineIntakeCompactDecision({ ...input, originalClarifications: [original] });
+    assert.ok(parsed?.preparedPlan);
+    assert.deepEqual(parsed.preparedPlan.proposedCalls[0]?.input, filters);
+    assert.equal(parseLineIntakeCompactDecision(input)?.simpleReadRejection, 'filter_not_grounded');
+  });
+});

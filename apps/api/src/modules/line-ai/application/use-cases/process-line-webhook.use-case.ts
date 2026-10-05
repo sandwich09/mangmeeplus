@@ -1,6 +1,6 @@
 import { THAI_SYSTEM_ROLE_NAMES, LINE_FEATURE_DISABLED_HELP_TH, SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
-import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSemanticSubrequests, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
+import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSemanticSubrequests, lineAiReplyClarifications, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import { PDFDocument } from 'pdf-lib';
 import { LineDocumentQaError, LineDocumentQaService, type LineDocumentQaJobRow, type LineDocumentQaOwner } from '../line-document-qa.service';
 import { LineDocumentQaWorker } from '../line-document-qa.worker';
@@ -1994,9 +1994,9 @@ type LineClarificationSource = {
   draftRouting?: string;
 };
 
-export function lineClarificationContentHash(item: Pick<LedgerSubRequestInput, 'text' | 'subject' | 'clarifyForIntent' | 'candidateExpenseIds' | 'pendingMedia'> & { clarifyQuestion?: string; question?: string }): string {
+export function lineClarificationContentHash(item: Pick<LedgerSubRequestInput, 'text' | 'subject' | 'clarifyForIntent' | 'candidateExpenseIds' | 'pendingMedia' | 'reasonCode'> & { clarifyQuestion?: string; question?: string }): string {
   return hashMessagePreview(JSON.stringify([item.text, item.clarifyQuestion ?? item.question ?? null,
-    item.subject ?? null, item.clarifyForIntent ?? null, item.candidateExpenseIds ?? [], item.pendingMedia ?? null]));
+    item.subject ?? null, item.clarifyForIntent ?? null, item.candidateExpenseIds ?? [], item.pendingMedia ?? null, ...(item.reasonCode ? [item.reasonCode] : [])]));
 }
 
 /** What this chat left open, read the way production a2b926c6 read it before routing a text turn. */
@@ -4176,7 +4176,8 @@ export class ProcessLineWebhookUseCase {
       if (!accepted || accepted.ownerEpoch !== bound.epoch || accepted.conversationId !== bound.id || accepted.digest !== locator!.revision
         || accepted.accessFingerprint !== this.deliveryAccess.get(event)?.fingerprint) throw new Error('LINE_TASK_SOURCE_CHANGED');
       const evidence = accepted.request.inputEvidence!;
-      const inventory = parseLineAiSemanticSubrequests(accepted.request.semanticSubrequests, accepted.request.messageText, evidence);
+      const inventory = parseLineAiSemanticSubrequests(accepted.request.semanticSubrequests, accepted.request.messageText, evidence,
+        lineAiReplyClarifications(accepted.request.openClarifications, accepted.request.resolvedClarificationIds));
       const original = inventory?.find(item => item.index === originalIndex);
       if (!original || original.kind !== 'write' || !original.writeIntent || !original.evidenceRefs?.length) throw new Error('LINE_TASK_SOURCE_MISSING');
       if (original.dependsOn.some(dependency => !projection.tasks.some(parent => parent.sourceRevisionLocators?.some(source => {
@@ -5176,8 +5177,9 @@ export class ProcessLineWebhookUseCase {
     }
     if (!await this.waitingSourcesCurrent(event, ctx, openWaiting)) return null;
     const openClarifications: LineAiOpenClarification[] | undefined = openWaiting.length > 0
-      ? openWaiting.map(({ id, question, text, subject, askedAt, clarifyForIntent, candidateExpenseIds, pendingMedia }) => ({
+      ? openWaiting.map(({ id, question, text, subject, askedAt, reasonCode, clarifyForIntent, candidateExpenseIds, pendingMedia }) => ({
         id, question, text, ...(subject && { subject }), askedAt,
+        ...(reasonCode && { reasonCode }),
         ...(clarifyForIntent && { clarifyForIntent }),
         ...(candidateExpenseIds?.length && { candidateExpenseIds }),
         ...(pendingMedia && { pendingMedia }),
@@ -6020,7 +6022,7 @@ export class ProcessLineWebhookUseCase {
       if (await this.handleRoutedPreference(event, requestId, semanticRoutePlan)) return;
       if (await this.resumeDocumentQuestionV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
       if (await this.draftCurrentDocumentV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
-      if (semanticRoutePlan.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
+      if (!open.openClarifications?.length && semanticRoutePlan.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
         await this.deliverPureGeneralV2(event, requestId, semanticRoutePlan, resolvedAccess, entitledFeatureKeys, candidates, conversationContext); return;
       }
     }
@@ -7451,6 +7453,7 @@ export class ProcessLineWebhookUseCase {
       messageText: event.inputEvidence ? event.messageText : normalizedText,
       ...await this.reliabilityContext(event),
       ...(routePlan.semanticSubrequests ? { semanticSubrequests: routePlan.semanticSubrequests } : {}),
+      ...(routePlan.resolvedClarificationIds ? { resolvedClarificationIds: routePlan.resolvedClarificationIds } : {}),
       ...(retainedTask ? { retainedTaskSource: retainedTask.source } : {}),
       ...(this.budgetGrantsV2.get(event) && event.inputEvidence ? { inputEvidence: event.inputEvidence, budgetGrantV2: this.budgetGrantsV2.get(event), contractCapabilities: ['input-evidence-v2' as const, 'budget-envelope-v2' as const] } : {}),
       ...(this.boundConversations.has(event) && this.config.lineAiApprovedKnowledgeEnabled ? { approvedKnowledge: true, ...(routePlan.selectedKnowledgeCardIds ? { selectedKnowledgeCardIds: routePlan.selectedKnowledgeCardIds } : {}) } : {}),
@@ -7707,7 +7710,7 @@ export class ProcessLineWebhookUseCase {
     // 10.5 Acknowledge work only after delivery. Clarifications and uncovered
     // sub-requests are now safe to advance because the employee saw this turn.
     if (this.ledger) {
-      const subRequests = this.ledger.coverageToSubRequests(turnResponse.coverage);
+      const subRequests = this.ledger.coverageToSubRequests(turnResponse.coverage, turnResponse.semanticCoverage, routePlan.semanticSubrequests);
       if (subRequests.length > 0) {
         await this.appendSourceBoundClarifications(event, {
           messagingChannelId: event.messagingChannelId,

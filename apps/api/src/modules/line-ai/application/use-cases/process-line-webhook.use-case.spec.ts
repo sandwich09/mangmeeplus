@@ -5960,7 +5960,7 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
       intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, resolvedClarificationIds: ['7-0'] }),
       openWaiting: [
         {
-          id: '7-0', question: 'ปีไหน?', text: 'บันทึกบิล 9/11/37', subject: 'expense',
+          id: '7-0', question: 'ปีไหน?', text: 'สรุปค่าใช้จ่ายเดือนสิงหาคม', subject: 'expense', reasonCode: 'READ_FILTER_NOT_UNDERSTOOD',
           askedAt: '2026-07-07T09:59:00.000Z', entry: entryOf('7-0'),
         },
         { id: '8-0', question: 'สาขาไหน?', text: 'ยอดขายสาขา', askedAt: '2026-07-07T09:59:30.000Z', entry: entryOf('8-0') },
@@ -5972,6 +5972,9 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
     assert.equal(aiGatewayRequests[0]?.openClarifications?.length, 2);
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.question, 'ปีไหน?');
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.subject, 'expense');
+    assert.equal(intakeRequests[0]?.openClarifications?.[0]?.reasonCode, 'READ_FILTER_NOT_UNDERSTOOD');
+    assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.reasonCode, 'READ_FILTER_NOT_UNDERSTOOD');
+    assert.deepEqual(aiGatewayRequests[0]?.resolvedClarificationIds, ['7-0']);
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.sourceContext, undefined, 'internal proof never reaches the model');
     assert.deepEqual(intakeRequests[0]?.openClarifications?.[0]?.pendingMedia,
       aiGatewayRequests[0]?.openClarifications?.[0]?.pendingMedia,
@@ -8331,4 +8334,64 @@ it('capability follow-up distinguishes shop permission management from platform 
   const reply = capabilityFollowUpReply('ยังไง', { permissions: [] });
   assert.match(reply, /ผู้มีสิทธิ์จัดการบทบาท/);
   assert.doesNotMatch(reply, /ผู้ดูแลระบบของบริษัท/);
+});
+
+it('keeps the bound turn grant after zero-model period routing and after original-question evidence routing', async () => {
+  const { parseLineIntakeCompactDecision } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/line-intake-compact-decision');
+  const { parseLineAiSemanticSubrequests, lineAiReplyClarifications } = await import('@watchdog-bms/contracts');
+  for (const [kind, shortcut] of [['read', true], ['read', false], ['general', false], ['help', false]] as const) {
+    const { prisma } = makePrisma();
+    prisma.client.lineIntakePendingMedia.findMany = async () => [];
+    prisma.client.lineLedgerDelivery = { findMany: async () => [], findFirst: async () => null, findUnique: async () => null };
+    const original = { id: 'q1', text: 'สรุปค่าใช้จ่ายร้านสมใจ', question: 'ปีไหนคะ', askedAt: new Date().toISOString(), reasonCode: 'READ_FILTER_NOT_UNDERSTOOD' };
+    let issued = 0;
+    // Gateway zero-call and provider-call cases both hand the API this ordinary decoded plan.
+    const routed = (req: any) => {
+      const decoded = parseLineIntakeCompactDecision({ raw: { subrequests: [{ kind, goal: original.text,
+        sources: shortcut ? [{ part: 0, whole: true }] : [{ part: 0, quote: original.text }],
+        ...(shortcut ? {} : { entity: 'ร้านสมใจ' }), filters: {} }] }, messageText: req.messageText,
+        inputEvidence: req.inputEvidence, language: 'th', enabledTools: new Set(), enabledPreparedFamilies: new Set(), originalClarifications: [original] as any });
+      assert.ok(decoded);
+      return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', confidence: 1, language: 'th',
+        resolvedClarificationIds: ['q1'], semanticSubrequests: decoded.semanticSubrequests };
+    };
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query'],
+      config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'], lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+      intakeRouteFn: routed,
+      aiGatewayFn: request => {
+        assert.ok(parseLineAiSemanticSubrequests(request.semanticSubrequests, request.messageText, request.inputEvidence,
+          lineAiReplyClarifications(request.openClarifications, request.resolvedClarificationIds)), 'same shared parser used for API retained plans and gateway turn ingress');
+        return { requestId: request.requestId, replyText: 'อ่านค่าใช้จ่ายแล้วค่ะ', intent: 'read_summary', agent: 'accounting', durationMs: 1,
+          webLinks: [], sourceLabels: [], sourceRefs: [], toolsInvoked: [], refused: false, semanticCoverage: [{ index: 0, status: 'handled' }] };
+      },
+    });
+    const event: any = { ...BASE_EVENT, webhookEventId: `reply-grant-${kind}-${shortcut}`, messageText: 'ปี 2569' };
+    event.inputEvidence = (await createLineAiInputEvidence({ turnKey: event.webhookEventId, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] }))!.inputEvidence;
+    const flow = h.useCase as any, grant = { turnKey: event.inputEvidence.turnKey }, lanes: string[] = [];
+    const findLog = prisma.client.lineWebhookEventLog.findUnique;
+    prisma.client.lineWebhookEventLog.findUnique = async (args: any) => args.select ? findLog(args) : { id: 'log-reply', status: 'received', companyId: 'company-1', createdAt: new Date() };
+    flow.aiGateway.issueLineReliabilityGrant = async () => { issued++; return grant; };
+    flow.aiGateway.narrowLineReliabilityGrant = async (_grant: any, lane: string) => { lanes.push(lane); return grant; };
+    flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+      projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+      save: async () => true, createTurn: async () => ({ id: 'turn-1' }) };
+    flow.loadOpenWorkContext = async () => ({ openWaiting: [], openClarifications: [original], recentCapturedExpenses: [], activeExpenseDrafts: [],
+      substituteContext: { workflowState: 'none', hasPendingQuestion: false, recentCandidateCount: 0 } });
+    flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+    flow.textValueCandidates = async () => ({ amounts: [], dates: [], periods: shortcut ? [{ span: 'ปี 2569', kind: 'year', fromDate: '2026-01-01', toDate: '2026-12-31', source: 'explicit', label: 'ปี 2569', assumptions: [] }] : [] });
+    flow.sendMessages = async () => 'ok';
+    await h.useCase.execute(event);
+    assert.equal(h.intakeRequests.length, 1);
+    assert.equal(issued, 1, 'real prepareTextGrantV2 issues before the router');
+    assert.deepEqual(lanes, [kind === 'read' ? 'mixed' : 'general']);
+    assert.equal(h.aiGatewayRequests.length, 1, 'the following turn is reached');
+    assert.equal(h.aiGatewayRequests[0].budgetGrantV2, grant);
+    assert.deepEqual(h.aiGatewayRequests[0].resolvedClarificationIds, ['q1']);
+    assert.equal(h.aiGatewayRequests[0].semanticSubrequests[0].kind, kind);
+  }
+});
+
+it('binds the read clarification marker to the waiting question content proof', () => {
+  const question = { text: 'สรุปค่าใช้จ่าย', question: 'ปีไหนคะ' };
+  assert.notEqual(lineClarificationContentHash(question), lineClarificationContentHash({ ...question, reasonCode: 'READ_FILTER_NOT_UNDERSTOOD' } as any));
 });
