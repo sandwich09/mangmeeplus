@@ -12,7 +12,7 @@ import { currentBudgetState } from '../../../common/usage/usage-context';
 import { productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
 import { PRODUCT_HELP_PACK } from './approved-product-help';
 import { buildCapabilityHelp } from './response-composer.agent';
-import { BACKLOG_TOOLS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
+import { BACKLOG_TOOLS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, expenseComparisonCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
 import { draftUpdateCardLayout } from './draft-update-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
@@ -402,6 +402,8 @@ const BACKLOG_VIEW_FILTER_KEYS = new Set(['paymentStatus', 'documentStatus', 've
 // E5 (tuning-6a): mirrors line-intake-compact-decision.ts's WHY_COMPARE_ADVICE_PATTERN's why terms
 // only (that file is outside this batch's owned files, so the terms are copied rather than shared).
 const WHY_QUESTION_PATTERN = /ทำไม|เพราะอะไร|สาเหตุ|\bwhy\b/iu;
+/** A comparison says a percentage only to a reader who asked for one (owner 2026-10-05: "เอา % ออกเถอะ งง"). */
+const PERCENT_ASKED_PATTERN = /เปอร์เซ[็]?[นณ]|%|กี่เท่า|\bpercent/iu;
 
 // M4 (tuning-8, T-110-a): broader than WHY_QUESTION_PATTERN on purpose — "เพิ่มขึ้น"/"เทียบ"/
 // "กว่าเดือน" etc. also imply a month-over-month comparison without a why-word. Used ONLY by
@@ -1009,11 +1011,11 @@ export async function runSemanticTurnV2(input: {
       const shares = expenseBreakdownShares(entry.result.data as Record<string, unknown>);
       if (shares) parts.push(shares);
     }
-    // A8: the direction sentence and rank lines join the SAME grounding allow-set as factsText —
+    // A8: the direction sentence joins the SAME grounding allow-set as factsText —
     // compose may still echo one of these numbers in a supplementary sentence even though a
     // comparison's own index skips compose for its FINAL answer (comparisonByIndex below).
     const comparison = comparisonByIndex.get(entry.index);
-    if (comparison) parts.push(comparison.factsText, comparison.directionLine, ...comparison.rankLines);
+    if (comparison) parts.push(comparison.factsText, comparison.directionLine);
     // M1 (tuning-8, T-111-b): APPEND — readEntries can now carry two results for the same index, and
     // the second `.set()` must not erase the first's already-derived shares (e.g. the unfiltered
     // breakdown's own-vendor share, which used to be the one discarded above).
@@ -1121,6 +1123,7 @@ export async function runSemanticTurnV2(input: {
   // one read of the reader's open work. Model prose never fills a row; an item answered any other way
   // has no entry here and is drawn as its sentence.
   const layouts = new Map<number, LineAiAnswerCardLayout>();
+  const percentAsked = PERCENT_ASKED_PATTERN.test(req.messageText);
   for (const item of inventory) {
     // C1(d): the composer never produced a usable answer for this subrequest after every retry —
     // a compose failure, not a customer question, so it must not linger as `needs_user`.
@@ -1177,7 +1180,7 @@ export async function runSemanticTurnV2(input: {
     // A complete comparison always uses its computed answer, including when compose ran for an
     // independent question. A model sentence must never replace a period's figures.
     else if (item.kind === 'read' && comparisonByIndex.has(item.index)) {
-      answer = { index: item.index, status: 'handled', text: expensePeriodComparisonReplyText(comparisonByIndex.get(item.index)!),
+      answer = { index: item.index, status: 'handled', text: expensePeriodComparisonReplyText(comparisonByIndex.get(item.index)!, percentAsked),
         reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED', sourceRefIds: comparisonSourceIds.get(comparisonByIndex.get(item.index)!)! };
       modelComposed = false;
     }
@@ -1367,7 +1370,13 @@ export async function runSemanticTurnV2(input: {
     && turnResults.length > 0 && turnResults.every(result => result.status === 'ok' && BACKLOG_TOOLS.has(result.toolName))
     && (turnResults.length > 1 || myPendingWorkQuestion(req.messageText))
     ? backlogCardLayout(turnResults) : undefined;
-  const layout = single ?? backlog;
+  // …or, for an answer that is ONE comparison and nothing else (each period is its own item, all of
+  // them answered by the same computed block), that comparison's rows.
+  const onlyComparison = comparisonByIndex.get(inventory[0]?.index ?? -1);
+  const comparisonLayout = !single && !backlog && onlyComparison && blocks.length === 1
+    && inventory.every(item => comparisonByIndex.get(item.index) === onlyComparison)
+    ? expenseComparisonCardLayout(onlyComparison, percentAsked, webLinks.length > 0) : undefined;
+  const layout = single ?? backlog ?? comparisonLayout;
   const sourceLabels = [...new Set(sourceRefs.map(ref => ref.label))];
   return { plan, outputs, replyText, semanticCoverage: coverage, sourceRefs, webLinks,
     ...(layout ? { presentation: { kind: 'answer_cards' as const, cards: [{ text: replyText, layout,
