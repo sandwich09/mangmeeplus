@@ -3431,13 +3431,16 @@ export class ProcessLineWebhookUseCase {
     confirm: boolean,
   ): Promise<void> {
     const chatKeyHash = chatKeyHashOf(event);
+    // A tap on a proposal's button carries no typed words to head a reply, and needs none: every
+    // answer to it is the edit's own card (design lock context 4), here "nothing was changed".
+    const unchanged = (reply: string) => buildDraftUpdateOutcomeCard('unchanged', reply, this.config.webBaseUrl, ctx.companyId);
     if (!this.draftUpdate?.enabled) {
-      await this.deliverReply(event, DRAFT_UPDATE_EXPIRED_REPLY);
+      await this.deliverReply(event, DRAFT_UPDATE_EXPIRED_REPLY, undefined, unchanged(DRAFT_UPDATE_EXPIRED_REPLY));
       await this.updateEventLog(event.webhookEventId, 'draft_update_disabled', undefined, ctx.companyId);
       return;
     }
     if (!event.draftUpdatePreviewId) {
-      await this.deliverReply(event, DRAFT_UPDATE_EXPIRED_REPLY);
+      await this.deliverReply(event, DRAFT_UPDATE_EXPIRED_REPLY, undefined, unchanged(DRAFT_UPDATE_EXPIRED_REPLY));
       await this.updateEventLog(event.webhookEventId, 'draft_update_expired', undefined, ctx.companyId);
       return;
     }
@@ -3453,7 +3456,8 @@ export class ProcessLineWebhookUseCase {
     const v2Preview = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId: ctx.companyId, userId: ctx.userId,
       planJson: { path: ['control', 'previewId'], equals: event.draftUpdatePreviewId } }, select: { status: true, planJson: true } });
     if (v2Preview && (v2Preview.status !== 'ACCEPTED' || !parseLineDeliveryPlan(v2Preview.planJson))) {
-      await this.deliverReply(event, 'ยังยืนยันไม่ได้ค่ะ รายละเอียดคำขอแก้ไขยังส่งไม่ครบ กรุณารอหรืออ่านส่วนที่เหลือก่อน');
+      const pending = 'ยังยืนยันไม่ได้ค่ะ รายละเอียดคำขอแก้ไขยังส่งไม่ครบ กรุณารอหรืออ่านส่วนที่เหลือก่อน';
+      await this.deliverReply(event, pending, undefined, unchanged(pending));
       await this.updateEventLog(event.webhookEventId, 'draft_update_blocked', 'PREVIEW_NOT_FULLY_DELIVERED', ctx.companyId);
       return;
     }

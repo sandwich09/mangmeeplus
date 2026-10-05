@@ -5737,6 +5737,45 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     });
   });
 
+  // The same class, a reply that has no typed words to stand under: a tap on a proposal's button. Its
+  // answer is the edit's own card (design lock context 4), never a bare text bubble.
+  describe('a bound chat\'s replies to a tap, and a reply with a link of its own', () => {
+    const ACCESS = { permissions: ['line.ai.query', 'expense.update'], roles: [] };
+    function seam(options: Record<string, unknown> = {}) {
+      const { prisma } = makePrisma();
+      const h = makeUseCase(prisma, { permissions: ACCESS.permissions, ...options });
+      const flow = h.useCase as any;
+      const sent: any[] = [];
+      flow.sendMessages = async (_event: unknown, messages: any[]) => { sent.push(...messages); return 'ok'; };
+      const bind = (event: object) => { flow.boundConversations.set(event, { owner: { companyId: 'company-1', userId: 'user-1' }, id: 'conversation', epoch: 1 }); return event as any; };
+      return { flow, sent, bind };
+    }
+
+    it('a tap on a proposal that is gone answers on the edit\'s own card: nothing was changed', async () => {
+      for (const draftUpdate of [{ enabled: true }, { enabled: false }]) {
+        const { flow, sent, bind } = seam({ draftUpdate });
+        await flow.handleDraftUpdatePostback(bind({ ...BASE_EVENT, webhookEventId: `evt-gone-${draftUpdate.enabled}`, messageText: 'ยืนยันการแก้ไข' }), { companyId: 'company-1', userId: 'user-1' }, ACCESS, true);
+        assert.equal(sent.length, 1);
+        const card = readLineSystemCard(sent[0]);
+        assert.deepEqual(card.header, ['แก้ไขค่าใช้จ่าย', 'ยังไม่ได้แก้ไข']);
+        assert.deepEqual(card.prose, [sent[0].canonicalText]);
+        assert.match(sent[0].canonicalText, /^ไม่พบรายการที่รอยืนยันในแชทนี้ค่ะ/u);
+        assert.equal(isCompleteLineBusinessAnswerPresentation(sent[0]), true);
+      }
+    });
+
+    it('a reply whose link is not a page of this company stays text: only a text message keeps it tappable', async () => {
+      const { flow, sent, bind } = seam();
+      await flow.deliverReply(bind({ ...BASE_EVENT, messageText: 'ขอลิงก์คู่มือ', lineMessageId: 'line-message-1' }), 'ดูได้ที่ https://example.org/guide ค่ะ');
+      assert.deepEqual(sent, [{ type: 'text', text: 'ดูได้ที่ https://example.org/guide ค่ะ' }]);
+      // …and a page of this company becomes the card's button, under the name its own line gives it.
+      sent.length = 0;
+      await flow.deliverReply(bind({ ...BASE_EVENT, messageText: 'ขอลิงก์รายการ', lineMessageId: 'line-message-2' }), 'เปิดได้เลยค่ะ\nเปิดดูรายการ: https://app.example.com/companies/company-1/expenses/e1');
+      const card = readLineSystemCard(sent[0]);
+      assert.deepEqual([card.prose, card.actions], [['เปิดได้เลยค่ะ'], [{ type: 'uri', label: 'เปิดดูรายการ', uri: 'https://app.example.com/companies/company-1/expenses/e1' }]]);
+    });
+  });
+
   it('says the budget could not be CHECKED for AI_BUDGET_UNAVAILABLE, and never that it is full', async () => {
     const { prisma, updates } = makePrisma();
     const h = makeUseCase(prisma, {
