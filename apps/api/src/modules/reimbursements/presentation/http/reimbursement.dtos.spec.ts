@@ -418,3 +418,10 @@ describe('multi payout 2a DTOs', () => {
     for (const payoutThirdPartyAccepted of ['true', 1, null]) await rejects(ApproveReimbursementDto, { payoutThirdPartyAccepted });
   });
 });
+
+it('multi payout 2b: correction DTO takes saved ids and holder facts but refuses mixed modes', async () => {
+  const body = (_type: any, input: any) => pipe.transform(input, { type: 'body', metatype: SubmitPayoutCorrectionDto });
+  await body(SubmitPayoutCorrectionDto, { mode: 'SAVED', savedAccountId: 'saved-1', expectedUpdatedAt: '2026-10-05T01:00:00Z' });
+  await body(SubmitPayoutCorrectionDto, { mode: 'SPECIFIED', holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก', saveForLater: true });
+  for (const input of [{ mode: 'SAVED' }, { mode: 'SAVED', savedAccountId: 'saved-1', accountName: 'สมชาย' }, { mode: 'PREVIOUS', holderType: 'SELF' }, { mode: 'CASH', savedAccountId: 'saved-1' }]) await rejects(SubmitPayoutCorrectionDto, input);
+});

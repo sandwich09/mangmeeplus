@@ -233,7 +233,8 @@ export async function sendBackForPayoutCorrection(
   // with no account each have their own, and a PromptPay number, having no bank, has no "wrong bank": that
   // takes the kind of the account the claim carries.
   const held = payoutCorrectionHeld(req);
-  const payoutKind = held === 'ACCOUNT' ? (await deps.repo.findClaimPayout(req))?.payoutKind : undefined;
+  const heldAccount = held === 'ACCOUNT' ? await deps.repo.findClaimPayout(req) : undefined;
+  const payoutKind = heldAccount?.payoutKind;
   if (!reimbursementPayoutCorrectionReasons(held, payoutKind).includes(input.reasonCode)) throw new BadRequestException('payout_correction_reason_required');
   const reasonCode = input.reasonCode;
   const note = typeof input.note === 'string' ? input.note.trim() : '';
@@ -243,7 +244,7 @@ export async function sendBackForPayoutCorrection(
   const policy = effectivePolicyForRequest(req, effectivePolicy(await deps.repo.findPolicy(ctx.companyId, null)));
   const requestedAt = new Date();
   // The reason is worded for the kind of account held: a PromptPay number is never called "เลขบัญชี".
-  const notice = reimbursementPayoutSentBackNotice(held, reasonCode, payoutKind);
+  const notice = reimbursementPayoutSentBackNotice(held, reasonCode, payoutKind, heldAccount);
   await deps.repo.requestPayoutCorrectionAtomic({
     companyId: ctx.companyId,
     requestId: req.id,

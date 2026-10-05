@@ -197,10 +197,10 @@ export class MemberPayoutAccountUseCase {
       change = {
         write: { mode: 'SAVED', savedAccountId: input.savedAccountId, requesterUserId, actorUserId: ctx.userId, key: this.config.credentialEncryptionKey },
         audit: { mode: 'SAVED' },
-        onPersisted: async (tx, requestId) => {
+        ...(!inRound && { onPersisted: async (tx: any, requestId: string) => {
           const row = await tx.reimbursementPayoutDestination.findFirst({ where: { companyId: ctx.companyId, reimbursementRequestId: requestId, frozenAt: null }, select: { holderType: true } });
           change.audit.holderType = row.holderType;
-        },
+        } }),
       };
     } else if (input.mode === 'SPECIFIED') {
       const holder = { holderType: input.holderType === undefined ? 'SELF' as const : input.holderType, holderNote: input.holderNote };
@@ -226,7 +226,7 @@ export class MemberPayoutAccountUseCase {
           this.assertOwn(ctx);
           change.onPersisted = async (tx) => {
             const saved = await savePayoutAccountForLater(tx, { companyId: ctx.companyId, userId: requesterUserId, destination: account, ...holder, holderNote: holder.holderType === 'THIRD_PARTY' ? holder.holderNote!.trim() : undefined });
-            if (saved.added) await this.audit.log(this.savedAuditEntry(ctx, 'add', saved.account), tx);
+            if (saved?.added) await this.audit.log(this.savedAuditEntry(ctx, 'add', saved.account), tx);
           };
         }
       }

@@ -36,6 +36,7 @@ import { ForbiddenException } from '@nestjs/common';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import type { ClaimPayoutRecord, ClaimPayoutVersionRecord, PaymentPayoutDestinationRecord } from '../../infrastructure/reimbursement-payout';
 import { hasPayoutSnapshot } from '../../domain/logic/payout-destination.logic';
+import { maskedPayoutHolderFacts } from '../../infrastructure/reimbursement-payout';
 import type { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 
 const iso = (d?: Date): string | undefined => (d ? d.toISOString() : undefined);
@@ -293,6 +294,7 @@ export function toPayoutCorrection(
       ...(previousAccount && {
         payoutKind: previousAccount.payoutKind, ...(previousAccount.bankName && { bankName: previousAccount.bankName }),
         accountName: previousAccount.accountName, accountLast4: previousAccount.accountLast4, version: previousAccount.version,
+        ...maskedPayoutHolderFacts(previousAccount),
       }),
     } }),
     ...(approved?.at && { previouslyApprovedAt: approved.at }),

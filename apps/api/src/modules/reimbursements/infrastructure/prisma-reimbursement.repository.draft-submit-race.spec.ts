@@ -2081,7 +2081,7 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
       [1, 'DEFAULT_ACCOUNT', '5678', fingerprintOf(KBANK), true, null]);
     const before = { shown: await repos[0]!.findClaimPayout(pending), number: openPayoutAccountNumber((await repos[0]!.findClaimPayoutSecret(companyId, created.id, 1))!.accountNumberEncrypted, key) };
     assert.equal(before.number, KBANK.accountNumber);
-    assert.deepEqual(before.shown, { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: KBANK.bankName, accountName: KBANK.accountName, accountLast4: '5678', version: 1, source: 'DEFAULT_ACCOUNT' });
+    assert.deepEqual(before.shown, { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: KBANK.bankName, accountName: KBANK.accountName, accountLast4: '5678', version: 1, source: 'DEFAULT_ACCOUNT', holderType: 'SELF' });
 
     // The member changes the default, then removes it: the sent claim still shows, reveals and hashes the same account.
     await setDefault(SCB);
@@ -2657,7 +2657,7 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     assert.equal(computeSnapshotHash(claimSnapshotFields(claimAfter)), claim.approvalSnapshotHash);
     // What the payment row shows of that account: masked, from the claim's own snapshot.
     assert.deepEqual(await repos[0]!.listPaymentPayoutDestinations(companyId, claim.id, [1]),
-      { 1: { version: 1, payoutKind: 'BANK_ACCOUNT', bankName: KBANK.bankName, accountName: KBANK.accountName, accountLast4: '5678' } });
+      { 1: { version: 1, payoutKind: 'BANK_ACCOUNT', bankName: KBANK.bankName, accountName: KBANK.accountName, accountLast4: '5678', holderType: 'SELF' } });
 
     // The same request again is the same payment; naming another version, or none, under its key is a conflict.
     assert.equal((await repo.recordPaymentAtomic(input)).created, false);
@@ -2756,7 +2756,7 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     const [frozen] = await destinationsOf(claim.id);
     assert.deepEqual(await repos[0]!.listClaimPayoutVersions(claim), [{
       version: 1, payoutKind: 'BANK_ACCOUNT', bankName: KBANK.bankName, accountName: KBANK.accountName, accountLast4: '5678', source: 'DEFAULT_ACCOUNT',
-      frozenAt: frozen!.frozenAt, verifiedByUserId: approver, verifiedAt: new Date('2026-10-01T09:00:00.000Z'), approvalStepId: step.id,
+      frozenAt: frozen!.frozenAt, holderType: 'SELF', verifiedByUserId: approver, verifiedAt: new Date('2026-10-01T09:00:00.000Z'), approvalStepId: step.id,
     }]);
 
     const seen: any[] = [];

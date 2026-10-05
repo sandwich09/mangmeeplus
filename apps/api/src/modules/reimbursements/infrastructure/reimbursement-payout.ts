@@ -75,6 +75,7 @@ export type ClaimPayoutRecord = {
   /** Set only when someone other than the requester typed the account, or set the default it was copied from. */
   enteredByUserId?: string;
   holderType?: ReimbursementPayoutHolderType;
+  holderNote?: string;
   verifiedByUserId?: string;
   verifiedAt?: Date;
   notReadyReason?: ReimbursementPayoutNotReadyReason;
@@ -220,8 +221,11 @@ async function lockSavedPayoutMember(tx: any, companyId: string, userId: string)
 }
 
 /** Reuse under the membership lock before inserting: unique violations abort draft transactions. */
-export async function savePayoutAccountForLater(tx: any, data: SavedPayoutAccountWrite): Promise<{ account: SavedPayoutAccountRecord; added: boolean }> {
+export async function savePayoutAccountForLater(tx: any, data: SavedPayoutAccountWrite): Promise<{ account: SavedPayoutAccountRecord; added: boolean } | undefined> {
   await lockSavedPayoutMember(tx, data.companyId, data.userId);
+  await tx.$queryRaw`SELECT 1 FROM "MemberPayoutAccount" WHERE "companyId" = ${data.companyId} AND "userId" = ${data.userId} FOR UPDATE`;
+  const currentDefault = await readMemberPayoutAccount(tx, data.companyId, data.userId);
+  if (currentDefault?.payoutMethod === 'BANK_TRANSFER' && currentDefault.fingerprint === data.destination.fingerprint) return undefined;
   const existing = await tx.memberSavedPayoutAccount.findFirst({
     where: { companyId: data.companyId, userId: data.userId, fingerprint: data.destination.fingerprint }, select: SAVED_ACCOUNT_COLUMNS,
   });
@@ -298,13 +302,14 @@ export async function readClaimPayout(client: any, claim: ClaimPayoutPointer): P
     where: { companyId: claim.companyId, reimbursementRequestId: claim.id, version: claim.payoutDestinationVersion },
     select: {
       version: true, payoutKind: true, bankName: true, accountName: true, accountLast4: true, source: true,
-      createdByUserId: true, verifiedByUserId: true, verifiedAt: true,
+      createdByUserId: true, verifiedByUserId: true, verifiedAt: true, holderType: true, holderNote: true,
     },
   });
   if (!row) return { payoutMethod: 'BANK_TRANSFER', ...(claim.status === 'DRAFT' && { notReadyReason: 'payout_destination_required' as const }) };
   return {
     payoutMethod: 'BANK_TRANSFER', payoutKind: row.payoutKind, ...(row.bankName && { bankName: row.bankName }), accountName: row.accountName,
     accountLast4: row.accountLast4, version: row.version, source: row.source,
+    ...maskedPayoutHolderFacts(row),
     // Typed by a preparer, or copied from a default someone else set: anyone but the requester is named.
     ...(row.createdByUserId !== claim.requesterUserId && { enteredByUserId: row.createdByUserId }),
     // An attestation belongs to a sent claim: a draft is about to be frozen and attested again.
@@ -313,7 +318,7 @@ export async function readClaimPayout(client: any, claim: ClaimPayoutPointer): P
 }
 
 /** One account a claim has been sent with, masked: a row of the claim page's account history. */
-export type ClaimPayoutVersionRecord = {
+export type ClaimPayoutVersionRecord = Partial<PayoutHolderFacts> & {
   version: number;
   payoutKind: ReimbursementPayoutKind;
   bankName?: string;
@@ -338,12 +343,13 @@ export async function readClaimPayoutVersions(client: any, claim: ClaimPayoutPoi
     where: { companyId: claim.companyId, reimbursementRequestId: claim.id, frozenAt: { not: null }, source: { not: LEGACY_PAYMENT_PAYOUT_SOURCE } },
     select: {
       version: true, payoutKind: true, bankName: true, accountName: true, accountLast4: true, source: true,
-      createdByUserId: true, frozenAt: true, verifiedByUserId: true, verifiedAt: true, approvalStepId: true,
+      createdByUserId: true, frozenAt: true, verifiedByUserId: true, verifiedAt: true, approvalStepId: true, holderType: true, holderNote: true,
     },
   });
   return rows.sort((a, b) => a.version - b.version).map((row) => ({
     version: row.version, payoutKind: row.payoutKind, ...(row.bankName && { bankName: row.bankName }), accountName: row.accountName,
     accountLast4: row.accountLast4, source: row.source, frozenAt: row.frozenAt,
+    ...maskedPayoutHolderFacts(row),
     // The same two rules as the claim's current account (`readClaimPayout`): anyone but the requester
     // is named, and the version a draft is about to be sent with again carries no attestation.
     ...(row.createdByUserId !== claim.requesterUserId && { enteredByUserId: row.createdByUserId }),
@@ -536,7 +542,19 @@ export async function freezePayoutCorrection(tx: any, claim: ClaimPayoutPointer,
   defaultSetInThisTransaction?: boolean;
   /** For "the account the claim had": what the claim was approved with when its round began. */
   previous?: { payoutMethod?: string; payoutVersion?: number };
+  approvalRequired?: boolean;
 }): Promise<SubmitPayoutColumns> {
+  if (input.write.mode === 'SAVED') {
+    const write = input.write;
+    const saved = write.actorUserId === claim.requesterUserId && write.requesterUserId === claim.requesterUserId
+      ? await readSavedPayoutAccountForCopy(tx, claim.companyId, claim.requesterUserId, write.savedAccountId) : null;
+    if (!saved) throw new NotFoundException('payout_saved_account_not_found');
+    return freezePayoutCorrection(tx, claim, { ...input, write: { mode: 'SPECIFIED', source: 'SAVED_ACCOUNT', actorUserId: write.actorUserId, destination: {
+      payoutKind: saved.payoutKind, bankName: saved.bankName, accountName: saved.accountName, accountNumberEncrypted: saved.accountNumberEncrypted, accountLast4: saved.accountLast4,
+      holderType: saved.holderType, holderNote: saved.holderNote, fingerprint: claimPayoutFingerprint(saved.fingerprint, saved, write.key),
+    } } });
+  }
+  const assertHolder = (holderType?: string) => { if (holderType === 'THIRD_PARTY' && input.approvalRequired === false) throw new ConflictException('payout_third_party_needs_approval'); };
   const cash: SubmitPayoutColumns = { payoutMethod: 'CASH', payoutDestinationVersion: null, payoutFingerprint: CASH_PAYOUT_FINGERPRINT };
   if (input.write.mode === 'CASH') return cash;
   const row = { companyId: claim.companyId, reimbursementRequestId: claim.id, frozenAt: input.frozenAt };
@@ -549,20 +567,24 @@ export async function freezePayoutCorrection(tx: any, claim: ClaimPayoutPointer,
       where: { companyId: claim.companyId, reimbursementRequestId: claim.id, version: input.previous.payoutVersion, frozenAt: { not: null }, source: { not: LEGACY_PAYMENT_PAYOUT_SOURCE } },
     });
     if (!approved) throw new ConflictException('payout_destination_changed');
+    assertHolder(approved.holderType);
     const version = await nextVersion();
     // Nobody types anything: the sealed columns move as one unit, with who entered that account as it was.
     await tx.reimbursementPayoutDestination.create({ data: {
       ...row, version, payoutKind: approved.payoutKind, bankName: approved.bankName, accountName: approved.accountName,
       accountNumberEncrypted: approved.accountNumberEncrypted, accountLast4: approved.accountLast4, fingerprint: approved.fingerprint,
       source: approved.source, createdByUserId: approved.createdByUserId,
+      ...maskedPayoutHolderFacts(approved),
     } });
     return { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: version, payoutFingerprint: approved.fingerprint };
   }
   if (input.write.mode === 'SPECIFIED') {
+    assertHolder(input.write.destination.holderType);
     const version = await nextVersion();
     await tx.reimbursementPayoutDestination.create({ data: { ...row, version, ...input.write.destination, source: input.write.source, createdByUserId: input.write.actorUserId } });
     return { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: version, payoutFingerprint: input.write.destination.fingerprint };
   }
+  if (input.write.mode !== 'DEFAULT') throw new BadRequestException('payout_mode_invalid');
   // An edit of the default waits for this correction, and this correction for one already under way.
   await tx.$queryRaw`SELECT 1 FROM "MemberPayoutAccount" WHERE "companyId" = ${claim.companyId} AND "userId" = ${claim.requesterUserId} FOR UPDATE`;
   const account = await tx.memberPayoutAccount.findFirst({ where: { companyId: claim.companyId, userId: claim.requesterUserId } });
@@ -623,7 +645,7 @@ export async function draftPayoutAfterReopen(tx: any, claim: ClaimPayoutPointer)
 // ---- The payment step (payout spec §12.3, §15) ----
 
 /** An account as a payment row shows it: masked, the same for every reader. */
-export type PaymentPayoutDestinationRecord = {
+export type PaymentPayoutDestinationRecord = Partial<PayoutHolderFacts> & {
   version: number;
   payoutKind: ReimbursementPayoutKind;
   bankName?: string;
@@ -652,7 +674,14 @@ export type ConfirmedPaymentPayout = {
   accountLast4: string;
   /** Nobody but the requester had checked this account, so the payer is now recorded as who did (§10.2). */
   payerVerified: boolean;
+  holderType?: ReimbursementPayoutHolderType;
 };
+
+/** One rule for every masked account reader; legacy payment copies retain their old shape. */
+export function maskedPayoutHolderFacts(row: { holderType?: ReimbursementPayoutHolderType | null; holderNote?: string | null; source?: string }): Partial<PayoutHolderFacts> {
+  if (!row.holderType || row.source === LEGACY_PAYMENT_PAYOUT_SOURCE) return {};
+  return { holderType: row.holderType, ...(row.holderType === 'THIRD_PARTY' && row.holderNote && { holderNote: row.holderNote }) };
+}
 
 /**
  * The accounts the given versions of a claim name, masked, by version: what each payment row of the
@@ -664,11 +693,12 @@ export async function readPaymentPayoutDestinations(
   if (versions.length === 0) return {};
   const rows = await client.reimbursementPayoutDestination.findMany({
     where: { companyId, reimbursementRequestId: requestId, version: { in: [...versions] } },
-    select: { version: true, payoutKind: true, bankName: true, accountName: true, accountLast4: true },
+    select: { version: true, payoutKind: true, bankName: true, accountName: true, accountLast4: true, holderType: true, holderNote: true, source: true },
   });
   return Object.fromEntries(rows.map((row: any) => [row.version, {
     version: row.version, payoutKind: row.payoutKind, ...(row.bankName && { bankName: row.bankName }),
     accountName: row.accountName, accountLast4: row.accountLast4,
+    ...maskedPayoutHolderFacts(row),
   }]));
 }
 
@@ -722,7 +752,7 @@ export async function readLegacyPayoutDefault(
 
 type ResolvedPaymentPayout =
   | { kind: 'NONE' }
-  | { kind: 'CLAIM'; row: { id: string; version: number; payoutKind: string; bankName: string | null; accountLast4: string; verifiedByUserId: string | null } }
+  | { kind: 'CLAIM'; row: { id: string; version: number; payoutKind: string; bankName: string | null; accountLast4: string; verifiedByUserId: string | null; holderType?: ReimbursementPayoutHolderType } }
   | { kind: 'MEMBER_DEFAULT'; account: any };
 
 /**
@@ -737,7 +767,7 @@ async function resolvePaymentPayout(client: any, claim: ClaimPayoutPointer, plan
         companyId: claim.companyId, reimbursementRequestId: claim.id, version: plan.payoutDestinationVersion,
         fingerprint: claim.payoutFingerprint ?? '', frozenAt: { not: null },
       },
-      select: { id: true, version: true, payoutKind: true, bankName: true, accountLast4: true, verifiedByUserId: true },
+      select: { id: true, version: true, payoutKind: true, bankName: true, accountLast4: true, verifiedByUserId: true, holderType: true },
     });
     if (!row) throw new ConflictException('payout_destination_changed');
     return { kind: 'CLAIM', row };
@@ -787,6 +817,7 @@ export async function confirmPaymentPayout(tx: any, claim: ClaimPayoutPointer, p
     return {
       payoutDestinationVersion: row.version, payoutConfirmedAt: input.confirmedAt, source: 'CLAIM',
       payoutKind: row.payoutKind, bankName: row.bankName, accountLast4: row.accountLast4, payerVerified,
+      ...(row.holderType && { holderType: row.holderType }),
     };
   }
   const { account } = resolved;

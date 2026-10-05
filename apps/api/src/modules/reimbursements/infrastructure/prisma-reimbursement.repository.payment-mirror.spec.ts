@@ -115,6 +115,24 @@ function voidHarness(amount = '289.0000', paidAmount = amount, netPayable = amou
   return { repo, expenseUpdates, request, tx };
 }
 
+it('multi payout 2b: refuses another currency under the payment lock before writes', async () => {
+  const h = recordHarness();
+  await assert.rejects(() => h.repo.recordPaymentAtomic({ companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'currency-2b', paidAmount: '289', currency: 'USD', paymentMethod: 'CASH', paidAt: PAID_AT, paidByUserId: 'finance-1' }), /payment_currency_mismatch/);
+  assert.deepEqual([h.request.paymentStatus, h.expenseUpdates.length], ['UNPAID', 0]);
+});
+it('multi payout 2b: source bank must be active in this company under the payment lock', async () => {
+  for (const account of [null, { id: 'bank-1', companyId: 'other', status: 'ACTIVE' }, { id: 'bank-1', companyId: 'co-1', status: 'INACTIVE' }]) {
+    const h = recordHarness();
+    h.tx.bankAccount = { findFirst: async ({ where }: any) => account && account.companyId === where.companyId && account.status === where.status ? account : null };
+    await assert.rejects(() => h.repo.recordPaymentAtomic({ companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'bank-2b', paidAmount: '289', currency: 'THB', paymentMethod: 'CASH', bankAccountId: 'bank-1', paidAt: PAID_AT, paidByUserId: 'finance-1' }), /payment_source_bank_account_invalid/);
+    assert.deepEqual([h.request.paymentStatus, h.expenseUpdates.length], ['UNPAID', 0]);
+  }
+  const h = recordHarness();
+  h.tx.bankAccount = { findFirst: async ({ where }: any) => { assert.deepEqual(where, { id: 'bank-1', companyId: 'co-1', status: 'ACTIVE' }); return { id: 'bank-1' }; } };
+  await h.repo.recordPaymentAtomic({ companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'active-2b', paidAmount: '289', currency: 'THB', paymentMethod: 'CASH', bankAccountId: 'bank-1', paidAt: PAID_AT, paidByUserId: 'finance-1' });
+  assert.equal(h.request.paymentStatus, 'PAID');
+});
+
 describe('reimbursement payout mirrors the claim expense projections', () => {
   it('refuses an unassigned claim again under the payment lock without changing its totals', async () => {
     const { repo, expenseUpdates, request } = recordHarness();
