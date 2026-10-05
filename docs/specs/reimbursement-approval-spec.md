@@ -10,6 +10,8 @@ Linked plan: [[plans/reimbursement-approval-plan|Reimbursement Approval Plan]]
 
 Amended 2026-07-26 by [[specs/reimbursement-journey-uplift-spec|Reimbursement Journey Uplift Spec]]: revives `ReimbursementLine` (multi-line claims) and a printable per-request `ใบเบิกค่าใช้จ่าย` claim form (NOT the grouped `ใบสำคัญจ่าย` voucher), widens reimbursement event payloads, and auto-enables reimbursement notification templates. LINE read-only boundary unchanged.
 
+Amended 2026-10-05 by [หลายบัญชีรับเงินคืน เลือกบัญชีต่อใบ และบัญชีของบุคคลอื่น](reimbursement-multi-payout-accounts-spec-th.md): a member keeps several saved payout accounts beside the default one and the requester picks the account on each claim; an account of another person (an outsider included) carries a required explanation, always gets an approval step even under the threshold, and is approved only with the approver's explicit acceptance. It builds on [the payout account and payment slip spec](reimbursement-payout-account-and-payment-slip-spec-th.md), whose rules stay. The design proposal of the same day, [reimbursement-recipient-bank-account-spec-th.md](reimbursement-recipient-bank-account-spec-th.md), was written from code that predates that feature and is kept as a proposal only.
+
 Owner decisions assumed for first pass on 2026-06-23:
 
 - Every reimbursement request from 1 THB requires approval by default. Thresholds remain configurable.
