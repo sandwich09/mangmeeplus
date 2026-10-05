@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
 import { buildLineDeliveryPlan, deliveryHash, initialDeliveryBatchStates, lineDeliveryRetryKey, parseDeliveryBatchStates, parseLineDeliveryPlan, splitLineDeliveryText, type DeliveryAuthorizationV2 } from './line-delivery-plan.logic';
-import { buildLineBusinessAnswerMessage, inheritCompleteLineBusinessAnswerPresentation } from './line-business-card.logic';
+import { asCompleteLineCard, buildLineBusinessAnswerMessage, inheritCompleteLineBusinessAnswerPresentation } from './line-business-card.logic';
+import { buildPendingApprovalCard } from './line-staff-menu.logic';
 const createdAt = '2026-09-27T00:00:00.000Z', expiresAt = '2026-09-27T00:59:00.000Z';
 const authorization: DeliveryAuthorizationV2 = { v: 2, kind: 'PUBLIC_GENERAL', admissionOwner: { kind: 'WEBHOOK', id: 'event-1', revision: 0 }, destination: { channelId: 'oa-1', channel: 'line', channelKind: 'GROUP', lineTargetId: 'group-1', targetHash: 'target-hash', chatKeyHash: 'chat-hash' }, actorUserId: null, initiatorHash: 'actor-hash', admissionPolicyDigest: 'policy', sourceManifestDigest: 'manifest', approvedPublicSourceIds: [], issuedAt: createdAt, expiresAt };
 const privateAuthorization: DeliveryAuthorizationV2 = { v: 2, kind: 'PRIVATE', issuedAt: createdAt, expiresAt,
@@ -148,6 +149,20 @@ test('old text-only plans round-trip without a fallback or version change', () =
   const p = plan(['คำตอบเดิม']);
   assert.equal(p.v, 2); assert.equal(p.batches[0]!.fallback, null);
   assert.deepEqual(parseLineDeliveryPlan(JSON.parse(JSON.stringify(p))), p);
+});
+test('UAT 2026-10-05: the pending-approval card is sent as a card and keeps its own text as the fallback', () => {
+  const context = { displayName: 'ผู้อนุมัติ', roleLabel: 'เจ้าของกิจการ', branchScopeLabel: 'ทุกสาขา', permissions: ['reimbursement.approve'], entitledFeatureKeys: null, webBaseUrl: 'https://app.example.test', companyId: 'co-1', isOwner: true };
+  for (const pending of [{ reimbursement: { total: 0, items: [] } }, { reimbursement: { total: 2, items: ['RB-202610-00001 · 650.00 บาท', 'RB-202610-00002 · 120.00 บาท'] } }]) {
+    // What the owner received: without the proof a plan sends the card's text, raw link and all.
+    const bare = buildPendingApprovalCard(context, pending);
+    assert.equal(bare.type, 'flex');
+    assert.equal(plan([(bare as { canonicalText: string }).canonicalText], [bare]).batches[0]!.primary.messages[0]!.type, 'text');
+    const card = asCompleteLineCard(buildPendingApprovalCard(context, pending));
+    const sent = plan([(card as { canonicalText: string }).canonicalText], [card]).batches[0]!;
+    assert.equal(sent.primary.messages[0]!.type, 'flex');
+    assert.deepEqual(sent.fallback!.messages.map(message => message.type), ['text']);
+    assert.match((sent.fallback!.messages[0] as { text: string }).text, /คำขอเบิกเงิน: https:\/\/app\.example\.test\/companies\/co-1\/reimbursements\?tab=approvals/);
+  }
 });
 test('multi-batch continuation stays before the exact terminal financial control', () => {
   const planId = deliveryHash(['line-delivery-v2', 'WEBHOOK', 'event-1']);

@@ -64,6 +64,17 @@ function completeCard(message: LineReplyMessage, bodyText: string): LineReplyMes
   return message;
 }
 
+/** A server-built menu card that shows every line of its canonical text (its title, its lines and each
+ *  button) is a complete presentation as well. Without this proof a delivery plan sends such a card
+ *  as its text: on UAT 2026-10-05 "รายการรออนุมัติ" arrived as plain text with a raw link. */
+export function asCompleteLineCard<T extends LineReplyMessage>(message: T): T {
+  const fingerprint = businessAnswerPresentationFingerprint(message);
+  if (fingerprint !== null && message.type === 'flex' && message.canonicalText !== undefined) {
+    completeBusinessAnswerPresentations.set(message, fingerprint);
+  }
+  return message;
+}
+
 /**
  * A URI button, one that sends a text command the webhook already answers (`โปรโมชั่น`), or one
  * that posts a bare intent back (P10-L G-04). Postback `data` never carries an id or any state —
