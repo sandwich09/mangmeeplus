@@ -156,7 +156,7 @@ test('old text-only plans round-trip without a fallback or version change', () =
 });
 test('UAT 2026-10-05: the pending-approval card is sent as a card and keeps its own text as the fallback', () => {
   const context = { displayName: 'ผู้อนุมัติ', roleLabel: 'เจ้าของกิจการ', branchScopeLabel: 'ทุกสาขา', permissions: ['reimbursement.approve'], entitledFeatureKeys: null, webBaseUrl: 'https://app.example.test', companyId: 'co-1', isOwner: true };
-  for (const pending of [{ reimbursement: { total: 0, items: [] } }, { reimbursement: { total: 2, items: ['RB-202610-00001 · 650.00 บาท', 'RB-202610-00002 · 120.00 บาท'] } }]) {
+  for (const pending of [{ reimbursement: { total: 0, items: [] } }, { reimbursement: { total: 2, items: [{ title: 'RB-202610-00001', detail: '650.00 บาท' }, { title: 'RB-202610-00002', detail: '120.00 บาท' }] } }]) {
     // What the owner received: without the proof a plan sends the card's text, raw link and all.
     const bare = buildPendingApprovalCard(context, pending);
     assert.equal(bare.type, 'flex');
@@ -165,7 +165,7 @@ test('UAT 2026-10-05: the pending-approval card is sent as a card and keeps its 
     const sent = plan([(card as { canonicalText: string }).canonicalText], [card]).batches[0]!;
     assert.equal(sent.primary.messages[0]!.type, 'flex');
     assert.deepEqual(sent.fallback!.messages.map(message => message.type), ['text']);
-    assert.match((sent.fallback!.messages[0] as { text: string }).text, /คำขอเบิกเงิน: https:\/\/app\.example\.test\/companies\/co-1\/reimbursements\?tab=approvals/);
+    assert.match((sent.fallback!.messages[0] as { text: string }).text, /ดูใบเบิกรออนุมัติในเว็บ: https:\/\/app\.example\.test\/companies\/co-1\/reimbursements\?tab=approvals/);
   }
 });
 test('multi-batch continuation stays before the exact terminal financial control', () => {

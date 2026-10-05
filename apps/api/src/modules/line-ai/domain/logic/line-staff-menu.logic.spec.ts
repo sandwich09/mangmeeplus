@@ -7,6 +7,8 @@ import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextM
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import { isPublicPolicyFollowUp, resolvePublicPolicyAnswer } from './line-public-policy.logic';
 import { buildPublicPolicyCardMessage } from './line-business-card.logic';
+import { lineSystemCardTexts } from './line-system-card.logic';
+import { lineFlexBodyProblems } from './line-system-card-limits.logic';
 
 for (const path of [
   '../../../../common/security/liff-page.security.ts',
@@ -506,39 +508,48 @@ describe('LINE staff menu', () => {
     assert.equal(JSON.stringify(empty).includes('✓ บริษัทนี้'), false);
   });
 
+  /** Every link on a card with its name. The designed card's buttons are boxes with an action. */
+  const cardLinks = (card: unknown): Array<[string, string]> => {
+    const found: Array<[string, string]> = [];
+    const visit = (node: unknown): void => {
+      if (Array.isArray(node)) { node.forEach(visit); return; }
+      if (!node || typeof node !== 'object') return;
+      const action = (node as { action?: { type?: string; label?: string; uri?: string } }).action;
+      if (action?.type === 'uri') found.push([action.label!, action.uri!]);
+      Object.values(node).forEach(visit);
+    };
+    visit((card as { contents: unknown }).contents);
+    return found;
+  };
   const approvalButtons = (permissions: string[]) => {
     const card = buildPendingApprovalCard({ ...context, permissions });
     assert.equal(card.type, 'flex');
-    const footer = (card as { contents: any }).contents.footer;
-    return (footer?.contents ?? []).map((button: any) => [button.action.label, button.action.uri]);
+    return cardLinks(card);
   };
+  const CLAIMS_QUEUE = ['ดูใบเบิกรออนุมัติในเว็บ', 'https://app.example.com/companies/c%201/reimbursements?tab=approvals'];
+  const PROCUREMENT_QUEUE = ['ดูใบขอซื้อ/ใบสั่งซื้อในเว็บ', 'https://app.example.com/companies/c%201/procurement'];
 
-  it('offers one tenant-scoped button per approval queue the member can act on', () => {
-    assert.deepEqual(approvalButtons(['reimbursement.approve', 'procurement.purchase_order.approve']), [
-      ['คำขอเบิกเงิน', 'https://app.example.com/companies/c%201/reimbursements?tab=approvals'],
-      ['ใบขอซื้อ/ใบสั่งซื้อ', 'https://app.example.com/companies/c%201/procurement'],
-    ]);
+  it('offers one tenant-scoped button per approval queue the member can act on, named by the page it opens', () => {
+    assert.deepEqual(approvalButtons(['reimbursement.approve', 'procurement.purchase_order.approve']), [CLAIMS_QUEUE, PROCUREMENT_QUEUE]);
   });
 
   it('sends a reimbursement approver straight to the approvals tab only', () => {
-    assert.deepEqual(approvalButtons(['reimbursement.approve']), [
-      ['คำขอเบิกเงิน', 'https://app.example.com/companies/c%201/reimbursements?tab=approvals'],
-    ]);
+    assert.deepEqual(approvalButtons(['reimbursement.approve']), [CLAIMS_QUEUE]);
   });
 
   // Step-journey spec §11: this queue card is explicitly UNCHANGED by the journey-page work — it
   // still opens the approval queue (a list), never a specific claim, so it never adopts the new
   // per-claim /reimbursements/:requestId path the notification templates and AI answers now use.
+  // The locked design's "เปิดใบเบิกเพื่ออนุมัติ" names a button that opens ONE claim, so it is not this one.
   it('reimbursement-step-journey Phase 4: the pending-approval queue card still opens the tab, not a per-claim journey path', () => {
-    assert.deepEqual(approvalButtons(['reimbursement.approve']), [
-      ['คำขอเบิกเงิน', 'https://app.example.com/companies/c%201/reimbursements?tab=approvals'],
-    ]);
+    assert.deepEqual(approvalButtons(['reimbursement.approve']), [CLAIMS_QUEUE]);
+    const withClaim = buildPendingApprovalCard({ ...context, permissions: ['reimbursement.approve'] }, { reimbursement: { total: 1, items: [{ title: 'RB-1' }] } });
+    assert.deepEqual(cardLinks(withClaim), [CLAIMS_QUEUE]);
+    assert.equal(JSON.stringify(withClaim).includes('เปิดใบเบิกเพื่ออนุมัติ'), false);
   });
 
   it('sends a purchase-request approver to procurement only', () => {
-    assert.deepEqual(approvalButtons(['procurement.purchase_request.approve']), [
-      ['ใบขอซื้อ/ใบสั่งซื้อ', 'https://app.example.com/companies/c%201/procurement'],
-    ]);
+    assert.deepEqual(approvalButtons(['procurement.purchase_request.approve']), [PROCUREMENT_QUEUE]);
   });
 
   it('never links to the demo settings page and drops the footer without a web base url', () => {
@@ -549,50 +560,106 @@ describe('LINE staff menu', () => {
 
   // UAT 2026-08-18: the card said only "เปิดรายการจริงในเว็บ", so an approver had to open the web
   // app to learn whether anything was waiting at all.
+  // Owner 2026-10-06 (Production): the card was still the plain one from before the locked design. It
+  // is now the design's "ใบเบิกรออนุมัติ" card; the plain card stays for a web base LINE cannot fetch from.
   describe('pending approval counts', () => {
-    const cardText = (card: any) => (card.contents.body.contents as any[]).map((line) => line.text);
+    const cardText = (card: any) => lineSystemCardTexts(card.contents);
+    const claims = { ...context, permissions: ['reimbursement.approve'] };
+    const AS_OF = '6 ต.ค. 2569';
+    const CHECKED = 'ตรวจเฉพาะใบเบิกที่รอคุณอนุมัติ ตามสิทธิ์ของคุณ';
+    const OPEN = 'ดูใบเบิกรออนุมัติในเว็บ';
 
-    it('states the total, names the queue, and lists at most five rows', () => {
-      const card = buildPendingApprovalCard(
-        { ...context, permissions: ['reimbursement.approve'] },
-        { reimbursement: { total: 7, items: ['RB-1 · สมชาย · 1,130.00 บาท', 'RB-2', 'RB-3', 'RB-4', 'RB-5', 'RB-6'] } },
-      );
-      const text = cardText(card);
+    it('states the total under the queue\'s own name, one row for each claim and at most five of them', () => {
+      const card = buildPendingApprovalCard(claims, { reimbursement: { total: 7, items: [
+        { title: 'RB-1', detail: 'สมชาย · 1,130.00 บาท' }, { title: 'RB-2' }, { title: 'RB-3' }, { title: 'RB-4' }, { title: 'RB-5' }, { title: 'RB-6' },
+      ] } }, AS_OF);
       assert.equal((card as { altText?: string }).altText, 'รายการรออนุมัติ 7 รายการ');
-      assert.equal(text[1], 'มี 7 รายการรอคุณอนุมัติ');
-      assert.equal(text[2], 'คำขอเบิกเงิน (7)');
-      assert.deepEqual(text.slice(3, 9), ['• RB-1 · สมชาย · 1,130.00 บาท', '• RB-2', '• RB-3', '• RB-4', '• RB-5', 'แสดง 5 จาก 7 รายการ · เปิดในเว็บเพื่อดูทั้งหมดและยืนยันอย่างปลอดภัย']);
+      assert.deepEqual(cardText(card), [
+        'ใบเบิกรออนุมัติ', 'พบ 7 รายการ',
+        // The number on its own line, who asked and how much under it.
+        'เลขที่ใบเบิก', ':', 'RB-1\nสมชาย · 1,130.00 บาท',
+        'เลขที่ใบเบิก', ':', 'RB-2', 'เลขที่ใบเบิก', ':', 'RB-3', 'เลขที่ใบเบิก', ':', 'RB-4', 'เลขที่ใบเบิก', ':', 'RB-5',
+        'ต้องทำ', ':', 'ตรวจสอบและอนุมัติใบเบิก',
+        'ข้อมูล ณ', ':', AS_OF,
+        CHECKED, 'แสดง 5 รายการแรก ดูทั้งหมดได้ในเว็บ',
+        OPEN,
+      ]);
+      assert.deepEqual(lineFlexBodyProblems((card as { contents: unknown }).contents), []);
     });
 
-    it('splits the five rows across the queues the member can act on', () => {
+    it('splits the five rows across the queues the member can act on, each under its own count', () => {
       const card = buildPendingApprovalCard(
         { ...context, permissions: ['reimbursement.approve', 'procurement.purchase_order.approve'] },
         {
-          reimbursement: { total: 3, items: ['RB-1', 'RB-2', 'RB-3'] },
-          procurement: { total: 4, items: ['PO-1', 'PO-2', 'PO-3', 'PO-4'] },
+          reimbursement: { total: 3, items: [{ title: 'RB-1' }, { title: 'RB-2' }, { title: 'RB-3' }] },
+          procurement: { total: 4, items: [{ title: 'PO-1', detail: '5,000.00 บาท' }, { title: 'PO-2' }, { title: 'PO-3' }, { title: 'PO-4' }] },
         },
       );
-      assert.deepEqual(cardText(card).slice(2), [
-        'คำขอเบิกเงิน (3)', '• RB-1', '• RB-2', '• RB-3',
-        'ใบขอซื้อ/ใบสั่งซื้อ (4)', '• PO-1', '• PO-2',
-        'แสดง 5 จาก 7 รายการ · เปิดในเว็บเพื่อดูทั้งหมดและยืนยันอย่างปลอดภัย',
+      assert.deepEqual(cardText(card), [
+        'รายการรออนุมัติ', 'พบ 7 รายการ',
+        'คำขอเบิกเงิน', ':', '3 รายการ', 'เลขที่ใบเบิก', ':', 'RB-1', 'เลขที่ใบเบิก', ':', 'RB-2', 'เลขที่ใบเบิก', ':', 'RB-3',
+        'ใบขอซื้อ/ใบสั่งซื้อ', ':', '4 รายการ', 'เลขที่เอกสาร', ':', 'PO-1\n5,000.00 บาท', 'เลขที่เอกสาร', ':', 'PO-2',
+        'ต้องทำ', ':', 'ตรวจสอบและอนุมัติในเว็บ',
+        'ตรวจเฉพาะรายการรออนุมัติ ตามสิทธิ์ของคุณ', 'แสดง 5 รายการแรก ดูทั้งหมดได้ในเว็บ',
+        OPEN, 'ดูใบขอซื้อ/ใบสั่งซื้อในเว็บ',
       ]);
     });
 
-    it('says the queue is empty when it was read, and stays silent about counts when it was not', () => {
-      const empty = buildPendingApprovalCard({ ...context, permissions: ['reimbursement.approve'] }, { reimbursement: { total: 0, items: [] } });
-      assert.deepEqual(cardText(empty), ['✅ รายการรออนุมัติ', 'ตอนนี้ไม่มีรายการรออนุมัติค่ะ']);
+    it('says nothing was found only of a queue that was read, and says so when it was not', () => {
+      const empty = buildPendingApprovalCard(claims, { reimbursement: { total: 0, items: [] } }, AS_OF);
+      // The locked design's empty state: the day it was read, what was checked, the way to the page.
+      assert.deepEqual(cardText(empty), ['ใบเบิกรออนุมัติ', 'ไม่พบรายการ', 'ข้อมูล ณ', ':', AS_OF, CHECKED, OPEN]);
+      assert.equal((empty as { altText?: string }).altText, 'รายการรออนุมัติ 0 รายการ');
 
-      const unread = buildPendingApprovalCard({ ...context, permissions: ['reimbursement.approve'] });
-      assert.deepEqual(cardText(unread), ['✅ รายการรออนุมัติ', 'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย']);
+      const unread = buildPendingApprovalCard(claims);
+      assert.deepEqual(cardText(unread), ['ใบเบิกรออนุมัติ', 'ยังอ่านไม่ได้', 'น้องมั่งมียังอ่านรายการรออนุมัติให้ไม่ได้ค่ะ เปิดดูรายการจริงในเว็บได้เลยนะคะ', OPEN]);
+      assert.equal(JSON.stringify(unread).includes('ไม่พบรายการ'), false);
+      assert.equal((unread as { altText?: string }).altText, 'รายการรออนุมัติ');
+    });
+
+    it('never calls a count whole, or a queue empty, while another queue could not be read', () => {
+      const both = { ...context, permissions: ['reimbursement.approve', 'procurement.purchase_order.approve'] };
+      const UNREAD = 'ยังอ่านใบขอซื้อ/ใบสั่งซื้อไม่ได้ เปิดดูในเว็บได้เลย';
+      const some = cardText(buildPendingApprovalCard(both, { reimbursement: { total: 2, items: [{ title: 'RB-1' }, { title: 'RB-2' }] } }));
+      assert.deepEqual(some.slice(0, 2), ['รายการรออนุมัติ', 'พบอย่างน้อย 2 รายการ']);
+      assert.ok(some.includes(UNREAD));
+      const none = cardText(buildPendingApprovalCard(both, { reimbursement: { total: 0, items: [] } }));
+      assert.deepEqual(none.slice(0, 2), ['รายการรออนุมัติ', 'ยังอ่านได้ไม่ครบ']);
+      assert.ok(none.includes(UNREAD));
+      assert.equal(none.includes('ไม่พบรายการ'), false);
     });
 
     it('ignores a count for a queue this member cannot act on', () => {
-      const card = buildPendingApprovalCard(
-        { ...context, permissions: ['reimbursement.approve'] },
-        { procurement: { total: 9, items: ['PO-1'] } },
-      );
-      assert.deepEqual(cardText(card), ['✅ รายการรออนุมัติ', 'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย']);
+      const card = buildPendingApprovalCard(claims, { procurement: { total: 9, items: [{ title: 'PO-1' }] } });
+      assert.deepEqual(cardText(card).slice(0, 2), ['ใบเบิกรออนุมัติ', 'ยังอ่านไม่ได้']);
+      assert.equal(JSON.stringify(card).includes('PO-1'), false);
+    });
+
+    it('tells a member with no approval queue here so, without saying that nothing waits', () => {
+      const card = buildPendingApprovalCard({ ...context, permissions: [] }, { reimbursement: { total: 0, items: [] } });
+      assert.deepEqual(cardText(card), [
+        'รายการรออนุมัติ', 'ยังดูผ่าน LINE ไม่ได้',
+        'บัญชีของคุณยังไม่มีคิวอนุมัติที่ดูผ่าน LINE ได้ในร้านนี้ค่ะ หากมีรายการที่ต้องอนุมัติ เปิดดูในเว็บแอปได้เลยนะคะ',
+      ]);
+      assert.deepEqual(cardLinks(card), []);
+      assert.doesNotMatch(JSON.stringify(card), /ไม่พบรายการ|ไม่มีรายการ/u);
+    });
+
+    // LINE fetches a card's pictures over https only: a base it cannot fetch from keeps the plain card.
+    it('keeps the plain card, with the same facts, where the designed card cannot be drawn', () => {
+      const plain = { ...claims, webBaseUrl: 'http://127.0.0.1:3900' };
+      const lines = (card: any) => (card.contents.body.contents as any[]).map((line) => line.text);
+      const card = buildPendingApprovalCard(plain, { reimbursement: { total: 7, items: [
+        { title: 'RB-1', detail: 'สมชาย · 1,130.00 บาท' }, { title: 'RB-2' }, { title: 'RB-3' }, { title: 'RB-4' }, { title: 'RB-5' }, { title: 'RB-6' },
+      ] } }, AS_OF);
+      assert.deepEqual(lines(card), [
+        '✅ รายการรออนุมัติ', 'มี 7 รายการรอคุณอนุมัติ', 'คำขอเบิกเงิน (7)',
+        '• RB-1 · สมชาย · 1,130.00 บาท', '• RB-2', '• RB-3', '• RB-4', '• RB-5',
+        'แสดง 5 จาก 7 รายการ · เปิดในเว็บเพื่อดูทั้งหมดและยืนยันอย่างปลอดภัย',
+      ]);
+      assert.deepEqual(lines(buildPendingApprovalCard(plain, { reimbursement: { total: 0, items: [] } })), ['✅ รายการรออนุมัติ', 'ตอนนี้ไม่มีรายการรออนุมัติค่ะ']);
+      assert.deepEqual(lines(buildPendingApprovalCard(plain)), ['✅ รายการรออนุมัติ', 'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย']);
+      assert.deepEqual(cardLinks(card), [['คำขอเบิกเงิน', 'http://127.0.0.1:3900/companies/c%201/reimbursements?tab=approvals']]);
     });
 
     it('names only the queues the caller should query', () => {
@@ -653,8 +720,7 @@ describe('LINE staff menu', () => {
       const reimbursementOnly = withFeatures('reimbursement');
       assert.ok(quickLabels(buildStaffCompletionQuickReply(reimbursementOnly)).includes('✅ รายการรออนุมัติ'));
       // The card behind the button must show exactly the queue that justified offering it.
-      const footer = (buildPendingApprovalCard(reimbursementOnly) as { contents: any }).contents.footer;
-      assert.deepEqual(footer.contents.map((button: any) => button.action.label), ['คำขอเบิกเงิน']);
+      assert.deepEqual(cardLinks(buildPendingApprovalCard(reimbursementOnly)).map(([label]) => label), ['ดูใบเบิกรออนุมัติในเว็บ']);
     });
 
     it('hides the receipt camera when the expenses upload submenu is off', () => {
@@ -701,14 +767,25 @@ describe('cards a bound chat is answered with carry their own words as canonical
 
   it('pending approvals: every line the card shows, then each button as a link line', () => {
     const approver = { ...context, permissions: ['reimbursement.approve', 'procurement.purchase_order.approve'] };
-    const pending = { reimbursement: { total: 7, items: ['RB-1 · สมชาย · 1,130.00 บาท', 'RB-2'] }, procurement: { total: 1, items: ['PO-1'] } };
-    const card = buildPendingApprovalCard(approver, pending);
+    const pending = {
+      reimbursement: { total: 7, items: [{ title: 'RB-1', detail: 'สมชาย · 1,130.00 บาท' }, { title: 'RB-2' }] },
+      procurement: { total: 1, items: [{ title: 'PO-1' }] },
+    };
+    const card = buildPendingApprovalCard(approver, pending, '6 ต.ค. 2569');
     assert.equal(canonical(card), [
-      ...bodyLines(card),
-      'คำขอเบิกเงิน: https://app.example.com/companies/c%201/reimbursements?tab=approvals',
-      'ใบขอซื้อ/ใบสั่งซื้อ: https://app.example.com/companies/c%201/procurement',
+      'รายการรออนุมัติ: พบ 8 รายการ',
+      'คำขอเบิกเงิน: 7 รายการ', 'เลขที่ใบเบิก: RB-1 · สมชาย · 1,130.00 บาท', 'เลขที่ใบเบิก: RB-2',
+      'ใบขอซื้อ/ใบสั่งซื้อ: 1 รายการ', 'เลขที่เอกสาร: PO-1',
+      'ต้องทำ: ตรวจสอบและอนุมัติในเว็บ', 'ข้อมูล ณ: 6 ต.ค. 2569',
+      'ตรวจเฉพาะรายการรออนุมัติ ตามสิทธิ์ของคุณ', 'แสดง 3 รายการแรก ดูทั้งหมดได้ในเว็บ',
+      'ดูใบเบิกรออนุมัติในเว็บ: https://app.example.com/companies/c%201/reimbursements?tab=approvals',
+      'ดูใบขอซื้อ/ใบสั่งซื้อในเว็บ: https://app.example.com/companies/c%201/procurement',
     ].join('\n'));
-    // No web base, no button — and no link line naming a page the card would not open.
+    // Every word on the bubble is in the text: the card shows all of it, which is what lets a delivery send the card itself.
+    for (const value of lineSystemCardTexts((card as { contents: unknown }).contents).filter((shown) => shown !== ':')) {
+      assert.ok(canonical(card)!.includes(value.replace(/\n/gu, ' · ')), value);
+    }
+    // No web base: the plain card, no button — and no link line naming a page the card would not open.
     for (const snapshot of [pending, { reimbursement: { total: 0, items: [] } }, undefined]) {
       const plain = buildPendingApprovalCard({ ...approver, webBaseUrl: undefined }, snapshot);
       assert.equal(canonical(plain), bodyLines(plain).join('\n'));

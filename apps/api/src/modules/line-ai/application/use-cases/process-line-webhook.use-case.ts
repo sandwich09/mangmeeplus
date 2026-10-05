@@ -2279,11 +2279,10 @@ export class ProcessLineWebhookUseCase {
       if (rows) {
         pending.reimbursement = {
           total: rows.length,
-          items: rows.slice(0, PENDING_APPROVAL_ITEM_LIMIT).map((row) => [
-            row.requestNo ?? 'คำขอเบิกเงิน',
-            row.requesterDisplayNameSnapshot,
-            bahtText(row.amount),
-          ].filter(Boolean).join(' · ')),
+          items: rows.slice(0, PENDING_APPROVAL_ITEM_LIMIT).map((row) => ({
+            title: row.requestNo ?? 'คำขอเบิกเงิน',
+            detail: [row.requesterDisplayNameSnapshot, bahtText(row.amount)].filter(Boolean).join(' · '),
+          })),
         };
       }
     }
@@ -2298,8 +2297,8 @@ export class ProcessLineWebhookUseCase {
         pending.procurement = {
           total: (requests?.total ?? 0) + (orders?.total ?? 0),
           items: [
-            ...(requests?.data ?? []).map((row) => `${row.requestNumber ?? 'ใบขอซื้อ'} · ${bahtText(row.grandTotalAmount)}`),
-            ...(orders?.data ?? []).map((row) => `${row.purchaseOrderNumber ?? 'ใบสั่งซื้อ'} · ${bahtText(row.grandTotalAmount)}`),
+            ...(requests?.data ?? []).map((row) => ({ title: row.requestNumber ?? 'ใบขอซื้อ', detail: bahtText(row.grandTotalAmount) })),
+            ...(orders?.data ?? []).map((row) => ({ title: row.purchaseOrderNumber ?? 'ใบสั่งซื้อ', detail: bahtText(row.grandTotalAmount) })),
           ].slice(0, PENDING_APPROVAL_ITEM_LIMIT),
         };
       }
@@ -6046,7 +6045,7 @@ export class ProcessLineWebhookUseCase {
               permissions: resolvedAccess.permissions,
               scopes: resolvedAccess.scopes,
               authProvider: 'line',
-            }, availableApprovalSurfaceKeys(menuContext))));
+            }, availableApprovalSurfaceKeys(menuContext)), THAI_DATE_REPLY_FORMATTER.format(new Date())));
       await this.deliverRequiredMessages(event, [message]);
       await this.updateEventLog(event.webhookEventId, `staff_menu_${menuCommand}`, undefined, companyId);
       return;
