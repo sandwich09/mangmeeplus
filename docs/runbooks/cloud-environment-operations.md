@@ -23,7 +23,36 @@ Provider webhook active:true, Contact/Social native replies stopped, how-to/pack
 Owner confirmed both cards received and actions working; supplemental acceptance signature verified. [Exact IDs, hashes, proof and recovery](../evidence/line-official-oa-isolated-publication-2026-10-04.md).
 
 
-## Hotfix 2026-09-30 evening — claim lines on a phone (current)
+## Release 2026-10-05 — UAT rounds 1–2 and Production (current)
+
+After this section, UAT and Production both serve `main` `2aa87ac68` (tree equal to develop `6ac6d8a63`). Production served the hotfix `908e7aab` before it and UAT served `7b1b1c11`. Every run used the local Kamal path from a clean `main` controller worktree, and GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok. What the release changes for people, and the counts read before and after it, are in `docs/agent-memory/owner-preview-batch-2026-10-04.md` ("Release record") and `docs/agent-memory/release-readiness-2026-10-04.md`.
+
+- Both UAT rounds used `--uat-smoke-acceptance`. The owner chose it for round 1 ("ตรวจอัตโนมัติ"); round 2 kept that choice.
+- Production used `--production-browser-acceptance`, with the owner signing in personally. His go: "แก้อันนี้ด้วย ต้องตอบเป็นการ์ด แล้ว เอาขึ้น uat หลังจากนั้น promote prod ได้เลย", then "พร้อม เริ่มเลย" right before the apply.
+
+| Env | Operation | Source (main) | Result | Seconds |
+|---|---|---|---|---|
+| UAT | `20261004T182131Z-e92a39e3` (preflight) | controller at `963c3c4da` | PREFLIGHT_PASSED_NO_DEPLOYMENT 01:21, 2 SSM sessions closed. | 12.2 |
+| UAT | `20261005T000027Z-7d775b7d` (prepare only) | `69e8e5f21` (#1003 twin = develop `8a4de3b35` via #1002: the owner-preview batch, 13 migrations since Production) | PREPARED_NO_DEPLOYMENT 07:20. `main-typescript-build` took 1,144.0 s; the same phase took 197.1 s in round 2. | 1,182.6 |
+| UAT | `20261005T002032Z-8cf8f08c` (prepared by `7d775b7d`) | `69e8e5f21` | ACCEPTED_LINE_DEFERRED 07:25, smoke, 12/12 phases, 13 migrations applied (database phase 70.8 s, rollout 104.8 s), AgentCore `kamal_uat_b` v51, signature verified, 2 SSM sessions closed, 19 builds retired. **Not promoted**: the owner's own check on UAT found the two defects below. | 304.6 |
+| UAT | `20261005T015756Z-d893f55c` (prepare only) | `2aa87ac68` (#1005 twin = develop `6ac6d8a63` via #1004: Thai file names on downloads, the LINE pending-approval card) | PREPARED_NO_DEPLOYMENT 09:01. | 234.7 |
+| UAT | `20261005T020153Z-ab52b619` (prepared by `d893f55c`) | `2aa87ac68` | ACCEPTED_LINE_DEFERRED 09:06, smoke, 12/12 phases, no migration (database phase 69.2 s, rollout 91.0 s), AgentCore `kamal_uat_a` v52, signature verified, 2 SSM sessions closed. | 278.0 |
+| Production | `20261005T020723Z-9af0be8a` (preflight) | — | PREFLIGHT_PASSED_NO_DEPLOYMENT 09:07, 4 SSM sessions closed. | 18.4 |
+| Production | `20261005T020935Z-c3166cc2` | `2aa87ac68`, promoted from UAT `ab52b619` with no rebuild, after preflight `9af0be8a` | ACCEPTED_LINE_DEFERRED 09:20, website ready 09:14:35 (299.8 s), acceptance written 09:19:35. Serving `live`, `OPEN`, 10/10 browser checks, with the owner signing in personally. 13 migrations applied (database phase 80.7 s, rollout 84.9 s), AgentCore `kamal_production_a` v21, signature verified, 4 SSM sessions closed, 19 builds retired, no `active.json`. | 628.4 |
+
+**Two defects that only the real storage and the real LINE path showed.** Both were found by the owner on UAT after round 1 and fixed before Production.
+- "เปิดดูไฟล์นี้" failed for a file with a Thai name. S3 answers 400 `InvalidArgument` ("Header value cannot be represented using ISO-8859-1") when a presigned `response-content-disposition` holds characters outside Latin-1. Local MinIO accepts the same request, so no local check can see it. The header now carries an ASCII fallback name plus the RFC 5987 form `filename*=UTF-8''…`.
+- The LINE answer to "รายการรออนุมัติ" arrived as text. The V2 delivery plan sends a flex card only when the message carries the completeness proof, and that card was built without it; otherwise the plan sends the card's text.
+
+**The owner may sign in before website-ready.** He signed in during the rollout, and the session was still valid after it. Every check was observed after the controller printed website-ready, and the observation file records the early sign-in. The browser stage took 300.9 s, against 93–198 s in the four Production releases of 2026-09-30: the checks themselves ran in 25 s, the rest was the controller reading the log and writing the evidence. Have the page-context check and the evidence writer ready before website-ready.
+
+**One bastion session for all the count files.** Every `start-session` on the Production bastion mails the owner a security alert, and this release sent four. The first attempt failed with `psql: invalid URI query parameter: "connection_limit"`: the stored database URL carries Prisma-only parameters, so drop its whole query string and add `sslmode=require`. The PRE file, the POST file, and the PRE file again with one support count then each used a session of 8–9 s. Run every file through one tunnel: the after-release read needs the PRE file again (P1, P3, P4) and the POST file together.
+
+**UAT's active companies fell from 19 to 11 before the deploy, not because of it.** A scheduled job of the build already on UAT (`system.company_plan_term.expired_trial_reset`) disabled eight expired-trial companies at 06:33, 47 minutes before round 1.
+
+**UAT hosts.** Both were already running at round 1 (since 2026-10-04 17:03, not started by this release) and were left running; the owner decides when to park them.
+
+## Hotfix 2026-09-30 evening — claim lines on a phone
 
 After this section, Production serves hotfix source `908e7aab`. `main` `b7d86eb8` (#937) merges it and has the same tree. UAT still serves `7b1b1c11`, which does not have this web fix. This is the first live use of the isolated `deploy-prod-hotfix` path since the Kamal cutover, run from a clean `main` controller at `7b1b1c11`. The GitHub workflow ID is `NOT_DISPATCHED`. Times are Bangkok.
 
