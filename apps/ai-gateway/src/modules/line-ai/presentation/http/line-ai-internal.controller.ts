@@ -487,6 +487,7 @@ export class LineAiInternalController {
     @Headers('x-internal-secret') secret: string | undefined,
     @Body() body: LineIntakeRouteRequest,
   ): Promise<LineIntakeRoutePlan> {
+    const receivedAt = Date.now();
     assertInternalSecret(secret, this.config.aiGatewayInternalSecret);
     if (!body?.requestId || !body.companyId || !body.userId || typeof body.messageText !== 'string' || !Array.isArray(body.permissions)) {
       throw new BadRequestException('Invalid intake route payload.');
@@ -559,7 +560,9 @@ export class LineAiInternalController {
       this.config.lineAiPublicLookupEnabled,
       [...APPROVED_PREPARED_FAMILY_KEYS],
     );
+    const routeStartedAt = Date.now();
     const routed = await router.routeIntake(body);
+    const routeMs = Date.now() - routeStartedAt;
     const { receiptCandidate, ...plan } = routed;
     const onePassDecision = assessIntakeOnePassReceipt(
       plan,
@@ -571,7 +574,7 @@ export class LineAiInternalController {
     // provider error, an unparseable answer — reached the operator as the same UNAVAILABLE/UNSUPPORTED line.
     this.logger.log({
       msg: 'LINE intake routed', requestId: body.requestId, status: plan.status, intent: plan.intent,
-      confidence: plan.confidence,
+      confidence: plan.confidence, routeMs, handlerMs: Date.now() - receivedAt,
       onePassReceipt: onePassReceipt ? 'accepted' : receiptCandidate === undefined ? 'absent' : 'rejected',
       ...(receiptCandidate === undefined || onePassReceipt ? {} : { onePassRejectReason: onePassDecision.reason }),
       ...(onePassDecision.missingFields?.length ? { onePassRejectMissingFields: onePassDecision.missingFields } : {}),
