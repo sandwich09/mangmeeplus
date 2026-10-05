@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
 import { buildLineDeliveryPlan, deliveryHash, initialDeliveryBatchStates, lineDeliveryRetryKey, parseDeliveryBatchStates, parseLineDeliveryPlan, splitLineDeliveryText, type DeliveryAuthorizationV2 } from './line-delivery-plan.logic';
-import { asCompleteLineCard, buildDesignedLineAnswerMessage, buildExpenseDraftReviewCard, buildLineBusinessAnswerMessage, buildLineSystemTextCardMessage, expenseDraftCardFactsFrom, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader } from './line-business-card.logic';
+import { asCompleteLineCard, buildDesignedLineAnswerMessage, buildExpenseDraftReviewCard, buildKeptReceiptCard, buildLineBusinessAnswerMessage, buildLineSystemTextCardMessage, expenseDraftCardFactsFrom, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader } from './line-business-card.logic';
+import { receiptProgress } from './line-receipt-status.logic';
 import { buildDraftUpdateOutcomeCard, buildDraftUpdatePreviewCard, draftUpdateCanonicalDiff } from './line-draft-update-card.logic';
 import { isLineSystemCard, readLineSystemBubble } from './line-system-card.fixture';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
@@ -275,6 +276,18 @@ test('bound path, a short system reply: its card is the plan primary, its senten
   const batch = boundPlan([withChoices]).batches[0]!;
   assert.equal(batch.primary.messages[0]!.type, 'flex');
   assert.deepEqual([batch.primary.messages[0]!.quickReply, batch.fallback?.messages[0]?.quickReply], [quickReply, quickReply]);
+});
+
+// Owner 2026-10-05: "this picture is a bill already kept" was still on the green card. In a bound chat the
+// plan sends the row card itself; the reply as it always was is the same slot's fallback.
+test('bound path, a photo that is a bill already kept: the row card is the plan primary, the reply its fallback', () => {
+  const reply = ['📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ', 'ผู้ขาย – Starbucks Coffee', 'ยอดรวม – 170.00 บาท', 'สถานะ – บันทึกแบบร่างแล้ว รอคุณตรวจสอบและยืนยัน',
+    `เปิดใบเสร็จเดิม: ${WEB}/companies/company/expenses/e1`].join('\n');
+  const card = buildKeptReceiptCard(reply, { expenseId: 'e1', vendor: 'Starbucks Coffee', total: '170.00 บาท', progress: receiptProgress('NEEDS_REVIEW') }, WEB, 'company');
+  const wire = assertCardIsPrimary(card, ['เอกสารที่ส่งมา', 'ตรงกับบิลที่เก็บไว้แล้ว'], 'kept receipt');
+  const drawn = readLineSystemBubble(wire.contents);
+  assert.deepEqual(drawn.rows.map(([label, , value]) => `${label}: ${value}`), ['ผู้ขาย: Starbucks Coffee', 'ยอดรวม: 170.00 บาท', 'สถานะ: บันทึกแบบร่างแล้ว']);
+  assert.deepEqual(drawn.actions.map(action => [action.label, action.uri]), [['เปิดใบเสร็จเดิม', `${WEB}/companies/company/expenses/e1?openExternalBrowser=1`]]);
 });
 
 test('bound path, context 3: capability, small talk and an explained bill are each one prose card under the reader\'s question', () => {

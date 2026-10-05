@@ -997,10 +997,18 @@ const PERIOD_ALL_MONTH_ALTERNATION = `${PERIOD_MONTH_ALTERNATION}|(?:${PERIOD_SH
 const PERIOD_RANGE_CONNECTOR = 'จนถึง|ถึง|ยัน|-|–|—|~|to|until|through';
 const MONTH_RANGE_ENDPOINT = `(${PERIOD_ALL_MONTH_ALTERNATION}|\\d{1,2})(?:\\s*(?:ปี\\s*|year\\s*)?['’]?(\\d{2,4})(?!\\d))?`;
 const PERIOD_MONTH_CONTEXT = 'ตั้งแต่|จาก|ช่วง|ระหว่าง|แล้ว|ของ|รายจ่าย|ค่าใช้จ่าย|ยอดขาย|ยอด';
+/** What may follow an undotted abbreviation ("กค", "กค."): never a Thai letter that would make it another word. */
+const PERIOD_SHORT_MONTH_END = '(?=$|\\s|และ|กับ|เทียบ|นี้|[),/!?\\-–]|ค่ะ|คะ|ครับ|นะ|ล่ะ|ละ)';
 const PERIOD_MONTH_LEAD = `(?:^|[\\s,(]|เดือน\\s*|${PERIOD_MONTH_CONTEXT})`;
+
+const MONTH_LIST_NEXT = new RegExp(`^\\.?\\s*(?:${PERIOD_RANGE_CONNECTOR})\\s*(?:เดือน\\s*)?(?:${PERIOD_ALL_MONTH_ALTERNATION})`, 'iu');
+const MONTH_LIST_BEFORE = new RegExp(`(?:${PERIOD_ALL_MONTH_ALTERNATION})\\.?\\s*(?:${PERIOD_RANGE_CONNECTOR})\\s*$`, 'iu');
 
 function monthRange(m: RegExpMatchArray, today: string): PeriodReading[] | null {
   if ((m[5] === 'กับ' || m[5] === 'และ') && m[1] !== 'ระหว่าง') return null;
+  // "ก.ค.-ส.ค.-ก.ย.": a third month joined on makes it a list of months, each read by its own rule.
+  const input = m.input ?? '', at = m.index ?? 0;
+  if (MONTH_LIST_NEXT.test(input.slice(at + m[0].length)) || MONTH_LIST_BEFORE.test(input.slice(0, at + (m[0].length - m[0].trimStart().length)))) return null;
   const month = (name: string) => periodMonthFromName(name) ?? (/^\d+$/u.test(name) ? Number(name) : 0);
   const first = month(m[3]!), last = month(m[7]!);
   // A bare numeric pair is not a month range (it can be a day range or an amount).
@@ -1248,6 +1256,11 @@ const PERIOD_RULES: PeriodRule[] = [
   },
   // ── quarters (calendar, never fiscal) ────────────────────────────────────
   {
+    // "ไตรมาสสาม", "ไตรมาสแรก": the quarter counted in words.
+    pattern: /ไตรมาส\s*(?:ที่\s*)?(หนึ่ง|แรก|สอง|สาม|สี่)(?:\s*(?:ปี\s*)?['’]?(\d{2,4})(?!\d))?/gu,
+    build: (m, today) => namedQuarter(['หนึ่ง', 'สอง', 'สาม', 'สี่'].indexOf(m[1] === 'แรก' ? 'หนึ่ง' : m[1]!) + 1, m[2], today),
+  },
+  {
     pattern: /(?:ไตรมาส\s*(?:ที่\s*)?|\bq)([1-4])(?:\s*[/\-]\s*|\s*(?:ปี|year)\s*|\s+)?(\d{2,4})?/giu,
     build: (m, today) => namedQuarter(Number(m[1]), m[2], today),
   },
@@ -1268,11 +1281,11 @@ const PERIOD_RULES: PeriodRule[] = [
   },
   // ── named months (± พ.ศ./ค.ศ./two-digit year, else the latest non-future occurrence) ──
   {
-    pattern: new RegExp(`เดือน\\s*(${PERIOD_SHORT_MONTH_ALTERNATION})\\.?\\s*(?:ปี\\s*)?['’]?(\\d{2,4})?(?=$|\\s|และ|กับ|[),/!?]|ค่ะ|คะ|ครับ|นะ|ล่ะ|ละ)`, 'giu'),
+    pattern: new RegExp(`เดือน\\s*(${PERIOD_SHORT_MONTH_ALTERNATION})\\.?\\s*(?:ปี\\s*)?['’]?(\\d{2,4})?${PERIOD_SHORT_MONTH_END}`, 'giu'),
     build: (m, today) => namedMonth(m[1]!, m[2], today),
   },
   {
-    pattern: new RegExp(`(?:^|\\s|[,(]|และ\\s*|กับ\\s*)(${PERIOD_SHORT_MONTH_ALTERNATION})\\.?\\s*(?:ปี\\s*)?['’]?(\\d{2,4})?(?=$|\\s|และ|กับ|[),/!?]|ค่ะ|คะ|ครับ|นะ|ล่ะ|ละ)`, 'giu'),
+    pattern: new RegExp(`(?:^|\\s|[,(/\\-–]|และ\\s*|กับ\\s*|เทียบ\\s*|สรุป|${PERIOD_MONTH_CONTEXT})(${PERIOD_SHORT_MONTH_ALTERNATION})\\.?\\s*(?:ปี\\s*)?['’]?(\\d{2,4})?${PERIOD_SHORT_MONTH_END}`, 'giu'),
     build: (m, today) => namedMonth(m[1]!, m[2], today),
   },
   {
@@ -1294,7 +1307,16 @@ const PERIOD_RULES: PeriodRule[] = [
   { pattern: /this\s*year/gi, build: (_m, today) => yearsAgo(0, today, 'ปีนี้') },
   // "เดือนมกราปี 2568": a year written straight after a spoken month name is that month's year, read by the
   // spoken-month rules below — never a whole-year period of its own.
-  { pattern: new RegExp(`(?<!(?:${PERIOD_SPOKEN_MONTH_ALTERNATION})\\s*)(?:ปี|year)\\s*['’]?(\\d{2,4})`, 'giu'), build: (m, today) => namedYear(m[1]!, today) },
+  // "พ.ศ. 2568", "ปี ค.ศ. 2025": the era is stated, so nothing is assumed about it.
+  {
+    pattern: /(?:ปี\s*)?(พ\.?\s?ศ\.?|ค\.?\s?ศ\.?)\s*(\d{4})(?!\d)/gu,
+    build: (m, today) => {
+      const year = Number(m[2]), yearBe = m[1]!.startsWith('พ') ? year : year + BE_CE_OFFSET;
+      return yearBe >= 2400 && yearBe <= 2700 ? namedYear(String(yearBe), today) : [];
+    },
+  },
+  { pattern: new RegExp(`(?<!(?:${PERIOD_SPOKEN_MONTH_ALTERNATION})\\s*)(?:ปี|year)\\s*['’]?(\\d{2,4})`, 'giu'), build: (m, today) => namedYear(m[1]!, today) },  // "ทั้งปี" with no year named is this year (a named or relative year was read by the rules above).
+  { pattern: /(?<!(?:ปีนี้|ปีที่แล้ว|ปีก่อน|\d)\s*)ทั้งปี(?!\s*(?:['’]?\d|พ\.?\s?ศ|ค\.?\s?ศ))/gu, build: (_m, today) => yearsAgo(0, today, 'ปีนี้') },
 ];
 
 /**
@@ -1312,7 +1334,7 @@ const SPOKEN_MONTH_PERIOD_RULES: PeriodRule[] = [
   {
     // NAT-09 ("ช่วยสรุปรายจ่ายสิงหาให้หน่อย"): a money noun right before the name and ให้ right after it are
     // boundaries too — a name or a longer word (ค่าจ้างคุณกันยา, รายจ่ายตุลาการ) still never matches.
-    pattern: new RegExp(`(?:^|\\s|[,(]|และ\\s*|แล้ว|ของ|รายจ่าย|ค่าใช้จ่าย|ยอดขาย|ยอด)(${PERIOD_SPOKEN_MONTH_ALTERNATION})${FULL_MONTH_NAME_REST}(?:\\s*(?:ปี\\s*)?['’]?(\\d{2,4}))?(?=$|\\s|และ|[),/.!?]|ล่ะ|ละ|นะ|คะ|ค่ะ|ครับ|บ้าง|หน่อย|ให้)`, 'giu'),
+    pattern: new RegExp(`(?:^|\\s|[,(]|และ\\s*|แล้ว|ของ|รายจ่าย|ค่าใช้จ่าย|ยอดขาย|ยอด|เทียบ|สรุป|(?<=(?:${PERIOD_ALL_MONTH_ALTERNATION})\\s*)กับ\\s*)(${PERIOD_SPOKEN_MONTH_ALTERNATION})${FULL_MONTH_NAME_REST}(?:\\s*(?:ปี\\s*)?['’]?(\\d{2,4}))?(?=$|\\s|และ|กับ|เทียบ|[),/.!?]|ล่ะ|ละ|นะ|คะ|ค่ะ|ครับ|บ้าง|หน่อย|ให้)`, 'giu'),
     build: (m, today) => namedMonth(m[1]!, m[2], today),
   },
 ];
