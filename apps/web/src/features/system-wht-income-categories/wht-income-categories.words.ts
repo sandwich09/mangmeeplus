@@ -22,7 +22,7 @@ export const W = {
   unknown: 'ยังไม่ทราบสถานะ',
   unknownForm: 'ยังไม่ทราบแบบยื่นภาษี',
   forms: { PND3: 'ภ.ง.ด.3', PND53: 'ภ.ง.ด.53' },
-  statuses: { ACTIVE: 'เปิดใช้งาน', DRAFT: 'ยังไม่เปิดใช้งาน', RETIRED: 'เลิกใช้งาน' },
+  statuses: { ACTIVE: 'เปิดใช้งาน', DRAFT: 'ไม่ได้เปิดใช้งาน', RETIRED: 'เลิกใช้งาน' },
 } as const;
 
 export const formLabel = (form: string) => W.forms[form as keyof typeof W.forms] ?? W.unknownForm;

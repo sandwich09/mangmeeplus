@@ -39,7 +39,8 @@ test('report shell keeps shared KPI sizes, descriptions, time row and loading sk
 test('overview uses equal KPI widths and places the top-payers row inside adoption with a header button', async () => {
   const { OverviewContent } = await content();
   const html = htmlOf(OverviewContent, { data: overview, nav });
-  assert.match(html, /data-executive-kpi-strip[^>]*min-\[1200px\]:grid-cols-4/);
+  // Four tiles share one row from 768 px (2026-10-05): three columns left the fourth alone on its row up to 1199 px.
+  assert.match(html, /data-executive-kpi-strip[^>]*md:grid-cols-4/); assert.doesNotMatch(html, /data-executive-kpi-strip[^>]*md:grid-cols-3/);
   assert.doesNotMatch(html, /\[&amp;_.mangmee-stat-card\]:h-full/); assert.match(html, /h-26/);
   assert.doesNotMatch(html, /<h2[^>]*>[^<]*เรื่องที่ควรดูต่อ/);
   assert.match(html, /<button[^>]*>ดูอันดับการใช้<\/button>/);

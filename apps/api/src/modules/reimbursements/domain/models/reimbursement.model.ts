@@ -239,6 +239,7 @@ export type ReimbursementRequestRecord = {
   duplicateStatus: ReimbursementDuplicateStatus;
   possibleDuplicateExpenseCount?: number;
   duplicateConfirmationPendingCount?: number;
+  confirmedDuplicateExpenseCount?: number;
   receiptRequirementStatus: ReimbursementReceiptRequirementStatus;
   postingStatus: ReimbursementPostingStatus;
   linkedExpenseId?: string;

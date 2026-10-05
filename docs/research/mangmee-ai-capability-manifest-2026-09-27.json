@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "8a4de3b352091f85116b92d68afc048a3cb60072",
-  "checkoutBranch": "claude/thai-filename-download-20261005",
+  "sourceRevision": "136725464035d4562aaa67582eae4cd198f14db5",
+  "checkoutBranch": "claude/small-followups-20261005",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
-      "sha256": "31fac9262a3ef4fa7337f22d85053704b1f9d712f46f55ff39224c34365f4b9b"
+      "sha256": "09e272bc4c78380ce3a8553a18d8f1885322ee5a2bc41e32d8550f199dcf0f4d"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-crm-operational-tools.use-case.ts",
@@ -9016,6 +9016,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-05T01:50:59.275Z",
-  "manifestDigest": "75ff6aff7be095fd463a9991ef99d4228a3219eacdaac3cf8db723b6b5fa0205"
+  "generatedAt": "2026-10-05T05:26:22.343Z",
+  "manifestDigest": "8c8080443cd0686b0049b1c9a2f5f6ff3858fe9f61990954f5ba81ab4218eebb"
 }

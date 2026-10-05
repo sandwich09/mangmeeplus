@@ -47,7 +47,7 @@ export const EXECUTIVE_WORDS = {
   service: 'บริการ', origin: 'ที่มา', plan: 'แพ็กเกจ (ปัจจุบัน)', planEnds: 'วันสิ้นสุดแพ็กเกจ', members: 'สมาชิกที่ใช้งานอยู่', branches: 'สาขา',
   companyCount: COMPANY_CUSTOMERS, get active() { return EXECUTIVE_FLAG_LABELS.activeInPeriod.true!; }, get paid() { return EXECUTIVE_FLAG_LABELS.paidInPeriod.true!; }, net: 'ยอดรับสุทธิในเดือน', receipts: 'เงินรับในเดือน', refunds: 'คืนเงินในเดือน',
   fees: 'ค่าธรรมเนียมการรับชำระ', tax: 'ภาษีมูลค่าเพิ่ม', aiCost: 'ต้นทุนผู้ช่วยและการอ่านใบเสร็จที่วัดได้',
-  receiptCount: 'ใบเสร็จในเดือน', lifetimeReceipts: 'ใบเสร็จสะสม', days: 'วันใช้งาน', users: 'ผู้ใช้ที่ใช้งาน', documents: 'เอกสาร', ai: 'ใช้ผู้ช่วย',
+  receiptCount: 'ใบเสร็จในเดือน', days: 'วันใช้งาน', users: 'ผู้ใช้ที่ใช้งาน', documents: 'เอกสาร', ai: 'ใช้ผู้ช่วย',
   netPerCompany: 'ยอดรับสุทธิต่อบริษัท', receiptsPerCompany: 'ใบเสร็จต่อบริษัท', adoptionShare: 'สัดส่วนบริษัทที่เคยเพิ่มใบเสร็จ',
   adoptionTitle: 'การเริ่มใช้ใบเสร็จ', receiptDefinition: 'ใบเสร็จค่าใช้จ่ายที่ลูกค้าเพิ่ม', documentDefinition: 'เอกสารคือรายจ่ายที่ยืนยันแล้วกับเอกสารขายที่ออกในเดือน',
   usersDefinition: 'นับผู้ที่ยืนยันรายจ่ายหรือสร้างเอกสารขาย ไม่นับผู้ที่ใช้เฉพาะผู้ช่วย', aiDefinition: 'ใช้ผู้ช่วยคือจำนวนครั้งที่ถามผู้ช่วย',
@@ -79,7 +79,7 @@ export const EXECUTIVE_WORDS = {
   shortTrend: 'แนวโน้ม 6 เดือน', shortDifference: 'ต่างกัน', shortCumulative: 'สะสม %', quantity: 'จำนวน',
   unitBaht: 'บาท', unitInHeader: (label: string, unit: string) => `${label} (${unit})`,
   joinedShort: (at: string) => `สมัคร ${at}`,
-  unitCompany: 'บริษัท', unitReceipt: 'ใบ', unitDay: 'วัน', unitRequest: 'ครั้ง', point: 'จุด',
+  unitCompany: 'บริษัท', unitReceipt: 'ใบ', unitItem: 'รายการ', unitDay: 'วัน', unitRequest: 'ครั้ง', point: 'จุด',
   back: (title: string) => `← กลับ${title}`,
   through: (at: string) => `ข้อมูลถึง ${at}`, moneyThrough: (at: string) => `ข้อมูลเงินถึงวันที่ ${at}`, revised: (at: string) => `ปรับปรุงเมื่อ ${at}`,
   staleAt: (at: string) => `ตัวเลขเป็นของ ${at}`, contactAt: (at: string) => `ข้อมูลบัญชี ณ ${at}`,
@@ -119,7 +119,7 @@ export const executivePlanLabel = (key: string | null | undefined) => billingPla
 export function executiveExportColumns(reportKey: string, subview?: string, contacts = false): string[] {
   return [W.company, W.registered, W.province, W.group, W.businessType, W.joined, W.filterLabels.companyStatus, W.plan, W.filterLabels.planState,
     W.filterLabels.discovery, 'รายละเอียดที่ลูกค้าระบุ', W.filterLabels.signupRail, W.referring, W.creditedSeller, 'ยอดชำระครั้งแรก (บาท)', W.creditAt,
-    W.filterLabels.paidEver, W.filterLabels.usageGroup, W.filterLabels.receiptAdoption, W.lifetimeReceipts, W.receiptCount, 'วันใช้งานในเดือน', 'ผู้ใช้ที่ใช้งานในเดือน',
+    W.filterLabels.paidEver, W.filterLabels.usageGroup, W.filterLabels.receiptAdoption, EXECUTIVE_SHEET_WORDS.lifetime, W.receiptCount, 'วันใช้งานในเดือน', 'ผู้ใช้ที่ใช้งานในเดือน',
     'เอกสารในเดือน', 'ใช้ผู้ช่วยในเดือน (ครั้ง)', `${W.receipts} (บาท)`, `${W.refunds} (บาท)`, `${W.net} (บาท)`, 'ค่าธรรมเนียมการรับชำระในเดือน (บาท)',
     'ต้นทุนผู้ช่วยและการอ่านใบเสร็จในเดือน (บาท)', W.firstActivity, W.lastActivity, W.lastWeb, W.lastLine,
     ...(reportKey === 'usage' && subview === 'ranking' ? [W.export.rank] : []),
@@ -230,7 +230,7 @@ export const EXECUTIVE_SHEET_WORDS = {
 };
 export const EXECUTIVE_COMPANY_SHEET_COLUMNS = [
   ['company', 'บริษัท / ร้าน'], ['businessType', W.businessType], ['plan', EXECUTIVE_SHEET_WORDS.package],
-  ['receiptsLifetime', 'ใบเสร็จในระบบ (รายการ)'], ['lastReceiptAt', 'เพิ่มใบเสร็จล่าสุด'], ['planEndsAt', 'สิ้นสุดแพ็กเกจ'],
+  ['receiptsLifetime', `${EXECUTIVE_SHEET_WORDS.lifetime} (${W.unitItem})`], ['lastReceiptAt', 'เพิ่มใบเสร็จล่าสุด'], ['planEndsAt', 'สิ้นสุดแพ็กเกจ'],
   ['email', 'อีเมล'], ['phone', 'เบอร์โทร'], ['note', 'หมายเหตุ'], ['noteUpdatedBy', 'ผู้แก้ไขหมายเหตุ'], ['noteUpdatedAt', 'แก้ไขหมายเหตุเมื่อ'],
   ['firstReceiptAt', 'บิลแรก'], ['receipts7', 'ใบเสร็จใหม่ 7 วัน'], ['receipts30', 'ใบเสร็จใหม่ 30 วัน'], ['receiptDays30', 'จำนวนวันที่เพิ่มใบเสร็จใน 30 วัน'],
   ['daysSinceLastReceipt', 'ห่างจากใบเสร็จล่าสุด (วัน)'], ['confirmed', 'ยืนยันแล้ว'], ['pending', 'รอตรวจ/ยืนยัน'], ['draft', 'แบบร่าง'], ['receiptBucket', 'ระดับใบเสร็จ'],

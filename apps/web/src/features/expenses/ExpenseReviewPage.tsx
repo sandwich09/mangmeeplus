@@ -1,7 +1,7 @@
 'use client';
 
 import { normalizeExpensePaymentAmount, expenseOverpaidAmount, expenseOverpaymentRemedy, expenseReopenedMessage, EXPENSE_CORRECTION_WORDS, EXPENSE_REVIEW_STEP_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
-import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, expenseDateIsReadable } from '@watchdog-bms/contracts';
+import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, expenseDateIsReadable, REIMBURSEMENT_DUPLICATE_CONFIRM_WARNING } from '@watchdog-bms/contracts';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -2098,6 +2098,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
               )}
               {duplicateResolution && (
                 <>
+                  {duplicateResolution.action === 'confirm' && detail.sourceReimbursementRequestId && (
+                    <p role="alert" className="text-sm text-amber-800">{REIMBURSEMENT_DUPLICATE_CONFIRM_WARNING}</p>
+                  )}
                   <div className="text-sm font-medium text-gray-700">{t('expenses.duplicate_resolution_reason', locale)}</div>
                   <textarea className={inputClass} rows={2} value={reason} onChange={(e) => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH} />
                   <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>

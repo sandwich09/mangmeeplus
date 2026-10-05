@@ -4,7 +4,7 @@ import { translateApiError } from '@/common/api/api-error-message';
 // The words for a payment method are shared with the server's notice (their own import, apart from the line above).
 import { REIMBURSEMENT_PAYMENT_METHOD_LABELS, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT } from '@watchdog-bms/contracts';
 // A claim sent back from the pay step (payout spec §14): what it is said to wait for, in the words every other reader of it uses.
-import { reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
+import { reimbursementPayoutRoundStatus, reimbursementDuplicateWait } from '@watchdog-bms/contracts';
 
 export const REIMBURSEMENT_CREATE_UNAVAILABLE = `ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}เพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์`;
 
@@ -75,9 +75,11 @@ export const REQUEST_STATUS_TONES: Record<string, MangmeeTone> = {
  * reads "รอระบบปรับสถานะ" for such a claim: the words of that line, that note and the LINE backlog.
  */
 export function claimStatusBadge(claim: {
-  status?: string; currentDesk?: { kind?: string } | null;
+  status?: string; duplicateReasons?: readonly string[]; currentDesk?: { kind?: string } | null;
   payoutCorrectionPhase?: string | null; payoutMethod?: string | null; payoutCorrectionAnswer?: string | null;
 } | null | undefined): { label: string; tone: MangmeeTone } {
+  const cancellation = reimbursementDuplicateWait(claim);
+  if (cancellation?.status) return { label: cancellation.status, tone: 'amber' };
   if (claim?.currentDesk?.kind === 'SYSTEM') return { label: REIMBURSEMENT_SYSTEM_WAIT_LABEL, tone: 'amber' };
   // Payout spec §14.2: a claim sent back from its pay step is PENDING_APPROVAL by its status. "รออนุมัติ" would name an
   // approver nobody waits for while the claim is with its requester, and say nothing of what is approved after. What it
@@ -157,9 +159,9 @@ export function currentDeskText(
  * account (payout spec §14.2), are with their requester: "ผู้เบิก", as on the badge, the step note and the timeline.
  */
 export function claimDeskText(claim: {
-  currentDesk?: Parameters<typeof currentDeskText>[0]; paymentDesk?: Parameters<typeof paymentDeskText>[0];
+  status?: string; duplicateReasons?: readonly string[]; currentDesk?: Parameters<typeof currentDeskText>[0]; paymentDesk?: Parameters<typeof paymentDeskText>[0];
 } | null | undefined): string | null {
-  return currentDeskText(claim?.currentDesk, claim?.paymentDesk);
+  return reimbursementDuplicateWait(claim)?.actor ?? currentDeskText(claim?.currentDesk, claim?.paymentDesk);
 }
 
 // ---- Claim-form signatures ----
@@ -277,9 +279,9 @@ export function reimbursementOwnActions(detail: any, userId: string, permissions
   return {
     canEditDraft: canPrepare && status === 'DRAFT' && (permissions.includes('reimbursement.update_own_draft') || permissions.includes('reimbursement.finance_review')),
     canSubmit: canPrepare && status === 'DRAFT' && permissions.includes('reimbursement.submit'),
-    canCancel: !beingCancelled && ((isRequester && permissions.includes('reimbursement.cancel_own'))
+    canCancel: !beingCancelled && (detail?.viewerCanCancel ?? (((isRequester && permissions.includes('reimbursement.cancel_own'))
       || permissions.includes('reimbursement.finance_review'))
-      && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status),
+      && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status))),
     // REJECTED -> DRAFT: fix and resubmit under the same request number (server: /reopen).
     canReopen: canPrepare && status === 'REJECTED' && permissions.includes('reimbursement.update_own_draft'),
   };

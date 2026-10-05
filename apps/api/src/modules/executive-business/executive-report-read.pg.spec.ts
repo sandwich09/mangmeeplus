@@ -1097,7 +1097,7 @@ describe('API13 snapshot to workbook agreement', () => {
     assert.match(cellXml(sheet, 'R7'), new RegExp(`<v>${overview.metrics.netReceiptsSatang.value! / 100}</v>`));
     assert.equal(output.rowCount, 15); assert.equal(f.stats().transactions, 2); assert.equal(f.stats().contacts, 0);
     const source = parts.get('xl/worksheets/sheet2.xml')!;
-    assert.equal(sourceCellXml(source, 'ใบเสร็จสะสม'), ''); assert.match(sourceCellXml(source, 'ยอดรับสุทธิในเดือน (บาท)'), /<v>-12.34<\/v>/);
+    assert.match(sourceCellXml(source, 'ใบเสร็จในระบบ (รายการ)'), /ยังไม่มีตัวเลข/); assert.match(sourceCellXml(source, 'ยอดรับสุทธิในเดือน (บาท)'), /<v>-12.34<\/v>/);
     assert.doesNotMatch([...parts.values()].join(''), /fiction-0|fixture-build|fixture-version|@|081\d{7}/);
     const companies = await f.report.companies(f.ctx, { month: f.body.month, paidEver: 'YES', pageSize: 1, sortBy: 'netReceipts' });
     const filtered = await f.report.export(f.ctx, { ...f.body, reportKey: 'companies', filters: { paidEver: 'YES' }, sortBy: 'netReceipts', sortDir: 'desc' });
@@ -1166,6 +1166,20 @@ it('the fictional reference workbook is reproducible and every part contains onl
       for (const company of companyNames) assert.ok(FICTIONAL_EXECUTIVE_COMPANIES.includes(company!), `${part}: only invented companies`);
     }
   }
+});
+
+it('the fictional receipt export shares its in-system word, count and missing-data qualifier across the sheet, KPI and bucket chart', async () => {
+  const { fictionalExecutiveWorkbook } = await import('./fixtures/executive-export.fixture');
+  const { EXECUTIVE_SHEET_WORDS: S, EXECUTIVE_WORDS: W } = await import('@watchdog-bms/contracts');
+  const parts = workbookParts(fictionalExecutiveWorkbook()), source = parts.get('xl/worksheets/sheet2.xml')!, dashboard = parts.get('xl/worksheets/sheet1.xml')!;
+  assert.ok(cellXml(source, 'T6').includes(S.lifetime));
+  assert.match(cellXml(source, 'T7'), /<v>7<\/v>/); assert.match(cellXml(source, 'T8'), /<v>0<\/v>/);
+  assert.ok(cellXml(source, 'T9').includes(W.unavailableFigure));
+  assert.ok(cellXml(dashboard, 'J10').includes(S.lifetime)); assert.match(cellXml(dashboard, 'J7'), /<v>7<\/v>/);
+  assert.ok(cellXml(dashboard, 'J11').includes(W.atLeast));
+  assert.ok(parts.get('xl/charts/chart2.xml')!.includes(S.lifetime));
+  assert.ok(dashboard.includes(`${W.export.bucketsDefinition} · ${W.atLeast}`));
+  assert.doesNotMatch([...parts.values()].join(''), /ใบเสร็จสะสม/);
 });
 
 it('rechecks the current account and session before returning a file', async () => {
@@ -1792,6 +1806,31 @@ describe('executive owner sheet and churn without PostgreSQL', () => {
 });
 
 describe('executive owner sheet source and permission boundaries', () => {
+  it('exports the in-system receipt count and qualifier in the one receipt column of month and range reports', async () => {
+    const { executiveExportColumns, EXECUTIVE_COMPANY_SHEET_COLUMNS, EXECUTIVE_SHEET_WORDS } = await import('@watchdog-bms/contracts');
+    for (const range of [false, true]) for (const coverage of ['complete', 'partial', 'unavailable']) {
+      const f = sheetSourceFixture();
+      const profile = f.profiles[1] as any;
+      profile.expenseReceiptCountLifetime = coverage === 'unavailable' ? 0 : 19;
+      profile.sheetFacts = coverage === 'complete' ? { ...profile.sheetFacts, sourceCount: 1, receiptCountersHeld: true } : null;
+      const body = { ...f.body, ...(range ? { month: undefined, ...f.query } : {}), reportKey: 'companies', sortBy: 'companyName', sortDir: 'asc' } as any;
+      const source = workbookParts((await f.report.export(f.ctx, body)).file).get('xl/worksheets/sheet2.xml')!;
+      const legacyLabel = executiveExportColumns('companies')[19]!;
+      const sheetLabel = EXECUTIVE_COMPANY_SHEET_COLUMNS.find(column => column.key === 'receiptsLifetime')!.label;
+      const expected = coverage === 'complete' ? /<v>1<\/v>/ : coverage === 'partial' ? /อย่างน้อย 19/ : /ยังไม่มีตัวเลข/;
+      assert.match(sourceCellXml(source, sheetLabel, 8), expected, `${range ? 'range' : 'month'} ${coverage}: ${sheetLabel}`);
+      // One receipt column in the file: the sheet's own. The older per-company column carries the same figure, so it gives its place to it.
+      assert.equal(legacyLabel, EXECUTIVE_SHEET_WORDS.lifetime);
+      assert.doesNotMatch(source, new RegExp(`<t[^>]*>${legacyLabel}</t>`), `${range ? 'range' : 'month'} ${coverage}: no second receipt column`);
+      if (coverage === 'complete') {
+        const overview = await f.report.overview(f.ctx, range ? f.query : { month: f.body.month });
+        assert.equal(overview.asOfFigures.receiptsLifetime.value, 7);
+        assert.deepEqual(overview.asOfFigures.receiptBuckets.map(bucket => bucket.value), [1, 1, 1]);
+        const chart = workbookParts((await f.report.export(f.ctx, { ...body, reportKey: 'overview', sortBy: undefined, sortDir: undefined })).file).get('xl/charts/chart2.xml')!;
+        assert.match(chart, /<c:pt idx="1"><c:v>1<\/c:v>/);
+      }
+    }
+  });
   it('keeps data-date drilldowns independent of a past period and includes later signups', async () => {
     const f = sheetSourceFixture(); Object.assign(f.profiles[2]!, { companyCreatedAt: at('2026-10-01T00:00:00Z') });
     const overview = await f.report.overview(f.ctx, f.query);
