@@ -77,3 +77,12 @@ describe('notification rules wording', () => {
     assert.doesNotMatch(centerSource, /placeholder="(?:22:00|07:00)"/);
   });
 });
+
+it('W4 every notification title wraps fully while the row keeps its minimum height and unread mark', () => {
+  const title = centerSource.match(/<p className="([^"]+)">\{item.title\}<\/p>/)![1]!;
+  assert.doesNotMatch(title, /line-clamp|truncate/);
+  assert.match(title, /break-words/);
+  assert.match(centerSource, /relative flex items-start gap-3 p-3/);
+  assert.doesNotMatch(centerSource.match(/<div key=\{item.id\}[^>]+>/)![0], /h-\[|max-h-|overflow-hidden/);
+  assert.match(centerSource, /isUnreadNotification\(item\)/);
+});

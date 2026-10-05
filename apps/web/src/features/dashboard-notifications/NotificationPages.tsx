@@ -228,9 +228,7 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
               {notificationTag(item).label}
             </span>
             <div className="pointer-events-none relative min-w-0 flex-1">
-              {/* Two lines instead of `truncate`: the title had ~180px of room and was cut
-                  mid-sentence, which is most of what made this screen unreadable on a phone. */}
-              <p className="line-clamp-2 text-sm font-medium text-gray-900 sm:truncate">{item.title}</p>
+              <p className="break-words text-sm font-medium text-gray-900">{item.title}</p>
               {notificationBodyText(item) && <p className="text-xs text-gray-500">{notificationBodyText(item)}</p>}
               <p className="text-xs text-gray-400 mt-0.5">{formatRelativeTime(item.createdAt)}</p>
             </div>
