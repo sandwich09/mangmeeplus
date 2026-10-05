@@ -101,6 +101,12 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   const [loading, setLoading] = useState(editing && canUpdate);
   const [editLoaded, setEditLoaded] = useState(!editing);
   const [error, setError] = useState<string | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error && !payoutInvalidField) {
+      errorRef.current?.scrollIntoView({ block: 'start' }); errorRef.current?.focus({ preventScroll: true });
+    }
+  }, [error, payoutInvalidField]);
   const [correctionNote, setCorrectionNote] = useState<string | null>(null);
   const [sourceBranchId, setSourceBranchId] = useState<string | null>(null);
   // Set only when the draft was created but its receipts failed to attach. Re-submitting would
@@ -181,10 +187,10 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     if (!editing && previousBranchRef.current !== branchId) {
       setForm(current => ({ ...current, lines: current.lines.map(line => line.linkedExpenseId ? emptyLine() : line) }));
       setRequesterUserId(userId);
-      setPayout(resetClaimPayoutForRequester); setPayoutInvalidField(undefined);
+      if (requesterUserId !== userId) { setPayout(resetClaimPayoutForRequester); setPayoutInvalidField(undefined); }
       previousBranchRef.current = branchId;
     }
-  }, [branchId, editing, userId]);
+  }, [branchId, editing, userId, requesterUserId]);
 
   useEffect(() => {
     const selectedBranch = editing ? sourceBranchId : branchId;
@@ -280,7 +286,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   const allLinesCollapsed = form.lines.every((_line, i) => !!collapsedLines[i]);
 
   const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(null);
+    e.preventDefault(); setError(null); setPayoutInvalidField(undefined);
     if (!editing && !branchId) { setError('กรุณาเลือกสาขาของรายการ'); return; }
     const v = validateRequestForm({
       reason: form.reason,
@@ -293,7 +299,10 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     if (payoutError) {
       setError(payoutError); setPayoutInvalidField(claimPayoutFieldError(payout)?.field);
       const formElement = e.currentTarget;
-      requestAnimationFrame(() => formElement.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+      requestAnimationFrame(() => {
+        const field = formElement.querySelector<HTMLElement>('[aria-invalid="true"]');
+        field?.scrollIntoView({ block: 'start' }); field?.focus({ preventScroll: true });
+      });
       return;
     }
     // Undefined leaves an existing draft's receiving choice as it is.
@@ -446,6 +455,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
             value={payout}
             onChange={value => { setPayout(value); setPayoutInvalidField(undefined); setError(null); }}
             invalidField={payoutInvalidField}
+            error={error}
             savedAccounts={savedAccounts}
             savedAccountsLoading={savedAccountsLoading}
             savedAccountsError={savedAccountsError}
@@ -565,7 +575,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
             <div className="text-xs font-semibold text-gray-500">ยอดรวม</div>
             <div className="mt-2 text-[26px] font-extrabold leading-none tracking-tight tabular-nums text-gray-900">{formatMoney(total, form.currency)}</div>
           </div>
-          {error && <ErrorBanner message={error} />}
+          {error && <div ref={errorRef} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={error} /></div>}
           <div className="mt-4 space-y-2">
             {strandedDraftId
               ? <Link href={`${hubHref}/${strandedDraftId}`} className={cx(btnClass, 'w-full')}>เปิดร่างเพื่อแก้ไขไฟล์</Link>

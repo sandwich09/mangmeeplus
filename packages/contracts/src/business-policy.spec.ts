@@ -200,3 +200,8 @@ test('D3: expense waiting for a confirmed-blocked claim says duplicate block, cl
   assert.equal(expenseReimbursementProgressLabel({ status: 'READY_FOR_PAYMENT' }), 'รอจ่ายคืน');
   assert.equal(expenseReimbursementProgressLabel({ status: 'PAID', hasConfirmedDuplicate: true } as any), 'จ่ายคืนแล้ว');
 });
+
+test('saved default swap tells where the previous account remains, in shared Thai words', () => {
+  assert.equal((payout.REIMBURSEMENT_SAVED_PAYOUT_WORDS as any).madeDefaultWithPrevious,
+    'ตั้งเป็นบัญชีประจำแล้ว บัญชีประจำเดิมอยู่ในรายการบัญชีที่บันทึกไว้');
+});

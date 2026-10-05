@@ -1,14 +1,15 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { PAYOUT_SAVED_ACCOUNT_LIMIT, PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH, type PayoutHolderFacts, type SavedPayoutAccountSummary, type SavedPayoutAccountListResponse } from '@watchdog-bms/contracts';
+import { FieldError } from '@/common/components/field/Field';
 import { MangmeeCard, cx } from '@/common/components/mangmee';
 import { ErrorState, LoadingState } from '@/common/components/state';
 import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
 import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/ExpensesUi';
 import { AccountNumberReveal, PayoutAccountFields, PayoutHolderFields, SavedPayoutAccountDetails, labelClass } from './ReimbursementPayout';
-import { addMySavedPayoutAccount, deleteMySavedPayoutAccount, getMySavedPayoutAccounts, makeMySavedPayoutAccountDefault, revealMySavedPayoutAccount } from './reimbursement-payout.api';
+import { addMySavedPayoutAccount, deleteMySavedPayoutAccount, getMySavedPayoutAccounts, getMyPayoutAccount, makeMySavedPayoutAccountDefault, revealMySavedPayoutAccount } from './reimbursement-payout.api';
 import { emptyPayoutAccountForm, payoutDestinationInput, payoutHolderInput, savedPayoutAccountFormError } from './reimbursement-payout.logic';
 import { REIMBURSEMENT_SAVED_PAYOUT_WORDS as W } from '@watchdog-bms/contracts';
 import { errorText } from './reimbursements.logic';
@@ -27,6 +28,13 @@ export function SavedPayoutAccountsCard({ companyId, onDefaultChanged }: { compa
   const [error, setError] = useState<string | null>(null);
   const [invalidField, setInvalidField] = useState<string>();
   const formRef = useRef<HTMLFormElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const labelErrorId = useId();
+  useEffect(() => {
+    if (error && !invalidField) {
+      errorRef.current?.scrollIntoView({ block: 'start' }); errorRef.current?.focus({ preventScroll: true });
+    }
+  }, [error, invalidField]);
   useEffect(() => {
     let active = true;
     setList(null); setLoadError(null);
@@ -35,14 +43,19 @@ export function SavedPayoutAccountsCard({ companyId, onDefaultChanged }: { compa
     return () => { active = false; };
   }, [companyId, reload]);
   useEffect(() => {
-    if (invalidField) formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    if (!invalidField) return;
+    const field = formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+    field?.scrollIntoView({ block: 'start' }); field?.focus({ preventScroll: true });
   }, [invalidField]);
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     const problem = savedPayoutAccountFormError(account, holder, label);
     if (problem) {
       setError(problem.text); setInvalidField(problem.field);
-      requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+      requestAnimationFrame(() => {
+        const field = formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+        field?.scrollIntoView({ block: 'start' }); field?.focus({ preventScroll: true });
+      });
       return;
     }
     setBusy(true); setError(null); setInvalidField(undefined);
@@ -52,17 +65,18 @@ export function SavedPayoutAccountsCard({ companyId, onDefaultChanged }: { compa
       setReload(value => value + 1); toast.success(W.saved);
     } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
-  const remove = async (id: string) => {
-    if (!(await confirm({ title: W.deleteTitle, message: W.deleteNotice, confirmLabel: 'ลบบัญชี', cancelLabel: 'กลับ', variant: 'danger' }))) return;
-    setBusy(true); setError(null);
-    try { await deleteMySavedPayoutAccount(companyId, id); setReload(value => value + 1); toast.success(W.removed); }
+  const remove = async (row: SavedPayoutAccountSummary, index: number) => {
+    if (!(await confirm({ title: W.deleteTitle, message: <span className="block space-y-3"><SavedPayoutAccountDetails account={row} index={index} /><span className="block">{W.deleteNotice}</span></span>, confirmLabel: 'ลบบัญชี', cancelLabel: 'กลับ', variant: 'danger' }))) return;
+    setBusy(true); setError(null); setInvalidField(undefined);
+    try { await deleteMySavedPayoutAccount(companyId, row.id); setReload(value => value + 1); toast.success(W.removed); }
     catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
   const makeDefault = async (id: string) => {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setInvalidField(undefined);
     try {
+      const previous = await getMyPayoutAccount(companyId);
       await makeMySavedPayoutAccountDefault(companyId, id);
-      onDefaultChanged(); setReload(value => value + 1); toast.success(W.madeDefault);
+      onDefaultChanged(); setReload(value => value + 1); toast.success(previous.account?.payoutMethod === 'BANK_TRANSFER' ? W.madeDefaultWithPrevious : W.madeDefault);
     } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
   const full = !!list && list.accounts.length >= Math.min(list.limit, PAYOUT_SAVED_ACCOUNT_LIMIT);
@@ -73,20 +87,20 @@ export function SavedPayoutAccountsCard({ companyId, onDefaultChanged }: { compa
       : !list ? <LoadingState label={W.loading} /> : <>
         {list.accounts.length === 0 && <p className="text-sm text-gray-600">{W.empty}</p>}
         {list.accounts.map((row, index) => <SavedPayoutAccountRow key={row.id} companyId={companyId} account={row} index={index} busy={busy}
-          onMakeDefault={() => void makeDefault(row.id)} onRemove={() => void remove(row.id)} />)}
+          onMakeDefault={() => void makeDefault(row.id)} onRemove={() => void remove(row, index)} />)}
         {adding && !full ? <form ref={formRef} className="space-y-3 border-t border-gray-100 pt-3" onSubmit={save} noValidate>
           <h3 className="font-semibold">{W.add}</h3>
-          <PayoutAccountFields value={account} onChange={value => { setAccount(value); setInvalidField(undefined); setError(null); }} disabled={busy} invalidField={invalidField} accountNameHint={W.accountNameHint} />
-          <PayoutHolderFields value={holder} onChange={value => { setHolder(value); setInvalidField(undefined); setError(null); }} forSelf disabled={busy} invalidField={invalidField} />
-          <label className={labelClass}>{W.label}<input aria-label={W.label} aria-invalid={invalidField === 'label'} className={cx(inputClass, 'mt-1.5 min-h-11 w-full')} maxLength={PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH} disabled={busy}
-            value={label} onChange={event => { setLabel(event.target.value); setInvalidField(undefined); setError(null); }} /></label>
+          <PayoutAccountFields value={account} onChange={value => { setAccount(value); setInvalidField(undefined); setError(null); }} disabled={busy} invalidField={invalidField} error={error} accountNameHint={W.accountNameHint} />
+          <PayoutHolderFields value={holder} onChange={value => { setHolder(value); setInvalidField(undefined); setError(null); }} forSelf disabled={busy} invalidField={invalidField} error={error} />
+          <label className={labelClass}>{W.label}<input aria-label={W.label} aria-invalid={invalidField === 'label'} aria-describedby={invalidField === 'label' && error ? labelErrorId : undefined} className={cx(inputClass, 'mt-1.5 min-h-11 w-full scroll-mt-[calc(var(--app-header-h)+1rem)]')} maxLength={PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH} disabled={busy}
+            value={label} onChange={event => { setLabel(event.target.value); setInvalidField(undefined); setError(null); }} />{invalidField === 'label' && error && <FieldError id={labelErrorId}>{error}</FieldError>}</label>
           <div className="flex flex-col gap-2 sm:flex-row">
             <button type="button" className={cx(ghostClass, 'min-h-11')} disabled={busy} onClick={() => { setAdding(false); setError(null); setInvalidField(undefined); }}>ยกเลิก</button>
             <button type="submit" className={cx(btnClass, 'min-h-11')} disabled={busy} aria-busy={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึกบัญชี'}</button>
           </div>
         </form> : !full && <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} onClick={() => { setAdding(true); setError(null); }}>{W.add}</button>}
       </>}
-    {error && <ErrorBanner message={error} />}
+    {error && <div ref={errorRef} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={error} /></div>}
     {confirmDialog}
   </MangmeeCard>;
 }

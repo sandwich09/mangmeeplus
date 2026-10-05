@@ -669,7 +669,7 @@ export function useClaimDocumentPreview(companyId: string, onError: (message: st
         footer={(
           <>
             {claimFormError && <p className="mr-auto text-xs font-semibold text-error-700">{claimFormError}</p>}
-            <button
+            <button type="button"
               className={successBtn}
               style={successBtnStyle}
               disabled={claimFormSaving} aria-busy={Boolean(claimFormSaving)}
@@ -776,9 +776,9 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
   const lineReceipt = (l: any) => (
     <>
       {l.sourceExpenseSnapshot ? l.sourceExpenseSnapshot.attachments.map((file: { id: string; fileName: string }) => (
-        <button key={file.id} className="block min-h-11 max-w-48 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(file.id, file.fileName)}>📎 {file.fileName}</button>
+        <button type="button" key={file.id} className="block min-h-11 max-w-48 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(file.id, file.fileName)}>📎 {file.fileName}</button>
       )) : l.attachmentId ? (
-        <button className="min-h-11 max-w-40 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(l.attachmentId, l.attachmentFileName ?? 'receipt.jpg')}>
+        <button type="button" className="min-h-11 max-w-40 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(l.attachmentId, l.attachmentFileName ?? 'receipt.jpg')}>
           📎 {l.attachmentFileName ?? 'เปิดไฟล์แนบ'}
         </button>
       ) : <div className="text-gray-600">{l.linkedExpenseId ? '🔗 ค่าใช้จ่ายที่บันทึกไว้' : '—'}</div>}
@@ -786,7 +786,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <div className="mt-1 space-y-1">
           <ThemedFile file={null} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
           <p className="leading-5 text-gray-400"><WholeWords text={ATTACHMENT_SOURCE_TYPES_LABEL} /></p>
-          {l.attachmentId && <button className="min-h-11 text-red-600 hover:underline" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
+          {l.attachmentId && <button type="button" className="min-h-11 text-red-600 hover:underline" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
         </div>
       )}
     </>
@@ -949,7 +949,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                   {/* Attaching again never deletes: the newest declared scan counts, older ones stay viewable. */}
                   {signedCopies.map((copy: any) => (
                     <li key={copy.attachmentId} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2">
-                      <button className="block min-h-11 max-w-full truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId, copy.fileName)}>📄 {copy.fileName}</button>
+                      <button type="button" className="block min-h-11 max-w-full truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId, copy.fileName)}>📄 {copy.fileName}</button>
                       {/* A scan declared as signed before a correction round showed the account that was then corrected. */}
                       {/* What the file is, before anyone opens it: a picture or a PDF, then what it was attached as. */}
                       <div className="break-words text-gray-500">
