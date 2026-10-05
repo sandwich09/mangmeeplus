@@ -854,7 +854,10 @@ const PERIOD_SPOKEN_MONTH_ALTERNATION = THAI_SPOKEN_MONTHS.map(([name]) => name)
 const FULL_MONTH_NAME_REST = '(?!คม|ยน|พันธ์)';
 
 function periodMonthFromName(name: string): number | null {
-  const compact = name.toLowerCase().replace(/\s+/gu, '');
+  const typed = name.toLowerCase().replace(/\s+/gu, '');
+  // "กค." — the abbreviation typed with only its final dot (owner on LINE UAT 2026-10-05: "เทียบค่าใช้จ่าย กค. สค. กย."
+  // was asked which period it meant). It is the undotted abbreviation; "ก.ค." keeps its own entry.
+  const compact = /^[\u0E00-\u0E7F]+\.$/u.test(typed) ? typed.slice(0, -1) : typed;
   const lowered = /^[\u0E00-\u0E7F]+\.[\u0E00-\u0E7F]+$/u.test(compact) ? `${compact}.` : compact;
   for (const [candidate, month] of [...PERIOD_MONTH_NAMES, ...PERIOD_SHORT_MONTH_NAMES, ...THAI_SPOKEN_MONTHS]) if (candidate === lowered) return month;
   return null;
@@ -990,7 +993,7 @@ function completeUnits(n: number, unit: string, today: string, suffix: string): 
     assumptions: [...latest.assumptions, PERIOD_ASSUMPTIONS.completeUnitsExcludeCurrent] }];
 }
 
-const PERIOD_ALL_MONTH_ALTERNATION = `${PERIOD_MONTH_ALTERNATION}|${PERIOD_SHORT_MONTH_ALTERNATION}|${PERIOD_SPOKEN_MONTH_ALTERNATION}`;
+const PERIOD_ALL_MONTH_ALTERNATION = `${PERIOD_MONTH_ALTERNATION}|(?:${PERIOD_SHORT_MONTH_ALTERNATION})\\.?|${PERIOD_SPOKEN_MONTH_ALTERNATION}`;
 const PERIOD_RANGE_CONNECTOR = 'จนถึง|ถึง|ยัน|-|–|—|~|to|until|through';
 const MONTH_RANGE_ENDPOINT = `(${PERIOD_ALL_MONTH_ALTERNATION}|\\d{1,2})(?:\\s*(?:ปี\\s*|year\\s*)?['’]?(\\d{2,4})(?!\\d))?`;
 const PERIOD_MONTH_CONTEXT = 'ตั้งแต่|จาก|ช่วง|ระหว่าง|แล้ว|ของ|รายจ่าย|ค่าใช้จ่าย|ยอดขาย|ยอด';
@@ -1265,11 +1268,11 @@ const PERIOD_RULES: PeriodRule[] = [
   },
   // ── named months (± พ.ศ./ค.ศ./two-digit year, else the latest non-future occurrence) ──
   {
-    pattern: new RegExp(`เดือน\\s*(${PERIOD_SHORT_MONTH_ALTERNATION})\\s*(?:ปี\\s*)?['’]?(\\d{2,4})?(?=$|\\s|และ|[),/])`, 'giu'),
+    pattern: new RegExp(`เดือน\\s*(${PERIOD_SHORT_MONTH_ALTERNATION})\\.?\\s*(?:ปี\\s*)?['’]?(\\d{2,4})?(?=$|\\s|และ|กับ|[),/!?]|ค่ะ|คะ|ครับ|นะ|ล่ะ|ละ)`, 'giu'),
     build: (m, today) => namedMonth(m[1]!, m[2], today),
   },
   {
-    pattern: new RegExp(`(?:^|\\s|[,(]|และ\\s*)(${PERIOD_SHORT_MONTH_ALTERNATION})\\s*(?:ปี\\s*)?['’]?(\\d{2,4})?(?=$|\\s|และ|[),/])`, 'giu'),
+    pattern: new RegExp(`(?:^|\\s|[,(]|และ\\s*|กับ\\s*)(${PERIOD_SHORT_MONTH_ALTERNATION})\\.?\\s*(?:ปี\\s*)?['’]?(\\d{2,4})?(?=$|\\s|และ|กับ|[),/!?]|ค่ะ|คะ|ครับ|นะ|ล่ะ|ละ)`, 'giu'),
     build: (m, today) => namedMonth(m[1]!, m[2], today),
   },
   {
