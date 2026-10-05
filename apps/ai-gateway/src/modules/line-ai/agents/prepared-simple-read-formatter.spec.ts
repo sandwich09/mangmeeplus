@@ -2245,6 +2245,127 @@ describe('design lock context 1 — the expense list and the grouped summary as 
   });
 });
 
+// Owner 2026-10-05: "ทุก scenario … พยายามเอาเข้า pattern นะ". The four other families a shop owner asks
+// every day and that have a sentence to mirror: the day's closing, the approval queue, the state of the
+// claims, one claim. Each row is a fact its own sentence states, in the sentence's words.
+describe('design lock — the day\'s closing, the approval queue, the claims and one claim as row cards', () => {
+  const sentence = (key: string, output: SpecialistOutput, ctx: Record<string, unknown> = {}) => {
+    const result = formatPreparedSimpleRead(key, output, { ...TH, ...ctx });
+    assert.ok(result.kind === 'answer');
+    return result.kind === 'answer' ? result.replyText : '';
+  };
+
+  it('the day\'s closing: what the day comes to, paid and unpaid, each thing on the checklist, and the honesty line', () => {
+    assert.deepEqual(layoutOf(DAILY, dailyOutput(dailyData())), {
+      context: 'expense_summary',
+      header: ['สรุปปิดร้าน', 'วันนี้ (26 ส.ค.)'],
+      rows: [
+        { label: 'ยอดรวม', value: '2,450.00 บาท', emphasis: 'total' },
+        { label: 'จำนวนรายการ', value: '3 รายการ' },
+        { label: 'จ่ายแล้ว', value: '1,200.00 บาท' },
+        { label: 'ยังไม่ได้จ่าย', value: '1,250.00 บาท' },
+        { label: 'ส่งเข้ามาวันนี้', value: '3 รายการ' },
+        { label: 'รอตรวจสอบ', value: '1 รายการ' },
+        { label: 'รอตรวจหลักฐาน', value: '1 รายการ' },
+        { label: 'ข้อมูล ณ', value: '26 ส.ค. 2569' },
+      ],
+      notes: ['จากรายการที่บันทึกในระบบ ถึง 14:30 — ไม่ใช่ยอดเงินเข้าออกธนาคาร'],
+      linkLabel: 'ดูค่าใช้จ่ายในเว็บ',
+    });
+    // Every checklist row is the sentence's own bullet, word for word.
+    const text = sentence(DAILY, dailyOutput(dailyData()));
+    for (const label of ['ส่งเข้ามาวันนี้', 'รอตรวจสอบ', 'รอตรวจหลักฐาน']) {
+      const entry = row(layoutOf(DAILY, dailyOutput(dailyData())), label)!;
+      assert.ok(text.includes(`• ${entry.label} ${entry.value}`), label);
+    }
+  });
+
+  it('a day with nothing dated on it says so and prints no amount; another day is named, and a narrower view is a note', () => {
+    const empty = layoutOf(DAILY, dailyOutput(emptyDay()))!;
+    assert.deepEqual(empty.rows, [{ label: 'จำนวนรายการ', value: 'ยังไม่มีรายการที่ลงวันที่วันนี้' }, { label: 'ข้อมูล ณ', value: '26 ส.ค. 2569' }]);
+    const yesterday = layoutOf(DAILY, dailyOutput(dailyData({ date: '2026-08-25', accessScope: 'own', dueEndOfDay: { totals: [{ currency: 'THB', count: 1, total: '99.0000' }], items: bounded(1) } })))!;
+    assert.deepEqual(yesterday.header, ['สรุปปิดร้าน', 'วันที่ 25 ส.ค. 2569']);
+    assert.deepEqual(row(yesterday, 'ครบกำหนดจ่ายวันนั้น'), { label: 'ครบกำหนดจ่ายวันนั้น', value: '1 รายการ รวม 99.00 บาท' });
+    assert.equal(row(yesterday, 'ส่งเข้ามาวันนั้น')?.value, '3 รายการ');
+    assert.equal(yesterday.notes?.[0], 'แสดงเฉพาะรายการของคุณ');
+    assert.doesNotMatch(JSON.stringify(yesterday), /วันนี้/u);
+  });
+
+  it('the approval queue: how many wait, their total where the sentence states one, each claim under its requester', () => {
+    const items = [approvalItem(), approvalItem({ id: 'r2', requesterDisplayName: 'สมหญิง', amount: '2500.00', submittedAt: '2026-08-06T10:00:00.000Z' })];
+    assert.deepEqual(layoutOf(REIMBURSEMENT_APPROVALS, approvalsOutput({ total: 2, items })), {
+      context: 'open_work',
+      header: ['เบิกจ่ายรออนุมัติ', 'พบ 2 รายการ'],
+      rows: [
+        { label: 'ยอดรวม', value: '4,000.00 บาท', emphasis: 'total' },
+        { label: 'สมชาย', value: '1,500.00 บาท · 5 ส.ค.' },
+        { label: 'สมหญิง', value: '2,500.00 บาท · 6 ส.ค.' },
+        { label: 'ข้อมูล ณ', value: '25 ส.ค. 2569' },
+      ],
+      notes: ['ตรวจเฉพาะใบเบิกที่รอคุณอนุมัติ'],
+    });
+    // More than it lists: the count stands alone (no sum of a part), and the card says how many it shows.
+    const many = layoutOf(REIMBURSEMENT_APPROVALS, approvalsOutput({ total: 12, items: Array.from({ length: 10 }, (_, index) => approvalItem({ id: `r${index}`, requesterDisplayName: `ผู้ขอ ${index + 1}` })) }))!;
+    assert.deepEqual(many.header, ['เบิกจ่ายรออนุมัติ', 'พบ 12 รายการ']);
+    assert.equal(row(many, 'ยอดรวม'), undefined);
+    assert.equal(many.rows.length, 6);
+    assert.deepEqual(many.notes, ['แสดง 5 จาก 12 รายการ', 'ตรวจเฉพาะใบเบิกที่รอคุณอนุมัติ']);
+    // None waiting: said in the header, with what was checked — never "the company has none".
+    assert.deepEqual(layoutOf(REIMBURSEMENT_APPROVALS, approvalsOutput({ total: 0, items: [] })), {
+      context: 'open_work', header: ['เบิกจ่ายรออนุมัติ', 'ไม่พบรายการ'], rows: [{ label: 'ข้อมูล ณ', value: '25 ส.ค. 2569' }], notes: ['ตรวจเฉพาะใบเบิกที่รอคุณอนุมัติ'],
+    });
+  });
+
+  it('the claims: one row for each state the sentence names, the amount only where it means something', () => {
+    assert.deepEqual(layoutOf(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData({ accessScope: 'own' }))), {
+      context: 'open_work',
+      header: ['สรุปใบเบิก', 'ณ 25 ส.ค. 2569'],
+      rows: [
+        { label: 'รออนุมัติ', value: '3 รายการ' },
+        { label: 'อนุมัติแล้วรอจ่าย', value: '5 รายการ รวม 12,500.00 บาท' },
+        { label: 'เกินกำหนด', value: '2 รายการ' },
+      ],
+      notes: ['แสดงเฉพาะรายการของคุณ'],
+    });
+    const quiet = layoutOf(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData({ pendingApprovalCount: 0, unpaidApprovedCount: 0, overdueApprovalCount: 0, totalUnpaidAmount: '0.00' })))!;
+    assert.deepEqual(quiet.rows, [{ label: 'รออนุมัติ', value: '0 รายการ' }, { label: 'อนุมัติแล้วรอจ่าย', value: '0 รายการ' }]);
+    const text = sentence(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData()));
+    for (const entry of layoutOf(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData()))!.rows) assert.ok(text.includes(`${entry.label} ${entry.value}`), entry.label);
+  });
+
+  it('one claim: its number, who asked, the day, the amount, and the state as a pill in its tone', () => {
+    assert.deepEqual(layoutOf(REIMBURSEMENT_DETAIL, reimbursementDetailOutput(reimbursementDetailData({ requestNo: 'REQ-0002' }))), {
+      context: 'expense_record',
+      header: ['ใบเบิกจ่าย', 'รออนุมัติ'],
+      rows: [
+        { label: 'เลขที่ใบเบิก', value: 'REQ-0002' },
+        { label: 'ผู้ขอ', value: 'สมชาย' },
+        { label: 'วันที่', value: '6 สิงหาคม 2569' },
+        { label: 'ยอดรวม', value: '1,500.00 บาท', emphasis: 'total' },
+        { label: 'สถานะ', value: 'รออนุมัติ', tone: 'pending' },
+      ],
+      linkLabel: 'เปิดดูใบเบิกในเว็บ',
+    });
+    for (const [status, label, tone] of [['PAID', 'จ่ายแล้ว', 'ok'], ['APPROVED', 'อนุมัติแล้ว', 'ok'], ['REJECTED', 'ปฏิเสธ', 'closed'], ['VOIDED', 'เพิกถอน', 'closed'],
+      ['READY_FOR_PAYMENT', 'พร้อมจ่าย', 'pending'], ['รอระบบดำเนินการ', 'รอระบบดำเนินการ', 'pending']] as const) {
+      const layout = layoutOf(REIMBURSEMENT_DETAIL, reimbursementDetailOutput(reimbursementDetailData({ status })))!;
+      assert.deepEqual([layout.header[1], row(layout, 'สถานะ')], [label, { label: 'สถานะ', value: label, tone }], status);
+      assert.equal(row(layout, 'เลขที่ใบเบิก'), undefined);
+    }
+    // A payment that is held says why, in the tool's own words, as a note.
+    const notice = 'ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ จึงบันทึกจ่ายไม่ได้';
+    assert.deepEqual(layoutOf(REIMBURSEMENT_DETAIL, reimbursementDetailOutput(reimbursementDetailData({ duplicateBlocksPayment: true, paymentBlockNotice: notice })))!.notes, [notice]);
+  });
+
+  it('none of them has a card for an English answer', () => {
+    for (const [key, output] of [[DAILY, dailyOutput(dailyData())], [REIMBURSEMENT_APPROVALS, approvalsOutput({ total: 0, items: [] })],
+      [REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData())], [REIMBURSEMENT_DETAIL, reimbursementDetailOutput(reimbursementDetailData())]] as const) {
+      const english = formatPreparedSimpleRead(key, output, EN);
+      assert.ok(english.kind === 'answer' && english.layout === undefined, key);
+    }
+  });
+});
+
 // Owner 2026-10-05, on a real answer to "มีงานค้างอะไรบ้าง" — three numbered parts, a "ขอบเขต:" line, a
 // "แหล่งข้อมูล:" line: "อ่านยากมาก … พยายามเอาเข้า pattern นะ". One row card of every read of the answer.
 describe('design lock context 2 — the reader\'s waiting work, several reads on one card', () => {

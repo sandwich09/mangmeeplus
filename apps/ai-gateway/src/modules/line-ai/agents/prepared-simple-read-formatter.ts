@@ -1121,7 +1121,24 @@ function formatExpenseDailyClosingSingleMetric(output: SpecialistOutput, ctx: Pr
   const scopeText = scopeLine(data?.['accessScope'], english);
 
   const replyText = `${headline}${settledText}${checklistText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}${honestyText}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+  // The same day on the locked card: what the day's records come to, then each thing on the checklist
+  // a row, in the sentence's own words. The required honesty line is a note.
+  const asOfDay = asOfDayLabel(output.asOf);
+  const layout = english ? undefined : cardLayout({
+    context: 'expense_summary',
+    header: ['สรุปปิดร้าน', dayPhrase],
+    rows: [
+      ...(count > 0 && totals ? [{ label: 'ยอดรวม', value: totals, emphasis: 'total' as const }] : []),
+      { label: 'จำนวนรายการ', value: count === 0 ? `ยังไม่มีรายการที่ลงวันที่${isToday ? 'วันนี้' : 'วันนั้น'}` : `${groupThousands(String(count))} รายการ` },
+      ...(paid ? [{ label: 'จ่ายแล้ว', value: paid }] : []),
+      ...(outstanding ? [{ label: 'ยังไม่ได้จ่าย', value: outstanding }] : []),
+      ...dailyClosingEntries(data, isToday, false).map((entry) => ({ label: entry.label, value: entry.value })),
+      ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
+    ],
+    ...cardNotes([scopeNote(data?.['accessScope']), honestyText.replace(/^\s*\((.*)\)\s*$/u, '$1')]),
+    ...(webLinks[0] ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}),
+  });
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /**
@@ -1334,7 +1351,24 @@ function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: 
     : `เบิกจ่ายรออนุมัติ: ${groupThousands(String(total))} รายการ${totalText}`;
 
   const replyText = `${headline}${itemLines}${moreText}${sourceText}${asOfLine(output.asOf, english)}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+  // The same queue on the locked card (context 2): how many wait, their total where the sentence
+  // states one, then each listed claim a row under its requester. What was checked is said in a note,
+  // so "none" is never read as "nobody in the company is waiting".
+  const asOfDay = asOfDayLabel(output.asOf);
+  const layout = english ? undefined : cardLayout({
+    context: 'open_work',
+    header: ['เบิกจ่ายรออนุมัติ', total === 0 ? 'ไม่พบรายการ' : `พบ ${groupThousands(String(total))} รายการ`],
+    rows: [
+      ...(sumGrounded && rows[0] ? [{ label: 'ยอดรวม', value: moneyWithCurrency(rows.reduce((sum, row) => sum + moneyNumber(row.amount), 0), rows[0].currency), emphasis: 'total' as const }] : []),
+      ...shown.map((row) => {
+        const dateLabel = row.date ? thaiAbbrDate(row.date, false, listYear) ?? row.date : undefined;
+        return { label: row.requester, value: `${moneyWithCurrency(row.amount, row.currency)}${dateLabel ? ` · ${dateLabel}` : ''}` };
+      }),
+      ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
+    ],
+    ...cardNotes([moreText, 'ตรวจเฉพาะใบเบิกที่รอคุณอนุมัติ']),
+  });
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /**
@@ -1371,7 +1405,19 @@ function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx
   const scopeText = scopeLine(data?.['accessScope'], english);
 
   const replyText = `${headline}${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+  // The same counts on the locked card: one row for each state the sentence names, in its words.
+  const asOfDay = asOfDayLabel(output.asOf);
+  const layout = english || !asOfDay ? undefined : cardLayout({
+    context: 'open_work',
+    header: ['สรุปใบเบิก', `ณ ${asOfDay}`],
+    rows: [
+      { label: 'รออนุมัติ', value: `${groupThousands(String(pending))} รายการ` },
+      { label: 'อนุมัติแล้วรอจ่าย', value: `${groupThousands(String(unpaidApproved))} รายการ${unpaidApproved > 0 ? ` รวม ${moneyText(totalUnpaid)} บาท` : ''}` },
+      ...(overdue > 0 ? [{ label: 'เกินกำหนด', value: `${groupThousands(String(overdue))} รายการ` }] : []),
+    ],
+    ...cardNotes([scopeNote(data?.['accessScope'])]),
+  });
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /** Same Thai wording the web app already shows for these exact status values
@@ -1417,7 +1463,25 @@ function formatReimbursementGetDetailSingleMetric(output: SpecialistOutput, ctx:
   const paymentBlock = data?.['duplicateBlocksPayment'] === true && typeof data['paymentBlockNotice'] === 'string'
     ? `\n${data['paymentBlockNotice']}` : '';
   const replyText = `${headline}${statusText}${paymentBlock}${sourceText}${asOfLine(output.asOf, english)}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+  // The same claim on the locked record card (context 5): its number when it has one, who asked, the
+  // day, the amount on the emphasised row and the state as a pill. A notice that payment is held is a note.
+  const requestNo = typeof data?.['requestNo'] === 'string' && data['requestNo'].trim() ? data['requestNo'].trim() : undefined;
+  const tone = status === 'PAID' || status === 'APPROVED' ? 'ok' as const
+    : status === 'REJECTED' || status === 'CANCELLED' || status === 'VOIDED' ? 'closed' as const : 'pending' as const;
+  const layout = english ? undefined : cardLayout({
+    context: 'expense_record',
+    header: ['ใบเบิกจ่าย', statusLabel],
+    rows: [
+      ...(requestNo ? [{ label: 'เลขที่ใบเบิก', value: requestNo }] : []),
+      { label: 'ผู้ขอ', value: requester },
+      { label: 'วันที่', value: dateLabel },
+      { label: 'ยอดรวม', value: `${moneyText(amount)} บาท`, emphasis: 'total' },
+      { label: 'สถานะ', value: statusLabel, tone },
+    ],
+    ...cardNotes([paymentBlock]),
+    ...(webLinks[0] ? { linkLabel: 'เปิดดูใบเบิกในเว็บ' } : {}),
+  });
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /** The two reads the locked "งานค้าง" card (design lock context 2) is drawn from. */
