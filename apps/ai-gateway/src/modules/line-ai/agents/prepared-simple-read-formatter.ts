@@ -12,7 +12,7 @@
  * `unverified` when the output does not match the family's exact shape, so the caller falls back to an
  * honest terminal without claiming success. No provider, no tool re-invocation.
  */
-import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
+import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, formatThaiPeriodRange, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
 import type { LineAiAnswerCardLayout, LineAiAnswerCardRow, LineAiPeriodCandidate, LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
@@ -459,8 +459,7 @@ export function formatExpenseSummary(
       ...(sourceRef?.label ? [{ label: 'ที่มา', value: sourceRef.label }] : []),
       ...(localizedAsOf ? [{ label: 'ข้อมูล ณ', value: localizedAsOf }] : []),
     ],
-    // The year note is a bracket after the period in the sentence; alone in a note it needs none.
-    ...cardNotes([scopeNote(accessScope), basisText, cancelledText, ctx.periodNote?.replace(/^\s*\(([^)]*)\)/u, '$1')]),
+    ...cardNotes([scopeNote(accessScope), basisText, cancelledText, periodNoteLine(ctx.periodNote)]),
     ...(webLinks[0] ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}),
   }) : undefined;
   return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
@@ -477,6 +476,25 @@ function cardNotes(clauses: ReadonlyArray<string | undefined>): { notes?: string
 function cardLayout(layout: LineAiAnswerCardLayout): LineAiAnswerCardLayout | undefined {
   return parseLineAiAnswerCardLayout(layout);
 }
+
+/** The period as a card's row says it: the sentence's own words for the dates. A period the reader
+ *  named reads "เดือนนี้ (1–5 ต.ค. 2569)" in the sentence — their word, then the dates — and the row
+ *  shows those dates, which fit one line; any other phrase is shown as the sentence has it. */
+function periodRowValue(phrase: string, data: Record<string, unknown> | undefined): string {
+  const period = data?.['period'];
+  const range = period && typeof period === 'object' && !Array.isArray(period) ? period as Record<string, unknown> : undefined;
+  const dates = typeof range?.['fromDate'] === 'string' && typeof range['toDate'] === 'string' ? formatThaiPeriodRange(range['fromDate'], range['toDate']) : undefined;
+  return dates && phrase.endsWith(`(${dates})`) ? dates : phrase;
+}
+
+/** The as-of day in the words `asOfLine` writes it ("5 ต.ค. 2569"), for the row beside that sentence. */
+function asOfDayLabel(asOf: string | undefined): string | undefined {
+  const day = asOfInZone(asOf, 'Asia/Bangkok')?.day;
+  return day ? thaiAbbrDate(day, false) : undefined;
+}
+
+/** The year note is a bracket after the period in the sentence; alone in a card's note it needs none. */
+const periodNoteLine = (note: string | undefined) => note?.replace(/^\s*\(([^)]*)\)/u, '$1');
 
 /** The second header line of the summary card: the month, or the months, the tool's own period covers. */
 function expensePeriodHeading(data: Record<string, unknown> | undefined): string | undefined {
@@ -558,14 +576,34 @@ function formatExpenseListRecentList(output: SpecialistOutput, ctx: PreparedForm
   const moreText = total > shown.length
     ? (english ? `\nShowing ${shown.length} of ${plural(total, 'record')}` : `\nแสดง ${shown.length} จาก ${groupThousands(String(total))} รายการ`)
     : '';
-  const { filtersText, scopeText } = expenseFilterLine(data, ctx, english);
+  const { filtersText, scopeText, filterPhrases, accessScope } = expenseFilterLine(data, ctx, english);
 
   const headline = english
     ? `Expenses: ${moneyText(totalAmount)} THB (${plural(total, 'record')})`
     : `ค่าใช้จ่าย: ${moneyText(totalAmount)} บาท (${groupThousands(String(total))} รายการ)`;
+  const periodLabel = ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined);
   const replyText = `${headline}${itemLines}${moreText}${filtersText}${scopeText}`
-    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined), ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+    + `${periodLine(ctx.proposedInput, data, english, periodLabel, ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
+  // The same list on the locked card (owner 2026-10-05: "อยากได้เหมือน pattern อ่านใบเสร็จ"): the total
+  // and the count, then each listed record as a row — its date, and what the sentence says of it.
+  const heading = english ? undefined : expensePeriodHeading(data);
+  const period = periodPhrase(ctx.proposedInput, data, false, periodLabel);
+  const asOfDay = asOfDayLabel(output.asOf);
+  const layout = heading && period ? cardLayout({
+    context: 'expense_summary',
+    header: ['รายการค่าใช้จ่าย', heading],
+    rows: [
+      { label: 'ยอดรวม', value: `${moneyText(totalAmount)} บาท`, emphasis: 'total' },
+      { label: 'จำนวนรายการ', value: `${groupThousands(String(total))} รายการ` },
+      ...shown.map((row) => ({ label: thaiAbbrDate(row.date, false, listYear) ?? row.date, value: `${row.vendor} · ${moneyText(row.amount)} บาท · ${statusLabel(row.status)}` })),
+      ...(filterPhrases.length ? [{ label: 'ตัวกรอง', value: filterPhrases.join(', ') }] : []),
+      { label: 'ช่วงวันที่', value: periodRowValue(period, data) },
+      ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
+    ],
+    ...cardNotes([moreText, scopeNote(accessScope), periodNoteLine(ctx.periodNote)]),
+    ...(webLinks[0] ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}),
+  }) : undefined;
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /**
@@ -812,13 +850,40 @@ function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedForma
   const totalText = english
     ? `\nTotal: ${moneyText(totalAmount)} THB (${plural(totalCount, 'record')})`
     : `\nรวมทั้งหมด: ${moneyText(totalAmount)} บาท (${groupThousands(String(totalCount))} รายการ)`;
-  const { filtersText, scopeText } = expenseFilterLine(data, ctx, english);
+  const { filtersText, scopeText, filterPhrases, accessScope } = expenseFilterLine(data, ctx, english);
 
   const axisLabel = english ? axis.labelEn : axis.labelTh;
   const headline = english ? `Expenses by ${axisLabel}` : `ค่าใช้จ่ายแยกตาม${axisLabel}`;
+  const periodLabel = ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined);
   const replyText = `${headline}${groupLines}${othersLine}${totalText}${filtersText}${scopeText}`
-    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined), ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+    + `${periodLine(ctx.proposedInput, data, english, periodLabel, ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
+  // The same summary on the locked card (owner 2026-10-05: "สรุปค่าใช้จ่ายเดือนนี้ อยากได้เหมือน pattern
+  // อ่านใบเสร็จ"): the total and the count, what the rows are grouped by, then one row for each group
+  // with its amount, share and count exactly as the sentence states them.
+  const heading = english ? undefined : expensePeriodHeading(data);
+  const period = periodPhrase(ctx.proposedInput, data, false, periodLabel);
+  const asOfDay = asOfDayLabel(output.asOf);
+  const sourceLabel = output.facts.find((fact) => fact.sourceRef)?.sourceRef?.label;
+  const groupValue = (amount: number, count: number) => `${moneyText(amount)} บาท (${percentText(amount)}, ${groupThousands(String(count))} รายการ)`;
+  const layout = heading && period ? cardLayout({
+    context: 'expense_summary',
+    header: ['สรุปค่าใช้จ่าย', heading],
+    rows: [
+      { label: 'ยอดรวม', value: `${moneyText(totalAmount)} บาท`, emphasis: 'total' },
+      { label: 'จำนวนรายการ', value: `${groupThousands(String(totalCount))} รายการ` },
+      { label: 'แยกตาม', value: axis.labelTh },
+      ...shown.map((g) => ({ label: g.name, value: groupValue(moneyNumber(g.amount), g.count) })),
+      ...(rest.length > 0 ? [{ label: `อื่นๆ (${rest.length})`,
+        value: groupValue(rest.reduce((sum, g) => sum + moneyNumber(g.amount), 0), rest.reduce((sum, g) => sum + g.count, 0)) }] : []),
+      ...(filterPhrases.length ? [{ label: 'ตัวกรอง', value: filterPhrases.join(', ') }] : []),
+      { label: 'ช่วงวันที่', value: periodRowValue(period, data) },
+      ...(sourceLabel ? [{ label: 'ที่มา', value: sourceLabel }] : []),
+      ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
+    ],
+    ...cardNotes([scopeNote(accessScope), periodNoteLine(ctx.periodNote)]),
+    ...(webLinks[0] ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}),
+  }) : undefined;
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /** Enough document types to be useful in one LINE bubble; the rest are admitted by the "of N types" line. */

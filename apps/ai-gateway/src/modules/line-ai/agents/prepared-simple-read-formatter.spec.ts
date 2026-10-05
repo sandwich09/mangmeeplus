@@ -2136,6 +2136,115 @@ describe('design lock context 2 — open work card', () => {
   });
 });
 
+// Owner 2026-10-05, real LINE: "ดูค่าใช้จ่ายเดือนนี้" and "สรุปค่าใช้จ่ายเดือนนี้" came back as sentences
+// on a prose card. "สรุปค่าใช้จ่ายเดือนนี้ อยากได้เหมือน pattern อ่านใบเสร็จ". The list and the grouped
+// summary are row cards, every row a fact their own sentence states, in the sentence's own words.
+describe('design lock context 1 — the expense list and the grouped summary as row cards', () => {
+  const asOf = '2026-10-05T07:39:00.000Z'; // 14:39 in Bangkok
+  const [thisMonth] = resolvePeriodCandidates('ดูค่าใช้จ่ายเดือนนี้', '2026-10-05');
+  const period = { fromDate: '2026-10-01', toDate: '2026-10-05', defaultedToCurrentMonth: false };
+  const asked = { periodLabel: thisMonth!.label, proposedInput: { fromDate: period.fromDate, toDate: period.toDate } };
+  const listed = (over: Record<string, unknown> = {}) => expenseOutput(expenseListData({ total: 1, period, summary: { totalAmount: '0.00' },
+    items: [expenseListItem({ expenseDate: '2026-10-04T03:00:00.000Z', vendorNameSnapshot: null, status: 'NEEDS_REVIEW', grandTotalAmount: '0.00' })], ...over }), asOf);
+  const grouped = (over: Record<string, unknown> = {}) => breakdownOutput(breakdownData({ totalCount: 1, totalAmount: '0.00', period,
+    byCategory: [{ categoryId: null, category: 'ไม่ระบุหมวด', currency: 'THB', count: 1, totalAmount: '0.00' }], ...over }), asOf);
+
+  it('the list the owner got: the total, the count, each record a row under its date, the dates of the period, when it was read', () => {
+    const result = formatPreparedSimpleRead(EXPENSE_LIST, listed(), { ...TH, ...asked });
+    assert.ok(result.kind === 'answer');
+    assert.equal(result.replyText, 'ค่าใช้จ่าย: 0.00 บาท (1 รายการ)\n1. 4 ต.ค. ไม่ระบุร้าน 0.00 บาท (รอตรวจสอบ)\nช่วง: เดือนนี้ (1–5 ต.ค. 2569)\nข้อมูล ณ 5 ต.ค. 2569');
+    assert.deepEqual(layoutOf(EXPENSE_LIST, listed(), asked), {
+      context: 'expense_summary',
+      header: ['รายการค่าใช้จ่าย', 'ตุลาคม 2569'],
+      rows: [
+        { label: 'ยอดรวม', value: '0.00 บาท', emphasis: 'total' },
+        { label: 'จำนวนรายการ', value: '1 รายการ' },
+        { label: '4 ต.ค.', value: 'ไม่ระบุร้าน · 0.00 บาท · รอตรวจสอบ' },
+        { label: 'ช่วงวันที่', value: '1–5 ต.ค. 2569' },
+        { label: 'ข้อมูล ณ', value: '5 ต.ค. 2569' },
+      ],
+      linkLabel: 'ดูค่าใช้จ่ายในเว็บ',
+    });
+  });
+
+  it('a row says what the sentence says of that record, and a longer list says how many it shows', () => {
+    const items = Array.from({ length: 12 }, (_, index) => expenseListItem({ id: `e${index}`, expenseDate: `2026-10-0${(index % 5) + 1}T03:00:00.000Z`,
+      vendorNameSnapshot: `ร้าน ${index + 1}`, grandTotalAmount: `${(index + 1) * 100}.50`, status: index % 2 ? 'CONFIRMED' : 'DRAFT' }));
+    const data = { total: 30, items, summary: { totalAmount: '12345.00' },
+      queryApplied: { statusBasis: 'CONFIRMED', accessScope: 'related', filters: { vendorName: 'ร้าน 1' } } };
+    const result = formatPreparedSimpleRead(EXPENSE_LIST, listed(data), { ...TH, ...asked });
+    const layout = layoutOf(EXPENSE_LIST, listed(data), asked)!;
+    assert.equal(layout.rows.length, 15, 'the total, the count, ten records, the filter, the period and the day: inside what a card holds');
+    assert.deepEqual(layout.rows[2], { label: '1 ต.ค.', value: 'ร้าน 1 · 100.50 บาท · ร่าง' });
+    assert.deepEqual(layout.rows[11], { label: '5 ต.ค.', value: 'ร้าน 10 · 1,000.50 บาท · ยืนยันแล้ว' });
+    assert.deepEqual(row(layout, 'ตัวกรอง'), { label: 'ตัวกรอง', value: 'เฉพาะที่ยืนยันแล้ว, เฉพาะร้านร้าน 1' });
+    assert.deepEqual(layout.notes, ['แสดง 10 จาก 30 รายการ', 'แสดงเฉพาะรายการที่เกี่ยวข้องกับคุณ']);
+    // Every row's words are in the sentence: nothing on the card that the canonical answer does not say.
+    assert.ok(result.kind === 'answer');
+    for (const entry of layout.rows.slice(2, 12)) for (const part of entry.value.split(' · ')) assert.ok(result.replyText.includes(part), part);
+    assert.ok(result.replyText.includes('แสดง 10 จาก 30 รายการ') && result.replyText.includes('ตัวกรอง: เฉพาะที่ยืนยันแล้ว, เฉพาะร้านร้าน 1'));
+  });
+
+  it('the grouped summary the owner got: the total, the count, what it is grouped by, each group with its amount, share and count', () => {
+    const result = formatPreparedSimpleRead(BREAKDOWN, grouped(), { ...TH, ...asked });
+    assert.ok(result.kind === 'answer');
+    assert.equal(result.replyText, 'ค่าใช้จ่ายแยกตามหมวด\n• ไม่ระบุหมวด: 0.00 บาท (0.0%, 1 รายการ)\nรวมทั้งหมด: 0.00 บาท (1 รายการ)\nช่วง: เดือนนี้ (1–5 ต.ค. 2569)\nข้อมูล ณ 5 ต.ค. 2569');
+    assert.deepEqual(layoutOf(BREAKDOWN, grouped(), asked), {
+      context: 'expense_summary',
+      header: ['สรุปค่าใช้จ่าย', 'ตุลาคม 2569'],
+      rows: [
+        { label: 'ยอดรวม', value: '0.00 บาท', emphasis: 'total' },
+        { label: 'จำนวนรายการ', value: '1 รายการ' },
+        { label: 'แยกตาม', value: 'หมวด' },
+        { label: 'ไม่ระบุหมวด', value: '0.00 บาท (0.0%, 1 รายการ)' },
+        { label: 'ช่วงวันที่', value: '1–5 ต.ค. 2569' },
+        { label: 'ที่มา', value: 'สรุปค่าใช้จ่ายแยกกลุ่ม' },
+        { label: 'ข้อมูล ณ', value: '5 ต.ค. 2569' },
+      ],
+      linkLabel: 'ดูค่าใช้จ่ายในเว็บ',
+    });
+  });
+
+  it('groups in the sentence\'s own order and words, the rest folded into one row, by shop or branch when asked so', () => {
+    const many = Array.from({ length: 11 }, (_, index) => ({ vendorId: `v${index}`, vendor: `ร้าน ${index + 1}`, currency: 'THB', count: index + 1, totalAmount: `${(11 - index) * 100}.00` }));
+    const data = { totalCount: 66, totalAmount: '6600.00', byVendor: many, queryApplied: { statusBasis: 'exclude_rejected_voided', filters: { groupBy: 'vendor', paymentStatus: 'UNPAID' } } };
+    const result = formatPreparedSimpleRead(BREAKDOWN, grouped(data), { ...TH, ...asked });
+    const layout = layoutOf(BREAKDOWN, grouped(data), asked)!;
+    assert.equal(layout.rows.length, 16, 'the most a card holds: three on top, eight groups, the rest, the filter, the period, the source and the day');
+    assert.deepEqual(layout.rows.slice(2, 5), [{ label: 'แยกตาม', value: 'ร้าน' },
+      { label: 'ร้าน 1', value: '1,100.00 บาท (16.7%, 1 รายการ)' }, { label: 'ร้าน 2', value: '1,000.00 บาท (15.2%, 2 รายการ)' }]);
+    assert.deepEqual(layout.rows[11], { label: 'อื่นๆ (3)', value: '600.00 บาท (9.1%, 30 รายการ)' });
+    assert.deepEqual(row(layout, 'ตัวกรอง'), { label: 'ตัวกรอง', value: 'เฉพาะที่ยังไม่ชำระ' });
+    assert.ok(result.kind === 'answer');
+    for (const entry of layout.rows.slice(3, 12)) assert.ok(result.replyText.includes(`• ${entry.label}: ${entry.value}`), entry.label);
+    assert.deepEqual(row(layoutOf(BREAKDOWN, grouped({ byBranch: [{ branchId: 'b1', branch: 'สาขาลาดพร้าว', currency: 'THB', count: 1, totalAmount: '0.00' }] }),
+      { ...asked, proposedInput: { ...asked.proposedInput, groupBy: 'branch' } }), 'แยกตาม'), { label: 'แยกตาม', value: 'สาขา' });
+  });
+
+  it('a period the reader did not name is shown as the sentence has it, and a year the system assumed is a note', () => {
+    const plain = layoutOf(EXPENSE_LIST, listed())!;
+    assert.deepEqual(row(plain, 'ช่วงวันที่'), { label: 'ช่วงวันที่', value: '1 ตุลาคม 2569 – 5 ตุลาคม 2569' });
+    const [october] = resolvePeriodCandidates('ดูรายจ่าย เดือน ตุลา', '2026-09-29');
+    const lastYear = { fromDate: october!.fromDate, toDate: october!.toDate, defaultedToCurrentMonth: false };
+    const assumed = layoutOf(BREAKDOWN, breakdownOutput(breakdownData({ period: lastYear }), '2026-09-29T16:08:00.000Z'),
+      { periodLabel: october!.label, proposedInput: { fromDate: lastYear.fromDate, toDate: lastYear.toDate }, periodNote: assumedYearNote(october, '2026-09-29T16:08:00.000Z', false) })!;
+    assert.deepEqual(assumed.header, ['สรุปค่าใช้จ่าย', 'ตุลาคม 2568']);
+    assert.deepEqual(row(assumed, 'ช่วงวันที่'), { label: 'ช่วงวันที่', value: '1–31 ต.ค. 2568' });
+    assert.deepEqual(assumed.notes, ['ไม่ได้ระบุปี จึงดูตุลาคมที่ผ่านมาล่าสุด ตุลาคมปีนี้ยังไม่ถึงค่ะ']);
+  });
+
+  it('is the sentence alone when the card could not say it whole: no period, English, a name longer than a row label', () => {
+    assert.equal(layoutOf(BREAKDOWN, grouped({ period: undefined })), undefined);
+    assert.equal(layoutOf(EXPENSE_LIST, listed({ period: undefined })), undefined);
+    for (const key of [EXPENSE_LIST, BREAKDOWN]) {
+      const english = formatPreparedSimpleRead(key, key === BREAKDOWN ? grouped() : listed(), EN);
+      assert.ok(english.kind === 'answer' && english.layout === undefined, key);
+    }
+    const long = formatPreparedSimpleRead(BREAKDOWN, grouped({ byCategory: [{ categoryId: 'c1', category: 'ก'.repeat(41), currency: 'THB', count: 1, totalAmount: '0.00' }] }), TH);
+    assert.ok(long.kind === 'answer' && long.layout === undefined && long.replyText.includes('ก'.repeat(41)));
+  });
+});
+
 // Owner 2026-10-05, on a real answer to "มีงานค้างอะไรบ้าง" — three numbered parts, a "ขอบเขต:" line, a
 // "แหล่งข้อมูล:" line: "อ่านยากมาก … พยายามเอาเข้า pattern นะ". One row card of every read of the answer.
 describe('design lock context 2 — the reader\'s waiting work, several reads on one card', () => {

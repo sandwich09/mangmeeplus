@@ -533,6 +533,41 @@ describe('gateway answers on the locked design', () => {
     assert.deepEqual(lineFlexBodyProblems((message as any).contents), []);
   });
 
+  // Owner 2026-10-05, real LINE: "ดูค่าใช้จ่ายเดือนนี้" and "สรุปค่าใช้จ่ายเดือนนี้" were sentences on a prose
+  // card. "อยากได้เหมือน pattern อ่านใบเสร็จ". The gateway now sends rows for both; this side draws them.
+  it('context 1 — the expense list and the grouped summary: each record or group a row, one button', () => {
+    const list = { context: 'expense_summary', header: ['รายการค่าใช้จ่าย', 'ตุลาคม 2569'],
+      rows: [{ label: 'ยอดรวม', value: '0.00 บาท', emphasis: 'total' }, { label: 'จำนวนรายการ', value: '1 รายการ' },
+        { label: '4 ต.ค.', value: 'ไม่ระบุร้าน · 0.00 บาท · รอตรวจสอบ' }, { label: 'ช่วงวันที่', value: '1–5 ต.ค. 2569' }, { label: 'ข้อมูล ณ', value: '5 ต.ค. 2569' }],
+      linkLabel: 'ดูค่าใช้จ่ายในเว็บ' };
+    const listSentence = 'ค่าใช้จ่าย: 0.00 บาท (1 รายการ)\n1. 4 ต.ค. ไม่ระบุร้าน 0.00 บาท (รอตรวจสอบ)\nช่วง: เดือนนี้ (1–5 ต.ค. 2569)\nข้อมูล ณ 5 ต.ค. 2569';
+    const listCard = readLineSystemCard(draw(answer(listSentence, list, EXPENSES), 'ดูค่าใช้จ่ายเดือนนี้'));
+    assert.deepEqual(listCard.header, ['รายการค่าใช้จ่าย', 'ตุลาคม 2569']);
+    assert.deepEqual(listCard.rows, list.rows.map((row) => [row.label, ':', row.value]));
+    assert.deepEqual([listCard.totals, listCard.prose, listCard.footnotes], [['ยอดรวม'], [], []]);
+    assert.deepEqual(listCard.actions, [{ type: 'uri', label: 'ดูค่าใช้จ่ายในเว็บ', uri: `${WEB}/companies/c1/expenses` }]);
+
+    const grouped = { context: 'expense_summary', header: ['สรุปค่าใช้จ่าย', 'ตุลาคม 2569'],
+      rows: [{ label: 'ยอดรวม', value: '5,000.00 บาท', emphasis: 'total' }, { label: 'จำนวนรายการ', value: '10 รายการ' }, { label: 'แยกตาม', value: 'หมวด' },
+        { label: 'อาหาร', value: '3,000.00 บาท (60.0%, 6 รายการ)' }, { label: 'เดินทาง', value: '1,500.00 บาท (30.0%, 3 รายการ)' }, { label: 'ค่าน้ำ', value: '500.00 บาท (10.0%, 1 รายการ)' },
+        { label: 'ช่วงวันที่', value: '1–5 ต.ค. 2569' }, { label: 'ที่มา', value: 'สรุปค่าใช้จ่ายแยกกลุ่ม' }, { label: 'ข้อมูล ณ', value: '5 ต.ค. 2569' }],
+      linkLabel: 'ดูค่าใช้จ่ายในเว็บ' };
+    const groupedSentence = 'ค่าใช้จ่ายแยกตามหมวด\n• อาหาร: 3,000.00 บาท (60.0%, 6 รายการ)\nรวมทั้งหมด: 5,000.00 บาท (10 รายการ)';
+    const message = draw(answer(groupedSentence, grouped, { label: 'สรุปค่าใช้จ่ายแยกกลุ่ม', path: '/companies/c1/expenses' }, 'สรุปค่าใช้จ่ายแยกกลุ่ม'), 'สรุปค่าใช้จ่ายเดือนนี้');
+    const groupedCard = readLineSystemCard(message);
+    assert.deepEqual(groupedCard.header, ['สรุปค่าใช้จ่าย', 'ตุลาคม 2569']);
+    assert.deepEqual(groupedCard.rows, grouped.rows.map((row) => [row.label, ':', row.value]));
+    assert.deepEqual(groupedCard.actions.map((action) => action.label), ['ดูค่าใช้จ่ายในเว็บ']);
+    assert.doesNotMatch(groupedCard.texts.join('\n'), /แหล่งข้อมูล|ค่าใช้จ่ายแยกตามหมวด\n/u);
+    assert.equal(isCompleteLineBusinessAnswerPresentation(message), true);
+    assert.deepEqual(lineFlexBodyProblems((message as any).contents), []);
+    // The most rows a layout may carry (sixteen) is still one card LINE accepts.
+    const full = { ...grouped, rows: [...grouped.rows.slice(0, 3), ...Array.from({ length: 13 }, (_, index) => ({ label: `ร้าน ${index + 1}`, value: '1,100.00 บาท (16.7%, 1 รายการ)' }))] };
+    const fullMessage = draw(answer(groupedSentence, full, EXPENSES), 'สรุปค่าใช้จ่ายเดือนนี้');
+    assert.equal(readLineSystemCard(fullMessage).rows.length, 16);
+    assert.deepEqual(lineFlexBodyProblems((fullMessage as any).contents), []);
+  });
+
   it('context 2 — open work: a claim opens THAT claim, by the path the tool vouched for, in the chat\'s own company', () => {
     const claim = { context: 'open_work', header: ['ใบเบิกรออนุมัติ', 'พบ 1 รายการ'],
       rows: [{ label: 'เลขที่ใบเบิก', value: 'RB-202608-00002' }, { label: 'ต้องทำ', value: 'ตรวจสอบและอนุมัติใบเบิก' }, { label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }],
