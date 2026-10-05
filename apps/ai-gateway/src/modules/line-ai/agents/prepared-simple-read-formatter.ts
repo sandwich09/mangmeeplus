@@ -601,12 +601,12 @@ function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: Prepa
     ? (english ? `\nCategory: ${category}` : `\nหมวด: ${category}`) : '';
   const scopeText = scopeLine(data?.['accessScope'], english);
   const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
-  const asOfLabel = thaiExpenseAsOfLabel(output.asOf);
   const text = (key: string) => typeof data?.[key] === 'string' && (data[key] as string).trim() ? (data[key] as string).trim() : undefined;
   const number = text('expenseNumber');
+  // The locked record and payment cards have no "ข้อมูล ณ" row (the summary and open-work cards do):
+  // the as-of stays in the sentence, which is the card's fallback and its notification text.
   const shared = {
     notes: cardNotes([scopeNote(data?.['accessScope'])]),
-    asOf: asOfLabel ? [{ label: 'ข้อมูล ณ', value: asOfLabel }] : [],
     link: webLinks[0] ? { linkLabel: 'เปิดดูรายการในเว็บ' } : {},
   };
 
@@ -636,7 +636,6 @@ function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: Prepa
         ...(paidOn ? [{ label: 'วันที่ชำระ', value: paidOn.thai }] : []),
         ...(methods ? [{ label: 'วิธีชำระเงิน', value: methods.thai }] : []),
         { label: 'สถานะชำระเงิน', value: paymentStatusLabel, tone: paymentStatus === 'PAID' ? 'ok' : 'pending' },
-        ...shared.asOf,
       ],
       ...shared.notes, ...shared.link,
     });
@@ -672,7 +671,6 @@ function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: Prepa
       ...(isMoney(vat) && moneyNumber(vat) !== 0 ? [{ label: 'VAT', value: `${moneyText(vat)} บาท` }] : []),
       { label: 'สถานะเอกสาร', value: documentStatusLabel, tone: status === 'CONFIRMED' ? 'ok' : closed ? 'closed' : 'pending' },
       ...(closed ? (reason ? [{ label: 'เหตุผล', value: reason }] : []) : [{ label: 'สถานะการจ่าย', value: paymentStatusLabel }]),
-      ...shared.asOf,
     ],
     ...shared.notes, ...shared.link,
   });

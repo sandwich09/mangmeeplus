@@ -1884,17 +1884,28 @@ describe('design lock context 5 — expense record card', () => {
         { label: 'VAT', value: '58.88 บาท' },
         { label: 'สถานะเอกสาร', value: 'ยืนยันแล้ว', tone: 'ok' },
         { label: 'สถานะการจ่าย', value: 'ยังไม่ชำระ' },
-        { label: 'ข้อมูล ณ', value: '25 สิงหาคม 2569' },
       ],
       linkLabel: 'เปิดดูรายการในเว็บ',
     });
+  });
+
+  // Gallery 2026-10-05 (A3): the locked record card ends with its states. When the record was read is
+  // said by the sentence — the card's fallback and its notification text — and by no row.
+  it('has no "ข้อมูล ณ" row: the as-of stays in the sentence', () => {
+    const output = expenseDetailOutput(recordData());
+    const result = formatPreparedSimpleRead(EXPENSE_DETAIL, output, TH);
+    assert.ok(result.kind === 'answer' && result.replyText.endsWith('\nข้อมูล ณ 25 ส.ค. 2569'));
+    assert.equal(row(layoutOf(EXPENSE_DETAIL, output), 'ข้อมูล ณ'), undefined);
+    for (const status of ['REJECTED', 'VOIDED', 'NEEDS_REVIEW'] as const) {
+      assert.equal(row(layoutOf(EXPENSE_DETAIL, expenseDetailOutput(recordData({ status }))), 'ข้อมูล ณ'), undefined, status);
+    }
   });
 
   it('leaves out every fact the record does not carry, and never prints a zero VAT or an additional charge as the item', () => {
     const layout = layoutOf(EXPENSE_DETAIL, expenseDetailOutput(expenseDetailData({
       vendorName: null, vatAmount: '0.00', lines: [{ description: 'ค่าบริการ', chargeKind: 'SERVICE_CHARGE' }],
     })));
-    assert.deepEqual(labels(layout), ['ผู้ขาย / ร้านค้า', 'วันที่เอกสาร', 'ยอดรวม', 'สถานะเอกสาร', 'สถานะการจ่าย', 'ข้อมูล ณ']);
+    assert.deepEqual(labels(layout), ['ผู้ขาย / ร้านค้า', 'วันที่เอกสาร', 'ยอดรวม', 'สถานะเอกสาร', 'สถานะการจ่าย']);
     assert.equal(row(layout, 'ผู้ขาย / ร้านค้า')?.value, 'ไม่ระบุร้าน');
   });
 
@@ -1970,7 +1981,6 @@ describe('design lock context 7 — payment card', () => {
         { label: 'วันที่ชำระ', value: '3 กันยายน 2569' },
         { label: 'วิธีชำระเงิน', value: 'โอนเงิน' },
         { label: 'สถานะชำระเงิน', value: 'ชำระแล้ว', tone: 'ok' },
-        { label: 'ข้อมูล ณ', value: '25 สิงหาคม 2569' },
       ],
       linkLabel: 'เปิดดูรายการในเว็บ',
     });
@@ -1982,7 +1992,7 @@ describe('design lock context 7 — payment card', () => {
     const layout = layoutOf(EXPENSE_DETAIL, output, asked);
     assert.deepEqual(layout?.header, ['การชำระเงิน', 'รอชำระเงิน']);
     assert.deepEqual(layout?.banner, { tone: 'pending', text: 'ยังไม่ชำระ · ยอดคงค้าง 1,284.00 บาท' });
-    assert.deepEqual(labels(layout), ['เลขรายการ', 'ผู้รับเงิน', 'ยอดสุทธิที่ต้องจ่าย', 'จ่ายแล้ว', 'ยอดคงค้าง', 'สถานะชำระเงิน', 'ข้อมูล ณ']);
+    assert.deepEqual(labels(layout), ['เลขรายการ', 'ผู้รับเงิน', 'ยอดสุทธิที่ต้องจ่าย', 'จ่ายแล้ว', 'ยอดคงค้าง', 'สถานะชำระเงิน']);
     assert.deepEqual(row(layout, 'สถานะชำระเงิน'), { label: 'สถานะชำระเงิน', value: 'ยังไม่ชำระ', tone: 'pending' });
     const result = formatPreparedSimpleRead(EXPENSE_DETAIL, output, { ...TH, ...asked });
     assert.ok(result.kind === 'answer' && !/วันที่ชำระ|วิธีชำระเงิน/.test(result.replyText));
