@@ -54,6 +54,11 @@ export function requiresApproval(amount: string, approvalRequiredFromAmount: str
   return d(amount).gte(d(approvalRequiredFromAmount));
 }
 
+/** The same approval floor for the draft warning and submit routing. */
+export function thirdPartyPayoutApprovalRequired(amount: string, threshold: string, thirdParty: boolean): boolean {
+  return thirdParty && !requiresApproval(amount, threshold);
+}
+
 // ---- Lines (1 ใบเบิก หลายรายการ) ----
 
 export const REIMBURSEMENT_MAX_LINES = 50;

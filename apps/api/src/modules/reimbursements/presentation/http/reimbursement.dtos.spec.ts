@@ -405,3 +405,16 @@ describe('payout correction DTOs', () => {
     }
   });
 });
+
+describe('multi payout 2a DTOs', () => {
+  it('takes a SAVED id alone and refuses missing ids, unknown modes and mixed account fields', async () => {
+    const output = await pipe.transform({ payout: { mode: 'SAVED', savedAccountId: 'saved-1' } }, { type: 'body', metatype: UpdateReimbursementDraftDto });
+    assert.equal(output.payout.savedAccountId, 'saved-1');
+    for (const payout of [{ mode: 'SAVED' }, { mode: 'SAVED', savedAccountId: '' }, { mode: 'SAVED', savedAccountId: 1 }, { mode: 'SAVED', savedAccountId: 'saved-1', accountName: 'สมชาย' }, { mode: 'UNKNOWN' }, { mode: 'CASH', savedAccountId: 'saved-1' }]) await rejects(UpdateReimbursementDraftDto, { payout });
+  });
+  it('takes typed holder facts and saveForLater, and a strictly boolean approval acceptance', async () => {
+    await pipe.transform({ payout: { mode: 'SPECIFIED', holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก', saveForLater: true } }, { type: 'body', metatype: UpdateReimbursementDraftDto });
+    await pipe.transform({ payoutThirdPartyAccepted: true }, { type: 'body', metatype: ApproveReimbursementDto });
+    for (const payoutThirdPartyAccepted of ['true', 1, null]) await rejects(ApproveReimbursementDto, { payoutThirdPartyAccepted });
+  });
+});

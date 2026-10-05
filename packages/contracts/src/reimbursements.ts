@@ -105,6 +105,7 @@ export type ReimbursementPolicySnapshotV1 = {
   policyVersion: string;
   approvalRequiredFromAmount: string;
   requiresApproval: boolean;
+  approvalFloor?: 'THIRD_PARTY_PAYOUT';
   route: null | {
     mode: 'MANAGER_ROLE' | 'OWNER_ROLE' | 'CUSTOM_ROLE';
     roleKey: string;
@@ -1468,11 +1469,11 @@ export const REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER: Partial<Record<R
 export function reimbursementPayoutAnsweredForRequesterNotice(
   answer: ReimbursementPayoutRoundAnswer | null | undefined,
   byName: string | null | undefined,
-  given: { payoutMethod?: string | null; payoutKind?: ReimbursementPayoutKind | null; bankName?: string | null; accountLast4?: string | null } | null | undefined,
+  given: { payoutMethod?: string | null; payoutKind?: ReimbursementPayoutKind | null; bankName?: string | null; accountLast4?: string | null; holderType?: ReimbursementPayoutHolderType } | null | undefined,
   facts: { draft?: boolean; alsoSavedAsDefault?: boolean } = {},
 ): { title: string; body: string } {
   const did = typeof answer === 'string' && Object.hasOwn(PAYOUT_ROUND_ANSWER_WORDS, answer) ? PAYOUT_ROUND_ANSWER_WORDS[answer].did : 'เลือกวิธีรับเงินคืน';
-  const account = given?.payoutMethod === 'BANK_TRANSFER' && given.accountLast4 ? maskedPayoutAccount(given) : undefined;
+  const account = given?.payoutMethod === 'BANK_TRANSFER' && given.accountLast4 ? maskedPayoutAccountWithHolder(given) : undefined;
   const holds = account ?? (given?.payoutMethod === 'CASH' ? 'รับเป็นเงินสด' : facts.draft ? 'ยังไม่ได้ระบุวิธีรับเงินคืน' : undefined);
   const next = facts.draft
     ? 'เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แจ้งผู้จัดทำใบเบิก'

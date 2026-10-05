@@ -43,7 +43,7 @@ import { ReserveDocumentNumberUseCase } from '../../data-model-core/application/
 import { CommitDocumentNumberUseCase } from '../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { CancelDocumentNumberUseCase } from '../../data-model-core/application/use-cases/cancel-document-number.use-case';
 import {
-  CancelReimbursementUseCase, GetReimbursementDetailUseCase, ResumeReimbursementUseCase, WithdrawReimbursementCancellationUseCase,
+  CancelReimbursementUseCase, GetReimbursementDetailUseCase, ResumeReimbursementUseCase, WithdrawReimbursementCancellationUseCase, SubmitReimbursementUseCase,
 } from '../application/use-cases/reimbursement-request.use-case';
 import { ReimbursementProjectionOrchestratorService } from '../application/services/reimbursement-projection-orchestrator.service';
 import { ReimbursementProjectionReconcilerService } from '../application/services/reimbursement-projection-reconciler.service';
@@ -3022,6 +3022,105 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     const failure = outcomes.find((result) => result.status === 'rejected') as PromiseRejectedResult;
     assert.equal(errorMessage(failure.reason), 'payout_saved_account_limit');
     assert.equal(await clients[0]!.memberSavedPayoutAccount.count({ where: { companyId, userId: requester } }), 20);
+  });
+
+  const thirdParty2a = { holderType: 'THIRD_PARTY' as const, holderNote: 'คู่สมรสของผู้เบิก' };
+  async function submit2a(claim: Claim) {
+    const db = clients[0]!;
+    if (!await db.reimbursementPolicy.findFirst({ where: { companyId, branchId: null } })) await db.reimbursementPolicy.create({ data: {
+      companyId, approvalRequiredFromAmount: '1000', requireReceipt: false, financeReviewRequired: true,
+      duplicatePolicy: 'WARN', createdByUserId: requester,
+    } });
+    await db.reimbursementRequest.update({ where: { id: claim.id }, data: { missingReceiptReason: 'ไม่มีใบเสร็จ' } });
+    const useCase = new SubmitReimbursementUseCase(repos[0]!, { log: async () => undefined } as any, {} as any, {
+      validate: async () => undefined, getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}),
+    } as any, {
+      resolveSubmissionRoute: async () => ({ responsibilityRole: 'MANAGER', effectiveTaskRole: 'MANAGER', recipientUserIds: [approver], ownerRecipientUserIds: [approver], ownerFallbackUsed: false }),
+    } as any, { execute: async () => { throw new Error('finance review must precede projection'); } } as any);
+    await useCase.execute({ ...savedCtx(), roles: ['STAFF'], permissions: ['reimbursement.submit', 'reimbursement.read_own'], scopes: {} } as any, claim.id, { payoutSubmitToken: await shownToken(claim) });
+    return (await repos[0]!.findRequestById(companyId, claim.id, true))!;
+  }
+  async function savedDraft2a(holderType: 'SELF' | 'THIRD_PARTY' = 'THIRD_PARTY') {
+    await resetSaved();
+    const accounts = savedUseCase();
+    const saved = await accounts.addSavedOwn(savedCtx(), { ...KBANK, holderType, ...(holderType === 'THIRD_PARTY' && { holderNote: thirdParty2a.holderNote }) });
+    const change = await accounts.draftPayoutChange(savedCtx(), requester, { mode: 'SAVED', savedAccountId: saved.id });
+    return { accounts, saved, claim: await draft('multi payout 2a saved account', change) };
+  }
+
+  it('multi payout 2a: saved third-party draft freezes holder facts and routes below-threshold approval', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const { claim } = await savedDraft2a();
+    const before = (await destinationsOf(claim.id))[0]!;
+    const sent = await submit2a(claim);
+    assert.equal(sent.status, 'PENDING_APPROVAL');
+    assert.equal(sent.approvalSteps!.length, 1);
+    assert.equal((sent.approvalPolicySnapshotJson as any).approvalFloor, 'THIRD_PARTY_PAYOUT');
+    const row = (await destinationsOf(claim.id))[0]!;
+    assert.deepEqual([row.source, row.holderType, row.holderNote, row.accountNumberEncrypted], ['SAVED_ACCOUNT', 'THIRD_PARTY', thirdParty2a.holderNote, before.accountNumberEncrypted]);
+    assert.ok(row.frozenAt);
+    assert.equal(row.fingerprint, sent.payoutFingerprint);
+  });
+  it('multi payout 2a: the same below-threshold amount with an own account has no approval step', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const { claim } = await savedDraft2a('SELF');
+    const sent = await submit2a(claim);
+    assert.equal(sent.status, 'FINANCE_REVIEW');
+    assert.equal(sent.approvalSteps!.length, 0);
+    assert.equal((sent.approvalPolicySnapshotJson as any).approvalFloor, undefined);
+  });
+  it('multi payout 2a: acceptance is required under the approval lock and stored with the attestation', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const { claim } = await savedDraft2a();
+    const sent = await submit2a(claim);
+    for (const accepted of [undefined, false, 'true']) await refusedBy(() => repos[0]!.beginApprovalDecisionAtomic({ ...approval(sent, 1), payoutThirdPartyAccepted: accepted }), /payout_third_party_acceptance_required/);
+    assert.equal((await destinationsOf(claim.id))[0]!.verifiedAt, null);
+    const result = await repos[0]!.beginApprovalDecisionAtomic({ ...approval(sent, 1), payoutThirdPartyAccepted: true });
+    const row = (await destinationsOf(claim.id))[0]!;
+    assert.deepEqual([row.verifiedByUserId, row.verifiedVia, row.approvalStepId], [approver, 'APPROVAL', result.approvalStepId]);
+    assert.ok(row.verifiedAt);
+  });
+  it('multi payout 2a: deleting the saved row and promoting another default cannot alter the draft copy', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const { accounts, saved, claim } = await savedDraft2a();
+    const before = (await destinationsOf(claim.id))[0]!;
+    await accounts.deleteSavedOwn(savedCtx(), saved.id);
+    const own = await accounts.addSavedOwn(savedCtx(), { ...SCB, holderType: 'SELF' });
+    await accounts.makeSavedDefaultOwn(savedCtx(), own.id);
+    const sent = await submit2a(claim);
+    const kept = (await destinationsOf(claim.id))[0]!;
+    assert.deepEqual([kept.accountNumberEncrypted, kept.fingerprint, kept.holderType, kept.holderNote], [before.accountNumberEncrypted, before.fingerprint, before.holderType, before.holderNote]);
+    assert.equal(sent.payoutFingerprint, before.fingerprint);
+  });
+  it('multi payout 2a: a holder change between the routing plan and freeze refuses the entire submit', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const { claim } = await savedDraft2a();
+    const plan = await repos[0]!.planSubmitPayout(claim);
+    assert.equal((plan as any).thirdParty, true);
+    const token = await shownToken(claim);
+    const row = (await destinationsOf(claim.id))[0]!;
+    await clients[0]!.reimbursementPayoutDestination.update({ where: { id: row.id }, data: { holderType: 'SELF', holderNote: null } });
+    const input = submitInput(claim, token);
+    input.payout.expectedThirdParty = true;
+    await refusedBy(() => repos[0]!.submitDraftAtomic(input), /payout_destination_changed/);
+    assert.equal((await repos[0]!.findRequestById(companyId, claim.id))!.status, 'DRAFT');
+    assert.equal((await destinationsOf(claim.id))[0]!.frozenAt, null);
+    assert.equal(await clients[0]!.reimbursementApprovalStep.count({ where: { reimbursementRequestId: claim.id } }), 0);
+  });
+  it('multi payout 2a: saveForLater reuses the fingerprint at the limit without aborting the draft transaction', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    await resetSaved();
+    const accounts = savedUseCase();
+    await accounts.addSavedOwn(savedCtx(), { ...KBANK, holderType: 'SELF' });
+    for (let index = 1; index < 20; index++) await accounts.addSavedOwn(savedCtx(), { ...KBANK, holderType: 'SELF', accountNumber: `000000${String(index).padStart(4, '0')}` });
+    const change = await accounts.draftPayoutChange(savedCtx(), requester, { mode: 'SPECIFIED', ...KBANK, ...thirdParty2a, saveForLater: true });
+    const claim = await draft('multi payout 2a reused saved account', change);
+    assert.equal((await destinationsOf(claim.id))[0]!.holderType, 'THIRD_PARTY');
+    assert.equal(await clients[0]!.memberSavedPayoutAccount.count({ where: { companyId, userId: requester } }), 20);
+    const count = await clients[0]!.reimbursementRequest.count({ where: { companyId } });
+    const full = await accounts.draftPayoutChange(savedCtx(), requester, { mode: 'SPECIFIED', ...SCB, ...thirdParty2a, saveForLater: true });
+    await refusedBy(() => draft('multi payout 2a full list rollback', full), /payout_saved_account_limit/);
+    assert.equal(await clients[0]!.reimbursementRequest.count({ where: { companyId } }), count);
   });
 
 });

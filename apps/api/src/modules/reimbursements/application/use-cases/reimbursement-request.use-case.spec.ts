@@ -503,6 +503,7 @@ function fakeRepo(options: RepoOptions = {}) {
     // A member of the fixture is ACTIVE unless a case says otherwise.
     findPayoutMember: async (_companyId: string, userId: string) => (options.payoutMembers?.[userId] ? { membershipStatus: 'ACTIVE', ...options.payoutMembers[userId] } : null),
     findClaimPayout: (claim: any) => readClaimPayout(payoutDb, claim),
+    findClaimPayoutHolderType: async (claim: any) => (await payoutDb.reimbursementPayoutDestination.findFirst({ where: { companyId: claim.companyId, reimbursementRequestId: claim.id, version: claim.payoutDestinationVersion }, select: { holderType: true } }))?.holderType,
     listClaimPayoutVersions: (claim: any) => readClaimPayoutVersions(payoutDb, claim),
     findDraftDefaultPayout: (claim: any) => readDraftDefaultPayout(payoutDb, claim),
     // What the detail shows whoever may pay a claim that froze no account (payout spec §15).
@@ -3699,11 +3700,11 @@ describe('payout: filing a claim on behalf of someone', () => {
     await world.update.execute(ctx(), draft.id, { reason: 'แก้เหตุผลอย่างเดียว' });
     const draftRows = world.audits.filter((row) => /^reimbursement\.request\.(create|update_draft)$/.test(row.action));
     assert.deepEqual(draftRows.map((row) => [row.action.split('.').pop(), row.actorUserId, row.metadataJson?.payout]), [
-      ['create', 'finance-1', { mode: 'SPECIFIED', source: 'PREPARER' }],
-      ['update_draft', 'staff-1', { mode: 'SPECIFIED', source: 'REQUESTER' }],
+      ['create', 'finance-1', { mode: 'SPECIFIED', source: 'PREPARER', holderType: 'SELF' }],
+      ['update_draft', 'staff-1', { mode: 'SPECIFIED', source: 'REQUESTER', holderType: 'SELF' }],
       ['update_draft', 'staff-1', { mode: 'CASH' }],
       ['update_draft', 'staff-1', { mode: 'DEFAULT' }],
-      ['update_draft', 'staff-1', { mode: 'SPECIFIED', source: 'REQUESTER', savedAsDefault: true }],
+      ['update_draft', 'staff-1', { mode: 'SPECIFIED', source: 'REQUESTER', holderType: 'SELF', savedAsDefault: true }],
       // A draft edit that leaves the receiving choice alone says nothing about it.
       ['update_draft', 'staff-1', undefined],
     ]);
@@ -5277,4 +5278,100 @@ describe('payout correction: who answered, when someone answers for the requeste
     assert.deepEqual(world.notifications.map((notice) => [notice.recipientUserIds, notice.title, notice.body]), [[['staff-1'],
       'อรทัย แก้บัญชีรับเงินในใบเบิกของคุณ: RB-202601-000001', 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ใช่บัญชีของคุณ แก้ได้ทันที']]);
   });
+});
+
+describe('multi payout 2a draft and submit', () => {
+  const third = { holderType: 'THIRD_PARTY' as const, holderNote: 'คู่สมรสของผู้เบิก' };
+  function world() {
+    const w = payoutWorld({ policy: { id: 'policy-2a', updatedAt: new Date('2026-10-05'), status: 'ACTIVE', currency: 'THB', requireReceipt: false, allowMissingReceiptWithReason: false, approvalRequiredFromAmount: '1000', financeReviewRequired: true, duplicatePolicy: 'WARN', approverMode: 'MANAGER_ROLE', defaultApproverRole: 'MANAGER', allowSelfApproval: false }, payoutMembers: { 'staff-1': EMPLOYEE } });
+    const savedRepo = new PrismaReimbursementRepository({ client: w.state.payoutTables.client } as any, {} as any);
+    Object.assign(w.state.repo, {
+      addSavedPayoutAccount: savedRepo.addSavedPayoutAccount.bind(savedRepo),
+      listSavedPayoutAccounts: savedRepo.listSavedPayoutAccounts.bind(savedRepo),
+      removeSavedPayoutAccount: savedRepo.removeSavedPayoutAccount.bind(savedRepo),
+    });
+    return w;
+  }
+  it('copies a saved account inside the draft transaction, keeps it independent, and applies the approval floor', async () => {
+    const w = world();
+    const saved = await w.payouts.addSavedOwn(ctx(), { ...KBANK, ...third });
+    const sealed = { ...w.state.payoutTables.savedAccounts[0] };
+    await w.create.execute(ctx(), claimInput({ payout: { mode: 'SAVED', savedAccountId: saved.id } }));
+    const row = w.state.payoutTables.destinations[0]!;
+    assert.deepEqual([row.source, row.holderType, row.holderNote, row.accountNumberEncrypted], ['SAVED_ACCOUNT', third.holderType, third.holderNote, sealed.accountNumberEncrypted]);
+    assert.notEqual(row.fingerprint, sealed.fingerprint);
+    await w.payouts.deleteSavedOwn(ctx(), saved.id);
+    await w.payouts.setOwn(ctx(), SCB);
+    assert.equal(row.accountNumberEncrypted, sealed.accountNumberEncrypted);
+    const detail = await w.detail.execute(ctx(), 'rb-1');
+    assert.equal(detail.payout?.approvalRequiredForThirdParty, true);
+    await w.send(ctx(), 'rb-1');
+    assert.equal(w.state.request.status, 'PENDING_APPROVAL');
+    assert.equal(w.state.calls.approvalSteps.length, 1);
+    assert.equal(w.state.request.approvalPolicySnapshotJson.approvalFloor, 'THIRD_PARTY_PAYOUT');
+    assert.deepEqual(w.audits.find((entry) => entry.action === 'reimbursement.request.create').metadataJson.payout, { mode: 'SAVED', holderType: 'THIRD_PARTY' });
+    assert.equal(w.notifications.length, 0);
+  });
+  it('refuses foreign saved ids, preparer choices and unknown or malformed modes without following the default', async () => {
+    const w = world();
+    const saved = await w.payouts.addSavedOwn(ctx(), { ...KBANK, holderType: 'SELF' });
+    await assert.rejects(() => w.payouts.draftPayoutChange(financeCtx(), 'staff-1', { mode: 'SAVED', savedAccountId: saved.id }), /payout_saved_account_not_found/);
+    for (const input of [null, {}, { mode: 'UNKNOWN' }, { mode: 'SAVED' }, { mode: 'SAVED', savedAccountId: '' }]) await assert.rejects(() => w.payouts.draftPayoutChange(ctx(), 'staff-1', input as any), (e: any) => e.getStatus?.() === 400);
+    for (const owner of [ctx({ userId: 'other' }), ctx({ companyId: 'other' })]) {
+      const change = await w.payouts.draftPayoutChange(owner, owner.userId, { mode: 'SAVED', savedAccountId: saved.id });
+      await assert.rejects(() => applyDraftPayoutChange(w.state.payoutTables.client, { ...w.state.request, id: 'rb-1', companyId: owner.companyId, requesterUserId: owner.userId, status: 'DRAFT' }, change, true), /payout_saved_account_not_found/);
+    }
+    const own = await w.payouts.draftPayoutChange(ctx(), 'staff-1', { mode: 'SAVED', savedAccountId: saved.id });
+    await assert.rejects(() => applyDraftPayoutChange(w.state.payoutTables.client, { id: 'rb-1', companyId: 'co-1', requesterUserId: 'other', status: 'DRAFT' }, own, true), /payout_saved_account_not_found/);
+  });
+  it('saves typed accounts atomically, reuses duplicates at the limit, and refuses unsafe combinations', async () => {
+    const w = world();
+    const tx = w.state.payoutTables.client;
+    const claim = { id: 'rb-1', companyId: 'co-1', requesterUserId: 'staff-1', status: 'DRAFT' } as any;
+    const change = await w.payouts.draftPayoutChange(ctx(), 'staff-1', { mode: 'SPECIFIED', ...KBANK, ...third, saveForLater: true });
+    await tx.$transaction((client: any) => applyDraftPayoutChange(client, claim, change, true));
+    assert.equal(w.state.payoutTables.savedAccounts.length, 1);
+    for (let index = 1; index < 20; index++) await w.payouts.addSavedOwn(ctx(), { ...KBANK, holderType: 'SELF', accountNumber: `000000${String(index).padStart(4, '0')}` });
+    await tx.$transaction((client: any) => applyDraftPayoutChange(client, claim, change, true));
+    assert.equal(w.state.payoutTables.savedAccounts.length, 20);
+    const before = { ...w.state.payoutTables.destinations[0] };
+    const another = await w.payouts.draftPayoutChange(ctx(), 'staff-1', { mode: 'SPECIFIED', ...SCB, ...third, saveForLater: true });
+    await assert.rejects(() => tx.$transaction((client: any) => applyDraftPayoutChange(client, claim, another)), /payout_saved_account_limit/);
+    assert.deepEqual(w.state.payoutTables.destinations[0], before);
+    for (const input of [{ mode: 'SPECIFIED', ...KBANK, ...third, saveAsDefault: true }, { mode: 'SPECIFIED', ...KBANK, saveAsDefault: true, saveForLater: true }]) await assert.rejects(() => w.payouts.draftPayoutChange(ctx(), 'staff-1', input as any), (e: any) => [400, 409].includes(e.getStatus?.()));
+    await assert.rejects(() => w.payouts.draftPayoutChange(financeCtx(), 'staff-1', { mode: 'SPECIFIED', ...KBANK, saveForLater: true }), (e: any) => e.getStatus?.() === 403);
+  });
+  it('tells the requester of a preparer typed third-party account using only the short flag', async () => {
+    const w = world();
+    await w.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK, ...third } }));
+    assert.match(w.notifications[0].body, /\(บัญชีของบุคคลอื่น\)/);
+    assert.doesNotMatch(w.notifications[0].body, /คู่สมรส|0123456789/);
+  });
+  it('checks holder routing again at freeze, reuses the version and requires acceptance again after reopening', async () => {
+    const w = world();
+    await w.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK, ...third } }));
+    const request = w.state.request;
+    const token = (await w.detail.execute(ctx(), 'rb-1')).payout!.submitToken;
+    await assert.rejects(() => freezePayoutAtSubmit(w.state.payoutTables.client, request, { actorUserId: 'staff-1', frozenAt: new Date(), seenToken: token, expectedThirdParty: false }), /payout_destination_changed/);
+    await w.send(ctx(), 'rb-1');
+    const db = w.state.payoutTables.client;
+    await attestClaimPayout(db, w.state.request, { verifiedVersion: 1, thirdPartyAccepted: true, actorUserId: 'staff-1', verifiedAt: new Date(), approvalStepId: 'step-1' });
+    const paid = await confirmPaymentPayout(db, w.state.request, { payoutDestinationVersion: 1 }, { actorUserId: 'payer-1', confirmedAt: new Date() });
+    assert.equal(paid?.payerVerified, true);
+    const columns = await draftPayoutAfterReopen(db, w.state.request);
+    Object.assign(request, columns, { status: 'DRAFT' });
+    await w.send(ctx(), 'rb-1');
+    assert.equal(request.payoutDestinationVersion, 1);
+    assert.equal(w.state.payoutTables.destinations[0]!.verifiedByUserId, null);
+    await assert.rejects(() => attestClaimPayout(db, request, { verifiedVersion: 1, actorUserId: 'manager-1', verifiedAt: new Date(), approvalStepId: 'step-2' }), /payout_third_party_acceptance_required/);
+  });
+});
+
+it('multi payout 2a: membership locks serialize writers without blocking foreign-key checks', async () => {
+  const tables = fakePayoutTables();
+  const repo = new PrismaReimbursementRepository({ client: tables.client } as any, {} as any);
+  await repo.addSavedPayoutAccount({ companyId: 'co-1', userId: 'staff-1', holderType: 'SELF', destination: sealPayoutDestination(KBANK, PAYOUT_KEY)! }, async () => undefined);
+  const locks = tables.rowLocks.filter((sql) => sql.includes('CompanyMembership'));
+  assert.equal(locks.length, 1);
+  assert.match(locks[0]!, /FOR NO KEY UPDATE/);
 });

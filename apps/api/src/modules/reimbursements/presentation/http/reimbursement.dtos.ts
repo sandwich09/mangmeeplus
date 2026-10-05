@@ -5,7 +5,7 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional,
-  IsString, Matches, Max, MaxLength, Min, ValidateIf, ValidateNested,
+  IsString, Matches, Max, MaxLength, Min, ValidateBy, ValidateIf, ValidateNested,
 } from 'class-validator';
 import type {
   ApproveReimbursementInput,
@@ -68,8 +68,17 @@ class PayoutDestinationFieldsDto {
 }
 
 export class ReimbursementPayoutDto extends PayoutDestinationFieldsDto {
-  @IsIn(['DEFAULT', 'CASH', 'SPECIFIED']) mode!: ReimbursementPayoutInput['mode'];
+  @IsIn(['DEFAULT', 'CASH', 'SPECIFIED', 'SAVED'])
+  @ValidateBy({ name: 'payoutModeFields', validator: { validate: (_value, args) => {
+    const body = args!.object as Record<string, unknown>;
+    if (body.mode === 'SAVED') return Object.entries(body).every(([key, value]) => value === undefined || key === 'mode' || key === 'savedAccountId');
+    return body.savedAccountId === undefined && (body.mode === 'SPECIFIED' || [body.holderType, body.holderNote, body.saveForLater].every((value) => value === undefined));
+  } } }) mode!: ReimbursementPayoutInput['mode'];
+  @IsString() @IsNotEmpty() @MaxLength(100) @ValidateIf((body, value) => body.mode === 'SAVED' || value !== undefined) declare savedAccountId?: string;
   @IsBoolean() @IsOptional() saveAsDefault?: boolean;
+  @IsBoolean() @ValidateIf((_body, value) => value !== undefined) declare saveForLater?: boolean;
+  @IsString() @MaxLength(40) @ValidateIf((_body, value) => value !== undefined) declare holderType?: ReimbursementPayoutHolderType;
+  @IsString() @MaxLength(2000) @ValidateIf((_body, value) => value !== undefined) declare holderNote?: string;
 }
 
 export class SetMemberPayoutAccountDto extends PayoutDestinationFieldsDto {
@@ -150,6 +159,7 @@ export class ApproveReimbursementDto implements ApproveReimbursementInput {
   @IsString() @IsOptional() @MaxLength(200) idempotencyKey?: string;
   // "ตรวจบัญชีแล้ว": a whole version number, never a string that happens to look like one.
   @IsInt() @Min(1) @IsOptional() payoutVerifiedVersion?: number;
+  @IsBoolean() @ValidateIf((_body, value) => value !== undefined) declare payoutThirdPartyAccepted?: boolean;
 }
 
 /**

@@ -359,7 +359,7 @@ export class ApproveReimbursementUseCase {
   ) {}
 
   /** `payoutVerifiedVersion`: the approver's "ตรวจบัญชีแล้ว" for the account version they looked at. */
-  async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string, payoutVerifiedVersion?: unknown): Promise<ReimbursementRequestDetail> {
+  async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string, payoutVerifiedVersion?: unknown, payoutThirdPartyAccepted?: unknown): Promise<ReimbursementRequestDetail> {
     // The comment stays on the step, which every reader of the claim is shown, and in the audit row.
     // An approver has just checked an account: its number is not typed here.
     if (looksLikeAccountNumber(comment)) throw new BadRequestException('note_contains_account_number');
@@ -404,8 +404,9 @@ export class ApproveReimbursementUseCase {
     // Human verification (owner decision P1): a claim paid by transfer is approved only with the
     // approver's attestation of the exact account version on the claim. The repository repeats this
     // under the request lock; a decision already made is only resumed, never attested twice.
+    const holderType = hasPayoutSnapshot(req) ? await this.repo.findClaimPayoutHolderType(req) : undefined;
     if (step?.status === 'PENDING') {
-      const payoutError = payoutAttestationError(req, payoutVerifiedVersion);
+      const payoutError = payoutAttestationError({ ...req, holderType }, payoutVerifiedVersion, payoutThirdPartyAccepted);
       // 409 for both: a tab opened before the release then says "load the latest and try again".
       if (payoutError) throw new ConflictException(payoutError);
     }
@@ -433,6 +434,7 @@ export class ApproveReimbursementUseCase {
         decidedAt: now,
         comment,
         payoutVerifiedVersion,
+        payoutThirdPartyAccepted,
         onApprovedPersisted: async (tx, approvalStepId) => {
           await this.audit.log({
             companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payout_correction.approve',
@@ -440,6 +442,7 @@ export class ApproveReimbursementUseCase {
             metadataJson: {
               requestNo: req.requestNo, amount: req.amount, currency: req.currency, comment, approvalStepId,
               payoutMethod: req.payoutMethod ?? null, payoutVersion: req.payoutDestinationVersion ?? null,
+              ...(holderType === 'THIRD_PARTY' && { thirdPartyAccepted: true }),
               ...(selfApproval && { selfApproval }),
             },
           }, tx);
@@ -488,6 +491,7 @@ export class ApproveReimbursementUseCase {
       decidedAt: now,
       comment,
       payoutVerifiedVersion,
+      payoutThirdPartyAccepted,
       financeRequestPatch: {
         status: 'FINANCE_REVIEW',
         approvedAt: now,
@@ -510,6 +514,7 @@ export class ApproveReimbursementUseCase {
           result: 'SUCCESS',
           riskLevel: 'HIGH',
           metadataJson: {
+            ...(holderType === 'THIRD_PARTY' && { thirdPartyAccepted: true }),
             amount: req.amount,
             currency: req.currency,
             comment,

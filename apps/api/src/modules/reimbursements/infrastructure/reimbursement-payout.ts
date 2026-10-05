@@ -24,9 +24,11 @@ import type {
   ReimbursementRequestStatus,
   SavedPayoutAccountSummary,
   PayoutHolderFacts,
+  ReimbursementPayoutHolderType,
 } from '@watchdog-bms/contracts';
 import {
   CASH_PAYOUT_FINGERPRINT,
+  claimPayoutFingerprint,
   draftFollowsDefaultAfterReopen,
   hasPayoutSnapshot,
   LEGACY_PAYMENT_PAYOUT_SOURCE,
@@ -72,6 +74,7 @@ export type ClaimPayoutRecord = {
   followsDefault?: boolean;
   /** Set only when someone other than the requester typed the account, or set the default it was copied from. */
   enteredByUserId?: string;
+  holderType?: ReimbursementPayoutHolderType;
   verifiedByUserId?: string;
   verifiedAt?: Date;
   notReadyReason?: ReimbursementPayoutNotReadyReason;
@@ -80,7 +83,8 @@ export type ClaimPayoutRecord = {
 export type DraftPayoutWrite =
   | { mode: 'DEFAULT' }
   | { mode: 'CASH' }
-  | { mode: 'SPECIFIED'; destination: SealedPayoutDestination; source: 'REQUESTER' | 'PREPARER'; actorUserId: string };
+  | { mode: 'SPECIFIED'; destination: SealedPayoutDestination & Partial<PayoutHolderFacts>; source: 'REQUESTER' | 'PREPARER' | 'SAVED_ACCOUNT'; actorUserId: string }
+  | { mode: 'SAVED'; savedAccountId: string; requesterUserId: string; actorUserId: string; key: Buffer };
 
 export type DraftPayoutChange = {
   write: DraftPayoutWrite;
@@ -212,7 +216,16 @@ export async function readSavedPayoutAccountForCopy(client: any, companyId: stri
 
 async function lockSavedPayoutMember(tx: any, companyId: string, userId: string): Promise<void> {
   // One membership lock serializes saved-list mutations, including the count when the list is empty.
-  await tx.$queryRaw`SELECT 1 FROM "CompanyMembership" WHERE "companyId" = ${companyId} AND "userId" = ${userId} FOR UPDATE`;
+  await tx.$queryRaw`SELECT 1 FROM "CompanyMembership" WHERE "companyId" = ${companyId} AND "userId" = ${userId} FOR NO KEY UPDATE`;
+}
+
+/** Reuse under the membership lock before inserting: unique violations abort draft transactions. */
+export async function savePayoutAccountForLater(tx: any, data: SavedPayoutAccountWrite): Promise<{ account: SavedPayoutAccountRecord; added: boolean }> {
+  await lockSavedPayoutMember(tx, data.companyId, data.userId);
+  const existing = await tx.memberSavedPayoutAccount.findFirst({
+    where: { companyId: data.companyId, userId: data.userId, fingerprint: data.destination.fingerprint }, select: SAVED_ACCOUNT_COLUMNS,
+  });
+  return existing ? { account: toSavedAccount(existing), added: false } : { account: await addSavedPayoutAccount(tx, data), added: true };
 }
 
 export async function addSavedPayoutAccount(tx: any, data: SavedPayoutAccountWrite): Promise<SavedPayoutAccountRecord> {
@@ -373,7 +386,7 @@ export async function readClaimPayoutSecret(client: any, companyId: string, requ
 async function listVersions(client: any, companyId: string, requestId: string): Promise<Array<PayoutDestinationVersionRow & { id: string }>> {
   return client.reimbursementPayoutDestination.findMany({
     where: { companyId, reimbursementRequestId: requestId },
-    select: { id: true, version: true, fingerprint: true, source: true, frozenAt: true },
+    select: { id: true, version: true, fingerprint: true, source: true, frozenAt: true, holderType: true },
     orderBy: { version: 'desc' },
   });
 }
@@ -384,13 +397,24 @@ async function listVersions(client: any, companyId: string, requestId: string): 
  * Call under the request lock.
  */
 export async function applyDraftPayout(tx: any, companyId: string, requestId: string, write: DraftPayoutWrite): Promise<Record<string, unknown>> {
+  if (write.mode === 'SAVED') {
+    const saved = write.actorUserId === write.requesterUserId ? await readSavedPayoutAccountForCopy(tx, companyId, write.requesterUserId, write.savedAccountId) : null;
+    if (!saved) throw new NotFoundException('payout_saved_account_not_found');
+    return applyDraftPayout(tx, companyId, requestId, { mode: 'SPECIFIED', source: 'SAVED_ACCOUNT', actorUserId: write.actorUserId, destination: {
+      payoutKind: saved.payoutKind, bankName: saved.bankName, accountName: saved.accountName,
+      accountNumberEncrypted: saved.accountNumberEncrypted, accountLast4: saved.accountLast4,
+      holderType: saved.holderType, holderNote: saved.holderNote,
+      fingerprint: claimPayoutFingerprint(saved.fingerprint, saved, write.key),
+    } });
+  }
   if (write.mode !== 'SPECIFIED') {
+    if (write.mode !== 'DEFAULT' && write.mode !== 'CASH') throw new BadRequestException('payout_mode_invalid');
     await tx.reimbursementPayoutDestination.deleteMany({ where: { companyId, reimbursementRequestId: requestId, frozenAt: null } });
     return { payoutMethod: write.mode === 'CASH' ? 'CASH' : null, payoutDestinationVersion: null, payoutFingerprint: null };
   }
   const versions = await listVersions(tx, companyId, requestId);
   const working = versions.find((row) => !row.frozenAt);
-  const columns = { ...write.destination, source: write.source, createdByUserId: write.actorUserId };
+  const columns = { ...write.destination, holderType: write.destination.holderType ?? 'SELF', holderNote: write.destination.holderNote ?? null, source: write.source, createdByUserId: write.actorUserId };
   const version = working?.version ?? (versions[0]?.version ?? 0) + 1;
   if (working) await tx.reimbursementPayoutDestination.update({ where: { id: working.id }, data: columns });
   else await tx.reimbursementPayoutDestination.create({ data: { companyId, reimbursementRequestId: requestId, version, ...columns } });
@@ -402,6 +426,7 @@ export async function applyDraftPayout(tx: any, companyId: string, requestId: st
  * never random ciphertext, a working-row version or just the last four digits.
  */
 export async function applyDraftPayoutChange(tx: any, claim: ClaimPayoutPointer, change: DraftPayoutChange, creating = false): Promise<Record<string, unknown>> {
+  if (change.write.mode === 'SAVED' && (change.write.requesterUserId !== claim.requesterUserId || change.write.actorUserId !== claim.requesterUserId)) throw new NotFoundException('payout_saved_account_not_found');
   const before = change.onChanged && !creating ? payoutSubmitToken(claim.id, await readSubmitPayoutPlan(tx, claim)) : undefined;
   const columns = await applyDraftPayout(tx, claim.companyId, claim.id, change.write);
   await change.onPersisted?.(tx, claim.id);
@@ -409,7 +434,7 @@ export async function applyDraftPayoutChange(tx: any, claim: ClaimPayoutPointer,
     const after = { ...claim, ...columns };
     if (creating || before !== payoutSubmitToken(claim.id, await readSubmitPayoutPlan(tx, after))) {
       const given = await readDraftDefaultPayout(tx, after) ?? await readClaimPayout(tx, after);
-      await change.onChanged(tx, claim.id, given);
+      await change.onChanged(tx, claim.id, given && { ...given, holderType: await readClaimPayoutHolderType(tx, after) });
     }
   }
   return columns;
@@ -424,6 +449,15 @@ export async function readSubmitPayoutPlan(client: any, claim: ClaimPayoutPointe
   return planSubmitPayout(claim, versions.map(({ id: _id, ...row }) => row), account);
 }
 
+/** Server-side routing/attestation fact; the masked screen payload is wired separately. */
+export async function readClaimPayoutHolderType(client: any, claim: ClaimPayoutPointer): Promise<ReimbursementPayoutHolderType | undefined> {
+  if (claim.payoutMethod !== 'BANK_TRANSFER' || claim.payoutDestinationVersion == null) return undefined;
+  const row = await client.reimbursementPayoutDestination.findFirst({
+    where: { companyId: claim.companyId, reimbursementRequestId: claim.id, version: claim.payoutDestinationVersion }, select: { holderType: true },
+  });
+  return row?.holderType;
+}
+
 /**
  * The payout side of a submit, wholly inside the submit transaction and under the request lock.
  * Nothing about the account is read before the transaction: here the requester's default row is
@@ -436,6 +470,7 @@ export async function freezePayoutAtSubmit(tx: any, claim: ClaimPayoutPointer, i
   frozenAt: Date;
   /** `payout.submitToken` of the detail the submitter was looking at. */
   seenToken?: unknown;
+  expectedThirdParty?: boolean;
 }): Promise<{ plan: FrozenPayoutPlan; columns: SubmitPayoutColumns }> {
   // A default-account edit waits for this submit to commit, and this submit waits for one already
   // under way: the account copied below is the account planned from.
@@ -446,6 +481,7 @@ export async function freezePayoutAtSubmit(tx: any, claim: ClaimPayoutPointer, i
   // Every payout refusal on submit and approve is a 409: a browser tab opened before the release
   // has no words for these codes, and its text for a conflict is "load the latest and try again".
   if ('error' in plan) throw new ConflictException(plan.error);
+  if (input.expectedThirdParty !== undefined && input.expectedThirdParty !== (plan.payoutMethod === 'BANK_TRANSFER' && plan.thirdParty === true)) throw new ConflictException('payout_destination_changed');
   // Show before freeze: whatever account the claim is sent with must be the one the submitter saw,
   // whether it comes from the default or was typed into this claim (by the requester in another tab,
   // or by whoever prepared the claim for them). Only cash the draft itself chose depends on nothing
@@ -550,11 +586,13 @@ export async function freezePayoutCorrection(tx: any, claim: ClaimPayoutPointer,
  */
 export async function attestClaimPayout(tx: any, claim: ClaimPayoutPointer, attestation: {
   verifiedVersion?: unknown;
+  thirdPartyAccepted?: unknown;
   actorUserId: string;
   verifiedAt: Date;
   approvalStepId: string;
 }): Promise<void> {
-  const error = payoutAttestationError(claim, attestation.verifiedVersion);
+  const holderType = hasPayoutSnapshot(claim) ? await readClaimPayoutHolderType(tx, claim) : undefined;
+  const error = payoutAttestationError({ ...claim, holderType }, attestation.verifiedVersion, attestation.thirdPartyAccepted);
   if (error) throw new ConflictException(error);
   // Nothing to attest: cash, or a legacy claim (sent without a snapshot, whatever its draft chose).
   if (claim.payoutMethod !== 'BANK_TRANSFER' || !hasPayoutSnapshot(claim)) return;

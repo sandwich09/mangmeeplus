@@ -23,9 +23,10 @@ import {
   payoutAccountEditRefusal,
   sealPayoutDestination,
   type SealedPayoutDestination,
+  claimPayoutFingerprint,
 } from '../../domain/logic/payout-destination.logic';
 import { PrismaReimbursementRepository, type DraftPayoutChange } from '../../infrastructure/prisma-reimbursement.repository';
-import type { MemberPayoutAccountRecord, SavedPayoutAccountRecord } from '../../infrastructure/reimbursement-payout';
+import { savePayoutAccountForLater, type MemberPayoutAccountRecord, type SavedPayoutAccountRecord } from '../../infrastructure/reimbursement-payout';
 
 /** The notification an account owner gets when someone else sets their account. */
 export const PAYOUT_ACCOUNT_SET_TRIGGER_KEY = 'reimbursement.payout_account_set_by_other';
@@ -33,7 +34,7 @@ export const PAYOUT_ACCOUNT_SET_TRIGGER_KEY = 'reimbursement.payout_account_set_
 const UNNAMED_MEMBER = 'สมาชิกบริษัท';
 
 /** What a draft's audit row says about its receiving choice: the mode, and who typed an account. Never the account. */
-export type DraftPayoutAudit = { mode: 'DEFAULT' | 'CASH' | 'SPECIFIED'; source?: 'REQUESTER' | 'PREPARER'; savedAsDefault?: true };
+export type DraftPayoutAudit = { mode: 'DEFAULT' | 'CASH' | 'SPECIFIED' | 'SAVED'; source?: 'REQUESTER' | 'PREPARER'; savedAsDefault?: true; holderType?: 'SELF' | 'THIRD_PARTY' };
 
 /** What an audit row may say about an account: kind, bank and the last 4 digits. Never the number. */
 function auditFacts(account: MemberPayoutAccountRecord | null) {
@@ -188,25 +189,49 @@ export class MemberPayoutAccountUseCase {
     const byRequester = requesterUserId === ctx.userId;
     const source = byRequester ? 'REQUESTER' as const : 'PREPARER' as const;
     let change: DraftPayoutChange & { audit: DraftPayoutAudit };
-    if (input.mode === 'SPECIFIED') {
-      const destination = this.seal(input);
+    if (!input || !['DEFAULT', 'CASH', 'SPECIFIED', 'SAVED'].includes(input.mode)) throw new BadRequestException('payout_mode_invalid');
+    if (input.mode === 'SAVED') {
+      if (typeof input.savedAccountId !== 'string' || !input.savedAccountId.trim()) throw new BadRequestException('payout_mode_invalid');
+      if (!byRequester) throw new NotFoundException('payout_saved_account_not_found');
+      this.assertOwn(ctx);
+      change = {
+        write: { mode: 'SAVED', savedAccountId: input.savedAccountId, requesterUserId, actorUserId: ctx.userId, key: this.config.credentialEncryptionKey },
+        audit: { mode: 'SAVED' },
+        onPersisted: async (tx, requestId) => {
+          const row = await tx.reimbursementPayoutDestination.findFirst({ where: { companyId: ctx.companyId, reimbursementRequestId: requestId, frozenAt: null }, select: { holderType: true } });
+          change.audit.holderType = row.holderType;
+        },
+      };
+    } else if (input.mode === 'SPECIFIED') {
+      const holder = { holderType: input.holderType === undefined ? 'SELF' as const : input.holderType, holderNote: input.holderNote };
+      const invalid = invalidPayoutHolderField(holder);
+      if (invalid) throw new BadRequestException(invalid === 'holderType' ? 'payout_holder_type_invalid' : 'payout_holder_note_invalid');
+      holder.holderNote = holder.holderType === 'THIRD_PARTY' ? holder.holderNote!.trim() : undefined;
+      if (input.saveAsDefault && input.saveForLater) throw new BadRequestException('payout_save_options_invalid');
+      if (input.saveAsDefault && holder.holderType === 'THIRD_PARTY') throw new ConflictException('payout_default_must_be_own');
+      if (input.saveForLater && !byRequester) throw new ForbiddenException('payout_saved_account_owner_required');
+      const account = this.seal(input);
+      const destination = { ...account, ...holder, fingerprint: claimPayoutFingerprint(account.fingerprint, holder, this.config.credentialEncryptionKey) };
       if (input.saveAsDefault) {
         if (byRequester) this.assertOwn(ctx);
         else await this.assertMayEditMember(ctx, requesterUserId);
         change = {
-          write: { mode: 'DEFAULT' }, audit: { mode: 'SPECIFIED', source, savedAsDefault: true },
-          // The claim's notice covers this save too. Failure rolls both writes back.
-          onPersisted: async (tx) => { await this.write(ctx, requesterUserId, 'BANK_TRANSFER', destination, tx, true); },
+          write: { mode: 'DEFAULT' }, audit: { mode: 'SPECIFIED', source, savedAsDefault: true, ...(!inRound && { holderType: holder.holderType }) },
+          onPersisted: async (tx) => { await this.write(ctx, requesterUserId, 'BANK_TRANSFER', account, tx, true); },
         };
       } else {
-        if (!byRequester && !mayTypePayoutAccountFor(await this.repo.findPayoutMember(ctx.companyId, requesterUserId))) {
-          throw new ConflictException('payout_account_member_not_active');
+        if (!byRequester && !mayTypePayoutAccountFor(await this.repo.findPayoutMember(ctx.companyId, requesterUserId))) throw new ConflictException('payout_account_member_not_active');
+        change = { write: { mode: 'SPECIFIED', destination, source, actorUserId: ctx.userId }, audit: { mode: 'SPECIFIED', source, ...(!inRound && { holderType: holder.holderType }) } };
+        if (input.saveForLater) {
+          this.assertOwn(ctx);
+          change.onPersisted = async (tx) => {
+            const saved = await savePayoutAccountForLater(tx, { companyId: ctx.companyId, userId: requesterUserId, destination: account, ...holder, holderNote: holder.holderType === 'THIRD_PARTY' ? holder.holderNote!.trim() : undefined });
+            if (saved.added) await this.audit.log(this.savedAuditEntry(ctx, 'add', saved.account), tx);
+          };
         }
-        change = { write: { mode: 'SPECIFIED', destination, source, actorUserId: ctx.userId }, audit: { mode: 'SPECIFIED', source } };
       }
     } else {
-      const mode = input.mode === 'CASH' ? 'CASH' : 'DEFAULT';
-      change = { write: { mode }, audit: { mode } };
+      change = { write: { mode: input.mode }, audit: { mode: input.mode } };
     }
     // Rounds announce every answer themselves. Drafts announce only a changed destination, and
     // cash/default choices for a former member remain valid even though nobody can receive a notice.

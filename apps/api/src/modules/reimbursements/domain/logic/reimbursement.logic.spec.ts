@@ -36,6 +36,7 @@ import {
   type CurrentDeskStepFields,
 } from './reimbursement.logic';
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
+import * as approvalRules from './reimbursement.logic';
 import {
   invalidPayoutDestinationField, isReimbursementClaimApprover, looksLikeAccountNumber, maskedPayoutAccount, maskedPayoutAccountNumber,
   normalizePayoutAccountNumber, reimbursementPaymentRule, reimbursementPaymentSlipRequired,
@@ -1998,4 +1999,47 @@ describe('company-wide strong duplicate signals', () => {
     assert.equal((duplicateBlocksPayment as any)('WARN', 0, 1), false);
     assert.equal((duplicateBlocksPayment as any)('BLOCK_PAYMENT', 0, 0), false);
   });
+});
+
+// Multi-payout round 2a: the old snapshot remains byte-for-byte compatible.
+const oldPayoutPolicy = {
+  schemaVersion: 1, policyId: 'policy-1', policyVersion: '2026-08-22T00:00:00.000Z',
+  approvalRequiredFromAmount: '100.0000', requiresApproval: true,
+  route: { mode: 'MANAGER_ROLE', roleKey: 'MANAGER', effectiveTaskRole: 'MANAGER', ownerFallbackUsedAtSubmission: false },
+  allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: false,
+  duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: true,
+} as const;
+const oldPayoutFields = { amount: '99.0000', currency: 'THB', categoryKey: 'travel', incurredDate: '2026-01-01', reason: 'Taxi', approvalPolicySnapshotJson: oldPayoutPolicy };
+it('multi payout 2a: pins the existing policy snapshot hash before adding the floor', () => {
+  assert.equal(computeSnapshotHash(oldPayoutFields), 'b07f3b91bc075a52f195ae2aa9318b61');
+});
+it('multi payout 2a: approval floor is only for third-party accounts below the threshold', () => {
+  assert.equal(approvalRules.thirdPartyPayoutApprovalRequired('99.99', '100', true), true);
+  assert.equal(approvalRules.thirdPartyPayoutApprovalRequired('100', '100', true), false);
+  assert.equal(approvalRules.thirdPartyPayoutApprovalRequired('99.99', '100', false), false);
+});
+it('multi payout 2a: the floor parses strictly and changes only new snapshot hashes', () => {
+  const policy = { ...oldPayoutPolicy, approvalFloor: 'THIRD_PARTY_PAYOUT' };
+  assert.equal(parseReimbursementPolicySnapshot(policy)?.approvalFloor, 'THIRD_PARTY_PAYOUT');
+  assert.notEqual(computeSnapshotHash({ ...oldPayoutFields, approvalPolicySnapshotJson: policy } as any), computeSnapshotHash(oldPayoutFields));
+  for (const patch of [{ approvalFloor: 'OTHER' }, { approvalFloor: null }, { requiresApproval: false, route: null }]) assert.throws(() => parseReimbursementPolicySnapshot({ ...policy, ...patch }), /invalid_reimbursement_policy_snapshot/);
+});
+it('multi payout 2a: plans expose third-party routing and tokens bind every holder fact', () => {
+  const account = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'สมชาย', accountNumber: '0123456789' };
+  const key = Buffer.alloc(32, 7);
+  const plans = ['SELF', 'THIRD_PARTY', 'THIRD_PARTY'].map((holderType, index) => {
+    const sealed = sealClaimPayoutDestination({ ...account, holderType, ...(holderType === 'THIRD_PARTY' && { holderNote: index === 1 ? 'คู่สมรสของผู้เบิก' : 'ช่างรับเหมาที่สำรองจ่าย' }) } as any, key)!;
+    return planSubmitPayout({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }, [{ ...sealed, version: 1, source: 'SAVED_ACCOUNT', frozenAt: null }], null);
+  });
+  assert.equal((plans[1] as any).thirdParty, true);
+  assert.equal((plans[0] as any).thirdParty, undefined);
+  assert.equal(new Set(plans.map((plan) => payoutSubmitToken('claim-1', plan))).size, 3);
+  assert.equal(draftFollowsDefaultAfterReopen({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }, [{ version: 1, source: 'SAVED_ACCOUNT' }]), false);
+});
+it('multi payout 2a: third-party attestation requires strict acceptance as well as the version', () => {
+  const claim = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'f'.repeat(64), holderType: 'THIRD_PARTY' };
+  for (const accepted of [undefined, false, 1, 'true']) assert.equal(payoutAttestationError(claim, 1, accepted), 'payout_third_party_acceptance_required');
+  assert.equal(payoutAttestationError(claim, 1, true), null);
+  assert.equal(payoutAttestationError(claim, undefined, true), 'payout_verification_required');
+  assert.equal(payoutAttestationError({ ...claim, holderType: 'SELF' }, 1, false), null);
 });

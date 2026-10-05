@@ -146,3 +146,8 @@ test('executive owner sheet uses one Thai churn definition and shared column/fil
   const { PLAN_TIER_PRESETS } = await import('./plan-term.js');
   for (const key of Object.keys(PLAN_TIER_PRESETS)) assert.doesNotMatch(words.executivePlanLabel(key), /[A-Za-z_]/);
 });
+test('multi payout 2a: preparer draft notice flags another holder without the private note', () => {
+  const notice = payout.reimbursementPayoutAnsweredForRequesterNotice(undefined, 'วิภา', { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountLast4: '6789', holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก' } as any, { draft: true });
+  assert.match(notice.body, /\(บัญชีของบุคคลอื่น\)/);
+  assert.doesNotMatch(notice.body, /คู่สมรส/);
+});

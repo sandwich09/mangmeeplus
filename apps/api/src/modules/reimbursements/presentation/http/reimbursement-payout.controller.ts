@@ -29,12 +29,14 @@ export class ReimbursementPayoutController {
 
   @Get('payout-accounts/me/saved')
   @RequirePermissions('reimbursement.create')
+  @ApiOperation({ summary: 'List my saved payout accounts (last 4 digits only)' })
   listSavedOwn(@ReqCtx() ctx: RequestContext) {
     return this.accounts.listSavedOwn(ctx);
   }
 
   @Post('payout-accounts/me/saved')
   @RequirePermissions('reimbursement.create')
+  @ApiOperation({ summary: 'Add my saved payout account' })
   addSavedOwn(@ReqCtx() ctx: RequestContext, @Body() body: AddSavedPayoutAccountDto) {
     return this.accounts.addSavedOwn(ctx, body as AddSavedPayoutAccountInput);
   }
@@ -42,6 +44,7 @@ export class ReimbursementPayoutController {
   @Delete('payout-accounts/me/saved/:accountId')
   @RequirePermissions('reimbursement.create')
   @HttpCode(204)
+  @ApiOperation({ summary: 'Delete my saved payout account' })
   deleteSavedOwn(@ReqCtx() ctx: RequestContext, @Param('accountId') id: string) {
     return this.accounts.deleteSavedOwn(ctx, id);
   }
@@ -49,6 +52,7 @@ export class ReimbursementPayoutController {
   @Post('payout-accounts/me/saved/:accountId/reveal')
   @RequirePermissions('reimbursement.create')
   @HttpCode(200)
+  @ApiOperation({ summary: 'Reveal my saved payout account number (audited)' })
   revealSavedOwn(@ReqCtx() ctx: RequestContext, @Param('accountId') id: string) {
     return this.accounts.revealSavedOwn(ctx, id);
   }
@@ -56,6 +60,7 @@ export class ReimbursementPayoutController {
   @Post('payout-accounts/me/saved/:accountId/make-default')
   @RequirePermissions('reimbursement.create')
   @HttpCode(200)
+  @ApiOperation({ summary: 'Make my saved own account the default' })
   makeSavedDefaultOwn(@ReqCtx() ctx: RequestContext, @Param('accountId') id: string) {
     return this.accounts.makeSavedDefaultOwn(ctx, id);
   }
