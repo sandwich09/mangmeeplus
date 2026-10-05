@@ -142,6 +142,9 @@ function coerceRefusalReason(value: unknown): LineAiRefusalReason | undefined {
     : undefined;
 }
 
+/** How long a YES of the budget capability probe is remembered by one gateway process. */
+const BUDGET_V2_CAPABILITY_TTL_MS = 5 * 60_000;
+
 @Injectable()
 export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
   private readonly region: string;
@@ -150,6 +153,8 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
   private readonly timeoutMs: number;
   private readonly expectedRuntimeIdentity?: LineAiExpectedRuntimeIdentity;
   private readonly credProvider: () => Promise<AwsCreds>;
+  /** Until when this process remembers that its runtime answered the budget probe with a yes. */
+  private budgetV2CapableUntilMs = 0;
 
   constructor(@Inject(AiGatewayConfigService) config: AiGatewayConfigService) {
     this.region = config.agentcoreRegion ?? config.bedrockRegion ?? 'ap-southeast-1';
@@ -182,8 +187,25 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
     }
   }
 
-  /** Negotiates the actual separately deployed artifact without dispatching a model or private data. */
+  /**
+   * Negotiates the actual separately deployed artifact without dispatching a model or private data.
+   *
+   * The probe is an invocation of the runtime, and it ran before EVERY LINE message: 1.5 of a turn's
+   * seconds (UAT 2026-10-05, `line.ai.intake_timing` grantMs 1505). Its answer is about the artifact
+   * behind this process's own pinned qualifier, which a release never changes under a serving process
+   * (the next release pins a NEW process to the other qualifier), and every real invocation still
+   * checks the runtime's identity itself (`invoke` fails closed on a mismatch). So a YES is remembered
+   * by this process for a few minutes. A NO or a failed probe is never remembered: the next message asks again.
+   */
   async lineBudgetV2CapabilityEnabled(): Promise<boolean> {
+    if (!this.expectedRuntimeIdentity) return false;
+    if (Date.now() < this.budgetV2CapableUntilMs) return true;
+    const capable = await this.probeLineBudgetV2Capability();
+    if (capable) this.budgetV2CapableUntilMs = Date.now() + BUDGET_V2_CAPABILITY_TTL_MS;
+    return capable;
+  }
+
+  private async probeLineBudgetV2Capability(): Promise<boolean> {
     if (!this.expectedRuntimeIdentity) return false;
     try {
       const result = await this.invoke({
