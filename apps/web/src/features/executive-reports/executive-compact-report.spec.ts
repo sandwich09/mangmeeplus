@@ -298,6 +298,48 @@ test('round B d: longest KPI value sets one scale through link wrappers; units n
   assert.doesNotMatch(markup, /absolute right-2|has-\[.executive-dot\]/);
 });
 
+test('four to eight KPI tiles have no lone last row; six keep three desktop and two phone columns', async () => {
+  const { ExecutiveKpi, ExecutiveKpiStrip } = await import('./ExecutiveReportDesign');
+  for (let count = 4; count <= 8; count++) {
+    const children = Array.from({ length: count }, (_, i) => React.createElement('a', { href: '/', key: i }, React.createElement(ExecutiveKpi, { label: W.company, value: i })));
+    const markup = html(ExecutiveKpiStrip, { children });
+    const classes = markup.match(/data-executive-kpi-strip="true" class="([^"]*)"/)![1];
+    assert.match(classes, /grid-cols-2/);
+    if (count % 2) assert.match(classes, /max-md:\[&amp;&gt;\*:last-child\]:col-span-2/);
+    else assert.doesNotMatch(classes, /last-child/);
+    if ([4, 7, 8].includes(count)) assert.match(classes, /md:grid-cols-4/);
+    else if (count === 6) assert.match(classes, /md:grid-cols-3/);
+    else assert.match(classes, /md:max-\[1200px\]:grid-cols-6.*nth-child.*col-span-3.*min-\[1200px\]:grid-cols-5/);
+    assert.equal((markup.match(/data-executive-kpi="true"/g) ?? []).length, count);
+  }
+});
+
+test('unmatched revenue uses a plain quantity header and the truthful unit on each value, keeping coverage marks', async () => {
+  const { AnalysisContent } = await import('./ExecutiveReportContent');
+  for (const coverage of ['complete', 'partial', 'unavailable']) {
+    const money = { ...cash, value: coverage === 'complete' ? 9900 : null, ...(coverage === 'partial' ? { knownValue: 9900 } : { knownValue: undefined }), coverage, reasonCodes: coverage === 'complete' ? [] : cash.reasonCodes };
+    const data = { ...envelope, coverage: { ...envelope.coverage, money: { coverage, reasonCodes: money.reasonCodes } }, unmatchedMoney: { count: 1, receiptsSatang: 9900, refundsSatang: 0 },
+      population: { ...envelope.population, excludedTestInternalNetReceiptsSatang: 9900, unclassifiedNetReceiptsSatang: 0 },
+      revenue: { receiptsSatang: money, refundsSatang: money, netReceiptsSatang: money, taxSatang: money, feesSatang: money, disputedInvoiceCount: 2, byPurchaseGroup: [], trend: [] } };
+    const markup = html(AnalysisContent, { data, nav: { ...nav, params: new URLSearchParams('view=unmatched') }, seller: null });
+    const table = markup.match(/<table[^>]*>[\s\S]*?<\/table>/)![0];
+    assert.match(table, /title="จำนวน"/); assert.doesNotMatch(table, /จำนวน \(จำนวน \/ บาท\)/);
+    const rows = table.match(/<tbody[^>]*>[\s\S]*?<\/tbody>/g)!;
+    assert.equal(rows.length, 6);
+    for (const [i, unit] of [W.unitItem, W.unitBaht, W.unitBaht, W.unitBaht, W.unitBaht, W.unitReceipt].entries()) {
+      assert.match(rows[i], new RegExp(`<span class="text-xs text-gray-600">${unit}</span>`));
+      assert.match(rows[i], /md:hidden">จำนวน<\/span>/);
+    }
+    if (coverage === 'complete') {
+      assert.match(visible(rows[0]), /จำนวน1รายการ/); assert.match(visible(rows[1]), /จำนวน99\.00บาท/); assert.match(visible(rows[5]), /จำนวน2ใบ/);
+      assert.doesNotMatch(table, /executive-dot/);
+    } else {
+      assert.match(table, /executive-dot/);
+      assert.match(table, coverage === 'partial' ? /aria-label="99\.00 บาท \(ยอดเฉพาะรายการที่ยืนยันแล้ว\)/ : /aria-label="ยังไม่มีตัวเลข/);
+    }
+  }
+});
+
 test('round B e: open and closed months have distinct banners, unclamped summaries and a two-column definition list', async () => {
   const { ReportStatus } = await import('./ExecutiveReportDesign');
   const open = html(ReportStatus, { data: envelope });

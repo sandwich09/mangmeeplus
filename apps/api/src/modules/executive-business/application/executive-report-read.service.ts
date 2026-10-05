@@ -409,6 +409,7 @@ export class ExecutiveReportReadService {
         for (const row of list) {
           if (performance.now() - started > 30_000) throw executiveError(ctx.requestId, 'EXECUTIVE_EXPORT_LIMIT_EXCEEDED');
           const company = this.rowOf(set, row, extra.names, extra.others.get(row.companyId)), profile = row.profile, live = extra.companies.get(row.companyId);
+          const countValue = (figure: ExecutiveCount) => figure.coverage === 'complete' ? figure.value : figure.coverage === 'partial' ? `${W.atLeast} ${figure.knownValue ?? 0}` : W.unavailableFigure;
           const sources = set.legacy ? { money: set.money, usage: set.usage, aiCost: costs } : periodSummaryOf(set, row).coverage;
           const money = (satang: number) => sources.money.coverage === 'unavailable' ? null : { value: satang / 100, style: 3 };
           const usage = (n: number) => sources.usage.coverage === 'unavailable' ? null : n;
@@ -422,7 +423,7 @@ export class ExecutiveReportReadService {
             company.creditedSeller.label ? executiveThaiLabel(company.creditedSeller.label, company.creditedSeller.salesCode) : null,
             profile.creditedSalesUserId ? { value: (extra.credit.get(row.companyId) ?? 0) / 100, style: 3 } : null, xlsxThaiDate(iso(profile.salesCreditPaidAt)),
             L.paidEver[row.paidEver]!, row.fullyRefunded ? EXECUTIVE_FLAG_LABELS.fullyRefunded.true! : row.usageGroup ? usageLabels[row.usageGroup]! : L.paidEver.UNKNOWN!,
-            L.receiptAdoption[profile.receiptAdoption]!, profile.receiptAdoption === 'UNKNOWN' || profile.receiptAdoption === 'NOT_ENTITLED' ? null : profile.expenseReceiptCountLifetime,
+            L.receiptAdoption[profile.receiptAdoption]!, countValue(company.sheet.receiptsLifetime),
             usage(expenseReceiptsOf(row)), usage(row.activeDays), set.period.monthCount > 1 ? null : usage(row.activeUsers), usage(documentsOf(row)), usage(row.aiRequests),
             money(row.receiptsSatang), money(row.refundsSatang), money(netOf(row)), money(row.feesSatang), sources.aiCost.coverage === 'unavailable' ? null : { value: row.aiCostSatang / 100, style: 3 },
             xlsxThaiDate(iso(profile.firstActivityAt)), xlsxThaiDate(iso(profile.lastActivityAt), true), xlsxThaiDate(iso(profile.lastWebEntryAt), true), xlsxThaiDate(iso(profile.lastLineActivityAt), true)];
@@ -439,7 +440,6 @@ export class ExecutiveReportReadService {
           }
           const note = await this.noteOf(ctx, row.companyId), sheet = company.sheet, inactivity = company.inactivity;
           const contact = includesContacts ? { email: cells[cells.length - 3], phone: cells[cells.length - 2] } : { email: null, phone: null };
-          const countValue = (figure: ExecutiveCount) => figure.coverage === 'complete' ? figure.value : figure.coverage === 'partial' ? `${W.atLeast} ${figure.knownValue ?? 0}` : W.unavailableFigure;
           const moneyValue = (figure: ExecutiveCount): WorkbookCell => ({ value: figureValue(figure, 100), style: 3 });
           const values: Record<string, WorkbookCell> = {
             company: company.displayName, businessType: sheet.businessTypeLabel ? safeNoteForExport(sheet.businessTypeLabel) : null, plan: executiveThaiLabel(company.planLabel), receiptsLifetime: countValue(sheet.receiptsLifetime),
