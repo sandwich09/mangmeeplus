@@ -324,40 +324,58 @@ const thaiWords = new Intl.Segmenter('th', { granularity: 'word' });
 const thaiGraphemes = new Intl.Segmenter('th', { granularity: 'grapheme' });
 const graphemeCount = (value: string) => [...thaiGraphemes.segment(value.trim())].length;
 
+// Thai is written without spaces, and the word list that finds its words cuts finer than a reader
+// does: ค่า|ใช้|จ่าย, วัน|นี้, ใบ|เสร็จ. A heading broken there reads as a mistake, so a line never ends
+// on a word that only begins a name, never starts with one that only ends a phrase, and never cuts
+// the few names below. Not a grammar: a list of the breaks that looked wrong.
+const NEVER_ENDS_A_LINE = new Set(['ค่า', 'ใบ', 'การ', 'ความ', 'ผู้', 'นัก', 'ราย', 'ยอด', 'เท่า', 'แจ้ง', 'ขั้น', 'อย่าง', 'รอ', 'ที่', 'ของ', 'ใน', 'กับ', 'และ', 'หรือ', 'จาก', 'ถึง', 'ไม่', 'จะ']);
+const NEVER_STARTS_A_LINE = new Set(['นี้', 'นั้น', 'ๆ', 'ค่ะ', 'คะ', 'ครับ', 'จ้า', 'จ้ะ', 'นะ', 'จัง', 'เลย', 'ไหร่', 'ไร', 'ไง', 'หน่อย', 'ไป', 'มา']);
+const KEPT_WHOLE = ['ค่าใช้จ่าย', 'ใช้จ่าย', 'เบิกจ่าย', 'ใบกำกับภาษี', 'แพ็กเกจ', 'เจ้าหน้าที่', 'ณ ที่จ่าย'];
+
+/** The places a heading may be broken, as the two lines each break would give. */
+function headerSplits(text: string): Array<readonly [string, string]> {
+  const pieces = [...thaiWords.segment(text)];
+  const kept = KEPT_WHOLE.flatMap((name) => [...text.matchAll(new RegExp(name, 'gu'))].map((match) => [match.index, match.index + name.length] as const));
+  const splits: Array<readonly [string, string]> = [];
+  const thai = /[\u0E00-\u0E7F]/u.test(text);
+  for (let index = 1; index < pieces.length; index += 1) {
+    const at = pieces[index]!.index, before = pieces[index - 1]!.segment, after = pieces[index]!.segment;
+    if (kept.some(([start, end]) => at > start && at < end)) continue;
+    // A space the writer typed is a place to break — except, in a Thai sentence, between two words in
+    // Latin letters ("service charge" is one name there). Elsewhere the two lists decide.
+    if (thai && !before.trim() && /[A-Za-z]$/u.test(pieces[index - 2]?.segment ?? '') && /^[A-Za-z]/u.test(after)) continue;
+    if (thai && !after.trim() && /[A-Za-z]$/u.test(before) && /^[A-Za-z]/u.test(pieces[index + 1]?.segment ?? '')) continue;
+    if (before.trim() && after.trim() && (NEVER_ENDS_A_LINE.has(before) || NEVER_STARTS_A_LINE.has(after))) continue;
+    const first = text.slice(0, at).trim(), second = text.slice(at).trim();
+    if (first && second) splits.push([first, second]);
+  }
+  return splits;
+}
+
 /**
  * The two header lines of an answer: the reader's own words (design lock §7: the header says what
  * was answered; a short question may be the heading, a long one is shortened). A short message is
- * split at the word boundary that makes the two lines most even; one that has no boundary stands
- * under `ข้อความของคุณ`; a long one keeps its beginning and ends in an ellipsis, in the quieter style.
+ * broken where its two lines come out most even; one that has no place to break stands under
+ * `ข้อความของคุณ`; a long one keeps its beginning and ends in an ellipsis, in the quieter style.
  * Nothing is rephrased, so no heading can say something the reader did not.
  */
 export function lineAnswerCardHeader(question: string | undefined): LineSystemCard['header'] | undefined {
   const text = (question ?? '').replace(/\s+/gu, ' ').trim();
   if (!text) return undefined;
-  const pieces = [...thaiWords.segment(text)].map((piece) => piece.segment);
-  const splits = pieces.slice(1).map((_, index) => [pieces.slice(0, index + 1).join('').trim(), pieces.slice(index + 1).join('').trim()] as const)
-    .filter(([first, second]) => first && second);
+  const splits = headerSplits(text);
   const even = splits.filter(([first, second]) => graphemeCount(first) <= HEADER_LINE_GRAPHEMES && graphemeCount(second) <= HEADER_LINE_GRAPHEMES)
     .sort((a, b) => Math.abs(graphemeCount(a[0]) - graphemeCount(a[1])) - Math.abs(graphemeCount(b[0]) - graphemeCount(b[1])))[0];
   if (even) return { lines: [even[0], even[1]], question: true };
   if (graphemeCount(text) <= HEADER_LINE_GRAPHEMES) return { lines: ['ข้อความของคุณ', text] };
-  // Whole words while they fit; a single word longer than a line is cut inside, there is no other way.
-  const take = (from: string[], max: number): string => {
-    let line = '';
-    while (from.length && graphemeCount(line + from[0]!) <= max) line += from.shift()!;
-    if (!line.trim() && from.length) {
-      const letters = [...thaiGraphemes.segment(from[0]!)].map((piece) => piece.segment);
-      line = letters.slice(0, max).join('');
-      from[0] = letters.slice(max).join('');
-    }
-    return line.trim();
-  };
-  const rest = [...pieces];
-  const first = take(rest, QUIET_HEADER_LINE_GRAPHEMES);
-  while (rest.length && !rest[0]!.trim()) rest.shift();
-  const whole = rest.join('').trim();
-  const second = graphemeCount(whole) <= QUIET_HEADER_LINE_GRAPHEMES ? whole : `${take(rest, QUIET_HEADER_LINE_GRAPHEMES - 1)}…`;
-  return second ? { lines: [first, second], question: true, quiet: true } : undefined;
+  // The longest beginning that fits the first line, then as much of the rest as the second holds.
+  const first = splits.filter(([line]) => graphemeCount(line) <= QUIET_HEADER_LINE_GRAPHEMES).at(-1);
+  const cut = (value: string, max: number) => [...thaiGraphemes.segment(value)].slice(0, max).map((piece) => piece.segment).join('').trim();
+  const head = first?.[0] ?? cut(text, QUIET_HEADER_LINE_GRAPHEMES);
+  const rest = first?.[1] ?? text.slice(head.length).trim();
+  if (!rest) return undefined;
+  if (graphemeCount(rest) <= QUIET_HEADER_LINE_GRAPHEMES) return { lines: [head, rest], question: true, quiet: true };
+  const tail = headerSplits(rest).filter(([line]) => graphemeCount(line) <= QUIET_HEADER_LINE_GRAPHEMES - 1).at(-1)?.[0] ?? cut(rest, QUIET_HEADER_LINE_GRAPHEMES - 1);
+  return { lines: [head, `${tail}…`], question: true, quiet: true };
 }
 
 /**
