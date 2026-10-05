@@ -1575,6 +1575,20 @@ const reimbursementSummaryData = (over: Record<string, unknown> = {}): Record<st
 });
 
 describe('R-L4 F11 reimbursement.get_summary::single_metric — สรุปเบิกจ่าย', () => {
+  it('Round 4: says duplicate-blocked count beside payable numbers in Thai and English, with legacy and zero unchanged', () => {
+    for (const language of [TH, EN]) {
+      const old = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData()), language);
+      const zero = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData({ duplicateBlockedCount: 0 })), language);
+      assert.deepEqual(zero, old);
+      const blocked = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY,
+        summaryOutput(reimbursementSummaryData({ unpaidApprovedCount: 0, totalUnpaidAmount: '0', duplicateBlockedCount: 2 })), language);
+      assert.equal(blocked.kind, 'answer');
+      if (blocked.kind === 'answer') assert.match(blocked.replyText.split('\n')[0]!, language === TH ? /ติดรายการซ้ำ 2 รายการ/ : /2 requests blocked by duplicates/);
+      const broken = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY,
+        summaryOutput(reimbursementSummaryData({ duplicateBlockedCount: -1 })), language);
+      assert.equal(broken.kind, 'unverified');
+    }
+  });
   // C8 (batch 5c, T-143-a): leads with the status counts, not the unpaid total — see the formatter's
   // own docstring for why. The unpaid-approved amount rides its own clause, only when count > 0.
   it('states the status counts, with the unpaid-approved amount attached, source, as-of and link (Thai)', () => {
@@ -2327,6 +2341,12 @@ describe('design lock — the day\'s closing, the approval queue, the claims and
       ],
       notes: ['แสดงเฉพาะรายการของคุณ'],
     });
+    // Claims a duplicate holds are a row of their own, between those that can be paid and the overdue ones
+    // (the sentence states the same split); none held, or an older API that sends no count, adds no row.
+    const held = layoutOf(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData({ duplicateBlockedCount: 2 })))!;
+    assert.deepEqual(held.rows.map(entry => [entry.label, entry.value]), [['รออนุมัติ', '3 รายการ'], ['อนุมัติแล้วรอจ่าย', '5 รายการ รวม 12,500.00 บาท'],
+      ['ติดรายการซ้ำ', '2 รายการ'], ['เกินกำหนด', '2 รายการ']]);
+    assert.equal(row(layoutOf(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData({ duplicateBlockedCount: 0 })))!, 'ติดรายการซ้ำ'), undefined);
     const quiet = layoutOf(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData({ pendingApprovalCount: 0, unpaidApprovedCount: 0, overdueApprovalCount: 0, totalUnpaidAmount: '0.00' })))!;
     assert.deepEqual(quiet.rows, [{ label: 'รออนุมัติ', value: '0 รายการ' }, { label: 'อนุมัติแล้วรอจ่าย', value: '0 รายการ' }]);
     const text = sentence(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData()));
@@ -2453,6 +2473,10 @@ describe('design lock context 2 — the reader\'s waiting work, several reads on
     ]));
     assert.deepEqual(layout.rows.slice(0, 2), [{ label: 'ใบเบิกรออนุมัติ', value: '2 รายการ' }, { label: 'ใบเบิกอนุมัติแล้วรอจ่าย', value: '1 รายการ รวม 480.00 บาท' }]);
     assert.deepEqual(layout.notes, ['ส่วนใบเบิกแสดงเฉพาะรายการของคุณ', 'ไม่มีรายการครบกำหนดจ่ายวันนี้หรือเกินกำหนด', 'ส่วนค่าใช้จ่ายแสดงเฉพาะรายการของคุณ', 'ตรวจเฉพาะงานที่รอคุณและรายการที่คุณมีสิทธิ์ดู']);
+    // A claim a duplicate holds waits too: its own row, even when it is the only claim that waits; a count that is not a count has no card.
+    const held = (extra: Record<string, unknown>) => backlogCardLayout([read('reimbursement.get_summary', { pendingApprovalCount: 0, unpaidApprovedCount: 0, overdueApprovalCount: 0, totalUnpaidAmount: '0.00', ...extra }), THE_OWNERS[0]!]);
+    assert.deepEqual(valid(held({ duplicateBlockedCount: 2 })).rows[0], { label: 'ใบเบิกติดรายการซ้ำ', value: '2 รายการ' });
+    assert.equal(held({ duplicateBlockedCount: -1 }), undefined);
     const none = valid(backlogCardLayout([read('reimbursement.get_summary', { pendingApprovalCount: 0, unpaidApprovedCount: 0, overdueApprovalCount: 0, totalUnpaidAmount: '0.00' }), THE_OWNERS[0]!]));
     assert.deepEqual(none.rows.slice(0, 2), [{ label: 'ใบเบิก', value: 'ไม่มีค้าง' }, { label: 'ใบรับรองแทนใบเสร็จ', value: 'ไม่มีค้าง' }]);
   });

@@ -153,6 +153,23 @@ describe('payment reminder candidates (audit B9)', () => {
   }
   const fires = (payload: Record<string, unknown>) => evaluateCondition(template().defaultConditionJson, payload, NOW).matched;
 
+  it('D2: suppresses confirmed duplicates and preserves the payment turn for unresolved and clear claims', async () => {
+    const { candidates, queries } = provider([
+      claim({ id: 'confirmed', confirmedDuplicateExpenseCount: 1 }),
+      claim({ id: 'unresolved', duplicateCandidates: [{ status: 'OPEN', candidateType: 'ATTACHMENT_CHECKSUM' }] }),
+      claim({ id: 'own-unresolved', duplicateConfirmationPendingCount: 1 }),
+      claim({ id: 'clear' }),
+    ], { slaHours: 48, duplicatePolicy: 'BLOCK_PAYMENT' }, ['confirmed', 'unresolved', 'own-unresolved', 'clear'].map((id) => step({ reimbursementRequestId: id })));
+    const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+    assert.deepEqual(items.map((item) => [item.sourceId, item.payload.paymentDuplicateBlock, item.payload.approvedByUserId]),
+      [['unresolved', 'UNRESOLVED', 'u_manager'], ['own-unresolved', 'UNRESOLVED', 'u_manager'], ['clear', 'NONE', 'u_manager']]);
+    assert.equal(queries[0].withDuplicateCandidates, true);
+    for (const policy of ['WARN', 'BLOCK_SUBMIT']) {
+      const { candidates } = provider([claim({ confirmedDuplicateExpenseCount: 1 })], { slaHours: 48, duplicatePolicy: policy });
+      assert.deepEqual(await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW), []);
+    }
+  });
+
   // Review: offering every waiting claim wrote a skipped run row per claim per hour in every
   // company. Only a claim past its deadline is offered; the rest cost nothing downstream.
   it('offers only the claims waiting for payment past the policy deadline', async () => {
@@ -163,12 +180,12 @@ describe('payment reminder candidates (audit B9)', () => {
 
     const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
 
-    assert.deepEqual(queries, [{ companyId: 'co-1', statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] }]);
+    assert.deepEqual(queries, [{ companyId: 'co-1', statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'], withDuplicateCandidates: true }]);
     assert.deepEqual(items.map((item) => [item.sourceType, item.sourceId, fires(item.payload)]), [
       ['reimbursement_request', 'rb-late', true],
     ]);
     assert.deepEqual(items[0]!.payload, {
-      requestId: 'rb-late', requestNo: 'RB-202610-00001', ageHours: 49, slaRisk: true, amount: '250', currency: 'THB',
+      requestId: 'rb-late', requestNo: 'RB-202610-00001', ageHours: 49, slaRisk: true, amount: '250', currency: 'THB', paymentDuplicateBlock: 'NONE',
       requesterUserId: 'u_staff', approverRecipientUserIds: ['u_manager', 'u_manager_2'],
       notificationPeriodKey: `payable:${hoursAgo(49).toISOString()}`,
     });
@@ -548,4 +565,19 @@ describe('approval reminder: who the scan names as the people to approve an over
     const notice = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'approval_sla_breach')!.defaultActionJson.find((action) => action.actionType === 'SEND_NOTIFICATION')!;
     assert.deepEqual(notice.configJson['recipientPayloadKeys'], ['approverRecipientUserIds']);
   });
+});
+
+it('D3: blocked reminder starts at confirmation, ignores closed/cancelling/clear claims and pins one blocked period', async () => {
+  const at = new Date('2026-10-05T01:00:00Z');
+  const rows: any[] = [{ id: 'old', status: 'READY_FOR_PAYMENT' }, { id: 'young', status: 'APPROVED' }, { id: 'clear', status: 'READY_FOR_PAYMENT' }, { id: 'cancelling', status: 'READY_FOR_PAYMENT', cancellationPendingAt: at }, { id: 'closed', status: 'PAID' }, { id: 'broken', status: 'READY_FOR_PAYMENT', approvalPolicySnapshotJson: { schemaVersion: 999 } }];
+  const repo: any = { listRequests: async () => rows, findPolicy: async () => ({ slaHours: 24 }), paymentNoticeFacts: async (_db: any, _co: string, id: string) => ({
+    paymentDuplicateBlock: id === 'clear' ? 'NONE' : 'CONFIRMED', confirmedDuplicateAt: id === 'young' ? new Date('2026-10-06T00:00:00Z') : at, confirmedDuplicateActorUserId: 'confirmer' }),
+    paymentNoticeFactsForRequest: async (co: string, id: string) => repo.paymentNoticeFacts(null, co, id) };
+  const provider = new WorkflowScanCandidatesProvider(repo, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+  const items = await provider.forTemplate('reimbursement_duplicate_sla_breach', 'co', new Date('2026-10-06T02:00:00Z'));
+  assert.deepEqual(items.map(item => item.sourceId), ['old']);
+  assert.equal(items[0].payload.notificationPeriodKey, at.toISOString());
+  assert.equal(items[0].payload.actorUserId, 'confirmer');
+  const next = await provider.forTemplate('reimbursement_duplicate_sla_breach', 'co', new Date('2026-10-06T03:00:00Z'));
+  assert.equal(next[0].payload.notificationPeriodKey, items[0].payload.notificationPeriodKey);
 });

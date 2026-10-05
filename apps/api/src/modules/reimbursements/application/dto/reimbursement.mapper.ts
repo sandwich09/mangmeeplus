@@ -26,11 +26,11 @@ import type {
   ReimbursementClaimSignatureRecord,
 } from '../../domain/models/reimbursement.model';
 import {
-  claimDuplicateReasons, claimDuplicateStatus, claimSignatureAckHash, computeReceiptRequirement, currentDesk, duplicateBlocksPayment,
+  claimDuplicateBlocksPayment, claimDuplicateReasons, claimDuplicateStatus, claimSignatureAckHash, computeReceiptRequirement, currentDesk, duplicateBlocksPayment,
   payoutCorrectionAnswer, payoutCorrectionAnsweredBy, payoutCorrectionPhase, payoutCorrectionRoundStart,
 } from '../../domain/logic/reimbursement.logic';
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
-import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest, type EffectivePolicy } from '../../domain/reimbursement.constants';
 import { assertCanReadRequestOrAssignment, mayCancelReimbursement } from '../use-cases/reimbursement-request.use-case';
 import { ForbiddenException } from '@nestjs/common';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
@@ -69,7 +69,7 @@ export function toRequestSummary(
   r: ReimbursementRequestRecord,
   // `approverNames` is what turns a PENDING_APPROVAL desk from the pool label into named
   // people; a caller that has not loaded the names simply gets the pool.
-  options: { allowMissingReceiptWithReason?: boolean; approverNames?: Record<string, string> } = {},
+  options: { allowMissingReceiptWithReason?: boolean; approverNames?: Record<string, string>; currentPolicy?: EffectivePolicy } = {},
 ): ReimbursementRequestSummary {
   // A claim sent back from the pay step for its payout destination (payout spec §14): whom it waits for.
   const correctionPhase = payoutCorrectionPhase(r);
@@ -107,6 +107,7 @@ export function toRequestSummary(
     // duplicate whatever the column says once the claim's expense records exist (`claimDuplicateStatus`).
     duplicateStatus: claimDuplicateStatus(r.duplicateStatus, r.duplicateCandidates),
     duplicateReasons: claimDuplicateReasons(r),
+    ...(options.currentPolicy ? { hasDuplicateBlocker: claimDuplicateBlocksPayment(r, options.currentPolicy) } : {}),
     receiptRequirementStatus: r.receiptRequirementStatus,
     ...(options.allowMissingReceiptWithReason !== undefined
       ? { allowMissingReceiptWithReason: options.allowMissingReceiptWithReason }

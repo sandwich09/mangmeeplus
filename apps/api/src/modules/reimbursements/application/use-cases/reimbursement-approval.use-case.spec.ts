@@ -106,6 +106,7 @@ function fakeRepo(req: any, policy: any = FINANCE_REVIEW_ON, events: any[] = [],
       new Set(activeApprovers ?? ids),
     findPolicy: async () => policy,
     assertPaymentRecordInput: async () => undefined,
+    paymentNoticeFacts: async () => ({ paymentDuplicateBlock: 'NONE', duplicateReasons: [] }),
     getUserDisplayNames: async () => ({}),
     listSignedClaimFormCopies: async () => [],
     listPaymentSlips: async () => ({}),
@@ -304,6 +305,24 @@ describe('ApproveReimbursementUseCase', () => {
     assert.equal(calls[0][1].id, 'rb-1');
     assert.equal(calls[0][2].kind, 'MANAGER');
     assert.equal(calls[0][2].approvalStepId, 'step-1');
+  });
+
+  it('D2: ordinary approval reads duplicate facts in its ready transaction and keeps other approval events', async (t) => {
+    for (const block of ['CONFIRMED', 'UNRESOLVED', 'NONE']) await t.test(block, async () => {
+      const events: any[] = [];
+      const repo = fakeRepo(baseRequest(), { financeReviewRequired: false }, events);
+      let reads = 0;
+      repo.paymentNoticeFacts = async (tx: any, companyId: string, id: string) => {
+        assert.ok(tx.outboxEvent); assert.deepEqual([companyId, id], ['co-1', 'rb-1']); reads++;
+        return { paymentDuplicateBlock: block, duplicateReasons: [] };
+      };
+      await approveUC(repo).execute(ctx(), 'rb-1');
+      const ready = events.filter((event) => event.eventType === 'reimbursement.ready_for_payment');
+      assert.equal(ready.length, block === 'CONFIRMED' ? 0 : 1);
+      if (ready[0]) assert.equal(ready[0].payloadJson.data.paymentDuplicateBlock, block);
+      assert.equal(reads, 1);
+      assert.ok(events.some((event) => event.eventType === 'reimbursement.approved'));
+    });
   });
 
   it('keeps the request pending and emits no approved event when projection fails', async () => {
@@ -1270,6 +1289,20 @@ describe('a claim whose payout account is being corrected', () => {
     return { repo, events, ran };
   }
   const recordingAudit = (entries: any[]) => ({ log: async (entry: any, tx: any) => { entries.push({ ...entry, inTransaction: !!tx }); } });
+
+  it('D2: payout reapproval states the transaction duplicate block without changing payment recipients', async (t) => {
+    for (const block of ['CONFIRMED', 'UNRESOLVED', 'NONE']) await t.test(block, async () => {
+      const { repo, events } = roundRepo(withApprovers());
+      repo.paymentNoticeFacts = async (tx: any) => { assert.ok(tx.outboxEvent); return { paymentDuplicateBlock: block, duplicateReasons: [] }; };
+      await approveUC(repo).execute(ctx(), 'rb-1', undefined, SEEN_HASH, 2);
+      assert.equal(events.length, block === 'CONFIRMED' ? 0 : 1);
+      if (events[0]) {
+        assert.equal(events[0].payloadJson.data.paymentDuplicateBlock, block);
+        assert.equal(events[0].payloadJson.actorUserId, 'approver-1');
+        assert.equal(events[0].payloadJson.data.requesterUserId, 'staff-1');
+      }
+    });
+  });
   const rejectUC = (repo: any, audit: any = noopAudit) => new RejectReimbursementUseCase(repo, audit, fakeDetailEvidence as any);
 
   it('multi payout 2a: the shared correction approval path forwards acceptance and audits it', async () => {
@@ -1332,7 +1365,7 @@ describe('a claim whose payout account is being corrected', () => {
       [['reimbursement.ready_for_payment', 'reimbursement.ready_for_payment:reimbursement_request:rb-1:step-2']]);
     assert.deepEqual(events[0].payloadJson.data, {
       requestId: 'rb-1', requestNo: 'RB-202601-000001', status: 'READY_FOR_PAYMENT', decision: 'APPROVED',
-      requesterUserId: 'staff-1', amount: '500.0000', currency: 'THB',
+      requesterUserId: 'staff-1', amount: '500.0000', currency: 'THB', paymentDuplicateBlock: 'NONE',
     });
     assert.equal(events[0].payloadJson.actorUserId, 'approver-1');
     // Who approved which account version, inside the transaction, and nothing of the account.

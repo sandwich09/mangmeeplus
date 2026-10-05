@@ -256,6 +256,17 @@ describe('mergeDraftLineEvidence', () => {
 });
 
 describe('summariseQueue', () => {
+  it('Round 4: approval queue keeps every amount and its SLA flags', () => {
+    assert.deepEqual(summariseQueue([{ amount: '100.50', outstandingAmount: '50', slaRisk: true },
+      { amount: '200', outstandingAmount: '125.25', slaRisk: false }]),
+    { count: 2, totalAmount: 300.5, outstandingAmount: 175.25, flagged: 1 });
+  });
+
+  it('Round 4: pay cards count and total only payable rows while retaining blocked count', () => {
+    assert.deepEqual(summariseQueue([{ amount: '100.50', outstandingAmount: '50', hasDuplicateBlocker: false },
+      { amount: '200', outstandingAmount: '125.25', hasDuplicateBlocker: true }]),
+    { count: 1, totalAmount: 100.5, outstandingAmount: 50, flagged: 1 });
+  });
   it('returns an all-zero summary for an empty queue', () => {
     assert.deepEqual(summariseQueue([]), { count: 0, totalAmount: 0, outstandingAmount: 0, flagged: 0 });
   });
@@ -267,7 +278,7 @@ describe('summariseQueue', () => {
         { amount: 200, outstandingAmount: '125.25', hasDuplicateBlocker: true },
         { amount: '30', outstandingAmount: '10', slaRisk: true, hasDuplicateBlocker: true },
       ]),
-      { count: 3, totalAmount: 330.5, outstandingAmount: 185.25, flagged: 3 },
+      { count: 1, totalAmount: 100.5, outstandingAmount: 50, flagged: 3 },
     );
   });
 
@@ -407,7 +418,7 @@ describe('parseHubTab against the visible set', () => {
 // shows, and the chips add up to ทั้งหมด. The API counts and filters by `reimbursementHubBucket` (its own spec
 // walks every page of every bucket); this is the rule itself, which lives in contracts.
 describe('hub buckets', () => {
-  const HUB_BUCKETS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
+  const HUB_BUCKETS = ['draft', 'review', 'payment', 'duplicate_blocked', 'paid', 'closed'] as const;
   // Each row carries the desk the list API answers with (terminal claims have none).
   const rows = [
     { id: 'draft', status: 'DRAFT', currentDesk: { kind: 'REQUESTER' } },
@@ -498,7 +509,7 @@ describe('hub cards and the lazy list', () => {
   });
 
   it('asks for a first page, then for more only when the table page shown, or a search, reaches past what is held', () => {
-    const summary = { counts: { all: 230, draft: 0, review: 0, payment: 230, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 };
+    const summary = { counts: { all: 230, draft: 0, review: 0, payment: 230, duplicate_blocked: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 };
     const firstPage = { items: Array.from({ length: 100 }, (_, index) => ({ id: `rb-${index}` })), total: 230, page: 1, pageSize: 100, hub: summary };
     // Nothing held yet: the first page, whatever the screen needs.
     assert.equal(hubNextPage(hubList(NO_HUB_LIST, 'payment'), QUEUE_PAGE_SIZE), 1);

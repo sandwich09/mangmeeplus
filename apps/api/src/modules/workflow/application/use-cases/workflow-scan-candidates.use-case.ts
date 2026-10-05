@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
-import { ageHours, approvalWaitStartedAt, isSlaRisk, payoutCorrectionPhase } from '../../../reimbursements/domain/logic/reimbursement.logic';
+import { ageHours, approvalWaitStartedAt, claimPaymentDuplicateBlock, canTransition, isSlaRisk, payoutCorrectionPhase } from '../../../reimbursements/domain/logic/reimbursement.logic';
 import { effectivePolicy, effectivePolicyForRequest, parseReimbursementPolicySnapshot } from '../../../reimbursements/domain/reimbursement.constants';
 import { ListReimbursementApproverOptionsUseCase } from '../../../reimbursements/application/use-cases/reimbursement-policy.use-case';
 import { PrismaCrmRepository } from '../../../crm/infrastructure/prisma-crm.repository';
@@ -54,6 +54,8 @@ export class WorkflowScanCandidatesProvider {
         return this.lowStockAlert(companyId);
       case 'approval_sla_breach':
         return this.approvalSlaBreach(companyId, now);
+      case 'reimbursement_duplicate_sla_breach':
+        return this.duplicateSlaBreach(companyId, now);
       case 'reimbursement_payment_sla_breach':
         return this.paymentSlaBreach(companyId, now);
       case 'tax_due_soon':
@@ -157,13 +159,38 @@ export class WorkflowScanCandidatesProvider {
     });
   }
 
+  // One reminder per confirmed-block period, starting at its first own receipt confirmation.
+  private async duplicateSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
+    const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
+    const claims = await this.reimbursementRepo.listRequests({ companyId, statuses: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'] });
+    const items: ScanCandidate[] = [];
+    // ponytail: one shared facts read per open claim in the company; batch the same reader if this ceiling grows.
+    for (const claim of claims) {
+      if (claim.cancellationPendingAt || !canTransition(claim.status, 'CANCELLED')) continue;
+      try {
+        const policy = effectivePolicyForRequest(claim, currentPolicy);
+        if (!policy.slaHours || policy.slaHours <= 0) continue;
+        const facts = await this.reimbursementRepo.paymentNoticeFactsForRequest(companyId, claim.id);
+        if (facts.paymentDuplicateBlock !== 'CONFIRMED' || !facts.confirmedDuplicateAt || ageHours(facts.confirmedDuplicateAt, now) < policy.slaHours) continue;
+        items.push({ sourceType: 'reimbursement_request', sourceId: claim.id, payload: {
+          requestId: claim.id, requestNo: claim.requestNo, requesterUserId: claim.requesterUserId, status: claim.status, financeReviewerUserId: claim.financeReviewedByUserId,
+          actorUserId: facts.confirmedDuplicateActorUserId, slaRisk: true, notificationPeriodKey: facts.confirmedDuplicateAt.toISOString(),
+        } });
+      } catch {
+        // An unreadable legacy snapshot must not stop reminders for the company's other claims.
+        continue;
+      }
+    }
+    return items;
+  }
+
   // Audit B9: claims waiting for payment, held to the same policy deadline as approvals. The clock
   // starts when the claim became payable: the finance decision when there was one, else the
   // approval; again when a recorded payment is taken back; and again when a corrected payout
   // account is approved, which is the later of the two dates.
   private async paymentSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
     const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
-    const waiting = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] });
+    const waiting = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'], withDuplicateCandidates: true });
     // Only claims that have a deadline are looked at, and only those past it are offered. Offering
     // every waiting claim wrote a skipped run row per claim per hour in every company, deadline or
     // not; a company that set none now costs one query and nothing else.
@@ -172,7 +199,8 @@ export class WorkflowScanCandidatesProvider {
       if (r.cancellationPendingAt) return [];
       try {
         const slaHours = effectivePolicyForRequest(r, currentPolicy).slaHours;
-        return slaHours && slaHours > 0 ? [{ ...r, slaHours }] : [];
+        const paymentDuplicateBlock = claimPaymentDuplicateBlock(r, currentPolicy);
+        return paymentDuplicateBlock !== 'CONFIRMED' && slaHours && slaHours > 0 ? [{ ...r, slaHours, paymentDuplicateBlock }] : [];
       } catch {
         // A policy snapshot that cannot be read costs this one claim its reminder. Left to throw,
         // it stopped the reminders of every other claim in the company, every scan.
@@ -207,6 +235,7 @@ export class WorkflowScanCandidatesProvider {
         payload: {
           requestId: r.id, requestNo: r.requestNo, ageHours: age,
           slaRisk: true,
+          paymentDuplicateBlock: r.paymentDuplicateBlock,
           // What is left to pay: the whole claim unless a legacy part payment was recorded.
           amount: r.outstandingAmount, currency: r.currency,
           // Whose turn it is to pay, for the notice to prefer (owner rule 2026-10-01): the finance

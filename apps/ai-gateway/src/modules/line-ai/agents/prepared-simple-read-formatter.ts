@@ -12,7 +12,7 @@
  * `unverified` when the output does not match the family's exact shape, so the caller falls back to an
  * honest terminal without claiming success. No provider, no tool re-invocation.
  */
-import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, formatThaiPeriodRange, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
+import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, formatThaiPeriodRange, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
 import type { LineAiAnswerCardLayout, LineAiAnswerCardRow, LineAiPeriodCandidate, LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
@@ -1386,7 +1386,9 @@ function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx
   const unpaidApproved = data?.['unpaidApprovedCount'];
   const overdue = data?.['overdueApprovalCount'];
   const totalUnpaid = data?.['totalUnpaidAmount'];
+  const duplicateBlocked = data?.['duplicateBlockedCount'];
   if (!isCount(pending) || !isCount(unpaidApproved) || !isCount(overdue) || !isMoney(totalUnpaid)) return { kind: 'unverified' };
+  if (duplicateBlocked !== undefined && !isCount(duplicateBlocked)) return { kind: 'unverified' };
   if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
 
   const english = isEnglish(ctx);
@@ -1397,6 +1399,9 @@ function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx
     english
       ? `${plural(unpaidApproved, 'request')} approved, unpaid${unpaidApproved > 0 ? `, totaling ${moneyText(totalUnpaid)} THB` : ''}`
       : `อนุมัติแล้วรอจ่าย ${groupThousands(String(unpaidApproved))} รายการ${unpaidApproved > 0 ? ` รวม ${moneyText(totalUnpaid)} บาท` : ''}`,
+    isCount(duplicateBlocked) && duplicateBlocked > 0 ? (english
+      ? `${plural(duplicateBlocked, 'request')} blocked by duplicates`
+      : `${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL} ${groupThousands(String(duplicateBlocked))} รายการ`) : undefined,
     overdue > 0 ? (english ? `${plural(overdue, 'request')} overdue` : `เกินกำหนด ${groupThousands(String(overdue))} รายการ`) : undefined,
   ].filter((clause): clause is string => Boolean(clause));
   const headline = english ? `Reimbursements: ${clauses.join(' · ')}` : `ใบเบิก: ${clauses.join(' · ')}`;
@@ -1413,6 +1418,9 @@ function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx
     rows: [
       { label: 'รออนุมัติ', value: `${groupThousands(String(pending))} รายการ` },
       { label: 'อนุมัติแล้วรอจ่าย', value: `${groupThousands(String(unpaidApproved))} รายการ${unpaidApproved > 0 ? ` รวม ${moneyText(totalUnpaid)} บาท` : ''}` },
+      // The sentence counts claims a duplicate holds apart from those that can be paid (owner 2026-10-05:
+      // "นับเฉพาะใบที่จ่ายได้จริง"); the card states the same split, in the same order.
+      ...(isCount(duplicateBlocked) && duplicateBlocked > 0 ? [{ label: REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, value: `${groupThousands(String(duplicateBlocked))} รายการ` }] : []),
       ...(overdue > 0 ? [{ label: 'เกินกำหนด', value: `${groupThousands(String(overdue))} รายการ` }] : []),
     ],
     ...cardNotes([scopeNote(data?.['accessScope'])]),
@@ -1601,10 +1609,14 @@ function backlogPart(toolName: string, data: Record<string, unknown>, asOf: stri
   }
   if (toolName === 'reimbursement.get_summary') {
     const pending = data['pendingApprovalCount'], unpaid = data['unpaidApprovedCount'], overdue = data['overdueApprovalCount'], amount = data['totalUnpaidAmount'];
-    if (!isCount(pending) || !isCount(unpaid) || !isCount(overdue) || !isMoney(amount) || aggregationIncomplete(data)) return undefined;
+    const blocked = data['duplicateBlockedCount'];
+    if (!isCount(pending) || !isCount(unpaid) || !isCount(overdue) || !isMoney(amount) || aggregationIncomplete(data)
+      || (blocked !== undefined && !isCount(blocked))) return undefined;
     const waiting: LineAiAnswerCardRow[] = [
       ...(pending > 0 ? [{ label: 'ใบเบิกรออนุมัติ', value: count(pending) }] : []),
       ...(unpaid > 0 ? [{ label: 'ใบเบิกอนุมัติแล้วรอจ่าย', value: `${count(unpaid)} รวม ${moneyText(amount)} บาท` }] : []),
+      // A claim a duplicate holds waits too, and is not among those that can be paid.
+      ...(isCount(blocked) && blocked > 0 ? [{ label: `ใบเบิก${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}`, value: count(blocked) }] : []),
       ...(overdue > 0 ? [{ label: 'ใบเบิกเกินกำหนด', value: count(overdue) }] : []),
     ];
     const scope = scopeNote(data['accessScope']);

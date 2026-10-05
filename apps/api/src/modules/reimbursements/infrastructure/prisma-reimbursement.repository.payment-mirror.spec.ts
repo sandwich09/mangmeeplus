@@ -134,6 +134,46 @@ it('multi payout 2b: source bank must be active in this company under the paymen
 });
 
 describe('reimbursement payout mirrors the claim expense projections', () => {
+  it('D2: void outbox says what the post-void claim can do, for clear, unresolved and confirmed duplicates', async (t) => {
+    for (const block of ['NONE', 'UNRESOLVED', 'CONFIRMED']) await t.test(block, async () => {
+      const { repo, request, tx } = voidHarness();
+      const events: any[] = [];
+      tx.reimbursementPolicy = { findFirst: async () => ({ duplicatePolicy: 'BLOCK_PAYMENT' }) };
+      tx.outboxEvent = { create: async ({ data }: any) => { events.push(data); return data; } };
+      tx.auditLog = { create: async () => ({}) };
+      request.sourceExpenses = block === 'CONFIRMED' ? [{ status: 'CONFIRMED', duplicateStatus: 'CONFIRMED_DUPLICATE' }] : [];
+      request.duplicateCandidates = block === 'UNRESOLVED' ? [{ status: 'OPEN', candidateType: 'ATTACHMENT_CHECKSUM' }] : [];
+      await repo.voidPaymentTrueReversal('co-1', 'rb-1', 'pay-1', 'finance-1', 'โอนผิดบัญชี', undefined, 'trace-1');
+      const data = events.find((event) => event.eventType === 'reimbursement.payment_voided').payloadJson.data;
+      assert.equal(data.requesterUserId, 'staff-1');
+      assert.equal(request.status, 'READY_FOR_PAYMENT');
+      assert.match(data.paymentVoidedNotice, /^การจ่ายเงินที่บันทึกไว้ถูกยกเลิก /);
+      if (block === 'NONE') assert.match(data.paymentVoidedNotice, /กลับไปรอจ่าย/);
+      else {
+        assert.doesNotMatch(data.paymentVoidedNotice, /กลับไปรอจ่าย|โอนผิดบัญชี|[A-Za-z_]/);
+        assert.match(data.paymentVoidedNotice, block === 'CONFIRMED' ? /รอยกเลิกคำขอ/ : /ปลดรายการซ้ำ/);
+      }
+    });
+  });
+  it('D2: payment-notice facts use transaction-owned candidates, expenses and the submitted policy', async () => {
+    const { repo, request, tx } = recordHarness();
+    const queries: any[] = [];
+    tx.reimbursementRequest.findFirstOrThrow = async (query: any) => { queries.push(query); return request; };
+    const snapshot = (duplicatePolicy: string) => ({ schemaVersion: 1, policyId: 'pol', policyVersion: 'v1', approvalRequiredFromAmount: '1', requiresApproval: false,
+      route: null, allowSelfApproval: false, requireReceipt: false, allowMissingReceiptWithReason: false, financeReviewRequired: false, duplicatePolicy });
+    for (const policy of ['WARN', 'BLOCK_SUBMIT', 'BLOCK_PAYMENT']) {
+      request.approvalPolicySnapshotJson = snapshot(policy);
+      request.sourceExpenses = [{ status: 'CONFIRMED', duplicateStatus: 'CONFIRMED_DUPLICATE' }];
+      const facts = await (repo as any).paymentNoticeFacts(tx, 'co-1', 'rb-1');
+      assert.deepEqual(facts, { paymentDuplicateBlock: 'CONFIRMED', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] });
+    }
+    request.sourceExpenses = [];
+    request.duplicateCandidates = [{ status: 'OPEN', candidateType: 'ATTACHMENT_CHECKSUM' }];
+    assert.equal((await (repo as any).paymentNoticeFacts(tx, 'co-1', 'rb-1')).paymentDuplicateBlock, 'UNRESOLVED');
+    request.approvalPolicySnapshotJson = snapshot('WARN');
+    assert.equal((await (repo as any).paymentNoticeFacts(tx, 'co-1', 'rb-1')).paymentDuplicateBlock, 'NONE');
+    assert.ok(queries.every((query) => query.where.companyId === 'co-1' && query.where.id === 'rb-1' && query.include.sourceExpenses && query.include.duplicateCandidates));
+  });
   it('refuses an unassigned claim again under the payment lock without changing its totals', async () => {
     const { repo, expenseUpdates, request } = recordHarness();
     request.branchId = null;
@@ -360,4 +400,17 @@ describe('payment source duplicate gate', () => {
     assert.match(JSON.stringify(strong.where), /source/);
     assert.equal(queries.find(q => q.where.requesterUserId === 'one').take, 50);
   });
+});
+
+it('D3: shared notice facts name the first own confirmation and its actor, not the last receipt', async () => {
+  const { repo, request, tx } = recordHarness();
+  const first = new Date('2026-10-05T01:00:00Z'); const last = new Date('2026-10-06T01:00:00Z');
+  request.sourceExpenses = [
+    { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'CONFIRMED_DUPLICATE', duplicateCandidates: [{ resolvedAt: last, resolvedByUserId: 'later' }] },
+    { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'CONFIRMED_DUPLICATE', duplicateCandidates: [{ resolvedAt: first, resolvedByUserId: 'first' }] },
+  ];
+  tx.reimbursementRequest.findFirstOrThrow = async () => request;
+  const facts = await repo.paymentNoticeFacts(tx, 'co-1', 'rb-1');
+  assert.equal(facts.paymentDuplicateBlock, 'CONFIRMED');
+  assert.deepEqual(facts.confirmedDuplicateAt, first); assert.equal(facts.confirmedDuplicateActorUserId, 'first');
 });

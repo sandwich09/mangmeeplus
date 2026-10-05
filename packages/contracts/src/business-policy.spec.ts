@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { reimbursementDuplicateBlockNotice } from './reimbursements.js';
 import * as payout from './reimbursements.js';
+import * as reimbursementWords from './reimbursements.js';
 
 test('saved payout holder facts validate type, trimmed note bounds and SELF absence', () => {
   for (const input of [null, undefined, {}, { holderType: 'OTHER' }, { holderType: 1 }]) {
@@ -55,6 +56,23 @@ test('payout holder words use the form actor, hide legacy lines and flag masked 
   assert.equal(payout.maskedPayoutAccountWithHolder({ payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' }), 'พร้อมเพย์เบอร์ลงท้าย 5678');
   assert.doesNotMatch(payout.maskedPayoutAccountWithHolder(thirdParty), /คู่สมรส|0123456789/);
   for (const word of Object.values(payout.REIMBURSEMENT_PAYOUT_HOLDER_WORDS)) assert.doesNotMatch(word, /[a-zA-Z_]/);
+});
+
+
+test('D2: payment-void notice follows the post-void state without promising payment through a duplicate block', () => {
+  const notice = (claim: object) => (reimbursementWords as any).reimbursementPaymentVoidedNotice(claim);
+  assert.equal(notice({ status: 'READY_FOR_PAYMENT', paymentDuplicateBlock: 'NONE', duplicateReasons: [] }),
+    'การจ่ายเงินที่บันทึกไว้ถูกยกเลิก ใบเบิกกลับไปรอจ่าย');
+  for (const [block, reasons] of [['UNRESOLVED', ['ATTACHMENT_CHECKSUM']], ['CONFIRMED', ['EXPENSE_CONFIRMED_DUPLICATE']]] as const) {
+    for (const status of ['READY_FOR_PAYMENT', 'PARTIALLY_PAID']) {
+      const text = notice({ status, paymentDuplicateBlock: block, duplicateReasons: reasons });
+      assert.match(text, /^การจ่ายเงินที่บันทึกไว้ถูกยกเลิก /);
+      assert.doesNotMatch(text, /กลับไปรอจ่าย|[A-Za-z_]/);
+      assert.match(text, block === 'CONFIRMED' ? /ยกเลิก/ : /ปลดรายการซ้ำ/);
+    }
+  }
+  assert.doesNotMatch(notice({ status: 'PAID', paymentDuplicateBlock: 'NONE' }), /กลับไปรอจ่าย/);
+  assert.doesNotMatch(notice({ status: 'READY_FOR_PAYMENT', cancellationPending: true, paymentDuplicateBlock: 'NONE' }), /กลับไปรอจ่าย/);
 });
 
 test('confirmed receipt guidance gives the actual cancellation or payment-void path, never duplicate clearance', () => {
@@ -174,4 +192,11 @@ test('multi payout 2b: a requester deliberately using another holder is told to 
   assert.match(notice.body, /ถ้าไม่ถูกต้อง แก้ได้ทันที/);
   assert.doesNotMatch(notice.body, /ถ้าไม่ใช่บัญชีของคุณ/);
   assert.equal(payout.REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE, 'กรอกบัญชีรับเงินคืนของใบนี้ หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย');
+});
+
+test('D3: expense waiting for a confirmed-blocked claim says duplicate block, clear and paid retain their labels', async () => {
+  const { expenseReimbursementProgressLabel } = await import('./expenses.js');
+  assert.equal(expenseReimbursementProgressLabel({ status: 'READY_FOR_PAYMENT', hasConfirmedDuplicate: true } as any), 'ติดรายการซ้ำ');
+  assert.equal(expenseReimbursementProgressLabel({ status: 'READY_FOR_PAYMENT' }), 'รอจ่ายคืน');
+  assert.equal(expenseReimbursementProgressLabel({ status: 'PAID', hasConfirmedDuplicate: true } as any), 'จ่ายคืนแล้ว');
 });

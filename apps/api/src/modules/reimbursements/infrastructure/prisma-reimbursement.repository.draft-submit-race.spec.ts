@@ -1647,6 +1647,64 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
   // spec cannot say what PostgreSQL does with the scope predicates, the case-insensitive search, the amount and
   // the paging order, so the whole rule is asked of the real database: every scope, with and without a search.
 
+  it('Round 4: searched hub payment and duplicate_blocked pages match counts across frozen policies', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const hub = (await db.company.create({ data: { name: `${TAG}-hub-duplicates`, status: 'ACTIVE' } })).id;
+    try {
+      const snapshot = (duplicatePolicy: 'WARN' | 'BLOCK_SUBMIT' | 'BLOCK_PAYMENT'): ReimbursementPolicySnapshotV1 => ({
+        schemaVersion: 1, policyId: 'pol', policyVersion: 'v1', approvalRequiredFromAmount: '1.00', requiresApproval: false,
+        route: null, allowSelfApproval: false, requireReceipt: false, allowMissingReceiptWithReason: false, financeReviewRequired: false, duplicatePolicy,
+      });
+      const fixtures = [
+        ['payable', 'BLOCK_PAYMENT', 'none'], ['warn-open', 'WARN', 'open'], ['block-open', 'BLOCK_PAYMENT', 'open'],
+        ['confirmed-warn', 'WARN', 'confirmed'], ['confirmed-submit', 'BLOCK_SUBMIT', 'confirmed'], ['confirmed-payment', 'BLOCK_PAYMENT', 'confirmed'],
+        ['block-own', 'BLOCK_PAYMENT', 'possible'], ['block-confirmation', 'BLOCK_PAYMENT', 'confirmation'],
+        ['outside-search', 'BLOCK_PAYMENT', 'confirmed'], ['outside-own', 'BLOCK_PAYMENT', 'confirmed'],
+      ] as const;
+      const ids = new Map<string, string>();
+      for (const [name, policy, duplicate] of fixtures) {
+        const request = await db.reimbursementRequest.create({ data: {
+          companyId: hub, requesterUserId: name === 'outside-own' ? `${TAG}-finance` : `${TAG}-user`,
+          createdByUserId: `${TAG}-user`, requesterDisplayNameSnapshot: 'สมชาย ใจดี', reason: name === 'outside-search' ? 'อีกเรื่อง' : 'ทดสอบจำนวน',
+          categoryKey: 'travel', amount: '100', outstandingAmount: '100', incurredDate: new Date('2026-09-20'),
+          status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'UNPAID', approvalPolicySnapshotJson: snapshot(policy),
+        } });
+        // The database gives every claim its first line (the fallback-line trigger): read it, never insert a second line 1.
+        const line = await db.reimbursementLine.findFirstOrThrow({ where: { reimbursementRequestId: request.id }, select: { id: true } });
+        ids.set(name, request.id);
+        if (duplicate === 'open') await db.reimbursementDuplicateCandidate.create({ data: {
+          companyId: hub, reimbursementRequestId: request.id, candidateType: 'AMOUNT_DATE_VENDOR', score: 80, status: 'OPEN',
+        } });
+        if (duplicate === 'confirmed' || duplicate === 'possible' || duplicate === 'confirmation') await db.expenseRecord.create({ data: {
+          companyId: hub, createdByUserId: `${TAG}-user`, expenseDate: new Date('2026-09-20'),
+          sourceReimbursementRequestId: request.id, sourceReimbursementLineId: line.id,
+          status: duplicate === 'confirmed' ? 'CONFIRMED' : 'READY_FOR_CONFIRMATION',
+          duplicateStatus: duplicate === 'confirmed' ? 'CONFIRMED_DUPLICATE' : duplicate === 'possible' ? 'POSSIBLE_DUPLICATE' : 'OVERRIDDEN',
+        } });
+      }
+      const reader = { companyId: hub, userId: `${TAG}-user`, requestId: `${TAG}-hub-duplicates`,
+        permissions: ['reimbursement.read_own'], scopes: {}, roles: [], authProvider: 'dev' } as any;
+      const list = new ListReimbursementsUseCase(repos[0]!);
+      const filter = { search: 'สมชาย ทดสอบจำนวน', pageSize: 100 };
+      const all = await list.execute(reader, filter);
+      assert.deepEqual(all.hub.counts, { all: 8, draft: 0, review: 0, payment: 2, duplicate_blocked: 6, paid: 0, closed: 0 });
+      for (const bucket of ['payment', 'duplicate_blocked'] as const) {
+        const page = await list.execute(reader, { ...filter, bucket });
+        assert.equal(page.items.length, all.hub.counts[bucket]);
+        assert.equal(page.total, page.items.length);
+        assert.deepEqual(page.hub, all.hub);
+        for (const item of page.items) {
+          assert.equal(reimbursementHubBucket(item), bucket, item.id);
+          assert.equal(item.hasDuplicateBlocker, bucket === 'duplicate_blocked');
+        }
+        if (bucket === 'payment') assert.deepEqual(page.items.map((item) => item.id).sort(), [ids.get('payable'), ids.get('warn-open')].sort());
+      }
+    } finally {
+      await db.company.deleteMany({ where: { id: hub } });
+    }
+  });
+
   it('counts every hub card as the rows its filter returns over all pages: company, own, related and branch-limited, with and without a search', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     const db = clients[0]!;
@@ -1693,7 +1751,7 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
       ];
       const has = (claim: Fixture, word: string) => [claim.requestNo, claim.requesterDisplayNameSnapshot, claim.reason, claim.categoryLabelSnapshot]
         .some((text) => typeof text === 'string' && text.toLowerCase().includes(word.toLowerCase())) || Number(claim.amount) === Number(word.replace(/,/g, ''));
-      const BUCKETS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
+      const BUCKETS = ['draft', 'review', 'payment', 'duplicate_blocked', 'paid', 'closed'] as const;
       /** Every page of one list, seven rows a page, the way the hub walks it. */
       const walk = async (ctx: any, filter: Record<string, unknown>) => {
         const pages: Awaited<ReturnType<typeof list.execute>>[] = [];
@@ -3682,6 +3740,33 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.deepEqual((await db.expenseRecord.findUniqueOrThrow({ where: { id: own!.id } })).confirmedAt, confirmed.confirmedAt);
     assert.equal(await db.auditLog.count({ where: { companyId, targetId: own!.id, action: 'expense.duplicate.dismiss' } }), 1);
     assert.deepEqual(await duplicateFacts(claim, 'expense-cleared'), { queue: [false, 'OVERRIDDEN'], detail: [false, 'OVERRIDDEN'], list: 'OVERRIDDEN', payment: 'PAID' });
+  });
+
+  it('D3: confirmed duplicate notice commits with confirmation, rolls back with it and retries once', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const target = await decidedClaim(1); await system(0).resume.execute(manager(), target.requestId);
+    const claim = await decidedClaim(1); await system(0).resume.execute(manager(), claim.requestId);
+    const [own] = await repos[0]!.listClaimProjections(companyId, claim.requestId);
+    const [other] = await repos[0]!.listClaimProjections(companyId, target.requestId);
+    await db.expenseRecord.update({ where: { id: own!.id }, data: { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'POSSIBLE_DUPLICATE', postingStatus: 'not_required' } });
+    const candidate = await db.expenseDuplicateCandidate.create({ data: { companyId, expenseId: own!.id, candidateExpenseId: other!.id, status: 'OPEN', score: 100, reasonCodesJson: ['same_checksum'] } });
+    const prisma = { client: db } as any;
+    const expenses = new PrismaExpenseRepository(prisma);
+    const input = { companyId, expenseId: own!.id, candidateId: candidate.id, actorUserId: FIN, action: 'confirm' as const, reason: 'ตรวจแล้วใช้ใบเสร็จซ้ำ', scopes: {} };
+    const where = { companyId, aggregateId: claim.requestId, eventType: 'reimbursement.duplicate_confirmed' };
+    await assert.rejects(() => db.$transaction(async tx => {
+      await expenses.resolveDuplicateCandidate(input, async () => undefined, tx);
+      assert.equal(await tx.outboxEvent.count({ where }), 1);
+      throw new Error('rollback_after_notice');
+    }), /rollback_after_notice/);
+    assert.equal(await db.outboxEvent.count({ where }), 0);
+    assert.equal((await db.expenseDuplicateCandidate.findUniqueOrThrow({ where: { id: candidate.id } })).status, 'OPEN');
+    assert.equal((await db.expenseRecord.findUniqueOrThrow({ where: { id: own!.id } })).duplicateStatus, 'POSSIBLE_DUPLICATE');
+    await expenses.resolveDuplicateCandidate(input, async () => undefined);
+    await expenses.resolveDuplicateCandidate(input, async () => undefined);
+    assert.equal(await db.outboxEvent.count({ where }), 1);
+    assert.equal((await db.expenseDuplicateCandidate.findUniqueOrThrow({ where: { id: candidate.id } })).status, 'CONFIRMED_DUPLICATE');
   });
 
   it('a confirmed own expense blocks detail, queue and new payment under the real lock for every policy', async (t) => {

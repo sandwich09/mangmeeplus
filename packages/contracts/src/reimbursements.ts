@@ -474,6 +474,7 @@ export type ReimbursementDuplicateGuidanceContext = {
   cancellationPending?: boolean;
   canResumeCancellation?: boolean;
 };
+const CONFIRMED_DUPLICATE_PAYMENT_REASON = `${REIMBURSEMENT_DUPLICATE_REASON_TEXT.EXPENSE_CONFIRMED_DUPLICATE} จึงบันทึกจ่ายไม่ได้`;
 const DUPLICATE_CANCEL_ACTOR = 'ผู้เบิกที่มีสิทธิ์ยกเลิกหรือผู้ตรวจการเงินที่ดูแลสาขาของใบนี้';
 const DUPLICATE_NEW_CLAIM_HELP = 'ให้ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ';
 const DUPLICATE_CANCEL_ACTION = 'กดยกเลิกคำขอในหน้าใบเบิกนี้';
@@ -494,7 +495,7 @@ export function reimbursementDuplicateBlockText(reasons: readonly string[] = [])
 }
 export function reimbursementDuplicateBlockNotice(reasons: readonly string[] = [], financeReview = false, context: ReimbursementDuplicateGuidanceContext = {}): string {
   if (reasons.includes('EXPENSE_CONFIRMED_DUPLICATE')) {
-    const why = `${REIMBURSEMENT_DUPLICATE_REASON_TEXT.EXPENSE_CONFIRMED_DUPLICATE} จึงบันทึกจ่ายไม่ได้`;
+    const why = CONFIRMED_DUPLICATE_PAYMENT_REASON;
     // After a cancellation the requester sends a new claim: "…ยกเลิกคำขอ แล้วให้ผู้เบิก…" reads as one step after the other.
     const then = `แล้ว${DUPLICATE_NEW_CLAIM_HELP}`;
     let help: string;
@@ -517,6 +518,40 @@ export function reimbursementDuplicateBlockNotice(reasons: readonly string[] = [
   return `${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}: ${reimbursementDuplicateReasonText(reasons)} ${financeReview ? REIMBURSEMENT_DUPLICATE_FINANCE_HELP : REIMBURSEMENT_DUPLICATE_CLEAR_HELP}`;
 }
 export const REIMBURSEMENT_DUPLICATE_UNRESOLVED = 'พบรายการที่อาจซ้ำ ต้องตรวจสอบก่อนทำต่อ';
+
+/** Confirmed receipts cannot be cleared; these notices use the same general cancellation guidance as the claim. */
+export function reimbursementConfirmedDuplicateNotice(recipient: 'requester' | 'cancel', overdue = false) {
+  return {
+    description: 'แจ้งเมื่อใบเสร็จของใบเบิกยืนยันว่าซ้ำ เพื่อให้ยกเลิกใบเบิกและส่งใบใหม่',
+    title: `ใบเบิก${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}${overdue ? 'เกินกำหนด' : ''}: {{requestNo}}`,
+    body: recipient === 'requester' ? reimbursementDuplicateBlockNotice(['EXPENSE_CONFIRMED_DUPLICATE'])
+      : `${CONFIRMED_DUPLICATE_PAYMENT_REASON} รอคุณยกเลิกคำขอ ${DUPLICATE_NEW_CLAIM_HELP}`,
+  };
+}
+
+export type ReimbursementPaymentDuplicateBlock = 'NONE' | 'UNRESOLVED' | 'CONFIRMED';
+export const REIMBURSEMENT_PAYMENT_VOIDED_TITLE = 'ยกเลิกการจ่ายเงินเบิก: {{requestNo}}';
+
+/** The payer's next step; callers suppress confirmed duplicates instead of telling anyone to pay. */
+export function reimbursementPaymentTurnNotice(kind: 'ready' | 'overdue', unresolved = false): { title: string; body: string } {
+  return {
+    title: `${unresolved ? `ใบเบิกรอตรวจรายการที่อาจซ้ำ${kind === 'overdue' ? 'เกินกำหนด' : ''}`
+      : kind === 'overdue' ? 'ใบเบิกรอจ่ายเงินเกินกำหนด' : 'พร้อมจ่ายเบิกจ่าย'}: {{requestNo}}`,
+    body: `ยอด {{amount}} {{currency}} · ${unresolved ? 'รอคุณตรวจรายการที่อาจซ้ำก่อนบันทึกการจ่ายเงิน' : 'รอคุณบันทึกการจ่ายเงิน'}`,
+  };
+}
+
+/** Only facts after the void, never its free-text reason or an account number. */
+export function reimbursementPaymentVoidedNotice(claim: {
+  status?: string; cancellationPending?: boolean; paymentDuplicateBlock?: ReimbursementPaymentDuplicateBlock; duplicateReasons?: readonly string[];
+} = {}): string {
+  const next = claim.cancellationPending ? REIMBURSEMENT_SYSTEM_WAIT_LABEL
+    : claim.paymentDuplicateBlock && claim.paymentDuplicateBlock !== 'NONE'
+      ? reimbursementDuplicateWait({ ...claim, currentDesk: { kind: 'PAYMENT' } })?.waiting
+        ?? reimbursementDuplicateBlockNotice(claim.duplicateReasons, false, claim)
+      : claim.status === 'PAID' ? 'ใบเบิกยังจ่ายครบแล้ว' : 'ใบเบิกกลับไปรอจ่าย';
+  return `การจ่ายเงินที่บันทึกไว้ถูกยกเลิก ${next}`;
+}
 export function reimbursementDuplicateSubmitNotice(reasons: readonly string[] = []): string {
   return `พบรายการที่อาจซ้ำ: ${reimbursementDuplicateReasonText(reasons)} ยังส่งใบนี้ไม่ได้ ตรวจและแก้หลักฐาน หรือให้ผู้มีสิทธิ์ตั้งค่านโยบายตรวจนโยบายรายการซ้ำก่อนส่งอีกครั้ง`;
 }
@@ -648,7 +683,7 @@ export const REIMBURSEMENT_SELF_APPROVED_NOTE = 'ผู้เบิกและ�
 // ---- หน้ารวม (hub) buckets ----
 
 /** Every claim sits in exactly one bucket, so the hub's chips add up to "ทั้งหมด". */
-export type ReimbursementHubBucket = 'draft' | 'review' | 'payment' | 'paid' | 'closed';
+export type ReimbursementHubBucket = 'draft' | 'review' | 'payment' | 'duplicate_blocked' | 'paid' | 'closed';
 
 /**
  * Where a claim's status alone places it. Typed over every status, so a status added later has to be
@@ -676,18 +711,21 @@ export function reimbursementHubBucket(claim: {
   status?: string;
   financeReviewStatus?: string;
   currentDesk?: { kind?: string } | null;
+  hasDuplicateBlocker?: boolean;
 }): ReimbursementHubBucket {
+  const paymentBucket = claim.hasDuplicateBlocker ? 'duplicate_blocked' : 'payment';
   switch (claim.currentDesk?.kind) {
     // A claim waiting for approval that is with its requester was sent back to have its payout account
     // corrected (payout spec §14). It stands at the approval step, so its status places it, in รออนุมัติ/ตรวจสอบ:
     // the counts and the list filter are made from the status, and a row must fall where they put it.
     case 'REQUESTER': if (claim.status === 'PENDING_APPROVAL') break; return 'draft';
     case 'APPROVER': case 'FINANCE': return 'review';
-    case 'PAYMENT': return 'payment';
+    case 'PAYMENT': return paymentBucket;
   }
   // Approved and still being routed on: to finance review while that is pending, otherwise to payment.
   if (claim.status === 'APPROVED' && claim.financeReviewStatus === 'PENDING') return 'review';
-  return HUB_BUCKET_BY_STATUS[claim.status as ReimbursementRequestStatus] ?? 'closed';
+  const bucket = HUB_BUCKET_BY_STATUS[claim.status as ReimbursementRequestStatus] ?? 'closed';
+  return bucket === 'payment' ? paymentBucket : bucket;
 }
 
 /** The whole list scope as the server counted it, or what a search found in it: what the hub's cards and chips print. */
@@ -703,6 +741,8 @@ export type ReimbursementHubSummary = {
 // ---- Request ----
 
 export type ReimbursementRequestSummary = {
+  /** The payment predicate evaluated on this claim's submitted policy and own duplicate facts. */
+  hasDuplicateBlocker?: boolean;
   id: string;
   companyId: string;
   branchId?: string;
@@ -2156,6 +2196,8 @@ export type ReimbursementAiSummary = {
   unpaidApprovedCount: number;
   overdueApprovalCount: number;
   totalUnpaidAmount: string;
+  /** Unpaid claims excluded from the payment figures by the duplicate predicate; absent in older output. */
+  duplicateBlockedCount?: number;
   /** Item 1 (spec R-A1 row 18): the caller's own effective read scope, from the same own/related/
    *  company permission check `GetReimbursementAiSummaryUseCase` already applies above. */
   accessScope: 'own' | 'related' | 'company';

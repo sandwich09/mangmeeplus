@@ -458,8 +458,8 @@ export class ReimbursementInternalNotesUseCase {
 }
 
 /** The scope's groups folded into what the hub's cards and chips print. Every claim is counted in exactly one bucket. */
-export function hubSummary(groups: readonly ReimbursementRequestGroup[]): ReimbursementHubSummary {
-  const counts = { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 };
+export function hubSummary(groups: readonly ReimbursementRequestGroup[], duplicateBlockedCount = 0): ReimbursementHubSummary {
+  const counts = { all: 0, draft: 0, review: 0, payment: 0, duplicate_blocked: duplicateBlockedCount, paid: 0, closed: 0 };
   let totalAmount = d('0');
   let blockedDraftCount = 0;
   for (const group of groups) {
@@ -469,11 +469,12 @@ export function hubSummary(groups: readonly ReimbursementRequestGroup[]): Reimbu
     // The gate a list row shows on its ส่งอนุมัติ button: a draft that still owes its receipt.
     if (group.status === 'DRAFT' && group.receiptRequirementStatus === 'REQUIRED') blockedDraftCount += group.count;
   }
+  counts.payment -= duplicateBlockedCount;
   return { counts, totalAmount: decStr(totalAmount), blockedDraftCount };
 }
 
 /** The hub's buckets by name. Typed over every bucket, so one added later has to be named here to be asked for. */
-const HUB_BUCKETS: readonly string[] = Object.keys({ draft: true, review: true, payment: true, paid: true, closed: true } satisfies Record<ReimbursementHubBucket, true>);
+const HUB_BUCKETS: readonly string[] = Object.keys({ draft: true, review: true, payment: true, duplicate_blocked: true, paid: true, closed: true } satisfies Record<ReimbursementHubBucket, true>);
 
 /** A page number or size from the query string: a whole number from 1 up, and small enough to be an OFFSET. */
 const wholeFrom1 = (value: number | undefined, fallback: number) =>
@@ -512,7 +513,8 @@ export class ListReimbursementsUseCase {
     const pageSize = Math.min(wholeFrom1(filter.pageSize, 20), 100);
     // The database pages. Before, every call loaded the whole scope and sliced it here, so walking a
     // list of N claims read N rows per page: N²/100 rows for all of it.
-    const [{ rows: items, groups }, policy] = await Promise.all([this.repo.listRequestPage({
+    const policy = await loadReimbursementPolicy(this.repo, ctx.companyId);
+    const { rows: items, groups, duplicateBlockedCount } = await this.repo.listRequestPage({
       companyId: ctx.companyId,
       requesterUserId,
       relatedUserId,
@@ -524,9 +526,9 @@ export class ListReimbursementsUseCase {
       search: filter.search?.trim().slice(0, 100) || undefined,
       skip: (page - 1) * pageSize,
       take: pageSize,
-    }), loadReimbursementPolicy(this.repo, ctx.companyId)]);
+    }, policy);
     // The total is read off the same groups the cards print, so a card can never count a different list.
-    const hub = hubSummary(groups);
+    const hub = hubSummary(groups, duplicateBlockedCount);
     // "อยู่ที่ …" needs the pending step and its assignees only where a claim is actually waiting
     // on a person. Two batched lookups for the page — and neither runs when the page has no
     // PENDING_APPROVAL row (both helpers return empty on an empty id list).
@@ -541,7 +543,7 @@ export class ListReimbursementsUseCase {
     return {
       items: items.map((row) => toRequestSummary(
         { ...row, approvalSteps: pendingSteps.filter((step) => step.reimbursementRequestId === row.id) },
-        { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames },
+        { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames, currentPolicy: policy },
       )),
       total: hub.counts[filter.bucket ?? 'all'],
       page,
@@ -853,7 +855,9 @@ export class SubmitReimbursementUseCase {
         companyId: ctx.companyId, requestId: id, actorUserId: req.requesterUserId,
         scopes: ctx.scopes ?? {}, completedAt: readyAt,
         onReadyPersisted: async (tx) => {
+          const { paymentDuplicateBlock } = await this.repo.paymentNoticeFacts(tx, ctx.companyId, id);
           for (const eventType of ['reimbursement.approved', 'reimbursement.ready_for_payment']) {
+            if (eventType === 'reimbursement.ready_for_payment' && paymentDuplicateBlock === 'CONFIRMED') continue;
             await appendSubmitOutbox(tx, {
               companyId: ctx.companyId, eventType, requestId: id, actorUserId: ctx.userId,
               traceRequestId: ctx.requestId, occurredAt: readyAt,
@@ -862,6 +866,7 @@ export class SubmitReimbursementUseCase {
                 requestId: id, requestNo, requesterUserId: req.requesterUserId,
                 status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD',
                 amount: req.amount, currency: req.currency,
+                ...(eventType === 'reimbursement.ready_for_payment' && { paymentDuplicateBlock }),
                 ...(approverRecipientUserIds.length > 0 && { approverRecipientUserIds }),
               },
             });

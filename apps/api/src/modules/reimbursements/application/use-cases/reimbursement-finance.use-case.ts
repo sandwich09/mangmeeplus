@@ -24,7 +24,7 @@ import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import { assertCanReadRequestOrAssignment, mayCancelReimbursement } from './reimbursement-request.use-case';
 import {
   validatePaymentRecording,
-  duplicateBlocksPayment, claimDuplicateReasons, confirmedDuplicateRefusal,
+  duplicateBlocksPayment, claimDuplicateBlocksPayment, claimDuplicateReasons, confirmedDuplicateRefusal,
   payoutCorrectionPhase,
   claimApproverUserId,
   isSamePaymentRequest,
@@ -80,9 +80,7 @@ export class ListFinanceQueueUseCase {
       // The payment's own test, on the policy the claim was sent under and the candidates the rows came
       // with. It read the status column, which after approval holds the result of the claim's expense
       // records: a claim found possibly duplicate at submit had no mark here while its payment was refused.
-      hasDuplicateBlocker: duplicateBlocksPayment(effectivePolicyForRequest(r, currentPolicy).duplicatePolicy,
-        (r.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length,
-        (r.possibleDuplicateExpenseCount ?? 0) + (r.duplicateConfirmationPendingCount ?? 0), r.confirmedDuplicateExpenseCount),
+      hasDuplicateBlocker: claimDuplicateBlocksPayment(r, currentPolicy),
       duplicateReasons: claimDuplicateReasons(r),
       viewerCanCancel: !r.cancellationPendingAt && mayCancelReimbursement(ctx, r),
     }));
@@ -216,7 +214,9 @@ export class FinanceReviewReimbursementUseCase {
             metadataJson: { decision: input.decision, projectionReady: true },
           }, tx);
           const approverUserId = claimApproverUserId(req);
+          const { paymentDuplicateBlock } = await this.repo.paymentNoticeFacts(tx, ctx.companyId, id);
           for (const eventType of ['reimbursement.finance_review_updated', 'reimbursement.ready_for_payment']) {
+            if (eventType === 'reimbursement.ready_for_payment' && paymentDuplicateBlock === 'CONFIRMED') continue;
             await appendReimbursementOutboxWithinTx(tx, {
               companyId: ctx.companyId,
               eventType,
@@ -237,6 +237,7 @@ export class FinanceReviewReimbursementUseCase {
                   decision: input.decision,
                   amount: req.amount,
                   currency: req.currency,
+                  ...(eventType === 'reimbursement.ready_for_payment' && { paymentDuplicateBlock }),
                   // A finance reviewer may not hold the pay right. The claim's approver is the next
                   // person the ready-to-pay notice asks, before it goes to everyone able to pay.
                   ...(approverUserId && { approverRecipientUserIds: [approverUserId] }),
