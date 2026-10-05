@@ -712,6 +712,7 @@ describe('a claim the system holds reads the same on LINE and on the web', () =>
     ];
     const steps = [pendingStep('waiting'), pendingStep('cancel-at-approval')];
     const repo = {
+      findPolicy: async () => null,
       listRequests: async () => rows,
       findPendingApprovalSteps: async (_companyId: string, ids: string[]) => steps.filter((step) => ids.includes(step.reimbursementRequestId)),
       findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
@@ -2001,7 +2002,7 @@ describe('claim detail paymentDesk', () => {
 describe('list paging and hub buckets', () => {
   const STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'CANCELLED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'VOIDED'];
   const FINANCE = ['NOT_REQUIRED', 'PENDING', 'NEEDS_INFO', 'APPROVED_FOR_PAYMENT', 'BLOCKED'];
-  const BUCKETS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
+  const BUCKETS = ['draft', 'review', 'payment', 'duplicate_blocked', 'paid', 'closed'] as const;
   const at = (second: number) => new Date(Date.UTC(2026, 8, 1, 0, 0, second));
   /** One claim for every status pair the database can hold, twice over for the live ones, so no two buckets are the same size. */
   const claims = STATUSES.flatMap((status, s) => FINANCE.flatMap((financeReviewStatus, f) =>
@@ -2016,6 +2017,7 @@ describe('list paging and hub buckets', () => {
   /** The claims table in memory, answering the repository's own `where`, order, OFFSET and LIMIT, and its GROUP BY. */
   function database(rows: any[] = claims) {
     const reads: Array<{ skip?: number; take?: number }> = [];
+    const factReads: any[] = [];
     const matches = (row: any, where: any): boolean => Object.entries(where ?? {}).every(([field, want]: [string, any]) => {
       if (want === undefined) return true;
       if (field === 'AND') return want.every((part: any) => matches(row, part));
@@ -2026,16 +2028,18 @@ describe('list paging and hub buckets', () => {
         return typeof row[field] === 'string' && row[field].toLowerCase().includes(want.contains.toLowerCase());
       }
       if (field === 'amount') return Number(row[field]) === Number(want);
-      if (want !== null && typeof want === 'object') return want.in.includes(row[field]);
+      if (want !== null && typeof want === 'object') return want.in ? want.in.includes(row[field]) : !want.notIn.includes(row[field]);
       return row[field] === want;
     });
     const client = {
       reimbursementRequest: {
-        findMany: async ({ where, skip, take }: any) => {
-          reads.push({ skip, take });
+        findMany: async ({ where, skip, take, select }: any) => {
+          if (!select) reads.push({ skip, take });
+          else factReads.push({ where, select });
           const found = rows.filter((row) => matches(row, where))
             .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1));
-          return found.slice(skip ?? 0, take === undefined ? undefined : (skip ?? 0) + take).map((row) => ({ ...row, _count: { lines: 1 } }));
+          return found.slice(skip ?? 0, take === undefined ? undefined : (skip ?? 0) + take).map((row) => ({ ...row,
+            _count: { lines: 1, duplicateCandidates: (row.duplicateCandidates ?? []).filter((candidate: any) => candidate.status === 'OPEN').length } }));
         },
         groupBy: async ({ by, where }: any) => {
           const groups = new Map<string, any>();
@@ -2053,9 +2057,83 @@ describe('list paging and hub buckets', () => {
       reimbursementApprovalStep: { findMany: async () => [] },
       companyMembership: { findMany: async () => [] },
     };
-    return { reads, list: new ListReimbursementsUseCase(new PrismaReimbursementRepository({ client } as any, {} as any)) };
+    return { reads, factReads, list: new ListReimbursementsUseCase(new PrismaReimbursementRepository({ client } as any, {} as any)) };
   }
   const reader = ctx({ permissions: ['reimbursement.read'] });
+
+  it('Round 4: LINE summary excludes duplicate blockers and backlog keeps them under their own desk', async () => {
+    const snapshot = (duplicatePolicy: string) => ({ schemaVersion: 1, policyId: 'pol', policyVersion: 'v1',
+      approvalRequiredFromAmount: '1.00', requiresApproval: false, route: null, allowSelfApproval: false,
+      requireReceipt: false, allowMissingReceiptWithReason: false, financeReviewRequired: false, duplicatePolicy });
+    const row = (id: string, duplicatePolicy: string, extra: object = {}) => ({ ...claims[0], id, status: 'READY_FOR_PAYMENT',
+      financeReviewStatus: 'NOT_REQUIRED', outstandingAmount: '100.0000', approvalPolicySnapshotJson: snapshot(duplicatePolicy), ...extra });
+    const fixtures = [row('payable', 'BLOCK_PAYMENT'), row('warn-open', 'WARN', { duplicateCandidates: [{ status: 'OPEN', candidateType: 'ATTACHMENT_CHECKSUM' }] }),
+      ...['WARN', 'BLOCK_SUBMIT', 'BLOCK_PAYMENT'].map((policy) => row(`confirmed-${policy}`, policy, { confirmedDuplicateExpenseCount: 1 })),
+      row('block-open', 'BLOCK_PAYMENT', { duplicateCandidates: [{ status: 'OPEN', candidateType: 'ATTACHMENT_CHECKSUM' }] }),
+      row('block-own', 'BLOCK_PAYMENT', { possibleDuplicateExpenseCount: 1 }),
+      row('block-confirmation', 'BLOCK_PAYMENT', { duplicateConfirmationPendingCount: 1 })];
+    const reads: any[] = [];
+    const repo = { listRequests: async (where: any) => { reads.push(where); return fixtures; }, findPolicy: async () => null,
+      findPendingApprovalSteps: async () => [], getUserDisplayNames: async () => ({}) } as any;
+    const summary = await new GetReimbursementAiSummaryUseCase(repo, noopAudit).execute(reader);
+    assert.deepEqual([summary.unpaidApprovedCount, summary.totalUnpaidAmount, (summary as any).duplicateBlockedCount], [2, '200.0000', 6]);
+    const backlog = await new GetReimbursementApprovalBacklogUseCase(repo, noopAudit).execute(reader);
+    assert.equal(backlog.total, 8);
+    assert.equal(backlog.desks.find((desk) => desk.kind === 'payment')?.count, 2);
+    const blocked = backlog.desks.filter((desk) => (desk.kind as string) === 'duplicate_blocked');
+    assert.equal(blocked.reduce((sum, desk) => sum + desk.count, 0), 6);
+    assert.ok(blocked.every((desk) => desk.label === 'ติดรายการซ้ำ'));
+    assert.equal(backlog.items.filter((item) => item.waitingOn === 'ติดรายการซ้ำ').length, 6);
+    assert.ok(reads.every((where) => where.withDuplicateCandidates === true));
+    fixtures.splice(2);
+    const clear = await new GetReimbursementAiSummaryUseCase(repo, noopAudit).execute(reader);
+    assert.equal((clear as any).duplicateBlockedCount, 0);
+    for (const status of ['FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID']) {
+      fixtures.splice(0, fixtures.length, row('blocked-at-stage', 'WARN', { status, confirmedDuplicateExpenseCount: 1 }));
+      const blocked = await new GetReimbursementAiSummaryUseCase(repo, noopAudit).execute(reader);
+      assert.deepEqual([blocked.unpaidApprovedCount, blocked.totalUnpaidAmount, blocked.duplicateBlockedCount], [0, '0.0000', 1], status);
+    }
+    for (const status of ['APPROVED', 'PAID', 'CANCELLED']) {
+      fixtures.splice(0, fixtures.length, row('outside-old-figure', 'WARN', { status, confirmedDuplicateExpenseCount: 1 }));
+      const unchanged = await new GetReimbursementAiSummaryUseCase(repo, noopAudit).execute(reader);
+      assert.deepEqual([unchanged.unpaidApprovedCount, unchanged.duplicateBlockedCount], [0, 0], status);
+    }
+  });
+
+  it('Round 4: splits payable and duplicate-blocked claims by frozen policy, with scoped search and matching row buckets', async () => {
+    const snapshot = (duplicatePolicy: string) => ({ schemaVersion: 1, policyId: 'pol', policyVersion: 'v1',
+      approvalRequiredFromAmount: '1.00', requiresApproval: false, route: null, allowSelfApproval: false,
+      requireReceipt: false, allowMissingReceiptWithReason: false, financeReviewRequired: false, duplicatePolicy });
+    const row = (id: string, duplicatePolicy: string, extra: object = {}) => ({ ...claims[0], id, status: 'READY_FOR_PAYMENT',
+      financeReviewStatus: 'NOT_REQUIRED', reason: 'ทดสอบจำนวน', approvalPolicySnapshotJson: snapshot(duplicatePolicy), ...extra });
+    const open = { status: 'OPEN', candidateType: 'ATTACHMENT_CHECKSUM' };
+    const confirmed = { duplicateStatus: 'CONFIRMED_DUPLICATE', status: 'CONFIRMED' };
+    const fixtures = [row('payable', 'BLOCK_PAYMENT'), row('warn-open', 'WARN', { duplicateCandidates: [open] }),
+      ...['WARN', 'BLOCK_SUBMIT', 'BLOCK_PAYMENT'].map((policy) => row(`confirmed-${policy}`, policy, { sourceExpenses: [confirmed] })),
+      row('block-open', 'BLOCK_PAYMENT', { duplicateCandidates: [open] }),
+      row('block-own', 'BLOCK_PAYMENT', { sourceExpenses: [{ duplicateStatus: 'POSSIBLE_DUPLICATE', status: 'READY_FOR_CONFIRMATION' }] }),
+      row('block-confirmation', 'BLOCK_PAYMENT', { sourceExpenses: [{ duplicateStatus: 'OVERRIDDEN', status: 'READY_FOR_CONFIRMATION' }] }),
+      row('outside-search', 'BLOCK_PAYMENT', { reason: 'อีกเรื่อง', sourceExpenses: [confirmed] }),
+      row('outside-scope', 'BLOCK_PAYMENT', { requesterUserId: 'staff-2', sourceExpenses: [confirmed] }),
+      { ...claims[0], id: 'draft', reason: 'ทดสอบจำนวน' }];
+    const { list, factReads } = database(fixtures);
+    const own = ctx({ permissions: ['reimbursement.read_own'], userId: 'staff-1' });
+    const all = await list.execute(own, { search: 'ทดสอบจำนวน', pageSize: 100 });
+    assert.deepEqual(all.hub.counts, { all: 9, draft: 1, review: 0, payment: 2, duplicate_blocked: 6, paid: 0, closed: 0 });
+    assert.equal(Object.entries(all.hub.counts).filter(([key]) => key !== 'all').reduce((sum, [, count]) => sum + count, 0), 9);
+    for (const bucket of ['payment', 'duplicate_blocked'] as const) {
+      const page = await list.execute(own, { search: 'ทดสอบจำนวน', bucket: bucket as any, pageSize: 100 });
+      assert.equal(page.items.length, all.hub.counts[bucket as keyof typeof all.hub.counts]);
+      assert.equal(page.total, page.items.length);
+      for (const item of page.items) {
+        assert.equal(reimbursementHubBucket(item), bucket, item.id);
+        assert.equal((item as any).hasDuplicateBlocker, bucket === 'duplicate_blocked', item.id);
+      }
+      if (bucket === 'payment') assert.deepEqual(page.items.map((item) => item.id).sort(), ['payable', 'warn-open']);
+    }
+    assert.equal(factReads.length, 3, 'one facts read per hub request, including a filtered page');
+    assert.ok(factReads.every(({ select }) => Object.keys(select).sort().join(',') === '_count,approvalPolicySnapshotJson,id,sourceExpenses'));
+  });
   /** Every page of one list, the way a client walks it. */
   async function walk(list: ListReimbursementsUseCase, filter: Record<string, unknown>, pageSize: number) {
     const pages: any[] = [];
@@ -2123,7 +2201,7 @@ describe('list paging and hub buckets', () => {
     assert.equal(hub.counts.all, claims.length);
     assert.equal(all[0].total, hub.counts.all);
     assert.equal(BUCKETS.reduce((sum, bucket) => sum + hub.counts[bucket], 0), hub.counts.all);
-    assert.equal(new Set(BUCKETS.map((bucket) => hub.counts[bucket])).size, BUCKETS.length, 'five different sizes, so a swapped bucket cannot pass');
+    assert.equal(new Set(BUCKETS.map((bucket) => hub.counts[bucket])).size, BUCKETS.length, 'six different sizes, so a swapped bucket cannot pass');
 
     const seen: string[] = [];
     for (const bucket of BUCKETS) {
@@ -2176,10 +2254,10 @@ describe('list paging and hub buckets', () => {
     const mine = claims.filter((row) => row.requesterUserId === 'staff-2');
     assert.ok(mine.length > 0 && mine.length < claims.length);
     assert.deepEqual([own.total, own.hub.counts.all, own.items.length], [mine.length, mine.length, mine.length]);
-    assert.deepEqual(own.hub.counts, { all: mine.length, draft: 5, review: 0, payment: 5, paid: 0, closed: 0 });
+    assert.deepEqual(own.hub.counts, { all: mine.length, draft: 5, review: 0, payment: 5, duplicate_blocked: 0, paid: 0, closed: 0 });
     // An empty scope: zeros everywhere, and a total amount that is still a number.
     const empty = await database([]).list.execute(reader, {});
-    assert.deepEqual(empty.hub, { counts: { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
+    assert.deepEqual(empty.hub, { counts: { all: 0, draft: 0, review: 0, payment: 0, duplicate_blocked: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
     assert.deepEqual([empty.items.length, empty.total], [0, 0]);
   });
 

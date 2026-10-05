@@ -12,7 +12,7 @@
  * `unverified` when the output does not match the family's exact shape, so the caller falls back to an
  * honest terminal without claiming success. No provider, no tool re-invocation.
  */
-import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS } from '@watchdog-bms/contracts';
+import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL } from '@watchdog-bms/contracts';
 import type { LineAiPeriodCandidate, LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
@@ -1095,7 +1095,9 @@ function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx
   const unpaidApproved = data?.['unpaidApprovedCount'];
   const overdue = data?.['overdueApprovalCount'];
   const totalUnpaid = data?.['totalUnpaidAmount'];
+  const duplicateBlocked = data?.['duplicateBlockedCount'];
   if (!isCount(pending) || !isCount(unpaidApproved) || !isCount(overdue) || !isMoney(totalUnpaid)) return { kind: 'unverified' };
+  if (duplicateBlocked !== undefined && !isCount(duplicateBlocked)) return { kind: 'unverified' };
   if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
 
   const english = isEnglish(ctx);
@@ -1106,6 +1108,9 @@ function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx
     english
       ? `${plural(unpaidApproved, 'request')} approved, unpaid${unpaidApproved > 0 ? `, totaling ${moneyText(totalUnpaid)} THB` : ''}`
       : `อนุมัติแล้วรอจ่าย ${groupThousands(String(unpaidApproved))} รายการ${unpaidApproved > 0 ? ` รวม ${moneyText(totalUnpaid)} บาท` : ''}`,
+    isCount(duplicateBlocked) && duplicateBlocked > 0 ? (english
+      ? `${plural(duplicateBlocked, 'request')} blocked by duplicates`
+      : `${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL} ${groupThousands(String(duplicateBlocked))} รายการ`) : undefined,
     overdue > 0 ? (english ? `${plural(overdue, 'request')} overdue` : `เกินกำหนด ${groupThousands(String(overdue))} รายการ`) : undefined,
   ].filter((clause): clause is string => Boolean(clause));
   const headline = english ? `Reimbursements: ${clauses.join(' · ')}` : `ใบเบิก: ${clauses.join(' · ')}`;

@@ -59,7 +59,7 @@ import {
   REIMBURSEMENT_SIGNED_COPY_PURPOSE,
   parseReimbursementPolicySnapshot,
 } from '../domain/reimbursement.constants';
-import { effectivePolicy, effectivePolicyForRequest } from '../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest, type EffectivePolicy } from '../domain/reimbursement.constants';
 import {
   buildPaymentSourceRef,
   claimSnapshotFields,
@@ -80,7 +80,7 @@ import {
   deriveHeaderFromLines,
   computeReceiptRequirement,
   currentDesk,
-  duplicateBlocksPayment, claimDuplicateReasons, confirmedDuplicateRefusal,
+  duplicateBlocksPayment, claimDuplicateBlocksPayment, claimDuplicateReasons, confirmedDuplicateRefusal,
 } from '../domain/logic/reimbursement.logic';
 import { CLAIM_PAYOUT_WORKLIST_LIMIT, exclusiveEndOfDay, isExpenseVoidReason } from '@watchdog-bms/contracts';
 import { findClaimExpenseVoidBlocker, type ExpenseVoidBlocker } from '../../expenses/infrastructure/expense-void-blocker';
@@ -3128,19 +3128,32 @@ export class PrismaReimbursementRepository {
 
   /**
    * One page of a list, read with LIMIT and OFFSET in the database, and the whole scope grouped by the
-   * fields the hub counts on. Two reads over one predicate: the page adds only the bucket to it, so the
+   * fields the hub counts on. The page, groups and payment duplicate facts share one predicate, so the
    * groups of a bucket add up to exactly the claims its pages hold. A search narrows that one predicate
    * (`hubSearchWhere`), so with a search the groups count what was found, bucket by bucket.
    */
-  async listRequestPage(where: ListRequestsWhere & { bucket?: string; skip: number; take: number }): Promise<{
+  async listRequestPage(where: ListRequestsWhere & { bucket?: string; skip: number; take: number }, currentPolicy?: EffectivePolicy): Promise<{
     rows: ReimbursementRequestRecord[];
     groups: ReimbursementRequestGroup[];
+    duplicateBlockedCount: number;
   }> {
     const scope = await this.requestListWhere({ ...where, search: undefined });
     if (where.search) scope.AND.push(hubSearchWhere(where.search));
+    const policy = currentPolicy ?? effectivePolicy(await this.findPolicy(where.companyId, null));
+    // ponytail: one extra read, bounded by unpaid payment-step claims in this searched scope.
+    // If scopes outgrow the facts read/id filter, index an eligibility projection maintained by this domain predicate.
+    const paymentClaims = await this.prisma.client.reimbursementRequest.findMany({
+      where: { ...scope, AND: [...scope.AND, hubBucketWhere('payment')] },
+      select: { id: true, approvalPolicySnapshotJson: true,
+        _count: { select: { duplicateCandidates: { where: { status: 'OPEN' } } } }, sourceExpenses: OWN_DUPLICATE_EXPENSES },
+    });
+    const blockedIds = paymentClaims.filter((row) => claimDuplicateBlocksPayment(this.toRequest(row), policy, row._count.duplicateCandidates)).map((row) => row.id);
+    const bucketWhere = where.bucket === 'duplicate_blocked' ? { id: { in: blockedIds } }
+      : where.bucket === 'payment' ? { AND: [hubBucketWhere('payment'), { id: { notIn: blockedIds } }] }
+      : where.bucket === undefined ? {} : hubBucketWhere(where.bucket);
     const [rows, groups] = await Promise.all([
       this.prisma.client.reimbursementRequest.findMany({
-        where: where.bucket === undefined ? scope : { ...scope, AND: [...scope.AND, hubBucketWhere(where.bucket)] },
+        where: { ...scope, AND: [...scope.AND, bucketWhere] },
         // The page's rows report the same duplicate status as the claim's own page: one batched read for the page.
         include: { _count: { select: { lines: true } }, duplicateCandidates: LIVE_DUPLICATE_CANDIDATES, sourceExpenses: OWN_DUPLICATE_EXPENSES },
         // The same stable order as `listRequests`: OFFSET pages need every row to keep its place.
@@ -3157,6 +3170,7 @@ export class PrismaReimbursementRepository {
     ]);
     return {
       rows: rows.map((row) => this.toRequest(row)),
+      duplicateBlockedCount: blockedIds.length,
       groups: groups.map((group) => ({
         status: group.status,
         financeReviewStatus: group.financeReviewStatus,

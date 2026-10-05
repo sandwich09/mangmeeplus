@@ -24,7 +24,7 @@ import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import { assertCanReadRequestOrAssignment, mayCancelReimbursement } from './reimbursement-request.use-case';
 import {
   validatePaymentRecording,
-  duplicateBlocksPayment, claimDuplicateReasons, confirmedDuplicateRefusal,
+  duplicateBlocksPayment, claimDuplicateBlocksPayment, claimDuplicateReasons, confirmedDuplicateRefusal,
   payoutCorrectionPhase,
   claimApproverUserId,
   isSamePaymentRequest,
@@ -80,9 +80,7 @@ export class ListFinanceQueueUseCase {
       // The payment's own test, on the policy the claim was sent under and the candidates the rows came
       // with. It read the status column, which after approval holds the result of the claim's expense
       // records: a claim found possibly duplicate at submit had no mark here while its payment was refused.
-      hasDuplicateBlocker: duplicateBlocksPayment(effectivePolicyForRequest(r, currentPolicy).duplicatePolicy,
-        (r.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length,
-        (r.possibleDuplicateExpenseCount ?? 0) + (r.duplicateConfirmationPendingCount ?? 0), r.confirmedDuplicateExpenseCount),
+      hasDuplicateBlocker: claimDuplicateBlocksPayment(r, currentPolicy),
       duplicateReasons: claimDuplicateReasons(r),
       viewerCanCancel: !r.cancellationPendingAt && mayCancelReimbursement(ctx, r),
     }));

@@ -17,6 +17,7 @@ Scope: the follow-ups that were set aside when the scope was frozen before the 2
 
 Decisions:
 
+- Owner, 2026-10-05, Round 4 counts: "นับเฉพาะใบที่จ่ายได้จริง แต่เราก็มีเตือนเรื่องใบซ้ำด้วยใช่ไหม". The summary tile "รอจ่าย N", "ยอดคงค้างรวม", the hub payment bucket and LINE aggregate "อนุมัติแล้วรอจ่าย" count only their existing population minus `duplicateBlocksPayment` on the submitted policy. Blocked payment-step claims remain counted and listed under “ติดรายการซ้ำ”; reminders and a new duplicate notice are round D2.
 - Owner, 2026-10-05 ~09:45: "ทำงานเล็ก ต่อ แต่ยังไม่ต้อง deploy uat prod ใช้ codex เหมือนเดิม".
 - Owner, 2026-10-05 ~10:00, on a claim whose receipt a reviewer confirmed as a real duplicate and which could still be paid in full: "ก) ห้ามจ่ายจนกว่าจะเอารายการซ้ำออกหรือยกเลิกใบเบิก และมีคำแนะนำด้วย อย่าปิดเงียบ". The controller reads it as: under every duplicate policy; nothing already paid is reversed.
 - Controller (the owner delegated screen design on 2026-10-04): with the contact pair shown, an extra sort column replaces the note column on a desktop instead of narrowing every text column. The first pass narrowed them and cut the package badges and put an e-mail on three lines.
@@ -27,9 +28,8 @@ Open questions:
 
 - The business-type cell still splits some Thai compounds (สิน|ค้า, จัด|ทำ). The split comes from the browser's own Thai word list (the same library answers the same way outside a page), and the cell forces no break, so a layout rule cannot change it. Left.
 - With the churn filter the list can carry more than one extra fact column and then scrolls sideways, as before.
-- A claim blocked by a confirmed duplicate keeps its stored status, so three things still treat it as payable. Asked the owner (recommended: count and remind only what can really be paid), not started:
+- A claim blocked by a confirmed duplicate keeps its stored status. After the Round 4 counts decision, these follow-ups remain for D2 or later:
   - the payment reminders and their notices (`workflow-template-catalog.ts`: "รอคุณบันทึกการจ่ายเงิน", "พร้อมจ่ายเบิกจ่าย", "ใบเบิกกลับไปรอจ่าย") can still name it. Changing that touches who is notified and the reminder selection;
-  - the counts and totals: the summary tile "รอจ่าย N" and "ยอดคงค้างรวม" on the claims page (on the local stack the tile read 9 while 2 claims could really be paid), and the LINE aggregate "อนุมัติแล้วรอจ่าย" (`prepared-simple-read-formatter.ts`);
   - the void dialog: its guidance is true but circular for the person voiding (it tells the voider to void).
 - The finance-review decision on a claim that is at the finance-review step with a confirmed duplicate is covered by unit tests only; it was not opened on a screen.
 
@@ -69,3 +69,78 @@ The first full run (11:13) was red on two older checks that pinned yesterday's b
 `e2e/receipt-draft-continuity.spec.ts`: 11 of 11 on chromium, three runs in a row, on a throwaway stack (own containers; database named `watchdog_bms` and bucket `receipt-remediation-…` as the spec's own safety checks require).
 
 Seen on the owner's local stack at 1280 and 390 px: the company list with and without an extra sort column, the unmatched-money table, the withholding kinds page, the executive account page, a usage export downloaded and opened (60 columns, one receipt count).
+
+### Round 4 — lane dupc D1, 2026-10-05
+
+Status: D1 implementation complete, uncommitted on `codex/dup-counts-20261005`; focused checks and all three typechecks pass. Real PostgreSQL and browser acceptance not checked (lane has no database, browser or servers). No reminder or notice changes, no migration, no deployment.
+
+- Tests first on old production: API Round 4 summary/hub 0 pass / 2 fail (8 instead of 2 payable; no blocked count); web Round 4 1 pass / 3 fail (approval invariant passed; hub/card/pay-count regressions failed); gateway Round 4 0 pass / 1 fail (missing duplicate clause); guide Round 4 0 pass / 1 fail (missing new card/chip explanation).
+- Policy facts are adapted once by `claimDuplicateBlocksPayment`, which calls the unchanged `duplicateBlocksPayment` with `effectivePolicyForRequest`. Hub facts, row summaries, pay-queue rows, LINE summary and backlog use that adapter. Confirmed own duplicates block every policy; open candidates and unresolved own expenses block only the submitted `BLOCK_PAYMENT` policy. Approval figures keep their existing population.
+- Hub: one extra minimal facts read per request, sharing scope and search; its ceiling is the scope's unpaid payment-step claims. Blocked ids split counts and `id in` / `id notIn` page filters. The `ponytail:` comment records an indexed eligibility projection maintained by the same domain predicate as the upgrade if that ceiling becomes too large. Six buckets sum to `all`; a row's server-supplied blocker fact selects the same bucket. The new chip always appears because all neighbouring chips do, including zero; the danger card appears only above zero.
+- Contracts rebuilt after source changes and after every temporary old-code proof. No capability-manifest drift; no regeneration needed. Old wording was searched across API, gateway, web specs and `e2e/`; affected existing backlog/ERP/web wording specs were run too. No package, schema, migration, paid-invoice or billing-schedule changes.
+
+#### Surface audit
+
+| Surface | Before | D1 result |
+|---|---|---|
+| Hub payment card/chip/list and row bucket | Existing payment-bucket statuses, including duplicate blockers | Same population minus the predicate; blockers retained in the sixth bucket, with matching counts/search/scope |
+| Pay-queue waiting count and outstanding total | Every queue row | Nonblocked rows only; duplicate card and full table retain blocked rows |
+| Approval-queue summary | All approval rows and SLA flags | Unchanged; pinned before the fix |
+| LINE summary and `reimbursement.get_summary` | Existing unpaid-approved statuses, including blockers | Same population minus the predicate, optional blocked count in Thai/English headline; the adapter forwards the complete summary unchanged |
+| LINE claim backlog | Blocked payment-step claims still counted as payment, with confirmed-duplicate actor labels | Retained under the shared duplicate label/kind, preserving cancellation/void notes and overall totals |
+| Dashboard cards/badges and `erp-dashboard-tools` health | Inventory/expense providers; confirmed expense-record outstanding amounts, no reimbursement claim-payment counter | Unchanged: a different record population, not a claim queue |
+| `notifications.list_open_alerts`, notification bell/dashboard unread badges | Stored open notification events, not live claim counts | Unchanged: payment reminder selection, event resolution and new duplicate notice are explicitly D2 |
+| Sidebar | Static reimbursement link, no claim-count producer | Unchanged; generic `badgeCount` rendering has no assigned reimbursement count |
+| Expense list/review progress badges; income/expense ledger | A linked claim's stored progress label; expense/accounting amounts | Unchanged: single-record labels/accounting balances, not a claim waiting-payment number/list. A linked expense badge can still say “รอจ่ายคืน”; noticed for controller, outside D1 aggregates |
+
+#### Commands and red/green evidence
+
+Command prefixes below run from this worktree; paths are relative to the corresponding package. No `tsx` CLI, whole suite or server was used.
+
+```sh
+# A
+pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec
+# W
+pnpm --filter @watchdog-bms/web exec node --import tsx --test --test-reporter=spec
+# G
+pnpm --filter @watchdog-bms/ai-gateway exec node --import tsx --test --test-reporter=spec
+# H (machine-wide lock)
+/private/tmp/claude-501/-Users-thawatchai-Project-MangmeeYungYuen-mangmeeplus/6fadd91a-5682-4234-a498-2e23f77e8587/scratchpad/codex/heavy.sh
+```
+
+| Tests | Old production result | Fixed production result |
+|---|---|---|
+| A `--test-name-pattern='Round 4' src/modules/reimbursements/application/use-cases/reimbursement-request.use-case.spec.ts`: LINE summary/backlog; frozen-policy hub split/search/row buckets | Exit 1, 0 pass / 2 fail | Both pass in the full focused file runs below |
+| A request + `reimbursement-approval-backlog.use-case.spec.ts`: existing confirmed-duplicate backlog; six-bucket paging, own/empty scope, search counts, accepted bucket validation | Temporarily restored HEAD production files (including contracts), exit 1, 222 pass / 7 fail; each changed behavior expectation failed | Exact same two-file command, exit 0, 229 pass / 0 fail |
+| W reimbursements logic + plain-Thai QA + API spec: pay totals/count; duplicate card/chip/filter; full pay table and approval cards; existing mixed flagged summary, split chips, chip layout/search expectations | Temporarily restored HEAD production, exit 1, 221 pass / 7 fail. Approval-only invariant passes old and new, as intended; API changes are fixture shape only | Exit 0, 228 pass / 0 fail |
+| W `--test-name-pattern='Round 4' src/features/user-guide/user-guide.content.spec.ts`: new card/chip and payable figure explanation | Exit 1, 0 pass / 1 fail | Full guide/wording run below, exit 0 |
+| G `--test-name-pattern='Round 4' src/modules/line-ai/agents/prepared-simple-read-formatter.spec.ts`: Thai/English blocked clause, absent/zero backward compatibility, invalid count refusal | Exit 1, 0 pass / 1 fail | Full formatter run, exit 0, 125 pass / 0 fail |
+| A real-PostgreSQL hub tests (names below) | Not checked: no database; no red or green database proof claimed | Loader run exit 0, 0 pass / 0 fail / 2 skipped |
+
+The controlled old-code runs saved current contents in memory, temporarily wrote HEAD production contents by hand, then restored all fixes in `finally` and rebuilt contracts. No git mutation command was used. Initial integration corrections were rerun: missing `findPolicy` in an older backlog mock (API request 217/1 and backlog/ERP 43/11), and stale chip expectations (web 226/2). These are superseded by the green runs below.
+
+| Command (prefix above) | Actual result |
+|---|---|
+| `pnpm --filter @watchdog-bms/contracts build` | Exit 0, including rebuild after the final old-code proof |
+| A `src/modules/reimbursements/application/use-cases/reimbursement-request.use-case.spec.ts src/modules/reimbursements/application/use-cases/reimbursement-approval-backlog.use-case.spec.ts src/modules/reimbursements/application/use-cases/reimbursement-finance.use-case.spec.ts` | Exit 0, 354 pass / 0 fail |
+| A `src/modules/reimbursements/application/use-cases/reimbursement-request.use-case.spec.ts src/modules/reimbursements/application/use-cases/reimbursement-approval-backlog.use-case.spec.ts src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.spec.ts src/modules/line-ai/application/use-cases/erp-reimbursement-tools.use-case.spec.ts src/modules/reimbursements/application/use-cases/reimbursement-related-access.use-case.spec.ts` | Exit 0, 284 pass / 0 fail |
+| A `src/modules/reimbursements/application/use-cases/reimbursement-request.use-case.spec.ts src/modules/reimbursements/application/use-cases/reimbursement-approval-backlog.use-case.spec.ts` (after final baseline restore) | Exit 0, 229 pass / 0 fail |
+| W `src/features/reimbursements/reimbursements.logic.spec.ts src/features/reimbursements/ReimbursementPages.plain-thai.qa.spec.ts src/features/reimbursements/reimbursements.api.spec.ts src/features/user-guide/user-guide.content.spec.ts` | Exit 0, 265 pass / 0 fail |
+| W `src/common/api/api-error-message.spec.ts src/features/reimbursements/reimbursements.model.spec.ts src/features/reimbursements/reimbursement-stranded-claims.qa.spec.ts` | Exit 0, 114 pass / 0 fail |
+| W `src/features/user-guide/user-guide.content.spec.ts src/common/i18n/sold-features-wording.spec.ts` | Exit 0, 57 pass / 0 fail |
+| G `src/modules/line-ai/agents/prepared-simple-read-formatter.spec.ts src/modules/line-ai/agents/semantic-turn-v2-approval-backlog.spec.ts` | Exit 0, 135 pass / 0 fail |
+| A `src/modules/line-ai/line-ai-capability-manifest.spec.ts` | Exit 0, 4 pass / 0 fail, no drift |
+| A `--test-name-pattern='Round 4\|counts every hub card as the rows its filter returns over all pages' src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.draft-submit-race.spec.ts` | Exit 0, 0 pass / 0 fail / 2 skipped; no DATABASE_URL |
+| H `pnpm --filter @watchdog-bms/api typecheck` | First exit 2: PostgreSQL fixture nested line carried invalid companyId; removed it. Retry exit 0 |
+| H `pnpm --filter @watchdog-bms/web typecheck` | Exit 0 |
+| H `pnpm --filter @watchdog-bms/ai-gateway typecheck` | Exit 0 |
+| `git diff --check` | Exit 0 on final handoff diff |
+
+#### Controller acceptance still required
+
+Run with the controller's real test database and `REIMBURSEMENT_PG_GATE_REQUIRED=true`, using A and the same name pattern/file above:
+
+- `Round 4: searched hub payment and duplicate_blocked pages match counts across frozen policies`.
+- `counts every hub card as the rows its filter returns over all pages: company, own, related and branch-limited, with and without a search`.
+
+Browser: verify hub card/chip/filter/search and pay-queue counts at desktop/phone widths, with mixed payable/blocked claims. Not checked here: no browser or servers allowed. Controller owns full verification and commit. D2 reminder selection/new duplicate notice remains unimplemented as requested; no unresolved D1 product decision.

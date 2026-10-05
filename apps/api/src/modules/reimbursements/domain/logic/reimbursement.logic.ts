@@ -28,7 +28,8 @@ import { hasPayoutSnapshot } from './payout-destination.logic';
 // service, repository) and expenses never depends back — this is a pure Decimal constant,
 // so the "no Nest / Prisma" rule above still holds.
 import { SETTLE_EPSILON } from '../../../expenses/domain/logic/expense-totals.logic';
-import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
+import { effectivePolicyForRequest, parseReimbursementPolicySnapshot, type EffectivePolicy } from '../reimbursement.constants';
+import type { ReimbursementRequestRecord } from '../models/reimbursement.model';
 
 // ---- Money helpers ----
 
@@ -772,6 +773,15 @@ export const PAYMENT_RECORDING_STATUSES: readonly ReimbursementRequestStatus[] =
  */
 export function duplicateBlocksPayment(duplicatePolicy: string, openCandidates: number, unresolvedExpenses = 0, confirmedExpenses = 0): boolean {
   return confirmedExpenses > 0 || (duplicatePolicy === 'BLOCK_PAYMENT' && (openCandidates > 0 || unresolvedExpenses > 0));
+}
+
+/** The same payment predicate on the claim's frozen policy and loaded duplicate facts. */
+export function claimDuplicateBlocksPayment(request: Pick<ReimbursementRequestRecord, 'approvalPolicySnapshotJson' | 'duplicateCandidates'
+  | 'possibleDuplicateExpenseCount' | 'duplicateConfirmationPendingCount' | 'confirmedDuplicateExpenseCount'>, currentPolicy: EffectivePolicy,
+  openCandidates = (request.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length): boolean {
+  return duplicateBlocksPayment(effectivePolicyForRequest(request, currentPolicy).duplicatePolicy,
+    openCandidates,
+    (request.possibleDuplicateExpenseCount ?? 0) + (request.duplicateConfirmationPendingCount ?? 0), request.confirmedDuplicateExpenseCount);
 }
 
 export function claimDuplicateReasons(request: { duplicateCandidates?: { status: string; candidateType: string }[]; possibleDuplicateExpenseCount?: number; duplicateConfirmationPendingCount?: number; confirmedDuplicateExpenseCount?: number }): import('@watchdog-bms/contracts').ReimbursementDuplicateReason[] {

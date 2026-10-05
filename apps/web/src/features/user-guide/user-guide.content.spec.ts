@@ -124,6 +124,14 @@ describe('the reimbursement guide reads as the product does', () => {
   const guide = buildReimbursementGuide('co', OWNER, ['OWNER']);
   const read = sentences(guide);
 
+  it('Round 4: explains the duplicate card and chip and payable-only waiting figures', () => {
+    const list = sentences({ ...guide, sections: guide.sections.filter((section) => section.id === 'list') }).join(' ');
+    assert.match(list, /ติดรายการซ้ำ/u);
+    assert.match(list, /จ่ายได้/u);
+    assert.match(list, /ตัวกรอง 7 ปุ่ม/u);
+    assert.match(list, /ยอดคงค้างรวม/u);
+  });
+
   // approved-product-help.ts (ai-gateway) links the LINE assistant's two claim cards to these sections.
   it('keeps the sections the assistant links to', () => {
     for (const id of ['quick-start', 'tabs']) assert.ok(guide.sections.some((section) => section.id === id), id);

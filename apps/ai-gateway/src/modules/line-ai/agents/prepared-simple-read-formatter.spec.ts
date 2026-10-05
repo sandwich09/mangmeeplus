@@ -1575,6 +1575,20 @@ const reimbursementSummaryData = (over: Record<string, unknown> = {}): Record<st
 });
 
 describe('R-L4 F11 reimbursement.get_summary::single_metric — สรุปเบิกจ่าย', () => {
+  it('Round 4: says duplicate-blocked count beside payable numbers in Thai and English, with legacy and zero unchanged', () => {
+    for (const language of [TH, EN]) {
+      const old = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData()), language);
+      const zero = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData({ duplicateBlockedCount: 0 })), language);
+      assert.deepEqual(zero, old);
+      const blocked = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY,
+        summaryOutput(reimbursementSummaryData({ unpaidApprovedCount: 0, totalUnpaidAmount: '0', duplicateBlockedCount: 2 })), language);
+      assert.equal(blocked.kind, 'answer');
+      if (blocked.kind === 'answer') assert.match(blocked.replyText.split('\n')[0]!, language === TH ? /ติดรายการซ้ำ 2 รายการ/ : /2 requests blocked by duplicates/);
+      const broken = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY,
+        summaryOutput(reimbursementSummaryData({ duplicateBlockedCount: -1 })), language);
+      assert.equal(broken.kind, 'unverified');
+    }
+  });
   // C8 (batch 5c, T-143-a): leads with the status counts, not the unpaid total — see the formatter's
   // own docstring for why. The unpaid-approved amount rides its own clause, only when count > 0.
   it('states the status counts, with the unpaid-approved amount attached, source, as-of and link (Thai)', () => {

@@ -1,4 +1,4 @@
-import { REIMBURSEMENT_DUPLICATE_POLICY_NOTE, REIMBURSEMENT_DUPLICATE_CLEAR_HELP, reimbursementPayoutOnBehalfNotice, reimbursementFinanceBlockedRequesterNotice, THAI_SYSTEM_ROLE_NAMES, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, REIMBURSEMENT_DUPLICATE_POLICY_NOTE, REIMBURSEMENT_DUPLICATE_CLEAR_HELP, reimbursementPayoutOnBehalfNotice, reimbursementFinanceBlockedRequesterNotice, THAI_SYSTEM_ROLE_NAMES, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT } from '@watchdog-bms/contracts';
 import { CLAIM_SIGN_LABEL, CLAIM_RESIGN_LABEL, SELF_APPROVAL_POLICY_NOTE, SELF_APPROVAL_SWITCH_LABEL } from '@/features/reimbursements/reimbursements.model';
 import { draftRowSubmitLabel } from '@/features/reimbursements/reimbursement-payout.logic';
 import { visibleHubTabs } from '@/features/reimbursements/reimbursements.logic';
@@ -132,16 +132,20 @@ export function buildReimbursementGuide(
             kind: 'items',
             items: [
               {
-                title: 'การ์ด 4 ใบในแท็บรายการที่เกี่ยวข้อง',
-                detail: '“ร่างรอส่ง” “รออนุมัติ/ตรวจสอบ” “รอจ่ายเงินคืน” และ “ยอดรวมที่ขอเบิก” แตะการ์ดเพื่อกรองรายการ แตะซ้ำเพื่อกลับไปดูทั้งหมด',
+                title: 'การ์ดสรุปในแท็บรายการที่เกี่ยวข้อง',
+                detail: `“ร่างรอส่ง” “รออนุมัติ/ตรวจสอบ” “รอจ่ายเงินคืน” และ “ยอดรวมที่ขอเบิก” ถ้ามีคำขอในขั้นจ่ายที่ติดรายการซ้ำ จะมีการ์ด “${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}” เพิ่ม แตะการ์ดเพื่อกรองรายการ แตะซ้ำเพื่อกลับไปดูทั้งหมด`,
               },
               {
-                title: 'ตัวกรอง 6 ปุ่มใต้การ์ด',
-                detail: '“ทั้งหมด” “ร่าง” “รออนุมัติ/ตรวจสอบ” “รอจ่าย” “จ่ายแล้ว” และ “ปฏิเสธ/ยกเลิก” คำขอ 1 ใบอยู่ในตัวกรองเดียว ตัวเลขทุกปุ่มรวมกันจึงเท่ากับ “ทั้งหมด”',
+                title: 'ตัวกรอง 7 ปุ่มใต้การ์ด',
+                detail: `“ทั้งหมด” “ร่าง” “รออนุมัติ/ตรวจสอบ” “รอจ่าย” “${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}” “จ่ายแล้ว” และ “ปฏิเสธ/ยกเลิก” คำขอ 1 ใบอยู่ในกลุ่มเดียว จำนวนของทั้ง 6 กลุ่มรวมกันเท่ากับ “ทั้งหมด” ตัวกรองแสดงเสมอ แม้กลุ่มนั้นไม่มีคำขอ`,
               },
               {
                 title: 'ผู้อนุมัติหาคำขอที่ต้องจ่ายได้ที่ “รอจ่าย”',
-                detail: 'แตะการ์ด “รอจ่ายเงินคืน” หรือตัวกรอง “รอจ่าย” จะเหลือเฉพาะคำขอที่อนุมัติแล้วและรอบันทึกจ่าย แตะคำขอเพื่อเปิดหน้าคำขอแล้วบันทึกจ่าย',
+                detail: `แตะการ์ด “รอจ่ายเงินคืน” หรือตัวกรอง “รอจ่าย” จะเหลือคำขอในขั้นจ่ายที่จ่ายได้ตามกฎรายการซ้ำ คำขอที่กฎรายการซ้ำห้ามจ่ายอยู่ใน “${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}” แตะคำขอเพื่อดูรายละเอียดและสิ่งที่ต้องทำต่อ`,
+              },
+              {
+                title: 'ตัวเลขในคิวรอจ่าย',
+                detail: `“รอจ่าย” และ “ยอดคงค้างรวม” ไม่นับคำขอที่กฎรายการซ้ำห้ามจ่าย คำขอเหล่านั้นนับใน “${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}” และยังอยู่ในรายการด้านล่าง จำนวน “ทั้งหมด” เหนือรายการจึงรวมคำขอที่ติดรายการซ้ำด้วย`,
               },
               {
                 title: 'ค้นหาจากเลขที่ ผู้เบิก เหตุผล หมวด หรือยอดเงิน',
