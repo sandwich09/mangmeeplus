@@ -3080,6 +3080,43 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
       'the reply that was sent before is the card\'s canonical text and its fallback');
   });
 
+  // Owner 2026-10-05, real LINE: a reply to a photo was still on the green card from before the design.
+  // Each of these is the reply the flow sends today, word for word, now under "เอกสารที่ส่งมา" and the
+  // fixed phrase for what became of the document.
+  it('every other reply to a bound photo is a card of the locked design, headed by what became of the document', async () => {
+    const CAPTURE = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.review', 'line.ai.query'];
+    const checkBill = businessClassification({ documentFamily: 'COMMERCIAL_DOCUMENT', documentKind: 'ORDER_OR_CHECK_BILL', transactionState: 'DUE',
+      amountSignals: ['Total 1,712.54'], settlementSignals: [], missingRequiredSignals: ['MISSING_PAYMENT_EVIDENCE'] });
+    const order = businessClassification({ documentFamily: 'COMMERCIAL_DOCUMENT', documentKind: 'ORDER_OR_CHECK_BILL', transactionState: 'ORDERED',
+      amountSignals: [], settlementSignals: [], missingRequiredSignals: ['QUANTITY_ONLY', 'MISSING_MONETARY_AMOUNT'] });
+    const notADocument = businessClassification({ documentFamily: 'NON_FINANCIAL', documentKind: 'NON_FINANCIAL_IMAGE', transactionState: 'NOT_APPLICABLE',
+      evidenceRoles: [], amountSignals: [], settlementSignals: [] } as any);
+    const open = { handled: true, status: 'OPEN', expenseId: 'expense-1', acceptedFields: [], blockers: [], replyText: '' } as const;
+    for (const [name, opts, outcome, sentence, quick] of [
+      ['several documents in one picture', { permissions: CAPTURE, receiptOcrResult: UNCLEAR_READ }, 'ขอข้อมูลเพิ่ม', /รูปนี้เป็นอะไรคะ|มากกว่า 1/u, false],
+      ['a check bill', { permissions: CAPTURE, routePlan: RECEIPT_ROUTE, substituteResult: open,
+        receiptOcrResult: { status: 'ok', classification: checkBill, fields: { grandTotalAmount: '1,712.54' } } }, 'ขอข้อมูลเพิ่ม', /จ่ายเงินแล้วหรือยังคะ/u, true],
+      ['an order with no amount', { permissions: CAPTURE, routePlan: RECEIPT_ROUTE, substituteResult: open,
+        receiptOcrResult: { status: 'ok', classification: order, fields: { quantity: '2' } } }, 'ผลการอ่านเอกสาร', /ยังไม่พบยอดเงินรวม/u, true],
+      ['a picture that is no document', { permissions: CAPTURE, routePlan: RECEIPT_ROUTE,
+        receiptOcrResult: { status: 'ok', classification: notADocument, fields: {} } }, 'ไม่ใช่เอกสารค่าใช้จ่าย', /ไม่ใช่เอกสารค่าใช้จ่าย/u, true],
+      ['a sender with no right to send a receipt', { permissions: ['line.ai.query'] }, 'ยังรับเอกสารนี้ไม่ได้', /ไม่มีสิทธิ์อัปโหลด/u, false],
+    ] as const) {
+      const { prisma } = makePrisma();
+      const h = makeHarness({ boundV2: true, prisma, ...opts } as any);
+      await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+      const reply: any = h.sentMessages.at(-1)?.at(-1);
+      const card = readLineSystemCard(reply);
+      assert.deepEqual(card.header, ['เอกสารที่ส่งมา', outcome], name);
+      assert.match(reply.canonicalText, sentence, name);
+      assert.deepEqual(card.prose, [reply.canonicalText.replace(/\n{2,}/gu, '\n')], `${name}: the words sent before are the card's paper (less its blank lines), its canonical text and its fallback`);
+      // A question's own buttons, or the menu that follows a finished reply, still ride on the card.
+      assert.equal(Boolean(reply.quickReply?.items?.length), quick, name);
+      assert.doesNotMatch(JSON.stringify(reply.contents), /ข้อมูลจากน้องมั่งมี/u, `${name}: not the card from before the design`);
+      assert.doesNotMatch(sentText(h), ID_OR_COMMAND, name);
+    }
+  });
+
   it('two unclear photos: files are named by order and time, buttons send their own words, and a tap picks the right one', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true,
