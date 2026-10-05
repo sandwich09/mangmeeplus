@@ -5,7 +5,9 @@
  */
 import { createHmac } from 'node:crypto';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
-import { buildLineSystemCardBubble, lineSystemCardAvailable, type LineSystemCard } from './line-system-card.logic';
+import type { LineSystemCard } from './line-system-card.logic';
+import { drawLineSystemCard } from './line-system-card-limits.logic';
+import { lineMessagePreview } from './line-message-preview.logic';
 
 export type LineBufferTextItem = {
   kind: 'text' | 'command';
@@ -173,9 +175,10 @@ function scanningCard(what: string, text: string): NonNullable<LineWaitStage['ca
 
 /** A waiting bubble as it is sent: the stage's card where LINE can fetch its pictures, its sentence otherwise. */
 export function lineWaitStageMessage(stage: LineWaitStage, webBaseUrl: string | undefined): LineReplyMessage {
-  if (!stage.card || !lineSystemCardAvailable(webBaseUrl)) return { type: 'text', text: stage.text.slice(0, 5000) };
+  const contents = stage.card && drawLineSystemCard({ ...stage.card, textStyle: 'waiting' }, webBaseUrl);
+  if (!stage.card || !contents) return { type: 'text', text: stage.text.slice(0, 5000) };
   const said = [stage.card.banner?.text, stage.card.text].filter(Boolean).join(' ');
-  return { type: 'flex', altText: said, canonicalText: stage.text, contents: buildLineSystemCardBubble({ ...stage.card, textStyle: 'waiting' }, webBaseUrl) };
+  return { type: 'flex', altText: lineMessagePreview(said), canonicalText: stage.text, contents };
 }
 
 /**

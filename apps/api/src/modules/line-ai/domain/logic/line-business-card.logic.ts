@@ -1,7 +1,8 @@
 import { AI_BUDGET_REFUSAL_CODES, parseLineAiAnswerCardLayout, type AiBudgetScope, type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
-import { buildLineSystemCardBubble, lineSystemCardAvailable, type LineSystemCard, type LineSystemCardIcon, type LineSystemCardRow } from './line-system-card.logic';
+import { lineSystemCardAvailable, type LineSystemCard, type LineSystemCardIcon, type LineSystemCardRow } from './line-system-card.logic';
+import { drawLineSystemCard, LINE_FLEX_CAROUSEL_MAX_BYTES } from './line-system-card-limits.logic';
 import {
   EMPLOYEE_DOOR_COMMAND,
   PACKAGE_CHANGE_COMMAND,
@@ -124,12 +125,13 @@ function bubble(
   suppliedButtons?: SafeButton[],
   rows?: DetailRow[],
 ): Record<string, unknown> {
-  const title = bounded(card.title || 'ข้อมูลจากน้องมั่งมี', 80);
+  // LINE refuses a message for one empty text or label, so a title or label of only spaces falls back too.
+  const title = bounded(card.title ?? '', 80) || 'ข้อมูลจากน้องมั่งมี';
   const text = bounded(card.text, 1_200);
   const badge = bounded(card.badge ?? '', 40);
   const sources = (card.sourceLabels ?? []).map((label) => bounded(label, 60)).filter(Boolean).slice(0, 5);
   const link = card.webLink && safeTenantLink(webBaseUrl, companyId, card.webLink.path);
-  const buttons = suppliedButtons ?? (link ? [{ label: bounded(card.webLink?.label || 'เปิดดูข้อมูล', 40), uri: link }] : []);
+  const buttons = suppliedButtons ?? (link ? [{ label: bounded(card.webLink?.label ?? '', 40) || 'เปิดดูข้อมูล', uri: link }] : []);
   return {
     type: 'bubble',
     styles: {
@@ -320,6 +322,8 @@ function systemCardHolds(rows: readonly LineSystemCardRow[], notes: readonly str
 
 const HEADER_LINE_GRAPHEMES = 14;
 const QUIET_HEADER_LINE_GRAPHEMES = 16;
+/** More than both lines can ever show, so a message cut here is always a long one that ends in an ellipsis. */
+const HEADER_READ_CHARS = 120;
 const thaiWords = new Intl.Segmenter('th', { granularity: 'word' });
 const thaiGraphemes = new Intl.Segmenter('th', { granularity: 'grapheme' });
 const graphemeCount = (value: string) => [...thaiGraphemes.segment(value.trim())].length;
@@ -360,7 +364,9 @@ function headerSplits(text: string): Array<readonly [string, string]> {
  * Nothing is rephrased, so no heading can say something the reader did not.
  */
 export function lineAnswerCardHeader(question: string | undefined): LineSystemCard['header'] | undefined {
-  const text = (question ?? '').replace(/\s+/gu, ' ').trim();
+  // A heading shows at most two short lines, so only the beginning of a long message is ever read:
+  // finding the words of a 5,000-character message would cost seconds for letters nobody sees.
+  const text = Array.from((question ?? '').replace(/\s+/gu, ' ').trim()).slice(0, HEADER_READ_CHARS).join('').trim();
   if (!text) return undefined;
   const splits = headerSplits(text);
   const even = splits.filter(([first, second]) => graphemeCount(first) <= HEADER_LINE_GRAPHEMES && graphemeCount(second) <= HEADER_LINE_GRAPHEMES)
@@ -399,16 +405,12 @@ export function buildLineSystemTextCardMessage(input: {
   const { body, links } = splitReplyLinks(input.text, input.webBaseUrl, input.companyId);
   if (!body || links.length > 1 || !within(body, ANSWER_CARD_BODY_LIMIT)) return undefined;
   const label = links[0] && bounded(links[0].label ?? input.linkLabel ?? 'เปิดดูในเว็บแอป', MAX_BUTTON_LABEL);
-  return asCompleteLineCard({
-    type: 'flex',
-    altText: preview(body, 400),
-    canonicalText: input.text,
-    contents: buildLineSystemCardBubble({
-      mascot: 'general', header: input.header, text: body, textStyle: input.textStyle ?? 'result',
-      ...(input.footnotes?.length ? { footnotes: input.footnotes } : {}),
-      ...(links[0] && label ? { button: { action: { type: 'uri', label, uri: links[0].uri }, icon: input.icon ?? 'receipt' } } : {}),
-    }, input.webBaseUrl),
-  });
+  const contents = drawLineSystemCard({
+    mascot: 'general', header: input.header, text: body, textStyle: input.textStyle ?? 'result',
+    ...(input.footnotes?.length ? { footnotes: input.footnotes } : {}),
+    ...(links[0] && label ? { button: { action: { type: 'uri', label, uri: links[0].uri }, icon: input.icon ?? 'receipt' } } : {}),
+  }, input.webBaseUrl);
+  return contents && asCompleteLineCard({ type: 'flex', altText: preview(body, 400), canonicalText: input.text, contents });
 }
 
 /**
@@ -517,16 +519,17 @@ export function buildExpenseDraftReviewCard(
   const actionUrl = safeTenantLink(webBaseUrl, companyId, `/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(facts.expenseId)}`);
   const rows = facts.rows.filter((row) => row.value.trim());
   const notes = facts.notes.filter((note) => note.trim());
-  if (!lineSystemCardAvailable(webBaseUrl) || !actionUrl || rows.length === 0 || !systemCardHolds(rows, notes)) return undefined;
-  return asCompleteLineCard({
+  if (!actionUrl || rows.length === 0 || !systemCardHolds(rows, notes)) return undefined;
+  const contents = drawLineSystemCard({
+    mascot: 'review', header: { lines: [facts.subject, 'รอตรวจสอบ'] }, rows, notes,
+    button: { action: { type: 'uri', label: 'ตรวจสอบและยืนยันในเว็บ', uri: actionUrl }, icon: 'clipboard', primary: true },
+  }, webBaseUrl);
+  return contents && asCompleteLineCard({
     type: 'flex',
     altText: preview(canonicalText, 400) || 'ร่างค่าใช้จ่าย',
     // The button as a line too: a text delivery still carries the way in.
     canonicalText: canonicalText.includes(actionUrl) ? canonicalText : `${canonicalText}\nเปิดดูรายการ: ${actionUrl}`,
-    contents: buildLineSystemCardBubble({
-      mascot: 'review', header: { lines: [facts.subject, 'รอตรวจสอบ'] }, rows, notes,
-      button: { action: { type: 'uri', label: 'ตรวจสอบและยืนยันในเว็บ', uri: actionUrl }, icon: 'clipboard', primary: true },
-    }, webBaseUrl),
+    contents,
   });
 }
 
@@ -926,7 +929,7 @@ function designedAnswerBubble(
   if (layout && layout.context !== 'edit_command') {
     const rows = layout.rows.map((row) => ({ label: row.label, value: row.value, ...(row.emphasis ? { total: true } : {}), ...(row.tone ? { pill: row.tone } : {}) }));
     if (!systemCardHolds(rows, layout.notes ?? [])) return undefined;
-    return buildLineSystemCardBubble({
+    return drawLineSystemCard({
       mascot: 'general', header: { lines: layout.header }, rows,
       ...(layout.banner ? { banner: layout.banner } : {}),
       ...(layout.notes ? { notes: layout.notes } : {}),
@@ -936,7 +939,7 @@ function designedAnswerBubble(
   const header = layout ? { lines: layout.header } : lineAnswerCardHeader(question);
   if (!header) return undefined;
   const sources = (card.sourceLabels ?? []).map((label) => label.trim()).filter(Boolean);
-  return buildLineSystemCardBubble({
+  return drawLineSystemCard({
     mascot: 'general', header, textStyle: layout ? 'result' : 'answer',
     text: [card.title, card.badge, card.text].map((part) => part?.trim()).filter(Boolean).join('\n'),
     ...(sources.length ? { footnotes: [`แหล่งข้อมูล: ${sources.join(', ')}`] } : {}),
@@ -977,12 +980,10 @@ export function buildDesignedLineAnswerMessage(
   const layout = cards.length === 1 && cards[0]!.text.trim() === response.replyText.trim() ? parseLineAiAnswerCardLayout(cards[0]!.layout) : undefined;
   const bubbles = cards.map((card) => designedAnswerBubble(card, layout, question, webBaseUrl, companyId));
   if (!bubbles.every((entry): entry is Record<string, unknown> => !!entry)) return undefined;
-  return asCompleteLineCard({
-    type: 'flex',
-    altText: preview(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี',
-    canonicalText,
-    contents: bubbles.length === 1 ? bubbles[0]! : { type: 'carousel', contents: bubbles },
-  });
+  const contents = bubbles.length === 1 ? bubbles[0]! : { type: 'carousel', contents: bubbles };
+  // LINE's own size for several cards side by side; past it the answer is sent as it was before.
+  if (bubbles.length > 1 && Buffer.byteLength(JSON.stringify(contents), 'utf8') > LINE_FLEX_CAROUSEL_MAX_BYTES) return undefined;
+  return asCompleteLineCard({ type: 'flex', altText: preview(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี', canonicalText, contents });
 }
 
 /** Renderer only: presentation is structured by the trusted gateway; raw model Flex JSON is never accepted.

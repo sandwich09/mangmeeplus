@@ -5,6 +5,8 @@ import {
   buildDesignedLineAnswerMessage,
   buildExpenseDraftCardMessage,
   buildExpenseDraftReviewCard,
+  expenseDraftCardFactsFrom,
+  expenseDraftCardSubject,
   buildLineSystemTextCardMessage,
   lineAnswerCardHeader,
   type LineExpenseDraftCardFacts,
@@ -25,7 +27,12 @@ import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-m
 import { receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 import * as cardBuilders from './line-business-card.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
-import { readLineSystemCard } from './line-system-card.fixture';
+import { isLineSystemCard, readLineSystemBubble, readLineSystemCard } from './line-system-card.fixture';
+import { lineMessagePreview } from './line-message-preview.logic';
+import { buildLineSystemCardBubble, lineSystemCardTexts, type LineSystemCard } from './line-system-card.logic';
+import { drawLineSystemCard, lineFlexBodyProblems, lineSystemCardSendable } from './line-system-card-limits.logic';
+import { buildDraftUpdateOutcomeCard, buildDraftUpdatePreviewCard } from './line-draft-update-card.logic';
+import { lineMediaGroupAckStage, lineWaitStageMessage, lineWaitStages } from './line-message-buffer.logic';
 
 const readSystemCard = readLineSystemCard;
 
@@ -349,6 +356,403 @@ describe('FIX-5 — a link label becomes its button, never a dangling colon line
   });
 });
 
+// ── Design lock 2026-10-04: the ONE native Flex renderer. These hold the structure the locked design
+//    needs from LINE — not pixels (the preview gallery compares those), but what makes the picture:
+//    two header lines, the paper over the green, the mascot above both, the colon in one column. ──
+describe('locked System OA card renderer', () => {
+  const WEB = 'https://app.example.com';
+  const FULL: LineSystemCard = {
+    mascot: 'general', header: { lines: ['การชำระเงิน', 'ชำระแล้ว'] },
+    banner: { tone: 'ok', text: 'ชำระแล้ว · ยอดคงค้าง 0.00 บาท' },
+    rows: [
+      { label: 'เลขรายการ', value: 'EXP-1' }, { label: 'ยอดสุทธิที่ต้องจ่าย', value: '1,284.00 บาท', total: true },
+      { label: 'จ่ายแล้ว', value: '1,284.00 บาท' }, { label: 'สถานะชำระเงิน', value: 'ชำระแล้ว', pill: 'ok' },
+    ],
+    notes: ['แสดงเฉพาะรายการของคุณ'], footnotes: ['แหล่งข้อมูล: ค่าใช้จ่าย'],
+    button: { action: { type: 'uri', label: 'เปิดดูรายการในเว็บ', uri: `${WEB}/companies/c1/expenses/e1` }, icon: 'receipt' },
+  };
+  const bubble = (card: LineSystemCard) => buildLineSystemCardBubble(card, WEB) as any;
+
+  it('is one body block: the green top, the white paper, and the mascot last so that it is drawn above both', () => {
+    const built = bubble(FULL);
+    assert.deepEqual([built.type, built.size, Object.keys(built).sort()], ['bubble', 'mega', ['body', 'size', 'type']]);
+    assert.equal(built.body.paddingAll, '0px');
+    const [top, paper, mascot] = built.body.contents;
+    assert.equal(built.body.contents.length, 3);
+    assert.deepEqual(top.background, { type: 'linearGradient', angle: '115deg', startColor: '#174e37', endColor: '#167c52' });
+    assert.equal(top.height, '80px', 'the compact header of the locked picture');
+    assert.equal(paper.backgroundColor, '#ffffff');
+    // The mascot: 112 px wide, absolutely placed, its box ending 4 px below the green — 16 px below the
+    // paper's upper edge — and never the first child (LINE forbids that) nor inside a box that would clip it.
+    assert.deepEqual([mascot.position, mascot.width, mascot.height, mascot.offsetEnd, mascot.offsetTop], ['absolute', '112px', '82px', '8px', '2px']);
+    assert.equal(mascot.contents[0].url, `${WEB}/assets/line/system-card-mascot-general-20261005.png`);
+    assert.equal(mascot.contents[0].aspectMode, 'fit');
+  });
+
+  it('lays the paper over the green with a rounded top, without a negative offset LINE would refuse', () => {
+    const [top] = bubble(FULL).body.contents;
+    const cap = top.contents[1];
+    // 12 px of overlap, an 18 px radius, clipped by the green top so only its upper edge shows.
+    assert.deepEqual([cap.position, cap.offsetTop, cap.width, cap.height, cap.cornerRadius, cap.backgroundColor], ['absolute', '68px', '100%', '36px', '18px', '#ffffff']);
+    assert.deepEqual(lineFlexBodyProblems(bubble(FULL)), [], 'every size is a positive px or %');
+  });
+
+  it('has exactly two header lines in each of its three styles, and never a brand line', () => {
+    const lines = (card: LineSystemCard) => bubble(card).body.contents[0].contents[0].contents;
+    const context = lines(FULL);
+    assert.deepEqual(context.map((line: any) => [line.text, line.size, line.color, line.weight]), [['การชำระเงิน', '11px', '#d2e8db', undefined], ['ชำระแล้ว', '15px', '#ffffff', 'bold']]);
+    const question = lines({ ...FULL, header: { lines: ['ทำอะไร', 'ได้บ้าง'], question: true } });
+    assert.deepEqual(question.map((line: any) => [line.text, line.size, line.weight]), [['ทำอะไร', '15px', 'bold'], ['ได้บ้าง', '15px', 'bold']]);
+    assert.equal(bubble({ ...FULL, header: { lines: ['ทำอะไร', 'ได้บ้าง'], question: true } }).body.contents[0].height, '81px');
+    const quiet = lines({ ...FULL, header: { lines: ['ค่าบริการในบิล', 'ทำไมคิดแยก'], question: true, quiet: true } });
+    assert.deepEqual(quiet.map((line: any) => [line.text, line.size, line.weight]), [['ค่าบริการในบิล', '14px', undefined], ['ทำไมคิดแยก', '14px', undefined]]);
+    for (const card of [FULL, { ...FULL, header: { lines: ['ก', 'ข'] as const, question: true } }]) {
+      assert.equal(lines(card).length, 2);
+      assert.doesNotMatch(lineSystemCardTexts(bubble(card)).join('\n'), /MANGMEE PLUS|คำสั่งมั่งมี|คำตอบจากน้องมั่งมี|ถามตอบทั่วไป|น้องมั่งมีตอบให้นะคะ|คำถามของคุณ/u);
+    }
+  });
+
+  it('puts every colon of a card in one column, whatever the label or the value', () => {
+    const built = bubble(FULL);
+    const rowBoxes = built.body.contents[1].contents.find((section: any) => section.paddingTop === '4px').contents.filter((entry: any) => entry.contents?.[0]?.layout === 'horizontal');
+    assert.equal(rowBoxes.length, 4);
+    for (const rowBox of rowBoxes) {
+      const [label, colon, value] = rowBox.contents[0].contents;
+      assert.deepEqual([label.width, colon.width, colon.contents[0].text, colon.contents[0].align], ['37%', '7.9%', ':', 'center']);
+      assert.equal(rowBox.contents[0].spacing, undefined, 'the gaps are part of the colon column, so they scale with the bubble');
+      assert.deepEqual([rowBox.paddingStart, rowBox.paddingEnd], ['5.4%', '5.4%']);
+      assert.ok(value.flex === 1, 'the value takes what is left and wraps');
+    }
+    const read = readLineSystemBubble(built);
+    assert.deepEqual(read.rows.map(([, colon]) => colon), [':', ':', ':', ':']);
+  });
+
+  it('draws the total on the cream band, a state as its pill, and the banner in its tone', () => {
+    const read = readLineSystemBubble(bubble(FULL));
+    assert.deepEqual(read.totals, ['ยอดสุทธิที่ต้องจ่าย']);
+    assert.deepEqual(read.pills, { 'สถานะชำระเงิน': ['#edf3e8', '#356341'] });
+    assert.equal(read.banner, 'ชำระแล้ว · ยอดคงค้าง 0.00 บาท');
+    const tones = (tone: 'ok' | 'pending' | 'closed') => readLineSystemBubble(bubble({ ...FULL, rows: [{ label: 'สถานะ', value: 'x', pill: tone }] })).pills['สถานะ'];
+    assert.deepEqual([tones('ok'), tones('pending'), tones('closed')], [['#edf3e8', '#356341'], ['#fbf1d8', '#755418'], ['#f5e4de', '#884838']]);
+    const bannerOf = (tone: 'ok' | 'pending' | 'scanning') => bubble({ ...FULL, banner: { tone, text: 'x' } }).body.contents[1].contents[0].contents[0];
+    assert.deepEqual([bannerOf('ok'), bannerOf('pending'), bannerOf('scanning')].map((box: any) => [box.backgroundColor, box.contents[1].color]),
+      [['#dceadd', '#255b38'], ['#f5e8c5', '#755418'], ['#deeee8', '#286857']]);
+    assert.match(bannerOf('scanning').contents[0].url, /system-card-icon-scan-\d{8}\.png$/u);
+  });
+
+  it('makes a button a box with an action: its icon, its label, its chevron — dark for the main one', () => {
+    const footerOf = (card: LineSystemCard) => bubble(card).body.contents[1].contents.at(-1).contents;
+    const [secondary] = footerOf(FULL);
+    assert.deepEqual(secondary.action, { type: 'uri', label: 'เปิดดูรายการในเว็บ', uri: `${WEB}/companies/c1/expenses/e1` });
+    assert.deepEqual([secondary.backgroundColor, secondary.cornerRadius, secondary.contents.map((part: any) => part.type)], ['#e0e8d8', '10px', ['image', 'text', 'image']]);
+    assert.match(secondary.contents[0].url, /system-card-icon-receipt-\d{8}\.png$/u);
+    const [primary] = footerOf({ ...FULL, button: { ...FULL.button!, icon: 'clipboard', primary: true } });
+    assert.deepEqual([primary.backgroundColor, primary.contents[1].color], ['#174e37', '#ffffff']);
+    assert.match(primary.contents[2].url, /system-card-icon-chevron-light-\d{8}\.png$/u);
+    const [pair] = footerOf({ ...FULL, button: undefined, choice: [
+      { type: 'postback', label: 'ยืนยัน', data: 'action=draft-update-confirm&previewId=p1', displayText: 'ยืนยันการแก้ไข' },
+      { type: 'postback', label: 'ยกเลิก', data: 'action=draft-update-cancel&previewId=p1', displayText: 'ยกเลิกการแก้ไข' }] });
+    assert.deepEqual(pair.contents.map((button: any) => [button.backgroundColor, button.action.data]),
+      [['#174e37', 'action=draft-update-confirm&previewId=p1'], ['#e0e8d8', 'action=draft-update-cancel&previewId=p1']]);
+  });
+
+  it('uses only pictures served over https from the web app, each with its version in its name', () => {
+    const urls = JSON.stringify(bubble({ ...FULL, mascot: 'scanning', banner: { tone: 'scanning', text: 'x' } })).match(/https:[^"]+\.png/gu) ?? [];
+    assert.ok(urls.length >= 4);
+    for (const url of urls) assert.match(url, /^https:\/\/app\.example\.com\/assets\/line\/system-card-(?:mascot|icon)-[a-z-]+-\d{8}\.png$/u);
+    for (const mascot of ['general', 'review', 'scanning'] as const) {
+      assert.match(readLineSystemBubble(bubble({ ...FULL, mascot })).mascot, new RegExp(`system-card-mascot-${mascot}-\\d{8}\\.png$`, 'u'));
+    }
+  });
+
+  it('keeps the lines of a list together and paragraphs apart, and closes a card that has no button', () => {
+    const prose = bubble({ mascot: 'general', header: { lines: ['ทำอะไร', 'ได้บ้าง'], question: true }, text: 'ช่วยได้ค่ะ เช่น\n• ค่าใช้จ่าย\n• งานค้าง\n\nลองถามได้เลย' });
+    const lines = prose.body.contents[1].contents[0].contents;
+    assert.deepEqual(lines.map((line: any) => line.text), ['ช่วยได้ค่ะ เช่น', '• ค่าใช้จ่าย', '• งานค้าง', 'ลองถามได้เลย']);
+    assert.ok(parseFloat(lines[2].margin) < parseFloat(lines[1].margin), 'two bullets in a row keep only the line spacing');
+    assert.equal(lines[3].margin, lines[1].margin);
+    const rowsOnly = bubble({ mascot: 'general', header: FULL.header, rows: FULL.rows });
+    assert.deepEqual(rowsOnly.body.contents[1].contents.at(-1), { type: 'box', layout: 'vertical', height: '18px', contents: [] });
+  });
+});
+
+// ── Design lock contexts 1, 2, 3, 5 and 7: a gateway answer. The gateway sends validated rows built
+//    from tool results (`layout`), or none; this side draws them, checks every link against the chat's
+//    own company, and keeps `text` as the canonical answer. Model text never fills a row here either. ──
+describe('gateway answers on the locked design', () => {
+  const WEB = 'https://app.example.com';
+  const answer = (replyText: string, layout: Record<string, unknown> | undefined, link?: { label: string; path: string }, source = 'รายการค่าใช้จ่าย'): LineAiTurnResponse => ({
+    requestId: 'r1', replyText, sourceRefs: [], sourceLabels: [source], webLinks: link ? [link] : [], intent: 'read_summary', agent: 'accounting',
+    refused: false, toolsInvoked: ['expense.list_recent'], durationMs: 1,
+    presentation: { kind: 'answer_cards', cards: [{ text: replyText, ...(layout ? { layout: layout as any } : {}), sourceLabels: [source], ...(link ? { webLink: link } : {}) }] },
+  });
+  const draw = (response: LineAiTurnResponse, question = 'ดูค่าใช้จ่ายเดือนนี้', company = 'c1') =>
+    buildLineBusinessAnswerMessage(response, response.replyText, WEB, company, question);
+  const SUMMARY = {
+    context: 'expense_summary', header: ['สรุปค่าใช้จ่าย', 'สิงหาคม 2569'],
+    rows: [{ label: 'ยอดรวม', value: '85.00 บาท', emphasis: 'total' }, { label: 'จำนวนรายการ', value: '7 รายการ' },
+      { label: 'ช่วงวันที่', value: '1 สิงหาคม 2569 – 31 สิงหาคม 2569' }, { label: 'ที่มา', value: 'รายการค่าใช้จ่าย' }, { label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }],
+    notes: ['ไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ 1 รายการ'], linkLabel: 'ดูค่าใช้จ่ายในเว็บ',
+  };
+  const SENTENCE = 'ค่าใช้จ่าย: 85.00 บาท (7 รายการ)\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ 1 รายการ\nช่วง: 1 สิงหาคม 2569 – 31 สิงหาคม 2569\nข้อมูล ณ 17 กันยายน 2569';
+  const EXPENSES = { label: 'รายการค่าใช้จ่าย', path: '/companies/c1/expenses' };
+
+  it('context 1 — expense summary: the layout\'s rows, its note, and the link under the layout\'s own words', () => {
+    const message = draw(answer(SENTENCE, SUMMARY, EXPENSES));
+    const card = readLineSystemCard(message);
+    assert.deepEqual(card.header, ['สรุปค่าใช้จ่าย', 'สิงหาคม 2569']);
+    assert.deepEqual(card.rows, SUMMARY.rows.map((row) => [row.label, ':', row.value]));
+    assert.deepEqual(card.totals, ['ยอดรวม']);
+    assert.deepEqual(card.notes, SUMMARY.notes);
+    assert.deepEqual(card.actions, [{ type: 'uri', label: 'ดูค่าใช้จ่ายในเว็บ', uri: `${WEB}/companies/c1/expenses` }]);
+    assert.deepEqual(card.prose, [], 'rows, not the sentence, are what a rows card shows');
+    assert.match(card.mascot, /system-card-mascot-general-/u);
+    // The sentence is still the canonical answer: what is stored, previewed, and sent if the card cannot be.
+    assert.ok(message.type === 'flex' && message.canonicalText!.startsWith(SENTENCE));
+    assert.equal(message.type === 'flex' && message.altText, lineMessagePreview(SENTENCE));
+    assert.equal(isCompleteLineBusinessAnswerPresentation(message), true);
+    assert.deepEqual(lineFlexBodyProblems((message as any).contents), []);
+  });
+
+  it('context 2 — open work: a claim opens THAT claim, by the path the tool vouched for, in the chat\'s own company', () => {
+    const claim = { context: 'open_work', header: ['ใบเบิกรออนุมัติ', 'พบ 1 รายการ'],
+      rows: [{ label: 'เลขที่ใบเบิก', value: 'RB-202608-00002' }, { label: 'ต้องทำ', value: 'ตรวจสอบและอนุมัติใบเบิก' }, { label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }],
+      notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ'], linkLabel: 'เปิดใบเบิกเพื่ออนุมัติ' };
+    const link = { label: 'อนุมัติเบิกจ่าย: RB-202608-00002', path: '/companies/c1/reimbursements/rb-1' };
+    const card = readLineSystemCard(draw(answer('มีใบเบิกรออนุมัติจากคุณอยู่ค่ะ', claim, link, 'อนุมัติเบิกจ่าย: RB-202608-00002'), 'มีงานค้างไหม'));
+    assert.deepEqual(card.header, ['ใบเบิกรออนุมัติ', 'พบ 1 รายการ']);
+    assert.deepEqual(card.rows.map(([label, , value]) => [label, value]), [['เลขที่ใบเบิก', 'RB-202608-00002'], ['ต้องทำ', 'ตรวจสอบและอนุมัติใบเบิก'], ['ข้อมูล ณ', '17 กันยายน 2569']]);
+    assert.deepEqual(card.actions, [{ type: 'uri', label: 'เปิดใบเบิกเพื่ออนุมัติ', uri: `${WEB}/companies/c1/reimbursements/rb-1` }]);
+    assert.match(JSON.stringify(card.bubble), /system-card-icon-list-\d{8}\.png/u);
+    // Design lock §9: neither of the two rows the owner cut.
+    assert.doesNotMatch(card.texts.join('\n'), /ระดับแจ้งเตือน|ขอบเขต/u);
+
+    // Another company's claim, a path outside the web app, or a link that is not a path: never a button
+    // of this chat — and a card that promises to open a claim it cannot open is not drawn at all.
+    for (const path of ['/companies/c2/reimbursements/rb-1', '//evil.example/companies/c1/reimbursements/rb-1', 'https://evil.example/x', '/companies/c1/../c2/reimbursements/rb-1', 'javascript:alert(1)']) {
+      const refused = draw(answer('มีใบเบิกรออนุมัติจากคุณอยู่ค่ะ', claim, { label: 'ใบเบิก', path }, 'ใบเบิก'), 'มีงานค้างไหม');
+      assert.equal(isLineSystemCard(refused), false, path);
+      assert.doesNotMatch(JSON.stringify(refused), /"type":"uri"/u, path);
+    }
+  });
+
+  it('context 2 — nothing found: says what was checked, and its button goes to the list', () => {
+    for (const [layout, path, label] of [
+      [{ context: 'open_work', header: ['การแจ้งเตือน', 'ไม่พบรายการ'], rows: [{ label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }], notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ'], linkLabel: 'ดูแจ้งเตือนในเว็บ' }, '/companies/c1/notifications', 'ดูแจ้งเตือนในเว็บ'],
+      [{ context: 'open_work', header: ['งานที่มอบหมาย', 'ไม่พบงานค้าง'], rows: [{ label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }], notes: ['ตรวจเฉพาะงานที่มอบหมายให้คุณและยังไม่เสร็จ'], linkLabel: 'ดูงานของฉันในเว็บ' }, '/companies/c1/workflow', 'ดูงานของฉันในเว็บ'],
+    ] as const) {
+      const card = readLineSystemCard(draw(answer('ตอนนี้ไม่มีค่ะ', layout, { label: 'x', path }, 'x'), 'มีงานค้างไหม'));
+      assert.deepEqual(card.header, layout.header);
+      assert.deepEqual(card.rows, [['ข้อมูล ณ', ':', '17 กันยายน 2569']]);
+      assert.deepEqual(card.notes, layout.notes);
+      assert.deepEqual(card.actions, [{ type: 'uri', label, uri: `${WEB}${path}` }]);
+    }
+  });
+
+  it('contexts 5 and 7 — a record and its payment: the state as a pill, the banner in its tone, their own icons', () => {
+    const record = { context: 'expense_record', header: ['รายการค่าใช้จ่าย', 'ถูกปฏิเสธ'],
+      rows: [{ label: 'เลขรายการ', value: 'EXP-2' }, { label: 'ยอดรวม', value: '2,140.00 บาท', emphasis: 'total' }, { label: 'สถานะเอกสาร', value: 'ปฏิเสธ', tone: 'closed' }, { label: 'เหตุผล', value: 'เอกสารประกอบไม่ครบ' }],
+      linkLabel: 'เปิดดูรายการในเว็บ' };
+    const recordCard = readLineSystemCard(draw(answer('ค่าใช้จ่าย: ร้าน ก', record, { label: 'EXP-2', path: '/companies/c1/expenses/e2' }, 'EXP-2'), 'รายการที่ 2'));
+    assert.deepEqual(recordCard.pills, { 'สถานะเอกสาร': ['#f5e4de', '#884838'] });
+    assert.deepEqual(recordCard.rows.at(-1), ['เหตุผล', ':', 'เอกสารประกอบไม่ครบ']);
+    assert.match(JSON.stringify(recordCard.bubble), /system-card-icon-file-\d{8}\.png/u);
+    for (const [status, tone, bannerColour] of [['ชำระแล้ว', 'ok', '#dceadd'], ['ยังไม่ชำระ', 'pending', '#f5e8c5'], ['ชำระบางส่วน', 'pending', '#f5e8c5']] as const) {
+      const payment = { context: 'payment', header: ['การชำระเงิน', status === 'ยังไม่ชำระ' ? 'รอชำระเงิน' : status], banner: { tone, text: `${status} · ยอดคงค้าง 0.00 บาท` },
+        rows: [{ label: 'ยอดสุทธิที่ต้องจ่าย', value: '1,284.00 บาท', emphasis: 'total' }, { label: 'สถานะชำระเงิน', value: status, tone }], linkLabel: 'เปิดดูรายการในเว็บ' };
+      const card = readLineSystemCard(draw(answer('การชำระเงิน: ร้าน ก', payment, { label: 'EXP-1', path: '/companies/c1/expenses/e1' }, 'EXP-1'), 'จ่ายหรือยัง'));
+      assert.equal(card.banner, `${status} · ยอดคงค้าง 0.00 บาท`);
+      assert.match(JSON.stringify(card.bubble), new RegExp(bannerColour, 'u'));
+      assert.deepEqual(card.totals, ['ยอดสุทธิที่ต้องจ่าย']);
+      assert.deepEqual(card.actions.map((action) => action.label), ['เปิดดูรายการในเว็บ']);
+      assert.match(JSON.stringify(card.bubble), /system-card-icon-receipt-\d{8}\.png/u);
+    }
+  });
+
+  it('context 3 — no layout: the answer as it was written, under the reader\'s own question', () => {
+    const capability = 'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ เช่น\n• ค่าใช้จ่ายและใบเสร็จ\n• งานค้างและการแจ้งเตือน';
+    const plain: LineAiTurnResponse = { ...answer(capability, undefined), sourceLabels: [], presentation: undefined, toolsInvoked: [] };
+    const message = buildDesignedLineAnswerMessage(plain, capability, WEB, 'c1', 'ทำอะไรได้บ้าง')!;
+    const card = readLineSystemCard(message);
+    assert.deepEqual(card.header, ['ทำอะไร', 'ได้บ้าง']);
+    assert.deepEqual(card.prose, [capability]);
+    assert.deepEqual([card.rows, card.notes, card.footnotes, card.actions], [[], [], [], []]);
+    assert.doesNotMatch(card.texts.join('\n'), /คำตอบจากน้องมั่งมี|ถามตอบทั่วไป|น้องมั่งมีตอบให้นะคะ|คำถามของคุณ/u);
+    assert.equal(message.type === 'flex' && message.canonicalText, capability);
+    // No question to head it (a push with no reader's words): the reply the way it was sent before.
+    assert.equal(buildDesignedLineAnswerMessage(plain, capability, WEB, 'c1', undefined), undefined);
+    assert.equal(isLineSystemCard(buildLineBusinessAnswerMessage(plain, capability, WEB, 'c1')), false);
+  });
+
+  it('context 4 — the edit-command header rides the answer\'s own sentence', () => {
+    const sentence = 'บิลนี้มีหลายบรรทัดค่ะ ขอทราบว่าต้องการแก้บรรทัดไหนนะคะ (เช่น "บรรทัด 2 เป็น 500")';
+    const card = readLineSystemCard(draw(answer(sentence, { context: 'edit_command', header: ['แก้ไขค่าใช้จ่าย', 'ขอข้อมูลเพิ่ม'], rows: [] }, undefined, 'ร่างค่าใช้จ่าย'), 'แก้เป็น 500'));
+    assert.deepEqual(card.header, ['แก้ไขค่าใช้จ่าย', 'ขอข้อมูลเพิ่ม']);
+    assert.deepEqual(card.prose, [sentence]);
+    assert.deepEqual(card.rows, []);
+  });
+
+  it('honours a layout only when it stands for the WHOLE reply, and only when it is one the validator accepts', () => {
+    // The card's text is not the whole reply (the turn said more): rows would hide the rest → not rows.
+    const more = { ...answer(SENTENCE, SUMMARY, EXPENSES), replyText: `${SENTENCE}\n\n🔒 ส่วนข้อมูลที่เหลือ คุณไม่มีสิทธิ์เข้าถึงค่ะ` };
+    assert.equal(isLineSystemCard(draw(more)) && readLineSystemCard(draw(more)).rows.length > 0, false);
+    // A layout that is not exactly the contract's shape is dropped: the answer is prose, never forged rows.
+    for (const forged of [
+      { ...SUMMARY, rows: [{ label: 'ยอดรวม', value: 'ดู https://evil.example' }] }, { ...SUMMARY, extra: true }, { ...SUMMARY, header: ['หัวเดียว'] },
+      { ...SUMMARY, context: 'marketing' }, { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [] } }, 'flex', null,
+    ]) {
+      const card = readLineSystemCard(draw(answer(SENTENCE, forged as any, EXPENSES)));
+      assert.deepEqual(card.rows, [], JSON.stringify(forged).slice(0, 60));
+      assert.deepEqual(card.prose, [SENTENCE]);
+      assert.deepEqual(card.header, ['ดูค่าใช้จ่าย', 'เดือนนี้']);
+      assert.doesNotMatch(JSON.stringify(card.bubble), /evil\.example/u);
+    }
+    // Two cards: each is prose under the question, side by side; a layout on one of them is not honoured.
+    const two: LineAiTurnResponse = { ...answer('ก\nข', undefined), sourceLabels: [], presentation: { kind: 'answer_cards', cards: [{ text: 'ก', layout: SUMMARY as any }, { text: 'ข' }] } };
+    const carousel = draw(two) as any;
+    assert.equal(carousel.contents.type, 'carousel');
+    assert.deepEqual(carousel.contents.contents.map((bubble: any) => readLineSystemBubble(bubble).rows.length), [0, 0]);
+    assert.deepEqual(lineFlexBodyProblems(carousel.contents), []);
+  });
+
+  it('never draws a refused turn\'s cards, and falls back whole when the design cannot hold the answer', () => {
+    const refused = { ...answer('🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้', SUMMARY, EXPENSES), refused: true };
+    const card = readLineSystemCard(draw(refused));
+    assert.deepEqual(card.rows, [], 'a refusal is never dressed as the data it refused');
+    assert.match(card.prose.join('\n'), /ไม่มีสิทธิ์/u);
+    // More text than the paper holds: the previous rendering, which is text-first for long replies.
+    const long = answer('ก'.repeat(1300), undefined);
+    assert.equal(isLineSystemCard(draw(long)), false);
+    // A row longer than the design holds: not this card.
+    const wide = answer(SENTENCE, { ...SUMMARY, rows: [{ label: 'ยอดรวม', value: 'ก'.repeat(201) }] }, EXPENSES);
+    assert.deepEqual(readLineSystemCard(draw(wide)).rows, [], 'the contract already refuses a 201-character value; the answer is prose');
+  });
+});
+
+// ── A refused BODY is the one way a card can lose an answer. LINE refuses the whole message for one
+//    empty text, one label over 40 characters, one postback over 300. No builder may hand it one. ──
+describe('LINE accepts every card of the locked design, whatever the record holds', () => {
+  const WEB = 'https://app.example.com';
+  const LONG = 'ก'.repeat(5000);
+  const NASTY = ['', '   ', '\n', LONG, 'https://evil.example/x', 'a\u0000b', '😀'.repeat(300), '<script>alert(1)</script>', '{"type":"bubble"}'];
+  /** A message is fine when it is the previous rendering (not this design) or a body LINE accepts. */
+  const acceptable = (message: LineReplyMessage | undefined, where: string) => {
+    if (!message || message.type !== 'flex') return;
+    assert.deepEqual(lineFlexBodyProblems(message.contents), [], where);
+    assert.ok(message.altText.trim().length > 0 && message.altText.length <= 400, `${where}: altText`);
+    if (isLineSystemCard(message)) {
+      const card = readLineSystemCard(message);
+      assert.equal(card.header.length, 2, where);
+      for (const text of card.texts) assert.ok(text.trim().length > 0, `${where}: an empty text`);
+      for (const row of card.rows) assert.ok(row.every((cell) => cell.trim().length > 0), `${where}: an empty cell`);
+    }
+  };
+
+  it('review card: a missing value has no row, an over-long one is not this card, and nothing empty is ever drawn', () => {
+    for (const value of NASTY) {
+      const facts = expenseDraftCardFactsFrom({ expenseId: 'e1', subject: expenseDraftCardSubject('RECEIPT'), vendor: value, item: value, date: value,
+        documentNumber: value, documentType: value, category: value, total: value, vat: value, withholdingTax: value, otherCharges: value,
+        status: 'รอตรวจสอบ', notesBefore: [value], notesAfter: [value, null, undefined] });
+      acceptable(buildExpenseDraftCardMessage('🧾 บันทึกแล้ว', facts, WEB, 'c1'), `review ${JSON.stringify(value).slice(0, 30)}`);
+      // A blank value is simply left out; the state row alone still makes a card.
+      if (!value.trim()) assert.deepEqual(readLineSystemCard(buildExpenseDraftReviewCard('🧾 บันทึกแล้ว', facts, WEB, 'c1')!).rows, [['สถานะเอกสาร', ':', 'รอตรวจสอบ']]);
+    }
+    // A blank state or subject cannot be drawn as this card: the reply is sent as it was before.
+    for (const facts of [
+      expenseDraftCardFactsFrom({ expenseId: 'e1', subject: 'ข้อมูลใบเสร็จ', status: '  ' }),
+      expenseDraftCardFactsFrom({ expenseId: 'e1', subject: '', status: 'รอตรวจสอบ' }),
+      expenseDraftCardFactsFrom({ expenseId: 'e1', subject: 'ก'.repeat(41), status: 'รอตรวจสอบ' }),
+    ]) {
+      assert.equal(buildExpenseDraftReviewCard('🧾 บันทึกแล้ว', facts, WEB, 'c1'), undefined);
+      acceptable(buildExpenseDraftCardMessage('🧾 บันทึกแล้ว', facts, WEB, 'c1'), 'review fallback');
+    }
+  });
+
+  it('answers: prose, sources, a link label and every layout field are bounded before a card is drawn', () => {
+    for (const value of NASTY) {
+      const cards = [{ text: value.trim() ? value : 'คำตอบ', title: value, badge: value, sourceLabels: [value], webLink: { label: value, path: '/companies/c1/expenses' } }];
+      acceptable(buildLineBusinessAnswerMessage({ ...response(cards), sourceLabels: [value], webLinks: [{ label: value, path: '/companies/c1/expenses' }] }, 'fallback', WEB, 'c1', value), `answer ${JSON.stringify(value).slice(0, 30)}`);
+      acceptable(buildLineBusinessAnswerMessage(response(), value.trim() ? value : 'fallback', WEB, 'c1', value), `plain ${JSON.stringify(value).slice(0, 30)}`);
+      acceptable(buildLineSystemTextCardMessage({ text: value, header: { lines: ['แก้ไขค่าใช้จ่าย', 'แก้ไขแล้ว'] }, webBaseUrl: WEB, companyId: 'c1', linkLabel: value, footnotes: [value].filter((note) => note.trim()) }), 'text card');
+      // A layout the gateway could never send (the validator refuses these values) still cannot break a card.
+      const layout = { context: 'open_work', header: [value || 'ก', value || 'ข'], rows: [{ label: value || 'ก', value: value || 'ข' }], notes: [value || 'ก'], linkLabel: value || 'ก', banner: { tone: 'ok', text: value || 'ก' } };
+      acceptable(buildLineBusinessAnswerMessage(response([{ text: 'คำตอบ', layout: layout as any, webLink: { label: 'ดู', path: '/companies/c1/notifications' } }]), 'คำตอบ', WEB, 'c1', 'มีงานค้างไหม'), 'forged layout');
+    }
+  });
+
+  it('edit command: the proposal and its outcomes never carry an empty cell, an over-long label or an over-long postback', () => {
+    const preview = (over: Record<string, unknown> = {}) => ({
+      previewId: 'p-1', recordType: 'expense' as const, expenseId: 'exp-1', record: { vendorName: 'BHC', expenseDate: '2026-09-03', statusLabel: 'รอตรวจสอบ' },
+      tool: 'expense.draft.add_charge' as const, diff: [{ field: 'charge.SERVICE_CHARGE', label: 'ค่าบริการ', kind: 'money' as const, before: null, after: '152.00' }],
+      totalsBefore: { subtotalAmount: '1520', discountAmount: '0', chargesAmount: '0.00', taxableAmount: '1520', vatAmount: '106.40', grandTotalAmount: '1626.40' },
+      totalsAfter: { subtotalAmount: '1520', discountAmount: '0', chargesAmount: '152.00', taxableAmount: '1672', vatAmount: '117.04', grandTotalAmount: '1789.04' },
+      warnings: [] as string[], expiresAt: '2026-09-05T10:10:00.000Z', ...over,
+    });
+    for (const value of NASTY) {
+      const built = buildDraftUpdatePreviewCard(preview({
+        record: { vendorName: value, expenseDate: value, statusLabel: value },
+        diff: [{ field: 'x', label: value.trim() ? value : 'ค่าบริการ', kind: 'text' as const, before: value, after: value }],
+        warnings: [value], totalsAfter: { ...preview().totalsAfter, grandTotalAmount: value },
+      }) as any, WEB);
+      // The designed card is checked; the card it had before is what it was and is not this work's.
+      if (isLineSystemCard(built)) acceptable(built, `preview ${JSON.stringify(value).slice(0, 30)}`);
+      for (const state of ['applied', 'cancelled', 'needs_input', 'unchanged'] as const) acceptable(buildDraftUpdateOutcomeCard(state, value, WEB, 'c1'), `outcome ${state}`);
+    }
+    // The postbacks of a drawn proposal are always within LINE's 300 characters.
+    const drawn = readLineSystemCard(buildDraftUpdatePreviewCard(preview({ previewId: 'x'.repeat(200) }) as any, WEB));
+    assert.ok(drawn.actions.every((action) => (action.data ?? '').length <= 300));
+  });
+
+  it('waiting and scanning cards are fixed words: every stage LINE can be handed is a body it accepts', () => {
+    const stages = [
+      ...[['image'], ['file'], ['image', 'image'], ['file', 'file'], ['image', 'file']].map((types) => lineMediaGroupAckStage(types as Array<'image' | 'file'>)),
+      ...lineWaitStages({ kind: 'text', messageText: 'ขอสรุปยอดขาย', seed: 's', loadingEnabled: false, latestAcceptedAt: 0, now: 0 }),
+      ...lineWaitStages({ kind: 'text', messageText: LONG, seed: 's', loadingEnabled: true, latestAcceptedAt: 0, now: 0 }),
+      ...lineWaitStages({ kind: 'media', messageText: '', seed: 's', loadingEnabled: true, latestAcceptedAt: 0, now: 0 }),
+    ];
+    assert.ok(stages.length >= 9);
+    for (const stage of stages) {
+      const message = lineWaitStageMessage(stage, WEB);
+      assert.equal(message.type, 'flex');
+      acceptable(message, stage.text.slice(0, 30));
+      assert.equal(message.type === 'flex' && message.canonicalText, stage.text);
+    }
+  });
+
+  it('the guard itself: what LINE would refuse is not drawable, and the walk names each reason', () => {
+    const ok: LineSystemCard = { mascot: 'general', header: { lines: ['ก', 'ข'] }, text: 'ค' };
+    assert.equal(lineSystemCardSendable(ok), true);
+    for (const [why, card] of [
+      ['an empty header line', { ...ok, header: { lines: ['ก', ' '] as const } }],
+      ['a header line over 40', { ...ok, header: { lines: ['ก'.repeat(41), 'ข'] as const } }],
+      ['an empty row value', { ...ok, rows: [{ label: 'ก', value: '' }] }],
+      ['an empty row label', { ...ok, rows: [{ label: ' ', value: 'ข' }] }],
+      ['an empty note', { ...ok, notes: [''] }],
+      ['an empty banner', { ...ok, banner: { tone: 'ok' as const, text: '' } }],
+      ['nothing under the header', { mascot: 'general' as const, header: ok.header }],
+      ['a label over 40', { ...ok, button: { action: { type: 'uri' as const, label: 'ก'.repeat(41), uri: `${WEB}/x` }, icon: 'file' as const } }],
+      ['an empty label', { ...ok, button: { action: { type: 'uri' as const, label: '', uri: `${WEB}/x` }, icon: 'file' as const } }],
+      ['a link that is not https', { ...ok, button: { action: { type: 'uri' as const, label: 'ดู', uri: 'http://app.example.com/x' }, icon: 'file' as const } }],
+      ['a link over 1000', { ...ok, button: { action: { type: 'uri' as const, label: 'ดู', uri: `${WEB}/${'x'.repeat(1000)}` }, icon: 'file' as const } }],
+      ['a postback over 300', { ...ok, choice: [{ type: 'postback' as const, label: 'ก', data: 'x'.repeat(301) }, { type: 'postback' as const, label: 'ข', data: 'y' }] as const }],
+      ['an empty postback', { ...ok, choice: [{ type: 'postback' as const, label: 'ก', data: '' }, { type: 'postback' as const, label: 'ข', data: 'y' }] as const }],
+      ['a control character', { ...ok, rows: [{ label: 'ก', value: 'a\u0000b' }] }],
+    ] as Array<[string, LineSystemCard]>) {
+      assert.equal(lineSystemCardSendable(card), false, why);
+      assert.equal(drawLineSystemCard(card, WEB), undefined, why);
+    }
+    assert.equal(drawLineSystemCard(ok, 'http://app.example.com'), undefined, 'no https base, no pictures, no card');
+    assert.equal(drawLineSystemCard({ ...ok, rows: Array.from({ length: 20 }, () => ({ label: 'ก'.repeat(40), value: 'ข'.repeat(600) })), notes: Array.from({ length: 30 }, () => 'ค'.repeat(600)) }, WEB), undefined, 'a bubble past 30 KB');
+    assert.deepEqual(lineFlexBodyProblems(drawLineSystemCard(ok, WEB)), []);
+    assert.deepEqual(lineFlexBodyProblems({ type: 'bubble', body: { type: 'box', layout: 'vertical', paddingTop: '-4px', contents: [
+      { type: 'text', text: '' }, { type: 'image', url: 'http://x/y.png' },
+      { type: 'box', layout: 'vertical', contents: [], action: { type: 'postback', label: 'ก'.repeat(41), data: '' } }] } }),
+      ['bubble0.body.paddingTop: -4px', 'bubble0.body.contents[0]: empty text', 'bubble0.body.contents[1]: image url',
+        'bubble0.body.contents[2]: action label', 'bubble0.body.contents[2]: postback data']);
+    assert.deepEqual(lineFlexBodyProblems({ type: 'carousel', contents: [] }), ['carousel of 0 bubbles']);
+  });
+});
+
 // ── Design lock §7: the header of a prose answer is the reader's own words on two lines. Thai has no
 //    spaces and a word list cuts finer than a reader does, so the break must never fall inside a name. ──
 describe('lineAnswerCardHeader — the reader\'s own question as two header lines', () => {
@@ -419,6 +823,16 @@ describe('lineAnswerCardHeader — the reader\'s own question as two header line
       for (const line of result.lines) assert.ok([...new Intl.Segmenter('th', { granularity: 'grapheme' }).segment(line)].length <= limit && line.trim().length > 0, `${question} → ${line}`);
     }
     for (const empty of [undefined, '', '   ', '\n\t']) assert.equal(lineAnswerCardHeader(empty), undefined);
+  });
+
+  it('reads only the beginning of a very long message: the heading of 5,000 characters costs no more than that of 100', () => {
+    const long = `${'ขอสรุปค่าใช้จ่ายเดือนนี้แยกตามหมวดหมู่และร้านค้า '.repeat(120)}`;
+    assert.ok(long.length > 5000);
+    const started = process.hrtime.bigint();
+    const result = lineAnswerCardHeader(long)!;
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.deepEqual([result.lines[0], result.quiet, result.lines[1].endsWith('…')], ['ขอสรุปค่าใช้จ่าย', true, true]);
+    assert.ok(elapsedMs < 50, `took ${elapsedMs.toFixed(1)} ms`);
   });
 });
 

@@ -5,17 +5,21 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { LineDraftUpdatePreview } from '@watchdog-bms/contracts';
+import { LINE_DRAFT_UPDATE_CONFIRM_HINT, type LineDraftUpdatePreview } from '@watchdog-bms/contracts';
 import { lineDraftUpdatePostbackPreviewId, linePostbackCommandText, staffMenuCommand } from './line-staff-menu.logic';
 import {
   DRAFT_UPDATE_CANCEL_COMMAND,
   DRAFT_UPDATE_CONFIRM_COMMAND,
+  buildDraftUpdateOutcomeCard,
   buildDraftUpdatePreviewCard,
   draftUpdateAppliedReply,
   draftUpdateBlockedReply,
   draftProposalAckReason,
   draftUpdateMutationBlockedReply,
 } from './line-draft-update-card.logic';
+import { isLineSystemCard, readLineSystemCard } from './line-system-card.fixture';
+import { lineFlexBodyProblems } from './line-system-card-limits.logic';
+import { isCompleteLineBusinessAnswerPresentation } from './line-business-card.logic';
 
 const preview: LineDraftUpdatePreview = {
   previewId: '550e8400-e29b-41d4-a716-446655440000',
@@ -198,5 +202,94 @@ describe('draft update confirm card', () => {
       draftUpdateAppliedReply('https://app.example', 'co-1', 'exp-1', preview),
     ];
     assert.ok(!strings.some((text) => text.includes('+')));
+  });
+});
+
+// ── Design lock 2026-10-04, context 4 "คำสั่งแก้ไข": the same proposal, the same postbacks and the same
+//    canonical text, drawn on the locked design; and what became of the edit as a card whose header
+//    names the state that really happened. ──
+describe('edit command on the locked design (context 4)', () => {
+  const WEB = 'https://app.example.com';
+  const confirm = 'action=draft-update-confirm&previewId=' + preview.previewId;
+  const cancel = 'action=draft-update-cancel&previewId=' + preview.previewId;
+
+  it('draws the proposal: the record, every change, the new total on the cream band, the hint and the two buttons', () => {
+    const message = buildDraftUpdatePreviewCard(preview, WEB);
+    const card = readLineSystemCard(message);
+    assert.deepEqual(card.header, ['แก้ไขค่าใช้จ่าย', 'รอยืนยัน']);
+    assert.match(card.mascot, /system-card-mascot-general-\d{8}\.png$/u);
+    assert.deepEqual(card.rows, [
+      ['ผู้ขาย', ':', 'BHC'], ['วันที่เอกสาร', ':', '3 ก.ย. 2569'], ['สถานะเอกสาร', ':', 'รอตรวจสอบ'],
+      ['ค่าบริการ', ':', 'ยังไม่ระบุ → 152.00'], ['ยอดรวมใหม่', ':', '1,789.04'], ['ยอดรวมเดิม', ':', '1,626.40'],
+    ]);
+    assert.deepEqual(card.totals, ['ยอดรวมใหม่']);
+    assert.deepEqual(card.footnotes, [LINE_DRAFT_UPDATE_CONFIRM_HINT]);
+    assert.deepEqual(lineFlexBodyProblems((message as any).contents), []);
+  });
+
+  it('keeps both postbacks, their display texts and the canonical text exactly as the card before it had them', () => {
+    const designed = buildDraftUpdatePreviewCard(preview, WEB) as any;
+    const before = buildDraftUpdatePreviewCard(preview) as any;
+    assert.equal(isLineSystemCard(designed), true);
+    assert.equal(isLineSystemCard(before), false, 'with no https base for the pictures the card it had before is sent');
+    assert.deepEqual(readLineSystemCard(designed).actions, before.contents.footer.contents.map((button: any) => button.action));
+    assert.deepEqual(readLineSystemCard(designed).actions, [
+      { type: 'postback', label: 'ยืนยัน', data: confirm, displayText: DRAFT_UPDATE_CONFIRM_COMMAND },
+      { type: 'postback', label: 'ยกเลิก', data: cancel, displayText: DRAFT_UPDATE_CANCEL_COMMAND },
+    ]);
+    assert.equal(designed.canonicalText, before.canonicalText);
+    assert.equal(designed.altText, before.altText);
+    // Nothing but the opaque preview id rides in a button: no expense, company or user id.
+    assert.ok(!allText(designed).some((text) => text.includes(preview.expenseId)));
+    // The same lane a typed message takes still reads them.
+    assert.equal(lineDraftUpdatePostbackPreviewId(confirm, DRAFT_UPDATE_CONFIRM_COMMAND), preview.previewId);
+    assert.equal(lineDraftUpdatePostbackPreviewId(cancel, DRAFT_UPDATE_CANCEL_COMMAND), preview.previewId);
+    // A card with buttons is a control: a delivery plan never sends it in place of the canonical text.
+    assert.equal(isCompleteLineBusinessAnswerPresentation(designed), false);
+  });
+
+  it('says "ไม่เปลี่ยน" on one total row when the edit leaves the total where it was, and shows every warning as a note', () => {
+    const same = buildDraftUpdatePreviewCard({ ...preview, totalsAfter: preview.totalsBefore, warnings: ['VAT ของค่าบริการยังไม่ได้ตรวจ', 'รายการนี้รอตรวจสอบ'],
+      diff: [{ field: 'vendorName', label: 'ผู้ขาย', kind: 'text', before: 'BHC', after: 'บีเอชซี' }] }, WEB);
+    const card = readLineSystemCard(same);
+    assert.deepEqual(card.rows.slice(-2), [['ผู้ขาย', ':', 'BHC → บีเอชซี'], ['ยอดรวม', ':', '1,626.40 (ไม่เปลี่ยน)']]);
+    assert.deepEqual(card.totals, ['ยอดรวม']);
+    assert.deepEqual(card.notes, ['⚠️ VAT ของค่าบริการยังไม่ได้ตรวจ', '⚠️ รายการนี้รอตรวจสอบ']);
+  });
+
+  it('never draws an empty cell or cuts a change: what the design cannot hold is sent as the card it had before', () => {
+    // A record with no state on it: the row is left out, the card is still drawn.
+    const stateless = readLineSystemCard(buildDraftUpdatePreviewCard({ ...preview, record: { ...preview.record, statusLabel: '' } }, WEB));
+    assert.deepEqual(stateless.rows.map(([label]) => label), ['ผู้ขาย', 'วันที่เอกสาร', 'ค่าบริการ', 'ยอดรวมใหม่', 'ยอดรวมเดิม']);
+    // More changes than the design holds, a label longer than a row, or four warnings: the previous card, whole.
+    const many = { ...preview, diff: Array.from({ length: 11 }, (_, index) => ({ field: `line.${index}`, label: `บรรทัด ${index + 1}`, kind: 'money' as const, before: '1.00', after: '2.00' })) };
+    const longLabel = { ...preview, diff: [{ ...preview.diff[0]!, label: 'ก'.repeat(41) }] };
+    const warned = { ...preview, warnings: ['1', '2', '3', '4'] };
+    for (const input of [many, longLabel, warned]) assert.equal(isLineSystemCard(buildDraftUpdatePreviewCard(input, WEB)), false);
+    // An id too long for LINE's postback limit cannot be drawn as a button of this design either.
+    assert.equal(isLineSystemCard(buildDraftUpdatePreviewCard({ ...preview, previewId: 'x'.repeat(300) }, WEB)), false);
+  });
+
+  it('draws what became of the edit with the header of the state that happened, the reply as its body and the record as its button', () => {
+    const applied = '✅ แก้ให้แล้วค่ะ: ค่าบริการ 152.00 · ยอดรวม 1,789.04\nเปิดดูรายการ: https://app.example.com/companies/co-1/expenses/exp-1';
+    for (const [state, reply, title, actions] of [
+      ['applied', applied, 'แก้ไขแล้ว', [{ type: 'uri', label: 'เปิดดูรายการ', uri: 'https://app.example.com/companies/co-1/expenses/exp-1' }]],
+      ['cancelled', 'ยกเลิกแล้วค่ะ ยังไม่ได้แก้อะไรในรายการนะคะ', 'ยกเลิกแล้ว', []],
+      ['needs_input', 'บิลนี้มีหลายบรรทัดค่ะ ขอทราบว่าต้องการแก้บรรทัดไหนนะคะ (เช่น "บรรทัด 2 เป็น 500")', 'ขอข้อมูลเพิ่ม', []],
+      ['unchanged', 'คำขอแก้ไขนี้หมดอายุแล้วค่ะ ยังไม่ได้แก้ไขรายการ', 'ยังไม่ได้แก้ไข', []],
+    ] as const) {
+      const message = buildDraftUpdateOutcomeCard(state, reply, WEB, 'co-1')!;
+      const card = readLineSystemCard(message);
+      assert.deepEqual(card.header, ['แก้ไขค่าใช้จ่าย', title], state);
+      assert.deepEqual(card.prose, [reply.split('\nเปิดดูรายการ:')[0]], state);
+      assert.deepEqual(card.actions, actions, state);
+      assert.equal((message as any).canonicalText, reply, 'the reply is the canonical text and the fallback');
+      assert.equal(isCompleteLineBusinessAnswerPresentation(message), true, 'so a bound chat is sent the card itself');
+      assert.deepEqual(lineFlexBodyProblems((message as any).contents), []);
+    }
+    // A reply that carries a link to another company, or no https base: not this card.
+    assert.deepEqual(readLineSystemCard(buildDraftUpdateOutcomeCard('applied', 'แก้แล้ว\nhttps://app.example.com/companies/co-2/expenses/x', WEB, 'co-1')!).actions, []);
+    assert.equal(buildDraftUpdateOutcomeCard('applied', applied, 'http://app.example.com', 'co-1'), undefined);
+    assert.equal(buildDraftUpdateOutcomeCard('applied', applied, undefined, 'co-1'), undefined);
   });
 });
