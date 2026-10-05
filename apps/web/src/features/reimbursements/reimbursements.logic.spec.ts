@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  paymentReferenceRequired, validatePaymentForm, validateRequestForm, sumLineAmounts, summariseQueue,
+  paymentVoidedMessage, paymentReferenceRequired, validatePaymentForm, validateRequestForm, sumLineAmounts, summariseQueue,
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
@@ -13,6 +13,21 @@ import {
 } from './reimbursements.logic';
 import { currentDeskText } from './reimbursements.model';
 import { REIMBURSEMENT_DESK_LABELS, isReimbursementClaimApprover, reimbursementHubBucket } from '@watchdog-bms/contracts';
+
+it('a confirmed duplicate offers cancellation guidance without payment or clearance, including partially paid claims', () => {
+  const confirmed = { id: 'rb', requesterUserId: 'staff', branchId: 'b', status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'], lines: [] };
+  const permissions = ['reimbursement.payment.record', 'reimbursement.duplicate.resolve', 'reimbursement.cancel_own', 'reimbursement.payment.void'];
+  const step = activeJourneyStep(buildJourneySteps(confirmed, permissions, 'staff'))!;
+  assert.equal(step.actions.includes('pay'), false);
+  assert.equal(step.actions.includes('resolve-duplicate'), false);
+  assert.equal(step.actions.includes('cancel'), true);
+  assert.match(step.note!, /กดยกเลิกคำขอในหน้าใบเบิก/);
+  const paid = activeJourneyStep(buildJourneySteps({ ...confirmed, status: 'PARTIALLY_PAID', payments: [{ status: 'RECORDED' }] }, permissions, 'staff'))!;
+  assert.equal(paid.actions.includes('cancel'), false);
+  assert.equal(paid.actions.includes('void-payment'), true);
+  assert.match(paid.note!, /มีรายการจ่ายอยู่ จึงยกเลิกคำขอไม่ได้/);
+  assert.match(paid.note!, /ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้/);
+});
 
 const line = (overrides: Record<string, unknown> = {}) => ({
   incurredDate: '2026-01-01', description: 'แท็กซี่', categoryKey: 'travel', amount: '100', hasReceipt: true, ...overrides,
@@ -1373,3 +1388,22 @@ for (const [reason, words] of [['ATTACHMENT_CHECKSUM', 'ใช้ใบเสร
     assert.ok(step.note!.includes('ปลดรายการซ้ำ'));
   });
 }
+
+it('payment-void success describes only the refreshed claim and this viewer’s next actions', () => {
+  const ready = { status: 'READY_FOR_PAYMENT', branchId: 'b', requesterUserId: 'staff', financeReviewStatus: 'NOT_REQUIRED', viewerCanCancel: false };
+  assert.equal(paymentVoidedMessage(ready, [], 'payer'), 'ยกเลิกการจ่ายแล้ว');
+  assert.equal(paymentVoidedMessage(ready, ['reimbursement.payment.record'], 'payer'), 'ยกเลิกการจ่ายแล้ว คุณสามารถบันทึกจ่ายใหม่ได้');
+  assert.equal(paymentVoidedMessage({ ...ready, viewerCanCancel: true }, [], 'staff'), 'ยกเลิกการจ่ายแล้ว คุณสามารถยกเลิกคำขอต่อได้');
+  const confirmed = { ...ready, duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] };
+  const message = paymentVoidedMessage(confirmed, ['reimbursement.payment.record'], 'payer');
+  assert.match(message, /^ยกเลิกการจ่ายแล้ว ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/);
+  assert.match(message, /ผู้เบิกที่มีสิทธิ์ยกเลิกหรือผู้ตรวจการเงินที่ดูแลสาขา/);
+  assert.doesNotMatch(message, /คุณสามารถ|บันทึกจ่ายใหม่|กลับไปรอจ่าย|กดยกเลิกคำขอ/);
+});
+
+it('the confirmed-duplicate timeline waits for cancellation instead of named payers', () => {
+  const row = { status: 'READY_FOR_PAYMENT', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'], currentDesk: { kind: 'PAYMENT' }, paymentDesk: { names: ['สมศรี'] } };
+  const waiting = buildClaimTimeline(row).find(entry => entry.key === 'payment')!;
+  assert.match(waiting.label, /รอยกเลิกคำขอ เพราะใบเสร็จยืนยันว่าซ้ำ/);
+  assert.doesNotMatch(waiting.label, /สมศรี|บันทึกจ่าย/);
+});

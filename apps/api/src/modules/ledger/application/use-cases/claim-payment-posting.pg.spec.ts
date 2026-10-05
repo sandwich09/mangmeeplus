@@ -260,8 +260,6 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
       for (const c of [ready, voided, beforeActivation, alreadyFailed, alreadyJournaled]) await post(s, 'expense.record', c.expenseIds[0]!);
       await post(s, 'expense.record', waitingAccrual.expenseIds[0]!);
       await post(s, 'expense.record', confirmedDuplicate.expenseIds[0]!);
-      // The suspected duplicate is still unconfirmed; a confirmed duplicate needs no accrual at all.
-      await client.expenseRecord.update({ where: { id: confirmedDuplicate.expenseIds[1]! }, data: { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'CONFIRMED_DUPLICATE', postingStatus: 'not_required' } });
       // An evidence warning keeps this accrual for the accountant, so the worker never posts it
       // and the payout behind it has to keep waiting.
       await client.expenseRecord.update({ where: { id: waitingAccrual.expenseIds[1]! }, data: { taxEvidenceStatus: 'NEEDS_REVIEW' } });
@@ -271,6 +269,10 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
         confirmedDuplicate: await pay(s, confirmedDuplicate), voided: await pay(s, voided), beforeActivation: await pay(s, beforeActivation),
         alreadyFailed: await pay(s, alreadyFailed), alreadyJournaled: await pay(s, alreadyJournaled),
       };
+      // The suspected duplicate is still unconfirmed; a confirmed duplicate needs no accrual at all.
+      // Since 2026-10-05 a claim with a confirmed duplicate takes no new payment, so this payout stands for one
+      // recorded before its receipt was confirmed as a duplicate: nothing recorded is reversed, and the worker still posts it.
+      await client.expenseRecord.update({ where: { id: confirmedDuplicate.expenseIds[1]! }, data: { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'CONFIRMED_DUPLICATE', postingStatus: 'not_required' } });
       await claims.voidPaymentTrueReversal(s.companyId, voided.requestId, paid.voided.id, s.userId, 'บันทึกผิด');
       // Even if a late status write left a voided payout looking unposted, it is never offered again.
       await client.reimbursementPayment.update({ where: { id: paid.voided.id }, data: { postingStatus: 'pending' } });

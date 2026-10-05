@@ -7,7 +7,7 @@
 // because the claim moved on (409) also has the page read the claim again, so what is under the form is true.
 
 import { useEffect, useRef, useState } from 'react';
-import { REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE, REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, type ReimbursementPayoutCorrectionReason } from '@watchdog-bms/contracts';
+import { reimbursementDuplicateBlockNotice, REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE, REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, type ReimbursementPayoutCorrectionReason } from '@watchdog-bms/contracts';
 import { cx } from '@/common/components/mangmee';
 import { sanitizeReasonInput } from '@/common/forms/sanitize';
 import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/ExpensesUi';
@@ -248,7 +248,9 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
       {/* True of every choice: what is approved may be the same account, a first one, or cash, and the step that
           approves it keeps only those of the claim's approvers who are still on its route. */}
       <p className="text-xs leading-5 text-gray-500">
-        {detail.payoutCorrectionPhase === 'AWAITING_APPROVAL'
+        {detail.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE')
+          ? reimbursementDuplicateBlockNotice(detail.duplicateReasons, false, { status: detail.status })
+          : detail.payoutCorrectionPhase === 'AWAITING_APPROVAL'
           ? 'เมื่อบันทึกแล้ว วิธีรับเงินคืนที่ส่งไปก่อนหน้าจะถูกแทนที่ และผู้อนุมัติจะตรวจวิธีรับเงินคืนที่เลือกครั้งนี้แทน'
           : 'เมื่อบันทึกแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติวิธีรับเงินคืนนี้ก่อนจึงจ่ายได้ ถ้าใบนี้ไม่ต้องอนุมัติตามนโยบาย ใบจะกลับไปรอจ่ายทันที'}
       </p>

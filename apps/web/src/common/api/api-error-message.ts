@@ -613,6 +613,7 @@ const CODE_LABELS: Record<string, string> = {
   missing_receipt_reason_required:
     'มีรายการที่ยังไม่แนบหลักฐาน กรุณาระบุเหตุผลที่ไม่มีใบเสร็จก่อนส่งใบเบิก',
   duplicate_unresolved: REIMBURSEMENT_DUPLICATE_UNRESOLVED,
+  duplicate_confirmed: reimbursementDuplicateBlockNotice(['EXPENSE_CONFIRMED_DUPLICATE']),
   invalid_primary_attachment: 'ไฟล์แนบต้องเป็นไฟล์ที่ผู้เบิกอัปโหลดเองและยังใช้งานอยู่',
   invalid_linked_expense: 'รายการค่าใช้จ่ายที่ผูกไว้ไม่ใช่ของผู้เบิก หรือถูกลบไปแล้ว',
   invalid_status_transition: 'สถานะปัจจุบันของใบเบิกทำรายการนี้ไม่ได้ กรุณาโหลดรายการใหม่',
@@ -1531,11 +1532,20 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
     retryAfterSeconds?: unknown;
     duplicateReasons?: unknown;
     duplicatePhase?: unknown;
+    claimStatus?: unknown;
+    canCancel?: unknown;
   } | null | undefined;
   const details = error?.details && typeof error.details === 'object'
     ? error.details as typeof error
     : undefined;
   const code = apiErrorCode(e);
+  if (code === 'duplicate_confirmed') {
+    const status = details?.claimStatus ?? error?.claimStatus;
+    return reimbursementDuplicateBlockNotice(['EXPENSE_CONFIRMED_DUPLICATE'], false, {
+      status: typeof status === 'string' ? status : undefined,
+      canCancel: (details?.canCancel ?? error?.canCancel) === true,
+    });
+  }
   if (code === 'duplicate_unresolved') {
     const reasons = details?.duplicateReasons ?? error?.duplicateReasons;
     const phase = details?.duplicatePhase ?? error?.duplicatePhase;

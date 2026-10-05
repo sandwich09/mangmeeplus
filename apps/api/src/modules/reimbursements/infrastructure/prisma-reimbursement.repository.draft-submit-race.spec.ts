@@ -3453,6 +3453,43 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.deepEqual(await duplicateFacts(claim, 'expense-cleared'), { queue: [false, 'OVERRIDDEN'], detail: [false, 'OVERRIDDEN'], list: 'OVERRIDDEN', payment: 'PAID' });
   });
 
+  it('a confirmed own expense blocks detail, queue and new payment under the real lock for every policy', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    for (const duplicatePolicy of ['WARN', 'BLOCK_SUBMIT', 'BLOCK_PAYMENT'] as const) {
+      const target = await decidedClaim(1);
+      await system(0).resume.execute(manager(), target.requestId);
+      const claim = await decidedClaim(1);
+      const ready = await system(0).resume.execute(manager(), claim.requestId);
+      const [own] = await repos[0]!.listClaimProjections(companyId, claim.requestId);
+      const [other] = await repos[0]!.listClaimProjections(companyId, target.requestId);
+      // Put the source back at duplicate review, as the existing expense-only duplicate proof above does
+      // through receipt detection. Resolve with the real expense service, never with a claim status flag.
+      await db.expenseRecord.update({ where: { id: own!.id }, data: { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'POSSIBLE_DUPLICATE', postingStatus: 'not_required' } });
+      const candidate = await db.expenseDuplicateCandidate.create({ data: { companyId, expenseId: own!.id, candidateExpenseId: other!.id, status: 'OPEN', score: 100, reasonCodesJson: ['same_checksum'] } });
+      const prisma = { client: db } as any;
+      const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
+      const expenses = new PrismaExpenseRepository(prisma);
+      await new ResolveDuplicateUseCase(expenses, audit).execute({ ...finance(), permissions: ['expense.duplicate.resolve'] }, own!.id, candidate.id, 'confirm', 'ตรวจแล้วใช้ใบเสร็จซ้ำ');
+      await db.reimbursementRequest.update({ where: { id: claim.requestId }, data: { duplicateStatus: 'NO_MATCH', approvalPolicySnapshotJson: {
+        schemaVersion: 1, policyId: 'pol', policyVersion: 'v1', approvalRequiredFromAmount: '1.00', requiresApproval: true,
+        route: { mode: 'MANAGER_ROLE', roleKey: 'MANAGER', effectiveTaskRole: 'MANAGER', ownerFallbackUsedAtSubmission: false },
+        allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy, financeReviewRequired: false,
+      } } });
+      const facts = await duplicateFacts({ requestId: claim.requestId, amount: ready.amount }, `confirmed-${duplicatePolicy}`);
+      assert.deepEqual([facts.queue[0], facts.detail[0], facts.payment], [true, true, '422 duplicate_confirmed']);
+      // Every list the claim shows in carries the fact too, so no row reads as ready to pay.
+      const listed = (await repos[0]!.listRequests({ companyId, scopes: {}, statuses: ['READY_FOR_PAYMENT'] })).find((row) => row.id === claim.requestId);
+      const paged = (await repos[0]!.listRequestPage({ companyId, scopes: {}, skip: 0, take: 100 })).rows.find((row) => row.id === claim.requestId);
+      assert.deepEqual([listed?.confirmedDuplicateExpenseCount, paged?.confirmedDuplicateExpenseCount], [1, 1]);
+      assert.equal(await db.reimbursementPayment.count({ where: { companyId, reimbursementRequestId: claim.requestId } }), 0);
+      const standing = await db.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } });
+      assert.equal(standing.paymentTotalAmount.toString(), '0');
+      assert.equal((await db.expenseRecord.findUniqueOrThrow({ where: { id: own!.id } })).postingStatus, 'not_required');
+      await assert.rejects(() => new ResolveDuplicateUseCase(expenses, audit).execute({ ...finance(), permissions: ['expense.duplicate.resolve'] }, own!.id, candidate.id, 'dismiss', 'ขอยกเลิกการยืนยัน'), /confirmed duplicate candidate/);
+    }
+  });
+
   // ---- A possible duplicate after approval: one fact, the claim's own open candidates ----
 
   /** A claim that may repeat another one, approved by its manager and carried out by the system: at the pay step. */
