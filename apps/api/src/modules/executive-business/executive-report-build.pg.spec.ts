@@ -288,18 +288,18 @@ describe('executive report build on real PostgreSQL', { skip: !databaseUrl }, ()
     const result = built(await build.rebuild(minuteLater()));
     const september = await client.executiveCompanyMonth.findMany({ where: { month: '2026-09', definitionVersion: 1 }, orderBy: { companyId: 'asc' } });
     const of = (label: string | null) => september.filter((row) => row.reportClassification === label);
-    // The population of September: the shops labelled CUSTOMER that existed before 1 Oct 00:00 Bangkok.
-    assert.deepEqual(of('CUSTOMER').map((row) => row.companyId), ['edge', 'lastminute', 'shop']);
+    // The population of September: every shop not labelled TEST or INTERNAL that existed before 1 Oct 00:00 Bangkok. A shop nobody labelled is a customer.
+    assert.deepEqual(of('CUSTOMER').map((row) => row.companyId), ['edge', 'lastminute', 'shop', 'unlabelled']);
     assert.equal(await monthRow('newcomer', '2026-09'), null);
     assert.equal((await monthRow('newcomer', '2026-10'))!.reportClassification, 'CUSTOMER');
     // Excluded companies keep their money as their own figure, so the month still reconciles with the provider.
     assert.deepEqual(of('TEST').map((row) => [row.companyId, row.receiptsSatang - row.refundsSatang]), [['tester', 24_900]]);
     assert.deepEqual(of('INTERNAL').map((row) => row.companyId), [PLATFORM_TENANT_ID]);
-    assert.deepEqual(of(null).map((row) => [row.companyId, row.receiptsSatang]), [['unlabelled', 5_000]]);
-    // Not classified is counted apart, whatever month is asked for.
+    assert.deepEqual(of(null), []);
+    // The round still says how many shops wait for a label: the labelling work left (spec §16.1).
     const round = await client.executiveReportBuild.findUniqueOrThrow({ where: { id: result.buildId } });
     assert.deepEqual({ kind: round.kind, companies: round.companyCount, unclassified: round.unclassifiedCount }, { kind: 'HOURLY', companies: 7, unclassified: 1 });
-    assert.equal(await client.executiveCompanyProfile.count({ where: { reportClassification: null } }), 1);
+    assert.equal(await client.executiveCompanyProfile.count({ where: { reportClassification: null } }), 0);
     assert.equal((await profile(PLATFORM_TENANT_ID)).reportClassification, 'INTERNAL');
     // The hourly round does not reach back: the platform company's first months wait for the next full round.
     assert.equal(await monthRow(PLATFORM_TENANT_ID, '2026-01'), null);

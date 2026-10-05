@@ -174,7 +174,8 @@ export class ExecutiveReportBuildUseCase {
     const months = kind === 'FULL' ? executiveMonths(firstMonth, currentMonth) : executiveMonths(previousMonth < firstMonth ? firstMonth : previousMonth, currentMonth);
     const firstBuildAt = firstBuild._min.asOf ?? asOf;
 
-    const classificationOf = (company: CompanyRow) => reportClassificationOf(company);
+    // A company nobody labelled yet counts as a customer, so the report shows every account by default; TEST and INTERNAL are the labels that take one out.
+    const classificationOf = (company: CompanyRow) => reportClassificationOf(company) ?? 'CUSTOMER';
     const monthRows: Prisma.ExecutiveCompanyMonthCreateManyInput[] = [], monthHeaders: Prisma.ExecutiveReportMonthCreateManyInput[] = [];
     const activityOf = new Map<string, { firstAt: Date | null; lastAt: Date | null; lastLineAt: Date | null; aiRequests30: number }>();
     const paidNow = new Map<string, { paidEver: string; paidEverReason: string | null; fullyRefunded: boolean }>();
@@ -342,7 +343,7 @@ export class ExecutiveReportBuildUseCase {
     // ── The write: the whole round, or nothing ──
     const build = await tx.executiveReportBuild.create({ data: { kind, definitionVersion, dimensionVersion: REPORT_INDUSTRY_GROUP_VERSION, asOf, startedAt,
       finishedAt: new Date(), firstMonth: months[0]!, lastMonth: months.at(-1)!, companyCount: companies.length,
-      unclassifiedCount: profiles.filter((profile) => !profile.reportClassification).length, billingDataThrough: coverage.dataThrough, billingSince: coverage.since,
+      unclassifiedCount: companies.filter((company) => !reportClassificationOf(company)).length, billingDataThrough: coverage.dataThrough, billingSince: coverage.since,
       aiUsageSince: aiSince._min.createdAt, ocrUsageSince: ocrSince._min.createdAt, discoverySince: discoverySince._min.createdAt } });
     const stamped = <T extends { buildId: string }>(rows: T[]) => rows.map((row) => ({ ...row, buildId: build.id }));
     await tx.executiveCompanyProfile.deleteMany({});
