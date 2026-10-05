@@ -574,6 +574,17 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.equal(store.get('replay-6')?.errorCode, 'ORPHAN_OUTCOME_UNREADABLE');
   });
 
+  it('parks a rejected Flex push just as a permanent rejection without replaying it', async () => {
+    const h = makeHarness([
+      rowAt('flex-rejected', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode: 'LINE_DELIVERY_FAILED_OTHER' }),
+    ], { replayEnabled: true, pushResult: 'failed_flex', outcomes: [{ webhookEventId: 'flex-rejected', messagesJson: STORED_MESSAGES, attempts: 1, deliveredAt: null }] });
+    await h.useCase.execute();
+    await h.useCase.execute();
+    assert.equal(h.store.get('flex-rejected')?.status, 'delivery_failed');
+    assert.equal(h.store.get('flex-rejected')?.errorCode, 'LINE_DELIVERY_FAILED_PERMANENT');
+    assert.equal(h.pushes.length, 1);
+  });
+
   it('purges event rows past the AI retention window', async () => {
     const day = 24 * 60 * 60 * 1000;
     const { useCase, store } = makeHarness([

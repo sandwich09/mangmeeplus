@@ -121,6 +121,7 @@ export class ExpenseCaptureLineUseCase {
       lineChatKeyHash: string | null; linePushTargetId: string | null;
       vendorNameSnapshot: string | null; grandTotalAmount: string | null; currency: string | null;
       sourceDocumentType: string | null; expenseDate: Date | null; primaryAttachmentId: string | null;
+      vendorDocumentNumber: string | null; categoryName: string | null; vatAmount: string | null; vatMode: string;
     };
     jobs: Array<{ id: string; status: string; pausedReason: string | null; lastErrorCode: string | null }>;
   } | null> {
@@ -130,6 +131,7 @@ export class ExpenseCaptureLineUseCase {
         id: true, status: true, captureSource: true, createdByUserId: true,
         sourceChannelMetadataJson: true, vendorNameSnapshot: true, grandTotalAmount: true,
         currency: true, sourceDocumentType: true, expenseDate: true, primaryAttachmentId: true,
+        vendorDocumentNumber: true, expenseCategory: { select: { name: true } }, vatAmount: true, vatMode: true,
       },
     });
     if (!expense) return null;
@@ -149,6 +151,8 @@ export class ExpenseCaptureLineUseCase {
         grandTotalAmount: expense.grandTotalAmount === null ? null : String(expense.grandTotalAmount),
         currency: expense.currency, sourceDocumentType: expense.sourceDocumentType,
         expenseDate: expense.expenseDate, primaryAttachmentId: expense.primaryAttachmentId,
+        vendorDocumentNumber: expense.vendorDocumentNumber, categoryName: expense.expenseCategory?.name ?? null,
+        vatAmount: expense.vatAmount === null ? null : String(expense.vatAmount), vatMode: expense.vatMode,
       },
       jobs,
     };

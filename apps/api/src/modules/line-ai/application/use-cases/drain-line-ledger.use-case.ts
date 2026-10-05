@@ -478,7 +478,8 @@ export class DrainLineLedgerUseCase {
       return this.refuseSourceDelivery(entry, claim);
     }
     if (!await this.deliveryStore.beginSend(claim)) throw new LedgerEntryHeldError('queued delivery lease expired');
-    const delivery = await this.lineReply.sendPush(entry.chatKey, messages!, `ledger:${claim.row.id}`).catch(() => 'failed_other' as const);
+    const pushed = await this.lineReply.sendPush(entry.chatKey, messages!, `ledger:${claim.row.id}`).catch(() => 'failed_other' as const);
+    const delivery = pushed === 'failed_flex' ? 'failed_permanent' : pushed;
     if (delivery !== 'ok') {
       await this.deliveryStore.finish(claim, delivery === 'failed_permanent' ? 'REFUSED' : 'UNKNOWN', `LINE_PUSH_${delivery.toUpperCase()}`);
       throw new Error(`LINE_PUSH_${delivery.toUpperCase()}`);
