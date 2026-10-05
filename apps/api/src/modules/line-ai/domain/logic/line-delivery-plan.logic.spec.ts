@@ -2,7 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
 import { buildLineDeliveryPlan, deliveryHash, initialDeliveryBatchStates, lineDeliveryRetryKey, parseDeliveryBatchStates, parseLineDeliveryPlan, splitLineDeliveryText, type DeliveryAuthorizationV2 } from './line-delivery-plan.logic';
-import { asCompleteLineCard, buildLineBusinessAnswerMessage, inheritCompleteLineBusinessAnswerPresentation } from './line-business-card.logic';
+import { asCompleteLineCard, buildDesignedLineAnswerMessage, buildExpenseDraftReviewCard, buildLineBusinessAnswerMessage, expenseDraftCardFactsFrom, inheritCompleteLineBusinessAnswerPresentation } from './line-business-card.logic';
+import { buildDraftUpdateOutcomeCard, buildDraftUpdatePreviewCard, draftUpdateCanonicalDiff } from './line-draft-update-card.logic';
+import { isLineSystemCard, readLineSystemBubble } from './line-system-card.fixture';
+import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { buildPendingApprovalCard } from './line-staff-menu.logic';
 const createdAt = '2026-09-27T00:00:00.000Z', expiresAt = '2026-09-27T00:59:00.000Z';
 const authorization: DeliveryAuthorizationV2 = { v: 2, kind: 'PUBLIC_GENERAL', admissionOwner: { kind: 'WEBHOOK', id: 'event-1', revision: 0 }, destination: { channelId: 'oa-1', channel: 'line', channelKind: 'GROUP', lineTargetId: 'group-1', targetHash: 'target-hash', chatKeyHash: 'chat-hash' }, actorUserId: null, initiatorHash: 'actor-hash', admissionPolicyDigest: 'policy', sourceManifestDigest: 'manifest', approvedPublicSourceIds: [], issuedAt: createdAt, expiresAt };
@@ -180,4 +183,131 @@ test('multi-batch continuation stays before the exact terminal financial control
   assert.equal(p.batches[2]!.primary.messages[0]!.type, 'flex');
   assert.match(((p.batches[2]!.fallback!.messages[0]!.quickReply!.items[0]!.action as any).data), /draft-update-confirm/);
   assert.ok(parseLineDeliveryPlan(JSON.parse(JSON.stringify(p))));
+});
+
+// ── Design lock 2026-10-04: the path a BOUND 1:1 chat really takes. The webhook hands the plan one
+//    item per message (the item's text is the message's canonical text) and the message itself as the
+//    preferred presentation. For every state of the locked design the plan must freeze THE CARD as the
+//    primary wire and the canonical text as the same slot's fallback — never the text first. ──
+const WEB = 'https://app.example.com';
+/** What the webhook's v2 send does with a message list: `sendMessagesV2` in process-line-webhook.use-case.ts. */
+function boundPlan(messages: LineReplyMessage[]) {
+  return plan(messages.map(message => message.type === 'flex' ? message.canonicalText! : message.type === 'text' ? message.text : ''), messages);
+}
+function assertCardIsPrimary(message: LineReplyMessage | undefined, header: [string, string], name: string) {
+  assert.ok(message && message.type === 'flex' && message.canonicalText, `${name}: a card that carries its canonical text`);
+  assert.equal(isLineSystemCard(message), true, `${name}: a card of the locked design`);
+  const p = boundPlan([message]), batch = p.batches[0]!;
+  assert.equal(p.batches.length, 1, name);
+  const wire = batch.primary.messages[0] as any;
+  assert.equal(wire.type, 'flex', `${name}: the card is the primary, not its text`);
+  assert.equal(wire.canonicalText, undefined, `${name}: the internal text never reaches LINE`);
+  assert.deepEqual(readLineSystemBubble(wire.contents).header, header, name);
+  // The same slot's fallback is the whole canonical text: what LINE gets if it refuses the card's body.
+  assert.deepEqual(batch.fallback?.messages.map(m => m.type === 'text' ? m.text : null), [withLineExternalBrowserText(message.canonicalText, Number.POSITIVE_INFINITY)], name);
+  assert.deepEqual(batch.spans, [{ itemId: p.answer.items[0]!.id, start: 0, end: p.answer.items[0]!.text.length, messageIndex: 0 }], `${name}: the card covers the whole item`);
+  assert.ok(parseLineDeliveryPlan(JSON.parse(JSON.stringify(p))), `${name}: the plan survives storage and replay`);
+  return wire;
+}
+const gatewayAnswer = (replyText: string, layout: Record<string, unknown> | undefined, link: { label: string; path: string } | undefined, question: string, source = 'แหล่งข้อมูล') =>
+  buildLineBusinessAnswerMessage({ requestId: 'request', replyText, sourceRefs: [], sourceLabels: [source], webLinks: link ? [link] : [], intent: 'read_summary',
+    agent: 'accounting', refused: false, toolsInvoked: ['tool'], durationMs: 1,
+    presentation: { kind: 'answer_cards', cards: [{ text: replyText, ...(layout ? { layout: layout as any } : {}), sourceLabels: [source], ...(link ? { webLink: link } : {}) }] } },
+  replyText, WEB, 'company', question);
+
+test('bound path, context 1: the expense summary rows card is the plan primary, its sentence the fallback', () => {
+  const sentence = 'ค่าใช้จ่าย: 85.00 บาท (7 รายการ)\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ 1 รายการ\nช่วง: 1 สิงหาคม 2569 – 31 สิงหาคม 2569\nข้อมูล ณ 17 กันยายน 2569';
+  const wire = assertCardIsPrimary(gatewayAnswer(sentence, { context: 'expense_summary', header: ['สรุปค่าใช้จ่าย', 'สิงหาคม 2569'],
+    rows: [{ label: 'ยอดรวม', value: '85.00 บาท', emphasis: 'total' }, { label: 'จำนวนรายการ', value: '7 รายการ' }], notes: ['ไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ 1 รายการ'], linkLabel: 'ดูค่าใช้จ่ายในเว็บ' },
+  { label: 'รายการค่าใช้จ่าย', path: '/companies/company/expenses' }, 'ดูค่าใช้จ่ายเดือนนี้', 'รายการค่าใช้จ่าย'), ['สรุปค่าใช้จ่าย', 'สิงหาคม 2569'], 'summary');
+  // R-B1: the button's link is escaped out of LINE's in-app browser in the frozen bytes; pictures are not links and are untouched.
+  assert.deepEqual(readLineSystemBubble(wire.contents).actions.map(action => action.uri), [`${WEB}/companies/company/expenses?openExternalBrowser=1`]);
+  assert.doesNotMatch(JSON.stringify(wire.contents), /\.png\?openExternalBrowser/u);
+});
+
+test('bound path, context 2: the three open-work states are the plan primary; the claim button opens that claim', () => {
+  const asOf = { label: 'ข้อมูล ณ', value: '17 กันยายน 2569' };
+  const claim = assertCardIsPrimary(gatewayAnswer('มีใบเบิกรออนุมัติจากคุณอยู่ค่ะ', { context: 'open_work', header: ['ใบเบิกรออนุมัติ', 'พบ 1 รายการ'],
+    rows: [{ label: 'เลขที่ใบเบิก', value: 'RB-202608-00002' }, { label: 'ต้องทำ', value: 'ตรวจสอบและอนุมัติใบเบิก' }, asOf], notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ'], linkLabel: 'เปิดใบเบิกเพื่ออนุมัติ' },
+  { label: 'อนุมัติเบิกจ่าย: RB-202608-00002', path: '/companies/company/reimbursements/rb-1' }, 'มีงานค้างไหม', 'อนุมัติเบิกจ่าย: RB-202608-00002'), ['ใบเบิกรออนุมัติ', 'พบ 1 รายการ'], 'claim found');
+  assert.deepEqual(readLineSystemBubble(claim.contents).actions.map(action => [action.label, action.uri]),
+    [['เปิดใบเบิกเพื่ออนุมัติ', `${WEB}/companies/company/reimbursements/rb-1?openExternalBrowser=1`]]);
+  assertCardIsPrimary(gatewayAnswer('ตอนนี้ไม่มีแจ้งเตือนที่ยังเปิดอยู่ค่ะ', { context: 'open_work', header: ['การแจ้งเตือน', 'ไม่พบรายการ'], rows: [asOf],
+    notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ'], linkLabel: 'ดูแจ้งเตือนในเว็บ' }, { label: 'รายการแจ้งเตือน', path: '/companies/company/notifications' }, 'มีแจ้งเตือนไหม', 'รายการแจ้งเตือน'),
+  ['การแจ้งเตือน', 'ไม่พบรายการ'], 'no open alerts');
+  assertCardIsPrimary(gatewayAnswer('ตอนนี้ไม่มีงานที่มอบหมายให้คุณค้างอยู่ค่ะ', { context: 'open_work', header: ['งานที่มอบหมาย', 'ไม่พบงานค้าง'], rows: [asOf],
+    notes: ['ตรวจเฉพาะงานที่มอบหมายให้คุณและยังไม่เสร็จ'], linkLabel: 'ดูงานของฉันในเว็บ' }, { label: 'งานที่ได้รับมอบหมาย', path: '/companies/company/workflow' }, 'มีงานค้างไหม', 'งานที่ได้รับมอบหมาย'),
+  ['งานที่มอบหมาย', 'ไม่พบงานค้าง'], 'no assigned tasks');
+});
+
+test('bound path, context 3: capability, small talk and an explained bill are each one prose card under the reader\'s question', () => {
+  const general = (replyText: string, question: string) => buildDesignedLineAnswerMessage({ requestId: 'request', replyText, sourceRefs: [], sourceLabels: [], webLinks: [],
+    intent: 'casual_conversation', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1 }, replyText, WEB, 'company', question);
+  assertCardIsPrimary(general('น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ เช่น\n• ค่าใช้จ่ายและใบเสร็จ\n• งานค้างและการแจ้งเตือน', 'ทำอะไรได้บ้าง'), ['ทำอะไร', 'ได้บ้าง'], 'capability');
+  assertCardIsPrimary(general('เหนื่อยมานิดหน่อยสินะคะ พักหายใจแป๊บหนึ่งก็ได้นะคะ 😊', 'วันนี้เหนื่อยจัง'), ['วันนี้', 'เหนื่อยจัง'], 'small talk');
+  const explain = 'บิล «BHC» 03/09/2569 เลขที่ A0042 ยอด 1,789.04 บาทค่ะ\nมาจาก สินค้า 1,520.00 + ค่าบริการ 152.00 = ฐานภาษี 1,672.00 แล้วบวก VAT 117.04 เป็น 1,789.04\nสถานะตอนนี้: รอตรวจสอบ';
+  assertCardIsPrimary(gatewayAnswer(explain, undefined, { label: 'BHC', path: '/companies/company/expenses/e1' }, 'ทำไม service charge คิดแยกเป็นอีกรายการนึง ทำไมไม่รวมกัน ?', 'BHC'), ['ทำไม', 'service charge…'], 'explain');
+});
+
+test('bound path, context 4: the proposal is the plan\'s control after its canonical text; applied, cancelled and needs-more are primaries', () => {
+  const preview = { previewId: 'preview-1', recordType: 'expense' as const, expenseId: 'exp-1', record: { vendorName: 'BHC', expenseDate: '2026-09-03', statusLabel: 'รอตรวจสอบ' },
+    tool: 'expense.draft.add_charge' as const, diff: [{ field: 'charge.SERVICE_CHARGE', label: 'ค่าบริการ', kind: 'money' as const, before: null, after: '152.00' }],
+    totalsBefore: { subtotalAmount: '1520', discountAmount: '0', chargesAmount: '0.00', taxableAmount: '1520', vatAmount: '106.40', grandTotalAmount: '1626.40' },
+    totalsAfter: { subtotalAmount: '1520', discountAmount: '0', chargesAmount: '152.00', taxableAmount: '1672', vatAmount: '117.04', grandTotalAmount: '1789.04' },
+    warnings: [], expiresAt };
+  const card = buildDraftUpdatePreviewCard(preview, WEB);
+  assert.equal(isLineSystemCard(card), true);
+  // A card with postbacks is never the presentation of an answer item: the plan sends the canonical
+  // diff first and the card as its control, and refuses a control that is not this exact preview.
+  const planId = deliveryHash(['line-delivery-v2', 'WEBHOOK', 'event-1']);
+  const items = [{ kind: 'answer' as const, text: draftUpdateCanonicalDiff(preview), sourceProofIds: [], required: true }];
+  const build = (previewId: string) => buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'event-1', createdAt, expiresAt, readyAt: createdAt,
+    firstDispatchDeadlineAt: '2026-09-27T00:00:40.000Z', authorization: privateAuthorization, businessResult: null, answer: { status: 'COMPLETE', pendingSubrequestIds: [], items },
+    control: { kind: 'EXPENSE_EDIT_CONFIRM', previewId, previewRevision: 'revision', expiresAt, requiredItemIds: [`${planId}:item:0`] }, preferredMessages: [null], controlMessage: card });
+  const p = build('preview-1');
+  assert.deepEqual(p.batches[0]!.primary.messages.map(m => m.type), ['text', 'flex']);
+  assert.equal((p.batches[0]!.primary.messages[0] as any).text, draftUpdateCanonicalDiff(preview), 'every changed value is read before the buttons');
+  const control = readLineSystemBubble((p.batches[0]!.primary.messages[1] as any).contents);
+  assert.deepEqual(control.header, ['แก้ไขค่าใช้จ่าย', 'รอยืนยัน']);
+  assert.deepEqual(control.actions.map(action => action.data), ['action=draft-update-confirm&previewId=preview-1', 'action=draft-update-cancel&previewId=preview-1']);
+  // If LINE refuses the card, the same two postbacks ride the fallback's quick reply.
+  assert.deepEqual(p.batches[0]!.fallback!.messages[1]!.quickReply!.items.map(item => (item.action as any).data), ['action=draft-update-confirm&previewId=preview-1', 'action=draft-update-cancel&previewId=preview-1']);
+  assert.throws(() => build('another-preview'), /PLAN_INVALID_CONTROL/);
+  assert.ok(parseLineDeliveryPlan(JSON.parse(JSON.stringify(p))));
+  // What became of the edit.
+  assertCardIsPrimary(buildDraftUpdateOutcomeCard('applied', `✅ แก้ให้แล้วค่ะ: ค่าบริการ 152.00 · ยอดรวม 1,789.04\nเปิดดูรายการ: ${WEB}/companies/company/expenses/exp-1`, WEB, 'company'), ['แก้ไขค่าใช้จ่าย', 'แก้ไขแล้ว'], 'applied');
+  assertCardIsPrimary(buildDraftUpdateOutcomeCard('cancelled', 'ยกเลิกแล้วค่ะ ยังไม่ได้แก้อะไรในรายการนะคะ', WEB, 'company'), ['แก้ไขค่าใช้จ่าย', 'ยกเลิกแล้ว'], 'cancelled');
+  assertCardIsPrimary(buildDraftUpdateOutcomeCard('needs_input', 'บิลนี้มีหลายบรรทัดค่ะ ขอทราบว่าต้องการแก้บรรทัดไหนนะคะ (เช่น "บรรทัด 2 เป็น 500")', WEB, 'company'), ['แก้ไขค่าใช้จ่าย', 'ขอข้อมูลเพิ่ม'], 'needs more information');
+});
+
+test('bound path, contexts 5 and 7: the record states and the payment states are the plan primary', () => {
+  const link = { label: 'EXP-2026-0009', path: '/companies/company/expenses/e1' };
+  for (const [title, pill, tone] of [['ยืนยันแล้ว', 'ยืนยันแล้ว', 'ok'], ['ถูกปฏิเสธ', 'ปฏิเสธ', 'closed'], ['ยกเลิกแล้ว', 'ยกเลิก', 'closed']] as const) {
+    assertCardIsPrimary(gatewayAnswer(`ค่าใช้จ่าย: ร้านตัวอย่างอุปกรณ์ วันที่ 4 ตุลาคม 2569 ยอด 2,140.00 บาท\nสถานะเอกสาร: ${pill}`, { context: 'expense_record', header: ['รายการค่าใช้จ่าย', title],
+      rows: [{ label: 'เลขรายการ', value: 'EXP-2026-0009' }, { label: 'ยอดรวม', value: '2,140.00 บาท', emphasis: 'total' }, { label: 'สถานะเอกสาร', value: pill, tone }], linkLabel: 'เปิดดูรายการในเว็บ' },
+    link, 'รายการที่ 2 สถานะอะไร', 'EXP-2026-0009'), ['รายการค่าใช้จ่าย', title], `record ${title}`);
+  }
+  for (const [title, status, tone] of [['ชำระแล้ว', 'ชำระแล้ว', 'ok'], ['รอชำระเงิน', 'ยังไม่ชำระ', 'pending'], ['ชำระบางส่วน', 'ชำระบางส่วน', 'pending']] as const) {
+    const wire = assertCardIsPrimary(gatewayAnswer(`การชำระเงิน: บริษัท ตัวอย่างอาหาร จำกัด ยอดสุทธิที่ต้องจ่าย 1,284.00 บาท\nสถานะชำระเงิน: ${status}`, { context: 'payment', header: ['การชำระเงิน', title],
+      banner: { tone, text: `${status} · ยอดคงค้าง 0.00 บาท` }, rows: [{ label: 'ยอดสุทธิที่ต้องจ่าย', value: '1,284.00 บาท', emphasis: 'total' }, { label: 'สถานะชำระเงิน', value: status, tone }], linkLabel: 'เปิดดูรายการในเว็บ' },
+    link, 'รายการนี้จ่ายหรือยัง', 'EXP-2026-0009'), ['การชำระเงิน', title], `payment ${status}`);
+    assert.equal(readLineSystemBubble(wire.contents).banner, `${status} · ยอดคงค้าง 0.00 บาท`);
+  }
+});
+
+test('bound path, context 6: the receipt review card is the plan primary and its reply the fallback, with the completion menu on both', () => {
+  const reply = `🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)\n\n• ยอดรวม – 1,284.00\n\n✅ ตรวจสอบและยืนยันในเว็บแอป:\n${WEB}/companies/company/expenses/exp-1`;
+  const facts = expenseDraftCardFactsFrom({ expenseId: 'exp-1', subject: 'ข้อมูลใบเสร็จ', vendor: 'บริษัท ตัวอย่างอาหาร จำกัด', date: '2 กันยายน 2569',
+    documentType: 'ใบเสร็จรับเงิน', category: 'ค่าอาหารและเครื่องดื่ม', total: '1,284.00 บาท', vat: '84.00 บาท', status: 'รอตรวจสอบ' });
+  const card = buildExpenseDraftReviewCard(reply, facts, WEB, 'company')!;
+  assertCardIsPrimary(card, ['ข้อมูลใบเสร็จ', 'รอตรวจสอบ'], 'receipt review');
+  // The webhook adds the completion menu by cloning the card; the proof must survive exactly that clone.
+  const menu = { items: [{ type: 'action' as const, action: { type: 'message' as const, label: '📷 ถ่ายใบเสร็จ', text: 'ถ่ายใบเสร็จ' } }] };
+  const withMenu = inheritCompleteLineBusinessAnswerPresentation(card, { ...card, quickReply: menu });
+  const batch = boundPlan([withMenu]).batches[0]!;
+  assert.equal(batch.primary.messages[0]!.type, 'flex');
+  assert.deepEqual([batch.primary.messages[0]!.quickReply, batch.fallback!.messages[0]!.quickReply], [menu, menu]);
+  // A copy that changed the card after it was built has no proof: the plan sends its text, never a card nobody vouched for.
+  const edited = inheritCompleteLineBusinessAnswerPresentation(card, { ...card, altText: 'อื่น' });
+  assert.equal(boundPlan([edited]).batches[0]!.primary.messages[0]!.type, 'text');
 });
