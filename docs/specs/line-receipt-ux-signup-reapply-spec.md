@@ -17,6 +17,8 @@ Baseline: previous live/UAT source `604ac785479ced5b9858d0b46d89f8d11cf2b9f6`; f
 
 ### Receipt regression
 
+Removed 2026-10-05: the card reply is always on; there is no switch.
+
 - Actual UAT API readback: `LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED=true`; `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED=true`; `LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED` absent. The latter defaults false in `packages/config/src/index.ts:305` and has no deploy/workflow wiring.
 - `process-line-webhook.use-case.ts:5586` calls `startFromReceipt` and replaces the old `formatPaypersReply` result. `deliverCompletedReplies` at line 2506 emits plain text while the presentation flag is false. The shared Flex theme itself did not change between the two sources.
 - `formatLineExpenseDraftReply` directly exposes `expenseId`, `accountHintKey`, item references and question IDs (`line-expense-draft-conversation.logic.ts:657,676,693`). Much of that formatter dates to commit `3cb52ce44` (2026-08-19); enabling the dormant path exposed it now. This is deterministic application output, not model hallucination.
