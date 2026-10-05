@@ -233,3 +233,9 @@ Process notes: the full 17-step verification (about seven minutes) ran before ev
 - Owner 21:45, two screenshots: the contact card's button "โทร 098-256-5628" becomes "ติดต่อทีมงาน" and opens the staff LINE OA (the number stays as text above); its "ติดต่อเจ้าหน้าที่" button is removed; the package card's "คุยกับทีมงาน" opens the staff LINE OA ("แก้เร็วๆ ง่ายๆ"). Done in round 2i (22:09) with the photo and file reply cards. The staff OA is the one `STAFF_OA_URL` already named (owner 2026-09-29); the staff OA's own contact card, another channel, was not changed.
 - Round 2j (22:30): the readiness probe remembered for five minutes (the 1.5 s the timing line found), and four claims screen defects from the second walk.
 - Still open for speed, by measurement: the AgentCore round trip of a turn that does no model work (about 1.6 s), the one-second message buffer, the router's model call for everything that is not the plain comparison.
+
+### Correction, 22:33–22:57
+
+- The comparison shortcut of round 2h never worked in a real turn: the budget authority refused to narrow a grant whose intake had spent no model call, and the owner got "ยังตรวจสอบเครดิต AI ของร้านไม่ได้" twice (22:33, 22:35). Cause, evidence and the withdrawal (round 2k, 22:57) are in `docs/runbooks/cloud-environment-operations.md` and in the two specs (`line-ai-credit-wording-and-deterministic-reads-spec-th.md`, `line-ai-capture-correction-spec.md`). The period-only reply route of round 2b had the same defect and was withdrawn with it.
+- What stayed and is confirmed by the UAT log: the readiness answer remembered for five minutes (`grantMs` about 40 instead of 1,500–2,000).
+- Open question to the owner (asked 22:58, no answer when this was written): may the budget rule be amended so that a turn routed in code can proceed? Until he says so, every text is routed by the model.
