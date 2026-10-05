@@ -34,6 +34,8 @@ function makeHarness(opts: {
   receiptOutcomes?: Array<'done' | 'defer_text' | 'locked'>;
   replyResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   pushResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
+  /** One result per push, in order; when it runs out, `pushResult` (or 'ok') answers. */
+  pushResults?: Array<'ok' | 'failed_flex' | 'failed_other' | 'failed_permanent'>;
   eventStoreUnavailable?: boolean;
   legalAcceptanceRequired?: boolean;
   assistantPaused?: boolean;
@@ -51,7 +53,7 @@ function makeHarness(opts: {
   const replyMessages: any[] = [];
   const replyTokens: string[] = [];
   // `text` is what the chat list shows (a card's altText); `message` is the whole message as sent.
-  const pushes: Array<{ to: string; text: string; message: any }> = [];
+  const pushes: Array<{ to: string; text: string; message: any; operationId?: string }> = [];
   const loadingCalls: string[] = [];
   const auditLogs: any[] = [];
   const serviceLogs: any[] = [];
@@ -127,9 +129,9 @@ function makeHarness(opts: {
       replies.push(messages[0]?.text ?? messages[0]?.altText ?? '');
       return opts.replyResult ?? 'ok';
     },
-    sendPush: async (to: string, messages: Array<{ text?: string; altText?: string }>) => {
-      pushes.push({ to, text: messages[0]?.text ?? messages[0]?.altText ?? '', message: messages[0] });
-      return opts.pushResult ?? 'ok';
+    sendPush: async (to: string, messages: Array<{ text?: string; altText?: string }>, operationId?: string) => {
+      pushes.push({ to, text: messages[0]?.text ?? messages[0]?.altText ?? '', message: messages[0], operationId });
+      return opts.pushResults?.shift() ?? opts.pushResult ?? 'ok';
     },
     startLoadingAnimation: async (chatId: string) => {
       loadingCalls.push(chatId);
@@ -643,6 +645,29 @@ describe('LineMessageBufferService – media and captions', () => {
     assert.equal(h.pushes.length, 1, 'no per-photo acknowledgement follows');
     assert.ok(loadingAtSecondRead > loadingAtFirstAnswer, 'the typing indicator comes back for the second read');
     assert.equal(h.service.holds('burst-1') || h.service.holds('burst-2'), false, 'answered photos are released');
+  });
+
+  // A pushed card has no reply token behind it: if LINE refuses its body, nothing else re-sends it.
+  it('re-sends a scanning card LINE refuses ONCE as the sentence it stands for, and the photo is still read and answered', async () => {
+    const h = makeHarness({ debounceMs: 0, pushResults: ['failed_flex', 'ok'] });
+    await h.service.enqueue(mediaEnv('refused-card'));
+    await sleep(30);
+    assert.equal(h.pushes.length, 2, 'the card, then its sentence — never a third bubble');
+    assert.equal(h.pushes[0]!.message.type, 'flex');
+    assert.deepEqual(h.pushes[1]!.message, { type: 'text', text: LINE_MEDIA_RECEIVED_TEXT }, 'the acknowledgement sentence the card declares, as plain text');
+    assert.ok(h.pushes[0]!.operationId, 'the first push names its operation');
+    assert.equal(h.pushes[1]!.operationId, `${h.pushes[0]!.operationId}:text`, 'the fallback\'s retry key is derived from the first');
+    assert.deepEqual(h.receipts.map(({ event }) => event.webhookEventId), ['refused-card'], 'waiting feedback never fails a turn');
+  });
+
+  it('does not retry a waiting bubble that failed for another reason, or whose sentence is refused too', async () => {
+    for (const pushResults of [['failed_other'], ['failed_permanent'], ['failed_flex', 'failed_other']] as const) {
+      const h = makeHarness({ debounceMs: 0, pushResults: [...pushResults] });
+      await h.service.enqueue(mediaEnv(`no-retry-${pushResults.join('-')}`));
+      await sleep(30);
+      assert.equal(h.pushes.length, pushResults.length, pushResults.join(' → '));
+      assert.equal(h.receipts.length, 1, 'the read goes on');
+    }
   });
 
   it('acknowledges a photo at once even when an earlier photo is still being read', async () => {

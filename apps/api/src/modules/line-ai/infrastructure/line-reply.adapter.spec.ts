@@ -122,9 +122,18 @@ describe('LineReplyAdapter 400 discrimination (§14.3 Flex failure fallback)', (
     assert.equal(await post('reply', [FLEX], 400, INVALID_TOKEN), 'failed_token');
   });
 
-  it('never narrows a non-Flex or non-reply failure — failed_flex refines failed_token only', async () => {
+  it('reports push Flex body rejection, including a mixed payload, as failed_flex', async () => {
+    assert.equal(await post('push', [FLEX], 400, BAD_FLEX), 'failed_flex');
+    assert.equal(await post('push', [TEXT, FLEX], 400, BAD_FLEX), 'failed_flex');
+  });
+
+  it('keeps other reply and push failures unchanged', async () => {
     assert.equal(await post('reply', [TEXT], 400, BAD_FLEX), 'failed_token', 'no Flex in the payload');
-    assert.equal(await post('push', [FLEX], 400, BAD_FLEX), 'failed_permanent', 'push body rejection needs a reviewed payload');
+    assert.equal(await post('push', [TEXT], 400, BAD_FLEX), 'failed_permanent', 'no Flex in the payload');
+    assert.equal(await post('push', [FLEX], 400, INVALID_TOKEN), 'failed_permanent', 'not a message body rejection');
+    assert.equal(await post('push', [FLEX], 403, BAD_FLEX), 'failed_permanent', 'only 400 is a body rejection');
+    assert.equal(await post('push', [FLEX], 429, BAD_FLEX), 'failed_other');
+    assert.equal(await post('push', [FLEX], 500, BAD_FLEX), 'failed_other');
     assert.equal(await post('reply', [FLEX], 500, ''), 'failed_other', 'only 400 is a body rejection');
   });
 });

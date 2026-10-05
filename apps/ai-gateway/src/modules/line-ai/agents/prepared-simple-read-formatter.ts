@@ -12,7 +12,7 @@
  * `unverified` when the output does not match the family's exact shape, so the caller falls back to an
  * honest terminal without claiming success. No provider, no tool re-invocation.
  */
-import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
+import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, formatThaiPeriodRange, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
 import type { LineAiAnswerCardLayout, LineAiAnswerCardRow, LineAiPeriodCandidate, LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
@@ -459,8 +459,7 @@ export function formatExpenseSummary(
       ...(sourceRef?.label ? [{ label: 'ที่มา', value: sourceRef.label }] : []),
       ...(localizedAsOf ? [{ label: 'ข้อมูล ณ', value: localizedAsOf }] : []),
     ],
-    // The year note is a bracket after the period in the sentence; alone in a note it needs none.
-    ...cardNotes([scopeNote(accessScope), basisText, cancelledText, ctx.periodNote?.replace(/^\s*\(([^)]*)\)/u, '$1')]),
+    ...cardNotes([scopeNote(accessScope), basisText, cancelledText, periodNoteLine(ctx.periodNote)]),
     ...(webLinks[0] ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}),
   }) : undefined;
   return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
@@ -477,6 +476,25 @@ function cardNotes(clauses: ReadonlyArray<string | undefined>): { notes?: string
 function cardLayout(layout: LineAiAnswerCardLayout): LineAiAnswerCardLayout | undefined {
   return parseLineAiAnswerCardLayout(layout);
 }
+
+/** The period as a card's row says it: the sentence's own words for the dates. A period the reader
+ *  named reads "เดือนนี้ (1–5 ต.ค. 2569)" in the sentence — their word, then the dates — and the row
+ *  shows those dates, which fit one line; any other phrase is shown as the sentence has it. */
+function periodRowValue(phrase: string, data: Record<string, unknown> | undefined): string {
+  const period = data?.['period'];
+  const range = period && typeof period === 'object' && !Array.isArray(period) ? period as Record<string, unknown> : undefined;
+  const dates = typeof range?.['fromDate'] === 'string' && typeof range['toDate'] === 'string' ? formatThaiPeriodRange(range['fromDate'], range['toDate']) : undefined;
+  return dates && phrase.endsWith(`(${dates})`) ? dates : phrase;
+}
+
+/** The as-of day in the words `asOfLine` writes it ("5 ต.ค. 2569"), for the row beside that sentence. */
+function asOfDayLabel(asOf: string | undefined): string | undefined {
+  const day = asOfInZone(asOf, 'Asia/Bangkok')?.day;
+  return day ? thaiAbbrDate(day, false) : undefined;
+}
+
+/** The year note is a bracket after the period in the sentence; alone in a card's note it needs none. */
+const periodNoteLine = (note: string | undefined) => note?.replace(/^\s*\(([^)]*)\)/u, '$1');
 
 /** The second header line of the summary card: the month, or the months, the tool's own period covers. */
 function expensePeriodHeading(data: Record<string, unknown> | undefined): string | undefined {
@@ -558,14 +576,34 @@ function formatExpenseListRecentList(output: SpecialistOutput, ctx: PreparedForm
   const moreText = total > shown.length
     ? (english ? `\nShowing ${shown.length} of ${plural(total, 'record')}` : `\nแสดง ${shown.length} จาก ${groupThousands(String(total))} รายการ`)
     : '';
-  const { filtersText, scopeText } = expenseFilterLine(data, ctx, english);
+  const { filtersText, scopeText, filterPhrases, accessScope } = expenseFilterLine(data, ctx, english);
 
   const headline = english
     ? `Expenses: ${moneyText(totalAmount)} THB (${plural(total, 'record')})`
     : `ค่าใช้จ่าย: ${moneyText(totalAmount)} บาท (${groupThousands(String(total))} รายการ)`;
+  const periodLabel = ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined);
   const replyText = `${headline}${itemLines}${moreText}${filtersText}${scopeText}`
-    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined), ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+    + `${periodLine(ctx.proposedInput, data, english, periodLabel, ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
+  // The same list on the locked card (owner 2026-10-05: "อยากได้เหมือน pattern อ่านใบเสร็จ"): the total
+  // and the count, then each listed record as a row — its date, and what the sentence says of it.
+  const heading = english ? undefined : expensePeriodHeading(data);
+  const period = periodPhrase(ctx.proposedInput, data, false, periodLabel);
+  const asOfDay = asOfDayLabel(output.asOf);
+  const layout = heading && period ? cardLayout({
+    context: 'expense_summary',
+    header: ['รายการค่าใช้จ่าย', heading],
+    rows: [
+      { label: 'ยอดรวม', value: `${moneyText(totalAmount)} บาท`, emphasis: 'total' },
+      { label: 'จำนวนรายการ', value: `${groupThousands(String(total))} รายการ` },
+      ...shown.map((row) => ({ label: thaiAbbrDate(row.date, false, listYear) ?? row.date, value: `${row.vendor} · ${moneyText(row.amount)} บาท · ${statusLabel(row.status)}` })),
+      ...(filterPhrases.length ? [{ label: 'ตัวกรอง', value: filterPhrases.join(', ') }] : []),
+      { label: 'ช่วงวันที่', value: periodRowValue(period, data) },
+      ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
+    ],
+    ...cardNotes([moreText, scopeNote(accessScope), periodNoteLine(ctx.periodNote)]),
+    ...(webLinks[0] ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}),
+  }) : undefined;
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /**
@@ -601,12 +639,12 @@ function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: Prepa
     ? (english ? `\nCategory: ${category}` : `\nหมวด: ${category}`) : '';
   const scopeText = scopeLine(data?.['accessScope'], english);
   const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
-  const asOfLabel = thaiExpenseAsOfLabel(output.asOf);
   const text = (key: string) => typeof data?.[key] === 'string' && (data[key] as string).trim() ? (data[key] as string).trim() : undefined;
   const number = text('expenseNumber');
+  // The locked record and payment cards have no "ข้อมูล ณ" row (the summary and open-work cards do):
+  // the as-of stays in the sentence, which is the card's fallback and its notification text.
   const shared = {
     notes: cardNotes([scopeNote(data?.['accessScope'])]),
-    asOf: asOfLabel ? [{ label: 'ข้อมูล ณ', value: asOfLabel }] : [],
     link: webLinks[0] ? { linkLabel: 'เปิดดูรายการในเว็บ' } : {},
   };
 
@@ -636,7 +674,6 @@ function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: Prepa
         ...(paidOn ? [{ label: 'วันที่ชำระ', value: paidOn.thai }] : []),
         ...(methods ? [{ label: 'วิธีชำระเงิน', value: methods.thai }] : []),
         { label: 'สถานะชำระเงิน', value: paymentStatusLabel, tone: paymentStatus === 'PAID' ? 'ok' : 'pending' },
-        ...shared.asOf,
       ],
       ...shared.notes, ...shared.link,
     });
@@ -672,7 +709,6 @@ function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: Prepa
       ...(isMoney(vat) && moneyNumber(vat) !== 0 ? [{ label: 'VAT', value: `${moneyText(vat)} บาท` }] : []),
       { label: 'สถานะเอกสาร', value: documentStatusLabel, tone: status === 'CONFIRMED' ? 'ok' : closed ? 'closed' : 'pending' },
       ...(closed ? (reason ? [{ label: 'เหตุผล', value: reason }] : []) : [{ label: 'สถานะการจ่าย', value: paymentStatusLabel }]),
-      ...shared.asOf,
     ],
     ...shared.notes, ...shared.link,
   });
@@ -814,13 +850,40 @@ function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedForma
   const totalText = english
     ? `\nTotal: ${moneyText(totalAmount)} THB (${plural(totalCount, 'record')})`
     : `\nรวมทั้งหมด: ${moneyText(totalAmount)} บาท (${groupThousands(String(totalCount))} รายการ)`;
-  const { filtersText, scopeText } = expenseFilterLine(data, ctx, english);
+  const { filtersText, scopeText, filterPhrases, accessScope } = expenseFilterLine(data, ctx, english);
 
   const axisLabel = english ? axis.labelEn : axis.labelTh;
   const headline = english ? `Expenses by ${axisLabel}` : `ค่าใช้จ่ายแยกตาม${axisLabel}`;
+  const periodLabel = ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined);
   const replyText = `${headline}${groupLines}${othersLine}${totalText}${filtersText}${scopeText}`
-    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined), ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+    + `${periodLine(ctx.proposedInput, data, english, periodLabel, ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
+  // The same summary on the locked card (owner 2026-10-05: "สรุปค่าใช้จ่ายเดือนนี้ อยากได้เหมือน pattern
+  // อ่านใบเสร็จ"): the total and the count, what the rows are grouped by, then one row for each group
+  // with its amount, share and count exactly as the sentence states them.
+  const heading = english ? undefined : expensePeriodHeading(data);
+  const period = periodPhrase(ctx.proposedInput, data, false, periodLabel);
+  const asOfDay = asOfDayLabel(output.asOf);
+  const sourceLabel = output.facts.find((fact) => fact.sourceRef)?.sourceRef?.label;
+  const groupValue = (amount: number, count: number) => `${moneyText(amount)} บาท (${percentText(amount)}, ${groupThousands(String(count))} รายการ)`;
+  const layout = heading && period ? cardLayout({
+    context: 'expense_summary',
+    header: ['สรุปค่าใช้จ่าย', heading],
+    rows: [
+      { label: 'ยอดรวม', value: `${moneyText(totalAmount)} บาท`, emphasis: 'total' },
+      { label: 'จำนวนรายการ', value: `${groupThousands(String(totalCount))} รายการ` },
+      { label: 'แยกตาม', value: axis.labelTh },
+      ...shown.map((g) => ({ label: g.name, value: groupValue(moneyNumber(g.amount), g.count) })),
+      ...(rest.length > 0 ? [{ label: `อื่นๆ (${rest.length})`,
+        value: groupValue(rest.reduce((sum, g) => sum + moneyNumber(g.amount), 0), rest.reduce((sum, g) => sum + g.count, 0)) }] : []),
+      ...(filterPhrases.length ? [{ label: 'ตัวกรอง', value: filterPhrases.join(', ') }] : []),
+      { label: 'ช่วงวันที่', value: periodRowValue(period, data) },
+      ...(sourceLabel ? [{ label: 'ที่มา', value: sourceLabel }] : []),
+      ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
+    ],
+    ...cardNotes([scopeNote(accessScope), periodNoteLine(ctx.periodNote)]),
+    ...(webLinks[0] ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}),
+  }) : undefined;
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /** Enough document types to be useful in one LINE bubble; the rest are admitted by the "of N types" line. */
@@ -936,26 +999,50 @@ function moneyGroupsText(value: unknown, english: boolean): string | undefined {
   return parts.join(' · ');
 }
 
-/** `submittedToday`/`pendingReview`/`evidenceBlockers` are all `{count, items}` — a plain record count,
- *  no money. Hidden (C5, batch 5c) when the tool reports none, so "มีอะไรต้องทำบ้าง" lists only what
- *  actually needs doing today. */
-function dailyClosingCountBullet(labelTh: string, labelEn: string, group: unknown, english: boolean): string | undefined {
+/** One thing the day's checklist counts: its name, and how many (and how much) the tool reports. The
+ *  sentence's bullets and a card's rows are both written from these, so they cannot say it differently. */
+type DailyClosingEntry = { key: string; label: string; value: string };
+
+/** `submittedToday`/`pendingReview`/`evidenceBlockers`/`duplicateRisks` are all `{count, items}` — a plain
+ *  record count, no money. Hidden (C5, batch 5c) when the tool reports none, so "มีอะไรต้องทำบ้าง" lists
+ *  only what actually needs doing today. */
+function dailyClosingCountEntry(key: string, labelTh: string, labelEn: string, data: Record<string, unknown> | undefined, english: boolean): DailyClosingEntry | undefined {
+  const group = data?.[key];
   const count = group && typeof group === 'object' && !Array.isArray(group) ? (group as Record<string, unknown>)['count'] : undefined;
   if (typeof count !== 'number' || count <= 0) return undefined;
-  return english ? `${labelEn} ${plural(count, 'record')}` : `${labelTh} ${groupThousands(String(count))} รายการ`;
+  return { key, label: english ? labelEn : labelTh, value: english ? plural(count, 'record') : `${groupThousands(String(count))} รายการ` };
 }
 
 /** `dueEndOfDay`/`overdue`/`unscheduledOutstanding` are `{totals, items}`: `items.total` is the record
  *  count across EVERY currency (same convention `occurredToday` uses above — never sum `totals[].count`,
  *  which is only one currency's share), `totals` the per-currency amounts via `moneyGroupsText`. */
-function dailyClosingMoneyBullet(labelTh: string, labelEn: string, group: unknown, english: boolean): string | undefined {
+function dailyClosingMoneyEntry(key: string, labelTh: string, labelEn: string, data: Record<string, unknown> | undefined, english: boolean): DailyClosingEntry | undefined {
+  const group = data?.[key];
   const record = group && typeof group === 'object' && !Array.isArray(group) ? group as Record<string, unknown> : undefined;
   const items = record?.['items'];
   const count = items && typeof items === 'object' && !Array.isArray(items) ? (items as Record<string, unknown>)['total'] : undefined;
   if (typeof count !== 'number' || count <= 0) return undefined;
   const totalsText = moneyGroupsText(record?.['totals'], english);
   if (!totalsText) return undefined;
-  return english ? `${labelEn} ${plural(count, 'record')}, total ${totalsText}` : `${labelTh} ${groupThousands(String(count))} รายการ รวม ${totalsText}`;
+  return { key, label: english ? labelEn : labelTh,
+    value: english ? `${plural(count, 'record')}, total ${totalsText}` : `${groupThousands(String(count))} รายการ รวม ${totalsText}` };
+}
+
+/** C5: the to-do list, one entry per NON-EMPTY section, fixed order. Money entries are per currency
+ *  (never summed, like `totals`/`paid`/`outstanding`); the evidence backlog is every OPEN blocker, not
+ *  only today's, same as before this list existed.
+ *  "วันนี้" is claimed only when this closing really is for today — `submittedToday`/`dueEndOfDay` are
+ *  both scoped to the REPORTED day, which "ปิดยอดเมื่อวาน" backs to a past day, so the bare "today"
+ *  wording would misstate which day these counts are for. */
+function dailyClosingEntries(data: Record<string, unknown> | undefined, isToday: boolean, english: boolean): DailyClosingEntry[] {
+  return [
+    dailyClosingCountEntry('submittedToday', isToday ? 'ส่งเข้ามาวันนี้' : 'ส่งเข้ามาวันนั้น', isToday ? 'Submitted today:' : 'Submitted that day:', data, english),
+    dailyClosingCountEntry('pendingReview', 'รอตรวจสอบ', 'Pending review:', data, english),
+    dailyClosingMoneyEntry('dueEndOfDay', isToday ? 'ครบกำหนดจ่ายวันนี้' : 'ครบกำหนดจ่ายวันนั้น', isToday ? 'Due today:' : 'Due that day:', data, english),
+    dailyClosingMoneyEntry('overdue', 'เกินกำหนดจ่าย', 'Overdue:', data, english),
+    dailyClosingMoneyEntry('unscheduledOutstanding', 'ค้างจ่าย (ยังไม่กำหนดวันจ่าย)', 'Unpaid (no due date scheduled):', data, english),
+    dailyClosingCountEntry('evidenceBlockers', 'รอตรวจหลักฐาน', 'Awaiting evidence review:', data, english),
+  ].filter((entry): entry is DailyClosingEntry => Boolean(entry));
 }
 
 /**
@@ -1021,20 +1108,7 @@ function formatExpenseDailyClosingSingleMetric(output: SpecialistOutput, ctx: Pr
       ? `\n${[paid && `Paid ${paid}`, outstanding && `Unpaid ${outstanding}`].filter(Boolean).join(' · ')}`
       : `\n${[paid && `จ่ายแล้ว ${paid}`, outstanding && `ยังไม่ได้จ่าย ${outstanding}`].filter(Boolean).join(' · ')}`)
     : '';
-  // C5: the to-do list, one bullet per NON-EMPTY section, fixed order. Money bullets are per currency
-  // (never summed, like `totals`/`paid`/`outstanding` above); the evidence backlog is every OPEN
-  // blocker, not only today's, same as before this list existed.
-  const checklist = [
-    // "วันนี้" is claimed only when this closing really is for today (same check as `dayPhrase` above)
-    // — `submittedToday`/`dueEndOfDay` are both scoped to the REPORTED day, which "ปิดยอดเมื่อวาน" backs
-    // to a past day, so the bare "today" wording would misstate which day these counts are for.
-    dailyClosingCountBullet(isToday ? 'ส่งเข้ามาวันนี้' : 'ส่งเข้ามาวันนั้น', isToday ? 'Submitted today:' : 'Submitted that day:', data?.['submittedToday'], english),
-    dailyClosingCountBullet('รอตรวจสอบ', 'Pending review:', data?.['pendingReview'], english),
-    dailyClosingMoneyBullet(isToday ? 'ครบกำหนดจ่ายวันนี้' : 'ครบกำหนดจ่ายวันนั้น', isToday ? 'Due today:' : 'Due that day:', data?.['dueEndOfDay'], english),
-    dailyClosingMoneyBullet('เกินกำหนดจ่าย', 'Overdue:', data?.['overdue'], english),
-    dailyClosingMoneyBullet('ค้างจ่าย (ยังไม่กำหนดวันจ่าย)', 'Unpaid (no due date scheduled):', data?.['unscheduledOutstanding'], english),
-    dailyClosingCountBullet('รอตรวจหลักฐาน', 'Awaiting evidence review:', data?.['evidenceBlockers'], english),
-  ].filter((line): line is string => Boolean(line));
+  const checklist = dailyClosingEntries(data, isToday, english).map((entry) => `${entry.label} ${entry.value}`);
   const checklistText = checklist.length > 0 ? `\n${checklist.map((line) => `• ${line}`).join('\n')}` : '';
 
   const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
@@ -1047,7 +1121,24 @@ function formatExpenseDailyClosingSingleMetric(output: SpecialistOutput, ctx: Pr
   const scopeText = scopeLine(data?.['accessScope'], english);
 
   const replyText = `${headline}${settledText}${checklistText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}${honestyText}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+  // The same day on the locked card: what the day's records come to, then each thing on the checklist
+  // a row, in the sentence's own words. The required honesty line is a note.
+  const asOfDay = asOfDayLabel(output.asOf);
+  const layout = english ? undefined : cardLayout({
+    context: 'expense_summary',
+    header: ['สรุปปิดร้าน', dayPhrase],
+    rows: [
+      ...(count > 0 && totals ? [{ label: 'ยอดรวม', value: totals, emphasis: 'total' as const }] : []),
+      { label: 'จำนวนรายการ', value: count === 0 ? `ยังไม่มีรายการที่ลงวันที่${isToday ? 'วันนี้' : 'วันนั้น'}` : `${groupThousands(String(count))} รายการ` },
+      ...(paid ? [{ label: 'จ่ายแล้ว', value: paid }] : []),
+      ...(outstanding ? [{ label: 'ยังไม่ได้จ่าย', value: outstanding }] : []),
+      ...dailyClosingEntries(data, isToday, false).map((entry) => ({ label: entry.label, value: entry.value })),
+      ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
+    ],
+    ...cardNotes([scopeNote(data?.['accessScope']), honestyText.replace(/^\s*\((.*)\)\s*$/u, '$1')]),
+    ...(webLinks[0] ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}),
+  });
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /**
@@ -1260,7 +1351,24 @@ function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: 
     : `เบิกจ่ายรออนุมัติ: ${groupThousands(String(total))} รายการ${totalText}`;
 
   const replyText = `${headline}${itemLines}${moreText}${sourceText}${asOfLine(output.asOf, english)}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+  // The same queue on the locked card (context 2): how many wait, their total where the sentence
+  // states one, then each listed claim a row under its requester. What was checked is said in a note,
+  // so "none" is never read as "nobody in the company is waiting".
+  const asOfDay = asOfDayLabel(output.asOf);
+  const layout = english ? undefined : cardLayout({
+    context: 'open_work',
+    header: ['เบิกจ่ายรออนุมัติ', total === 0 ? 'ไม่พบรายการ' : `พบ ${groupThousands(String(total))} รายการ`],
+    rows: [
+      ...(sumGrounded && rows[0] ? [{ label: 'ยอดรวม', value: moneyWithCurrency(rows.reduce((sum, row) => sum + moneyNumber(row.amount), 0), rows[0].currency), emphasis: 'total' as const }] : []),
+      ...shown.map((row) => {
+        const dateLabel = row.date ? thaiAbbrDate(row.date, false, listYear) ?? row.date : undefined;
+        return { label: row.requester, value: `${moneyWithCurrency(row.amount, row.currency)}${dateLabel ? ` · ${dateLabel}` : ''}` };
+      }),
+      ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
+    ],
+    ...cardNotes([moreText, 'ตรวจเฉพาะใบเบิกที่รอคุณอนุมัติ']),
+  });
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /**
@@ -1297,7 +1405,19 @@ function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx
   const scopeText = scopeLine(data?.['accessScope'], english);
 
   const replyText = `${headline}${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+  // The same counts on the locked card: one row for each state the sentence names, in its words.
+  const asOfDay = asOfDayLabel(output.asOf);
+  const layout = english || !asOfDay ? undefined : cardLayout({
+    context: 'open_work',
+    header: ['สรุปใบเบิก', `ณ ${asOfDay}`],
+    rows: [
+      { label: 'รออนุมัติ', value: `${groupThousands(String(pending))} รายการ` },
+      { label: 'อนุมัติแล้วรอจ่าย', value: `${groupThousands(String(unpaidApproved))} รายการ${unpaidApproved > 0 ? ` รวม ${moneyText(totalUnpaid)} บาท` : ''}` },
+      ...(overdue > 0 ? [{ label: 'เกินกำหนด', value: `${groupThousands(String(overdue))} รายการ` }] : []),
+    ],
+    ...cardNotes([scopeNote(data?.['accessScope'])]),
+  });
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /** Same Thai wording the web app already shows for these exact status values
@@ -1343,7 +1463,25 @@ function formatReimbursementGetDetailSingleMetric(output: SpecialistOutput, ctx:
   const paymentBlock = data?.['duplicateBlocksPayment'] === true && typeof data['paymentBlockNotice'] === 'string'
     ? `\n${data['paymentBlockNotice']}` : '';
   const replyText = `${headline}${statusText}${paymentBlock}${sourceText}${asOfLine(output.asOf, english)}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+  // The same claim on the locked record card (context 5): its number when it has one, who asked, the
+  // day, the amount on the emphasised row and the state as a pill. A notice that payment is held is a note.
+  const requestNo = typeof data?.['requestNo'] === 'string' && data['requestNo'].trim() ? data['requestNo'].trim() : undefined;
+  const tone = status === 'PAID' || status === 'APPROVED' ? 'ok' as const
+    : status === 'REJECTED' || status === 'CANCELLED' || status === 'VOIDED' ? 'closed' as const : 'pending' as const;
+  const layout = english ? undefined : cardLayout({
+    context: 'expense_record',
+    header: ['ใบเบิกจ่าย', statusLabel],
+    rows: [
+      ...(requestNo ? [{ label: 'เลขที่ใบเบิก', value: requestNo }] : []),
+      { label: 'ผู้ขอ', value: requester },
+      { label: 'วันที่', value: dateLabel },
+      { label: 'ยอดรวม', value: `${moneyText(amount)} บาท`, emphasis: 'total' },
+      { label: 'สถานะ', value: statusLabel, tone },
+    ],
+    ...cardNotes([paymentBlock]),
+    ...(webLinks[0] ? { linkLabel: 'เปิดดูใบเบิกในเว็บ' } : {}),
+  });
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
 
 /** The two reads the locked "งานค้าง" card (design lock context 2) is drawn from. */
@@ -1407,6 +1545,132 @@ export function openWorkCardLayout(toolName: string, data: unknown, asOf: string
     ],
     notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ', ...partial],
     linkLabel: claims && record['opens'] === 'claim' ? 'เปิดใบเบิกเพื่ออนุมัติ' : 'ดูแจ้งเตือนในเว็บ',
+  });
+}
+
+/** What an answer about the reader's own waiting work is read from (advisor Q2): the two queues waiting
+ *  for the reader, the status of the reader's own claims that stands in for a queue they do not have,
+ *  the day's checklist, and the two reads of context 2. */
+export const BACKLOG_TOOLS: ReadonlySet<string> = new Set([
+  'expense.list_substitute_receipts_to_sign', 'reimbursement.list_pending_approvals', 'reimbursement.get_summary',
+  'expense.get_daily_closing', ...OPEN_WORK_TOOLS,
+]);
+const NOTHING_WAITING = 'ไม่มีค้าง';
+
+/** What one read contributes to the card: a row for each kind of work that waits, or the one row that
+ *  says this kind was read and has nothing; and the plain sentences its figures need beside them. */
+type BacklogPart = { waiting: LineAiAnswerCardRow[]; none?: LineAiAnswerCardRow; notes?: string[] };
+
+function backlogPart(toolName: string, data: Record<string, unknown>, asOf: string | undefined): BacklogPart | undefined {
+  const count = (value: number) => `${groupThousands(String(value))} รายการ`;
+  if (toolName === 'expense.list_substitute_receipts_to_sign') {
+    // The words of the queue itself (substitute-receipt.use-case.ts), counted in ใบ like every other answer about it.
+    const label = 'ใบรับรองแทนใบเสร็จ';
+    const step = (key: string): Record<string, unknown> | null | undefined => data[key] === undefined ? null
+      : data[key] && typeof data[key] === 'object' && !Array.isArray(data[key]) ? data[key] as Record<string, unknown> : undefined;
+    const payer = step('asPayer'), approver = step('asApprover');
+    if (payer === undefined || approver === undefined || (!payer && !approver)
+      || (payer && !isCount(payer['count'])) || (approver && !isCount(approver['count']))) return undefined;
+    const sheets = (value: number) => `${groupThousands(String(value))} ใบ`;
+    const parts: string[] = [];
+    if (payer && (payer['count'] as number) > 0) parts.push(`รอคุณลงลายมือชื่อในฐานะผู้จ่ายเงิน ${sheets(payer['count'] as number)}`);
+    if (approver && (approver['count'] as number) > 0) {
+      const steps = Array.isArray(approver['byStep']) ? approver['byStep'] as unknown[] : [];
+      const named = steps.map((entry) => entry && typeof entry === 'object' ? entry as Record<string, unknown> : undefined);
+      // The tool's own split of the approver's pile, when it is whole; otherwise the pile as one figure.
+      const split = named.length > 0 && named.every((entry) => typeof entry?.['stepLabel'] === 'string' && (entry['stepLabel'] as string).trim() && isCount(entry['count']))
+        && named.reduce((sum, entry) => sum + (entry!['count'] as number), 0) === approver['count'];
+      parts.push(split ? named.map((entry) => `${(entry!['stepLabel'] as string).trim()} ${sheets(entry!['count'] as number)}`).join(' · ')
+        : `รอคุณอนุมัติ ${sheets(approver['count'] as number)}`);
+    }
+    if (parts.length) return { waiting: [{ label, value: parts.join(' · ') }] };
+    // Read for one side only (a question that named it): "nothing" is said of that side alone.
+    return { waiting: [], none: { label, value: payer && approver ? NOTHING_WAITING : payer ? 'ไม่มีที่รอคุณลงลายมือชื่อ' : 'ไม่มีที่รอคุณอนุมัติ' } };
+  }
+  if (toolName === 'reimbursement.list_pending_approvals') {
+    const label = 'เบิกจ่ายรอคุณอนุมัติ';
+    const total = data['total'], items = data['items'];
+    if (!isCount(total) || !Array.isArray(items) || aggregationIncomplete(data)) return undefined;
+    if (total === 0) return { waiting: [], none: { label, value: NOTHING_WAITING } };
+    // An amount only when the tool returned every claim it counted, in one currency (the list family's own rule).
+    const rows = items.map((item) => item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : undefined);
+    const summed = total <= rows.length && rows.length > 0 && rows.every((row) => isMoney(row?.['amount']) && typeof row['currency'] === 'string' && row['currency'] === rows[0]!['currency']);
+    const sum = summed ? rows.reduce((value, row) => value + moneyNumber(row!['amount'] as string | number), 0) : undefined;
+    const currency = summed ? rows[0]!['currency'] as string : undefined;
+    return { waiting: [{ label, value: `${count(total)}${sum !== undefined ? ` รวม ${moneyText(sum)} ${currency === 'THB' ? 'บาท' : currency}` : ''}` }] };
+  }
+  if (toolName === 'reimbursement.get_summary') {
+    const pending = data['pendingApprovalCount'], unpaid = data['unpaidApprovedCount'], overdue = data['overdueApprovalCount'], amount = data['totalUnpaidAmount'];
+    if (!isCount(pending) || !isCount(unpaid) || !isCount(overdue) || !isMoney(amount) || aggregationIncomplete(data)) return undefined;
+    const waiting: LineAiAnswerCardRow[] = [
+      ...(pending > 0 ? [{ label: 'ใบเบิกรออนุมัติ', value: count(pending) }] : []),
+      ...(unpaid > 0 ? [{ label: 'ใบเบิกอนุมัติแล้วรอจ่าย', value: `${count(unpaid)} รวม ${moneyText(amount)} บาท` }] : []),
+      ...(overdue > 0 ? [{ label: 'ใบเบิกเกินกำหนด', value: count(overdue) }] : []),
+    ];
+    const scope = scopeNote(data['accessScope']);
+    return { waiting, ...(waiting.length ? {} : { none: { label: 'ใบเบิก', value: NOTHING_WAITING } }), ...(scope ? { notes: [`ส่วนใบเบิก${scope}`] } : {}) };
+  }
+  if (toolName === 'expense.get_daily_closing') {
+    const day = data['date'];
+    if (typeof day !== 'string' || !CIVIL_DATE.test(day) || aggregationIncomplete(data)) return undefined;
+    const isToday = asOfInZone(asOf, data['timezone'])?.day === day;
+    // The checklist's own entries and words; what was sent in that day is not work that waits, and a
+    // possible duplicate is (the web's word for it).
+    const dueDay = thaiAbbrDate(day, false) ?? day;
+    const waiting = [
+      ...dailyClosingEntries(data, isToday, false).filter((entry) => entry.key !== 'submittedToday'),
+      dailyClosingCountEntry('duplicateRisks', 'อาจเป็นรายการซ้ำ', 'Possible duplicates:', data, false),
+    ].filter((entry): entry is DailyClosingEntry => Boolean(entry))
+      .map((entry) => ({ label: !isToday && entry.key === 'dueEndOfDay' ? `ครบกำหนดจ่าย ${dueDay}` : entry.label, value: entry.value }));
+    const scope = scopeNote(data['accessScope']);
+    const nothingDue = waiting.length > 0 && !dailyClosingMoneyEntry('dueEndOfDay', '-', '-', data, false) && !dailyClosingMoneyEntry('overdue', '-', '-', data, false);
+    const notes = [
+      ...(nothingDue ? [`ไม่มีรายการครบกำหนดจ่าย${isToday ? 'วันนี้' : ` ${dueDay} `}หรือเกินกำหนด`] : []),
+      ...(scope ? [`ส่วนค่าใช้จ่าย${scope}`] : []),
+    ];
+    return { waiting, ...(waiting.length ? {} : { none: { label: 'รายการค่าใช้จ่าย', value: NOTHING_WAITING } }), ...(notes.length ? { notes } : {}) };
+  }
+  if (OPEN_WORK_TOOLS.has(toolName)) {
+    const tasks = toolName === 'workflow.list_assigned_tasks';
+    const label = tasks ? 'งานที่มอบหมาย' : 'การแจ้งเตือน';
+    const found = data[tasks ? 'total' : 'count'];
+    if (!isCount(found)) return undefined;
+    if (found === 0) return { waiting: [], none: { label, value: NOTHING_WAITING } };
+    // The notice read is one page: `hasMore` makes its count a floor.
+    return { waiting: [{ label, value: `${!tasks && data['hasMore'] === true ? 'มากกว่า ' : ''}${count(found)}` }] };
+  }
+  return undefined;
+}
+
+/**
+ * ONE row card for an answer made of several reads of what is waiting (design lock context 2; owner
+ * 2026-10-05 on the wall of text "มีงานค้างอะไรบ้าง" got: "อ่านยากมาก"). Each kind of work is a row — how
+ * many wait and, where the read totals it, how much; a kind that was read and has nothing says
+ * "ไม่มีค้าง", so the reader sees it was checked. Kinds with work come first.
+ *
+ * Built only from the results given, which the caller has already checked are successful,
+ * permission-checked reads — never from a sentence. A result that is not exactly its tool's shape, or
+ * the same read twice, has no card, and the answer is drawn as its sentences.
+ */
+export function backlogCardLayout(results: ReadonlyArray<{ toolName: string; data?: unknown; asOf?: string }>): LineAiAnswerCardLayout | undefined {
+  if (results.length === 0 || new Set(results.map((result) => result.toolName)).size !== results.length) return undefined;
+  const parts: BacklogPart[] = [];
+  for (const result of results) {
+    const data = result.data && typeof result.data === 'object' && !Array.isArray(result.data) ? result.data as Record<string, unknown> : undefined;
+    const part = data && BACKLOG_TOOLS.has(result.toolName) ? backlogPart(result.toolName, data, result.asOf) : undefined;
+    if (!part) return undefined;
+    parts.push(part);
+  }
+  const day = asOfInZone(results[0]!.asOf, 'Asia/Bangkok')?.day;
+  const asOfLabel = day ? thaiAbbrDate(day, false) : undefined;
+  if (!asOfLabel) return undefined;
+  const waiting = parts.flatMap((part) => part.waiting);
+  return cardLayout({
+    context: 'open_work',
+    // With work waiting the header says the day it was read; with none it says so, and the day is a row.
+    header: ['งานค้าง', waiting.length ? `ณ ${asOfLabel}` : 'ไม่พบงานค้าง'],
+    rows: [...waiting, ...parts.flatMap((part) => part.none ? [part.none] : []), ...(waiting.length ? [] : [{ label: 'ข้อมูล ณ', value: asOfLabel }])],
+    notes: [...parts.flatMap((part) => part.notes ?? []), 'ตรวจเฉพาะงานที่รอคุณและรายการที่คุณมีสิทธิ์ดู'],
   });
 }
 
