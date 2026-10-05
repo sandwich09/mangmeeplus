@@ -433,8 +433,6 @@ export class RecordReimbursementPaymentUseCase {
       return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     }
 
-    await this.repo.assertPaymentRecordInput(req, input);
-
     // Sent back to have its payout account corrected (payout spec §14.7, §22): its status refuses the
     // payment below anyway; this tells a payer whose form was open what happened, in their own words.
     if (payoutCorrectionPhase(req)) throw new ConflictException('payout_correction_in_progress');
@@ -468,6 +466,10 @@ export class RecordReimbursementPaymentUseCase {
         ? { code: error, duplicatePhase: 'PAYMENT', message: reimbursementDuplicateBlockNotice(duplicateReasons, false, guidance), duplicateReasons, claimStatus: req.status, canCancel: guidance.canCancel }
         : error);
     }
+    // The payment's own currency and source bank account (multi-payout spec §9). After the refusals that
+    // read nothing more — a claim outside the caller's branch must not cost a lookup — and, like every
+    // other refusal, before a payment number is reserved; the repository repeats it under the lock.
+    await this.repo.assertPaymentRecordInput(req, input);
     await this.repo.assertClaimPaymentReady(ctx.companyId, id, paidAt);
     // Everything that can refuse the payment is checked before a payment number is reserved: a
     // refusal after that point would burn a number that only a retry with the same key reuses.
