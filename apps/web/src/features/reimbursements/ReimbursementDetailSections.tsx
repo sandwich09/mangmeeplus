@@ -42,7 +42,8 @@ import {
   rowHasFinanceReview, savePaymentForm, signedCopyMisfiledHint, slipTargetPayment, sumLineAmounts, timelineDateText,
   type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip, type PaymentSlipChoice,
 } from './reimbursements.logic';
-import { PayerConfirmationCheck } from './ReimbursementPayout';
+import { payoutHolderLine } from '@watchdog-bms/contracts';
+import { PayoutHolderNotice, PayerConfirmationCheck } from './ReimbursementPayout';
 import {
   PAID_DIFFERENTLY_LABEL, PAYMENT_NO_CLAIM_ACCOUNT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, paymentDestinationText, paymentFormPayout, requestedPayout,
 } from './reimbursement-payout.logic';
@@ -192,7 +193,7 @@ export function VoidPaymentDialog({ payment, claim, busy, error, onClose, onConf
   );
 }
 
-export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, error, onClose, onConfirm, confirmLabel = 'อนุมัติด้วยข้อมูลล่าสุด' }: {
+export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, error, onClose, onConfirm, confirmLabel = 'อนุมัติด้วยข้อมูลล่าสุด', beforePayout, payout }: {
   requestNo?: string;
   diff: ApprovalFieldDiff[];
   lines: any[];
@@ -203,7 +204,13 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
   onConfirm: () => void;
   /** A claim now paid by transfer is not approved from here: the caller sends the approver to check the account first. */
   confirmLabel?: string;
+  beforePayout?: Parameters<typeof PayoutHolderNotice>[0]['account'];
+  payout?: Parameters<typeof PayoutHolderNotice>[0]['account'];
 }) {
+  const accountText = (text: string, account: typeof payout) => {
+    const line = account?.accountName && payoutHolderLine(account);
+    return line && text.endsWith(` · ${line}`) ? text.slice(0, -line.length - 3) : text;
+  };
   return (
     <Modal
       open
@@ -231,10 +238,11 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
               {diff.map(row => (
                 <tr key={row.key} className={cx(row.changed ? 'bg-warning-50' : 'text-gray-500', row.key === 'amount' && 'whitespace-nowrap')}>
                   <td>{row.label}</td>
-                  <td className={row.changed ? 'text-gray-400 line-through' : 'text-gray-500'}>{row.before}</td>
+                  <td className={row.changed ? 'text-gray-400 line-through' : 'text-gray-500'}>{row.key === 'payout' ? accountText(row.before, beforePayout) : row.before}{row.key === 'payout' && <PayoutHolderNotice account={beforePayout} />}</td>
                   <td className={row.changed ? 'font-bold text-gray-900' : 'text-gray-500'}>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span>{row.after}</span>
+                      <span>{row.key === 'payout' ? accountText(row.after, payout) : row.after}</span>
+                      {row.key === 'payout' && <PayoutHolderNotice account={payout} />}
                       {row.changed && <MangmeeBadge tone="amber">แก้ไขแล้ว</MangmeeBadge>}
                     </div>
                   </td>
@@ -1032,6 +1040,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                 {paymentDestinationText(p) ? (
                   <div className="mt-1 break-words text-gray-500">
                     {`โอนเข้า ${paymentDestinationText(p)}${p.payoutConfirmedAt ? ` · ยืนยันเมื่อ ${formatThaiDateTime(p.payoutConfirmedAt)}` : ''}`}
+                    <PayoutHolderNotice account={p.payoutDestination} />
                   </div>
                 ) : p.paymentMethod === 'BANK_TRANSFER' && <div className="mt-1 text-gray-500">{PAYMENT_NO_CLAIM_ACCOUNT}</div>}
                 {p.methodMismatchReason && (

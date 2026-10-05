@@ -8,7 +8,7 @@ import { reimbursementPayoutOnBehalfNotice, REIMBURSEMENT_PAYOUT_TYPING_ON_BEHAL
 // Every screen here shows the last 4 digits; the full number appears only after "แสดงเลขบัญชี",
 // which the server answers for the account's own reveal group and records each time.
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type Ref } from 'react';
 import Link from 'next/link';
 import { payoutHolderChoiceLabel, payoutHolderLine, REIMBURSEMENT_PAYOUT_HOLDER_WORDS as HOLDER_WORDS, PAYOUT_HOLDER_NOTE_MAX_LENGTH, type PayoutHolderFacts, type SavedPayoutAccountSummary, maskedPayoutAccount, type MemberPayoutAccountSummary, type ReimbursementLegacyPayoutDefault, type ReimbursementPayoutSummary } from '@watchdog-bms/contracts';
 // The pay step's line as the claim's own requester reads it (its own import, apart from the line above).
@@ -105,15 +105,15 @@ export function PayoutAccountFields({ value, onChange, disabled = false, invalid
 }
 
 /** Holder facts are shared by the saved-account form and a typed claim account. Defaults stay own-only. */
-export function PayoutHolderFields({ value, onChange, forSelf, disabled = false, invalidField }: {
-  value: PayoutHolderFacts; onChange: (next: PayoutHolderFacts) => void; forSelf: boolean; disabled?: boolean; invalidField?: string;
+export function PayoutHolderFields({ value, onChange, forSelf, disabled = false, invalidField, allowThirdParty = true }: {
+  value: PayoutHolderFacts; onChange: (next: PayoutHolderFacts) => void; forSelf: boolean; disabled?: boolean; invalidField?: string; allowThirdParty?: boolean;
 }) {
   const groupName = useId();
   const fieldsRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (invalidField) fieldsRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(); }, [invalidField]);
   return <div ref={fieldsRef} className="space-y-3 [overflow-wrap:anywhere]">
     <div role="radiogroup" aria-label={SAVED_PAYOUT_WORDS.holder} className="space-y-2">
-      {(['SELF', 'THIRD_PARTY'] as const).map(holderType => <label key={holderType} className={cx(choiceClass, value.holderType === holderType && 'border-brand-300 bg-brand-25')}>
+      {(['SELF', 'THIRD_PARTY'] as const).filter(type => allowThirdParty || type === 'SELF').map(holderType => <label key={holderType} className={cx(choiceClass, value.holderType === holderType && 'border-brand-300 bg-brand-25')}>
         <input type="radio" name={groupName} className="mt-0.5 h-5 w-5 shrink-0" disabled={disabled} checked={value.holderType === holderType}
           aria-invalid={invalidField === 'holderType'} onChange={() => onChange({ holderType })} />
         <span>{payoutHolderChoiceLabel(holderType, forSelf)}</span>
@@ -124,6 +124,17 @@ export function PayoutHolderFields({ value, onChange, forSelf, disabled = false,
         disabled={disabled} placeholder={HOLDER_WORDS.noteExample} value={value.holderNote ?? ''} onChange={event => onChange({ ...value, holderNote: event.target.value })} />
     </label>}
   </div>;
+}
+
+/** Holder facts follow the existing account-name visibility boundary. */
+export function PayoutHolderNotice({ account }: { account?: Parameters<typeof payoutHolderLine>[0] & { accountName?: string | null } | null }) {
+  if (!account?.accountName || account.holderType !== 'THIRD_PARTY') return null;
+  return <span className="block min-w-0 space-y-1 [overflow-wrap:anywhere]"><MangmeeBadge tone="amber">{HOLDER_WORDS.thirdParty}</MangmeeBadge><span className="block text-sm">{payoutHolderLine(account)}</span></span>;
+}
+export function SavedPayoutAccountOption({ account, index, checked, onChange, disabled = false, name = 'claim-payout-mode' }: {
+  account: SavedPayoutAccountSummary; index: number; checked: boolean; onChange: () => void; disabled?: boolean; name?: string;
+}) {
+  return <label className={cx(choiceClass, checked && 'border-brand-300 bg-brand-25')}><input type="radio" name={name} className="mt-0.5 h-5 w-5 shrink-0" checked={checked} disabled={disabled} onChange={onChange} /><SavedPayoutAccountDetails account={account} index={index} /></label>;
 }
 
 /** Same facts in the list and radio choice; ordinal keeps even equal masked accounts distinguishable. */
@@ -404,11 +415,7 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
         {forSelf && defaultAccount && setByOtherLine(defaultAccount) && (
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{setByOtherLine(defaultAccount)} ตรวจว่าเป็นบัญชีของคุณ</p>
         )}
-        {forSelf && savedAccounts.map((account, index) => <label key={account.id} className={cx(choiceClass, value.mode === 'SAVED' && value.savedAccountId === account.id && 'border-brand-300 bg-brand-25')}>
-          <input type="radio" name="claim-payout-mode" className="mt-0.5 h-5 w-5 shrink-0" checked={value.mode === 'SAVED' && value.savedAccountId === account.id}
-            onChange={() => onChange({ ...value, mode: 'SAVED', savedAccountId: account.id })} />
-          <SavedPayoutAccountDetails account={account} index={index} />
-        </label>)}
+        {forSelf && savedAccounts.map((account, index) => <SavedPayoutAccountOption key={account.id} account={account} index={index} checked={value.mode === 'SAVED' && value.savedAccountId === account.id} onChange={() => onChange({ ...value, mode: 'SAVED', savedAccountId: account.id })} />)}
         {forSelf && savedAccountsLoading && <LoadingState label={SAVED_PAYOUT_WORDS.loading} />}
         {forSelf && savedAccountsError && <ErrorState description={savedAccountsError} onRetry={onReloadSaved} />}
         {option('CASH', PAYOUT_METHOD_TEXT.CASH!)}
@@ -528,6 +535,7 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
       {view.state === 'transfer' && payout && (
         <>
           {names(payout.accountName)}
+          <PayoutHolderNotice account={payout} />
           <AccountNumberReveal masked={view.line} payoutKind={payout.payoutKind} revealKey={`${detail.id}:${payout.version ?? ''}`} canReveal={payout.canRevealAccountNumber === true}
             last4={payout.accountLast4} onReveal={reveal} />
         </>
@@ -546,6 +554,7 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
                   <span className="min-w-0 break-words text-sm font-semibold text-gray-900">{row.line}</span>
                   {row.current && <MangmeeBadge tone="teal">ใช้อยู่ตอนนี้</MangmeeBadge>}
                 </div>
+                <PayoutHolderNotice account={row.holder} />
                 <ul className="mt-1 space-y-0.5 text-xs text-gray-500">{row.notes.map((note) => <li key={note}>{note}</li>)}</ul>
               </li>
             ))}
@@ -571,18 +580,21 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
  * "ตรวจบัญชีแล้ว": the approver's attestation of the account shown above, required to approve a transfer claim. What they
  * are told to look at is what the card shows of that kind of account: a PromptPay number has no bank and no "เลขบัญชี".
  */
-export function PayoutAttestationCheck({ checked, onChange, disabled = false, payoutKind }: {
+export function PayoutAttestationCheck({ checked, onChange, disabled = false, payoutKind, holderType, forSelf = false, inputRef }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   payoutKind?: string | null;
+  holderType?: string | null;
+  forSelf?: boolean;
+  inputRef?: Ref<HTMLInputElement>;
 }) {
   return (
     <label className="flex min-h-11 items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700">
-      <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+      <input ref={inputRef} type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
       <span>
-        <span className="block font-semibold text-gray-900">{PAYOUT_ATTESTATION_TEXT}</span>
-        <span className="mt-0.5 block text-xs text-gray-500">{payoutNumberWords(payoutKind).check}</span>
+        <span className="block font-semibold text-gray-900">{holderType === 'THIRD_PARTY' ? HOLDER_WORDS.thirdPartyAcceptance : PAYOUT_ATTESTATION_TEXT}</span>
+        {holderType === 'THIRD_PARTY' ? checked && forSelf && <span className="mt-0.5 block text-xs text-gray-500">{HOLDER_WORDS.thirdPartySelfAttestation}</span> : <span className="mt-0.5 block text-xs text-gray-500">{payoutNumberWords(payoutKind).check}</span>}
       </span>
     </label>
   );
@@ -604,8 +616,9 @@ export function PayerConfirmationCheck({ confirmation, checked, onChange, disabl
       <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={checked} disabled={disabled} aria-required={confirmation.required}
         onChange={(event) => onChange(event.target.checked)} />
       <span className="min-w-0">
-        <span className="block font-semibold text-gray-900">{PAYER_CONFIRMATION_TEXT}{confirmation.required && ' *'}</span>
+        <span className="block font-semibold text-gray-900">{confirmation.holder?.holderType === 'THIRD_PARTY' ? HOLDER_WORDS.thirdPartyPaymentConfirmation : PAYER_CONFIRMATION_TEXT}{confirmation.required && ' *'}</span>
         <span className="mt-0.5 block text-xs text-gray-600">{confirmation.accountLine}</span>
+        <PayoutHolderNotice account={confirmation.holder} />
         {confirmation.note && <span className="mt-0.5 block text-xs text-gray-500">{confirmation.note}</span>}
       </span>
     </label>

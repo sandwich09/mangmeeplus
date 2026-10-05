@@ -34,7 +34,7 @@ import {
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel, useClaimDocumentPreview,
 } from './ReimbursementDetailSections';
-import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage, draftRowSubmitLabel } from './reimbursement-payout.logic';
+import { isThirdPartyAcceptanceRefusal, claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage, draftRowSubmitLabel } from './reimbursement-payout.logic';
 import { ClaimPayoutCard } from './ReimbursementPayout';
 import { roleDisplayName } from '../employee-access/role-picker.logic';
 import { REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, reimbursementDuplicateBlockText, type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
@@ -544,6 +544,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
         const failure = err(e);
         await load();
         setError(failure);
+        if (isThirdPartyAcceptanceRefusal(e)) { toast.error(failure); onOpenDetail(r.id); }
       }
     } finally { setBusy(null); }
   };
@@ -687,6 +688,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
       />}
       {staleReview && <StaleApprovalDialog
         requestNo={staleReview.detail.requestNo ?? staleReview.row.requestNo}
+        beforePayout={staleReview.row.payout} payout={staleReview.detail.payout}
         diff={diffApprovalFields(
           approvalComparable(staleReview.row, staleReview.row.lineCount ?? 1),
           approvalComparable(staleReview.detail, (staleReview.detail.lines ?? []).length),
@@ -708,7 +710,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
             setStaleReview(null);
             await load();
             toast.success('อนุมัติคำขอเรียบร้อยแล้ว');
-          } catch (e) { setError(err(e)); }
+          } catch (e) { setError(err(e)); if (isThirdPartyAcceptanceRefusal(e)) { setStaleReview(null); await load(); toast.error(err(e)); onOpenDetail(review.row.id); } }
           finally { setBusy(null); }
         }}
       />}

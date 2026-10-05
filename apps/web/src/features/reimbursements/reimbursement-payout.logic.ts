@@ -2,7 +2,7 @@
 // contracts (the API runs the same function); this file only turns it into Thai and into payloads.
 
 import {
-  invalidPayoutDestinationField, invalidPayoutHolderField, invalidSavedPayoutAccountLabel,
+  payoutHolderLine, invalidPayoutDestinationField, invalidPayoutHolderField, invalidSavedPayoutAccountLabel,
   REIMBURSEMENT_PAYOUT_HOLDER_WORDS, type PayoutHolderFacts, type SavedPayoutAccountSummary,
   reimbursementPayoutOnBehalfNotice,
   maskedPayoutAccount,
@@ -344,7 +344,7 @@ export function claimCashNote(detail: PayoutRoundFacts): string {
   return answeredBy ? reimbursementPayoutRoundCashNote(answeredBy) : CLAIM_STATES_CASH_NOTE;
 }
 
-type PayoutAccountOrigin = Pick<ReimbursementPayoutSummary, 'source' | 'enteredByUserId' | 'enteredByName' | 'verifiedByUserId' | 'verifiedByName' | 'verifiedAt'>;
+type PayoutAccountOrigin = Pick<ReimbursementPayoutSummary, 'source' | 'enteredByUserId' | 'enteredByName' | 'verifiedByUserId' | 'verifiedByName' | 'verifiedAt' | 'holderType'>;
 
 /**
  * Where a sent claim's account came from, in one phrase (spec §17.2): a copy of the requester's default
@@ -363,12 +363,12 @@ export function payoutSourceText(account: PayoutAccountOrigin): string | null {
 export function payoutAttestationText(account: PayoutAccountOrigin, requesterUserId?: string): string | null {
   if (!account.verifiedAt) return null;
   return account.verifiedByUserId && account.verifiedByUserId === requesterUserId
-    ? `${REQUESTER_SELF_ATTESTED} เมื่อ ${formatThaiDateTime(account.verifiedAt)}`
+    ? `${account.holderType === 'THIRD_PARTY' ? REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdPartySelfAttestation : REQUESTER_SELF_ATTESTED} เมื่อ ${formatThaiDateTime(account.verifiedAt)}`
     : `ตรวจบัญชีแล้วโดย ${account.verifiedByName ?? 'ผู้อนุมัติ'} เมื่อ ${formatThaiDateTime(account.verifiedAt)}`;
 }
 
 /** One account the claim has been sent with, in the card's own words. */
-export type ClaimPayoutHistoryRow = { version: number; current: boolean; line: string; notes: string[] };
+export type ClaimPayoutHistoryRow = { version: number; current: boolean; line: string; notes: string[]; holder?: ReimbursementPayoutSummary };
 
 /**
  * The claim's account history for the card "การรับเงินคืน" (spec §17.2): every account the claim has been
@@ -393,7 +393,7 @@ export function claimPayoutHistory(detail: {
     const line = payoutAccountWithName(version);
     const attested = payoutAttestationText(version, detail.requesterUserId);
     const answer = kept.get(version.version);
-    const sameAccount = answer && [...rows].reverse().find((row) => row.line === line);
+    const sameAccount = answer && [...rows].reverse().find((row) => row.line === line && row.holder?.holderType === (version.holderType === 'THIRD_PARTY' ? version.holderType : undefined) && row.holder?.holderNote === (version.holderType === 'THIRD_PARTY' ? version.holderNote : undefined));
     if (sameAccount) {
       sameAccount.current ||= version.version === current;
       sameAccount.notes.push(`${payoutCorrectionAnsweredText(answer.answer, answer)} เมื่อ ${formatThaiDateTime(answer.at)}`, ...(attested ? [attested] : []));
@@ -401,6 +401,7 @@ export function claimPayoutHistory(detail: {
     }
     rows.push({
       version: version.version, current: version.version === current, line,
+      ...(version.accountName && version.holderType === 'THIRD_PARTY' && { holder: version }),
       // An account no longer in use says who attested it only when someone did: "not yet" would never come true.
       notes: [`เริ่มใช้กับใบนี้เมื่อ ${formatThaiDateTime(version.frozenAt)}`, payoutSourceText(version), attested].filter((note): note is string => !!note),
     });
@@ -438,7 +439,7 @@ export function payoutDefaultChangedHint(
 export function payoutComparableText(claim: { payout?: ReimbursementPayoutSummary | null; payoutMethod?: string | null } | null | undefined): string {
   const payout = claim?.payout;
   if (payout?.payoutMethod === 'BANK_TRANSFER' && payout.accountLast4) {
-    return `${maskedPayoutAccount(payout)}${payout.accountName ? ` · ${payout.accountName}` : ''}`;
+    return `${maskedPayoutAccount(payout)}${payout.accountName ? ` · ${payout.accountName}${payoutHolderLine(payout) ? ` · ${payoutHolderLine(payout)}` : ''}` : ''}`;
   }
   const method = payout?.payoutMethod ?? claim?.payoutMethod;
   return method ? PAYOUT_METHOD_TEXT[method] ?? 'วิธีอื่น' : '';
@@ -502,6 +503,7 @@ export type PaymentFormConfirmation = {
   note?: string;
   /** Legacy claim: the token of the default the page shows, sent back with the confirmation. */
   defaultToken?: string;
+  holder?: ReimbursementPayoutSummary;
 };
 
 /** What the payment form asks about the payout, for the method chosen: the API's own rule, turned into fields. */
@@ -527,6 +529,7 @@ export function paymentFormPayout(detail: PayStepClaim | null | undefined, payme
   const confirmation: PaymentFormConfirmation | undefined = rule.payoutConfirmation === 'required' && payout
     ? {
       key: `version:${payout.version}`, required: true, accountLine: payoutAccountWithName(payout),
+      ...(payout.accountName && payout.holderType === 'THIRD_PARTY' && { holder: payout }),
       // Nobody attested the account, or only the requester did: this confirmation is its check.
       ...((!payout.verifiedAt || payout.verifiedByUserId === detail?.requesterUserId) && { note: PAYER_IS_VERIFIER_NOTE }),
     }
@@ -750,7 +753,7 @@ export function payoutCorrectionSendBackNotes(detail: {
 }
 
 /** What the requester picks for a claim in a round. Nothing is picked for them: the account in question may be their default. */
-export type PayoutCorrectionForm = { mode: '' | 'DEFAULT' | 'SPECIFIED' | 'CASH' | 'PREVIOUS'; account: PayoutAccountForm; saveAsDefault: boolean };
+export type PayoutCorrectionForm = Omit<ClaimPayoutForm, 'mode'> & { mode: '' | 'DEFAULT' | 'SPECIFIED' | 'CASH' | 'PREVIOUS' | 'SAVED' };
 
 /** The choice that keeps the account the claim was approved with before its round, as it is (spec §14.5): nobody types anything. */
 export const PAYOUT_CORRECTION_PREVIOUS_LABEL = 'ใช้บัญชีเดิมของใบนี้';
@@ -780,7 +783,7 @@ export function payoutCorrectionOffers(
   detail: { payoutCorrectionActions?: { submitModes?: readonly string[] | null; [flag: string]: unknown } | null } | null | undefined, mode: Exclude<PayoutCorrectionForm['mode'], ''>,
 ): boolean {
   const modes = detail?.payoutCorrectionActions?.submitModes;
-  return !Array.isArray(modes) || modes.includes(mode);
+  return Array.isArray(modes) ? modes.includes(mode) : mode !== 'SAVED';
 }
 /**
  * The server said up front that an account cannot be typed on this requester's behalf because they are no longer an
@@ -805,9 +808,10 @@ export function emptyPayoutCorrectionForm(): PayoutCorrectionForm {
 }
 
 /** Why the account form cannot be sent yet, with the field to mark; null when it can. The account rule is the API's own. */
-export function payoutCorrectionFormError(form: PayoutCorrectionForm): { text: string; field?: PayoutDestinationField } | null {
+export function payoutCorrectionFormError(form: PayoutCorrectionForm): { text: string; field?: string } | null {
   if (!form.mode) return { text: 'กรุณาเลือกวิธีรับเงินคืนของใบนี้' };
-  return form.mode === 'SPECIFIED' ? payoutAccountFormError(form.account) : null;
+  return form.mode === 'SPECIFIED' ? payoutAccountFormError(form.account) ?? payoutHolderFormError(form.holder ?? { holderType: 'SELF' })
+    : form.mode === 'SAVED' && !form.savedAccountId ? { text: SAVED_PAYOUT_WORDS.choose, field: 'savedAccountId' } : null;
 }
 
 /**
@@ -819,12 +823,13 @@ export function payoutCorrectionFormError(form: PayoutCorrectionForm): { text: s
  * the claim is still that one.
  */
 export function payoutCorrectionInput(
-  form: PayoutCorrectionForm, defaultToken: string | undefined, canSaveAsDefault: boolean, expectedUpdatedAt?: string | null,
+  form: PayoutCorrectionForm, defaultToken: string | undefined, canSaveAsDefault: boolean, expectedUpdatedAt?: string | null, forSelf = true,
 ): SubmitReimbursementPayoutCorrectionInput | null {
   const choice: SubmitReimbursementPayoutCorrectionInput | null = form.mode === 'CASH' ? { mode: 'CASH' }
     : form.mode === 'PREVIOUS' ? { mode: 'PREVIOUS' }
       : form.mode === 'DEFAULT' ? (defaultToken ? { mode: 'DEFAULT', defaultToken } : null)
-        : form.mode === 'SPECIFIED' ? { mode: 'SPECIFIED', ...payoutDestinationInput(form.account), ...(form.saveAsDefault && canSaveAsDefault && { saveAsDefault: true }) }
+        : form.mode === 'SAVED' ? (forSelf && form.savedAccountId ? { mode: 'SAVED', savedAccountId: form.savedAccountId } : null)
+        : form.mode === 'SPECIFIED' ? claimPayoutInput({ ...form, mode: 'SPECIFIED' }, canSaveAsDefault, forSelf) as SubmitReimbursementPayoutCorrectionInput
           : null;
   return choice && { ...choice, ...(expectedUpdatedAt && { expectedUpdatedAt }) };
 }
@@ -847,4 +852,15 @@ export function payoutCorrectionCardNote(detail: { payoutMethod?: string | null 
   if (detail.payoutCorrectionPhase === 'AWAITING_REQUESTER') return payoutRoundTexts(detail).cardNote;
   if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') return reimbursementPayoutRoundGivenNote(detail.payoutCorrectionAnsweredBy);
   return null;
+}
+
+/** Acceptance belongs to the exact claim/account and submitted approval snapshot the reader checked. */
+export function payoutApprovalKey(detail: any): string {
+  return JSON.stringify([detail.id, detail.payout?.version, detail.payout?.holderType, detail.payout?.holderNote, detail.submittedAt, detail.approvalSnapshotHash]);
+}
+export function needsThirdPartyAcceptance(detail: any): boolean {
+  return claimNeedsPayoutAttestation(detail) && detail.payout?.holderType === 'THIRD_PARTY';
+}
+export function isThirdPartyAcceptanceRefusal(error: unknown): boolean {
+  return apiErrorCode(error) === 'payout_third_party_acceptance_required';
 }

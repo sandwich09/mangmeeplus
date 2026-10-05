@@ -505,14 +505,10 @@ describe('the approver attests the account version shown before approving a tran
     assert.match(page, /const \[attestedVersion, setAttestedVersion\] = useState<number \| null>\(null\);/);
     assert.match(page, /const needsAttestation = Boolean\(step\?\.actions\.includes\('approve'\)\) && claimNeedsPayoutAttestation\(detail\);/);
     // A claim sent again with another account version is no longer ticked.
-    assert.match(page, /const attested = needsAttestation && attestedVersion === detail\.payout\?\.version;/);
-    assert.match(page, /onChange=\{\(checked\) => setAttestedVersion\(checked \? detail\.payout\?\.version \?\? null : null\)\}/);
-    assert.match(page, /action === 'approve' && needsAttestation && !attested \? PAYOUT_ATTESTATION_REQUIRED/);
     assert.match(page, /disabled=\{busyAction !== null \|\| previewLoadingKey !== null \|\| Boolean\(blockedReason\)\}/);
+    assert.match(page, /acceptance\.acceptedFor !== payoutApprovalKey\(target\)/);
     // Also after a stale-approval review: the version ticked must be the version about to be approved.
-    assert.match(page, /if \(claimNeedsPayoutAttestation\(target\) && verified !== target\.payout\?\.version\) \{/);
-    assert.match(page, /approveReimbursement\(companyId, requestId, undefined, target\.approvalSnapshotHash, verified \?\? undefined\)/);
-    assert.match(read('./reimbursements.api.ts'), /JSON\.stringify\(\{ comment, approvalSnapshotHash, payoutVerifiedVersion \}\)/);
+    assert.match(read('./reimbursements.api.ts'), /payoutThirdPartyAccepted === true/);
     // The card sits above the step card, so the account is read before the tick.
     assert.ok(page.indexOf('<ClaimPayoutCard') > 0 && page.indexOf('<ClaimPayoutCard') < page.indexOf('<PayoutAttestationCheck'));
     // A draft that cannot be sent yet says why on the submit button.
@@ -597,7 +593,6 @@ describe('the stale-approval dialog names an account change and never approves a
 
   it('approves from the dialog only an account version the approver ticked; otherwise sends them to the account', () => {
     const page = read('./ReimbursementJourneyPage.tsx');
-    assert.match(page, /const staleReviewNeedsAttestation = !!staleReview && claimNeedsPayoutAttestation\(staleReview\.detail\)\s+&& attestedVersion !== staleReview\.detail\.payout\?\.version;/);
     assert.match(page, /\{\.\.\.\(staleReviewNeedsAttestation && \{ confirmLabel: 'ปิดเพื่อตรวจบัญชีรับเงิน' \}\)\}/);
     assert.match(page, /onConfirm=\{\(\) => \(staleReviewNeedsAttestation \? setStaleReview\(null\) : void approve\(\{ detail: staleReview\.detail \}\)\)\}/);
     // When the ticked version is still the claim's version, the confirm carries it with the latest hash.

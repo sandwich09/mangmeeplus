@@ -1836,6 +1836,7 @@ export const REIMBURSEMENT_PAYOUT_HOLDER_WORDS = {
   thirdPartyAcceptanceRequired: 'ติ๊กยอมรับการคืนเงินเข้าบัญชีของบุคคลอื่นก่อนอนุมัติ',
   thirdPartyApprovalNotice: 'ใบนี้คืนเงินเข้าบัญชีของบุคคลอื่น จึงต้องผ่านผู้อนุมัติก่อนจ่ายทุกครั้ง',
   thirdPartySelfAttestation: 'ผู้เบิกยืนยันบัญชีของบุคคลอื่นด้วยตนเอง',
+  thirdPartyPaymentConfirmation: 'โอนเข้าบัญชีของบุคคลอื่นตามที่อนุมัติในใบนี้แล้ว และชื่อผู้รับที่ธนาคารแสดงตรงกับใบเบิก',
 } as const;
 
 export function payoutHolderChoiceLabel(holderType: ReimbursementPayoutHolderType, forSelf: boolean): string {
