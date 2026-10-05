@@ -108,14 +108,15 @@ describe('cards-cmp: one deterministic answer for every comparable period', () =
         total: count, summary: { totalAmount: amount }, totalAmount: amount, totalCount: count,
         ...(toolName === 'expense.get_breakdown' ? { byCategory: [{ category: 'ค่าบริการ', totalAmount: amount }] } : {}) } };
   };
-  async function runSeries(rows: ToolResult[], filters: Record<string, string>[] = [], options: { keyed?: boolean; extra?: boolean; asks?: string } = {}) {
+  async function runSeries(rows: ToolResult[], filters: Record<string, string>[] = [], options: { keyed?: boolean; extra?: boolean; asks?: string; hinted?: boolean } = {}) {
     const periods = rows.map(result => (result.data as { period: { fromDate: string; toDate: string } }).period);
     const messageText = `เปรียบเทียบค่าใช้จ่าย ${periods.map(period => `${names[Number(period.fromDate.slice(5, 7)) - 1]} 2569`).join(' และ ')}${options.asks ?? ''}`;
     const inputs = periods.map((period, index) => ({ ...(options.keyed ? { periodKey: period.fromDate.slice(0, 7) } : period), ...filters[index] }));
     const request: LineAiTurnRequest = { requestId: 'req-series', webhookEventId: 'event-series', messageText,
       messagePreviewHash: 'c'.repeat(16), valueCandidates: extractValueCandidates(messageText, '2026-10-05'),
       semanticSubrequests: periods.map((period, index) => ({ index, kind: 'read', goal: messageText,
-        requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: inputs[index]! })),
+        requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: inputs[index]!,
+        ...(options.hinted ? { toolHint: rows[index]!.toolName } : {}) })),
       userContext: baseUserContext(['expense.read']) };
     if (options.extra) request.semanticSubrequests!.push({ index: rows.length, kind: 'general', goal: 'กำไรคืออะไร', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} });
     const { provider, calls } = recordingProvider([
@@ -161,6 +162,13 @@ describe('cards-cmp: one deterministic answer for every comparable period', () =
     assert.deepEqual(result.replyText.split('\n').slice(-2), ['ส.ค. มากกว่า ก.ค. 189,751.77 บาท', 'ก.ย. น้อยกว่า ส.ค. 116,899.57 บาท']);
     assert.equal(result.replyText.match(/^• /gmu)?.length, 3);
     assert.doesNotMatch(result.replyText, /อยู่ในสรุปด้านบน|^\d+\. |%/mu);
+  });
+  it('routed with its read tool named (the model-free comparison route): no model call in the whole turn', async () => {
+    const { result, calls } = await runSeries([row(7, '180', 1, 'expense.get_breakdown'), row(8, '13526', 20, 'expense.get_breakdown'), row(9, '13094.24', 3, 'expense.get_breakdown')], [], { hinted: true });
+    assert.deepEqual(calls.map(call => call.usageTag), []);
+    assert.deepEqual(result.replyText.split('\n').slice(4, 6), ['ส.ค. มากกว่า ก.ค. 13,346.00 บาท', 'ก.ย. น้อยกว่า ส.ค. 431.76 บาท']);
+    assert.equal(result.presentation?.cards[0]?.layout?.rows.length, 8);
+    assert.ok(result.semanticCoverage?.every(item => item.status === 'handled'));
   });
   it('a reader who asks for a percentage gets it, in the reply and on the card', async () => {
     // +189751.77 /25147.80 = +754.5%, ratio 8.5; -116899.57 /214899.57 = -54.4%.

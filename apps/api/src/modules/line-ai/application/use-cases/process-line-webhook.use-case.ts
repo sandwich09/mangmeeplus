@@ -2374,14 +2374,21 @@ export class ProcessLineWebhookUseCase {
     try {
       const hasImageContent = !!input.attachment?.contentBase64
         && (input.attachment.mimeType === 'image/png' || input.attachment.mimeType === 'image/jpeg');
+      // Owner 2026-10-05 ("อ่านช้ามาก"): about two of a turn's seconds passed inside this stage before the
+      // model was asked. One line says which step took them; it carries durations only.
+      const timing = { startedAt: Date.now(), grantMs: 0, contextMs: 0, categoriesMs: 0 };
       const budgetGrantV2 = input.event ? await this.prepareTextGrantV2(input.event, input.requestId, hasImageContent) : undefined;
+      timing.grantMs = Date.now() - timing.startedAt;
       const reliabilityContext = input.event ? await this.reliabilityContext(input.event) : {};
+      timing.contextMs = Date.now() - timing.startedAt - timing.grantMs;
       // Bound private turns get the catalogue too: without it the capture hint below can never name a
       // category, and every LINE draft was saved uncategorised (UAT 2026-09-29, "ค่าส่งของ 300 บาท").
       // Only an actor who may create an expense draft needs it; question-only turns read no expense data.
       const activeCategories = this.expenseRepo && RECEIPT_CAPTURE_PERMISSIONS.some((permission) => input.permissions.includes(permission))
         ? aiSelectableExpenseCategories(await this.expenseRepo.listCategories(input.companyId)).map((c) => ({ id: c.id, name: c.name }))
         : [];
+      timing.categoriesMs = Date.now() - timing.startedAt - timing.grantMs - timing.contextMs;
+      const gatewayStartedAt = Date.now();
       const offeredToolNames = lineIntakeOfferedToolNames({
         permissions: input.permissions,
         entitledFeatureKeys: input.entitledFeatureKeys,
@@ -2389,7 +2396,7 @@ export class ProcessLineWebhookUseCase {
         publicLookupEnabled: this.config.lineAiPublicLookupEnabled,
         reimbursementDraftWriteEnabled: this.config.lineAiReimbursementDraftWriteEnabled,
       });
-      return await this.aiGateway.requestLineIntakeRoute({
+      const routed = await this.aiGateway.requestLineIntakeRoute({
         requestId: input.requestId,
         // Not part of the model payload — the intake router builds its prompt from an explicit
         // field allowlist — so this only reaches the budget attempt key.
@@ -2446,6 +2453,11 @@ export class ProcessLineWebhookUseCase {
           : {}),
       }, { busyWaitDeadlineMs: input.busyWaitDeadlineMs, retryWebhookEventId: input.retryWebhookEventId, onAdmitted: input.onAdmitted,
         ...(admitOverCap ? { admitOverCap: true } : {}) });
+      try {
+        this.logger.log({ msg: 'line.ai.intake_timing', surface: 'employee_oa', requestId: input.requestId, webhookEventId: input.webhookEventId,
+          grantMs: timing.grantMs, contextMs: timing.contextMs, categoriesMs: timing.categoriesMs, gatewayMs: Date.now() - gatewayStartedAt });
+      } catch { /* telemetry cannot change the outcome it observes */ }
+      return routed;
     } catch (err) {
       // Spec §9.1: our own money gate refused BEFORE any provider ran. Collapsing that into
       // `ROUTER_UNREACHABLE` is what lost the reason and sent the turn straight back into the same
