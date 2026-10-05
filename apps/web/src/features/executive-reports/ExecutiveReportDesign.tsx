@@ -175,9 +175,9 @@ export function ExecutiveKpiStrip({ children, columns = 3 }: { children: ReactNo
   const scale = { digits: Math.max(1, ...values.map(p => p.figure ? figureNumber(p.figure, p.moneyValue).length : String(p.value ?? '').length)), size: 26 };
   // One size for the whole strip, small enough for its longest figure in the narrowest tile (five in a row at 1200 px): digits never wrap.
   scale.size = scale.digits > 12 ? 14 : scale.digits > 10 ? 16 : scale.digits > 7 ? 18 : 26;
-  const five = values.length === 5, four = values.length === 4;
+  const five = values.length === 5, fourColumns = [4, 7, 8].includes(values.length);
   // Five tiles: two a row on a phone with the last one across the row, 3 + 2 from 768 px, one row of five from 1200 px. No empty slot at any width.
-  return <KpiScale.Provider value={scale}><div data-executive-kpi-strip className={`grid min-w-0 grid-cols-2 gap-2 ${five ? 'max-md:[&>*:last-child]:col-span-2 md:max-[1200px]:grid-cols-6 md:max-[1200px]:[&>*]:col-span-2 md:max-[1200px]:[&>*:nth-child(n+4)]:col-span-3 min-[1200px]:grid-cols-5' : `${columns === 3 ? 'md:grid-cols-3' : ''} ${four ? 'min-[1200px]:grid-cols-4' : ''}`}`}>{children}</div></KpiScale.Provider>;
+  return <KpiScale.Provider value={scale}><div data-executive-kpi-strip className={`grid min-w-0 grid-cols-2 gap-2 ${five || values.length === 7 ? 'max-md:[&>*:last-child]:col-span-2' : ''} ${five ? 'md:max-[1200px]:grid-cols-6 md:max-[1200px]:[&>*]:col-span-2 md:max-[1200px]:[&>*:nth-child(n+4)]:col-span-3 min-[1200px]:grid-cols-5' : fourColumns ? 'md:grid-cols-4' : columns === 3 ? 'md:grid-cols-3' : ''}`}>{children}</div></KpiScale.Provider>;
 }
 export function comparisonLine(comparison: ExecutivePeriodComparison): string {
   const qualifier = executivePeriodComparisonQualifier(comparison);

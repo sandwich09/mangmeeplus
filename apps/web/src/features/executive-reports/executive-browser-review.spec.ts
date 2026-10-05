@@ -317,15 +317,28 @@ test('owner\'s sheet: the nine columns fit a 1280 px screen, a fact the list is 
     assert.deepEqual(props.columns.filter((c: any) => c.sort).map((c: any) => c.label), sortBy === 'joinedAt' ? [] : [NINE[['companyName', 'receiptsLifetime', 'lastReceiptAt', 'planEndsAt'].indexOf(sortBy) && ['companyName', 'receiptsLifetime', 'lastReceiptAt', 'planEndsAt'].indexOf(sortBy) + 2]], sortBy);
   }
   // Ordered by a fact outside the nine: that fact is read right after the name and carries the order's arrow.
-  for (const [sortBy, label] of [['netReceipts', 'ยอดรับสุทธิ (บาท)'], ['daysSinceLastReceipt', 'ห่างจากใบเสร็จล่าสุด (วัน)'], ['aiRequests30', 'คำขอผู้ช่วย 30 วัน'], ['activeDays', W.days], ['lastActivityAt', W.lastActivity]] as const) {
+  for (const [sortBy, label] of [['netReceipts', 'ยอดรับสุทธิ (บาท)'], ['receipts7', 'ใบเสร็จใหม่ 7 วัน'], ['lifetimeNetSatang', 'ชำระสุทธิสะสม (บาท)'], ['daysSinceLastReceipt', 'ห่างจากใบเสร็จล่าสุด (วัน)'], ['aiRequests30', 'คำขอผู้ช่วย 30 วัน'], ['activeDays', W.days], ['lastActivityAt', W.lastActivity]] as const) {
     assert.deepEqual(labels(sortBy), [NINE[0], label, ...NINE.slice(1)], sortBy);
     assert.equal(table(sortBy).props.columns[1].sort, 'descending', sortBy);
+  }
+  const { EXECUTIVE_SORT_OPTIONS } = await import('@watchdog-bms/contracts');
+  for (const { sortBy } of EXECUTIVE_SORT_OPTIONS) for (const status of ['OK', 'NOT_PERMITTED']) {
+    const props = table(sortBy, { ...row, ownerContact: { ...row.ownerContact, status } }).props;
+    assert.ok(props.columns.reduce((n: number, c: any) => n + c.width, 44) <= 974, `${sortBy} ${status}`);
+    assert.equal(props.columns[0].width, 150, sortBy);
+    for (const label of ['ใบเสร็จในระบบ (รายการ)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'เบอร์โทร']) {
+      assert.equal(props.columns.find((c: any) => c.label === label)?.width, table('joinedAt', { ...row, ownerContact: { ...row.ownerContact, status } }).props.columns.find((c: any) => c.label === label)?.width);
+    }
   }
   // The headers that take two lines break before a whole word, never inside one the browser does not know.
   const rendered = html(ExecutiveTable, table('joinedAt').props);
   for (const [first, second] of [['ใบเสร็จในระบบ ', '(รายการ)'], ['เพิ่มใบเสร็จ', 'ล่าสุด'], ['สิ้นสุด', 'แพ็กเกจ']]) assert.ok(rendered.includes(`<span class="whitespace-nowrap">${first}</span><wbr/><span class="whitespace-nowrap">${second}</span>`), second);
   // With the contact right: two links the reader presses to write or call. The phone link carries digits only.
-  assert.match(rendered, /<a href="mailto:owner@example\.test" title="owner@example\.test"[^>]*>owner@example\.test<\/a>/); assert.match(rendered, /<a href="tel:0810000001"[^>]*>081-000 0001<\/a>/);
+  const emailLink = rendered.match(/<a href="mailto:owner@example\.test"[^>]*>[\s\S]*?<\/a>/)![0];
+  assert.match(emailLink, /title="owner@example\.test"/); assert.match(emailLink, />owner<wbr class="max-md:hidden"\/>@example\.test<\/a>/);
+  assert.match(emailLink, /md:whitespace-normal md:\[overflow-wrap:anywhere\]/); assert.doesNotMatch(emailLink, /\s(?:truncate|line-clamp)/);
+  assert.match(rendered, /<a href="tel:0810000001"[^>]*>081-000 0001<\/a>/);
+  assert.match(rendered, /md:line-clamp-2 md:break-normal md:\[overflow-wrap:break-word\]/);
   // Without it the API returns no contact: the two columns do not exist, and no cell is empty or masked.
   const hidden = { ...row, ownerContact: { status: 'NOT_PERMITTED' } };
   assert.deepEqual(labels('joinedAt', hidden), NINE.filter(label => label !== 'อีเมล' && label !== 'เบอร์โทร'));
