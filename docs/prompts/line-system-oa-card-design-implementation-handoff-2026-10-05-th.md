@@ -99,6 +99,8 @@ Q&A / คำสั่งแก้ไข / สรุป / งานค้าง�
 
 ## จุดในโค้ดที่ตรวจแล้ว และช่องว่างที่ต้องทำต่อ
 
+Removed 2026-10-05: the card reply is always on; there is no switch.
+
 | จุด | ข้อค้นพบ / งานต่อ |
 | --- | --- |
 | [line-business-card.logic.ts](../../apps/api/src/modules/line-ai/domain/logic/line-business-card.logic.ts) | builder เดิมสำหรับข้อความ, receipt draft และ answer cards ใช้ theme/layout เดิม รักษา `safeTenantLink`, canonical text และ fallback แล้วใช้ native pattern ร่วมเฉพาะบริบทที่ล็อก อย่าเปลี่ยน signup/package/legal/quota card ที่ใช้ helper เดียวโดยไม่ตั้งใจ |

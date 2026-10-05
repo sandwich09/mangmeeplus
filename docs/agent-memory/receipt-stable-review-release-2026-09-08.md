@@ -27,6 +27,8 @@ Read all environment entries and secret binding names from the singleton ACTIVE 
 
 Secret binding names match for every service. Bindings correctly target separate environment resources. This proves configuration presence, not interchangeability of secret values.
 
+Removed 2026-10-05: the card reply is always on; there is no switch.
+
 | Setting | UAT live | Production now | Prepared next live deploy |
 | --- | --- | --- | --- |
 | LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED | true | absent | true (protected variable + workflow default) |
