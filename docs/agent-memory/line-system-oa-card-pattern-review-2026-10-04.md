@@ -1,6 +1,6 @@
 # Agent Memory: System OA card pattern review
 
-Status: IMPLEMENTED IN NATIVE FLEX 2026-10-05 (part 1 merged as #1012 develop / #1013 main, and the coordinator reported starting its UAT deploy; part 2 — body-safety guard, push fallback, bound-path proofs, scanning fallback sentence — on branch `claude/line-system-oa-cards-20261005`). The PDF/file result card (state 6') and the renderer's look-tuning are in other lanes. NOT yet accepted on a real LINE client: the pictures below this line are from a local Flex renderer. Earlier status lines in this file are history.
+Status: ON LINE UAT 2026-10-05 16:37 (main `8edb735ec`): part 1 (#1012/#1013), part 2a (#1014/#1015: row cards, named buttons) and round 2b (#1016/#1017: periods, a reply completes the question, every month in a comparison, no bare text). Production is NOT touched and waits for the owner's own go. Earlier status: IMPLEMENTED IN NATIVE FLEX 2026-10-05 (part 1 merged as #1012 develop / #1013 main, and the coordinator reported starting its UAT deploy; part 2 — body-safety guard, push fallback, bound-path proofs, scanning fallback sentence — on branch `claude/line-system-oa-cards-20261005`). The PDF/file result card (state 6') and the renderer's look-tuning are in other lanes. NOT yet accepted on a real LINE client: the pictures below this line are from a local Flex renderer. Earlier status lines in this file are history.
 Owner: Codex / root
 Scope: System Mangmee OA cards for payment, review, scanning, ordinary Q&A and commands, using the owner's three mascot images and aligned label / colon / value rows. This is separate from the completed Official marketing OA publication.
 
@@ -118,6 +118,30 @@ Equal in every measured case (|Δ| < 0.75 px, identical colour): header height a
 - The approval-queue read (`reimbursement.list_pending_approvals`) keeps its list as prose: its facts (requester, date, amount per claim) have no rows in the locked claim card.
 - Replies outside the eight contexts (typed-note draft conversation, corrections, reference replies, legal / package / quota cards) keep the card they had.
 - On the gateway path the proposal is two bubbles — the canonical sentence, then the locked proposal card — because the delivery plan requires the control to follow the complete canonical text. On the API-local path it is the one card.
+
+## Round 2 after the owner's phone test — 2026-10-05 (controller's record)
+
+**What the owner said, in order.** 14:45 (after part 1 on UAT): "ตอบแค่ความสามารถปัจจุบัน, สรุปค่าใช้จ่ายเดือนนี้ อยากได้เหมือน แพร์ทเทิน อ่านใบเสร็จ, มีงานค้าง อ่านยากมาก และลิ้งชื่อปุ่ม ใช้ชื่อได้เลย ไม่ต้องบอกว่าปุ่มลิ้ง 1 2 3 ที่เหลือโอเคแล้ว พยายามเอาเขา patern นะ". 14:55, two decisions: "การ์ดคำอธิบาย ตามแนะนำ" (the explain card keeps its one button to the record) and "หัวการ์ดของคำถามยาว ๆ เป็นแบบเดิมไปก่อน เพราะให้ model เขียนเพิ่มต้องทดสอบอีก" (a long question's heading stays its own first words). 15:05–15:10, from UAT and Production: "ถามวนอะ ส่วนของ ปี จริงๆ ดีฟอลปีนี้ได้เลยนะ แต่ถ้า user ระบุปีมา ค่อยทำตาม user", "การ์ดหลุดด้วย", and on a three-month answer "ข้อมูลที่สรุป มันไม่เหมือนสรุป อ่านแล้วยังงง". 15:33: "ทำไวๆหน่อยนะ" and "อะไรที่ยังไม่อยู่ในขอบเขตก็ไม่ต้องทำ".
+
+**Lesson of part 1.** The 20 fixtures covered the designed states, not the real routes: a compound question arrived on the card from before the design, the list and the grouped summary were prose, and the capability answer had a preamble. A phone test of real questions comes before calling a card round done.
+
+**Part 2a (#1014/#1015, UAT 15:54, operation `20261005T084812Z-4694f13f`).**
+- Row cards built in the gateway formatter from tool results, with the sentence unchanged as the canonical text: the expense list (`รายการค่าใช้จ่าย` / month; `ยอดรวม`, `จำนวนรายการ`, one row per record), the grouped summary (`สรุปค่าใช้จ่าย` / month; `แยกตาม : หมวด|ร้าน|สาขา`, one row per group, `อื่นๆ (N)`), the day's closing (`สรุปปิดร้าน`), the approval queue (`เบิกจ่ายรออนุมัติ` / `พบ N รายการ`), the claims summary (`สรุปใบเบิก` / `ณ <วัน>`), one claim (`ใบเบิกจ่าย`).
+- "มีงานค้างอะไรบ้าง" is ONE card (`งานค้าง` / `ณ <วัน>` or `ไม่พบงานค้าง`): a row for each kind of waiting work, `ไม่มีค้าง` for a kind that was read and has nothing, one named button per page. The merge is in the gateway (`backlogCardLayout`), so the API contract "a layout stands for the whole reply" is unchanged. Past 16 rows or 8 buttons the answer is the prose card.
+- A button is named by the page it opens; `เปิดลิงก์ N` no longer exists (a link nothing names says `เปิดดูในเว็บแอป`). Up to 8 buttons under one another, 8 px apart.
+- A gateway answer without rows is one prose card of the locked design under the reader's own words; the `แหล่งข้อมูล:` line is not printed (it stays in the canonical text); `ขอบเขต: เฉพาะ…` prints as `แสดงเฉพาะ…`.
+- "ทำอะไรได้บ้าง" is answered with the current capabilities alone. A receipt sent as a file gets the review card; a pushed card LINE refuses is sent once more as its text.
+- Open questions 2 and 5 above are answered by this round: the record and payment cards end with their states as locked (no `ข้อมูล ณ` row), and the approval queue is a row card of its own.
+
+**Round 2b (#1016/#1017, UAT 16:37, operation `20261005T092928Z-8c27754e`).**
+- Periods as people say them (`docs/specs/line-ai-period-resolution-spec-th.md` §4.5): N complete units for `N เดือนย้อนหลัง|ล่าสุด|ที่ผ่านมา`, one period for a month-to-month range, the year defaults to this year and a stated year is followed, a non-month word is never asked about as a month. Controller's decision for the owner: the current, unfinished month is not part of "N เดือนย้อนหลัง"; the answer states the dates.
+- A short reply completes the assistant's own question: decoder rejection reasons and a targeted repair, the open question may be cited by a read clause, and a reply that is nothing but a period is routed by code with no model call (`line-intake-reply.spec.ts`, listed in the whole-chain catalog).
+- A question about several months is answered once with every month, one fact per line (`expensePeriodComparisonSeries`).
+- In a bound chat a bare-text reply to a typed message (the two route apologies, short notices, a completed reply) stands on the locked card under the reader's words; a tap on a proposal that is gone answers on the edit's own card. Open question 6 is answered for bound chats; still text: a reply to a photo, file or tap, a chat that is not bound, a web base that is not https, a reply whose link is not a page of this company.
+
+**Asked of LINE before each round.** `POST /v2/bot/message/validate/reply` from the UAT API container: 21 of 21 payloads for 2a, 8 of 8 for 2b (the stacked-button footer, the 16-row summary, a 3,000-character prose card, the apology cards).
+
+**Not done, by the owner's scope rule.** Per-month rows for "3 เดือนย้อนหลัง" (today: one total for the range plus the by-category rows; `calendarMonthsForPeriod` exists and nothing calls it); a row layout for the many-month comparison (it is prose on the card); the coverage table of every answer family; gallery items A4 (waiting card sentence) and A6 (`ฐานยอด` note); the two older gateway paths. A read the model answers in its own words stays prose, because its sentence may be narrower than the table.
 
 ## Open questions
 
