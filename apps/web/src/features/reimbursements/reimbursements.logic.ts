@@ -1,12 +1,12 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateReasonText, reimbursementDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
+  REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, reimbursementDuplicateWait, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateReasonText, reimbursementDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
   reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE,
   reimbursementPaymentReferenceRequired as paymentReferenceRequired, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, REIMBURSEMENT_PAYMENT_STEP_NOTE,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
-import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
+import { apiErrorCode, apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import {
   CLAIM_SIGN_LABEL, CLAIM_SIGNATURE_ROLE_LABELS, claimSignAction, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
@@ -134,7 +134,7 @@ export function awaitingSystemNote(detail: any, approvedBy?: string): string {
 export function errorText(e: unknown): string {
   const code = (e as { code?: unknown } | null)?.code;
   const viaCode = typeof code === 'string' ? ERROR_CODE_LABELS[code] ?? translateApiError(code) : null;
-  if (code === 'duplicate_unresolved') return apiErrorMessage(e);
+  if (code === 'duplicate_unresolved' || code === 'duplicate_confirmed') return apiErrorMessage(e);
   if (viaCode) return viaCode;
   return errorMessage(e instanceof Error ? e.message : 'เกิดข้อผิดพลาด', e);
 }
@@ -388,6 +388,7 @@ export function paymentSaveErrorMessage(stage: 'slip-upload' | 'record', error: 
   if (stage === 'slip-upload') return `อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ${errorText(error)}`;
   if (isLostPaymentRace(error)) return 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่';
   const reason = errorText(error);
+  if ((error as { code?: unknown } | null)?.code === 'duplicate_confirmed') return reason;
   if ((error as { status?: unknown } | null)?.status === 409) return `ยังบันทึกจ่ายไม่สำเร็จ · ${reason}`;
   return slipKept
     ? `แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ${reason} · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่`
@@ -411,7 +412,7 @@ export type PaymentFormSession = { idempotencyKey: string | null; saving: boolea
 export type PaymentFormSave =
   | { status: 'saved' }
   /** Nothing was sent, or the save failed. `text` is the plain-Thai sentence the form shows, never a raw error. */
-  | { status: 'refused'; text: string }
+  | { status: 'refused'; text: string; refreshClaim?: true }
   /** A press that arrived while an earlier one was still running. Nothing was done. */
   | { status: 'ignored' };
 
@@ -489,7 +490,8 @@ export async function savePaymentForm(
         ...(payout?.rule.mismatchReasonRequired && { methodMismatchReason: mismatchReason.trim() }),
       });
     } catch (error) {
-      return { status: 'refused', text: paymentSaveErrorMessage('record', error, slipAttachmentId !== undefined) };
+      return { status: 'refused', text: paymentSaveErrorMessage('record', error, slipAttachmentId !== undefined),
+        ...(apiErrorCode(error) === 'duplicate_confirmed' && { refreshClaim: true as const }) };
     }
     return { status: 'saved' };
   } finally {
@@ -954,7 +956,7 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   const paid = (detail?.payments ?? []).find((p: any) => p.status === 'RECORDED');
   rows.push(paid
     ? { key: 'payment', state: 'done', label: paidLabel(paid), date: paid.paidAt }
-    : { key: 'payment', state: at === 'payment' ? 'current' : 'future', label: at === 'payment' ? `กำลัง${waitingForPayer(detail)}` : 'รอบันทึกจ่าย' });
+    : { key: 'payment', state: at === 'payment' ? 'current' : 'future', label: detail?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') ? reimbursementDuplicateWait(detail)?.waiting ?? reimbursementDuplicateBlockNotice(detail.duplicateReasons, false, { status: detail.status }) : at === 'payment' ? `กำลัง${waitingForPayer(detail)}` : 'รอบันทึกจ่าย' });
   return rows;
 }
 
@@ -1173,6 +1175,26 @@ function payoutCorrectionStepNote(
   ].filter(Boolean).join(' · ');
 }
 
+export function duplicateNoticeForViewer(detail: any, permissions: readonly string[], userId: string): string {
+  return reimbursementDuplicateBlockNotice(detail?.duplicateReasons, detail?.status === 'FINANCE_REVIEW', {
+    status: detail?.status,
+    canCancel: reimbursementOwnActions(detail, userId, permissions).canCancel,
+    cancellationPending: claimIsBeingCancelled(detail),
+    canResumeCancellation: detail?.pendingCancellation?.canResume === true,
+  });
+}
+
+export function paymentVoidedMessage(detail: any, permissions: readonly string[], userId: string): string {
+  if (detail?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE')) return `${PAYMENT_VOIDED_LABEL} ${duplicateNoticeForViewer(detail, permissions, userId)}`;
+  const actions = activeJourneyStep(buildJourneySteps(detail, permissions, userId))?.actions ?? [];
+  const next = [actions.includes('pay') && 'บันทึกจ่ายใหม่', reimbursementOwnActions(detail, userId, permissions).canCancel && 'ยกเลิกคำขอต่อ'].filter(Boolean);
+  return `${PAYMENT_VOIDED_LABEL}${next.length ? ` คุณสามารถ${next.join('หรือ')}ได้` : ''}`;
+}
+
+export function duplicateCanBeCleared(claim: { duplicateBlocksPayment?: boolean; hasDuplicateBlocker?: boolean; duplicateReasons?: readonly string[] }): boolean {
+  return (claim.duplicateBlocksPayment === true || claim.hasDuplicateBlocker === true) && !claim.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE');
+}
+
 /**
  * The claim as 4 or 5 steps with the actions open to this viewer. A projection of the existing
  * statuses: nothing is stored, every action still goes through its own endpoint, and the buttons
@@ -1195,6 +1217,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
   const humanApproved = !!approval;
   const signed = new Set((detail?.signatures ?? []).map((row: any) => row.role));
   const payment = (detail?.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
+  const confirmedDuplicate = detail?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') === true;
   const duplicate = ['POSSIBLE_DUPLICATE', 'CONFIRMED_DUPLICATE'].includes(detail?.duplicateStatus)
     ? DUPLICATE_STATUS_LABELS[detail.duplicateStatus] : undefined;
   // Payout spec §14: the claim's place in a correction round, and what the server says THIS viewer may do about
@@ -1239,7 +1262,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       // approvers send it back once more instead, with the same call that opened the round.
       if (round.phase === 'AWAITING_APPROVAL' && detail?.approvalActions?.canApprove === true) actions.push('approve');
       if (correction?.canSubmit === true) actions.push('correct-payout');
-      if (correction?.canRequest === true) actions.push('send-back');
+      if (!confirmedDuplicate && correction?.canRequest === true) actions.push('send-back');
       note = payoutCorrectionStepNote(detail, round, {
         canApprove: actions.includes('approve'), canSubmit: actions.includes('correct-payout'), isRequester: detail?.requesterUserId === userId,
       });
@@ -1272,7 +1295,10 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
     } else if (key === 'payment') {
       // APPROVED here is the no-finance claim waiting for its projection; the API accepts payment then.
       const payable = ['READY_FOR_PAYMENT', 'APPROVED'].includes(status);
-      if (payable && (detail?.duplicateBlocksPayment === true || detail?.duplicateReasons?.includes('EXPENSE_CONFIRMATION'))) {
+      if (confirmedDuplicate) {
+        note = duplicateNoticeForViewer(detail, permissions, userId);
+        if (canVoidRecordedPayment(payment, permissions)) actions.push('void-payment');
+      } else if (payable && (detail?.duplicateBlocksPayment === true || detail?.duplicateReasons?.includes('EXPENSE_CONFIRMATION'))) {
         // The API refuses payment until the block is cleared with a reason.
         // Owner 2026-09-21: a claim has only a requester and an approver, so whoever records the
         // payment clears the duplicate block with a reason; duplicate.resolve holders still can too.
@@ -1280,7 +1306,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         if (canResolve) actions.push('resolve-duplicate');
         const reasons = detail.duplicateReasons ?? (detail.duplicateCandidates ?? []).filter((candidate: any) => candidate.status === 'OPEN').map((candidate: any) => candidate.candidateType);
         note = canResolve ? reimbursementDuplicateBlockNotice(reasons)
-          : `ติดรายการซ้ำ: ${reimbursementDuplicateReasonText(reasons)} รอ${PAYER}ตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้`;
+          : `${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}: ${reimbursementDuplicateReasonText(reasons)} รอ${PAYER}ตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้`;
       } else {
         const canPay = permissions.includes('reimbursement.payment.record');
         // The payment endpoint refuses a claim with no branch for everyone, so nobody is offered the
@@ -1327,7 +1353,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
     // whoever may record its payment, the approver it stands on, or its requester. The page offers it at the foot of
     // the account box, where a wrong account is found, and says it there: not among the buttons of this step, where
     // one wrong tap beside "บันทึกจ่าย" took both signatures off a claim that only needed paying.
-    if (!ended && key === 'payment' && !round && correction?.canRequest === true) actions.push('send-back');
+    if (!ended && !confirmedDuplicate && key === 'payment' && !round && correction?.canRequest === true) actions.push('send-back');
     if (!ended && own.canCancel) actions.push('cancel');
     // No requestNo, no document: drafts and claims cancelled out of DRAFT never got one.
     if (detail?.requestNo && status !== 'DRAFT') actions.push('print');
@@ -1335,6 +1361,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       if (canUploadSignedCopy(detail, userId, permissions)) actions.push('attach-signed-copy');
       if (canVoidRecordedPayment(payment, permissions)) actions.push('void-payment');
     }
+    if (confirmedDuplicate && key !== 'payment') note = [note, duplicateNoticeForViewer(detail, permissions, userId)].filter(Boolean).join(' · ');
     return { note, actions };
   };
 

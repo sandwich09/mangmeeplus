@@ -17,7 +17,7 @@ const rows = [
 test('the rendered catalog lists Thai names, forms, rates, statuses and on/off controls without code tokens', () => {
   const { WhtIncomeCategoryList } = require('./WhtIncomeCategoriesPage');
   const markup = renderToStaticMarkup(React.createElement(WhtIncomeCategoryList, { rows, busyCode: null, onToggle: () => {} }));
-  for (const words of ['ค่าบริการ (นิติบุคคล)', 'ดอกเบี้ย', 'ภ.ง.ด.53', 'ภ.ง.ด.3', '3%', '1%', 'เปิดใช้งาน', 'ยังไม่เปิดใช้งาน', 'เลิกใช้งาน', 'ปิดใช้', 'เปิดใช้']) assert.ok(markup.includes(words), words);
+  for (const words of ['ค่าบริการ (นิติบุคคล)', 'ดอกเบี้ย', 'ภ.ง.ด.53', 'ภ.ง.ด.3', '3%', '1%', 'เปิดใช้งาน', 'ไม่ได้เปิดใช้งาน', 'เลิกใช้งาน', 'ปิดใช้', 'เปิดใช้']) assert.ok(markup.includes(words), words);
   assert.equal((markup.match(/role="switch"/g) ?? []).length, 3);
   assert.match(markup, /aria-checked="true"/);
   assert.match(markup, /aria-checked="false"/);
@@ -37,7 +37,7 @@ test('a phone reads and switches every kind without sideways scrolling, and the 
   assert.match(markup, /grid-cols-\[minmax\(0,1fr\)_auto\]/, 'name and facts on the left, the switch beside them');
   assert.match(markup, /<span class="sm:hidden">อัตราเริ่มต้น <\/span>/, 'without column headings the rate still says what it is');
   assert.equal((markup.match(/role="status"[^>]*>บันทึกแล้ว</g) ?? []).length, 1);
-  assert.match(markup, /ยังไม่เปิดใช้งาน<span role="status"[^>]*>บันทึกแล้ว</, 'on the kind that was just switched');
+  assert.match(markup, /ไม่ได้เปิดใช้งาน<span role="status"[^>]*>บันทึกแล้ว</, 'on the kind that was just switched');
   const page = source('WhtIncomeCategoriesPage.tsx');
   assert.ok(page.indexOf('await confirm(') < page.indexOf('setBusyCode(row.code)'), 'reading the confirmation makes nothing busy');
   assert.match(page, /setSavedCode\(saved\.code\)/);

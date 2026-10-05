@@ -5,7 +5,9 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './harness/fixtures';
 import { ensureBrowserLegalAcceptance, expectNoClientError } from './harness/auth';
 import { chooseThemedOption } from './harness/e2e-utils';
+import { EXPENSE_WITHHOLDING_WORDS } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '../apps/web/src/common/i18n/workspace-dictionary';
+import { PAYEE_ENTITY_KIND_LABELS } from '../apps/web/src/features/expenses/expenses.model';
 
 const apiRequire = createRequire(resolve('apps/api/package.json'));
 const databaseUrl = process.env.RECEIPT_CONTINUITY_TEST_DATABASE_URL;
@@ -20,6 +22,9 @@ const databaseUrl = process.env.RECEIPT_CONTINUITY_TEST_DATABASE_URL;
 const sourceDraftSave = (page: Page) => page.locator('section')
   .filter({ has: page.getByRole('heading', { name: 'ข้อมูลผู้ขายและรายการ', exact: true }) })
   .getByRole('button', { name: 'บันทึกแบบร่าง', exact: true });
+
+/** The toast that carries this text: a save can also announce a vendor added to the counterparty list, so there may be two toasts. */
+const statusToast = (page: Page, text: string) => page.locator('.toast-enter[role="status"]').filter({ hasText: text });
 
 /** Seed only synthetic records in an explicitly selected local DB; requests and UI stay real. */
 async function fixture(companyId: string, ownerId = 'seed-local-owner', ocrItems = [{ description: 'กระดาษ A4' }, { description: 'ปากกา' }]) {
@@ -104,7 +109,7 @@ for (const width of [390, 1280]) {
       await sourceDraftSave(page).click();
       const saveResult = await savedResponse;
       expect(saveResult.ok(), await saveResult.text()).toBe(true);
-      await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว กลับมาแก้ไขต่อได้');
+      await expect(statusToast(page, 'บันทึกแบบร่างแล้ว กลับมาแก้ไขต่อได้')).toBeVisible();
       const saved = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
       expect(saved.sourceDraft.header.vendorName).toBe('ร้านทดสอบที่กรอกเอง');
       expect(saved.sourceDraft.header.expenseDate).toBeNull();
@@ -221,7 +226,7 @@ test('reviewer reopens legacy READY in the ordinary form without inventing finan
     await page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ }).fill('เติมต่อโดยไม่เดายอด');
     await expect(sourceDraftSave(page)).toHaveCount(0);
     await page.getByRole('button', { name: 'เก็บร่างไว้ก่อน', exact: true }).click();
-    await expect(page.locator('.toast-enter[role="status"]')).toContainText('เก็บร่างแล้ว');
+    await expect(statusToast(page, 'เก็บร่างแล้ว')).toBeVisible();
     const saved = await f.client.expenseRecord.findUniqueOrThrow({ where: { id: f.expense.id }, include: { lines: true } });
     expect(saved.status).toBe('NEEDS_REVIEW');
     expect(saved.lines).toHaveLength(0);
@@ -279,7 +284,7 @@ for (const width of [390, 1280]) {
       const saves: string[] = [];
       page.on('request', (request) => { if (request.method() === 'PATCH' && request.url().includes(f.expense.id)) saves.push(request.url()); });
       await sourceDraftSave(page).click();
-      await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
+      await expect(statusToast(page, 'บันทึกแบบร่างแล้ว')).toBeVisible();
       expect(saves).toHaveLength(1);
       const saved = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
       expect(saved.sourceDraft.header.expenseDate).toBeNull();
@@ -332,7 +337,7 @@ test('reviewer retains the accepted financial row while original OCR quantity st
     await expect(price).toHaveValue('55');
     await page.getByLabel('ซื้อไปใช้ทำอะไร', { exact: true }).fill('ทดสอบยืนยันจำนวนที่อ่านไม่ได้');
     await sourceDraftSave(page).click();
-    await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
+    await expect(statusToast(page, 'บันทึกแบบร่างแล้ว')).toBeVisible();
     await page.reload();
     await expect(quantity).toHaveValue('1');
     await expect(price).toHaveValue('55');
@@ -426,14 +431,17 @@ for (const width of [390, 1280]) {
       { description: 'COKE', quantity: '1', unitPrice: '25' },
     ] as any);
     const words = workspaceDictionary.th;
+    // A vendor of this run only: the counterparty list remembers a vendor's payee type, and the next run must start without one.
+    const vendorName = 'PANDA MALA (บริษัท รวยเจริญดี จำกัด) ' + randomUUID().slice(0, 8);
     const whtCategoryCode = 'e2e-wht-' + randomUUID();
+    const whtCategoryName = 'ค่าบริการทดสอบ';
     const whtPath = '**/api/v1/companies/' + companyId + '/expenses/wht-income-categories';
     await page.route(whtPath, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     try {
       const category = await f.client.expenseCategory.findFirstOrThrow({ where: { companyId, status: 'ACTIVE', accountHintKey: 'expense.meals' } });
       const setup = await api.patch(`companies/${companyId}/expenses/${f.expense.id}/review-fields`, { data: {
         expectedUpdatedAt: f.expense.updatedAt.toISOString(), expenseDate: '2026-09-07',
-        vendorNameSnapshot: 'PANDA MALA (บริษัท รวยเจริญดี จำกัด)', vendorDocumentNumber: '00912/1',
+        vendorNameSnapshot: vendorName, vendorDocumentNumber: '00912/1',
         vatMode: 'VAT_INCLUDED', lines: [
           { lineNumber: 1, description: 'TOMATO SOUP', quantity: '0.63', unitPrice: '386.9048', discountAmount: '8.75', vatRate: '0.07', expenseCategoryId: category.id },
           ...['SOUP', 'SELF SERVICE SAUCE', 'COKE'].map((description, index) => ({ lineNumber: index + 2, description, quantity: '1', unitPrice: index === 2 ? '25' : '20', vatRate: '0.07', expenseCategoryId: category.id })),
@@ -452,7 +460,7 @@ for (const width of [390, 1280]) {
       await expect(page.getByRole('region', { name: 'ข้อมูลบิลที่ยังไม่ครบ', exact: true })).toHaveCount(0);
       const vendor = page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ });
       await expect(vendor).toHaveCount(1);
-      await expect(vendor).toHaveValue('PANDA MALA (บริษัท รวยเจริญดี จำกัด)');
+      await expect(vendor).toHaveValue(vendorName);
       await expect(page.getByLabel('รายละเอียด', { exact: true })).toHaveCount(4);
       await expect(page.getByText(/I01|I02|expense\.meals|D-PURPOSE/)).toHaveCount(0);
       const purpose = page.getByLabel('ซื้อไปใช้ทำอะไร', { exact: true });
@@ -482,8 +490,8 @@ for (const width of [390, 1280]) {
         }
       }
       await saveDraft.click();
-      const savedToast = page.locator('.toast-enter[role="status"]');
-      await expect(savedToast).toContainText('บันทึกแบบร่างแล้ว กลับมาแก้ไขต่อได้');
+      const savedToast = statusToast(page, 'บันทึกแบบร่างแล้ว กลับมาแก้ไขต่อได้');
+      await expect(savedToast).toBeVisible();
       await savedToast.evaluate(async (element) => { await Promise.all(element.getAnimations().map((animation) => animation.finished)); });
       await page.screenshot({ path: info.outputPath(`receipt-saved-toast-${width}.png`) });
       await savedToast.getByRole('button', { name: 'ปิดการแจ้งเตือน' }).click();
@@ -516,12 +524,15 @@ for (const width of [390, 1280]) {
       await page.screenshot({ path: info.outputPath(`receipt-review-dropdown-${width}.png`) });
       await categoryList.getByRole('option', { name: category.name, exact: true }).click();
       {
-        const next = page.getByRole('button', { name: 'ถัดไป', exact: true });
+        const next = page.getByRole('button', { name: words['expenses.step_next'], exact: true });
         const block = page.getByTestId('expense-withholding');
         const choice = block.getByRole('combobox', { name: words['expenses.wht_choice'], exact: true });
-        const payeeKind = page.getByRole('combobox', { name: words['expenses.payee_entity_kind'], exact: true });
+        const payeeKind = block.getByRole('combobox', { name: words['expenses.payee_entity_kind'], exact: true });
         const incomeCategory = block.getByRole('combobox', { name: words['expenses.wht_income_category'], exact: true });
-        const withholding = block.getByRole('spinbutton', { name: /^อัตราหัก ณ ที่จ่าย/ });
+        // A text field with a decimal keypad: it may be empty while it is being typed in.
+        const withholding = block.getByRole('textbox', { name: words['expenses.wht_value_percent'] });
+        const flagged = block.locator('[aria-invalid="true"]');
+        const wayOut = page.getByText(EXPENSE_WITHHOLDING_WORDS.wayOut(words['expenses.wht_no']), { exact: true });
         await expect(choice).toContainText(words['expenses.wht_no']);
         await expect(payeeKind).toHaveCount(0);
         await expect(incomeCategory).toHaveCount(0);
@@ -530,34 +541,76 @@ for (const width of [390, 1280]) {
         await page.getByRole('option', { name: words['expenses.wht_yes'], exact: true }).click();
         await expect(payeeKind).toBeVisible();
         await expect(incomeCategory).toBeVisible();
+        // A freshly chosen หัก starts clean: an empty rate, nothing flagged, ถัดไป still open.
+        await expect(withholding).toHaveAttribute('inputmode', 'decimal');
+        await expect(withholding).toHaveValue('');
+        await expect(flagged).toHaveCount(0);
+        await expect(next).toBeEnabled();
         await expect(block.getByText(words['expenses.wht_categories_empty'], { exact: true })).toHaveCount(0);
         await payeeKind.click();
-        await page.getByRole('option', { name: 'บุคคลธรรมดา', exact: true }).click();
+        await page.getByRole('option', { name: PAYEE_ENTITY_KIND_LABELS.INDIVIDUAL, exact: true }).click();
         await expect(block.getByText(words['expenses.wht_categories_empty'], { exact: true })).toBeVisible();
-        await withholding.fill('3');
+        // The first press of ถัดไป stays on the step: it goes to the first missing field and says it once, with the way out.
+        await next.click();
+        await expect(incomeCategory).toBeFocused();
         await expect(incomeCategory).toHaveAttribute('aria-invalid', 'true');
+        await expect(flagged).toHaveCount(1);
+        await expect(page.getByText(words['expenses.v_wht_category_required'], { exact: true })).toHaveCount(1);
+        await expect(wayOut).toHaveCount(1);
         await expect(next).toBeDisabled();
         await block.screenshot({ path: info.outputPath('withholding-empty-catalog-' + width + '.png') });
-        // Clearing the rate needs no category, even with an empty catalog.
+        // Typing in the rate never changes the decision: a leading zero is tidied on leaving the field, and an emptied field keeps หัก.
+        await withholding.fill('03');
+        await withholding.blur();
+        await expect(withholding).toHaveValue('3');
         await withholding.fill('');
-        await expect(choice).toContainText(words['expenses.wht_no']);
+        await expect(choice).toContainText(words['expenses.wht_yes']);
+        await expect(incomeCategory).toBeVisible();
+        // With an empty catalog the way out is the decision itself.
+        await choice.click();
+        await page.getByRole('option', { name: words['expenses.wht_no'], exact: true }).click();
         await expect(payeeKind).toHaveCount(0);
         await expect(incomeCategory).toHaveCount(0);
         await expect(next).toBeEnabled();
         // A synthetic ACTIVE row in the explicitly selected isolated DB; seeded catalog decisions stay untouched.
         await f.client.whtIncomeCategory.create({ data: {
-          code: whtCategoryCode, nameTh: 'ค่าบริการทดสอบ', formType: 'PND53', defaultRate: '3', status: 'ACTIVE',
+          code: whtCategoryCode, nameTh: whtCategoryName, formType: 'PND53', defaultRate: '3', status: 'ACTIVE',
         } });
         await page.unroute(whtPath);
         await page.reload();
         await choice.click();
         await page.getByRole('option', { name: words['expenses.wht_yes'], exact: true }).click();
-        await incomeCategory.click();
-        await page.getByRole('option', { name: 'ค่าบริการทดสอบ', exact: true }).click();
-        await expect(withholding).toHaveValue('3');
-        await expect(next).toBeDisabled();
+        // Income categories follow the payee type, so the type comes first; the category then fills its rate and nothing is flagged.
         await payeeKind.click();
-        await page.getByRole('option', { name: 'นิติบุคคล (ภ.ง.ด.53)', exact: true }).click();
+        await page.getByRole('option', { name: PAYEE_ENTITY_KIND_LABELS.INDIVIDUAL, exact: true }).click();
+        // The seeded catalog has kinds for a person; the synthetic one is for a juristic payee, so it is not offered here.
+        await incomeCategory.click();
+        await expect(page.getByRole('option').first()).toBeVisible();
+        await expect(page.getByRole('option', { name: whtCategoryName, exact: true })).toHaveCount(0);
+        await page.keyboard.press('Escape');
+        await payeeKind.click();
+        await page.getByRole('option', { name: PAYEE_ENTITY_KIND_LABELS.JURISTIC, exact: true }).click();
+        await expect(block.getByText(words['expenses.wht_categories_empty'], { exact: true })).toHaveCount(0);
+        await incomeCategory.click();
+        await page.getByRole('option', { name: whtCategoryName, exact: true }).click();
+        await expect(withholding).toHaveValue('3');
+        await expect(flagged).toHaveCount(0);
+        await expect(next).toBeEnabled();
+        // A blank rate keeps the selected decision/category; leaving it reveals one field error.
+        await withholding.fill('');
+        await expect(choice).toContainText(words['expenses.wht_yes']);
+        await expect(incomeCategory).toContainText(whtCategoryName);
+        await expect(withholding).not.toHaveAttribute('aria-invalid', 'true');
+        await withholding.blur();
+        await expect(next).toBeDisabled();
+        await expect(withholding).toHaveAttribute('aria-invalid', 'true');
+        await expect(flagged).toHaveCount(1);
+        await expect(page.getByText(words['expenses.v_wht_percent'], { exact: true })).toHaveCount(1);
+        await expect(wayOut).toHaveCount(1);
+        await withholding.fill('3');
+        await expect(flagged).toHaveCount(0);
+        await expect(wayOut).toHaveCount(0);
+        await expect(next).toBeEnabled();
         const order = await block.evaluate((element) => {
           const fields = ['expense-payee-entity-kind-', 'expense-wht-category-', 'expense-wht-rate-'];
           return fields.map((id) => element.querySelector('[id^="' + id + '"]')!.getBoundingClientRect().top);
@@ -565,11 +618,11 @@ for (const width of [390, 1280]) {
         expect(order[0]).toBeLessThan(order[1]);
         expect(order[1]).toBeLessThan(order[2]);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-        const whtBase = block.getByRole('spinbutton', { name: /^ฐานคำนวณหัก ณ ที่จ่าย/ });
+        const whtBase = block.getByRole('spinbutton', { name: words['expenses.wht_base'] });
         await whtBase.fill('1000');
         await expect(next).toBeEnabled();
         await saveDraft.click();
-        await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
+        await expect(statusToast(page, words['expenses.review_draft_saved'])).toBeVisible();
         const taxes = await (await api.get('companies/' + companyId + '/expenses/' + f.expense.id)).json();
         expect(taxes.whtInputJson).toMatchObject({ inputType: 'RATE', value: '3', baseAmount: '1000' });
         expect(Number(taxes.whtAmount)).toBe(30);
@@ -582,7 +635,10 @@ for (const width of [390, 1280]) {
         await block.screenshot({ path: info.outputPath('withholding-selected-' + width + '.png') });
         await whtBase.fill('100000');
         await expect(next).toBeDisabled();
-        await expect(page.getByRole('status').filter({ hasText: /^ยอดหัก ณ ที่จ่ายต้องไม่เกินฐานหักหรือยอดรวมเอกสาร$/ })).toBeVisible();
+        // The sentence is said once, beside the rate; the footer only points to it.
+        await expect(withholding).toHaveAttribute('aria-invalid', 'true');
+        await expect(page.getByText(words['expenses.v_wht_exceeds_base'], { exact: true })).toHaveCount(1);
+        await expect(page.getByRole('status').filter({ hasText: words['expenses.v_wht_exceeds_base'] })).toHaveCount(0);
         await choice.click();
         await page.getByRole('option', { name: words['expenses.wht_no'], exact: true }).click();
         await expect(payeeKind).toHaveCount(0);
@@ -590,37 +646,64 @@ for (const width of [390, 1280]) {
         await expect(withholding).toHaveCount(0);
         await expect(next).toBeEnabled();
         await saveDraft.click();
-        await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
+        await expect(statusToast(page, words['expenses.review_draft_saved'])).toBeVisible();
         const cleared = await (await api.get('companies/' + companyId + '/expenses/' + f.expense.id)).json();
         expect(cleared.whtInputJson).toMatchObject({ inputType: 'RATE', value: '0' });
         expect(cleared.whtInputJson.baseAmount).toBeUndefined();
         expect(Number(cleared.whtAmount)).toBe(0);
         expect(cleared.whtCategoryCode).toBe('');
         expect(Number(cleared.whtRate)).toBe(0);
+        expect(cleared.vendorEntityKindSnapshot).toBe('JURISTIC');
         await choice.click();
         await page.getByRole('option', { name: words['expenses.wht_yes'], exact: true }).click();
+        await expect(payeeKind).toContainText(PAYEE_ENTITY_KIND_LABELS.JURISTIC);
         await incomeCategory.click();
-        await page.getByRole('option', { name: 'ค่าบริการทดสอบ', exact: true }).click();
+        await page.getByRole('option', { name: whtCategoryName, exact: true }).click();
         await withholding.fill('0');
-        await expect(incomeCategory).toContainText('ค่าบริการทดสอบ');
+        await expect(choice).toContainText(words['expenses.wht_yes']);
+        await expect(incomeCategory).toContainText(whtCategoryName);
         await withholding.press('End');
         await withholding.pressSequentially('.5');
         await expect(withholding).toHaveValue('0.5');
         await expect(next).toBeEnabled();
         await block.getByRole('combobox', { name: words['expenses.wht_input_unit'], exact: true }).click();
         await page.getByRole('option', { name: words['expenses.wht_unit_baht'], exact: true }).click();
-        const amount = block.getByRole('spinbutton', { name: words['expenses.wht_value_baht'], exact: true });
+        const amount = block.getByRole('textbox', { name: words['expenses.wht_value_baht'] });
+        await expect(amount).toHaveAttribute('inputmode', 'decimal');
         await amount.fill('30');
+        // An emptied amount is only a field being typed in: the decision stays หัก until the reviewer changes it.
         await amount.fill('');
-        await expect(choice).toContainText(words['expenses.wht_no']);
+        await expect(choice).toContainText(words['expenses.wht_yes']);
+        await expect(incomeCategory).toContainText(whtCategoryName);
+        await expect(amount).not.toHaveAttribute('aria-invalid', 'true');
+        await amount.blur();
+        await expect(next).toBeDisabled();
+        await expect(amount).toHaveAttribute('aria-invalid', 'true');
+        await expect(flagged).toHaveCount(1);
+        await expect(page.getByText(words['expenses.v_wht_amount'], { exact: true })).toHaveCount(1);
+        await expect(wayOut).toHaveCount(1);
+        await choice.click();
+        await page.getByRole('option', { name: words['expenses.wht_no'], exact: true }).click();
         await expect(incomeCategory).toHaveCount(0);
+        await expect(amount).toHaveCount(0);
+        await expect(wayOut).toHaveCount(0);
         await expect(next).toBeEnabled();
       }
-      await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+      await page.getByRole('button', { name: words['expenses.step_next'], exact: true }).click();
       await expect(page.getByText('ขั้นที่ 2:', { exact: true })).toBeVisible();
       await expect(saveDraft).toHaveCount(0);
-      await page.getByRole('button', { name: 'ย้อนกลับ', exact: true }).click();
+      const advanced = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
+      expect(advanced.whtInputJson).toMatchObject({ inputType: 'RATE', value: '0' });
+      expect(advanced.whtInputJson.baseAmount).toBeUndefined();
+      expect(Number(advanced.whtAmount)).toBe(0);
+      expect(advanced.whtCategoryCode).toBe('');
+      expect(Number(advanced.whtRate)).toBe(0);
+      expect(advanced.vendorEntityKindSnapshot).toBe('JURISTIC');
+      // ย้อนกลับ is one of the secondary actions behind เพิ่มเติม in the footer.
+      await page.locator('summary').filter({ hasText: 'เพิ่มเติม' }).click();
+      await page.getByRole('button', { name: words['expenses.step_back'], exact: true }).click();
       await expect(saveDraft).toBeVisible();
+      await expect(page.getByTestId('expense-withholding').getByRole('combobox', { name: words['expenses.wht_choice'], exact: true })).toContainText(words['expenses.wht_no']);
       await f.client.expenseRecord.update({ where: { id: f.expense.id }, data: { status: 'READY_FOR_CONFIRMATION' } });
       await page.reload();
       await expect(page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toBeVisible();
@@ -632,15 +715,17 @@ for (const width of [390, 1280]) {
         const readPath = `**/api/v1/companies/${companyId}/expenses/${f.expense.id}`;
         await page.route(readPath, (route) => route.fulfill({ status: 503, contentType: 'application/json', body: '{"message":"private_readback_diagnostic"}' }));
         await saveDraft.click();
-        await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกข้อมูลแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ');
+        await expect(statusToast(page, 'บันทึกข้อมูลแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ')).toBeVisible();
         await expect(page.getByText('private_readback_diagnostic')).toHaveCount(0);
         await page.unroute(readPath);
         await page.reload();
         await expect(purpose).toHaveValue('เลี้ยงอาหารลูกค้าที่มาคุยงาน');
       }
     } finally {
-      await page.unroute(whtPath);
+      // The page is already closed after a timeout; the synthetic rows must still be removed.
+      await page.unroute(whtPath).catch(() => {});
       await f.client.whtIncomeCategory.deleteMany({ where: { code: whtCategoryCode } });
+      await f.client.accountingCounterparty.deleteMany({ where: { companyId, displayName: vendorName } }).catch(() => {});
       await f.cleanup();
     }
   });

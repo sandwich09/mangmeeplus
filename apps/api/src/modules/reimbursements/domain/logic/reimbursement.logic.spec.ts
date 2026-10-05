@@ -393,6 +393,15 @@ describe('payment recording (MVP full-payment)', () => {
   it('rejects duplicate blocker', () => {
     assert.equal(validatePaymentRecording({ ...base, duplicateBlocking: true }), 'duplicate_unresolved');
   });
+  it('blocks a confirmed own expense under every policy, with a distinct refusal and unchanged unresolved handling', () => {
+    for (const policy of ['WARN', 'BLOCK_SUBMIT', 'BLOCK_PAYMENT']) {
+      assert.equal((duplicateBlocksPayment as any)(policy, 0, 0, 1), true, policy);
+      assert.equal(validatePaymentRecording({ ...base, duplicateBlocking: true, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] } as any), 'duplicate_confirmed');
+      assert.equal((duplicateBlocksPayment as any)(policy, 1, 0, 0), policy === 'BLOCK_PAYMENT');
+      assert.equal((duplicateBlocksPayment as any)(policy, 0, 1, 0), policy === 'BLOCK_PAYMENT');
+      assert.equal((duplicateBlocksPayment as any)(policy, 0, 0, 0), false);
+    }
+  });
   // One test for the payment, the claim detail's `duplicateBlocksPayment` and the pay-queue row's `hasDuplicateBlocker`.
   it('is refused for a duplicate exactly while the claim\'s policy blocks payment and a candidate of its own is open', () => {
     for (const [policy, open, blocks] of [['BLOCK_PAYMENT', 1, true], ['BLOCK_PAYMENT', 3, true], ['BLOCK_PAYMENT', 0, false],

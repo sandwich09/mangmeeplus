@@ -33,6 +33,8 @@ Decisions (owner, verbatim where quoted):
 
 Open questions (none blocks UAT):
 
+- Later the same day (2026-10-05) the owner had the small follow-ups below done: see `small-followups-2026-10-05.md` for what was fixed (the confirmed-duplicate payment by his decision, the screen items, the export column, the withholding word, the browser test, the note saved by an executive account proven on a screen) and what was left (future dates on sales-document receipts: not a sold feature).
+
 - A claim whose expense is a CONFIRMED duplicate can still be paid (existing rule). The owner has not asked to change it.
 - Future dates on sales-document receipts are still accepted; the owner's "ห้ามวันอนาคต" was applied to expense payments and claim payouts only.
 - The refreshed approved-help card went live on source review alone, as the owner's 2026-09-27 decision allows; a model-backed evaluation needs a new budget approval.

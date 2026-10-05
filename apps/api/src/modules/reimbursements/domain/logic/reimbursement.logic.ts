@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import {
-  isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, reimbursementPaymentReferenceRequired, reimbursementPayoutCorrectionPhase,
+  reimbursementDuplicateBlockNotice, isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, reimbursementPaymentReferenceRequired, reimbursementPayoutCorrectionPhase,
   reimbursementPayoutHeld, reimbursementPayoutRoundAnswer, reimbursementPayoutRoundStatus, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, todayCivilDate,
 } from '@watchdog-bms/contracts';
 import type {
@@ -738,6 +738,7 @@ export type PaymentEligibilityInput = {
   financeReviewRequired: boolean;
   financeReviewApproved: boolean;
   duplicateBlocking: boolean;
+  duplicateReasons?: readonly import('@watchdog-bms/contracts').ReimbursementDuplicateReason[];
   approvedAmount: string;
   outstandingAmount: string;
   paidAmount: string;
@@ -762,23 +763,31 @@ export const PAYMENT_RECORDING_STATUSES: readonly ReimbursementRequestStatus[] =
 // Answers combine the claim candidates with its own expense records below.
 
 /**
- * Whether an unresolved duplicate refuses the claim's payment: the policy the claim was sent under
- * blocks payment, and a claim candidate or its own expense duplicate is unresolved. The one test.
+ * A confirmed own expense duplicate always refuses new payment. An unresolved duplicate refuses
+ * it only under the claim's BLOCK_PAYMENT policy. The one test.
  * Recording a payment asks it before
  * the payment lock and under it (`duplicate_unresolved`), the claim detail reports it as
  * `duplicateBlocksPayment` and a pay-queue row as `hasDuplicateBlocker`, so a row and a claim page
  * carry the mark exactly when the payment would be refused for it.
  */
-export function duplicateBlocksPayment(duplicatePolicy: string, openCandidates: number, unresolvedExpenses = 0): boolean {
-  return duplicatePolicy === 'BLOCK_PAYMENT' && (openCandidates > 0 || unresolvedExpenses > 0);
+export function duplicateBlocksPayment(duplicatePolicy: string, openCandidates: number, unresolvedExpenses = 0, confirmedExpenses = 0): boolean {
+  return confirmedExpenses > 0 || (duplicatePolicy === 'BLOCK_PAYMENT' && (openCandidates > 0 || unresolvedExpenses > 0));
 }
 
-export function claimDuplicateReasons(request: { duplicateCandidates?: { status: string; candidateType: string }[]; possibleDuplicateExpenseCount?: number; duplicateConfirmationPendingCount?: number }): import('@watchdog-bms/contracts').ReimbursementDuplicateReason[] {
+export function claimDuplicateReasons(request: { duplicateCandidates?: { status: string; candidateType: string }[]; possibleDuplicateExpenseCount?: number; duplicateConfirmationPendingCount?: number; confirmedDuplicateExpenseCount?: number }): import('@watchdog-bms/contracts').ReimbursementDuplicateReason[] {
   return [...new Set([
     ...(request.duplicateCandidates ?? []).filter(candidate => candidate.status === 'OPEN').map(candidate => candidate.candidateType),
     ...((request.possibleDuplicateExpenseCount ?? 0) > 0 ? ['EXPENSE_DOCUMENT'] : []),
     ...((request.duplicateConfirmationPendingCount ?? 0) > 0 ? ['EXPENSE_CONFIRMATION'] : []),
+    ...((request.confirmedDuplicateExpenseCount ?? 0) > 0 ? ['EXPENSE_CONFIRMED_DUPLICATE'] : []),
   ])] as import('@watchdog-bms/contracts').ReimbursementDuplicateReason[];
+}
+
+export function confirmedDuplicateRefusal(request: Parameters<typeof claimDuplicateReasons>[0] & { status: string }, canCancel?: boolean) {
+  const duplicateReasons = claimDuplicateReasons(request);
+  if (!duplicateReasons.includes('EXPENSE_CONFIRMED_DUPLICATE')) return null;
+  return { code: 'duplicate_confirmed', duplicatePhase: 'PAYMENT', duplicateReasons, claimStatus: request.status, canCancel,
+    message: reimbursementDuplicateBlockNotice(duplicateReasons, false, { status: request.status, canCancel }) };
 }
 
 /**
@@ -802,7 +811,10 @@ export function claimDuplicateStatus<Status extends string>(
 export function validatePaymentRecording(input: PaymentEligibilityInput): string | null {
   if (!PAYMENT_RECORDING_STATUSES.includes(input.status)) return 'invalid_status_transition';
   if (input.financeReviewRequired && !input.financeReviewApproved) return 'finance_review_required';
-  if (input.duplicateBlocking) return 'duplicate_unresolved';
+  if (input.duplicateBlocking) {
+    if (input.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE')) return 'duplicate_confirmed';
+    return 'duplicate_unresolved';
+  }
 
   const paid = d(input.paidAmount);
   if (!paid.gt(0)) return 'payment_amount_invalid';

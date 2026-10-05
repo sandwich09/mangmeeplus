@@ -80,7 +80,7 @@ import {
   deriveHeaderFromLines,
   computeReceiptRequirement,
   currentDesk,
-  duplicateBlocksPayment, claimDuplicateReasons,
+  duplicateBlocksPayment, claimDuplicateReasons, confirmedDuplicateRefusal,
 } from '../domain/logic/reimbursement.logic';
 import { CLAIM_PAYOUT_WORKLIST_LIMIT, exclusiveEndOfDay, isExpenseVoidReason } from '@watchdog-bms/contracts';
 import { findClaimExpenseVoidBlocker, type ExpenseVoidBlocker } from '../../expenses/infrastructure/expense-void-blocker';
@@ -125,6 +125,7 @@ const OWN_DUPLICATE_EXPENSES = {
   where: { OR: [
     { duplicateStatus: 'POSSIBLE_DUPLICATE' as const, status: { not: 'VOIDED' as const } },
     { duplicateStatus: 'OVERRIDDEN' as const, status: 'READY_FOR_CONFIRMATION' as const },
+    { duplicateStatus: 'CONFIRMED_DUPLICATE' as const },
   ] },
   select: { duplicateStatus: true, status: true },
 };
@@ -1870,7 +1871,7 @@ export class PrismaReimbursementRepository {
       await this.lockRequest(tx, data.companyId, data.requestId);
       const row = await tx.reimbursementRequest.findFirst({
         where: { id: data.requestId, companyId: data.companyId },
-        include: { lines: { orderBy: { lineNo: 'asc' } } },
+        include: { lines: { orderBy: { lineNo: 'asc' } }, sourceExpenses: OWN_DUPLICATE_EXPENSES },
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
       if (row.status !== 'FINANCE_REVIEW') {
@@ -1882,6 +1883,8 @@ export class PrismaReimbursementRepository {
       }
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes);
+      const refusal = data.resolveRequestDuplicates && confirmedDuplicateRefusal(request);
+      if (refusal) throw new UnprocessableEntityException(refusal);
       await assertReimbursementSources(tx, request);
       if (request.financeReviewStatus === 'APPROVED_FOR_PAYMENT') {
         if (request.financeReviewedByUserId !== data.actorUserId || !request.financeReviewedAt) {
@@ -1942,7 +1945,7 @@ export class PrismaReimbursementRepository {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
       await this.lockRequest(tx, data.companyId, data.requestId);
-      const row = await tx.reimbursementRequest.findFirst({ where: { id: data.requestId, companyId: data.companyId } });
+      const row = await tx.reimbursementRequest.findFirst({ where: { id: data.requestId, companyId: data.companyId }, include: { sourceExpenses: OWN_DUPLICATE_EXPENSES } });
       if (!row) throw new NotFoundException('Reimbursement request not found');
       if (!['APPROVED', 'READY_FOR_PAYMENT'].includes(row.status)) {
         throw new UnprocessableEntityException(`Cannot resolve duplicates from status ${row.status}`);
@@ -1950,6 +1953,8 @@ export class PrismaReimbursementRepository {
       this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) throw this.requestChanged();
       this.assertDecisionBranch(row.branchId, data.scopes);
+      const refusal = confirmedDuplicateRefusal(this.toRequest(row));
+      if (refusal) throw new UnprocessableEntityException(refusal);
       await this.overrideOpenDuplicates(tx, data.companyId, data.requestId, data.actorUserId, data.resolvedAt, data.reason);
       const changed = await tx.reimbursementRequest.updateMany({
         where: { id: data.requestId, companyId: data.companyId, status: row.status, updatedAt: data.expectedUpdatedAt },
@@ -3137,7 +3142,7 @@ export class PrismaReimbursementRepository {
       this.prisma.client.reimbursementRequest.findMany({
         where: where.bucket === undefined ? scope : { ...scope, AND: [...scope.AND, hubBucketWhere(where.bucket)] },
         // The page's rows report the same duplicate status as the claim's own page: one batched read for the page.
-        include: { _count: { select: { lines: true } }, duplicateCandidates: LIVE_DUPLICATE_CANDIDATES },
+        include: { _count: { select: { lines: true } }, duplicateCandidates: LIVE_DUPLICATE_CANDIDATES, sourceExpenses: OWN_DUPLICATE_EXPENSES },
         // The same stable order as `listRequests`: OFFSET pages need every row to keep its place.
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: where.skip,
@@ -3171,7 +3176,9 @@ export class PrismaReimbursementRepository {
         ...(where.status === 'PENDING_APPROVAL' && {
           approvalSteps: { where: { status: 'PENDING' as any } },
         }),
-        ...(where.withDuplicateCandidates && { duplicateCandidates: LIVE_DUPLICATE_CANDIDATES, sourceExpenses: OWN_DUPLICATE_EXPENSES }),
+        // A row's own expense duplicates decide what it may say about being paid (a confirmed one waits to be cancelled), on every list.
+        sourceExpenses: OWN_DUPLICATE_EXPENSES,
+        ...(where.withDuplicateCandidates && { duplicateCandidates: LIVE_DUPLICATE_CANDIDATES }),
       },
       // F2 (tuning-6b): rows created in the same instant (seeded data, bulk imports) came back in
       // arbitrary order under createdAt alone, so the LINE list's "1./2." numbering ("ใบที่สอง") could
@@ -3480,12 +3487,14 @@ export class PrismaReimbursementRepository {
       }).then((row: any) => row ? this.toPolicy(row) : null)));
       const duplicateBlocking = duplicateBlocksPayment(policy.duplicatePolicy, await tx.reimbursementDuplicateCandidate.count({
         where: { companyId: data.companyId, reimbursementRequestId: data.reimbursementRequestId, status: 'OPEN' },
-      }), (this.toRequest(request).possibleDuplicateExpenseCount ?? 0) + (this.toRequest(request).duplicateConfirmationPendingCount ?? 0));
+      }), (this.toRequest(request).possibleDuplicateExpenseCount ?? 0) + (this.toRequest(request).duplicateConfirmationPendingCount ?? 0), this.toRequest(request).confirmedDuplicateExpenseCount);
+      const duplicateReasons = claimDuplicateReasons(this.toRequest(request));
       const error = validatePaymentRecording({
         status: request.status,
         financeReviewRequired: policy.financeReviewRequired,
         financeReviewApproved: request.financeReviewStatus === 'APPROVED_FOR_PAYMENT' || !policy.financeReviewRequired,
         duplicateBlocking,
+        duplicateReasons,
         approvedAmount: dec(request.amount),
         outstandingAmount: dec(request.outstandingAmount),
         paidAmount: data.paidAmount,
@@ -3493,7 +3502,7 @@ export class PrismaReimbursementRepository {
         paymentReference: data.paymentReference,
         hasSlip: Boolean(data.slipAttachmentId),
       });
-      if (error) throw new UnprocessableEntityException(error === 'duplicate_unresolved' ? { code: error, duplicatePhase: 'PAYMENT', message: reimbursementDuplicateBlockNotice(claimDuplicateReasons(this.toRequest(request))), duplicateReasons: claimDuplicateReasons(this.toRequest(request)) } : error);
+      if (error) throw new UnprocessableEntityException(error === 'duplicate_unresolved' || error === 'duplicate_confirmed' ? { code: error, duplicatePhase: 'PAYMENT', message: reimbursementDuplicateBlockNotice(duplicateReasons, false, { status: request.status }), duplicateReasons, claimStatus: request.status } : error);
       await this.assertClaimProjectionsReady(tx, this.toRequest(request));
       // Spec §12.3, §12.4, §12.6: the account version the payer was shown is the claim's version NOW,
       // a transfer into the claim's account is confirmed, and a method other than the one asked for
@@ -4699,6 +4708,7 @@ export class PrismaReimbursementRepository {
       payments: row.payments ? row.payments.map((p: any) => this.toPayment(p)) : undefined,
       possibleDuplicateExpenseCount: row.sourceExpenses?.filter((expense: any) => expense.duplicateStatus === 'POSSIBLE_DUPLICATE').length ?? 0,
       duplicateConfirmationPendingCount: row.sourceExpenses?.filter((expense: any) => expense.duplicateStatus === 'OVERRIDDEN' && expense.status === 'READY_FOR_CONFIRMATION').length ?? 0,
+      confirmedDuplicateExpenseCount: row.sourceExpenses?.filter((expense: any) => expense.duplicateStatus === 'CONFIRMED_DUPLICATE').length ?? 0,
       duplicateCandidates: row.duplicateCandidates ? row.duplicateCandidates.map((d: any) => this.toDuplicate(d)) : undefined,
       claimSignatures: row.claimSignatures ? row.claimSignatures.map((s: any) => this.toClaimSignature(s)) : undefined,
     };

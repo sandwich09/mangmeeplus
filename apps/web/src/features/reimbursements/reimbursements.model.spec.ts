@@ -399,3 +399,14 @@ describe('a claim in a payout round', () => {
     assert.equal(claimDeskText(null), null);
   });
 });
+
+it('a confirmed duplicate waiting at payment has cancellation status and actor on every row', () => {
+  const row = { status: 'READY_FOR_PAYMENT', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'], currentDesk: { kind: 'PAYMENT' }, paymentDesk: { names: ['สมศรี'] } };
+  assert.equal(claimStatusBadge(row).label, 'รอยกเลิก');
+  assert.match(claimDeskText(row)!, /ผู้เบิกที่มีสิทธิ์ยกเลิกหรือผู้ตรวจการเงินที่ดูแลสาขา/);
+  assert.equal(claimStatusBadge({ ...row, duplicateReasons: [] }).label, 'พร้อมจ่าย');
+  assert.equal(claimStatusBadge({ ...row, status: 'PAID' }).label, 'จ่ายแล้ว');
+  assert.equal(claimStatusBadge({ ...row, status: 'APPROVED' }).label, 'รอยกเลิก');
+  assert.equal(claimStatusBadge({ ...row, status: 'PARTIALLY_PAID' }).label, 'จ่ายบางส่วน');
+  assert.equal(claimDeskText({ ...row, status: 'PARTIALLY_PAID' }), 'ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้');
+});
