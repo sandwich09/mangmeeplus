@@ -3142,7 +3142,7 @@ export class PrismaReimbursementRepository {
       this.prisma.client.reimbursementRequest.findMany({
         where: where.bucket === undefined ? scope : { ...scope, AND: [...scope.AND, hubBucketWhere(where.bucket)] },
         // The page's rows report the same duplicate status as the claim's own page: one batched read for the page.
-        include: { _count: { select: { lines: true } }, duplicateCandidates: LIVE_DUPLICATE_CANDIDATES },
+        include: { _count: { select: { lines: true } }, duplicateCandidates: LIVE_DUPLICATE_CANDIDATES, sourceExpenses: OWN_DUPLICATE_EXPENSES },
         // The same stable order as `listRequests`: OFFSET pages need every row to keep its place.
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: where.skip,
@@ -3176,7 +3176,9 @@ export class PrismaReimbursementRepository {
         ...(where.status === 'PENDING_APPROVAL' && {
           approvalSteps: { where: { status: 'PENDING' as any } },
         }),
-        ...(where.withDuplicateCandidates && { duplicateCandidates: LIVE_DUPLICATE_CANDIDATES, sourceExpenses: OWN_DUPLICATE_EXPENSES }),
+        // A row's own expense duplicates decide what it may say about being paid (a confirmed one waits to be cancelled), on every list.
+        sourceExpenses: OWN_DUPLICATE_EXPENSES,
+        ...(where.withDuplicateCandidates && { duplicateCandidates: LIVE_DUPLICATE_CANDIDATES }),
       },
       // F2 (tuning-6b): rows created in the same instant (seeded data, bulk imports) came back in
       // arbitrary order under createdAt alone, so the LINE list's "1./2." numbering ("ใบที่สอง") could

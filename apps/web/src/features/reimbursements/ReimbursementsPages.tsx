@@ -78,10 +78,13 @@ const FREE_TEXT_CELL = '!whitespace-normal [overflow-wrap:anywhere]';
  * line that does not wrap (a long reason, a desk of several names), and every card then runs past the screen's edge.
  */
 const QUEUE_CARDS_CLASS = 'mt-3 grid grid-cols-1 gap-3 @[44rem]:grid-cols-2';
-/** A claim never said whose desk it sits on. Terminal claims have none, and render nothing. */
+/**
+ * A claim never said whose desk it sits on. Terminal claims have none, and render nothing. The line wraps: cut at the
+ * card's edge it hid who has to act (a phone showed "…ที่ดูแลสาขาขอ…" for a claim waiting to be cancelled).
+ */
 function CurrentDeskLine({ row }: { row: { currentDesk?: { kind?: string; names?: string[] } } }) {
   const desk = claimDeskText(row);
-  return desk ? <div className="mt-1 truncate text-xs text-gray-500" data-testid="reimbursement-current-desk">อยู่ที่ {desk}</div> : null;
+  return desk ? <div className="mt-1 text-xs text-gray-500 [overflow-wrap:anywhere]" data-testid="reimbursement-current-desk">อยู่ที่ {desk}</div> : null;
 }
 
 function TablePager({ from, to, total, page, totalPages, onPage }: {
