@@ -2478,8 +2478,11 @@ export class ProcessLineWebhookUseCase {
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     text: string,
     quickReply?: LineReplyMessage['quickReply'],
+    /** This same reply as a card of the locked System OA design, when its builder could draw it whole.
+     *  The card carries `text` as its canonical text, so `text` is still what is stored and what falls back. */
+    designed?: LineReplyMessage,
   ): Promise<void> {
-    const result = await this.deliverMessages(event, [{
+    const result = await this.deliverMessages(event, [designed ?? {
       ...(this.boundConversations.has(event) ? { type: 'text' as const, text } : this.lineReply.buildTextMessage(text)),
       ...(quickReply ? { quickReply } : {}),
     }]);
@@ -3744,9 +3747,7 @@ export class ProcessLineWebhookUseCase {
           : 'ร่างใบเบิกนี้หมดอายุหรือเปลี่ยนไปแล้วค่ะ ยังไม่ได้สร้างใบเบิก';
       }
     }
-    const designed = editState && buildDraftUpdateOutcomeCard(editState, text, this.config.webBaseUrl, ctx.companyId);
-    if (designed) await this.deliverRequiredMessages(event, [designed]);
-    else await this.deliverReply(event, text);
+    await this.deliverReply(event, text, undefined, editState && buildDraftUpdateOutcomeCard(editState, text, this.config.webBaseUrl, ctx.companyId));
     await this.persistIntakeTurn({ event, userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: normalizeLineText(event.messageText), replyText: text, intent: reply === 'cancel' ? 'CORRECTION' : 'CLARIFY' });
     await this.updateEventLog(event.webhookEventId, reply === 'cancel' ? 'pending_work_cancelled' : 'pending_work_reviewed', undefined, ctx.companyId);
