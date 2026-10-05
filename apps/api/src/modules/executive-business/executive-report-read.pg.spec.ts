@@ -1097,7 +1097,7 @@ describe('API13 snapshot to workbook agreement', () => {
     assert.match(cellXml(sheet, 'R7'), new RegExp(`<v>${overview.metrics.netReceiptsSatang.value! / 100}</v>`));
     assert.equal(output.rowCount, 15); assert.equal(f.stats().transactions, 2); assert.equal(f.stats().contacts, 0);
     const source = parts.get('xl/worksheets/sheet2.xml')!;
-    assert.match(sourceCellXml(source, 'ใบเสร็จในระบบ'), /ยังไม่มีตัวเลข/); assert.match(sourceCellXml(source, 'ยอดรับสุทธิในเดือน (บาท)'), /<v>-12.34<\/v>/);
+    assert.match(sourceCellXml(source, 'ใบเสร็จในระบบ (รายการ)'), /ยังไม่มีตัวเลข/); assert.match(sourceCellXml(source, 'ยอดรับสุทธิในเดือน (บาท)'), /<v>-12.34<\/v>/);
     assert.doesNotMatch([...parts.values()].join(''), /fiction-0|fixture-build|fixture-version|@|081\d{7}/);
     const companies = await f.report.companies(f.ctx, { month: f.body.month, paidEver: 'YES', pageSize: 1, sortBy: 'netReceipts' });
     const filtered = await f.report.export(f.ctx, { ...f.body, reportKey: 'companies', filters: { paidEver: 'YES' }, sortBy: 'netReceipts', sortDir: 'desc' });
@@ -1806,7 +1806,7 @@ describe('executive owner sheet and churn without PostgreSQL', () => {
 });
 
 describe('executive owner sheet source and permission boundaries', () => {
-  it('exports the in-system receipt count and qualifier in both company columns for month and range reports', async () => {
+  it('exports the in-system receipt count and qualifier in the one receipt column of month and range reports', async () => {
     const { executiveExportColumns, EXECUTIVE_COMPANY_SHEET_COLUMNS, EXECUTIVE_SHEET_WORDS } = await import('@watchdog-bms/contracts');
     for (const range of [false, true]) for (const coverage of ['complete', 'partial', 'unavailable']) {
       const f = sheetSourceFixture();
@@ -1818,9 +1818,10 @@ describe('executive owner sheet source and permission boundaries', () => {
       const legacyLabel = executiveExportColumns('companies')[19]!;
       const sheetLabel = EXECUTIVE_COMPANY_SHEET_COLUMNS.find(column => column.key === 'receiptsLifetime')!.label;
       const expected = coverage === 'complete' ? /<v>1<\/v>/ : coverage === 'partial' ? /อย่างน้อย 19/ : /ยังไม่มีตัวเลข/;
-      for (const label of [legacyLabel, sheetLabel]) assert.match(sourceCellXml(source, label, 8), expected, `${range ? 'range' : 'month'} ${coverage}: ${label}`);
+      assert.match(sourceCellXml(source, sheetLabel, 8), expected, `${range ? 'range' : 'month'} ${coverage}: ${sheetLabel}`);
+      // One receipt column in the file: the sheet's own. The older per-company column carries the same figure, so it gives its place to it.
       assert.equal(legacyLabel, EXECUTIVE_SHEET_WORDS.lifetime);
-      assert.equal(sourceCellXml(source, legacyLabel, 8).replace(/ r="[A-Z]+8"/, ''), sourceCellXml(source, sheetLabel, 8).replace(/ r="[A-Z]+8"/, ''));
+      assert.doesNotMatch(source, new RegExp(`<t[^>]*>${legacyLabel}</t>`), `${range ? 'range' : 'month'} ${coverage}: no second receipt column`);
       if (coverage === 'complete') {
         const overview = await f.report.overview(f.ctx, range ? f.query : { month: f.body.month });
         assert.equal(overview.asOfFigures.receiptsLifetime.value, 7);

@@ -395,7 +395,7 @@ export class ExecutiveReportReadService {
         const ranks = metric && !(sortBy === 'netReceipts' && moneyIncomplete(set.money)) ? ranksOf(sortedBy(set.scope, metric, 'desc'), metric) : null;
         const contactAt = this.clock(), oldColumns = (body.month !== undefined ? executiveExportColumns : executivePeriodExportColumns)(body.reportKey, body.subview, includesContacts);
         const sheetColumns = EXECUTIVE_COMPANY_SHEET_COLUMNS.filter(column => includesContacts || !['email', 'phone'].includes(column.key));
-        const aliases: Record<string, number> = { company: 0, businessType: 4, plan: 7, joinedAt: 5, signupRail: 11, discovery: 9, referrer: 12 };
+        const aliases: Record<string, number> = { company: 0, businessType: 4, plan: 7, joinedAt: 5, signupRail: 11, discovery: 9, referrer: 12, receiptsLifetime: 19 };
         const replaced = new Set(Object.values(aliases));
         const kept = oldColumns.map((label, index) => ({ label, index })).filter(({ index, label }) => !replaced.has(index) && ![W.email, W.phoneNumber].includes(label));
         const columns = [...sheetColumns.map(column => column.label), ...kept.map(column => column.label)];
