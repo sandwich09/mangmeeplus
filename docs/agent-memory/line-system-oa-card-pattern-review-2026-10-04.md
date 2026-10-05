@@ -239,3 +239,9 @@ Process notes: the full 17-step verification (about seven minutes) ran before ev
 - The comparison shortcut of round 2h never worked in a real turn: the budget authority refused to narrow a grant whose intake had spent no model call, and the owner got "ยังตรวจสอบเครดิต AI ของร้านไม่ได้" twice (22:33, 22:35). Cause, evidence and the withdrawal (round 2k, 22:57) are in `docs/runbooks/cloud-environment-operations.md` and in the two specs (`line-ai-credit-wording-and-deterministic-reads-spec-th.md`, `line-ai-capture-correction-spec.md`). The period-only reply route of round 2b had the same defect and was withdrawn with it.
 - What stayed and is confirmed by the UAT log: the readiness answer remembered for five minutes (`grantMs` about 40 instead of 1,500–2,000).
 - Open question to the owner (asked 22:58, no answer when this was written): may the budget rule be amended so that a turn routed in code can proceed? Until he says so, every text is routed by the model.
+
+### Production, 2026-10-06 00:18
+
+- The owner read the impact check of the budget rule ("กติกาคืออะไรบ้าง มีผลกระทบยังไงบ้าง ตรวจมาก่อน เดี๋ยวบัคพังที่อื่นอีก"), decided against the amendment and ordered Production: "ยังไงไม่ต้องทำ เอาของขึ้น prod ได้เลย". Every text stays routed by the model.
+- Rounds 2a–2k and the claims batch were promoted from the signed UAT round 2k: operation `20261005T171004Z-ed0e56d7`, ACCEPTED_LINE_DEFERRED, source `67c270d3c`. Run ids, timings and the counts read afterwards are in `docs/runbooks/cloud-environment-operations.md`, "Release 2026-10-06 00:18".
+- Status: done. Left for another day, by the owner's scope rule or by his decision: per-group differences in a comparison; the AgentCore round trip of a turn that does no model work; the model-free routes; the small claims screen items listed in `docs/agent-memory/reimbursement-multi-payout-accounts.md`.
