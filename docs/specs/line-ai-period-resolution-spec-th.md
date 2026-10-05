@@ -310,7 +310,7 @@ Acceptance: ตาราง R1–R6 ใน `line-ai-value-normalizer.spec.ts` �
 
 R1–R6, helper เดือน และ test ปีสองหลักเดิมที่แก้ expectation รวม 8 tests แดงเมื่อใส่ production เดิมกลับแล้ว และเขียวเมื่อคืน fix; matrix invariants กับ P2 preservation เขียวทั้งก่อนและหลังเพราะเป็น regression guards
 
-ข้อค้าง consumer: `orchestrator-model-loop.agent.spec.ts:211` ยัง expect ว่าเดือน 12 ที่ระบุปีอนาคตจะถูกถามเป็นชื่อเดือน; R5 ให้เดือนเลข 1–12 ไม่เข้า `unresolvedMonthName` อีกแล้ว จึงได้คำถามช่วงเวลาทั่วไปแทน และ assertion ก่อนหน้านี้ยืนยันว่าไม่ได้เรียก business tool — ไม่แก้ไฟล์ของเลนอื่น
+เลขเดือนที่ไม่มี candidate ครอบ (นอก 1–12 หรือเดือนที่ยังมาไม่ถึง เช่น `เดือน 12 ปี 2569` ถามในเดือนกันยายน) ยังเข้า `unresolvedMonthName` ตาม §4.3 เหมือนเดิม — controller คืนกติกานี้หลังรวมงาน เพราะ `orchestrator-model-loop.agent.spec.ts:211` ยืนยันพฤติกรรมนี้; จำนวนนับและช่วงเดือน (`3 เดือนล่าสุด`, `เดือน 8-10`) ไม่ถูกถามเพราะมี candidate ของตัวเองครอบแล้ว
 
 helper ยังไม่มี consumer ตามขอบเขต P1; หากรอบถัดไปต้องตอบแยกทุกเดือนในช่วง ต้องให้ `requestedExpenseMonths` ใน `orchestrator.agent.ts` และทาง semantic read ใช้เดือนจาก helper แล้วผูก tool inputs และหลักฐานแต่ละเดือนให้ครบ (ปัจจุบัน range เป็นช่วงเดียวที่อนุญาต)
 
