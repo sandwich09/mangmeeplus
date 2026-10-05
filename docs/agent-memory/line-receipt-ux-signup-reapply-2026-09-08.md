@@ -45,6 +45,8 @@ Next: Await the owner's next task. Never dispatch Production while held. Main re
 
 ## Release ledger
 
+Removed 2026-10-05: the card reply is always on; there is no switch.
+
 - Candidate: `fe584d2f6006f251bebac0377e9ce7c4ac0c7588`. Controller/main: `d2e60091dad7434ba7476ea31b1121204ee7b047`. develop merge: `dfce145842d34e8f169dd3b15b4b74e51baef261`. Candidate ancestor of both, all three trees byte-identical, CI/deploy workflow blobs match.
 - PR483 develop and PR484 main merged with owner-authorized admin merge only after exact PR CI34151804829 and CI34151898827 completed SUCCESS. Actual Typecheck and Test, migration, config and security jobs all passed; no skipped validation treated as proof.
 - Final whole-workspace local typecheck and tests exited0. Mandatory production-image-security shell suite PASS; serving-mode/pin checks PASS. LINE provider validate/push accepted all four synthetic shared-card variants (HTTP200) at2026-09-07T18:32:54Z; no recipient or actual outbound message.

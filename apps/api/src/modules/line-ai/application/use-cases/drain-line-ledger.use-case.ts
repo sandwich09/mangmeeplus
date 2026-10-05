@@ -310,7 +310,7 @@ export class DrainLineLedgerUseCase {
     const text = formatLineReply(response, this.config.webBaseUrl);
     // P12-3b: the identity was just re-resolved above (`userContext`), so a drained answer carries
     // the same handoff a live reply would. `chatKey` is the LINE recipient this push targets.
-    const answer = [buildLineBusinessAnswerMessage(response, text, this.config.webBaseUrl, entry.companyId)];
+    const answer = [buildLineBusinessAnswerMessage(response, text, this.config.webBaseUrl, entry.companyId, turnRequest.messageText)];
     const outgoing = this.handoffLinks
       ? await this.handoffLinks.wrapOutgoingLineContent(
         { userId: entry.userId, companyId: entry.companyId, lineUserId: entry.chatKey, surface: 'line_ai_ledger_drain' },

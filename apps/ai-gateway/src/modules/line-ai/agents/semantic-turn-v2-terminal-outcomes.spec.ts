@@ -1163,3 +1163,99 @@ describe('advisor S0: general answers are shaped in code, and a stock clause is 
     assert.deepEqual(result.semanticCoverage?.map((entry) => [entry.status, entry.reasonCode]), [['handled', undefined], ['unsupported', 'PACKAGE_FEATURE_NOT_ENABLED']]);
   });
 });
+
+// Design lock (2026-10-04): the v2 turn is the path every bound chat takes. It carries a card layout
+// only when the whole reply is ONE item whose rows the trusted code built from a successful,
+// permission-checked result — a read of the reader's open work, or the deterministic read sentence.
+describe('design lock: the v2 turn attaches a card layout built from the tool result, never from model text', () => {
+  const AS_OF = '2026-09-17T10:00:00.000Z';
+  const NOTICE_REF = { id: 'dashboard-notifications:notification_event:n1', label: 'อนุมัติเบิกจ่าย: RB-202608-00002', module: 'dashboard-notifications',
+    entityType: 'notification_event', entityId: 'n1', permissionChecked: true as const, asOf: AS_OF, webPath: '/companies/company/reimbursements/rb-1' };
+  const claimResult = (): ToolResult => ({ toolName: 'notifications.list_open_alerts', status: 'ok', asOf: AS_OF, sourceRefs: [NOTICE_REF], facts: [],
+    data: { count: 1, hasMore: false, opens: 'claim', items: [{ id: 'n1', title: 'อนุมัติเบิกจ่าย: RB-202608-00002', severity: 'ACTION', createdAt: AS_OF, kind: 'claim_approval', documentNo: 'RB-202608-00002' }] } });
+
+  function openWorkRequest(permissions = ['notification.read', 'workflow.task.read']): LineAiTurnRequest {
+    return {
+      requestId: 'req-open-work', webhookEventId: 'event-open-work', messageText: 'มีงานค้างอะไรบ้างคะ', messagePreviewHash: 'b'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'แจ้งเตือนที่ยังเปิด', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(permissions),
+    };
+  }
+
+  async function run(request: LineAiTurnRequest, modelTexts: string[], invoke: (toolName: string) => ToolResult) {
+    const queue = [...modelTexts];
+    const provider: IModelProvider = { async generateText(_input: ProviderInput): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    return runSemanticTurnV2({
+      req: request, provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      enabledDeterministicFamilies: new Set(['expense.list_recent::single_metric', 'expense.get_detail::single_metric']),
+      async invoke(meta): Promise<ToolResult> { return invoke(meta.name); },
+    });
+  }
+  const call = (toolName: string, input: Record<string, unknown> = {}) => JSON.stringify({ calls: [{ index: 0, toolName, input }] });
+  const answer = (text: string, sourceRefIds: string[]) => JSON.stringify({ answers: [{ index: 0, status: 'handled', text, sourceRefIds }] });
+
+  it('open work: the sentence is the model\'s, the rows and the claim button are the tool result\'s', async () => {
+    const result = await run(openWorkRequest(), [call('notifications.list_open_alerts'), answer('มีใบเบิกรออนุมัติจากคุณอยู่ค่ะ', [NOTICE_REF.id])], claimResult);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.deepEqual(result.presentation, { kind: 'answer_cards', cards: [{
+      text: result.replyText,
+      layout: {
+        context: 'open_work', header: ['ใบเบิกรออนุมัติ', 'พบ 1 รายการ'],
+        rows: [{ label: 'เลขที่ใบเบิก', value: 'RB-202608-00002' }, { label: 'ต้องทำ', value: 'ตรวจสอบและอนุมัติใบเบิก' }, { label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }],
+        notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ'], linkLabel: 'เปิดใบเบิกเพื่ออนุมัติ',
+      },
+      sourceLabels: ['อนุมัติเบิกจ่าย: RB-202608-00002'],
+      webLink: { label: 'อนุมัติเบิกจ่าย: RB-202608-00002', path: '/companies/company/reimbursements/rb-1' },
+    }] });
+  });
+
+  it('a refused or failed read of open work has no card: it is never drawn as "nothing found"', async () => {
+    for (const status of ['forbidden', 'unavailable'] as const) {
+      const result = await run(openWorkRequest(), [call('notifications.list_open_alerts'), answer('ไม่พบแจ้งเตือนค่ะ', [NOTICE_REF.id])],
+        () => ({ toolName: 'notifications.list_open_alerts', status, asOf: AS_OF, sourceRefs: [] }));
+      assert.equal(result.presentation, undefined, status);
+      assert.notEqual(result.semanticCoverage?.[0]?.status, 'handled', status);
+      assert.doesNotMatch(result.replyText, /ไม่พบแจ้งเตือน|ไม่พบรายการ/, status);
+    }
+  });
+
+  it('an answer that is more than that one item is not a card of it', async () => {
+    const request = openWorkRequest();
+    request.semanticSubrequests = [
+      { index: 0, kind: 'read', goal: 'แจ้งเตือนที่ยังเปิด', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} },
+      { index: 1, kind: 'general', goal: 'ทักทาย', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} },
+    ];
+    const result = await run(request, [call('notifications.list_open_alerts'), JSON.stringify({ answers: [
+      { index: 0, status: 'handled', text: 'มีใบเบิกรออนุมัติจากคุณอยู่ค่ะ', sourceRefIds: [NOTICE_REF.id] },
+      { index: 1, status: 'handled', topic: 'social', text: 'สวัสดีค่ะ' }] })], claimResult);
+    assert.ok(result.replyText.includes('มีใบเบิกรออนุมัติจากคุณอยู่ค่ะ'), result.replyText);
+    assert.equal(result.presentation, undefined);
+  });
+
+  it('a deterministic read sentence brings its own card; a model-composed read sentence brings none', async () => {
+    const detailRef = { id: 'expenses:expense:e1', label: 'EXP-2026-0009', module: 'expenses', entityType: 'expense', entityId: 'e1',
+      permissionChecked: true as const, asOf: AS_OF, webPath: '/companies/company/expenses/e1' };
+    const detail = (): ToolResult => ({ toolName: 'expense.get_detail', status: 'ok', asOf: AS_OF, sourceRefs: [detailRef], facts: [],
+      data: { id: 'e1', expenseNumber: 'EXP-2026-0009', expenseDate: '2026-08-05T00:00:00.000Z', vendorName: 'ร้านสมใจ', status: 'CONFIRMED',
+        paymentStatus: 'UNPAID', grandTotalAmount: '900.00', netPayableAmount: '900.00', paidAmount: '0.00', outstandingAmount: '900.00',
+        payments: { count: 0, lastPaidOn: null, methods: [] } } });
+    const request = (messageText: string): LineAiTurnRequest => ({
+      requestId: 'req-detail', webhookEventId: 'event-detail', messageText, messagePreviewHash: 'c'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'รายละเอียดรายการ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(['expense.read']),
+    });
+    // The composer's number is not in the result: grounding refuses it and the verified formatter answers.
+    const fallback = await run(request('รายการนี้จ่ายหรือยังคะ'), [call('expense.get_detail', { expenseId: 'e1' }), answer('ยอด 12,345 บาทค่ะ', [detailRef.id])], detail);
+    assert.equal(fallback.semanticCoverage?.[0]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
+    const card = fallback.presentation?.kind === 'answer_cards' ? fallback.presentation.cards[0] : undefined;
+    assert.equal(card?.text, fallback.replyText);
+    assert.deepEqual(card?.layout?.header, ['การชำระเงิน', 'รอชำระเงิน']);
+    assert.deepEqual(card?.layout?.banner, { tone: 'pending', text: 'ยังไม่ชำระ · ยอดคงค้าง 900.00 บาท' });
+    assert.ok(fallback.replyText.startsWith('การชำระเงิน: ร้านสมใจ ยอดสุทธิที่ต้องจ่าย 900.00 บาท'), fallback.replyText);
+    // The composer's own grounded sentence: prose, no rows — model text never fills a card.
+    const composed = await run(request('รายการนี้ร้านอะไรคะ'), [call('expense.get_detail', { expenseId: 'e1' }), answer('ร้านสมใจค่ะ', [detailRef.id])], detail);
+    assert.equal(composed.semanticCoverage?.[0]?.status, 'handled');
+    assert.equal(composed.replyText, 'ร้านสมใจค่ะ');
+    assert.equal(composed.presentation, undefined);
+  });
+});

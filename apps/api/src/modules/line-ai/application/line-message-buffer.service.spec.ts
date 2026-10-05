@@ -50,7 +50,8 @@ function makeHarness(opts: {
   const replies: string[] = [];
   const replyMessages: any[] = [];
   const replyTokens: string[] = [];
-  const pushes: Array<{ to: string; text: string }> = [];
+  // `text` is what the chat list shows (a card's altText); `message` is the whole message as sent.
+  const pushes: Array<{ to: string; text: string; message: any }> = [];
   const loadingCalls: string[] = [];
   const auditLogs: any[] = [];
   const serviceLogs: any[] = [];
@@ -127,7 +128,7 @@ function makeHarness(opts: {
       return opts.replyResult ?? 'ok';
     },
     sendPush: async (to: string, messages: Array<{ text?: string; altText?: string }>) => {
-      pushes.push({ to, text: messages[0]?.text ?? messages[0]?.altText ?? '' });
+      pushes.push({ to, text: messages[0]?.text ?? messages[0]?.altText ?? '', message: messages[0] });
       return opts.pushResult ?? 'ok';
     },
     startLoadingAnimation: async (chatId: string) => {
@@ -563,7 +564,11 @@ describe('LineMessageBufferService – media and captions', () => {
       'company-at-acceptance',
       'orphan replay preserves the accepted tenant snapshot',
     );
-    assert.match(h.pushes[0]?.text ?? '', /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
+    // Design lock context 8: the acknowledgement is the scanning card; its sentence is unchanged underneath.
+    assert.equal(h.pushes.length, 1);
+    assert.equal(h.pushes[0]?.message.type, 'flex');
+    assert.match(h.pushes[0]?.message.canonicalText ?? '', /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
+    assert.match(h.pushes[0]?.text ?? '', /^กำลังอ่านข้อมูลจากรูป .*คุยกับน้องต่อได้เลย$/);
 
     await h.service.enqueue(textEnv('while-ocr', 'ติดต่อเรา'));
     await sleep(20);
@@ -623,8 +628,12 @@ describe('LineMessageBufferService – media and captions', () => {
     await h.service.enqueue(mediaEnv('burst-1'));
     await h.service.enqueue(mediaEnv('burst-2'));
     await sleep(60);
-    assert.deepEqual(h.pushes.map((push) => push.text), [lineMediaGroupAckText(['image', 'image'])], 'one acknowledgement for the burst');
-    assert.match(h.pushes[0]!.text, /^ได้รับรูปแล้ว 2 รูปค่ะ/);
+    assert.deepEqual(h.pushes.map((push) => push.message.canonicalText), [lineMediaGroupAckText(['image', 'image'])], 'one acknowledgement for the burst');
+    assert.match(h.pushes[0]!.message.canonicalText, /^ได้รับรูปแล้ว 2 รูปค่ะ/);
+    // … and it is ONE scanning card that names the burst by its count, not a card per photo.
+    assert.equal(h.pushes[0]!.message.type, 'flex');
+    assert.match(h.pushes[0]!.text, /^กำลังอ่านข้อมูลจากรูป 2 รูป /);
+    assert.match(JSON.stringify(h.pushes[0]!.message.contents), /"เอกสารที่ส่งมา".*"กำลังสแกน"/);
     assert.deepEqual(timeline, ['read:burst-1'], 'both photos are acknowledged while the first is still being read');
     assert.equal(h.service.holds('burst-2'), true, 'the queued photo is still in memory, so the orphan sweep must leave it alone');
 
@@ -653,8 +662,9 @@ describe('LineMessageBufferService – media and captions', () => {
     await h.service.enqueue(mediaEnv('later-2'));
     await sleep(20);
     assert.equal(h.receipts.length, 1, 'the second read still waits for the first');
-    assert.deepEqual(h.pushes.map((push) => push.text), [LINE_MEDIA_RECEIVED_TEXT, LINE_MEDIA_RECEIVED_TEXT],
+    assert.deepEqual(h.pushes.map((push) => push.message.canonicalText), [LINE_MEDIA_RECEIVED_TEXT, LINE_MEDIA_RECEIVED_TEXT],
       'but its acknowledgement does not');
+    assert.deepEqual(h.pushes.map((push) => push.message.type), ['flex', 'flex']);
 
     releaseFirst();
     await sleep(30);
@@ -958,6 +968,10 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       await settle();
       assert.equal(h.pushes.length, 1, 'a genuinely slow turn says so once, before the 60 s spinner lapses');
       assert.match(h.pushes[0]?.text ?? '', /ยังหาคำตอบอยู่/);
+      // Design lock context 5 "กำลังตรวจสอบ": that one status is the locked waiting card, same sentence.
+      assert.equal(h.pushes[0]?.message.type, 'flex');
+      assert.match(h.pushes[0]?.message.canonicalText ?? '', /ยังหาคำตอบอยู่/);
+      assert.match(JSON.stringify(h.pushes[0]?.message.contents), /"ข้อมูลที่คุณขอ".*"กำลังตรวจสอบ"/);
 
       t.mock.timers.tick(1_300);
       await settle();

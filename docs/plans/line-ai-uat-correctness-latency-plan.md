@@ -247,6 +247,8 @@
 
 ### งาน
 
+Removed 2026-10-05: the card reply is always on; there is no switch.
+
 - [ ] reuse clarification/handoff card จาก Phase 3A และ expense card จาก Phase 1B; เพิ่ม optional
   reimbursement draft card เมื่อ Phase 3B ได้ owner GO โดยใช้ `line-business-card.logic.ts` เป็น primitive
 - [x] singular completion ต้องไม่ผ่าน plain-text-only helper (หลัง

@@ -7,7 +7,7 @@ import { runSemanticTurnV2 } from './semantic-turn-v2';
  * all data via ErpToolClient.
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiSemanticCoverageV2, LineAiSemanticSubrequestV2, LineAiPeriodCandidate, LineAiPreparedPlan, LineAiReadMemory, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta, PublicLookupResult } from '@watchdog-bms/contracts';
+import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiSemanticCoverageV2, LineAiSemanticSubrequestV2, LineAiPeriodCandidate, LineAiPreparedPlan, LineAiReadMemory, LineAiValueCandidates, LineAiAnswerCardLayout, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta, PublicLookupResult } from '@watchdog-bms/contracts';
 import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, isBusinessIntakeIntent, mapThaiDigits, parseLineAiPreparedPlan, parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, resolvePeriodCandidates, unresolvedMonthName } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
@@ -18,9 +18,9 @@ import { isExplicitJokeAsk, ResponseComposerAgent, featureDisabledReply } from '
 import { normalizePlanToolAccess, removeRuntimeBlockedTools, toolAccessOutcome } from './tool-availability';
 import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext, type PreparedSimpleReadEligibility } from '../domain/logic/prepared-simple-read.logic';
 import { expenseNameResolutionIssue, expenseNameResolutionReplyText } from '../domain/logic/business-read-result-semantics';
-import { APPROVED_PREPARED_FAMILY_KEYS, assumedYearNote, formatExpenseSummary, formatPreparedSimpleRead, isEnglish, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
+import { APPROVED_PREPARED_FAMILY_KEYS, OPEN_WORK_TOOLS, assumedYearNote, formatExpenseSummary, formatPreparedSimpleRead, isEnglish, openWorkCardLayout, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
-import { formatDraftUpdateReply } from './draft-update-formatter';
+import { draftUpdateCardLayout, formatDraftUpdateReply } from './draft-update-formatter';
 import { offeredKnowledgeMetadata, productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
 import { PRODUCT_HELP_PACK } from './approved-product-help';
 import { GROUNDING_TEXT_MAX } from '../infrastructure/erp-tool.client';
@@ -382,7 +382,7 @@ function expenseClarification(req: LineAiTurnRequest): string {
 function deterministicExpenseSummaryReply(
   req: LineAiTurnRequest,
   outputs: SpecialistOutput[],
-): { replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[] } | undefined {
+): { replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[]; layout?: LineAiAnswerCardLayout } | undefined {
   if (outputs.length === 0 || outputs.some(output => output.status !== 'SUCCEEDED'
     || output.toolCalls.length !== 1 || output.toolCalls[0]?.name !== 'expense.list_recent' || output.toolCalls[0]?.status !== 'ok'
     || typeof output.asOf !== 'string' || !Number.isFinite(Date.parse(output.asOf))
@@ -459,10 +459,13 @@ function deterministicExpenseSummaryReply(
     );
   });
   if (formatted.some(result => result.kind !== 'answer')) return undefined;
+  // One period is one summary card; several periods stay the sentences they are.
+  const only = formatted.length === 1 && formatted[0]!.kind === 'answer' ? formatted[0]! : undefined;
   return {
     replyText: formatted.map(result => result.kind === 'answer' ? result.replyText : '').join('\n\n'),
     sourceRefs: formatted.flatMap(result => result.kind === 'answer' ? result.sourceRefs : []),
     webLinks: formatted.flatMap(result => result.kind === 'answer' ? result.webLinks : []),
+    ...(only?.layout ? { layout: only.layout } : {}),
   };
 }
 
@@ -906,6 +909,15 @@ export function buildAnswerPresentation(
   if (successful.length === 0) return undefined;
 
   const composer = new ResponseComposerAgent();
+  // Design lock: an answer that is ONE successful call and nothing else gets that call's card —
+  // context 2 from a read of the reader's open notices or assigned tasks, context 4's header from a
+  // draft-edit result whose deterministic sentence is the reply. Built from the result, never the sentence.
+  const only = successful.length === 1 && successful[0]!.toolData?.length === 1
+    && successful[0]!.toolCalls.every((call) => call.status === 'ok') ? successful[0]!.toolData[0]! : undefined;
+  const layout = !only ? undefined
+    : OPEN_WORK_TOOLS.has(only.tool) ? openWorkCardLayout(only.tool, only.data, successful[0]!.asOf)
+      : (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(only.tool) && formatDraftUpdateReply(only.data) === replyText
+        ? draftUpdateCardLayout(only.data) : undefined;
   return {
     kind: 'answer_cards',
     cards: successful.map((output) => {
@@ -913,6 +925,7 @@ export function buildAnswerPresentation(
       const sourceLabels = [...new Set(composed.sourceRefs.map((source) => source.label))];
       return {
         text: successful.length === 1 ? replyText : composed.replyText,
+        ...(layout ? { layout } : {}),
         ...(sourceLabels.length > 0 ? { sourceLabels } : {}),
         ...(composed.webLinks[0] ? {
           webLink: output.toolCalls.some((call) => call.name === 'expense.get_daily_closing')
@@ -1556,6 +1569,7 @@ export class OrchestratorAgent {
         finalWebLinks = deterministicExpense.webLinks;
         const sourceLabels = [...new Set(finalSourceRefs.map(source => source.label))];
         expensePresentation = { kind: 'answer_cards', cards: [{ text: replyText,
+          ...(deterministicExpense.layout ? { layout: deterministicExpense.layout } : {}),
           ...(sourceLabels.length > 0 ? { sourceLabels } : {}), ...(finalWebLinks[0] ? { webLink: finalWebLinks[0] } : {}) }] };
       } else {
         replyText = expenseBranchResolutionReply(req, expenseOrBreakdownOutputs)
@@ -1824,6 +1838,7 @@ export class OrchestratorAgent {
         language: singlePlan.language,
         locale: req.userContext.locale,
         proposedInput: toolInput,
+        messageText: req.messageText,
         // Spec §3.4: when the validated input selected a period the resolver read from the user's own
         // words, the answer names that period in those words AND in dates ("เดือนที่แล้ว (1–31 ส.ค. 2569)").
         ...(periodLabel ? { periodLabel } : {}),
@@ -1861,16 +1876,19 @@ export class OrchestratorAgent {
   private buildPreparedAnswerResult(
     plan: AgentIntentPlan,
     output: SpecialistOutput,
-    formatted: { replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[] },
+    formatted: { replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[]; layout?: LineAiAnswerCardLayout },
     startMs: number,
-    expenseSummary?: { replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[] },
+    expenseSummary?: { replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[]; layout?: LineAiAnswerCardLayout },
   ): AgentRunResult {
     const sourceLabels = [...new Set(formatted.sourceRefs.map((s) => s.label))];
     const replyText = expenseSummary?.replyText ?? formatted.replyText;
+    // The layout of the very sentence that is sent: the summary's when the summary replaced the family's.
+    const layout = (expenseSummary ?? formatted).layout;
     const presentation: LineAiAnswerPresentation = {
       kind: 'answer_cards',
       cards: [{
         text: replyText,
+        ...(layout ? { layout } : {}),
         ...(sourceLabels.length > 0 ? { sourceLabels } : {}),
         ...(formatted.webLinks[0] ? { webLink: formatted.webLinks[0] } : {}),
       }],

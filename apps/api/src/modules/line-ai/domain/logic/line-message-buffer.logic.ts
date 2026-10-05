@@ -4,6 +4,8 @@
  * Spec: docs/specs/line-ai-message-buffering-spec.md
  */
 import { createHmac } from 'node:crypto';
+import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import { buildLineSystemCardBubble, lineSystemCardAvailable, type LineSystemCard } from './line-system-card.logic';
 
 export type LineBufferTextItem = {
   kind: 'text' | 'command';
@@ -121,7 +123,16 @@ export function lineWaitStatusText(messageText: string, turnSeed = messageText):
   return stableStatusVariant(variants, turnSeed);
 }
 
-export type LineWaitStage = { delayMs: number; text: string };
+/** The header of a waiting card. `ข้อมูลที่คุณขอ` only when the message asked for something the rules
+ *  above recognise as data; any other message is simply being answered. */
+export function lineWaitCardHeader(messageText: string): readonly [string, string] {
+  const normalized = messageText.trim().toLowerCase();
+  return LINE_WAIT_STATUS_RULES.some(([pattern]) => pattern.test(normalized)) ? ['ข้อมูลที่คุณขอ', 'กำลังตรวจสอบ'] : ['ข้อความของคุณ', 'กำลังหาคำตอบ'];
+}
+
+/** One waiting bubble. `card` is what the locked design shows at that moment; `text` is the same
+ *  moment as a sentence, sent wherever the card cannot be drawn. */
+export type LineWaitStage = { delayMs: number; text: string; card?: Pick<LineSystemCard, 'mascot' | 'header' | 'banner' | 'text'> };
 
 /**
  * The ONE arrival acknowledgement for a media group (UAT 2026-09-29 "ส่งรูปที่ 2 ต่อกันแล้วเงียบไป": each
@@ -136,6 +147,35 @@ export function lineMediaGroupAckText(mediaTypes: ReadonlyArray<'image' | 'file'
   if (!files) return `ได้รับรูปแล้ว ${photos} รูปค่ะ 🧾 น้องจะอ่านให้ทีละรูปตามลำดับ แล้วสรุปให้ครบทุกรูปนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ`;
   if (!photos) return `ได้รับไฟล์แล้ว ${files} ไฟล์ค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้ครบทุกไฟล์นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ`;
   return `ได้รับรูป ${photos} รูปและไฟล์ ${files} ไฟล์แล้วค่ะ 🧾 น้องจะอ่านให้ทีละรายการ แล้วสรุปให้ครบทุกรายการในแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ`;
+}
+
+/**
+ * The same acknowledgement as the locked "กำลังสแกน" card (design lock §8): what is being read, and
+ * where the result will come. A file is never called a picture, a burst names its count, and nothing
+ * here says how far the read is or when it ends — the server knows neither.
+ */
+export function lineMediaGroupAckStage(mediaTypes: ReadonlyArray<'image' | 'file'>): LineWaitStage {
+  const photos = mediaTypes.filter((type) => type === 'image').length;
+  const files = mediaTypes.length - photos;
+  const what = mediaTypes.length <= 1 ? (files ? 'ไฟล์' : 'รูป')
+    : !files ? `รูป ${photos} รูป` : !photos ? `ไฟล์ ${files} ไฟล์` : `รูป ${photos} รูปและไฟล์ ${files} ไฟล์`;
+  const result = mediaTypes.length <= 1 ? 'อ่านเสร็จแล้ว น้องจะส่งสรุปให้ในแชตนี้ค่ะ'
+    : !files ? 'น้องจะอ่านให้ทีละรูปตามลำดับ แล้วส่งสรุปให้ครบทุกรูปในแชตนี้ค่ะ'
+      : !photos ? 'อ่านเสร็จแล้ว น้องจะส่งสรุปให้ครบทุกไฟล์ในแชตนี้ค่ะ'
+        : 'น้องจะอ่านให้ทีละรายการ แล้วส่งสรุปให้ครบทุกรายการในแชตนี้ค่ะ';
+  return { delayMs: 0, text: lineMediaGroupAckText(mediaTypes), card: scanningCard(what, `${result} ระหว่างนี้คุยกับน้องต่อได้เลย`) };
+}
+
+/** The locked scanning card: its header never changes, the banner names what is being read. */
+function scanningCard(what: string, text: string): NonNullable<LineWaitStage['card']> {
+  return { mascot: 'scanning', header: { lines: ['เอกสารที่ส่งมา', 'กำลังสแกน'] }, banner: { tone: 'scanning', text: `กำลังอ่านข้อมูลจาก${what}` }, text };
+}
+
+/** A waiting bubble as it is sent: the stage's card where LINE can fetch its pictures, its sentence otherwise. */
+export function lineWaitStageMessage(stage: LineWaitStage, webBaseUrl: string | undefined): LineReplyMessage {
+  if (!stage.card || !lineSystemCardAvailable(webBaseUrl)) return { type: 'text', text: stage.text.slice(0, 5000) };
+  const said = [stage.card.banner?.text, stage.card.text].filter(Boolean).join(' ');
+  return { type: 'flex', altText: said, canonicalText: stage.text, contents: buildLineSystemCardBubble({ ...stage.card, textStyle: 'waiting' }, webBaseUrl) };
 }
 
 /**
@@ -159,14 +199,19 @@ export function lineWaitStages(input: {
   if (input.kind === 'media') {
     // The slow-turn nudge is written for a photo the customer is watching for; for a file it would be
     // a second promise nobody is waiting on.
-    return input.mediaType === 'file' ? [] : [{ delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_MEDIA_SLOW_STATUS_TEXT }];
+    // It is the same read as the acknowledgement's, a minute on: the scanning card, with the nudge as its sentence.
+    return input.mediaType === 'file' ? []
+      : [{ delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_MEDIA_SLOW_STATUS_TEXT, card: scanningCard('รูป', LINE_MEDIA_SLOW_STATUS_TEXT) }];
   }
   const anchored = (delayMs: number) => Math.max(0, input.latestAcceptedAt + delayMs - input.now);
-  const slowStage = { delayMs: anchored(LINE_WAIT_STATUS_SLOW_DELAY_MS), text: LINE_SLOW_TURN_STATUS_TEXT };
+  // The locked "กำลังตรวจสอบ" card: the sentence is the stage's own, the header says what is being worked on.
+  const checking = (text: string): LineWaitStage['card'] => ({ mascot: 'general', header: { lines: lineWaitCardHeader(input.messageText) }, text });
+  const slowStage = { delayMs: anchored(LINE_WAIT_STATUS_SLOW_DELAY_MS), text: LINE_SLOW_TURN_STATUS_TEXT, card: checking(LINE_SLOW_TURN_STATUS_TEXT) };
+  const early = lineWaitStatusText(input.messageText, input.seed);
   return input.loadingEnabled
     ? [slowStage]
     : [
-      { delayMs: anchored(LINE_WAIT_STATUS_DELAY_MS), text: lineWaitStatusText(input.messageText, input.seed) },
+      { delayMs: anchored(LINE_WAIT_STATUS_DELAY_MS), text: early, card: checking(early) },
       slowStage,
     ];
 }

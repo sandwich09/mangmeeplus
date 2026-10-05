@@ -2,6 +2,8 @@
 
 ## 1. สถานะ
 
+Removed 2026-10-05: the card reply is always on; there is no switch.
+
 - สถานะ: **MERGE-SAFE แบบ default-off; ยังไม่ ACTIVATION-READY และ behavior phases ต้องผ่าน rollout gates ตาม §15**
 - วันที่: 2026-08-21
 - เจ้าของ: Product / Finance Platform / LINE AI / AI Gateway

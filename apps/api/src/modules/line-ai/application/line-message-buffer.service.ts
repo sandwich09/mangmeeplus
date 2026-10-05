@@ -33,7 +33,8 @@ import {
   debounceCohortMs,
   fittingPrefixCount,
   joinGroupText,
-  lineMediaGroupAckText,
+  lineMediaGroupAckStage,
+  lineWaitStageMessage,
   lineWaitStages,
   nextFlushDelayMs,
   segmentBatch,
@@ -804,9 +805,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     try {
       if (group.mediaItems.some((item) => item.assistantPausedAtAcceptance)
         || await this.processWebhook.assistantPaused(state.lineUserId)) return async () => {};
-      return await this.startWaitFeedback(state, [{
-        delayMs: 0, text: lineMediaGroupAckText(group.mediaItems.map((item) => item.messageType)),
-      }], suppressLoading);
+      return await this.startWaitFeedback(state, [lineMediaGroupAckStage(group.mediaItems.map((item) => item.messageType))], suppressLoading);
     } catch {
       return async () => {};
     }
@@ -1149,8 +1148,8 @@ export class LineMessageBufferService implements OnModuleDestroy {
     const restartDeliveries: Promise<void>[] = [];
     const restartTimers: NodeJS.Timeout[] = [];
 
-    const deliverStatus = async (text: string) => {
-      const delivered = await this.sendWaitStatus(state, text);
+    const deliverStatus = async (stage: LineWaitStage) => {
+      const delivered = await this.sendWaitStatus(state, stage);
       if (!delivered || finished) return;
       // LINE dismisses loading when an OA bubble arrives. Restart after a short delivery cushion and
       // once more as a keepalive for slow devices; `settle` cancels both when the answer is ready.
@@ -1165,10 +1164,10 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // ack at delay 0), then at most one delayed status per stage. Final delivery cancels what has not fired.
     for (const stage of stages) {
       if (stage.delayMs === 0) {
-        statusDeliveries.push(deliverStatus(stage.text));
+        statusDeliveries.push(deliverStatus(stage));
       } else {
         statusTimers.push(setTimeout(() => {
-          if (!finished) statusDeliveries.push(deliverStatus(stage.text));
+          if (!finished) statusDeliveries.push(deliverStatus(stage));
         }, stage.delayMs));
       }
     }
@@ -1184,9 +1183,10 @@ export class LineMessageBufferService implements OnModuleDestroy {
     };
   }
 
-  private async sendWaitStatus(state: ChatState, text: string): Promise<boolean> {
+  /** One waiting bubble: the locked card where LINE can fetch its pictures, the same sentence otherwise. */
+  private async sendWaitStatus(state: ChatState, stage: LineWaitStage): Promise<boolean> {
     const result = await this.lineReply
-      .sendPush(state.chatId, [this.lineReply.buildTextMessage(text)])
+      .sendPush(state.chatId, [lineWaitStageMessage(stage, this.config.webBaseUrl)])
       .catch(() => 'failed_other' as const);
     if (result !== 'ok') {
       this.logger.warn({ msg: 'LINE waiting feedback delivery failed', result });

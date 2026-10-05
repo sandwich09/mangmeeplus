@@ -217,6 +217,13 @@ export class GetExpenseUseCase {
     return r;
   }
 
+  /** The name of the category a record `execute` just let this caller read is filed under — what the
+   *  web detail shows beside it. An archived category still names its expenses; none is null. */
+  async categoryName(ctx: RequestContext, expense: Pick<ExpenseRecord, 'expenseCategoryId'>): Promise<string | null> {
+    if (!expense.expenseCategoryId) return null;
+    return (await this.repo.listCategoryNames(ctx.companyId, [expense.expenseCategoryId]))[0]?.name ?? null;
+  }
+
   correctionCapabilities(ctx: RequestContext, expenseId: string) {
     return this.repo.expenseCorrectionCapabilities(ctx.companyId, expenseId, ctx.permissions);
   }

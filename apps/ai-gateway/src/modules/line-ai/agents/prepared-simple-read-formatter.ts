@@ -12,13 +12,15 @@
  * `unverified` when the output does not match the family's exact shape, so the caller falls back to an
  * honest terminal without claiming success. No provider, no tool re-invocation.
  */
-import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS } from '@watchdog-bms/contracts';
-import type { LineAiPeriodCandidate, LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
+import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
+import type { LineAiAnswerCardLayout, LineAiAnswerCardRow, LineAiPeriodCandidate, LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
 
 export type PreparedFormatResult =
-  | { kind: 'answer'; replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[] }
+  /** `layout` is the same answer as the locked System OA card shows it (design lock spec): built from the
+   *  very values `replyText` states, by the same family, so the card and the sentence cannot disagree. */
+  | { kind: 'answer'; replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[]; layout?: LineAiAnswerCardLayout }
   /** The output did not match this family's verified shape — do not claim success; caller stays honest. */
   | { kind: 'unverified' };
 
@@ -38,6 +40,9 @@ export type PreparedFormatContext = {
   branchLabel?: string;
   /** Thai calendar rendering for the as-of date, used only by the expense summary answer. */
   asOfLabel?: string;
+  /** The reader's own message. It never changes a figure: it only tells a question about PAYING from a
+   *  question about the record, which are two cards of the same permission-checked read. */
+  messageText?: string;
 };
 
 export const isEnglish = (ctx: PreparedFormatContext): boolean =>
@@ -116,9 +121,21 @@ export function periodLine(
   periodLabel?: string,
   note = '',
 ): string {
+  const phrase = periodPhrase(proposedInput, data, english, periodLabel);
+  if (!phrase) return '';
+  return english ? `\nPeriod: ${phrase}${note}` : `\nช่วง: ${phrase}${note}`;
+}
+
+/** The words of `periodLine` without its label: what the line says and what the card's row shows. */
+function periodPhrase(
+  proposedInput: Record<string, unknown> | undefined,
+  data: Record<string, unknown> | undefined,
+  english: boolean,
+  periodLabel?: string,
+): string | undefined {
   // The label already reads as Thai ("เดือนที่แล้ว (1–31 ส.ค. 2569)"), so it replaces the bare ISO
   // range for a Thai answer.
-  if (!english && periodLabel) return `\nช่วง: ${periodLabel}${note}`;
+  if (!english && periodLabel) return periodLabel;
   const effective = appliedPeriod(data);
   const from = effective?.fromDate ?? (typeof proposedInput?.['fromDate'] === 'string' ? proposedInput['fromDate'] as string : undefined);
   const to = effective?.toDate ?? (typeof proposedInput?.['toDate'] === 'string' ? proposedInput['toDate'] as string : undefined);
@@ -136,8 +153,7 @@ export function periodLine(
       );
     }
   }
-  if (!phrase) return '';
-  return english ? `\nPeriod: ${phrase}${note}` : `\nช่วง: ${phrase}${note}`;
+  return phrase;
 }
 
 /**
@@ -325,6 +341,11 @@ function scopeLine(accessScope: unknown, english: boolean): string {
   return '';
 }
 
+/** The same scope as a card's note: a plain sentence, without the word "ขอบเขต" (design lock §9). */
+function scopeNote(accessScope: unknown): string | undefined {
+  return accessScope === 'own' ? 'แสดงเฉพาะรายการของคุณ' : accessScope === 'related' ? 'แสดงเฉพาะรายการที่เกี่ยวข้องกับคุณ' : undefined;
+}
+
 /** Spec R-A1's ตัวกรอง line — document/payment status, resolved category/vendor name, and branch —
  *  read off `queryApplied` (the tool's own TRUSTED echo of what it actually applied, never the model's
  *  raw proposed input). Shared by every `expense.list_recent`/`expense.get_breakdown`-shaped family
@@ -338,7 +359,7 @@ function expenseFilterLine(
   data: Record<string, unknown> | undefined,
   ctx: PreparedFormatContext,
   english: boolean,
-): { filtersText: string; hasStatusFilter: boolean; scopeText: string } {
+): { filtersText: string; hasStatusFilter: boolean; scopeText: string; filterPhrases: string[]; accessScope: unknown } {
   const queryApplied = data?.['queryApplied'];
   const appliedFilters = queryApplied && typeof queryApplied === 'object' && !Array.isArray(queryApplied)
     ? queryApplied as Record<string, unknown> : undefined;
@@ -366,6 +387,8 @@ function expenseFilterLine(
     filtersText: filterPhrases.length ? (english ? `\nFilters: ${filterPhrases.join(', ')}` : `\nตัวกรอง: ${filterPhrases.join(', ')}`) : '',
     hasStatusFilter: documentStatus !== undefined || paymentStatus !== undefined,
     scopeText: scopeLine(appliedFilters?.['accessScope'], english),
+    filterPhrases,
+    accessScope: appliedFilters?.['accessScope'],
   };
 }
 
@@ -404,7 +427,7 @@ export function formatExpenseSummary(
   // basis text below is computed from the SAME narrowed set), so with documentStatus=CONFIRMED the old
   // unconditional basis line printed "pending 0.00 (draft 0.00)" even though a draft genuinely exists —
   // it was simply excluded by the filter, not absent.
-  const { filtersText, hasStatusFilter, scopeText } = expenseFilterLine(data, ctx, english);
+  const { filtersText, hasStatusFilter, scopeText, filterPhrases, accessScope } = expenseFilterLine(data, ctx, english);
 
   const draftAmount = totals['draftAmount'];
   const pendingAmount = totals['pendingAmount'];
@@ -420,8 +443,53 @@ export function formatExpenseSummary(
 
   const localizedAsOf = ctx.asOfLabel ?? thaiExpenseAsOfLabel(asOf);
   const asOfText = english ? asOfLine(asOf, true) : localizedAsOf ? asOfLine(asOf, false, localizedAsOf) : '';
-  const replyText = `${label}: ${amount}${countText}${filtersText}${scopeText}${basisText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined), ctx.periodNote)}${sourceText}${asOfText}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+  const periodLabel = ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined);
+  const replyText = `${label}: ${amount}${countText}${filtersText}${scopeText}${basisText}${cancelledText}${periodLine(undefined, data, english, periodLabel, ctx.periodNote)}${sourceText}${asOfText}`;
+  // The locked "สรุปค่าใช้จ่าย" card: every clause of the sentence above as a row or a note, nothing else.
+  const heading = english ? undefined : expensePeriodHeading(data);
+  const period = periodPhrase(undefined, data, false, periodLabel);
+  const layout = heading && period ? cardLayout({
+    context: 'expense_summary',
+    header: ['สรุปค่าใช้จ่าย', heading],
+    rows: [
+      { label: 'ยอดรวม', value: amount, emphasis: 'total' },
+      { label: 'จำนวนรายการ', value: countAvailable ? `${groupThousands(String(count))} รายการ` : 'ยังยืนยันจำนวนรายการไม่ได้' },
+      ...(filterPhrases.length ? [{ label: 'ตัวกรอง', value: filterPhrases.join(', ') }] : []),
+      { label: 'ช่วงวันที่', value: period },
+      ...(sourceRef?.label ? [{ label: 'ที่มา', value: sourceRef.label }] : []),
+      ...(localizedAsOf ? [{ label: 'ข้อมูล ณ', value: localizedAsOf }] : []),
+    ],
+    // The year note is a bracket after the period in the sentence; alone in a note it needs none.
+    ...cardNotes([scopeNote(accessScope), basisText, cancelledText, ctx.periodNote?.replace(/^\s*\(([^)]*)\)/u, '$1')]),
+    ...(webLinks[0] ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}),
+  }) : undefined;
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
+}
+
+/** A card's notes from the sentence's own optional clauses: each on one line, the empty ones dropped. */
+function cardNotes(clauses: ReadonlyArray<string | undefined>): { notes?: string[] } {
+  const notes = clauses.map((clause) => clause?.replace(/\s*\n\s*/gu, ' ').trim()).filter((clause): clause is string => !!clause);
+  return notes.length ? { notes } : {};
+}
+
+/** Only a layout the receiver will accept leaves this file: one its own validator refuses (a value
+ *  longer than a row holds, a link in a name) is no layout, and the answer is drawn as its sentence. */
+function cardLayout(layout: LineAiAnswerCardLayout): LineAiAnswerCardLayout | undefined {
+  return parseLineAiAnswerCardLayout(layout);
+}
+
+/** The second header line of the summary card: the month, or the months, the tool's own period covers. */
+function expensePeriodHeading(data: Record<string, unknown> | undefined): string | undefined {
+  const period = data?.['period'];
+  if (!period || typeof period !== 'object' || Array.isArray(period)) return undefined;
+  const from = CIVIL_DATE.exec(String((period as Record<string, unknown>)['fromDate'] ?? ''));
+  const to = CIVIL_DATE.exec(String((period as Record<string, unknown>)['toDate'] ?? ''));
+  if (!from || !to) return undefined;
+  const year = (match: RegExpExecArray) => Number(match[1]) + 543;
+  if (from[0] === to[0]) return thaiAbbrDate(from[0], false);
+  if (from[1] === to[1] && from[2] === to[2]) return `${THAI_FULL_MONTH_NAMES[Number(from[2]) - 1]} ${year(from)}`;
+  const month = (match: RegExpExecArray) => THAI_MONTH_ABBR[Number(match[2]) - 1];
+  return from[1] === to[1] ? `${month(from)} – ${month(to)} ${year(to)}` : `${month(from)} ${year(from)} – ${month(to)} ${year(to)}`;
 }
 
 /** Plain labels for the accounting document types the ERP issues; an unknown/legacy type keeps its raw
@@ -533,18 +601,133 @@ function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: Prepa
     ? (english ? `\nCategory: ${category}` : `\nหมวด: ${category}`) : '';
   const scopeText = scopeLine(data?.['accessScope'], english);
   const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const asOfLabel = thaiExpenseAsOfLabel(output.asOf);
+  const text = (key: string) => typeof data?.[key] === 'string' && (data[key] as string).trim() ? (data[key] as string).trim() : undefined;
+  const number = text('expenseNumber');
+  const shared = {
+    notes: cardNotes([scopeNote(data?.['accessScope'])]),
+    asOf: asOfLabel ? [{ label: 'ข้อมูล ณ', value: asOfLabel }] : [],
+    link: webLinks[0] ? { linkLabel: 'เปิดดูรายการในเว็บ' } : {},
+  };
+
+  // A question about PAYING a confirmed record is answered with what was paid, what is left, and —
+  // where a payment was recorded — when and how (design lock context 7). Same read, same record.
+  const payment = status === 'CONFIRMED' && asksAboutPayment(ctx.messageText) ? expensePaymentFacts(data, paymentStatus) : undefined;
+  if (payment) {
+    const { net, paid, outstanding, paidOn, methods } = payment;
+    const evidence = [
+      paidOn ? (english ? `Paid on ${paidOn.english}` : `วันที่ชำระ ${paidOn.thai}`) : undefined,
+      methods ? (english ? `Method: ${methods.english}` : `วิธีชำระเงิน ${methods.thai}`) : undefined,
+    ].filter((clause): clause is string => !!clause);
+    const replyText = (english
+      ? `Payment: ${vendor}, net payable ${net} THB\nPaid ${paid} THB · Outstanding ${outstanding} THB\nPayment status: ${paymentStatusLabel}${evidence.map((clause) => ` · ${clause}`).join('')}`
+      : `การชำระเงิน: ${vendor} ยอดสุทธิที่ต้องจ่าย ${net} บาท\nจ่ายแล้ว ${paid} บาท · ยอดคงค้าง ${outstanding} บาท\nสถานะชำระเงิน: ${paymentStatusLabel}${evidence.map((clause) => ` · ${clause}`).join('')}`)
+      + `${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
+    const layout = english ? undefined : cardLayout({
+      context: 'payment',
+      header: ['การชำระเงิน', paymentStatus === 'UNPAID' ? 'รอชำระเงิน' : paymentStatusLabel],
+      banner: { tone: paymentStatus === 'PAID' ? 'ok' : 'pending', text: `${paymentStatusLabel} · ยอดคงค้าง ${outstanding} บาท` },
+      rows: [
+        ...(number ? [{ label: 'เลขรายการ', value: number }] : []),
+        { label: 'ผู้รับเงิน', value: vendor },
+        { label: 'ยอดสุทธิที่ต้องจ่าย', value: `${net} บาท`, emphasis: 'total' },
+        { label: 'จ่ายแล้ว', value: `${paid} บาท` },
+        { label: 'ยอดคงค้าง', value: `${outstanding} บาท` },
+        ...(paidOn ? [{ label: 'วันที่ชำระ', value: paidOn.thai }] : []),
+        ...(methods ? [{ label: 'วิธีชำระเงิน', value: methods.thai }] : []),
+        { label: 'สถานะชำระเงิน', value: paymentStatusLabel, tone: paymentStatus === 'PAID' ? 'ok' : 'pending' },
+        ...shared.asOf,
+      ],
+      ...shared.notes, ...shared.link,
+    });
+    return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
+  }
 
   // C6 (batch 5c): the English headline printed the raw ISO date while the Thai side already used
   // `dateLabel` — `expenseDate` already passed `thaiIsoDate`'s stricter real-calendar check above.
   const headline = english
     ? `Expense: ${vendor}, ${thaiAbbrDate(expenseDate.slice(0, 10), true) ?? expenseDate.slice(0, 10)}, ${moneyText(amount)} THB`
     : `ค่าใช้จ่าย: ${vendor} วันที่ ${dateLabel} ยอด ${moneyText(amount)} บาท`;
-  const statusText = english
-    ? `\nDocument status: ${documentStatusLabel} · Payment status: ${paymentStatusLabel}`
-    : `\nสถานะเอกสาร: ${documentStatusLabel} · สถานะการจ่าย: ${paymentStatusLabel}`;
+  // A rejected or voided record owes nothing: its second fact is why it was closed, when the record
+  // says why, never a payment state that reads as money still due.
+  const closed = status === 'REJECTED' || status === 'VOIDED';
+  const reason = closed ? text(status === 'REJECTED' ? 'rejectReason' : 'voidReason') : undefined;
+  const statusText = (english ? `\nDocument status: ${documentStatusLabel}` : `\nสถานะเอกสาร: ${documentStatusLabel}`)
+    + (closed ? (reason ? (english ? ` · Reason: ${reason}` : ` · เหตุผล: ${reason}`) : '')
+      : (english ? ` · Payment status: ${paymentStatusLabel}` : ` · สถานะการจ่าย: ${paymentStatusLabel}`));
 
   const replyText = `${headline}${statusText}${categoryText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
-  return { kind: 'answer', replyText, sourceRefs, webLinks };
+  const item = expenseItemPhrase(data?.['lines']);
+  const vat = data?.['vatAmount'];
+  const layout = english ? undefined : cardLayout({
+    context: 'expense_record',
+    header: ['รายการค่าใช้จ่าย', status === 'REJECTED' ? 'ถูกปฏิเสธ' : status === 'VOIDED' ? 'ยกเลิกแล้ว' : documentStatusLabel],
+    rows: [
+      ...(number ? [{ label: 'เลขรายการ', value: number }] : []),
+      ...(item ? [{ label: 'รายการ', value: item }] : []),
+      { label: 'ผู้ขาย / ร้านค้า', value: vendor },
+      { label: 'วันที่เอกสาร', value: dateLabel },
+      ...(typeof category === 'string' && category ? [{ label: 'หมวดค่าใช้จ่าย', value: category }] : []),
+      { label: 'ยอดรวม', value: `${moneyText(amount)} บาท`, emphasis: 'total' },
+      ...(isMoney(vat) && moneyNumber(vat) !== 0 ? [{ label: 'VAT', value: `${moneyText(vat)} บาท` }] : []),
+      { label: 'สถานะเอกสาร', value: documentStatusLabel, tone: status === 'CONFIRMED' ? 'ok' : closed ? 'closed' : 'pending' },
+      ...(closed ? (reason ? [{ label: 'เหตุผล', value: reason }] : []) : [{ label: 'สถานะการจ่าย', value: paymentStatusLabel }]),
+      ...shared.asOf,
+    ],
+    ...shared.notes, ...shared.link,
+  });
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
+}
+
+/** Does the reader ask about PAYING? "ค่าใช้จ่าย" and its kin carry the word จ่าย without asking it. */
+function asksAboutPayment(messageText: string | undefined): boolean {
+  return /ชำระ|จ่าย|ค้าง|\b(?:un)?paid\b|\bpay(?:ment|ments|s)?\b|\boutstanding\b|\bowe[ds]?\b/iu
+    .test((messageText ?? '').replace(/ค่าใช้จ่าย|รายจ่าย|ใช้จ่าย|เบิกจ่าย/gu, ''));
+}
+
+/** Same words the web shows for a recorded payment's method (apps/web/src/features/expenses/
+ *  expenses.model.ts PAYMENT_METHOD_LABELS) — one small local map, like the two above it in this file. */
+const EXPENSE_PAYMENT_METHOD_TH: Record<string, string> = {
+  CASH: 'เงินสด', BANK_TRANSFER: 'โอนเงิน', CARD: 'บัตรเครดิต', CHEQUE: 'เช็ค', OTHER: 'อื่นๆ',
+};
+
+/** The amounts of one record's payment, and — only where the record has a recorded payment that says
+ *  so — the day of the latest and the ways paid. `undefined` when the tool sent no payment amounts:
+ *  the caller then answers about the record, never about a payment it cannot state. */
+function expensePaymentFacts(data: Record<string, unknown> | undefined, paymentStatus: string): {
+  net: string; paid: string; outstanding: string;
+  paidOn?: { thai: string; english: string }; methods?: { thai: string; english: string };
+} | undefined {
+  const net = data?.['netPayableAmount'], paid = data?.['paidAmount'], outstanding = data?.['outstandingAmount'];
+  if (!['UNPAID', 'PARTIALLY_PAID', 'PAID'].includes(paymentStatus) || !isMoney(net) || !isMoney(paid) || !isMoney(outstanding)) return undefined;
+  const payments = data?.['payments'];
+  const recorded = payments && typeof payments === 'object' && !Array.isArray(payments) ? payments as Record<string, unknown> : undefined;
+  const count = isCount(recorded?.['count']) ? recorded['count'] as number : 0;
+  const lastPaidOn = typeof recorded?.['lastPaidOn'] === 'string' ? recorded['lastPaidOn'] as string : undefined;
+  const day = count > 0 && lastPaidOn ? thaiIsoDate(lastPaidOn) : undefined;
+  const keys = count > 0 && Array.isArray(recorded?.['methods']) ? recorded['methods'] as unknown[] : [];
+  const named = keys.length > 0 && keys.every((key) => typeof key === 'string' && EXPENSE_PAYMENT_METHOD_TH[key]);
+  return {
+    net: moneyText(net), paid: moneyText(paid), outstanding: moneyText(outstanding),
+    ...(day && lastPaidOn ? { paidOn: {
+      thai: count > 1 ? `${day} (ครั้งล่าสุดจาก ${count} ครั้ง)` : day,
+      english: `${thaiAbbrDate(lastPaidOn, true) ?? lastPaidOn}${count > 1 ? ` (latest of ${count})` : ''}`,
+    } } : {}),
+    ...(named ? { methods: {
+      thai: (keys as string[]).map((key) => EXPENSE_PAYMENT_METHOD_TH[key]!).join(', '),
+      english: (keys as string[]).map(humanizedEnum).join(', '),
+    } } : {}),
+  };
+}
+
+/** What the record is for: its first product line, and a word that there are more. Additional
+ *  charges are their own rows on the web and never the record's name. */
+function expenseItemPhrase(lines: unknown): string | undefined {
+  const products = (Array.isArray(lines) ? lines : []).filter((line): line is Record<string, unknown> =>
+    !!line && typeof line === 'object' && (line as Record<string, unknown>)['chargeKind'] == null
+    && typeof (line as Record<string, unknown>)['description'] === 'string' && !!((line as Record<string, unknown>)['description'] as string).trim());
+  const first = (products[0]?.['description'] as string | undefined)?.trim();
+  return first ? `${first}${products.length > 1 ? ' และรายการอื่น' : ''}` : undefined;
 }
 
 /** R-A2: enough breakdown groups to stay readable in one bubble; the rest are folded into "อื่นๆ". */
@@ -1161,6 +1344,70 @@ function formatReimbursementGetDetailSingleMetric(output: SpecialistOutput, ctx:
     ? `\n${data['paymentBlockNotice']}` : '';
   const replyText = `${headline}${statusText}${paymentBlock}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/** The two reads the locked "งานค้าง" card (design lock context 2) is drawn from. */
+export const OPEN_WORK_TOOLS: ReadonlySet<string> = new Set(['notifications.list_open_alerts', 'workflow.list_assigned_tasks']);
+const OPEN_WORK_ROWS = 10;
+
+/**
+ * The open-work card of ONE successful read of the reader's own open notices or unfinished assigned
+ * tasks: every item the tool returned, how many there are, when it was read, and in one short line
+ * WHAT was checked — so "nothing found" is never read as "the company has no work" (the notice read is
+ * one page of the reader's own notices; the task read is the reader's own open tasks).
+ *
+ * Built only from the tool's data. A result that is not this exact shape — a missing count, an item
+ * without a title — has no layout, and the answer is drawn as its sentence. A read that was refused or
+ * failed never reaches here: the caller passes successful results only.
+ *
+ * The claim rows and the button that opens the claim come from what the tool itself vouched for
+ * (`kind`, `documentNo`, `opens`); nothing is read out of a title here.
+ */
+export function openWorkCardLayout(toolName: string, data: unknown, asOf: string | undefined): LineAiAnswerCardLayout | undefined {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  const record = data as Record<string, unknown>;
+  const tasks = toolName === 'workflow.list_assigned_tasks';
+  if (!tasks && toolName !== 'notifications.list_open_alerts') return undefined;
+  const count = record[tasks ? 'total' : 'count'];
+  const raw = record['items'];
+  if (!isCount(count) || !Array.isArray(raw) || raw.length > count) return undefined;
+  const items: Array<Record<string, unknown> & { title: string }> = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object' || typeof (entry as Record<string, unknown>)['title'] !== 'string'
+      || !((entry as Record<string, unknown>)['title'] as string).trim()) return undefined;
+    items.push(entry as Record<string, unknown> & { title: string });
+  }
+  if (count > 0 && items.length === 0) return undefined;
+  const shown = items.slice(0, OPEN_WORK_ROWS);
+  // The notice read is a page: `hasMore` means the count is a floor, never the whole.
+  const more = !tasks && record['hasMore'] === true;
+  const found = count === 0 ? undefined : `พบ${more ? 'มากกว่า' : ''} ${groupThousands(String(count))} รายการ`;
+  const asOfLabel = thaiExpenseAsOfLabel(asOf);
+  const asOfRow: LineAiAnswerCardRow[] = asOfLabel ? [{ label: 'ข้อมูล ณ', value: asOfLabel }] : [];
+  const partial = count > shown.length || more ? [`แสดง ${shown.length} รายการแรก ดูทั้งหมดได้ในเว็บ`] : [];
+  if (tasks) {
+    return cardLayout({
+      context: 'open_work',
+      header: ['งานที่มอบหมาย', found ?? 'ไม่พบงานค้าง'],
+      rows: [...shown.map((item, index) => ({ label: `งานที่ ${index + 1}`, value: item.title.trim() })), ...asOfRow],
+      notes: ['ตรวจเฉพาะงานที่มอบหมายให้คุณและยังไม่เสร็จ', ...partial],
+      linkLabel: 'ดูงานของฉันในเว็บ',
+    });
+  }
+  const claimNumbers = shown.map((item) => item['kind'] === 'claim_approval' && typeof item['documentNo'] === 'string' ? item['documentNo'].trim() : '');
+  const claims = count > 0 && !partial.length && claimNumbers.every(Boolean);
+  return cardLayout({
+    context: 'open_work',
+    header: claims ? ['ใบเบิกรออนุมัติ', found!] : ['การแจ้งเตือน', found ?? 'ไม่พบรายการ'],
+    rows: [
+      ...(claims
+        ? [...claimNumbers.map((value) => ({ label: 'เลขที่ใบเบิก', value })), { label: 'ต้องทำ', value: 'ตรวจสอบและอนุมัติใบเบิก' }]
+        : shown.map((item, index) => ({ label: `รายการที่ ${index + 1}`, value: item.title.trim() }))),
+      ...asOfRow,
+    ],
+    notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ', ...partial],
+    linkLabel: claims && record['opens'] === 'claim' ? 'เปิดใบเบิกเพื่ออนุมัติ' : 'ดูแจ้งเตือนในเว็บ',
+  });
 }
 
 /**

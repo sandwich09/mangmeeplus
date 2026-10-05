@@ -11,7 +11,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
-import { AI_BUDGET_ESTIMATOR_VERSION_V2, AI_BUDGET_PROFILE_TABLE_DIGEST_V2, parseLineAiSemanticCoverage } from '@watchdog-bms/contracts';
+import { AI_BUDGET_ESTIMATOR_VERSION_V2, AI_BUDGET_PROFILE_TABLE_DIGEST_V2, parseLineAiAnswerCardLayout, parseLineAiSemanticCoverage } from '@watchdog-bms/contracts';
 import type {
   AiUsageEntry,
   LineAiExpectedRuntimeIdentity,
@@ -52,6 +52,17 @@ function isAnswerPresentation(value: unknown): boolean {
     }
     return true;
   });
+}
+
+/** A card's `layout` is presentation metadata from a separately deployed artifact: re-parsed here with
+ *  the contract's own validator, and a layout that does not parse is dropped — the card is then its
+ *  `text`, which the check above already required. The answer itself is never refused for it. */
+function withParsedCardLayouts(presentation: unknown): unknown {
+  const record = presentation as { cards: Array<Record<string, unknown>> };
+  return { ...record, cards: record.cards.map(({ layout: rawLayout, ...card }) => {
+    const layout = rawLayout === undefined ? undefined : parseLineAiAnswerCardLayout(rawLayout);
+    return layout ? { ...card, layout } : card;
+  }) };
 }
 
 const USAGE_COUNTERS = ['inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens', 'durationMs'] as const;
@@ -342,6 +353,7 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
     }
     return {
       ...rest,
+      ...(rest['presentation'] !== undefined ? { presentation: withParsedCardLayouts(rest['presentation']) } : {}),
       runtimeBinding,
       ...(usage ? { usage } : {}),
       ...(runtimeIdentity ? { runtimeIdentity } : {}),
