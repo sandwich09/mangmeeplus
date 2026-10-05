@@ -717,6 +717,8 @@ export const PERIOD_ASSUMPTIONS = {
   clampedToToday: 'period_clamped_to_today',
   /** "7 วันล่าสุด" counts today as one of the N days. */
   lastNDaysIncludeToday: 'last_n_days_include_today',
+  /** Recent calendar windows exclude the unfinished current unit. */
+  completeUnitsExcludeCurrent: 'complete_units_exclude_current',
   /** A month name, quarter or range written with no year: the most recent occurrence not in the future. */
   yearAssumedLatest: 'year_assumed_latest_past',
   /** A uniquely identifiable full Thai month name had one mistyped Unicode character. */
@@ -781,6 +783,29 @@ export function formatThaiPeriodRange(fromDate: string, toDate: string): string 
   if (fromYear === toYear && fromMonth === toMonth) return `${fromDay}–${toDay} ${toAbbr} ${toYear}`;
   if (fromYear === toYear) return `${fromDay} ${fromAbbr} – ${toDay} ${toAbbr} ${toYear}`;
   return `${fromDay} ${fromAbbr} ${fromYear} – ${toDay} ${toAbbr} ${toYear}`;
+}
+
+/** Calendar months in a whole-month period, including its explicitly clamped current month. */
+export function calendarMonthsForPeriod(
+  period: Pick<LineAiPeriodCandidate, 'fromDate' | 'toDate' | 'assumptions'>,
+  todayIso: string,
+): Array<{ monthKey: string; fromDate: string; toDate: string; label: string }> | null {
+  const { fromDate, toDate } = period;
+  const fromMs = civilMs(fromDate), toMs = civilMs(toDate);
+  if (fromMs === null || toMs === null || isoOfMs(fromMs) !== fromDate || isoOfMs(toMs) !== toDate
+    || !fromDate.endsWith('-01') || fromDate > toDate || toDate > todayIso) return null;
+  const lastYear = Number(toDate.slice(0, 4)), lastMonth = Number(toDate.slice(5, 7));
+  if (toDate !== monthBounds(lastYear, lastMonth).toDate
+    && !(toDate === todayIso && period.assumptions.includes(PERIOD_ASSUMPTIONS.clampedToToday))) return null;
+  const first = Number(fromDate.slice(0, 4)) * 12 + Number(fromDate.slice(5, 7)) - 1;
+  const last = lastYear * 12 + lastMonth - 1;
+  return Array.from({ length: last - first + 1 }, (_, index) => {
+    const cursor = first + index;
+    const bounds = monthBounds(Math.floor(cursor / 12), cursor % 12 + 1);
+    const end = bounds.toDate < toDate ? bounds.toDate : toDate;
+    return { monthKey: bounds.fromDate.slice(0, 7), fromDate: bounds.fromDate, toDate: end,
+      label: formatThaiPeriodRange(bounds.fromDate, end) };
+  });
 }
 
 /** What one matched span resolved to, before clamping/labelling. */
@@ -856,7 +881,13 @@ function correctedThaiMonthName(token: string): string | null {
   return new Set(matches.map(([, month]) => month)).size === 1 ? matches[0]![0] : null;
 }
 
-/** An explicit `เดือน...` whose month cannot be resolved must never silently use the current month. */
+function looksLikeThaiMonth(token: string): boolean {
+  return token.length <= 3
+    ? PERIOD_SHORT_MONTH_NAMES.some(([name]) => name[0] === token[0] && oneEditApart(token, name))
+    : FULL_THAI_MONTH_NAMES.some(([name]) => name.slice(0, 3) === token.slice(0, 3) || oneEditApart(token, name));
+}
+
+/** Only an unresolved month-like token or an out-of-range month number needs a month question. */
 export function unresolvedMonthName(text: string, periods: LineAiPeriodCandidate[]): string | null {
   const coveredAt = (index: number): boolean => periods.some((period) => {
     let start = text.indexOf(period.span);
@@ -872,30 +903,29 @@ export function unresolvedMonthName(text: string, periods: LineAiPeriodCandidate
     if (/(?:ต้น|กลาง|ปลาย|สิ้น)$/u.test(before)
       || /^(?:นี้|หน้า|ถัดไป|ก่อน|ที่แล้ว|ปัจจุบัน|ละ)/u.test(token) || token.length < 2) continue;
     const tokenStart = (match.index ?? 0) + match[0].indexOf(match[1]!);
-    if (!coveredAt(tokenStart)) return token.slice(0, 32);
+    if (looksLikeThaiMonth(token) && !coveredAt(tokenStart)) return token.slice(0, 32);
     let cursor = tokenStart + token.length;
     for (;;) {
       const next = /^\s*และ\s*([ก-๙]+)/u.exec(text.slice(cursor));
       if (!next) break;
       const nextToken = next[1]!.split('และ', 1)[0]!;
       const nextStart = cursor + next[0].indexOf(next[1]!);
-      if (!nextToken.startsWith('เดือน') && (
-        nextToken.length <= 3 && PERIOD_SHORT_MONTH_NAMES.some(([name]) => name[0] === nextToken[0])
-        || nextToken.length > 3 && FULL_THAI_MONTH_NAMES.some(([name]) => name.slice(0, 2) === nextToken.slice(0, 2))
-      ) && !coveredAt(nextStart)) return nextToken.slice(0, 32);
+      if (!nextToken.startsWith('เดือน') && looksLikeThaiMonth(nextToken) && !coveredAt(nextStart)) return nextToken.slice(0, 32);
       cursor = nextStart + nextToken.length;
     }
   }
   for (const match of text.matchAll(/(?:เดือน|\bmonth\b)\s*([0-9๐-๙]{1,4})(?![0-9๐-๙])/giu)) {
     const start = (match.index ?? 0) + match[0].lastIndexOf(match[1]!);
+    // A month number no candidate covers: out of 1–12, or a month that has not come yet (spec §4.3:
+    // "เดือน 12 ปี 2569" asked in September is answered by naming it, never by reading this month).
+    // A count is not a month: "3 เดือนล่าสุด" and "เดือน 8-10" are covered by their own candidates.
     if (!coveredAt(start)) return match[1]!;
   }
   // A separated full month-like word can also be a typo without the word เดือน before it.
   for (const match of text.matchAll(/(?:^|[\s,(]|และ\s*)([ก-๙]{5,14}?)(?=$|\s|และ|[),/.!?]|ปี\s*\d)/gu)) {
     const token = match[1]!;
     const start = (match.index ?? 0) + match[0].lastIndexOf(token);
-    if (FULL_THAI_MONTH_NAMES.some(([name]) => name.slice(0, 3) === token.slice(0, 3))
-      && !coveredAt(start)) return token;
+    if (looksLikeThaiMonth(token) && !coveredAt(start)) return token;
   }
   return null;
 }
@@ -909,8 +939,10 @@ function fuzzyQualified(text: string, start: number): boolean {
 }
 
 /** Year readings for a period, plus the `year_read_be` marker the spec names. */
-function periodYearReadings(rawYear: number, digits: number): YearReading[] {
-  return resolveYearReadings(rawYear, digits).map((reading) => reading.assumptions.includes(VALUE_ASSUMPTIONS.eraReadBe)
+function periodYearReadings(rawYear: number, digits: number, todayIso: string): YearReading[] {
+  const readings = plausibleEraReadings(resolveYearReadings(rawYear, digits), todayIso)
+    .filter(reading => !reading.assumptions.includes(VALUE_ASSUMPTIONS.ambiguousTwoDigitYear));
+  return readings.map((reading) => reading.assumptions.includes(VALUE_ASSUMPTIONS.eraReadBe)
     ? { ...reading, assumptions: [...reading.assumptions, PERIOD_ASSUMPTIONS.yearReadBe] }
     : reading);
 }
@@ -924,39 +956,142 @@ type PeriodRule = {
   pattern: RegExp;
   /** Thai relative words only: skip a match a fuzzy qualifier precedes. */
   fuzzyGuard?: boolean;
-  build: (match: RegExpExecArray | RegExpMatchArray, todayIso: string) => PeriodReading[];
+  /** null leaves an invalid month range to the existing individual-month rules. */
+  build: (match: RegExpExecArray | RegExpMatchArray, todayIso: string) => PeriodReading[] | null;
 };
 
 const singleDay = (iso: string, word: string, assumptions: string[] = []): PeriodReading[] =>
   [{ kind: 'day', fromDate: iso, toDate: iso, word, source: 'relative', assumptions }];
 
+// Consume complete count tokens so estimates cannot fall back to their last number.
+const PERIOD_COUNT_PATTERN = `(?:[-+]?\\d+(?:[.,]\\d+)*|(?:${THAI_NUMBER_TOKENS.map(([word]) => word).join('|')})+)`;
+function periodCount(raw: string | undefined): number {
+  if (raw === undefined) return 1;
+  if (/^\d+$/u.test(raw)) return Number(raw);
+  if (!new RegExp(`^(?:${THAI_DAY_WORD_ALTERNATION})$`, 'u').test(raw)) return NaN;
+  const scanned = scanThaiWordTokens(raw, 0);
+  return scanned ? evaluateWordTokens(scanned.tokens) ?? NaN : NaN;
+}
+
+function completeUnits(n: number, unit: string, today: string, suffix: string): PeriodReading[] {
+  if (!(n >= 1 && n <= MAX_RELATIVE_MONTHS)) return [];
+  const kind = /month|เดือน/i.test(unit) ? 'month' : /week|สัปดาห์|อาทิตย์|วีค/i.test(unit) ? 'week'
+    : /quarter|ไตรมาส/i.test(unit) ? 'quarter' : 'year';
+  const thaiUnit = { month: 'เดือน', week: 'สัปดาห์', quarter: 'ไตรมาส', year: 'ปี' }[kind];
+  const word = `${n} ${thaiUnit}${suffix}`;
+  const latest = kind === 'week' ? weeksAgo(1, today, word)[0]! : kind === 'month' ? monthsAgo(1, today, word)[0]!
+    : kind === 'quarter' ? quartersAgo(1, today, word)[0]! : yearsAgo(1, today, word)[0]!;
+  const earliest = kind === 'week' ? weeksAgo(n, today, word)[0]! : kind === 'month' ? monthsAgo(n, today, word)[0]!
+    : kind === 'quarter' ? quartersAgo(n, today, word)[0]! : yearsAgo(n, today, word)[0]!;
+  return [{ ...latest, kind: n === 1 ? kind : 'range', fromDate: earliest.fromDate,
+    ...(n > 1 ? { monthKey: undefined } : {}),
+    assumptions: [...latest.assumptions, PERIOD_ASSUMPTIONS.completeUnitsExcludeCurrent] }];
+}
+
+const PERIOD_ALL_MONTH_ALTERNATION = `${PERIOD_MONTH_ALTERNATION}|${PERIOD_SHORT_MONTH_ALTERNATION}|${PERIOD_SPOKEN_MONTH_ALTERNATION}`;
+const MONTH_RANGE_ENDPOINT = `(${PERIOD_ALL_MONTH_ALTERNATION}|\\d{1,2})(?:\\s*(?:ปี\\s*|year\\s*)?['’]?(\\d{2,4})(?!\\d))?`;
+const PERIOD_MONTH_CONTEXT = 'ตั้งแต่|จาก|ช่วง|ระหว่าง|แล้ว|ของ|รายจ่าย|ค่าใช้จ่าย|ยอดขาย|ยอด';
+const PERIOD_MONTH_LEAD = `(?:^|[\\s,(]|เดือน\\s*|${PERIOD_MONTH_CONTEXT})`;
+
+function monthRange(m: RegExpMatchArray, today: string): PeriodReading[] | null {
+  if ((m[5] === 'กับ' || m[5] === 'และ') && m[1] !== 'ระหว่าง') return null;
+  const month = (name: string) => periodMonthFromName(name) ?? (/^\d+$/u.test(name) ? Number(name) : 0);
+  const first = month(m[3]!), last = month(m[7]!);
+  // A bare numeric pair is not a month range (it can be a day range or an amount).
+  if ((/^\d/u.test(m[3]!) && !m[2]) || (/^\d/u.test(m[7]!) && !m[6] && !/^\d/u.test(m[3]!))
+    || first < 1 || first > 12 || last < 1 || last > 12) return null;
+  if ((/^may\.?$/i.test(m[3]!) && !m[2] && !m[4]) || (/^may\.?$/i.test(m[7]!) && !m[6] && !m[8])) return null;
+  const leftYear = m[4] ? namedPeriodYearReadings(m[3]!, m[4], today)[0] : undefined;
+  const rightYear = m[8] ? namedPeriodYearReadings(m[7]!, m[8], today)[0] : undefined;
+  if ((m[4] && !leftYear) || (m[8] && !rightYear)) return [];
+  const fromYear = leftYear?.yearCe ?? (rightYear ? rightYear.yearCe - Number(first > last) : latestNonFutureYear(first, today));
+  const toYear = rightYear?.yearCe ?? fromYear + Number(last < first);
+  const monthCount = (toYear - fromYear) * 12 + last - first + 1;
+  if (monthCount < 1 || monthCount > MAX_RELATIVE_MONTHS) return null;
+  const assumptions = leftYear || rightYear ? [...new Set([...(leftYear?.assumptions ?? []), ...(rightYear?.assumptions ?? [])])]
+    : [PERIOD_ASSUMPTIONS.yearAssumedLatest];
+  return rangeReading(monthBounds(fromYear, first).fromDate, monthBounds(toYear, last).toDate, assumptions);
+}
+
+// These longer phrases must own their spans before singular units or numbered months can match.
+const EVERYDAY_PERIOD_RULES: PeriodRule[] = [
+  {
+    pattern: new RegExp(`(?:^|[\\s,(]|(?=${PERIOD_MONTH_CONTEXT}|เดือน))(?:(from|${PERIOD_MONTH_CONTEXT})\\s*)?(เดือน\\s*|month\\s*)?${MONTH_RANGE_ENDPOINT}\\s*(จนถึง|ถึง|ยัน|-|–|—|~|to|until|through|กับ|และ)\\s*(เดือน\\s*|month\\s*)?${MONTH_RANGE_ENDPOINT}(?=$|\\s|[),.!?]|ค่ะ|ครับ|ให้|บ้าง)`, 'giu'),
+    build: monthRange,
+  },
+  {
+    pattern: new RegExp(`${PERIOD_MONTH_LEAD}(${PERIOD_ALL_MONTH_ALTERNATION})\\s*(ปี(?:ที่แล้ว|ก่อน|นี้)|ที่ผ่านมา)`, 'giu'),
+    build: (m, today) => {
+      if (m[2] === 'ที่ผ่านมา') return namedMonth(m[1]!, undefined, today);
+      const month = periodMonthFromName(m[1]!);
+      const year = Number(today.slice(0, 4)) - Number(m[2] !== 'ปีนี้');
+      return month ? [monthReading(year, month, '', 'named_month', [])] : [];
+    },
+  },
+  { pattern: /ครึ่งปี(ที่ผ่านมา|ย้อนหลัง|ล่าสุด)/gu, build: (m, today) => completeUnits(6, 'เดือน', today, m[1]!) },
+  {
+    pattern: /(?:ตั้งแต่ต้นเดือน(?:นี้)?(?:\s*ถึง(?:วันนี้|ตอนนี้|ปัจจุบัน))?|ต้นเดือนนี้\s*ถึง(?:วันนี้|ตอนนี้|ปัจจุบัน))(?!(?:นี้|ที่แล้ว|ก่อน|หน้า)|\s*(?:\d|ถึง))/gu,
+    build: (_m, today) => monthsAgo(0, today, 'เดือนนี้'),
+  },
+  {
+    pattern: /(?:ตั้งแต่ต้นปี(?:นี้)?(?:\s*ถึง(?:วันนี้|ตอนนี้|ปัจจุบัน))?|ต้นปี(?:นี้)?\s*ถึง(?:วันนี้|ตอนนี้|ปัจจุบัน)|\byear\s+to\s+date\b|\bytd\b)(?!(?:นี้|ที่แล้ว|ก่อน|หน้า)|\s*(?:\d|ถึง))/giu,
+    build: (_m, today) => yearsAgo(0, today, 'ปีนี้'),
+  },
+  {
+    pattern: new RegExp(`วันที่\\s*(\\d{1,2})\\s*(?:-|–|—|~|ถึง)\\s*(\\d{1,2})(?!\\d)(?:\\s*เดือน(นี้|ที่แล้ว|ที่ผ่านมา|ล่าสุด|ย้อนหลัง|ก่อนหน้า(?:นี้)?|ก่อน)|(?!\\s*(?:[/\\d]|เดือน|${PERIOD_ALL_MONTH_ALTERNATION})))`, 'giu'),
+    build: (m, today) => {
+      const base = monthsAgo(m[3] && m[3] !== 'นี้' ? 1 : 0, today, '')[0]!;
+      const year = Number(base.fromDate.slice(0, 4)), month = Number(base.fromDate.slice(5, 7));
+      const from = toIsoDate(Number(m[1]), month, year), to = toIsoDate(Number(m[2]), month, year);
+      return from && to ? rangeReading(from, to, []) : [];
+    },
+  },
+  {
+    pattern: new RegExp(`(?<!เสาร์)(?:(${PERIOD_COUNT_PATTERN})\\s*)?(เดือน|สัปดาห์|อาทิตย์|วีค|ไตรมาส|ปี)\\s*(ที่ผ่านมา|ล่าสุด|ย้อนหลัง|ก่อนหน้า(?:นี้)?|หลัง(?:สุด)?)`, 'gu'),
+    fuzzyGuard: true,
+    build: (m, today) => m[2] !== 'เดือน' && /^(?:ก่อนหน้า|หลัง)/u.test(m[3]!) ? null
+      : completeUnits(periodCount(m[1]), m[2]!, today, m[3]!),
+  },
+  {
+    pattern: new RegExp(`ย้อนหลัง\\s*(${PERIOD_COUNT_PATTERN})\\s*(เดือน|สัปดาห์|อาทิตย์|วีค|ไตรมาส|ปี)`, 'gu'),
+    build: (m, today) => completeUnits(periodCount(m[1]), m[2]!, today, 'ย้อนหลัง'),
+  },
+  {
+    pattern: /\b(?:last|past|previous)\s+(\d+)\s+(months?|weeks?|quarters?|years?)\b/gi,
+    build: (m, today) => completeUnits(Number(m[1]), m[2]!, today, 'ล่าสุด'),
+  },
+  // Consume an approximate/unsupported count before "this unit" instead of reading only its suffix.
+  { pattern: new RegExp(`${PERIOD_COUNT_PATTERN}\\s*(?:เดือน|สัปดาห์|อาทิตย์|วีค|ปี|ไตรมาส)นี้`, 'gu'), build: () => [] },
+];
+
 /** Ordered most-specific first; an earlier rule's span blocks any later overlapping match, exactly
  *  like the date extractor above (so "3 วันก่อน" is never also read as "วันก่อน"). */
 const PERIOD_RULES: PeriodRule[] = [
+  ...EVERYDAY_PERIOD_RULES,
   // ── single days ───────────────────────────────────────────────────────────
   { pattern: /เมื่อวานซืน/gu, build: (_m, today) => singleDay(shiftDays(today, -2), 'เมื่อวานซืน') },
   { pattern: /day\s*before\s*yesterday/gi, build: (_m, today) => singleDay(shiftDays(today, -2), 'เมื่อวานซืน') },
   // ── N last days (before the N-days-ago day rule: "3 วันที่ผ่านมา" is a window, not one day) ──
   {
-    pattern: /(\d{1,3})\s*วัน(?:ที่ผ่านมา|ล่าสุด|ย้อนหลัง)/gu,
-    build: (m, today) => lastNDays(Number(m[1]), today),
+    pattern: new RegExp(`(${PERIOD_COUNT_PATTERN})\\s*วัน(?:ที่ผ่านมา|ล่าสุด|ย้อนหลัง)`, 'gu'),
+    build: (m, today) => lastNDays(periodCount(m[1]), today),
   },
   {
     pattern: /(?:last|past)\s*(\d{1,3})\s*days?/gi,
-    build: (m, today) => lastNDays(Number(m[1]), today),
+    build: (m, today) => lastNDays(periodCount(m[1]), today),
   },
   // ── N days ago (one day) ─────────────────────────────────────────────────
   {
-    pattern: /(\d{1,3})\s*วัน(?:ก่อน|ที่แล้ว)/gu,
+    pattern: new RegExp(`(${PERIOD_COUNT_PATTERN})\\s*วัน(?:ก่อน|ที่แล้ว)`, 'gu'),
     build: (m, today) => {
-      const n = Number(m[1]);
+      const n = periodCount(m[1]);
       return n >= 1 && n <= MAX_RELATIVE_DAYS ? singleDay(shiftDays(today, -n), `${n} วันก่อน`) : [];
     },
   },
   {
     pattern: /(\d{1,3})\s*days?\s*ago/gi,
     build: (m, today) => {
-      const n = Number(m[1]);
+      const n = periodCount(m[1]);
       return n >= 1 && n <= MAX_RELATIVE_DAYS ? singleDay(shiftDays(today, -n), `${n} วันก่อน`) : [];
     },
   },
@@ -972,29 +1107,29 @@ const PERIOD_RULES: PeriodRule[] = [
   { pattern: /\btoday\b/gi, build: (_m, today) => singleDay(today, 'วันนี้') },
   // ── weeks (Monday–Sunday) ────────────────────────────────────────────────
   {
-    pattern: /(\d{1,2})\s*(?:สัปดาห์|อาทิตย์)(?:ที่แล้ว|ก่อน)/gu,
-    build: (m, today) => weeksAgo(Number(m[1]), today, `${Number(m[1])} สัปดาห์ที่แล้ว`),
+    pattern: new RegExp(`(${PERIOD_COUNT_PATTERN})\\s*(?:สัปดาห์|อาทิตย์|วีค)(?:ที่แล้ว|ก่อน)`, 'gu'),
+    build: (m, today) => weeksAgo(periodCount(m[1]), today, `${periodCount(m[1])} สัปดาห์ที่แล้ว`),
   },
   {
     pattern: /(\d{1,2})\s*weeks?\s*ago/gi,
-    build: (m, today) => weeksAgo(Number(m[1]), today, `${Number(m[1])} สัปดาห์ที่แล้ว`),
+    build: (m, today) => weeksAgo(periodCount(m[1]), today, `${periodCount(m[1])} สัปดาห์ที่แล้ว`),
   },
   {
-    pattern: /(?:สัปดาห์|อาทิตย์)(?:ที่แล้ว|ก่อน)/gu,
+    pattern: /(?:สัปดาห์|อาทิตย์|วีค)(?:ที่แล้ว|ก่อน)/gu,
     fuzzyGuard: true,
     build: (_m, today) => weeksAgo(1, today, 'สัปดาห์ที่แล้ว'),
   },
   { pattern: /last\s*week/gi, build: (_m, today) => weeksAgo(1, today, 'สัปดาห์ที่แล้ว') },
-  { pattern: /(?:สัปดาห์|อาทิตย์)นี้/gu, fuzzyGuard: true, build: (_m, today) => weeksAgo(0, today, 'สัปดาห์นี้') },
+  { pattern: /(?:สัปดาห์|อาทิตย์|วีค)นี้/gu, fuzzyGuard: true, build: (_m, today) => weeksAgo(0, today, 'สัปดาห์นี้') },
   { pattern: /this\s*week/gi, build: (_m, today) => weeksAgo(0, today, 'สัปดาห์นี้') },
   // ── months ───────────────────────────────────────────────────────────────
   {
-    pattern: /(\d{1,2})\s*เดือน(?:ที่แล้ว|ก่อน)/gu,
-    build: (m, today) => monthsAgo(Number(m[1]), today, `${Number(m[1])} เดือนที่แล้ว`),
+    pattern: new RegExp(`(${PERIOD_COUNT_PATTERN})\\s*เดือน(?:ที่แล้ว|ก่อน)`, 'gu'),
+    build: (m, today) => monthsAgo(periodCount(m[1]), today, `${periodCount(m[1])} เดือนที่แล้ว`),
   },
   {
     pattern: /(\d{1,2})\s*months?\s*ago/gi,
-    build: (m, today) => monthsAgo(Number(m[1]), today, `${Number(m[1])} เดือนที่แล้ว`),
+    build: (m, today) => monthsAgo(periodCount(m[1]), today, `${periodCount(m[1])} เดือนที่แล้ว`),
   },
   { pattern: /เดือน(?:ที่แล้ว|ก่อน)/gu, fuzzyGuard: true, build: (_m, today) => monthsAgo(1, today, 'เดือนที่แล้ว') },
   { pattern: /(?:last|previous)\s*month/gi, build: (_m, today) => monthsAgo(1, today, 'เดือนที่แล้ว') },
@@ -1061,7 +1196,7 @@ const PERIOD_RULES: PeriodRule[] = [
   { pattern: /this\s*year/gi, build: (_m, today) => yearsAgo(0, today, 'ปีนี้') },
   // "เดือนมกราปี 2568": a year written straight after a spoken month name is that month's year, read by the
   // spoken-month rules below — never a whole-year period of its own.
-  { pattern: new RegExp(`(?<!(?:${PERIOD_SPOKEN_MONTH_ALTERNATION})\\s*)(?:ปี|year)\\s*['’]?(\\d{2,4})`, 'giu'), build: (m) => namedYear(m[1]!) },
+  { pattern: new RegExp(`(?<!(?:${PERIOD_SPOKEN_MONTH_ALTERNATION})\\s*)(?:ปี|year)\\s*['’]?(\\d{2,4})`, 'giu'), build: (m, today) => namedYear(m[1]!, today) },
 ];
 
 /**
@@ -1148,8 +1283,8 @@ function yearsAgo(n: number, todayIso: string, word: string): PeriodReading[] {
   }];
 }
 
-function namedYear(rawYear: string): PeriodReading[] {
-  return periodYearReadings(Number(rawYear), rawYear.length === 2 ? 2 : 4).map((reading) => ({
+function namedYear(rawYear: string, todayIso: string): PeriodReading[] {
+  return periodYearReadings(Number(rawYear), rawYear.length === 2 ? 2 : 4, todayIso).map((reading) => ({
     kind: 'year' as const,
     fromDate: `${reading.yearCe}-01-01`,
     toDate: `${reading.yearCe}-12-31`,
@@ -1173,7 +1308,7 @@ function namedQuarter(quarter: number, rawYear: string | undefined, todayIso: st
       assumptions: [PERIOD_ASSUMPTIONS.yearAssumedLatest],
     }];
   }
-  return periodYearReadings(Number(rawYear), rawYear.length === 2 ? 2 : 4).map((reading) => ({
+  return periodYearReadings(Number(rawYear), rawYear.length === 2 ? 2 : 4, todayIso).map((reading) => ({
     kind: 'quarter' as const,
     ...quarterBounds(reading.yearCe, quarter),
     word: `ไตรมาส ${quarter}/${reading.yearBe}`,
@@ -1188,6 +1323,13 @@ function latestNonFutureYear(month: number, todayIso: string): number {
   return month <= Number(todayIso.slice(5, 7)) ? year : year - 1;
 }
 
+function namedPeriodYearReadings(monthName: string, rawYear: string, todayIso: string): YearReading[] {
+  const readings = periodYearReadings(Number(rawYear), rawYear.length, todayIso);
+  if (rawYear.length !== 2) return readings;
+  const named = resolveNamedMonthYearReadings(monthName, Number(rawYear), 2)[0];
+  return readings.map(reading => named?.yearCe === reading.yearCe ? named : reading);
+}
+
 function namedMonth(monthName: string, rawYear: string | undefined, todayIso: string): PeriodReading[] {
   const month = periodMonthFromName(monthName);
   if (!month) return [];
@@ -1195,11 +1337,8 @@ function namedMonth(monthName: string, rawYear: string | undefined, todayIso: st
     return [monthReading(latestNonFutureYear(month, todayIso), month, '', 'named_month',
       [PERIOD_ASSUMPTIONS.yearAssumedLatest])];
   }
-  return resolveNamedMonthYearReadings(monthName, Number(rawYear), rawYear.length === 2 ? 2 : 4)
-    .map((reading) => monthReading(reading.yearCe, month, '', 'named_month',
-      reading.assumptions.includes(VALUE_ASSUMPTIONS.eraReadBe)
-        ? [...reading.assumptions, PERIOD_ASSUMPTIONS.yearReadBe]
-        : reading.assumptions));
+  return namedPeriodYearReadings(monthName, rawYear, todayIso)
+    .map((reading) => monthReading(reading.yearCe, month, '', 'named_month', reading.assumptions));
 }
 
 function numberedMonth(month: number, rawYear: string | undefined, todayIso: string, english: boolean): PeriodReading[] {
@@ -1224,7 +1363,7 @@ function namedMonthDayRange(
   const month = periodMonthFromName(monthName);
   if (!month) return [];
   const readings = rawYear
-    ? resolveNamedMonthYearReadings(monthName, Number(rawYear), rawYear.length === 2 ? 2 : 4)
+    ? namedPeriodYearReadings(monthName, rawYear, todayIso)
       .map((reading) => ({ yearCe: reading.yearCe, assumptions: reading.assumptions }))
     : [{ yearCe: latestNonFutureYear(month, todayIso), assumptions: [PERIOD_ASSUMPTIONS.yearAssumedLatest] }];
   return readings.flatMap((reading) => {
@@ -1258,11 +1397,9 @@ function numericDayRange(
   const end = read(pairs[1]!);
   const orderAssumptions = !dayFirstLocked && !monthFirstLocked && pairs.some(([a, b]) => a !== b)
     ? [VALUE_ASSUMPTIONS.orderAssumedDayMonth] : [];
-  const yearReadings = rawYear ? periodYearReadings(Number(rawYear), rawYear.length === 2 ? 2 : 4) : [];
+  const yearReadings = rawYear ? periodYearReadings(Number(rawYear), rawYear.length === 2 ? 2 : 4, todayIso) : [];
   const readings = rawYear
-    // Same rule as a single numeric date: the era of a two-digit year resolves by plausibility ONLY
-    // when the วัน/เดือน order is already certain; otherwise both readings survive and stay ambiguous.
-    ? (orderAssumptions.length === 0 ? plausibleEraReadings(yearReadings, todayIso) : yearReadings)
+    ? yearReadings
       .map((reading) => ({ yearCe: reading.yearCe, assumptions: reading.assumptions }))
     : [{
         yearCe: latestNonFutureYear(end.month, todayIso),
@@ -1352,8 +1489,10 @@ export function resolvePeriodCandidates(
       // but could not pin down (e.g. "25 เดือนที่แล้ว", past the N ceiling) must not then be re-read
       // by a looser rule as plain "เดือนที่แล้ว". No candidate means the tool's default period, and
       // the answer says which period that was.
+      const readings = rule.build(match, todayIso);
+      if (readings === null) continue;
       used.push({ start, end });
-      for (const reading of rule.build(match, todayIso)) push(text.slice(start, end), reading, start, end);
+      for (const reading of readings) push(text.slice(start, end), reading, start, end);
     }
   } };
   applyRules(PERIOD_RULES);

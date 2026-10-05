@@ -25,7 +25,7 @@ Owner confirmed both cards received and actions working; supplemental acceptance
 
 ## LINE card rounds 2026-10-05 afternoon — UAT only (current for UAT)
 
-After the first row below, UAT serves `main` `54c4cae73` (LINE System OA cards part 1) and no longer the `2aa87ac68` of the section that follows. Production is NOT touched by these rounds: it serves the morning release plus another session's hotfix `0c6e888a8` (`20261005T060824Z-6f2c3d60`, 13:19 Bangkok). Every run used the local Kamal path from the clean controller worktree; GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok. Owner's words: "เร่งแก้ของ ไลน์หน่อยได้ไหม จะได้ทดสอบจริงบน line uat" (UAT only; Production needs his own go).
+After the last row below, UAT serves `main` `ea5a98344` (LINE System OA cards parts 1 and 2a) and no longer the `2aa87ac68` of the section that follows. Production is NOT touched by these rounds: it serves the morning release plus another session's hotfix `0c6e888a8` (`20261005T060824Z-6f2c3d60`, 13:19 Bangkok). Every run used the local Kamal path from the clean controller worktree; GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok. Owner's words: "เร่งแก้ของ ไลน์หน่อยได้ไหม จะได้ทดสอบจริงบน line uat" (UAT only; Production needs his own go).
 
 | Env | Operation | Source (main) | Result | Seconds |
 |---|---|---|---|---|
@@ -33,10 +33,17 @@ After the first row below, UAT serves `main` `54c4cae73` (LINE System OA cards p
 | UAT | `20261005T070634Z-09f0d57b` (preflight) | — | PREFLIGHT_PASSED_NO_DEPLOYMENT 14:06, after the owner started both hosts at 14:01. | 13.1 |
 | UAT | `20261005T072445Z-424f6a64` (prepare only) | `54c4cae73` (#1013 twin = develop `1ad8d59d1` via #1012) | PREPARED_NO_DEPLOYMENT 14:31; `main-typescript-build` 338.8 s. | 383.8 |
 | UAT | `20261005T073126Z-e63ad874` (prepared by `424f6a64`) | `54c4cae73` | ACCEPTED_LINE_DEFERRED 14:37, smoke, 12/12 phases, no migration (database phase 78.0 s, rollout 99.3 s), AgentCore `kamal_uat_b` v53, signature verified. | 350.4 |
+| UAT | `20261005T083915Z-f63676fe` (preflight) | controller at `ea5a98344` | PREFLIGHT_PASSED_NO_DEPLOYMENT 15:39. | 12.4 |
+| UAT | `20261005T084047Z-d5c616e7` (prepare only) | `ea5a98344` (#1015 twin = develop `2b30ab1ba` via #1014: LINE cards part 2a, row cards and named buttons) | PREPARED_NO_DEPLOYMENT 15:48. | 430.0 |
+| UAT | `20261005T084812Z-4694f13f` (prepared by `d5c616e7`) | `ea5a98344` | ACCEPTED_LINE_DEFERRED 15:54, smoke, 12/12 phases, no migration (database phase 62.4 s, rollout 98.3 s), AgentCore `kamal_uat_a` v54, signature verified, 2 SSM sessions closed. | 363.1 |
 
 **Stopped UAT hosts stop a release at the first step, and the agent cannot start them.** The deploy role (`mangmee-kamal-uat`) and the dev profile have no `ec2:StartInstances`; only the owner's own profile does, and the controller does not use it. Ask the owner to start the two hosts, then run the read-only preflight again before preparing.
 
 **Ask LINE before the customer sees a card.** `POST https://api.line.me/v2/bot/message/validate/reply` accepts a Flex payload and answers 200 or names the invalid field, and sends nothing to anyone. It was called from inside the UAT API container with that container's own channel token (`scratchpad/uat-line/validate.js` piped through one SSM port-forward and one ssh command), 49 payloads before part 1 went out. UAT and Production run with the text fallback on, so a card LINE refuses reaches the customer as plain text: validate every NEW card structure before a round.
+
+**A UAT round verified with the short gate hid a real-database failure.** Part 2a went out on typechecks, the capability manifest, the whole-chain acceptance and LINE's validator (about three minutes) because the owner asked for speed. The full run on the next round then failed in `line-capture-delivery.pg.spec.ts`: its link count assumed every address under the web base was a link, and the receipt result is now the locked card, whose pictures are served from that base. The product was right and the test was stale, but only the real-PostgreSQL step could say so. The full 17-step run takes about seven minutes on this machine: run it for every round that changes what a pushed message contains.
+
+**A lane killed in mid-typecheck leaves the machine lock behind.** At 15:51 a Codex lane died with "Selected model is at capacity" while its typecheck held `/tmp/mangmee-heavy.lock`; every other job waited ten minutes on a lock nobody owned. The wrapper (`scratchpad/codex/heavy.sh`) now records its pid in the lock and a waiter removes a lock whose holder is gone.
 
 **What only a real phone showed** (owner, 14:45–15:07): the fixtures covered the designed states, not the real routes. A compound question arrived on the card from before the design, the list and the grouped summary were prose, and a short reply to the assistant's own question was rejected by the router's decoder (`line.intake_route.compact_decode rejection=decision_shape_invalid`, two model calls, ten seconds) and answered with a plain-text apology. The gateway and API container logs on the UAT hosts named that cause in minutes; read them before designing a fix.
 

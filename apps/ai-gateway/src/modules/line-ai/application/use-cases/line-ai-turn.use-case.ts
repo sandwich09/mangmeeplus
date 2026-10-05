@@ -5,7 +5,7 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiAnswerCardLayout, LineAiTurnRequest, LineAiTurnResponse, ToolResult, SourceRef } from '@watchdog-bms/contracts';
-import { AI_BUDGET_REFUSAL_CODES, LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_TOOL_REGISTRY, asIntakeRouteIntent, extractValueCandidates, isBusinessIntakeIntent, lineAiRetainedTaskSourceMatchesProjection, parseAiBudgetGrantV2, parseLineAiPreparedPlan, parseLineAiTurnValueCandidates, parseLineAiResponsePreferences, parseLineAiTaskProjection, parseLineAiSemanticSubrequests, parseLineAiSemanticCoverage, verifyLineAiInputEvidence, verifyLineAiRetainedTaskSource, verifyLineAiValueCandidatesV2 } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_TOOL_REGISTRY, asIntakeRouteIntent, extractValueCandidates, isBusinessIntakeIntent, lineAiRetainedTaskSourceMatchesProjection, parseAiBudgetGrantV2, parseLineAiPreparedPlan, parseLineAiTurnValueCandidates, parseLineAiResponsePreferences, parseLineAiTaskProjection, parseLineAiSemanticSubrequests, lineAiReplyClarifications, parseLineAiSemanticCoverage, verifyLineAiInputEvidence, verifyLineAiRetainedTaskSource, verifyLineAiValueCandidatesV2 } from '@watchdog-bms/contracts';
 import { currentBudgetState } from '../../../../common/usage/usage-context';
 import { AI_BUDGET_V2_SUPPORTED } from '../../../../common/usage/ai-budget-provider';
 import { classifyIntent, chooseAgent, selectTools, getRefusalReason, validateTurnRequest } from '../../domain/logic/line-ai-turn.logic';
@@ -237,7 +237,8 @@ export class LineAiTurnUseCase {
       retainedTaskSource,
       responsePreferences: req.responsePreferences === undefined ? undefined : parseLineAiResponsePreferences(req.responsePreferences),
       semanticSubrequests: req.semanticSubrequests === undefined ? undefined
-        : parseLineAiSemanticSubrequests(req.semanticSubrequests, req.messageText, req.inputEvidence),
+        : parseLineAiSemanticSubrequests(req.semanticSubrequests, req.messageText, req.inputEvidence,
+          lineAiReplyClarifications(req.openClarifications, req.resolvedClarificationIds)),
       valueCandidates: req.valueCandidates
         ? versionedValueCandidates ? verifiedValueCandidates : parsedValueCandidates
           ?? extractValueCandidates(req.messageText, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }))
@@ -307,6 +308,8 @@ export class LineAiTurnUseCase {
           sha256: '',
         })),
         conversationContext: req.conversationContext,
+        openClarifications: req.openClarifications,
+        resolvedClarificationIds: req.resolvedClarificationIds,
         ...(req.inputEvidence ? { inputEvidence: req.inputEvidence } : {}),
         ...(req.contractCapabilities ? { contractCapabilities: req.contractCapabilities } : {}),
         ...(req.budgetGrantV2 ? { budgetGrantV2: req.budgetGrantV2 } : {}),

@@ -1,6 +1,6 @@
 import { THAI_SYSTEM_ROLE_NAMES, LINE_FEATURE_DISABLED_HELP_TH, SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
-import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSemanticSubrequests, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
+import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSemanticSubrequests, lineAiReplyClarifications, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import { PDFDocument } from 'pdf-lib';
 import { LineDocumentQaError, LineDocumentQaService, type LineDocumentQaJobRow, type LineDocumentQaOwner } from '../line-document-qa.service';
 import { LineDocumentQaWorker } from '../line-document-qa.worker';
@@ -159,7 +159,8 @@ import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer,
 import { buildEventDiscountCard, EVENT_DISCOUNT_MEMBER_REPLY, isMangmeeDiscountQuestion } from '../../domain/logic/line-event-discount.logic';
 import { BillingService } from '../../../billing/application/billing.service';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { lineSystemCardTexts } from '../../domain/logic/line-system-card.logic';
+import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildLineSystemTextCardMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -1994,9 +1995,9 @@ type LineClarificationSource = {
   draftRouting?: string;
 };
 
-export function lineClarificationContentHash(item: Pick<LedgerSubRequestInput, 'text' | 'subject' | 'clarifyForIntent' | 'candidateExpenseIds' | 'pendingMedia'> & { clarifyQuestion?: string; question?: string }): string {
+export function lineClarificationContentHash(item: Pick<LedgerSubRequestInput, 'text' | 'subject' | 'clarifyForIntent' | 'candidateExpenseIds' | 'pendingMedia' | 'reasonCode'> & { clarifyQuestion?: string; question?: string }): string {
   return hashMessagePreview(JSON.stringify([item.text, item.clarifyQuestion ?? item.question ?? null,
-    item.subject ?? null, item.clarifyForIntent ?? null, item.candidateExpenseIds ?? [], item.pendingMedia ?? null]));
+    item.subject ?? null, item.clarifyForIntent ?? null, item.candidateExpenseIds ?? [], item.pendingMedia ?? null, ...(item.reasonCode ? [item.reasonCode] : [])]));
 }
 
 /** What this chat left open, read the way production a2b926c6 read it before routing a text turn. */
@@ -2482,11 +2483,35 @@ export class ProcessLineWebhookUseCase {
      *  The card carries `text` as its canonical text, so `text` is still what is stored and what falls back. */
     designed?: LineReplyMessage,
   ): Promise<void> {
-    const result = await this.deliverMessages(event, [designed ?? {
-      ...(this.boundConversations.has(event) ? { type: 'text' as const, text } : this.lineReply.buildTextMessage(text)),
-      ...(quickReply ? { quickReply } : {}),
-    }]);
+    const card = designed ? undefined : this.boundReplyCard(event, text);
+    const result = await this.deliverMessages(event, [designed
+      ?? (card ? inheritCompleteLineBusinessAnswerPresentation(card, { ...card, ...(quickReply ? { quickReply } : {}) }) : {
+        ...(this.boundConversations.has(event) ? { type: 'text' as const, text } : this.lineReply.buildTextMessage(text)),
+        ...(quickReply ? { quickReply } : {}),
+      })]);
     if (result !== 'ok') throw new LineDeliveryError(result);
+  }
+
+  /**
+   * A bound chat's short reply — an apology, a question, a notice — on the locked design, under the
+   * reader's own words (owner 2026-10-05, when "ขอโทษค่ะ น้องมั่งมียังไม่แน่ใจว่าหมายถึงอะไร…" came back as
+   * a bare text bubble between cards: "การ์ดหลุดด้วย"). The card carries `text` as its canonical text, so
+   * the delivery plan stores the same words and sends them if LINE refuses the card.
+   *
+   * `undefined` — the reply stays the text it was — for a chat that is not bound; for a reply to
+   * something that carried no typed words (a photo, a file, a button tap): a heading needs the
+   * reader's words; for a web base that is not https; and for a reply with a link that cannot be made
+   * a button of this company, which only a text message keeps tappable.
+   */
+  private boundReplyCard(event: object, text: string, badge?: string): LineReplyMessage | undefined {
+    const bound = this.boundConversations.get(event);
+    // A typed message has LINE's own message id; a tap or a follow is carried here as words the reader never typed.
+    const typed = 'messageText' in event && typeof event.messageText === 'string' && 'lineMessageId' in event && event.lineMessageId ? event.messageText : undefined;
+    const header = bound && lineAnswerCardHeader(typed);
+    if (!bound || !header) return undefined;
+    const card = buildLineSystemTextCardMessage({ text, ...(badge?.trim() ? { paper: `${badge.trim()}\n${text}` } : {}), header,
+      webBaseUrl: this.config.webBaseUrl, companyId: bound.owner.companyId, textStyle: 'answer', icon: 'file' });
+    return card?.type === 'flex' && !lineSystemCardTexts(card.contents).some((line) => /https?:\/\//iu.test(line)) ? card : undefined;
   }
 
   /** P29 + J1: answer a locked company with the package invitation instead of the generic "we
@@ -3407,13 +3432,16 @@ export class ProcessLineWebhookUseCase {
     confirm: boolean,
   ): Promise<void> {
     const chatKeyHash = chatKeyHashOf(event);
+    // A tap on a proposal's button carries no typed words to head a reply, and needs none: every
+    // answer to it is the edit's own card (design lock context 4), here "nothing was changed".
+    const unchanged = (reply: string) => buildDraftUpdateOutcomeCard('unchanged', reply, this.config.webBaseUrl, ctx.companyId);
     if (!this.draftUpdate?.enabled) {
-      await this.deliverReply(event, DRAFT_UPDATE_EXPIRED_REPLY);
+      await this.deliverReply(event, DRAFT_UPDATE_EXPIRED_REPLY, undefined, unchanged(DRAFT_UPDATE_EXPIRED_REPLY));
       await this.updateEventLog(event.webhookEventId, 'draft_update_disabled', undefined, ctx.companyId);
       return;
     }
     if (!event.draftUpdatePreviewId) {
-      await this.deliverReply(event, DRAFT_UPDATE_EXPIRED_REPLY);
+      await this.deliverReply(event, DRAFT_UPDATE_EXPIRED_REPLY, undefined, unchanged(DRAFT_UPDATE_EXPIRED_REPLY));
       await this.updateEventLog(event.webhookEventId, 'draft_update_expired', undefined, ctx.companyId);
       return;
     }
@@ -3429,7 +3457,8 @@ export class ProcessLineWebhookUseCase {
     const v2Preview = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId: ctx.companyId, userId: ctx.userId,
       planJson: { path: ['control', 'previewId'], equals: event.draftUpdatePreviewId } }, select: { status: true, planJson: true } });
     if (v2Preview && (v2Preview.status !== 'ACCEPTED' || !parseLineDeliveryPlan(v2Preview.planJson))) {
-      await this.deliverReply(event, 'ยังยืนยันไม่ได้ค่ะ รายละเอียดคำขอแก้ไขยังส่งไม่ครบ กรุณารอหรืออ่านส่วนที่เหลือก่อน');
+      const pending = 'ยังยืนยันไม่ได้ค่ะ รายละเอียดคำขอแก้ไขยังส่งไม่ครบ กรุณารอหรืออ่านส่วนที่เหลือก่อน';
+      await this.deliverReply(event, pending, undefined, unchanged(pending));
       await this.updateEventLog(event.webhookEventId, 'draft_update_blocked', 'PREVIEW_NOT_FULLY_DELIVERED', ctx.companyId);
       return;
     }
@@ -3579,8 +3608,10 @@ export class ProcessLineWebhookUseCase {
     if (!designed && Array.from(text).length > LINE_FLEX_CARD_BODY_MAX_CHARS) {
       return this.deliverCompletedReplies(event, splitLineExpenseDraftReply(text), companyId, access);
     }
+    // In a bound chat the reply stands on the locked design under the reader's own words; the card from
+    // before the design is what a chat that is not bound, or a reply to a photo or a tap, still gets.
     const message = await this.timeStage(event.webhookEventId, 'render', () => this.withCompletionMenu(
-      designed ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
+      designed ?? this.boundReplyCard(event, text, badge) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
       companyId,
       access,
     ));
@@ -3627,7 +3658,7 @@ export class ProcessLineWebhookUseCase {
       // terminal message only where it holds the whole terminal text, and a longer text is sent as text.
       const terminalCard = (text: string): LineReplyMessage => expenseDraft && !/ข้อมูลที่ต้องใช้|ข้อมูลที่ยังต้องตอบ/u.test(text)
         ? buildExpenseDraftCardMessage(text, expenseDraft, this.config.webBaseUrl, companyId)
-        : buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId);
+        : this.boundReplyCard(event, text) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId);
       // Spec §10.1: earlier parts stay lossless text; the terminal part becomes the same Flex card a
       // single completed reply gets, so a multi-part journey never ends in plain text.
       if (Array.from(terminal).length <= LINE_FLEX_CARD_BODY_MAX_CHARS) {
@@ -4176,7 +4207,8 @@ export class ProcessLineWebhookUseCase {
       if (!accepted || accepted.ownerEpoch !== bound.epoch || accepted.conversationId !== bound.id || accepted.digest !== locator!.revision
         || accepted.accessFingerprint !== this.deliveryAccess.get(event)?.fingerprint) throw new Error('LINE_TASK_SOURCE_CHANGED');
       const evidence = accepted.request.inputEvidence!;
-      const inventory = parseLineAiSemanticSubrequests(accepted.request.semanticSubrequests, accepted.request.messageText, evidence);
+      const inventory = parseLineAiSemanticSubrequests(accepted.request.semanticSubrequests, accepted.request.messageText, evidence,
+        lineAiReplyClarifications(accepted.request.openClarifications, accepted.request.resolvedClarificationIds));
       const original = inventory?.find(item => item.index === originalIndex);
       if (!original || original.kind !== 'write' || !original.writeIntent || !original.evidenceRefs?.length) throw new Error('LINE_TASK_SOURCE_MISSING');
       if (original.dependsOn.some(dependency => !projection.tasks.some(parent => parent.sourceRevisionLocators?.some(source => {
@@ -5176,8 +5208,9 @@ export class ProcessLineWebhookUseCase {
     }
     if (!await this.waitingSourcesCurrent(event, ctx, openWaiting)) return null;
     const openClarifications: LineAiOpenClarification[] | undefined = openWaiting.length > 0
-      ? openWaiting.map(({ id, question, text, subject, askedAt, clarifyForIntent, candidateExpenseIds, pendingMedia }) => ({
+      ? openWaiting.map(({ id, question, text, subject, askedAt, reasonCode, clarifyForIntent, candidateExpenseIds, pendingMedia }) => ({
         id, question, text, ...(subject && { subject }), askedAt,
+        ...(reasonCode && { reasonCode }),
         ...(clarifyForIntent && { clarifyForIntent }),
         ...(candidateExpenseIds?.length && { candidateExpenseIds }),
         ...(pendingMedia && { pendingMedia }),
@@ -6020,7 +6053,7 @@ export class ProcessLineWebhookUseCase {
       if (await this.handleRoutedPreference(event, requestId, semanticRoutePlan)) return;
       if (await this.resumeDocumentQuestionV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
       if (await this.draftCurrentDocumentV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
-      if (semanticRoutePlan.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
+      if (!open.openClarifications?.length && semanticRoutePlan.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
         await this.deliverPureGeneralV2(event, requestId, semanticRoutePlan, resolvedAccess, entitledFeatureKeys, candidates, conversationContext); return;
       }
     }
@@ -7451,6 +7484,7 @@ export class ProcessLineWebhookUseCase {
       messageText: event.inputEvidence ? event.messageText : normalizedText,
       ...await this.reliabilityContext(event),
       ...(routePlan.semanticSubrequests ? { semanticSubrequests: routePlan.semanticSubrequests } : {}),
+      ...(routePlan.resolvedClarificationIds ? { resolvedClarificationIds: routePlan.resolvedClarificationIds } : {}),
       ...(retainedTask ? { retainedTaskSource: retainedTask.source } : {}),
       ...(this.budgetGrantsV2.get(event) && event.inputEvidence ? { inputEvidence: event.inputEvidence, budgetGrantV2: this.budgetGrantsV2.get(event), contractCapabilities: ['input-evidence-v2' as const, 'budget-envelope-v2' as const] } : {}),
       ...(this.boundConversations.has(event) && this.config.lineAiApprovedKnowledgeEnabled ? { approvedKnowledge: true, ...(routePlan.selectedKnowledgeCardIds ? { selectedKnowledgeCardIds: routePlan.selectedKnowledgeCardIds } : {}) } : {}),
@@ -7707,7 +7741,7 @@ export class ProcessLineWebhookUseCase {
     // 10.5 Acknowledge work only after delivery. Clarifications and uncovered
     // sub-requests are now safe to advance because the employee saw this turn.
     if (this.ledger) {
-      const subRequests = this.ledger.coverageToSubRequests(turnResponse.coverage);
+      const subRequests = this.ledger.coverageToSubRequests(turnResponse.coverage, turnResponse.semanticCoverage, routePlan.semanticSubrequests);
       if (subRequests.length > 0) {
         await this.appendSourceBoundClarifications(event, {
           messagingChannelId: event.messagingChannelId,

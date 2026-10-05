@@ -24,7 +24,7 @@ import {
   parseLineAiInputEvidence,
   parseLineAiResponsePreferences,
   parseLineAiTaskProjection,
-  parseLineAiSemanticSubrequests,
+  parseLineAiSemanticSubrequests, lineAiReplyClarifications, parseLineAiOpenClarifications,
   lineAiRetainedTaskSourceMatchesProjection,
   parseLineAiRetainedTaskSource,
   verifyLineAiRetainedTaskSource,
@@ -82,6 +82,8 @@ export type RuntimePayload = {
   modelPolicy?: LineAiTurnRequest['modelPolicy'];
   attachments?: unknown[];
   conversationContext?: LineAiTurnRequest['conversationContext'];
+  openClarifications?: LineAiTurnRequest['openClarifications'];
+  resolvedClarificationIds?: LineAiTurnRequest['resolvedClarificationIds'];
   inputEvidence?: LineAiTurnRequest['inputEvidence'];
   contractCapabilities?: LineAiTurnRequest['contractCapabilities'];
   budgetGrantV2?: LineAiTurnRequest['budgetGrantV2'];
@@ -351,7 +353,7 @@ function boundedMessageText(value: unknown, max = maxMessageChars()): string | u
   return typeof value === 'string' && value && value.length <= max ? value : undefined;
 }
 
-function parseV2InputFields(p: Record<string, unknown>, messageText: string): Pick<RuntimePayload, 'inputEvidence' | 'contractCapabilities' | 'budgetGrantV2' | 'taskProjection' | 'responsePreferences' | 'semanticSubrequests' | 'retainedTaskSource'> | null {
+function parseV2InputFields(p: Record<string, unknown>, messageText: string): Pick<RuntimePayload, 'inputEvidence' | 'contractCapabilities' | 'budgetGrantV2' | 'taskProjection' | 'responsePreferences' | 'semanticSubrequests' | 'retainedTaskSource' | 'openClarifications' | 'resolvedClarificationIds'> | null {
   const hasV2Field = p['inputEvidence'] !== undefined || p['budgetGrantV2'] !== undefined
     || p['contractCapabilities'] !== undefined || p['retainedTaskSource'] !== undefined;
   if (!hasV2Field) return {};
@@ -366,8 +368,12 @@ function parseV2InputFields(p: Record<string, unknown>, messageText: string): Pi
     || digest(evidence.parts.map((part) => part.rawText).join('\n')) !== evidence.joinedSha256) return null;
   const taskProjection = p['taskProjection'] === undefined ? undefined : parseLineAiTaskProjection(p['taskProjection']);
   const responsePreferences = p['responsePreferences'] === undefined ? undefined : parseLineAiResponsePreferences(p['responsePreferences']);
+  const openClarifications = p['openClarifications'] === undefined ? undefined : parseLineAiOpenClarifications(p['openClarifications']);
+  if (p['openClarifications'] !== undefined && !openClarifications) return null;
+  const resolvedClarificationIds = p['resolvedClarificationIds'] === undefined ? undefined : Array.isArray(p['resolvedClarificationIds'])
+    ? p['resolvedClarificationIds'].filter((id): id is string => typeof id === 'string' && !!openClarifications?.some(entry => entry.id === id)) : [];
   const semanticSubrequests = p['semanticSubrequests'] === undefined ? undefined
-    : parseLineAiSemanticSubrequests(p['semanticSubrequests'], messageText, evidence);
+    : parseLineAiSemanticSubrequests(p['semanticSubrequests'], messageText, evidence, lineAiReplyClarifications(openClarifications, resolvedClarificationIds));
   const retainedTaskSource = p['retainedTaskSource'] === undefined ? undefined
     : parseLineAiRetainedTaskSource(p['retainedTaskSource']);
   if (p['taskProjection'] !== undefined && !taskProjection
@@ -377,6 +383,7 @@ function parseV2InputFields(p: Record<string, unknown>, messageText: string): Pi
       || !lineAiRetainedTaskSourceMatchesProjection(retainedTaskSource, taskProjection, 'turn'))) return null;
   return { inputEvidence: evidence, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'], budgetGrantV2: grant,
     ...(taskProjection ? { taskProjection } : {}), ...(responsePreferences ? { responsePreferences } : {}),
+    ...(openClarifications ? { openClarifications } : {}), ...(resolvedClarificationIds ? { resolvedClarificationIds } : {}),
     ...(semanticSubrequests ? { semanticSubrequests } : {}), ...(retainedTaskSource ? { retainedTaskSource } : {}) };
 }
 
@@ -483,6 +490,8 @@ export function payloadToTurnRequest(p: RuntimePayload): LineAiTurnRequest {
     modelPolicy: p.modelPolicy,
     attachments: (p.attachments ?? []) as LineAiTurnRequest['attachments'],
     conversationContext: p.conversationContext,
+    ...(p.openClarifications ? { openClarifications: p.openClarifications } : {}),
+    ...(p.resolvedClarificationIds ? { resolvedClarificationIds: p.resolvedClarificationIds } : {}),
     ...(p.valueCandidates ? { valueCandidates: p.valueCandidates } : {}),
     ...(p.inputEvidence ? { inputEvidence: p.inputEvidence } : {}),
     ...(p.contractCapabilities ? { contractCapabilities: p.contractCapabilities } : {}),

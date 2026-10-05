@@ -197,12 +197,12 @@ Optional subrequest members preserve current meaning:
 
 - `requiredEvidence`;
 - `dependsOn`, using earlier array indexes only;
-- `entity`, exact user text only; the decoder maps it to canonical `entityReference: {kind:"user_text", value}`;
+- `entity`, exact live user text or the same selected original read/general/help clarification text (R1 in `line-ai-capture-correction-spec.md`); the decoder maps it to canonical `entityReference: {kind:"user_text", value}`;
 - `taskRef`, selected exactly from the offered projection;
 - `writeIntent`, only for an explicit write clause;
 - multiple `sources` for a clause crossing accepted input parts.
 
-`sources` identify only parts offered in this request. A whole-part reference expands from the server-provided `fullPartRef`. A narrower reference carries an exact `quote`; the decoder locates it within that offered part and accepts it only when the occurrence is unique. It then builds canonical UTF-16 offsets and copies the server-held SHA-256. The model never supplies a hash. Missing, normalized, non-unique, or cross-part text is invalid and triggers the existing bounded repair/failure behavior.
+`sources` identify only parts offered in this request. A whole-part reference expands from the server-provided `fullPartRef`. A narrower reference carries an exact `quote`; the decoder locates it within that offered part and accepts it only when the occurrence is unique. It then builds canonical UTF-16 offsets and copies the server-held SHA-256. The model never supplies a hash. For a read/general/help reply, R1 permits an exact quote from the selected open question and rewrites it to the whole live reply part; write/file/public remain live-only. Otherwise missing, normalized, non-unique, or cross-part text is invalid and triggers the existing bounded repair/failure behavior.
 
 Array order becomes the canonical contiguous `index`; the model does not repeat indexes. Omitted `requiredEvidence` and `dependsOn` expand to empty arrays. `filters` is required and may be empty. No clause may be omitted because it is unsupported, blocked, negated, quoted, general, help, file, public, read, or write.
 
