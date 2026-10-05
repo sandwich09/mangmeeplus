@@ -1,3 +1,5 @@
+import { claimPaymentDuplicateBlock } from '../../reimbursements/domain/logic/reimbursement.logic';
+import { effectivePolicy } from '../../reimbursements/domain/reimbursement.constants';
 import { reimbursementPayoutCorrectionPhase, type ReimbursementPayoutCorrectionPhase } from '@watchdog-bms/contracts';
 import type { PrismaService } from '../../../common/database/prisma.service';
 
@@ -12,7 +14,7 @@ import type { PrismaService } from '../../../common/database/prisma.service';
  * its status.
  */
 export const DOCUMENT_NOTIFICATION_STATES: Record<string, {
-  sourceType: string; statuses: readonly string[]; payoutCorrection?: readonly ('NONE' | ReimbursementPayoutCorrectionPhase)[];
+  sourceType: string; statuses: readonly string[]; confirmedDuplicate?: boolean; payoutCorrection?: readonly ('NONE' | ReimbursementPayoutCorrectionPhase)[];
 }> = {
   'expense.substitute_receipt_signature_pending': { sourceType: 'substitute_receipt_evidence', statuses: ['PREPARED'] },
   'expense.substitute_receipt_approval_pending': { sourceType: 'substitute_receipt_evidence', statuses: ['PAYER_CERTIFIED'] },
@@ -24,6 +26,9 @@ export const DOCUMENT_NOTIFICATION_STATES: Record<string, {
   'workflow.reimbursement_correction_requester': { sourceType: 'reimbursement_request', statuses: ['DRAFT'] },
   'workflow.reimbursement_finance_review': { sourceType: 'reimbursement_request', statuses: ['FINANCE_REVIEW'] },
   'workflow.reimbursement_ready_for_payment': { sourceType: 'reimbursement_request', statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] },
+  'workflow.reimbursement_duplicate_cancel': { sourceType: 'reimbursement_request', statuses: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'], confirmedDuplicate: true },
+  'workflow.reimbursement_duplicate_confirmed': { sourceType: 'reimbursement_request', statuses: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'], confirmedDuplicate: true },
+  'workflow.reimbursement_duplicate_sla_breach': { sourceType: 'reimbursement_request', statuses: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'], confirmedDuplicate: true },
   'workflow.reimbursement_payment_sla_breach': { sourceType: 'reimbursement_request', statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] },
 };
 
@@ -40,7 +45,7 @@ export async function completedDocumentNotificationIds(db: PrismaService['client
     certificates.length ? db.expenseSubstituteReceiptEvidence.findMany({ where: { companyId, id: { in: certificates } }, select: { id: true, status: true } }) : [],
     claims.length ? db.reimbursementRequest.findMany({
       where: { companyId, id: { in: claims } },
-      select: { id: true, status: true, payoutCorrectionRequestedAt: true, payoutCorrectionSubmittedAt: true, cancellationPendingAt: true },
+      select: { id: true, status: true, payoutCorrectionRequestedAt: true, payoutCorrectionSubmittedAt: true, cancellationPendingAt: true, sourceExpenses: { where: { status: { notIn: ['VOIDED', 'REJECTED'] } }, select: { duplicateStatus: true } } },
     }) : [],
   ]);
   return events.filter(event => {
@@ -55,6 +60,7 @@ export async function completedDocumentNotificationIds(db: PrismaService['client
     // A claim being cancelled takes no decision and no payment until that is finished or withdrawn: its
     // notices ask for something the API refuses. Read here, not stored, so a withdrawal gives them back.
     if (claim.cancellationPendingAt) return true;
+    if (rule.confirmedDuplicate && claimPaymentDuplicateBlock({ confirmedDuplicateExpenseCount: (claim.sourceExpenses ?? []).filter(expense => expense.duplicateStatus === 'CONFIRMED_DUPLICATE').length }, effectivePolicy(null)) !== 'CONFIRMED') return true;
     const phase = reimbursementPayoutCorrectionPhase(claim);
     if (rule.payoutCorrection && !rule.payoutCorrection.includes(phase ?? 'NONE')) return true;
     // A corrected account waits for approval since it was given: an approval notice from before that

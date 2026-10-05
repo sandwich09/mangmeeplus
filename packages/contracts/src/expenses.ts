@@ -1,3 +1,4 @@
+import { REIMBURSEMENT_DUPLICATE_BLOCK_LABEL } from './reimbursements.js';
 import { hasCurrentExpenseEvidenceReview } from './expense-evidence.js';
 import { PAYMENT_DATE_IN_FUTURE } from './civil-date.js';
 export * from './expense-evidence.js';
@@ -751,11 +752,12 @@ export function expenseConfirmedLockMessage(capabilities?: ExpenseCorrectionCapa
     : `เอกสารยืนยันแล้ว จึงล็อกข้อมูลไว้ ${EXPENSE_CORRECTION_WORDS.unavailable}`;
 }
 
-export type ExpenseReimbursementProgress = { requestId?: string; requestNo?: string | null; status: string };
+export type ExpenseReimbursementProgress = { requestId?: string; requestNo?: string | null; status: string; hasConfirmedDuplicate?: boolean };
 export function isExpensePendingReview(row: { status: ExpenseStatus; reimbursementProgress?: ExpenseReimbursementProgress }): boolean {
   return isExpensePending(row.status) && !row.reimbursementProgress;
 }
 export function expenseReimbursementProgressLabel(progress: ExpenseReimbursementProgress): string {
+  if (progress.hasConfirmedDuplicate && progress.status !== 'PAID') return REIMBURSEMENT_DUPLICATE_BLOCK_LABEL;
   const labels: Record<string, string> = { WAITING_CLAIM: 'รอยื่นเบิกคืน', DRAFT: 'ใบเบิกฉบับร่าง', PENDING_APPROVAL: 'รออนุมัติเบิกคืน', APPROVED: 'อนุมัติเบิกคืนแล้ว', FINANCE_REVIEW: 'รอตรวจการเงิน', READY_FOR_PAYMENT: 'รอจ่ายคืน', PARTIALLY_PAID: 'จ่ายคืนบางส่วน', PAID: 'จ่ายคืนแล้ว' };
   return labels[progress.status] ?? 'ติดตามใบเบิกคืน';
 }

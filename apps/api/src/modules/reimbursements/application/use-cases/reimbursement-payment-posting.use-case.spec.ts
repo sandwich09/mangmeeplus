@@ -41,6 +41,7 @@ describe('RecordReimbursementPaymentUseCase — postingStatus lifecycle', () => 
       listOpenDuplicateCandidates: async () => [],
       // Preflight before the payment number is reserved; the repository repeats it under the lock.
       assertClaimPaymentReady: async () => undefined,
+      assertPaymentRecordInput: async () => undefined,
       recordPaymentAtomic: async (data: any) => {
         // Mirrors the real repo: postingStatus starts 'pending'.
         const payment = { id: 'pay-1', ...data, sourcePaymentRef: '{}', status: 'RECORDED', postingStatus: 'pending', createdAt: new Date(), updatedAt: new Date() };

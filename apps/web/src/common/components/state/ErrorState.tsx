@@ -30,7 +30,7 @@ export function ErrorState({
         {description && <p className="text-sm text-gray-400">{description}</p>}
       </div>
       {onRetry && (
-        <Button variant="secondary" size="sm" onClick={onRetry}>
+        <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
           {t('state.error.retry', locale)}
         </Button>
       )}

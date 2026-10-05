@@ -1,3 +1,5 @@
+import { PrismaReimbursementRepository } from '../../reimbursements/infrastructure/prisma-reimbursement.repository';
+import { canTransition } from '../../reimbursements/domain/logic/reimbursement.logic';
 import { normalizeExpensePaymentAmount, EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages } from '@watchdog-bms/contracts';
 import { loadExpenseReimbursementProgress } from './expense-reimbursement-progress';
 import { loadExpenseEvidenceSources } from './expense-evidence-sources';
@@ -3906,7 +3908,13 @@ export class PrismaExpenseRepository {
         where: { companyId: input.companyId, expenseId: input.expenseId, status: 'CONFIRMED_DUPLICATE' },
         select: { id: true },
       });
-      if (existingConfirmed) throw new ConflictException('Expense already has a confirmed duplicate candidate');
+      if (existingConfirmed) {
+        if (input.action === 'confirm' && existingConfirmed.id === input.candidateId) {
+          const source = await tx.expenseRecord.findFirst({ where: { companyId: input.companyId, id: input.expenseId }, select: { sourceReimbursementRequestId: true } });
+          if (source?.sourceReimbursementRequestId) return;
+        }
+        throw new ConflictException('Expense already has a confirmed duplicate candidate');
+      }
       const ownedCandidate = await tx.expenseDuplicateCandidate.findFirst({
         where: { id: input.candidateId, companyId: input.companyId, expenseId: input.expenseId, status: 'OPEN' },
         select: { candidateExpenseId: true },
@@ -3960,6 +3968,22 @@ export class PrismaExpenseRepository {
       });
       if (expense.count !== 1) throw new NotFoundException(`Expense ${input.expenseId} not found`);
       await auditWithinTx(tx);
+      if (input.action === 'confirm') {
+        const source = await tx.expenseRecord.findFirst({ where: { companyId: input.companyId, id: input.expenseId }, select: { sourceReimbursementRequestId: true } });
+        if (source?.sourceReimbursementRequestId) {
+          const claim = await tx.reimbursementRequest.findFirst({ where: { companyId: input.companyId, id: source.sourceReimbursementRequestId } });
+          if (claim && !claim.cancellationPendingAt && canTransition(claim.status, 'CANCELLED')) {
+            const facts = await new PrismaReimbursementRepository(this.prisma, this.documentNumbers).paymentNoticeFacts(tx, input.companyId, claim.id);
+            if (facts.paymentDuplicateBlock === 'CONFIRMED') await tx.outboxEvent.createMany({ skipDuplicates: true, data: [{
+              companyId: input.companyId, eventType: 'reimbursement.duplicate_confirmed', aggregateType: 'reimbursement_request', aggregateId: claim.id,
+              eventKey: `reimbursement.duplicate_confirmed:${claim.id}`,
+              payloadJson: { companyId: input.companyId, actorUserId: input.actorUserId, aggregateType: 'reimbursement_request', aggregateId: claim.id,
+                occurredAt: new Date().toISOString(), data: { requestId: claim.id, requestNo: claim.requestNo, requesterUserId: claim.requesterUserId, status: claim.status, ...(claim.financeReviewedByUserId && { financeReviewerUserId: claim.financeReviewedByUserId }) } },
+              status: 'PENDING', priority: 'NORMAL',
+            }] });
+          }
+        }
+      }
     };
     if (db) await work(db);
     else await client.$transaction(work);

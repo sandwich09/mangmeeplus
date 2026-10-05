@@ -1,5 +1,5 @@
 /**
- * Spec support: an in-memory stand-in for the two payout tables, shaped like the Prisma delegates
+ * Spec support: an in-memory stand-in for the payout tables, shaped like the Prisma delegates
  * `reimbursement-payout.ts` calls. Use-case specs run the real payout functions over it, so they
  * exercise the same code as production instead of a hand-written imitation of it.
  *
@@ -28,6 +28,9 @@ function pick(row: Record<string, unknown>, select?: Record<string, boolean>): a
 export function fakePayoutTables() {
   const accounts: Record<string, any>[] = [];
   const destinations: Record<string, any>[] = [];
+  const savedAccounts: Record<string, any>[] = [];
+  const rowLocks: string[] = [];
+  let savedId = 0;
   // `@updatedAt`: every write of a row is later than the one before, also within one millisecond of a test.
   let clock = 0;
   const now = () => new Date(clock = Math.max(Date.now(), clock + 1));
@@ -40,9 +43,40 @@ export function fakePayoutTables() {
     Object.assign(row, data);
   }
 
+  function createSaved(data: any) {
+    if (savedAccounts.some((row) => row.companyId === data.companyId && row.userId === data.userId && row.fingerprint === data.fingerprint)) {
+      throw Object.assign(new Error('saved account duplicate'), { code: 'P2002' });
+    }
+    const row = { id: `saved-${++savedId}`, createdAt: now(), updatedAt: now(), label: null, holderNote: null, ...data };
+    savedAccounts.push(row);
+    return row;
+  }
+
   const client = {
     // `SELECT … FOR UPDATE` on the default account: nothing runs concurrently in memory.
-    $queryRaw: async () => [],
+    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => { rowLocks.push(`${strings.join('?')} | ${values.join(',')}`); return []; },
+    memberSavedPayoutAccount: {
+      findFirst: async ({ where, select }: any) => {
+        const row = savedAccounts.find((candidate) => matches(candidate, where));
+        return row ? pick(row, select) : null;
+      },
+      findMany: async ({ where, select }: any) => savedAccounts.filter((row) => matches(row, where)).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).map((row) => pick(row, select)),
+      count: async ({ where }: any) => savedAccounts.filter((row) => matches(row, where)).length,
+      create: async ({ data, select }: any) => pick(createSaved(data), select),
+      createMany: async ({ data, skipDuplicates }: any) => {
+        let count = 0;
+        for (const row of Array.isArray(data) ? data : [data]) {
+          try { createSaved(row); count++; } catch (error) { if (!skipDuplicates || (error as any).code !== 'P2002') throw error; }
+        }
+        return { count };
+      },
+      deleteMany: async ({ where }: any) => {
+        const kept = savedAccounts.filter((row) => !matches(row, where));
+        const count = savedAccounts.length - kept.length;
+        savedAccounts.splice(0, savedAccounts.length, ...kept);
+        return { count };
+      },
+    },
     memberPayoutAccount: {
       findFirst: async ({ where, select }: any) => {
         const row = accounts.find((candidate) => matches(candidate, where));
@@ -104,5 +138,14 @@ export function fakePayoutTables() {
       },
     },
   };
-  return { accounts, destinations, client };
+  return { accounts, savedAccounts, destinations, rowLocks, client: {
+    ...client,
+    $transaction: async (run: (tx: typeof client) => Promise<any>) => {
+      const snapshots = [accounts, savedAccounts, destinations].map((rows) => rows.map((row) => ({ ...row })));
+      try { return await run(client); } catch (error) {
+        [accounts, savedAccounts, destinations].forEach((rows, index) => rows.splice(0, rows.length, ...snapshots[index]!));
+        throw error;
+      }
+    },
+  } };
 }

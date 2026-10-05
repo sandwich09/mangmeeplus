@@ -470,6 +470,17 @@ describe('the receiving account on the printed claim form', () => {
 
   const viewer = (userId: string, permissions: string[], overrides: Partial<any> = {}) => ctx({ userId, authSubject: userId, permissions, ...overrides });
   const requester = viewer('staff-1', ['reimbursement.read_own', 'reimbursement.create']);
+
+  it('multi payout 2b: every permitted print reader gets holder facts through the use case', async () => {
+    const w = world();
+    Object.assign(w.tables.destinations[0]!, { holderType: 'THIRD_PARTY', holderNote: '<คู่สมรสของผู้เบิก>', verifiedByUserId: 'staff-1' });
+    for (const who of [requester, viewer('auditor-1', ['reimbursement.read', 'reimbursement.export'])]) {
+      for (const printed of imagesOf(await w.print(who))) {
+        assert.match(printed, /บัญชีของบุคคลอื่น: &lt;คู่สมรสของผู้เบิก&gt;/);
+        assert.match(printed, /ผู้เบิกยืนยันบัญชีของบุคคลอื่นด้วยตนเอง/);
+      }
+    }
+  });
   const approver = viewer('mgr-1', ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject']);
   const payer = viewer('payer-1', ['reimbursement.read', 'reimbursement.payment.record']);
   const inGroup: Array<[string, any]> = [['REQUESTER', requester], ['APPROVER', approver], ['PAYER', payer]];

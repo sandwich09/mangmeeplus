@@ -233,7 +233,8 @@ export async function sendBackForPayoutCorrection(
   // with no account each have their own, and a PromptPay number, having no bank, has no "wrong bank": that
   // takes the kind of the account the claim carries.
   const held = payoutCorrectionHeld(req);
-  const payoutKind = held === 'ACCOUNT' ? (await deps.repo.findClaimPayout(req))?.payoutKind : undefined;
+  const heldAccount = held === 'ACCOUNT' ? await deps.repo.findClaimPayout(req) : undefined;
+  const payoutKind = heldAccount?.payoutKind;
   if (!reimbursementPayoutCorrectionReasons(held, payoutKind).includes(input.reasonCode)) throw new BadRequestException('payout_correction_reason_required');
   const reasonCode = input.reasonCode;
   const note = typeof input.note === 'string' ? input.note.trim() : '';
@@ -243,7 +244,7 @@ export async function sendBackForPayoutCorrection(
   const policy = effectivePolicyForRequest(req, effectivePolicy(await deps.repo.findPolicy(ctx.companyId, null)));
   const requestedAt = new Date();
   // The reason is worded for the kind of account held: a PromptPay number is never called "เลขบัญชี".
-  const notice = reimbursementPayoutSentBackNotice(held, reasonCode, payoutKind);
+  const notice = reimbursementPayoutSentBackNotice(held, reasonCode, payoutKind, heldAccount);
   await deps.repo.requestPayoutCorrectionAtomic({
     companyId: ctx.companyId,
     requestId: req.id,
@@ -359,7 +360,7 @@ export class ApproveReimbursementUseCase {
   ) {}
 
   /** `payoutVerifiedVersion`: the approver's "ตรวจบัญชีแล้ว" for the account version they looked at. */
-  async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string, payoutVerifiedVersion?: unknown): Promise<ReimbursementRequestDetail> {
+  async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string, payoutVerifiedVersion?: unknown, payoutThirdPartyAccepted?: unknown): Promise<ReimbursementRequestDetail> {
     // The comment stays on the step, which every reader of the claim is shown, and in the audit row.
     // An approver has just checked an account: its number is not typed here.
     if (looksLikeAccountNumber(comment)) throw new BadRequestException('note_contains_account_number');
@@ -404,8 +405,9 @@ export class ApproveReimbursementUseCase {
     // Human verification (owner decision P1): a claim paid by transfer is approved only with the
     // approver's attestation of the exact account version on the claim. The repository repeats this
     // under the request lock; a decision already made is only resumed, never attested twice.
+    const holderType = hasPayoutSnapshot(req) ? await this.repo.findClaimPayoutHolderType(req) : undefined;
     if (step?.status === 'PENDING') {
-      const payoutError = payoutAttestationError(req, payoutVerifiedVersion);
+      const payoutError = payoutAttestationError({ ...req, holderType }, payoutVerifiedVersion, payoutThirdPartyAccepted);
       // 409 for both: a tab opened before the release then says "load the latest and try again".
       if (payoutError) throw new ConflictException(payoutError);
     }
@@ -433,6 +435,7 @@ export class ApproveReimbursementUseCase {
         decidedAt: now,
         comment,
         payoutVerifiedVersion,
+        payoutThirdPartyAccepted,
         onApprovedPersisted: async (tx, approvalStepId) => {
           await this.audit.log({
             companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payout_correction.approve',
@@ -440,6 +443,7 @@ export class ApproveReimbursementUseCase {
             metadataJson: {
               requestNo: req.requestNo, amount: req.amount, currency: req.currency, comment, approvalStepId,
               payoutMethod: req.payoutMethod ?? null, payoutVersion: req.payoutDestinationVersion ?? null,
+              ...(holderType === 'THIRD_PARTY' && { thirdPartyAccepted: true }),
               ...(selfApproval && { selfApproval }),
             },
           }, tx);
@@ -455,6 +459,8 @@ export class ApproveReimbursementUseCase {
           // its approver, who is the actor of this event. The reviewer is named where the notice looks
           // first, and still in the list a rule from before that order reads after the actor.
           const financeReviewer = req.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? req.financeReviewedByUserId : undefined;
+          const { paymentDuplicateBlock } = await this.repo.paymentNoticeFacts(tx, ctx.companyId, id);
+          if (paymentDuplicateBlock === 'CONFIRMED') return;
           await appendOutboxWithinTx(tx, {
             companyId: ctx.companyId,
             eventType: 'reimbursement.ready_for_payment',
@@ -466,6 +472,7 @@ export class ApproveReimbursementUseCase {
               data: {
                 requestId: id, requestNo: req.requestNo, status: 'READY_FOR_PAYMENT', decision: 'APPROVED',
                 requesterUserId: req.requesterUserId, amount: req.amount, currency: req.currency,
+                paymentDuplicateBlock,
                 ...(financeReviewer && { financeReviewerUserId: financeReviewer, approverRecipientUserIds: [financeReviewer] }),
               },
             },
@@ -488,6 +495,7 @@ export class ApproveReimbursementUseCase {
       decidedAt: now,
       comment,
       payoutVerifiedVersion,
+      payoutThirdPartyAccepted,
       financeRequestPatch: {
         status: 'FINANCE_REVIEW',
         approvedAt: now,
@@ -510,6 +518,7 @@ export class ApproveReimbursementUseCase {
           result: 'SUCCESS',
           riskLevel: 'HIGH',
           metadataJson: {
+            ...(holderType === 'THIRD_PARTY' && { thirdPartyAccepted: true }),
             amount: req.amount,
             currency: req.currency,
             comment,
@@ -592,7 +601,9 @@ export class ApproveReimbursementUseCase {
             riskLevel: 'HIGH',
             metadataJson: { amount: req.amount, currency: req.currency, comment, projectionReady: true },
           }, tx);
+          const { paymentDuplicateBlock } = await this.repo.paymentNoticeFacts(tx, ctx.companyId, id);
           for (const eventType of ['reimbursement.approved', 'reimbursement.ready_for_payment']) {
+            if (eventType === 'reimbursement.ready_for_payment' && paymentDuplicateBlock === 'CONFIRMED') continue;
             await appendOutboxWithinTx(tx, {
               companyId: ctx.companyId,
               eventType,
@@ -613,6 +624,7 @@ export class ApproveReimbursementUseCase {
                   requesterUserId: req.requesterUserId,
                   amount: req.amount,
                   currency: req.currency,
+                  ...(eventType === 'reimbursement.ready_for_payment' && { paymentDuplicateBlock }),
                 },
               },
             });

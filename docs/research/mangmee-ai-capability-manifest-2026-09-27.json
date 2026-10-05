@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "7ca4b0cfe16de46fa8a5f9dfc8b49451e5c50e1f",
-  "checkoutBranch": "claude/line-2e-20261005",
-  "checkoutDirty": false,
+  "sourceRevision": "ae93dd881ff4997d5441cca903689b0f0f2c0978",
+  "checkoutBranch": "claude/claims-batch-20261005",
+  "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -9016,6 +9016,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-05T11:10:29.628Z",
+  "generatedAt": "2026-10-05T13:06:01.387Z",
   "manifestDigest": "9b6164ef7ec2738a58dfeb898523eb9656f1d56c1598a02ad2b065caaf26ba06"
 }
