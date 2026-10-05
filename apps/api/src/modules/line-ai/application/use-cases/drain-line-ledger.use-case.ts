@@ -478,14 +478,16 @@ export class DrainLineLedgerUseCase {
       return this.refuseSourceDelivery(entry, claim);
     }
     if (!await this.deliveryStore.beginSend(claim)) throw new LedgerEntryHeldError('queued delivery lease expired');
-    let delivery = await this.lineReply.sendPush(entry.chatKey, messages!, `ledger:${claim.row.id}`).catch(() => 'failed_other' as const);
+    let pushed = await this.lineReply.sendPush(entry.chatKey, messages!, `ledger:${claim.row.id}`).catch(() => 'failed_other' as const);
     // LINE refused the card's BODY: the same bytes cannot succeed, the text the card itself declares
     // can. Once, under its own stable key — a later attempt of this delivery meets the same refusal,
     // falls back the same way, and LINE answers the repeated key without a second message.
-    if (delivery === 'failed_flex') {
+    if (pushed === 'failed_flex') {
       this.logger.warn({ msg: 'line_flex_text_fallback_used', surface: 'ledger_drain' });
-      delivery = await this.lineReply.sendPush(entry.chatKey, toCanonicalTextMessages(messages!), `ledger:${claim.row.id}:text`).catch(() => 'failed_other' as const);
+      pushed = await this.lineReply.sendPush(entry.chatKey, toCanonicalTextMessages(messages!), `ledger:${claim.row.id}:text`).catch(() => 'failed_other' as const);
     }
+    // A body still refused is the permanent rejection it was before that refusal had a name of its own.
+    const delivery = pushed === 'failed_flex' ? 'failed_permanent' : pushed;
     if (delivery !== 'ok') {
       await this.deliveryStore.finish(claim, delivery === 'failed_permanent' ? 'REFUSED' : 'UNKNOWN', `LINE_PUSH_${delivery.toUpperCase()}`);
       throw new Error(`LINE_PUSH_${delivery.toUpperCase()}`);

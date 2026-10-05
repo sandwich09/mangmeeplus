@@ -2,6 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LineCaptureResultNotifierUseCase, LINE_CAPTURE_READ_FINISHED_EVENT_TYPE } from './line-capture-result-notifier.use-case';
 import { hashMessagePreview } from '../../domain/logic/line-ai-classifier.logic';
+import { buildExpenseDraftReviewCard, isCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
+import { linePushRetryKey } from '../../infrastructure/line-reply.adapter';
+import { ExpenseCaptureLineUseCase } from '../../../expenses/application/use-cases/expense-capture-line.use-case';
 
 const LINE_USER = 'Ufake-line-user';
 const CHAT_HASH = hashMessagePreview(LINE_USER);
@@ -16,6 +19,8 @@ type Scenario = {
   linePushTargetId?: string | null;
   payload?: Record<string, unknown>;
   pushResult?: string;
+  pushResults?: string[];
+  expenseFacts?: Record<string, unknown>;
   companyId?: string;
   /** §3.2: what `AutoHandoffSingleDocumentCaptureUseCase` answers for this group. */
   autoHandoff?: 'expense' | 'skipped' | 'throws';
@@ -56,8 +61,10 @@ function makeNotifier(scenario: Scenario = {}) {
         // `draftDeleteCount: 0` models a draft someone already filled in — the guarded delete matches nothing.
         deleteMany: async (input: any) => { draftDeletes.push(input.where); return { count: scenario.draftDeleteCount ?? 1 }; },
         findFirst: async () => ({
+          status: 'NEEDS_REVIEW',
           vendorNameSnapshot: 'ร้านค้าดี', grandTotalAmount: '250.0000', currency: 'THB',
           sourceDocumentType: 'RECEIPT', expenseDate: new Date('2026-07-25T00:00:00.000Z'),
+          ...scenario.expenseFacts,
         }),
       },
       // The NR07 cleanup runs in one transaction over the same client.
@@ -104,6 +111,7 @@ function makeNotifier(scenario: Scenario = {}) {
             vendorNameSnapshot: 'ร้านค้าดี', grandTotalAmount: '250.0000', currency: 'THB',
             sourceDocumentType: 'RECEIPT', expenseDate: new Date('2026-07-25T00:00:00.000Z'),
             primaryAttachmentId: 'att-1',
+            ...scenario.expenseFacts,
           },
           jobs: scenario.jobs ?? [{ id: 'job-1', status: 'DONE', pausedReason: null, lastErrorCode: null }],
         }),
@@ -111,7 +119,7 @@ function makeNotifier(scenario: Scenario = {}) {
     { updateLineIntakeAttemptOutcome: async (input: any) => { attemptUpdates.push(input); return true; } } as any,
     {
       buildTextMessage: (text: string) => ({ type: 'text', text }),
-      sendPush: async (to: string, messages: any[], key?: string) => { pushes.push({ to, messages, key }); return scenario.pushResult ?? 'ok'; },
+      sendPush: async (to: string, messages: any[], key?: string) => { pushes.push({ to, messages, key }); return scenario.pushResults?.[(pushes.length - 1) % scenario.pushResults.length] ?? scenario.pushResult ?? 'ok'; },
     } as any,
     {
       claimBatch: async () => events,
@@ -137,7 +145,10 @@ function makeNotifier(scenario: Scenario = {}) {
   return { notifier, published, failed, pushes, attemptUpdates, closes, handoffCalls, expenses, draftDeletes, linkDeletes, attachmentDeletes, auditEntries };
 }
 
-const pushedText = (h: ReturnType<typeof makeNotifier>): string => h.pushes[0]?.messages[0]?.text ?? '';
+const pushedText = (h: ReturnType<typeof makeNotifier>): string => h.pushes[0]?.messages[0]?.canonicalText ?? h.pushes[0]?.messages[0]?.text ?? '';
+
+const EXPENSE_LINK = 'https://app.example.com/companies/company-1/expenses/expense-1';
+const RECEIPT_TEXT = `🧾 อ่านเอกสารแล้ว บันทึกเป็นร่างรายการให้แล้วค่ะ\nร้าน: ร้านค้าดี\nยอดในใบเสร็จ: 250.00 บาท\nประเภทเอกสาร: ใบเสร็จรับเงิน\nวันที่: 25 ก.ค. 2569\nยังไม่ยืนยันรายการ\n\n✅ ตรวจสอบและยืนยันในเว็บแอป:\n${EXPENSE_LINK}`;
 
 /** The retired AI-money wording, assembled at runtime: spelled out here it would trip the repo-wide
  *  guard that exists to keep it out of source (spec §3, W-01). */
@@ -336,6 +347,161 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
   const expensePayload = (over: Record<string, unknown> = {}) => ({
     ownerType: 'EXPENSE', expenseId: 'expense-1', status: 'DONE', ...over,
   });
+
+  it('pins the existing receipt fallback bytes', async () => {
+    const h = makeNotifier({ payload: expensePayload() });
+    await h.notifier.execute();
+    assert.equal(pushedText(h), RECEIPT_TEXT);
+  });
+
+  it('sends the same proved review builder from saved facts without changing the canonical text', async () => {
+    const h = makeNotifier({ payload: expensePayload(), expenseFacts: { vendorDocumentNumber: 'ใบเสร็จ-๑', categoryName: 'ค่าอาหาร', vatAmount: '16.3551', vatMode: 'INCLUSIVE' } });
+    await h.notifier.execute();
+    const message = h.pushes[0].messages[0];
+    const expected = buildExpenseDraftReviewCard(RECEIPT_TEXT, {
+      expenseId: 'expense-1', subject: 'ข้อมูลใบเสร็จ',
+      rows: [
+        { label: 'ผู้ขาย / ร้านค้า', value: 'ร้านค้าดี' },
+        { label: 'วันที่เอกสาร', value: '25 ก.ค. 2569' },
+        { label: 'เลขเอกสาร', value: 'ใบเสร็จ-1' },
+        { label: 'ประเภทเอกสาร', value: 'ใบเสร็จรับเงิน' },
+        { label: 'หมวดค่าใช้จ่าย', value: 'ค่าอาหาร' },
+        { label: 'ยอดรวม', value: '250.00 บาท', total: true },
+        { label: 'ภาษีมูลค่าเพิ่ม', value: '16.36 บาท' },
+        { label: 'สถานะเอกสาร', value: 'รอตรวจสอบ', pill: 'pending' },
+      ], notes: ['ยังไม่ยืนยันรายการ'],
+    }, 'https://app.example.com', 'company-1');
+    assert.equal(message.type, 'flex');
+    assert.equal(message.canonicalText, RECEIPT_TEXT);
+    assert.equal(message.canonicalText, expected?.type === 'flex' ? expected.canonicalText : undefined);
+    assert.deepEqual(message.contents, expected?.type === 'flex' ? expected.contents : undefined);
+    assert.ok(isCompleteLineBusinessAnswerPresentation(message), 'completion menu preserves the renderer proof');
+    assert.ok(message.quickReply);
+  });
+
+  it('omits missing optional rows without inventing values', async () => {
+    const h = makeNotifier({ payload: expensePayload(), expenseFacts: { vendorNameSnapshot: null, grandTotalAmount: null, expenseDate: null, sourceDocumentType: null, vendorDocumentNumber: null, categoryName: null, vatAmount: null } });
+    await h.notifier.execute();
+    const message = h.pushes[0].messages[0];
+    assert.equal(message.type, 'flex');
+    const body = JSON.stringify(message.contents);
+    for (const label of ['ผู้ขาย / ร้านค้า', 'วันที่เอกสาร', 'เลขเอกสาร', 'ประเภทเอกสาร', 'หมวดค่าใช้จ่าย', 'ยอดรวม', 'ภาษีมูลค่าเพิ่ม']) assert.ok(!body.includes(label), label);
+    assert.ok(body.includes('สถานะเอกสาร'));
+    assert.equal(pushedText(h), `🧾 อ่านเอกสารแล้ว บันทึกเป็นร่างรายการให้แล้วค่ะ\nยอดในใบเสร็จ: ยังอ่านยอดไม่ได้\nยังไม่ยืนยันรายการ\n\n✅ ตรวจสอบและยืนยันในเว็บแอป:\n${EXPENSE_LINK}`);
+  });
+
+  it('keeps the proved review card and its exact text fallback in the v2 delivery plan', async () => {
+    const h = makeNotifier({ payload: expensePayload() });
+    await h.notifier.execute();
+    const notifier = h.notifier as any;
+    const now = new Date();
+    const record = { id: 'expense-1', createdAt: now, updatedAt: now };
+    notifier.captureLine.readFinishedDeliveryProof = async () => ({ records: [record] });
+    notifier.contexts = { load: async () => ({ row: { id: 'line-v2:conversation-1' } }) };
+    let savedPlan: any;
+    notifier.plans = { savePlan: async (_producer: unknown, plan: unknown) => { savedPlan = plan; return { id: 'plan-1' }; } };
+    notifier.replayCapturePlan = async () => ({ kind: 'accepted' });
+    await notifier.saveCapturePlan({
+      event: { id: 'outbox-1', claimToken: 'token-1', createdAt: now },
+      owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'm1', messagingChannelId: 'channel-1', chatKeyHash: CHAT_HASH },
+      epoch: 1, accessFingerprint: 'access', lineUserId: LINE_USER, context: {},
+    }, expensePayload({ jobId: 'job-1' }), RECEIPT_TEXT, 'NONE', h.pushes[0].messages[0]);
+    assert.equal(savedPlan.batches[0].primary.messages[0].type, 'flex');
+    assert.equal(savedPlan.batches[0].fallback.messages[0].type, 'text');
+    assert.equal(savedPlan.batches[0].fallback.messages[0].text, savedPlan.answer.items[0].text);
+    assert.ok(savedPlan.batches[0].fallback.messages[0].text.includes('250.00 บาท'));
+    assert.notEqual(savedPlan.batches[0].primary.pushRetryKey, savedPlan.batches[0].fallback.pushRetryKey);
+  });
+
+  it('reads the optional card facts from the saved expense, including its category and decimal VAT', async () => {
+    let selected: any;
+    const reader = new ExpenseCaptureLineUseCase({} as any, { client: {
+      expenseRecord: { findFirst: async (input: any) => {
+        selected = input;
+        return { id: 'expense-1', companyId: 'company-1', status: 'NEEDS_REVIEW', sourceChannelMetadataJson: null,
+          vendorDocumentNumber: 'ใบเสร็จ-1', grandTotalAmount: { toString: () => '250.0000' },
+          vatAmount: { toString: () => '16.3551' }, vatMode: 'INCLUSIVE', expenseCategory: { name: 'ค่าอาหาร' } };
+      } },
+      expenseCaptureReadJob: { findMany: async () => [] },
+    } } as any, {} as any);
+    const snapshot = await reader.readFinishedExpenseSnapshot('company-1', 'expense-1');
+    assert.deepEqual(selected.where, { companyId: 'company-1', id: 'expense-1' });
+    assert.equal(selected.select.vendorDocumentNumber, true);
+    assert.equal(selected.select.vatAmount, true);
+    assert.deepEqual(selected.select.expenseCategory, { select: { name: true } });
+    assert.equal(snapshot?.expense.vendorDocumentNumber, 'ใบเสร็จ-1');
+    assert.equal(snapshot?.expense.categoryName, 'ค่าอาหาร');
+    assert.equal(snapshot?.expense.vatAmount, '16.3551');
+  });
+
+  it('downgrades a rejected card once to the pinned text and derives a replay-stable operation key', async () => {
+    const h = makeNotifier({ events: 2, payload: expensePayload(), pushResults: ['failed_flex', 'ok'] });
+    const result = await h.notifier.execute();
+    assert.deepEqual(result, { claimed: 2, pushed: 2, skipped: 0, parked: 0 });
+    assert.equal(h.pushes.length, 4);
+    for (const [card, fallback] of [[h.pushes[0], h.pushes[1]], [h.pushes[2], h.pushes[3]]]) {
+      assert.equal(card.messages[0].type, 'flex');
+      assert.equal(fallback.to, card.to);
+      assert.equal(fallback.messages[0].type, 'text');
+      assert.equal(fallback.messages[0].text, RECEIPT_TEXT);
+      assert.deepEqual(fallback.messages[0].quickReply, card.messages[0].quickReply);
+      assert.equal(fallback.key, `${card.key}:text-fallback`);
+    }
+    assert.equal(linePushRetryKey(h.pushes[1].key!, LINE_USER, h.pushes[1].messages), linePushRetryKey(h.pushes[3].key!, LINE_USER, h.pushes[3].messages));
+    assert.deepEqual(h.published, ['outbox-1', 'outbox-2']);
+    assert.ok(h.attemptUpdates.every(row => row.reasonCode === 'result_delivered'));
+  });
+
+  it('wraps the link once and reuses that exact canonical text and menu for the fallback', async () => {
+    const h = makeNotifier({ payload: expensePayload(), pushResults: ['failed_flex', 'ok'] });
+    let wraps = 0;
+    (h.notifier as any).handoffLinks = { wrapOutgoingLineContent: async (_actor: unknown, messages: any[]) => {
+      wraps++;
+      return messages.map(message => ({ ...message, canonicalText: message.canonicalText.replace(EXPENSE_LINK, 'https://app.example.com/l/synthetic') }));
+    } };
+    const result = await h.notifier.execute();
+    assert.equal(result.pushed, 1);
+    assert.equal(wraps, 1);
+    assert.equal(h.pushes[1].messages[0].text, RECEIPT_TEXT.replace(EXPENSE_LINK, 'https://app.example.com/l/synthetic'));
+    assert.deepEqual(h.pushes[1].messages[0].quickReply, h.pushes[0].messages[0].quickReply);
+  });
+
+  for (const pushResults of [['failed_other'], ['failed_permanent'], ['failed_flex', 'failed_other'], ['failed_flex', 'failed_permanent'], ['failed_flex', 'failed_flex']]) {
+    it(`keeps failed notices undelivered without a second downgrade: ${pushResults.join(',')}`, async () => {
+      const h = makeNotifier({ payload: expensePayload(), pushResults });
+      const result = await h.notifier.execute();
+      assert.equal(result.parked, 1);
+      assert.equal(result.pushed, 0);
+      assert.equal(h.pushes.length, pushResults.length);
+      assert.equal(h.attemptUpdates[0].reasonCode, 'LINE_DELIVERY_FAILED');
+      assert.equal(h.published.length, 0);
+    });
+  }
+
+  for (const [name, payload, text] of [
+    ['failed', { status: 'FAILED' }, `อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้\n${EXPENSE_LINK}`],
+    ['partial', { status: 'PARTIAL' }, `อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้\n${EXPENSE_LINK}`],
+    ['not applied', { applied: false }, `อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้\n${EXPENSE_LINK}`],
+    ['paused', { status: 'PAUSED', pausedReason: 'ai_credit' }, `เก็บไฟล์ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ (เครดิตสำหรับการอ่านเอกสารไม่พอ) ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้\n${EXPENSE_LINK}`],
+    ['split', { documentCount: 2, splitExpenseIds: ['expense-2'] }, `📄 อ่านเอกสารแล้วค่ะ พบเอกสาร 2 ใบ สร้างรายการให้แล้ว\n1) ${EXPENSE_LINK}\n2) https://app.example.com/companies/company-1/expenses/expense-2\nยังไม่ยืนยันรายการ กรุณาตรวจในเว็บแอปค่ะ`],
+    ['quotation', { classification: { contentKind: 'DOCUMENT', documentKind: 'QUOTATION' } }, `ใบนี้เป็นใบเสนอราคาค่ะ ยังมีข้อมูลไม่พอสำหรับบันทึกค่าใช้จ่าย ส่งใบแจ้งหนี้หรือใบเสร็จของรายการนี้เพิ่มได้เลยค่ะ\nเก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้: ${EXPENSE_LINK}`],
+    ['parcel label', { classification: { contentKind: 'DOCUMENT', documentKind: 'DELIVERY_NOTE', missingRequiredSignals: ['PARCEL_LABEL_SIGNAL'] } }, `ใบนี้เป็นใบปะหน้าพัสดุค่ะ ยังไม่พบหลักฐานการจ่ายค่าส่ง หากมีใบเสร็จค่าส่ง ส่งเพิ่มได้เลยค่ะ\nเก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้: ${EXPENSE_LINK}`],
+    ['deposit slip', { classification: { contentKind: 'DOCUMENT', documentKind: 'DELIVERY_NOTE', missingRequiredSignals: ['DEPOSIT_SLIP_SIGNAL'] } }, `ใบนี้ยืนยันการรับฝากพัสดุค่ะ แต่ยังไม่พบข้อมูลการจ่ายค่าส่ง หากมีใบเสร็จค่าส่ง ส่งเพิ่มได้เลยค่ะ\nเก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้: ${EXPENSE_LINK}`],
+    ['invoice', { classification: { contentKind: 'DOCUMENT', documentKind: 'SUPPLIER_INVOICE_OR_BILL' } }, 'ใบนี้เป็นใบแจ้งหนี้ค่ะ ยังไม่พบหลักฐานการชำระ กรุณาตรวจข้อมูลก่อนบันทึก'],
+    ['invoice with amount', { documentTotal: '250.00', classification: { contentKind: 'DOCUMENT', documentKind: 'SUPPLIER_INVOICE_OR_BILL' } }, 'ใบนี้เป็นใบแจ้งหนี้ ยอด 250.00 บาทค่ะ ยังไม่พบหลักฐานการชำระ กรุณาตรวจข้อมูลก่อนบันทึก'],
+    ['transfer slip', { classification: { contentKind: 'DOCUMENT', documentKind: 'TRANSFER_SLIP' } }, 'พบสลิปโอนเงินค่ะ กรุณาตรวจว่าจ่ายค่าอะไรและให้ใคร'],
+    ['marketplace order', { classification: { contentKind: 'DOCUMENT', documentKind: 'MARKETPLACE_ORDER' } }, 'พบหลักฐานคำสั่งซื้อค่ะ กรุณาตรวจรายการและสถานะชำระเงิน'],
+    ['unknown document', { classification: { contentKind: 'AMBIGUOUS', documentKind: 'NEEDS_REVIEW' } }, `ยังไม่แน่ใจว่าเป็นเอกสารประเภทใดค่ะ\nเก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้: ${EXPENSE_LINK}`],
+    ['non-business', { classification: { contentKind: 'DOCUMENT', documentKind: 'NON_FINANCIAL_IMAGE' } }, 'ภาพนี้ไม่ใช่เอกสารค่าใช้จ่ายค่ะ จึงไม่ได้สร้างรายการ ส่งเอกสารค่าใช้จ่ายที่ต้องการบันทึกได้เลยค่ะ'],
+  ] as const) {
+    it(`pins ${name} as today's text notice byte for byte`, async () => {
+      const h = makeNotifier({ payload: expensePayload(payload) });
+      await h.notifier.execute();
+      assert.equal(h.pushes.length, 1);
+      assert.equal(h.pushes[0].messages[0].type, 'text');
+      assert.equal(pushedText(h), text);
+    });
+  }
 
   it('one document pushes the receipt card, read off the draft, with the expense link', async () => {
     const h = makeNotifier({ payload: expensePayload({ documentCount: 1 }) });

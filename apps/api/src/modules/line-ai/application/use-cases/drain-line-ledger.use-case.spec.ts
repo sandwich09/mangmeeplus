@@ -36,7 +36,7 @@ function makeUseCase(opts: {
   entitlements?: Array<{ featureKey: string; enabled: boolean }>;
   turnFn?: (req: any) => any;
   duringTurn?: () => void;
-  pushResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
+  pushResult?: 'ok' | 'failed_token' | 'failed_flex' | 'failed_other' | 'skipped';
   /** One result per push, in order; when it runs out, `pushResult` (or 'ok') answers. */
   pushResults?: Array<'ok' | 'failed_flex' | 'failed_other' | 'failed_permanent'>;
 } = {}) {
@@ -224,6 +224,14 @@ describe('AP22 queued UNKNOWN and accepted recovery', () => {
     await h.useCase.execute(20, NOW); h.state.linked = false;
     const recovered = await h.useCase.execute(20, NOW);
     assert.equal(recovered.followedUp, 1); assert.equal(h.pushes.length, 1); assert.equal(h.turnRequests.length, 1);
+  });
+
+  it('a body LINE refuses as a card and again as its text stays terminal with the existing permanent error code', async () => {
+    const h = makeUseCase({ claims: [{ entry: entry(), deliveryCount: 1, idleMs: 10_000 }], pushResult: 'failed_flex' });
+    await h.useCase.execute(20, NOW);
+    assert.deepEqual(h.pushes.map((push) => push.message.type), ['flex', 'text'], 'the card, then its text once');
+    assert.equal([...h.deliveryRows.values()][0].status, 'REFUSED');
+    assert.equal([...h.deliveryRows.values()][0].errorCode, 'LINE_PUSH_FAILED_PERMANENT');
   });
 
   it('changed source after UNKNOWN gets a static recovery notice and preserves the original output', async () => {
