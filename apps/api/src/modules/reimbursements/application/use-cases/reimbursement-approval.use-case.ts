@@ -1,7 +1,7 @@
 import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import type { RequestContext, ReimbursementApprovalQueueItem, ReimbursementAwaitingSystem, ReimbursementRequestDetail } from '@watchdog-bms/contracts';
 import {
-  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionReasons, reimbursementPayoutSentBackNotice,
+  REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY, isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionReasons, reimbursementPayoutSentBackNotice,
   REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH,
 } from '@watchdog-bms/contracts';
 import { notAwaitingApproval, PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
@@ -235,7 +235,8 @@ export async function sendBackForPayoutCorrection(
   const held = payoutCorrectionHeld(req);
   const heldAccount = held === 'ACCOUNT' ? await deps.repo.findClaimPayout(req) : undefined;
   const payoutKind = heldAccount?.payoutKind;
-  if (!reimbursementPayoutCorrectionReasons(held, payoutKind).includes(input.reasonCode)) throw new BadRequestException('payout_correction_reason_required');
+  if (heldAccount?.holderType === 'THIRD_PARTY' && input.reasonCode === 'ACCOUNT_NAME_MISMATCH') throw new BadRequestException({ code: 'payout_correction_name_mismatch_third_party', message: REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY });
+  if (!reimbursementPayoutCorrectionReasons(held, payoutKind, heldAccount?.holderType).includes(input.reasonCode)) throw new BadRequestException('payout_correction_reason_required');
   const reasonCode = input.reasonCode;
   const note = typeof input.note === 'string' ? input.note.trim() : '';
   if (note.length > REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH) throw new BadRequestException('payout_correction_note_too_long');

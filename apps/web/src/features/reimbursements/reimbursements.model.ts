@@ -75,7 +75,7 @@ export const REQUEST_STATUS_TONES: Record<string, MangmeeTone> = {
  * reads "รอระบบปรับสถานะ" for such a claim: the words of that line, that note and the LINE backlog.
  */
 export function claimStatusBadge(claim: {
-  status?: string; duplicateReasons?: readonly string[]; currentDesk?: { kind?: string } | null;
+  status?: string; duplicateReasons?: readonly string[]; hasDuplicateBlocker?: boolean; duplicateBlocksPayment?: boolean; currentDesk?: { kind?: string } | null;
   payoutCorrectionPhase?: string | null; payoutMethod?: string | null; payoutCorrectionAnswer?: string | null;
 } | null | undefined): { label: string; tone: MangmeeTone } {
   const cancellation = reimbursementDuplicateWait(claim);
@@ -159,7 +159,7 @@ export function currentDeskText(
  * account (payout spec §14.2), are with their requester: "ผู้เบิก", as on the badge, the step note and the timeline.
  */
 export function claimDeskText(claim: {
-  status?: string; duplicateReasons?: readonly string[]; currentDesk?: Parameters<typeof currentDeskText>[0]; paymentDesk?: Parameters<typeof paymentDeskText>[0];
+  status?: string; duplicateReasons?: readonly string[]; hasDuplicateBlocker?: boolean; duplicateBlocksPayment?: boolean; currentDesk?: Parameters<typeof currentDeskText>[0]; paymentDesk?: Parameters<typeof paymentDeskText>[0];
 } | null | undefined): string | null {
   return reimbursementDuplicateWait(claim)?.actor ?? currentDeskText(claim?.currentDesk, claim?.paymentDesk);
 }

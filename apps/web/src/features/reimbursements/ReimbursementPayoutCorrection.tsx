@@ -160,6 +160,12 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
   const [canSaveAsDefault, setCanSaveAsDefault] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invalidField, setInvalidField] = useState<string | undefined>(undefined);
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error && !invalidField) {
+      errorRef.current?.scrollIntoView({ block: 'start' }); errorRef.current?.focus({ preventScroll: true });
+    }
+  }, [error, invalidField]);
   const [busy, setBusy] = useState(false);
   // Typing an account for a requester who is no longer an active member is the server's to refuse. The claim detail
   // says so up front (`submitModes`), and the form then never offers the choice; a page read before the requester
@@ -261,8 +267,8 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
         )}
       {form.mode === 'SPECIFIED' && typingOffered && (
         <div className="space-y-3 border-t border-gray-100 pt-3">
-          <PayoutAccountFields value={form.account} onChange={(account) => change({ account })} disabled={busy} invalidField={invalidField} accountNameHint={SAVED_WORDS.accountNameHint} />
-          <PayoutHolderFields value={form.holder ?? { holderType: 'SELF' }} forSelf={forSelf} disabled={busy} invalidField={invalidField} allowThirdParty={thirdPartyAllowed}
+          <PayoutAccountFields value={form.account} onChange={(account) => change({ account })} disabled={busy} invalidField={invalidField} error={error} accountNameHint={SAVED_WORDS.accountNameHint} />
+          <PayoutHolderFields value={form.holder ?? { holderType: 'SELF' }} forSelf={forSelf} disabled={busy} invalidField={invalidField} error={error} allowThirdParty={thirdPartyAllowed}
             onChange={holder => { const next = setClaimPayoutHolder({ ...form, mode: 'SPECIFIED' }, holder); change({ holder: next.holder, saveAsDefault: next.saveAsDefault }); }} />
           {canSaveAsDefault && form.holder?.holderType !== 'THIRD_PARTY' && (
             <label className="flex min-h-11 items-start gap-3 text-sm text-gray-700">
@@ -288,7 +294,7 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
       {!forSelf && typingOffered && (
         <p className="text-xs leading-5 text-gray-500" data-testid="reimbursement-payout-correction-on-behalf-notice">{PAYOUT_CORRECTION_ON_BEHALF_NOTICE}</p>
       )}
-      {error && <ErrorBanner message={error} />}
+      {error && <div ref={errorRef} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={error} /></div>}
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <button type="button" className={cx(ghostClass, 'w-full sm:w-auto')} disabled={busy} onClick={onCancel}>ยกเลิก</button>
         <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy} aria-busy={busy}>{busy ? 'กำลังบันทึก...' : PAYOUT_CORRECTION_SAVE_LABEL}</button>

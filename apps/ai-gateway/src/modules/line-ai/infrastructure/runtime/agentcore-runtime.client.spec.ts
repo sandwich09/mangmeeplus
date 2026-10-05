@@ -87,6 +87,53 @@ describe('AgentCoreRuntimeClient', () => {
     }
   });
 
+  it('remembers a YES of the budget probe for five minutes, and never a NO or a failed probe', async (t) => {
+    const orig = globalThis.fetch;
+    const identity = { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), serviceVersion: 'candidate-a', contractVersion: 1 };
+    const { AI_BUDGET_ESTIMATOR_VERSION_V2, AI_BUDGET_PROFILE_TABLE_DIGEST_V2 } = await import('@watchdog-bms/contracts');
+    const capability = { supported: true, inputContractVersion: 2, providerOutputVersion: 2, budgetContractVersion: 2,
+      profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2 };
+    let probes = 0;
+    let answer: 'yes' | 'no' | 'down' = 'no';
+    globalThis.fetch = async (_url: any, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      assert.equal(body['lineBudgetV2CapabilityProbe'], true);
+      probes += 1;
+      if (answer === 'down') return new Response('{}', { status: 500 }) as any;
+      return new Response(JSON.stringify({ turnId: body['turnId'], replyText: '', plan: { status: 'UNROUTABLE', intents: [] }, durationMs: 0,
+        refused: false, sourceRefs: [], webLinks: [], toolsInvoked: [], runtimeIdentity: identity,
+        lineBudgetV2Capability: { ...capability, supported: answer === 'yes' } }), { status: 200 }) as any;
+    };
+    t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+    try {
+      const client = new AgentCoreRuntimeClient(makeExpectedConfig());
+      // A NO and a failed probe are asked again every time.
+      assert.equal(await client.lineBudgetV2CapabilityEnabled(), false);
+      answer = 'down';
+      assert.equal(await client.lineBudgetV2CapabilityEnabled(), false);
+      assert.equal(probes, 2);
+      // A YES is asked once, then remembered: the next messages do not invoke the runtime.
+      answer = 'yes';
+      assert.equal(await client.lineBudgetV2CapabilityEnabled(), true);
+      answer = 'no';
+      assert.equal(await client.lineBudgetV2CapabilityEnabled(), true);
+      t.mock.timers.tick(5 * 60_000 - 1);
+      assert.equal(await client.lineBudgetV2CapabilityEnabled(), true);
+      assert.equal(probes, 3);
+      // After five minutes the runtime is asked again, and its NO is believed at once.
+      t.mock.timers.tick(1);
+      assert.equal(await client.lineBudgetV2CapabilityEnabled(), false);
+      assert.equal(probes, 4);
+      // Another process has its own memory; one with no expected identity never says yes.
+      answer = 'yes';
+      assert.equal(await new AgentCoreRuntimeClient(makeExpectedConfig()).lineBudgetV2CapabilityEnabled(), true);
+      assert.equal(await new AgentCoreRuntimeClient(makeConfig()).lineBudgetV2CapabilityEnabled(), false);
+      assert.equal(probes, 5);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
   it('throws RUNTIME_NOT_CONFIGURED when ARN is empty', async () => {
     const client = new AgentCoreRuntimeClient(makeConfig(''));
     await assert.rejects(
