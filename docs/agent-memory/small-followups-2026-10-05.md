@@ -20,12 +20,12 @@ Decisions:
 - Owner, 2026-10-05 ~09:45: "ทำงานเล็ก ต่อ แต่ยังไม่ต้อง deploy uat prod ใช้ codex เหมือนเดิม".
 - Owner, 2026-10-05 ~10:00, on a claim whose receipt a reviewer confirmed as a real duplicate and which could still be paid in full: "ก) ห้ามจ่ายจนกว่าจะเอารายการซ้ำออกหรือยกเลิกใบเบิก และมีคำแนะนำด้วย อย่าปิดเงียบ". The controller reads it as: under every duplicate policy; nothing already paid is reversed.
 - Controller (the owner delegated screen design on 2026-10-04): with the contact pair shown, an extra sort column replaces the note column on a desktop instead of narrowing every text column. The first pass narrowed them and cut the package badges and put an e-mail on three lines.
+- Owner, 2026-10-05 ~11:55, on the legal screen a new executive account passes at its first sign-in: "ก) ปล่อยไว้". The screen is the one every account passes (the executive spec already requires it, like sales accounts); two phrases on it are written for shop users ("พื้นที่ทำงานของร้าน" under the logo, "การยืนยันนี้ใช้กับบัญชีของคุณทุกกิจการ"). They stay as they are; the documents and the three statements were never in question.
 - Left out on purpose: a payment date in the future on sales-document receipts. Sales documents are not in the packs that are sold (`focus-on-sold-feature-packs`).
 
 Open questions:
 
 - The business-type cell still splits some Thai compounds (สิน|ค้า, จัด|ทำ). The split comes from the browser's own Thai word list (the same library answers the same way outside a page), and the cell forces no break, so a layout rule cannot change it. Left.
-- A new executive account's first sign-in goes through the legal screen written for shop users ("พื้นที่ทำงานของร้าน", "การยืนยันนี้ใช้กับบัญชีของคุณทุกกิจการ"). Seen by the browser proof on a local stack; not changed, the owner decides.
 - With the churn filter the list can carry more than one extra fact column and then scrolls sideways, as before.
 
 Artifacts:
