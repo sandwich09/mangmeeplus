@@ -1185,9 +1185,20 @@ export class LineMessageBufferService implements OnModuleDestroy {
 
   /** One waiting bubble: the locked card where LINE can fetch its pictures, the same sentence otherwise. */
   private async sendWaitStatus(state: ChatState, stage: LineWaitStage): Promise<boolean> {
-    const result = await this.lineReply
-      .sendPush(state.chatId, [lineWaitStageMessage(stage, this.config.webBaseUrl)])
+    const message = lineWaitStageMessage(stage, this.config.webBaseUrl);
+    const operationId = randomUUID();
+    let result = await this.lineReply
+      .sendPush(state.chatId, [message], operationId)
       .catch(() => 'failed_other' as const);
+    // LINE refused the card's BODY. The same bytes cannot succeed; the sentence the card stands for —
+    // what this bubble was before the card — can. Once, under a key derived from the first push, so a
+    // repeat of this fallback is the same request to LINE and never a second bubble.
+    if (result === 'failed_flex' && message.type === 'flex') {
+      this.logger.warn({ msg: 'line_flex_text_fallback_used', surface: 'waiting_feedback' });
+      result = await this.lineReply
+        .sendPush(state.chatId, [{ type: 'text', text: stage.text.slice(0, 5000) }], `${operationId}:text`)
+        .catch(() => 'failed_other' as const);
+    }
     if (result !== 'ok') {
       this.logger.warn({ msg: 'LINE waiting feedback delivery failed', result });
       return false;

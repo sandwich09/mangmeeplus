@@ -1,6 +1,6 @@
 # Agent Memory: System OA card pattern review
 
-Status: HANDOFF READY 2026-10-05; design locked 2026-10-04 and runtime implementation authorized by “ทำเลย”. Owner then requested a Markdown handoff with all example images. Source inspection and plan are complete; runtime code for this task has not yet been edited. Live publication is not requested.
+Status: IMPLEMENTED IN NATIVE FLEX 2026-10-05 (part 1 merged as #1012 develop / #1013 main, and the coordinator reported starting its UAT deploy; part 2 — body-safety guard, push fallback, bound-path proofs, scanning fallback sentence — on branch `claude/line-system-oa-cards-20261005`). The PDF/file result card (state 6') and the renderer's look-tuning are in other lanes. NOT yet accepted on a real LINE client: the pictures below this line are from a local Flex renderer. Earlier status lines in this file are history.
 Owner: Codex / root
 Scope: System Mangmee OA cards for payment, review, scanning, ordinary Q&A and commands, using the owner's three mascot images and aligned label / colon / value rows. This is separate from the completed Official marketing OA publication.
 
@@ -47,10 +47,92 @@ Scope: System Mangmee OA cards for payment, review, scanning, ordinary Q&A and c
 - Owner found `ระดับแจ้งเตือน` and `ขอบเขต` confusing and asked whether the action opens the reimbursement. Revised the example: context `ใบเบิกรออนุมัติ`, `เลขที่ใบเบิก` with the fixture request number, `ต้องทำ : ตรวจสอบและอนุมัติใบเบิก`, and action `เปิดใบเบิกเพื่ออนุมัติ`. Removed the scope row and retained a plain note `ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ`; empty assigned tasks use `ตรวจเฉพาะงานที่มอบหมายให้คุณและยังไม่เสร็จ`.
 - Destination audit: current `NotificationsListOpenAlertsTool` source references always point to `/companies/{companyId}/notifications`; it does not expose the reimbursement request ID/detail link. The existing notification fixture contains the older hub route with `tab=approvals&focus=rb-1`, while the current hub opens each claim's journey at `/companies/{companyId}/reimbursements/{requestId}` and no longer reads the focus parameter. Verified the dedicated journey route in `apps/web/app/(workspace)/companies/[companyId]/reimbursements/[requestId]/page.tsx`. The revised preview records that direct route as a proposed destination only; it does not navigate or claim the runtime link changed. Later implementation must project an authorized request ID/detail reference, never infer an ID from the displayed request number or blindly reuse the old hub URL.
 
+## Implementation 2026-10-05 — what was built
+
+Read this section first; the decisions below it are the design history.
+
+### Shape
+
+- **One renderer**: `apps/api/src/modules/line-ai/domain/logic/line-system-card.logic.ts`. A context builder describes a card (mascot, two header lines, banner, rows, notes, prose, footnotes, one button or a pair) and never sets a colour or a size. The bubble is ONE body block: the green gradient top (fixed height, two text lines, and inside it an absolutely placed white rounded box — the paper's top), the white paper, and the mascot as the LAST, absolutely placed child so that it is drawn above both and clipped by neither.
+- **One guard**: `line-system-card-limits.logic.ts`. No builder calls the renderer directly; `drawLineSystemCard` returns nothing for a card LINE would refuse (an empty text, a label over 40, a postback over 300, a link that is not https, a bubble over 30 KB) or that would show an empty cell, and the builder's caller sends the reply the way it was sent before the design. A refused body is the one way a card can lose an answer.
+- **Pictures**: `apps/web/public/assets/line/system-card-*-20261005.png` — the three mascots are byte copies of the locked cut-outs; nine icons are rendered from the preview's line icons by `docs/evidence/line-system-oa-native-flex-2026-10-05/make-icon-assets.mjs`. LINE caches a picture by URL: a changed picture needs a new date in its name (`ASSET_VERSION`).
+- **Contract**: `LineAiAnswerCard.layout` (`packages/contracts/src/line-ai.ts`) — context, exactly two header lines, `label`/`value` rows (`emphasis: 'total'`, `tone`), banner, notes, `linkLabel`. `parseLineAiAnswerCardLayout` is the receiver's validator (exact keys, allowlisted enums, bounded strings, no link, no control character, nothing that is Flex). The trusted gateway writes a layout from successful permission-checked tool results; model text never fills a row; `text` stays the canonical answer. A layout is honoured only on the one card whose text IS the whole reply.
+- **Reading a card in a spec**: `line-system-card.fixture.ts` (`readLineSystemCard`), so no spec walks the JSON by hand.
+
+### Where each of the 20 states is produced
+
+| # | Context / state | Produced by | Sent through |
+|---|---|---|---|
+| 1 | Expense summary | gateway `formatExpenseSummary` (prepared lane, legacy deterministic summary, direct read, v2 fallback) → `layout` | `buildLineBusinessAnswerMessage` → delivery plan (card primary, sentence fallback) |
+| 2 | Open work: claim found / no open alerts / no assigned tasks | gateway `openWorkCardLayout` from ONE successful `notifications.list_open_alerts` or `workflow.list_assigned_tasks` result (v2 turn, legacy orchestration, direct read); the sentence is still the composer's | same |
+| 3 | Q&A: capability / small talk | API `deliverPureGeneralV2` → `buildDesignedLineAnswerMessage` (prose under the reader's own question) | delivery plan |
+| 3 | Q&A: explain a document | gateway answer with no layout → prose under the reader's question | same |
+| 4 | Edit: proposal | API `buildDraftUpdatePreviewCard` (postbacks, display texts, canonical text byte-equal to the card before it) | the plan's CONTROL after its canonical diff; alone on the API-local path |
+| 4 | Edit: applied / cancelled / needs more information | API `buildDraftUpdateOutcomeCard` (postback handler, proposal handler, typed cancel/review); on the gateway path the `edit_command` layout names the state | delivery plan |
+| 5 | Record: confirmed / rejected / cancelled | gateway `formatExpenseGetDetailSingleMetric` → `layout` (`expense.get_detail`) | delivery plan |
+| 5 | Record: being checked | message buffer slow-turn status (`lineWaitStages`) → waiting card | push (with a text re-send if LINE refuses the card) |
+| 6 | Receipt awaiting review — photo | `expenseDraftCardFacts` → `buildExpenseDraftReviewCard` on the capture terminal, recovery, resume and pending-media paths | delivery plan |
+| 6' | Receipt awaiting review — PDF/file result | capture-result notifier — OTHER LANE (uses `expenseDraftCardFactsFrom` + `buildExpenseDraftReviewCard`) | plan / push |
+| 7 | Payment: paid / unpaid / partly paid | gateway `formatExpenseGetDetailSingleMetric` when the record is confirmed AND the message asks about paying | delivery plan |
+| 8 | Scanning | message buffer media acknowledgement (`lineMediaGroupAckStage`), same moment, once per group | push (with a text re-send if LINE refuses the card) |
+
+### Sentences that changed (everything else is byte-equal)
+
+| Where | Before | After | Why |
+|---|---|---|---|
+| A question about PAYING a confirmed record (`expense.get_detail`, deterministic) | `ค่าใช้จ่าย: {ร้าน} วันที่ {วันที่} ยอด {ยอดรวม} บาท` / `สถานะเอกสาร: ยืนยันแล้ว · สถานะการจ่าย: {สถานะ}` | `การชำระเงิน: {ร้าน} ยอดสุทธิที่ต้องจ่าย {สุทธิ} บาท` / `จ่ายแล้ว {จ่ายแล้ว} บาท · ยอดคงค้าง {คงค้าง} บาท` / `สถานะชำระเงิน: {สถานะ}[ · วันที่ชำระ {วัน}][ · วิธีชำระเงิน {วิธี}]` | the payment card and its sentence must say the same; a payment question gets a payment answer |
+| A rejected or voided record (same family) | `สถานะเอกสาร: ปฏิเสธ · สถานะการจ่าย: ยังไม่ชำระ` | `สถานะเอกสาร: ปฏิเสธ[ · เหตุผล: {เหตุผล}]` | a closed record owes nothing: "ยังไม่ชำระ" read as money still due; the locked card shows the reason |
+| The photo acknowledgement (canonical text of the scanning card) | `ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ปกติไม่เกิน 1 นาที เสร็จแล้วน้องจะสรุปให้เลยนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ` | `ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ` | the lock bans a time nobody knows on the scanning context, also in the fallback |
+| A review card's canonical text | the reply | the reply, plus `เปิดดูรายการ: {ลิงก์}` ONLY when the reply itself has no link | a text delivery must still carry the way in |
+
+New words on cards (not in any sentence before): header lines `สรุปค่าใช้จ่าย`, `ใบเบิกรออนุมัติ / พบ N รายการ`, `การแจ้งเตือน / ไม่พบรายการ`, `งานที่มอบหมาย / ไม่พบงานค้าง`, `รายการค่าใช้จ่าย / {สถานะ}`, `การชำระเงิน / {ชำระแล้ว|รอชำระเงิน|ชำระบางส่วน}`, `ข้อมูลใบเสร็จ|ข้อมูลเอกสาร|ร่างค่าใช้จ่าย / รอตรวจสอบ`, `แก้ไขค่าใช้จ่าย / {รอยืนยัน|แก้ไขแล้ว|ยกเลิกแล้ว|ขอข้อมูลเพิ่ม|ยังไม่ได้แก้ไข}`, `เอกสารที่ส่งมา / กำลังสแกน`, `ข้อมูลที่คุณขอ / กำลังตรวจสอบ`, `ข้อความของคุณ / กำลังหาคำตอบ` (a waiting card for a message that asked for no data), `ข้อความของคุณ / {ข้อความ}` (a prose answer to a one-word message that cannot be broken in two); row names as in the locked pictures; notes `รายการนี้เป็นร่าง ยังไม่ได้ยืนยันรายการ`, `ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ`, `ตรวจเฉพาะงานที่มอบหมายให้คุณและยังไม่เสร็จ`, `แสดง N รายการแรก ดูทั้งหมดได้ในเว็บ`, `แสดงเฉพาะรายการของคุณ`; buttons `ดูค่าใช้จ่ายในเว็บ`, `เปิดใบเบิกเพื่ออนุมัติ`, `ดูแจ้งเตือนในเว็บ`, `ดูงานของฉันในเว็บ`, `เปิดดูรายการในเว็บ`, `ตรวจสอบและยืนยันในเว็บ`, `ดูในเว็บ`; banner `กำลังอ่านข้อมูลจาก{รูป|ไฟล์|รูป N รูป|…}`; scanning sentences as locked.
+
+### Native limits — what LINE's Flex cannot do as the picture does, and what was done instead
+
+Measured by the gallery helper on HEAD `83dd48a7e` with the local Flex renderer (`docs/evidence/line-system-oa-native-flex-2026-10-05/flex-to-html.mjs`), all 20 states at both widths, against the baseline's own DOM. That renderer follows LINE's published layout rules but is NOT a LINE client: the bubble width, the bubble's corner radius, the device font and its line height are assumptions there and must be read on a real phone.
+
+| Element | Locked picture | Native Flex | Why / what was done |
+|---|---|---|---|
+| Bubble width | 252 px (320 frame), 342 px (736 frame) | LINE decides (`mega`); local renderer assumes 256 / 300 px | a card cannot set its width. Row sides and the colon column are a SHARE of the width (5.4 %, 7.9 %), so the label and value columns hold what the picture's do at either width |
+| Row side inset at the wide frame | 18 px | 16.19 px at a 300 px bubble | follows from the line above; equal as a share of the bubble (5.26–5.56 %) |
+| Bubble corner radius | 21 px | LINE's own (17 px assumed) | not settable |
+| Font and weights | Noto Sans Thai; 430 / 500 / 600 / 700 | the device's font; `regular` or `bold` only | 430 and 500 are drawn regular, 600 bold |
+| Shadows (bubble, the paper's upper edge, the mascot) | soft shadows | none | Flex has no shadow |
+| Paper over the green | negative margin (−12 px) | an absolutely placed rounded white box inside the green top | LINE accepts no negative offset; measured equal (paper edge at 68 / 69 px, radius 18) |
+| Mascot across the seam | CSS `bottom: −4px` | last child of the body, absolute, top = header + 4 − 82 | measured equal (112 × 82 px, 8 px from the right, 16 px over the paper) |
+| Line height | CSS line-height 1.5–1.8 | `lineSpacing` between lines + padding, assuming a 1.4 line box | measured equal in the local renderer; on a phone it depends on the font's own metrics |
+| Buttons | HTML button with a vector icon | a box with an action; icons are PNG | a Flex button takes no icon and no such colours |
+| One layout for every width | a second set of measures under 380 px | none | Flex has no breakpoint; see the first row |
+| A rule under the last visible row of the confirmed record | present (a hidden row follows it in the HTML) | absent | an artefact of the preview's markup; left for the owner's call |
+| Tabular figures | `tabular-nums` | not available | — |
+
+Equal in every measured case (|Δ| < 0.75 px, identical colour): header height and gradient, both header lines' position, size and colour, the mascot's box, the paper's edge and radius, every row's label / colon / value position and pitch, the colon column (0 px spread), the cream total row, pills, rules, the note box, buttons, banners, prose pitch and paragraph gaps.
+
+### Decisions taken while building (each is one small change to reverse)
+
+- The review card shows `เลขเอกสาร` as the locked picture does, although the owner's 2026-09-08 acceptance removed the document number from the automatic receipt SUMMARY. The canonical text still leaves it out. Coordinator: keep; the owner may ask to drop it (one line in `expenseDraftCardFacts`).
+- Record and payment cards carry a `ข้อมูล ณ` row that the locked pictures of those two contexts do not have: the answer's own freshness line must not be lost when the card replaces the sentence.
+- The record card's pill is the record's own state as the web names it (`ร่าง`, `รอตรวจสอบ`, `ยืนยันแล้ว`, `ปฏิเสธ`, `ยกเลิก`); the review card's header says `รอตรวจสอบ` for every unconfirmed capture, as the reply's own first line does.
+- A prose answer's header is the reader's own words: broken in two where the lines come out most even and never inside a Thai name; the beginning with `…` for a long question (the designer's hand-written topic heading "ค่าบริการในบิล / ทำไมคิดแยก" cannot be produced by code without rephrasing).
+- Rows only where the sentence is deterministic (or, for open work, where the rows are the whole tool result). A model-composed read answer is prose: its sentence may say more than a fixed set of rows.
+- The approval-queue read (`reimbursement.list_pending_approvals`) keeps its list as prose: its facts (requester, date, amount per claim) have no rows in the locked claim card.
+- Replies outside the eight contexts (typed-note draft conversation, corrections, reference replies, legal / package / quota cards) keep the card they had.
+- On the gateway path the proposal is two bubbles — the canonical sentence, then the locked proposal card — because the delivery plan requires the control to follow the complete canonical text. On the API-local path it is the one card.
+
 ## Open questions
 
-- Current implementation plan scopes System OA chat answers and media acknowledgment; background notification push remains a separate path outside this implementation round. Use only grounded optional fields within the locked layout. Native rendering/asset availability and default-off terminal-Flex gating still require implementation verification, not an invented completed state.
-- No answer is required to finish the requested handoff. Implementation authorization persists; deployment is not authorized for this System OA scope.
+After the 2026-10-05 implementation (for the owner; none blocks the code):
+
+1. `เลขเอกสาร` on the review card: shown as the locked picture has it; the 2026-09-08 acceptance had removed it from the automatic summary. Keep or drop?
+2. `ข้อมูล ณ` on the record and payment cards: one row more than their locked pictures, so that the answer's freshness line is not lost. Keep or drop?
+3. A long question's header is its own beginning with `…`. A topic heading like the designer's needs either a fixed vocabulary per topic or a model; neither was built.
+4. `ข้อความของคุณ` as the first header line of a one-word message's answer and of a waiting card for a message that asked for no data: new words, close in spirit to the `คำถามของคุณ` the owner cut from the card body. Acceptable in the header?
+5. Should the approval-queue answer (`reimbursement.list_pending_approvals`) be drawn as the claim card too? It states requester, date and amount per claim, which the locked claim card has no rows for.
+6. Should replies outside the eight contexts (typed-note draft conversation, corrections, reference replies) move to the locked look, and under which two header lines?
+7. The gateway-path proposal is two bubbles (sentence, then the proposal card). One bubble needs the delivery plan to accept a control without a preceding text item — a change to a financial-mutation safeguard, not a presentation change.
+8. The rule under the last visible row of the confirmed record card in the baseline picture: reproduce it, or treat it as an artefact?
+
+Still true from before: background notification pushes (the web bell's LINE copies) are a separate send path outside this work.
 
 ## Artifacts
 
@@ -90,6 +172,16 @@ Scope: System Mangmee OA cards for payment, review, scanning, ordinary Q&A and c
 - Plain-language pending-work revision PASS: reran offline source proof and the focused browser check (40 cases at 736px/320px). The fixture request number, action wording, proposed direct destination and empty-mode destinations match their source/design evidence; no real anchor/navigation or write is introduced. Removed confusing labels, aligned colons and all earlier source/layout checks pass. Visually inspected the revised pending-approval card at 320px. Current fragment 703,004 bytes; latest ledger supersedes previous sizes. Runtime files and live OA settings remain untouched.
 - Owner design lock verification PASS: all 30 preserved files match manifest sizes/SHA-256; preserved preview is byte-identical to the approved 703,004-byte fragment; eight variants, existing 40-case evidence, spec reference links and absence of trailing whitespace checked. Scoped `git diff --check` PASS. No new browser/product tests run because only documentation and exact evidence copies changed; no presentation, runtime code, provider or live state changed in this lock turn.
 
+- 2026-10-05 implementation checks (worktree `/private/tmp/mangmee-line-cards-20261005`, branch `claude/line-system-oa-cards-20261005`, HEAD `e4df2603c` unless noted; every command's real exit code was read):
+  - Typechecks, each through the machine's heavy-job lock, all exit 0: `pnpm --filter @watchdog-bms/api typecheck`, `… ai-gateway typecheck`, `… contracts typecheck`, `… config typecheck`, `… web typecheck`. `pnpm --filter @watchdog-bms/config test` exit 0 (153 tests).
+  - `node scripts/run-line-ai-whole-chain-acceptance.mjs` exit 0: 4 + 5 + 491 + 451 + 7 + 231 + 2056 + 490 tests, 0 failed, four infra scripts pass.
+  - API specs, each `pnpm --filter @watchdog-bms/api exec tsx --test <file>`, all exit 0: line-business-card.logic 80 · line-draft-update-card.logic 19 · line-delivery-plan.logic 22 · line-message-buffer.logic 33 · line-message-buffer.service 77 · drain-line-ledger 68 · process-line-webhook 406 · line-intake-dispatch 360 · process-line-task-resume 13 · erp-core-detail-tools 15 · erp-empty-result-semantics 12 · erp-business-tools 66.
+  - Gateway specs (at `d6ddc1046`), all exit 0: prepared-simple-read-formatter 148 · orchestrator.agent 92 · semantic-turn-v2-terminal-outcomes 54 · line-ai-turn.use-case 44 · agentcore-runtime.client 17 · draft-update-formatter 13. Contracts: line-ai-advisor-answer 34.
+  - One flake seen once under machine load (load average ≈ 20): line-message-buffer.service "acknowledges a two-photo burst once…" (real 20 ms timers); three clean runs after.
+  - Reported by the coordinator, not run here: part 1 (up to `2c83440c1`, merged with develop) passed the full local verification 17 of 17, and LINE's own validator accepted 40 of 40 payloads called from the UAT API container.
+  - NOT done here: no message was sent to LINE; no real LINE client was looked at; no model call; no database; the 40-picture gallery and its measurements are the gallery helper's.
+
 ## Next
 
-- Give the complete Markdown handoff to the owner. Recipient can implement the already-authorized plan while preserving the locked baseline and existing changes. Verify the eight card contexts, canonical fallback/postbacks/multipart, tenant-safe direct reimbursement links and native payload/visual parity. Keep local evidence distinct from actual LINE client/publication acceptance.
+- 2026-10-05, after the implementation: (1) the PDF/file result as the review card and `failed_flex` for a pushed message land from their own lane; (2) the gallery helper's deviation list decides any renderer tuning; (3) acceptance on a real LINE client — bubble width, corner radius, font, line height, the pictures loading from the web host — is the step no local check replaces; (4) the owner's answers to the open questions above. Production promotion needs the owner's explicit go.
+- (History) Give the complete Markdown handoff to the owner. Recipient can implement the already-authorized plan while preserving the locked baseline and existing changes. Verify the eight card contexts, canonical fallback/postbacks/multipart, tenant-safe direct reimbursement links and native payload/visual parity. Keep local evidence distinct from actual LINE client/publication acceptance.

@@ -105,6 +105,9 @@ export type LineSystemCard = {
   footnotes?: readonly string[];
   /** One full-width link button… */
   button?: { action: LineSystemCardAction; icon: LineSystemCardIcon; primary?: boolean };
+  /** …or several, one under the other, each named by what it opens (owner 2026-10-05: an answer with
+   *  several places to open names every one of them). Drawn only when there is no `button`. */
+  buttons?: ReadonlyArray<{ action: LineSystemCardAction; icon: LineSystemCardIcon }>;
   /** …or the two answers to a question, side by side: the first is the dark one. */
   choice?: readonly [LineSystemCardAction, LineSystemCardAction];
 };
@@ -253,17 +256,20 @@ function button(entry: LineSystemCardAction, primary: boolean, inner: Flex[], ex
 function footer(card: LineSystemCard, webBaseUrl: string): Flex | undefined {
   const label = (entry: LineSystemCardAction, primary: boolean, extra: Flex = {}) =>
     wrapped(entry.label, 14, 1.6, primary ? PAPER : SECONDARY[1], { flex: 1, ...extra });
+  const link = (entry: NonNullable<LineSystemCard['button']>) => button(entry.action, entry.primary === true, [
+    image(webBaseUrl, entry.icon === 'clipboard' ? 'clipboard' : entry.icon, 16),
+    label(entry.action, entry.primary === true),
+    image(webBaseUrl, entry.primary ? 'chevronLight' : 'chevron', 16),
+  ]);
   const contents = card.choice
     ? [{ type: 'box', layout: 'horizontal', spacing: '8px', contents: card.choice.map((entry, index) =>
       button(entry, index === 0, [label(entry, index === 0, { align: 'center' })], { flex: 1 })) }]
-    : card.button
-      ? [button(card.button.action, card.button.primary === true, [
-        image(webBaseUrl, card.button.icon === 'clipboard' ? 'clipboard' : card.button.icon, 16),
-        label(card.button.action, card.button.primary === true),
-        image(webBaseUrl, card.button.primary ? 'chevronLight' : 'chevron', 16),
-      ])]
-      : undefined;
-  return contents && { type: 'box', layout: 'vertical', paddingTop: '14px', paddingBottom: '16px', paddingStart: '16px', paddingEnd: '16px', contents };
+    : card.button ? [link(card.button)]
+      : card.buttons?.length ? card.buttons.map(link)
+        : undefined;
+  // Buttons under one another stand 8 px apart, the gap the design has between its two buttons.
+  return contents && { type: 'box', layout: 'vertical', paddingTop: '14px', paddingBottom: '16px', paddingStart: '16px', paddingEnd: '16px',
+    ...(contents.length > 1 ? { spacing: '8px' } : {}), contents };
 }
 
 /** The bubble. `webBaseUrl` must have passed `lineSystemCardAvailable`. */
