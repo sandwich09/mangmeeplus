@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "3491def58b970b64bca6d588ccd83b0f1f32e8b0",
-  "checkoutBranch": "claude/line-system-oa-cards-20261005",
+  "sourceRevision": "b1143124568ec9529866e62ceb3c529aa597afe6",
+  "checkoutBranch": "claude/line-approval-card-20261006",
   "checkoutDirty": false,
   "sourceHashes": [
     {
@@ -109,7 +109,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "0ea767fbdbb9b8d3f17a42e8e9df34bf74c0ad1814950400b304e6ac8a9511f0"
+      "sha256": "458c49567b022b2af6fc9f2c296071105341abe0813a8d14602ed192c5ecfdc3"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -9016,6 +9016,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-05T14:11:07.326Z",
-  "manifestDigest": "7534a535759853a245366f3bb6a53a0962ec15ae44df4d98af50d7cb93803c29"
+  "generatedAt": "2026-10-05T17:51:28.098Z",
+  "manifestDigest": "35770a8e3bad5726eb68f8e6a67f49afeaf00bbbf0de479add3f602349717173"
 }

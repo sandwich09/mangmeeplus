@@ -1,5 +1,7 @@
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
+import type { LineSystemCard, LineSystemCardRow } from './line-system-card.logic';
+import { drawLineSystemCard } from './line-system-card-limits.logic';
 import { THAI_SYSTEM_ROLE_NAMES, FEATURE_CATALOG, scrubRecordText } from '@watchdog-bms/contracts';
 
 /**
@@ -574,11 +576,15 @@ export function buildReceiptCapturePrompt(_context: StaffMenuContext): LineReply
   };
 }
 
-/** One button per real approval queue the member can act on. Ordered as listed. */
+/** One button per real approval queue the member can act on. Ordered as listed. `itemLabel` and
+ *  `open` are the queue's words on the card of the locked design: what heads a waiting record, and
+ *  what the button that opens the queue's own page is called. */
 const APPROVAL_SURFACES = [
   {
     key: 'reimbursement',
     label: 'คำขอเบิกเงิน',
+    itemLabel: 'เลขที่ใบเบิก',
+    open: 'ดูใบเบิกรออนุมัติในเว็บ',
     permissions: ['reimbursement.approve'],
     path: 'reimbursements?tab=approvals',
     features: ['reimbursement'],
@@ -586,6 +592,8 @@ const APPROVAL_SURFACES = [
   {
     key: 'procurement',
     label: 'ใบขอซื้อ/ใบสั่งซื้อ',
+    itemLabel: 'เลขที่เอกสาร',
+    open: 'ดูใบขอซื้อ/ใบสั่งซื้อในเว็บ',
     permissions: ['procurement.purchase_request.approve', 'procurement.purchase_order.approve'],
     path: 'procurement',
     features: ['procurement.purchase_requests', 'procurement.purchase_orders'],
@@ -594,10 +602,13 @@ const APPROVAL_SURFACES = [
 
 export type ApprovalSurfaceKey = (typeof APPROVAL_SURFACES)[number]['key'];
 
-/** What the approver has waiting: `total` is the whole queue, `items` the display lines the card
- *  may show. A key left out means that queue could not be read — the card then links out without a
- *  count instead of implying zero. */
-export type PendingApprovalSnapshot = Partial<Record<ApprovalSurfaceKey, { total: number; items: string[] }>>;
+/** One waiting record: what identifies it (its number) and, when the queue says, who asked and how much. */
+export type PendingApprovalItem = { title: string; detail?: string };
+
+/** What the approver has waiting: `total` is the whole queue, `items` the records the card may show.
+ *  A key left out means that queue could not be read — the card then links out without a count
+ *  instead of implying zero. */
+export type PendingApprovalSnapshot = Partial<Record<ApprovalSurfaceKey, { total: number; items: PendingApprovalItem[] }>>;
 
 /** LINE shows the shortlist; the web app stays the place the approval is actually made. */
 export const PENDING_APPROVAL_ITEM_LIMIT = 5;
@@ -617,11 +628,96 @@ export function availableApprovalSurfaceKeys(
     .map((surface) => surface.key);
 }
 
-export function buildPendingApprovalCard(context: StaffMenuContext, pending: PendingApprovalSnapshot = {}): LineReplyMessage {
+/**
+ * The approval queue on the card of the locked design (design lock, context "งานค้าง": for claims
+ * `ใบเบิกรออนุมัติ / พบ … รายการ`, a row for each claim, what to do, the day it was read, the one line
+ * that says what was checked, and a button named by the page it opens). Owner 2026-10-06, on
+ * Production: the menu's "รายการรออนุมัติ" was still the plain card from before the design.
+ *
+ * Every state says only what was read: nothing found is said of the queues that were read, a queue
+ * that could not be read is named as that, and a member with no queue here is told so without a
+ * claim that nothing waits. The button opens the queue's own page (a list), never one claim.
+ *
+ * `undefined` where that card cannot be drawn whole (no https base for its pictures, a value longer
+ * than a row holds): the plain card is sent as before.
+ */
+function pendingApprovalDesignedCard(
+  surfaces: ReturnType<typeof availableApprovalSurfaces>,
+  pending: PendingApprovalSnapshot,
+  links: ReadonlyArray<{ label: string; uri: string }>,
+  webBaseUrl: string | undefined,
+  asOfLabel: string | undefined,
+): { contents: Record<string, unknown>; lines: string[] } | undefined {
+  const counted = surfaces.filter((surface) => pending[surface.key]);
+  const total = counted.reduce((sum, surface) => sum + pending[surface.key]!.total, 0);
+  const claimsOnly = surfaces.length === 1 && surfaces[0]!.key === 'reimbursement';
+  const subject = claimsOnly ? 'ใบเบิกรออนุมัติ' : 'รายการรออนุมัติ';
+  const rows: LineSystemCardRow[] = [];
+  const notes: string[] = [];
+  let found: string;
+  let text: string | undefined;
+  if (surfaces.length === 0) {
+    found = 'ยังดูผ่าน LINE ไม่ได้';
+    text = 'บัญชีของคุณยังไม่มีคิวอนุมัติที่ดูผ่าน LINE ได้ในร้านนี้ค่ะ หากมีรายการที่ต้องอนุมัติ เปิดดูในเว็บแอปได้เลยนะคะ';
+  } else if (counted.length === 0) {
+    found = 'ยังอ่านไม่ได้';
+    text = 'น้องมั่งมียังอ่านรายการรออนุมัติให้ไม่ได้ค่ะ เปิดดูรายการจริงในเว็บได้เลยนะคะ';
+  } else {
+    // A queue that could not be read makes the count a floor, and "nothing found" unsaid.
+    const partial = counted.length < surfaces.length;
+    found = total === 0 ? (partial ? 'ยังอ่านได้ไม่ครบ' : 'ไม่พบรายการ') : `พบ${partial ? 'อย่างน้อย' : ''} ${total} รายการ`;
+    let listed = 0;
+    for (const surface of counted) {
+      const queue = pending[surface.key]!;
+      if (queue.total === 0) continue;
+      if (counted.length > 1) rows.push({ label: surface.label, value: `${queue.total} รายการ` });
+      for (const item of queue.items.slice(0, PENDING_APPROVAL_ITEM_LIMIT - listed)) {
+        // The number on its own line, who asked and how much under it.
+        rows.push({ label: surface.itemLabel, value: [item.title, item.detail].filter((part) => part?.trim()).join('\n') });
+        listed += 1;
+      }
+    }
+    if (total > 0) rows.push({ label: 'ต้องทำ', value: claimsOnly ? 'ตรวจสอบและอนุมัติใบเบิก' : 'ตรวจสอบและอนุมัติในเว็บ' });
+    if (asOfLabel?.trim()) rows.push({ label: 'ข้อมูล ณ', value: asOfLabel.trim() });
+    notes.push(claimsOnly ? 'ตรวจเฉพาะใบเบิกที่รอคุณอนุมัติ ตามสิทธิ์ของคุณ' : 'ตรวจเฉพาะรายการรออนุมัติ ตามสิทธิ์ของคุณ');
+    if (listed < total) notes.push(listed > 0 ? `แสดง ${listed} รายการแรก ดูทั้งหมดได้ในเว็บ` : 'ดูรายการทั้งหมดได้ในเว็บ');
+    for (const surface of surfaces) if (!pending[surface.key]) notes.push(`ยังอ่าน${surface.label}ไม่ได้ เปิดดูในเว็บได้เลย`);
+  }
+  const buttons = links.map((link) => ({ action: { type: 'uri' as const, label: link.label, uri: link.uri }, icon: 'list' as const }));
+  const card: LineSystemCard = {
+    mascot: 'general', header: { lines: [subject, found] },
+    ...(rows.length ? { rows } : {}), ...(notes.length ? { notes } : {}), ...(text ? { text, textStyle: 'result' as const } : {}),
+    ...(buttons.length === 1 ? { button: buttons[0]! } : buttons.length ? { buttons } : {}),
+  };
+  const contents = drawLineSystemCard(card, webBaseUrl);
+  // The same words as a text: what a delivery sends when LINE refuses the card.
+  return contents && { contents, lines: [
+    `${subject}: ${found}`,
+    ...rows.map((row) => `${row.label}: ${row.value.replace(/\n/gu, ' · ')}`),
+    ...(text ? [text] : []),
+    ...notes,
+  ] };
+}
+
+export function buildPendingApprovalCard(context: StaffMenuContext, pending: PendingApprovalSnapshot = {}, asOfLabel?: string): LineReplyMessage {
   const base = context.webBaseUrl?.replace(/\/$/, '');
   const permissions = new Set(context.permissions);
   const companySegment = `/companies/${encodeURIComponent(context.companyId)}/`;
   const surfaces = availableApprovalSurfaces(permissions, context.entitledFeatureKeys);
+  const counted = surfaces.filter((surface) => pending[surface.key]);
+  const total = counted.reduce((sum, surface) => sum + pending[surface.key]!.total, 0);
+  const altText = counted.length === 0 ? 'รายการรออนุมัติ' : `รายการรออนุมัติ ${total} รายการ`;
+
+  const designed = pendingApprovalDesignedCard(
+    surfaces, pending, base ? surfaces.map((surface) => ({ label: surface.open, uri: `${base}${companySegment}${surface.path}` })) : [],
+    context.webBaseUrl, asOfLabel,
+  );
+  if (designed) {
+    const { contents, lines } = designed;
+    // Every line the card shows, then each button as "label: link", so a text delivery still opens the queue.
+    return { type: 'flex', altText, canonicalText: [...lines, ...(base ? surfaces.map((surface) => `${surface.open}: ${base}${companySegment}${surface.path}`) : [])].join('\n'), contents };
+  }
+
   const buttons = base
     ? surfaces.map((surface) => ({
       type: 'button', style: 'primary', color: '#12B76A',
@@ -629,8 +725,6 @@ export function buildPendingApprovalCard(context: StaffMenuContext, pending: Pen
     }))
     : [];
 
-  const counted = surfaces.filter((surface) => pending[surface.key]);
-  const total = counted.reduce((sum, surface) => sum + pending[surface.key]!.total, 0);
   const lines: Record<string, unknown>[] = [];
   let listed = 0;
   for (const surface of counted) {
@@ -638,7 +732,7 @@ export function buildPendingApprovalCard(context: StaffMenuContext, pending: Pen
     if (queue.total === 0) continue;
     lines.push({ type: 'text', text: `${surface.label} (${queue.total})`, weight: 'bold', size: 'sm', color: '#101828', margin: 'md', wrap: true });
     for (const item of queue.items.slice(0, PENDING_APPROVAL_ITEM_LIMIT - listed)) {
-      lines.push({ type: 'text', text: `• ${item}`, size: 'sm', color: '#475467', wrap: true });
+      lines.push({ type: 'text', text: `• ${[item.title, item.detail].filter((part) => part?.trim()).join(' · ')}`, size: 'sm', color: '#475467', wrap: true });
       listed += 1;
     }
   }
@@ -657,7 +751,7 @@ export function buildPendingApprovalCard(context: StaffMenuContext, pending: Pen
   const title = '✅ รายการรออนุมัติ';
   return {
     type: 'flex',
-    altText: counted.length === 0 ? 'รายการรออนุมัติ' : `รายการรออนุมัติ ${total} รายการ`,
+    altText,
     // Every line the card shows, then each button as "label: link", so a text delivery still opens the queue.
     canonicalText: [title, summary, ...lines.map((line) => String(line.text)), ...(closing ? [closing] : []),
       ...buttons.map(({ action }) => `${action.label}: ${action.uri}`)].join('\n'),
