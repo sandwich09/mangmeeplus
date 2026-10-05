@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createLineAiInputEvidence, parseLineAiSemanticSubrequests, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
+import { createLineAiInputEvidence, extractValueCandidates, parseLineAiSemanticSubrequests, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import { INTAKE_REPAIR_HINTS } from './line-intake-compact-decision';
 import { IntentRouterAgent } from './intent-router.agent';
 import { runWithUsageContext } from '../../../common/usage/usage-context';
@@ -80,6 +80,15 @@ describe('original question evidence', () => {
 });
 function periods(spans: string[]) { return { amounts: [], dates: [], periods: spans.map((span, i) => ({ span, kind: 'month', fromDate: `2026-0${i + 8}-01`, toDate: `2026-0${i + 8}-28`, source: 'named_month', label: span, assumptions: [] })) }; }
 describe('period-only reply', () => {
+  // The owner's own two replies on LINE UAT (2026-10-05 15:05, 15:07), read by the REAL period reader: both were
+  // answered with an apology after two model calls. They are one period each, so no model is asked at all.
+  for (const [text, fromDate, toDate] of [['สิงหา ถึง ตค', '2026-08-01', '2026-10-05'], ['ปี 2569', '2026-01-01', '2026-10-05'],
+    ['3 เดือนล่าสุด', '2026-07-01', '2026-09-30'], ['ปี 69', '2026-01-01', '2026-10-05']] as const) it(`the owner's reply, real reader: ${text}`, async () => {
+    const { plan, sent } = await route(await request(text, { valueCandidates: extractValueCandidates(text, '2026-10-05') }), answer());
+    assert.equal(sent.length, 0);
+    assert.deepEqual(plan.resolvedClarificationIds, ['q1']);
+    assert.deepEqual(plan.semanticSubrequests!.map(sub => [sub.kind, sub.requestedFilters]), [['read', { fromDate, toDate }]]);
+  });
   for (const [text, spans] of [['ปี 2569', ['ปี 2569']], ['เดือนที่แล้วครับ', ['เดือนที่แล้ว']], ['ของเดือนสิงหาค่ะ', ['เดือนสิงหา']], ['ส.ค. 69', ['ส.ค. 69']], ['ส.ค. ก.ย.', ['ส.ค.', 'ก.ย.']]] as const) it(text, async () => {
     const { plan, sent } = await route(await request(text, { valueCandidates: periods([...spans]) }), answer());
     assert.equal(sent.length, 0); assert.equal(plan.intent, 'BUSINESS_READ_QUESTION'); assert.deepEqual(plan.resolvedClarificationIds, ['q1']);
