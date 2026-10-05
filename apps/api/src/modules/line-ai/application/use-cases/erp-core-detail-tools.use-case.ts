@@ -2,7 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException, Optional } from '@ne
 import Decimal from 'decimal.js';
 import type { RequestContext, SourceRef, ToolResult } from '@watchdog-bms/contracts';
 import {
-  civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementPayoutHeld, reimbursementPayoutRoundStatus, reimbursementDuplicateBlockNotice,
+  civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementPayoutHeld, reimbursementPayoutRoundStatus, reimbursementDuplicateBlockNotice, reimbursementDuplicateWait,
 } from '@watchdog-bms/contracts';
 import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
@@ -444,7 +444,7 @@ export class ReimbursementGetDetailTool implements ErpReadToolPort<{ reimburseme
           title: item.title ?? null, reason: item.reason, category: item.categoryLabelSnapshot ?? item.categoryKey,
           amount: item.amount, currency: item.currency, incurredDate: item.incurredDate,
           status: item.cancellationPending ? REIMBURSEMENT_SYSTEM_WAIT_LABEL
-            : (round && reimbursementPayoutRoundStatus({ payoutCorrectionPhase: round.phase, payoutMethod: item.payoutMethod, payoutCorrectionAnswer: item.payoutCorrectionAnswer }))
+            : reimbursementDuplicateWait(item)?.status ?? (round && reimbursementPayoutRoundStatus({ payoutCorrectionPhase: round.phase, payoutMethod: item.payoutMethod, payoutCorrectionAnswer: item.payoutCorrectionAnswer }))
               ?? item.status,
           ...(round?.phase === 'AWAITING_REQUESTER' && {
             sentBackOn: civilDate(new Date(round.requestedAt)), note: REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held[reimbursementPayoutHeld(item)].assistantNote,

@@ -619,3 +619,16 @@ it('the duplicate-clear dialog covers source-document duplicates and confirmatio
   assert.match(text, /ถ้าการยืนยันยังไม่เสร็จ/);
   assert.doesNotMatch(text, /ใบนี้ไม่ได้เบิกซ้ำกับคำขออื่น/);
 });
+
+it('a confirmed duplicate shows cancellation throughout the page and offers no payout send-back', () => {
+  const detail = claim({ payoutMethod: 'CASH', payout: { payoutKind: 'CASH', payoutMethod: 'CASH', version: 1 }, payoutCorrectionActions: { canRequest: true },
+    duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'], paymentDesk: { names: ['สมศรี'] } });
+  const viewer = { userId: 'owner', permissions: OWNER };
+  const text = visible(claimPage(detail, viewer)).join(' ');
+  assert.match(text, /รอยกเลิก/);
+  assert.match(text, /อยู่ที่.*ผู้เบิกที่มีสิทธิ์ยกเลิกหรือผู้ตรวจการเงินที่ดูแลสาขา/);
+  assert.match(text, /รอยกเลิกคำขอ เพราะใบเสร็จยืนยันว่าซ้ำ/);
+  assert.doesNotMatch(text, /พร้อมจ่าย|กำลังรอ สมศรี บันทึกจ่าย|ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง/);
+  const steps = buildJourneySteps(detail, OWNER, 'owner');
+  assert.equal(steps.some(step => step.actions.includes('send-back')), false);
+});

@@ -235,3 +235,14 @@ describe('GetReimbursementApprovalBacklogUseCase — whose desk (advisor spec §
     assert.deepEqual([result.total, result.awaitingApprovalCount], [3, 1]);
   });
 });
+
+it('confirmed duplicates wait for cancellation, separate from payable claims in the LINE backlog', async () => {
+  const blocked = claim({ status: 'READY_FOR_PAYMENT', confirmedDuplicateExpenseCount: 1 });
+  const payable = claim({ status: 'READY_FOR_PAYMENT' });
+  const partial = claim({ status: 'PARTIALLY_PAID', confirmedDuplicateExpenseCount: 1 });
+  const result = await run(repo([blocked, partial, payable], [], {}));
+  assert.match(result.items.find(row => row.id === blocked.id)!.waitingOn, /ผู้เบิกที่มีสิทธิ์ยกเลิกหรือผู้ตรวจการเงินที่ดูแลสาขา/);
+  assert.equal(result.desks.length, 3);
+  assert.equal(result.items.find(row => row.id === partial.id)!.waitingOn, 'ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้');
+  assert.match(result.desks.find(row => row.label.includes('ผู้เบิก'))!.note!, /รอยกเลิกคำขอ เพราะใบเสร็จยืนยันว่าซ้ำ/);
+});

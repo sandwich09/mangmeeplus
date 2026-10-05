@@ -16,7 +16,7 @@ import {
 } from './reimbursements.api';
 import {
   FINANCE_REVIEW_LABELS, POLICY_TAB_LABEL, REIMBURSEMENT_CREATE_UNAVAILABLE, SELF_APPROVAL_SWITCH_LABEL, SELF_APPROVAL_POLICY_NOTE,
-  claimDeskText, claimStatusBadge, currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
+  claimDeskText, claimStatusBadge, reimbursementOwnActions, reimbursementSubmitReadiness,
 } from './reimbursements.model';
 import {
   dateShort, ICON, KPI, StatCard, ErrorBanner,
@@ -37,7 +37,7 @@ import {
 import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage, draftRowSubmitLabel } from './reimbursement-payout.logic';
 import { ClaimPayoutCard } from './ReimbursementPayout';
 import { roleDisplayName } from '../employee-access/role-picker.logic';
-import { reimbursementDuplicateBlockText, type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, reimbursementDuplicateBlockText, type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
 /** Every banner in this feature goes through here, so API error codes never reach the user raw. */
@@ -555,7 +555,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
     r.ageHours,
     r.slaRisk ? OVERDUE_LABEL : '',
     rowMayBeDuplicate(r) ? MAY_BE_DUPLICATE_LABEL : '',
-    currentDeskText(r.currentDesk),
+    claimDeskText(r),
   ], query)), [data, query]);
   const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
   const pagedData = useMemo(() => filteredData.slice(bounds.start, bounds.end), [filteredData, bounds]);
@@ -771,7 +771,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, userId
     claimStatusBadge(r).label,
     financeLine(r),
     r.hasDuplicateBlocker ? reimbursementDuplicateBlockText(r.duplicateReasons) : '',
-    currentDeskText(r.currentDesk),
+    claimDeskText(r),
   ], query)), [data, query, financeLine]);
   const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
   const pagedData = useMemo(() => filteredData.slice(bounds.start, bounds.end), [filteredData, bounds]);
@@ -785,7 +785,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, userId
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             <StatCard icon={ICON.clock} label={words.waiting} value={summary.count} {...KPI.sky} />
             <StatCard icon={ICON.wallet} label="ยอดคงค้างรวม" value={formatMoney(summary.outstandingAmount, 'THB')} {...KPI.purple} />
-            <StatCard icon={ICON.alert} label="พบรายการที่อาจซ้ำ" value={summary.flagged} danger={summary.flagged > 0} {...KPI.danger} />
+            <StatCard icon={ICON.alert} label={REIMBURSEMENT_DUPLICATE_BLOCK_LABEL} value={summary.flagged} danger={summary.flagged > 0} {...KPI.danger} />
           </div>
           <MangmeeCard className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -812,7 +812,11 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, userId
             <div className="[container-type:inline-size]">
             <div className="hidden @[58rem]:block" data-testid="reimbursements-finance-table">
             <div className="mt-3 overflow-x-auto">
-                <table className={QUEUE_TABLE_CLASS}>
+                <table className={cx(QUEUE_TABLE_CLASS, 'w-full table-fixed [&_td]:!whitespace-normal [&_th]:!whitespace-normal [&_td]:[overflow-wrap:anywhere]')}>
+                  <colgroup>
+                    <col style={{ width: 128 }} /><col style={{ width: 112 }} /><col style={{ width: 80 }} /><col style={{ width: 144 }} />
+                    <col />{withReview && <col style={{ width: 112 }} />}<col style={{ width: 176 }} />
+                  </colgroup>
                   <thead>
                     <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้เบิก</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th>{withReview && <th className="!text-center">ตรวจการเงิน</th>}<th className="!text-center">การกระทำ</th></tr>
                   </thead>
@@ -820,13 +824,13 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, userId
                     {pagedData.map((r: any) => (
                       <tr key={r.id} className="cursor-pointer" onClick={() => onOpenDetail(r.id)}>
                         <td className="font-mono text-xs">{r.requestNo ?? '—'}</td>
-                        <td className={cx(FREE_TEXT_CELL, 'min-w-24')}>{r.requesterDisplayNameSnapshot}</td>
+                        <td className={FREE_TEXT_CELL}>{r.requesterDisplayNameSnapshot}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
-                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge claim={r} />{(r.hasDuplicateBlocker || r.duplicateReasons?.includes('EXPENSE_CONFIRMATION')) && <><MangmeeBadge tone="amber">{reimbursementDuplicateBlockText(r.duplicateReasons)}</MangmeeBadge><span className="text-xs text-amber-800">{duplicateNoticeForViewer(r, permissions, userId)}</span></>}</div></td>
+                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge claim={r} />{(r.hasDuplicateBlocker || r.duplicateReasons?.includes('EXPENSE_CONFIRMATION')) && <><MangmeeBadge tone="amber">{reimbursementDuplicateBlockText(r.duplicateReasons)}</MangmeeBadge><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere] text-xs text-amber-800">{duplicateNoticeForViewer(r, permissions, userId)}</span></>}</div></td>
                         {withReview && <td className="text-xs text-gray-500">{financeLine(r) ?? '—'}</td>}
                         <td className="text-right">
-                          <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+                          <div className="flex flex-wrap items-center justify-end gap-2">
                             <button type="button" aria-label="ดูรายละเอียด" title="ดูรายละเอียด"
                               className={cx(ghostClass, '!min-h-9 !w-9 !px-0 !py-0')}
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
@@ -920,7 +924,7 @@ export function PaymentModal({ companyId, userId, permissions, request, onClose,
         <div className="space-y-3">
           {/* The same box the claim page shows at its payment step: where to transfer, with show and copy. */}
           <ClaimPayoutCard companyId={companyId} detail={claim} userId={userId} payoutAccountHref={`${claimPath}/payout-account`} payStep />
-          <PaymentForm companyId={companyId} request={claim} onCancel={onClose} onDone={onDone}
+          <PaymentForm companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} onClaimChanged={() => onDone()}
             onOpenFile={(choice) => void openSlipChoice(claim.id, choice)} />
           {openFileError && <ErrorBanner message={`เปิดไฟล์ไม่สำเร็จ · ${openFileError}`} />}
         </div>

@@ -537,7 +537,7 @@ describe('the pay queue\'s dialog: every listed file is opened before it is chos
     const hub = read('./ReimbursementsPages.tsx');
     const page = read('./ReimbursementJourneyPage.tsx');
     assert.match(hub, /const \{ openSlipChoice, previewModals \} = useClaimDocumentPreview\(companyId, setOpenFileError\);/);
-    assert.match(hub, /<PaymentForm companyId=\{companyId\} request=\{claim\} onCancel=\{onClose\} onDone=\{onDone\}\s+onOpenFile=\{\(choice\) => void openSlipChoice\(claim\.id, choice\)\} \/>/);
+    assert.match(hub, /<PaymentForm companyId=\{companyId\} request=\{claim\} onCancel=\{onClose\} onDone=\{onDone\} onClaimChanged=\{\(\) => onDone\(\)\}\s+onOpenFile=\{\(choice\) => void openSlipChoice\(claim\.id, choice\)\} \/>/);
     assert.match(page, /onOpenFile=\{\(choice\) => void openSlipChoice\(detail\.id, choice\)\} \/>/);
     assert.match(hub, /<\/Modal>\s+\{previewModals\}\s+<\/>/);
     // A file that cannot be opened says so inside the dialog, where the person is looking.
@@ -545,4 +545,40 @@ describe('the pay queue\'s dialog: every listed file is opened before it is chos
     // The form takes no host without the handler.
     assert.match(read('./ReimbursementDetailSections.tsx'), /\n  onOpenFile: \(choice: PaymentSlipChoice\) => void;\n\}\) \{/);
   });
+});
+
+it('a confirmed duplicate refusal rereads the claim and hands its current state to the host without reporting payment success', async () => {
+  const realCreate = reactRuntime.createElement, realState = reactRuntime.useState, realFetch = globalThis.fetch;
+  const realWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  let submit: ((event: { preventDefault(): void }) => Promise<void>) | undefined;
+  let shown: any, closed = false, successes = 0;
+  const calls: string[] = [];
+  const current = { ...base, duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] };
+  Reflect.set(reactRuntime, 'createElement', (type: any, props: any, ...children: any[]) => {
+    if (type === 'form') submit = props.onSubmit;
+    return (realCreate as any)(type, props, ...children);
+  });
+  Reflect.set(reactRuntime, 'useState', (initial: any) => {
+    const [value, set] = realState(initial);
+    return initial?.paymentMethod !== undefined ? [{ ...initial, paymentMethod: 'CASH' }, set] : [value, set];
+  });
+  Object.assign(globalThis, { window: {} });
+  globalThis.fetch = (async (_input: any, init?: RequestInit) => {
+    calls.push(init?.method ?? 'GET');
+    return init?.method === 'POST' ? Response.json({ code: 'duplicate_confirmed', claimStatus: 'READY_FOR_PAYMENT' }, { status: 422 }) : Response.json(current);
+  }) as typeof fetch;
+  try {
+    renderToStaticMarkup(h(ToastContext.Provider, { value: { ...toast, success: () => { successes++; } } },
+      h(sections.PaymentForm, { companyId: 'company-1', request: base, onCancel: () => { closed = true; }, onDone: () => { successes++; }, onOpenFile: noop,
+        onClaimChanged: (latest: any) => { shown = latest; closed = true; } } as any)));
+    assert.ok(submit);
+    await submit({ preventDefault: noop });
+    assert.deepEqual(calls, ['POST', 'GET']);
+    assert.deepEqual(shown, current);
+    assert.equal(closed, true);
+    assert.equal(successes, 0);
+  } finally {
+    Reflect.set(reactRuntime, 'createElement', realCreate); Reflect.set(reactRuntime, 'useState', realState); globalThis.fetch = realFetch;
+    if (realWindow) Object.defineProperty(globalThis, 'window', realWindow); else Reflect.deleteProperty(globalThis, 'window');
+  }
 });

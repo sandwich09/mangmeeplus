@@ -744,6 +744,12 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
   const KEEP = 'ใช้บัญชีเดิมของใบนี้';
   const choices = (texts: string[]) => texts.filter((text) => ['ใช้บัญชีรับเงินคืนประจำของฉัน', 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', KEEP].includes(text));
 
+  it('never promises a pay step in the account form of a confirmed duplicate', () => {
+    const page = form(withDefault(phaseA({ duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] })));
+    assert.match(page.texts.join(' '), /ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/);
+    assert.doesNotMatch(page.texts.join(' '), /ใบจะกลับไปรอจ่าย|ก่อนจึงจ่ายได้/);
+  });
+
   it('offers the requester\'s default account as the server shows it now, masked, beside cash and a typed account, and chooses none', () => {
     const { html, texts } = form(withDefault(phaseA()));
     assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของฉัน', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', KEEP]);
@@ -1719,6 +1725,14 @@ describe('the round\'s forms open inside the step card, never in a dialog', () =
     }
   });
 
+  it('uses the refreshed duplicate state after saving a payout answer', async () => {
+    const page = filled(phaseA({ payoutCorrectionActions: GIVE }), requester, 'correct-payout', { picked: { mode: 'CASH' } });
+    toasts.length = 0;
+    await withApi((_url, method) => ({ status: 200, body: asAnswered(ready({ ...(method === 'GET' && { duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] }) })) }), () => page.handlers.form.onSubmit(submitEvent));
+    assert.match(toasts.join(' '), /บันทึกวิธีรับเงินคืนแล้ว .*ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/);
+    assert.doesNotMatch(toasts.join(' '), /กลับไปรอจ่าย/);
+  });
+
   // A second press that arrives after the first was taken (another tab, or a press again after a lost answer).
   it('closes an account form whose claim changed after it was opened, even where the form is still offered, and says what to look at', async () => {
     const page = filled(phaseA({ payoutCorrectionActions: GIVE, updatedAt: AT.sentBack }), requester, 'correct-payout', { picked: { mode: 'CASH' } });
@@ -1801,6 +1815,14 @@ describe('the approval of a round: the comparison, the attestation of the NEW ac
     assert.ok(ticked, 'a tick for version 2 is a tick');
     assert.doesNotMatch(button(ticked.html), /disabled=""/);
     assert.equal(tickedFor(1), null, 'the tick the first approval was given with attests nothing of the new account');
+  });
+
+  it('uses the refreshed duplicate state after approving a payout answer', async () => {
+    const page = tickedFor(2)!;
+    toasts.length = 0;
+    await withApi((_url, method) => ({ status: 200, body: asAnswered(reapproved({ ...(method === 'GET' && { duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] }) })) }), () => page.handlers.approve.onClick());
+    assert.match(toasts.join(' '), /อนุมัติบัญชีรับเงินใหม่แล้ว .*ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/);
+    assert.doesNotMatch(toasts.join(' '), /กลับไปรอจ่าย/);
   });
 
   it('approves with the hash and the account version the card showed, through the approval endpoint, and says the claim is back at its pay step', async () => {
@@ -2427,6 +2449,17 @@ describe('signing and signed copies around a round (spec §14.4, AC32)', () => {
   const waits = (status: string) => `ใบนี้${status} ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งเมื่อใบกลับมารอจ่าย`;
   const WAITS = waits('รอผู้เบิกแก้บัญชีรับเงิน');
 
+  it('does not promise payment after signing or voiding a confirmed duplicate', () => {
+    const detail = phaseA({ duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] });
+    assert.doesNotMatch(detailSections(detail, requester).texts.join(' '), /ทำได้อีกครั้งเมื่อใบกลับมารอจ่าย/);
+  });
+
+  it('does not promise a pay step before voiding a confirmed duplicate', () => {
+    const dialog = render(h(sections.VoidPaymentDialog, { payment: {}, claim: { duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'], status: 'PAID' }, onClose: noop, onConfirm: noop } as any));
+    assert.match(dialog.texts.join(' '), /ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/);
+    assert.doesNotMatch(dialog.texts.join(' '), /ใบเบิกจะกลับไปสถานะรอจ่าย/);
+  });
+
   it('offers no ลงนาม to anyone while a round is open, says why, and offers it again once the new account is approved', () => {
     for (const [at, said] of [[phaseA, WAITS], [phaseB, waits('รออนุมัติบัญชีรับเงินใหม่')]] as const) {
       for (const viewer of [requester, approver, payer]) {
@@ -2666,4 +2699,14 @@ describe('claim detail words from actual actors and routes', () => {
       assert.equal(texts.some((text) => text.includes('อนุมัติรายการของตนเองตามนโยบายบริษัท')), false);
     }
   });
+});
+
+it('a changed default account offers no correction route for a confirmed duplicate', () => {
+  const blocked = ready({ payout: { ...KBANK, source: 'DEFAULT_ACCOUNT', defaultAccountChanged: true }, payoutCorrectionActions: SEND,
+    duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] });
+  const page = claimPage(blocked, requester);
+  const hint = page.texts.find(text => text.startsWith('บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว'))!;
+  assert.ok(hint);
+  assert.doesNotMatch(hint, /กดส่งกลับ|ก่อนมีการโอน|แจ้งผู้อนุมัติ/);
+  assert.doesNotMatch(page.html, /data-testid="reimbursement-payout-send-back"/);
 });
