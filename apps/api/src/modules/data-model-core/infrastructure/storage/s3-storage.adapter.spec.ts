@@ -142,6 +142,27 @@ describe('S3StorageAdapter', () => {
     signedUrl.mock.restore();
   });
 
+  it('signs a Thai file name as an ASCII header, because the storage service answers 400 to anything outside ISO-8859-1', async () => {
+    const dispositions: Array<string | undefined> = [];
+    const signedUrl = mock.method(s3Presigner, 'getSignedUrl', async (_client: S3Client, command: GetObjectCommand) => {
+      dispositions.push(command.input.ResponseContentDisposition);
+      return 'https://s3.example.test/download';
+    });
+
+    const storage = new S3StorageAdapter(config as AppConfigService);
+    // The name the system gives a printed claim form; a signed copy comes back under it (UAT 2026-10-05).
+    const fileName = 'ใบเบิกค่าใช้จ่าย RB-202610-00001.pdf';
+    await storage.createDownloadUrl({ bucket: 'watchdog-evidence', objectKey: 'co-1/claim.pdf', mimeType: 'application/pdf', fileName, disposition: 'inline' });
+    await storage.createDownloadUrl({ bucket: 'watchdog-evidence', objectKey: 'co-1/claim.pdf', mimeType: 'application/pdf', fileName: "สลิป (1)'*.pdf" });
+
+    for (const disposition of dispositions) assert.match(disposition!, /^[\x20-\x7e]+$/);
+    assert.equal(dispositions[0], `inline; filename="________________ RB-202610-00001.pdf"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    // Characters RFC 5987 does not allow bare in the extended form are escaped too.
+    assert.equal(dispositions[1], "attachment; filename=\"____ (1)'*.pdf\"; filename*=UTF-8''%E0%B8%AA%E0%B8%A5%E0%B8%B4%E0%B8%9B%20%281%29%27%2A.pdf");
+    assert.equal(decodeURIComponent(dispositions[0]!.split("filename*=UTF-8''")[1]!), fileName);
+    signedUrl.mock.restore();
+  });
+
   it('presigns upload and download URLs against the configured public endpoint', async () => {
     const storage = new S3StorageAdapter({
       ...config,

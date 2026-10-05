@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "2a1f1d52161a2cb349d834e8174400943b44f616",
-  "checkoutBranch": "claude/owner-preview-20261004",
+  "sourceRevision": "8a4de3b352091f85116b92d68afc048a3cb60072",
+  "checkoutBranch": "claude/thai-filename-download-20261005",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -109,7 +109,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "ba7dbff57b4485fe1be8936a8cc0419a6c0ce77677021bdc95bb825e9c7dcbe7"
+      "sha256": "5d350aba7f51bdb8e6b8cbf36241a3a726e0a4e86b6ca59314ff575c5724472c"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -9016,6 +9016,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-04T18:25:45.694Z",
-  "manifestDigest": "a57335e1618711aaa94ca22708cfc17cafc46ece9f9a5fc00f5fe8f887ac7b3f"
+  "generatedAt": "2026-10-05T01:50:59.275Z",
+  "manifestDigest": "75ff6aff7be095fd463a9991ef99d4228a3219eacdaac3cf8db723b6b5fa0205"
 }
