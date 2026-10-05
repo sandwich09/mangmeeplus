@@ -205,3 +205,11 @@ test('saved default swap tells where the previous account remains, in shared Tha
   assert.equal((payout.REIMBURSEMENT_SAVED_PAYOUT_WORDS as any).madeDefaultWithPrevious,
     'ตั้งเป็นบัญชีประจำแล้ว บัญชีประจำเดิมอยู่ในรายการบัญชีที่บันทึกไว้');
 });
+
+test('W4 third-party send-back reasons exclude name mismatch, including PromptPay; SELF and legacy stay unchanged', () => {
+  for (const kind of ['BANK_ACCOUNT', 'PROMPTPAY_PHONE'] as const) {
+    const own = payout.reimbursementPayoutCorrectionReasons('ACCOUNT', kind);
+    assert.deepEqual((payout.reimbursementPayoutCorrectionReasons as any)('ACCOUNT', kind, 'THIRD_PARTY'), own.filter(code => code !== 'ACCOUNT_NAME_MISMATCH'));
+    assert.deepEqual((payout.reimbursementPayoutCorrectionReasons as any)('ACCOUNT', kind, 'SELF'), own);
+  }
+});

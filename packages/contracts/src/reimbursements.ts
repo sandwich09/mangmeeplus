@@ -481,9 +481,14 @@ const DUPLICATE_CANCEL_ACTION = 'กดยกเลิกคำขอในห�
 const DUPLICATE_CANCEL_HELP = `ให้${DUPLICATE_CANCEL_ACTOR}ยกเลิกคำขอ`;
 const DUPLICATE_VOID_ACTOR = 'ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้';
 const DUPLICATE_VOID_HELP = `ให้${DUPLICATE_VOID_ACTOR}ตรวจและยกเลิกรายการจ่ายให้ครบก่อน`;
-/** Display-only: the stored status, routing and reminders keep their existing rules. */
-export function reimbursementDuplicateWait(claim?: { status?: string; duplicateReasons?: readonly string[]; cancellationPending?: boolean; currentDesk?: { kind?: string } | null } | null) {
-  if (!claim?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') || claim.cancellationPending || claim.currentDesk?.kind === 'SYSTEM') return undefined;
+/** Display-only duplicate hold, from the row/detail payment predicate; stored routing is unchanged. */
+export function reimbursementDuplicateWait(claim?: { status?: string; duplicateReasons?: readonly string[]; hasDuplicateBlocker?: boolean; duplicateBlocksPayment?: boolean; cancellationPending?: boolean; currentDesk?: { kind?: string } | null } | null) {
+  if (!claim || claim.cancellationPending || claim.currentDesk?.kind === 'SYSTEM') return undefined;
+  if (!claim.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE')) {
+    if (!(claim.hasDuplicateBlocker || claim.duplicateBlocksPayment) || !['READY_FOR_PAYMENT', 'APPROVED', 'PARTIALLY_PAID'].includes(claim.status ?? '') || (claim.status === 'APPROVED' && claim.currentDesk?.kind !== 'PAYMENT')) return undefined;
+    return { status: REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, actor: REIMBURSEMENT_DESK_LABELS.PAYMENT,
+      waiting: reimbursementDuplicateBlockNotice(claim.duplicateReasons, false, { status: claim.status }) };
+  }
   if (claim.status === 'PARTIALLY_PAID') return { status: undefined, actor: DUPLICATE_VOID_ACTOR,
     waiting: reimbursementDuplicateBlockNotice(claim.duplicateReasons, false, { status: claim.status }) };
   if (claim.status !== 'READY_FOR_PAYMENT' && !(claim.status === 'APPROVED' && claim.currentDesk?.kind === 'PAYMENT')) return undefined;
@@ -1072,6 +1077,7 @@ export const REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS = {
   REQUESTER_ASKED_METHOD: 'ผู้เบิกขอเปลี่ยนวิธีรับเงินคืน',
   OTHER: 'อื่น ๆ',
 } as const;
+export const REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY = 'บัญชีของบุคคลอื่นใช้เหตุผลว่าชื่อบัญชีไม่ตรงกับผู้เบิกไม่ได้ กรุณาเลือกเหตุผลอื่น';
 export type ReimbursementPayoutCorrectionReason = keyof typeof REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS;
 
 export function isReimbursementPayoutCorrectionReason(value: unknown): value is ReimbursementPayoutCorrectionReason {
@@ -1086,13 +1092,14 @@ export function isReimbursementPayoutCorrectionReason(value: unknown): value is 
  * PromptPay number, having no bank, has four; cash has its own two; and a claim with no account is sent
  * back for that one reason, which a form states and does not ask.
  *
- * `payoutKind` is the kind of the account held (`payout.payoutKind` on a detail).
+ * `payoutKind` and `holderType` are the facts of the account held. A third-party account
+ * deliberately differs from the requester, so name mismatch is never a reason for it.
  */
-export function reimbursementPayoutCorrectionReasons(held: ReimbursementPayoutHeld, payoutKind?: ReimbursementPayoutKind | null): ReimbursementPayoutCorrectionReason[] {
+export function reimbursementPayoutCorrectionReasons(held: ReimbursementPayoutHeld, payoutKind?: ReimbursementPayoutKind | null, holderType?: ReimbursementPayoutHolderType | null): ReimbursementPayoutCorrectionReason[] {
   if (held === 'NOTHING') return ['NO_ACCOUNT_ON_CLAIM'];
   if (held === 'CASH') return ['CASH_NOT_PAYABLE', 'REQUESTER_ASKED_METHOD', 'OTHER'];
   return [
-    'ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NAME_MISMATCH', ...(payoutKind === 'PROMPTPAY_PHONE' ? [] : ['BANK_WRONG' as const]),
+    'ACCOUNT_NUMBER_WRONG', ...(holderType === 'THIRD_PARTY' ? [] : ['ACCOUNT_NAME_MISMATCH' as const]), ...(payoutKind === 'PROMPTPAY_PHONE' ? [] : ['BANK_WRONG' as const]),
     'ACCOUNT_UNUSABLE', 'REQUESTER_ASKED', 'OTHER',
   ];
 }

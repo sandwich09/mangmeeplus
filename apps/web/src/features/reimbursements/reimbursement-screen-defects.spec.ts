@@ -87,3 +87,22 @@ it('W3 default swap distinguishes a previous transfer account from cash or absen
   assert.match(source, /payoutMethod === 'BANK_TRANSFER' \? W.madeDefaultWithPrevious : W.madeDefault/);
   assert.equal((W as any).madeDefaultWithPrevious, 'ตั้งเป็นบัญชีประจำแล้ว บัญชีประจำเดิมอยู่ในรายการบัญชีที่บันทึกไว้');
 });
+
+it('W4 correction answer passes each inline refusal to the existing fields and brings non-field refusals into view', () => {
+  const source = read('./ReimbursementPayoutCorrection.tsx').split('export function PayoutCorrectionAccountForm')[1]!;
+  assert.match(source, /<PayoutAccountFields[^\n]*invalidField=\{invalidField\}[^\n]*error=\{error\}/);
+  assert.match(source, /<PayoutHolderFields[^\n]*invalidField=\{invalidField\}[^\n]*error=\{error\}/);
+  assert.match(source, /error && !invalidField/);
+  assert.match(source, /errorRef.current\?\.scrollIntoView/);
+  assert.match(source, /ref=\{errorRef\} tabIndex=\{-1\}/);
+});
+it('W4 send-back form omits name mismatch only for another persons account', () => {
+  const correction = require('./reimbursement-payout.logic');
+  for (const payoutKind of ['BANK_ACCOUNT', 'PROMPTPAY_PHONE']) {
+    const own = correction.payoutCorrectionReasons({ payoutMethod: 'BANK_TRANSFER', payout: { payoutKind, holderType: 'SELF' } });
+    const third = correction.payoutCorrectionReasons({ payoutMethod: 'BANK_TRANSFER', payout: { payoutKind, holderType: 'THIRD_PARTY' } });
+    assert.ok(own.some(([code]: string[]) => code === 'ACCOUNT_NAME_MISMATCH'));
+    assert.deepEqual(third, own.filter(([code]: string[]) => code !== 'ACCOUNT_NAME_MISMATCH'));
+    assert.equal(require('@/common/api/api-error-message').translateApiError('payout_correction_name_mismatch_third_party'), require('@watchdog-bms/contracts').REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY);
+  }
+});
