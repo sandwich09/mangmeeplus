@@ -5555,3 +5555,22 @@ describe('multi payout 2b correction and readers', () => {
     await assert.rejects(() => w.payouts.addSavedOwn(ctx(), { ...KBANK, holderType: 'SELF' }), /payout_saved_account_is_default/);
   });
 });
+
+it('W4 API refuses name mismatch for third-party accounts at payment and correction approval without writes', async () => {
+  for (const answered of [false, true]) {
+    const w = correctionWorld();
+    const id = await w.ready();
+    await w.sendBack.execute(payerCtx(), id, { reasonCode: 'REQUESTER_ASKED' });
+    await w.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB, holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก' });
+    if (!answered) await w.approve.execute(approverCtx(), id, undefined, w.claim().approvalSnapshotHash, 2, true);
+    const before = JSON.stringify([w.claim(), w.audits, w.events()]);
+    await assert.rejects(() => w.sendBack.execute(answered ? approverCtx() : payerCtx(), id, { reasonCode: 'ACCOUNT_NAME_MISMATCH' }), (error: any) => {
+      assert.equal(error.getStatus(), 400);
+      assert.equal(error.getResponse().code, 'payout_correction_name_mismatch_third_party');
+      assert.equal(error.getResponse().message, 'บัญชีของบุคคลอื่นใช้เหตุผลว่าชื่อบัญชีไม่ตรงกับผู้เบิกไม่ได้ กรุณาเลือกเหตุผลอื่น');
+      return true;
+    });
+    assert.equal(JSON.stringify([w.claim(), w.audits, w.events()]), before);
+    await w.sendBack.execute(answered ? approverCtx() : payerCtx(), id, { reasonCode: 'ACCOUNT_UNUSABLE' });
+  }
+});

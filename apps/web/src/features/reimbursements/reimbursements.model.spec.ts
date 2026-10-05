@@ -410,3 +410,16 @@ it('a confirmed duplicate waiting at payment has cancellation status and actor o
   assert.equal(claimStatusBadge({ ...row, status: 'PARTIALLY_PAID' }).label, 'จ่ายบางส่วน');
   assert.equal(claimDeskText({ ...row, status: 'PARTIALLY_PAID' }), 'ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้');
 });
+
+it('W4 held possible duplicates use the same status and desk on lists and detail; warnings remain payable', () => {
+  for (const facts of [{ hasDuplicateBlocker: true }, { duplicateBlocksPayment: true }]) {
+    for (const status of ['READY_FOR_PAYMENT', 'APPROVED', 'PARTIALLY_PAID']) {
+      const row = { status, currentDesk: { kind: 'PAYMENT' }, duplicateReasons: ['MANUAL'], ...facts };
+      assert.equal(claimStatusBadge(row).label, 'ติดรายการซ้ำ');
+      assert.equal(claimDeskText(row), 'ผู้มีสิทธิ์บันทึกจ่าย');
+      assert.equal(claimStatusBadge({ ...row, currentDesk: { kind: 'SYSTEM' } }).label, 'รอระบบปรับสถานะ');
+    }
+  }
+  assert.equal(claimStatusBadge({ status: 'READY_FOR_PAYMENT', duplicateReasons: ['MANUAL'] }).label, 'พร้อมจ่าย');
+  assert.equal(claimStatusBadge({ status: 'PAID', hasDuplicateBlocker: true } as any).label, 'จ่ายแล้ว');
+});
