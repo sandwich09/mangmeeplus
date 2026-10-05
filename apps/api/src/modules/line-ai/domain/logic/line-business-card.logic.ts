@@ -406,6 +406,70 @@ export type LineExpenseDraftCardFacts = {
   notes: string[];
 };
 
+/** The record EXISTS but is unconfirmed — the same state the canonical reply's header prints
+ *  ("บันทึก…เบื้องต้นแล้ว (รอตรวจสอบ)"), said once on the card, and never by a model. */
+export const EXPENSE_DRAFT_CARD_NOTE = 'รายการนี้เป็นร่าง ยังไม่ได้ยืนยันรายการ';
+
+/** The header's first line of the review card: a receipt is called a receipt, a typed note a draft,
+ *  and any other paper simply a document — the row below it names the kind. */
+export function expenseDraftCardSubject(sourceDocumentType: string | null | undefined, textOnly = false): string {
+  return textOnly ? 'ร่างค่าใช้จ่าย' : sourceDocumentType === 'RECEIPT' ? 'ข้อมูลใบเสร็จ' : 'ข้อมูลเอกสาร';
+}
+
+/** What a producer of a draft's review card knows, each value already in the words it would print
+ *  (a formatted date, an amount with its unit). A value that is missing or blank has no row. */
+export type LineExpenseDraftCardValues = {
+  expenseId: string;
+  /** `ข้อมูลใบเสร็จ` for a receipt, `ข้อมูลเอกสาร` for another paper, `ร่างค่าใช้จ่าย` for a typed note. */
+  subject: string;
+  vendor?: string | null;
+  item?: string | null;
+  date?: string | null;
+  documentNumber?: string | null;
+  documentType?: string | null;
+  category?: string | null;
+  total?: string | null;
+  vat?: string | null;
+  withholdingTax?: string | null;
+  otherCharges?: string | null;
+  /** The record's own state in words (`EXPENSE_STATUS_LABELS`). */
+  status: string;
+  /** What the reply says before its facts, and after them; each is a note, word for word. */
+  notesBefore?: ReadonlyArray<string | null | undefined>;
+  notesAfter?: ReadonlyArray<string | null | undefined>;
+};
+
+/**
+ * The review card's rows, in the locked design's order and under its names, for every producer of a
+ * draft's card (the photo terminal, the file result): ONE place decides what a row is called and
+ * where it stands, so two producers cannot draw the same record two ways. A value nobody grounded is
+ * left out — never a placeholder. The state is always the last row, as a pending pill.
+ */
+export function expenseDraftCardFactsFrom(values: LineExpenseDraftCardValues): LineExpenseDraftCardFacts {
+  const row = (label: string, value: string | null | undefined, extra: Partial<LineSystemCardRow> = {}): LineSystemCardRow[] =>
+    value?.trim() ? [{ label, value: value.trim(), ...extra }] : [];
+  const notes = (entries: ReadonlyArray<string | null | undefined> = []) => entries.map((entry) => entry?.trim()).filter((entry): entry is string => !!entry);
+  const vendor = values.vendor?.trim();
+  return {
+    expenseId: values.expenseId,
+    subject: values.subject,
+    rows: [
+      ...row('ผู้ขาย / ร้านค้า', vendor),
+      ...row('รายการ', values.item?.trim() !== vendor ? values.item : undefined),
+      ...row('วันที่เอกสาร', values.date),
+      ...row('เลขเอกสาร', values.documentNumber),
+      ...row('ประเภทเอกสาร', values.documentType),
+      ...row('หมวดค่าใช้จ่าย', values.category),
+      ...row('ยอดรวม', values.total, { total: true }),
+      ...row('VAT', values.vat),
+      ...row('ภาษีหัก ณ ที่จ่าย', values.withholdingTax),
+      ...row('ค่าบริการอื่นๆ', values.otherCharges),
+      { label: 'สถานะเอกสาร', value: values.status, pill: 'pending' },
+    ],
+    notes: [...notes(values.notesBefore), EXPENSE_DRAFT_CARD_NOTE, ...notes(values.notesAfter)],
+  };
+}
+
 /** §10.1: the capture terminal as the locked review card — the review mascot, the facts as
  *  `label : value` rows, the draft's notes, and the one button that opens the record for review.
  *
