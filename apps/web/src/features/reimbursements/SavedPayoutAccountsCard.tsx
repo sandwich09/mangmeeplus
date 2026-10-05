@@ -99,8 +99,8 @@ export function SavedPayoutAccountRow({ companyId, account, index, busy, onMakeD
     <AccountNumberReveal masked="" payoutKind={account.payoutKind} revealKey={`${companyId}:${account.id}`} canReveal last4={account.accountLast4}
       onReveal={async () => (await revealMySavedPayoutAccount(companyId, account.id)).accountNumber} />
     <div className="flex flex-col gap-2 sm:flex-row">
-      {account.holderType === 'SELF' && <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} onClick={onMakeDefault}>{W.makeDefault}</button>}
-      <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} onClick={onRemove}>ลบบัญชี</button>
+      {account.holderType === 'SELF' && <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={onMakeDefault}>{W.makeDefault}</button>}
+      <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={onRemove}>ลบบัญชี</button>
     </div>
   </div>;
 }

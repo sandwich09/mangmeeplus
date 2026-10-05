@@ -1915,6 +1915,10 @@ export const REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS = {
   payout_third_party_needs_approval: 'ใบนี้ใช้บัญชีของบุคคลอื่นไม่ได้เพราะไม่มีขั้นอนุมัติ เลือกบัญชีของตัวเองหรือเงินสด หรือยกเลิกใบนี้แล้วส่งใบใหม่',
   payment_currency_mismatch: 'สกุลเงินที่จ่ายไม่ตรงกับใบเบิก กรุณาใช้สกุลเงินเดียวกับใบเบิก',
   payment_source_bank_account_invalid: 'บัญชีที่ใช้จ่ายไม่พร้อมใช้งานในบริษัทนี้ กรุณาโหลดข้อมูลล่าสุดและเลือกบัญชีที่ใช้จ่ายใหม่',
+  // A choice the form should never send, and the two the command refuses for who is filling the form.
+  payout_mode_invalid: 'เลือกวิธีรับเงินคืนไม่สำเร็จ กรุณาโหลดหน้าใหม่แล้วเลือกวิธีรับเงินคืนอีกครั้ง',
+  payout_save_options_invalid: 'เลือกได้อย่างเดียว: บันทึกเป็นบัญชีประจำ หรือบันทึกบัญชีนี้ไว้ใช้ครั้งหน้า กรุณาเอาเครื่องหมายออกหนึ่งช่อง',
+  payout_saved_account_owner_required: 'บัญชีที่บันทึกไว้เป็นของผู้เบิก จึงเลือกหรือบันทึกเพิ่มได้เฉพาะเมื่อผู้เบิกกรอกใบเบิกเอง กรุณาเลือกบัญชีประจำของผู้เบิก เงินสด หรือกรอกบัญชีสำหรับใบนี้',
 };
 
 // Source: Bank of Thailand financial institution directory, checked 2026-09-23.
