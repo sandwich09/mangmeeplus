@@ -60,12 +60,23 @@ function isFileAttemptQuestion(original: string, normalized: string): boolean {
   return BARE_SIZE_WORD.test(normalized) && MEDIA_NOUN_PATTERN.test(normalized);
 }
 
+/** What a kept receipt has come to, as its facts: the state it is in, the words that follow that state
+ *  where there are any (what the reader still has to do, or what went wrong), and how the state reads —
+ *  done, still open, or closed. The sentence below and a card's state row are both written from these,
+ *  so they cannot say it differently. */
+export type ReceiptProgress = { state: string; next?: string; tone: 'ok' | 'pending' | 'closed' };
+
+export function receiptProgress(status: string, verificationStatus?: string | null): ReceiptProgress {
+  if (status === 'CONFIRMED') return { state: 'ยืนยันรายการแล้ว', tone: 'ok' };
+  if (status === 'VOIDED') return { state: 'ยกเลิกรายการแล้ว', tone: 'closed' };
+  if (status === 'REJECTED') return { state: 'รายการไม่ผ่านการตรวจ', tone: 'closed' };
+  if (status === 'EXTRACTING' || verificationStatus === 'VERIFYING') return { state: 'กำลังอ่านใบเสร็จ', tone: 'pending' };
+  if (verificationStatus === 'FAILED') return { state: 'เก็บภาพแล้ว', next: 'แต่อ่านข้อมูลไม่สำเร็จ', tone: 'pending' };
+  if (status === 'DRAFT' || status === 'NEEDS_REVIEW' || status === 'READY_FOR_CONFIRMATION') return { state: 'บันทึกแบบร่างแล้ว', next: 'รอคุณตรวจสอบและยืนยัน', tone: 'pending' };
+  return { state: 'ยังยืนยันสถานะไม่ได้', tone: 'pending' };
+}
+
 export function receiptProgressLabel(status: string, verificationStatus?: string | null): string {
-  if (status === 'CONFIRMED') return 'ยืนยันรายการแล้ว';
-  if (status === 'VOIDED') return 'ยกเลิกรายการแล้ว';
-  if (status === 'REJECTED') return 'รายการไม่ผ่านการตรวจ';
-  if (status === 'EXTRACTING' || verificationStatus === 'VERIFYING') return 'กำลังอ่านใบเสร็จ';
-  if (verificationStatus === 'FAILED') return 'เก็บภาพแล้ว แต่อ่านข้อมูลไม่สำเร็จ';
-  if (status === 'DRAFT' || status === 'NEEDS_REVIEW' || status === 'READY_FOR_CONFIRMATION') return 'บันทึกแบบร่างแล้ว รอคุณตรวจสอบและยืนยัน';
-  return 'ยังยืนยันสถานะไม่ได้';
+  const { state, next } = receiptProgress(status, verificationStatus);
+  return next ? `${state} ${next}` : state;
 }
