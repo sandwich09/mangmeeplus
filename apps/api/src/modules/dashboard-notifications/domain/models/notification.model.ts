@@ -143,6 +143,9 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   'workflow.approval_sla_breach',
   // Audit B9: a claim waiting for payment past the policy deadline reminds whoever can pay it, and
   // the requester is told when a recorded payment of their claim is taken back.
+  'workflow.reimbursement_duplicate_confirmed',
+  'workflow.reimbursement_duplicate_cancel',
+  'workflow.reimbursement_duplicate_sla_breach',
   'workflow.reimbursement_payment_sla_breach',
   'workflow.reimbursement_payment_voided',
   'workflow.reimbursement_finance_blocked_requester',
@@ -199,6 +202,9 @@ export const ALWAYS_DELIVERED_TRIGGER_KEYS: string[] = [
   // and everyone who saved a preference row before today would otherwise get them on the web bell only.
   'workflow.reimbursement_payment_voided',
   'workflow.reimbursement_finance_blocked_requester',
+  'workflow.reimbursement_duplicate_confirmed',
+  'workflow.reimbursement_duplicate_cancel',
+  'workflow.reimbursement_duplicate_sla_breach',
   'workflow.reimbursement_payment_sla_breach',
   // A claim held back from payment until its payout account is corrected, and the account then waiting
   // for approval: neither person asked for the wait, and the money is paid only after both have acted.
@@ -234,6 +240,9 @@ export const NOTIFICATION_TRIGGER_FEATURE_KEYS: Readonly<Record<string, readonly
   crm_booking_reminder: ['crm.bookings'],
   'workflow.reimbursement_pending_approval': ['reimbursement'],
   'workflow.approval_sla_breach': ['reimbursement'],
+  'workflow.reimbursement_duplicate_confirmed': ['reimbursement'],
+  'workflow.reimbursement_duplicate_cancel': ['reimbursement'],
+  'workflow.reimbursement_duplicate_sla_breach': ['reimbursement'],
   'workflow.reimbursement_payment_sla_breach': ['reimbursement'],
   'workflow.reimbursement_payment_voided': ['reimbursement'],
   'workflow.reimbursement_finance_blocked_requester': ['reimbursement'],

@@ -222,7 +222,7 @@ describe('item 3 (223-turn eval batch 2): a two-period comparison is answered wi
     });
   }
 
-  it('accepts a compose answer that cites the code-computed difference and percent', async () => {
+  it('a compose answer that cites the code-computed difference is grounded; the comparison itself stays the computed one, with no percentage', async () => {
     const answers = JSON.stringify({ answers: [
       { index: 0, status: 'handled', text: 'เดือนนี้ 17,765.00 บาท', sourceRefIds: ['expenses:expense_breakdown:summary'] },
       { index: 1, status: 'handled', text: 'เดือนที่แล้ว 40,453.00 บาท มากกว่าเดือนนี้ ต่างกัน -22,688.00 บาท (-56.1%)', sourceRefIds: ['expenses:expense_breakdown:summary'] },
@@ -231,8 +231,9 @@ describe('item 3 (223-turn eval batch 2): a two-period comparison is answered wi
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.equal(result.semanticCoverage?.[1]?.status, 'handled');
     assert.notEqual(result.semanticCoverage?.[1]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
-    assert.ok(result.replyText.includes('-22,688.00'));
-    assert.ok(result.replyText.includes('-56.1%'));
+    assert.match(result.replyText, /^1–28 ก\.ย\. น้อยกว่า ส\.ค\. 22,688\.00 บาท$/mu, result.replyText);
+    // Owner 2026-10-05: no percentage in a comparison the reader did not ask one of.
+    assert.doesNotMatch(result.replyText, /%/u, result.replyText);
   });
 
   it('falls to the deterministic comparison when compose invents an ungrounded difference', async () => {
@@ -243,9 +244,9 @@ describe('item 3 (223-turn eval batch 2): a two-period comparison is answered wi
     const result = await runCmp([answers]);
     assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
     assert.ok(!result.replyText.includes('99,999'), 'the invented figure must not leak through');
-    // A8: the bare signed "-22,688.00" line is now a direction sentence from the LATER period's own
-    // point of view, and "ช่วง 2026-08-01" is now the Thai whole-month label "ส.ค. 2569".
-    assert.match(result.replyText, /น้อยกว่า.*22,688\.00 บาท \(ลดลง 56\.1%\)/su, result.replyText);
+    // A8: the bare signed "-22,688.00" line is a sentence naming both periods, and "ช่วง 2026-08-01"
+    // is the Thai whole-month label "ส.ค. 2569".
+    assert.match(result.replyText, /^1–28 ก\.ย\. น้อยกว่า ส\.ค\. 22,688\.00 บาท$/mu, result.replyText);
     assert.ok(result.replyText.includes('• ส.ค. 2569'), result.replyText);
   });
 
@@ -257,8 +258,8 @@ describe('item 3 (223-turn eval batch 2): a two-period comparison is answered wi
       assert.equal(coverage?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
       assert.notEqual(coverage?.reasonCode, 'SEMANTIC_ANSWER_UNAVAILABLE');
     }
-    // A8: same direction-sentence rewrite as above.
-    assert.match(result.replyText, /น้อยกว่า.*22,688\.00 บาท \(ลดลง 56\.1%\)/su, result.replyText);
+    // A8: same sentence as above.
+    assert.match(result.replyText, /^1–28 ก\.ย\. น้อยกว่า ส\.ค\. 22,688\.00 บาท$/mu, result.replyText);
     assert.ok(!result.replyText.includes('ดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
     // A7: both indices render the SAME deterministic comparison block — printed once, unnumbered.
     assert.ok(!result.replyText.startsWith('1. '), result.replyText);

@@ -4,7 +4,7 @@ import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type P
 
 const sources = {
   expenses: { file: 'expenses-guide.content.ts', hash: '6fad431f54f3eb4e4469f496ff43e4438c45f707ca6fd437eec60d90fd9397d3' },
-  reimbursements: { file: 'reimbursement-guide.content.ts', hash: '5062ebdf55877b00a868eeef18f763f507651363db7f672f0e1ebc399879637e' },
+  reimbursements: { file: 'reimbursement-guide.content.ts', hash: 'b9e70fc60e1a02e4494c6a4739d135adbbb1d01498ec0fdc08e5f9b8f1ce1cda' },
   'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '8abcde427c8df626472db6d8709e144d843b83e8655b1934c343b410765bfc99' },
   reports: { file: 'reports-guide.content.ts', hash: 'a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4' },
 } as const;
@@ -14,7 +14,7 @@ function card(
   permissionAnyOf: string[], requiredCapabilities: string[] = [],
 ): ProductKnowledgeCard {
   const value: ProductKnowledgeCard = {
-    id, version: guide === 'expenses' || guide === 'reimbursements' ? 2 : 1, title, questions, summary: title, body,
+    id, version: guide === 'reimbursements' ? 3 : guide === 'expenses' ? 2 : 1, title, questions, summary: title, body,
     sourceURL: `/companies/{companyId}/user-guide/${guide}#${anchor}`,
     sourceFile: `apps/web/src/features/user-guide/${sources[guide].file}`, sourceHash: sources[guide].hash,
     contentHash: '', permissionAnyOf, requiredPermissions: [],
@@ -30,9 +30,9 @@ const reimbursementReaders = ['reimbursement.read', 'reimbursement.read_related'
 const substituteReaders = ['expense.review', 'expense.confirm', 'expense.read_own'];
 
 export const PRODUCT_HELP_PACK: ProductKnowledgePack = {
-  id: 'mangmee-product-help', version: 2, status: 'APPROVED',
+  id: 'mangmee-product-help', version: 3, status: 'APPROVED',
   language: 'th', jurisdiction: 'TH',
-  owner: 'repository:product-help', reviewers: ['repository-ai-source-code-review:codex-gpt-6:2026-10-04'],
+  owner: 'repository:product-help', reviewers: ['repository-ai-source-code-review:codex-gpt-6:2026-10-05'],
   effectiveFrom: '2026-09-27T00:00:00+07:00', effectiveTo: '2026-12-27T00:00:00+07:00', reviewDueAt: '2026-12-27T00:00:00+07:00',
   releaseRange: { min: '2.4.0', maxExclusive: '2.5.0' }, contentHash: '',
   cards: [

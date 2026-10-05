@@ -206,7 +206,7 @@ const hubPermissions = ['reimbursement.read', 'reimbursement.create', 'reimburse
  * every bucket), so this fake uses the same rule and nothing of the page's.
  */
 function served(claims: any[], filter?: string) {
-  const counts = { all: claims.length, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 };
+  const counts = { all: claims.length, draft: 0, review: 0, payment: 0, duplicate_blocked: 0, paid: 0, closed: 0 };
   for (const claim of claims) counts[reimbursementHubBucket(claim)] += 1;
   const rows = filter ? claims.filter((claim) => reimbursementHubBucket(claim) === filter) : claims;
   return { rows, total: rows.length, summary: { counts, totalAmount: String(claims.reduce((sum, claim) => sum + Number(claim.amount), 0)),
@@ -305,6 +305,31 @@ describe('the claim lines fit a 390 px phone (Owner, 2026-09-30)', () => {
 });
 
 describe('the hub cards and chips count what their filter shows (spec §18.1, AC38)', () => {
+  it('Round 4: duplicate card and chip keep blocked rows visible and payable filter matches its count', () => {
+    const blocked = { ...hubClaims.find((row) => row.status === 'READY_FOR_PAYMENT'), id: 'blocked', hasDuplicateBlocker: true };
+    const claims = [...hubClaims, blocked];
+    const all = hubTab('mine', claims);
+    assert.equal(numbers(cardsOf(all), true)['ติดรายการซ้ำ'], '1');
+    assert.equal(numbers(chipsOf(all), false)['ติดรายการซ้ำ'], '1');
+    assert.equal(rowsShown(hubTab('mine', claims, 'duplicate_blocked')), 1);
+    assert.equal(rowsShown(hubTab('mine', claims, 'payment')), 2);
+    const empty = hubTab('mine', hubClaims);
+    assert.equal(numbers(cardsOf(empty), true)['ติดรายการซ้ำ'], undefined);
+    assert.equal(numbers(chipsOf(empty), false)['ติดรายการซ้ำ'], '0');
+  });
+
+  it('Round 4: pay cards exclude blocked rows but table keeps all rows; approval cards retain SLA totals', () => {
+    const payable = { ...queueRow, id: 'payable', status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED',
+      amount: '100.00', outstandingAmount: '100.00', hasDuplicateBlocker: false, slaRisk: undefined };
+    const blocked = { ...payable, id: 'blocked', amount: '900.00', outstandingAmount: '900.00', hasDuplicateBlocker: true };
+    const html = hubTab('finance', [payable, blocked], undefined, {}, '', false);
+    const metric = (html: string, label: string) => { const texts = visible(html); return texts[texts.indexOf(label) - 1]; };
+    assert.deepEqual([metric(html, 'รอจ่าย'), metric(html, 'ยอดคงค้างรวม'), metric(html, 'ติดรายการซ้ำ')], ['1', '100.00 บาท', '1']);
+    assert.ok(visible(html).includes('ทั้งหมด 2 รายการ'));
+    const approval = hubTab('approvals', [{ ...payable, hasDuplicateBlocker: undefined, slaRisk: true },
+      { ...blocked, hasDuplicateBlocker: undefined, slaRisk: false }]);
+    assert.deepEqual([metric(approval, 'รอคุณอนุมัติ'), metric(approval, 'ยอดรวมที่รออนุมัติ')], ['2', '1,000.00 บาท']);
+  });
   /** The markup inside the element marked `from`, up to the tag that carries `to`. */
   const between = (html: string, from: string, to: string) => html.slice(html.indexOf('>', html.indexOf(from)) + 1, html.lastIndexOf('<', html.indexOf(to)));
   const cardsOf = (html: string) => between(html, 'data-testid="reimbursements-mine-summary"', 'data-testid="reimbursements-mine-filters"');
@@ -322,7 +347,7 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
     assert.deepEqual(numbers(cardsOf(html), true),
       { 'ร่างรอส่ง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่ายเงินคืน': '2', 'ยอดรวมที่ขอเบิก': '700.00 บาท' });
     const chips = numbers(chipsOf(html), false);
-    assert.deepEqual(chips, { 'ทั้งหมด': '7', 'ร่าง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่าย': '2', 'จ่ายแล้ว': '1', 'ปฏิเสธ/ยกเลิก': '2' });
+    assert.deepEqual(chips, { 'ทั้งหมด': '7', 'ร่าง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่าย': '2', 'ติดรายการซ้ำ': '0', 'จ่ายแล้ว': '1', 'ปฏิเสธ/ยกเลิก': '2' });
     assert.equal(rowsShown(html), 7);
     // Tapping a card or its chip shows exactly the claims it counted.
     for (const [filter, card, chip] of [['draft', 'ร่างรอส่ง', 'ร่าง'], ['review', 'รออนุมัติ/ตรวจสอบ', 'รออนุมัติ/ตรวจสอบ'],
@@ -386,7 +411,7 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
     const html = hubTab('mine', hubClaims);
     assert.ok(html.includes('<div class="grid w-full grid-cols-2 gap-2 sm:grid-cols-3" data-testid="reimbursements-mine-filters">'));
     const chipClasses = [...chipsOf(html).matchAll(/<button type="button" aria-pressed="(?:true|false)" class="([^"]*)"/gu)].map(([, className]) => className!);
-    assert.equal(chipClasses.length, 6);
+    assert.equal(chipClasses.length, 7);
     for (const className of chipClasses) assert.doesNotMatch(className, /\b(?:min-)?w-\[|whitespace-nowrap/u);
     // A label wider than a 390 px chip (measured in a browser: 143 px needed, 132 there) breaks at its slash, never inside a Thai word.
     assert.ok(chipsOf(html).includes('<span class="min-w-0"><span class="whitespace-nowrap">รออนุมัติ/</span><span class="whitespace-nowrap">ตรวจสอบ</span></span>'));
@@ -401,7 +426,7 @@ describe('the hub takes its list lazily and says when a page did not load (revie
   // A shop with 230 claims waiting for payment: the first answer carries 100 rows and the counts of all 230.
   const many = Array.from({ length: 100 }, (_, index) => ({ ...draft, id: `${ids.request}${index}`, requestNo: 'RB-202609-00007', status: 'READY_FOR_PAYMENT',
     amount: '100.0000', currentDesk: { kind: 'PAYMENT' } }));
-  const of230 = { total: 230, nextPage: 2, summary: { counts: { all: 230, draft: 0, review: 0, payment: 230, paid: 0, closed: 0 }, totalAmount: '23000.0000', blockedDraftCount: 0 } };
+  const of230 = { total: 230, nextPage: 2, summary: { counts: { all: 230, draft: 0, review: 0, payment: 230, duplicate_blocked: 0, paid: 0, closed: 0 }, totalAmount: '23000.0000', blockedDraftCount: 0 } };
 
   it('shows the cards and chips of the whole scope from the first page, with only that page of rows held', () => {
     // Before: the hub walked every page before it showed anything, and counted the rows it had loaded.
@@ -478,7 +503,7 @@ describe('the hub search is asked of the API, and the cards count what it found 
     const html = hubTab('mine', found, undefined, {}, 'แท็กซี่');
     // Before: the cards kept the whole shop's 1, 1, 2 and 700 baht beside three rows, and the chip ทั้งหมด said 7.
     assert.deepEqual(cardNumbers(html), ['1', '0', '1', '300.00 บาท']);
-    assert.deepEqual(chipNumbers(html), ['3', '1', '0', '1', '1', '0']);
+    assert.deepEqual(chipNumbers(html), ['3', '1', '0', '1', '0', '1', '0']);
     assert.equal(rowsShown(html), 3);
     const texts = visible(html);
     assert.ok(texts.includes('พบ 3 รายการที่ตรงกับคำค้น · ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น'), texts.filter((text) => text.includes('พบ')).join(' | '));
@@ -872,7 +897,7 @@ describe('the signature card has an approver block only where the claim has an a
 describe('the edit page speaks of a reason for sending back only for a draft someone sent back (owner 2026-10-02)', () => {
   /**
    * The edit page with its draft loaded. Its states in the order it declares them: `loading` is its one `true`,
-   * `editLoaded` its fourth `false`, and the note of a draft that was sent back its sixth `null`.
+   * `editLoaded` its fifth `false`, and the note of a draft that was sent back its seventh `null`.
    */
   const editPage = (note: string | null) => {
     let falses = 0;
@@ -880,8 +905,8 @@ describe('the edit page speaks of a reason for sending back only for a draft som
     return visible(renderWithState(createPage({ requestId: ids.request, canUpdate: true }), (initial) => {
       if (Array.isArray(initial?.lines)) return filledForm;
       if (initial === true) return false;
-      if (initial === false) { falses += 1; return falses === 4 ? true : undefined; }
-      if (initial === null) { nulls += 1; return nulls === 6 && note ? note : undefined; }
+      if (initial === false) { falses += 1; return falses === 5 ? true : undefined; }
+      if (initial === null) { nulls += 1; return nulls === 7 && note ? note : undefined; }
       return undefined;
     }));
   };
@@ -989,20 +1014,20 @@ describe('a signer with no saved signature is told what is true and what to do (
 // Seen in the real look: an approver whose claim was edited after it was sent got the dialog that says so, under a red
 // toast that said "ข้อมูลใบเบิกที่ใช้อนุมัติไม่ครบ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง": another reason, and another thing to do.
 describe('a refused approval gets one answer, from the screen that asked (owner 2026-10-02)', () => {
-  it('leaves the refusal to the claim page and the approval queue, which answer every one, with no error toast beside them', () => {
+  it('answers approval refusals on their screen and carries acceptance refusals to the claim page', () => {
     const api = readFileSync(join(__dirname, 'reimbursements.api.ts'), 'utf8');
-    assert.match(api, /\/approve`, \{\s+method: 'POST', body: JSON\.stringify\(\{ comment, approvalSnapshotHash, payoutVerifiedVersion \}\), suppressErrorToast: true,\s+\}\)/);
+    assert.match(api, /\/approve`, \{\s+method: 'POST', body: JSON\.stringify\(\{ comment, approvalSnapshotHash, payoutVerifiedVersion, \.\.\.\(payoutThirdPartyAccepted === true && \{ payoutThirdPartyAccepted: true \}\) \}\), suppressErrorToast: true,\s+\}\)/);
     // The queue: the dialog of a claim edited after it was sent, or its own banner. Both of its approvals.
     const hub = readFileSync(join(__dirname, 'ReimbursementsPages.tsx'), 'utf8');
     assert.match(hub, /if \(isStaleApprovalError\(e\)\) \{\s+try \{\s+setStaleReview\(\{ row: r, detail: await getReimbursement\(companyId, r\.id\) \}\);\s+\} catch \(e2\) \{ setError\(err\(e2\)\); \}\s+\} else \{/);
     // A refusal of any other kind: the claim moved on while the queue was open. The queue is read again, and the banner
     // says what was refused above the claims as they are now (seen in the real look: the cancelled claim's card stayed, with its buttons).
-    assert.match(hub, /\} else \{\s+const failure = err\(e\);\s+await load\(\);\s+setError\(failure\);\s+\}/);
+    assert.match(hub, /\} else \{\s+const failure = err\(e\);\s+await load\(\);\s+setError\(failure\);\s+if \(isThirdPartyAcceptanceRefusal\(e\)\) \{ toast\.error\(failure\); onOpenDetail\(r\.id\); \}\s+\}/);
     assert.equal((hub.match(/try \{ await fn\(\); \} catch \(e\) \{ failure = err\(e\); \}\s+await load\(\);\s+if \(failure\) setError\(failure\);/g) ?? []).length, 2, 'the approval queue and the pay queue');
-    assert.match(hub, /toast\.success\('อนุมัติคำขอเรียบร้อยแล้ว'\);\s+\} catch \(e\) \{ setError\(err\(e\)\); \}/);
+    assert.match(hub, /toast\.success\('อนุมัติคำขอเรียบร้อยแล้ว'\);\s+\} catch \(e\) \{ setError\(err\(e\)\); if \(isThirdPartyAcceptanceRefusal\(e\)\)/);
     // Its banner is brought into view (the row pressed may be far below it on a phone), except under that dialog, which shows it.
     assert.match(hub, /\{error && <ErrorBanner message=\{error\} focus=\{!staleReview\} \/>\}/);
-    assert.match(hub, /<StaleApprovalDialog[\s\S]{0,700}?error=\{error\}/);
+    assert.match(hub, /<StaleApprovalDialog[\s\S]{0,1000}?error=\{error\}/);
     // The words of that dialog, and of the claim screens' own sentence for the refusal: the claim was edited, look again.
     assert.match(readFileSync(join(__dirname, 'ReimbursementDetailSections.tsx'), 'utf8'), /คำขอนี้ถูกแก้ไขหลังจากส่งอนุมัติ กรุณาตรวจสอบข้อมูลล่าสุดก่อนตัดสินใจ/);
     assert.match(errorMessage('stale_approval_snapshot'), /^คำขอถูกแก้ไขหลังส่งอนุมัติ/u);

@@ -108,6 +108,60 @@ describe('period-only reply', () => {
   });
 });
 
+describe('a plain comparison of expenses is read without a model', () => {
+  // The owner on LINE UAT, 2026-10-05 20:36: "เทียบค่าใช้จ่าย กค. สค. กย." waited 4.6 s of its 11 s for a model to
+  // read a sentence the period reader had read whole. Periods come from the REAL reader, today = 5 ต.ค. 2569.
+  const TODAY = '2026-10-05';
+  const compare = (text: string, extra: any = {}) => request(text, { openClarifications: [], offeredToolNames: ['expense.get_breakdown', 'expense.list_recent'],
+    enabledFeatures: null, valueCandidates: extractValueCandidates(text, TODAY), ...extra });
+  const months = (...keys: string[]) => keys.map(key => { const [y, m] = key.split('-').map(Number);
+    return { fromDate: `${key}-01`, toDate: `${key}-${new Date(Date.UTC(y!, m!, 0)).getUTCDate()}` }; });
+  for (const [text, expected] of [
+    ['เทียบค่าใช้จ่าย กค. สค. กย.', months('2026-07', '2026-08', '2026-09')],
+    ['เปรียบเทียบค่าใช้จ่าย กรกฎาคม สิงหาคม กันยายน', months('2026-07', '2026-08', '2026-09')],
+    ['เทียบค่าใช้จ่ายสิงหากับกันยา', months('2026-08', '2026-09')],
+    ['ค่าใช้จ่าย ส.ค. เทียบกับ ก.ย.', months('2026-08', '2026-09')],
+    ['ขอเทียบค่าใช้จ่าย ก.ค.-ส.ค.-ก.ย. หน่อยครับ', months('2026-07', '2026-08', '2026-09')],
+    // Said newest first; read oldest first. This month runs to today.
+    ['เปรียบเทียบค่าใช้จ่ายเดือนนี้กับเดือนที่แล้ว', [months('2026-09')[0]!, { fromDate: '2026-10-01', toDate: '2026-10-05' }]],
+    ['เทียบรายจ่ายปีนี้กับปีที่แล้ว', [{ fromDate: '2025-01-01', toDate: '2025-12-31' }, { fromDate: '2026-01-01', toDate: '2026-10-05' }]],
+    ['compare expenses Aug and Sep', months('2026-08', '2026-09')],
+  ] as const) it(`no model call: ${text}`, async () => {
+    const req = await compare(text);
+    const { plan, sent, logs } = await route(req, answer());
+    assert.equal(sent.length, 0, 'the model is not asked');
+    assert.equal(plan.status, 'ROUTED'); assert.equal(plan.intent, 'BUSINESS_READ_QUESTION');
+    assert.deepEqual(plan.semanticSubrequests!.map(sub => [sub.kind, (sub as any).toolHint, sub.requestedFilters]),
+      expected.map(period => ['read', 'expense.get_breakdown', period]));
+    for (const sub of plan.semanticSubrequests!) assert.equal(evidenceRefsText(sub.evidenceRefs, req.inputEvidence, req.messageText), text);
+    assert.ok(parseLineAiSemanticSubrequests(plan.semanticSubrequests, req.messageText, req.inputEvidence));
+    assert.deepEqual(logs.filter(l => l.msg === 'line.intake_route.compact_decode').map(l => [l.outcome, l.attempt, l.subrequestCount]), [['semantic_only', 0, expected.length]]);
+    assert.ok(!JSON.stringify(logs).includes(text), 'no message text in a log');
+  });
+  for (const [label, text, extra] of [
+    ['a filter', 'เทียบค่าใช้จ่ายร้านสมใจ ส.ค. กับ ก.ย.', {}], ['a grouping', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย. แยกตามร้าน', {}],
+    ['a reason asked', 'ทำไมค่าใช้จ่าย ส.ค. มากกว่า ก.ค.', {}], ['a percentage asked', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย. ต่างกันกี่เปอร์เซ็นต์', {}],
+    ['another subject', 'เทียบยอดขาย ส.ค. กับ ก.ย.', {}], ['no comparison word', 'ค่าใช้จ่าย ส.ค. กับ ก.ย.', {}],
+    ['one period', 'เทียบค่าใช้จ่าย 3 เดือนย้อนหลัง', {}], ['a range, which is one period', 'เทียบค่าใช้จ่าย ส.ค. ถึง ก.ย.', {}],
+    ['the same period twice', 'เทียบค่าใช้จ่ายเดือนนี้กับเดือนนี้', {}], ['periods that overlap', 'เทียบค่าใช้จ่ายปีนี้กับเดือนนี้', {}],
+    ['an amount', 'เทียบค่าใช้จ่าย 500 บาท ส.ค. กับ ก.ย.', {}],
+    ['a question still open', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย.', { openClarifications: [open] }],
+    ['a file', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย.', { attachments: [{ id: 'a', mimeType: 'image/png' }] }],
+    ['the grouped read not offered to this person', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย.', { offeredToolNames: ['expense.list_recent'] }],
+    ['no permission to read expenses', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย.', { permissions: ['ai.tool.invoke'] }],
+  ] as const) it(`the model reads it: ${label}`, async () => {
+    const { sent } = await route(await compare(text, extra), answer());
+    assert.ok(sent.length >= 1, 'the model is asked');
+  });
+  it('two messages sent together are the model\'s to read', async () => {
+    const text = 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย.';
+    const built = await createLineAiInputEvidence({ turnKey: 'reply', parts: [{ partId: 'part-0', rawText: 'เทียบค่าใช้จ่าย', acceptedAtMs: 1, eventIdHash: 'a'.repeat(64) },
+      { partId: 'part-1', rawText: 'ส.ค. กับ ก.ย.', acceptedAtMs: 2, eventIdHash: 'b'.repeat(64) }] });
+    const { sent } = await route(await compare(text, { inputEvidence: built!.inputEvidence }), answer());
+    assert.ok(sent.length >= 1);
+  });
+});
+
 describe('continued read downstream contracts', () => {
   for (const lane of ['strands-local', 'agentcore']) it(`keeps original entity and selected question through ${lane}`, async () => {
     const { AI_BUDGET_PROFILE_TABLE_DIGEST_V2 } = await import('@watchdog-bms/contracts');

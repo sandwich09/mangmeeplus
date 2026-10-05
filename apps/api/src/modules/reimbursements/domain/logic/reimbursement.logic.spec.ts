@@ -36,6 +36,7 @@ import {
   type CurrentDeskStepFields,
 } from './reimbursement.logic';
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
+import * as approvalRules from './reimbursement.logic';
 import {
   invalidPayoutDestinationField, isReimbursementClaimApprover, looksLikeAccountNumber, maskedPayoutAccount, maskedPayoutAccountNumber,
   normalizePayoutAccountNumber, reimbursementPaymentRule, reimbursementPaymentSlipRequired,
@@ -55,6 +56,8 @@ import {
   planSubmitPayout,
   payoutSubmitToken,
   sealPayoutDestination,
+  sealClaimPayoutDestination,
+  claimPayoutFingerprint,
   submitPayoutColumns,
 } from './payout-destination.logic';
 // Whose turn it is at the pay step (its own import, apart from the block above).
@@ -1152,6 +1155,10 @@ describe('payout: sealing an account (one place on write)', () => {
   const key = Buffer.alloc(32, 3);
   const typed = { payoutKind: 'BANK_ACCOUNT' as const, bankName: ' ธนาคารกสิกรไทย ', accountName: ' นาย สมชาย ใจดี ', accountNumber: '012-3-45678-9' };
 
+  it('pins the existing SELF account fingerprint byte for byte', () => {
+    assert.equal(sealPayoutDestination(typed, key)!.fingerprint, '20a6ace167d863136527d7e43f213416a03e78d79799cf16b2bb2b2360c29042');
+  });
+
   it('stores a last 4 that is always the tail of what a reveal decrypts, leading zeros included', () => {
     for (const accountNumber of ['012-3-45678-9', '000123456789012', '0000001234', '100000', '0812345678']) {
       const sealed = sealPayoutDestination({ ...typed, accountNumber }, key)!;
@@ -1205,6 +1212,58 @@ describe('payout: sealing an account (one place on write)', () => {
     });
     assert.equal((nested.payments as any[])[0].paidAt, paidAt, 'a date is a value, not a bag of keys');
     assert.equal(JSON.stringify(nested).includes('0123456789'), false);
+  });
+});
+
+describe('payout: claim holder fingerprint', () => {
+  const key = Buffer.alloc(32, 3);
+  const account = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' };
+  const holder = { holderType: 'THIRD_PARTY' as const, holderNote: 'คู่สมรสของผู้เบิก' };
+
+  it('keeps the pinned v1 fingerprint for explicit and implicit SELF claims', () => {
+    const golden = '20a6ace167d863136527d7e43f213416a03e78d79799cf16b2bb2b2360c29042';
+    for (const input of [account, { ...account, holderType: 'SELF' as const, holderNote: ' ' }]) {
+      const sealed = sealClaimPayoutDestination(input, key)!;
+      assert.equal(sealed.fingerprint, golden);
+      assert.equal(sealed.holderType, 'SELF');
+      assert.equal(sealed.holderNote, null);
+    }
+  });
+
+  it('distinguishes THIRD_PARTY from SELF for the same account', () => {
+    assert.notEqual(sealClaimPayoutDestination({ ...account, ...holder }, key)!.fingerprint, sealPayoutDestination(account, key)!.fingerprint);
+  });
+
+  it('changes the claim fingerprint when the third-party note changes', () => {
+    const first = sealClaimPayoutDestination({ ...account, ...holder }, key)!;
+    const changed = sealClaimPayoutDestination({ ...account, ...holder, holderNote: 'ช่างรับเหมาที่สำรองจ่ายค่าวัสดุ' }, key)!;
+    assert.notEqual(first.fingerprint, changed.fingerprint);
+  });
+
+  it('ignores random ciphertext and trims the third-party note', () => {
+    const first = sealClaimPayoutDestination({ ...account, ...holder }, key)!;
+    const again = sealClaimPayoutDestination({ ...account, ...holder, holderNote: ` ${holder.holderNote} ` }, key)!;
+    assert.notEqual(first.accountNumberEncrypted, again.accountNumberEncrypted);
+    assert.equal(first.fingerprint, again.fingerprint);
+    assert.equal(again.holderNote, holder.holderNote);
+  });
+
+  it('derives the direct claim fingerprint from the stored v1 fingerprint without a number', () => {
+    const saved = sealPayoutDestination(account, key)!;
+    const direct = sealClaimPayoutDestination({ ...account, ...holder }, key)!;
+    assert.equal(claimPayoutFingerprint(saved.fingerprint, holder, key), direct.fingerprint);
+    assert.equal(claimPayoutFingerprint(saved.fingerprint, { holderType: 'SELF' }, key), saved.fingerprint);
+    assert.notEqual(claimPayoutFingerprint(saved.fingerprint, holder, Buffer.alloc(32, 4)), direct.fingerprint);
+  });
+
+  it('refuses invalid holder facts or malformed accounts before sealing', () => {
+    for (const input of [
+      { ...account, holderType: 'THIRD_PARTY' as const },
+      { ...account, holderType: 'SELF' as const, holderNote: holder.holderNote },
+      { ...account, ...holder, holderNote: 'เลขบัญชี 0123456789' },
+      { ...account, ...holder, accountNumber: '12345' },
+    ]) assert.equal(sealClaimPayoutDestination(input, key), null);
+    assert.equal(sealClaimPayoutDestination(undefined, key), null);
   });
 });
 
@@ -1940,4 +1999,47 @@ describe('company-wide strong duplicate signals', () => {
     assert.equal((duplicateBlocksPayment as any)('WARN', 0, 1), false);
     assert.equal((duplicateBlocksPayment as any)('BLOCK_PAYMENT', 0, 0), false);
   });
+});
+
+// Multi-payout round 2a: the old snapshot remains byte-for-byte compatible.
+const oldPayoutPolicy = {
+  schemaVersion: 1, policyId: 'policy-1', policyVersion: '2026-08-22T00:00:00.000Z',
+  approvalRequiredFromAmount: '100.0000', requiresApproval: true,
+  route: { mode: 'MANAGER_ROLE', roleKey: 'MANAGER', effectiveTaskRole: 'MANAGER', ownerFallbackUsedAtSubmission: false },
+  allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: false,
+  duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: true,
+} as const;
+const oldPayoutFields = { amount: '99.0000', currency: 'THB', categoryKey: 'travel', incurredDate: '2026-01-01', reason: 'Taxi', approvalPolicySnapshotJson: oldPayoutPolicy };
+it('multi payout 2a: pins the existing policy snapshot hash before adding the floor', () => {
+  assert.equal(computeSnapshotHash(oldPayoutFields), 'b07f3b91bc075a52f195ae2aa9318b61');
+});
+it('multi payout 2a: approval floor is only for third-party accounts below the threshold', () => {
+  assert.equal(approvalRules.thirdPartyPayoutApprovalRequired('99.99', '100', true), true);
+  assert.equal(approvalRules.thirdPartyPayoutApprovalRequired('100', '100', true), false);
+  assert.equal(approvalRules.thirdPartyPayoutApprovalRequired('99.99', '100', false), false);
+});
+it('multi payout 2a: the floor parses strictly and changes only new snapshot hashes', () => {
+  const policy = { ...oldPayoutPolicy, approvalFloor: 'THIRD_PARTY_PAYOUT' };
+  assert.equal(parseReimbursementPolicySnapshot(policy)?.approvalFloor, 'THIRD_PARTY_PAYOUT');
+  assert.notEqual(computeSnapshotHash({ ...oldPayoutFields, approvalPolicySnapshotJson: policy } as any), computeSnapshotHash(oldPayoutFields));
+  for (const patch of [{ approvalFloor: 'OTHER' }, { approvalFloor: null }, { requiresApproval: false, route: null }]) assert.throws(() => parseReimbursementPolicySnapshot({ ...policy, ...patch }), /invalid_reimbursement_policy_snapshot/);
+});
+it('multi payout 2a: plans expose third-party routing and tokens bind every holder fact', () => {
+  const account = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'สมชาย', accountNumber: '0123456789' };
+  const key = Buffer.alloc(32, 7);
+  const plans = ['SELF', 'THIRD_PARTY', 'THIRD_PARTY'].map((holderType, index) => {
+    const sealed = sealClaimPayoutDestination({ ...account, holderType, ...(holderType === 'THIRD_PARTY' && { holderNote: index === 1 ? 'คู่สมรสของผู้เบิก' : 'ช่างรับเหมาที่สำรองจ่าย' }) } as any, key)!;
+    return planSubmitPayout({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }, [{ ...sealed, version: 1, source: 'SAVED_ACCOUNT', frozenAt: null }], null);
+  });
+  assert.equal((plans[1] as any).thirdParty, true);
+  assert.equal((plans[0] as any).thirdParty, undefined);
+  assert.equal(new Set(plans.map((plan) => payoutSubmitToken('claim-1', plan))).size, 3);
+  assert.equal(draftFollowsDefaultAfterReopen({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }, [{ version: 1, source: 'SAVED_ACCOUNT' }]), false);
+});
+it('multi payout 2a: third-party attestation requires strict acceptance as well as the version', () => {
+  const claim = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'f'.repeat(64), holderType: 'THIRD_PARTY' };
+  for (const accepted of [undefined, false, 1, 'true']) assert.equal(payoutAttestationError(claim, 1, accepted), 'payout_third_party_acceptance_required');
+  assert.equal(payoutAttestationError(claim, 1, true), null);
+  assert.equal(payoutAttestationError(claim, undefined, true), 'payout_verification_required');
+  assert.equal(payoutAttestationError({ ...claim, holderType: 'SELF' }, 1, false), null);
 });

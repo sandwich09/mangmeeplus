@@ -230,12 +230,14 @@ export class ReimbursementProjectionReconcilerService {
           originalDecisionActorUserId: intent.actorUserId,
         },
       }, tx);
+      const { paymentDuplicateBlock } = await this.repo.paymentNoticeFacts(tx, intent.request.companyId, intent.request.id);
       const eventTypes = intent.kind === 'MANAGER'
         ? ['reimbursement.approved', 'reimbursement.ready_for_payment']
         : intent.kind === 'FINANCE'
           ? ['reimbursement.finance_review_updated', 'reimbursement.ready_for_payment']
           : ['reimbursement.approved', 'reimbursement.ready_for_payment'];
       for (const eventType of eventTypes) {
+        if (eventType === 'reimbursement.ready_for_payment' && paymentDuplicateBlock === 'CONFIRMED') continue;
         const decisionId = intent.approvalStepId
           ?? intent.request.submittedAt?.toISOString()
           ?? intent.actorUserId;
@@ -261,6 +263,7 @@ export class ReimbursementProjectionReconcilerService {
                 decision: 'APPROVED',
                 amount: intent.request.amount,
                 currency: intent.request.currency,
+                ...(eventType === 'reimbursement.ready_for_payment' && { paymentDuplicateBlock }),
                 ...(approverRecipientUserIds.length > 0 && { approverRecipientUserIds }),
               },
             },

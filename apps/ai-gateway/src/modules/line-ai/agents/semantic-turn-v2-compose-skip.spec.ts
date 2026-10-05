@@ -44,7 +44,7 @@ describe('tuning-3 item 4: a two-period comparison skips the compose call entire
   const SEPTEMBER = { period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, totalAmount: '17765.00', totalCount: 14,
     byCategory: [{ category: 'ค่าใช้จ่ายอื่นๆ', totalAmount: '4599.50' }, { category: 'ค่าบริการ', totalAmount: '4188.50' }] };
 
-  it('T-016-style grouped compare: never calls line.compose, and the reply carries the ranked category lines', async () => {
+  it('T-016-style grouped compare: never calls line.compose, and the reply names what each period spent the most on', async () => {
     const request: LineAiTurnRequest = {
       requestId: 'req-2', webhookEventId: 'event-2', messageText: 'เดือนนี้กับเดือนที่แล้ว แยกตามหมวดต่างกันยังไงบ้างคะ',
       messagePreviewHash: 'b'.repeat(16),
@@ -80,8 +80,20 @@ describe('tuning-3 item 4: a two-period comparison skips the compose call entire
       async invoke(_meta, _ctx, args): Promise<ToolResult> { return results.get(String((args as Record<string, unknown>)['fromDate']))!; },
     });
     assert.deepEqual(calls.map((call) => call.usageTag), ['line.loop'], 'line.compose must never be called for a fully-covered comparison');
-    assert.ok(result.replyText.includes('ค่าบริการ'), result.replyText);
-    assert.ok(result.replyText.includes('ต่างกัน'), result.replyText);
+    // Owner 2026-10-05: what each period spent the most on, in words — no percentage, no rank lines,
+    // no table of every group — and the whole answer as rows of the locked card.
+    assert.deepEqual(result.replyText.split('\n').slice(-3), ['ค่าใช้จ่ายที่น่าสนใจ',
+      '• ส.ค. จ่ายมากที่สุด: ค่าบริการ 10,764.50 บาท', '• 1–28 ก.ย. จ่ายมากที่สุด: ค่าใช้จ่ายอื่นๆ 4,599.50 บาท'], result.replyText);
+    assert.doesNotMatch(result.replyText, /%|อันดับ|ต่างกัน/u, result.replyText);
+    const card = result.presentation?.cards[0];
+    assert.equal(card?.text, result.replyText);
+    assert.deepEqual(card?.layout?.header, ['เปรียบเทียบค่าใช้จ่าย', '1 ส.ค. – 28 ก.ย. 2569']);
+    assert.deepEqual(card?.layout?.rows, [
+      { label: 'ส.ค. 2569', value: '40,453.00 บาท' }, { label: '1–28 ก.ย. 2569', value: '17,765.00 บาท' },
+      { label: '1–28 ก.ย. น้อยกว่า ส.ค.', value: '22,688.00 บาท' },
+      { label: 'ส.ค. จ่ายมากที่สุด', value: 'ค่าบริการ 10,764.50 บาท' }, { label: '1–28 ก.ย. จ่ายมากที่สุด', value: 'ค่าใช้จ่ายอื่นๆ 4,599.50 บาท' },
+    ]);
+    assert.deepEqual(card?.layout?.notes, ['การเปรียบเทียบนี้มีทั้งเดือนเต็มและช่วงที่ไม่ครบเดือน']);
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
     assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
   });
@@ -96,14 +108,15 @@ describe('cards-cmp: one deterministic answer for every comparable period', () =
         total: count, summary: { totalAmount: amount }, totalAmount: amount, totalCount: count,
         ...(toolName === 'expense.get_breakdown' ? { byCategory: [{ category: 'ค่าบริการ', totalAmount: amount }] } : {}) } };
   };
-  async function runSeries(rows: ToolResult[], filters: Record<string, string>[] = [], options: { keyed?: boolean; extra?: boolean } = {}) {
+  async function runSeries(rows: ToolResult[], filters: Record<string, string>[] = [], options: { keyed?: boolean; extra?: boolean; asks?: string; hinted?: boolean } = {}) {
     const periods = rows.map(result => (result.data as { period: { fromDate: string; toDate: string } }).period);
-    const messageText = `เปรียบเทียบค่าใช้จ่าย ${periods.map(period => `${names[Number(period.fromDate.slice(5, 7)) - 1]} 2569`).join(' และ ')}`;
+    const messageText = `เปรียบเทียบค่าใช้จ่าย ${periods.map(period => `${names[Number(period.fromDate.slice(5, 7)) - 1]} 2569`).join(' และ ')}${options.asks ?? ''}`;
     const inputs = periods.map((period, index) => ({ ...(options.keyed ? { periodKey: period.fromDate.slice(0, 7) } : period), ...filters[index] }));
     const request: LineAiTurnRequest = { requestId: 'req-series', webhookEventId: 'event-series', messageText,
       messagePreviewHash: 'c'.repeat(16), valueCandidates: extractValueCandidates(messageText, '2026-10-05'),
       semanticSubrequests: periods.map((period, index) => ({ index, kind: 'read', goal: messageText,
-        requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: inputs[index]! })),
+        requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: inputs[index]!,
+        ...(options.hinted ? { toolHint: rows[index]!.toolName } : {}) })),
       userContext: baseUserContext(['expense.read']) };
     if (options.extra) request.semanticSubrequests!.push({ index: rows.length, kind: 'general', goal: 'กำไรคืออะไร', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} });
     const { provider, calls } = recordingProvider([
@@ -127,8 +140,13 @@ describe('cards-cmp: one deterministic answer for every comparable period', () =
     assert.deepEqual(calls.map(call => call.usageTag), ['line.loop']);
     assert.equal(result.replyText.match(/^เปรียบเทียบค่าใช้จ่าย/gmu)?.length, 1);
     assert.equal(result.replyText.match(/^• /gmu)?.length, count);
-    assert.equal(result.replyText.match(/^  มากกว่า /gmu)?.length, count - 1);
-    assert.doesNotMatch(result.replyText, /อยู่ในสรุปด้านบน|^\d+\. /mu);
+    assert.equal(result.replyText.match(/^\S+ มากกว่า \S+ 1,000\.00 บาท$/gmu)?.length, count - 1);
+    assert.doesNotMatch(result.replyText, /อยู่ในสรุปด้านบน|^\d+\. |%/mu);
+    // One card of rows for the whole answer: every month, then every month against the one before it.
+    const layout = result.presentation?.cards[0]?.layout;
+    assert.equal(result.presentation?.cards[0]?.text, result.replyText);
+    assert.equal(layout?.rows.length, 2 * count - 1);
+    assert.deepEqual(layout?.rows[count], { label: 'ก.พ. มากกว่า ม.ค.', value: '1,000.00 บาท' });
     rows.forEach((resultRow, i) => {
       const data = resultRow.data as { totalAmount: string; total: number };
       assert.ok(result.replyText.includes(`${Number(data.totalAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })} บาท (${data.total} รายการ)`));
@@ -141,10 +159,23 @@ describe('cards-cmp: one deterministic answer for every comparable period', () =
     const { result, calls } = await runSeries([row(7, '25147.80', 7), row(8, '214899.57', 25), row(9, '98000', 12)]);
     assert.deepEqual(calls.map(call => call.usageTag), ['line.loop']);
     assert.ok(result.replyText.includes('• ก.ย. 2569: 98,000.00 บาท (12 รายการ)'));
-    assert.match(result.replyText, /754\.5% หรือราว 8\.5 เท่าของ ก\.ค\./u);
-    assert.match(result.replyText, /116,899\.57 บาท \(ลดลง 54\.4%\)/u);
+    assert.deepEqual(result.replyText.split('\n').slice(-2), ['ส.ค. มากกว่า ก.ค. 189,751.77 บาท', 'ก.ย. น้อยกว่า ส.ค. 116,899.57 บาท']);
     assert.equal(result.replyText.match(/^• /gmu)?.length, 3);
-    assert.doesNotMatch(result.replyText, /อยู่ในสรุปด้านบน|^\d+\. /mu);
+    assert.doesNotMatch(result.replyText, /อยู่ในสรุปด้านบน|^\d+\. |%/mu);
+  });
+  it('routed with its read tool named (the model-free comparison route): no model call in the whole turn', async () => {
+    const { result, calls } = await runSeries([row(7, '180', 1, 'expense.get_breakdown'), row(8, '13526', 20, 'expense.get_breakdown'), row(9, '13094.24', 3, 'expense.get_breakdown')], [], { hinted: true });
+    assert.deepEqual(calls.map(call => call.usageTag), []);
+    assert.deepEqual(result.replyText.split('\n').slice(4, 6), ['ส.ค. มากกว่า ก.ค. 13,346.00 บาท', 'ก.ย. น้อยกว่า ส.ค. 431.76 บาท']);
+    assert.equal(result.presentation?.cards[0]?.layout?.rows.length, 8);
+    assert.ok(result.semanticCoverage?.every(item => item.status === 'handled'));
+  });
+  it('a reader who asks for a percentage gets it, in the reply and on the card', async () => {
+    // +189751.77 /25147.80 = +754.5%, ratio 8.5; -116899.57 /214899.57 = -54.4%.
+    const { result } = await runSeries([row(7, '25147.80', 7), row(8, '214899.57', 25), row(9, '98000', 12)], [], { asks: ' ต่างกันกี่เปอร์เซ็นต์' });
+    assert.deepEqual(result.replyText.split('\n').slice(-2), [
+      'ส.ค. มากกว่า ก.ค. 189,751.77 บาท (เพิ่มขึ้น 754.5% หรือราว 8.5 เท่าของ ก.ค.)', 'ก.ย. น้อยกว่า ส.ค. 116,899.57 บาท (ลดลง 54.4%)']);
+    assert.deepEqual(result.presentation?.cards[0]?.layout?.rows.at(-1), { label: 'ก.ย. น้อยกว่า ส.ค.', value: '116,899.57 บาท (ลดลง 54.4%)' });
   });
   it('a repeated period shares the comparison without a duplicate line or model answer', async () => {
     // August 200 - July 100=100; growth=100%, ratio=2.0. July was requested twice.
@@ -154,13 +185,17 @@ describe('cards-cmp: one deterministic answer for every comparable period', () =
     assert.equal(result.semanticCoverage?.length, 3);
     assert.ok(result.semanticCoverage?.every(item => item.status === 'handled'));
   });
-  it('three grouped reads preserve every total and both adjacent grouped changes', async () => {
-    // 100 -> 200 = +100 (+100%, 2x); 200 -> 300 = +100 (+50%).
+  it('three grouped reads keep every total, both changes and what each month spent the most on', async () => {
     const { result, calls } = await runSeries([row(7, '100', 1, 'expense.get_breakdown'), row(8, '200', 2, 'expense.get_breakdown'), row(9, '300', 3, 'expense.get_breakdown')]);
     assert.deepEqual(calls.map(call => call.usageTag), ['line.loop']);
-    assert.equal(result.replyText.match(/^• /gmu)?.length, 3);
-    assert.match(result.replyText, /ค่าบริการ\n  ก\.ค\. 2569: 100\.00 บาท\n  ส\.ค\. 2569: 200\.00 บาท\n  ต่างกัน 100\.00 บาท \(\+100\.0%\)/u);
-    assert.match(result.replyText, /ค่าบริการ\n  ส\.ค\. 2569: 200\.00 บาท\n  ก\.ย\. 2569: 300\.00 บาท\n  ต่างกัน 100\.00 บาท \(\+50\.0%\)/u);
+    assert.deepEqual(result.replyText.split('\n'), [
+      'เปรียบเทียบค่าใช้จ่าย ก.ค. – ก.ย. 2569',
+      '• ก.ค. 2569: 100.00 บาท (1 รายการ)', '• ส.ค. 2569: 200.00 บาท (2 รายการ)', '• ก.ย. 2569: 300.00 บาท (3 รายการ)',
+      'ส.ค. มากกว่า ก.ค. 100.00 บาท', 'ก.ย. มากกว่า ส.ค. 100.00 บาท',
+      'ค่าใช้จ่ายที่น่าสนใจ',
+      '• ก.ค. จ่ายมากที่สุด: ค่าบริการ 100.00 บาท', '• ส.ค. จ่ายมากที่สุด: ค่าบริการ 200.00 บาท', '• ก.ย. จ่ายมากที่สุด: ค่าบริการ 300.00 บาท',
+    ]);
+    assert.equal(result.presentation?.cards[0]?.layout?.rows.length, 8);
   });
   it('a compound turn keeps one comparison at its first item even when the model composes the independent answer', async () => {
     // +189751.77 /25147.80=754.5%, ratio=8.5; -116899.57 /214899.57=-54.4%.

@@ -48,6 +48,8 @@ import {
   validateRequestFields,
   validateLines,
   requiresApproval,
+  thirdPartyPayoutApprovalRequired,
+  payoutCorrectionApprovalRequired,
   computeReceiptRequirement,
   isLineEvidenced,
   claimSnapshotFields,
@@ -336,7 +338,10 @@ export class GetReimbursementDetailUseCase {
     );
     // What "ส่งอนุมัติ" would freeze right now. The page sends this back with the submit, and a
     // submit whose own answer differs is refused: nobody sends a claim to an account they did not see.
-    const submitToken = req.status === 'DRAFT' ? payoutSubmitToken(req.id, await this.repo.planSubmitPayout(req)) : undefined;
+    const submitPlan = req.status === 'DRAFT' ? await this.repo.planSubmitPayout(req) : undefined;
+    const submitToken = submitPlan ? payoutSubmitToken(req.id, submitPlan) : undefined;
+    const approvalRequiredForThirdParty = submitPlan && !('error' in submitPlan) && submitPlan.payoutMethod === 'BANK_TRANSFER' && submitPlan.thirdParty === true
+      && thirdPartyPayoutApprovalRequired(req.amount, (await loadReimbursementPolicy(this.repo, ctx.companyId)).approvalRequiredFromAmount, true);
     // Payout spec §22: the requester changed their default after sending this claim. The claim keeps
     // what it froze, and the requester alone is told, from fingerprints that stay on the server.
     const defaultAccountChanged = req.requesterUserId === ctx.userId && detail.payout?.source === 'DEFAULT_ACCOUNT'
@@ -366,7 +371,7 @@ export class GetReimbursementDetailUseCase {
       ...(payoutCorrectionHistory && { payoutCorrectionHistory }),
       // The button is offered exactly when the reveal endpoint would answer.
       ...(payout && { payout: {
-        ...payout, ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
+        ...payout, ...(approvalRequiredForThirdParty && { approvalRequiredForThirdParty: true as const }), ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
         canRevealAccountNumber: await claimPayoutRevealGroup(ctx, req, this.repo, approvalActions) !== null,
       } }),
       ...(legacyPayoutDefault && { legacyPayoutDefault }),
@@ -453,8 +458,8 @@ export class ReimbursementInternalNotesUseCase {
 }
 
 /** The scope's groups folded into what the hub's cards and chips print. Every claim is counted in exactly one bucket. */
-export function hubSummary(groups: readonly ReimbursementRequestGroup[]): ReimbursementHubSummary {
-  const counts = { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 };
+export function hubSummary(groups: readonly ReimbursementRequestGroup[], duplicateBlockedCount = 0): ReimbursementHubSummary {
+  const counts = { all: 0, draft: 0, review: 0, payment: 0, duplicate_blocked: duplicateBlockedCount, paid: 0, closed: 0 };
   let totalAmount = d('0');
   let blockedDraftCount = 0;
   for (const group of groups) {
@@ -464,11 +469,12 @@ export function hubSummary(groups: readonly ReimbursementRequestGroup[]): Reimbu
     // The gate a list row shows on its ส่งอนุมัติ button: a draft that still owes its receipt.
     if (group.status === 'DRAFT' && group.receiptRequirementStatus === 'REQUIRED') blockedDraftCount += group.count;
   }
+  counts.payment -= duplicateBlockedCount;
   return { counts, totalAmount: decStr(totalAmount), blockedDraftCount };
 }
 
 /** The hub's buckets by name. Typed over every bucket, so one added later has to be named here to be asked for. */
-const HUB_BUCKETS: readonly string[] = Object.keys({ draft: true, review: true, payment: true, paid: true, closed: true } satisfies Record<ReimbursementHubBucket, true>);
+const HUB_BUCKETS: readonly string[] = Object.keys({ draft: true, review: true, payment: true, duplicate_blocked: true, paid: true, closed: true } satisfies Record<ReimbursementHubBucket, true>);
 
 /** A page number or size from the query string: a whole number from 1 up, and small enough to be an OFFSET. */
 const wholeFrom1 = (value: number | undefined, fallback: number) =>
@@ -507,7 +513,8 @@ export class ListReimbursementsUseCase {
     const pageSize = Math.min(wholeFrom1(filter.pageSize, 20), 100);
     // The database pages. Before, every call loaded the whole scope and sliced it here, so walking a
     // list of N claims read N rows per page: N²/100 rows for all of it.
-    const [{ rows: items, groups }, policy] = await Promise.all([this.repo.listRequestPage({
+    const policy = await loadReimbursementPolicy(this.repo, ctx.companyId);
+    const { rows: items, groups, duplicateBlockedCount } = await this.repo.listRequestPage({
       companyId: ctx.companyId,
       requesterUserId,
       relatedUserId,
@@ -519,9 +526,9 @@ export class ListReimbursementsUseCase {
       search: filter.search?.trim().slice(0, 100) || undefined,
       skip: (page - 1) * pageSize,
       take: pageSize,
-    }), loadReimbursementPolicy(this.repo, ctx.companyId)]);
+    }, policy);
     // The total is read off the same groups the cards print, so a card can never count a different list.
-    const hub = hubSummary(groups);
+    const hub = hubSummary(groups, duplicateBlockedCount);
     // "อยู่ที่ …" needs the pending step and its assignees only where a claim is actually waiting
     // on a person. Two batched lookups for the page — and neither runs when the page has no
     // PENDING_APPROVAL row (both helpers return empty on an empty id list).
@@ -536,7 +543,7 @@ export class ListReimbursementsUseCase {
     return {
       items: items.map((row) => toRequestSummary(
         { ...row, approvalSteps: pendingSteps.filter((step) => step.reimbursementRequestId === row.id) },
-        { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames },
+        { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames, currentPolicy: policy },
       )),
       total: hub.counts[filter.bucket ?? 'all'],
       page,
@@ -616,7 +623,10 @@ export class SubmitReimbursementUseCase {
     }
 
     const now = new Date();
-    const humanApprovalRequired = requiresApproval(req.amount, policy.approvalRequiredFromAmount);
+    const payoutPlan = await this.repo.planSubmitPayout(req);
+    const thirdParty = !('error' in payoutPlan) && payoutPlan.payoutMethod === 'BANK_TRANSFER' && payoutPlan.thirdParty === true;
+    const approvalFloor = thirdPartyPayoutApprovalRequired(req.amount, policy.approvalRequiredFromAmount, thirdParty);
+    const humanApprovalRequired = requiresApproval(req.amount, policy.approvalRequiredFromAmount) || approvalFloor;
     const roleKey = policy.defaultApproverRole ?? 'MANAGER';
     let approverUserId: string | undefined;
     let submissionRoute: Awaited<ReturnType<ListReimbursementApproverOptionsUseCase['resolveSubmissionRoute']>> | undefined;
@@ -647,6 +657,7 @@ export class SubmitReimbursementUseCase {
       policyVersion: policyRecord?.updatedAt.toISOString() ?? 'default:v1',
       approvalRequiredFromAmount: policy.approvalRequiredFromAmount,
       requiresApproval: humanApprovalRequired,
+      ...(approvalFloor && { approvalFloor: 'THIRD_PARTY_PAYOUT' as const }),
       route: submissionRoute ? {
         mode: approverModeForRole(submissionRoute.responsibilityRole),
         roleKey: submissionRoute.responsibilityRole,
@@ -707,7 +718,7 @@ export class SubmitReimbursementUseCase {
         assignedApproverUserIdsJson: submissionRoute!.recipientUserIds,
       } }),
       // The claim's own copy is frozen in this transaction; from here on nothing reads the default.
-      payout: { actorUserId: ctx.userId, frozenAt: now, seenToken: input?.payoutSubmitToken, snapshotHash },
+      payout: { actorUserId: ctx.userId, frozenAt: now, seenToken: input?.payoutSubmitToken, expectedThirdParty: thirdParty, snapshotHash },
       request: {
         status: initialStatus,
         submittedAt: now,
@@ -844,7 +855,9 @@ export class SubmitReimbursementUseCase {
         companyId: ctx.companyId, requestId: id, actorUserId: req.requesterUserId,
         scopes: ctx.scopes ?? {}, completedAt: readyAt,
         onReadyPersisted: async (tx) => {
+          const { paymentDuplicateBlock } = await this.repo.paymentNoticeFacts(tx, ctx.companyId, id);
           for (const eventType of ['reimbursement.approved', 'reimbursement.ready_for_payment']) {
+            if (eventType === 'reimbursement.ready_for_payment' && paymentDuplicateBlock === 'CONFIRMED') continue;
             await appendSubmitOutbox(tx, {
               companyId: ctx.companyId, eventType, requestId: id, actorUserId: ctx.userId,
               traceRequestId: ctx.requestId, occurredAt: readyAt,
@@ -853,6 +866,7 @@ export class SubmitReimbursementUseCase {
                 requestId: id, requestNo, requesterUserId: req.requesterUserId,
                 status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD',
                 amount: req.amount, currency: req.currency,
+                ...(eventType === 'reimbursement.ready_for_payment' && { paymentDuplicateBlock }),
                 ...(approverRecipientUserIds.length > 0 && { approverRecipientUserIds }),
               },
             });
@@ -1345,10 +1359,12 @@ export async function payoutCorrectionActionsOf(
       submitModes: [
         ...(account && token ? ['DEFAULT' as const] : []),
         ...(typingRefused ? [] : ['SPECIFIED' as const]),
+        ...(req.requesterUserId === ctx.userId && ctx.permissions.includes('reimbursement.create') ? ['SAVED' as const] : []),
         'CASH' as const,
         ...(payoutCorrectionRoundStart(req)?.payoutMethod ? ['PREVIOUS' as const] : []),
       ],
       ...(typingRefused && { specifiedRefusal: 'REQUESTER_NOT_ACTIVE' as const }),
+      ...(!payoutCorrectionApprovalRequired(req) && { thirdPartyRefusal: 'APPROVAL_NOT_REQUIRED' as const }),
     }),
   };
 }

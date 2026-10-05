@@ -28,7 +28,8 @@ import { hasPayoutSnapshot } from './payout-destination.logic';
 // service, repository) and expenses never depends back — this is a pure Decimal constant,
 // so the "no Nest / Prisma" rule above still holds.
 import { SETTLE_EPSILON } from '../../../expenses/domain/logic/expense-totals.logic';
-import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
+import { effectivePolicyForRequest, parseReimbursementPolicySnapshot, type EffectivePolicy } from '../reimbursement.constants';
+import type { ReimbursementRequestRecord } from '../models/reimbursement.model';
 
 // ---- Money helpers ----
 
@@ -52,6 +53,11 @@ export function normalizeReimbursementAmount(value: string | number): string {
 /** Approval required when amount >= approvalRequiredFromAmount (default 1.00). Decimal-safe. */
 export function requiresApproval(amount: string, approvalRequiredFromAmount: string): boolean {
   return d(amount).gte(d(approvalRequiredFromAmount));
+}
+
+/** The same approval floor for the draft warning and submit routing. */
+export function thirdPartyPayoutApprovalRequired(amount: string, threshold: string, thirdParty: boolean): boolean {
+  return thirdParty && !requiresApproval(amount, threshold);
 }
 
 // ---- Lines (1 ใบเบิก หลายรายการ) ----
@@ -420,6 +426,11 @@ export function payoutCorrectionSourceStep<Step extends { id: string; status: st
     .sort((a, b) => b.invalidatedAt!.getTime() - a.invalidatedAt!.getTime())[0];
 }
 
+/** The frozen policy decides for current claims; legacy rounds retain their recorded approval route. */
+export function payoutCorrectionApprovalRequired(claim: Parameters<typeof payoutCorrectionSourceStep>[0] & { approvalPolicySnapshotJson?: unknown }): boolean {
+  return parseReimbursementPolicySnapshot(claim.approvalPolicySnapshotJson)?.requiresApproval ?? !!payoutCorrectionSourceStep(claim);
+}
+
 /**
  * What the claim was approved with when its current round began: kept by the send-back that opened
  * the round (a send-back from the round's own step keeps none). The detail's "previous account" and
@@ -774,6 +785,15 @@ export function duplicateBlocksPayment(duplicatePolicy: string, openCandidates: 
   return confirmedExpenses > 0 || (duplicatePolicy === 'BLOCK_PAYMENT' && (openCandidates > 0 || unresolvedExpenses > 0));
 }
 
+/** The same payment predicate on the claim's frozen policy and loaded duplicate facts. */
+export function claimDuplicateBlocksPayment(request: Pick<ReimbursementRequestRecord, 'approvalPolicySnapshotJson' | 'duplicateCandidates'
+  | 'possibleDuplicateExpenseCount' | 'duplicateConfirmationPendingCount' | 'confirmedDuplicateExpenseCount'>, currentPolicy: EffectivePolicy,
+  openCandidates = (request.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length): boolean {
+  return duplicateBlocksPayment(effectivePolicyForRequest(request, currentPolicy).duplicatePolicy,
+    openCandidates,
+    (request.possibleDuplicateExpenseCount ?? 0) + (request.duplicateConfirmationPendingCount ?? 0), request.confirmedDuplicateExpenseCount);
+}
+
 export function claimDuplicateReasons(request: { duplicateCandidates?: { status: string; candidateType: string }[]; possibleDuplicateExpenseCount?: number; duplicateConfirmationPendingCount?: number; confirmedDuplicateExpenseCount?: number }): import('@watchdog-bms/contracts').ReimbursementDuplicateReason[] {
   return [...new Set([
     ...(request.duplicateCandidates ?? []).filter(candidate => candidate.status === 'OPEN').map(candidate => candidate.candidateType),
@@ -781,6 +801,11 @@ export function claimDuplicateReasons(request: { duplicateCandidates?: { status:
     ...((request.duplicateConfirmationPendingCount ?? 0) > 0 ? ['EXPENSE_CONFIRMATION'] : []),
     ...((request.confirmedDuplicateExpenseCount ?? 0) > 0 ? ['EXPENSE_CONFIRMED_DUPLICATE'] : []),
   ])] as import('@watchdog-bms/contracts').ReimbursementDuplicateReason[];
+}
+
+export function claimPaymentDuplicateBlock(request: Parameters<typeof claimDuplicateBlocksPayment>[0], currentPolicy: EffectivePolicy): import('@watchdog-bms/contracts').ReimbursementPaymentDuplicateBlock {
+  if (!claimDuplicateBlocksPayment(request, currentPolicy)) return 'NONE';
+  return claimDuplicateReasons(request).includes('EXPENSE_CONFIRMED_DUPLICATE') ? 'CONFIRMED' : 'UNRESOLVED';
 }
 
 export function confirmedDuplicateRefusal(request: Parameters<typeof claimDuplicateReasons>[0] & { status: string }, canCancel?: boolean) {

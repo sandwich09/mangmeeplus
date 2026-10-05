@@ -42,3 +42,14 @@ it('repairs every decision code word a notice stored before the fix can still ca
   // Already in Thai (rendered at creation since the fix): nothing left to repair.
   assert.equal(localizeReimbursementDecision('ผลการพิจารณา: อนุมัติ · ยอด 125 THB'), 'ผลการพิจารณา: อนุมัติ · ยอด 125 THB');
 });
+
+it('D3: duplicate notices resolve on clearance, closure or cancellation intent and retain the blocked open claim', async () => {
+  let status = 'READY_FOR_PAYMENT'; let blocked = true; let cancelling = false;
+  const db: any = { notificationEvent: { findMany: async () => [{ id: 'dup', triggerKey: 'workflow.reimbursement_duplicate_confirmed', sourceType: 'reimbursement_request', sourceId: 'rb' }] },
+    reimbursementRequest: { findMany: async () => [{ id: 'rb', status, cancellationPendingAt: cancelling ? new Date() : null, sourceExpenses: blocked ? [{ duplicateStatus: 'CONFIRMED_DUPLICATE' }] : [] }] } };
+  assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'u'), []);
+  blocked = false; assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'u'), ['dup']);
+  blocked = true;
+  for (const closed of ['PAID', 'CANCELLED', 'VOIDED', 'REJECTED']) { status = closed; assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'u'), ['dup']); }
+  status = 'READY_FOR_PAYMENT'; cancelling = true; assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'u'), ['dup']);
+});

@@ -184,7 +184,7 @@ describe('reimbursement receipt upload', () => {
 // The hub's list is asked for a page at a time. What the hub holds is `HubList` (reimbursements.logic.ts); this is the
 // part that talks to the API, and the part that drops an answer nobody is waiting for any more.
 describe('loadHubPage and the hub list it fills', () => {
-  const hub = (all: number) => ({ counts: { all, draft: 0, review: 0, payment: all, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
+  const hub = (all: number) => ({ counts: { all, draft: 0, review: 0, payment: all, duplicate_blocked: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
   /** A list endpoint over `rows`, answering `pageSize` rows a page whatever was asked; `failing` pages answer 500. */
   function server(rows: Array<{ id: string }>, pageSize = 100, failing: number[] = []) {
     const urls: string[] = [];

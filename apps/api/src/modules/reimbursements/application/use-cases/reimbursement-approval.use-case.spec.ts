@@ -105,11 +105,14 @@ function fakeRepo(req: any, policy: any = FINANCE_REVIEW_ON, events: any[] = [],
     findActiveApproverUserIds: async (_companyId: string, ids: string[]) =>
       new Set(activeApprovers ?? ids),
     findPolicy: async () => policy,
+    assertPaymentRecordInput: async () => undefined,
+    paymentNoticeFacts: async () => ({ paymentDuplicateBlock: 'NONE', duplicateReasons: [] }),
     getUserDisplayNames: async () => ({}),
     listSignedClaimFormCopies: async () => [],
     listPaymentSlips: async () => ({}),
     // The claim's own masked snapshot, as the repository reads it.
     findClaimPayout: async (claim: any) => (claim.payoutMethod ? { payoutMethod: claim.payoutMethod, ...claim.payoutSnapshot } : undefined),
+    findClaimPayoutHolderType: async (claim: any) => claim.payoutSnapshot?.holderType,
     beginApprovalDecisionAtomic: async (data: any) => {
       const step = req.approvalSteps[0];
       step.status = 'APPROVED'; step.decisionByUserId = data.actorUserId; step.decidedAt = data.decidedAt;
@@ -302,6 +305,24 @@ describe('ApproveReimbursementUseCase', () => {
     assert.equal(calls[0][1].id, 'rb-1');
     assert.equal(calls[0][2].kind, 'MANAGER');
     assert.equal(calls[0][2].approvalStepId, 'step-1');
+  });
+
+  it('D2: ordinary approval reads duplicate facts in its ready transaction and keeps other approval events', async (t) => {
+    for (const block of ['CONFIRMED', 'UNRESOLVED', 'NONE']) await t.test(block, async () => {
+      const events: any[] = [];
+      const repo = fakeRepo(baseRequest(), { financeReviewRequired: false }, events);
+      let reads = 0;
+      repo.paymentNoticeFacts = async (tx: any, companyId: string, id: string) => {
+        assert.ok(tx.outboxEvent); assert.deepEqual([companyId, id], ['co-1', 'rb-1']); reads++;
+        return { paymentDuplicateBlock: block, duplicateReasons: [] };
+      };
+      await approveUC(repo).execute(ctx(), 'rb-1');
+      const ready = events.filter((event) => event.eventType === 'reimbursement.ready_for_payment');
+      assert.equal(ready.length, block === 'CONFIRMED' ? 0 : 1);
+      if (ready[0]) assert.equal(ready[0].payloadJson.data.paymentDuplicateBlock, block);
+      assert.equal(reads, 1);
+      assert.ok(events.some((event) => event.eventType === 'reimbursement.approved'));
+    });
   });
 
   it('keeps the request pending and emits no approved event when projection fails', async () => {
@@ -1268,7 +1289,31 @@ describe('a claim whose payout account is being corrected', () => {
     return { repo, events, ran };
   }
   const recordingAudit = (entries: any[]) => ({ log: async (entry: any, tx: any) => { entries.push({ ...entry, inTransaction: !!tx }); } });
+
+  it('D2: payout reapproval states the transaction duplicate block without changing payment recipients', async (t) => {
+    for (const block of ['CONFIRMED', 'UNRESOLVED', 'NONE']) await t.test(block, async () => {
+      const { repo, events } = roundRepo(withApprovers());
+      repo.paymentNoticeFacts = async (tx: any) => { assert.ok(tx.outboxEvent); return { paymentDuplicateBlock: block, duplicateReasons: [] }; };
+      await approveUC(repo).execute(ctx(), 'rb-1', undefined, SEEN_HASH, 2);
+      assert.equal(events.length, block === 'CONFIRMED' ? 0 : 1);
+      if (events[0]) {
+        assert.equal(events[0].payloadJson.data.paymentDuplicateBlock, block);
+        assert.equal(events[0].payloadJson.actorUserId, 'approver-1');
+        assert.equal(events[0].payloadJson.data.requesterUserId, 'staff-1');
+      }
+    });
+  });
   const rejectUC = (repo: any, audit: any = noopAudit) => new RejectReimbursementUseCase(repo, audit, fakeDetailEvidence as any);
+
+  it('multi payout 2a: the shared correction approval path forwards acceptance and audits it', async () => {
+    const entries: any[] = [];
+    const { repo, ran } = roundRepo(withApprovers({ payoutSnapshot: { holderType: 'THIRD_PARTY' } }));
+    await assert.rejects(() => approveUC(repo).useCase.execute(ctx(), 'rb-1', undefined, SEEN_HASH, 2), /payout_third_party_acceptance_required/);
+    assert.equal(ran.length, 0);
+    await approveUC(repo, undefined, recordingAudit(entries)).useCase.execute(ctx(), 'rb-1', undefined, SEEN_HASH, 2, true);
+    assert.equal(ran[0]![1].payoutThirdPartyAccepted, true);
+    assert.equal(entries[0].metadataJson.thirdPartyAccepted, true);
+  });
 
   it('offers no decision while it waits for its requester: approve and reject answer that the account is being corrected', async () => {
     const { repo, ran } = roundRepo(withRequester());
@@ -1320,7 +1365,7 @@ describe('a claim whose payout account is being corrected', () => {
       [['reimbursement.ready_for_payment', 'reimbursement.ready_for_payment:reimbursement_request:rb-1:step-2']]);
     assert.deepEqual(events[0].payloadJson.data, {
       requestId: 'rb-1', requestNo: 'RB-202601-000001', status: 'READY_FOR_PAYMENT', decision: 'APPROVED',
-      requesterUserId: 'staff-1', amount: '500.0000', currency: 'THB',
+      requesterUserId: 'staff-1', amount: '500.0000', currency: 'THB', paymentDuplicateBlock: 'NONE',
     });
     assert.equal(events[0].payloadJson.actorUserId, 'approver-1');
     // Who approved which account version, inside the transaction, and nothing of the account.
@@ -1400,4 +1445,31 @@ describe('a claim whose payout account is being corrected', () => {
 
 it('the missing-approver recovery note names OWNER as the standard role label does', () => {
   assert.equal(NO_ACTIVE_APPROVER_NOTE, 'ผู้ที่ถูกกำหนดให้อนุมัติไม่อยู่หรือไม่ได้ดูแลสาขานี้แล้ว เจ้าของกิจการหรือผู้มีบทบาทอนุมัติเดิมอนุมัติแทนได้บนเว็บ');
+});
+
+describe('multi payout 2a acceptance', () => {
+  it('refuses third-party approval before the transaction without strict acceptance', async () => {
+    for (const accepted of [undefined, false, 'true', 1]) {
+      const request = baseRequest({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'f'.repeat(64), payoutSnapshot: { holderType: 'THIRD_PARTY' } });
+      const repo = fakeRepo(request);
+      let decisions = 0;
+      repo.beginApprovalDecisionAtomic = async () => { decisions++; throw new Error('decision reached'); };
+      await assert.rejects(() => approveUC(repo).useCase.execute(ctx(), 'rb-1', undefined, SEEN_HASH, 1, accepted), /payout_third_party_acceptance_required/);
+      assert.equal(decisions, 0);
+    }
+  });
+  it('passes acceptance under the lock and records it on the approval audit, including self approval', async () => {
+    for (const own of [false, true]) {
+      const request = baseRequest({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'f'.repeat(64), payoutSnapshot: { holderType: 'THIRD_PARTY' } });
+      const repo = fakeRepo(request, { ...FINANCE_REVIEW_ON, allowSelfApproval: true });
+      let checked: any;
+      const begin = repo.beginApprovalDecisionAtomic;
+      repo.beginApprovalDecisionAtomic = async (data: any) => { checked = data; return begin(data); };
+      const audits: any[] = [];
+      await approveUC(repo, undefined, { log: async (row: any) => { audits.push(row); } }).useCase.execute(ctx(own ? { userId: 'staff-1' } : {}), 'rb-1', undefined, SEEN_HASH, 1, true);
+      assert.equal(checked.payoutThirdPartyAccepted, true);
+      assert.equal(audits.find((row) => row.action === 'reimbursement.approval.approve').metadataJson.thirdPartyAccepted, true);
+      assert.equal(audits.find((row) => row.action === 'reimbursement.payout.verify').metadataJson.byRequester, own);
+    }
+  });
 });

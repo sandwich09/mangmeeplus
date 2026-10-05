@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { maskedPayoutAccount, reimbursementPayoutAnsweredForRequesterNotice } from '@watchdog-bms/contracts';
+import { invalidPayoutHolderField, invalidSavedPayoutAccountLabel, PAYOUT_SAVED_ACCOUNT_LIMIT, maskedPayoutAccount, reimbursementPayoutAnsweredForRequesterNotice } from '@watchdog-bms/contracts';
 import type {
   MemberPayoutAccountResponse,
   MemberPayoutAccountSummary,
@@ -9,6 +9,9 @@ import type {
   ReimbursementPayoutInput,
   RequestContext,
   SetMemberPayoutAccountInput,
+  AddSavedPayoutAccountInput,
+  SavedPayoutAccountSummary,
+  SavedPayoutAccountListResponse,
 } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -20,9 +23,10 @@ import {
   payoutAccountEditRefusal,
   sealPayoutDestination,
   type SealedPayoutDestination,
+  claimPayoutFingerprint,
 } from '../../domain/logic/payout-destination.logic';
 import { PrismaReimbursementRepository, type DraftPayoutChange } from '../../infrastructure/prisma-reimbursement.repository';
-import type { MemberPayoutAccountRecord } from '../../infrastructure/reimbursement-payout';
+import { savePayoutAccountForLater, type MemberPayoutAccountRecord, type SavedPayoutAccountRecord } from '../../infrastructure/reimbursement-payout';
 
 /** The notification an account owner gets when someone else sets their account. */
 export const PAYOUT_ACCOUNT_SET_TRIGGER_KEY = 'reimbursement.payout_account_set_by_other';
@@ -30,7 +34,7 @@ export const PAYOUT_ACCOUNT_SET_TRIGGER_KEY = 'reimbursement.payout_account_set_
 const UNNAMED_MEMBER = 'สมาชิกบริษัท';
 
 /** What a draft's audit row says about its receiving choice: the mode, and who typed an account. Never the account. */
-export type DraftPayoutAudit = { mode: 'DEFAULT' | 'CASH' | 'SPECIFIED'; source?: 'REQUESTER' | 'PREPARER'; savedAsDefault?: true };
+export type DraftPayoutAudit = { mode: 'DEFAULT' | 'CASH' | 'SPECIFIED' | 'SAVED'; source?: 'REQUESTER' | 'PREPARER'; savedAsDefault?: true; holderType?: 'SELF' | 'THIRD_PARTY' };
 
 /** What an audit row may say about an account: kind, bank and the last 4 digits. Never the number. */
 function auditFacts(account: MemberPayoutAccountRecord | null) {
@@ -52,6 +56,59 @@ export class MemberPayoutAccountUseCase {
     private readonly config: AppConfigService,
     private readonly notifications: CreateOrUpdateNotificationEventUseCase,
   ) {}
+
+  async listSavedOwn(ctx: RequestContext): Promise<SavedPayoutAccountListResponse> {
+    this.assertOwn(ctx);
+    return { accounts: (await this.repo.listSavedPayoutAccounts(ctx.companyId, ctx.userId)).map(toSavedPayoutAccountSummary), limit: PAYOUT_SAVED_ACCOUNT_LIMIT };
+  }
+
+  async addSavedOwn(ctx: RequestContext, input: AddSavedPayoutAccountInput): Promise<SavedPayoutAccountSummary> {
+    this.assertOwn(ctx);
+    const holderField = invalidPayoutHolderField(input);
+    if (holderField) throw new BadRequestException(holderField === 'holderType' ? 'payout_holder_type_invalid' : 'payout_holder_note_invalid');
+    if (invalidSavedPayoutAccountLabel(input?.label)) throw new BadRequestException('payout_saved_account_label_invalid');
+    const destination = sealPayoutDestination(input, this.config.credentialEncryptionKey);
+    if (!destination) throw new BadRequestException('payout_destination_invalid');
+    const account = await this.repo.addSavedPayoutAccount({
+      companyId: ctx.companyId, userId: ctx.userId, destination,
+      holderType: input.holderType, holderNote: input.holderType === 'THIRD_PARTY' ? input.holderNote!.trim() : undefined,
+      label: input.label?.trim() || undefined,
+    }, (tx, row) => this.audit.log(this.savedAuditEntry(ctx, 'add', row), tx));
+    return toSavedPayoutAccountSummary(account);
+  }
+
+  async deleteSavedOwn(ctx: RequestContext, id: string): Promise<void> {
+    this.assertOwn(ctx);
+    await this.repo.removeSavedPayoutAccount(ctx.companyId, ctx.userId, id, (tx, row) => this.audit.log(this.savedAuditEntry(ctx, 'delete', row), tx));
+  }
+
+  async revealSavedOwn(ctx: RequestContext, id: string): Promise<PayoutAccountReveal> {
+    this.assertOwn(ctx);
+    const [account, secret] = await Promise.all([
+      this.repo.findSavedPayoutAccount(ctx.companyId, ctx.userId, id),
+      this.repo.findSavedPayoutSecret(ctx.companyId, ctx.userId, id),
+    ]);
+    if (!account || !secret) throw new NotFoundException('payout_saved_account_not_found');
+    await this.audit.logOrThrow(this.savedAuditEntry(ctx, 'reveal', account));
+    return { accountNumber: openPayoutAccountNumber(secret, this.config.credentialEncryptionKey) };
+  }
+
+  async makeSavedDefaultOwn(ctx: RequestContext, id: string): Promise<MemberPayoutAccountResponse> {
+    this.assertOwn(ctx);
+    const account = await this.repo.makeSavedPayoutAccountDefault(ctx.companyId, ctx.userId, id,
+      (tx, destination) => this.write(ctx, ctx.userId, 'BANK_TRANSFER', destination, tx),
+      (tx, row) => this.audit.log(this.savedAuditEntry(ctx, 'make_default', row), tx));
+    return this.respond(ctx.companyId, account);
+  }
+
+  private savedAuditEntry(ctx: RequestContext, action: 'add' | 'delete' | 'reveal' | 'make_default', account: SavedPayoutAccountRecord) {
+    return {
+      companyId: ctx.companyId, actorUserId: ctx.userId, action: `reimbursement.payout_saved_account.${action}`,
+      targetType: 'member_saved_payout_account', targetId: account.id, requestId: ctx.requestId,
+      result: 'SUCCESS' as const, riskLevel: 'MEDIUM' as const,
+      metadataJson: { payoutKind: account.payoutKind, bankName: account.bankName ?? null, accountLast4: account.accountLast4, holderType: account.holderType },
+    };
+  }
 
   async getOwn(ctx: RequestContext): Promise<MemberPayoutAccountResponse> {
     this.assertOwn(ctx);
@@ -132,25 +189,49 @@ export class MemberPayoutAccountUseCase {
     const byRequester = requesterUserId === ctx.userId;
     const source = byRequester ? 'REQUESTER' as const : 'PREPARER' as const;
     let change: DraftPayoutChange & { audit: DraftPayoutAudit };
-    if (input.mode === 'SPECIFIED') {
-      const destination = this.seal(input);
+    if (!input || !['DEFAULT', 'CASH', 'SPECIFIED', 'SAVED'].includes(input.mode)) throw new BadRequestException('payout_mode_invalid');
+    if (input.mode === 'SAVED') {
+      if (typeof input.savedAccountId !== 'string' || !input.savedAccountId.trim()) throw new BadRequestException('payout_mode_invalid');
+      if (!byRequester) throw new NotFoundException('payout_saved_account_not_found');
+      this.assertOwn(ctx);
+      change = {
+        write: { mode: 'SAVED', savedAccountId: input.savedAccountId, requesterUserId, actorUserId: ctx.userId, key: this.config.credentialEncryptionKey },
+        audit: { mode: 'SAVED' },
+        ...(!inRound && { onPersisted: async (tx: any, requestId: string) => {
+          const row = await tx.reimbursementPayoutDestination.findFirst({ where: { companyId: ctx.companyId, reimbursementRequestId: requestId, frozenAt: null }, select: { holderType: true } });
+          change.audit.holderType = row.holderType;
+        } }),
+      };
+    } else if (input.mode === 'SPECIFIED') {
+      const holder = { holderType: input.holderType === undefined ? 'SELF' as const : input.holderType, holderNote: input.holderNote };
+      const invalid = invalidPayoutHolderField(holder);
+      if (invalid) throw new BadRequestException(invalid === 'holderType' ? 'payout_holder_type_invalid' : 'payout_holder_note_invalid');
+      holder.holderNote = holder.holderType === 'THIRD_PARTY' ? holder.holderNote!.trim() : undefined;
+      if (input.saveAsDefault && input.saveForLater) throw new BadRequestException('payout_save_options_invalid');
+      if (input.saveAsDefault && holder.holderType === 'THIRD_PARTY') throw new ConflictException('payout_default_must_be_own');
+      if (input.saveForLater && !byRequester) throw new ForbiddenException('payout_saved_account_owner_required');
+      const account = this.seal(input);
+      const destination = { ...account, ...holder, fingerprint: claimPayoutFingerprint(account.fingerprint, holder, this.config.credentialEncryptionKey) };
       if (input.saveAsDefault) {
         if (byRequester) this.assertOwn(ctx);
         else await this.assertMayEditMember(ctx, requesterUserId);
         change = {
-          write: { mode: 'DEFAULT' }, audit: { mode: 'SPECIFIED', source, savedAsDefault: true },
-          // The claim's notice covers this save too. Failure rolls both writes back.
-          onPersisted: async (tx) => { await this.write(ctx, requesterUserId, 'BANK_TRANSFER', destination, tx, true); },
+          write: { mode: 'DEFAULT' }, audit: { mode: 'SPECIFIED', source, savedAsDefault: true, ...(!inRound && { holderType: holder.holderType }) },
+          onPersisted: async (tx) => { await this.write(ctx, requesterUserId, 'BANK_TRANSFER', account, tx, true); },
         };
       } else {
-        if (!byRequester && !mayTypePayoutAccountFor(await this.repo.findPayoutMember(ctx.companyId, requesterUserId))) {
-          throw new ConflictException('payout_account_member_not_active');
+        if (!byRequester && !mayTypePayoutAccountFor(await this.repo.findPayoutMember(ctx.companyId, requesterUserId))) throw new ConflictException('payout_account_member_not_active');
+        change = { write: { mode: 'SPECIFIED', destination, source, actorUserId: ctx.userId }, audit: { mode: 'SPECIFIED', source, ...(!inRound && { holderType: holder.holderType }) } };
+        if (input.saveForLater) {
+          this.assertOwn(ctx);
+          change.onPersisted = async (tx) => {
+            const saved = await savePayoutAccountForLater(tx, { companyId: ctx.companyId, userId: requesterUserId, destination: account, ...holder, holderNote: holder.holderType === 'THIRD_PARTY' ? holder.holderNote!.trim() : undefined });
+            if (saved?.added) await this.audit.log(this.savedAuditEntry(ctx, 'add', saved.account), tx);
+          };
         }
-        change = { write: { mode: 'SPECIFIED', destination, source, actorUserId: ctx.userId }, audit: { mode: 'SPECIFIED', source } };
       }
     } else {
-      const mode = input.mode === 'CASH' ? 'CASH' : 'DEFAULT';
-      change = { write: { mode }, audit: { mode } };
+      change = { write: { mode: input.mode }, audit: { mode: input.mode } };
     }
     // Rounds announce every answer themselves. Drafts announce only a changed destination, and
     // cash/default choices for a former member remain valid even though nobody can receive a notice.
@@ -298,4 +379,8 @@ export function toMemberPayoutAccountSummary(account: MemberPayoutAccountRecord,
     updatedAt: account.updatedAt.toISOString(),
     ...(setByOtherName && { setByOtherName }),
   };
+}
+
+export function toSavedPayoutAccountSummary(account: SavedPayoutAccountRecord): SavedPayoutAccountSummary {
+  return { ...account, createdAt: account.createdAt.toISOString() };
 }
