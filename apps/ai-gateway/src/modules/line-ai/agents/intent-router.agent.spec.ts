@@ -1601,17 +1601,17 @@ describe('LINE intake router – advisor route under the trusted capability', ()
 
 // UAT 2026-09-06: "สอนฉันใช้งานเบื้องต้น…" made the router write a tutorial instead of JSON. The route
 // failed closed correctly, but the log carried only the code — nothing said WHAT the model had written.
-describe('LINE intake router – an unparseable answer is logged, bounded, model output only', () => {
+describe('LINE intake router – an unparseable answer logs metadata without model output', () => {
   const USER_TEXT = 'สอนฉันใช้งานเบื้องต้นแบบง่ายง่ายแบบมนุษย์แม่ป้าเข้าใจได้';
   const intake = () => ({ requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: USER_TEXT, permissions: [] } as any);
   const routerWriting = (text: string, stopReason: 'end_turn' | 'max_tokens') => {
     const router = new IntentRouterAgent({ generateText: async () => ({ ok: true as const, text, stopReason }) } as any);
     const warned: Array<Record<string, unknown>> = [];
-    (router as any).logger = { warn: (entry: Record<string, unknown>) => warned.push(entry) };
+    (router as any).logger = { log: () => undefined, warn: (entry: Record<string, unknown>) => warned.push(entry) };
     return { router, warned };
   };
 
-  it('warns once with the code, the stop reason, the size and a 160-char whitespace-collapsed preview', async () => {
+  it('warns once with the defect, attempt, stop reason and size, without a model preview', async () => {
     const tutorial = `ได้เลยค่ะ สอนให้นะคะ\n1) ${'ถ่ายรูปใบเสร็จแล้วส่งมา '.repeat(30)}\n\t2) กดยืนยัน`;
     const { router, warned } = routerWriting(tutorial, 'end_turn');
     const plan = await router.routeIntake(intake());
@@ -1623,8 +1623,10 @@ describe('LINE intake router – an unparseable answer is logged, bounded, model
     assert.equal(entry.errorCode, 'ROUTER_JSON_PARSE_FAILED');
     assert.equal(entry.stopReason, 'end_turn');
     assert.equal(entry.outputChars, tutorial.length);
-    assert.equal((entry.outputPreview as string).length, 160);
-    assert.doesNotMatch(entry.outputPreview as string, /[\n\t]/, 'whitespace collapsed');
+    assert.equal(entry.outputPreview, undefined);
+    assert.equal(entry.rejection, 'route_json_invalid');
+    assert.equal(entry.attempt, 1);
+    assert.equal(JSON.stringify(entry).includes(tutorial.slice(0, 10)), false);
     assert.equal(JSON.stringify(entry).includes(USER_TEXT), false, 'never the user message');
   });
 
