@@ -5776,6 +5776,54 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     });
   });
 
+  // The same class, the other seam: a completed reply. It used to stand on the green card titled
+  // "ข้อมูลจากน้องมั่งมี" from before the design.
+  describe('a bound chat\'s completed replies', () => {
+    const ACCESS = { permissions: ['line.ai.query'], roles: [] };
+    function seam() {
+      const { prisma } = makePrisma();
+      const h = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+      const flow = h.useCase as any;
+      const sent: any[] = [];
+      flow.deliverRequiredMessages = async (_event: unknown, messages: any[]) => { sent.push(...messages); };
+      flow.sendMessages = async (_event: unknown, messages: any[]) => { sent.push(...messages); return 'ok'; };
+      const bind = (event: object) => { flow.boundConversations.set(event, { owner: { companyId: 'company-1', userId: 'user-1' }, id: 'conversation', epoch: 1 }); return event as any; };
+      return { flow, sent, bind };
+    }
+    const LINK = 'https://app.example.com/companies/company-1/expenses/e1';
+
+    it('a completed reply to a typed message: the locked design under the reader\'s words, its link a button with its own name', async () => {
+      const { flow, sent, bind } = seam();
+      const event = bind({ ...BASE_EVENT, messageText: 'ยกเลิกรายการล่าสุด', lineMessageId: 'line-message-1' });
+      await flow.deliverCompletedReply(event, `ยกเลิกรายการแล้วค่ะ\nเปิดดูรายการ: ${LINK}`, 'company-1', ACCESS, '🔵 ยกเลิกแล้ว');
+      assert.equal(sent.length, 1);
+      const card = readLineSystemCard(sent[0]);
+      assert.deepEqual(card.header, [...lineAnswerCardHeader('ยกเลิกรายการล่าสุด')!.lines]);
+      assert.deepEqual(card.prose, ['🔵 ยกเลิกแล้ว\nยกเลิกรายการแล้วค่ะ'], 'the state badge leads the paper');
+      assert.deepEqual(card.actions, [{ type: 'uri', label: 'เปิดดูรายการ', uri: LINK }]);
+      assert.doesNotMatch(JSON.stringify(sent[0].contents), /ข้อมูลจากน้องมั่งมี|#15803D/u, 'not the card from before the design');
+      assert.ok(card.texts.every((line) => !/https?:/u.test(line)), 'no raw link is printed');
+      assert.equal(sent[0].canonicalText, `ยกเลิกรายการแล้วค่ะ\nเปิดดูรายการ: ${LINK}`, 'the reply itself is still the canonical text');
+      assert.ok(sent[0].quickReply?.items.length > 0, 'the completion menu still rides the card');
+      assert.equal(isCompleteLineBusinessAnswerPresentation(sent[0]), true);
+    });
+
+    it('the last part of a reply sent in parts is that card too; the earlier parts stay text', async () => {
+      const { flow, sent, bind } = seam();
+      const event = bind({ ...BASE_EVENT, messageText: 'ขอรายละเอียดทั้งหมด', lineMessageId: 'line-message-1' });
+      await flow.deliverCompletedReplies(event, ['ส่วนที่หนึ่ง', 'สรุปท้าย'], 'company-1', ACCESS);
+      assert.deepEqual([sent[0], isLineSystemCard(sent[1])], [{ type: 'text', text: 'ส่วนที่หนึ่ง' }, true]);
+      assert.deepEqual(readLineSystemCard(sent[1]).prose, ['สรุปท้าย']);
+    });
+
+    it('keeps the card from before for a chat that is not bound and for a reply to a tap', async () => {
+      const { flow, sent, bind } = seam();
+      await flow.deliverCompletedReply({ ...BASE_EVENT, messageText: 'ยกเลิกรายการล่าสุด', lineMessageId: 'line-message-1' }, 'ยกเลิกรายการแล้วค่ะ', 'company-1', ACCESS);
+      await flow.deliverCompletedReply(bind({ ...BASE_EVENT, messageText: 'ยกเลิก' }), 'ยกเลิกรายการแล้วค่ะ', 'company-1', ACCESS);
+      assert.deepEqual(sent.map((message) => [isLineSystemCard(message), message.contents?.header?.contents?.[0]?.text]), [[false, 'ข้อมูลจากน้องมั่งมี'], [false, 'ข้อมูลจากน้องมั่งมี']]);
+    });
+  });
+
   it('says the budget could not be CHECKED for AI_BUDGET_UNAVAILABLE, and never that it is full', async () => {
     const { prisma, updates } = makePrisma();
     const h = makeUseCase(prisma, {

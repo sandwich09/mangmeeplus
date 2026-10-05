@@ -2503,13 +2503,14 @@ export class ProcessLineWebhookUseCase {
    * reader's words; for a web base that is not https; and for a reply with a link that cannot be made
    * a button of this company, which only a text message keeps tappable.
    */
-  private boundReplyCard(event: object, text: string): LineReplyMessage | undefined {
+  private boundReplyCard(event: object, text: string, badge?: string): LineReplyMessage | undefined {
     const bound = this.boundConversations.get(event);
     // A typed message has LINE's own message id; a tap or a follow is carried here as words the reader never typed.
     const typed = 'messageText' in event && typeof event.messageText === 'string' && 'lineMessageId' in event && event.lineMessageId ? event.messageText : undefined;
     const header = bound && lineAnswerCardHeader(typed);
     if (!bound || !header) return undefined;
-    const card = buildLineSystemTextCardMessage({ text, header, webBaseUrl: this.config.webBaseUrl, companyId: bound.owner.companyId, textStyle: 'answer', icon: 'file' });
+    const card = buildLineSystemTextCardMessage({ text, ...(badge?.trim() ? { paper: `${badge.trim()}\n${text}` } : {}), header,
+      webBaseUrl: this.config.webBaseUrl, companyId: bound.owner.companyId, textStyle: 'answer', icon: 'file' });
     return card?.type === 'flex' && !lineSystemCardTexts(card.contents).some((line) => /https?:\/\//iu.test(line)) ? card : undefined;
   }
 
@@ -3607,8 +3608,10 @@ export class ProcessLineWebhookUseCase {
     if (!designed && Array.from(text).length > LINE_FLEX_CARD_BODY_MAX_CHARS) {
       return this.deliverCompletedReplies(event, splitLineExpenseDraftReply(text), companyId, access);
     }
+    // In a bound chat the reply stands on the locked design under the reader's own words; the card from
+    // before the design is what a chat that is not bound, or a reply to a photo or a tap, still gets.
     const message = await this.timeStage(event.webhookEventId, 'render', () => this.withCompletionMenu(
-      designed ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
+      designed ?? this.boundReplyCard(event, text, badge) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
       companyId,
       access,
     ));
@@ -3655,7 +3658,7 @@ export class ProcessLineWebhookUseCase {
       // terminal message only where it holds the whole terminal text, and a longer text is sent as text.
       const terminalCard = (text: string): LineReplyMessage => expenseDraft && !/ข้อมูลที่ต้องใช้|ข้อมูลที่ยังต้องตอบ/u.test(text)
         ? buildExpenseDraftCardMessage(text, expenseDraft, this.config.webBaseUrl, companyId)
-        : buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId);
+        : this.boundReplyCard(event, text) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId);
       // Spec §10.1: earlier parts stay lossless text; the terminal part becomes the same Flex card a
       // single completed reply gets, so a multi-part journey never ends in plain text.
       if (Array.from(terminal).length <= LINE_FLEX_CARD_BODY_MAX_CHARS) {
