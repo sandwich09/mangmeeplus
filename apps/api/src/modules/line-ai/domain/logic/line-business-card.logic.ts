@@ -2,7 +2,7 @@ import { AI_BUDGET_REFUSAL_CODES, parseLineAiAnswerCardLayout, type AiBudgetScop
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
 import { lineSystemCardAvailable, type LineSystemCard, type LineSystemCardIcon, type LineSystemCardRow } from './line-system-card.logic';
-import { drawLineSystemCard, LINE_FLEX_CAROUSEL_MAX_BYTES } from './line-system-card-limits.logic';
+import { drawLineSystemCard, LINE_SYSTEM_CARD_BUTTONS_MAX } from './line-system-card-limits.logic';
 import {
   EMPLOYEE_DOOR_COMMAND,
   PACKAGE_CHANGE_COMMAND,
@@ -218,6 +218,7 @@ function answerCardTitle(response: LineAiTurnResponse): string {
 }
 
 const MAX_BUTTON_LABEL = 40;
+const UNNAMED_LINK_LABEL = 'เปิดดูในเว็บแอป';
 
 /**
  * A body line that names its link — `ดาวน์โหลดเอกสาร:`, `เปิดตรวจสอบในเว็บ:` — is the label the
@@ -228,8 +229,11 @@ const MAX_BUTTON_LABEL = 40;
  */
 function labelFromLine(line: string): string | undefined {
   const trimmed = line.trim();
-  if (!trimmed.endsWith(':')) return undefined;
-  const label = trimmed.slice(0, -1).trim();
+  // `เปิดดู: <name>` is how `completeAnswerText` writes the page a source opens: the name is the label.
+  // Owner 2026-10-05, on a real answer with three such lines left on the card above "เปิดลิงก์ 1 / 2 / 3":
+  // "ลิ้งชื่อปุ่ม ใช้ชื่อได้เลย ไม่ต้องบอกว่าปุ่มลิ้ง 1 2 3".
+  const named = /^เปิดดู:\s*(\S.*)$/u.exec(trimmed)?.[1];
+  const label = named ?? (trimmed.endsWith(':') ? trimmed.slice(0, -1).trim() : '');
   return label && Array.from(label).length <= MAX_BUTTON_LABEL ? label : undefined;
 }
 
@@ -283,10 +287,8 @@ export function buildLineAssistantTextCardMessage(
   title = 'ข้อมูลจากน้องมั่งมี',
 ): LineReplyMessage {
   const { body, links } = splitReplyLinks(text, webBaseUrl, companyId);
-  const buttons = links.map((link, index) => ({
-    label: link.label ?? (links.length === 1 ? 'เปิดดูในเว็บแอป' : `เปิดลิงก์ ${index + 1}`),
-    uri: link.uri,
-  }));
+  // A link nothing names says where it leads; it is never numbered (owner 2026-10-05).
+  const buttons = links.map((link) => ({ label: link.label ?? UNNAMED_LINK_LABEL, uri: link.uri }));
   const cardText = body || 'เปิดดูรายละเอียดในเว็บแอป';
   const message: LineReplyMessage = {
     type: 'flex',
@@ -345,6 +347,8 @@ function headerSplits(text: string): Array<readonly [string, string]> {
   for (let index = 1; index < pieces.length; index += 1) {
     const at = pieces[index]!.index, before = pieces[index - 1]!.segment, after = pieces[index]!.segment;
     if (kept.some(([start, end]) => at > start && at < end)) continue;
+    // A number or code written without a space is one thing: "EXP-2026-000123" never breaks at its hyphens.
+    if (/[A-Za-z0-9#/_.-]$/u.test(before) && /^[A-Za-z0-9#/_.-]/u.test(after)) continue;
     // A space the writer typed is a place to break — except, in a Thai sentence, between two words in
     // Latin letters ("service charge" is one name there). Elsewhere the two lists decide.
     if (thai && !before.trim() && /[A-Za-z]$/u.test(pieces[index - 2]?.segment ?? '') && /^[A-Za-z]/u.test(after)) continue;
@@ -378,37 +382,52 @@ export function lineAnswerCardHeader(question: string | undefined): LineSystemCa
   const cut = (value: string, max: number) => [...thaiGraphemes.segment(value)].slice(0, max).map((piece) => piece.segment).join('').trim();
   const head = first?.[0] ?? cut(text, QUIET_HEADER_LINE_GRAPHEMES);
   const rest = first?.[1] ?? text.slice(head.length).trim();
-  if (!rest) return undefined;
+  // One unbroken word a little longer than a line (a record number): it stands whole under the
+  // kicker, and the line shrinks to fit — the same place a short unbreakable message stands.
+  if (!rest) return { lines: ['ข้อความของคุณ', head] };
   if (graphemeCount(rest) <= QUIET_HEADER_LINE_GRAPHEMES) return { lines: [head, rest], question: true, quiet: true };
   const tail = headerSplits(rest).filter(([line]) => graphemeCount(line) <= QUIET_HEADER_LINE_GRAPHEMES - 1).at(-1)?.[0] ?? cut(rest, QUIET_HEADER_LINE_GRAPHEMES - 1);
   return { lines: [head, `${tail}…`], question: true, quiet: true };
 }
 
+/** On a card the scope is a plain sentence — the design never prints the word "ขอบเขต" (lock §9). The
+ *  canonical text keeps the line as it was written. Same words as the gateway's note for a row card. */
+function withPlainScope(text: string): string {
+  return text.replace(/^ขอบเขต:[ \t]*(?=เฉพาะ)/gmu, 'แสดง').replace(/^ขอบเขต:[ \t]*/gmu, '');
+}
+
 /**
- * A reply that is a sentence, on the locked design: two header lines, the sentence, and its one web
- * link as the button. `undefined` when this design cannot carry the reply whole — no https base for
- * the pictures, a second link, or more text than the paper holds — and the caller sends what it sent
- * before. The text stays the canonical answer and the fallback.
+ * A reply that is a sentence, on the locked design: two header lines, the sentence, and every safe web
+ * link it carries as a button named by the line that carried it. `undefined` when this design cannot
+ * carry the reply whole — no https base for the pictures, nothing to say, more links than a card
+ * holds, or more text than one bubble may be — and the caller sends what it sent before. `text` stays
+ * the canonical answer and the fallback; `paper` is what the card prints when that is not all of it.
  */
 export function buildLineSystemTextCardMessage(input: {
   text: string;
+  /** The words drawn, when the canonical text has lines a card does not print (an answer's source line). */
+  paper?: string;
   header: LineSystemCard['header'];
   webBaseUrl: string | undefined;
   companyId: string;
   textStyle?: LineSystemCard['textStyle'];
   icon?: LineSystemCardIcon;
-  /** What the button says when the reply's own line did not name the link. */
+  /** What a button says when the reply's own line did not name its link. */
   linkLabel?: string;
   footnotes?: readonly string[];
 }): LineReplyMessage | undefined {
   if (!lineSystemCardAvailable(input.webBaseUrl)) return undefined;
-  const { body, links } = splitReplyLinks(input.text, input.webBaseUrl, input.companyId);
-  if (!body || links.length > 1 || !within(body, ANSWER_CARD_BODY_LIMIT)) return undefined;
-  const label = links[0] && bounded(links[0].label ?? input.linkLabel ?? 'เปิดดูในเว็บแอป', MAX_BUTTON_LABEL);
+  const { body, links } = splitReplyLinks(withPlainScope(input.paper ?? input.text), input.webBaseUrl, input.companyId);
+  if (!body || links.length > LINE_SYSTEM_CARD_BUTTONS_MAX) return undefined;
+  const buttons = links.map((link) => ({
+    action: { type: 'uri' as const, label: bounded(link.label ?? input.linkLabel ?? UNNAMED_LINK_LABEL, MAX_BUTTON_LABEL), uri: link.uri },
+    icon: input.icon ?? 'receipt' as const,
+  }));
   const contents = drawLineSystemCard({
     mascot: 'general', header: input.header, text: body, textStyle: input.textStyle ?? 'result',
     ...(input.footnotes?.length ? { footnotes: input.footnotes } : {}),
-    ...(links[0] && label ? { button: { action: { type: 'uri', label, uri: links[0].uri }, icon: input.icon ?? 'receipt' } } : {}),
+    // One link is the design's one button; several stand under one another, each with its own name.
+    ...(buttons.length === 1 ? { button: buttons[0]! } : buttons.length ? { buttons } : {}),
   }, input.webBaseUrl);
   return contents && asCompleteLineCard({ type: 'flex', altText: preview(body, 400), canonicalText: input.text, contents });
 }
@@ -863,6 +882,19 @@ export function buildReceiptQuotaExceededMessage(text: string, canManagePlan: bo
   }, text);
 }
 
+/** Every page an answer opens that this chat may open, each once, as `completeAnswerText` writes it. */
+function answerLinkLines(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string): string[] {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const link of [...response.webLinks, ...cards.flatMap(card => card.webLink ? [card.webLink] : [])]) {
+    const url = safeTenantLink(webBaseUrl, companyId, link.path);
+    if (!url || seen.has(url)) continue;
+    seen.add(url); lines.push(`เปิดดู: ${link.label.trim() || 'เปิดดูข้อมูล'} ${url}`);
+  }
+  return lines;
+}
+
+/** The whole answer as text — the canonical text: the reply, what its cards add, its sources and each page it opens. */
 function completeAnswerText(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string): string {
   const parts: string[] = [];
   const blocks = new Set<string>();
@@ -874,14 +906,24 @@ function completeAnswerText(response: LineAiTurnResponse, cards: LineAiAnswerCar
   for (const card of cards) { append(card.title); append(card.badge); append(card.text); }
   const sources = [...new Set([...response.sourceLabels, ...cards.flatMap(card => card.sourceLabels ?? [])].map(label => label.trim()).filter(Boolean))];
   if (sources.length) append(`แหล่งข้อมูล: ${sources.join(', ')}`);
-  const links = [...response.webLinks, ...cards.flatMap(card => card.webLink ? [card.webLink] : [])];
-  const seen = new Set<string>();
-  for (const link of links) {
-    const url = safeTenantLink(webBaseUrl, companyId, link.path);
-    if (!url || seen.has(url)) continue;
-    seen.add(url); append(`เปิดดู: ${link.label.trim() || 'เปิดดูข้อมูล'} ${url}`);
-  }
+  for (const line of answerLinkLines(response, cards, webBaseUrl, companyId)) append(line);
   return parts.join('\n\n');
+}
+
+/** What a prose card of the locked design prints of that answer: each sentence once, a card's title
+ *  above its own text, and no line naming the sources (owner 2026-10-05: the card ends with the answer
+ *  and its named buttons). The page lines stay, so that each becomes a button with its page's name. */
+function answerPaperText(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string): string {
+  const parts: string[] = [];
+  const append = (value: string | undefined) => {
+    const text = value?.trim();
+    if (text && !parts.some((part) => part.includes(text))) parts.push(text);
+  };
+  // The reply leads unless a card already says it whole; then that card's own order stands.
+  const reply = response.replyText.trim();
+  if (!cards.some((card) => card.text.includes(reply))) append(reply);
+  for (const card of cards) { append(card.title); append(card.badge); append(card.text); }
+  return [...parts, ...answerLinkLines(response, cards, webBaseUrl, companyId)].join('\n\n');
 }
 
 function answerCardsCoverCompleteReply(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string): boolean {
@@ -913,40 +955,6 @@ const LAYOUT_BUTTON_ICON: Record<Exclude<LineAiAnswerCardLayout['context'], 'edi
   expense_summary: 'receipt', open_work: 'list', expense_record: 'file', payment: 'receipt',
 };
 
-/** One answer card on the locked design: the gateway's rows when it sent a layout for the whole
- *  reply, otherwise the answer as prose under the reader's own question. `undefined` when the design
- *  cannot hold it — the caller then sends the reply the way it always has. */
-function designedAnswerBubble(
-  card: LineAiAnswerCard,
-  layout: LineAiAnswerCardLayout | undefined,
-  question: string | undefined,
-  webBaseUrl: string,
-  companyId: string,
-): Record<string, unknown> | undefined {
-  const uri = card.webLink && safeTenantLink(webBaseUrl, companyId, card.webLink.path);
-  const button = (label: string, icon: LineSystemCardIcon) => uri
-    ? { button: { action: { type: 'uri' as const, label: bounded(label || 'เปิดดูข้อมูล', MAX_BUTTON_LABEL), uri }, icon } } : {};
-  if (layout && layout.context !== 'edit_command') {
-    const rows = layout.rows.map((row) => ({ label: row.label, value: row.value, ...(row.emphasis ? { total: true } : {}), ...(row.tone ? { pill: row.tone } : {}) }));
-    if (!systemCardHolds(rows, layout.notes ?? [])) return undefined;
-    return drawLineSystemCard({
-      mascot: 'general', header: { lines: layout.header }, rows,
-      ...(layout.banner ? { banner: layout.banner } : {}),
-      ...(layout.notes ? { notes: layout.notes } : {}),
-      ...button(layout.linkLabel ?? card.webLink?.label ?? '', LAYOUT_BUTTON_ICON[layout.context]),
-    }, webBaseUrl);
-  }
-  const header = layout ? { lines: layout.header } : lineAnswerCardHeader(question);
-  if (!header) return undefined;
-  const sources = (card.sourceLabels ?? []).map((label) => label.trim()).filter(Boolean);
-  return drawLineSystemCard({
-    mascot: 'general', header, textStyle: layout ? 'result' : 'answer',
-    text: [card.title, card.badge, card.text].map((part) => part?.trim()).filter(Boolean).join('\n'),
-    ...(sources.length ? { footnotes: [`แหล่งข้อมูล: ${sources.join(', ')}`] } : {}),
-    ...button(layout?.linkLabel ?? card.webLink?.label ?? '', layout ? 'receipt' : 'file'),
-  }, webBaseUrl);
-}
-
 /** The answer cards the gateway structured, without a refused turn's. */
 function answerCards(response: LineAiTurnResponse): LineAiAnswerCard[] {
   return !response.refused && response.presentation?.kind === 'answer_cards'
@@ -954,11 +962,44 @@ function answerCards(response: LineAiTurnResponse): LineAiAnswerCard[] {
     : [];
 }
 
+/** The gateway's rows on the locked design, with every page the answer opens as a button named by
+ *  what it opens. `undefined` when the design cannot hold them all — the answer is then its prose. */
+function designedRowsBubble(
+  layout: LineAiAnswerCardLayout & { context: Exclude<LineAiAnswerCardLayout['context'], 'edit_command'> },
+  card: LineAiAnswerCard,
+  response: LineAiTurnResponse,
+  webBaseUrl: string,
+  companyId: string,
+): Record<string, unknown> | undefined {
+  const rows = layout.rows.map((row) => ({ label: row.label, value: row.value, ...(row.emphasis ? { total: true } : {}), ...(row.tone ? { pill: row.tone } : {}) }));
+  if (!systemCardHolds(rows, layout.notes ?? [])) return undefined;
+  // The card's own page first, under the words the layout gives it; every other page under its own name.
+  const own = card.webLink && safeTenantLink(webBaseUrl, companyId, card.webLink.path);
+  // Rows that came with a page this chat may not open (another company's, or no page of the web app)
+  // are not drawn: a card never promises a page it cannot open.
+  if (card.webLink && !own) return undefined;
+  const links: Array<{ uri: string; label: string }> = [];
+  for (const link of [...(card.webLink ? [card.webLink] : []), ...response.webLinks]) {
+    const uri = safeTenantLink(webBaseUrl, companyId, link.path);
+    if (uri && !links.some((entry) => entry.uri === uri)) links.push({ uri, label: (uri === own && layout.linkLabel) || link.label.trim() || 'เปิดดูข้อมูล' });
+  }
+  // A name is never cut: one longer than a button holds leaves the answer to its prose, where it is printed whole.
+  if (links.length > LINE_SYSTEM_CARD_BUTTONS_MAX || links.some((link) => !within(link.label, MAX_BUTTON_LABEL))) return undefined;
+  const buttons = links.map((link) => ({ action: { type: 'uri' as const, label: link.label, uri: link.uri }, icon: LAYOUT_BUTTON_ICON[layout.context] }));
+  return drawLineSystemCard({
+    mascot: 'general', header: { lines: layout.header }, rows,
+    ...(layout.banner ? { banner: layout.banner } : {}),
+    ...(layout.notes ? { notes: layout.notes } : {}),
+    ...(buttons.length === 1 ? { button: buttons[0]! } : buttons.length ? { buttons } : {}),
+  }, webBaseUrl);
+}
+
 /**
- * A gateway answer on the locked System OA design, or `undefined` when the design cannot show the
- * WHOLE answer — no https base for the pictures, no question to head a prose answer, a second link,
- * more text than the paper holds, or cards that do not cover the reply. The caller then sends the
- * answer the way it did before the design, which is also this card's fallback text.
+ * A gateway answer on the locked System OA design. Rows when the gateway sent a layout for the whole
+ * reply; otherwise the answer as prose under the reader's own question, every page it opens a button
+ * with that page's name. `undefined` only when the design cannot show the answer at all — no https
+ * base for the pictures, no words of the reader to head a prose answer, or more than one bubble may
+ * hold — and the caller then sends the answer the way it did before the design.
  * `question` is the reader's own message; it heads an answer that has no structured layout.
  */
 export function buildDesignedLineAnswerMessage(
@@ -970,20 +1011,21 @@ export function buildDesignedLineAnswerMessage(
 ): LineReplyMessage | undefined {
   if (!lineSystemCardAvailable(webBaseUrl)) return undefined;
   const cards = answerCards(response);
-  const canonicalText = completeAnswerText(response, cards, webBaseUrl, companyId);
-  if (cards.length === 0) {
-    const header = lineAnswerCardHeader(question);
-    return header && buildLineSystemTextCardMessage({ text: canonicalText || fallbackText, header, webBaseUrl, companyId, textStyle: 'answer', icon: 'file' });
-  }
-  if (!answerCardsCoverCompleteReply(response, cards, webBaseUrl, companyId)) return undefined;
+  const canonicalText = completeAnswerText(response, cards, webBaseUrl, companyId) || fallbackText;
   // A layout stands for the whole reply or for nothing: it is honoured on the one card whose text IS the reply.
-  const layout = cards.length === 1 && cards[0]!.text.trim() === response.replyText.trim() ? parseLineAiAnswerCardLayout(cards[0]!.layout) : undefined;
-  const bubbles = cards.map((card) => designedAnswerBubble(card, layout, question, webBaseUrl, companyId));
-  if (!bubbles.every((entry): entry is Record<string, unknown> => !!entry)) return undefined;
-  const contents = bubbles.length === 1 ? bubbles[0]! : { type: 'carousel', contents: bubbles };
-  // LINE's own size for several cards side by side; past it the answer is sent as it was before.
-  if (bubbles.length > 1 && Buffer.byteLength(JSON.stringify(contents), 'utf8') > LINE_FLEX_CAROUSEL_MAX_BYTES) return undefined;
-  return asCompleteLineCard({ type: 'flex', altText: preview(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี', canonicalText, contents });
+  const only = cards.length === 1 && cards[0]!.text.trim() === response.replyText.trim() ? cards[0]! : undefined;
+  const layout = only && parseLineAiAnswerCardLayout(only.layout);
+  if (only && layout && layout.context !== 'edit_command') {
+    const contents = designedRowsBubble({ ...layout, context: layout.context }, only, response, webBaseUrl, companyId);
+    if (contents) return asCompleteLineCard({ type: 'flex', altText: preview(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี', canonicalText, contents });
+  }
+  // Everything else is the answer's own sentences. The line naming its sources stays in the canonical
+  // text and is not drawn (owner 2026-10-05: the card ends with the answer and its named buttons).
+  const header = layout ? { lines: layout.header } : lineAnswerCardHeader(question);
+  return header && buildLineSystemTextCardMessage({
+    text: canonicalText, paper: answerPaperText(response, cards, webBaseUrl, companyId) || fallbackText,
+    header, webBaseUrl, companyId, textStyle: layout ? 'result' : 'answer', icon: layout ? 'receipt' : 'file',
+  });
 }
 
 /** Renderer only: presentation is structured by the trusted gateway; raw model Flex JSON is never accepted.

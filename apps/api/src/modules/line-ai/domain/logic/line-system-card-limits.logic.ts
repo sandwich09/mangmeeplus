@@ -24,9 +24,11 @@ export const LINE_FLEX_CAROUSEL_MAX_BYTES = 50_000;
 const SHORT_LINE_MAX = 40;
 /** A row value, a note, a banner or a footnote: bounded so that no single field can carry the bubble past 30 KB. */
 const FIELD_MAX = 600;
-/** The prose of one card; the callers' own limit is 1,200. */
-const PROSE_MAX = 4_000;
+/** The prose of one card: what one LINE text message holds, which is what the card's fallback is. */
+const PROSE_MAX = 5_000;
 const ROWS_MAX = 20;
+/** Link buttons under one another on one card: one page for each of the eight reads a turn may make. */
+export const LINE_SYSTEM_CARD_BUTTONS_MAX = 8;
 
 const length = (value: string) => Array.from(value).length;
 /** Text a person can read: something other than white space, and no character LINE's JSON rejects. */
@@ -54,6 +56,7 @@ export function lineSystemCardSendable(card: LineSystemCard): boolean {
     // A card must say something under its header.
     && (rows.length > 0 || notes.length > 0 || !!card.text?.trim() || card.banner !== undefined)
     && (card.button === undefined || sendableAction(card.button.action))
+    && (card.buttons === undefined || (card.buttons.length <= LINE_SYSTEM_CARD_BUTTONS_MAX && card.buttons.every((entry) => sendableAction(entry.action))))
     && (card.choice === undefined || card.choice.every(sendableAction));
 }
 

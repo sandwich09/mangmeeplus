@@ -2100,11 +2100,13 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(sentMessages.length, 1);
     assert.equal(sentMessages[0]?.type, 'flex');
     // The gateway sent no layout, so the answer is prose under the reader's own question: the card's
-    // title and text, its source as the small line, and its one web link as the button.
+    // title and text, and its one web link as the button. The line naming the source is not drawn
+    // (owner 2026-10-05); it stays in the canonical text.
     const card = readLineSystemCard(sentMessages[0]);
     assert.deepEqual(card.header, ['ดูค่าใช้จ่าย', 'เดือนนี้']);
     assert.deepEqual(card.prose, ['ค่าใช้จ่ายเดือนนี้\nเดือนนี้ยังไม่มีค่าใช้จ่าย รวม 0.00 บาท']);
-    assert.deepEqual(card.footnotes, ['แหล่งข้อมูล: ค่าใช้จ่าย']);
+    assert.deepEqual(card.footnotes, []);
+    assert.match(sentMessages[0].canonicalText ?? '', /แหล่งข้อมูล: ค่าใช้จ่าย/u);
     assert.deepEqual(card.actions.map((action) => [action.type, action.label, action.uri]), [['uri', 'ดูค่าใช้จ่าย', 'https://app.example.com/companies/company-1/expenses']]);
     assert.match(card.mascot, /^https:\/\/app\.example\.com\/assets\/line\/system-card-mascot-general-\d{8}\.png$/u);
     assert.match(JSON.stringify(sentMessages[0].contents), /"startColor":"#174e37","endColor":"#167c52"/u, 'the locked green, not the old theme');

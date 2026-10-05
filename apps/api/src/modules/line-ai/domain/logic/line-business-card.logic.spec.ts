@@ -314,12 +314,31 @@ describe('FIX-5 — a link label becomes its button, never a dangling colon line
     assert.doesNotMatch(body, /:\s*$/m, 'no colon line is left behind');
   });
 
-  it('numbers only the link that has no label of its own', () => {
+  // Owner 2026-10-05: "ลิ้งชื่อปุ่ม ใช้ชื่อได้เลย ไม่ต้องบอกว่าปุ่มลิ้ง 1 2 3".
+  it('never numbers a button: a link nothing names says where it leads', () => {
     const { buttons } = card(`ดูรายละเอียด ${web} ก่อน\nดูเอกสาร: ${web2}`);
     assert.deepEqual(buttons, [
-      { label: 'เปิดลิงก์ 1', uri: web },
+      { label: 'เปิดดูในเว็บแอป', uri: web },
       { label: 'ดูเอกสาร', uri: web2 },
     ]);
+  });
+
+  it('reads the name the complete answer text gives a page — "เปิดดู: <name> <url>" — and takes the line off the card', () => {
+    const { body, buttons } = card([
+      'ไม่มีงานค้างค่ะ',
+      'แหล่งข้อมูล: ใบรับรองแทนใบเสร็จ, สรุปปิดร้าน 5 ต.ค. 2569',
+      `เปิดดู: ใบรับรองแทนใบเสร็จ ${web}`,
+      `เปิดดู: สรุปปิดร้าน 5 ต.ค. 2569 ${web2}`,
+    ].join('\n\n'));
+    assert.deepEqual(buttons, [
+      { label: 'ใบรับรองแทนใบเสร็จ', uri: web },
+      { label: 'สรุปปิดร้าน 5 ต.ค. 2569', uri: web2 },
+    ]);
+    assert.doesNotMatch(body, /เปิดดู|เปิดลิงก์/u);
+    // A name longer than a button holds stays on the card, whole, and its button says where it leads.
+    const long = card(`เปิดดู: ${'ก'.repeat(41)} ${web}`);
+    assert.deepEqual(long.buttons, [{ label: 'เปิดดูในเว็บแอป', uri: web }]);
+    assert.match(long.body, /^เปิดดู: ก{41}$/u);
   });
 
   it('M7: marks a truncated alt text instead of cutting it mid-word', () => {
@@ -344,9 +363,9 @@ describe('FIX-5 — a link label becomes its button, never a dangling colon line
     assert.match(body, new RegExp(sentence));
   });
 
-  it('leaves two links on one line to the generic numbering', () => {
+  it('gives two links on one line no name of their own, and no number either', () => {
     const { buttons } = card(`ลิงก์: ${web} ${web2}`);
-    assert.deepEqual(buttons.map((button: any) => button.label), ['เปิดลิงก์ 1', 'เปิดลิงก์ 2']);
+    assert.deepEqual(buttons.map((button: any) => button.label), ['เปิดดูในเว็บแอป', 'เปิดดูในเว็บแอป']);
   });
 
   it('keeps a rejected URL and its label in the body untouched', () => {
@@ -528,11 +547,13 @@ describe('gateway answers on the locked design', () => {
     assert.doesNotMatch(card.texts.join('\n'), /ระดับแจ้งเตือน|ขอบเขต/u);
 
     // Another company's claim, a path outside the web app, or a link that is not a path: never a button
-    // of this chat — and a card that promises to open a claim it cannot open is not drawn at all.
+    // of this chat — and rows that promise to open a claim they cannot open are not drawn at all. What
+    // is left is the answer's own sentence, under the reader's words, with nothing to tap.
     for (const path of ['/companies/c2/reimbursements/rb-1', '//evil.example/companies/c1/reimbursements/rb-1', 'https://evil.example/x', '/companies/c1/../c2/reimbursements/rb-1', 'javascript:alert(1)']) {
       const refused = draw(answer('มีใบเบิกรออนุมัติจากคุณอยู่ค่ะ', claim, { label: 'ใบเบิก', path }, 'ใบเบิก'), 'มีงานค้างไหม');
-      assert.equal(isLineSystemCard(refused), false, path);
-      assert.doesNotMatch(JSON.stringify(refused), /"type":"uri"/u, path);
+      const drawn = readLineSystemCard(refused);
+      assert.deepEqual([drawn.rows, drawn.actions, drawn.prose], [[], [], ['มีใบเบิกรออนุมัติจากคุณอยู่ค่ะ']], path);
+      assert.doesNotMatch(JSON.stringify(refused), /"type":"uri"|evil\.example|\/c2\//u, path);
     }
   });
 
@@ -607,12 +628,88 @@ describe('gateway answers on the locked design', () => {
       assert.deepEqual(card.header, ['ดูค่าใช้จ่าย', 'เดือนนี้']);
       assert.doesNotMatch(JSON.stringify(card.bubble), /evil\.example/u);
     }
-    // Two cards: each is prose under the question, side by side; a layout on one of them is not honoured.
-    const two: LineAiTurnResponse = { ...answer('ก\nข', undefined), sourceLabels: [], presentation: { kind: 'answer_cards', cards: [{ text: 'ก', layout: SUMMARY as any }, { text: 'ข' }] } };
-    const carousel = draw(two) as any;
-    assert.equal(carousel.contents.type, 'carousel');
-    assert.deepEqual(carousel.contents.contents.map((bubble: any) => readLineSystemBubble(bubble).rows.length), [0, 0]);
-    assert.deepEqual(lineFlexBodyProblems(carousel.contents), []);
+    // Two cards: one card of prose under the question, each sentence once; a layout on one of them is not honoured.
+    const two: LineAiTurnResponse = { ...answer('ก\nข', undefined), sourceLabels: [], presentation: { kind: 'answer_cards', cards: [{ text: 'ก', layout: SUMMARY as any }, { text: 'ข' }, { text: 'ค' }] } };
+    const both = draw(two) as any;
+    assert.equal(both.contents.type, 'bubble');
+    assert.deepEqual([readLineSystemCard(both).rows, readLineSystemCard(both).prose], [[], ['ก\nข\nค']]);
+    assert.deepEqual(lineFlexBodyProblems(both.contents), []);
+  });
+
+  // Owner 2026-10-05, a real answer to "มีงานค้างอะไรบ้าง" (three reads, three pages): it went out on the
+  // card from before the design — "น้องมั่งมีตอบให้นะคะ", a "ขอบเขต:" line, a "แหล่งข้อมูล:" line, three
+  // "เปิดดู: …" lines and buttons "เปิดลิงก์ 1 / 2 / 3". "อ่านยากมาก และลิ้งชื่อปุ่ม ใช้ชื่อได้เลย".
+  describe('an answer the gateway sent no rows for', () => {
+    const REPLY = '1. ใบรับรองแทนใบเสร็จที่รอให้เซ็นหรืออนุมัติ: ไม่มีค้างอยู่เลยค่ะ ✅\nขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ\n\n2. รายการเบิกจ่ายที่รอให้อนุมัติ: ไม่มีค้างเช่นกันค่ะ ✅\n\n3. งานค้างปิดวัน 5 ต.ค. 2569 มีที่ต้องจัดการบนเว็บดังนี้ค่ะ\n• รอตรวจสอบ 21 รายการ';
+    const PAGES = [
+      { label: 'ใบรับรองแทนใบเสร็จ', path: '/companies/c1/expenses/substitute-receipts' },
+      { label: 'รายการเบิกจ่ายรออนุมัติ', path: '/companies/c1/reimbursements' },
+      { label: 'สรุปปิดร้าน 5 ต.ค. 2569', path: '/companies/c1/expenses' },
+    ];
+    const compound: LineAiTurnResponse = {
+      requestId: 'r1', replyText: REPLY, sourceRefs: [], sourceLabels: PAGES.map((page) => page.label), webLinks: PAGES, intent: 'read_summary', agent: 'accounting',
+      refused: false, toolsInvoked: ['expense.list_substitute_receipts_to_sign', 'reimbursement.list_pending_approvals', 'expense.get_daily_closing'], durationMs: 1,
+    };
+
+    it('is one card of the locked design: the answer, and every page it opens as a button with that page\'s name', () => {
+      const message = draw(compound, 'มีงานค้างอะไรบ้าง');
+      const card = readLineSystemCard(message);
+      assert.deepEqual(card.header, ['มีงานค้าง', 'อะไรบ้าง']);
+      assert.deepEqual(card.actions, PAGES.map((page) => ({ type: 'uri', label: page.label, uri: `${WEB}${page.path}` })));
+      const paper = card.texts.join('\n');
+      assert.doesNotMatch(paper, /แหล่งข้อมูล|เปิดดู:|เปิดลิงก์|ขอบเขต|น้องมั่งมีตอบให้นะคะ|https?:/u);
+      assert.match(paper, /แสดงเฉพาะรายการที่เกี่ยวข้องกับคุณ/u, 'the scope is said as a plain sentence');
+      assert.match(paper, /รอตรวจสอบ 21 รายการ/u);
+      // Buttons under one another, 8 px apart, each in the design's light style with its icon and chevron.
+      const footer = card.bubble.body.contents[1].contents.at(-1);
+      assert.deepEqual([footer.layout, footer.spacing, footer.contents.length], ['vertical', '8px', 3]);
+      assert.ok(footer.contents.every((button: any) => button.backgroundColor === '#e0e8d8' && button.contents.length === 3));
+      // The canonical text is unchanged: it still names the sources and every page, for the fallback and the record.
+      assert.ok(message.type === 'flex' && message.canonicalText!.includes('แหล่งข้อมูล: ใบรับรองแทนใบเสร็จ, รายการเบิกจ่ายรออนุมัติ, สรุปปิดร้าน 5 ต.ค. 2569'));
+      assert.ok(message.type === 'flex' && message.canonicalText!.includes(`เปิดดู: สรุปปิดร้าน 5 ต.ค. 2569 ${WEB}/companies/c1/expenses`));
+      assert.ok(message.type === 'flex' && message.canonicalText!.includes('ขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ'));
+      assert.equal(isCompleteLineBusinessAnswerPresentation(message), true);
+      assert.deepEqual(lineFlexBodyProblems((message as any).contents), []);
+    });
+
+    it('keeps the one button of an answer that read one record, under the record\'s name, and prints no source line', () => {
+      const explain: LineAiTurnResponse = { ...compound, replyText: 'บิล «BHC» ยอด 1,789.04 บาทค่ะ\nสถานะตอนนี้: รอตรวจสอบ', sourceLabels: ['EXP-1'],
+        webLinks: [{ label: 'EXP-1', path: '/companies/c1/expenses/exp-bhc' }], toolsInvoked: ['expense.get_detail'] };
+      const card = readLineSystemCard(draw(explain, 'ทำไม service charge คิดแยกเป็นอีกรายการนึง ทำไมไม่รวมกัน ?'));
+      assert.deepEqual(card.prose, ['บิล «BHC» ยอด 1,789.04 บาทค่ะ\nสถานะตอนนี้: รอตรวจสอบ']);
+      assert.deepEqual(card.footnotes, []);
+      assert.deepEqual(card.actions, [{ type: 'uri', label: 'EXP-1', uri: `${WEB}/companies/c1/expenses/exp-bhc` }]);
+      // The same for the one card the gateway sends beside a deterministic sentence that has no rows.
+      const single = readLineSystemCard(draw(answer('ค่าใช้จ่ายแยกตามหมวด\n• ไม่ระบุหมวด: 0.00 บาท', undefined, { label: 'สรุปค่าใช้จ่ายแยกกลุ่ม', path: '/companies/c1/expenses' }, 'สรุปค่าใช้จ่ายแยกกลุ่ม'), 'สรุปค่าใช้จ่ายเดือนนี้'));
+      assert.deepEqual([single.footnotes, single.actions.map((action) => action.label)], [[], ['สรุปค่าใช้จ่ายแยกกลุ่ม']]);
+    });
+
+    it('never goes back to the card from before the design, whatever shape the answer has', () => {
+      const shapes: Array<[string, LineAiTurnResponse]> = [
+        ['several pages', compound],
+        ['cards that do not cover the reply', { ...compound, presentation: { kind: 'answer_cards', cards: [{ text: 'ส่วนหนึ่งของคำตอบ', webLink: PAGES[0]! }] } }],
+        ['a card with more sources than the old card showed', { ...compound, presentation: { kind: 'answer_cards', cards: [{ text: REPLY, sourceLabels: ['ก', 'ข', 'ค', 'ง', 'จ', 'ฉ'] }] } }],
+        ['rows the design cannot hold', { ...compound, presentation: { kind: 'answer_cards', cards: [{ text: REPLY, layout: { ...SUMMARY, rows: Array.from({ length: 16 }, (_, index) => ({ label: `แถว ${index}`, value: 'ก'.repeat(200) })) } as any }] } }],
+        ['a refusal', { ...compound, refused: true, webLinks: [], sourceLabels: [] }],
+        ['a long answer', { ...compound, replyText: 'ก'.repeat(3000) }],
+        ['one long unbroken word as the question', compound],
+      ];
+      for (const [name, response] of shapes) {
+        const message = draw(response, name === 'one long unbroken word as the question' ? 'EXP-2026-000123' : 'มีงานค้างอะไรบ้าง');
+        assert.equal(isLineSystemCard(message), true, name);
+        assert.doesNotMatch(JSON.stringify(message), /น้องมั่งมีตอบให้นะคะ|น้องมั่งมีสรุป|ข้อมูลจากน้องมั่งมี|เปิดลิงก์/u, name);
+        assert.deepEqual(lineFlexBodyProblems((message as any).contents), [], name);
+      }
+      assert.deepEqual(readLineSystemCard(draw(compound, 'EXP-2026-000123')).header, ['ข้อความของคุณ', 'EXP-2026-000123']);
+    });
+
+    it('a row card shows every other page of the answer under its own name, after its own button', () => {
+      const withMore = { ...answer(SENTENCE, SUMMARY, EXPENSES), webLinks: [EXPENSES, { label: 'สรุปปิดร้าน 5 ต.ค. 2569', path: '/companies/c1/expenses?day=2026-10-05' }, { label: 'ของบริษัทอื่น', path: '/companies/c2/expenses' }] };
+      const card = readLineSystemCard(draw(withMore));
+      assert.deepEqual(card.actions.map((action) => [action.label, action.uri]), [
+        ['ดูค่าใช้จ่ายในเว็บ', `${WEB}/companies/c1/expenses`], ['สรุปปิดร้าน 5 ต.ค. 2569', `${WEB}/companies/c1/expenses?day=2026-10-05`]]);
+      assert.equal(card.rows.length, SUMMARY.rows.length);
+    });
   });
 
   it('never draws a refused turn\'s cards, and falls back whole when the design cannot hold the answer', () => {
@@ -620,9 +717,12 @@ describe('gateway answers on the locked design', () => {
     const card = readLineSystemCard(draw(refused));
     assert.deepEqual(card.rows, [], 'a refusal is never dressed as the data it refused');
     assert.match(card.prose.join('\n'), /ไม่มีสิทธิ์/u);
-    // More text than the paper holds: the previous rendering, which is text-first for long replies.
-    const long = answer('ก'.repeat(1300), undefined);
-    assert.equal(isLineSystemCard(draw(long)), false);
+    // A long answer is still one card: the paper holds what one LINE text message holds…
+    const long = answer(`${'ก'.repeat(1300)}\n${'ข'.repeat(1300)}`, undefined);
+    assert.deepEqual(readLineSystemCard(draw(long)).prose, [`${'ก'.repeat(1300)}\n${'ข'.repeat(1300)}`]);
+    assert.deepEqual(lineFlexBodyProblems((draw(long) as any).contents), []);
+    // …and past that it is the previous rendering, which the delivery plan sends as its text.
+    assert.equal(isLineSystemCard(draw(answer('ก'.repeat(5001), undefined))), false);
     // A row longer than the design holds: not this card.
     const wide = answer(SENTENCE, { ...SUMMARY, rows: [{ label: 'ยอดรวม', value: 'ก'.repeat(201) }] }, EXPENSES);
     assert.deepEqual(readLineSystemCard(draw(wide)).rows, [], 'the contract already refuses a 201-character value; the answer is prose');
@@ -804,6 +904,16 @@ describe('lineAnswerCardHeader — the reader\'s own question as two header line
       ['ค่าใช้จ่าย', 'ข้อความของคุณ / ค่าใช้จ่าย [under]'], ['hello', 'ข้อความของคุณ / hello [under]'], ['ok', 'ข้อความของคุณ / ok [under]']]) {
       assert.equal(header(message), expected, message);
     }
+  });
+
+  it('never breaks a number or a code written without a space, however long', () => {
+    for (const [message, expected] of [
+      ['ขอดูรายการ DEMO-EXP-002', 'ขอดูรายการ / DEMO-EXP-002'],
+      ['EXP-2026-0009', 'ข้อความของคุณ / EXP-2026-0009 [under]'],
+      // Longer than a line and with no place to break: whole under the kicker (the line shrinks to fit).
+      ['EXP-2026-000123', 'ข้อความของคุณ / EXP-2026-000123 [under]'],
+      ['RB-202608-00002 ถึงไหนแล้ว', 'RB-202608-00002 / ถึงไหนแล้ว [quiet]'],
+    ]) assert.equal(header(message), expected, message);
   });
 
   it('keeps the beginning of a long question and marks the cut, in the quieter style; a Latin name is not split', () => {
