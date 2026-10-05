@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { aggregateState, aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText,
-  expensePeriodComparison, expensePeriodComparisonSeries, expensePeriodComparisonReplyText, expenseBreakdownShares,
+  expensePeriodComparison, expensePeriodComparisonSeries, expensePeriodComparisonReplyText, expensePeriodComparisonCard, expenseBreakdownShares,
   reimbursementApprovalNotPermittedReplyText, packageManagerRequiredReplyText, reimbursementPendingApprovalsTotal,
   withoutUnaskedPackagePurchaseLine, withReceiptRestartDate, withAskedSubstituteQueueSideLead } from './business-read-result-semantics';
 import type { ToolResult } from '@watchdog-bms/contracts';
@@ -279,14 +279,15 @@ describe('item 3(a)/(c): expense period comparison', () => {
     const comparison = expensePeriodComparison('expense.list_recent', augData, sepData)!;
     const text = expensePeriodComparisonReplyText(comparison);
     // A8: Thai period labels (a whole month prints without a day range; month-to-date keeps one)
-    // replace the raw ISO dates, and a direction sentence (from the LATER period's point of view)
-    // replaces the bare signed "ต่างกัน" line — list_recent never gets rankLines (ungrouped).
-    // (17,765 - 40,453) / 40,453 * 100 = -56.1% rounded.
+    // replace the raw ISO dates. Owner 2026-10-05: the later period against the earlier one in one
+    // plain sentence, and no percentage ("เอา % ออกเถอะ งง") unless the reader asked for one.
     assert.equal(text, 'เปรียบเทียบค่าใช้จ่าย 1 ส.ค. – 28 ก.ย. 2569\n'
       + '• ส.ค. 2569: 40,453.00 บาท (14 รายการ)\n'
       + '• 1–28 ก.ย. 2569: 17,765.00 บาท (14 รายการ)\n'
-      + '  น้อยกว่า ส.ค. 22,688.00 บาท (ลดลง 56.1%)\n'
+      + '1–28 ก.ย. น้อยกว่า ส.ค. 22,688.00 บาท\n'
       + 'การเปรียบเทียบนี้มีทั้งเดือนเต็มและช่วงที่ไม่ครบเดือน');
+    // (17,765 - 40,453) / 40,453 * 100 = -56.1% rounded: said only to a reader who asked for a percentage.
+    assert.match(expensePeriodComparisonReplyText(comparison, true), /^1–28 ก\.ย\. น้อยกว่า ส\.ค\. 22,688\.00 บาท \(ลดลง 56\.1%\)$/mu);
   });
 
   it('also compares expense.list_recent by payment/document status amounts, but never in the deterministic reply (spec §3 row 9 is totals-only)', () => {
@@ -300,55 +301,71 @@ describe('item 3(a)/(c): expense period comparison', () => {
     assert.doesNotMatch(expensePeriodComparisonReplyText(comparison), /ยังไม่จ่าย/su);
   });
 
-  it('tuning-3 item 4 (T-016/T-082): a grouped (get_breakdown) comparison\'s deterministic reply also ranks in its matching category lines', () => {
+  it('owner 2026-10-05: a grouped comparison says what each period spent the most on — no percentage, no rank lines, no table of groups', () => {
     const comparison = expensePeriodComparison('expense.get_breakdown', LAST_MONTH, THIS_MONTH)!;
     const text = expensePeriodComparisonReplyText(comparison);
-    // A8: Thai period labels, a direction sentence instead of the bare "ต่างกัน" line, PLUS the new
-    // rankLines (independent top-3-per-period) appended after groupLines.
     assert.equal(text, [
       'เปรียบเทียบค่าใช้จ่าย 1 ส.ค. – 28 ก.ย. 2569',
       '• ส.ค. 2569: 40,453.00 บาท (14 รายการ)',
       '• 1–28 ก.ย. 2569: 17,765.00 บาท (14 รายการ)',
-      `  ${comparison.directionLine}`,
+      '1–28 ก.ย. น้อยกว่า ส.ค. 22,688.00 บาท',
       'การเปรียบเทียบนี้มีทั้งเดือนเต็มและช่วงที่ไม่ครบเดือน',
-      ...comparison.groupLines,
-      ...comparison.rankLines,
-    ].join('\n'), 'the summary keeps the computed groups and independent ranks');
-    assert.match(text, /ค่าบริการ.*-6,576\.00.*-61\.1%/su);
-    assert.match(text, /ค่าใช้จ่ายอื่นๆ.*-2,576\.00/su);
-    assert.equal(comparison.groupLines[0], 'ค่าบริการ\n  ส.ค. 2569: 10,764.50 บาท\n  1–28 ก.ย. 2569: 4,188.50 บาท\n  ต่างกัน -6,576.00 บาท (-61.1%)');
-    // ค่าบริการ (10,764.50 บาท, the larger of its two periods) ranks ahead of ค่าใช้จ่ายอื่นๆ (7,175.50).
-    assert.ok(text.indexOf('ค่าบริการ') < text.indexOf('ค่าใช้จ่ายอื่นๆ'), 'groups rank by amount, largest first');
-    // A8: rank 1 differs between the two periods (ค่าบริการ vs ค่าใช้จ่ายอื่นๆ) — stated explicitly.
-    assert.match(text, /อันดับ 1 ส\.ค\. 2569: ค่าบริการ.*อันดับ 1 1–28 ก\.ย\. 2569: ค่าใช้จ่ายอื่นๆ.*ไม่ใช่หมวดเดียวกัน/su);
+      'ค่าใช้จ่ายที่น่าสนใจ',
+      // Each period's own largest group: ค่าบริการ 10,764.50 in August, ค่าใช้จ่ายอื่นๆ 4,599.50 in September.
+      '• ส.ค. จ่ายมากที่สุด: ค่าบริการ 10,764.50 บาท',
+      '• 1–28 ก.ย. จ่ายมากที่สุด: ค่าใช้จ่ายอื่นๆ 4,599.50 บาท',
+    ].join('\n'));
+    assert.doesNotMatch(text, /%|อันดับ|ต่างกัน/u);
+    // The per-group differences stay facts a composed sentence may cite; the reply no longer prints them.
+    assert.match(comparison.factsText, /ค่าบริการ.*-6,576\.00.*-61\.1%/su);
   });
 
-  it('tuning-3 item 4: never a group either period did not actually return in groupLines, ranked by the larger side first', () => {
+  it('a group only ONE period has is named as that period\'s largest; ranked by amount, not by the order the tool gave', () => {
     const augOnly = { period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, totalAmount: '10000', totalCount: 3,
       byCategory: [{ category: 'ค่าน้ำมัน', totalAmount: '1000' }, { category: 'ค่าเดินทางเท่านั้นเดือนสิงหา', totalAmount: '9000' }] };
     const sepOnly = { period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, totalAmount: '2000', totalCount: 2,
       byCategory: [{ category: 'ค่าน้ำมัน', totalAmount: '2000' }] };
     const comparison = expensePeriodComparison('expense.get_breakdown', augOnly, sepOnly)!;
-    assert.match(comparison.groupLines.join('\n'), /ค่าน้ำมัน/);
-    assert.doesNotMatch(comparison.groupLines.join('\n'), /ค่าเดินทางเท่านั้นเดือนสิงหา/,
-      'a category the OTHER period never returned must never be printed in the matched groupLines');
-    // A8: rankLines are independent PER period — a period-exclusive top group legitimately appears
-    // there (that is exactly what reveals "not the same category" to the customer).
-    assert.match(comparison.rankLines.join('\n'), /ค่าเดินทางเท่านั้นเดือนสิงหา/);
+    assert.deepEqual(comparison.periodA.top, { label: 'ค่าเดินทางเท่านั้นเดือนสิงหา', totalAmount: '9000' });
+    assert.deepEqual(comparison.periodB.top, { label: 'ค่าน้ำมัน', totalAmount: '2000' });
+    const text = expensePeriodComparisonReplyText(comparison);
+    assert.match(text, /^• ส\.ค\. จ่ายมากที่สุด: ค่าเดินทางเท่านั้นเดือนสิงหา 9,000\.00 บาท$/mu);
+    assert.match(text, /^• 1–28 ก\.ย\. จ่ายมากที่สุด: ค่าน้ำมัน 2,000\.00 บาท$/mu);
+    // The matched facts never invent a group the other period did not return.
+    assert.doesNotMatch(comparison.factsText, /ค่าเดินทางเท่านั้นเดือนสิงหา/);
   });
 
-  it('tuning-3 item 4: ranks by amount (not input order) and caps at the same 8-group bound as the single-period formatter', () => {
-    const category = (n: number) => `หมวด${n}`;
-    // Deliberately NOT pre-sorted, so only a real sort-by-amount keeps the two smallest (idx 1, 6) out.
-    const amounts = [500, 100, 900, 300, 1000, 700, 200, 800, 600, 400];
-    const rows = amounts.map((totalAmount, i) => ({ category: category(i), totalAmount: String(totalAmount) }));
-    const total = String(amounts.reduce((sum, value) => sum + value, 0));
-    const augMany = { period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, totalAmount: total, totalCount: 10, byCategory: rows };
-    const sepMany = { period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, totalAmount: total, totalCount: 10, byCategory: rows };
-    const comparison = expensePeriodComparison('expense.get_breakdown', augMany, sepMany)!;
-    const text = expensePeriodComparisonReplyText(comparison);
-    for (const i of [0, 2, 3, 4, 5, 7, 8, 9]) assert.match(text, new RegExp(category(i)), `top-8 amount ${category(i)} must be shown`);
-    for (const i of [1, 6]) assert.doesNotMatch(text, new RegExp(category(i)), `the two smallest amounts (${category(i)}) must be dropped by the cap`);
+  it('names one group for each period however many groups there are, and none for a period with no group', () => {
+    const rows = [500, 100, 900, 300, 1000, 700, 200, 800, 600, 400].map((totalAmount, i) => ({ category: `หมวด${i}`, totalAmount: String(totalAmount) }));
+    const augMany = { period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, totalAmount: '5500', totalCount: 10, byCategory: rows };
+    const sepNone = { period: { fromDate: '2026-09-01', toDate: '2026-09-30' }, totalAmount: '0', totalCount: 0, byCategory: [] };
+    const text = expensePeriodComparisonReplyText(expensePeriodComparison('expense.get_breakdown', augMany, sepNone)!);
+    assert.deepEqual(text.split('\n').slice(3), ['ก.ย. น้อยกว่า ส.ค. 5,500.00 บาท', 'ค่าใช้จ่ายที่น่าสนใจ', '• ส.ค. จ่ายมากที่สุด: หมวด4 1,000.00 บาท']);
+  });
+
+  it('the same answer as card rows: a row for each period, each change and each largest group; a note for a partial period and the scope', () => {
+    const scoped = { queryApplied: { accessScope: 'related' } };
+    const card = expensePeriodComparisonCard(expensePeriodComparison('expense.get_breakdown', { ...LAST_MONTH, ...scoped }, { ...THIS_MONTH, ...scoped })!)!;
+    assert.deepEqual(card, {
+      header: ['เปรียบเทียบค่าใช้จ่าย', '1 ส.ค. – 28 ก.ย. 2569'],
+      rows: [
+        { label: 'ส.ค. 2569', value: '40,453.00 บาท' },
+        { label: '1–28 ก.ย. 2569', value: '17,765.00 บาท' },
+        { label: '1–28 ก.ย. น้อยกว่า ส.ค.', value: '22,688.00 บาท' },
+        { label: 'ส.ค. จ่ายมากที่สุด', value: 'ค่าบริการ 10,764.50 บาท' },
+        { label: '1–28 ก.ย. จ่ายมากที่สุด', value: 'ค่าใช้จ่ายอื่นๆ 4,599.50 บาท' },
+      ],
+      notes: ['การเปรียบเทียบนี้มีทั้งเดือนเต็มและช่วงที่ไม่ครบเดือน', 'แสดงเฉพาะรายการที่เกี่ยวข้องกับคุณ'],
+    });
+    // Equal totals have no amount to print: the row says so in words. English has no card.
+    const same = expensePeriodComparison('expense.list_recent',
+      { period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, total: 1, summary: { totalAmount: '100' } },
+      { period: { fromDate: '2026-09-01', toDate: '2026-09-30' }, total: 1, summary: { totalAmount: '100' } })!;
+    assert.deepEqual(expensePeriodComparisonCard(same)!.rows.at(-1), { label: 'ก.ย. เท่ากับ ส.ค.', value: 'ยอดเท่ากัน' });
+    assert.deepEqual(expensePeriodComparisonCard(same)!.notes, []);
+    assert.equal(expensePeriodComparisonCard(expensePeriodComparison('expense.get_breakdown', LAST_MONTH, THIS_MONTH, true)!), undefined);
+    // A percentage on the card only when the reader asked: (17,765 - 40,453) / 40,453 = -56.1%.
+    assert.equal(expensePeriodComparisonCard(expensePeriodComparison('expense.get_breakdown', LAST_MONTH, THIS_MONTH)!, true)!.rows[2]!.value, '22,688.00 บาท (ลดลง 56.1%)');
   });
 });
 
@@ -358,7 +375,7 @@ describe('cards-cmp: expense comparison series and arithmetic', () => {
     return { period: { fromDate: `${key}-01`, toDate: `${key}-${new Date(Date.UTC(year!, m!, 0)).getUTCDate()}` },
       total: count, summary: { totalAmount } };
   };
-  it('owner case: every month once, chronological, with adjacent difference, percentage and multiple', () => {
+  it('owner case: every month once, chronological, then each month against the one before it', () => {
     // 214899.57 - 25147.80 = 189751.77; /25147.80 = 754.5%; 214899.57/25147.80 = 8.5x.
     // 98000 - 214899.57 = -116899.57; /214899.57 = -54.4%.
     const series = expensePeriodComparisonSeries('expense.list_recent', [
@@ -368,10 +385,19 @@ describe('cards-cmp: expense comparison series and arithmetic', () => {
       'เปรียบเทียบค่าใช้จ่าย ก.ค. – ก.ย. 2569',
       '• ก.ค. 2569: 25,147.80 บาท (7 รายการ)',
       '• ส.ค. 2569: 214,899.57 บาท (25 รายการ)',
-      '  มากกว่า ก.ค. 189,751.77 บาท (เพิ่มขึ้น 754.5% หรือราว 8.5 เท่าของ ก.ค.)',
       '• ก.ย. 2569: 98,000.00 บาท (12 รายการ)',
-      '  น้อยกว่า ส.ค. 116,899.57 บาท (ลดลง 54.4%)',
+      'ส.ค. มากกว่า ก.ค. 189,751.77 บาท',
+      'ก.ย. น้อยกว่า ส.ค. 116,899.57 บาท',
     ].join('\n'));
+    // A reader who asked for a percentage gets it, with the multiple from double up.
+    assert.deepEqual(expensePeriodComparisonReplyText(series, true).split('\n').slice(4), [
+      'ส.ค. มากกว่า ก.ค. 189,751.77 บาท (เพิ่มขึ้น 754.5% หรือราว 8.5 เท่าของ ก.ค.)',
+      'ก.ย. น้อยกว่า ส.ค. 116,899.57 บาท (ลดลง 54.4%)',
+    ]);
+    assert.deepEqual(expensePeriodComparisonCard(series)!.rows, [
+      { label: 'ก.ค. 2569', value: '25,147.80 บาท' }, { label: 'ส.ค. 2569', value: '214,899.57 บาท' }, { label: 'ก.ย. 2569', value: '98,000.00 บาท' },
+      { label: 'ส.ค. มากกว่า ก.ค.', value: '189,751.77 บาท' }, { label: 'ก.ย. น้อยกว่า ส.ค.', value: '116,899.57 บาท' },
+    ]);
     assert.match(series.factsText, /8\.5 เท่าของ ก\.ค\./u, 'the multiple is a grounded fact too');
     assert.equal(series.periods.length, 3);
     assert.equal(series.comparisons.length, 2);
@@ -386,12 +412,15 @@ describe('cards-cmp: expense comparison series and arithmetic', () => {
     const comparison = expensePeriodComparison('expense.list_recent', month('2026-08', earlier!), month('2026-09', later!))!;
     assert.equal(comparison.directionLine, expected);
     assert.ok(comparison.factsText.includes(expected!));
+    // The reply says the same change with both periods named and no percentage.
+    assert.equal(expensePeriodComparisonReplyText(comparison).split('\n')[3], `ก.ย. ${expected!.replace(/ \(.*$/u, '')}`);
   });
   it('year end: every amount and direction identifies its year', () => {
     // (200-100)/100=100%, 200/100=2.0.
     const series = expensePeriodComparisonSeries('expense.list_recent', [month('2027-01', '200'), month('2026-12', '100')])!;
     assert.equal(series.headerLine, 'เปรียบเทียบค่าใช้จ่าย ธ.ค. 2569 – ม.ค. 2570');
-    assert.match(expensePeriodComparisonReplyText(series), /• ม\.ค\. 2570:.*\n  มากกว่า ธ\.ค\. 2569 100\.00 บาท \(เพิ่มขึ้น 100\.0% หรือราว 2\.0 เท่าของ ธ\.ค\. 2569\)/u);
+    assert.match(expensePeriodComparisonReplyText(series), /^ม\.ค\. 2570 มากกว่า ธ\.ค\. 2569 100\.00 บาท$/mu);
+    assert.match(expensePeriodComparisonReplyText(series, true), /^ม\.ค\. 2570 มากกว่า ธ\.ค\. 2569 100\.00 บาท \(เพิ่มขึ้น 100\.0% หรือราว 2\.0 เท่าของ ธ\.ค\. 2569\)$/mu);
   });
   it('English keeps the same header, bullets, day range, arithmetic and partial-period warning', () => {
     // (200-100)/100=100%, 200/100=2.0.
@@ -401,9 +430,10 @@ describe('cards-cmp: expense comparison series and arithmetic', () => {
       'Expense comparison Aug 1 – Sep 28, 2026',
       '• Aug 2026: 100.00 THB (1 item)',
       '• 1–28 Sep 2026: 200.00 THB (1 item)',
-      '  More than Aug by 100.00 THB (up 100.0% or about 2.0 times Aug)',
+      '1–28 Sep is 100.00 THB more than Aug',
       'This comparison includes both full months and partial periods.',
     ].join('\n'));
+    assert.match(expensePeriodComparisonReplyText(series, true), /^1–28 Sep is 100\.00 THB more than Aug \(up 100\.0% or about 2\.0 times Aug\)$/mu);
   });
   it('a range of whole calendar months is not falsely called a partial month', () => {
     // April 200 - Jan–Mar 100=100; growth=100%, ratio=2.0. Jan–Mar covers three complete months.
@@ -459,14 +489,13 @@ describe('cards-cmp: expense comparison series and arithmetic', () => {
     const series = expensePeriodComparisonSeries('expense.list_recent', [{ ...month('2026-08', '100'), accessScope: 'related' }, { ...month('2026-09', '200'), accessScope: 'related' }])!;
     assert.ok(expensePeriodComparisonReplyText(series).endsWith('ขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ'));
   });
-  it('English grouped comparisons use one amount or rank per line and English units', () => {
-    // Group: (200-100)/100=100%, difference=100.
+  it('English grouped comparisons name each period\'s largest group in English units', () => {
     const a = { ...month('2026-08', '100'), totalAmount: '100', totalCount: 1, byCategory: [{ category: 'Services', totalAmount: '100' }] };
     const b = { ...month('2026-09', '200'), totalAmount: '200', totalCount: 1, byCategory: [{ category: 'Services', totalAmount: '200' }] };
     const comparison = expensePeriodComparison('expense.get_breakdown', a, b, true)!;
-    assert.match(expensePeriodComparisonReplyText(comparison), /Services\n  Aug 2026: 100\.00 THB\n  Sep 2026: 200\.00 THB\n  Difference 100\.00 THB \(\+100\.0%\)/u);
-    assert.deepEqual(comparison.rankLines, ['Rank 1 Aug 2026: Services 100.00 THB', 'Rank 1 Sep 2026: Services 200.00 THB', 'Rank 1: same category']);
-    assert.doesNotMatch(expensePeriodComparisonReplyText(comparison), /บาท|ต่างกัน|อันดับ/u);
+    assert.deepEqual(expensePeriodComparisonReplyText(comparison).split('\n').slice(3), [
+      'Sep is 100.00 THB more than Aug', 'Notable expenses', '• Aug spent the most on: Services 100.00 THB', '• Sep spent the most on: Services 200.00 THB']);
+    assert.doesNotMatch(expensePeriodComparisonReplyText(comparison), /[\u0E00-\u0E7F]|%/u);
   });
   it('nine periods are refused as a series, never truncated to the eight-period limit', () => {
     assert.equal(expensePeriodComparisonSeries('expense.list_recent', Array.from({ length: 9 }, (_, i) => month(`2026-0${i + 1}`, String(i + 1)))), undefined);
@@ -514,12 +543,12 @@ describe('A8 (batch5, T-082-a): comparison follows the applied groupBy, not alwa
     assert.match(comparison.factsText, /ร้านสมใจการค้า/);
   });
 
-  it('exact real-world rank-1 line: T-082-a\'s "อันดับ 1" wording, numbers, and "not the same vendor"', () => {
+  it('T-082-a\'s real numbers: each period\'s largest vendor is named, so the reader sees they are not the same', () => {
     const comparison = expensePeriodComparison('expense.get_breakdown', AUGUST_VENDOR, SEPTEMBER_VENDOR)!;
-    assert.deepEqual(comparison.rankLines.slice(0, 3), [
-      'อันดับ 1 ส.ค. 2569: ไม่ระบุร้าน 7,587.00 บาท',
-      'อันดับ 1 1–28 ก.ย. 2569: ร้านสมใจการค้า 4,188.50 บาท',
-      'อันดับ 1 ไม่ใช่ร้านเดียวกัน',
+    assert.deepEqual(expensePeriodComparisonReplyText(comparison).split('\n').slice(-3), [
+      'ค่าใช้จ่ายที่น่าสนใจ',
+      '• ส.ค. จ่ายมากที่สุด: ไม่ระบุร้าน 7,587.00 บาท',
+      '• 1–28 ก.ย. จ่ายมากที่สุด: ร้านสมใจการค้า 4,188.50 บาท',
     ]);
   });
 

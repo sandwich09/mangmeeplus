@@ -1024,8 +1024,71 @@ it('all controller matrix phrases keep bounded, non-future, exact-span wire cand
 });
 
 
+it('P3: a month abbreviation typed with only its final dot is that month (owner on LINE UAT 2026-10-05)', () => {
+  const months = (text: string) => (extractValueCandidates(text, P1_TODAY).periods ?? []).map(p => [p.kind, p.fromDate, p.toDate]);
+  const m = (from: string, to: string) => ['month', from, to];
+  // His message, asked which period it meant: three months, as with every other way of writing them.
+  const three = [m('2026-07-01', '2026-07-31'), m('2026-08-01', '2026-08-31'), m('2026-09-01', '2026-09-30')];
+  for (const text of ['เทียบค่าใช้จ่าย กค. สค. กย.', 'กค. สค. กย.', 'กค.,สค.,กย.', 'เทียบค่าใช้จ่าย กค สค กย', 'เทียบค่าใช้จ่าย ก.ค. ส.ค. ก.ย.']) {
+    assert.deepEqual(months(text), three, text);
+    assert.equal(unresolvedMonthName(text, extractValueCandidates(text, P1_TODAY).periods ?? []), null, text);
+  }
+  // every month, alone and after เดือน, with a year, glued to a polite word, and beside กับ
+  const all = ['มค.', 'กพ.', 'มีค.', 'เมย.', 'พค.', 'มิย.', 'กค.', 'สค.', 'กย.', 'ตค.', 'พย.', 'ธค.'];
+  for (const [index, name] of all.entries()) {
+    const key = `-${String(index + 1).padStart(2, '0')}-`;
+    for (const text of [name, `เดือน ${name}`, `ค่าใช้จ่าย ${name}`, `ของเดือน${name}ค่ะ`]) {
+      const found = extractValueCandidates(text, P1_TODAY).periods ?? [];
+      assert.equal(found.length, 1, text); assert.ok(found[0]!.fromDate.includes(key), text); assert.equal(found[0]!.kind, 'month', text);
+      assert.equal(unresolvedMonthName(text, found), null, text);
+    }
+  }
+  assert.deepEqual(months('ค่าใช้จ่าย สค. 69'), [m('2026-08-01', '2026-08-31')]);
+  assert.deepEqual(months('ธค. 68'), [m('2025-12-01', '2025-12-31')]);
+  assert.deepEqual(months('เทียบ กค.กับสค.'), [m('2026-07-01', '2026-07-31'), m('2026-08-01', '2026-08-31')]);
+  // the range, since and day-range forms take the same spelling
+  for (const [text, from, to] of [['กค.-กย.', '2026-07-01', '2026-09-30'], ['กค. ถึง กย.', '2026-07-01', '2026-09-30'], ['ตั้งแต่ สค. ถึง ตค.', '2026-08-01', P1_TODAY],
+    ['ตั้งแต่ สค.', '2026-08-01', P1_TODAY], ['1 สค. ถึง 15 กย.', '2026-08-01', '2026-09-15'], ['กค.ปีที่แล้ว', '2025-07-01', '2025-07-31']] as const) {
+    assert.deepEqual((extractValueCandidates(text, P1_TODAY).periods ?? []).map(p => [p.fromDate, p.toDate]), [[from, to]], text);
+  }
+  // still not a month: the letters inside another word or name
+  for (const text of ['มีค่าใช้จ่ายอะไรบ้าง', 'ร้านกค. จำกัด', 'สค.บ.']) assert.deepEqual(extractValueCandidates(text, P1_TODAY).periods ?? [], [], text);
+});
+
+it('P4: months and years as they are typed in a comparison or glued to the word before', () => {
+  const read = (text: string) => (extractValueCandidates(text, P1_TODAY).periods ?? []).map(p => [p.fromDate, p.toDate]);
+  const jul = ['2026-07-01', '2026-07-31'], aug = ['2026-08-01', '2026-08-31'], sep = ['2026-09-01', '2026-09-30'], oct = ['2026-10-01', P1_TODAY];
+  const rows: Array<[string, string[][]]> = [
+    // spoken names in a comparison: nothing was read before, so the assistant asked which period was meant
+    ['เทียบกรกฎากับสิงหา', [jul, aug]], ['เทียบสิงหากับกันยา', [aug, sep]], ['เทียบ สิงหา กับ กันยา', [aug, sep]], ['สรุปกันยา', [sep]],
+    // three months joined by a connector are a list, never a range plus a month
+    ['เทียบ ก.ค.-ส.ค.-ก.ย.', [jul, aug, sep]], ['เทียบ กค-สค-กย', [jul, aug, sep]], ['กค.-สค.-กย.-ตค.', [jul, aug, sep, oct]],
+    // two months joined by a connector stay one range
+    ['ก.ค.-ก.ย.', [['2026-07-01', '2026-09-30']]], ['กค-กย', [['2026-07-01', '2026-09-30']]],
+    // an abbreviation glued to the word before it, or followed by เทียบ / นี้
+    ['ค่าใช้จ่ายกค.', [jul]], ['ยอดกย.', [sep]], ['สรุปกย.', [sep]], ['รายจ่ายสค', [aug]], ['ขอยอด ตค.นี้', [oct]], ['กย.เทียบกับสค.', [sep, aug]], ['กย เทียบ สค', [sep, aug]],
+    ['กค./สค./กย.', [jul, aug, sep]],
+    // a year with its era stated, the whole year, and a quarter counted in words
+    ['พ.ศ. 2568', [['2025-01-01', '2025-12-31']]], ['ปี พ.ศ.2568', [['2025-01-01', '2025-12-31']]], ['ปี ค.ศ. 2025', [['2025-01-01', '2025-12-31']]], ['ค.ศ.2026', [['2026-01-01', P1_TODAY]]],
+    ['ค่าใช้จ่ายทั้งปี', [['2026-01-01', P1_TODAY]]], ['ทั้งปี 68', [['2025-01-01', '2025-12-31']]], ['ปี 2568 ทั้งปี', [['2025-01-01', '2025-12-31']]], ['ปีนี้ทั้งปี', [['2026-01-01', P1_TODAY]]],
+    ['ทั้งปีที่แล้ว', [['2025-01-01', '2025-12-31']]],
+    ['ไตรมาสสาม', [['2026-07-01', '2026-09-30']]], ['ไตรมาสแรก', [['2026-01-01', '2026-03-31']]], ['ไตรมาสที่สอง ปี 68', [['2025-04-01', '2025-06-30']]],
+  ];
+  for (const [text, expected] of rows) {
+    assert.deepEqual(read(text), expected, text);
+    const found = extractValueCandidates(text, P1_TODAY);
+    assert.equal(unresolvedMonthName(text, found.periods ?? []), null, text);
+    for (const period of found.periods ?? []) assert.ok(text.includes(period.span), `${text}: span`);
+    assert.deepEqual(parseLineAiValueCandidates(found, text), found, `${text}: wire`);
+  }
+  // still not months: a person's name after กับ, a longer word, the letters inside another word, a future era year
+  for (const text of ['จ่ายให้กับกันยา 500 บาท', 'ไปกับตุลา', 'สรุปตุลาการ', 'ของมีค่า', 'ของพยาบาล', 'สคริปต์', 'ยอดมีค่ามาก', 'พ.ศ. 2599', 'ค.ศ. 1850']) {
+    assert.deepEqual(read(text), [], text);
+  }
+});
+
 it('out-of-scope half years, numeric months and weekdays still have no period', () => {
-  for (const text of ['ครึ่งปีแรก', 'ครึ่งปีหลัง', 'ครึ่งปีแรก 2569', 'กย.', '9/2569',
+  for (const text of ['ครึ่งปีแรก', 'ครึ่งปีหลัง', 'ครึ่งปีแรก 2569', '9/2569',
     '๙/๒๕๖๙', '09/69', 'จันทร์ที่แล้ว', 'วันจันทร์', 'เสาร์อาทิตย์ที่ผ่านมา']) {
     assert.deepEqual(extractValueCandidates(text, P1_TODAY).periods ?? [], [], text);
   }

@@ -31,6 +31,15 @@ const ROWS_MAX = 20;
 export const LINE_SYSTEM_CARD_BUTTONS_MAX = 8;
 
 const length = (value: string) => Array.from(value).length;
+
+/** A state pill is one line that cannot wrap: LINE cuts what does not fit. On the narrowest bubble the
+ *  gallery measured (256 px) the value column is 125.8 px, the pill's own sides take 14, and its 12 px
+ *  letters were at most 6.9 px wide: sixteen letters. A state longer than that is printed as words. */
+const PILL_LETTERS_MAX = 16;
+const letters = new Intl.Segmenter('th', { granularity: 'grapheme' });
+export function lineSystemCardPillHolds(value: string): boolean {
+  return [...letters.segment(value.trim())].length <= PILL_LETTERS_MAX;
+}
 /** Text a person can read: something other than white space, and no character LINE's JSON rejects. */
 // eslint-disable-next-line no-control-regex
 const readable = (value: unknown, max: number): value is string => typeof value === 'string' && value.trim().length > 0 && length(value) <= max && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value);

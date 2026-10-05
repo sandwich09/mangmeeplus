@@ -5,6 +5,7 @@ import {
   buildDesignedLineAnswerMessage,
   buildExpenseDraftCardMessage,
   buildExpenseDraftReviewCard,
+  buildKeptReceiptCard,
   expenseDraftCardFactsFrom,
   expenseDraftCardSubject,
   buildLineSystemTextCardMessage,
@@ -29,6 +30,7 @@ import * as cardBuilders from './line-business-card.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { isLineSystemCard, readLineSystemBubble, readLineSystemCard } from './line-system-card.fixture';
 import { lineMessagePreview } from './line-message-preview.logic';
+import { receiptProgress, receiptProgressLabel } from './line-receipt-status.logic';
 import { buildLineSystemCardBubble, lineSystemCardTexts, type LineSystemCard } from './line-system-card.logic';
 import { drawLineSystemCard, lineFlexBodyProblems, lineSystemCardSendable } from './line-system-card-limits.logic';
 import { buildDraftUpdateOutcomeCard, buildDraftUpdatePreviewCard } from './line-draft-update-card.logic';
@@ -1091,6 +1093,99 @@ describe('expense draft card (§10.1) — the locked review card', () => {
   });
 });
 
+// ── Owner 2026-10-05, real LINE: a photo that is a bill already kept was answered on the green card
+//    from before the design ("ข้อมูลจากน้องมั่งมี" / "📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ …"). It is a row
+//    card like the receipt review card, written from the record's own facts. ──
+describe('a photo that is a bill already kept — the row card', () => {
+  const WEB = 'https://app.example.com';
+  const LINK = `${WEB}/companies/c1/expenses/e1`;
+  /** The reply exactly as the webhook composes it. */
+  const reply = (vendor: string | null, total: string, status: string, verification?: string | null) => [
+    '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ', ...(vendor ? [`ผู้ขาย – ${vendor}`] : []), `ยอดรวม – ${total}`,
+    `สถานะ – ${receiptProgressLabel(status, verification)}`, `เปิดใบเสร็จเดิม: ${LINK}`].join('\n');
+  const kept = (status: string, verification?: string | null, over: { vendor?: string | null; total?: string | null } = {}) => {
+    const facts = { vendor: 'Starbucks Coffee', total: '170.00 บาท', ...over };
+    const text = reply(facts.vendor ?? null, facts.total ?? '0.00 บาท', status, verification);
+    return { text, message: buildKeptReceiptCard(text, { expenseId: 'e1', ...facts, progress: receiptProgress(status, verification) }, WEB, 'c1') };
+  };
+  const PILL = { ok: ['#edf3e8', '#356341'], pending: ['#fbf1d8', '#755418'], closed: ['#f5e4de', '#884838'] } as const;
+
+  it('the case the owner saw — a draft waiting for review: seller, total on the emphasised row, the state, what is left to do, one button', () => {
+    const { text, message } = kept('NEEDS_REVIEW');
+    const card = readSystemCard(message!);
+    assert.deepEqual(card.header, ['เอกสารที่ส่งมา', 'ตรงกับบิลที่เก็บไว้แล้ว']);
+    assert.deepEqual(card.rows, [['ผู้ขาย', ':', 'Starbucks Coffee'], ['ยอดรวม', ':', '170.00 บาท'], ['สถานะ', ':', 'บันทึกแบบร่างแล้ว']]);
+    assert.deepEqual(card.totals, ['ยอดรวม']);
+    assert.deepEqual(card.pills, { 'สถานะ': PILL.pending });
+    assert.deepEqual(card.notes, ['รอคุณตรวจสอบและยืนยัน']);
+    assert.deepEqual(card.actions, [{ type: 'uri', label: 'เปิดใบเสร็จเดิม', uri: LINK }]);
+    assert.deepEqual([card.prose, card.footnotes, card.banner], [[], [], undefined]);
+    assert.match(card.mascot, /system-card-mascot-general-/u);
+    // Nothing the card prints is an emoji, a raw link, or the title of the card from before the design.
+    assert.ok(card.texts.every((line) => !/\p{Extended_Pictographic}|https?:|ข้อมูลจากน้องมั่งมี/u.test(line)), card.texts.join(' | '));
+    // The reply itself is untouched: it is what is stored, and what LINE gets if it refuses the card.
+    assert.equal(message!.type === 'flex' && message!.canonicalText, text);
+    assert.equal(message!.type === 'flex' && message!.altText, '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ\nผู้ขาย – Starbucks Coffee\nยอดรวม – 170.00 บาท\nสถานะ – บันทึกแบบร่างแล้ว รอคุณตรวจสอบและยืนยัน');
+    assert.equal(isCompleteLineBusinessAnswerPresentation(message!), true);
+    assert.deepEqual(lineFlexBodyProblems((message as any).contents), []);
+  });
+
+  it('every state the kept bill can be in: the state row and the note are the sentence\'s own words, in the state\'s tone', () => {
+    for (const [status, verification, state, pill, note] of [
+      ['DRAFT', null, 'บันทึกแบบร่างแล้ว', PILL.pending, 'รอคุณตรวจสอบและยืนยัน'],
+      ['NEEDS_REVIEW', 'VERIFIED', 'บันทึกแบบร่างแล้ว', PILL.pending, 'รอคุณตรวจสอบและยืนยัน'],
+      ['READY_FOR_CONFIRMATION', null, 'บันทึกแบบร่างแล้ว', PILL.pending, 'รอคุณตรวจสอบและยืนยัน'],
+      ['CONFIRMED', null, 'ยืนยันรายการแล้ว', PILL.ok, undefined],
+      ['VOIDED', null, 'ยกเลิกรายการแล้ว', PILL.closed, undefined],
+      // Longer than a pill holds on a narrow phone: printed as words, never cut.
+      ['REJECTED', null, 'รายการไม่ผ่านการตรวจ', undefined, undefined],
+      ['EXTRACTING', null, 'กำลังอ่านใบเสร็จ', PILL.pending, undefined],
+      ['DRAFT', 'VERIFYING', 'กำลังอ่านใบเสร็จ', PILL.pending, undefined],
+      ['DRAFT', 'FAILED', 'เก็บภาพแล้ว', PILL.pending, 'แต่อ่านข้อมูลไม่สำเร็จ'],
+      ['A_STATE_NOT_KNOWN_HERE', null, 'ยังยืนยันสถานะไม่ได้', PILL.pending, undefined],
+    ] as const) {
+      const name = `${status}/${verification}`;
+      const { text, message } = kept(status, verification);
+      const card = readSystemCard(message!);
+      assert.deepEqual(card.header, ['เอกสารที่ส่งมา', 'ตรงกับบิลที่เก็บไว้แล้ว'], name);
+      assert.deepEqual(card.rows.at(-1), ['สถานะ', ':', state], name);
+      assert.deepEqual(card.pills, pill ? { 'สถานะ': pill } : {}, name);
+      assert.deepEqual(card.notes, note ? [note] : [], name);
+      // One wording per fact: the sentence says the same state and the same follow-on, in that order.
+      assert.equal(receiptProgressLabel(status, verification), note ? `${state} ${note}` : state, name);
+      assert.ok(text.includes(`สถานะ – ${note ? `${state} ${note}` : state}`), name);
+      assert.equal(message!.type === 'flex' && message!.canonicalText, text, name);
+      assert.deepEqual(lineFlexBodyProblems((message as any).contents), [], name);
+    }
+  });
+
+  it('a fact the record does not hold has no row — never an empty cell; the state alone still makes the card', () => {
+    for (const vendor of [null, undefined, '', '   ']) {
+      const card = readSystemCard(kept('DRAFT', null, { vendor }).message!);
+      assert.deepEqual(card.rows.map(([label]) => label), ['ยอดรวม', 'สถานะ'], JSON.stringify(vendor));
+    }
+    for (const total of [null, undefined, '', '  ']) {
+      const card = readSystemCard(kept('EXTRACTING', null, { total }).message!);
+      assert.deepEqual(card.rows.map(([label]) => label), ['ผู้ขาย', 'สถานะ'], JSON.stringify(total));
+      assert.deepEqual(card.totals, [], 'no emphasised row for an amount the record does not hold');
+    }
+    const bare = readSystemCard(kept('EXTRACTING', null, { vendor: null, total: null }).message!);
+    assert.deepEqual(bare.rows, [['สถานะ', ':', 'กำลังอ่านใบเสร็จ']]);
+    assert.deepEqual(bare.actions.map((action) => action.label), ['เปิดใบเสร็จเดิม']);
+    for (const row of bare.rows) assert.ok(row.every((cell) => cell.trim().length > 0));
+  });
+
+  it('is not drawn where it could not be whole: the caller then sends the reply as it did before', () => {
+    const facts = { expenseId: 'e1', vendor: 'Starbucks Coffee', total: '170.00 บาท', progress: receiptProgress('DRAFT') };
+    for (const base of [undefined, '', 'http://localhost:3000', 'not a url']) assert.equal(buildKeptReceiptCard('reply', facts, base, 'c1'), undefined, String(base));
+    assert.equal(buildKeptReceiptCard('reply', { ...facts, vendor: 'ก'.repeat(201) }, WEB, 'c1'), undefined, 'a seller longer than a row holds');
+    // The button opens THIS company's own page of that bill, or there is no card: an id that is not a
+    // plain id is never turned into a way out of the company's pages.
+    assert.equal(buildKeptReceiptCard('reply', { ...facts, expenseId: '../../c2/expenses/x?y=1' }, WEB, 'c1'), undefined);
+    assert.deepEqual(readSystemCard(buildKeptReceiptCard('reply', { ...facts, expenseId: 'exp 1' }, WEB, 'c1')!).actions.map((action) => action.uri), [`${WEB}/companies/c1/expenses/exp%201`]);
+  });
+});
+
 describe('reimbursement intake cards — server-owned, never rendered from model text', () => {
   const BADGE = '📝 ยังไม่ได้สร้างรายการ';
   const bubbleOf = (message: { type: string }) => (message as any).contents;
@@ -1326,6 +1421,7 @@ describe('delivery plan guard: every card carries its text, or says why it never
     buildLineAssistantTextCardMessage: () => [buildLineAssistantTextCardMessage('คำตอบ', WEB, 'c1')],
     buildExpenseDraftCardMessage: () => [buildExpenseDraftCardMessage('ร่างค่าใช้จ่าย', DRAFT_FACTS, WEB, 'c1'), buildExpenseDraftCardMessage('ร่างค่าใช้จ่าย', DRAFT_FACTS, undefined, 'c1')],
     buildExpenseDraftReviewCard: () => [buildExpenseDraftReviewCard('ร่างค่าใช้จ่าย', DRAFT_FACTS, WEB, 'c1')!],
+    buildKeptReceiptCard: () => [buildKeptReceiptCard('รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ', { expenseId: 'e1', progress: receiptProgress('DRAFT') }, WEB, 'c1')!],
     buildLineSystemTextCardMessage: () => [buildLineSystemTextCardMessage({ text: 'คำตอบ', header: { lines: ['แก้ไขค่าใช้จ่าย', 'ยกเลิกแล้ว'] }, webBaseUrl: WEB, companyId: 'c1' })!],
     buildDesignedLineAnswerMessage: () => [
       buildDesignedLineAnswerMessage(response(), 'fallback', WEB, 'c1', 'ทำอะไรได้บ้าง')!,
