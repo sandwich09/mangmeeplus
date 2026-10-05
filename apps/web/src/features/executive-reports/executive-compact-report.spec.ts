@@ -327,7 +327,8 @@ test('unmatched revenue uses a plain quantity header and the truthful unit on ea
     const rows = table.match(/<tbody[^>]*>[\s\S]*?<\/tbody>/g)!;
     assert.equal(rows.length, 6);
     for (const [i, unit] of [W.unitItem, W.unitBaht, W.unitBaht, W.unitBaht, W.unitBaht, W.unitReceipt].entries()) {
-      assert.match(rows[i], new RegExp(`<span class="text-xs text-gray-600">${unit}</span>`));
+      // The unit has its own slot of one width, so the numbers of the column line up.
+      assert.match(rows[i], new RegExp(`<span class="w-11 text-left text-xs text-gray-600">${unit}</span>`));
       assert.match(rows[i], /md:hidden">จำนวน<\/span>/);
     }
     if (coverage === 'complete') {
