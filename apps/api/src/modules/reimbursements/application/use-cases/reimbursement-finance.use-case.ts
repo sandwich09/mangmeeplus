@@ -24,7 +24,7 @@ import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import { assertCanReadRequestOrAssignment, mayCancelReimbursement } from './reimbursement-request.use-case';
 import {
   validatePaymentRecording,
-  duplicateBlocksPayment, claimDuplicateReasons,
+  duplicateBlocksPayment, claimDuplicateReasons, confirmedDuplicateRefusal,
   payoutCorrectionPhase,
   claimApproverUserId,
   isSamePaymentRequest,
@@ -121,6 +121,8 @@ export class FinanceReviewReimbursementUseCase {
       if (!ctx.permissions.includes('reimbursement.duplicate.resolve')) throw new ForbiddenException('Missing permission: reimbursement.duplicate.resolve');
       if (!input.duplicateResolutionReason?.trim() || input.duplicateResolutionReason.trim().length > 500) throw new BadRequestException('duplicate_resolution_reason_required');
       if (looksLikeAccountNumber(input.duplicateResolutionReason)) throw new BadRequestException('note_contains_account_number');
+      const refusal = confirmedDuplicateRefusal(req, mayCancelReimbursement(ctx, req));
+      if (refusal) throw new UnprocessableEntityException(refusal);
     }
     if (input.decision === 'NEEDS_INFO' && !note) {
       throw new BadRequestException('finance_correction_reason_required');
@@ -275,6 +277,8 @@ export class FinanceReviewReimbursementUseCase {
     const req = await this.repo.findRequestById(ctx.companyId, id);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     assertReimbursementBranchInScope(ctx, req.branchId);
+    const refusal = confirmedDuplicateRefusal(req, mayCancelReimbursement(ctx, req));
+    if (refusal) throw new UnprocessableEntityException(refusal);
 
     let reconcileExpenses = false;
     const resolved = await this.repo.resolvePaymentDuplicatesAtomic({

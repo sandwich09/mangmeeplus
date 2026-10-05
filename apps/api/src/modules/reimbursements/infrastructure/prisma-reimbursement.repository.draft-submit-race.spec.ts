@@ -3478,6 +3478,10 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
       } } });
       const facts = await duplicateFacts({ requestId: claim.requestId, amount: ready.amount }, `confirmed-${duplicatePolicy}`);
       assert.deepEqual([facts.queue[0], facts.detail[0], facts.payment], [true, true, '422 duplicate_confirmed']);
+      // Every list the claim shows in carries the fact too, so no row reads as ready to pay.
+      const listed = (await repos[0]!.listRequests({ companyId, scopes: {}, statuses: ['READY_FOR_PAYMENT'] })).find((row) => row.id === claim.requestId);
+      const paged = (await repos[0]!.listRequestPage({ companyId, scopes: {}, skip: 0, take: 100 })).rows.find((row) => row.id === claim.requestId);
+      assert.deepEqual([listed?.confirmedDuplicateExpenseCount, paged?.confirmedDuplicateExpenseCount], [1, 1]);
       assert.equal(await db.reimbursementPayment.count({ where: { companyId, reimbursementRequestId: claim.requestId } }), 0);
       const standing = await db.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } });
       assert.equal(standing.paymentTotalAmount.toString(), '0');

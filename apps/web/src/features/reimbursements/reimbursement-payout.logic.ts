@@ -373,7 +373,7 @@ export function claimPayoutHistory(detail: {
  * to do (taking the claim back to a draft and sending it again). Null when the server said nothing.
  */
 export function payoutDefaultChangedHint(
-  detail: { payout?: ReimbursementPayoutSummary | null; payoutCorrectionPhase?: string | null; payoutCorrectionActions?: { canRequest?: boolean; canSubmit?: boolean } | null },
+  detail: { duplicateReasons?: readonly string[]; payout?: ReimbursementPayoutSummary | null; payoutCorrectionPhase?: string | null; payoutCorrectionActions?: { canRequest?: boolean; canSubmit?: boolean } | null },
   canWithdraw: boolean,
 ): string | null {
   if (detail.payout?.defaultAccountChanged !== true) return null;
@@ -386,7 +386,8 @@ export function payoutDefaultChangedHint(
       ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${payoutCorrectionAnswerWords({ ...detail.payout, payoutCorrectionPhase: detail.payoutCorrectionPhase }, true).button}ในขั้นอนุมัติ แล้วเลือกใช้บัญชีประจำ`
       : detail.payoutCorrectionActions?.canRequest === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${payoutRoundTexts(detail.payout).payLink}ที่ท้ายกล่องนี้ ก่อนมีการโอน`
         : 'ตอนนี้คุณเปิดใบนี้กลับเป็นร่างเองไม่ได้แล้ว ถ้าต้องการเปลี่ยนบัญชี แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน';
-  return `บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ${how}`;
+  const fact = 'บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ';
+  return detail.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') ? fact : `${fact} ${how}`;
 }
 
 /**
