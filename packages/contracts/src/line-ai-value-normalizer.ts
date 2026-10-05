@@ -956,6 +956,8 @@ type PeriodRule = {
   pattern: RegExp;
   /** Thai relative words only: skip a match a fuzzy qualifier precedes. */
   fuzzyGuard?: boolean;
+  /** A recognized day range must not also be joined from record DATE candidates. */
+  blocksDateRanges?: boolean;
   /** null leaves an invalid month range to the existing individual-month rules. */
   build: (match: RegExpExecArray | RegExpMatchArray, todayIso: string) => PeriodReading[] | null;
 };
@@ -989,6 +991,7 @@ function completeUnits(n: number, unit: string, today: string, suffix: string): 
 }
 
 const PERIOD_ALL_MONTH_ALTERNATION = `${PERIOD_MONTH_ALTERNATION}|${PERIOD_SHORT_MONTH_ALTERNATION}|${PERIOD_SPOKEN_MONTH_ALTERNATION}`;
+const PERIOD_RANGE_CONNECTOR = 'จนถึง|ถึง|ยัน|-|–|—|~|to|until|through';
 const MONTH_RANGE_ENDPOINT = `(${PERIOD_ALL_MONTH_ALTERNATION}|\\d{1,2})(?:\\s*(?:ปี\\s*|year\\s*)?['’]?(\\d{2,4})(?!\\d))?`;
 const PERIOD_MONTH_CONTEXT = 'ตั้งแต่|จาก|ช่วง|ระหว่าง|แล้ว|ของ|รายจ่าย|ค่าใช้จ่าย|ยอดขาย|ยอด';
 const PERIOD_MONTH_LEAD = `(?:^|[\\s,(]|เดือน\\s*|${PERIOD_MONTH_CONTEXT})`;
@@ -1013,10 +1016,76 @@ function monthRange(m: RegExpMatchArray, today: string): PeriodReading[] | null 
   return rangeReading(monthBounds(fromYear, first).fromDate, monthBounds(toYear, last).toDate, assumptions);
 }
 
+const NAMED_DAY_ENDPOINT = `(?:วันที่\\s*)?(\\d{1,2})(?!\\d)\\s*(เดือน\\s*|month\\s*)?(${PERIOD_ALL_MONTH_ALTERNATION}|\\d{1,2})(?:\\s*(?:ปี\\s*|year\\s*)?['’]?(\\d{4}|\\d{2})(?!\\d))?`;
+const DAY_RANGE_LEAD = `(?:^|[\\s,(]|(?=วันที่|${PERIOD_MONTH_CONTEXT}))(?:from|${PERIOD_MONTH_CONTEXT})?\\s*`;
+const FULL_NUMERIC_DAY = '(\\d{1,2})[/.-](\\d{1,2})[/.-](\\d{4}|\\d{2})(?!\\d)';
+
+// February 29 has a calendar occurrence only in a leap year; impossible month-days never do.
+function dayOccurrence(day: number, month: number, yearCe: number, direction: -1 | 1): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > lastDayOfMonth(2000, month)) return null;
+  let date = toIsoDate(day, month, yearCe);
+  while (!date && yearCe >= 100 && yearCe <= 9999) date = toIsoDate(day, month, yearCe += direction);
+  return date;
+}
+
+function namedDayBounds(day: string, prefix: string | undefined, name: string, rawYear: string | undefined, today: string): {
+  month: number; yearCe: number; date: string; assumptions: string[];
+} | null {
+  const month = periodMonthFromName(name) ?? (prefix && /^\d+$/u.test(name) ? Number(name) : 0);
+  const year = rawYear ? namedPeriodYearReadings(name, rawYear, today)[0] : undefined;
+  if (rawYear && !year) return null;
+  let yearCe = year?.yearCe ?? latestNonFutureYear(month, today);
+  let date = rawYear ? toIsoDate(Number(day), month, yearCe) : dayOccurrence(Number(day), month, yearCe, -1);
+  if (!rawYear && date && date > today) date = dayOccurrence(Number(day), month, yearCe - 1, -1);
+  return date ? { month, yearCe: Number(date.slice(0, 4)), date, assumptions: year?.assumptions ?? [PERIOD_ASSUMPTIONS.yearAssumedLatest] } : null;
+}
+
+function namedDayRange(m: RegExpMatchArray, today: string): PeriodReading[] | null {
+  const first = namedDayBounds(m[1]!, m[2], m[3]!, m[4], today);
+  const last = namedDayBounds(m[5]!, m[6], m[7]!, m[8], today);
+  if (!first || !last) return null;
+  const wraps = last.month < first.month || last.month === first.month && Number(m[5]) < Number(m[1]);
+  const fromYear = m[4] ? first.yearCe : m[8] ? last.yearCe - Number(wraps) : first.yearCe;
+  const from = m[4] ? first.date : dayOccurrence(Number(m[1]), first.month, fromYear, -1);
+  const to = m[8] ? last.date : from ? dayOccurrence(Number(m[5]), last.month,
+    Number(from.slice(0, 4)) + Number(wraps), 1) : null;
+  if (!from || !to || from > to) return null;
+  const assumptions = m[4] || m[8]
+    ? [...new Set([...(m[4] ? first.assumptions : []), ...(m[8] ? last.assumptions : [])])]
+    : [PERIOD_ASSUMPTIONS.yearAssumedLatest];
+  return rangeReading(from, to, assumptions);
+}
+
+const DAY_RANGE_RULES: PeriodRule[] = [
+  {
+    pattern: new RegExp(`ระหว่าง\\s*${NAMED_DAY_ENDPOINT}\\s*(?:กับ|และ)\\s*${NAMED_DAY_ENDPOINT}(?=$|\\s|[),.!?]|ค่ะ|ครับ|ให้|บ้าง)`, 'giu'),
+    blocksDateRanges: true,
+    build: namedDayRange,
+  },
+  {
+    pattern: new RegExp(`${DAY_RANGE_LEAD}${NAMED_DAY_ENDPOINT}\\s*(?:${PERIOD_RANGE_CONNECTOR})\\s*${NAMED_DAY_ENDPOINT}(?=$|\\s|[),.!?]|ค่ะ|ครับ|ให้|บ้าง)`, 'giu'),
+    blocksDateRanges: true,
+    build: namedDayRange,
+  },
+  {
+    pattern: new RegExp(`${DAY_RANGE_LEAD}${NAMED_DAY_ENDPOINT}\\s*(?:ถึง|จนถึง|ยัน|to|until)\\s*(?:วันนี้|ตอนนี้|ปัจจุบัน|today\\b|now\\b)`, 'giu'),
+    blocksDateRanges: true,
+    build: (m, today) => {
+      const first = namedDayBounds(m[1]!, m[2], m[3]!, m[4], today);
+      return first ? rangeReading(first.date, today, first.assumptions) : null;
+    },
+  },
+  {
+    pattern: new RegExp(`(?<!\\d)${FULL_NUMERIC_DAY}\\s*(?:${PERIOD_RANGE_CONNECTOR})\\s*${FULL_NUMERIC_DAY}`, 'giu'),
+    blocksDateRanges: true,
+    build: (m, today) => numericDayRange(m[1]!, m[2]!, m[4]!, m[5]!, m[6], today, m[3]),
+  },
+];
+
 // These longer phrases must own their spans before singular units or numbered months can match.
 const EVERYDAY_PERIOD_RULES: PeriodRule[] = [
   {
-    pattern: new RegExp(`(?:^|[\\s,(]|(?=${PERIOD_MONTH_CONTEXT}|เดือน))(?:(from|${PERIOD_MONTH_CONTEXT})\\s*)?(เดือน\\s*|month\\s*)?${MONTH_RANGE_ENDPOINT}\\s*(จนถึง|ถึง|ยัน|-|–|—|~|to|until|through|กับ|และ)\\s*(เดือน\\s*|month\\s*)?${MONTH_RANGE_ENDPOINT}(?=$|\\s|[),.!?]|ค่ะ|ครับ|ให้|บ้าง)`, 'giu'),
+    pattern: new RegExp(`(?:^|[\\s,(]|(?=${PERIOD_MONTH_CONTEXT}|เดือน))(?:(from|${PERIOD_MONTH_CONTEXT})\\s*)?(เดือน\\s*|month\\s*)?${MONTH_RANGE_ENDPOINT}\\s*(${PERIOD_RANGE_CONNECTOR}|กับ|และ)\\s*(เดือน\\s*|month\\s*)?${MONTH_RANGE_ENDPOINT}(?=$|\\s|[),.!?]|ค่ะ|ครับ|ให้|บ้าง)`, 'giu'),
     build: monthRange,
   },
   {
@@ -1066,8 +1135,34 @@ const EVERYDAY_PERIOD_RULES: PeriodRule[] = [
 
 /** Ordered most-specific first; an earlier rule's span blocks any later overlapping match, exactly
  *  like the date extractor above (so "3 วันก่อน" is never also read as "วันก่อน"). */
+// "ตั้งแต่ <วัน เดือน>" or "ตั้งแต่เดือน <เดือน>" with no end named means up to today (controller, 2026-10-05:
+// read as the whole month, "ตั้งแต่ 15 ก.ย." silently answered for 1–30 ก.ย.). After every range rule, so a
+// range that names its end keeps its span; before the single-month rules, which would read only the month.
+const SINCE_TAIL = '(?:\\s*(?:จนถึง|ถึง|ยัน)\\s*(?:วันนี้|ตอนนี้|ปัจจุบัน))?(?=$|\\s|[),.!?]|ค่ะ|ครับ|ให้|บ้าง|เป็นต้นมา|มา)';
+const SINCE_RULES: PeriodRule[] = [
+  {
+    pattern: new RegExp(`(?:ตั้งแต่|นับจาก|\\bsince\\b)\\s*${NAMED_DAY_ENDPOINT}${SINCE_TAIL}`, 'giu'),
+    blocksDateRanges: true,
+    build: (m, today) => {
+      const first = namedDayBounds(m[1]!, m[2], m[3]!, m[4], today);
+      return first ? rangeReading(first.date, today, first.assumptions) : null;
+    },
+  },
+  {
+    pattern: new RegExp(`(?:ตั้งแต่|นับจาก|\\bsince\\b)\\s*(?:เดือน\\s*|month\\s*)?(${PERIOD_ALL_MONTH_ALTERNATION})(?:\\s*(?:ปี\\s*|year\\s*)?['’]?(\\d{4}|\\d{2})(?!\\d))?${SINCE_TAIL}`, 'giu'),
+    build: (m, today) => {
+      // `may` is also an ordinary English word: it names a month here only with its year.
+      if (/^may\.?$/i.test(m[1]!) && !m[2]) return null;
+      const month = namedMonth(m[1]!, m[2], today)[0];
+      return month && month.fromDate <= today ? rangeReading(month.fromDate, today, month.assumptions) : null;
+    },
+  },
+];
+
 const PERIOD_RULES: PeriodRule[] = [
+  ...DAY_RANGE_RULES,
   ...EVERYDAY_PERIOD_RULES,
+  ...SINCE_RULES,
   // ── single days ───────────────────────────────────────────────────────────
   { pattern: /เมื่อวานซืน/gu, build: (_m, today) => singleDay(shiftDays(today, -2), 'เมื่อวานซืน') },
   { pattern: /day\s*before\s*yesterday/gi, build: (_m, today) => singleDay(shiftDays(today, -2), 'เมื่อวานซืน') },
@@ -1383,6 +1478,7 @@ function numericDayRange(
   secondB: string,
   rawYear: string | undefined,
   todayIso: string,
+  firstRawYear?: string,
 ): PeriodReading[] {
   const pairs: Array<[number, number]> = [[Number(firstA), Number(firstB)], [Number(secondA), Number(secondB)]];
   if (pairs.some(([a, b]) => a > 12 && b > 12)) return [];
@@ -1406,9 +1502,14 @@ function numericDayRange(
         assumptions: [PERIOD_ASSUMPTIONS.yearAssumedLatest],
       }];
   return readings.flatMap((reading) => {
-    const from = toIsoDate(start.day, start.month, reading.yearCe);
-    const to = toIsoDate(end.day, end.month, reading.yearCe);
-    return from && to ? rangeReading(from, to, [...orderAssumptions, ...reading.assumptions]) : [];
+    const firstYears = firstRawYear ? periodYearReadings(Number(firstRawYear), firstRawYear.length, todayIso)
+      : [{ yearCe: reading.yearCe, assumptions: [] }];
+    return firstYears.flatMap((first) => {
+      const from = toIsoDate(start.day, start.month, first.yearCe);
+      const to = toIsoDate(end.day, end.month, reading.yearCe);
+      return from && to ? rangeReading(from, to,
+        [...new Set([...orderAssumptions, ...first.assumptions, ...reading.assumptions])]) : [];
+    });
   });
 }
 
@@ -1452,6 +1553,7 @@ export function resolvePeriodCandidates(
   if (!CIVIL_DATE_PATTERN.test(todayIso)) return [];
   const mapped = mapThaiDigits(text);
   const used: SpanRange[] = [];
+  const dayRangeSpans: SpanRange[] = [];
   const out: LineAiPeriodCandidate[] = [];
 
   const push = (span: string, reading: PeriodReading, start: number, end: number): void => {
@@ -1490,6 +1592,7 @@ export function resolvePeriodCandidates(
       // by a looser rule as plain "เดือนที่แล้ว". No candidate means the tool's default period, and
       // the answer says which period that was.
       const readings = rule.build(match, todayIso);
+      if (rule.blocksDateRanges) dayRangeSpans.push({ start, end });
       if (readings === null) continue;
       used.push({ start, end });
       for (const reading of readings) push(text.slice(start, end), reading, start, end);
@@ -1516,7 +1619,9 @@ export function resolvePeriodCandidates(
     }
   }
   applyRules(SPOKEN_MONTH_PERIOD_RULES);
-  for (const found of dateCandidateRanges(text, dates, scan)) push(found.span, found.reading, found.start, found.end);
+  for (const found of dateCandidateRanges(text, dates, scan)) {
+    if (!overlaps(dayRangeSpans, found.start, found.end)) push(found.span, found.reading, found.start, found.end);
+  }
 
   return scan ? out : out.sort((a, b) => text.indexOf(a.span) - text.indexOf(b.span)).slice(0, MAX_PERIOD_CANDIDATES);
 }
