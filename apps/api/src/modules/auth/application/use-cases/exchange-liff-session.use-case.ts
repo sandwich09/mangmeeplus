@@ -8,7 +8,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { AuthRateLimitService } from '../auth-rate-limit.service';
 import { LineIdTokenService } from '../line-id-token.service';
-import { lineHandoffUrl, resolveLineHandoffTarget } from '../../domain/logic/line-handoff.logic';
+import { isSafeHandoffPath, lineHandoffUrl, resolveLineHandoffTarget } from '../../domain/logic/line-handoff.logic';
 import { MintLineHandoffTokenUseCase } from './mint-line-handoff-token.use-case';
 import { canManagePlan } from '../../../access-control/domain/logic/plan-manager.logic';
 import { planTermLockReason } from '../../../system-partner-management/domain/logic/plan-term.logic';
@@ -30,6 +30,15 @@ export type ExchangeLiffSessionResult =
   | { needsSelection: true; companies: Array<{ id: string; name: string; lockReason?: PlanTermLockReason; canManagePlan?: boolean }> }
   | { reason: LiffSessionBlockedReason };
 
+/** A message's link that could not be opened signed in still opens: the same page, through the login wall. */
+type WithWebFallback<T> = T extends { handoffUrl: string } ? T : T & { fallbackUrl?: string };
+
+/** `/companies/<id>/…` from a LINE message's link, or `null` — then the tap is an ordinary start. */
+function openTarget(to: string | undefined): { companyId: string; path: string } | null {
+  const companyId = /^\/companies\/([A-Za-z0-9_-]{1,128})(?:[/?#]|$)/.exec(to ?? '')?.[1];
+  return to && companyId && isSafeHandoffPath(to, companyId) ? { companyId, path: to } : null;
+}
+
 export type ExchangeLiffSessionCommand = {
   idToken: string;
   /** Echoed back from the picker on the second call. Validated against live memberships, never trusted. */
@@ -39,6 +48,11 @@ export type ExchangeLiffSessionCommand = {
    * lands on the package page. A name, never a path: the path is built here and checked at mint.
    */
   landing?: 'package';
+  /**
+   * The page a LINE message's link pointed at (Owner 2026-10-06). It names its own company, and that
+   * company is accepted exactly as `companyId` is: only if this token's user is a member of it.
+   */
+  to?: string;
 };
 
 /**
@@ -61,12 +75,15 @@ export class ExchangeLiffSessionUseCase {
     private readonly audit: AuditService,
   ) {}
 
-  async execute(cmd: ExchangeLiffSessionCommand): Promise<ExchangeLiffSessionResult> {
+  async execute(cmd: ExchangeLiffSessionCommand): Promise<WithWebFallback<ExchangeLiffSessionResult>> {
     // The handoff route is what this endpoint hands out. With it off there is no destination to
     // send anyone to, so it refuses rather than minting a token nothing will accept.
     if (!this.config.lineWebHandoffEnabled) throw new ForbiddenException('line_web_handoff_disabled');
     // Read before the token is verified: unset means the URL we would build points nowhere.
     const webBaseUrl = requiredWebAppBase(this.config.sesWebBaseUrl);
+
+    const open = openTarget(cmd.to);
+    const blocked = <T extends object>(result: T) => open ? { ...result, fallbackUrl: `${webBaseUrl.replace(/\/+$/, '')}${open.path}` } : result;
 
     const verified = await this.lineIdToken.verify(cmd.idToken);
     // Charged on every exchange by this verified account (spec §9): the picker's second call is a
@@ -81,17 +98,17 @@ export class ExchangeLiffSessionUseCase {
       },
       select: { userId: true, status: true, user: { select: { status: true } } },
     });
-    if (!identity) return { needsSignup: true };
-    if (identity.status !== 'ACTIVE' || identity.user.status !== 'ACTIVE') return { reason: 'suspended' };
+    if (!identity) return blocked({ needsSignup: true as const });
+    if (identity.status !== 'ACTIVE' || identity.user.status !== 'ACTIVE') return blocked({ reason: 'suspended' as const });
 
-    const decision = await this.resolveCompany(identity.userId, verified.providerUserId, cmd.companyId, cmd.landing === 'package');
+    const decision = await this.resolveCompany(identity.userId, verified.providerUserId, open?.companyId ?? cmd.companyId, !open && cmd.landing === 'package', open?.path);
     if ('companyId' in decision) {
       const targetPath = decision.targetPath;
       const { rawToken } = await this.mint.execute({
         userId: identity.userId,
         companyId: decision.companyId,
         lineUserId: verified.providerUserId,
-        surface: 'liff_start',
+        surface: open ? 'liff_open' : 'liff_start',
         targetPath,
       });
       void this.audit.log({
@@ -109,7 +126,7 @@ export class ExchangeLiffSessionUseCase {
         ...(isBillingCustomerRecoveryPath(targetPath, decision.companyId) ? { packagePage: true as const } : {}),
       };
     }
-    return decision;
+    return blocked(decision);
   }
 
   /**
@@ -122,6 +139,7 @@ export class ExchangeLiffSessionUseCase {
     lineUserId: string,
     requestedCompanyId: string | undefined,
     packageLanding = false,
+    openPath?: string,
   ): Promise<{ companyId: string; targetPath: string } | Exclude<ExchangeLiffSessionResult, { handoffUrl: string }>> {
     const memberships = await this.prisma.client.companyMembership.findMany({
       where: { userId, status: 'ACTIVE', OR: [
@@ -152,7 +170,7 @@ export class ExchangeLiffSessionUseCase {
       // overview, which `resolveLineHandoffTarget` still enforces below.
       const wanted = (isLocked(membership) || packageLanding) && canManagePlan(membership.roles)
         ? `/companies/${membership.companyId}/billing?channel=line`
-        : `/companies/${membership.companyId}/${LIFF_START_TARGET_PATH}`;
+        : openPath ?? `/companies/${membership.companyId}/${LIFF_START_TARGET_PATH}`;
       const targetPath = resolveLineHandoffTarget(membership.companyId, wanted, membership.company, now);
       return targetPath ? { companyId: membership.companyId, targetPath } : { reason: 'suspended' as const };
     };

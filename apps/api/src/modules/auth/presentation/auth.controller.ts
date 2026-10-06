@@ -142,6 +142,8 @@ class LiffSessionDto {
   @IsString() @IsOptional() @MaxLength(128) @Matches(COMPANY_ID_PATTERN) companyId?: string;
   /** Sales-event page (spec §3.3): a name from this list, never a path — the server builds the path. */
   @IsOptional() @IsIn(['package']) landing?: 'package';
+  /** The page a LINE message's link pointed at. Checked against the token's own memberships. */
+  @IsString() @IsOptional() @MaxLength(512) to?: string;
 }
 
 class RefreshDto {
@@ -714,6 +716,7 @@ export class AuthController {
       idToken: dto.idToken,
       ...(dto.companyId ? { companyId: dto.companyId } : {}),
       ...(dto.landing ? { landing: dto.landing } : {}),
+      ...(dto.to ? { to: dto.to } : {}),
     });
   }
 
