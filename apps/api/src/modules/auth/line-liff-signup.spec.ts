@@ -1348,6 +1348,45 @@ const activeIdentity = { userId: 'user-1', user: { status: 'ACTIVE' } };
 const membership = (companyId: string, name = 'ร้านทดสอบ'): Membership => ({ companyId, company: { name, status: 'ACTIVE' } });
 
 describe('ExchangeLiffSessionUseCase', () => {
+  // Owner 2026-10-06: a LINE message's link opens ITS page signed in — as the person who tapped.
+  it('mints into the page a message link named, inside a company the tapper belongs to', async () => {
+    const { useCase, minted } = makeUseCase({
+      identity: activeIdentity,
+      memberships: [membership('co-1'), membership('co-2')],
+      context: { companyId: 'co-1' },
+    });
+
+    const result = await useCase.execute({ idToken: 'a.b.c', to: '/companies/co-2/expenses/e1?branchId=b1' });
+
+    assert.deepEqual(result, { handoffUrl: `${WEB_BASE}/l/RAWTOKEN` });
+    assert.equal(minted[0].companyId, 'co-2', 'the link names the company, not the chat context');
+    assert.equal(minted[0].targetPath, '/companies/co-2/expenses/e1?branchId=b1');
+    assert.equal(minted[0].surface, 'liff_open');
+  });
+
+  it('never mints for a message link into a company the tapper is not in; the page stays reachable by login', async () => {
+    const { useCase, minted } = makeUseCase({ identity: activeIdentity, memberships: [membership('co-1')] });
+
+    const result = await useCase.execute({ idToken: 'a.b.c', to: '/companies/co-9/expenses/e1' });
+
+    assert.deepEqual(result, { reason: 'no_membership', fallbackUrl: `${WEB_BASE}/companies/co-9/expenses/e1` });
+    assert.equal(minted.length, 0);
+    assert.deepEqual(
+      await makeUseCase({ identity: null }).useCase.execute({ idToken: 'a.b.c', to: '/companies/co-1/billing' }),
+      { needsSignup: true, fallbackUrl: `${WEB_BASE}/companies/co-1/billing` },
+    );
+  });
+
+  it('treats a link that is not a company page as an ordinary start', async () => {
+    for (const to of ['//evil.example/companies/co-1', '/companies/co-1/../co-2/expenses', '/login', 'https://evil.example/companies/co-1/x', '/companies/co-1/a\\b']) {
+      const { useCase, minted } = makeUseCase({ identity: activeIdentity, memberships: [membership('co-1')] });
+      const result = await useCase.execute({ idToken: 'a.b.c', to });
+      assert.deepEqual(result, { handoffUrl: `${WEB_BASE}/l/RAWTOKEN` }, to);
+      assert.equal(minted[0].targetPath, '/companies/co-1/dashboard', to);
+      assert.equal(minted[0].surface, 'liff_start', to);
+    }
+  });
+
   it('mints a handoff into the single active company, under that company root', async () => {
     const { useCase, buckets, minted, audited } = makeUseCase({
       identity: activeIdentity,
