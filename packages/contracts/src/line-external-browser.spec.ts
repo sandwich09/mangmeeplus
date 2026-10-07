@@ -1,6 +1,7 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  configureLineSignedInOpen,
   stripLineExternalBrowserParam,
   withLineExternalBrowserLinks,
   withLineExternalBrowserParam,
@@ -69,4 +70,25 @@ it('never cuts a link: over-length text and uri stay as they were', () => {
   const longUri = `https://app/${'a'.repeat(978)}`;
   const flex = [{ type: 'flex', contents: { type: 'bubble', action: { type: 'uri', uri: longUri } } }];
   assert.equal(withLineExternalBrowserLinks(flex), flex);
+});
+
+// Owner 2026-10-06: a company page in a LINE message opens signed in, through the LIFF start page.
+it('sends a company page through the LIFF start page once configured, and nothing else', () => {
+  try {
+    configureLineSignedInOpen({ webBaseUrl: 'https://app.example.test/', liffId: '2011037668-AbCd' });
+    const open = 'https://liff.line.me/2011037668-AbCd/start?to=%2Fcompanies%2Fc1%2Fexpenses%2Fe1%3FbranchId%3Db1';
+    assert.equal(withLineExternalBrowserParam('https://app.example.test/companies/c1/expenses/e1?branchId=b1'), open);
+    assert.equal(withLineExternalBrowserParam('https://app.example.test/companies/c1/expenses/e1?branchId=b1&openExternalBrowser=1'), open);
+    assert.equal(withLineExternalBrowserParam(open), open, 'idempotent: a replay sends the same bytes');
+    assert.equal(withLineExternalBrowserText('ดู https://app.example.test/companies/c1/billing.'), 'ดู https://liff.line.me/2011037668-AbCd/start?to=%2Fcompanies%2Fc1%2Fbilling.');
+    const [flex] = withLineExternalBrowserLinks([{ type: 'flex', contents: { action: { type: 'uri', uri: 'https://app.example.test/companies/c1/billing' } } }]);
+    assert.match(JSON.stringify(flex), /liff\.line\.me\/2011037668-AbCd\/start\?to=%2Fcompanies%2Fc1%2Fbilling"/);
+    // Not a company page, a sign-in token link, another origin: exactly as before.
+    for (const url of ['https://app.example.test/l/token', 'https://app.example.test/login', 'https://other.example.test/companies/c1/billing'])
+      assert.equal(withLineExternalBrowserParam(url), `${url}?openExternalBrowser=1`);
+    configureLineSignedInOpen({ webBaseUrl: 'https://app.example.test', liffId: 'not-a-liff-id' });
+    assert.equal(withLineExternalBrowserParam('https://app.example.test/companies/c1/billing'), 'https://app.example.test/companies/c1/billing?openExternalBrowser=1');
+  } finally {
+    configureLineSignedInOpen(null);
+  }
 });

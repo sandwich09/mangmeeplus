@@ -166,6 +166,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const devMode = root.dataset.devMode === 'true';
   const oaAddUrl = root.dataset.oaAddUrl || '';
   const query = new URLSearchParams(location.search);
+  /** A LINE message's link (Owner 2026-10-06): the start page opens THAT page, signed in, by itself. */
+  const openTo = mode === 'start' ? (query.get('to') || '').slice(0, 512) : '';
   const statusEl = document.getElementById('status');
   const detailEl = document.getElementById('detail');
   const actionEl = document.getElementById('notice-action');
@@ -1215,12 +1217,18 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       // The event page is there to use the discount: the server lands a plan manager on the package page.
-      body: JSON.stringify({ idToken, ...(companyId ? { companyId } : {}), ...(eventPage ? { landing: 'package' } : {}) })
+      body: JSON.stringify({ idToken, ...(companyId ? { companyId } : {}), ...(eventPage ? { landing: 'package' } : {}), ...(openTo ? { to: openTo } : {}) })
     });
     const text = await res.text();
     if (res.status === 403 || res.status === 503) throw new Error(UNAVAILABLE_TH);
     if (!res.ok) throw new Error(refusalCode(text) || ('เปิดหน้าเว็บไม่สำเร็จ: ' + res.status));
     const session = JSON.parse(text);
+    // No signed-in way in for this LINE account: the link still opens, through the web's own login.
+    if (typeof session.fallbackUrl === 'string' && session.fallbackUrl && openWebBtn) {
+      preparedHandoffUrl = session.fallbackUrl;
+      openWebBtn.textContent = 'เข้าสู่ระบบบนเว็บ';
+      openWebBtn.hidden = false;
+    }
     if (session.needsSignup) {
       setStatus('ยังไม่มีร้านที่ผูกกับ LINE นี้ค่ะ เปิดร้านใหม่ได้เลยนะคะ', '', 'info');
       const signupEl = document.getElementById('go-signup');
@@ -1250,6 +1258,31 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     openWebBtn.textContent = (labels && labels.buttonLabel) || 'เปิดหน้าเว็บ';
     openWebBtn.hidden = false;
     setStatus((labels && labels.readyText) || 'พร้อมแล้วค่ะ กดเปิดหน้าเว็บเพื่อเข้าร้าน', '', 'info');
+    if (openTo) autoOpenPrepared();
+  }
+
+  /**
+   * A link from a LINE message was already tapped once, in the chat: open it without a second tap.
+   * ponytail: not proved on a device that LINE opens the outside browser with no tap on this page,
+   * so the button above stays on screen with the same unspent link as the second way.
+   */
+  function autoOpenPrepared() {
+    const url = preparedHandoffUrl;
+    if (!liff.isInClient()) {
+      preparedHandoffUrl = '';
+      location.replace(url);
+      return;
+    }
+    // Hidden = the outside browser took over, so the link is spent; back in LINE, this page is done.
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden' && preparedHandoffUrl === url) {
+        preparedHandoffUrl = '';
+        if (openWebBtn) openWebBtn.hidden = true;
+      } else if (document.visibilityState === 'visible' && !preparedHandoffUrl) {
+        try { liff.closeWindow(); } catch { /* the page stays; "ลองอีกครั้ง" makes a new link */ }
+      }
+    });
+    try { liff.openWindow({ url, external: true }); } catch { /* the button is still there */ }
   }
 
   /** Signup mode's one way to a fresh link. Every sentence about a new link names this button, so

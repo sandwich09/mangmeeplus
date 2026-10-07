@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { configureLineSignedInOpen } from '@watchdog-bms/contracts';
 import {
   DEFAULT_APPROVED_AI_MODEL_IDS,
   apiConfigSchema,
@@ -31,6 +32,10 @@ export class AppConfigService {
       throw new Error('Official OA replies require dedicated channel credentials and an HTTPS WEB_BASE_URL.');
     }
     validateProductionConfig(this.config as unknown as Record<string, unknown>);
+    // The start page's exchange needs both the handoff route and WEB_BASE_URL; without them the
+    // links stay plain. Here, because every process that can send a LINE message builds this service.
+    configureLineSignedInOpen(this.config.LINE_WEB_HANDOFF_ENABLED
+      ? { webBaseUrl: this.config.WEB_BASE_URL, liffId: this.config.LINE_LIFF_ID } : null);
   }
 
   get port(): number { return this.config.PORT; }
