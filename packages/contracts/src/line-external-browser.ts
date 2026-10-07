@@ -29,7 +29,31 @@ export function hasLineExternalBrowserParam(url: string): boolean {
   return parse(url)?.searchParams.get(LINE_EXTERNAL_BROWSER_PARAM) === '1';
 }
 
+/**
+ * Owner 2026-10-06: a web link in a LINE message opens the page already signed in. A sign-in token
+ * cannot ride in a stored message (it dies in 15 minutes, a replay lands later), so the link goes
+ * to the LIFF start page instead, which proves who tapped and mints the token AT the tap.
+ * Set once at API boot; unset (specs, a deployment with no LIFF) keeps the plain link + param.
+ */
+let signedInOpen: { webOrigin: string; liffId: string } | null = null;
+
+export function configureLineSignedInOpen(input: { webBaseUrl?: string | null; liffId?: string | null } | null): void {
+  const origin = input?.webBaseUrl ? parse(input.webBaseUrl)?.origin : undefined;
+  const liffId = input?.liffId ?? '';
+  signedInOpen = origin && /^[0-9]{4,20}-[A-Za-z0-9]{1,32}$/.test(liffId) ? { webOrigin: origin, liffId } : null;
+}
+
+/** `https://liff.line.me/<id>/start?to=<path>` for a web-app page inside a company, else `null`. */
+export function lineSignedInOpenUrl(url: string): string | null {
+  const parsed = signedInOpen && parse(url);
+  if (!signedInOpen || !parsed || parsed.origin !== signedInOpen.webOrigin || !parsed.pathname.startsWith('/companies/')) return null;
+  const to = stripLineExternalBrowserParam(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+  return `https://liff.line.me/${signedInOpen.liffId}/start?to=${encodeURIComponent(to)}`;
+}
+
 export function withLineExternalBrowserParam(url: string): string {
+  const signedIn = lineSignedInOpenUrl(url);
+  if (signedIn) return signedIn;
   if (!shouldOpenOutsideLine(url) || hasLineExternalBrowserParam(url)) return url;
   const hashAt = url.indexOf('#');
   const head = hashAt >= 0 ? url.slice(0, hashAt) : url;

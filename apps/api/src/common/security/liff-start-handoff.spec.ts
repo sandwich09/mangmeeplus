@@ -4,7 +4,7 @@ import { runInNewContext } from 'node:vm';
 import { LIFF_PAGE_SCRIPT } from './liff-page.security';
 
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve)); };
-function start(inClient = true, openFails = false) {
+function start(inClient = true, openFails = false, search = '') {
   const elements: Record<string, any> = {};
   function element(id: string) {
     return { id, hidden: true, disabled: false, textContent: '', className: '', handlers: {} as any,
@@ -15,23 +15,61 @@ function start(inClient = true, openFails = false) {
   for (const id of ['status', 'detail', 'link', 'open-web', 'companies', 'go-signup']) elements[id] = element(id);
   let reply: any = { handoffUrl: 'https://app.example.test/l/test-token' };
   let fails = false;
-  const opened: any[] = [], navigated: string[] = [];
-  const location = { href: 'https://api.example.test/v1/auth/line/start-page', origin: 'https://api.example.test', search: '', assign: (url: string) => navigated.push(url) };
+  const opened: any[] = [], navigated: string[] = [], bodies: any[] = [];
+  let closed = 0;
+  const page: any = { visibilityState: 'visible', listeners: [] as any[] };
+  const location = { href: 'https://api.example.test/v1/auth/line/start-page', origin: 'https://api.example.test', search, assign: (url: string) => navigated.push(url), replace: (url: string) => navigated.push(url) };
   runInNewContext(LIFF_PAGE_SCRIPT, {
     document: { body: { dataset: { liffMode: 'start', liffId: '123-test', apiBase: 'https://api.example.test/v1' } },
+      get visibilityState() { return page.visibilityState; }, addEventListener: (_name: string, fn: any) => page.listeners.push(fn),
       getElementById: (id: string) => elements[id] ?? null, querySelectorAll: () => [], createElement: () => element('') },
     location, URL, URLSearchParams, Date, setTimeout,
     navigator: { userAgent: 'LINE Android' },
     liff: { init: async () => {}, isLoggedIn: () => true, getDecodedIDToken: () => ({ exp: Date.now() / 1000 + 3600 }),
-      getIDToken: () => 'test.id.token', isInClient: () => inClient,
+      getIDToken: () => 'test.id.token', isInClient: () => inClient, closeWindow: () => { closed += 1; },
       openWindow: (input: any) => { if (openFails) throw new Error('blocked'); opened.push(input); } },
-    fetch: async () => { if (fails) throw new Error('offline'); return { ok: true, status: 200, text: async () => JSON.stringify(reply) }; },
+    fetch: async (_url: string, init: any) => { bodies.push(JSON.parse(init.body)); if (fails) throw new Error('offline'); return { ok: true, status: 200, text: async () => JSON.stringify(reply) }; },
   });
-  return { elements, opened, navigated, setReply: (value: any) => { reply = value; }, fail: () => { fails = true; },
+  return { elements, opened, navigated, bodies, closedCount: () => closed,
+    show: (state: string) => { page.visibilityState = state; for (const fn of page.listeners) fn(); }, setReply: (value: any) => { reply = value; }, fail: () => { fails = true; },
     click: (id: string) => elements[id].handlers.click({ preventDefault() {} }) };
 }
 
 describe('GW02 actual LIFF script, provider boundary simulated', () => {
+  // Owner 2026-10-06: a link tapped in a LINE message carries its page as `to`; that tap was the
+  // gesture, so the page opens by itself and the button stays as the second way.
+  it('opens a message link by itself, sends its page to the server, and closes when LINE is back', async () => {
+    const h = start(true, false, '?to=%2Fcompanies%2Fc1%2Fexpenses%2Fe1'); await settle();
+    assert.equal(h.bodies[0].to, '/companies/c1/expenses/e1');
+    assert.equal(JSON.stringify(h.opened), JSON.stringify([{ url: 'https://app.example.test/l/test-token', external: true }]));
+    assert.equal(h.elements['open-web'].hidden, false, 'the link is unspent until the outside browser takes over');
+    h.show('hidden');
+    assert.equal(h.elements['open-web'].hidden, true);
+    h.click('open-web'); assert.equal(h.opened.length, 1, 'a spent link is never opened twice');
+    h.show('visible'); assert.equal(h.closedCount(), 1);
+  });
+  it('keeps the button when LINE refuses to open a message link by itself', async () => {
+    const h = start(true, true, '?to=%2Fcompanies%2Fc1%2Fbilling'); await settle();
+    assert.equal(h.elements['open-web'].hidden, false);
+    assert.equal(h.elements.link.disabled, false);
+  });
+  it('outside LINE a message link goes straight to its page', async () => {
+    const h = start(false, false, '?to=%2Fcompanies%2Fc1%2Fbilling'); await settle();
+    assert.deepEqual(h.navigated, ['https://app.example.test/l/test-token']);
+  });
+  it('a LINE account with no way in still gets the page, through the web login', async () => {
+    const h = start(true, false, '?to=%2Fcompanies%2Fc1%2Fbilling');
+    h.setReply({ needsSignup: true, fallbackUrl: 'https://app.example.test/companies/c1/billing' }); await settle();
+    assert.equal(h.opened.length, 0);
+    assert.equal(h.elements['open-web'].textContent, 'เข้าสู่ระบบบนเว็บ');
+    h.click('open-web');
+    assert.equal(JSON.stringify(h.opened), JSON.stringify([{ url: 'https://app.example.test/companies/c1/billing', external: true }]));
+  });
+  it('an ordinary start sends no page and still waits for the tap', async () => {
+    const h = start(); await settle();
+    assert.equal('to' in h.bodies[0], false); assert.equal(h.opened.length, 0);
+  });
+
   for (const inClient of [true, false]) it(`waits for a gesture and opens once, LINE=${inClient}`, async () => {
     const h = start(inClient); await settle();
     assert.equal(h.elements['open-web'].hidden, false);
