@@ -1,6 +1,6 @@
 # Agent Memory: LINE message links open the web page signed in
 
-Status: implemented on `claude/line-links-open-signed-in-20261006`; Production hotfix pending (see Next).
+Status: implemented and merged to `main` and `develop` on 2026-10-07 by the owner's word. NEVER deployed: the Production hotfix run of 2026-10-06 14:24 stopped in its first phase (`productionMutated` false) and the cloud environment was shut down afterwards. Not proven by a real LINE turn.
 Owner: thawatchai (decision in chat, 2026-10-06 ~14:10 Bangkok).
 Scope: every web link the system sends in a LINE message (card buttons and links in text) that points
 at a page inside a company (`<web>/companies/<id>/…`).
