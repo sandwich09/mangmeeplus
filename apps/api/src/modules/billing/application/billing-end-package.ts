@@ -22,6 +22,14 @@ type Invoice = Pick<BillingInvoice, 'billingAccountId' | 'providerStatus' | 'app
   Partial<Pick<BillingInvoice, 'benefitEnd'>>;
 
 /**
+ * True while the provider would still collect for this account (CARD_AUTO or PROMPTPAY_RENEW): staff cancel the renewal first.
+ * Cancel-at-period-end and a canceled subscription are not live.
+ */
+export const renewalIsLive = (account: Pick<Account, 'renewalMode' | 'baseSubscriptionId' | 'cancelAtPeriodEnd' | 'subscriptionState'>) =>
+  !!(account.baseSubscriptionId || account.renewalMode === 'CARD_AUTO' || account.renewalMode === 'PROMPTPAY_RENEW') && !account.cancelAtPeriodEnd &&
+  !['canceled', 'incomplete_expired'].includes(account.subscriptionState);
+
+/**
  * Why this paid invoice cannot end the shop's running package, or null. "Current" means the invoice
  * is applied, already serving, and its service end is the one the account and the plan term run on now
  * (plan R2: a promotion purchase serves until `benefitEnd`, past its paid `periodEnd`).
@@ -33,9 +41,8 @@ export function endPackageBlock(company: { status: string; planTerm: Term | null
     !account.paidThrough || account.paidThrough <= now || invoice.billingAccountId !== account.id || invoice.providerStatus !== 'paid' ||
     invoice.applyStatus !== 'APPLIED' || !invoice.appliedAt || invoice.periodStart > now || invoiceServiceEnd(invoice).getTime() !== account.paidThrough.getTime() ||
     termProjectionHash(term) !== account.termProjectionHash) return 'BILLING_END_PACKAGE_NOT_CURRENT';
-  // ponytail: never touches Stripe; staff cancel the renewal first (CARD_AUTO or PROMPTPAY_RENEW).
-  if ((account.baseSubscriptionId || account.renewalMode === 'CARD_AUTO' || account.renewalMode === 'PROMPTPAY_RENEW') && !account.cancelAtPeriodEnd &&
-    !['canceled', 'incomplete_expired'].includes(account.subscriptionState)) return 'BILLING_END_PACKAGE_AUTO_RENEW';
+  // ponytail: never touches Stripe; staff cancel the renewal first.
+  if (renewalIsLive(account)) return 'BILLING_END_PACKAGE_AUTO_RENEW';
   if (account.activeAttemptId || account.activeCollectionOperationId || account.pendingPlanChangeId) return 'BILLING_END_PACKAGE_PENDING';
   if (requireFullRefund && invoice.refundedSatang < invoice.paidSatang) return 'BILLING_END_PACKAGE_NOT_REFUNDED';
   return null;

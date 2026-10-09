@@ -29,13 +29,20 @@ function fakeDb(rows: { company?: Record<string, unknown>; account?: Record<stri
   redemption?: Record<string, unknown> | null; lots?: Lot[] } = {}) {
   const state = { company: { id: 'company', status: 'ACTIVE', planTerm: term(), ...rows.company }, account: account(rows.account), invoice: invoice(rows.invoice),
     redemption: rows.redemption ?? null, lots: rows.lots ?? [] };
-  const writes: string[] = [], audits: Record<string, unknown>[] = [];
+  const writes: string[] = [], audits: Record<string, unknown>[] = [], issues: Record<string, unknown>[] = [];
   const tx: never = new Proxy({} as Record<string, unknown>, { get: (_, model: string) => {
     if (model === '$executeRaw' || model === '$queryRaw') return async () => [];
     if (model === '$transaction') return (fn: (inner: unknown) => unknown) => fn(tx);
     return new Proxy({}, { get: (_, method: string) => async (args: { data?: Record<string, unknown>; where?: Record<string, unknown> } = {}) => {
       if (/^(create|update|upsert|delete)/.test(method)) writes.push(`${model}.${method}`);
       if (model === 'auditLog' && method === 'create') audits.push(args.data!);
+      // BillingIssue: the unique (stripeAccountId, livemode, kind, referenceId) the detector locks and reads by, so a second detect finds the first.
+      if (model === 'billingIssue' && method === 'findUnique') {
+        const key = (args.where as { stripeAccountId_livemode_kind_referenceId: Record<string, unknown> }).stripeAccountId_livemode_kind_referenceId;
+        return issues.find(issue => Object.entries(key).every(([field, want]) => issue[field] === want)) ?? null;
+      }
+      if (model === 'billingIssue' && method === 'create') { const row = { id: `issue-${issues.length + 1}`, state: 'OPEN', episode: 1, ...args.data }; issues.push(row); return row; }
+      if (model === 'billingIssue' && method === 'update') return Object.assign(issues.find(issue => issue.id === args.where!.id)!, args.data);
       // The promotion redemption of the invoice: the Q6 stamp only lands on a CONSUMED row that was never adjusted.
       if (model === 'billingPromotionRedemption' && method.startsWith('find')) return state.redemption;
       if (model === 'billingPromotionRedemption' && method === 'updateMany') {
@@ -63,7 +70,7 @@ function fakeDb(rows: { company?: Record<string, unknown>; account?: Record<stri
     } });
   } }) as never;
   const lifecycle = { calls: [] as Record<string, unknown>[], async execute(cmd: Record<string, unknown>) { this.calls.push(cmd); state.company.status = String(cmd.targetStatus); return { id: 'company', status: String(cmd.targetStatus) }; } };
-  return { state, writes, audits, tx, lifecycle };
+  return { state, writes, audits, issues, tx, lifecycle };
 }
 
 test('only an applied, running, fully refunded invoice of a non-renewing package can end it', () => {
@@ -325,4 +332,93 @@ test('standalone end of a fully refunded promotion package ends it through its b
   const ok = await run();
   assert.deepEqual(ok.result, { canEnd: false, blockedReason: 'BILLING_END_PACKAGE_NOT_CURRENT' });
   assert.deepEqual([ok.db.state.company.status, ok.db.state.redemption!.state, ok.db.state.redemption!.entitlementAdjustedAt, ok.db.state.lots.every(l => l.revokedAt?.getTime() === now.getTime())], ['DISABLED', 'CONSUMED', now, true]);
+});
+
+// ---- plan R14: the renewal guard of a promotion refund, and the review for a source nothing could end ----
+const DAY = 86_400_000;
+type Rows = { company?: object; account?: object; invoice?: object; redemption?: object | null; lots?: Lot[] };
+const withRenewal = (over: Rows, stopped: object = {}): Rows => ({ ...over, account: { ...over.account, ...renewing, ...stopped } });
+// Each of these makes the promotion source not the running package. The old gate read that as "nothing to end" and never looked at the renewal.
+const notRunning: Record<string, Rows> = {
+  'company not active': { company: { status: 'SUSPENDED' } },
+  'term changed by hand': { account: { termProjectionHash: 'other' } },
+  'paid through moved by gift days': { account: { paidThrough: new Date(benefitEnd.getTime() + 5 * DAY) } },
+  'bought in advance, not started': { invoice: { periodStart: new Date('2026-09-30T00:00:00.000Z') } },
+  'paid, not applied': { invoice: { applyStatus: 'HELD', appliedAt: null } },
+};
+
+test('plan R14: a promotion refund keeps the renewal guard whatever else makes its source not the running package; other invoices are judged as before', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now });
+  const AUTO = 'BILLING_END_PACKAGE_AUTO_RENEW', NOT_CURRENT = 'BILLING_END_PACKAGE_NOT_CURRENT';
+  const block = async (rows: object, p: object) => {
+    const db = fakeDb(rows);
+    return Object.create(BillingRefundsService.prototype).refundBlock(db.tx, db.state.account, 'invoice', p);
+  };
+  for (const [name, over] of Object.entries(notRunning)) {
+    assert.equal(await block(promoRows(withRenewal(over)), pin), AUTO, `${name}: a live renewal would still charge at the benefit end`);
+    assert.equal(await block(promoRows(over), pin), null, `${name}: without a renewal the refund goes and staff adjust the entitlement`);
+    for (const stopped of [{ cancelAtPeriodEnd: true }, { subscriptionState: 'canceled' }, { subscriptionState: 'incomplete_expired' }])
+      assert.equal(await block(promoRows(withRenewal(over, stopped)), pin), null, `${name}: a renewal already stopped is no reason`);
+    assert.equal(await block(promoRows(withRenewal(over)), { endPackage: false, promotionRedemptionId: 'redemption' }), null, `${name}: a partial refund asks for no end`);
+  }
+  // The renewal belongs to the source only while its service runs: one that ended on or before now has nothing left to charge for.
+  const ends = (at: Date) => promoRows(withRenewal({ invoice: { periodEnd: new Date('2026-09-15T00:00:00.000Z'), benefitEnd: at } }));
+  assert.equal(await block(ends(new Date('2026-09-20T00:00:00.000Z')), pin), null, 'service over: the renewal pays for later time');
+  assert.equal(await block(ends(now), pin), null, 'ending exactly now is over');
+  assert.equal(await block(ends(new Date(now.getTime() + 1)), pin), AUTO);
+  assert.equal(await block(promoRows(withRenewal({})), pin), AUTO, 'the running package: endPackageBlock itself');
+  // An invoice that is not a promotion purchase is judged by endPackageBlock alone, exactly as on main: the same states, renewal or not.
+  for (const [name, over] of Object.entries({ ...notRunning, 'running': {}, 'service over': { invoice: { periodEnd: start, benefitEnd: null } } } as Record<string, Rows>))
+    for (const renewal of [false, true]) {
+      const rows = { ...promoRows(renewal ? withRenewal(over) : over), redemption: null }, db = fakeDb(rows);
+      const expected = endPackageBlock(db.state.company as never, db.state.account, db.state.invoice, false);
+      assert.equal(await block(rows, { endPackage: true }), expected, `${name}${renewal ? ' with a renewal' : ''}`);
+      assert.equal(await block(rows, {}), null, `${name}: no end asked`);
+      if (name !== 'running') assert.equal(expected, NOT_CURRENT, `${name}: still refused at preview, never tolerated`);
+    }
+});
+
+test('plan R14: a fully refunded promotion source nothing could end or settle is opened as a review on its invoice, once; the right stays used', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now });
+  const row = { id: 'refund', companyId: 'company', stripeAccountId: 'acct', livemode: true, referenceId: 'invoice', reason: 'r' };
+  const run = async (rows: object, p: object = pin, terminal = 'SUCCEEDED') => {
+    const db = fakeDb(rows), service = Object.assign(Object.create(BillingRefundsService.prototype), { lifecycle: db.lifecycle });
+    const step = () => service.endRefundedPackage(db.tx, p, terminal, row, db.state.account);
+    return { db, step, ended: await step() as boolean | undefined };
+  };
+  const seen = (db: ReturnType<typeof fakeDb>) => db.issues.map(issue => [issue.kind, issue.referenceId, issue.companyId, issue.stripeAccountId, issue.livemode, issue.state]);
+  const review = [['PROMOTION_REVIEW', 'invoice', 'company', 'acct', true, 'OPEN']];
+  const later = new Date('2026-12-10T00:00:00.000Z');
+  const needStaff: Record<string, object> = {
+    'not started': promoRows({ invoice: { periodStart: new Date('2026-09-30T00:00:00.000Z') }, lots: sourceLots() }),
+    'paid, not applied': promoRows({ invoice: { applyStatus: 'HELD', appliedAt: null }, redemption: redemption({ benefitAppliedAt: null }) }),
+    'replaced, its base units carried into a later purchase': promoRows({ account: { paidThrough: later }, lots: [lot('base', 'INITIAL', { sourceKey: 'invoice', expiresAt: later }),
+      lot('bonus', 'PROMOTION', { sourceKey: 'promo:invoice', revokedAt: start })] }),
+    'a renewal that went live after the gate': promoRows({ account: { ...renewing, paidThrough: new Date(benefitEnd.getTime() + 5 * DAY) }, lots: sourceLots() }),
+  };
+  for (const [name, rows] of Object.entries(needStaff)) {
+    const first = await run(rows);
+    assert.deepEqual([first.ended, seen(first.db), first.db.writes], [false, review, ['billingIssue.create', 'auditLog.create']], `${name}: nothing else is written`);
+    assert.deepEqual([first.db.state.redemption!.state, first.db.state.redemption!.entitlementAdjustedAt, first.db.state.redemption!.version, first.db.lifecycle.calls.length],
+      ['CONSUMED', null, 3, 0], `${name}: the right stays used and unadjusted`);
+    assert.equal(await first.step(), false);
+    assert.deepEqual([seen(first.db), first.db.writes.filter(w => w === 'billingIssue.create')], [review, ['billingIssue.create']], `${name}: a replay finds the first review`);
+  }
+  // Nothing for staff: ended, settled, or adjusted before. A source that is not a promotion purchase is left alone exactly as before.
+  const gone = [lot('base', 'INITIAL', { sourceKey: 'invoice', expiresAt: start }), lot('bonus', 'PROMOTION', { sourceKey: 'promo:invoice', revokedAt: start })];
+  const quiet: Record<string, [object, object, boolean]> = {
+    'ended now': [promoRows({ lots: sourceLots() }), pin, true],
+    'spent, so settled now': [promoRows({ account: { paidThrough: start }, lots: gone }), pin, false],
+    'adjusted before (an earlier end, or a replay)': [promoRows({ account: { paidThrough: start }, lots: gone, redemption: redemption({ entitlementAdjustedAt: start }) }), pin, false],
+    'not a promotion purchase': [{ ...promoRows({ invoice: { periodStart: new Date('2026-09-30T00:00:00.000Z') } }), redemption: null }, { endPackage: true }, false],
+  };
+  for (const [name, [rows, p, ended]] of Object.entries(quiet)) {
+    const r = await run(rows, p);
+    assert.deepEqual([r.ended, r.db.issues.length, r.db.writes.filter(w => w.startsWith('billingIssue'))], [ended, 0, []], name);
+  }
+  // A refund that did not reach SUCCEEDED, or a partial one, asks for no end and writes nothing.
+  for (const [p, terminal] of [[pin, 'FAILED'], [{ endPackage: false, promotionRedemptionId: 'redemption' }, 'SUCCEEDED']] as const) {
+    const r = await run(needStaff['not started'] as object, p, terminal);
+    assert.deepEqual([r.ended, r.db.issues.length, r.db.writes], [undefined, 0, []]);
+  }
 });

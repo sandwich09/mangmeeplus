@@ -1,12 +1,13 @@
 import { billingApprovalMode, canApproveBillingChange } from './billing-approval';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { BillingEndPackageReview, BillingRefundInput, BillingRefundReview, BillingRefundOperation, BillingStatus } from '@watchdog-bms/contracts';
+import { BILLING_PROMOTION_REVIEW_ISSUE, type BillingEndPackageReview, type BillingRefundInput, type BillingRefundReview, type BillingRefundOperation, type BillingStatus } from '@watchdog-bms/contracts';
 import type { BillingAccount, BillingInvoice, BillingOperation, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
+import { invoiceServiceEnd } from '../domain/billing-package';
 import { assertKeys, assertRefundControlPolicy, billingError, configurationHash } from '../domain/billing-policy';
 import { StripeRequestError } from '../infrastructure/stripe.client';
 import { BillingService } from './billing.service';
@@ -15,7 +16,7 @@ import { BillingConfigurationService } from './billing-configuration.service';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import { recordBillingFinancials } from './billing-financial';
 import { pendingRefund, refundSource, refundParams, refundPreview, observedRefund, refundReviewRequired } from './billing-refund-source';
-import { endPackageBlock, endPackageError, endPaidPackage, refundEndsPackage, stampSpentPromotion } from './billing-end-package';
+import { endPackageBlock, endPackageError, endPaidPackage, refundEndsPackage, renewalIsLive, stampSpentPromotion } from './billing-end-package';
 import { promotionForInvoice } from './billing-promotion';
 
 type Proposed={accountId:string;customerId:string;chargeId:string;membershipId:string;actorCompanyId:string;sourceHash:string;localHash:string;providerSourceHash:string;
@@ -54,10 +55,15 @@ export class BillingRefundsService {
     if(promo&&!full&&input.endPackage===true)throw endPackageError('BILLING_END_PACKAGE_NOT_REFUNDED');
     return {endPackage:input.endPackage===true||(!!promo&&full),...promo?{promotionRedemptionId:promo.id}:{}};
   }
-  /** Why the package end this refund asks for cannot run now, or null. For a pinned promotion purchase "nothing is running" is no reason (the refund still goes, staff adjust the entitlement); a live renewal or a pending purchase still is. */
+  /**
+   * Why the package end this refund asks for cannot run now, or null. For a pinned promotion purchase "nothing is running" is no reason (the refund
+   * still goes, staff adjust the entitlement); a live renewal or a pending purchase still is. The renewal is judged on its own there (plan R14):
+   * until that source's service is over, a live one would still charge at its benefit end, so staff cancel it first, whatever else makes the source not current.
+   */
   private async refundBlock(tx:Prisma.TransactionClient,account:BillingAccount,invoiceId:string,p:Pick<Proposed,'endPackage'|'promotionRedemptionId'>){
     const block=p.endPackage?await this.packageBlock(tx,account,invoiceId):null;
-    return block==='BILLING_END_PACKAGE_NOT_CURRENT'&&p.promotionRedemptionId?null:block;
+    if(block!=='BILLING_END_PACKAGE_NOT_CURRENT'||!p.promotionRedemptionId)return block;
+    return renewalIsLive(account)&&invoiceServiceEnd(await this.invoice(account,invoiceId,tx))>new Date()?'BILLING_END_PACKAGE_AUTO_RENEW' as const:null;
   }
   /** The invoice is still the promotion purchase the proposal pinned (or still none), so execute answers for the source it previewed. */
   private async pinned(tx:Prisma.TransactionClient,invoiceId:string,p:Pick<Proposed,'promotionRedemptionId'>){
@@ -267,15 +273,18 @@ export class BillingRefundsService {
       });
     }finally{await this.prisma.client.billingAccount.updateMany({where:{id:p.accountId,leaseToken:lease},data:{leaseToken:null,leaseUntil:null,nextReconcileAt:new Date()}});}
   }
-  /** A term that already ended or moved to another purchase is left alone; a live renewal or pending purchase waits for staff. */
+  /** A term that already ended or moved to another purchase is left alone; a live renewal or pending purchase waits for staff. A promotion source nothing could end or settle is opened as a review. */
   private async endRefundedPackage(tx:Prisma.TransactionClient,p:Pick<Proposed,'endPackage'|'promotionRedemptionId'>,terminal:string,row:BillingOperation,account:BillingAccount){
     if(!refundEndsPackage(p,terminal))return undefined;
     if(!await this.pinned(tx,row.referenceId!,p))throw refundReviewRequired();
     const block=await endPaidPackage(tx,this.lifecycle,{companyId:row.companyId!,accountId:account.id,invoiceId:row.referenceId!,requireFullRefund:false,
       actorUserId:null,requestId:row.id,reason:row.reason,refundOperationId:row.id});
     if(block&&block!=='BILLING_END_PACKAGE_NOT_CURRENT')throw endPackageError(block);
-    // Spec Q6: nothing of a promotion source is running, so only a source with nothing left of it is settled; any other waits for staff.
-    if(block&&p.promotionRedemptionId)await stampSpentPromotion(tx,{accountId:account.id,invoiceId:row.referenceId!});
+    // Spec Q6: nothing of a promotion source is running, so only a source with nothing left of it is settled. Any other (not started, held,
+    // replaced, or a renewal that went live after the gate) waits for staff, and no tool ends it: the review on the invoice is how they see it.
+    // The redemption stays CONSUMED and the campaign usage is never lowered; an entitlement already adjusted is not a case for staff.
+    if(block&&p.promotionRedemptionId&&!await stampSpentPromotion(tx,{accountId:account.id,invoiceId:row.referenceId!})&&!(await promotionForInvoice(tx,row.referenceId!))?.entitlementAdjustedAt)
+      await detectBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:BILLING_PROMOTION_REVIEW_ISSUE,referenceId:row.referenceId!});
     return !block;
   }
   async endPackageReview(context:RequestContext,companyId:string,invoiceId:string):Promise<BillingEndPackageReview>{
