@@ -8687,10 +8687,16 @@ describe('LINE: ถามส่วนลด (sales-event spec §8.1, Owner UAT 2
     const member = discountLane({ lineEventDiscount: async () => { throw new ForbiddenException('ต้องได้รับสิทธิ์จัดการแพ็กเกจบริษัท'); } });
     await member.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-member', messageText: 'ส่วนลดค่ามั่งมี' });
     assert.equal(member.replies[0], 'ส่วนลดจากงานใช้ตอนซื้อแพ็กเกจของร้าน เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจสอบถามในแชทนี้ได้เลยค่ะ');
-    const paying = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'CREDIT' }) });
+    const paying = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'CREDIT', renewalMode: 'CARD_AUTO' }) });
     await paying.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-paying', messageText: 'ส่วนลด' });
     assert.match(paying.sentMessages[0].contents.body.contents[1].text, /ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ/);
     assert.equal(paying.sentMessages[0].contents.footer, undefined);
+    // UAT 2026-10-10: a shop that is sent a QR bill each period is told that, never that its card is charged by itself.
+    const qr = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'CREDIT', renewalMode: 'PROMPTPAY_RENEW' }) });
+    await qr.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-qr-bill', messageText: 'ส่วนลด' });
+    assert.match(qr.sentMessages[0].contents.body.contents[1].text, /ร้านนี้ต่ออายุด้วยบิล QR ทุกงวด ส่วนลดจากงานยังใช้กับบิล QR รอบต่ออายุไม่ได้ค่ะ$/u);
+    assert.doesNotMatch(JSON.stringify(qr.sentMessages), /ตัดเงินอัตโนมัติ/u);
+    assert.equal(qr.sentMessages[0].contents.footer, undefined);
   });
 });
 

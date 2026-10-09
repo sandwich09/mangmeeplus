@@ -334,6 +334,23 @@ or represent the command as merged. The current hash can be computed without clo
 python3 -c 'import runpy; m=runpy.run_path("infra/kamal/release.py"); print(m["digest"](m["controller_manifest"]()))'
 ```
 
+On a slow uplink, or for the first release after a registry rebuild, add `--publish-images` to
+`--prepare`. After every preparation check passes it logs in to the registry as an apply does and
+pushes the four prepared images under `prepared-<source>-<operation-id>-<service>` tags, up to one
+hour per image, recording service, tag, digest and seconds in `preparedImagePublication`. The later
+`--apply --prepared-build` still pushes its own tags inside its 240-second limit and pre-mutation
+budget, but finds every layer already uploaded. The option writes to the image registry only: no
+remote lock, no `active.json`, no host, provider or database change, and it is not a deployment,
+acceptance or promotion. A failed upload fails the preparation (`FAILED`, phase
+`publish-prepared-images`) and leaves nothing to reconcile; prepare again. The repository is
+tag-immutable and has no lifecycle rule, so `prepared-` tags stay until they are expired by hand
+or by a rule on that prefix.
+
+```sh
+infra/kamal/deploy-uat --profile <deployment-profile> --prepare --publish-images --uat-smoke-acceptance
+infra/kamal/deploy-uat --profile <deployment-profile> --apply --prepared-build <run>/build --uat-smoke-acceptance
+```
+
 The tools image carries and validates the complete migration/sync catalog. AgentCore code is hashed,
 uploaded once under a unique operation key, downloaded at its exact S3 version, and read back before
 the gateway is replaced. An unchanged exact source/config/artifact reuses its pinned provider version.

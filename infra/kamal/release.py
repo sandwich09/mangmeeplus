@@ -45,6 +45,7 @@ REGION = 'ap-southeast-1'
 UAT_DEPLOY_TARGET_SECONDS = 600
 UAT_PRE_MUTATION_SECONDS = 360
 UAT_BUILD_SECONDS = 240
+PREPARED_PUBLISH_SECONDS = 3600  # per image; runs outside the remote lock and the UAT pre-mutation budget
 HOST_STORAGE_HEADROOM_BYTES = 2 * 1024 ** 3
 HOST_STORAGE_MULTIPLIER = 2
 CONTROLLER_FILES = tuple('infra/kamal/'+p for p in ('release.py','config.json','retire-builds.cjs','deploy-uat','deploy-prod')) + tuple('infra/dev-kamal/'+p for p in ('build-complete.py','capture-config.py','release_inventory.py','verify-config.mjs','Dockerfile.tools'))
@@ -979,6 +980,21 @@ class Release:
             for h in self.target['hosts'][s]: self.remote(h,['docker','pull',self.images[s]['tag']],timeout=240)
         self.remote(self.target['hosts']['api-web'][0],['docker','pull',self.images['tools']['tag']],timeout=240)
 
+    def publish_prepared_images(self):
+        # Registry writes only: an apply still pushes its own tags, and then finds every layer already uploaded.
+        # The repository is tag-immutable, so each preparation uses its own `prepared-` tags.
+        registry=f'{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com'
+        rows=self.receipt['preparedImagePublication']=[]
+        with self.registry_login() as login_env:
+            for s,a in self.manifest['artifacts'].items():
+                version='prepared-'+self.version(s); tag=registry+'/'+self.target['repository']+':'+version
+                start=time.monotonic()
+                self.command(['docker','tag',a['tag'],tag])
+                self.command(['docker','push',tag],env=login_env,timeout=PREPARED_PUBLISH_SECONDS,log='publish-prepared-'+s)
+                data=self.aws(['ecr','describe-images','--repository-name',self.target['repository'],'--image-ids','imageTag='+version])['imageDetails']
+                require(len(data)==1, 'Published digest missing')
+                rows.append({'service':s,'tag':tag,'digest':data[0]['imageDigest'],'seconds':round(time.monotonic()-start,3)})
+
     def tool(self, command, *, extra=None, timeout=240, stdin=''):
         env={**self.envs['api-web'],**(extra or {})}
         args=['docker','run','--rm','-i','--network','kamal']
@@ -1035,6 +1051,8 @@ finally{await client.$disconnect();}})().catch(()=>process.exit(1));"""
                 with self.phase('fresh-config-and-image-validation'): self.configuration(); self.render()
                 with self.phase('host-storage-capacity'): self.storage_capacity()
                 with self.phase('config-freshness-readback'): self.config_freshness()
+                if getattr(self.args, 'publish_images', False):
+                    with self.phase('publish-prepared-images'): self.publish_prepared_images()
                 self.receipt['status']='PREPARED_NO_DEPLOYMENT'; return
             if not self.args.apply:
                 self.receipt['status']='PREFLIGHT_PASSED_NO_DEPLOYMENT'; return
@@ -1686,6 +1704,7 @@ def main():
     action.add_argument('--apply',action='store_true',help='Deploy to the enrolled target; default only checks prerequisites')
     action.add_argument('--prepare',action='store_true',help='Build pinned main and validate complete config locally; only reads the enrolled cloud target, never deploys')
     action.add_argument('--reconcile-host-identity',action='store_true',help='Explicitly reconcile the enrolled SSM hosts\' private addresses and verified SSH host keys; never deploys')
+    p.add_argument('--publish-images',action='store_true',help='With --prepare: after every check passes, upload the prepared images to the registry under prepared- tags so a later --apply finds their layers; registry writes only, never deploys')
     p.add_argument('--accept-host-key-rotation',action='store_true',help='Permit an observed SSM host-key rotation during explicit reconciliation only')
     p.add_argument('--host-key-rotation-reason',help='Non-empty audit reason required with --accept-host-key-rotation')
     p.add_argument('--uat-controller-sha256', help='Explicit hash-bound test of the new local controller on real UAT only')
@@ -1696,6 +1715,8 @@ def main():
     args=p.parse_args()
     if args.prepare and args.rollback:
         p.error('--prepare cannot be combined with --rollback')
+    if args.publish_images and not args.prepare:
+        p.error('--publish-images is only valid with --prepare')
     if args.reconcile_host_identity:
         if args.rollback or args.first_migration or args.uat_release or args.source_sha or args.production_baseline or args.hotfix_path or args.regression_test:
             p.error('Host identity reconciliation cannot select a release or rollback')

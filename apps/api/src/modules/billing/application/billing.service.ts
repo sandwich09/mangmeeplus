@@ -289,7 +289,9 @@ export class BillingService {
     const company = await this.prisma.client.company.findUnique({ where: { id: context.companyId }, select: { planTerm: true } });
     const account = await this.account(context.companyId);
     const source = await this.purchaseSource({ planTerm: company?.planTerm ?? null }, account);
-    return { path: eventDiscountPath(source, account?.renewalMode), tickets: await holderEventDiscountTickets(this.prisma.client, context.userId, new Date()) };
+    // Read as status() reads it (a subscription under a NONE column is a card charged by itself), so LINE and the package page say the same of how this shop renews.
+    const renewalMode = (account?.renewalMode !== 'NONE' ? account?.renewalMode : account?.baseSubscriptionId ? 'CARD_AUTO' : 'NONE') as BillingStatus['renewalMode'];
+    return { path: eventDiscountPath(source, renewalMode), renewalMode, tickets: await holderEventDiscountTickets(this.prisma.client, context.userId, new Date()) };
   }
 
   /** LINE "ฉันมีส่วนลดไหม" (sales-event spec §8.1): the same owner-only read, plus why this shop may not take the discount

@@ -625,6 +625,68 @@ class Contracts(unittest.TestCase):
                 with (r.state/'deployment.lock').open('a+') as lock:
                     m.fcntl.flock(lock,m.fcntl.LOCK_EX|m.fcntl.LOCK_NB)
 
+    def test_prepare_publishes_images_only_on_request_and_only_to_the_registry(self):
+        services=('api-web','ai-gateway','workers','tools')
+        def prepared(tmp,fail=None):
+            r,calls=self.runner(tmp);r.args.apply=False;r.args.prepare=True;r.aws_prefix=['aws']
+            r.build={'sourceCommit':'a'*40};r.manifest={'artifacts':{s:{'tag':'local/'+s} for s in services}}
+            r.remote=lambda *a,**k:self.fail('preparation must not reach a host')
+            r.acquire_remote_lock=lambda:self.fail('preparation must not take the remote lock')
+            commands=[]
+            def command(args,**kwargs):
+                commands.append((args,kwargs))
+                if args[-2:]==['ecr','get-login-password']:return 'registry-private-token\n'
+                if args[:2]==['docker','login']:Path(kwargs['env']['DOCKER_CONFIG']).mkdir()
+                if args[:2]==['docker','push'] and args[2].endswith(str(fail)):raise RuntimeError('injected push')
+                return ''
+            r.command=command
+            r.aws=lambda args,**k:{'imageDetails':[{'imageDigest':'sha256:'+args[-1].rsplit('-',1)[1]}]} if args[:2]==['ecr','describe-images'] else self.fail(args)
+            return r,calls,commands
+        pushes=lambda commands:[(a[2],k['timeout'],k['env']['DOCKER_CONFIG']) for a,k in commands if a[:2]==['docker','push']]
+        with tempfile.TemporaryDirectory() as tmp:
+            r,calls,commands=prepared(tmp);r.run()
+            self.assertEqual(commands,[]);self.assertNotIn('preparedImagePublication',r.receipt)
+        with tempfile.TemporaryDirectory() as tmp:
+            r,calls,commands=prepared(tmp);r.args.publish_images=True;r.run();r.save()
+            repository=f'{m.ACCOUNT}.dkr.ecr.{m.REGION}.amazonaws.com/'+r.target['repository']
+            tags=[f'{repository}:prepared-{"a"*40}-{r.id}-{s}' for s in services]
+            self.assertEqual(pushes(commands),[(tag,m.PREPARED_PUBLISH_SECONDS,str(r.work/'registry-login')) for tag in tags])
+            self.assertGreater(m.PREPARED_PUBLISH_SECONDS,m.UAT_PRE_MUTATION_SECONDS)
+            self.assertEqual([a for a,_ in commands if a[:2]==['docker','tag']],[['docker','tag','local/'+s,tag] for s,tag in zip(services,tags)])
+            self.assertEqual({a[0] for a,_ in commands},{'aws','docker'})
+            self.assertEqual(calls,['preflight','source_and_build','configuration','render','storage_capacity','config_freshness'])
+            saved=m.read(r.work/'result.json')
+            self.assertEqual(saved['status'],'PREPARED_NO_DEPLOYMENT')
+            self.assertEqual([(x['service'],x['tag'],x['digest']) for x in saved['preparedImagePublication']],
+                             [(s,tag,'sha256:'+s.rsplit('-',1)[-1]) for s,tag in zip(services,tags)])
+            self.assertTrue(all(x['seconds']>=0 for x in saved['preparedImagePublication']))
+            self.assertNotIn('registry-private-token',json.dumps(saved))
+            self.assertEqual(saved['phases'][-1]['name'],'publish-prepared-images')
+            self.assertFalse((r.work/'registry-login').exists());self.assertFalse((r.state/'active.json').exists())
+        with tempfile.TemporaryDirectory() as tmp:
+            r,calls,commands=prepared(tmp,fail='workers');r.args.publish_images=True
+            with self.assertRaisesRegex(RuntimeError,'injected push'):r.run()
+            self.assertEqual([x['service'] for x in r.receipt['preparedImagePublication']],['api-web','ai-gateway'])
+            self.assertEqual(r.receipt['phases'][-1],{**r.receipt['phases'][-1],'name':'publish-prepared-images','status':'FAILED'})
+            self.assertNotEqual(r.receipt['status'],'PREPARED_NO_DEPLOYMENT');self.assertEqual(r.changed,[])
+            self.assertFalse((r.work/'registry-login').exists());self.assertFalse((r.state/'active.json').exists())
+        with patch.object(sys,'argv',['release.py','--environment','uat','--apply','--publish-images']), \
+                patch.object(sys,'stderr',io.StringIO()),patch.object(m,'Release') as constructor:
+            with self.assertRaises(SystemExit):m.main()
+            constructor.assert_not_called()
+
+    def test_apply_publication_keeps_its_own_tags_and_time_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r,_=self.runner(tmp);del r.publish;r.aws_prefix=['aws'];r.source=Path(tmp);r.build={'sourceCommit':'a'*40}
+            services=(*m.SERVICES,'tools');r.manifest={'artifacts':{s:{'tag':'local/'+s} for s in services}};r.hosts={}
+            pushes=[]
+            def command(args,**kwargs):
+                if args[:2]==['docker','push']:pushes.append((args[2],kwargs['timeout']))
+                return json.dumps([{'Id':'sha256:1','RootFS':{}}]) if args[:3]==['docker','image','inspect'] else 'token'
+            r.command=command;r.remote=lambda *a,**k:'';r.aws=lambda args,**k:{'imageDetails':[{'imageDigest':'sha256:2'}]}
+            r.publish()
+            self.assertEqual(pushes,[(f'{m.ACCOUNT}.dkr.ecr.{m.REGION}.amazonaws.com/{r.target["repository"]}:{"a"*40}-{r.id}-{s}',240) for s in services])
+
     def test_prepare_preserves_unreconciled_operation(self):
         with tempfile.TemporaryDirectory() as tmp:
             r,calls=self.runner(tmp);r.args.apply=False;r.args.prepare=True
