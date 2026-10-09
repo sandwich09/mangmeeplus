@@ -6,23 +6,23 @@ import { usePathname, useRouter } from 'next/navigation';
 import type { PlanTermNotice } from './plan-term.api';
 import { PLAN_LOCK_COPY, PLAN_LOCK_CTA, isLockedShellPath, planLockReason, planTermView } from './plan-term.logic';
 
-export type BannerPlace = 'package' | 'return' | 'elsewhere';
+export type BannerPlace = 'billing' | 'elsewhere';
 
 /**
- * Where the banner is drawn, as far as its button and its sentence go. The package page is where the button leads, and a payment may be open on it (the first and biggest green
- * control of the screen was "เลือกแพ็กเกจ", above "ชำระเงินต่อ"); the return page owns the next step ("รอผล", or its own choices). Neither shows the button; every other page does.
- * `usePathname` has no query, but a trailing slash or a query that slipped in must not bring the button back.
+ * Where the banner is drawn, as far as its button and its sentence go. Every page of the shop's billing area — the package page, the return page, the invoice pages — owns the next step: the package
+ * page leads to the chooser or to a payment that is open (the first and biggest green control of the screen was "เลือกแพ็กเกจ", above "ชำระเงินต่อ"), the return page waits for the payment or offers
+ * its own choices. None of them shows the button; every other page does. `usePathname` has no query, but a trailing slash or a query that slipped in must not bring the button back.
  */
 export function bannerPlace(pathname: string, companyId: string): BannerPlace {
   const path = pathname.split(/[?#]/)[0]!.replace(/\/$/, ''), base = `/companies/${encodeURIComponent(companyId)}/billing`;
-  return path === `${base}/return` ? 'return' : path === base ? 'package' : 'elsewhere';
+  return path === base || path.startsWith(`${base}/`) ? 'billing' : 'elsewhere';
 }
 
 /**
- * The banner's sentence is "<what is the matter> · <what to do>". On the package page the card below says what to do — or is showing a payment that is open, where "choose a package" would
- * invite a second one — so there the banner keeps only what is the matter. Every other page, the return page included, keeps the whole sentence.
+ * The banner's sentence is "<what is the matter> · <what to do>". On every billing page the page below says what to do — or is showing a payment that is open or awaited, where "choose a package"
+ * would invite a second one — so there the banner keeps only what is the matter. Every other page keeps the whole sentence.
  */
-export const bannerSentence = (banner: string, place: BannerPlace): string => place === 'package' ? banner.split(' · ')[0]! : banner;
+export const bannerSentence = (banner: string, place: BannerPlace): string => place === 'billing' ? banner.split(' · ')[0]! : banner;
 
 /**
  * The company-wide term state (P29) at the top of the shell. An ended term routes to the renewal
@@ -48,7 +48,7 @@ export function PlanTermBanner({ companyId, notice }: { companyId: string; notic
   const copy = PLAN_LOCK_COPY[planLockReason(notice)];
   const canManagePlan = notice.canManagePlan ?? notice.isOwner;
   // Back from Stripe the return page owns the next step — it waits for the payment, or offers its own choices — and the package page is where this button leads: a second "เลือกแพ็กเกจ" above
-  // either would invite paying twice (see `bannerPlace`).
+  // either would invite paying twice (see `bannerPlace`, which covers every page of the billing area).
   const place = bannerPlace(pathname, companyId);
 
   return (

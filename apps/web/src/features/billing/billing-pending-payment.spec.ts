@@ -316,7 +316,7 @@ test('the card: the block leads under its own heading, the package area follows,
   // the invitation gives way (no pointer stands in its place: the block says it), the reserved right is said in the block, and the amber alert goes for every kind that is in flight
   assert.match(page, /const purchaseHint = pending\?\.inFlight \? null : canBuy \|\| oneTapCancel \?/);
   assert.match(page, /\{promotionBlock && !pending\?\.showsReservedPromotion && <section role="status" aria-label="สถานะโปรโมชั่น"/);
-  assert.match(page, /\{status\.purchaseBlockCode && !\(status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' && pendingShown && pending\?\.inFlight\) && <div role="alert"/);
+  assert.match(page, /\{status\.purchaseBlockCode && !quietBlock && !\(status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' && pendingShown && pending\?\.inFlight\) && <div role="alert"/);
   assert.match(page, /<p>\{status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' \? PENDING_TEXT\.alertCheckoutPending : errorText\(\{ code: status\.purchaseBlockCode \}\)\}<\/p>/);
   assert.match(page, />ตรวจสถานะล่าสุด<\/button>/, 'the button the alert\'s sentence names');
   // what is gone: the gray waiting box, the pointer, the old paragraph, and every field of the block that existed only for them
@@ -485,4 +485,47 @@ test('D13: in every commit where a notice is set together with a chooser change,
   assert.match(page, /const \[noticeAgain, setNoticeAgain\] = useState\(0\);/);
   // the banner's recipient guard: a recipient error has its own destination, the banner leaves it alone
   assert.match(page, /if \(error && !RECIPIENT_ERROR_CODES\.includes\(errorCode \?\? ''\)\) \{ errorBanner/);
+});
+
+// ---- UAT 2026-10-10: ending a payment never leaves its block beside the notice that says it is ended ----
+// After "ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่" succeeded, the notice "ยกเลิกรายการเดิมแล้ว …" sat for 3-5 seconds above the old block ("มีรายการชำระเงินที่ยังไม่เสร็จ", the reserved right, the three
+// choices) until the read that follows the cancel landed. The status on screen is stale the moment the cancel call succeeds, so the page keeps that status object and draws its loading line
+// instead of the card until a status that is not that object arrives. The surface x state table (the browser lane runs it with the read held back):
+//   cancel answer           | notice shown                         | old block | what stands in its place until the read lands | after the read
+//   EXPIRED (one tap)       | ยกเลิกรายการเดิมแล้ว …                | none      | the loading line                              | the chooser opens (reopenChooser)
+//   EXPIRED (confirmed)     | ยกเลิกรายการแล้ว …                   | none      | the loading line                              | the card the status describes
+//   COMPLETED / still open  | the checking notices (+ its button)  | none      | the loading line                              | the card the status describes (a received payment shows its own block)
+//   the call fails          | none (the banner is shown)           | stays     | -                                             | -
+test('ending a payment: the stale status is dropped from the screen the moment the call succeeds, for the one-tap end and for the confirmed end, whatever state the answer is', () => {
+  // the page remembers WHICH status was stale, by identity: every fresh read (the reload, readStatus, the focus refresh) replaces the object, so nothing has to reset it
+  assert.match(page, /const \[endedStatus, setEndedStatus\] = useState<BillingStatus \| null>\(null\);/);
+  assert.match(page, /const settling = !!status && status === endedStatus;/);
+  assert.equal(count(page, 'setEndedStatus('), 2, 'one per way of ending a payment, nowhere else');
+  assert.doesNotMatch(page, /setEndedStatus\(null\)/);
+  // each way sets it right after the cancel call has succeeded and before any notice is set, in the same batch as the notice and the reload
+  const oneTap = pendingSection.slice(pendingSection.indexOf('cancel: oneTapCancel ?'), pendingSection.indexOf(') : () => setConfirmCheckoutCancel(true)')),
+    confirmed = pendingSection.slice(pendingSection.indexOf('{PENDING_TEXT.confirmYes}') - 700, pendingSection.indexOf('{PENDING_TEXT.confirmYes}'));
+  for (const [name, part] of [['one tap', oneTap], ['confirmed', confirmed]] as const) {
+    const call = part.indexOf('await api.cancelCheckout(status.attemptId!)'), ended = part.indexOf('setEndedStatus(latestStatus.current ?? status)'), notice = part.indexOf('setCheckoutCancelNotice('), reload = part.indexOf('setReload(');
+    assert.ok(call >= 0 && call < ended && ended < notice && notice < reload, `${name}: the call, then the stale status dropped, then the notice, then the read`);
+    assert.equal(count(part, 'setEndedStatus('), 1, name);
+  }
+  // a failed call throws before it: the block stays, with the banner
+  assert.ok(pendingSection.indexOf('await api.cancelCheckout(status.attemptId!)') < pendingSection.indexOf('setEndedStatus('));
+  // the status that is dropped is the one on screen when the call answers (a read that landed while it was out replaced the one the button was drawn from), kept in a ref refreshed on every render
+  assert.match(page, /const latestStatus = useRef\(status\);\s*latestStatus\.current = status;\s*const settling = !!status && status === endedStatus;/);
+});
+
+test('ending a payment: while the status is the stale one the page draws the loading line and none of the card, so the notice and the block of choices are never on screen together', () => {
+  const loading = at('{(!data || settling) && !error && <p role="status">กำลังตรวจสอบสิทธิ์และรายการชำระเงิน…</p>}'), body = at('{data && status && !settling && <>'), notice = at('{checkoutCancelNotice && <div ref={checkoutNotice}');
+  assert.ok(notice < loading && loading < body, 'the notice is outside the part that gives way, and the loading line comes right where the card was');
+  // every place that draws the block, or an alert about the payment, is inside the part that gives way
+  const calls = [...page.matchAll(/pendingSection\(status, pending\)/g)].map(match => match.index!);
+  assert.equal(calls.length, 2, 'the block is drawn in two places (leading the card, or after the notes)');
+  for (const index of calls) assert.ok(index > body, 'inside the part that gives way');
+  assert.ok(at('{status.purchaseBlockCode && !quietBlock') > body, 'and so is the amber alert for the payment');
+  // the loading line is the one the first load shows, said the same way
+  assert.equal(count(page, 'กำลังตรวจสอบสิทธิ์และรายการชำระเงิน…'), 1);
+  // a read that fails is not hidden behind it: the error banner is outside, and the line is not drawn beside an error
+  assert.ok(at('{error && <div ref={errorBanner}') < notice);
 });

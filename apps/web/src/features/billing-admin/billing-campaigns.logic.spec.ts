@@ -6,7 +6,7 @@ import { BILLING_PROMOTION_STARTER_TEMPLATE, type BillingConfigurationOperation,
   type BillingPromotionCampaignView, type BillingPromotionDraftError, type BillingPromotionPreviewRow, type BillingPromotionReportCompany } from '@watchdog-bms/contracts';
 import {
   ruleLabel as ruleLabelOf, bahtText, blockerText, campaignButtons, campaignDraftInput, campaignError, campaignFormFromTerms, campaignFormProblems, campaignLoadFailure,
-  campaignModeMarker, campaignOfferOptions, campaignRequest, campaignStatusMeta, campaignTitle, campaignUsageText, campaignWindowText, CAMPAIGN_CLOSE_COPY,
+  campaignCapFullText, campaignModeMarker, campaignOfferOptions, campaignRequest, campaignStatusHelp, campaignStatusMeta, campaignTitle, campaignUsageText, campaignWindowText, CAMPAIGN_CLOSE_COPY,
   CAMPAIGN_ERROR_TEXT, CAMPAIGN_OPERATION_STEP_TEXT, CAMPAIGN_SAVED_NOTICE, CAMPAIGN_STATUS_META, CAMPAIGN_STATUSES, countText, DETAIL_NEEDS, DRAFT_STALE_TEXT, draftErrorsByField, draftErrorText, draftLockedText,
   emptyCampaignForm, filterCampaigns, isRequestOpen, LIST_NEEDS, NO_CAMPAIGN_FILTERS, operationStateText, operationSteps, pendingCheckoutsText, permissionNote, previewBlockedText, previewRowView,
   publishedTermsCopy, reportCountItems, reportMoneyView, reportRowView, requestKey, resumeBlockedText, reuseIntent, rulesText, safeAdminHref, templateRuleSummary, termsFacts, type CampaignFormValues,
@@ -529,6 +529,55 @@ describe('the published terms are worded for the status the campaign is in', () 
     const text = source('BillingCampaignDetailPage.tsx');
     assert.match(text, /<TermsCard title=\{termsCopy\.title\} terms=\{published\} endedAt=\{published\.endedAt\} note=\{termsCopy\.note\} \/>/);
     assert.doesNotMatch(text, /title="เงื่อนไขที่ใช้อยู่"/);
+  });
+});
+
+describe('an active campaign with every right taken says so, on the detail page and in the list', () => {
+  const usage = (reserved: number, consumed: number) => ({ reserved, consumed, taken: reserved + consumed, cap: null as number | null });
+  const FULL = 'สิทธิ์ครบจำนวนแล้ว (5 จาก 5) ร้านที่ยังไม่ได้จองสิทธิ์เลือกใช้โปรโมชั่นนี้ไม่ได้ ส่วนการซื้อแพ็กเกจแบบปกติเป็นไปตามเดิม';
+  const RESERVED_NOTE = (n: number) => ` มี ${n} สิทธิ์ที่จองไว้กับรายการชำระที่ยังไม่เสร็จ รายการที่ถูกยกเลิกจะคืนสิทธิ์ให้ร้านอื่นใช้ได้`;
+  const OPEN = CAMPAIGN_STATUS_META.ACTIVE.help;
+  const at = (status: BillingPromotionCampaignStatus, cap: number | null, reserved: number, consumed: number) =>
+    view({ status, published: { ...published, cap }, usage: usage(reserved, consumed) });
+
+  it('is a table of status x cap x used + reserved: only an active campaign with a cap and used + reserved >= cap is "all taken"', () => {
+    const cases: [string, BillingPromotionCampaignView, string][] = [
+      ['active, 5 of 5 used, none reserved', at('ACTIVE', 5, 0, 5), FULL],
+      ['active, 4 used + 1 reserved = 5 of 5', at('ACTIVE', 5, 1, 4), FULL + RESERVED_NOTE(1)],
+      ['active, 5 reserved of 5', at('ACTIVE', 5, 5, 0), FULL + RESERVED_NOTE(5)],
+      ['active, 1,000 of 1,000, thousands separated', at('ACTIVE', 1000, 0, 1000), FULL.replaceAll('5 จาก 5', '1,000 จาก 1,000')],
+      ['active, more taken than the cap (the number is shown as it is)', at('ACTIVE', 5, 0, 6), FULL.replace('5 จาก 5', '6 จาก 5')],
+      ['active, 3 used + 1 reserved of 5: one is left', at('ACTIVE', 5, 1, 3), OPEN],
+      ['active, nothing used', at('ACTIVE', 5, 0, 0), OPEN],
+      ['active, no cap', at('ACTIVE', null, 0, 99_999), OPEN],
+      ['active, nothing published', view({ status: 'ACTIVE', published: null, usage: usage(0, 5) }), OPEN],
+    ];
+    for (const status of ['SCHEDULED', 'PAUSED', 'ENDED', 'CATALOG_STALE', 'DRAFT', 'AWAITING_APPROVAL'] as const)
+      cases.push([`${status}, 5 of 5 used: its own help, "all taken" is said for an active campaign only`, at(status, 5, 0, 5), CAMPAIGN_STATUS_META[status].help]);
+    for (const [name, item, want] of cases) {
+      assert.equal(campaignStatusHelp(item), want, name);
+      assert.equal(campaignCapFullText(item) !== null, want !== OPEN && item.status === 'ACTIVE', name);
+      assert.doesNotMatch(campaignStatusHelp(item), MACHINE_TOKEN, name);
+    }
+    // the sentence does not say shops can choose it, and does not call a reservation that stands "used up"
+    assert.doesNotMatch(FULL, /เลือกใช้สิทธิ์ตอนซื้อแพ็กเกจได้/);
+    assert.equal(CAMPAIGN_STATUS_META.ACTIVE.help, 'ร้านที่เข้าเงื่อนไขเลือกใช้สิทธิ์ตอนซื้อแพ็กเกจได้');
+  });
+
+  it('is the same fact the usage column prints: the sentence appears exactly when "used + reserved / cap" reads full', () => {
+    for (const [reserved, consumed] of [[0, 0], [0, 4], [1, 3], [1, 4], [0, 5], [2, 3], [0, 9]]) {
+      const item = at('ACTIVE', 5, reserved, consumed), [taken, cap] = campaignUsageText(item).split(' / ').map(Number);
+      assert.equal(campaignCapFullText(item) !== null, taken! >= cap!, `${taken} / ${cap}`);
+    }
+  });
+
+  it('both screens use it: the detail page prints the status help through it, and every list row prints the same sentence', () => {
+    const detail = source('BillingCampaignDetailPage.tsx'), list = source('BillingCampaignsPage.tsx');
+    assert.match(detail, /help = campaignStatusHelp\(campaign\)/);
+    assert.match(detail, /\{help && <p className="rounded-lg bg-gray-50 p-3 text-gray-700">\{help\}<\/p>\}/);
+    assert.doesNotMatch(detail, /status\.help/, 'the detail page no longer prints the status help on its own');
+    assert.match(list, /full = campaignCapFullText\(item\)/);
+    assert.match(list, /\{full && <p className="text-sm text-amber-800">\{full\}<\/p>\}/);
   });
 });
 

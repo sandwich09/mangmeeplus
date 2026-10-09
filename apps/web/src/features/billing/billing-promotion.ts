@@ -1,6 +1,7 @@
 import { BILLING_PAID_TIERS, type BillingBenefitChoice, type BillingInvoiceItem, type BillingOffer, type BillingPromotionOfferView, type BillingPromotionUnavailableReason,
   type BillingPromotionUse, type BillingQuote, type BillingStatus } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
+import { errorText } from './billing-error-text';
 import { EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountBaht, eventDiscountHelpText } from './billing-event-discount';
 
 /**
@@ -83,7 +84,12 @@ export function promotionCardBenefit(pick: BillingBenefitChoice | null, offered:
   if (chosen) return chosen === 'NORMAL' || onCard[chosen] ? chosen : 'NORMAL';
   return onCard.PROMOTION ? 'PROMOTION' : onCard.EVENT_DISCOUNT ? 'EVENT_DISCOUNT' : 'NORMAL';
 }
-export const PROMOTION_ONE_PER_PURCHASE = 'ใช้ได้ครั้งละ 1 อย่างต่อการซื้อ สิ่งที่ไม่ได้เลือกจะไม่ถูกใช้';
+/**
+ * The one sentence under the three-way choice. It used to end "what is not chosen is not used", which is false by design (plan R19): a package with no promotion is bought as its own card shows —
+ * with a held discount, the one on its card — whichever radio is on. So it says what holds for every pick and every card: one thing per purchase, the promotion only on the packages that show it,
+ * and any other package as it is shown.
+ */
+export const PROMOTION_ONE_PER_PURCHASE = 'ใช้ได้ครั้งละ 1 อย่างต่อการซื้อ โปรโมชั่นใช้ได้เฉพาะแพ็กเกจที่แสดงโปรโมชั่น แพ็กเกจอื่นซื้อตามที่แสดงไว้ที่แพ็กเกจนั้น';
 /** Today's wording when only a discount is on offer; the three-way wording as soon as a promotion is. */
 export function promotionChoiceCopy(on: { promotion: boolean; ticket: boolean; firstBillOnly: boolean }) {
   return on.promotion
@@ -247,4 +253,24 @@ export function promotionUpgradeNote(status: Pick<BillingStatus, 'upgradeDeferre
   if (!until || Date.parse(until) <= now || status.accessState !== 'ACTIVE' || status.interval !== offer.interval) return null;
   return rank(status.tierKey) >= 0 && rank(offer.offerKey) > rank(status.tierKey)
     ? `อัปเกรดได้หลังวันที่ ${day(until)} เพราะแพ็กเกจปัจจุบันยังมีเวลาโปรโมชั่นที่ใช้ไม่หมด` : null;
+}
+
+/* ---- a closed purchase that is not a problem (UAT 2026-10-10) ---- */
+
+const QUIET_BLOCK_CODES: readonly string[] = ['BILLING_REPEAT_NOT_READY', 'BILLING_PLAN_CHANGE_REQUIRED'];
+/**
+ * `purchaseBlockCode` says why no new package can be bought right now. Two of its codes are plain facts about a shop whose package runs and is paid — a promotion that still has time to give
+ * (card shops), a QR bill every period — and an amber alert with a reference for the team told a customer who had just paid that something had failed. For such a shop they become one quiet line
+ * inside the package card; this returns it, or null when the alert must stay (any other code, or these two when the shop is not active, paid and applied with no payment in flight).
+ *
+ * The date is told only while it lies ahead and the platform's own gate for package changes is open: after the gate closes the date would promise what it does not. Every other case keeps the
+ * existing sentence of the code. "หลังวันที่" is the card's own word (`promotionUpgradeNote`): true at every hour of that day, where "ตั้งแต่วันที่" would be false before the clock time the free time ends.
+ */
+export function purchaseBlockQuiet(status: Pick<BillingStatus, 'purchaseBlockCode' | 'accessState' | 'paymentState' | 'applyState' | 'attemptId' | 'packageChangesEnabled' | 'upgradeDeferredUntil'>,
+  now: number = Date.now()): string | null {
+  const code = status.purchaseBlockCode;
+  if (!code || !QUIET_BLOCK_CODES.includes(code) || status.accessState !== 'ACTIVE' || status.paymentState !== 'PAID' || status.applyState !== 'APPLIED' || status.attemptId) return null;
+  const until = status.upgradeDeferredUntil;
+  return code === 'BILLING_REPEAT_NOT_READY' && until && Date.parse(until) > now && status.packageChangesEnabled !== false
+    ? `ซื้อหรือเปลี่ยนแพ็กเกจได้หลังวันที่ ${day(until)} เพราะแพ็กเกจปัจจุบันยังมีเวลาโปรโมชั่นที่ใช้ไม่หมด` : errorText({ code });
 }

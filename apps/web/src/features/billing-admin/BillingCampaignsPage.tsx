@@ -7,7 +7,7 @@ import { billingControl, billingField, billingLink, billingPrimaryControl } from
 import { listCampaigns } from './billing-campaigns.api';
 import {
   CAMPAIGN_MANAGE_PERMISSION, CAMPAIGN_STATUS_META, CAMPAIGN_STATUSES, CAMPAIGN_TONE_CLASS, LIST_NEEDS, NO_CAMPAIGN_FILTERS, campaignLoadFailure, campaignModeMarker,
-  campaignOfferOptions, campaignStatusMeta, campaignTerms, campaignTitle, campaignUsageText, campaignWindowText, filterCampaigns, permissionNote, rulesText,
+  campaignCapFullText, campaignOfferOptions, campaignStatusMeta, campaignTerms, campaignTitle, campaignUsageText, campaignWindowText, filterCampaigns, permissionNote, rulesText,
   type CampaignFilters, type CampaignLoadFailure,
 } from './billing-campaigns.logic';
 
@@ -91,6 +91,7 @@ export default function BillingCampaignsPage() {
       <div className="space-y-3">
         {shown.map(item => {
           const status = campaignStatusMeta(item.status), terms = campaignTerms(item), packages = rulesText(terms?.rules ?? []);
+          const full = campaignCapFullText(item);
           return <article key={item.campaignId} aria-label={campaignTitle(item)} className="space-y-3 rounded-xl border border-gray-200 bg-white p-4 sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
@@ -109,6 +110,7 @@ export default function BillingCampaignsPage() {
               <div><dt className="text-gray-500">แพ็กเกจและรอบ</dt><dd className="mt-1 text-base text-gray-900">{packages || 'ยังไม่ได้เลือก'}</dd></div>
               <div><dt className="text-gray-500">ใช้สิทธิ์แล้ว (รวมที่จองไว้) / สูงสุด</dt><dd className="mt-1 text-base text-gray-900">{campaignUsageText(item)}</dd></div>
             </dl>
+            {full && <p className="text-sm text-amber-800">{full}</p>}
             {(item.published && item.draft) || item.pendingOperationId ? <p className="text-sm text-amber-800">
               {item.published && item.draft ? 'มีร่างที่แก้ไว้ ยังไม่ได้เปิดใช้' : ''}{item.published && item.draft && item.pendingOperationId ? ' · ' : ''}{item.pendingOperationId ? 'มีคำขอเปิดใช้ที่ยังไม่เสร็จ' : ''}
             </p> : null}
