@@ -724,8 +724,9 @@ class Release:
         write(self.build_dir/'build-result.json',self.build)
 
     def enrolled_baseline(self):
-        # A rebuilt environment has no ECS services to read: its configuration bodies are enrolled beside the target.
-        baseline = self.state/'config-baseline'
+        # A rebuilt environment has no ECS services to read: its configuration bodies are enrolled under its own
+        # .env.kamal directory (a rehearsal may read another environment than the one it deploys to).
+        baseline = self.state.parent/self.args.environment/'config-baseline'
         return ['--baseline',str(baseline)] if baseline.is_dir() else []
 
     def configuration(self):
