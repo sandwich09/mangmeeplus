@@ -212,6 +212,8 @@ export default function BillingCampaignDetailPage({ campaignId }: { campaignId: 
   });
 
   const showDraftCard = Boolean(draft) || buttons.edit;
+  // One name for the section: what a person reads as its heading is what a screen reader calls the region.
+  const openTitle = !draft && buttons.resume ? 'กลับมาเปิดแคมเปญ' : 'เปิดใช้แคมเปญ';
   const previewCaption = operation ? 'ตัวอย่างของคำขอนี้ ตรวจให้ตรงกับที่ต้องการก่อนส่งคำขอ'
     : draft ? 'ตัวอย่างจากร่างที่บันทึกไว้ คำนวณจากราคาและโควตาแพ็กเกจปัจจุบัน ยังไม่เปลี่ยนอะไรกับลูกค้า'
       : 'ตัวอย่างจากเงื่อนไขที่ใช้อยู่ คำนวณจากราคาและโควตาแพ็กเกจปัจจุบัน';
@@ -267,8 +269,8 @@ export default function BillingCampaignDetailPage({ campaignId }: { campaignId: 
 
       <PreviewSection rows={rows} caption={previewCaption} />
 
-      {(buttons.preview || buttons.resume || operation) && <section aria-label="เปิดใช้แคมเปญ" className={card}>
-        <h2 className="text-lg font-semibold text-gray-900">{!draft && buttons.resume ? 'กลับมาเปิดแคมเปญ' : 'เปิดใช้แคมเปญ'}</h2>
+      {(buttons.preview || buttons.resume || operation) && <section aria-label={openTitle} className={card}>
+        <h2 className="text-lg font-semibold text-gray-900">{openTitle}</h2>
         {!operation && <>
           <p className="text-gray-700">ขั้นตอน: ตรวจสอบก่อนเปิด ส่งคำขอ แล้วอนุมัติและเปิดใช้ (ต้องยืนยันรหัสผ่าน) แคมเปญเริ่มรับสิทธิ์ตามเวลาเริ่มที่ตั้งไว้โดยไม่ต้องทำอะไรเพิ่ม
             การเปิดแคมเปญไม่ได้เปิดการขาย ถ้าปิดรับรายการซื้อไว้ในตั้งค่าการชำระเงิน ลูกค้ายังซื้อไม่ได้</p>

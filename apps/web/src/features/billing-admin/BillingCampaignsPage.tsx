@@ -7,11 +7,13 @@ import { billingControl, billingField, billingLink, billingPrimaryControl } from
 import { listCampaigns } from './billing-campaigns.api';
 import {
   CAMPAIGN_MANAGE_PERMISSION, CAMPAIGN_STATUS_META, CAMPAIGN_STATUSES, CAMPAIGN_TONE_CLASS, LIST_NEEDS, NO_CAMPAIGN_FILTERS, campaignLoadFailure, campaignModeMarker,
-  campaignOfferOptions, campaignStatusMeta, campaignTerms, campaignTitle, campaignUsageText, campaignWindowText, filterCampaigns, permissionNote, ruleLabel,
+  campaignOfferOptions, campaignStatusMeta, campaignTerms, campaignTitle, campaignUsageText, campaignWindowText, filterCampaigns, permissionNote, rulesText,
   type CampaignFilters, type CampaignLoadFailure,
 } from './billing-campaigns.logic';
 
 const badge = 'inline-flex rounded-lg border px-2 py-1 text-sm';
+/** The TEST / LIVE chip beside a status chip: neutral, so it is never mistaken for the status (a paused or stale campaign is amber too). */
+const modeBadge = `${badge} border-gray-300 bg-white text-gray-700`;
 
 export default function BillingCampaignsPage() {
   const [list, setList] = useState<BillingPromotionCampaignList | null>(null);
@@ -56,26 +58,26 @@ export default function BillingCampaignsPage() {
         <button type="button" className={billingControl} disabled={loading} aria-busy={loading} onClick={() => setReload(value => value + 1)}>โหลดรายการใหม่</button>
       </div>
       {list.campaigns.length > 0 && <form role="search" aria-label="ค้นหาและกรองแคมเปญ" onSubmit={event => event.preventDefault()}
-        className="grid gap-3 rounded-xl border border-gray-200 bg-white p-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
-        <div className="min-w-0">
+        className="grid gap-3 rounded-xl border border-gray-200 bg-white p-4 sm:grid-cols-2 sm:items-end xl:grid-cols-[minmax(14rem,2fr)_minmax(14rem,1fr)_minmax(18rem,1.2fr)_auto]">
+        <div className="min-w-0 sm:col-span-2 xl:col-span-1">
           <label htmlFor="campaign-search" className="block text-sm font-medium text-gray-700">ค้นหาชื่อแคมเปญ</label>
           <input id="campaign-search" type="search" className={billingField} maxLength={120} value={filters.search} placeholder="ชื่อภายในหรือชื่อที่ลูกค้าเห็น" onChange={event => setFilters({ ...filters, search: event.target.value })} />
         </div>
         <div className="min-w-0">
           <label htmlFor="campaign-status" className="block text-sm font-medium text-gray-700">สถานะ</label>
-          <ThemedSelect id="campaign-status" aria-label="สถานะ" className={billingField} value={filters.status} onChange={event => setFilters({ ...filters, status: event.target.value as CampaignFilters['status'] })}>
+          <ThemedSelect id="campaign-status" aria-label="สถานะ" wrapLabel className={billingField} value={filters.status} onChange={event => setFilters({ ...filters, status: event.target.value as CampaignFilters['status'] })}>
             <option value="">ทุกสถานะ</option>
             {CAMPAIGN_STATUSES.map(status => <option key={status} value={status}>{CAMPAIGN_STATUS_META[status].label}</option>)}
           </ThemedSelect>
         </div>
         <div className="min-w-0">
           <label htmlFor="campaign-offer" className="block text-sm font-medium text-gray-700">แพ็กเกจและรอบ</label>
-          <ThemedSelect id="campaign-offer" aria-label="แพ็กเกจและรอบ" className={billingField} value={filters.offer} onChange={event => setFilters({ ...filters, offer: event.target.value })}>
+          <ThemedSelect id="campaign-offer" aria-label="แพ็กเกจและรอบ" wrapLabel className={billingField} value={filters.offer} onChange={event => setFilters({ ...filters, offer: event.target.value })}>
             <option value="">ทุกแพ็กเกจ</option>
             {offers.map(offer => <option key={offer.value} value={offer.value}>{offer.label}</option>)}
           </ThemedSelect>
         </div>
-        <button type="button" className={billingControl} disabled={!filtered} onClick={() => setFilters(NO_CAMPAIGN_FILTERS)}>ล้างตัวกรอง</button>
+        <button type="button" className={`${billingControl} sm:justify-self-start`} disabled={!filtered} onClick={() => setFilters(NO_CAMPAIGN_FILTERS)}>ล้างตัวกรอง</button>
       </form>}
       {list.campaigns.length === 0 && <div className="rounded-xl border border-gray-200 bg-white p-8 text-center">
         <p className="text-lg font-semibold text-gray-900">ยังไม่มีแคมเปญโปรโมชั่น</p>
@@ -88,18 +90,18 @@ export default function BillingCampaignsPage() {
       </div>}
       <div className="space-y-3">
         {shown.map(item => {
-          const status = campaignStatusMeta(item.status), terms = campaignTerms(item), packages = (terms?.rules ?? []).map(ruleLabel).join(' · ');
+          const status = campaignStatusMeta(item.status), terms = campaignTerms(item), packages = rulesText(terms?.rules ?? []);
           return <article key={item.campaignId} aria-label={campaignTitle(item)} className="space-y-3 rounded-xl border border-gray-200 bg-white p-4 sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="text-lg font-semibold text-gray-900">
-                  <Link className="inline-flex min-h-11 items-center text-brand-800 underline underline-offset-4" href={`/system/billing/campaigns/${encodeURIComponent(item.campaignId)}`}>{campaignTitle(item)}</Link>
+                  <Link className="inline-flex min-h-11 max-w-full items-center text-brand-800 underline underline-offset-4 [overflow-wrap:anywhere]" href={`/system/billing/campaigns/${encodeURIComponent(item.campaignId)}`}>{campaignTitle(item)}</Link>
                 </h2>
-                <p className="mt-1 text-gray-600">ชื่อที่ลูกค้าเห็น: {terms?.displayName || 'ยังไม่ได้กรอก'}</p>
+                <p className="mt-1 text-gray-600 [overflow-wrap:anywhere]">ชื่อที่ลูกค้าเห็น: {terms?.displayName || 'ยังไม่ได้กรอก'}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <span className={`${badge} ${CAMPAIGN_TONE_CLASS[status.tone]}`}>{status.label}</span>
-                {marker && <span className={`${badge} ${CAMPAIGN_TONE_CLASS[marker.tone]}`}>{marker.label}</span>}
+                {marker && <span className={modeBadge}>{marker.label}</span>}
               </div>
             </div>
             <dl className="grid gap-3 text-sm sm:grid-cols-3">

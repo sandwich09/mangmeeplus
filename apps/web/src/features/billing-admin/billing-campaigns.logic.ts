@@ -6,6 +6,7 @@ import {
   billingLabel,
   billingOfferLabel,
   billingPermissionLabel,
+  billingPlanLabel,
   type BillingConfigurationOperation,
   type BillingInterval,
   type BillingMode,
@@ -75,6 +76,16 @@ type Terms = Partial<Pick<BillingPromotionCampaign, 'internalName' | 'displayNam
 type TermsRule = NonNullable<Terms['rules']>[number];
 
 export const ruleLabel = (rule: Pick<TermsRule, 'offerKey' | 'interval'>): string => billingOfferLabel(`${rule.offerKey}:${rule.interval}`);
+const CYCLE_WORD: Record<string, string> = { month: 'รายเดือน', year: 'รายปี' };
+/**
+ * The packages and cycles of a campaign's rules, for a list row. One package is said once with its cycles ("เริ่มต้น (STARTER) · รายเดือนและรายปี");
+ * rules of several packages, or a cycle this screen has no word for, keep one label per rule.
+ */
+export function rulesText(rules: readonly Pick<TermsRule, 'offerKey' | 'interval'>[]): string {
+  const first = rules[0];
+  if (!first || rules.length < 2 || rules.some(rule => rule.offerKey !== first.offerKey || !Object.hasOwn(CYCLE_WORD, rule.interval))) return rules.map(ruleLabel).join(' · ');
+  return `${billingPlanLabel(first.offerKey)} · ${[...new Set(rules.map(rule => CYCLE_WORD[rule.interval]!))].join('และ')}`;
+}
 export const ruleBenefit = (rule: Pick<TermsRule, 'bonusMonths' | 'bonusReceiptUnits'>): string => `แถม ${rule.bonusMonths} เดือน + ใบเสร็จ ${rule.bonusReceiptUnits} ใบ`;
 
 const NOT_SET = 'ยังไม่ได้กรอก';

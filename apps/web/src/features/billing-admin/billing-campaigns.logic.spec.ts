@@ -5,11 +5,11 @@ import { join } from 'node:path';
 import { BILLING_PROMOTION_STARTER_TEMPLATE, type BillingConfigurationOperation, type BillingPromotionCampaign, type BillingPromotionCampaignAction, type BillingPromotionCampaignStatus,
   type BillingPromotionCampaignView, type BillingPromotionDraftError, type BillingPromotionPreviewRow, type BillingPromotionReportCompany } from '@watchdog-bms/contracts';
 import {
-  bahtText, blockerText, campaignButtons, campaignDraftInput, campaignError, campaignFormFromTerms, campaignFormProblems, campaignLoadFailure,
+  ruleLabel as ruleLabelOf, bahtText, blockerText, campaignButtons, campaignDraftInput, campaignError, campaignFormFromTerms, campaignFormProblems, campaignLoadFailure,
   campaignModeMarker, campaignOfferOptions, campaignRequest, campaignStatusMeta, campaignTitle, campaignUsageText, campaignWindowText, CAMPAIGN_CLOSE_COPY,
   CAMPAIGN_ERROR_TEXT, CAMPAIGN_OPERATION_STEP_TEXT, CAMPAIGN_SAVED_NOTICE, CAMPAIGN_STATUS_META, CAMPAIGN_STATUSES, countText, DETAIL_NEEDS, DRAFT_STALE_TEXT, draftErrorsByField, draftErrorText, draftLockedText,
   emptyCampaignForm, filterCampaigns, isRequestOpen, LIST_NEEDS, NO_CAMPAIGN_FILTERS, operationStateText, operationSteps, pendingCheckoutsText, permissionNote, previewBlockedText, previewRowView,
-  publishedTermsCopy, reportCountItems, reportMoneyView, reportRowView, requestKey, resumeBlockedText, reuseIntent, safeAdminHref, templateRuleSummary, termsFacts, type CampaignFormValues,
+  publishedTermsCopy, reportCountItems, reportMoneyView, reportRowView, requestKey, resumeBlockedText, reuseIntent, rulesText, safeAdminHref, templateRuleSummary, termsFacts, type CampaignFormValues,
 } from './billing-campaigns.logic';
 
 /** Text an Admin reads must never carry an enum key, a code, an id or a hash. */
@@ -587,6 +587,103 @@ describe('the issue panel knows the promotion review', () => {
     assert.match(description, /คืนเงินเต็มจำนวน.*ยุติสิทธิ์ที่ยังไม่ใช้/, 'a fully refunded promotion purchase that could not be ended');
     assert.match(description, /ตรวจบิลกับรายชื่อร้านที่ใช้สิทธิ์ในรายงานของแคมเปญ/);
     assert.doesNotMatch(description, MACHINE_TOKEN);
+  });
+});
+
+describe('what a list row says about its packages', () => {
+  it('says one package once with its cycles, and keeps one label per rule when the rules are not one package with known cycles', () => {
+    const month = { offerKey: 'STARTER_249', interval: 'month' }, year = { offerKey: 'STARTER_249', interval: 'year' };
+    assert.equal(rulesText([month, year]), 'เริ่มต้น (STARTER) · รายเดือนและรายปี');
+    assert.equal(rulesText([year, month]), 'เริ่มต้น (STARTER) · รายปีและรายเดือน', 'the order the rules are in');
+    assert.equal(rulesText([month, month]), 'เริ่มต้น (STARTER) · รายเดือน', 'a cycle is said once');
+    // One rule reads as it always did.
+    assert.equal(rulesText([month]), ruleLabelOf(month));
+    assert.equal(rulesText([year]), 'เริ่มต้น (STARTER) · รายปี');
+    assert.equal(rulesText([]), '');
+    // Another package keeps one label per rule, and a cycle with no word here does too.
+    assert.equal(rulesText([month, { offerKey: 'BASIC_499', interval: 'month' }]), `${ruleLabelOf(month)} · ${ruleLabelOf({ offerKey: 'BASIC_499', interval: 'month' })}`);
+    assert.equal(rulesText([month, { offerKey: 'STARTER_249', interval: 'week' }]), `${ruleLabelOf(month)} · ${ruleLabelOf({ offerKey: 'STARTER_249', interval: 'week' })}`);
+    // The campaign's own template and the published rules of the first campaign read the same.
+    assert.equal(rulesText(published.rules), 'เริ่มต้น (STARTER) · รายเดือนและรายปี');
+    assert.equal(rulesText(BILLING_PROMOTION_STARTER_TEMPLATE.rules.map(rule => ({ offerKey: BILLING_PROMOTION_STARTER_TEMPLATE.offerKey, interval: rule.interval }))), 'เริ่มต้น (STARTER) · รายเดือนและรายปี');
+    for (const text of [rulesText([month, year]), rulesText([month])]) assert.doesNotMatch(text, MACHINE_TOKEN);
+    assert.match(source('BillingCampaignsPage.tsx'), /packages = rulesText\(terms\?\.rules \?\? \[\]\);/);
+  });
+});
+
+describe('the campaign screens hold long names, wide labels and small targets (browser findings FXE-D5, D8 and the minor ones)', () => {
+  // The expressions that print something an Admin typed. Each one sits in an element that may break a word anywhere: a 120-character name with no space
+  // is allowed, and `break-words` alone does not shrink an inline-flex or flex item below the word.
+  const TYPED: [string, string[]][] = [
+    ['BillingCampaignsPage.tsx', ['{campaignTitle(item)}', "{terms?.displayName || 'ยังไม่ได้กรอก'}"]],
+    ['BillingCampaignDetailPage.tsx', ['{campaignTitle(campaign)}', "{terms?.displayName || 'ยังไม่ได้กรอก'}", '{fact.value}', '{operation.reason}']],
+    ['BillingCampaignReportSection.tsx', ['{shown.title}']],
+  ];
+  const parentTag = (text: string, expression: string): string[] => {
+    const tags: string[] = [];
+    for (let at = text.indexOf(expression); at >= 0; at = text.indexOf(expression, at + 1)) {
+      const open = text.lastIndexOf('>', at), between = text.slice(open + 1, at);
+      // a text child of an element (not an attribute value): only plain words between the tag's end and the expression
+      if (open < 0 || /[<{]/.test(between)) continue;
+      tags.push(text.slice(text.lastIndexOf('<', open), open + 1));
+    }
+    return tags;
+  };
+  for (const [page, expressions] of TYPED) it(`${page}: every typed name or reason is in an element that breaks anywhere`, () => {
+    const text = source(page);
+    for (const expression of expressions) {
+      const tags = parentTag(text, expression);
+      assert.ok(tags.length > 0, `${expression} is printed as text`);
+      for (const tag of tags) assert.match(tag, /\[overflow-wrap:anywhere\]/, `${expression} sits in ${tag}`);
+    }
+  });
+
+  it('the list row title is a link that can wrap: it never grows past its row', () => {
+    const list = source('BillingCampaignsPage.tsx');
+    assert.match(list, /<Link className="inline-flex min-h-11 max-w-full items-center text-brand-800 underline underline-offset-4 \[overflow-wrap:anywhere\]" href=/);
+  });
+
+  it('the filters give the cycle select room for its longest label and let a label wrap instead of being cut', () => {
+    const list = source('BillingCampaignsPage.tsx');
+    // Below 1280 two columns (the search spans both); from 1280 four columns whose select columns have their own minimum.
+    const form = /className="grid gap-3 rounded-xl border border-gray-200 bg-white p-4 (sm:grid-cols-2 sm:items-end) xl:grid-cols-\[([^\]]+)\]">/.exec(list);
+    assert.ok(form, 'the filter form grid');
+    const tracks = form![2]!.split('_'), minimum = (track: string) => Number(/minmax\((\d+(?:\.\d+)?)rem,/.exec(track)?.[1]);
+    assert.equal(tracks.length, 4);
+    assert.ok(minimum(tracks[2]!) >= 17, 'the cycle column holds "เริ่มต้น (STARTER) · รายเดือน" and its chevron (about 17rem)');
+    assert.ok(minimum(tracks[1]!) >= 13, 'the status column holds the longest status');
+    assert.equal(tracks[3], 'auto');
+    assert.match(list, /<div className="min-w-0 sm:col-span-2 xl:col-span-1">\s*<label htmlFor="campaign-search"/);
+    assert.match(list, /<ThemedSelect id="campaign-status" aria-label="สถานะ" wrapLabel /);
+    assert.match(list, /<ThemedSelect id="campaign-offer" aria-label="แพ็กเกจและรอบ" wrapLabel /);
+    assert.match(list, /className=\{`\$\{billingControl\} sm:justify-self-start`\} disabled=\{!filtered\}/);
+    // The widths of the old template that cut the label are gone.
+    assert.doesNotMatch(list, /sm:grid-cols-\[minmax\(0,2fr\)_minmax\(0,1fr\)_minmax\(0,1fr\)_auto\]/);
+  });
+
+  it('the TEST / LIVE chip of a row is neutral, so it is never the colour of a status chip', () => {
+    const list = source('BillingCampaignsPage.tsx');
+    assert.match(list, /const modeBadge = `\$\{badge\} border-gray-300 bg-white text-gray-700`;/);
+    assert.match(list, /\{marker && <span className=\{modeBadge\}>\{marker\.label\}<\/span>\}/);
+    assert.doesNotMatch(list, /\{marker && <span className=\{`\$\{badge\} \$\{CAMPAIGN_TONE_CLASS\[marker\.tone\]\}`\}>\{marker\.label\}<\/span>\}/);
+    // The status chip keeps its tone; the page-level marker above the list is the one place the TEST warning stays amber.
+    assert.match(list, /<span className=\{`\$\{badge\} \$\{CAMPAIGN_TONE_CLASS\[status\.tone\]\}`\}>\{status\.label\}<\/span>/);
+    assert.match(list, /\{marker && <p className=\{`\$\{badge\} \$\{CAMPAIGN_TONE_CLASS\[marker\.tone\]\}`\}>/);
+  });
+
+  it('every radio and checkbox row of the form is at least 44px tall, "จำกัดไม่เกิน" included', () => {
+    const form = source('BillingCampaignFormPage.tsx');
+    const rows = [...form.matchAll(/<label\b[^>]*?className="([^"]*)"[^>]*>\s*<input type="(?:radio|checkbox)"/g)];
+    assert.equal(rows.length, 3, 'the two cap choices, and the one checkbox row that is drawn for each cycle');
+    for (const [, classes] of rows) assert.match(classes!, /\bmin-h-11\b/, classes);
+    assert.match(form, /<label className="flex min-h-11 items-center gap-3">\s*<input type="radio" name="campaign-cap" checked=\{form\.capChoice === 'LIMITED'\}/);
+  });
+
+  it('the open / resume section is named by its own heading', () => {
+    const detail = source('BillingCampaignDetailPage.tsx');
+    assert.match(detail, /const openTitle = !draft && buttons\.resume \? 'กลับมาเปิดแคมเปญ' : 'เปิดใช้แคมเปญ';/);
+    assert.match(detail, /<section aria-label=\{openTitle\} className=\{card\}>\s*<h2 className="text-lg font-semibold text-gray-900">\{openTitle\}<\/h2>/);
+    assert.doesNotMatch(detail, /aria-label="เปิดใช้แคมเปญ"/);
   });
 });
 
