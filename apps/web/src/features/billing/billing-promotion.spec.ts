@@ -4,9 +4,9 @@ import { test } from 'node:test';
 import { isDeepStrictEqual } from 'node:util';
 import type { BillingBenefitChoice, BillingPromotionOfferView, BillingPromotionUnavailableReason, BillingPromotionUse, BillingRenewalSetupState } from '@watchdog-bms/contracts';
 import { EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountHelpText } from './billing-event-discount';
-import { PROMOTION_NOT_PICKED, PROMOTION_ONCE, PROMOTION_ONE_PER_PURCHASE, promotionCard, promotionCardBenefit, promotionChoiceCopy, promotionChoiceLabel, promotionHeadline,
-  promotionLostNotice, promotionOffered, promotionPageBenefit, promotionPick, promotionQuoteBenefit, promotionQuoteFields, promotionReasonText, promotionReview, promotionRow,
-  promotionStatus, promotionSwitchLabel, promotionUpgradeNote } from './billing-promotion';
+import { PROMOTION_NOT_PICKED, PROMOTION_ONCE, PROMOTION_ONE_PER_PURCHASE, promotionCard, promotionCardBenefit, promotionCardShowsPlainFacts, promotionChoiceCopy, promotionChoiceLabel,
+  promotionHeadline, promotionInvoiceLine, promotionLostNotice, promotionOffered, promotionPageBenefit, promotionPick, promotionQuoteBenefit, promotionQuoteFields, promotionReasonText,
+  promotionReceipts, promotionReview, promotionRow, promotionStatus, promotionSwitchLabel, promotionUpgradeNote, statusDeadlines } from './billing-promotion';
 
 const CAMPAIGN = 'camp_9f3';
 const row = (over: Partial<BillingPromotionOfferView> = {}): BillingPromotionOfferView => ({ campaignId: CAMPAIGN, displayName: 'ซื้อ 1 แถม 1', offerKey: 'STARTER_249', interval: 'month',
@@ -38,12 +38,12 @@ test('the card text comes from the card price and the row, for a month and a yea
   assert.equal(promotionHeadline(row(), { priceSatang: 24900 }), '249 บาท ได้ 2 เดือน');
   assert.equal(promotionHeadline(yearRow(), { priceSatang: 249000 }), '2,490 บาท ได้ 13 เดือน');
   assert.deepEqual(promotionCard(row(), { priceSatang: 24900 }), { name: 'ซื้อ 1 แถม 1', headline: '249 บาท ได้ 2 เดือน', lines: [
-    'ชำระ 1 เดือน แถมฟรี 1 เดือน', 'ใบเสร็จ 60 ใบ (รวมแถม 30 ใบ)', 'ใช้ได้ครั้งเดียวต่อร้าน', 'โปรโมชั่นสิ้นสุด 31 ตุลาคม 2569 เวลา 23:59 น.'] });
-  assert.deepEqual(promotionCard(yearRow(), { priceSatang: 249000 }).lines.slice(0, 2), ['ชำระ 12 เดือน แถมฟรี 1 เดือน', 'ใบเสร็จ 390 ใบ (รวมแถม 30 ใบ)']);
+    'ชำระ 1 เดือน แถมฟรี 1 เดือน', 'ใบเสร็จ 60 ใบ (รวมแถม 30 ใบ) ได้ทันทีเมื่อชำระสำเร็จ', 'ใช้ได้ครั้งเดียวต่อร้าน', 'โปรโมชั่นสิ้นสุด 31 ตุลาคม 2569 เวลา 23:59 น.'] });
+  assert.deepEqual(promotionCard(yearRow(), { priceSatang: 249000 }).lines.slice(0, 2), ['ชำระ 12 เดือน แถมฟรี 1 เดือน', 'ใบเสร็จ 390 ใบ (รวมแถม 30 ใบ) ได้ทันทีเมื่อชำระสำเร็จ']);
   // Any other figures: nothing is remembered from the first campaign.
   const other = promotionCard(row({ displayName: 'ฉลองเปิดร้าน', totalMonths: 5, bonusMonths: 2, totalReceiptUnits: 125, bonusReceiptUnits: 25 }), { priceSatang: 19950 });
   assert.equal(other.headline, '199.50 บาท ได้ 5 เดือน');
-  assert.deepEqual(other.lines.slice(0, 2), ['ชำระ 3 เดือน แถมฟรี 2 เดือน', 'ใบเสร็จ 125 ใบ (รวมแถม 25 ใบ)']);
+  assert.deepEqual(other.lines.slice(0, 2), ['ชำระ 3 เดือน แถมฟรี 2 เดือน', 'ใบเสร็จ 125 ใบ (รวมแถม 25 ใบ) ได้ทันทีเมื่อชำระสำเร็จ']);
   assert.equal(other.name, 'ฉลองเปิดร้าน');
   assert.doesNotMatch(JSON.stringify(other), /\b(?:249|60|390)\b/);
   assert.equal(PROMOTION_ONCE, 'ใช้ได้ครั้งเดียวต่อร้าน');
@@ -347,12 +347,90 @@ test('Q5: an upgrade card says when instead of offering the upgrade, only while 
 const page = readFileSync(new URL('./BillingPage.tsx', import.meta.url), 'utf8');
 const logic = readFileSync(new URL('./billing-promotion.ts', import.meta.url), 'utf8');
 
-test('the annual card keeps its per-month average on the paid price and the paid 12 months, whatever a promotion adds', () => {
-  assert.match(page, /\{interval === 'year' && <p className="text-sm text-gray-600">เฉลี่ยเดือนละ \{money\(Math\.round\(offer\.priceSatang \/ 12\)\)\}<\/p>\}/);
+test('the annual card keeps its per-month average on the paid price and the paid 12 months for a normal purchase, whatever a promotion adds', () => {
+  assert.match(page, /\{interval === 'year' && plain && <p className="text-sm text-gray-600">เฉลี่ยเดือนละ \{money\(Math\.round\(offer\.priceSatang \/ 12\)\)\}<\/p>\}/);
   assert.doesNotMatch(page, /priceSatang\s*\/\s*(?:13|[\w.?]*[Mm]onths)/, 'never divided by the months a promotion adds');
   assert.doesNotMatch(logic, /\/\s*(?:12|13)\b|เฉลี่ย/, 'the promotion text carries no average of its own');
   // The card's own price and the row's own months are what the promotion line is built from.
   assert.match(logic, /eventDiscountBaht\(offer\.priceSatang\)\} บาท ได้ \$\{row\.totalMonths\} เดือน/);
+});
+
+test('a card that takes the promotion says its months and receipts once, in the promotion block; a card that does not keeps the plain lines', () => {
+  assert.equal(promotionCardShowsPlainFacts('PROMOTION'), false);
+  for (const benefit of ['NORMAL', 'EVENT_DISCOUNT'] as const) assert.equal(promotionCardShowsPlainFacts(benefit), true, benefit);
+  // The same benefit that colours the block as picked is the one that removes the plain lines — they can never both speak.
+  assert.match(page, /\$\{cardBenefit === 'PROMOTION' \? 'border-brand-300 bg-brand-50'/);
+  assert.match(page, /const plain = promotionCardShowsPlainFacts\(cardBenefit\);/);
+  // "ใช้งาน 12 เดือน · ประหยัด", "360 ใบ ได้ทันที" and the average all sit behind that guard; the monthly cadence label says no count of months and stays.
+  assert.match(page, /\{\(plain \|\| interval === 'month'\) && <p className="text-sm text-brand-700">\{interval === 'year' \? `ใช้งาน 12 เดือน/);
+  assert.match(page, /\{plain && <p>\{offer\.receiptAllowance\.toLocaleString\('th-TH'\)\} ใบ ได้ทันทีเมื่อชำระสำเร็จ<\/p>\}/);
+  const card = page.slice(page.indexOf('const plain = promotionCardShowsPlainFacts'), page.indexOf("offer.offerKey === 'ENTERPRISE_1999'"));
+  assert.equal((card.match(/offer\.receiptAllowance/g) ?? []).length, 1, 'the card prints the plain receipt count in one place, behind the guard');
+  assert.equal((card.match(/ใช้งาน 12 เดือน/g) ?? []).length, 1);
+  // What the promotion block itself says, for a month and for a year: its own months and receipts, ready on payment.
+  const year = promotionCard(yearRow(), { priceSatang: 249000 });
+  assert.deepEqual([year.headline, ...year.lines.slice(0, 2)], ['2,490 บาท ได้ 13 เดือน', 'ชำระ 12 เดือน แถมฟรี 1 เดือน', 'ใบเสร็จ 390 ใบ (รวมแถม 30 ใบ) ได้ทันทีเมื่อชำระสำเร็จ']);
+});
+
+test('the quote review counts the bonus once: the projected totals and the package row include it, and without a promotion nothing moves', () => {
+  // API figures: allowance 30, 12 carried from the trial, 5 left from before. The API adds none of the bonus.
+  const base = { offer: { receiptAllowance: 30 }, purchase: { projectedRemainingReceipts: 47, trialCarryover: { receiptUnits: 12 } } };
+  assert.deepEqual(promotionReceipts({ ...base, promotion: { bonusReceiptUnits: 30 } } as never), { bonus: 30, packageUnits: 60, projected: 77 });
+  assert.deepEqual(promotionReceipts(base as never), { bonus: 0, packageUnits: 30, projected: 47 });
+  assert.deepEqual(promotionReceipts({ offer: { receiptAllowance: 30 }, promotion: { bonusReceiptUnits: 30 } } as never), { bonus: 30, packageUnits: 60, projected: 30 }, 'a quote without a purchase block');
+  // The list on the screen adds up in both cases: package row + carryover + other quota (the API's own difference, never moved) = the total.
+  for (const promotion of [undefined, { bonusReceiptUnits: 30 }]) {
+    const quote = { ...base, promotion } as never, shown = promotionReceipts(quote), other = base.purchase.projectedRemainingReceipts - base.offer.receiptAllowance - base.purchase.trialCarryover.receiptUnits;
+    assert.equal(shown.packageUnits + base.purchase.trialCarryover.receiptUnits + other, shown.projected, `promotion ${promotion ? 'on' : 'off'}`);
+  }
+  // The two sentences and the list read their figures from it; the raw projected figure is left where no promotion can exist (upgrades).
+  assert.match(page, /หลังซื้อคงเหลือประมาณ \{promotionReceipts\(quote\)\.projected\.toLocaleString\('th-TH'\)\} ใบ รวมโควตาเดิมที่ยังไม่หมดอายุ/);
+  assert.match(page, /<dt>โควตาแพ็กเกจ\{promoReview && ` \(รวมแถม \$\{promotionReceipts\(quote\)\.bonus\.toLocaleString\('th-TH'\)\} ใบ\)`\}<\/dt><dd>\{promotionReceipts\(quote\)\.packageUnits\.toLocaleString\('th-TH'\)\} ใบ<\/dd>/);
+  assert.match(page, /<dt>รวมหลังชำระสำเร็จโดยประมาณ<\/dt><dd>\{promotionReceipts\(quote\)\.projected\.toLocaleString\('th-TH'\)\} ใบ<\/dd>/);
+  assert.doesNotMatch(page, /หลังซื้อคงเหลือประมาณ \{quote\.purchase\.projectedRemainingReceipts/);
+  assert.doesNotMatch(page, /<dt>โควตาแพ็กเกจ<\/dt>/);
+  assert.doesNotMatch(page, /<dd>\{quote\.purchase\.projectedRemainingReceipts\.toLocaleString/);
+});
+
+test('a right already opened is not told as "in use" once the package has ended; a right still waiting is, whatever the access', () => {
+  const NAME = 'โปรโมชั่น ซื้อ 1 แถม 1';
+  assert.equal(promotionStatus(use(), false), null);
+  assert.equal(promotionStatus(use({ renewalSetupState: 'READY', expectedNextChargeAt: '2026-12-05T03:00:00.000Z' }), false), null);
+  assert.equal(promotionStatus(use({ benefitEnd: '2026-10-01T03:00:00.000Z' }), false), null, 'a package that lapsed');
+  assert.equal(promotionStatus(use(), true)!.title, 'ใช้สิทธิ์โปรโมชั่นแล้ว');
+  assert.equal(promotionStatus(use())!.title, 'ใช้สิทธิ์โปรโมชั่นแล้ว', 'running is the default');
+  // Reserved for an open Checkout, or paid and being opened (no end date yet): the purchase in front of the buyer, told on a locked shop too.
+  assert.equal(promotionStatus(use({ state: 'RESERVED', benefitEnd: null, paidEnd: null }), false)!.title, 'จองสิทธิ์โปรโมชั่นไว้ให้รายการชำระนี้แล้ว');
+  assert.deepEqual(promotionStatus(use({ benefitEnd: null }), false)!.lines.slice(0, 2), [NAME, 'กำลังเปิดสิทธิ์ให้ ไม่ต้องชำระซ้ำ']);
+  assert.equal(promotionStatus(use({ benefitEnd: null, renewalSetupState: 'PENDING' }), false)!.checking, true);
+  // The page passes whether access runs — on the return page also once the attempt itself is applied — and nothing else.
+  assert.match(page, /promotionStatus\(\(returning \? returnAttempt\?\.promotion : undefined\) \?\? status\?\.promotion, status\?\.accessState === 'ACTIVE' \|\| \(returning && returnComplete\)\)/);
+});
+
+test('the history row of a promotion purchase says the free time and the bonus receipts, and leaves the invoice\'s own period and amount as they are', () => {
+  const promotion = { displayName: 'ซื้อ 1 แถม 1', paidEnd: '2026-11-05T03:00:00.000Z', benefitEnd: '2026-12-05T03:00:00.000Z', bonusReceiptUnits: 30 };
+  assert.equal(promotionInvoiceLine(promotion), 'โปรโมชั่น ซื้อ 1 แถม 1 · แถมฟรี 5 พฤศจิกายน 2569 – 5 ธันวาคม 2569 · ใบเสร็จเพิ่ม 30 ใบ');
+  assert.equal(promotionInvoiceLine({ ...promotion, bonusReceiptUnits: 0 }), 'โปรโมชั่น ซื้อ 1 แถม 1 · แถมฟรี 5 พฤศจิกายน 2569 – 5 ธันวาคม 2569');
+  assert.equal(promotionInvoiceLine({ ...promotion, paidEnd: '2026-11-04T18:30:00.000Z' }).includes('แถมฟรี 5 พฤศจิกายน 2569 –'), true, 'Thai dates');
+  assert.doesNotMatch(promotionInvoiceLine(promotion), MACHINE);
+  assert.match(page, /<p>\{invoice\.number \?\? 'รายการชำระเงิน'\} · \{money\(invoice\.amountSatang\)\} · \{date\(invoice\.createdAt\)\}<\/p>\s*\{invoice\.promotion && <p className="break-words text-sm text-gray-600">\{promotionInvoiceLine\(invoice\.promotion\)\}<\/p>\}/);
+});
+
+test('the page re-reads its status when a promotion on offer ends by the clock, as it does at a term deadline', () => {
+  const now = Date.parse('2026-10-09T00:00:00.000Z'), at = (days: number) => new Date(now + days * 86_400_000).toISOString();
+  const status = (over: Record<string, unknown> = {}) => ({ paidThrough: at(20), termEndsAt: at(20), graceEndsAt: null, promotions: [row({ endsAt: at(3) })], ...over }) as Parameters<typeof statusDeadlines>[0];
+  assert.deepEqual(statusDeadlines(status(), now).sort(), [now + 3 * 86_400_000, now + 20 * 86_400_000, now + 20 * 86_400_000].sort());
+  assert.equal(Math.min(...statusDeadlines(status(), now)), now + 3 * 86_400_000, 'the nearest is the promotion\'s end');
+  // Several rows: each end is a deadline; one that ended, or that offers nothing now, is not.
+  const rows = [row({ endsAt: at(5) }), yearRow({ endsAt: at(2) }), row({ campaignId: 'old', endsAt: at(-1) }), row({ campaignId: 'full', endsAt: at(1), available: false, reason: 'CAP_FULL' })];
+  assert.equal(Math.min(...statusDeadlines(status({ promotions: rows }), now)), now + 2 * 86_400_000);
+  assert.equal(statusDeadlines(status({ promotions: rows }), now).length, 2 + 2);
+  // Nothing on offer, nothing from before promotions: exactly the three term instants that are ahead.
+  assert.equal(statusDeadlines(status({ promotions: undefined }), now).length, 2);
+  assert.deepEqual(statusDeadlines(status({ paidThrough: null, termEndsAt: null, promotions: [] }), now), []);
+  assert.deepEqual(statusDeadlines(status({ paidThrough: at(-2), termEndsAt: at(-2), promotions: [row({ endsAt: at(-1) })] }), now), []);
+  assert.match(page, /const deadlines = statusDeadlines\(status\);/);
+  assert.doesNotMatch(page, /\[status\.paidThrough, status\.termEndsAt, status\.graceEndsAt\]\.filter/);
 });
 
 test('the page sends the benefit through promotionQuoteFields, routes PROMOTION_UNAVAILABLE to its own notice, and keeps the plain buy button', () => {
