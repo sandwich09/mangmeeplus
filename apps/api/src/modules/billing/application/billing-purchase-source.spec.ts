@@ -19,6 +19,20 @@ test('one-time readiness refuses refunded, disputed, missing or mismapped contra
   assert.equal(oneTimeSourceReady({ ...account, baseSubscriptionId: 'sub' }, invoice), false);
   assert.equal(oneTimeSourceReady(account, null), false);
 });
+test('a promotion invoice is a ready one-time source when its free time, not its paid period, ends at paidThrough (plan R2)', () => {
+  const paidEnd = new Date('2026-10-21T00:00:00.000Z'), benefitEnd = new Date('2026-11-21T00:00:00.000Z');
+  const account = { id: 'a', baseSubscriptionId: null, contractAttemptId: 'attempt', paidThrough: benefitEnd, billingAnchorDay: 21 } as BillingAccount;
+  const invoice = { billingAccountId: 'a', sourceAttemptId: 'attempt', productKind: 'PACKAGE', providerStatus: 'paid', applyStatus: 'APPLIED',
+    appliedAt: now, refundedSatang: 0, disputed: false, periodEnd: paidEnd, benefitEnd, contractSnapshot: { quote: { offer: { offerKey: 'STARTER_249', interval: 'month' } } } } as unknown as BillingInvoice;
+  assert.equal(oneTimeSourceReady(account, invoice), true);
+  // The free time decides, both ways: a paid period that happens to end at paidThrough is not the service end of a promotion invoice.
+  assert.equal(oneTimeSourceReady({ ...account, paidThrough: paidEnd }, invoice), false);
+  assert.equal(oneTimeSourceReady(account, { ...invoice, benefitEnd: new Date(benefitEnd.getTime() + 1) } as BillingInvoice), false);
+  // Without `benefitEnd` nothing changed: the paid period must end at paidThrough.
+  assert.equal(oneTimeSourceReady(account, { ...invoice, benefitEnd: null } as BillingInvoice), false);
+  assert.equal(oneTimeSourceReady(account, { ...invoice, benefitEnd: undefined } as unknown as BillingInvoice), false);
+  assert.equal(oneTimeSourceReady(account, { ...invoice, benefitEnd: null, periodEnd: benefitEnd } as BillingInvoice), true);
+});
 const manual = { companyId: 'company', tierKey: 'BASIC_499', billingReceiptAccountId: null,
   termStartAt: new Date('2026-09-01T00:00:00.000Z'), termEndsAt: new Date('2026-10-01T00:00:00.000Z'),
   branchLimit: 2, employeeLimit: 5, monthlySlipLimit: 50, termDisabledAt: null,

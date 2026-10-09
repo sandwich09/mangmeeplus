@@ -101,6 +101,10 @@ export class BillingQuoteDto {
   @IsOptional() @IsIn(['USE', 'DECLINE']) eventDiscountChoice?: string;
   /** Owner 2026-09-29: which held discount this payment uses (with USE); omitted = the best one for this card. */
   @IsOptional() @IsString() @MinLength(1) @MaxLength(40) eventDiscountTicketSerial?: string;
+  /** Promotion spec Q4: the one benefit this purchase takes; omitted = the behaviour before promotions (never PROMOTION).
+   *  A client names the choice and a campaign only — months, receipts and prices are the server's. */
+  @IsOptional() @IsIn(['NORMAL', 'PROMOTION', 'EVENT_DISCOUNT']) benefitChoice?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(64) promotionCampaignId?: string;
 }
 export class BillingCheckoutDto {
   @IsUUID() quoteId!: string;
