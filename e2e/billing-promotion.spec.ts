@@ -16,7 +16,7 @@ import { chooseThemedOption } from './harness/e2e-utils';
 import type { Locator, Page, TestInfo } from '@playwright/test';
 import type { BillingPromotionUse, BillingStatus } from '@watchdog-bms/contracts';
 import { ATTEMPT_ID, CAMPAIGN_ID, CAMPAIGN_NAME, FIXED_NOW, READ_ONLY, STARTER_RULES, addCampaign, addMonths, apiError, apiMessage, completeDraft, defaultCustomerWorld, failNext, forbidden, heldTicket,
-  heldTicketView, inDays, inMs, installAdminRoutes, installCustomerRoutes, invoiceItem, newAdminWorld, newShopStatus, openOperation, paidShopStatus, promotionRows, promotionUnavailableAnswer,
+  heldTicketView, inDays, inMs, installAdminRoutes, installCustomerRoutes, invoiceItem, newAdminWorld, newShopStatus, openOperation, openPaymentStatus, paidShopStatus, promotionRows, promotionUnavailableAnswer,
   promotionUse, publishedCampaign, reportCompany, reportPage, thaiDateTime, thaiDay, trialShopStatus, type AdminWorld, type CustomerWorld } from './billing-promotion.fixture';
 
 // Every state below runs at the phone (390, the primary device) and at the desktop (1280), on a fixed clock (12:00 Bangkok on 9 Oct 2026).
@@ -112,6 +112,9 @@ const REASON: Record<string, string> = {
   ALREADY_USED: 'ร้านนี้ใช้สิทธิ์โปรโมชั่นนี้แล้ว', CAP_FULL: 'สิทธิ์โปรโมชั่นครบจำนวนแล้ว', IN_PROGRESS: 'มีรายการชำระที่ใช้สิทธิ์นี้ค้างอยู่ เปิดรายการเดิมเพื่อชำระต่อ',
   PAUSED: 'โปรโมชั่นนี้หยุดรับสิทธิ์ชั่วคราว', PURCHASE_KIND_UNSUPPORTED: 'โปรโมชั่นนี้ยังใช้กับการซื้อแบบนี้ไม่ได้', CHANGED: 'เงื่อนไขโปรโมชั่นเปลี่ยนแล้ว',
 };
+
+/** The right a shop holds while its Checkout is open (`status.promotion`): reserved, nothing used yet. */
+const RESERVED_USE = promotionUse({ state: 'RESERVED', paidEnd: null, benefitEnd: null, renewalSetupState: 'PENDING', expectedNextChargeAt: null });
 
 /** Open the package page and the chooser behind "เลือกแพ็กเกจ" / "ซื้อหรือเปลี่ยนแพ็กเกจ". */
 async function openChooser(page: Page, w: CustomerWorld, width: number, info?: TestInfo, shot?: string) {
@@ -274,15 +277,22 @@ for (const width of WIDTHS) {
     await settle(page, info, width, 'promo01r2-year-normal');
   });
 
-  // DEFECT FXE-D6 (phone only: at 1280 the block is on the first screen): after "เลือกแพ็กเกจนี้" the review opens on the document box, the tax lines and a big "ชำระวันนี้ ฿249.00"; the block
-  // that says what the promotion gives (paid and free time, receipts) starts at the very bottom of a 390x844 first screen (28% of it in view). BillingPage.tsx:832 renders it after the VAT sentence.
-  (width === 390 ? test.fixme : test)(`PROMO-02 the review's first screen already shows what the promotion gives (the promotion block is in view without scrolling) at ${width}px`, async ({ authedPage: page, companyId }) => {
+  // FXE-D6 (fixed in round 3, by order only): a review with a promotion reads the rights sentence, the tax line, "ชำระวันนี้", the VAT sentence, THEN the promotion block, then the held discount that
+  // is not used, then "ข้อมูลออกเอกสาร"; a plain review keeps its order. At 390x844 the price and the promotion block are in the first screen.
+  test(`PROMO-02 the review's first screen already shows what the promotion gives (the promotion block is in view without scrolling) at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     const w = defaultCustomerWorld(companyId);
     await openChooser(page, w, width);
     await buyStarter(page).click();
     await expect(promoReviewOf(page)).toBeVisible();
     await page.waitForTimeout(600);
     await expect(promoReviewOf(page)).toBeInViewport({ ratio: 0.5 });
+    // the order down the page: the price, then the promotion, then the document box
+    const top = (locator: Locator) => locator.evaluate(el => Math.round(el.getBoundingClientRect().top + window.scrollY));
+    const price = await top(reviewOf(page).getByText(/^ชำระวันนี้/).first()), promo = await top(promoReviewOf(page)), documents = await top(reviewOf(page).getByLabel('ข้อมูลออกเอกสาร', { exact: true }));
+    expect(price, 'the price comes before the promotion block').toBeLessThan(promo);
+    expect(promo, 'the promotion block comes before the document box').toBeLessThan(documents);
+    await firstScreen(page, info, width, 'promo02r3-promo-review-first-screen');
+    wire(info, 'promo-review-first-screen', width, await promoReviewOf(page).evaluate(el => { const r = el.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), viewport: window.innerHeight }; }));
   });
 
   // FXE-D7 (fixed in round 2): the history row of a promotion purchase carries one more line — the free time and the bonus receipts — while the invoice's own number, amount and date stay.
@@ -366,19 +376,13 @@ for (const width of WIDTHS) {
 
 for (const reason of ['ALREADY_USED', 'CAP_FULL', 'IN_PROGRESS', 'PAUSED', 'PURCHASE_KIND_UNSUPPORTED'] as const) for (const width of WIDTHS) {
   test(`PROMO-04 ${reason}: the card says why in plain Thai and the normal buy button still works at ${width}px`, async ({ authedPage: page, companyId }, info) => {
-    const open = { paymentState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: true,
-      promotion: promotionUse({ state: 'RESERVED', paidEnd: null, benefitEnd: null, renewalSetupState: 'PENDING', expectedNextChargeAt: null }) } as const;
+    // The API computes the rows only where the shop can buy, and a Checkout of its own removes `new_sales` (billing.service.ts status()), so a row that says IN_PROGRESS is the moment after
+    // a payment ended and before its right is released. The card says why and the normal purchase stays open. A status that still names the open payment is section 9's.
     const w = reason === 'PURCHASE_KIND_UNSUPPORTED'
       ? defaultCustomerWorld(companyId, paidShopStatus(companyId, { promotions: promotionRows(reason), availablePurchaseModes: ['CARD_AUTO'] }))
-      : defaultCustomerWorld(companyId, newShopStatus(companyId, { promotions: promotionRows(reason), ...(reason === 'IN_PROGRESS' ? open : {}) }));
+      : defaultCustomerWorld(companyId, newShopStatus(companyId, { promotions: promotionRows(reason) }));
     if (reason === 'PURCHASE_KIND_UNSUPPORTED') w.purchase = 'REPEAT';
-    if (reason === 'IN_PROGRESS') {
-      await installCustomerRoutes(page, w);
-      await openAt(page, width, `/companies/${companyId}/billing`);
-      await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' })).toContainText('จองสิทธิ์โปรโมชั่นไว้ให้รายการชำระนี้แล้ว');
-      await settle(page, info, width, 'promo04-in-progress-overview');
-      await page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true }).click();
-    } else await openChooser(page, w, width);
+    await openChooser(page, w, width);
     await expect(regionNamed(page, 'เลือกแพ็กเกจ')).toBeVisible();
     const starter = starterOf(page);
     await expect(starter.getByRole('note').filter({ hasText: REASON[reason] })).toBeVisible();
@@ -405,7 +409,8 @@ for (const reason of ['ALREADY_USED', 'CAP_FULL', 'IN_PROGRESS', 'PAUSED', 'PURC
 /** A one-time Starter that is still running: the only paid shop that may take the promotion (a repeat on the same offer, paid once). */
 const repeatWorld = (companyId: string) => {
   const previous = '2026-10-25T05:00:00.000Z';
-  const w = defaultCustomerWorld(companyId, paidShopStatus(companyId, { renewalMode: 'CARD_ONCE', subscriptionState: 'NONE', nextChargeAt: null, paidThrough: previous, termEndsAt: previous,
+  // A one-time package has no subscription to manage (`allowedActions` is just `new_sales`), and a paid shop's finished attempt is no longer the account's active one.
+  const w = defaultCustomerWorld(companyId, paidShopStatus(companyId, { renewalMode: 'CARD_ONCE', subscriptionState: 'NONE', nextChargeAt: null, paidThrough: previous, termEndsAt: previous, allowedActions: ['new_sales'],
     availablePurchaseModes: ['CARD_ONCE', 'PROMPTPAY_ONCE'], enabledPurchaseModes: ['CARD_ONCE', 'PROMPTPAY_ONCE'], usage: { used: 10, limit: 30, remaining: 20, cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: previous },
     promotions: [...promotionRows().slice(0, 1), ...promotionRows('PURCHASE_KIND_UNSUPPORTED').slice(1)] }));
   w.purchase = 'REPEAT';
@@ -557,9 +562,8 @@ for (const width of WIDTHS) {
     await openChooser(page, w, width);
     await buyStarter(page).click();
     await expect(promoReviewOf(page)).toBeVisible();
-    // the other tab already opened a payment holding the right: the next status read shows it
-    w.status = newShopStatus(companyId, { promotions: promotionRows('IN_PROGRESS'), paymentState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: true,
-      promotion: promotionUse({ state: 'RESERVED', paidEnd: null, benefitEnd: null, renewalSetupState: 'PENDING', expectedNextChargeAt: null }) });
+    // the other tab already opened a payment holding the right: the next status read shows it. An open Checkout removes `new_sales` and the promotion rows, so there is no chooser, only the payment.
+    w.status = openPaymentStatus(newShopStatus(companyId, { promotions: promotionRows() }), { promotion: RESERVED_USE });
     await confirmCheckout(page);
     const lost = page.getByRole('alert').filter({ hasText: 'โปรโมชั่นที่เลือกไว้ใช้ไม่ได้แล้ว' });
     await expect(lost).toBeVisible();
@@ -568,9 +572,13 @@ for (const width of WIDTHS) {
     await expect(lost.getByRole('button', { name: 'ตรวจสอบรายการใหม่' })).toHaveCount(0);
     await expect(reviewOf(page)).toHaveCount(0);
     await expect(regionNamed(page, 'เลือกแพ็กเกจ')).toHaveCount(0);
-    // "below": the open payment and its way back are on the page
-    await expect(page.getByRole('button', { name: 'กลับไปยังรายการเดิม', exact: true })).toBeVisible();
-    await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' })).toContainText('จองสิทธิ์โปรโมชั่นไว้ให้รายการชำระนี้แล้ว');
+    // "below": the open payment and its way on are on the page, in the one titled block (the right is told in it, not in a second box)
+    const block = regionNamed(page, 'มีรายการชำระเงินที่ยังไม่เสร็จ');
+    await expect(block).toBeVisible();
+    await expect(block.getByRole('button', { name: 'ชำระเงินต่อ', exact: true })).toBeVisible();
+    await expect(block).toContainText(`จองสิทธิ์โปรโมชั่น ${CAMPAIGN_NAME} ไว้ให้รายการนี้แล้ว สิทธิ์เริ่มใช้เมื่อชำระเงินสำเร็จ`);
+    await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/ })).toHaveCount(0);
     expect(w.log.quotes).toHaveLength(1);
     await settle(page, info, width, 'promo05-lost-in-progress');
   });
@@ -613,9 +621,9 @@ for (const width of WIDTHS) {
     wire(info, 'lost-notice-position', width, { onQuote, onCheckout });
   });
 
-  // DEFECT FXE-D2: the notice is rendered above the tabs (BillingPage.tsx:505) and nothing scrolls to it. After a refused quote the buyer is ~1000px below it;
-  // after a refused checkout the effect at BillingPage.tsx:130 scrolls to the chooser heading, which sits below the notice, so the notice ends up under the sticky header.
-  for (const refused of ['quote', 'checkout'] as const) test.fixme(`PROMO-05 the lost-promotion notice is on screen after the ${refused} is refused (a person can see it) at ${width}px`, async ({ authedPage: page, companyId }) => {
+  // FXE-D2 (fixed in round 3): the notice takes a ref, focus and a `scrollIntoView` under the sticky header, declared after the chooser-heading scroll so it has the last word. After a refused
+  // quote the buyer was ~1000px below it; after a refused checkout the heading scroll left it under the header. Now a person sees it whichever button was refused.
+  for (const refused of ['quote', 'checkout'] as const) test(`PROMO-05 the lost-promotion notice is on screen after the ${refused} is refused (a person can see it) at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     const w = defaultCustomerWorld(companyId);
     if (refused === 'quote') w.quoteOverride = n => n === 1 ? promotionUnavailableAnswer('CAP_FULL') : undefined; else w.checkoutOverride = n => n === 1 ? promotionUnavailableAnswer('CHANGED') : undefined;
     await openChooser(page, w, width);
@@ -624,7 +632,13 @@ for (const width of WIDTHS) {
     const lost = page.getByRole('alert').filter({ hasText: 'โปรโมชั่นที่เลือกไว้ใช้ไม่ได้แล้ว' });
     await expect(lost).toBeVisible();
     await page.waitForTimeout(600);
-    expect((await inViewNow(lost)).visibleToBuyer).toBe(true);
+    const seen = await inViewNow(lost);
+    expect(seen.visibleToBuyer, JSON.stringify(seen)).toBe(true);
+    // not hidden under the sticky header, and it holds the keyboard focus, so it is announced
+    expect(seen.top, JSON.stringify(seen)).toBeGreaterThanOrEqual(0);
+    await expect(lost).toBeFocused();
+    wire(info, `lost-notice-on-screen-after-${refused}`, width, seen);
+    await firstScreen(page, info, width, `promo05r3-lost-notice-on-screen-after-${refused}`);
   });
 }
 
@@ -841,7 +855,8 @@ for (const width of WIDTHS) for (const state of AFTER_PAYMENT) {
     await expect(block.locator('p')).toHaveText([state.title, ...state.lines]);
     await expect(block).not.toContainText(/จองสิทธิ์|เมื่อชำระเงินสำเร็จ/);
     // a renewal still being set up brings the existing "check again" button and never an invitation to pay again
-    await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงินอีกครั้ง', exact: true })).toHaveCount(state.recheck ? 1 : 0);
+    await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true })).toHaveCount(state.recheck ? 1 : 0);
+    await expect(regionNamed(page, 'ระบบได้รับเงินแล้ว ไม่ต้องชำระซ้ำ')).toHaveCount(state.recheck ? 1 : 0);
     await expect(page.getByRole('heading', { name: 'แพ็กเกจปัจจุบัน', exact: true })).toBeVisible();
     await expect(regionNamed(page, 'สถานะแพ็กเกจ')).toContainText(until);
     await settle(page, info, width, `promo08-${state.key.toLowerCase()}`);
@@ -850,13 +865,14 @@ for (const width of WIDTHS) for (const state of AFTER_PAYMENT) {
 
 for (const width of WIDTHS) {
   test(`PROMO-08 a payment still open holds the right: "reserved", never worded as used at ${width}px`, async ({ authedPage: page, companyId }, info) => {
-    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { paymentState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: true, allowedActions: [], promotions: undefined,
-      promotion: promotionUse({ state: 'RESERVED', paidEnd: null, benefitEnd: null, renewalSetupState: 'PENDING', expectedNextChargeAt: null }) }));
+    const w = defaultCustomerWorld(companyId, openPaymentStatus(newShopStatus(companyId, { promotions: promotionRows() }), { promotion: RESERVED_USE }));
     await openOverview(page, w, width);
-    const block = page.getByRole('status', { name: 'สถานะโปรโมชั่น' });
-    await expect(block.locator('p')).toHaveText(['จองสิทธิ์โปรโมชั่นไว้ให้รายการชำระนี้แล้ว', nameLine, 'สิทธิ์จะเริ่มใช้เมื่อชำระเงินสำเร็จ']);
+    // the right is told once, in the block of the payment that holds it; the separate green box says nothing for a reserved right
+    const block = regionNamed(page, 'มีรายการชำระเงินที่ยังไม่เสร็จ');
+    await expect(block.locator(':scope > p')).toHaveText(['เปิดหน้าชำระเงินไว้แล้ว แต่ระบบยังไม่ได้รับผลการชำระเงิน', `จองสิทธิ์โปรโมชั่น ${CAMPAIGN_NAME} ไว้ให้รายการนี้แล้ว สิทธิ์เริ่มใช้เมื่อชำระเงินสำเร็จ`]);
+    await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' })).toHaveCount(0);
     await expect(block).not.toContainText(/ใช้สิทธิ์โปรโมชั่นแล้ว|ใช้ได้ถึง/);
-    await expect(page.getByRole('button', { name: 'กลับไปยังรายการเดิม', exact: true })).toBeVisible();
+    await expect(block.getByRole('button', { name: 'ชำระเงินต่อ', exact: true })).toBeVisible();
     await settle(page, info, width, 'promo08-reserved');
   });
 
@@ -875,7 +891,10 @@ for (const width of WIDTHS) {
       await expect(block).toContainText('ใช้สิทธิ์โปรโมชั่นแล้ว');
       await expect(block).toContainText('กำลังตั้งค่ารอบถัดไป ไม่ต้องชำระซ้ำ');
       await expect(block).not.toContainText('จองสิทธิ์');
-      await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงินอีกครั้ง', exact: true })).toBeVisible();
+      // money received (or the renewal still being set up): the block with its one quiet check, never a way to pay again or to throw the payment away
+      await expect(regionNamed(page, 'ระบบได้รับเงินแล้ว ไม่ต้องชำระซ้ำ').getByRole('button')).toHaveText(['ตรวจผลการชำระเงิน']);
+      await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true })).toBeVisible();
+      for (const gone of ['ชำระเงินต่อ', 'ยกเลิกรายการนี้', 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่']) await expect(page.getByRole('button', { name: gone, exact: true })).toHaveCount(0);
       for (const invitation of ['เลือกแพ็กเกจใหม่', 'เลือกแพ็กเกจ', 'ซื้อหรือเปลี่ยนแพ็กเกจ']) await expect(page.getByRole('button', { name: invitation, exact: true })).toHaveCount(0);
       await settle(page, info, width, `promo08-return-${stage}`);
     });
@@ -893,64 +912,98 @@ for (const width of WIDTHS) {
     await settle(page, info, width, `promo08r2-access-${access.toLowerCase()}`);
   });
 
-  // Round 2: an open payment the reconciler expired before it ever started is refused on "กลับไปยังรายการเดิม" with its own sentence ("เริ่มรายการใหม่"), and the right is back.
-  test(`PROMO-08 resuming a payment that never started says so in plain Thai, and the shop can start again with the promotion at ${width}px`, async ({ authedPage: page, companyId }, info) => {
-    const open = { paymentState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: true, allowedActions: ['new_sales'],
-      promotion: promotionUse({ state: 'RESERVED', paidEnd: null, benefitEnd: null, renewalSetupState: 'PENDING', expectedNextChargeAt: null }) } as const;
-    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { ...open, allowedActions: [...open.allowedActions], promotions: undefined }));
-    w.resumeOverride = () => ({ status: 409, json: { code: 'BILLING_CHECKOUT_NOT_STARTED', message: 'Checkout was never started' } });
+  // An open payment the reconciler expired before it ever started is refused on "ชำระเงินต่อ" with its own sentence ("เริ่มรายการใหม่"), and the right is back.
+  // FXE-D9 (fixed in round 3): the page reads the status itself, so the dead payment, its block and its reserved right go while the banner stays. FXE-D10 (fixed in round 3): the banner is brought into view.
+  const neverStarted = { status: 409, json: { code: 'BILLING_CHECKOUT_NOT_STARTED', message: 'Checkout was never started' } };
+  const neverStartedBanner = (page: Page) => page.getByRole('alert').filter({ hasText: 'รายการชำระเงินนี้ยังไม่ได้เริ่ม ระบบยกเลิกให้แล้ว กรุณาเริ่มรายการใหม่' });
+  const openForResume = (companyId: string) => {
+    const free = newShopStatus(companyId, { promotions: promotionRows() }), w = defaultCustomerWorld(companyId, openPaymentStatus(free, { promotion: RESERVED_USE }));
+    w.resumeOverride = () => neverStarted;
+    return { w, free };
+  };
+  test(`PROMO-08 resuming a payment that never started says so in plain Thai, the page reads the status itself, and the shop can start again with the promotion at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const { w, free } = openForResume(companyId);
     await openOverview(page, w, width);
-    await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' })).toContainText('จองสิทธิ์โปรโมชั่นไว้ให้รายการชำระนี้แล้ว');
+    const block = regionNamed(page, 'มีรายการชำระเงินที่ยังไม่เสร็จ');
+    await expect(block).toContainText(`จองสิทธิ์โปรโมชั่น ${CAMPAIGN_NAME} ไว้ให้รายการนี้แล้ว`);
     // the reconciler has expired it by the time the buyer taps: the next read shows a free shop and the right back on offer
-    w.status = newShopStatus(companyId, { promotions: promotionRows() });
-    await page.getByRole('button', { name: 'กลับไปยังรายการเดิม', exact: true }).click();
-    const banner = page.getByRole('alert').filter({ hasText: 'รายการชำระเงินนี้ยังไม่ได้เริ่ม ระบบยกเลิกให้แล้ว กรุณาเริ่มรายการใหม่' });
+    w.status = free;
+    await block.getByRole('button', { name: 'ชำระเงินต่อ', exact: true }).click();
+    const banner = neverStartedBanner(page);
     await expect(banner).toBeVisible();
     await page.waitForTimeout(500);
-    wire(info, 'resume-refused-position', width, await inViewNow(banner));
-    await firstScreen(page, info, width, 'promo08r2-resume-refused-first-screen');
-    await settle(page, info, width, 'promo08r2-resume-not-started');
-    // "ลองใหม่" in the banner reads the status again: the dead payment and its reserved right are gone, the shop can choose
-    await banner.getByRole('button', { name: 'ลองใหม่', exact: true }).click();
+    const seen = await inViewNow(banner);
+    expect(seen.visibleToBuyer, JSON.stringify(seen)).toBe(true);
+    wire(info, 'resume-refused-position', width, { ...seen, requests: w.log.calls });
+    // no second tap: the dead payment and its block are gone, the banner is still there, and the way to choose a package is open
+    await expect(block).toHaveCount(0);
+    await expect(banner).toBeVisible();
     await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' })).toHaveCount(0);
-    await page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true }).first().click();
+    await firstScreen(page, info, width, 'promo08r3-resume-refused-first-screen');
+    await settle(page, info, width, 'promo08r3-resume-not-started');
+    await page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true }).click();
     await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' })).toBeVisible();
   });
 
-  // DEFECT FXE-D9: the refusal says "ระบบยกเลิกให้แล้ว กรุณาเริ่มรายการใหม่", but `action()`'s catch (BillingPage.tsx:260) only shows the banner: the page keeps the cancelled payment, its
-  // "จองสิทธิ์โปรโมชั่นไว้ให้รายการชำระนี้แล้ว" block and "กลับไปยังรายการเดิม" until the buyer finds "ลองใหม่" in the banner. Fix: read the status again when the code is BILLING_CHECKOUT_NOT_STARTED.
-  test.fixme(`PROMO-08 after "ยังไม่ได้เริ่ม" the page reads the status itself: the cancelled payment and its reserved right are gone without another tap at ${width}px`, async ({ authedPage: page, companyId }) => {
-    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { paymentState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: true, promotions: undefined,
-      promotion: promotionUse({ state: 'RESERVED', paidEnd: null, benefitEnd: null, renewalSetupState: 'PENDING', expectedNextChargeAt: null }) }));
-    w.resumeOverride = () => ({ status: 409, json: { code: 'BILLING_CHECKOUT_NOT_STARTED', message: 'Checkout was never started' } });
+  test(`PROMO-08 after "ยังไม่ได้เริ่ม" the page reads the status itself: the cancelled payment and its reserved right are gone without another tap at ${width}px`, async ({ authedPage: page, companyId }) => {
+    const { w, free } = openForResume(companyId);
     await openOverview(page, w, width);
-    w.status = newShopStatus(companyId, { promotions: promotionRows() });
-    await page.getByRole('button', { name: 'กลับไปยังรายการเดิม', exact: true }).click();
-    await expect(page.getByRole('alert').filter({ hasText: 'รายการชำระเงินนี้ยังไม่ได้เริ่ม' })).toBeVisible();
+    await expect(regionNamed(page, 'มีรายการชำระเงินที่ยังไม่เสร็จ')).toBeVisible();
+    const reads = w.log.statusReads;
+    w.status = free;
+    await regionNamed(page, 'มีรายการชำระเงินที่ยังไม่เสร็จ').getByRole('button', { name: 'ชำระเงินต่อ', exact: true }).click();
+    await expect(neverStartedBanner(page)).toBeVisible();
+    await expect(regionNamed(page, 'มีรายการชำระเงินที่ยังไม่เสร็จ')).toHaveCount(0);
     await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true })).toBeVisible();
+    expect(w.log.statusReads).toBeGreaterThan(reads);
+    expect(w.log.resumes).toBe(1);
   });
 
-  // DEFECT FXE-D10 (the same class as D2, for the page's ordinary red banner): the error banner is the first thing on the page (BillingPage.tsx:485) and nothing scrolls to it. After a refused
-  // "กลับไปยังรายการเดิม" the buyer is down at that button, the banner is 315px above the 390x844 viewport (177px at 1280), and nothing visibly happens. Same fix as D2: scroll and focus it.
-  test.fixme(`PROMO-08 the red error banner is on screen after a refused "กลับไปยังรายการเดิม" (a person can see it) at ${width}px`, async ({ authedPage: page, companyId }) => {
-    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { paymentState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: true, promotions: undefined,
-      promotion: promotionUse({ state: 'RESERVED', paidEnd: null, benefitEnd: null, renewalSetupState: 'PENDING', expectedNextChargeAt: null }) }));
-    w.resumeOverride = () => ({ status: 409, json: { code: 'BILLING_CHECKOUT_NOT_STARTED', message: 'Checkout was never started' } });
+  // The same for the answers that also mean "this payment is over": the payment to end is gone (404), or the request found it changed (CONTROL_PREVIEW_STALE).
+  for (const refusal of [{ name: '404 on ending it', via: 'cancel' as const, answer: { status: 404, json: { statusCode: 404, message: 'Not Found' } } },
+    { name: 'CONTROL_PREVIEW_STALE on resuming it', via: 'resume' as const, answer: { status: 409, json: { code: 'CONTROL_PREVIEW_STALE', message: 'stale' } } }])
+    test(`PROMO-08 a payment that is over (${refusal.name}): the banner is on screen and the page reads the status itself at ${width}px`, async ({ authedPage: page, companyId }) => {
+      const { w, free } = openForResume(companyId);
+      if (refusal.via === 'cancel') w.cancelOverride = () => refusal.answer; else w.resumeOverride = () => refusal.answer;
+      await openOverview(page, w, width);
+      const block = regionNamed(page, 'มีรายการชำระเงินที่ยังไม่เสร็จ');
+      await expect(block).toBeVisible();
+      w.status = free;
+      await block.getByRole('button', { name: refusal.via === 'cancel' ? 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่' : 'ชำระเงินต่อ', exact: true }).click();
+      const banner = page.locator('[role="alert"].bg-red-50');
+      await expect(banner).toBeVisible();
+      await page.waitForTimeout(500);
+      expect((await inViewNow(banner)).visibleToBuyer).toBe(true);
+      await expect(block).toHaveCount(0);
+      await expect(banner).toBeVisible();
+      await expect(page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true })).toBeVisible();
+    });
+
+  // FXE-D10 (fixed in round 3): the red banner takes a ref, focus and the header scroll margin, and is brought into view only when it is not already visible. After a refused "ชำระเงินต่อ" the buyer is at that
+  // button, the banner was 315px above the 390x844 viewport (177px at 1280) and nothing visibly happened. Here the status still names the open payment, so the block stays beside the banner.
+  test(`PROMO-08 the red error banner is on screen after a refused "ชำระเงินต่อ" (a person can see it) at ${width}px`, async ({ authedPage: page, companyId }) => {
+    const { w } = openForResume(companyId);
     await openOverview(page, w, width);
-    await page.getByRole('button', { name: 'กลับไปยังรายการเดิม', exact: true }).click();
-    const banner = page.getByRole('alert').filter({ hasText: 'รายการชำระเงินนี้ยังไม่ได้เริ่ม' });
+    await regionNamed(page, 'มีรายการชำระเงินที่ยังไม่เสร็จ').getByRole('button', { name: 'ชำระเงินต่อ', exact: true }).click();
+    const banner = neverStartedBanner(page);
     await expect(banner).toBeVisible();
     await page.waitForTimeout(500);
-    expect((await inViewNow(banner)).visibleToBuyer).toBe(true);
+    const seen = await inViewNow(banner);
+    expect(seen.visibleToBuyer, JSON.stringify(seen)).toBe(true);
+    await expect(banner).toBeFocused();
   });
 
   test(`PROMO-08 a payment that failed leaves the return page without any word about a reserved right at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     // the API no longer sends `promotion` for a RESERVED right on a FAILED / EXPIRED attempt (status carries none either: the right went back)
-    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { paymentState: 'FAILED', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, promotions: promotionRows() }));
+    // A finished attempt is no longer the account's active one: the status names none (`paymentState` NONE), the rows are back, and the return page reads the attempt itself.
+    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { promotions: promotionRows() }));
     w.attempt = { attemptId: ATTEMPT_ID, state: 'EXPIRED', errorCode: null, observedAt: FIXED_NOW, paymentState: 'FAILED', applyState: 'NONE', invoiceReference: null };
     await openOverview(page, w, width, `/billing/return?attempt=${ATTEMPT_ID}`);
     await expect(page.getByRole('heading', { name: 'รายการชำระเงินนี้ไม่สำเร็จ', exact: true })).toBeVisible();
     await expect(page.getByText(/จองสิทธิ์|สิทธิ์โปรโมชั่น|ใช้สิทธิ์โปรโมชั่นแล้ว/)).toHaveCount(0);
+    // the last result stays checkable, and the way to a new purchase is open
+    await expect(regionNamed(page, 'ผลการชำระเงินล่าสุด').getByRole('button')).toHaveText(['ตรวจผลการชำระเงิน']);
     // the promotion is on offer again for the next try
     await page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true }).first().click();
     await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' })).toBeVisible();
@@ -970,6 +1023,379 @@ for (const width of WIDTHS) {
     await expect(starterOf(page).getByRole('button', { name: 'ซื้อแพ็กเกจเดิมเพิ่ม', exact: true })).toBeEnabled();
     await expect(starterOf(page)).toContainText('แพ็กเกจปัจจุบัน');
     await settle(page, info, width, 'promo08-upgrade-deferred');
+  });
+}
+
+/* ================================================================ 9. a payment that is started and not finished: ONE titled block, in order ================================================================ */
+
+// `billing-pending-payment.ts` decides what the package page shows for a payment of the shop that is unfinished, in flight or being checked (its spec's state table is the specification).
+// These tests put every state a buyer can reach through the simulated status in a browser, at 390 and 1280: ONE region with a title (or the card's own words), the sentence that says what is
+// waiting, an ORDERED list of choices each tied to the line that says what it does, at most one green button (the first choice, or the page's generic one when no payment is open), what gave way
+// (the generic "choose a package", its invitation, the amber "checking" alert for an open page, the separate promotion box for a reserved right), and the reference for the team last in the card.
+// The simulated status is what the API sends while a Checkout is open: no `new_sales`, no promotion rows, `purchaseBlockCode` BILLING_CHECKOUT_PENDING (see openPaymentStatus).
+
+const OPEN_TITLE = 'มีรายการชำระเงินที่ยังไม่เสร็จ', RECEIVED_TITLE = 'ระบบได้รับเงินแล้ว ไม่ต้องชำระซ้ำ', CHECKING_TITLE = 'กำลังตรวจรายการชำระเงิน', LAST_TITLE = 'ผลการชำระเงินล่าสุด';
+const WAITING_NAME = 'ตรวจผลการชำระเงิน';
+const POINTER_OPEN = `${OPEN_TITLE} ดูตัวเลือกด้านล่าง`, POINTER_CHECKING = 'กำลังตรวจรายการชำระเงิน ยังไม่ต้องเริ่มรายการใหม่';
+const UNPAID_PAGE = 'เปิดหน้าชำระเงินไว้แล้ว แต่ระบบยังไม่ได้รับผลการชำระเงิน';
+const RESERVED_LINE = `จองสิทธิ์โปรโมชั่น ${CAMPAIGN_NAME} ไว้ให้รายการนี้แล้ว สิทธิ์เริ่มใช้เมื่อชำระเงินสำเร็จ`;
+const RIGHT_BACK = 'สิทธิ์โปรโมชั่นที่จองไว้จะถูกคืน เลือกใช้ใหม่ได้ถ้าโปรโมชั่นยังเปิดอยู่';
+const PACKAGE_KEPT = 'แพ็กเกจที่ใช้อยู่ไม่เปลี่ยน';
+const CHECK_CAUTION = 'ระบบยังยืนยันผลจากผู้ให้บริการรับชำระเงินไม่ได้ กดตรวจก่อนชำระใหม่ เพื่อไม่ให้ชำระซ้ำ';
+const CONTINUE_CAUTION = 'ใช้เมื่อแน่ใจว่ายังไม่ได้ชำระ เปิดหน้าชำระเงินเดิมเพื่อจ่ายให้เสร็จ';
+const AMBER_TEXT = 'ระบบกำลังตรวจรายการชำระเงินเดิมกับผู้ให้บริการรับชำระเงิน กรุณารอสักครู่แล้วกดลองใหม่';
+const GENERIC_BUTTON = /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/;
+const INVITATIONS = ['เลือกแพ็กเกจเพื่อเริ่มใช้งาน', 'เลือกแพ็กเกจเพื่อใช้งานต่อ'];
+/** The four names the block is called by (a screen reader's region), and the labels the four old loose buttons wore. */
+const BLOCK_NAMES = [OPEN_TITLE, RECEIVED_TITLE, CHECKING_TITLE, LAST_TITLE, WAITING_NAME];
+const OLD_LABELS = ['กลับไปยังรายการเดิม', 'ตรวจผลการชำระเงินอีกครั้ง', 'เลือกแพ็กเกจใหม่', 'ยุติรายการที่ยังไม่ชำระ', 'ยืนยันยุติหน้าชำระเงิน', 'ยังไม่ยุติ'];
+
+type Step = { label: string; captions: string[]; green?: true };
+type Block = { name: string; title: string | null; intro: string[]; steps: Step[] };
+const CONTINUE_OPEN: Step = { label: 'ชำระเงินต่อ', green: true, captions: ['เปิดหน้าชำระเงินเดิมเพื่อจ่ายให้เสร็จ'] };
+const CHECK_CLAIM: Step = { label: 'ชำระแล้ว ตรวจผลการชำระเงิน', captions: ['กดเมื่อจ่ายเงินแล้วแต่หน้านี้ยังไม่เปลี่ยน'] };
+const cancelOneTap = (...more: string[]): Step => ({ label: 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', captions: ['รายการเดิมจะถูกยกเลิก', ...more] });
+const cancelAsking = (...more: string[]): Step => ({ label: 'ยกเลิกรายการนี้', captions: ['ระบบจะตรวจผลกับผู้ให้บริการรับชำระเงินก่อน จึงเลือกแพ็กเกจใหม่ได้', ...more] });
+const checkOnly = (caption: string, green = false): Step => ({ label: 'ตรวจผลการชำระเงิน', captions: [caption], ...(green ? { green: true as const } : {}) });
+
+/** The block as a buyer reads it, top to bottom: its title, the sentences that say what is waiting, then the choices in order, each a button tied to the line that says what it does. */
+async function expectBlock(page: Page, block: Block) {
+  const region = regionNamed(page, block.name);
+  await expect(region).toHaveCount(1);
+  await expect(region.getByRole('heading')).toHaveText(block.title ? [block.title] : []);
+  await expect(region.locator(':scope > p')).toHaveText(block.intro);
+  const items = region.locator(':scope > ol > li');
+  await expect(items, 'the choices').toHaveCount(block.steps.length);
+  for (const [index, step] of block.steps.entries()) {
+    const item = items.nth(index), button = item.getByRole('button').first();
+    await expect(button, `choice ${index + 1}`).toHaveText(step.label);
+    await expect(item.locator('p[id]'), `the lines under "${step.label}"`).toHaveText(step.captions);
+    await expect(button, `"${step.label}" is described by its lines`).toHaveAccessibleDescription(step.captions.join(' '));
+    await expect(button).toBeEnabled();
+  }
+  return region;
+}
+/** Buttons and links that wear the brand green (the primary control, solid or a gradient of it), by their text. 'main' = the page's own content, 'screen' = everything a buyer sees, the shell's banner included. */
+const greenControls = (page: Page, scope: 'main' | 'screen' = 'main') => page.evaluate(where => {
+  const root = where === 'main' ? document.querySelector('main, [role="main"], #workspace-main') ?? document.body : document.body;
+  return Array.from(root.querySelectorAll('button, a')).filter(el => {
+    const box = el.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0 || el.closest('[hidden]')) return false;
+    const style = getComputedStyle(el), paint = style.backgroundImage.includes('gradient') ? style.backgroundImage : style.backgroundColor;
+    const [red, green, blue] = (paint.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/) ?? []).slice(1).map(Number);
+    return red !== undefined && green !== undefined && blue !== undefined && green > red + 40 && green > blue + 20;
+  }).map(el => (el.textContent ?? '').trim());
+}, scope);
+/** The reference for the team is support information, not a step: the very last thing in the package card, collapsed, after the block. */
+async function expectReferenceLast(page: Page, blockName: string | null) {
+  const card = regionNamed(page, 'สถานะแพ็กเกจ'), last = card.locator(':scope > *').last();
+  expect(await last.evaluate(el => el.tagName)).toBe('DETAILS');
+  await expect(last.locator('summary')).toHaveText('เลขอ้างอิงสำหรับแจ้งทีมงาน');
+  await expect(last).not.toHaveAttribute('open', '');
+  if (blockName) {
+    const order = await card.evaluate((root, name) => { const children = Array.from(root.children); return { block: children.findIndex(el => el.getAttribute('aria-label') === name), last: children.length - 1 }; }, blockName);
+    expect(order.block, 'the block is a child of the card, before the reference').toBeGreaterThanOrEqual(0);
+    expect(order.block).toBeLessThan(order.last);
+  }
+}
+
+const freeShop = (companyId: string) => newShopStatus(companyId, { promotions: promotionRows() });
+/** A shop with a Checkout of its own open (and the promotion right reserved for it unless said otherwise); ending the payment gives back `free`. */
+function openWorld(companyId: string, free: BillingStatus, over: Partial<BillingStatus> = {}, reserved = true): CustomerWorld {
+  const w = defaultCustomerWorld(companyId, openPaymentStatus(free, { ...(reserved ? { promotion: RESERVED_USE } : {}), ...over }));
+  w.afterCancel = free;
+  return w;
+}
+const returnAttempt = (over: Partial<NonNullable<CustomerWorld['attempt']>> = {}): NonNullable<CustomerWorld['attempt']> =>
+  ({ attemptId: ATTEMPT_ID, state: 'OPEN', errorCode: null, observedAt: FIXED_NOW, paymentState: 'PENDING', applyState: 'NONE', invoiceReference: null, ...over });
+const RETURN_PAGE = `/billing/return?attempt=${ATTEMPT_ID}`;
+/** A one-time Starter that is still running and buys the same package again with the promotion: the shop whose package facts stay on screen while its payment is open. */
+const runningShopWorld = (companyId: string, over: Partial<BillingStatus> = {}) => {
+  const { w: free, previous } = repeatWorld(companyId), w = openWorld(companyId, { ...free.status, allowedActions: ['new_sales'] }, over);
+  w.purchase = 'REPEAT';
+  return { w, previous };
+};
+
+// `amber` = the amber "ระบบกำลังตรวจรายการชำระเงินเดิม …" alert (with its own "ตรวจสถานะล่าสุด" and a copy of the reference) that the status's BILLING_CHECKOUT_PENDING puts above the card. The page hides it for an
+// open payment page only (billing-pending-payment.spec.ts pins that); for the other kinds it stays beside the block, which is what these rows record (see the report: it repeats the block's one check).
+type PendingCase = { key: string; title: string; world: (companyId: string) => CustomerWorld; route?: string; block: Block | null; hint?: string | null; generic: boolean; amber: boolean; promoBox: boolean; reference: boolean; facts?: string[] };
+const PENDING_CASES: PendingCase[] = [
+  { key: 'open-reserved', title: 'an unpaid payment page is open and holds the promotion, the shop has no package yet (the owner\'s screen)', world: c => openWorld(c, freeShop(c)),
+    block: { name: OPEN_TITLE, title: OPEN_TITLE, intro: [UNPAID_PAGE, RESERVED_LINE], steps: [CONTINUE_OPEN, CHECK_CLAIM, cancelOneTap(RIGHT_BACK)] },
+    hint: POINTER_OPEN, generic: false, amber: false, promoBox: false, reference: true },
+  { key: 'open-plain', title: 'the same without a promotion', world: c => openWorld(c, newShopStatus(c, { promotions: undefined }), {}, false),
+    block: { name: OPEN_TITLE, title: OPEN_TITLE, intro: [UNPAID_PAGE], steps: [CONTINUE_OPEN, CHECK_CLAIM, cancelOneTap()] },
+    hint: POINTER_OPEN, generic: false, amber: false, promoBox: false, reference: true },
+  { key: 'open-running', title: 'the same for a shop whose package runs: its facts stay, and the cancel choice says the package does not change', world: c => runningShopWorld(c).w,
+    block: { name: OPEN_TITLE, title: OPEN_TITLE, intro: [UNPAID_PAGE, RESERVED_LINE], steps: [CONTINUE_OPEN, CHECK_CLAIM, cancelOneTap(RIGHT_BACK, PACKAGE_KEPT)] },
+    hint: null, generic: false, amber: false, promoBox: false, reference: true, facts: ['เริ่มต้น (STARTER)', thaiDay('2026-10-25T05:00:00.000Z'), '20 ใบ', 'จ่ายครั้งเดียว'] },
+  { key: 'unknown', title: 'the outcome is unknown: the check leads, paying again only when sure, ending asks first', world: c => openWorld(c, freeShop(c), { paymentState: 'UNKNOWN' }),
+    block: { name: OPEN_TITLE, title: OPEN_TITLE, intro: ['ระบบยังยืนยันผลการชำระเงินรายการนี้ไม่ได้', RESERVED_LINE],
+      steps: [checkOnly(CHECK_CAUTION, true), { label: 'ชำระเงินต่อ', captions: [CONTINUE_CAUTION] }, cancelAsking(`ถ้ายังไม่ได้ชำระ ${RIGHT_BACK}`)] },
+    hint: POINTER_OPEN, generic: false, amber: false, promoBox: false, reference: true },
+  { key: 'action-required', title: 'the payment page needs one more step: continue first', world: c => openWorld(c, freeShop(c), { paymentState: 'ACTION_REQUIRED' }, false),
+    block: { name: OPEN_TITLE, title: OPEN_TITLE, intro: ['การชำระเงินรายการนี้ยังต้องทำขั้นตอนเพิ่มที่หน้าชำระเงิน'],
+      steps: [{ label: 'ชำระเงินต่อ', green: true, captions: ['เปิดหน้าชำระเงินเดิมเพื่อทำขั้นตอนที่เหลือให้เสร็จ'] },
+        { label: 'ตรวจผลการชำระเงิน', captions: ['กดเมื่อทำขั้นตอนที่หน้าชำระเงินเสร็จแล้วแต่หน้านี้ยังไม่เปลี่ยน'] }, cancelAsking()] },
+    hint: POINTER_OPEN, generic: false, amber: false, promoBox: false, reference: true },
+  { key: 'waiting', title: 'back from the payment page and the first answer is pending: the card says it, the block has no title and one quiet check', route: RETURN_PAGE,
+    world: c => { const w = openWorld(c, freeShop(c)); w.attempt = returnAttempt({ promotion: RESERVED_USE }); return w; },
+    block: { name: WAITING_NAME, title: null, intro: [RESERVED_LINE], steps: [checkOnly('กดเมื่ออยากให้ตรวจผลทันที')] },
+    generic: false, amber: true, promoBox: false, reference: true, facts: ['กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', 'ระบบตรวจผลให้อัตโนมัติ ไม่ต้องชำระซ้ำ'] },
+  { key: 'waiting-running', title: 'the same for a shop whose package runs: the block says the waiting itself', route: RETURN_PAGE,
+    world: c => { const { w } = runningShopWorld(c); w.attempt = returnAttempt({ promotion: RESERVED_USE }); return w; },
+    block: { name: WAITING_NAME, title: null, intro: ['กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน ระบบตรวจผลให้อัตโนมัติ ไม่ต้องชำระซ้ำ', RESERVED_LINE], steps: [checkOnly('กดเมื่ออยากให้ตรวจผลทันที')] },
+    generic: false, amber: true, promoBox: false, reference: true },
+  { key: 'received-applying', title: 'the money is received and the package is being applied: the check alone, never a way to pay again', hint: RECEIVED_TITLE,
+    world: c => defaultCustomerWorld(c, newShopStatus(c, { paymentState: 'PAID', applyState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: false, purchaseBlockCode: 'BILLING_CHECKOUT_PENDING',
+      allowedActions: [], promotions: undefined })),
+    block: { name: RECEIVED_TITLE, title: RECEIVED_TITLE, intro: [], steps: [checkOnly('กดเมื่ออยากตรวจผลล่าสุด')] },
+    generic: false, amber: true, promoBox: false, reference: true },
+  { key: 'received-renewal', title: 'paid and running, the renewal is still being set up: the check alone', hint: null,
+    world: c => defaultCustomerWorld(c, paidShopStatus(c, { promotion: promotionUse({ renewalSetupState: 'PENDING' }), subscriptionState: 'NONE', nextChargeAt: null, allowedActions: [] })),
+    block: { name: RECEIVED_TITLE, title: RECEIVED_TITLE, intro: [], steps: [checkOnly('กดเมื่ออยากตรวจผลล่าสุด')] },
+    generic: false, amber: false, promoBox: true, reference: false, facts: ['แพ็กเกจปัจจุบัน'] },
+  { key: 'last-result-failed', title: 'a renewal charge failed (past due): the check alone, with the sentence that says so', hint: null,
+    world: c => defaultCustomerWorld(c, paidShopStatus(c, { paymentState: 'FAILED', subscriptionState: 'past_due', allowedActions: ['portal_payment_method', 'portal_cancel_subscription'] })),
+    block: { name: LAST_TITLE, title: LAST_TITLE, intro: ['ผู้ให้บริการรับชำระเงินแจ้งว่าการเก็บเงินครั้งล่าสุดไม่สำเร็จ'], steps: [checkOnly('กดเมื่อจ่ายเงินแล้ว เพื่อตรวจผลล่าสุดอีกครั้ง')] },
+    generic: false, amber: false, promoBox: false, reference: true },
+  { key: 'checking', title: 'a payment is in flight and has no page to resume or end yet: wait, do not start another', hint: POINTER_CHECKING,
+    world: c => openWorld(c, freeShop(c), { canCancelCheckout: false }, false),
+    block: { name: CHECKING_TITLE, title: CHECKING_TITLE, intro: ['ระบบกำลังตรวจรายการชำระเงินนี้กับผู้ให้บริการรับชำระเงิน ยังไม่ต้องเริ่มรายการใหม่'], steps: [checkOnly('กดเพื่อให้ระบบตรวจผลล่าสุดกับผู้ให้บริการรับชำระเงิน')] },
+    generic: false, amber: true, promoBox: false, reference: true },
+  { key: 'last-result-old-paid', title: 'an old paid record on a shop whose package ran out: the check stays, and the way to a new purchase stays too', hint: 'เลือกแพ็กเกจเพื่อใช้งานต่อ',
+    world: c => defaultCustomerWorld(c, paidShopStatus(c, { accessState: 'EXPIRED', lockReason: 'trial_ended', termEndsAt: inDays(-3), paidThrough: inDays(-3), subscriptionState: 'canceled', nextChargeAt: null,
+      allowedActions: ['new_sales'], promotions: promotionRows() })),
+    block: { name: LAST_TITLE, title: LAST_TITLE, intro: [], steps: [checkOnly('ให้ระบบถามผู้ให้บริการรับชำระเงินอีกครั้งว่ามีผลล่าสุดหรือไม่')] },
+    generic: true, amber: false, promoBox: false, reference: true },
+  { key: 'none', title: 'no payment at all: exactly the single button, as before', world: c => defaultCustomerWorld(c), block: null, hint: 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน', generic: true, amber: false, promoBox: false, reference: false },
+];
+
+for (const width of WIDTHS) for (const state of PENDING_CASES) {
+  test(`PENDING ${state.key}: ${state.title} at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = state.world(companyId);
+    await openOverview(page, w, width, state.route);
+    await expect(regionNamed(page, 'สถานะแพ็กเกจ')).toBeVisible();
+    if (state.block) await expectBlock(page, state.block);
+    else await expect(page.getByRole('region', { name: new RegExp(`^(${BLOCK_NAMES.join('|')})$`) })).toHaveCount(0);
+    // the old loose buttons are gone in every state
+    for (const old of OLD_LABELS) await expect(page.getByRole('button', { name: old, exact: true }), old).toHaveCount(0);
+    // the generic "choose a package" button exists only where no payment is open or in flight
+    await expect(page.getByRole('button', { name: GENERIC_BUTTON })).toHaveCount(state.generic ? 1 : 0);
+    // the sentence in the no-package box: the invitation, or the pointer that stands where it was
+    if (state.hint === null) for (const invitation of [...INVITATIONS, POINTER_OPEN]) await expect(page.getByText(invitation, { exact: true }), invitation).toHaveCount(0);
+    else if (state.hint !== undefined) await expect(page.getByText(state.hint, { exact: true }).first()).toBeVisible();
+    if (state.block && !state.generic) for (const invitation of INVITATIONS) await expect(page.getByText(invitation, { exact: true }), invitation).toHaveCount(0);
+    await expect(page.getByRole('alert').filter({ hasText: AMBER_TEXT }), 'the amber "checking" alert').toHaveCount(state.amber ? 1 : 0);
+    await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' }), 'the separate promotion box').toHaveCount(state.promoBox ? 1 : 0);
+    for (const fact of state.facts ?? []) await expect(regionNamed(page, 'สถานะแพ็กเกจ')).toContainText(fact);
+    // at most one green button on the page, and it is the one the block (or, with no payment, the page) leads with
+    const wanted = [...(state.block?.steps.filter(step => step.green).map(step => step.label) ?? [])];
+    if (state.generic) wanted.push((await page.getByRole('button', { name: GENERIC_BUTTON }).textContent())!.trim());
+    expect(await greenControls(page), 'solid green controls on the page').toEqual(wanted);
+    expect(wanted.length).toBeLessThanOrEqual(1);
+    if (state.reference) await expectReferenceLast(page, state.block?.name ?? null);
+    else await expect(page.getByText('เลขอ้างอิงสำหรับแจ้งทีมงาน', { exact: true })).toHaveCount(0);
+    await firstScreen(page, info, width, `pending-${state.key}`);
+    await settle(page, info, width, `pending-${state.key}`);
+  });
+}
+
+// ---- pressing each choice sends the request it always sent, and the answer is where the buyer is looking ----
+
+const sent = (w: CustomerWorld) => w.log.calls.map(({ method, path, body }) => ({ method, path, body }));
+const ownerWorld = (companyId: string) => openWorld(companyId, freeShop(companyId));
+const ownerBlock = (page: Page) => regionNamed(page, OPEN_TITLE);
+
+for (const width of WIDTHS) {
+  test(`PENDING the owner's state, "ชำระเงินต่อ": resumes the same payment and goes to its payment page at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = ownerWorld(companyId);
+    await openOverview(page, w, width);
+    await ownerBlock(page).getByRole('button', { name: 'ชำระเงินต่อ', exact: true }).click();
+    await page.waitForURL(/checkout\.stripe\.com/);
+    expect(sent(w)).toEqual([{ method: 'POST', path: `/attempts/${ATTEMPT_ID}/resume`, body: {} }]);
+    expect(w.log.calls[0]!.key).toBeNull();
+    wire(info, 'press-continue-resume-request', width, w.log.calls);
+  });
+
+  test(`PENDING the owner's state, "ชำระแล้ว ตรวจผลการชำระเงิน": asks the provider for the result and says so right under the choice, then "อัปเดตข้อมูล" shows the paid package at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = ownerWorld(companyId);
+    await openOverview(page, w, width);
+    const block = ownerBlock(page), reads = w.log.statusReads, text = 'ส่งคำขอตรวจสอบแล้ว ยังไม่ใช่ผลยืนยันการชำระเงิน กดอัปเดตข้อมูลเพื่อดูผลภายหลัง';
+    await block.getByRole('button', { name: 'ชำระแล้ว ตรวจผลการชำระเงิน', exact: true }).click();
+    const notice = block.getByRole('status').filter({ hasText: text });
+    await expect(notice).toBeVisible();
+    expect(sent(w)).toEqual([{ method: 'POST', path: '/refresh', body: {} }]);
+    wire(info, 'press-check-refresh-request', width, w.log.calls);
+    await page.waitForTimeout(600);
+    wire(info, 'press-check-notice-position', width, await inViewNow(notice));
+    // the answer sits inside the choice that was pressed (the second), with its own "อัปเดตข้อมูล"; the status was read again straight away
+    const second = block.locator(':scope > ol > li').nth(1);
+    await expect(second).toContainText(text);
+    await expect(second.getByRole('button', { name: 'อัปเดตข้อมูล', exact: true })).toBeVisible();
+    expect(w.log.statusReads).toBeGreaterThan(reads);
+    await firstScreen(page, info, width, 'pending-owner-after-check');
+    await settle(page, info, width, 'pending-owner-after-check');
+    // the money arrived meanwhile: "อัปเดตข้อมูล" shows the paid package, and the block is gone
+    w.status = paidShopStatus(companyId, { promotion: promotionUse() }); w.attempt = null;
+    await second.getByRole('button', { name: 'อัปเดตข้อมูล', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'แพ็กเกจปัจจุบัน', exact: true })).toBeVisible();
+    await expect(block).toHaveCount(0);
+  });
+
+  test(`PENDING the owner's state, "ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่": ends the payment in one tap, gives the right back, says so in sight and opens the choice at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = ownerWorld(companyId);
+    await openOverview(page, w, width);
+    await ownerBlock(page).getByRole('button', { name: 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', exact: true }).click();
+    const notice = page.getByRole('status').filter({ hasText: 'ยกเลิกรายการเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย' });
+    await expect(notice).toBeVisible();
+    expect(sent(w)).toEqual([{ method: 'POST', path: `/attempts/${ATTEMPT_ID}/cancel`, body: {} }]);
+    expect(w.log.calls[0]!.key).toBeNull();
+    wire(info, 'press-cancel-request', width, w.log.calls);
+    // the payment, its block and its reserved right are gone; the choice of packages is open and the promotion is on offer again
+    await expect(ownerBlock(page)).toHaveCount(0);
+    await expect(regionNamed(page, 'เลือกแพ็กเกจ')).toBeVisible();
+    await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' })).toBeVisible();
+    await page.waitForTimeout(600);
+    wire(info, 'press-cancel-notice-position', width, await inViewNow(notice));
+    await firstScreen(page, info, width, 'pending-owner-after-cancel');
+    await settle(page, info, width, 'pending-owner-after-cancel');
+  });
+
+  // DEFECT FXE-D12: the answer of the check ("ส่งคำขอตรวจสอบแล้ว …") is a plain paragraph under the pressed button (BillingPage.tsx:600, the check choice of pendingSection): it takes no ref, no focus, no scroll.
+  // At 1280x900 the choice sits at the bottom of the first screen without any scrolling (its button ends at y=891 of 900), so the answer lands at y=931, below the fold, and nothing visibly happens.
+  // Here the button is put at the bottom edge of the screen (the worst place, and the natural one on a desktop). Fix: a ref and `scrollIntoView({ block: 'nearest' })` on the notice, like the other three.
+  test.fixme(`PENDING the owner's state: the answer of "ชำระแล้ว ตรวจผลการชำระเงิน" is in sight even when the button was at the bottom edge of the screen at ${width}px`, async ({ authedPage: page, companyId }) => {
+    const w = ownerWorld(companyId);
+    await openOverview(page, w, width);
+    const block = ownerBlock(page), button = block.getByRole('button', { name: 'ชำระแล้ว ตรวจผลการชำระเงิน', exact: true });
+    await button.evaluate(el => { window.scrollBy(0, el.getBoundingClientRect().bottom - window.innerHeight + 8); });
+    await button.click();
+    const notice = block.getByRole('status').filter({ hasText: 'ส่งคำขอตรวจสอบแล้ว' });
+    await expect(notice).toBeVisible();
+    await page.waitForTimeout(600);
+    const seen = await inViewNow(notice);
+    expect(seen.visibleToBuyer, JSON.stringify(seen)).toBe(true);
+  });
+
+  // DEFECT FXE-D13: after the one-tap cancel the notice that says so ("ยกเลิกรายการเดิมแล้ว …") is brought into view, and then the choice of packages opens and the chooser-heading effect
+  // (BillingPage.tsx:138, `scrollIntoView({ block: 'start' })`) scrolls past it; the notice effect (BillingPage.tsx:148) depends on the notice alone, so it does not run again. The notice ends 63px
+  // above the top of a 390x844 screen (91px above 1280x900), and the buyer sees a chooser with no word about the payment that was just ended. Fix: add `choosing` to that effect's dependencies.
+  test.fixme(`PENDING the owner's state: the notice after "ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่" is still in sight once the choice of packages has opened at ${width}px`, async ({ authedPage: page, companyId }) => {
+    const w = ownerWorld(companyId);
+    await openOverview(page, w, width);
+    await ownerBlock(page).getByRole('button', { name: 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', exact: true }).click();
+    const notice = page.getByRole('status').filter({ hasText: 'ยกเลิกรายการเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย' });
+    await expect(notice).toBeVisible();
+    await expect(regionNamed(page, 'เลือกแพ็กเกจ')).toBeVisible();
+    await page.waitForTimeout(600);
+    const seen = await inViewNow(notice);
+    expect(seen.visibleToBuyer, JSON.stringify(seen)).toBe(true);
+  });
+
+  // DEFECT FXE-D11: the shell's banner for a shop with no package (PlanTermBanner.tsx:41) keeps its own green "เลือกแพ็กเกจ" and the sentence "… เลือกแพ็กเกจเพื่อเริ่มใช้งาน" at the top of the
+  // package page while a payment is open or its money is received. It is the first and biggest green button of the screen at 390 (above "ชำระเงินต่อ"), it leads to the page the buyer is on, and it
+  // invites a second purchase on a page whose whole block says not to (the return page already hides it for that reason: `onReturnPage`). Fix: hide that button on the package page itself too.
+  for (const key of ['open-reserved', 'received-applying'] as const) test.fixme(`PENDING ${key}: the shell's banner does not offer a second "เลือกแพ็กเกจ": one green button on the whole screen at ${width}px`, async ({ authedPage: page, companyId }) => {
+    const state = PENDING_CASES.find(item => item.key === key)!;
+    await openOverview(page, state.world(companyId), width);
+    await expectBlock(page, state.block!);
+    expect(await greenControls(page, 'screen'), 'green controls on the whole screen, the shell included').toEqual(state.block!.steps.filter(step => step.green).map(step => step.label));
+  });
+
+  test(`PENDING outcome unknown: ending asks first, "ยังไม่ยกเลิก" leaves everything as it was, "ยืนยันยกเลิกรายการนี้" ends it and says so in sight at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = openWorld(companyId, freeShop(companyId), { paymentState: 'UNKNOWN' });
+    await openOverview(page, w, width);
+    const block = ownerBlock(page), end = block.getByRole('button', { name: 'ยกเลิกรายการนี้', exact: true }), ask = block.locator(':scope > ol > li').nth(2);
+    await end.click();
+    await expect(ask).toContainText('ยกเลิกรายการนี้ใช่ไหม? ระบบจะตรวจผลกับผู้ให้บริการรับชำระเงินก่อน จึงเริ่มเลือกแพ็กเกจใหม่ได้');
+    await expect(ask.getByRole('button')).toHaveText(['ยืนยันยกเลิกรายการนี้', 'ยังไม่ยกเลิก']);
+    expect(w.log.cancels, 'asking sends nothing').toBe(0);
+    await settle(page, info, width, 'pending-unknown-asking');
+    await ask.getByRole('button', { name: 'ยังไม่ยกเลิก', exact: true }).click();
+    await expect(end).toBeVisible();
+    await expect(ask.locator('p[id]')).toHaveCount(2);
+    expect(w.log.cancels).toBe(0);
+    await end.click();
+    await ask.getByRole('button', { name: 'ยืนยันยกเลิกรายการนี้', exact: true }).click();
+    const notice = page.getByRole('status').filter({ hasText: 'ยกเลิกรายการแล้ว เลือกแพ็กเกจใหม่ได้' });
+    await expect(notice).toBeVisible();
+    expect(sent(w)).toEqual([{ method: 'POST', path: `/attempts/${ATTEMPT_ID}/cancel`, body: {} }]);
+    wire(info, 'press-cancel-confirmed-request', width, w.log.calls);
+    await expect(block).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true })).toBeVisible();
+    await page.waitForTimeout(600);
+    const seen = await inViewNow(notice);
+    wire(info, 'press-cancel-confirmed-notice-position', width, seen);
+    expect(seen.visibleToBuyer, JSON.stringify(seen)).toBe(true);
+    await firstScreen(page, info, width, 'pending-unknown-after-cancel');
+  });
+
+  test(`PENDING back from the payment page and waiting: the one choice asks the provider and says so right under itself at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = openWorld(companyId, freeShop(companyId));
+    w.attempt = returnAttempt({ promotion: RESERVED_USE });
+    await openOverview(page, w, width, RETURN_PAGE);
+    const block = regionNamed(page, WAITING_NAME);
+    await expect(block).toBeVisible();
+    const before = w.log.refreshes;
+    await block.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true }).click();
+    const notice = block.getByRole('status').filter({ hasText: 'ส่งคำขอตรวจสอบแล้ว' });
+    await expect(notice).toBeVisible();
+    await expect.poll(() => w.log.refreshes).toBeGreaterThan(before);
+    await page.waitForTimeout(600);
+    const seen = await inViewNow(notice);
+    expect(seen.visibleToBuyer, JSON.stringify(seen)).toBe(true);
+    wire(info, 'press-waiting-check', width, { seen, requests: w.log.calls.filter(call => call.path === '/refresh') });
+    await expect(block.getByRole('button', { name: 'อัปเดตข้อมูล', exact: true })).toBeVisible();
+    await settle(page, info, width, 'pending-waiting-after-check');
+  });
+
+  // The choices of every other open state send the same requests as the owner's: the check asks the provider (refresh), "ชำระเงินต่อ" resumes the same payment, whatever the state says about them.
+  for (const key of ['action-required', 'unknown'] as const) test(`PENDING ${key}: "ตรวจผลการชำระเงิน" asks the provider and "ชำระเงินต่อ" resumes the same payment, the same requests as ever at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = PENDING_CASES.find(item => item.key === key)!.world(companyId);
+    await openOverview(page, w, width);
+    const block = ownerBlock(page);
+    await block.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true }).click();
+    await expect(block.getByRole('status').filter({ hasText: 'ส่งคำขอตรวจสอบแล้ว ยังไม่ใช่ผลยืนยันการชำระเงิน' })).toBeVisible();
+    expect(sent(w)).toEqual([{ method: 'POST', path: '/refresh', body: {} }]);
+    await block.getByRole('button', { name: 'ชำระเงินต่อ', exact: true }).click();
+    await page.waitForURL(/checkout\.stripe\.com/);
+    expect(sent(w)).toEqual([{ method: 'POST', path: '/refresh', body: {} }, { method: 'POST', path: `/attempts/${ATTEMPT_ID}/resume`, body: {} }]);
+    wire(info, `press-${key}-requests`, width, w.log.calls);
+  });
+
+  // A shop whose package runs and that opened a payment for the same package again: ending that payment sends the same request, the package is not touched, and the promotion is on offer again.
+  test(`PENDING a shop whose package runs: ending the extra payment is the same one-tap request, the right is back and the same package can be bought again at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const { w } = runningShopWorld(companyId);
+    await openOverview(page, w, width);
+    await ownerBlock(page).getByRole('button', { name: 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'ยกเลิกรายการเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย' })).toBeVisible();
+    expect(sent(w)).toEqual([{ method: 'POST', path: `/attempts/${ATTEMPT_ID}/cancel`, body: {} }]);
+    wire(info, 'press-running-cancel-request', width, w.log.calls);
+    await expect(ownerBlock(page)).toHaveCount(0);
+    await expect(regionNamed(page, 'เลือกแพ็กเกจ')).toBeVisible();
+    await expect(buyStarter(page)).toBeEnabled();
+    await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' })).toBeVisible();
+    await expect(starterOf(page)).toContainText('แพ็กเกจปัจจุบัน');
+  });
+
+  // The wait for the payment page's answer gives up after 3 minutes: the block changes from the quiet check to the full set, the check first (the buyer may well have paid).
+  test(`PENDING the wait for the answer gave up (3 minutes): the check leads, paying again only when sure at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = openWorld(companyId, freeShop(companyId));
+    w.attempt = returnAttempt({ promotion: RESERVED_USE });
+    await installCustomerRoutes(page, w);
+    await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
+    await page.clock.install({ time: new Date(FIXED_NOW) });
+    await page.goto(`/companies/${companyId}${RETURN_PAGE}`);
+    await expect(regionNamed(page, WAITING_NAME)).toBeVisible();
+    await page.clock.fastForward(185_000);
+    await expectBlock(page, { name: OPEN_TITLE, title: OPEN_TITLE, intro: ['กลับจากหน้าชำระเงินแล้ว แต่ระบบยังยืนยันผลการชำระเงินไม่ได้', RESERVED_LINE],
+      steps: [checkOnly(CHECK_CAUTION, true), { label: 'ชำระเงินต่อ', captions: [CONTINUE_CAUTION] }, cancelOneTap(RIGHT_BACK)] });
+    await expect(page.getByText('ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: GENERIC_BUTTON })).toHaveCount(0);
+    expect(await greenControls(page)).toEqual(['ตรวจผลการชำระเงิน']);
+    await firstScreen(page, info, width, 'pending-gave-up');
+    await settle(page, info, width, 'pending-gave-up');
   });
 }
 
@@ -1043,9 +1469,16 @@ for (const width of WIDTHS) {
     const active = articleOf(page, 'Starter แถมเดือน ต.ค. 2569');
     await expect(active).toContainText(`ชื่อที่ลูกค้าเห็น: ${CAMPAIGN_NAME}`);
     await expect(active.locator('dd').nth(0)).toHaveText(`${thaiDateTime('2026-10-01T03:00:00.000Z')} ถึง ${thaiDateTime('2026-10-31T16:59:00.000Z')}`);
-    await expect(active.locator('dd').nth(1)).toHaveText('เริ่มต้น (STARTER) · รายเดือน · เริ่มต้น (STARTER) · รายปี');
+    await expect(active.locator('dd').nth(1)).toHaveText('เริ่มต้น (STARTER) · รายเดือนและรายปี');
     await expect(articleOf(page, 'ร่าง Starter ธ.ค.').locator('dd').nth(1)).toHaveText('เริ่มต้น (STARTER) · รายเดือน');
     await expect(articleOf(page, 'Starter แถมเดือน ต.ค. 2569').getByRole('link')).toHaveAttribute('href', '/system/billing/campaigns/camp-active');
+    // the TEST chip is neutral (white, gray border): it never wears the amber of a status chip such as "พัก"
+    const chip = (title: string, text: RegExp) => articleOf(page, title).locator('span').filter({ hasText: text }).evaluate(el => { const style = getComputedStyle(el); return { background: style.backgroundColor, border: style.borderTopColor }; });
+    const testChip = await chip('พักไว้ก่อน ก.ย.', /^โหมดทดสอบ/), pausedChip = await chip('พักไว้ก่อน ก.ย.', /^พัก$/);
+    expect(testChip.background).toBe('rgb(255, 255, 255)');
+    expect(pausedChip.background).not.toBe(testChip.background);
+    for (const item of EVERY_STATUS) expect(await chip(item.title, /^โหมดทดสอบ/), item.title).toEqual(testChip);
+    wire(info, 'chips', width, { test: testChip, paused: pausedChip });
     await settle(page, info, width, 'promo09-every-status');
   });
 
@@ -1133,11 +1566,14 @@ const longNameWorld = () => {
 };
 const LONG_INTERNAL = 'Internal'.padEnd(120, 'y');
 for (const width of WIDTHS) {
-  // DEFECT FXE-D5: the row's title link is `inline-flex` with no way to break a long word (BillingCampaignsPage.tsx:96); a 120-character internal name (the allowed maximum)
-  // pushes the whole page to 1121px wide at 390px. Fix: add `max-w-full [overflow-wrap:anywhere]` to that link.
-  test.fixme(`PROMO-09 the longest internal name (120 characters, no spaces) stays inside the list row at ${width}px`, async ({ page }, info) => {
+  // FXE-D5 (fixed in round 3): the row's title link wraps (`max-w-full [overflow-wrap:anywhere]`); a 120-character internal name (the allowed maximum) pushed the whole page to 1121px wide at 390px.
+  test(`PROMO-09 the longest internal name (120 characters, no spaces) stays inside the list row at ${width}px`, async ({ page }, info) => {
     await adminOpen(page, longNameWorld(), width, '/system/billing/campaigns');
-    await expect(articleOf(page, LONG_INTERNAL)).toBeVisible();
+    const row = articleOf(page, LONG_INTERNAL);
+    await expect(row).toBeVisible();
+    // every box of the row, the long name and the customer-facing name included, ends inside the row's own box
+    const outside = await row.evaluate(el => { const edge = el.getBoundingClientRect().right + 1; return Array.from(el.querySelectorAll('*')).filter(child => child.getBoundingClientRect().right > edge).map(child => (child.textContent ?? '').slice(0, 30)); });
+    expect(outside, 'boxes past the right edge of the row').toEqual([]);
     await settle(page, info, width, 'promo09-long-names-list');
   });
 
@@ -1149,15 +1585,18 @@ for (const width of WIDTHS) {
 }
 
 for (const width of WIDTHS) {
-  // DEFECT FXE-D8 (1280 only): at 1280 the three filter columns give the cycle select 193px (BillingCampaignsPage.tsx:59, `sm:grid-cols-[2fr_1fr_1fr_auto]`), and "เริ่มต้น (STARTER) · รายปี" is cut to
-  // "เริ่มต้น (STARTER) …" — the one word that says which cycle is filtered (รายเดือน / รายปี) is the one that disappears.
-  (width === 1280 ? test.fixme : test)(`PROMO-09 the cycle filter still shows which cycle is chosen (the selected text is not cut off) at ${width}px`, async ({ page }) => {
+  // FXE-D8 (fixed in round 3): the filter row gives the cycle select room from 1280px (two columns below that) and both selects wrap a label instead of cutting it, so the word that says which
+  // cycle is filtered (รายเดือน / รายปี) is always on screen.
+  test(`PROMO-09 the cycle filter still shows which cycle is chosen (the selected text is not cut off) at ${width}px`, async ({ page }, info) => {
     const w = everyStatusWorld();
     await adminOpen(page, w, width, '/system/billing/campaigns');
     const select = page.getByRole('combobox', { name: 'แพ็กเกจและรอบ', exact: true });
     await chooseThemedOption(page, select, 'เริ่มต้น (STARTER) · รายปี');
     const cut = await select.evaluate(el => [el, ...Array.from(el.querySelectorAll('*'))].filter(node => getComputedStyle(node).overflowX !== 'visible' && node.scrollWidth > node.clientWidth + 1).length);
     expect(cut, 'elements whose text is cut off').toBe(0);
+    await expect(select).toContainText('เริ่มต้น (STARTER) · รายปี');
+    await fits(page, width);
+    await pictures(page, info, width, 'promo09-cycle-filter');
   });
 }
 
@@ -1214,6 +1653,11 @@ for (const width of WIDTHS) {
     await page.getByRole('button', { name: 'เดือนถัดไป', exact: true }).click();
     await page.getByRole('button', { name: '14', exact: true }).click();
     await form.getByLabel('สิ้นสุดรับสิทธิ์ เวลา').fill('23:59');
+    // the cap rows are 44px targets (the "จำกัดไม่เกิน" row used to be as high as its text)
+    for (const name of ['ไม่จำกัด', 'จำกัดไม่เกิน']) {
+      const row = form.locator('label').filter({ has: page.getByRole('radio', { name, exact: true }) });
+      expect((await row.boundingBox())!.height, `${name} row`).toBeGreaterThanOrEqual(44);
+    }
     await form.getByRole('radio', { name: 'จำกัดไม่เกิน' }).check();
     await form.getByLabel('จำนวนสิทธิ์สูงสุด', { exact: true }).fill('100');
     await form.getByLabel('เหตุผลที่บันทึกครั้งนี้').fill('เปิดโปรปลายปี');
@@ -1454,7 +1898,10 @@ for (const width of WIDTHS) {
     await settle(page, info, width, 'promo12-paused');
 
     // resume: a RESUME preview, no draft version, the same publish workflow
-    const resume = region(page, 'เปิดใช้แคมเปญ');
+    // a paused campaign with no draft: the section is named for what it does, and what a person reads as its heading is what a screen reader calls the region
+    await expect(region(page, 'เปิดใช้แคมเปญ')).toHaveCount(0);
+    const resume = region(page, 'กลับมาเปิดแคมเปญ');
+    await expect(resume.getByRole('heading', { name: 'กลับมาเปิดแคมเปญ', level: 2 })).toBeVisible();
     await expect(resume.getByRole('button', { name: 'กลับมาเปิด', exact: true })).toBeDisabled();
     await resume.getByLabel('เหตุผล').fill('ตรวจราคาเสร็จแล้ว');
     await resume.getByRole('button', { name: 'กลับมาเปิด', exact: true }).click();
