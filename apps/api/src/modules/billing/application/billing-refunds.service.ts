@@ -1,7 +1,7 @@
 import { billingApprovalMode, canApproveBillingChange } from './billing-approval';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { BILLING_PROMOTION_REVIEW_ISSUE, type BillingEndPackageReview, type BillingRefundInput, type BillingRefundReview, type BillingRefundOperation, type BillingStatus } from '@watchdog-bms/contracts';
+import { BILLING_PROMOTION_REVIEW_ISSUE, type BillingEndPackageReview, type BillingRefundInput, type BillingRefundPromotion, type BillingRefundReview, type BillingRefundOperation, type BillingPromotionSnapshot, type BillingStatus } from '@watchdog-bms/contracts';
 import type { BillingAccount, BillingInvoice, BillingOperation, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
@@ -65,6 +65,12 @@ export class BillingRefundsService {
     if(block!=='BILLING_END_PACKAGE_NOT_CURRENT'||!p.promotionRedemptionId)return block;
     return renewalIsLive(account)&&invoiceServiceEnd(await this.invoice(account,invoiceId,tx))>new Date()?'BILLING_END_PACKAGE_AUTO_RENEW' as const:null;
   }
+  /** What the refund screens tell about the promotion this invoice was bought with, or nothing: named by the invoice's own snapshot, sized by its redemption. */
+  private async promotion(invoice:Pick<BillingInvoice,'id'|'contractSnapshot'|'benefitEnd'>|null):Promise<{promotion?:BillingRefundPromotion}>{
+    const promo=invoice&&await promotionForInvoice(this.prisma.client,invoice.id);
+    return promo?{promotion:{displayName:(invoice.contractSnapshot as {promotion?:BillingPromotionSnapshot}|null)?.promotion?.displayName??'',bonusMonths:promo.bonusMonths,
+      bonusReceiptUnits:promo.bonusReceiptUnits,benefitEnd:invoice.benefitEnd?.toISOString()??null}}:{};
+  }
   /** The invoice is still the promotion purchase the proposal pinned (or still none), so execute answers for the source it previewed. */
   private async pinned(tx:Prisma.TransactionClient,invoiceId:string,p:Pick<Proposed,'promotionRedemptionId'>){
     return ((await promotionForInvoice(tx,invoiceId))?.id??null)===(p.promotionRedemptionId??null);
@@ -108,7 +114,7 @@ export class BillingRefundsService {
           s.source.charge.amount_refunded>=s.row.paidSatang||s.source.invoice.post_payment_credit_notes_amount>=s.row.paidSatang?'CONTROL_REFUND_FULL':null;
     return {companyId,companyName:s.company.name,invoiceId,invoiceNumber:s.row.providerNumber,mode:s.account.livemode?'LIVE':'TEST',
       paidSatang:s.row.paidSatang,refundedSatang:s.source.charge.amount_refunded,disputed:s.source.charge.disputed,refundLimitSatang:limit,
-      canCreate:blocked===null,blockedReason:blocked,sourceHash:s.sourceHash,observedAt:new Date().toISOString(),usage:await this.billing.usage(companyId),adjustments:s.source.adjustments};
+      canCreate:blocked===null,blockedReason:blocked,sourceHash:s.sourceHash,observedAt:new Date().toISOString(),usage:await this.billing.usage(companyId),adjustments:s.source.adjustments,...await this.promotion(s.row)};
   }
   async preview(context:RequestContext,companyId:string,invoiceId:string,input:BillingRefundInput){
     assertKeys(input,['amountSatang','reason','memo','notifyCustomer','sourceHash','endPackage']);
@@ -143,7 +149,8 @@ export class BillingRefundsService {
       allowedActions:[...(own&&manage&&fresh&&row.state==='PREVIEW'?['submit' as const]:[]),...(canApproveBillingChange(access,row.initiatorUserId,context.userId,'system.billing.refund.manage')&&fresh&&row.state==='AWAITING_APPROVAL'?['approve' as const]:[]),
         ...(!j.dispatchedAt&&['PREVIEW','AWAITING_APPROVAL','QUEUED','BLOCKED'].includes(row.state)&&(manage||approve)&&(!row.leaseUntil||row.leaseUntil<=new Date())?['cancel' as const]:[]),
         ...((manage||approve)&&['QUEUED','RUNNING','UNKNOWN','BLOCKED','FAILED'].includes(row.state)&&(!row.leaseUntil||row.leaseUntil<=new Date())?['run' as const]:[])],
-      dispatchedAt:j.dispatchedAt??null,creditNoteId:j.creditNoteId??null,creditNoteNumber:j.creditNoteNumber??null,refundId:j.refundId??null,refundState:j.refundState??null,reviewCaseId:issue?.id??null,bankReceiptConfirmed:false,endPackage:p.endPackage===true,packageEnded:j.packageEnded??null};
+      dispatchedAt:j.dispatchedAt??null,creditNoteId:j.creditNoteId??null,creditNoteNumber:j.creditNoteNumber??null,refundId:j.refundId??null,refundState:j.refundState??null,reviewCaseId:issue?.id??null,bankReceiptConfirmed:false,endPackage:p.endPackage===true,packageEnded:j.packageEnded??null,
+      ...p.promotionRedemptionId?await this.promotion(await this.prisma.client.billingInvoice.findUnique({where:{id:row.referenceId!}})):{}};
   }
   async get(context:RequestContext,id:string){return this.view(context,await this.row(context,id));}
   async list(context:RequestContext,companyId:string,invoiceId:string,cursor?:string){
