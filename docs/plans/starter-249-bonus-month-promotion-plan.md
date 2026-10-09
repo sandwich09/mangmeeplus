@@ -230,6 +230,9 @@ Open before a campaign is opened to real customers:
 3. Repeat on a live card subscription and a promotion on a scheduled change (refused today, R10).
 4. Automatic entitlement adjustment for a fully refunded promotion source that has not started, is held or was replaced, and for dispute outcomes (staff today; the report shows PENDING / REVIEW).
 5. `billing-grace.pg.spec.ts` is registered in no test runner; it was run by hand for this work.
+6. The UAT re-test of the fixes from the walk (the customer-side lines, the cap-full Admin text, the refund block on a new purchase) on source `e414d3a24`: needs the owner's password at the campaign re-authentication and a shop-owner sign-in. The Admin side was read again on that source without them: the first campaign's report is unchanged (used 5, still active 4, cancelled 1, fully refunded 1, received 3,486 THB, refunded 249 THB) and the second TEST campaign's draft passes "ตรวจสอบก่อนเปิด".
+7. `e2e/billing-promotion.spec.ts` ran for real on 2026-10-10 (259 tests with the three older billing specs, 0 failed): the simulated-API screens at 390 px and 1280 px. It found FXE-D14, fixed in #1059: a long unbroken campaign name stretched the chooser and the plan cards past a phone screen.
+8. A shop whose renewal is switched off is still told that it renews, on the web event-discount note and in the LINE reply (older text, not from this work).
 
 ### UAT walk, 2026-10-09 23:00 – 2026-10-10 00:06 (Stripe test mode, source `7cb86fa0e`)
 
