@@ -179,6 +179,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
           </div>
         </details>}
         {overview?.platformScope && <Link onClick={leaving} href="/system/billing/settings" className="inline-flex min-h-11 items-center px-2 text-sm font-medium text-gray-600 hover:underline">ตั้งค่าการชำระเงิน</Link>}
+        {overview?.platformScope && <Link onClick={leaving} href="/system/billing/campaigns" className="inline-flex min-h-11 items-center px-2 text-sm font-medium text-gray-600 hover:underline">แคมเปญโปรโมชั่น</Link>}
         {overview?.canManageScopes && <Link onClick={leaving} href="/system/billing/operator-scopes" className="inline-flex min-h-11 items-center px-2 text-sm text-gray-600 hover:underline">สิทธิ์เจ้าหน้าที่</Link>}
       </div>
     </div>
