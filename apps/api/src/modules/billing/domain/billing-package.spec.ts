@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { billingOffer, BILLING_DRAFT_POLICY, FEATURE_PACKAGE_PRESETS, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
-import { appendPackageInterval, fullPackagePurchaseImpact, proratedPackagePrice, proratedReceiptIncrease } from './billing-package';
+import { appendPackageInterval, fullPackagePurchaseImpact, invoiceServiceEnd, promotionBoundaries, proratedPackagePrice, proratedReceiptIncrease } from './billing-package';
 import { assertRefundControlPolicy, effectiveBillingGates, assertStripePrice, assertStripePortalConfiguration, parseBillingPolicy } from './billing-policy';
 import { BillingService } from '../application/billing.service';
 
@@ -215,4 +215,33 @@ test('capacity policy accepts paired bounded limits without changing prices, rec
     ...[0,-1,1.5,1001,'5',true,Infinity].map(branchLimit=>({branchLimit,employeeLimit:25})),
     ...[0,-1,1.5,1001,'25',true,Infinity].map(employeeLimit=>({branchLimit:7,employeeLimit}))])
     assert.throws(()=>parseBillingPolicy({...BILLING_DRAFT_POLICY,offerTerms:{PRO_999:{...terms,...limits}}}));
+});
+
+test('promotion boundaries count months once from the start: 2 months for a month, 13 for a year, anniversary kept through short months', () => {
+  const ends = (start: string, interval: 'month' | 'year', anchorDay?: number, bonusMonths = 1) => {
+    const { paidEnd, benefitEnd } = promotionBoundaries({ serviceStartsAt: new Date(start), interval, anchorDay, bonusMonths });
+    return [paidEnd.toISOString(), benefitEnd.toISOString()];
+  };
+  // Spec §5 example: paid 5 Oct 2026 10:00 Bangkok.
+  assert.deepEqual(ends('2026-10-05T03:00:00.000Z', 'month'), ['2026-11-05T03:00:00.000Z', '2026-12-05T03:00:00.000Z']);
+  assert.deepEqual(ends('2026-10-05T03:00:00.000Z', 'year'), ['2027-10-05T03:00:00.000Z', '2027-11-05T03:00:00.000Z'], '13 months, never 24');
+  // 31 Jan → paid end clamps to 28 Feb, the free month still ends 31 Mar (not 28 Mar).
+  assert.deepEqual(ends('2026-01-31T03:00:00.000Z', 'month'), ['2026-02-28T03:00:00.000Z', '2026-03-31T03:00:00.000Z']);
+  assert.deepEqual(ends('2028-01-31T03:00:00.000Z', 'month'), ['2028-02-29T03:00:00.000Z', '2028-03-31T03:00:00.000Z'], 'leap year');
+  assert.deepEqual(ends('2028-02-29T03:00:00.000Z', 'year'), ['2029-02-28T03:00:00.000Z', '2029-03-29T03:00:00.000Z'], 'bought on 29 Feb');
+  assert.deepEqual(ends('2026-12-15T03:00:00.000Z', 'month'), ['2027-01-15T03:00:00.000Z', '2027-02-15T03:00:00.000Z'], 'December into the next year');
+  // A continuing purchase starts at a clamped paidThrough and keeps the shop's original anchor day.
+  assert.deepEqual(ends('2026-02-28T03:00:00.000Z', 'month', 31), ['2026-03-31T03:00:00.000Z', '2026-04-30T03:00:00.000Z']);
+  assert.deepEqual(ends('2026-02-28T03:00:00.000Z', 'month'), ['2026-03-28T03:00:00.000Z', '2026-04-28T03:00:00.000Z'], 'without the anchor the day would drift');
+  // 02:00 Bangkok on 5 Oct is still 4 Oct in UTC: billing keeps its UTC anchor convention.
+  assert.deepEqual(ends('2026-10-04T19:00:00.000Z', 'month'), ['2026-11-04T19:00:00.000Z', '2026-12-04T19:00:00.000Z']);
+  assert.deepEqual(ends('2026-10-05T03:00:00.000Z', 'month', undefined, 2), ['2026-11-05T03:00:00.000Z', '2027-01-05T03:00:00.000Z']);
+  for (const bonusMonths of [0, -1, 1.5]) assert.throws(() => ends('2026-10-05T03:00:00.000Z', 'month', undefined, bonusMonths));
+});
+
+test('an invoice gives service until its benefit end when it has one, else until its period end', () => {
+  const periodEnd = new Date('2026-11-05T03:00:00.000Z'), benefitEnd = new Date('2026-12-05T03:00:00.000Z');
+  assert.equal(invoiceServiceEnd({ periodEnd, benefitEnd }), benefitEnd);
+  assert.equal(invoiceServiceEnd({ periodEnd, benefitEnd: null }), periodEnd);
+  assert.equal(invoiceServiceEnd({ periodEnd }), periodEnd);
 });

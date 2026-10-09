@@ -1,0 +1,82 @@
+{
+  "kind": "EXACT_SOURCE_PURE_FUNCTION_PROBE",
+  "date": "2026-10-09",
+  "sourceRef": "fddfd05baf97be683796f6b7db4d2e72157197db",
+  "sourceHashes": {
+    "apps/api/src/modules/billing/domain/billing-package.ts": "9932863a7c5594d304fb3bb2f072e229bddd33a9fe796e980ea39a5c5a06ce75",
+    "apps/api/src/modules/line-ai/application/ai-credit-cycles.ts": "42cd406c8062137c423a323bb053fbce3e6d9128601069c5213b570ff18ca286"
+  },
+  "harnessSha256": "9a6a45928d0e2728514147b37b84d02b83f6ba91375afa747800b49839d8460d",
+  "assertions": 6,
+  "status": "PASS_REPRODUCTION",
+  "finding": "F05 remains in unchanged source; revised reference model defines desired promotion segment behavior",
+  "limitations": "Synthetic account fixtures and exact transpiled calendar/cycle source only; unused billing-policy dependency stubbed. No DB/provider/funding/browser calls.",
+  "scenarios": [
+    {
+      "id": "P01",
+      "at": "2026-10-10T03:00:00Z",
+      "futurePaidPeriod": false,
+      "expectedCycleStart": "2026-10-05T03:00:00.000Z",
+      "actual": {
+        "cycleKey": "synthetic-account:2026-10-05T03:00:00.000Z",
+        "billingAccountId": "synthetic-account",
+        "start": "2026-10-05T03:00:00.000Z",
+        "end": "2026-11-05T03:00:00.000Z",
+        "state": "PAID",
+        "invoiceId": "I1",
+        "renewalPaymentDueAt": null
+      }
+    },
+    {
+      "id": "P02",
+      "at": "2026-11-10T03:00:00Z",
+      "futurePaidPeriod": false,
+      "expectedCycleStart": "2026-10-05T03:00:00.000Z",
+      "actual": {
+        "cycleKey": "synthetic-account:2026-10-05T03:00:00.000Z",
+        "billingAccountId": "synthetic-account",
+        "start": "2026-10-05T03:00:00.000Z",
+        "end": "2026-12-05T03:00:00.000Z",
+        "state": "PAID",
+        "invoiceId": "I1",
+        "renewalPaymentDueAt": null
+      }
+    },
+    {
+      "id": "P03",
+      "at": "2026-11-10T03:00:00Z",
+      "futurePaidPeriod": true,
+      "expectedCycleStart": null,
+      "actual": null
+    },
+    {
+      "id": "P04",
+      "at": "2026-12-10T03:00:00Z",
+      "futurePaidPeriod": true,
+      "expectedCycleStart": "2026-12-05T03:00:00.000Z",
+      "actual": {
+        "cycleKey": "synthetic-account:2026-12-05T03:00:00.000Z",
+        "billingAccountId": "synthetic-account",
+        "start": "2026-12-05T03:00:00.000Z",
+        "end": "2027-01-05T03:00:00.000Z",
+        "state": "PAID",
+        "invoiceId": "I2",
+        "renewalPaymentDueAt": null
+      }
+    },
+    {
+      "id": "P05",
+      "start": "2026-01-31T03:00:00Z",
+      "months": 2,
+      "expected": "2026-03-31T03:00:00.000Z",
+      "actual": "2026-03-31T03:00:00.000Z"
+    },
+    {
+      "id": "P06",
+      "start": "2028-02-29T03:00:00Z",
+      "months": 13,
+      "expected": "2029-03-29T03:00:00.000Z",
+      "actual": "2029-03-29T03:00:00.000Z"
+    }
+  ]
+}

@@ -10,7 +10,7 @@ type GrantDb = Pick<Prisma.TransactionClient, 'billingReceiptGrant' | 'receiptUn
  * closed instead of being guessed into a group.
  */
 const RECEIPT_LOT_GROUP: Readonly<Record<string, 0 | 1 | 2>> = {
-  INITIAL: 0, RENEWAL: 0, REPEAT: 0, UPGRADE: 0, TRIAL_CARRYOVER: 0,
+  INITIAL: 0, RENEWAL: 0, REPEAT: 0, UPGRADE: 0, TRIAL_CARRYOVER: 0, PROMOTION: 0,
   ADMIN_ADJUSTMENT: 1, ADD_ON_ADMIN: 1, SALES_EVENT: 1,
   ADD_ON_PAID: 2,
 };
@@ -49,8 +49,10 @@ export async function receiptLots(db: GrantDb, where: Prisma.BillingReceiptGrant
     if (RECEIPT_LOT_GROUP[row.kind] === undefined || reserved < 0 || remaining < 0 || !Number.isSafeInteger(row.units)) throw new Error('billing.receipt_balance_corrupt');
     return { ...row, reserved, consumed: used, revoked, remaining };
   });
-  // Array#sort is stable, so the FEFO order of the query survives inside each group.
-  return lots.sort((a, b) => RECEIPT_LOT_GROUP[a.kind]! - RECEIPT_LOT_GROUP[b.kind]!);
+  // Array#sort is stable, so the FEFO order of the query (expiresAt, createdAt, id) survives inside each group. Promotion
+  // spec Q1: on an equal expiry the bonus lot goes before the base one, so a later repeat carries the base and not the bonus.
+  const bonus = (lot: ReceiptLot) => (lot.kind === 'PROMOTION' ? 0 : 1);
+  return lots.sort((a, b) => RECEIPT_LOT_GROUP[a.kind]! - RECEIPT_LOT_GROUP[b.kind]! || a.expiresAt.getTime() - b.expiresAt.getTime() || bonus(a) - bonus(b));
 }
 
 function receiptBalance(lots: ReceiptLot[], eligible: (lot: ReceiptLot) => boolean) {
@@ -81,13 +83,15 @@ export async function packageReceiptBalance(db: GrantDb, companyId: string, bill
 /** Internal apply seam, after financial evidence validation, in the invoice/term/audit transaction. */
 export async function grantPaidPackageReceipts(tx: Prisma.TransactionClient, input: {
   companyId: string; billingAccountId: string; sourceKey: string; policyRevisionId: string;
-  kind: 'INITIAL' | 'RENEWAL' | 'REPEAT' | 'UPGRADE'; units: number;
+  kind: 'INITIAL' | 'RENEWAL' | 'REPEAT' | 'UPGRADE' | 'PROMOTION'; units: number;
   serviceStart: Date; serviceEnd: Date; availableAt: Date; expiresAt: Date;
 }) {
   if (!Number.isInteger(input.units) || input.units < 0 || input.units > 2_147_483_647
     || ![input.serviceStart, input.serviceEnd, input.availableAt, input.expiresAt].every((d) => Number.isSafeInteger(d.getTime()))
     || input.serviceStart >= input.serviceEnd || input.availableAt >= input.expiresAt
-    || input.expiresAt < input.serviceEnd || !input.sourceKey || !input.policyRevisionId) throw new Error('billing.invalid_receipt_grant');
+    || input.expiresAt < input.serviceEnd || !input.sourceKey || !input.policyRevisionId
+    // A bonus lot is never empty and its expiry is fixed at the end of its free time (the CHECK says the same).
+    || (input.kind === 'PROMOTION' && (input.units < 1 || input.expiresAt.getTime() !== input.serviceEnd.getTime()))) throw new Error('billing.invalid_receipt_grant');
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${input.companyId}`}))`;
   // Lock before any term writes, after OCR's advisory lock: admission inserts hold a Company FK lock.
   await lockPlanTermCompany(tx, input.companyId);
@@ -114,4 +118,30 @@ export async function grantPaidPackageReceipts(tx: Prisma.TransactionClient, inp
     billingReceiptAccountId: input.billingAccountId, quotaNoticeSentMonthKey: null,
   } });
   return grant;
+}
+
+export const promotionReceiptSourceKey = (invoiceId: string) => `promo:${invoiceId}`;
+
+/**
+ * Promotion spec §5 "ใบเสร็จ", same transaction as the paid apply: the base lot of the paid period and the bonus lot of
+ * the free time, both usable from the verified payment and both expiring at `benefitEnd`. The base lot is an ordinary
+ * package lot (a REPEAT carries still-valid paid units to `benefitEnd`, and a later repeat carries it on); the bonus lot
+ * is PROMOTION, which no carry, grace or free-days list names, so its expiry never moves.
+ */
+export async function grantPromotionPackageReceipts(tx: Prisma.TransactionClient, input: {
+  companyId: string; billingAccountId: string; invoiceId: string; policyRevisionId: string; kind: 'INITIAL' | 'REPEAT';
+  baseUnits: number; bonusUnits: number; serviceStart: Date; paidEnd: Date; benefitEnd: Date; availableAt: Date;
+}) {
+  const { invoiceId, baseUnits, bonusUnits, paidEnd, benefitEnd, kind, serviceStart, ...common } = input;
+  const base = await grantPaidPackageReceipts(tx, { ...common, sourceKey: invoiceId, kind, units: baseUnits, serviceStart, serviceEnd: paidEnd, expiresAt: benefitEnd });
+  const bonus = await grantPaidPackageReceipts(tx, { ...common, sourceKey: promotionReceiptSourceKey(invoiceId), kind: 'PROMOTION', units: bonusUnits,
+    serviceStart: paidEnd, serviceEnd: benefitEnd, expiresAt: benefitEnd });
+  return { base, bonus };
+}
+
+/** Plan R9: the free-time segments `[paidEnd, benefitEnd)` of an account, from its non-revoked bonus lots, oldest first. */
+export async function promotionSegments(db: Pick<Prisma.TransactionClient, 'billingReceiptGrant'>, billingAccountId: string) {
+  const lots = await db.billingReceiptGrant.findMany({ where: { billingAccountId, kind: 'PROMOTION', revokedAt: null },
+    orderBy: [{ serviceStart: 'asc' }, { id: 'asc' }], select: { id: true, sourceKey: true, serviceStart: true, serviceEnd: true } });
+  return lots.map(lot => ({ lotId: lot.id, invoiceId: lot.sourceKey.slice(promotionReceiptSourceKey('').length), start: lot.serviceStart, end: lot.serviceEnd }));
 }

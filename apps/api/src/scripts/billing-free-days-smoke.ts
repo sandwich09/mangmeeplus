@@ -7,6 +7,7 @@ import type { checkBillingConfigurationDrafts } from './billing-configuration-dr
 import { appendPackageInterval } from '../modules/billing/domain/billing-package';
 import { upgradeHistory } from '../modules/billing/application/billing-upgrade';
 import { termProjectionHash } from '../modules/billing/domain/paid-invoice';
+import type { Prisma } from '../generated/prisma/client';
 
 /** Real approved Admin commands and DB/HTTP/browser; Stripe schedule transport is simulated. */
 export async function checkBillingFreeDays(input: Parameters<typeof checkBillingConfigurationDrafts>[0], companyId: string, accountId: string) {
@@ -109,9 +110,11 @@ export async function checkBillingFreeDays(input: Parameters<typeof checkBilling
       {'x-company-id':companyId,'idempotency-key':`cancel-downgrade-gift-${tag}`})).status,200);
     await input.reconcile(accountId);assert.equal((await db.billingAccount.findUniqueOrThrow({where:{id:accountId}})).pendingPlanChangeId,null);
     const originalSettings=await db.billingSettings.findUniqueOrThrow({where:{stripeAccountId_livemode:{stripeAccountId:input.stripeAccountId,livemode:false}}});
+    // Campaigns live beside the policy (promotionJson): a revision made from another one must carry them, or they vanish.
+    const activeRevision=await db.billingPolicyRevision.findUniqueOrThrow({where:{id:originalSettings.policyRevisionId!}});
     const quoteRevision=await db.billingPolicyRevision.create({data:{stripeAccountId:input.stripeAccountId,livemode:false,state:'ACTIVE',createdByUserId:input.userIds[0]!,
       version:1+(await db.billingPolicyRevision.aggregate({where:{stripeAccountId:input.stripeAccountId,livemode:false},_max:{version:true}}))._max.version!,
-      policyJson:{...policy,priceIds:{...policy.priceIds,'BASIC_499:month':priceId}}}});
+      policyJson:{...policy,priceIds:{...policy.priceIds,'BASIC_499:month':priceId}},promotionJson:(activeRevision.promotionJson??undefined) as Prisma.InputJsonValue|undefined}});
     try{
       await db.billingSettings.update({where:{id:originalSettings.id},data:{policyRevisionId:quoteRevision.id,version:{increment:1}}});
       const repeat=await request(`${customer}/quote`,'POST',{offerKey:'BASIC_499',interval:'month',billingEmail:'synthetic-gift@example.test'},{'x-company-id':companyId});

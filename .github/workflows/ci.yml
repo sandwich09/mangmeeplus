@@ -792,6 +792,17 @@ jobs:
             pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/billing-event-discount.pg.spec.ts
           BILLING_EVENT_DISCOUNT_RENEWAL_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/billing-event-discount-renewal.pg.spec.ts
+          # Promotion campaigns: once per shop per campaign, the cap under its fence, reserve/use/release.
+          BILLING_PROMOTION_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/billing-promotion.pg.spec.ts
+          # The Admin campaign API (drafts, publication under the fence, pause/end, report), then the purchase: the
+          # choice at quote and the reservation at Checkout, and the paid apply with its paid and free boundaries.
+          BILLING_PROMOTION_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/billing-promotion-campaigns.pg.spec.ts
+          BILLING_PROMOTION_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/billing-promotion-checkout.pg.spec.ts
+          BILLING_PROMOTION_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/billing-promotion-apply.pg.spec.ts
           DATA_RIGHTS_SINGLE_ADMIN_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test src/modules/data-rights/data-rights-single-admin.pg.spec.ts
           BILLING_CASH_MOVEMENTS_TEST_DATABASE_URL="$DATABASE_URL" \

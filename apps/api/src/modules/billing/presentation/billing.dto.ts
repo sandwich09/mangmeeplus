@@ -101,6 +101,10 @@ export class BillingQuoteDto {
   @IsOptional() @IsIn(['USE', 'DECLINE']) eventDiscountChoice?: string;
   /** Owner 2026-09-29: which held discount this payment uses (with USE); omitted = the best one for this card. */
   @IsOptional() @IsString() @MinLength(1) @MaxLength(40) eventDiscountTicketSerial?: string;
+  /** Promotion spec Q4: the one benefit this purchase takes; omitted = the behaviour before promotions (never PROMOTION).
+   *  A client names the choice and a campaign only — months, receipts and prices are the server's. */
+  @IsOptional() @IsIn(['NORMAL', 'PROMOTION', 'EVENT_DISCOUNT']) benefitChoice?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(64) promotionCampaignId?: string;
 }
 export class BillingCheckoutDto {
   @IsUUID() quoteId!: string;
@@ -179,4 +183,23 @@ export class BillingBatchDto {
 
 export class BillingTimelineExportDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(180) cursor?: string;
+}
+
+// Promotion campaigns (promotion plan §6, lane C). `values` is parsed by `parsePromotionDraft`, which lists what is missing.
+export class BillingPromotionDraftDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(64) campaignId?: string;
+  @IsOptional() @IsInt() @Min(0) draftVersion?: number;
+  @IsObject() values!: object;
+  @IsString() @MinLength(1) @MaxLength(500) reason!: string;
+}
+export class BillingPromotionDiscardDto {
+  @IsInt() @Min(0) draftVersion!: number;
+}
+export class BillingPromotionPreviewDto extends BillingVersionDto {
+  @IsOptional() @IsInt() @Min(0) draftVersion?: number;
+  @IsIn(['PUBLISH', 'RESUME']) action!: string;
+  @IsString() @MinLength(1) @MaxLength(500) reason!: string;
+}
+export class BillingPromotionStateDto extends BillingVersionDto {
+  @IsString() @MinLength(1) @MaxLength(500) reason!: string;
 }
