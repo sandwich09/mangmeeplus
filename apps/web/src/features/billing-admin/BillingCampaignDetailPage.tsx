@@ -4,15 +4,15 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { BillingConfigurationOperation, BillingPromotionCampaignDetail, BillingPromotionPreviewRow } from '@watchdog-bms/contracts';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
-import { billingApprovalLabel, billingControl, billingField, billingLink, billingPermissionLabel, billingPrimaryControl } from '../billing/billing-display';
+import { billingApprovalLabel, billingControl, billingField, billingLink, billingPrimaryControl } from '../billing/billing-display';
 import { BillingCampaignForm } from './BillingCampaignFormPage';
 import BillingCampaignReportSection from './BillingCampaignReportSection';
 import { closeCampaign, confirmPassword, discardCampaignDraft, getCampaign, previewCampaign, stepOperation } from './billing-campaigns.api';
 import {
-  CAMPAIGN_CLOSE_COPY, CAMPAIGN_MANAGE_PERMISSION, CAMPAIGN_OPERATION_STEP_TEXT, CAMPAIGN_SAVED_NOTICE, CAMPAIGN_TEXT_LIMITS, CAMPAIGN_TONE_CLASS, DRAFT_STALE_TEXT,
-  blockerText, campaignButtons, campaignError, campaignLoadFailure, campaignModeMarker, campaignStatusMeta, campaignTerms, campaignTitle, draftErrorText,
-  operationStateText, operationSteps, pendingCheckoutsText, previewBlockedText, previewRowView, reuseIntent, termsFacts,
-  type CampaignIntent, type CampaignLoadFailure, type CampaignOperationStep,
+  CAMPAIGN_CLOSE_COPY, CAMPAIGN_MANAGE_PERMISSION, CAMPAIGN_OPERATION_STEP_TEXT, CAMPAIGN_SAVED_NOTICE, CAMPAIGN_TEXT_LIMITS, CAMPAIGN_TONE_CLASS, DETAIL_NEEDS, DRAFT_STALE_TEXT,
+  blockerText, campaignButtons, campaignError, campaignLoadFailure, campaignModeMarker, campaignRequest, campaignStatusMeta, campaignTerms, campaignTitle, draftErrorText, draftLockedText,
+  isRequestOpen, operationStateText, operationSteps, pendingCheckoutsText, permissionNote, previewBlockedText, previewRowView, publishedTermsCopy, requestKey, resumeBlockedText, reuseIntent,
+  termsFacts, type CampaignIntent, type CampaignLoadFailure, type CampaignOperationStep,
 } from './billing-campaigns.logic';
 
 const badge = 'inline-flex rounded-lg border px-2 py-1 text-sm';
@@ -93,6 +93,8 @@ export default function BillingCampaignDetailPage({ campaignId }: { campaignId: 
   const [reload, setReload] = useState(0);
   const [formKey, setFormKey] = useState(0);
   const [operation, setOperation] = useState<BillingConfigurationOperation | null>(null);
+  // The version of the open request that already answered "stale" to a step: the server leaves it as it was, so it must not be offered again as it is.
+  const [refusedRequest, setRefusedRequest] = useState<string | null>(null);
   const [rows, setRows] = useState<BillingPromotionPreviewRow[]>([]);
   const [reauthUntil, setReauthUntil] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -138,7 +140,10 @@ export default function BillingCampaignDetailPage({ campaignId }: { campaignId: 
     const problem = campaignError(cause);
     if (problem.kind !== 'unconfirmed') closeIntent.current = null;
     if (problem.kind === 'reauth') setReauthUntil(null);
-    if (problem.kind === 'stale') setReload(value => value + 1);
+    if (problem.kind === 'stale') {
+      if (isRequestOpen(operation)) setRefusedRequest(requestKey(operation!));
+      setReload(value => value + 1);
+    }
     // The permission is gone: stop offering the buttons even though this page was loaded with them.
     if (problem.kind === 'forbidden') {
       setDetail(current => current && { ...current, capabilities: [], campaign: { ...current.campaign, allowedActions: [] } });
@@ -175,18 +180,22 @@ export default function BillingCampaignDetailPage({ campaignId }: { campaignId: 
   const campaign = detail.campaign, draft = campaign.draft, published = campaign.published;
   const buttons = campaignButtons(campaign.allowedActions);
   const status = campaignStatusMeta(campaign.status), marker = campaignModeMarker(detail.mode), terms = campaignTerms(campaign);
-  const steps = operationSteps(operation);
+  // Spec §4: while a request is open the draft is frozen (an edit would make the later approval stale), and a request that can no longer go on offers only "ยกเลิกคำขอ".
+  const request = campaignRequest(operation, { settingsVersion: detail.settingsVersion, refused: refusedRequest });
+  const steps = operationSteps(operation, request.usable);
   const reauthenticated = Boolean(reauthUntil && Date.parse(reauthUntil) > Date.now());
-  const operationExpired = Boolean(operation && ['PREVIEW', 'AWAITING_APPROVAL'].includes(operation.state) && Date.parse(operation.expiresAt) <= Date.now());
-  const blocked = previewBlockedText(draft?.validationErrors, rows);
+  const previewBlocked = previewBlockedText(draft?.validationErrors, rows), resumeBlocked = resumeBlockedText(Boolean(draft), rows);
+  const blocked = buttons.preview ? previewBlocked : resumeBlocked;
   const canManage = detail.capabilities.includes(CAMPAIGN_MANAGE_PERMISSION);
+  const termsCopy = publishedTermsCopy(campaign.status);
+  const permission = permissionNote({ canManage, canApprove: steps.includes('approve'), needs: DETAIL_NEEDS });
 
   const preview = (action: 'PUBLISH' | 'RESUME') => run(
     () => previewCampaign(campaignId, { expectedVersion: detail.settingsVersion, ...(action === 'PUBLISH' && draft ? { draftVersion: draft.version } : {}), action, reason: publishReason.trim() }),
     result => { setOperation(result.operation); setRows(result.previewRows); });
   const step = (kind: CampaignOperationStep) => operation && run(() => stepOperation(operation, kind), result => {
     setOperation(result);
-    if (!['PREVIEW', 'AWAITING_APPROVAL'].includes(result.state)) { setNotice(operationStateText(result.state)); setPublishReason(''); setReload(value => value + 1); }
+    if (!isRequestOpen(result)) { setNotice(operationStateText(result.state)); setPublishReason(''); setReload(value => value + 1); }
   });
   const close = (action: 'pause' | 'end') => {
     const body = { expectedVersion: detail.settingsVersion, reason: closeReason.trim() };
@@ -228,7 +237,7 @@ export default function BillingCampaignDetailPage({ campaignId }: { campaignId: 
       {failure.kind === 'failed' && <button type="button" className={`${billingControl} mt-3`} onClick={() => setReload(value => value + 1)}>ลองอีกครั้ง</button>}
     </div>}
     {detail.mode === 'DISABLED' && <p className="rounded-lg border border-gray-200 bg-white p-4 text-gray-700">ยังไม่เปิดใช้การชำระเงินในระบบนี้ จึงยังเปิดหรือแก้แคมเปญไม่ได้</p>}
-    {!canManage && <p className="text-sm text-gray-600">บัญชีนี้ดูแคมเปญได้อย่างเดียว การแก้ไข เปิด พัก และจบแคมเปญต้องมีสิทธิ์ “{billingPermissionLabel(CAMPAIGN_MANAGE_PERMISSION)}”</p>}
+    {permission && <p className="text-sm text-gray-600">{permission}</p>}
 
     {editing ? <section ref={editRef} aria-label="แก้ร่างแคมเปญ" className="scroll-mt-4 space-y-4">
       <h2 className="text-lg font-semibold text-gray-900">{draft ? 'แก้ร่างแคมเปญ' : 'แก้เงื่อนไขเป็นร่างใหม่'}</h2>
@@ -238,20 +247,20 @@ export default function BillingCampaignDetailPage({ campaignId }: { campaignId: 
         onCancel={() => setEditing(false)} />
     </section> : <>
       <div className={`grid gap-4 ${published && showDraftCard ? 'lg:grid-cols-2' : ''}`}>
-        {published && <TermsCard title="เงื่อนไขที่ใช้อยู่" terms={published} endedAt={published.endedAt}
-          note="ลูกค้าเห็นและใช้สิทธิ์ตามเงื่อนไขนี้ เวลาแสดงเป็นเวลาประเทศไทย" />}
+        {published && <TermsCard title={termsCopy.title} terms={published} endedAt={published.endedAt} note={termsCopy.note} />}
         {showDraftCard && <TermsCard title="ร่างที่กำลังแก้" terms={draft?.values}
           note={draft ? 'ยังไม่มีผลกับลูกค้า จนกว่าจะตรวจสอบก่อนเปิดและยืนยัน' : 'ยังไม่มีร่าง กด “แก้เงื่อนไข” เพื่อสร้างร่างใหม่จากเงื่อนไขที่ใช้อยู่'}>
           {draft && draft.validationErrors.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
             <p className="font-semibold">ร่างยังไม่ครบ</p>
             <ul className="list-inside list-disc">{draft.validationErrors.map(item => <li key={`${item.field}:${item.code}`}>{draftErrorText(item)}</li>)}</ul>
           </div>}
+          {request.open && (buttons.edit || buttons.discard) && <p role="note" className="rounded-lg bg-amber-50 p-3 text-amber-900">{draftLockedText(operation!.allowedActions.includes('cancel'))}</p>}
           <div className="flex flex-wrap gap-3">
-            {buttons.edit && <button type="button" className={draft ? billingPrimaryControl : billingControl} disabled={busy} onClick={() => setEditing(true)}>{draft ? 'แก้ร่าง' : 'แก้เงื่อนไข'}</button>}
-            {buttons.discard && draft && (discarding ? <>
+            {buttons.edit && <button type="button" className={draft ? billingPrimaryControl : billingControl} disabled={busy || request.open} onClick={() => setEditing(true)}>{draft ? 'แก้ร่าง' : 'แก้เงื่อนไข'}</button>}
+            {buttons.discard && draft && (discarding && !request.open ? <>
               <button type="button" className={billingControl} disabled={busy} aria-busy={busy} onClick={() => void discard()}>ยืนยันยกเลิกร่างนี้</button>
               <button type="button" className={billingControl} disabled={busy} onClick={() => setDiscarding(false)}>ไม่ยกเลิก</button>
-            </> : <button type="button" className={billingControl} disabled={busy} onClick={() => setDiscarding(true)}>ยกเลิกร่าง</button>)}
+            </> : <button type="button" className={billingControl} disabled={busy || request.open} onClick={() => setDiscarding(true)}>ยกเลิกร่าง</button>)}
           </div>
         </TermsCard>}
       </div>
@@ -270,21 +279,21 @@ export default function BillingCampaignDetailPage({ campaignId }: { campaignId: 
           </div>
           {blocked && <p className="text-amber-800">{blocked}</p>}
           <div className="flex flex-wrap gap-3">
-            {buttons.preview && <button type="button" className={billingPrimaryControl} disabled={busy || !publishReason.trim() || Boolean(blocked)} aria-busy={busy} onClick={() => void preview('PUBLISH')}>ตรวจสอบก่อนเปิด</button>}
-            {buttons.resume && <button type="button" className={buttons.preview ? billingControl : billingPrimaryControl} disabled={busy || !publishReason.trim() || Boolean(blocked)} aria-busy={busy} onClick={() => void preview('RESUME')}>กลับมาเปิด</button>}
+            {buttons.preview && <button type="button" className={billingPrimaryControl} disabled={busy || !publishReason.trim() || Boolean(previewBlocked)} aria-busy={busy} onClick={() => void preview('PUBLISH')}>ตรวจสอบก่อนเปิด</button>}
+            {buttons.resume && <button type="button" className={buttons.preview ? billingControl : billingPrimaryControl} disabled={busy || !publishReason.trim() || Boolean(resumeBlocked)} aria-busy={busy} onClick={() => void preview('RESUME')}>กลับมาเปิด</button>}
           </div>
         </>}
         {operation && <div className="space-y-3">
-          <p className="font-semibold text-gray-900">{operationStateText(operation.state)}</p>
+          {request.open && !request.usable ? <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">{request.note}</p>
+            : <p className="font-semibold text-gray-900">{operationStateText(operation.state)}</p>}
           {operation.reason && <p className="text-gray-700 [overflow-wrap:anywhere]">เหตุผลที่ระบุ: {operation.reason}</p>}
           {['BLOCKED', 'FAILED', 'UNKNOWN'].includes(operation.state) && operation.errorCode && <p role="alert" className="text-red-800">{blockerText(operation.errorCode)}</p>}
-          {['PREVIEW', 'AWAITING_APPROVAL'].includes(operation.state) && <p className="text-gray-700">ใช้คำขอได้ถึง {formatThaiDateTime(operation.expiresAt)}
-            {operationExpired && ' · หมดอายุแล้ว ยกเลิกคำขอนี้แล้วตรวจสอบก่อนเปิดอีกครั้ง'}</p>}
+          {request.usable && <p className="text-gray-700">ใช้คำขอได้ถึง {formatThaiDateTime(operation.expiresAt)}</p>}
           {operation.approvalMode && <p className="text-gray-700">{billingApprovalLabel(operation.approvalMode)}</p>}
           {steps.some(item => item !== 'cancel') && <ReauthPanel until={reauthUntil} onConfirmed={setReauthUntil} />}
           <div className="flex flex-wrap gap-3">
             {steps.map(item => <button key={item} type="button" className={item === 'cancel' ? billingControl : billingPrimaryControl} aria-busy={busy}
-              disabled={busy || (item !== 'cancel' && (!reauthenticated || operationExpired))} onClick={() => void step(item)}>{CAMPAIGN_OPERATION_STEP_TEXT[item]}</button>)}
+              disabled={busy || (item !== 'cancel' && !reauthenticated)} onClick={() => void step(item)}>{CAMPAIGN_OPERATION_STEP_TEXT[item]}</button>)}
           </div>
         </div>}
       </section>}

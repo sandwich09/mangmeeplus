@@ -3,11 +3,11 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import type { BillingPromotionCampaignList } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
-import { billingControl, billingField, billingLink, billingPermissionLabel, billingPrimaryControl } from '../billing/billing-display';
+import { billingControl, billingField, billingLink, billingPrimaryControl } from '../billing/billing-display';
 import { listCampaigns } from './billing-campaigns.api';
 import {
-  CAMPAIGN_MANAGE_PERMISSION, CAMPAIGN_STATUS_META, CAMPAIGN_STATUSES, CAMPAIGN_TONE_CLASS, NO_CAMPAIGN_FILTERS, campaignLoadFailure, campaignModeMarker,
-  campaignOfferOptions, campaignStatusMeta, campaignTerms, campaignTitle, campaignUsageText, campaignWindowText, filterCampaigns, ruleLabel,
+  CAMPAIGN_MANAGE_PERMISSION, CAMPAIGN_STATUS_META, CAMPAIGN_STATUSES, CAMPAIGN_TONE_CLASS, LIST_NEEDS, NO_CAMPAIGN_FILTERS, campaignLoadFailure, campaignModeMarker,
+  campaignOfferOptions, campaignStatusMeta, campaignTerms, campaignTitle, campaignUsageText, campaignWindowText, filterCampaigns, permissionNote, ruleLabel,
   type CampaignFilters, type CampaignLoadFailure,
 } from './billing-campaigns.logic';
 
@@ -52,7 +52,7 @@ export default function BillingCampaignsPage() {
     {disabled && <p className="rounded-lg border border-gray-200 bg-white p-4 text-gray-700">ยังไม่เปิดใช้การชำระเงินในระบบนี้ จึงยังสร้างหรือใช้แคมเปญไม่ได้</p>}
     {list && !disabled && <>
       <div className="flex flex-wrap items-center gap-3">
-        {canCreate ? create : <p className="text-sm text-gray-600">บัญชีนี้ดูแคมเปญได้อย่างเดียว การสร้างแคมเปญต้องมีสิทธิ์ “{billingPermissionLabel(CAMPAIGN_MANAGE_PERMISSION)}”</p>}
+        {canCreate ? create : <p className="text-sm text-gray-600">{permissionNote({ canManage: false, canApprove: list.campaigns.some(item => item.allowedActions.includes('APPROVE')), needs: LIST_NEEDS })}</p>}
         <button type="button" className={billingControl} disabled={loading} aria-busy={loading} onClick={() => setReload(value => value + 1)}>โหลดรายการใหม่</button>
       </div>
       {list.campaigns.length > 0 && <form role="search" aria-label="ค้นหาและกรองแคมเปญ" onSubmit={event => event.preventDefault()}

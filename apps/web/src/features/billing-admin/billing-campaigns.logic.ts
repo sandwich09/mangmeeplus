@@ -5,6 +5,7 @@ import {
   BILLING_PROMOTION_STARTER_TEMPLATE,
   billingLabel,
   billingOfferLabel,
+  billingPermissionLabel,
   type BillingConfigurationOperation,
   type BillingInterval,
   type BillingMode,
@@ -100,6 +101,19 @@ export function termsFacts(terms: Terms | null | undefined): { label: string; va
 /** The terms a list row shows: what is live, else what is being drafted. */
 export const campaignTerms = (view: Pick<BillingPromotionCampaignView, 'published' | 'draft'>): Terms | null => view.published ?? view.draft?.values ?? null;
 export const campaignTitle = (view: Pick<BillingPromotionCampaignView, 'published' | 'draft'>): string => campaignTerms(view)?.internalName || 'แคมเปญที่ยังไม่ได้ตั้งชื่อ';
+
+const PUBLISHED_TERMS_COPY: Partial<Record<BillingPromotionCampaignStatus, { title: string; note: string }>> = {
+  ACTIVE: { title: 'เงื่อนไขที่ใช้อยู่', note: 'ลูกค้าเห็นและใช้สิทธิ์ตามเงื่อนไขนี้' },
+  SCHEDULED: { title: 'เงื่อนไขที่ตั้งเวลาไว้', note: 'ยังไม่ถึงเวลาเริ่ม ลูกค้ายังใช้สิทธิ์ตามเงื่อนไขนี้ไม่ได้' },
+  PAUSED: { title: 'เงื่อนไขที่พักไว้', note: 'ตอนนี้ลูกค้าใช้สิทธิ์ใหม่ตามเงื่อนไขนี้ไม่ได้ รายการที่จองสิทธิ์ไว้แล้วยังได้รับตามเดิม' },
+  ENDED: { title: 'เงื่อนไขของแคมเปญที่จบแล้ว', note: 'ปิดรับสิทธิ์แล้ว เก็บไว้ให้ดูเป็นประวัติ' },
+  CATALOG_STALE: { title: 'เงื่อนไขที่เผยแพร่ไว้', note: 'ระบบหยุดรับสิทธิ์ใหม่ เพราะราคา โควตา หรือภาษีของแพ็กเกจเปลี่ยนไปจากตอนเปิดแคมเปญ' },
+};
+/** The published terms are "in use" only while the campaign is active; a scheduled, paused, ended or stale one is worded for what it is. */
+export function publishedTermsCopy(status: string): { title: string; note: string } {
+  const copy = Object.hasOwn(PUBLISHED_TERMS_COPY, status) ? PUBLISHED_TERMS_COPY[status as BillingPromotionCampaignStatus] : undefined;
+  return { title: copy?.title ?? 'เงื่อนไขที่เผยแพร่แล้ว', note: `${copy ? `${copy.note} ` : ''}เวลาแสดงเป็นเวลาประเทศไทย` };
+}
 /** "used / cap": taken = reserved + consumed, a refund never lowers it. Unpublished has no live cap. */
 export function campaignUsageText(view: Pick<BillingPromotionCampaignView, 'published' | 'usage'>): string {
   if (!view.published) return 'ยังไม่เปิดให้ใช้สิทธิ์';
@@ -236,7 +250,9 @@ const UNCONFIRMED = 'ยังยืนยันผลไม่ได้ โห�
 export const CAMPAIGN_ERROR_TEXT: Record<string, string> = {
   CONTROL_PREVIEW_STALE: 'ข้อมูลเปลี่ยนไประหว่างที่เปิดหน้านี้ หรือคำขอหมดอายุ ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจสอบอีกครั้งก่อนดำเนินการต่อ',
   CONTROL_REAUTH_REQUIRED: 'ยืนยันรหัสผ่านก่อน แล้วกดดำเนินการรายการเดิมอีกครั้ง',
-  CONTROL_PROMOTION_INVALID: 'ข้อมูลแคมเปญยังไม่ถูกต้องหรือไม่ตรงกับแบบตั้งต้น ตรวจชื่อ ช่วงเวลา และรอบที่เลือก แล้วตรวจสอบก่อนเปิดอีกครั้ง',
+  // Two causes share this code: the campaign's own fields, and a catalog that no longer matches the template (which editing the campaign cannot fix).
+  CONTROL_PROMOTION_INVALID: `ข้อมูลแคมเปญไม่ตรงกับแบบตั้งต้น ตรวจชื่อ ช่วงเวลา และรอบที่เลือก อีกสาเหตุคือแพ็กเกจเริ่มต้นไม่ตรงกับแบบตั้งต้น ซึ่งใช้ได้เฉพาะเมื่อราคารายเดือน ${bahtText(BILLING_PROMOTION_STARTER_TEMPLATE.monthlyPriceSatang)} และใบเสร็จ ${
+    BILLING_PROMOTION_STARTER_TEMPLATE.rules.map(rule => `${rule.baseReceiptUnits} ใบต่อ${rule.interval === 'year' ? 'ปี' : 'เดือน'}`).join(' ')} เรื่องนี้แก้ที่แคมเปญไม่ได้ เมื่อแก้ครบแล้วให้ตรวจสอบก่อนเปิดอีกครั้ง`,
   CONTROL_PROMOTION_NOT_FOUND: 'ไม่พบแคมเปญนี้ อาจถูกยกเลิกร่างไปแล้ว กลับไปรายการแคมเปญเพื่อดูข้อมูลล่าสุด',
   CONTROL_PROMOTION_ENDED: 'แคมเปญนี้จบแล้ว แก้ไข พัก หรือเปิดใหม่ไม่ได้ ถ้าจะจัดรอบใหม่ให้สร้างแคมเปญใหม่',
   CONTROL_PROMOTION_OVERLAP: 'มีแคมเปญอื่นของแพ็กเกจและรอบเดียวกันในช่วงเวลานี้อยู่แล้ว เลื่อนช่วงเวลาหรือจบแคมเปญเดิมก่อน',
@@ -295,9 +311,48 @@ export function campaignButtons(allowed: readonly BillingPromotionCampaignAction
 export type CampaignOperationStep = 'submit' | 'approve' | 'cancel';
 export const CAMPAIGN_OPERATION_STEPS: readonly CampaignOperationStep[] = ['submit', 'approve', 'cancel'];
 export const CAMPAIGN_OPERATION_STEP_TEXT: Record<CampaignOperationStep, string> = { submit: 'ส่งคำขอ', approve: 'อนุมัติและเปิดใช้', cancel: 'ยกเลิกคำขอ' };
-/** The open publication's own allowedActions drive the workflow buttons, in a fixed order. */
-export function operationSteps(operation: Pick<BillingConfigurationOperation, 'allowedActions'> | null): CampaignOperationStep[] {
-  return operation ? CAMPAIGN_OPERATION_STEPS.filter(step => operation.allowedActions.includes(step)) : [];
+/** The open publication's own allowedActions drive the workflow buttons, in a fixed order. A request that can no longer go on offers only "ยกเลิกคำขอ". */
+export function operationSteps(operation: Pick<BillingConfigurationOperation, 'allowedActions'> | null, usable = true): CampaignOperationStep[] {
+  return operation ? CAMPAIGN_OPERATION_STEPS.filter(step => operation.allowedActions.includes(step) && (usable || step === 'cancel')) : [];
+}
+
+// ── an open publication request ──
+
+const OPEN_REQUEST_STATES: readonly string[] = ['PREVIEW', 'AWAITING_APPROVAL'];
+/** Waiting on someone: the draft behind it is frozen (spec §4 "รออนุมัติ … ห้ามแก้ข้อมูลขณะรอ"), or the later approval would be refused as stale. */
+export const isRequestOpen = (operation: Pick<BillingConfigurationOperation, 'state'> | null | undefined): boolean => !!operation && OPEN_REQUEST_STATES.includes(operation.state);
+/** One version of one request, so an answer about it is never read for a later version. */
+export const requestKey = (operation: Pick<BillingConfigurationOperation, 'id' | 'version'>): string => `${operation.id}:${operation.version}`;
+export type CampaignRequest = { open: boolean; usable: boolean; note: string | null };
+/**
+ * Whether the open request can still be submitted or approved. The server refuses both (CONTROL_PREVIEW_STALE) once the request expired, once
+ * the billing settings moved on since it was previewed, or — `refused` — when it already answered stale for this very version of the request;
+ * and it leaves the request as it was, so without this the admin is offered the same button again and again. `note` is the one sentence that
+ * leads out: cancel the request, then check before opening again.
+ */
+export function campaignRequest(operation: Pick<BillingConfigurationOperation, 'id' | 'state' | 'version' | 'expiresAt' | 'sourceVersion' | 'allowedActions'> | null | undefined,
+  input: { settingsVersion: number; refused: string | null; now?: number }): CampaignRequest {
+  if (!operation || !isRequestOpen(operation)) return { open: false, usable: false, note: null };
+  const redo = `${operation.allowedActions.includes('cancel') ? 'ยกเลิกคำขอนี้' : 'ให้ผู้ส่งคำขอยกเลิกคำขอนี้'}แล้วตรวจสอบก่อนเปิดอีกครั้ง`;
+  if (Date.parse(operation.expiresAt) <= (input.now ?? Date.now())) return { open: true, usable: false, note: `คำขอนี้หมดอายุเมื่อ ${formatThaiDateTime(operation.expiresAt)} ${redo}` };
+  if (operation.sourceVersion !== input.settingsVersion || input.refused === requestKey(operation))
+    return { open: true, usable: false, note: `คำขอนี้ใช้ต่อไม่ได้แล้ว เพราะข้อมูลเปลี่ยนไปหลังตรวจสอบก่อนเปิด ${redo}` };
+  return { open: true, usable: true, note: null };
+}
+/** Where "แก้ร่าง" and "ยกเลิกร่าง" were, while a request is open: one sentence, and what to do first. */
+export const draftLockedText = (canCancel: boolean): string =>
+  `มีคำขอเปิดแคมเปญค้างอยู่ จึงแก้หรือยกเลิกร่างไม่ได้ ต้อง${canCancel ? '' : 'ให้ผู้ส่งคำขอ'}กด “${CAMPAIGN_OPERATION_STEP_TEXT.cancel}” ก่อน`;
+
+export const DETAIL_NEEDS = 'การแก้ไข เปิด พัก และจบแคมเปญ';
+export const LIST_NEEDS = 'การสร้างแคมเปญ';
+/**
+ * Why an account sees no edit buttons. A reviewer who may approve the open request is told so, not that the account can only look.
+ * `needs` is what the manage permission is needed for on that screen.
+ */
+export function permissionNote(input: { canManage: boolean; canApprove: boolean; needs: string }): string | null {
+  if (input.canManage) return null;
+  const need = `${input.needs}ต้องมีสิทธิ์ “${billingPermissionLabel(CAMPAIGN_MANAGE_PERMISSION)}”`;
+  return input.canApprove ? `บัญชีนี้อนุมัติคำขอเปิดแคมเปญที่ส่งมาแล้วได้ แต่${need}` : `บัญชีนี้ดูแคมเปญได้อย่างเดียว ${need}`;
 }
 const OPERATION_STATE_TEXT: Record<string, string> = {
   PREVIEW: 'ตรวจตัวอย่างแล้ว ส่งคำขอเพื่อให้ผู้อนุมัติยืนยัน',
@@ -312,6 +367,11 @@ export function previewBlockedText(draftErrors: readonly BillingPromotionDraftEr
   if (rows.some(row => row.blockers.length)) return 'ตัวอย่างพบเรื่องที่ต้องแก้ก่อนเปิด ตามรายการด้านบน';
   return null;
 }
+/**
+ * "กลับมาเปิด" reopens the published terms and ignores the draft (the server builds it from them): a draft's gaps never block it, and while a
+ * draft exists the rows on screen are the draft's, not the terms being reopened, so they cannot block it either.
+ */
+export const resumeBlockedText = (hasDraft: boolean, rows: readonly BillingPromotionPreviewRow[]): string | null => (hasDraft ? null : previewBlockedText(undefined, rows));
 
 // ── pause / end ──
 
