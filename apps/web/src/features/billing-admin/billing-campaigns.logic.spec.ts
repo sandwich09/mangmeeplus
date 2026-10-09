@@ -2,14 +2,14 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { BILLING_PROMOTION_STARTER_TEMPLATE, type BillingPromotionCampaign, type BillingPromotionCampaignAction, type BillingPromotionCampaignStatus,
+import { BILLING_PROMOTION_STARTER_TEMPLATE, type BillingConfigurationOperation, type BillingPromotionCampaign, type BillingPromotionCampaignAction, type BillingPromotionCampaignStatus,
   type BillingPromotionCampaignView, type BillingPromotionDraftError, type BillingPromotionPreviewRow, type BillingPromotionReportCompany } from '@watchdog-bms/contracts';
 import {
   bahtText, blockerText, campaignButtons, campaignDraftInput, campaignError, campaignFormFromTerms, campaignFormProblems, campaignLoadFailure,
-  campaignModeMarker, campaignOfferOptions, campaignStatusMeta, campaignTitle, campaignUsageText, campaignWindowText, CAMPAIGN_CLOSE_COPY,
-  CAMPAIGN_ERROR_TEXT, CAMPAIGN_SAVED_NOTICE, CAMPAIGN_STATUS_META, CAMPAIGN_STATUSES, countText, DRAFT_STALE_TEXT, draftErrorsByField, draftErrorText, emptyCampaignForm, filterCampaigns, NO_CAMPAIGN_FILTERS,
-  operationStateText, operationSteps, pendingCheckoutsText, previewBlockedText, previewRowView, reportCountItems, reportMoneyView, reportRowView,
-  reuseIntent, safeAdminHref, templateRuleSummary, termsFacts, type CampaignFormValues,
+  campaignModeMarker, campaignOfferOptions, campaignRequest, campaignStatusMeta, campaignTitle, campaignUsageText, campaignWindowText, CAMPAIGN_CLOSE_COPY,
+  CAMPAIGN_ERROR_TEXT, CAMPAIGN_OPERATION_STEP_TEXT, CAMPAIGN_SAVED_NOTICE, CAMPAIGN_STATUS_META, CAMPAIGN_STATUSES, countText, DETAIL_NEEDS, DRAFT_STALE_TEXT, draftErrorsByField, draftErrorText, draftLockedText,
+  emptyCampaignForm, filterCampaigns, isRequestOpen, LIST_NEEDS, NO_CAMPAIGN_FILTERS, operationStateText, operationSteps, pendingCheckoutsText, permissionNote, previewBlockedText, previewRowView,
+  publishedTermsCopy, reportCountItems, reportMoneyView, reportRowView, requestKey, resumeBlockedText, reuseIntent, safeAdminHref, templateRuleSummary, termsFacts, type CampaignFormValues,
 } from './billing-campaigns.logic';
 
 /** Text an Admin reads must never carry an enum key, a code, an id or a hash. */
@@ -39,6 +39,8 @@ function row(overrides: Partial<BillingPromotionPreviewRow> = {}): BillingPromot
     paidMonths: 1, bonusMonths: 1, totalMonths: 2, baseReceiptUnits: 30, bonusReceiptUnits: 30, totalReceiptUnits: 60,
     exampleStartsAt: '2026-10-05T03:00:00.000Z', paidEnd: '2026-11-05T03:00:00.000Z', benefitEnd: '2026-12-05T03:00:00.000Z', renewalTotalSatang: 24900, blockers: [], ...overrides };
 }
+
+const source = (page: string) => readFileSync(join(__dirname, page), 'utf8');
 
 describe('words an Admin reads', () => {
   it('has a Thai label, help and tone for every campaign status, and a safe fallback for an unknown one', () => {
@@ -420,10 +422,177 @@ describe('the usage report', () => {
   });
 });
 
+describe('a publication request that is open (spec §4 "รออนุมัติ")', () => {
+  const NOW = Date.parse('2026-10-09T03:00:00.000Z');
+  const op = (over: Partial<BillingConfigurationOperation> = {}) => ({ id: 'op-1', state: 'PREVIEW', version: 2, sourceVersion: 7, expiresAt: '2026-10-09T03:10:00.000Z',
+    allowedActions: ['submit', 'cancel'], ...over }) as Pick<BillingConfigurationOperation, 'id' | 'state' | 'version' | 'sourceVersion' | 'expiresAt' | 'allowedActions'>;
+  const ask = (operation: ReturnType<typeof op> | null, over: { settingsVersion?: number; refused?: string | null } = {}) =>
+    campaignRequest(operation, { settingsVersion: 7, refused: null, now: NOW, ...over });
+
+  it('is open only while it waits on someone', () => {
+    for (const state of ['PREVIEW', 'AWAITING_APPROVAL']) assert.equal(isRequestOpen(op({ state } as never)), true, state);
+    for (const state of ['DRAFT', 'CANCELLED', 'SUCCEEDED', 'BLOCKED', 'FAILED', 'UNKNOWN', 'SCHEDULED']) assert.equal(isRequestOpen(op({ state } as never)), false, state);
+    assert.equal(isRequestOpen(null), false);
+    assert.deepEqual(ask(null), { open: false, usable: false, note: null });
+    assert.deepEqual(ask(op({ state: 'CANCELLED' } as never)), { open: false, usable: false, note: null });
+  });
+
+  it('can still be submitted or approved only while it is fresh, on the settings it was checked against, and not already refused', () => {
+    assert.deepEqual(ask(op()), { open: true, usable: true, note: null });
+    assert.deepEqual(ask(op({ state: 'AWAITING_APPROVAL', allowedActions: ['approve'] } as never)), { open: true, usable: true, note: null });
+    const moved = ask(op(), { settingsVersion: 8 }), expired = ask(op({ expiresAt: '2026-10-09T02:59:59.000Z' })), refused = ask(op(), { refused: requestKey(op()) });
+    for (const dead of [moved, expired, refused]) { assert.equal(dead.open, true); assert.equal(dead.usable, false); assert.ok(dead.note); }
+    // The expiry instant itself is over, like the server's `expiresAt <= now`.
+    assert.equal(ask(op({ expiresAt: '2026-10-09T03:00:00.000Z' })).usable, false);
+    // An answer about one version of the request says nothing about the next one (somebody else moved it).
+    assert.equal(ask(op({ version: 3 }), { refused: requestKey(op()) }).usable, true);
+    assert.equal(ask(op({ id: 'op-2' }), { refused: requestKey(op()) }).usable, true);
+    assert.equal(requestKey(op()), 'op-1:2');
+  });
+
+  it('leads out of a dead request in one sentence: cancel it, then check before opening again', () => {
+    assert.equal(ask(op(), { settingsVersion: 8 }).note, 'คำขอนี้ใช้ต่อไม่ได้แล้ว เพราะข้อมูลเปลี่ยนไปหลังตรวจสอบก่อนเปิด ยกเลิกคำขอนี้แล้วตรวจสอบก่อนเปิดอีกครั้ง');
+    assert.equal(ask(op({ expiresAt: '2026-10-09T02:00:00.000Z' })).note, 'คำขอนี้หมดอายุเมื่อ 9 ต.ค. 2569 09:00 น. ยกเลิกคำขอนี้แล้วตรวจสอบก่อนเปิดอีกครั้ง');
+    // A reviewer who cannot cancel is told who can; nobody is told to press a button that is not there.
+    const reviewer = ask(op({ state: 'AWAITING_APPROVAL', allowedActions: ['approve'] } as never), { settingsVersion: 8 });
+    assert.match(reviewer.note!, /ให้ผู้ส่งคำขอยกเลิกคำขอนี้แล้วตรวจสอบก่อนเปิดอีกครั้ง$/);
+    for (const note of [reviewer.note!, ask(op(), { settingsVersion: 8 }).note!]) { assert.match(note, /[ก-๙]/); assert.doesNotMatch(note, MACHINE_TOKEN); assert.doesNotMatch(note, /\n/); }
+  });
+
+  it('offers only "ยกเลิกคำขอ" once the request cannot go on; the other buttons are the server\'s answer as before', () => {
+    const both = op({ allowedActions: ['submit', 'cancel'] });
+    assert.deepEqual(operationSteps(both), ['submit', 'cancel']);
+    assert.deepEqual(operationSteps(both, true), ['submit', 'cancel']);
+    assert.deepEqual(operationSteps(both, false), ['cancel']);
+    assert.deepEqual(operationSteps(op({ allowedActions: ['approve'] } as never), false), [], 'a reviewer without cancel is left with no button to loop on');
+    assert.deepEqual(operationSteps(null, false), []);
+  });
+
+  it('freezes the draft behind an open request, with one sentence that says what to press first', () => {
+    const cancel = CAMPAIGN_OPERATION_STEP_TEXT.cancel;
+    assert.equal(draftLockedText(true), `มีคำขอเปิดแคมเปญค้างอยู่ จึงแก้หรือยกเลิกร่างไม่ได้ ต้องกด “${cancel}” ก่อน`);
+    assert.equal(draftLockedText(false), `มีคำขอเปิดแคมเปญค้างอยู่ จึงแก้หรือยกเลิกร่างไม่ได้ ต้องให้ผู้ส่งคำขอกด “${cancel}” ก่อน`);
+    for (const text of [draftLockedText(true), draftLockedText(false)]) { assert.doesNotMatch(text, MACHINE_TOKEN); assert.doesNotMatch(text, /\n/); }
+    // Wired: both draft buttons are disabled while a request is open, the confirmation of a discard cannot stay on screen, and the sentence stands in their place.
+    const text = source('BillingCampaignDetailPage.tsx');
+    assert.match(text, /\{request\.open && \(buttons\.edit \|\| buttons\.discard\) && <p role="note"[^>]*>\{draftLockedText\(operation!\.allowedActions\.includes\('cancel'\)\)\}<\/p>\}/);
+    assert.match(text, /disabled=\{busy \|\| request\.open\} onClick=\{\(\) => setEditing\(true\)\}/);
+    assert.match(text, /discarding && !request\.open \? <>/);
+    assert.match(text, /disabled=\{busy \|\| request\.open\} onClick=\{\(\) => setDiscarding\(true\)\}/);
+  });
+
+  it('remembers which version of the request answered stale, reloads, and offers only cancel until it changes', () => {
+    const text = source('BillingCampaignDetailPage.tsx');
+    assert.match(text, /if \(problem\.kind === 'stale'\) \{\s*if \(isRequestOpen\(operation\)\) setRefusedRequest\(requestKey\(operation!\)\);\s*setReload\(value => value \+ 1\);\s*\}/);
+    assert.match(text, /campaignRequest\(operation, \{ settingsVersion: detail\.settingsVersion, refused: refusedRequest \}\)/);
+    assert.match(text, /\{request\.open && !request\.usable \? <p role="alert"[^>]*>\{request\.note\}<\/p>/);
+    assert.match(text, /disabled=\{busy \|\| \(item !== 'cancel' && !reauthenticated\)\}/);
+    assert.doesNotMatch(text, /operationExpired/, 'one rule for expiry and staleness');
+  });
+});
+
+describe('"กลับมาเปิด" ignores the draft', () => {
+  it('is blocked by nothing from a draft: not its gaps, not the rows that belong to it', () => {
+    const gaps: BillingPromotionDraftError[] = [{ field: 'cap', code: 'REQUIRED' }];
+    const blocked = [row({ blockers: ['CONTROL_PROMOTION_CATALOG_STALE'] })];
+    assert.equal(resumeBlockedText(true, []), null);
+    assert.equal(resumeBlockedText(true, blocked), null, 'while a draft exists the rows are the draft\'s');
+    assert.ok(previewBlockedText(gaps, []), 'the preview of that same draft is still blocked');
+    // With no draft the rows are the published terms being reopened: their blockers are real.
+    assert.equal(resumeBlockedText(false, [row()]), null);
+    assert.match(resumeBlockedText(false, blocked)!, /ต้องแก้ก่อนเปิด/);
+    const text = source('BillingCampaignDetailPage.tsx');
+    assert.match(text, /disabled=\{busy \|\| !publishReason\.trim\(\) \|\| Boolean\(resumeBlocked\)\} aria-busy=\{busy\} onClick=\{\(\) => void preview\('RESUME'\)\}/);
+    assert.match(text, /disabled=\{busy \|\| !publishReason\.trim\(\) \|\| Boolean\(previewBlocked\)\} aria-busy=\{busy\} onClick=\{\(\) => void preview\('PUBLISH'\)\}/);
+    assert.match(text, /const blocked = buttons\.preview \? previewBlocked : resumeBlocked;/);
+  });
+});
+
+describe('the published terms are worded for the status the campaign is in', () => {
+  it('calls only an active campaign\'s terms "in use", and never says a customer uses terms that are scheduled, paused, ended or stale', () => {
+    assert.deepEqual(publishedTermsCopy('ACTIVE'), { title: 'เงื่อนไขที่ใช้อยู่', note: 'ลูกค้าเห็นและใช้สิทธิ์ตามเงื่อนไขนี้ เวลาแสดงเป็นเวลาประเทศไทย' });
+    for (const status of ['SCHEDULED', 'PAUSED', 'ENDED', 'CATALOG_STALE']) {
+      const { title, note } = publishedTermsCopy(status);
+      assert.doesNotMatch(title, /ที่ใช้อยู่/, status);
+      assert.doesNotMatch(note, /ลูกค้าเห็นและใช้สิทธิ์ตามเงื่อนไขนี้/, status);
+      assert.match(note, /เวลาแสดงเป็นเวลาประเทศไทย$/, status);
+    }
+    assert.match(publishedTermsCopy('SCHEDULED').note, /ยังใช้สิทธิ์.*ไม่ได้/);
+    assert.match(publishedTermsCopy('PAUSED').note, /ใช้สิทธิ์ใหม่.*ไม่ได้/);
+    assert.match(publishedTermsCopy('ENDED').note, /ปิดรับสิทธิ์แล้ว/);
+    assert.match(publishedTermsCopy('CATALOG_STALE').note, /หยุดรับสิทธิ์ใหม่/);
+    const titles = ['ACTIVE', 'SCHEDULED', 'PAUSED', 'ENDED', 'CATALOG_STALE'].map(status => publishedTermsCopy(status).title);
+    assert.equal(new Set(titles).size, titles.length, 'one heading per status');
+    // A status we do not know claims nothing; neither does the one a campaign has only before it is published.
+    for (const status of ['DRAFT', 'AWAITING_APPROVAL', 'SOMETHING_NEW', 'constructor']) assert.deepEqual(publishedTermsCopy(status), { title: 'เงื่อนไขที่เผยแพร่แล้ว', note: 'เวลาแสดงเป็นเวลาประเทศไทย' }, status);
+    for (const status of STATUSES) for (const text of Object.values(publishedTermsCopy(status))) assert.doesNotMatch(text, MACHINE_TOKEN, status);
+    const text = source('BillingCampaignDetailPage.tsx');
+    assert.match(text, /<TermsCard title=\{termsCopy\.title\} terms=\{published\} endedAt=\{published\.endedAt\} note=\{termsCopy\.note\} \/>/);
+    assert.doesNotMatch(text, /title="เงื่อนไขที่ใช้อยู่"/);
+  });
+});
+
+describe('the sentence for CONTROL_PROMOTION_INVALID is true for both of its causes', () => {
+  it('names the campaign\'s own fields and the package price and quota the template needs, and says the second cannot be fixed on the campaign', () => {
+    const text = CAMPAIGN_ERROR_TEXT.CONTROL_PROMOTION_INVALID!;
+    // Cause 1, editable: the campaign's own fields.
+    assert.match(text, /ชื่อ ช่วงเวลา และรอบที่เลือก/);
+    // Cause 2, not editable: the catalog must be the template's price and quota — read from the template, never typed here.
+    const template = BILLING_PROMOTION_STARTER_TEMPLATE;
+    assert.ok(text.includes(`ราคารายเดือน ${bahtText(template.monthlyPriceSatang)}`), 'the monthly price');
+    for (const rule of template.rules) assert.ok(text.includes(`${rule.baseReceiptUnits} ใบต่อ${rule.interval === 'year' ? 'ปี' : 'เดือน'}`), `base receipts ${rule.interval}`);
+    assert.match(text, /แก้ที่แคมเปญไม่ได้/);
+    assert.doesNotMatch(text, MACHINE_TOKEN);
+    // The preview rows print the same sentence for the same code.
+    assert.equal(blockerText('CONTROL_PROMOTION_INVALID'), text);
+    assert.equal(previewRowView(row({ blockers: ['CONTROL_PROMOTION_INVALID'] })).blockers[0], text);
+  });
+});
+
+describe('who is told they can only look', () => {
+  it('tells an account that may approve the open request so, and only then drops "ดูได้อย่างเดียว"', () => {
+    const cannot = 'บัญชีนี้ดูแคมเปญได้อย่างเดียว การแก้ไข เปิด พัก และจบแคมเปญต้องมีสิทธิ์ “ตั้งนโยบาย”';
+    assert.equal(permissionNote({ canManage: true, canApprove: false, needs: DETAIL_NEEDS }), null);
+    assert.equal(permissionNote({ canManage: true, canApprove: true, needs: DETAIL_NEEDS }), null);
+    assert.equal(permissionNote({ canManage: false, canApprove: false, needs: DETAIL_NEEDS }), cannot);
+    const approver = permissionNote({ canManage: false, canApprove: true, needs: DETAIL_NEEDS })!;
+    assert.equal(approver, 'บัญชีนี้อนุมัติคำขอเปิดแคมเปญที่ส่งมาแล้วได้ แต่การแก้ไข เปิด พัก และจบแคมเปญต้องมีสิทธิ์ “ตั้งนโยบาย”');
+    assert.doesNotMatch(approver, /ดูแคมเปญได้อย่างเดียว/);
+    assert.equal(permissionNote({ canManage: false, canApprove: false, needs: LIST_NEEDS }), 'บัญชีนี้ดูแคมเปญได้อย่างเดียว การสร้างแคมเปญต้องมีสิทธิ์ “ตั้งนโยบาย”');
+    for (const text of [cannot, approver]) assert.doesNotMatch(text, MACHINE_TOKEN);
+    // The detail page asks whether the request it offers can be approved (a dead request offers no approve); the list asks whether any campaign lists APPROVE for the caller.
+    const detail = source('BillingCampaignDetailPage.tsx'), list = source('BillingCampaignsPage.tsx');
+    assert.match(detail, /permissionNote\(\{ canManage, canApprove: steps\.includes\('approve'\), needs: DETAIL_NEEDS \}\)/);
+    assert.match(list, /permissionNote\(\{ canManage: false, canApprove: list\.campaigns\.some\(item => item\.allowedActions\.includes\('APPROVE'\)\), needs: LIST_NEEDS \}\)/);
+    for (const page of [detail, list]) assert.doesNotMatch(page, /ดูแคมเปญได้อย่างเดียว/, 'the sentence lives in one place');
+  });
+});
+
+describe('the issue panel knows the promotion review', () => {
+  const panel = source('BillingIssueResolutionPanel.tsx');
+  const branch = panel.slice(panel.indexOf('issue.kind === BILLING_PROMOTION_REVIEW_ISSUE'), panel.indexOf("issue.kind === 'PROVIDER_EVENT_FAILED'"));
+  const discount = panel.slice(panel.indexOf('issue.kind === BILLING_EVENT_DISCOUNT_REVIEW_ISSUE'), panel.indexOf('issue.kind === BILLING_PROMOTION_REVIEW_ISSUE'));
+  it('has its own branch with the event-discount branch\'s link logic: the bill for those who may read money, the company otherwise', () => {
+    assert.ok(branch.length > 200, 'a branch exists');
+    assert.match(panel, /import \{ BILLING_EVENT_DISCOUNT_REVIEW_ISSUE, BILLING_PROMOTION_REVIEW_ISSUE,/);
+    const link = /href = company && financial \? `\$\{company\}\/invoices\/\$\{ref\}` : company;/;
+    assert.match(discount, link);
+    assert.match(branch, link);
+    assert.match(branch, /action = financial \? 'ตรวจบิลที่ใช้โปรโมชั่น' : 'เปิดข้อมูลบริษัทเพื่อตรวจโปรโมชั่น';/);
+  });
+  it('says both causes in plain Thai and what the operator decides from', () => {
+    const description = /description = '([^']+)'/.exec(branch)?.[1] ?? '';
+    assert.match(description, /เลือกใช้โปรโมชั่น/);
+    assert.match(description, /ไม่มีเดือนแถมและใบเสร็จแถม/, 'the shop kept a normal purchase, without the bonus');
+    assert.match(description, /คืนเงินเต็มจำนวน.*ยุติสิทธิ์ที่ยังไม่ใช้/, 'a fully refunded promotion purchase that could not be ended');
+    assert.match(description, /ตรวจบิลกับรายชื่อร้านที่ใช้สิทธิ์ในรายงานของแคมเปญ/);
+    assert.doesNotMatch(description, MACHINE_TOKEN);
+  });
+});
+
 // Source-text guards (same idea as sales-console.qa.spec.ts): the pages are client components behind useEffect, so nothing here
 // renders them; these hold the decisions a reviewer would otherwise re-check by eye on every diff.
 const PAGES = ['BillingCampaignsPage.tsx', 'BillingCampaignFormPage.tsx', 'BillingCampaignDetailPage.tsx', 'BillingCampaignReportSection.tsx'];
-const source = (page: string) => readFileSync(join(__dirname, page), 'utf8');
 
 describe('campaign screens print no machine token', () => {
   it('scans every campaign page component in the feature', () => {
@@ -453,6 +622,6 @@ describe('campaign screens print no machine token', () => {
   it('every button the detail page shows is tied to a server action or an open operation', () => {
     const text = source('BillingCampaignDetailPage.tsx');
     for (const key of ['edit', 'discard', 'preview', 'resume', 'pause', 'end']) assert.match(text, new RegExp(`buttons\\.${key}\\b`), key);
-    assert.match(text, /operationSteps\(operation\)/);
+    assert.match(text, /operationSteps\(operation, request\.usable\)/);
   });
 });

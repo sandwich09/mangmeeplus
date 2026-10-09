@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { BILLING_EVENT_DISCOUNT_REVIEW_ISSUE, type BillingApplyInvoiceView, type BillingOperatorIssue, type BillingOperatorOverview } from '@watchdog-bms/contracts';
+import { BILLING_EVENT_DISCOUNT_REVIEW_ISSUE, BILLING_PROMOTION_REVIEW_ISSUE, type BillingApplyInvoiceView, type BillingOperatorIssue, type BillingOperatorOverview } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { billingControl, billingPrimaryControl, billingLabel } from '../billing/billing-display';
 import BillingOperationPanel from './BillingOperationPanel';
@@ -74,6 +74,11 @@ function nextStep(issue: BillingOperatorIssue, overview: BillingOperatorOverview
     // The shop keeps what it paid for; an operator checks the bill and the discount list, then closes it.
     description = 'ลูกค้าจ่ายบิลนี้ในยอดที่ลดด้วยส่วนลดจากงาน แต่ระบบไม่พบส่วนลดที่จองไว้ให้รายการนี้ สิทธิ์ของร้านเปิดตามยอดที่จ่ายแล้ว ให้ตรวจบิลกับรายการส่วนลดจากงานของร้าน แล้วปิดเรื่องเมื่อตรวจเสร็จ';
     action = financial ? 'ตรวจบิลที่ใช้ส่วนลด' : 'เปิดรายการส่วนลดของบริษัท'; href = company && financial ? `${company}/invoices/${ref}` : company;
+  } else if (issue.kind === BILLING_PROMOTION_REVIEW_ISSUE) {
+    // Promotion spec §6: the bill was paid with a promotion chosen but its right could not be used for it (the shop keeps a normal purchase, without the bonus),
+    // or a fully refunded promotion purchase could not be ended automatically. An operator checks the bill and the campaign's usage list, then decides and closes it.
+    description = 'ลูกค้าจ่ายบิลนี้โดยเลือกใช้โปรโมชั่น แต่ระบบใช้สิทธิ์โปรโมชั่นกับบิลนี้ไม่ได้ (สิทธิ์ที่จองไว้ถูกคืนแล้วหรือถูกใช้กับบิลอื่น) ร้านจึงได้แพ็กเกจตามยอดที่จ่ายแล้วโดยไม่มีเดือนแถมและใบเสร็จแถม หรือเป็นบิลโปรโมชั่นที่คืนเงินเต็มจำนวนแล้ว แต่ระบบยุติสิทธิ์ที่ยังไม่ใช้ให้เองไม่ได้ ให้ตรวจบิลกับรายชื่อร้านที่ใช้สิทธิ์ในรายงานของแคมเปญ แล้วตัดสินใจและปิดเรื่องเมื่อตรวจเสร็จ';
+    action = financial ? 'ตรวจบิลที่ใช้โปรโมชั่น' : 'เปิดข้อมูลบริษัทเพื่อตรวจโปรโมชั่น'; href = company && financial ? `${company}/invoices/${ref}` : company;
   } else if (issue.kind === 'PROVIDER_EVENT_FAILED') {
     description = 'มั่งมีรับข้อมูลจาก Stripe แล้ว แต่ตรวจรายการนั้นไม่สำเร็จ เปิดรายการเดิมเพื่อตรวจและลองประมวลผลอีกครั้ง'; action = 'ตรวจรายการแจ้งจาก Stripe'; href = platform ? `/system/billing/provider-events/${ref}` : null;
   } else if (issue.kind.startsWith('PROVIDER_SCAN_')) {
