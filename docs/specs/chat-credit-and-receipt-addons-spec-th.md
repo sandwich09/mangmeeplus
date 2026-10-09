@@ -196,7 +196,7 @@ V1 ไม่มี coupon, ส่วนลด, ตั๋วงานอีเว
 
 PROMOTION คือใบเสร็จโบนัสจากแคมเปญโปรโมชั่น อยู่กลุ่มแพ็กเกจ ใช้ได้กับไฟล์ทุกแบบเหมือนโควตาแพ็กเกจ หมดอายุตายตัวเมื่อสิ้นช่วงแถม ไม่ยกยอด และเมื่อหมดอายุพร้อมโควตาหลักจะถูกหักก่อน (ดู starter-249-bonus-month-promotion-spec-th.md §5)
 
-Flow ของแพ็กเกจต้องอ่านเฉพาะยอดกลุ่มแพ็กเกจ: projection ใน quote (`billing.service.ts:495`) และตอน apply (`billing-reconciler.service.ts:600`) ใช้ helper ใหม่ที่นับเฉพาะ kind ของแพ็กเกจ ไม่นับยอด ADD_ON เป็นยอดแพ็กที่ยกไป. Whitelist ของ writer ฝั่งแพ็กเกจคงเดิมและไม่รวม kind ใหม่ (`billing-receipt-grants.ts:48-54`, `billing-free-days.ts:183-184`, `billing-reconciler.service.ts:1221-1222,1349-1350`, `billing-end-package.ts:63-64`, `billing-package-request.ts:21-22`; `billing-upgrade.ts:23-26` อ่านทุก kind แล้วกรองเอง) (C06)
+Flow ของแพ็กเกจต้องอ่านเฉพาะยอดกลุ่มแพ็กเกจ: projection ใน quote (`billing.service.ts:495`) และตอน apply (`billing-reconciler.service.ts:600`) ใช้ helper ใหม่ที่นับเฉพาะ kind ของแพ็กเกจ ไม่นับยอด ADD_ON เป็นยอดแพ็กที่ยกไป. Whitelist ของ writer ฝั่งแพ็กเกจคงเดิมและไม่รวม kind ใหม่ (ยกเว้น `PROMOTION` ซึ่งเขียนคู่กับโควตาหลักของรายการซื้อเดียวกัน แต่ไม่ถูกยกยอด ไม่ถูกยืดช่วงผ่อนผัน และไม่ถูกยืดด้วยวันแถมจากผู้ดูแล) (`billing-receipt-grants.ts:48-54`, `billing-free-days.ts:183-184`, `billing-reconciler.service.ts:1221-1222,1349-1350`, `billing-end-package.ts:63-64`, `billing-package-request.ts:21-22`; `billing-upgrade.ts:23-26` อ่านทุก kind แล้วกรองเอง) (C06)
 
 ## 7. Journey ลูกค้าและสถานะหน้าจอ
 
