@@ -170,8 +170,9 @@ GitHub Actions has been in `startup_failure` (zero jobs) since late September, s
 - PostgreSQL specs against a throwaway local database migrated from an empty one (`prisma migrate deploy`), including the existing `billing-event-discount.pg.spec.ts`, `billing-event-discount-renewal.pg.spec.ts`, `receipt-addon-ledger.pg.spec.ts`, `billing-cash-movements.pg.spec.ts` as regressions.
 - `prisma validate`, `test:boot`, `node apps/api/scripts/check-di-metadata.mjs`, the maintenance-pins `--check`, `node scripts/run-line-ai-whole-chain-acceptance.mjs`.
 - Independent review of the integrated diff before merge.
+- Browser: `e2e/billing-promotion.spec.ts` renders every state of the Admin and the customer screens at 390 px and 1280 px against a simulated Billing API (`e2e/billing-promotion.fixture.ts`). It proves the screens, not the payment provider.
 
-Not verifiable here (recorded as debt, not claimed): native Stripe test-mode behaviour, browser acceptance at 390 px and desktop, UAT.
+Not verifiable here (recorded as debt, not claimed): native Stripe test-mode behaviour, browser acceptance against a real API on UAT.
 
 ## 8. Acceptance map
 
