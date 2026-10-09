@@ -475,7 +475,9 @@ export type BillingConfigurationImpactItem = { reference: string; kind: BillingC
 export type BillingConfigurationImpactPage = { kind: BillingConfigurationImpactKind; items: (BillingConfigurationImpactItem & { companyName: string })[];
   sourceHash: string; matchesPreview: boolean; nextCursor: string | null; observedAt: string };
 export type BillingConfigurationOperation = BillingOperationView & { sourceVersion: number; previewHash: string;
-  proposed: { policy: BillingPolicy; gates: Record<BillingAction, boolean>; effectiveAt?:string|null }; impact: BillingConfigurationImpact|null;canEditDraft?:boolean;sourceDraftVersion?:number; salesCompanies?: BillingSalesCompany[];
+  proposed: { policy: BillingPolicy; gates: Record<BillingAction, boolean>; effectiveAt?:string|null;
+    /** A campaign publication: the whole campaign map this publication would store, and the one campaign it changes. */
+    promotions?: Record<string, BillingPromotionCampaign>; campaignId?: string }; impact: BillingConfigurationImpact|null;canEditDraft?:boolean;sourceDraftVersion?:number; salesCompanies?: BillingSalesCompany[];
   scheduledFor?:string|null; scheduleDue?:boolean;
   allowedActions: ('submit' | 'approve' | 'cancel' | 'apply')[]; activeRevisionId: string | null };
 
@@ -720,3 +722,34 @@ export type BillingPromotionCampaignReport = { campaignId: string; mode: Billing
   moneyReceivedSatang: number | null; refundedSatang: number | null;
   /** Newest first; `nextCursor` null = last page. */
   companies: BillingPromotionReportCompany[]; nextCursor: string | null };
+
+/**
+ * Admin campaign API wire shapes (plan §6: lane C serves them, lane E calls them). Every route is under
+ * `/v1/system/billing`; reading needs `system.billing.read`, every command `system.billing.policy.manage`.
+ *
+ *   GET  promotion-campaigns                         -> BillingPromotionCampaignList
+ *   GET  promotion-campaigns/:campaignId             -> BillingPromotionCampaignDetail
+ *   GET  promotion-campaigns/:campaignId/report      -> BillingPromotionCampaignReport          (?cursor=)
+ *   POST promotion-campaign-drafts                   -> BillingPromotionCampaignDetail          (BillingPromotionDraftInput, Idempotency-Key)
+ *   POST promotion-campaign-drafts/:campaignId/discard -> BillingPromotionCampaignList          ({ draftVersion })
+ *   POST promotion-campaigns/:campaignId/preview     -> BillingPromotionPreviewResult           (BillingPromotionPreviewInput)
+ *   POST promotion-campaigns/:campaignId/pause | end -> BillingPromotionCampaignDetail          (BillingPromotionStateInput, Idempotency-Key, reauthentication)
+ *
+ * A preview creates an ordinary configuration change; it is submitted, approved or cancelled through the existing
+ * `configuration-changes/:id/{submit|approve|cancel}` routes, and reauthentication is the existing `reauthenticate` route.
+ */
+export type BillingPromotionCampaignDetail = { mode: BillingMode | 'DISABLED'; settingsVersion: number; capabilities: string[];
+  /** As on BillingConfiguration: until when this session's password confirmation is valid; null = confirm first. */
+  reauthenticatedUntil: string | null;
+  campaign: BillingPromotionCampaignView;
+  /** Rows for the draft when one exists and has rules, otherwise for the published terms; empty when neither can be priced. */
+  previewRows: BillingPromotionPreviewRow[];
+  /** The open publication of this campaign (preview or awaiting approval), with its allowed actions; null = none. */
+  operation: BillingConfigurationOperation | null };
+/** Save a draft. No `campaignId` = create a campaign (the server mints the id). `draftVersion` = the draft's version when updating one. */
+export type BillingPromotionDraftInput = { campaignId?: string; draftVersion?: number; values: Omit<BillingPromotionCampaignDraft, 'campaignId'>; reason: string };
+/** PUBLISH = publish the saved draft (strictly validated); RESUME = reopen a paused campaign unchanged. `expectedVersion` = settingsVersion. */
+export type BillingPromotionPreviewInput = { expectedVersion: number; draftVersion?: number; action: 'PUBLISH' | 'RESUME'; reason: string };
+export type BillingPromotionPreviewResult = { operation: BillingConfigurationOperation; previewRows: BillingPromotionPreviewRow[] };
+/** Pause or end now. `expectedVersion` = settingsVersion. */
+export type BillingPromotionStateInput = { expectedVersion: number; reason: string };
