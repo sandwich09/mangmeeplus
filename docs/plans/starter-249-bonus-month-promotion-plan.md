@@ -225,8 +225,29 @@ Three independent reviews of the integrated diff (purchase money path; Admin API
 
 Open before a campaign is opened to real customers:
 
-1. Native Stripe test-mode proof on UAT: a payment-mode Checkout that saves the card, then a subscription bound with a 2-month and a 13-month `trial_end`; PromptPay renewal invoices at `benefitEnd`.
-2. Browser acceptance on UAT at 390 px and desktop for the Admin and the customer journeys.
+1. Native Stripe test mode on UAT — walked 2026-10-09/10 (see "UAT walk" below). Still unproven: the annual offer in the auto-renew card mode (the 13-month deferral was proven with the QR-bill mode), and the first renewal charge or bill at `benefitEnd` (a future date).
+2. Browser acceptance on UAT — walked at phone width for the Admin and the customer journeys (same walk). Not walked: desktop width on UAT, a full refund with "keep the package", a dispute, resuming a paused campaign.
 3. Repeat on a live card subscription and a promotion on a scheduled change (refused today, R10).
 4. Automatic entitlement adjustment for a fully refunded promotion source that has not started, is held or was replaced, and for dispute outcomes (staff today; the report shows PENDING / REVIEW).
 5. `billing-grace.pg.spec.ts` is registered in no test runner; it was run by hand for this work.
+
+### UAT walk, 2026-10-09 23:00 – 2026-10-10 00:06 (Stripe test mode, source `7cb86fa0e`)
+
+One TEST campaign from the Starter template ("ซื้อ Starter แถม 1 เดือน", cap 5, one week), created, checked, submitted and approved by the System Admin; then every right used through the customer screens, the Admin report read, and the campaign paused and ended. The owner signed in, typed his password at each re-authentication, typed the one test card and pressed the two refund approvals; PromptPay test payments need no card.
+
+| Case | Shop state before | Result read from the screens and the API |
+|---|---|---|
+| Auto-renew card, monthly | expired | 249 THB; service to +2 months; 60 receipts; right CONSUMED; renewal READY; subscription `trialing`, next charge at `benefitEnd`; invoice period = the paid month |
+| Pay-once card, monthly | expired | 2 months, 60 receipts, no next charge |
+| PromptPay, bill every period, monthly | expired | 2 months, 60 receipts, subscription `trialing`, QR bill at `benefitEnd` |
+| PromptPay, bill every period, annual | expired | 2,490 THB; 13 months; 390 receipts; renewal PENDING for a few seconds, then READY; next bill 13 months out |
+| Repeat, PromptPay pay-once | active pay-once Starter | new end stacked after the current one; receipts 30 + 60 |
+| Started, not paid, cancelled | expired | block with three ordered choices; "continue paying" reopened the same Checkout; cancel released the right (attempt EXPIRED) |
+| Cap | — | a reserved right counts: other shops saw `CAP_FULL` while the fifth was reserved, again after it was consumed |
+| Refusals | auto-renew Starter, other tiers, used shop | `PURCHASE_KIND_UNSUPPORTED`, `ALREADY_USED`; each shows a reason and leaves the normal purchase |
+| Admin report | — | used 5, cancelled before payment 1, received 3,486 THB, free months 5, bonus receipts 150 |
+| Partial refund 100 THB, keep | pay-once shop | time and receipts unchanged; report: refunds 1, refunded 100 THB, used still 5 |
+| Remainder 149 THB, end the package now | same shop | package and receipts ended; right still used (used 5, still active 4, fully refunded 1, refunded 249 THB); the `FINANCIAL_REVIEW` issue opened by the refund is the older behaviour of every refund |
+| Pause, end | — | PAUSED with "resume" offered; ENDED, history kept |
+
+Defects found on the walk (none in the money path) and fixed in the follow-up change: an amber alert with a support reference after a promotion purchase in the two renewing modes; a chooser sentence untrue for packages without the promotion; the shell banner on the return address during an unfinished payment; the event-discount note calling a QR-bill shop "auto-charged"; the cancel notice shown together with the old pending block for a few seconds; the Admin refund review silent about the promotion; the Admin campaign page saying shops can use a right while the cap is full.

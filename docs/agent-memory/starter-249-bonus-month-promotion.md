@@ -67,10 +67,10 @@ Implementation 2026-10-09 (controller + lanes):
 - Test wiring: new unit spec in `scripts/line-ai-whole-chain-acceptance.catalog.mjs`; four `billing-promotion*.pg.spec.ts` in the PostgreSQL step of `.github/workflows/ci.yml`. GitHub Actions was in `startup_failure`, so the gate ran locally (mirror of the PR jobs, PostgreSQL step against a throwaway database).
 
 Open:
-- Native Stripe test-mode proof and browser acceptance on UAT before any campaign is opened to real customers.
+- Walked on UAT in Stripe test mode on 2026-10-09/10 (plan §9, "UAT walk"). Still unproven before a campaign is opened to real customers: the annual offer in the auto-renew card mode, the first renewal at the end of the free time, desktop width on UAT.
 - Refused combinations and staff-handled refund cases listed in plan §9.
 - Rollout: after the first promotion purchase never roll back past this release (an older binary fails closed on a `PROMOTION` lot).
 
 Next:
-- On UAT (deployed; record in `docs/runbooks/cloud-environment-operations.md`, "Release 2026-10-09 22:52"): create a TEST campaign from the Starter template, buy with a test card in CARD_ONCE and CARD_AUTO, and check the bound subscription's trial end. The UAT acceptance was the smoke: nobody signed in and no campaign was created.
+- UAT round with the fixes from the walk, then the owner's look at the corrected screens. The TEST campaign of the walk is ENDED; five UAT shops hold a used right for it.
 - Production promotion only on the Owner's explicit go.
