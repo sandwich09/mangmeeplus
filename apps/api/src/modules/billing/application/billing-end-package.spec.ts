@@ -248,6 +248,17 @@ test('promotion Q6 at preview: a cumulative-full refund forces the end and pins 
     assert.deepEqual(await decide({}, previous!, amount!, flag), { endPackage: flag === true });
 });
 
+test('the refund screens are told the promotion of the invoice from its redemption and its own snapshot; any other invoice tells nothing', async () => {
+  const told = (rows: object, row: object | null) => Object.assign(Object.create(BillingRefundsService.prototype), { prisma: { client: fakeDb(rows).tx } }).promotion(row);
+  const sized = promoRows({ redemption: redemption({ bonusMonths: 1, bonusReceiptUnits: 30 }) }), snapshot = { promotion: { displayName: 'ซื้อ 1 แถม 1' } };
+  assert.deepEqual(await told(sized, { id: 'invoice', contractSnapshot: snapshot, benefitEnd }),
+    { promotion: { displayName: 'ซื้อ 1 แถม 1', bonusMonths: 1, bonusReceiptUnits: 30, benefitEnd: benefitEnd.toISOString() } });
+  assert.deepEqual(await told(sized, { id: 'invoice', contractSnapshot: null, benefitEnd: null }),
+    { promotion: { displayName: '', bonusMonths: 1, bonusReceiptUnits: 30, benefitEnd: null } }, 'a right used but never applied is still told');
+  assert.deepEqual(await told({}, { id: 'invoice', contractSnapshot: snapshot, benefitEnd }), {}, 'no redemption: the field is absent');
+  assert.deepEqual(await told(sized, null), {});
+});
+
 test('a promotion refund tolerates a source with nothing running, never a live renewal or a pending purchase; other invoices stay strict', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now });
   const block = async (rows: object, p: object) => {
