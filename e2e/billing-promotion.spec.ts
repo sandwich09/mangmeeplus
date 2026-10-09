@@ -185,9 +185,9 @@ for (const width of WIDTHS) {
   });
 }
 
-// FXE-D14 (open): the test above passes because `<main>` clips (overflow-x: clip), so the page never scrolls sideways. At 390px the same name still stretches the choice box's content to 658px and the plan
-// cards' content to 580px: the name, the note under the choice and the cards' right edge are cut off at the screen edge. The review is fine. It becomes a plain `test` when the chooser wraps the name.
-for (const width of WIDTHS) (width < 600 ? test.fixme : test)(`PROMO-01 the longest customer-facing campaign name leaves no box of the chooser past the screen edge, not only no page scroll at ${width}px`, async ({ authedPage: page, companyId }) => {
+// FXE-D14 (fixed): the test above only watches the page's scroll width, and `<main>` clips sideways overflow (overflow-x: clip). This one guards that the unbroken name wraps inside the choice box and the
+// plan cards instead of stretching them past the screen edge, where the name, the note under the choice and the cards' right edge were cut off.
+for (const width of WIDTHS) test(`PROMO-01 the longest customer-facing campaign name leaves no box of the chooser past the screen edge, not only no page scroll at ${width}px`, async ({ authedPage: page, companyId }) => {
   const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { promotions: promotionRows(null, { displayName: LONG_NAME }) }));
   await openChooser(page, w, width);
   expect((await audit(page, width)).offscreen, 'boxes reaching past the screen edge').toEqual([]);
