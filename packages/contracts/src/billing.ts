@@ -586,6 +586,8 @@ export type BillingEventDiscountTicket = {
 };
 export type BillingEventDiscountView = {
   path: 'DISCOUNT' | 'CREDIT' | null;
+  /** How this shop renews, read as `BillingStatus.renewalMode` reads it (LINE words why a running renewal cannot use a discount per mode). Absent = no billing account. */
+  renewalMode?: BillingPurchaseMode | 'NONE';
   tickets: BillingEventDiscountTicket[];
 };
 
