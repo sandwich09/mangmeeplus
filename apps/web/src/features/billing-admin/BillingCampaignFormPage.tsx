@@ -148,7 +148,7 @@ export function BillingCampaignForm({ campaign, template = BILLING_PROMOTION_STA
           <input type="radio" name="campaign-cap" checked={form.capChoice === 'UNLIMITED'} aria-describedby="campaign-cap-note" onChange={() => edit({ capChoice: 'UNLIMITED' }, 'cap')} />ไม่จำกัด
         </label>
         <div className="flex min-h-11 flex-wrap items-center gap-3">
-          <label className="flex items-center gap-3">
+          <label className="flex min-h-11 items-center gap-3">
             <input type="radio" name="campaign-cap" checked={form.capChoice === 'LIMITED'} aria-describedby="campaign-cap-note" onChange={() => edit({ capChoice: 'LIMITED' }, 'cap')} />จำกัดไม่เกิน
           </label>
           <input aria-label="จำนวนสิทธิ์สูงสุด" className={`${billingField} !mt-0 !w-32`} inputMode="numeric" maxLength={13} value={form.cap}
