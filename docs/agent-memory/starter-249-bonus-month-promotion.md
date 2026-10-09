@@ -1,6 +1,6 @@
 # Agent Memory: starter 249 bonus month promotion
 
-Status: Release 1 IMPLEMENTED on branch `claude/starter-249-promotion-20261009` (2026-10-09) from the revised spec; no campaign exists, so the capability is inert. Plan: `docs/plans/starter-249-bonus-month-promotion-plan.md` (decisions R1–R19, acceptance map §8, open items §9).
+Status: Release 1 MERGED 2026-10-09 (main #1047, develop #1048) and ON UAT since 2026-10-09 22:52 (source `7cb86fa0e`, operation `20261009T154644Z-822c9df4`); not on Production. No campaign exists, so the capability is inert. Plan: `docs/plans/starter-249-bonus-month-promotion-plan.md` (decisions R1–R19, acceptance map §8, open items §9).
 Owner: Thawatchai / Codex
 Scope: Admin console creates and manages campaigns; first campaign is STARTER_249 monthly buy one month get one month and annual purchase gets 13 months; bugs, gaps, impact, dependencies and change points.
 
@@ -72,5 +72,5 @@ Open:
 - Rollout: after the first promotion purchase never roll back past this release (an older binary fails closed on a `PROMOTION` lot).
 
 Next:
-- UAT deploy by the mandatory protocol (`docs/runbooks/uat-production-v2-deployment.md`), then on UAT: create a TEST campaign from the Starter template, buy with a test card in CARD_ONCE and CARD_AUTO, and check the bound subscription's trial end.
+- On UAT (deployed; record in `docs/runbooks/cloud-environment-operations.md`, "Release 2026-10-09 22:52"): create a TEST campaign from the Starter template, buy with a test card in CARD_ONCE and CARD_AUTO, and check the bound subscription's trial end. The UAT acceptance was the smoke: nobody signed in and no campaign was created.
 - Production promotion only on the Owner's explicit go.
