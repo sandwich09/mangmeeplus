@@ -10,7 +10,7 @@ import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { billingApprovalLabel, billingControl as button } from '@/features/billing/billing-display';
 import { refundPromotionLines } from './billing-refund-promotion';
 const field=billingField;
-const promotionBlock=(lines:string[])=>lines.length>0&&<div className="space-y-1 rounded-xl bg-amber-50 p-3" role="note" aria-label="โปรโมชันของใบแจ้งหนี้นี้">{lines.map(line=><p key={line}>{line}</p>)}</div>;
+const promotionBlock=(lines:string[])=>lines.length>0&&<div className="space-y-1 rounded-xl bg-amber-50 p-3" role="note" aria-label="โปรโมชั่นของใบแจ้งหนี้นี้">{lines.map(line=><p key={line}>{line}</p>)}</div>;
 const money=(value:number)=>new Intl.NumberFormat('th-TH',{style:'currency',currency:'THB'}).format(value/100);
 const time=(value:string|null)=>value?formatThaiDateTime(value):'ยังไม่มีผลตรวจ';
 
