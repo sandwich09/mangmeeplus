@@ -874,5 +874,57 @@ class Contracts(unittest.TestCase):
                 with self.assertRaises(ValueError):r.rollback(r.state/'active.json')
                 self.assertEqual(calls,[])
 
+    def test_enrolled_baseline_replaces_the_retired_ecs_read(self):
+        ref=f'arn:aws:secretsmanager:{m.REGION}:{m.ACCOUNT}:secret:watchdog-bms/uat/jwt-AbCdEf'
+        body=lambda service:{'scalingTarget':{'min':1},'primaryContainer':{'image':'registry/'+service,
+            'environment':[{'name':'APP_ENV','value':'production'},{'name':'DEPLOY_ENVIRONMENT','value':'uat'}],
+            'secrets':[{'name':'JWT_SECRET','valueFrom':ref}]}}
+        # Every AWS call is logged; an ECS call fails, so a pass proves the enrolled directory was the only source.
+        aws='#!/bin/sh\necho "$@" >> "$AWS_STUB_LOG"\ncase "$*" in\n' \
+            '*"sts get-caller-identity"*) echo \'{"Account":"%s","Arn":"arn:aws:sts::%s:assumed-role/deploy/s"}\';;\n' \
+            '*"secretsmanager describe-secret"*) echo \'{"VersionIdsToStages":{"v1":["AWSCURRENT"]}}\';;\n' \
+            '*) exit 9;;\nesac\n' % (m.ACCOUNT,m.ACCOUNT)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);bins=root/'bin';bins.mkdir();(bins/'aws').write_text(aws);(bins/'aws').chmod(0o755)
+            env={**os.environ,'PATH':str(bins)+os.pathsep+os.environ['PATH'],'AWS_STUB_LOG':str(root/'aws.log')}
+            def capture(name,baseline):
+                return subprocess.run([sys.executable,str(m.HELPERS/'capture-config.py'),'--environment','uat','--profile','',
+                    '--private-output',str(root/name),'--evidence',str(root/(name+'.json')),'--baseline',str(baseline)],
+                    env=env,capture_output=True,text=True)
+            enrolled=root/'uat'/'config-baseline';enrolled.mkdir(parents=True)
+            for service in m.SERVICES:m.write(enrolled/(service+'.configuration.json'),body(service))
+            self.assertEqual(capture('first',enrolled).returncode,0)
+            evidence=m.read(root/'first.json')
+            self.assertEqual((evidence['status'],evidence['configurationSource']),('passed','enrolled-baseline'))
+            self.assertEqual(evidence['secretVersions'],{ref:'v1'})
+            self.assertEqual(m.read(root/'first'/'workers.configuration.json'),body('workers'))
+            self.assertEqual(evidence['services']['api-web']['configurationSha256'],
+                hashlib.sha256(json.dumps(body('api-web'),sort_keys=True).encode()).hexdigest())
+            self.assertNotIn(' ecs ',(root/'aws.log').read_text())
+            # An incomplete enrollment stops the release; it never falls back to another source.
+            (enrolled/'workers.configuration.json').unlink()
+            self.assertNotEqual(capture('second',enrolled).returncode,0)
+            evidence=m.read(root/'second.json')
+            self.assertEqual(evidence['status'],'blocked')
+            self.assertEqual(evidence['errors'],['baseline:workers: enrolled configuration is missing or malformed'])
+            self.assertNotIn(' ecs ',(root/'aws.log').read_text())
+            # A repeated secret name in a hand-written body is refused, not collapsed.
+            repeated=body('workers');repeated['primaryContainer']['secrets']*=2
+            m.write(enrolled/'workers.configuration.json',repeated)
+            self.assertIn('duplicate/conflicting config key',capture('third',enrolled).stderr)
+            # Both reads of a release carry the option: the capture and the second read before mutation.
+            seen=[]
+            class Stop(Exception):pass
+            def command(cmd,**_):
+                seen.append(cmd);raise Stop
+            r=m.Release.__new__(m.Release);r.state=root/'uat';r.work=root;r.receipt={};r.command=command
+            r.args=argparse.Namespace(environment='uat',profile='')
+            for read in (r.configuration,r.config_freshness):
+                with self.assertRaises(Stop):read()
+                self.assertEqual(seen[-1][-2:],['--baseline',str(enrolled)])
+            # An environment with nothing enrolled keeps the ECS read.
+            r.args.environment='production'
+            self.assertEqual(r.enrolled_baseline(),[])
+
 
 if __name__=='__main__':unittest.main(verbosity=2)

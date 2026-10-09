@@ -27,6 +27,8 @@ def main():
     p.add_argument('--evidence', type=Path, required=True)
     p.add_argument('--resolve-secrets', action='store_true')
     p.add_argument('--profile', default='watchdog-bedrock')
+    p.add_argument('--baseline', type=Path,
+                   help='Enrolled directory of <service>.configuration.json, read instead of the retired ECS services')
     args = p.parse_args()
     args.private_output.mkdir(mode=0o700, parents=True, exist_ok=False)
     aws = ['aws', '--region', REGION]
@@ -47,10 +49,19 @@ def main():
              if env == 'uat' else {'api-web': 'watchdog-bms-api-web-pub', 'ai-gateway': 'watchdog-bms-ai-gateway-v2', 'workers': 'watchdog-bms-workers'})
     cluster = 'watchdog-bms-' + ('uat' if env == 'uat' else 'prod')
     evidence = {'readAt': datetime.now(timezone.utc).isoformat(), 'environment': env,
-                'principal': principal['Arn'], 'services': {}, 'secretValuesPublished': False, 'errors': []}
+                'principal': principal['Arn'], 'services': {}, 'secretValuesPublished': False, 'errors': [],
+                'configurationSource': 'enrolled-baseline' if args.baseline else 'ecs'}
     captured = {}
     def read_service(item):
         service, name = item
+        if args.baseline:
+            # A rebuilt environment has no ECS services; its enrolled directory holds the same bodies.
+            try:
+                config = json.loads((args.baseline / (service + '.configuration.json')).read_text())
+                config['primaryContainer']['image'], config['scalingTarget']
+            except (OSError, ValueError, KeyError, TypeError):
+                raise RuntimeError('baseline:' + service + ': enrolled configuration is missing or malformed') from None
+            return service, config
         arn = f'arn:aws:ecs:{REGION}:{ACCOUNT}:service/{cluster}/{name}'
         data = call(['ecs', 'describe-express-gateway-service', '--service-arn', arn])['service']
         configs = data['activeConfigurations']
@@ -70,7 +81,8 @@ def main():
         container = config['primaryContainer']
         values = {row['name']: row['value'] for row in container.get('environment', [])}
         secrets = {row['name']: row['valueFrom'] for row in container.get('secrets', [])}
-        if len(values) != len(container.get('environment', [])) or set(values) & set(secrets):
+        if (len(values) != len(container.get('environment', [])) or len(secrets) != len(container.get('secrets', []))
+                or set(values) & set(secrets)):
             raise SystemExit(service + ': duplicate/conflicting config key')
         if values.get('APP_ENV') != 'production' or values.get('DEPLOY_ENVIRONMENT') != env:
             raise SystemExit(service + ': wrong environment identity')
