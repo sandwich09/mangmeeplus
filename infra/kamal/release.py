@@ -723,13 +723,19 @@ class Release:
             'images':images,'agentcore':self.uat_bundle['agentcore']}
         write(self.build_dir/'build-result.json',self.build)
 
+    def enrolled_baseline(self):
+        # A rebuilt environment has no ECS services to read: its configuration bodies are enrolled under its own
+        # .env.kamal directory (a rehearsal may read another environment than the one it deploys to).
+        baseline = self.state.parent/self.args.environment/'config-baseline'
+        return ['--baseline',str(baseline)] if baseline.is_dir() else []
+
     def configuration(self):
         capture = self.work/'capture'
         cmd=[sys.executable,str(HELPERS/'capture-config.py'),'--environment',self.args.environment,
              '--private-output',str(capture),'--evidence',str(self.work/'capture-evidence.json'),'--resolve-secrets']
         if self.args.profile: cmd += ['--profile',self.args.profile]
         else: cmd += ['--profile','']
-        self.command(cmd,timeout=180,log='capture')
+        self.command(cmd+self.enrolled_baseline(),timeout=180,log='capture')
         for s in SERVICES:
             for k,v in read(capture/(s+'.resolved.json')).items():
                 if isinstance(v,str) and any(n in k for n in ('SECRET','TOKEN','PASSWORD','KEY','DATABASE_URL','REDIS_URL')):
@@ -846,7 +852,7 @@ class Release:
         cmd=[sys.executable,str(HELPERS/'capture-config.py'),'--environment',self.args.environment,
              '--private-output',str(self.work/'recapture'),'--evidence',str(self.work/'recapture-evidence.json'),
              '--profile',self.args.profile or '']
-        self.command(cmd,timeout=180,log='config-freshness')
+        self.command(cmd+self.enrolled_baseline(),timeout=180,log='config-freshness')
         before,after=read(self.work/'capture-evidence.json'),read(self.work/'recapture-evidence.json')
         require(before['secretVersions']==after['secretVersions'], 'Secrets rotated after capture; stop before runtime mutation')
         for ref, version in self.manifest['secretVersions'].items():
