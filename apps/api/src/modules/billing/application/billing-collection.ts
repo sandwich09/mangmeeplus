@@ -14,7 +14,7 @@ import type { BillingService, BillingSnapshot } from './billing.service';
 import { collectionContract, currentSchedulePhase, schedulePhase, subscriptionGraph, simpleCollection, sameScheduleTaxes as sameTaxes, scheduleTaxes as taxes, type PlanChangeSource } from './billing-schedule';
 import { capacityOptions, capacityValid, capacityImpact, capacityReview, parseCapacitySelection } from './billing-capacity';
 import { isUpgrade } from './billing-upgrade';
-import { eventDiscountCardAuto } from '../domain/billing-event-discount.logic';
+import { prepaidCardAuto } from '../domain/billing-checkout-mode';
 import { termProjectionHash } from '../domain/paid-invoice';
 
 /** `emailProof` survives only on rows proposed before DQ2 dropped the account-email requirement. */
@@ -81,8 +81,9 @@ export class BillingCollection {
     let snapshot = accepted.future, change: PlanChangeSource | undefined;
     const { sub, schedule } = await this.provider(account), target = account.paidThrough.getTime() / 1000;
     const promptPayRenew = account.renewalMode === 'PROMPTPAY_RENEW' && snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW';
-    // A card trialing through a period already paid once: an advance deal, or SD-O13's discounted first period (spec §5.3 item 5).
-    const advanceCardTrial = account.renewalMode === 'CARD_AUTO' && (!!snapshot.advanceDeal || eventDiscountCardAuto(snapshot)) && sub.status === 'trialing';
+    // A card trialing through a period already paid once: an advance deal, SD-O13's discounted first period (spec §5.3 item 5),
+    // or a promotion purchase trialing to the end of its free time (promotion spec §7).
+    const advanceCardTrial = account.renewalMode === 'CARD_AUTO' && (!!snapshot.advanceDeal || prepaidCardAuto(snapshot)) && sub.status === 'trialing';
     if (promptPayRenew && (changing(action) || schedule || sub.collection_method !== 'send_invoice' ||
         sub.payment_settings?.payment_method_types?.length !== 1 || sub.payment_settings.payment_method_types[0] !== 'promptpay'))
       throw review();
@@ -202,7 +203,7 @@ export class BillingCollection {
   private observed(p: Proposed, sub: StripeObject, schedule: StripeObject | null, id: string) {
     const cancel = p.action === 'CANCEL_RENEWAL', target = Date.parse(p.paidThrough) / 1000;
     const promptPayRenew = p.snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW';
-    const advanceCardTrial = (p.snapshot.quote.purchaseMode === 'CARD_AUTO' && !!p.snapshot.advanceDeal) || eventDiscountCardAuto(p.snapshot);
+    const advanceCardTrial = (p.snapshot.quote.purchaseMode === 'CARD_AUTO' && !!p.snapshot.advanceDeal) || prepaidCardAuto(p.snapshot);
     if (sub.status === 'canceled') return cancel && !changing(p.action);
     if (p.method === 'DELETE') return false;
     if (sub.billing_mode?.type !== 'classic' || !(cancel ? ['active', 'past_due', 'unpaid', ...((promptPayRenew || advanceCardTrial) ? ['trialing'] : [])] :

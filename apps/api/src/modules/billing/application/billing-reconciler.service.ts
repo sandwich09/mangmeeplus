@@ -20,9 +20,9 @@ import { stripeCustomerSyncPayload, stripeCustomerSynced } from './billing-compa
 import { readRecipientCapture, recordRecipientCapture, type RecipientCapture } from './billing-recipient-capture';
 import { restartFits, restartSource } from './billing-restart';
 import { observeBillingCharges, recordBillingFinancials } from './billing-financial';
-import { grantPaidPackageReceipts } from './billing-receipt-grants';
+import { grantPaidPackageReceipts, grantPromotionPackageReceipts } from './billing-receipt-grants';
 import { grantTrialReceiptCarryover } from './billing-trial-carryover';
-import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/billing-package';
+import { appendPackageInterval, fullPackagePurchaseImpact, invoiceServiceEnd, promotionBoundaries } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { packageReceiptBalance } from './billing-receipt-grants';
 import { applyDealRequest, fulfillPaidPackageRequest, recordReferralAttribution, scheduleDealReturn, supersedeUnpaidDeal, supersedeUnpaidPackageRequest } from './billing-package-request';
@@ -37,8 +37,8 @@ import { DEAL_SUBSCRIPTION_CANCEL_TYPE, queueDealSubscriptionCancel } from './bi
 import { dealSnapshotHash } from '../domain/deal-offer';
 import type { PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { releaseEventDiscount, useEventDiscount } from './billing-event-discount';
-import { eventDiscountCardAuto } from '../domain/billing-event-discount.logic';
-import { paymentCheckoutSnapshot } from '../domain/billing-checkout-mode';
+import { consumePromotion, markPromotionApplied, promotionForAttempt, releasePromotion } from './billing-promotion';
+import { paymentCheckoutSnapshot, prepaidCardAuto } from '../domain/billing-checkout-mode';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
@@ -51,6 +51,34 @@ export function validBillingEvent(event: StripeObject, accountId: string, livemo
     event.api_version === STRIPE_API_VERSION && event.livemode === livemode &&
     (event.account === undefined || event.account === accountId) && typeof event.type === 'string' &&
     typeof event.data?.object?.id === 'string' && /^[a-z]+_[a-zA-Z0-9_]+$/.test(event.data.object.id));
+}
+
+/** A paid bill whose snapshot holds a promotion but whose right was not there to consume: applied as a normal purchase, then reviewed. */
+export const BILLING_PROMOTION_REVIEW_ISSUE = 'PROMOTION_REVIEW';
+
+/**
+ * Promotion spec §5: the paid period and the free time of a one-time apply, or null when this snapshot cannot carry a bonus
+ * (no promotion, or a purchase kind release 1 refuses at quote — plan §2). Counted from the same start and anchor as `impact`,
+ * so the paid end must be the one `impact` already holds; anything else is no bonus, never a second opinion on the dates.
+ */
+function promotionApplyBoundaries(snapshot: BillingSnapshot, impact: { serviceStartsAt: Date; paidThrough: Date }, paidAt: Date) {
+  if (!snapshot.promotion || snapshot.upgrade || snapshot.oneTimeChange || snapshot.deal || snapshot.subscriptionConversion) return null;
+  try {
+    const boundaries = promotionBoundaries({ serviceStartsAt: impact.serviceStartsAt, interval: snapshot.quote.offer.interval,
+      // `fullPackagePurchaseImpact` keeps the old anchor only when the purchase continues a running term.
+      anchorDay: impact.serviceStartsAt.getTime() === paidAt.getTime() ? undefined : snapshot.oneTime?.anchorDay, bonusMonths: snapshot.promotion.bonusMonths });
+    return boundaries.paidEnd.getTime() === impact.paidThrough.getTime() ? boundaries : null;
+  } catch (error) { if (error instanceof ConflictException) return null; throw error; }
+}
+
+/** Promotion spec §6 RELEASED: an attempt proven unpaid gives its right back. The audit row keeps the attempt id the right drops. */
+async function releaseUnpaidPromotion(tx: Prisma.TransactionClient, account: BillingAccount, attempt: BillingAttempt, reason: string) {
+  const right = await promotionForAttempt(tx, attempt.id);
+  if (right?.state !== 'RESERVED') return;
+  await releasePromotion(tx, attempt.id);
+  await tx.auditLog.create({ data: { companyId: account.companyId, actorUserId: attempt.initiatingUserId, action: 'billing.promotion.released',
+    targetType: 'BillingPromotionRedemption', targetId: right.id, requestId: attempt.id, result: 'SUCCESS', riskLevel: 'HIGH',
+    metadataJson: { attemptId: attempt.id, campaignId: right.campaignId, reason } } });
 }
 
 @Injectable()
@@ -82,6 +110,7 @@ export class BillingReconcilerService {
       if (!changed.count) throw new Error('billing.profile_sync_changed');
       await tx.billingAccount.updateMany({ where: { id: account.id, activeAttemptId: attempt.id }, data: { activeAttemptId: null, version: { increment: 1 } } });
       if (snapshot.eventDiscount?.choice === 'USE') await releaseEventDiscount(tx, attempt.id);
+      if (snapshot.promotion) await releaseUnpaidPromotion(tx, account, attempt, 'profile_sync_retry');
       await tx.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
         kind: 'UNKNOWN_ATTEMPT', referenceId: attempt.id, state: { not: 'RESOLVED' } }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
     });
@@ -245,7 +274,7 @@ export class BillingReconcilerService {
       // contract. Its delayed Stripe events must never reconcile it back onto this account.
       if (!account.baseSubscriptionId && hintedSubscriptionId && activeSnapshot?.subscriptionConversion?.subscriptionId === hintedSubscriptionId) return;
       if (attempt && (activeSnapshot?.advanceDeal || ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(activeSnapshot?.quote.purchaseMode ?? '') ||
-          eventDiscountCardAuto(activeSnapshot))) {
+          prepaidCardAuto(activeSnapshot))) {
         nextReconcileAt = await this.reconcileOneTime(account, attempt, leaseToken) ?? null;
         return;
       }
@@ -317,7 +346,7 @@ export class BillingReconcilerService {
       for (const invoice of invoices.filter((i) => i.status === 'paid').sort((a, b) => a.created - b.created)) {
         // A zero trial/credit invoice is never evidence of a successful card charge.
         if (invoice.total === 0) {
-          if ((snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' || snapshot.advanceDeal || eventDiscountCardAuto(snapshot)) && invoice.billing_reason === 'subscription_create' &&
+          if ((snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' || snapshot.advanceDeal || prepaidCardAuto(snapshot)) && invoice.billing_reason === 'subscription_create' &&
               invoice.status === 'paid' && invoice.amount_paid === 0 && invoice.livemode === account.livemode &&
               stripeId(invoice.customer) === account.customerId && stripeId(invoice.parent?.subscription_details?.subscription) === subscription.id)
             continue;
@@ -488,7 +517,7 @@ export class BillingReconcilerService {
     const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
     const mode = snapshot.quote.purchaseMode;
     if (!(snapshot.advanceDeal ? ['CARD_AUTO', 'PROMPTPAY_RENEW'].includes(mode ?? '') :
-        (['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(mode ?? '') || eventDiscountCardAuto(snapshot))) || !account.customerId || !snapshot.productId || snapshot.repeat)
+        (['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(mode ?? '') || prepaidCardAuto(snapshot))) || !account.customerId || !snapshot.productId || snapshot.repeat)
       throw new Error('billing.one_time_contract_missing');
     if ((snapshot.upgrade && !snapshot.oneTime) || (snapshot.oneTimeChange && (!snapshot.oneTime || snapshot.upgrade || mode === 'PROMPTPAY_RENEW')))
       throw new Error('billing.one_time_change_contract');
@@ -511,6 +540,7 @@ export class BillingReconcilerService {
         await tx.billingAttempt.update({ where: { id: attempt.id }, data: { status: 'EXPIRED', checkoutSessionId: session.id } });
         await tx.billingAccount.update({ where: { id: account.id }, data: { activeAttemptId: null, observedAt: new Date(), version: { increment: 1 } } });
         if (snapshot.eventDiscount?.choice === 'USE') await releaseEventDiscount(tx, attempt.id);
+        if (snapshot.promotion) await releaseUnpaidPromotion(tx, account, attempt, 'checkout_expired_unpaid');
       });
       return;
     }
@@ -546,6 +576,10 @@ export class BillingReconcilerService {
     const collectible = siblings.some(sub => !['canceled', 'incomplete_expired'].includes(sub.status) &&
       sub.id !== snapshot.subscriptionConversion?.subscriptionId);
     let disabledFeatures: string[] = [], planMenus: PlanMenuMove | null = null, cancellationOperationId: string | null = null;
+    // Promotion plan §6: `impact.paidThrough` stays the paid end (the financial period). `serviceEnd` is where the service this
+    // purchase gives really ends — the same instant without a bonus, `benefitEnd` once this invoice consumed its right.
+    const promotion = promotionApplyBoundaries(snapshot, impact, evidence.paidAt);
+    let serviceEnd = impact.paidThrough;
     await this.prisma.client.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
       // Same lock order as `applyInvoice`: OCR config, entitlements, then the plan term.
@@ -571,6 +605,17 @@ export class BillingReconcilerService {
       // this attempt never blocks the apply — the customer paid what they confirmed — it opens a review instead.
       if (snapshot.eventDiscount?.choice === 'USE' && !await useEventDiscount(tx, { attemptId: attempt.id, invoiceId: row.id, companyId: account.companyId, now: new Date() }))
         await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode, kind: BILLING_EVENT_DISCOUNT_REVIEW_ISSUE, referenceId: row.id });
+      // Promotion spec §6 CONSUMED: verified money uses the right before any exit, HELD and import included. A bill already
+      // applied keeps what it was applied with (its own `benefitEnd`), so a replay neither consumes nor grants anything new.
+      let bonus = false;
+      if (row.appliedAt) { if (row.benefitEnd) serviceEnd = row.benefitEnd; }
+      else if (snapshot.promotion) {
+        bonus = await consumePromotion(tx, { attemptId: attempt.id, invoiceId: row.id, companyId: account.companyId, now: new Date() }) && !!promotion;
+        // No right to consume (released, or used by another bill), or a purchase that cannot carry it: the customer paid the
+        // normal price, so the bill applies as a normal purchase and an operator reviews it. Never a bonus without its right.
+        if (bonus) serviceEnd = promotion!.benefitEnd;
+        else await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode, kind: BILLING_PROMOTION_REVIEW_ISSUE, referenceId: row.id });
+      }
       if (row.appliedAt) { await resolveAppliedInvoiceIssues(tx, account, row.id); return; }
       const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
       const source = snapshot.oneTime ? await tx.billingInvoice.findFirst({ where: { id: snapshot.oneTime.invoiceId,
@@ -599,7 +644,7 @@ export class BillingReconcilerService {
         : !current.baseSubscriptionId || (snapshot.restart?.subscriptionId === current.baseSubscriptionId && current.paidThrough && current.paidThrough <= evidence.paidAt);
       const sourceReady = !collectible && current.activeAttemptId === attempt.id &&
         termProjectionHash(company.planTerm) === snapshot.termHash &&
-        (!snapshot.oneTime || (source?.periodEnd.toISOString() === snapshot.oneTime.paidThrough &&
+        (!snapshot.oneTime || (!!source && invoiceServiceEnd(source).toISOString() === snapshot.oneTime.paidThrough &&
           current.paidThrough?.toISOString() === snapshot.oneTime.paidThrough &&
           current.billingAnchorDay === snapshot.oneTime.anchorDay && !source.refundedSatang && !source.disputed &&
           current.termProjectionHash === snapshot.termHash &&
@@ -607,7 +652,7 @@ export class BillingReconcilerService {
         conversionReady &&
         (company.status === 'ACTIVE' || (company.status === 'DISABLED' && !!company.planTerm?.termDisabledAt));
       if (recordOnly || !sourceReady || !capacityReady || !upgradeReady || !featureReady || evidence.refundedSatang || evidence.disputed ||
-          impact.paidThrough <= new Date() || evidence.paidAt > new Date()) {
+          serviceEnd <= new Date() || evidence.paidAt > new Date()) {
         await tx.billingInvoice.update({ where: { id: row.id }, data: { applyStatus: 'HELD',
           errorCode: !capacityReady ? 'BILLING_CAP_SELECTION_REQUIRED' : !featureReady ? 'BILLING_ENTITLEMENT_REVIEW_REQUIRED' : 'access_review_required' } });
         await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
@@ -630,22 +675,31 @@ export class BillingReconcilerService {
       await tx.companyPlanTerm.upsert({ where: { companyId: company.id }, create: {
         companyId: company.id, tierKey: snapshot.quote.offer.offerKey, branchLimit: snapshot.quote.offer.branchLimit,
         employeeLimit: snapshot.quote.offer.employeeLimit, monthlySlipLimit: snapshot.quote.offer.monthlySlipLimit,
-        termStartAt: impact.serviceStartsAt, termEndsAt: impact.paidThrough, lastRenewedAt: new Date(),
+        termStartAt: impact.serviceStartsAt, termEndsAt: serviceEnd, lastRenewedAt: new Date(),
       }, update: { ...(!snapshot.oneTimeChange ? { tierKey: snapshot.quote.offer.offerKey, branchLimit: snapshot.quote.offer.branchLimit,
         employeeLimit: snapshot.quote.offer.employeeLimit, monthlySlipLimit: snapshot.quote.offer.monthlySlipLimit } : {}),
         ...(!snapshot.oneTime || impact.serviceStartsAt.getTime() === evidence.paidAt.getTime() ? { termStartAt: impact.serviceStartsAt } : {}),
-        termEndsAt: impact.paidThrough, termDisabledAt: null, warmupUntil: null, warmupSlipLimit: null,
+        termEndsAt: serviceEnd, termDisabledAt: null, warmupUntil: null, warmupSlipLimit: null,
         warn7SentAt: null, warn3SentAt: null, warn1SentAt: null, expiredNotifiedAt: null,
         ...(!snapshot.upgrade ? { lastRenewedAt: new Date(), renewCount: { increment: 1 } } : {}) } });
       if (company.status === 'DISABLED' && company.planTerm?.termDisabledAt) await this.lifecycle.execute({ companyId: company.id,
         targetStatus: 'ACTIVE', requestingAdminUserId: null, requestId: row.id, reason: 'stripe_verified_one_time_paid' }, tx);
-      await grantPaidPackageReceipts(tx, { companyId: company.id, billingAccountId: account.id, sourceKey: row.id,
+      // Promotion spec §5: the base lot of the paid period and the bonus lot of the free time, both usable from the verified
+      // payment and both ending at `benefitEnd`; the redemption is stamped in this same commit.
+      if (bonus) {
+        await grantPromotionPackageReceipts(tx, { companyId: company.id, billingAccountId: account.id, invoiceId: row.id,
+          policyRevisionId: attempt.policyRevisionId, kind: snapshot.oneTime ? 'REPEAT' : 'INITIAL',
+          baseUnits: snapshot.quote.offer.receiptAllowance, bonusUnits: snapshot.promotion!.bonusReceiptUnits,
+          serviceStart: impact.serviceStartsAt, paidEnd: impact.paidThrough, benefitEnd: serviceEnd, availableAt: evidence.paidAt });
+        await markPromotionApplied(tx, { invoiceId: row.id, paidStart: impact.serviceStartsAt, paidEnd: impact.paidThrough, bonusEnd: serviceEnd, now: new Date() });
+      } else await grantPaidPackageReceipts(tx, { companyId: company.id, billingAccountId: account.id, sourceKey: row.id,
         policyRevisionId: attempt.policyRevisionId, kind: snapshot.upgrade ? 'UPGRADE' : snapshot.oneTime ? 'REPEAT' : 'INITIAL',
         units: snapshot.upgrade?.receiptUnitsAdded ?? snapshot.quote.offer.receiptAllowance,
         serviceStart: impact.serviceStartsAt, serviceEnd: impact.paidThrough,
         availableAt: snapshot.oneTimeChange ? impact.serviceStartsAt : evidence.paidAt, expiresAt: impact.paidThrough });
       const term = await tx.companyPlanTerm.findUniqueOrThrow({ where: { companyId: company.id } });
-      await tx.billingInvoice.update({ where: { id: row.id }, data: { applyStatus: 'APPLIED', appliedAt: new Date(), errorCode: null } });
+      await tx.billingInvoice.update({ where: { id: row.id }, data: { applyStatus: 'APPLIED', appliedAt: new Date(), errorCode: null,
+        ...(bonus ? { benefitEnd: serviceEnd } : {}) } });
       await tx.billingAttempt.update({ where: { id: attempt.id }, data: { status: 'COMPLETED', errorCode: null, checkoutSessionId: session.id } });
       const scheduled = snapshot.oneTimeChange ? await tx.billingOperation.create({ data: {
         companyId: company.id, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
@@ -671,9 +725,9 @@ export class BillingReconcilerService {
           initiatorUserId: attempt.initiatingUserId, source: { accountId: account.id,
             subscriptionId: snapshot.subscriptionConversion.subscriptionId, dealRequestId: snapshot.deal!.requestId, attemptId: attempt.id } });
       }
-      await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: impact.paidThrough, baseSubscriptionId: null,
-        // A renewing first period keeps the slot until its subscription binds: PROMPTPAY_RENEW, and SD-O13's discounted card.
-        contractAttemptId: attempt.id, activeAttemptId: mode === 'PROMPTPAY_RENEW' || eventDiscountCardAuto(snapshot) ? attempt.id : null,
+      await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: serviceEnd, baseSubscriptionId: null,
+        // A renewing first period keeps the slot until its subscription binds: PROMPTPAY_RENEW, SD-O13's discounted card, a promotion's card.
+        contractAttemptId: attempt.id, activeAttemptId: mode === 'PROMPTPAY_RENEW' || prepaidCardAuto(snapshot) ? attempt.id : null,
         subscriptionState: 'NONE', renewalMode: mode!,
         billingAnchorDay: snapshot.oneTime?.anchorDay ?? evidence.paidAt.getUTCDate(), nextChargeAt: null,
         cancelAtPeriodEnd: false, graceEndsAt: null, termProjectionHash: termProjectionHash(term), pendingPlanChangeId: scheduled?.id ?? null,
@@ -697,7 +751,8 @@ export class BillingReconcilerService {
       await resolveAppliedInvoiceIssues(tx, account, row.id);
       await tx.auditLog.create({ data: { companyId: company.id, actorUserId: attempt.initiatingUserId,
         action: 'billing.invoice.applied', targetType: 'BillingInvoice', targetId: row.id, requestId: attempt.id,
-        result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { purchaseMode: mode, paidThrough: impact.paidThrough.toISOString() } } });
+        result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { purchaseMode: mode, paidThrough: serviceEnd.toISOString(),
+          ...(bonus ? { promotion: { campaignId: snapshot.promotion!.campaignId, paidEnd: impact.paidThrough.toISOString(), benefitEnd: serviceEnd.toISOString() } } : {}) } } });
       await tx.outboxEvent.upsert({ where: { eventKey: `billing:applied:${row.id}` }, update: {}, create: {
         companyId: company.id, eventType: 'billing.invoice.applied', aggregateType: 'BillingInvoice', aggregateId: row.id,
         eventKey: `billing:applied:${row.id}`, payloadJson: { schemaVersion: 1, occurredAt: new Date().toISOString(),
@@ -710,8 +765,9 @@ export class BillingReconcilerService {
     if (planMenus) await movePlanMenus(this.prisma, planMenus);
     if (cancellationOperationId) await this.billing.dealSubscriptionCancel.advance(
       await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } }), lease);
-    if ((mode === 'PROMPTPAY_RENEW' || eventDiscountCardAuto(snapshot)) && !recordOnly)
-      await this.bindPromptPayRenewal(account, attempt, snapshot, lease, impact.paidThrough, intent);
+    // The first real charge is the catalog price at the end of the service already given: `benefitEnd` for a promotion.
+    if ((mode === 'PROMPTPAY_RENEW' || prepaidCardAuto(snapshot)) && !recordOnly)
+      await this.bindPromptPayRenewal(account, attempt, snapshot, lease, serviceEnd, intent);
   }
 
   /** First cycle is paid now, but the running one-time term remains authoritative until its end. */
@@ -749,7 +805,7 @@ export class BillingReconcilerService {
         ['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(current.renewalMode) && current.contractAttemptId === source.contractAttemptId &&
         current.paidThrough?.getTime() === startsAt.getTime() && current.billingAnchorDay === source.anchorDay &&
         current.termProjectionHash === snapshot.termHash && !current.pendingPlanChangeId &&
-        old?.periodEnd.getTime() === startsAt.getTime() && !old.refundedSatang && !old.disputed &&
+        !!old && invoiceServiceEnd(old).getTime() === startsAt.getTime() && !old.refundedSatang && !old.disputed &&
         termProjectionHash(company.planTerm) === snapshot.termHash &&
         (company.status === 'ACTIVE' || (company.status === 'DISABLED' && !!company.planTerm?.termDisabledAt)) &&
         dealRow && ['APPROVED', 'EXPIRED', 'PAID'].includes(dealRow.status) &&
@@ -968,7 +1024,7 @@ export class BillingReconcilerService {
       const sourceReady = current.activeAttemptId === attempt.id && !current.baseSubscriptionId && !current.pendingPlanChangeId &&
         current.contractAttemptId === advance.contractAttemptId && current.paidThrough?.getTime() === startsAt.getTime() &&
         current.billingAnchorDay === advance.anchorDay && current.termProjectionHash === snapshot.termHash &&
-        termProjectionHash(company.planTerm) === snapshot.termHash && old?.periodEnd.getTime() === startsAt.getTime() &&
+        termProjectionHash(company.planTerm) === snapshot.termHash && !!old && invoiceServiceEnd(old).getTime() === startsAt.getTime() &&
         !old.refundedSatang && !old.disputed && invoice?.periodStart.getTime() === startsAt.getTime() &&
         invoice.periodEnd.getTime() === endsAt.getTime() && !invoice.refundedSatang && !invoice.disputed &&
         invoice.applyStatus === 'PENDING' && !invoice.appliedAt && operation.state === 'PAID' &&
@@ -1106,7 +1162,8 @@ export class BillingReconcilerService {
 
   /**
    * PROMPTPAY_RENEW, and SD-O13's discounted CARD_AUTO first period (spec §5.3): that period is paid and applied, so bind the
-   * catalog-price subscription trialing until it ends. A card is the one this Checkout saved, checked the way bindAdvanceDeal does.
+   * catalog-price subscription trialing until it ends. For a promotion purchase `paidThrough` is `benefitEnd` (promotion spec §7):
+   * `trial_end`, the contract's `effectiveAt` and `nextChargeAt` are the end of the free time, at the normal price and cadence. A card is the one this Checkout saved, checked the way bindAdvanceDeal does.
    */
   private async bindPromptPayRenewal(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot,
     lease: string, paidThrough: Date, intent: StripeObject) {
@@ -1195,7 +1252,11 @@ export class BillingReconcilerService {
     if(!payment)throw new Error('billing.card_payment_missing');
     const intent=await this.stripe.request('GET',`/payment_intents/${stripeId(payment.payment.payment_intent)}`,{expand:['latest_charge.balance_transaction']});
     const charge=typeof intent.latest_charge==='object'?intent.latest_charge:await this.stripe.request('GET',`/charges/${stripeId(intent.latest_charge)}`,{expand:['balance_transaction']});
-    await this.applyInvoice(account,contract,paidInvoiceEvidence(invoice,subscription,lines,payments,intent,charge,snapshot,this.stripe.livemode),snapshot,lease,recordOnly,capture);
+    // Promotion plan §6: a subscription invoice is never the promotion purchase (that one is paid in a payment Checkout and applied
+    // by `reconcileOneTime`). The bound contract keeps `promotion` — stop/resume renewal reads it while the subscription trials —
+    // so it is dropped here: a renewal is applied and recorded as the normal offer, and nothing can read it as a second bonus.
+    const { promotion: _promotion, ...renewal } = snapshot;
+    await this.applyInvoice(account,contract,paidInvoiceEvidence(invoice,subscription,lines,payments,intent,charge,snapshot,this.stripe.livemode),snapshot.promotion?renewal:snapshot,lease,recordOnly,capture);
   }
 
   private async contractSnapshot(accountId: string, at: Date, fallback: BillingSnapshot): Promise<BillingSnapshot> {
