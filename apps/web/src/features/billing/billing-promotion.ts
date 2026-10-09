@@ -195,6 +195,9 @@ export type PromotionLostNotice = NonNullable<ReturnType<typeof promotionLostNot
 
 /* ---- after the payment ---- */
 
+/** The name of the promotion whose right is reserved for a payment still open (told inside the pending-payment block), else null. */
+export const promotionReservedName = (use: BillingPromotionUse | null | undefined): string | null => (use?.state === 'RESERVED' ? use.displayName : null);
+
 /** The right this shop holds, on the status and on the return page. `checking` = offer the existing "check again" control. */
 export function promotionStatus(use: BillingPromotionUse | null | undefined, running = true) {
   if (!use) return null;
