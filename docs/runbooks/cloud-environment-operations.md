@@ -23,7 +23,7 @@ Provider webhook active:true, Contact/Social native replies stopped, how-to/pack
 Owner confirmed both cards received and actions working; supplemental acceptance signature verified. [Exact IDs, hashes, proof and recovery](../evidence/line-official-oa-isolated-publication-2026-10-04.md).
 
 
-## Release 2026-10-09 22:52 — UAT only (superseded for UAT by the section above)
+## Release 2026-10-09 22:52 — UAT only (superseded for UAT by the sections below)
 
 UAT serves `main` `7cb86fa0e` since 2026-10-09 22:52 Bangkok: promotion campaigns release 1 (#1047/#1048, one migration `20261009120000_billing_promotion_campaigns`; inert until an Admin publishes a campaign), the LINE link sign-in fix (#1045/#1046) and everything else merged after `67c270d3c`. Production is NOT touched by this round and needs the owner's own go. Local Kamal path from the clean controller worktree; GitHub workflow ids (`UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`) are `NOT_DISPATCHED`. Times are Bangkok. Owner's words: "merge ขึ้น uat เลย ไวๆ", then "งั้นหยุดก่อน ค่อยทำต่อ" on hearing of the blocker below, then "ทำต่อเลย".
 
@@ -46,7 +46,7 @@ UAT serves `main` `7cb86fa0e` since 2026-10-09 22:52 Bangkok: promotion campaign
 
 **Not proven by this round.** The acceptance is the config and readiness smoke: nobody signed in, no campaign was created and no payment was made. Before a campaign is opened to real customers: a TEST campaign from the Starter template on UAT, a purchase with a test card in the pay-once and the auto-renew card modes, and the bound subscription's trial end (`docs/plans/starter-249-bonus-month-promotion-plan.md` §9).
 
-## Release 2026-10-10 01:02 — UAT only (current for UAT)
+## Release 2026-10-10 01:02 — UAT only (superseded for UAT by the section below)
 
 UAT serves `main` `c1774b798` since 2026-10-10 01:02 Bangkok: the seven fixes from the UAT walk of the promotion campaign (#1053/#1054; no migration) on top of the section below. Production is NOT touched. Local Kamal path; GitHub workflow ids `NOT_DISPATCHED`. Owner's words: "เทสให้จบก่อน ค่อยแก้ทีเดียว", then "เสร็จแล้วขึ้น uat เลย". The walk itself is recorded in `docs/plans/starter-249-bonus-month-promotion-plan.md` §9.
 
@@ -63,6 +63,27 @@ UAT serves `main` `c1774b798` since 2026-10-10 01:02 Bangkok: the seven fixes fr
 **A pre-check that counts release processes with a pattern naming the script counts the shell that runs it** (again; see the note of 2026-10-05 below): chained before the apply, it stopped the apply from starting at 00:39 and cost five minutes. Check processes in a separate command and read the run directories.
 
 **The controller worktree must be fresh.** The system's temp cleaner removed files older than a few days from `/private/tmp/mangmee-release-controller-20261005` around midnight, its `.git` pointer among them. A release controller worktree is created from `origin/main` for the round (with `.env.kamal` linked in), not kept for days.
+
+## Release 2026-10-10 04:46 — UAT only (current for UAT), and the Production preparation
+
+UAT serves `main` `e1425bf02` since 2026-10-10 04:46 Bangkok: the LINE event-discount sentence per renewal mode and the release tool's `--prepare --publish-images` (#1057/#1058; no migration), on top of the section above. Production is NOT touched: it still serves `bdb65d8e8` (restored 2026-10-09). Local Kamal path; GitHub workflow ids `NOT_DISPATCHED`. Owner's words: "ทำต่อเลย", "เสร็จแล้วขึ้น uat เลย", then at about 04:30 "ขึ้น uat เสร็จแล้ว ทดสอบซ้ำ อนุญาตทั้งหมด ให้กรอกข้อมูลเอง ถ้าผ่านแล้วทั้งหมด ให้ขึ้น prod ได้เลย". That is a conditional go for this promotion only, after the UAT re-test passes; the agent still does not type a password or a card number, and the Production acceptance needs the owner's own sign-in.
+
+| Env | Operation | Source (main) | Result | Seconds |
+|---|---|---|---|---|
+| UAT | `20261009T212934Z-9f4b56d6` (prepare, images published) | `e1425bf02` (#1057 twin = develop `02427f3b7` via #1058) | PREPARED_NO_DEPLOYMENT 04:41; the four `prepared-` tags published: first use of `--publish-images`. | 721.2 |
+| UAT | `20261009T214200Z-1f694b27` (prepared by `9f4b56d6`) | `e1425bf02` | ACCEPTED_LINE_DEFERRED 04:46 at the first try, smoke, 12/12 phases, no migration (publish-and-pull 35.6 s, database phase 57.7 s, rollout 97.0 s), AgentCore `kamal_uat_b` v4, signature verified, 19 builds retired, 2 SSM sessions closed. Probes 04:46: health 200, platform-access 200 OPEN, `/login` 200. | 255.3 |
+| Production | `20261009T214957Z-4708ca2b` (prepare only) | `e1425bf02` | **FAILED** 04:53 at `fresh-config-and-image-validation`: "AWS secretsmanager:get-secret-value failed". Preflight (16.9 s) and build (195.1 s) passed; capture source `enrolled-baseline`. Nothing published, nothing changed. | 220.8 |
+| Production | `20261009T215722Z-ccdd4e4b` (rehearsal of the prepare, one setting dropped in memory; marked by a file in its run directory) | `e1425bf02` | PREPARED_NO_DEPLOYMENT 04:57: config validation, host storage and the second configuration read passed. | 39.5 |
+
+**Uploading the prepared images first makes the apply pass at the first try on this uplink.** `--prepare --publish-images` took the upload out of the apply's 240 s limit: `publish-and-pull` needed 35.6 s, where the two rounds before it had each lost an apply at that boundary. The working order is now two commands (README, "Each release").
+
+**Production's configuration baseline is enrolled and proven** (private `.env.kamal/production/config-baseline/`, same method as UAT in the 22:52 section). Bodies: the capture of the last accepted release `20261005T180652Z-3f9b6aa1`, with ai-gateway `CORS_ALLOWED_ORIGINS` set to the new AI origin. Proof by key name and value hash only, one read-only session per host: the four serving containers ran that release's environment except the keys the controller sets from the enrolled target (API and AI internal origins, AgentCore ARN and qualifier; each equals the target's value) and that one CORS value; the two API hosts are equal. After the rehearsed prepare, the prepared environments equalled the serving ones except `GIT_SHA`, `SERVICE_VERSION`, `AGENTCORE_EXPECTED_SOURCE_COMMIT`, the keys an image supplies itself (`PATH`, `NODE_VERSION`, `YARN_VERSION`, `NEXT_TELEMETRY_DISABLED`) and the three Official OA keys below. Also read: the Production deploy role answers; both AgentCore endpoints (`kamal_production_a`, `kamal_production_b`) are READY; the registry exists; the trusted UAT signing key is enabled and the UAT images are readable with the Production role; each host has 31–37 GB free against at most 4.7 GB needed; no remote release lock on API host A and no `active.json`.
+
+**A normal Production release asked for the retired Official OA credentials.** `infra/kamal/config.json` still set production `LINE_OFFICIAL_REPLY_ENABLED` to `true`, so a release on the normal path (a UAT promotion is one) reads the secrets `watchdog-bms/production/line-official/channel-secret` and `channel-access-token` and checks the token with LINE. Both secrets were deleted on 2026-10-07 10:16 with the Official OA retirement and were left out of the Production restore on purpose. The last Production release before the retirement that ran this read was the promotion of 2026-10-06 00:18; the hotfix after it preserved the serving configuration and never asked. What serves: the restored API containers still carry the old values in their environment and map the route, but since they started (2026-10-09 14:50) neither API host has logged one request on `/v1/line/official/webhook`, while other requests are logged. The route was never the Official OA's live path: the owner chose the separate Official OA service on 2026-10-04 (`docs/specs/line-official-oa-flex-replies-spec-th.md`). Fix: the entry is removed from the production settings (same change as this record). The next Production release therefore starts the API without the three `LINE_OFFICIAL_*` keys and the route answers 404; the code and the release tool's check stay, and setting the entry back brings the route back once the credentials exist again. Restoring the two secrets instead is the owner's call (account authority, inside the deletion recovery window).
+
+**A Production `--prepare` needs the acceptance mode on its command line.** `deploy-prod --prepare` alone stops in argument validation with "Acceptance credentials file is missing", before a run directory or a cloud read; add `--production-browser-acceptance` (README corrected).
+
+**Find the stops of a rebuilt environment before the owner is at the keyboard.** The Production prepare is read-only, takes four minutes with a warm build cache, and found a stop that the promotion would otherwise have hit with the owner waiting to sign in. When a stop is a tracked setting, rehearse the rest of the prepare with that one value changed in memory before merging, so that one merge and one UAT round carry every fix (the protocol's "inspect the next steps read-only").
 
 ## Release 2026-10-06 00:18 — Production (current for Production)
 
