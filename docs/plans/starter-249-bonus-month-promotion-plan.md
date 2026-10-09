@@ -1,6 +1,6 @@
 # Plan: Starter 249 bonus-month promotion — release 1
 
-Status: IN PROGRESS (2026-10-09). Spec: [starter-249-bonus-month-promotion-spec-th.md](../specs/starter-249-bonus-month-promotion-spec-th.md). Memory: [agent-memory](../agent-memory/starter-249-bonus-month-promotion.md).
+Status: RELEASE 1 IMPLEMENTED on the feature branch (2026-10-09); no campaign exists, so the capability is inert. Acceptance map in §8; open items in §9. Spec: [starter-249-bonus-month-promotion-spec-th.md](../specs/starter-249-bonus-month-promotion-spec-th.md). Memory: [agent-memory](../agent-memory/starter-249-bonus-month-promotion.md).
 
 Base: `origin/main` `7d2f21fae` (tree identical to `origin/develop`). The billing module is byte-identical to the spec's base "M" except `schema.prisma` (+32 lines) and one migration.
 
@@ -14,7 +14,7 @@ Five read-only source reviews ran before this plan. These findings are decisions
 | --- | --- | --- |
 | R1 | A new key inside `policyJson` makes an older API binary fail `parseBillingPolicy` and close **all** sales (`billing-policy.ts:30`, `billing.service.ts:166`). The general settings page also round-trips the whole policy and `saveDraft` parses strictly, so incomplete campaign drafts are impossible there. | Campaign terms live in a sibling nullable column `BillingPolicyRevision.promotionJson` (`Record<campaignId, campaign>`). `publish()` writes `proposed.promotions ?? <current revision's promotionJson>`, so a general publish can never drop or edit campaigns and a campaign publish carries the policy unchanged. Incomplete drafts are `BillingOperation` rows of type `PROMOTION_CAMPAIGN_DRAFT` (`type` is a String; no migration). |
 | R2 | Eight readers assume `invoice.periodEnd == account.paidThrough` (`billing.service.ts:187, 634, 867`; `billing-purchase-source.ts:18`; `billing-end-package.ts:29`; reconciler `:602, :752, :971, :1058, :1069`). With `paidThrough = benefitEnd` and `periodEnd = paidEnd` a healthy promo shop becomes `SOURCE_INCONSISTENT` and can buy nothing. The spec names only end-package. | One nullable column `BillingInvoice.benefitEnd` (service end including the free time; null = `periodEnd`) and ONE helper `invoiceServiceEnd(invoice)`. Every equality above compares `invoiceServiceEnd(invoice)` to `paidThrough`. The financial period (`periodStart/periodEnd`) is never stretched. |
-| R3 | The pre-dispatch barrier fails an attempt when the policy revision id or settings version changed after the reservation commit (`billing.service.ts:729-730`), and `resume()` hides the URL (`:1111`). Every pause/end publishes a new revision, so a RESERVED right would be withdrawn — against spec §6 / A04 / A30. | For an attempt whose snapshot holds a promotion, the barrier and `resume()` treat the revision as unchanged when `configurationHash(currentRevision.policyJson) === configurationHash(attemptRevision.policyJson)`; gate checks stay. A base-policy change in that sub-second window still fails closed (release + re-quote), which is the conservative side of the spec. |
+| R3 | The pre-dispatch barrier fails an attempt when the policy revision id or settings version changed after the reservation commit (`billing.service.ts:729-730`), and `resume()` hides the URL (`:1111`). Every pause/end publishes a new revision, so a RESERVED right would be withdrawn — against spec §6 / A04 / A30. | For EVERY attempt (review finding: pause/end are one-step commands and must not stop a normal buyer either), the barrier and `resume()` treat a new revision or settings version as unchanged when `configurationHash(currentRevision.policyJson) === configurationHash(attemptRevision.policyJson)` (`basePolicyUnchanged`). The `new_sales` and payment-mode gates are read as before, and `plan_changes` is re-read for an upgrade or a scheduled change. A base-policy change in that sub-second window still fails closed (release + re-quote). Quote staleness at Checkout is unchanged: any publication asks for a fresh quote. |
 | R4 | "Every final mutation takes the fence" is over-specified: `taken` only rises in reserve/re-reserve. Release/consume sit inside ~10 Company-first transactions; retrofitting a fence-first order there is the deadlock risk. | The advisory fence `billing-promotion-policy:<env>` is taken — always as the FIRST lock — only by reserve/re-reserve and by admission-changing publications (publish, pause, end, resume). Consume and release stay row-guarded `updateMany` under the existing Company lock, exactly like the event ticket. Checkout pre-reads the quote without a lock to know whether to take the fence. |
 | R5 | Pause/end through preview → submit → approve needs Stripe network calls and a 10-minute window; it is not "immediate". | Pause and End are one-step closing commands modelled on `close()` (emergency close): one transaction, reauth, `expectedVersion`, idempotency key, reason, new revision, audit. Anything that opens admission (first publish, edit, cap change, resume) goes through the existing preview → submit → approve workflow. `effectiveAt` scheduling is not used for campaigns: "scheduled" = published with a future `startsAt`. |
 | R6 | Re-POSTing "the exact original payload" is unsafe: `expires_at` is not pinned; a same-key different-params POST returns 4xx → REJECTED → treated as proof of no sale → release (`billing.service.ts:802, 821`). | Recovery is read-back by customer + metadata only (as today). Never re-POST a Checkout for a reserved promotion. |
@@ -26,6 +26,11 @@ Five read-only source reviews ran before this plan. These findings are decisions
 | R12 | Every billing table is scoped by `(stripeAccountId, livemode)`. | `promotionEnvironmentId = livemode ? 'LIVE' : 'TEST'`. Provider account is a binding on the redemption row, not part of uniqueness. Carrying campaigns across a Stripe account change is out of scope (no account-migration tool exists). |
 | R13 | `offer.intervalCount` is a trap: sales attribution turns it into months (`billing-package-request.ts:160`). | Never express bonus time through `intervalCount`. Boundaries come from `promotionBoundaries()` only. |
 | R14 | `endPaidPackage` revokes only the four base kinds and is an optional flag; a full refund of an auto-renew source would still charge at `benefitEnd`. | Add `PROMOTION` to the revoke list; a cumulative-full refund of a promo source forces end-package; a partial promo refund rejects the flag; an auto-renew promo source must have renewal cancelled first (existing `BILLING_END_PACKAGE_AUTO_RENEW`). The redemption stays CONSUMED and is stamped `entitlementAdjustedAt`. |
+| R15 | Review: the console showed `CATALOG_STALE` while the other cycle of the same campaign kept reserving. | A stale signature on ANY rule stops admission for the whole campaign (spec §4); NORMAL stays purchasable. |
+| R16 | Review: a right reserved for a Checkout that was never requested (process died before the barrier) stayed RESERVED forever and held a cap seat; nothing read `createBy`. | The reconciler releases it once `createBy` has passed, only when the attempt is still `CREATING` with no session and nothing exists at the provider (spec §6). An attempt that reached `REQUESTING`/`UNKNOWN` is never released by elapsed time: it stays in review and keeps its cap seat. |
+| R17 | Review: `endPackageBlock` answers NOT_CURRENT before it looks at the renewal, and a promotion refund tolerates NOT_CURRENT, so a full refund could leave a usable bonus lot and a future charge. | While the source's service is not over and the renewal is live, the refund is refused (`BILLING_END_PACKAGE_AUTO_RENEW`) even when NOT_CURRENT is tolerated. A succeeded full refund whose entitlement could be neither ended nor stamped opens a `PROMOTION_REVIEW` issue on the invoice; the report then answers REVIEW. |
+| R18 | Review: one historical overlap between a free time and a paid period switched AI credit off at every instant, forever. | Runs that are over before the run in force starts are ignored; an overlap among the runs still in force or ahead returns null. |
+| R19 | Review: the package page sent the new `benefitChoice` field for a shop that only holds a sales-event ticket, which changes the API's answer for existing shops before any campaign exists. | The page sends the new fields only when an available promotion row exists for the card being quoted; otherwise the request is byte-for-byte the one from before this feature. |
 
 ## 2. Release-1 scope
 
@@ -38,9 +43,9 @@ Five read-only source reviews ran before this plan. These findings are decisions
 
 **Refused with `PROMOTION_UNAVAILABLE` + reason `PURCHASE_KIND_UNSUPPORTED` (NORMAL stays purchasable)**: repeat on a live CARD_AUTO subscription; any scheduled change (cadence or tier) as the promo purchase; upgrade; sales deal / advance deal. Already refused today for every purchase: active PROMPTPAY_RENEW, a subscription still trialing, a pending plan change, holds.
 
-**After a promotion purchase**: immediate upgrade (differential or full-package) overlapping paid, free or future promo time → `PROMOTION_UPGRADE_DEFERRED` with the date `max(benefitEnd, paidThrough)`; stop/resume renewal works while the bound subscription is trialing; grace and sweep read `termEndsAt = benefitEnd`; partial refund keeps everything; verified cumulative-full refund ends the source's unused entitlement; dispute keeps today's `FINANCIAL_REVIEW` hold.
+**After a promotion purchase**: immediate upgrade (differential or full-package) while a promotion purchase still gives service → `PROMOTION_UPGRADE_DEFERRED` with the date of the latest promotion `benefitEnd` (the block lifts there; a normal repeat stacked after it follows the normal guards); stop/resume renewal works while the bound subscription is trialing; grace and sweep read `termEndsAt = benefitEnd`; partial refund keeps everything; verified cumulative-full refund ends the source's unused entitlement; dispute keeps today's `FINANCIAL_REVIEW` hold.
 
-**Deferred (documented, not built)**: repeat on a live CARD_AUTO subscription (needs Stripe test-mode proof of the 13-month zero-price phase); promo on scheduled changes; automatic entitlement adjustment for a full refund of a not-yet-started (future) promo source and for dispute won/lost (staff-handled, state shows PENDING/REVIEW); a sweep for attempts stranded in CREATING (`createBy` is stored; the existing forced-expiry tool releases); provider-account migration; marketing-site copy (separate repository); native Stripe test-mode proof and browser acceptance on UAT.
+**Deferred (documented, not built)**: repeat on a live CARD_AUTO subscription (needs Stripe test-mode proof of the 13-month zero-price phase); promo on scheduled changes; automatic entitlement adjustment for a full refund of a not-yet-started (future) promo source and for dispute won/lost (staff-handled, state shows PENDING/REVIEW); automatic release of a reserved right on an attempt that reached REQUESTING/UNKNOWN without a session (it stays in review and keeps its cap seat, per spec §6; R16 covers the never-requested case); provider-account migration; marketing-site copy (separate repository); native Stripe test-mode proof and browser acceptance on UAT.
 
 No feature flag or env switch: the capability is always on and inert until an Admin publishes a campaign.
 
@@ -170,4 +175,57 @@ Not verifiable here (recorded as debt, not claimed): native Stripe test-mode beh
 
 ## 8. Acceptance map
 
-Filled in at integration: each of A01–A36 → the spec file and test that proves it, or the explicit reason it is refused/deferred in release 1.
+"Proven" means a registered test passes against the merged code. PostgreSQL specs run against a database migrated from empty; the payment provider in every one of them is a FAKE Stripe, so no row below claims native provider behaviour (§9). Spec files are under `apps/api/src/modules/billing/` unless a path says otherwise.
+
+| ID | Status in release 1 | Evidence or reason |
+| --- | --- | --- |
+| A01 | Proven | `billing-promotion-checkout.pg.spec.ts` (quote: 2 / 13 months, 60 / 390 units; Basic refused `OFFER_NOT_COVERED`), `billing-promotion-apply.pg.spec.ts` (applied month and year) |
+| A02 | Partly | New shop / legacy trial (INITIAL) and an active one-time Starter (REPEAT) proven in the apply and checkout specs; RESTART uses the same apply path but has no test of its own; an active auto-renewal is refused in release 1 (A12) |
+| A03 | Proven | `billing-promotion.pg.spec.ts` (once per company per campaign, a second campaign allowed, TEST and LIVE separate), checkout spec (same shop refused while RESERVED and after CONSUMED) |
+| A04 | Proven | checkout spec (a pause or end published between reservation and dispatch does not stop the dispatch; a base-policy change does), `billing-promotion-campaigns.pg.spec.ts` (a new revision keeps usage) |
+| A05 | Proven | `domain/billing-package.spec.ts` (31 Jan, leap day, Dec → Jan, early-morning Bangkok), apply spec (31 Jan → 28 Feb → 31 Mar) |
+| A06 | Proven | apply spec (a repeat continues from the old `paidThrough` and keeps the anchor day); checkout spec journey (a normal repeat after a promotion starts at `benefitEnd`) |
+| A07 | Proven | apply spec (base + bonus lots, once; replay grants nothing), `receipt-addon-ledger.pg.spec.ts` |
+| A08 | Proven | `application/billing-receipt-allocator.spec.ts`, `receipt-addon-ledger.pg.spec.ts` (own expiry and group per kind; unknown kind fails closed) |
+| A09 | Proven | `line-ai/application/ai-credit-cycles.spec.ts`, `line-ai/application/ai-credit-funding.pg.spec.ts` (funded once, not after revoke, none for gift days) |
+| A10 | Proven | apply spec (one-time apply exactly once; expired unpaid releases), checkout spec (provider rejection releases, UNKNOWN does not) |
+| A11 | Proven with the fake provider | apply spec and checkout spec journey: payment now, subscription bound with `trial_end = benefitEnd`, the $0 trial invoice grants nothing, the first renewal has base units only |
+| A12 | Refused by design | Repeat on a live card subscription answers `PROMOTION_UNAVAILABLE` / `PURCHASE_KIND_UNSUPPORTED` and NORMAL still quotes (checkout spec); R10 |
+| A13 | Partly | Stop/resume while the bound subscription trials (`application/billing-collection.spec.ts`); grace does not stretch the bonus lot (`billing-grace.pg.spec.ts`, run by hand — it is registered nowhere); a scheduled downgrade or cadence change while trialing is refused as before |
+| A14 | Proven | `application/billing-upgrade.spec.ts`, checkout spec journey (`PROMOTION_UPGRADE_DEFERRED`, `upgradeDeferredUntil`); the date is told, a scheduled upgrade is not created for the buyer |
+| A15 | Proven | `billing-promotion.pg.spec.ts` (before start, ended, paused, cap full, cap race under the fence), apply spec (a reserved Checkout paid after the end still applies) |
+| A16 | Proven | apply spec (replay of the paid event, HELD → retry, late paid proof) |
+| A17 | Proven | checkout spec (PROMOTION leaves the ticket untouched, EVENT_DISCOUNT leaves the campaign untouched; a quote without `benefitChoice` is unchanged) |
+| A18 | Partly | `application/billing-end-package.spec.ts`: partial keeps everything, cumulative-full ends the running source and revokes base + bonus, the renewal guard, the stamp, replay. A source that has not started, is held, or was replaced stays PENDING / REVIEW for staff; dispute handling is unchanged |
+| A19 | Proven | campaigns spec (permission, reauthentication, stale versions), checkout spec (the client sends only a choice and a campaign id) |
+| A20 | Partly | One contract feeds card, review, status, history and Admin; web logic specs; browser run in §9 |
+| A21 | Not proven | No mixed-version or rollback test. Rollout rule R8: after the first promotion purchase never roll back past this release |
+| A22 | Partly | Report counts and money gating (campaigns spec); first-activation attribution keeps its existing one-row-per-company rule; the marketing site is a separate repository |
+| A23 | Proven (API) | campaigns spec (template, incomplete draft, reload, not in the catalog, preview 2 / 60 and 13 / 390) |
+| A24 | Proven (API) | campaigns spec (publish through submit + approve; a campaign publication carries policy and gates unchanged) |
+| A25 | Proven | campaigns spec (pause is immediate for `reservePromotion`, resume keeps usage, an ended campaign cannot reopen) |
+| A26 | Proven | campaigns spec (stale publish refused, another campaign never overwritten, retried create and pause do not duplicate) |
+| A27 | Browser run in §9 | `apps/web/src/features/billing-admin/billing-campaigns.logic.spec.ts` for the logic |
+| A28 | Proven | `domain/billing-promotion.spec.ts`, `billing-promotion.pg.spec.ts`, campaigns spec (stale signature stops the whole campaign; a 50/600 catalog cannot be republished under the template) |
+| A29 | Partly | Uniqueness is per environment, not per provider account (`billing-promotion.pg.spec.ts`); carrying campaigns across a provider-account change is not built (R12) |
+| A30 | Proven | checkout spec (reserve → pause → dispatch; never-requested attempt released after `createBy`; REQUESTING / UNKNOWN not released), apply spec (paid after the end) |
+| A31 | Proven | `receipt-addon-ledger.pg.spec.ts` (bonus first on equal expiry, base carried and bonus fixed, 60 not 40 or 70, reserve → expiry → consume) |
+| A32 | Proven | `ai-credit-cycles.spec.ts` (tail and gap give the same cycle, 31 Jan clamp, gift days, anchor chain) |
+| A33 | Partly | Journey: PENDING → REVIEW → READY and a lost bind request bound once. Stopping renewal while PENDING is not offered (the control appears once bound) |
+| A34 | Proven | checkout spec (`PROMOTION_UNAVAILABLE` with its reason, no silent fallback), `apps/web/src/features/billing/billing-promotion.spec.ts` (one choice, exact request fields) |
+| A35 | Partly | As A18 |
+| A36 | Proven | `billing-promotion.pg.spec.ts` (two concurrent reservations at cap 1 admit one), campaigns spec (cap below reserved + consumed refused at approve even when the preview came first) |
+
+## 9. Verification record and open items
+
+Local gate on the integrated branch (GitHub Actions is in `startup_failure`, so this is the gate): prisma validate, native TypeScript typecheck of api and web, the other packages' typechecks, DI metadata check, maintenance pins, every package's unit suite, the two billing acceptance steps, harness manifests, the LINE-AI whole-chain acceptance, boot, and the whole PostgreSQL step of `ci.yml` against a database migrated from empty. Results of the final run are in the pull request.
+
+Three independent reviews of the integrated diff (purchase money path; Admin API, refunds and AI credit; web against the API as built) found no P1 in the API and one P1 wire regression in the web; their findings are R15–R19 above and the fix commits on the branch.
+
+Open before a campaign is opened to real customers:
+
+1. Native Stripe test-mode proof on UAT: a payment-mode Checkout that saves the card, then a subscription bound with a 2-month and a 13-month `trial_end`; PromptPay renewal invoices at `benefitEnd`.
+2. Browser acceptance on UAT at 390 px and desktop for the Admin and the customer journeys.
+3. Repeat on a live card subscription and a promotion on a scheduled change (refused today, R10).
+4. Automatic entitlement adjustment for a fully refunded promotion source that has not started, is held or was replaced, and for dispute outcomes (staff today; the report shows PENDING / REVIEW).
+5. `billing-grace.pg.spec.ts` is registered in no test runner; it was run by hand for this work.
