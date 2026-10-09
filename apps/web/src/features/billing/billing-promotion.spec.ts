@@ -447,6 +447,39 @@ test('the page sends the benefit through promotionQuoteFields, routes PROMOTION_
   assert.match(page, /\|\| promotionBlock\?\.checking\) && \(status\.paymentState !== 'NONE'/);
 });
 
+test('FXE-D2: the lost-promotion notice is brought into view under the sticky header, after the chooser-heading scroll, and is announced and focusable like the cadence notice', () => {
+  // The notice: a ref, focusable, an alert, and the page's own scroll margin for the sticky header.
+  assert.match(page, /<div ref=\{lostNotice\} tabIndex=\{-1\} role="alert" className="scroll-mt-\[calc\(var\(--app-header-h,0px\)\+1\.5rem\)\] space-y-2 [^"]*">\s*<p className="font-semibold">\{promotionLost\.title\}<\/p>/);
+  // The effect: on the notice only, to the top of the notice, focus without a second scroll.
+  const effect = /useEffect\(\(\) => \{ if \(promotionLost\) \{ lostNotice\.current\?\.scrollIntoView\(\{ block: 'start' \}\); lostNotice\.current\?\.focus\(\{ preventScroll: true \}\); \} \}, \[promotionLost\]\);/;
+  assert.match(page, effect);
+  // A refused checkout drops the quote, which runs the effect that scrolls to the chooser heading below the notice; this one must come after it so the notice is the last scroll.
+  const heading = page.indexOf("useEffect(() => { if (quote || choosing) { backNavigation.current?.scrollIntoView({ block: 'start' });");
+  assert.ok(heading > 0, 'the chooser-heading effect is still there');
+  assert.ok(page.search(effect) > heading, 'the notice effect is declared after the chooser-heading effect');
+  // The two causes that set the notice are the refused quote and the refused checkout; both go through `action`, which sets it together with dropping the quote.
+  assert.match(page, /if \(lost\) \{ setPromotionLost\(lost\); setQuote\(null\); setAccepted\(false\);/);
+  // Same pattern as the cadence notice, which this page already scrolls to and focuses.
+  assert.match(page, /<div ref=\{cadenceNoticeRef\} tabIndex=\{-1\} role="status" className="scroll-mt-\[calc\(var\(--app-header-h,0px\)\+1\.5rem\)\]/);
+});
+
+test('FXE-D6: a promotion review shows the price and then what the promotion gives; the document box and the discount not used follow it, every other review keeps its order', () => {
+  const at = (text: string) => { const index = page.indexOf(text); assert.ok(index > 0, text); return index; };
+  // One definition of each block, rendered in one of two places.
+  assert.equal((page.match(/aria-label="ข้อมูลออกเอกสาร"/g) ?? []).length, 1);
+  assert.equal((page.match(/aria-label="ส่วนลดจากงาน" className="space-y-2/g) ?? []).length, 1);
+  const before = at('{!promoReview && <>{documentBox(quote, status)}{discountBox(quote)}</>}'), tax = at('<p>ราคาก่อนภาษี'), promo = at('{promoReview && <section aria-label="โปรโมชั่นที่ใช้ในรายการนี้"'),
+    after = at('{promoReview && <>{discountBox(quote)}{documentBox(quote, status)}</>}'), kind = at("{quote.purchase?.kind === 'UPGRADE' ? <div");
+  assert.ok(before < tax, 'without a promotion the document box and the discount stay above the price, as before');
+  assert.ok(tax < promo && promo < after && after < kind, 'with a promotion: price, then the promotion block, then the discount not used, then the document box');
+  // The chosen benefit first: the promotion block is above the discount section it can be swapped for.
+  assert.ok(promo < page.indexOf('{discountBox(quote)}{documentBox(quote, status)}'));
+  // The blocks are the same JSX as before, now called with the quote: nothing but their position changed.
+  assert.match(page, /const documentBox = \(quote: BillingQuote, status: BillingStatus\) => <div className="rounded-xl border border-gray-200 p-4" aria-label="ข้อมูลออกเอกสาร">/);
+  assert.match(page, /const discountBox = \(quote: BillingQuote\) => quote\.eventDiscount && <section aria-label="ส่วนลดจากงาน"/);
+  assert.match(page, /\}\}>\{promotionSwitchLabel\(quote\)\}<\/button>\s*<\/section>;/, 'the switch that says what replaces what is still in the discount section');
+});
+
 test('no figure of one campaign is written into the promotion logic', () => {
   assert.doesNotMatch(logic.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ''), /\b(?:249|390|60)\b/);
 });
