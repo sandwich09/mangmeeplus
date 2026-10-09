@@ -130,6 +130,20 @@ export function campaignUsageText(view: Pick<BillingPromotionCampaignView, 'publ
   if (!view.published) return 'ยังไม่เปิดให้ใช้สิทธิ์';
   return `${countText(view.usage.taken)} / ${view.published.cap === null ? 'ไม่จำกัด' : countText(view.published.cap)}`;
 }
+/**
+ * An ACTIVE campaign whose cap is all taken (used + reserved ≥ cap) still runs, but every shop is refused it (CAP_FULL), so "shops can choose it" would be false.
+ * Said from the same two numbers as the usage text; a reserved right that is cancelled is given back, so a reservation among them is told too. A normal purchase is "as before", not "open": the sales
+ * gate may be closed, and this sentence is about the cap only. Null = not in that state.
+ */
+export function campaignCapFullText(view: Pick<BillingPromotionCampaignView, 'status' | 'published' | 'usage'>): string | null {
+  const cap = view.published?.cap, { taken, reserved } = view.usage;
+  if (view.status !== 'ACTIVE' || typeof cap !== 'number' || taken < cap) return null;
+  return `สิทธิ์ครบจำนวนแล้ว (${countText(taken)} จาก ${countText(cap)}) ร้านที่ยังไม่ได้จองสิทธิ์เลือกใช้โปรโมชั่นนี้ไม่ได้ ส่วนการซื้อแพ็กเกจแบบปกติเป็นไปตามเดิม${
+    reserved > 0 ? ` มี ${countText(reserved)} สิทธิ์ที่จองไว้กับรายการชำระที่ยังไม่เสร็จ รายการที่ถูกยกเลิกจะคืนสิทธิ์ให้ร้านอื่นใช้ได้` : ''}`;
+}
+/** The line under a campaign's name: what its status means, unless that is an active campaign with no right left. */
+export const campaignStatusHelp = (view: Pick<BillingPromotionCampaignView, 'status' | 'published' | 'usage'>): string =>
+  campaignCapFullText(view) ?? campaignStatusMeta(view.status).help;
 
 // ── list filters ──
 
