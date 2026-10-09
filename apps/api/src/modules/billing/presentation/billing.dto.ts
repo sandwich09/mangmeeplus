@@ -184,3 +184,22 @@ export class BillingBatchDto {
 export class BillingTimelineExportDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(180) cursor?: string;
 }
+
+// Promotion campaigns (promotion plan §6, lane C). `values` is parsed by `parsePromotionDraft`, which lists what is missing.
+export class BillingPromotionDraftDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(64) campaignId?: string;
+  @IsOptional() @IsInt() @Min(0) draftVersion?: number;
+  @IsObject() values!: object;
+  @IsString() @MinLength(1) @MaxLength(500) reason!: string;
+}
+export class BillingPromotionDiscardDto {
+  @IsInt() @Min(0) draftVersion!: number;
+}
+export class BillingPromotionPreviewDto extends BillingVersionDto {
+  @IsOptional() @IsInt() @Min(0) draftVersion?: number;
+  @IsIn(['PUBLISH', 'RESUME']) action!: string;
+  @IsString() @MinLength(1) @MaxLength(500) reason!: string;
+}
+export class BillingPromotionStateDto extends BillingVersionDto {
+  @IsString() @MinLength(1) @MaxLength(500) reason!: string;
+}
