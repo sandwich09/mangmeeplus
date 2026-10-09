@@ -13,6 +13,7 @@ import {
   renewalPathFor,
 } from './plan-term.logic';
 import type { PlanTermNotice } from './plan-term.api';
+import { bannerPlace, bannerSentence } from './PlanTermBanner';
 
 const notice = (over: Partial<PlanTermNotice>): PlanTermNotice => ({
   derivedState: 'ACTIVE',
@@ -162,7 +163,45 @@ describe('lock reason', () => {
     const banner = readFileSync(new URL('./PlanTermBanner.tsx', import.meta.url), 'utf8');
     assert.doesNotMatch(page, /พักการใช้งาน/);
     assert.match(page, /\{copy\.staff\} ข้อมูลทั้งหมดยังอยู่ครบ/);
-    assert.match(banner, /canManagePlan \? copy\.banner : copy\.staff/);
+    assert.match(banner, /canManagePlan \? bannerSentence\(copy\.banner, place\) : copy\.staff/);
+  });
+});
+
+// Round 4 (promotion work): the shell's banner offered "เลือกแพ็กเกจ" on the package page itself — the page that button links to — so at 390px the first and biggest green control of the
+// screen sat above "ชำระเงินต่อ", even while a payment was open or its money was received. The return page already hid it for that reason.
+describe('the locked banner on the billing pages', () => {
+  const ID = 'company-1', base = `/companies/${ID}/billing`;
+
+  it('has no button on the package page (with or without a trailing slash or a query) and on the return page, and one everywhere else', () => {
+    assert.equal(bannerPlace(base, ID), 'package');
+    assert.equal(bannerPlace(`${base}/`, ID), 'package');
+    assert.equal(bannerPlace(`${base}?interval=year`, ID), 'package');
+    assert.equal(bannerPlace(`${base}/#billing-history`, ID), 'package');
+    assert.equal(bannerPlace(`${base}/return`, ID), 'return');
+    assert.equal(bannerPlace(`${base}/return/`, ID), 'return');
+    assert.equal(bannerPlace(`${base}/return?attempt=a1&checkout=canceled`, ID), 'return');
+    for (const elsewhere of [`/companies/${ID}/dashboard`, `/companies/${ID}/settings`, `/companies/${ID}/renew`, `${base}/invoices/inv-1`, `${base}-other`, `/companies/${ID}/billing2`, '/', ''])
+      assert.equal(bannerPlace(elsewhere, ID), 'elsewhere', elsewhere);
+    // another company's package page is not this company's
+    assert.equal(bannerPlace('/companies/company-2/billing', ID), 'elsewhere');
+  });
+
+  it('on the package page the sentence keeps what is the matter and drops the invitation; every other page keeps the whole sentence', () => {
+    assert.equal(bannerSentence(PLAN_LOCK_COPY.no_package.banner, 'package'), 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้');
+    assert.equal(bannerSentence(PLAN_LOCK_COPY.trial_ended.banner, 'package'), 'แพ็กเกจของร้านหมดอายุแล้ว');
+    for (const copy of Object.values(PLAN_LOCK_COPY)) {
+      // the sentence is "<the matter> · <what to do>": the split in `bannerSentence` is only safe while that holds
+      assert.equal(copy.banner.split(' · ').length, 2, copy.banner);
+      assert.doesNotMatch(bannerSentence(copy.banner, 'package'), /เลือกแพ็กเกจ|เพื่อ/);
+      assert.equal(bannerSentence(copy.banner, 'return'), copy.banner);
+      assert.equal(bannerSentence(copy.banner, 'elsewhere'), copy.banner);
+    }
+  });
+
+  it('draws the button only where the place says so, and staff are never given one', () => {
+    const banner = readFileSync(new URL('./PlanTermBanner.tsx', import.meta.url), 'utf8');
+    assert.match(banner, /\{canManagePlan && place === 'elsewhere' && \(\s*<Link className="mangmee-btn mangmee-btn-primary w-full sm:w-auto" href=\{`\/companies\/\$\{companyId\}\/billing`\}>\s*\{PLAN_LOCK_CTA\}/);
+    assert.equal(banner.split('PLAN_LOCK_CTA').length - 1, 2, 'imported once, drawn once');
   });
 });
 

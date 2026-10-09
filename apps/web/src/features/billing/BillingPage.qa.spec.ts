@@ -19,11 +19,13 @@ test('a success return waits for Stripe: no cancel, resume, new choice or banner
   // and the two-step end keeps its confirmation for every attempt that is not a plain unpaid page.
   assert.match(page, /canEnd: canEndCheckout, canResume: canResumePayment, oneTap: oneTapCancel,/);
   assert.match(page, /const confirming = step\.key === 'cancel' && !oneTapCancel && confirmCheckoutCancel;/);
-  // The no-package box ("เลือกแพ็กเกจเพื่อเริ่มใช้งาน") gives way to the waiting line.
-  assert.match(page, /\{noPackage && awaitingStripe \? <div[^>]*>\s*<p[^>]*>กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน<\/p>/);
-  // The locked banner's own "เลือกแพ็กเกจ" stays off the return page.
-  assert.match(banner, /const onReturnPage = pathname === `\/companies\/\$\{encodeURIComponent\(companyId\)\}\/billing\/return`;/);
-  assert.match(banner, /\{canManagePlan && !onReturnPage && \(/);
+  // The no-package box ("เลือกแพ็กเกจเพื่อเริ่มใช้งาน") gives way to the waiting line: that line is now the card's heading (billing-pending-payment.ts, PENDING_TEXT.headingWaiting), said once, and the
+  // gray waiting box is gone. A box with nothing but the badge's words gives way too; an expired shop keeps the date its package ended.
+  assert.doesNotMatch(page, /noPackage && awaitingStripe/);
+  assert.match(page, /\{noPackage \? \(pending\?\.inFlight && !\(lockReason === 'trial_ended' && status\.termEndsAt\) \? null : <dl/);
+  // The locked banner's own "เลือกแพ็กเกจ" stays off the return page, and off the package page it leads to (plan-term.logic.spec.ts runs `bannerPlace`).
+  assert.match(banner, /const place = bannerPlace\(pathname, companyId\);/);
+  assert.match(banner, /\{canManagePlan && place === 'elsewhere' && \(/);
 });
 
 test('paid but not applied: a held payment says the team is checking and shows the reference openly', () => {
@@ -37,7 +39,10 @@ test('paid but not applied: a held payment says the team is checking and shows t
 test('a paid advance deal ends the polling and is never told to contact the team', () => {
   assert.match(polling, /if \(!returning \|\| !returnAttemptId \|\| returnError \|\| pendingDeal\) return;/);
   assert.match(polling, /\[api, returning, returnAttemptId, returnComplete, returnError, returnAttempt\?\.paymentState, returnAttempt\?\.applyState, checkoutCanceled, pendingDeal\]/);
-  assert.match(page, /\{returning && !confirmed && timedOut && !status\.pendingDeal && <p role="status">ยังยืนยันผลไม่ได้/);
+  // The old "ยังยืนยันผลไม่ได้ … ติดต่อทีมงานพร้อมเลขอ้างอิง" paragraph repeated the block and, beside "ระบบได้รับเงินแล้ว", contradicted it. Its one sentence of its own lives in the block of an
+  // UNPAID payment (billing-pending-payment.ts, `CONTACT`), so a paid deal never gets it.
+  assert.doesNotMatch(page, /timedOut && !status\.pendingDeal && <p role="status">ยังยืนยันผลไม่ได้/);
+  assert.doesNotMatch(page, /ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่/);
 });
 
 // A browser runs a timer longer than 2^31-1 ms (about 24.8 days) at once: a quote valid that long
