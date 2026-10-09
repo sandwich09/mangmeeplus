@@ -12,20 +12,20 @@ describe('refund of a promotion purchase (spec Q6, plan R14 / R17)', () => {
 
   // [case, input, what the middle line must say, what it must not say]
   const table: [string, Partial<RefundPromotionCase>, RegExp, RegExp][] = [
-    ['partial, keep', {}, /^คำขอนี้คืนไม่ครบยอดที่จ่าย: เวลาใช้งาน \(รวมช่วงแถมฟรี\) และใบเสร็จ \(รวมใบเสร็จเพิ่ม\) ของร้านคงเดิม$/, /ยุติ/],
+    ['partial, keep', {}, /^คำขอนี้คืนไม่ครบยอดที่จ่าย: เวลาใช้งานและใบเสร็จของร้านคงเดิม รวมเดือนแถมและใบเสร็จแถม$/, /ยุติ/],
     ['partial after an earlier partial, keep', { refundedSatang: 10_000, amountSatang: 14_899 }, /^คำขอนี้คืนไม่ครบยอดที่จ่าย: เวลาใช้งาน/, /ยุติ/],
     ['partial, end asked: refused', { endPackage: true }, /ยุติแพ็กเกจไม่ได้เมื่อคืนไม่ครบยอดที่จ่าย ระบบจะไม่รับคำขอนี้/, /คงเดิม|ระบบจะยุติ/],
-    ['full, keep asked: ended anyway, decided at Stripe success', { amountSatang: 24_900 }, /^คำขอนี้ทำให้คืนครบยอดที่จ่าย: เมื่อ Stripe คืนเงินสำเร็จ ระบบจะยุติสิทธิ์ที่ยังไม่ได้ใช้ของการซื้อนี้เอง แม้เลือกคงแพ็กเกจไว้ · .*ระบบตัดสินตอนนั้น.*เปิดเคสให้เจ้าหน้าที่.*ต่ออายุอัตโนมัติ/, /คงเดิม/],
+    ['full, keep asked: ended anyway, decided at Stripe success', { amountSatang: 24_900 }, /^คำขอนี้ทำให้คืนครบยอดที่จ่าย: เมื่อ Stripe คืนเงินสำเร็จ ระบบจะยุติสิทธิ์ที่ยังไม่ได้ใช้ของการซื้อนี้เอง แม้เลือกคงแพ็กเกจไว้ เดือนแถมและใบเสร็จแถมที่ยังเหลือจะใช้ต่อไม่ได้ · .*เปิดเรื่องให้เจ้าหน้าที่ตรวจ · ถ้าร้านยังเปิดต่ออายุอัตโนมัติหรือมีรายการค้างจ่าย ระบบอาจให้จัดการเรื่องนั้นก่อน$/, /คงเดิม/],
     ['full by cumulative total, end asked', { refundedSatang: 10_000, amountSatang: 14_900, endPackage: true }, /^คำขอนี้ทำให้คืนครบยอดที่จ่าย: เมื่อ Stripe คืนเงินสำเร็จ/, /คงเดิม/],
     ['full, saved request not decided yet', { amountSatang: 24_900, endPackage: true, packageEnded: null }, /^คำขอนี้ทำให้คืนครบยอดที่จ่าย: เมื่อ Stripe คืนเงินสำเร็จ/, /แล้ว:/],
-    ['full, package ended', { amountSatang: 24_900, endPackage: true, packageEnded: true }, /^คืนครบยอดที่จ่ายแล้ว: ระบบยุติแพ็กเกจของการซื้อนี้แล้ว .*\(รวมใบเสร็จเพิ่ม\) ใช้ต่อไม่ได้$/, /เมื่อ Stripe|เปิดเคส/],
-    ['full, the source was not the running package', { amountSatang: 24_900, endPackage: true, packageEnded: false }, /ระบบจึงไม่ได้ยุติแพ็กเกจ .*ถือว่าปรับสิทธิ์แล้ว กรณีอื่น.*เปิดเคสให้เจ้าหน้าที่ตรวจและปรับสิทธิ์เอง ดูผลได้ในรายงานแคมเปญ$/, /ระบบยุติแพ็กเกจของการซื้อนี้แล้ว/],
-    ['nothing typed yet: both outcomes', { amountSatang: NaN }, /^ถ้าคืนไม่ครบยอดที่จ่าย: .*คงเดิม และยุติแพ็กเกจไม่ได้เมื่อคืนไม่ครบยอดที่จ่าย · ถ้าคืนครบยอดที่จ่าย: เมื่อ Stripe คืนเงินสำเร็จ/, /คำขอนี้/],
+    ['full, package ended', { amountSatang: 24_900, endPackage: true, packageEnded: true }, /^คืนครบยอดที่จ่ายแล้ว: ระบบยุติแพ็กเกจของการซื้อนี้แล้ว เดือนแถมและใบเสร็จแถมที่ยังเหลือใช้ต่อไม่ได้$/, /เมื่อ Stripe|เปิดเรื่อง/],
+    ['full, the source was not the running package', { amountSatang: 24_900, endPackage: true, packageEnded: false }, /^คืนครบยอดที่จ่ายแล้ว: ระบบไม่ได้ยุติแพ็กเกจ เพราะการซื้อนี้ไม่ใช่แพ็กเกจที่ร้านใช้อยู่ตอนคืนเงินสำเร็จ .*เปิดเรื่องให้เจ้าหน้าที่ตรวจ ดูผลได้ในรายงานแคมเปญ$/, /เมื่อ Stripe/],
+    ['nothing typed yet: both outcomes', { amountSatang: NaN }, /^ถ้าคืนไม่ครบยอดที่จ่าย: .*คงเดิม.* และยุติแพ็กเกจไม่ได้เมื่อคืนไม่ครบยอดที่จ่าย · ถ้าคืนครบยอดที่จ่าย: เมื่อ Stripe คืนเงินสำเร็จ/, /คำขอนี้/],
   ];
   for (const [name, input, says, never] of table) it(name, () => {
     const lines = refundPromotionLines(promotion, at(input));
     assert.equal(lines.length, 3);
-    assert.equal(lines[0], 'ซื้อด้วยโปรโมชัน ซื้อ 1 แถม 1 · แถมฟรี 1 เดือน · ใบเสร็จเพิ่ม 30 ใบ · ใช้ได้ถึง 5 ธ.ค. 2569 17:00 น. (รวมช่วงแถมฟรี)');
+    assert.equal(lines[0], 'ซื้อด้วยโปรโมชั่น ซื้อ 1 แถม 1 · แถมฟรี 1 เดือน · ใบเสร็จแถม 30 ใบ · ใช้ได้ถึง 5 ธ.ค. 2569 17:00 น. (รวมเดือนแถม)');
     assert.match(lines[1]!, says);
     assert.doesNotMatch(lines[1]!, never);
     assert.equal(lines[2], REFUND_PROMOTION_RIGHT, 'the right is never returned, in every case');
@@ -33,6 +33,6 @@ describe('refund of a promotion purchase (spec Q6, plan R14 / R17)', () => {
   });
 
   it('a right used but never applied has no end date to show', () => {
-    assert.equal(refundPromotionLines({ ...promotion, displayName: '', benefitEnd: null }, at({}))[0], 'ซื้อด้วยโปรโมชัน · แถมฟรี 1 เดือน · ใบเสร็จเพิ่ม 30 ใบ · ยังไม่ได้เปิดสิทธิ์ที่แถม');
+    assert.equal(refundPromotionLines({ ...promotion, displayName: '', benefitEnd: null }, at({}))[0], 'ซื้อด้วยโปรโมชั่น · แถมฟรี 1 เดือน · ใบเสร็จแถม 30 ใบ · ยังไม่ได้เปิดสิทธิ์ที่แถม');
   });
 });
