@@ -327,6 +327,38 @@ describe('a promotion free time is one AI credit cycle of its own (plan R9, Q2, 
     assert.equal(cycleAt(account({ billingAnchorDay: 5, paidThrough: benefitEnd }), [paid, upgrade], utc('2026-11-20T00:00:00Z'), 7, false, [free])!.invoiceId, 'promo-inv');
   });
 
+  it('leaves an old overlap among runs that are already over as history: a later cycle is cut as if it were not there, the gift stretch and the pending renewal too', () => {
+    // A bad old row: the free time [5 Feb, 5 Mar) is overlapped by a kept paid period [10 Feb, 5 Apr). Both are long over when the shop pays again in June.
+    const old = promotion(utc('2026-01-05T03:00:00Z'), 'month', 'old-promo');
+    const clash: AiCreditPaidPeriod = { id: 'old-clash', periodStart: new Date(old.paidEnd.getTime() + 5 * DAY), periodEnd: utc('2026-04-05T03:00:00Z') };
+    const later = oneTimeChain(utc('2026-06-01T00:00:00Z'), [{ interval: 'month' }, { interval: 'month' }]);
+    const periods = [old.paid, clash, ...later], segments = [old.free], end = later[1]!.periodEnd;
+    const acct = account({ billingAnchorDay: 1, paidThrough: end });
+    for (const day of ['2026-06-10', '2026-07-10']) {
+      const at = utc(`${day}T00:00:00Z`), cycle = cycleAt(acct, periods, at, 7, false, segments);
+      assert.deepEqual([cycle?.invoiceId, cycle?.fundingSource], [day === '2026-06-10' ? 'inv-0' : 'inv-1', undefined], day);
+      assert.deepEqual(cycle, cycleAt(acct, later, at), `${day}: exactly the cycle it has without the old rows`);
+    }
+    assert.deepEqual(boundaries(acct, periods, later[0]!.periodStart, segments), boundaries(acct, later, later[0]!.periodStart));
+    // Gift days stretch the last run, and an unpaid auto-renewal opens after it: both are cut from the last run, which is clean.
+    const gifted = account({ billingAnchorDay: 1, paidThrough: new Date(end.getTime() + 4 * DAY) }), giftAt = new Date(end.getTime() + 2 * DAY);
+    assert.deepEqual(cycleAt(gifted, periods, giftAt, 7, false, segments), cycleAt(gifted, later, giftAt));
+    assert.equal(cycleAt(gifted, periods, giftAt, 7, false, segments)?.invoiceId, 'inv-1');
+    const renewing = account({ billingAnchorDay: 1, renewalMode: 'CARD_AUTO', subscriptionState: 'active', paidThrough: end }), pendingAt = new Date(end.getTime() + DAY);
+    assert.deepEqual(cycleAt(renewing, periods, pendingAt, 7, false, segments), cycleAt(renewing, later, pendingAt));
+    assert.equal(cycleAt(renewing, periods, pendingAt, 7, false, segments)?.state, 'RENEWAL_PENDING');
+    // The overlap itself still stops funding while it is in force or still ahead (the free time, the paid period over it, the paid month before them), and the lapse after has no cycle.
+    for (const day of ['2026-01-20', '2026-02-20', '2026-03-20']) assert.equal(cycleAt(acct, periods, utc(`${day}T00:00:00Z`), 7, false, segments), null, day);
+    assert.equal(cycleAt(acct, periods, utc('2026-04-20T00:00:00Z'), 7, false, segments), null, 'a lapse');
+    // A new overlap at the run in force stops its cycle, whatever the gift stretch or the pending renewal would have cut from it.
+    const inside: AiCreditPromoSegment = { start: new Date(later[1]!.periodStart.getTime() + 5 * DAY), end: new Date(later[1]!.periodStart.getTime() + 20 * DAY), invoiceId: 'twin' };
+    const bad = [...segments, inside];
+    assert.equal(cycleAt(acct, periods, utc('2026-07-10T00:00:00Z'), 7, false, bad), null, 'inside the paid month');
+    assert.equal(cycleAt(gifted, periods, giftAt, 7, false, bad), null, 'the gift stretch of the last run');
+    assert.equal(cycleAt(renewing, periods, pendingAt, 7, false, bad), null, 'the pending renewal after the last run');
+    assert.equal(cycleAt(acct, periods, utc('2026-06-10T00:00:00Z'), 7, false, bad), null, 'the month before it: the overlap is still ahead, as in the 20 Oct case above');
+  });
+
   it('changes nothing for a shop without a free time: an empty list answers exactly like no list', () => {
     const periods = oneTimeChain(utc('2026-09-10T00:00:00Z'), [{ interval: 'month' }, { interval: 'month' }]);
     const acct = account({ renewalMode: 'CARD_AUTO', subscriptionState: 'active', billingAnchorDay: 10, paidThrough: new Date(periods[1]!.periodEnd.getTime() + 5 * DAY) });

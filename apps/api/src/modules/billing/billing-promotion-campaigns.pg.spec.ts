@@ -23,7 +23,7 @@ import type { RequestContext } from '../auth/domain/models/request-context.model
 import { BillingAdminService } from './application/billing-admin.service';
 import { BillingConfigurationService } from './application/billing-configuration.service';
 import { BillingService } from './application/billing.service';
-import { consumePromotion, lockPromotionFence, promotionEligibility, promotionEnvironment, promotionOffers, promotionUsage, reservePromotion } from './application/billing-promotion';
+import { consumePromotion, lockPromotionFence, promotionEligibility, promotionEnvironment, promotionOffers, promotionUsage, releasePromotion, reservePromotion } from './application/billing-promotion';
 import { configurationHash } from './domain/billing-policy';
 import { promotionBoundaries } from './domain/billing-package';
 import { promotionOfferSignature } from './domain/billing-promotion';
@@ -84,6 +84,7 @@ describe('promotion campaigns, Admin API, on PostgreSQL', { skip: !databaseUrl }
   after(async () => {
     await client.auditLog.deleteMany({ where: { OR: [{ actorUserId: { in: userIds } }, { companyId: { in: companyIds } }] } });
     await client.billingPromotionRedemption.deleteMany({ where: { stripeAccountId: { in: accounts } } });
+    await client.billingIssue.deleteMany({ where: { stripeAccountId: { in: accounts } } });
     await client.billingInvoice.deleteMany({ where: { id: { in: invoiceIds } } });
     await client.billingOperation.deleteMany({ where: { stripeAccountId: { in: accounts } } });
     await client.billingSettings.deleteMany({ where: { stripeAccountId: { in: accounts } } });
@@ -162,6 +163,26 @@ describe('promotion campaigns, Admin API, on PostgreSQL', { skip: !databaseUrl }
     if (hold) await sleep(hold);
     return result;
   });
+
+  type RowOver = { paid?: number; refunded?: number; applied?: boolean; bonusEnd?: Date; adjusted?: boolean; releaseCount?: number; interval?: 'month' | 'year' };
+  /** A redemption the way the engine leaves it, `minutes` old (accepted and created then); a CONSUMED one points at the paid bill it was used for. */
+  async function redemptionRow(campaignId: string, minutes: number, state: 'RESERVED' | 'CONSUMED' | 'RELEASED', over: RowOver = {}) {
+    const s = await shop(), acceptedAt = new Date(Date.now() - minutes * 60_000);
+    let invoiceId: string | null = null;
+    if (state === 'CONSUMED') {
+      const invoice = await client.billingInvoice.create({ data: { billingAccountId: s.accountId, providerInvoiceId: `in_${randomUUID()}`, offerSnapshot: {}, productKind: 'PACKAGE', policyRevisionId: 'spec',
+        currency: 'THB', totalSatang: over.paid ?? 24900, paidSatang: over.paid ?? 24900, refundedSatang: over.refunded ?? 0, taxSatang: 0, periodStart: acceptedAt,
+        periodEnd: new Date(acceptedAt.getTime() + 30 * DAY), providerStatus: 'paid', evidenceHash: 'spec' } });
+      invoiceId = invoice.id;
+      invoiceIds.push(invoice.id);
+    }
+    return client.billingPromotionRedemption.create({ data: { promotionEnvironmentId: 'TEST', campaignId, companyId: s.companyId, billingAccountId: s.accountId, stripeAccountId: stripe.accountId,
+      livemode: false, state, policyRevisionId: 'spec', campaignRevision: 1, termsHash: 'spec', offerKey: 'STARTER_249', interval: over.interval ?? 'month', offerSignature: 'spec', bonusMonths: 1,
+      bonusReceiptUnits: 30, attemptId: state === 'RELEASED' ? null : attempt(), invoiceId, acceptedAt, createdAt: acceptedAt, createBy: new Date(acceptedAt.getTime() + 600_000),
+      consumedAt: state === 'CONSUMED' ? acceptedAt : null, releasedAt: state === 'RELEASED' ? acceptedAt : null, releaseCount: over.releaseCount ?? 0,
+      benefitAppliedAt: over.applied ? acceptedAt : null, paidStart: over.applied ? acceptedAt : null, paidEnd: over.applied ? new Date(acceptedAt.getTime() + 30 * DAY) : null,
+      bonusEnd: over.bonusEnd ?? null, entitlementAdjustedAt: over.adjusted ? new Date() : null } });
+  }
 
   it('saves an incomplete draft, reloads it with what is missing, and keeps it out of the active revision, the quote and the package page (A23)', async () => {
     await mode();
@@ -333,6 +354,35 @@ describe('promotion campaigns, Admin API, on PostgreSQL', { skip: !databaseUrl }
     const again = await save(starter()), previewed = await preview(again.campaign.campaignId, 0);
     await publish(previewed.operation);
     assert.equal(Object.keys(await published()).length, 1);
+  });
+
+  it('stops reporting a publication as pending once the settings moved on: it can never be approved, so nothing offers to approve it (spec §4)', async () => {
+    await mode();
+    const a = await create(starter()), edit = await service.savePromotionDraft(ctx(adminA), { campaignId: a, values: { cap: 9 }, reason: 'ปรับเพดาน' }, key('cap'));
+    // X is a campaign nobody has published yet, in a later window so that it does not collide with A.
+    const x = (await save(starter({ startsAt: at(2 * HOUR), endsAt: at(3 * HOUR) }))).campaign.campaignId;
+    const submit = async (id: string, draftVersion: number) => {
+      const previewed = await preview(id, draftVersion);
+      return { previewed, submitted: await service.submit(ctx(adminA), previewed.operation.id, previewed.operation.version, previewed.operation.previewHash, key('submit')) };
+    };
+    const pendingA = await submit(a, edit.campaign.draft!.version), pendingX = await submit(x, 0);
+    const [beforeA, beforeX] = [await view(a), await view(x)];
+    assert.deepEqual([beforeA.pendingOperationId, beforeA.allowedActions.includes('APPROVE'), beforeX.status, beforeX.pendingOperationId, beforeX.allowedActions.includes('APPROVE')],
+      [pendingA.previewed.operation.id, true, 'AWAITING_APPROVAL', pendingX.previewed.operation.id, true]);
+    // Any publication or pause moves the settings version: both previews are now of an older version.
+    await service.setPromotionState(ctx(adminA), a, 'PAUSE', { expectedVersion: await version(), reason: 'พักระหว่างรออนุมัติ' }, key('pause'));
+    await refused(service.approve(ctx(adminA), pendingX.previewed.operation.id, pendingX.submitted.version, pendingX.submitted.previewHash), 'CONTROL_PREVIEW_STALE');
+    await refused(service.approve(ctx(adminA), pendingA.previewed.operation.id, pendingA.submitted.version, pendingA.submitted.previewHash), 'CONTROL_PREVIEW_STALE');
+    const [afterA, afterX, list] = [await view(a), await view(x), await service.promotionCampaigns(ctx(adminA))];
+    assert.deepEqual([afterX.status, afterX.pendingOperationId, afterX.allowedActions, (await detail(x)).operation], ['DRAFT', null, ['EDIT', 'DISCARD_DRAFT', 'PREVIEW'], null],
+      'a campaign nobody published is a draft again, not awaiting an approval that cannot happen');
+    assert.deepEqual([afterA.status, afterA.pendingOperationId, afterA.allowedActions], ['PAUSED', null, ['EDIT', 'DISCARD_DRAFT', 'PREVIEW', 'RESUME', 'END']]);
+    assert.deepEqual(list.campaigns.map(item => [item.campaignId, item.pendingOperationId]).sort(), [[a, null], [x, null]].sort());
+    // A fresh preview on the current version is pending again and goes through.
+    const again = await submit(x, 0);
+    assert.deepEqual([(await view(x)).pendingOperationId, (await view(x)).status], [again.previewed.operation.id, 'AWAITING_APPROVAL']);
+    await service.approve(ctx(adminA), again.previewed.operation.id, again.submitted.version, again.submitted.previewHash);
+    assert.equal((await view(x)).status, 'SCHEDULED');
   });
 
   it('never reopens a gate that was closed after the preview, and needs a confirmed password for pause and end (A24)', async () => {
@@ -528,25 +578,9 @@ describe('promotion campaigns, Admin API, on PostgreSQL', { skip: !databaseUrl }
 
   it('reports every state, the bonus granted and the money — and withholds the money without the financial permission', async () => {
     await mode();
-    const id = await create(starter({ cap: null })), tick = (n: number) => new Date(Date.now() - n * 60_000);
+    const id = await create(starter({ cap: null }));
     let order = 0;
-    const row = async (state: 'RESERVED' | 'CONSUMED' | 'RELEASED', over: { paid?: number; refunded?: number; applied?: boolean; bonusEnd?: Date; adjusted?: boolean; releaseCount?: number; interval?: 'month' | 'year' } = {}) => {
-      const s = await shop(), acceptedAt = tick(order += 1);
-      let invoiceId: string | null = null;
-      if (state === 'CONSUMED') {
-        const invoice = await client.billingInvoice.create({ data: { billingAccountId: s.accountId, providerInvoiceId: `in_${randomUUID()}`, offerSnapshot: {}, productKind: 'PACKAGE', policyRevisionId: 'spec',
-          currency: 'THB', totalSatang: over.paid ?? 24900, paidSatang: over.paid ?? 24900, refundedSatang: over.refunded ?? 0, taxSatang: 0, periodStart: acceptedAt,
-          periodEnd: new Date(acceptedAt.getTime() + 30 * DAY), providerStatus: 'paid', evidenceHash: 'spec' } });
-        invoiceId = invoice.id;
-        invoiceIds.push(invoice.id);
-      }
-      return client.billingPromotionRedemption.create({ data: { promotionEnvironmentId: 'TEST', campaignId: id, companyId: s.companyId, billingAccountId: s.accountId, stripeAccountId: stripe.accountId,
-        livemode: false, state, policyRevisionId: 'spec', campaignRevision: 1, termsHash: 'spec', offerKey: 'STARTER_249', interval: over.interval ?? 'month', offerSignature: 'spec', bonusMonths: 1,
-        bonusReceiptUnits: 30, attemptId: state === 'RELEASED' ? null : attempt(), invoiceId, acceptedAt, createBy: new Date(acceptedAt.getTime() + 600_000),
-        consumedAt: state === 'CONSUMED' ? acceptedAt : null, releasedAt: state === 'RELEASED' ? acceptedAt : null, releaseCount: over.releaseCount ?? 0,
-        benefitAppliedAt: over.applied ? acceptedAt : null, paidStart: over.applied ? acceptedAt : null, paidEnd: over.applied ? new Date(acceptedAt.getTime() + 30 * DAY) : null,
-        bonusEnd: over.bonusEnd ?? null, entitlementAdjustedAt: over.adjusted ? new Date() : null } });
-    };
+    const row = (state: 'RESERVED' | 'CONSUMED' | 'RELEASED', over: RowOver = {}) => redemptionRow(id, order += 1, state, over);
     const future = new Date(Date.now() + 10 * DAY), past = new Date(Date.now() - DAY);
     const rows = [await row('RESERVED'), await row('CONSUMED'), await row('CONSUMED', { applied: true, bonusEnd: future }),
       await row('CONSUMED', { applied: true, bonusEnd: future, refunded: 10_000 }), await row('CONSUMED', { applied: true, bonusEnd: future, refunded: 24_900 }),
@@ -576,7 +610,7 @@ describe('promotion campaigns, Admin API, on PostgreSQL', { skip: !databaseUrl }
     const crowded = `campaign-${run}-crowded`, base = Date.now();
     await client.billingPromotionRedemption.createMany({ data: Array.from({ length: 26 }, (_, index) => ({ promotionEnvironmentId: 'TEST', campaignId: crowded, companyId: `crowd-${run}-${index}`,
       billingAccountId: 'spec', stripeAccountId: stripe.accountId, livemode: false, state: 'RELEASED', policyRevisionId: 'spec', campaignRevision: 1, termsHash: 'spec', offerKey: 'STARTER_249',
-      interval: 'month', offerSignature: 'spec', bonusMonths: 1, bonusReceiptUnits: 30, acceptedAt: new Date(base - index * 1000), createBy: new Date(base + 600_000),
+      interval: 'month', offerSignature: 'spec', bonusMonths: 1, bonusReceiptUnits: 30, acceptedAt: new Date(base - index * 1000), createdAt: new Date(base - index * 1000), createBy: new Date(base + 600_000),
       releasedAt: new Date(base), releaseCount: 1 })) });
     const page1 = await service.promotionCampaignReport(ctx(adminA), crowded);
     assert.deepEqual([page1.companies.length, page1.counts.releasedBeforePay, typeof page1.nextCursor], [25, 26, 'string']);
@@ -584,5 +618,50 @@ describe('promotion campaigns, Admin API, on PostgreSQL', { skip: !databaseUrl }
     assert.deepEqual([page2.companies.length, page2.nextCursor, page2.companies[0]!.companyId], [1, null, `crowd-${run}-25`]);
     assert.equal(new Set([...page1.companies, ...page2.companies].map(item => item.companyId)).size, 26);
     await assert.rejects(service.promotionCampaignReport(ctx(adminA), crowded, randomUUID()), (error: unknown) => codeOf(error) === 'CONTROL_PROMOTION_NOT_FOUND');
+  });
+
+  it('answers REVIEW for a fully refunded right whose entitlement staff still have to adjust, and only then (Q6)', async () => {
+    await mode();
+    const id = await create(starter({ cap: null })), future = new Date(Date.now() + 10 * DAY), full = 24_900;
+    let order = 0;
+    const row = (state: 'RESERVED' | 'CONSUMED' | 'RELEASED', over: RowOver = {}) => redemptionRow(id, order += 1, state, { applied: true, bonusEnd: future, ...over });
+    const flag = (item: { companyId: string; invoiceId: string | null }, state = 'OPEN', kind = 'PROMOTION_REVIEW') =>
+      client.billingIssue.create({ data: { stripeAccountId: stripe.accountId, livemode: false, companyId: item.companyId, kind, referenceId: item.invoiceId!, state } });
+    const open = await row('CONSUMED', { refunded: full }), closed = await row('CONSUMED', { refunded: full }), none = await row('CONSUMED', { refunded: full });
+    const adjusted = await row('CONSUMED', { refunded: full, adjusted: true }), partial = await row('CONSUMED', { refunded: 10_000 }), other = await row('CONSUMED', { refunded: full });
+    const waiting = await row('CONSUMED', { refunded: full });
+    await flag(open);
+    await flag(closed, 'RESOLVED');
+    await flag(adjusted);
+    await flag(partial);
+    await flag(other, 'OPEN', 'PAID_HELD');
+    await flag(waiting, 'IN_PROGRESS');
+    const report = await service.promotionCampaignReport(ctx(adminA), id), state = (item: { companyId: string }) => report.companies.find(company => company.companyId === item.companyId)!;
+    assert.deepEqual([state(open), state(closed), state(none), state(adjusted), state(partial), state(other), state(waiting)].map(company => [company.refund, company.entitlementAdjustmentState]), [
+      ['FULL', 'REVIEW'], ['FULL', 'PENDING'], ['FULL', 'PENDING'], ['FULL', 'ADJUSTED'], ['PARTIAL', 'NOT_REQUIRED'], ['FULL', 'PENDING'], ['FULL', 'REVIEW']],
+      'an open review makes it REVIEW; a resolved one, none, or another kind leaves it PENDING; adjusted and partial are decided first');
+    // The counts do not move with it: a refund never lowers a used right.
+    assert.deepEqual([report.counts.fullyRefunded, report.counts.refunded, report.counts.applied], [6, 7, 7]);
+  });
+
+  it('pages the report on the row\'s creation, so a re-reservation between two pages repeats no company and skips none', async () => {
+    await mode();
+    const id = await create(starter({ cap: null })), shops: Shop[] = [];
+    for (let index = 0; index < 27; index += 1) shops.push(await shop());
+    for (const s of shops) assert.equal(await reserve(s, await quote(id, s)), true);
+    const byAge = () => client.billingPromotionRedemption.findMany({ where: { campaignId: id }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+    // Two shops give their right back: the 25th row of the report (the cursor of its first page) and the last one (on the second page).
+    const rows = await byAge(), [anchor, oldest] = [rows[24]!, rows[26]!];
+    for (const item of [anchor, oldest]) await client.$transaction(tx => releasePromotion(tx, item.attemptId!));
+    const page1 = await service.promotionCampaignReport(ctx(adminA), id);
+    assert.deepEqual([page1.companies.length, page1.companies.at(-1)!.companyId, page1.nextCursor], [25, anchor.companyId, anchor.id]);
+    // A moment later both take it again. A re-reservation rewrites acceptedAt, so by that key both rows would jump to the front.
+    await sleep(20);
+    for (const item of [anchor, oldest]) { const s = shops.find(candidate => candidate.companyId === item.companyId)!; assert.equal(await reserve(s, await quote(id, s)), true); }
+    assert.ok((await client.billingPromotionRedemption.findUniqueOrThrow({ where: { id: anchor.id } })).acceptedAt > anchor.acceptedAt, 'the premise: acceptedAt moved');
+    const page2 = await service.promotionCampaignReport(ctx(adminA), id, page1.nextCursor!);
+    const seen = [...page1.companies, ...page2.companies].map(company => company.companyId);
+    assert.deepEqual([page2.companies.length, page2.nextCursor, new Set(seen).size, seen.length], [2, null, 27, 27], 'every company once');
+    assert.deepEqual(seen, (await byAge()).map(item => item.companyId), 'in the order they were first reserved, newest first');
   });
 });
