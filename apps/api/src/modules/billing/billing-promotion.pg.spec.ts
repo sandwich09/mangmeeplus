@@ -62,7 +62,7 @@ describe('promotion campaigns on PostgreSQL', { skip: !databaseUrl }, () => {
       promotionJson: promotions, createdByUserId: `admin-${run}` } });
     const id = `${stripeAccountId}:${livemode ? 'live' : 'test'}`;
     await client.billingSettings.upsert({ where: { id }, create: { id, stripeAccountId, livemode, gatesJson: {}, policyRevisionId: revision.id }, update: { policyRevisionId: revision.id } });
-    return { settings: { livemode }, promotions, revisionId: revision.id };
+    return { settings: { livemode }, policy, promotions, revisionId: revision.id };
   }
   async function shop(livemode = false, companyId = `promo-shop-${run}-${sequence += 1}`): Promise<Shop> {
     if (!companyIds.includes(companyId)) { companyIds.push(companyId); await client.company.create({ data: { id: companyId, name: 'Synthetic promotion company' } }); }
@@ -209,6 +209,15 @@ describe('promotion campaigns on PostgreSQL', { skip: !databaseUrl }, () => {
     // The catalog now sells 50 receipts a month: the pinned signature no longer matches the current offer.
     await refused([live], 'CATALOG_STALE', { ...BILLING_DRAFT_POLICY, offerTerms: { STARTER_249: { monthlyPriceSatang: 24900, annualPriceSatang: 249000, monthlyReceiptAllowance: 50 } } });
     await refused([live], 'CATALOG_STALE', { ...BILLING_DRAFT_POLICY, taxTreatment: 'INCLUSIVE_VAT_7', taxRateId: 'txr_synthetic' });
+    // Spec §4: one stale rule stops the whole campaign. Only the YEARLY price changed; the monthly offer this shop pinned is
+    // still current, yet its reservation, a new quote and the package page all answer CATALOG_STALE — as the console shows it.
+    const yearChanged = { ...BILLING_DRAFT_POLICY, offerTerms: { STARTER_249: { monthlyPriceSatang: 24900, annualPriceSatang: 250000, monthlyReceiptAllowance: 30 } } };
+    assert.equal(promotionOfferSignature(month(yearChanged), tax), pinned.offerSignature, 'the monthly offer itself did not change');
+    await refused([live], 'CATALOG_STALE', yearChanged);
+    const stale = await publish([live], false, yearChanged);
+    assert.deepEqual(await promotionEligibility(client, { settings: stale, companyId: s.companyId, offer: month(yearChanged), tax, now: new Date() }), { ok: false, reason: 'CATALOG_STALE' });
+    assert.deepEqual((await promotionOffers(client, { settings: stale, companyId: s.companyId, offers: [month(yearChanged), billingOffer('STARTER_249', 'year', yearChanged)], tax, now: new Date() }))
+      .map(view => [view.interval, view.available, view.reason]), [['month', false, 'CATALOG_STALE'], ['year', false, 'CATALOG_STALE']]);
     await refused([{ ...live, revision: 2, displayName: 'ชื่อใหม่' }], 'CHANGED');
     await refused([{ ...live, cap: 50 }], 'CHANGED');
     await refused([], 'CHANGED');

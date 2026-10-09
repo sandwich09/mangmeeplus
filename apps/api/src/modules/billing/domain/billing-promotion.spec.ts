@@ -39,7 +39,7 @@ test('strict parse accepts only complete campaigns keyed by their own id; lenien
     one(campaign({ revision: 0 })), one(campaign({ displayName: '<b>ฟรี</b>' })), one(campaign({ displayName: ' ' })), one(campaign({ internalName: 'x'.repeat(121) })),
     one(campaign({ startsAt: '2026-10-10' })), one(campaign({ endsAt: '2026-10-10T00:00:00.000Z' })), one(campaign({ cap: 0 })), one(campaign({ cap: 1.5 })),
     one(campaign({ paused: 'no' as never })), one(campaign({ endedAt: 'yesterday' })), one(campaign({ rules: [] })),
-    one(campaign({ rules: [campaign().rules[0]!, campaign().rules[0]!] })), one(campaign({ rules: [{ ...campaign().rules[0]!, bonusMonths: 0 }] })),
+    one(campaign({ rules: [campaign().rules[0]!, campaign().rules[0]!] })), one(campaign({ rules: [{ ...campaign().rules[0]!, bonusMonths: 0 }] })), one(campaign({ rules: [{ ...campaign().rules[0]!, bonusReceiptUnits: 0 }] })),
     one(campaign({ rules: [{ ...campaign().rules[0]!, offerSignature: 'short' }] })), one(campaign({ rules: [{ ...campaign().rules[0]!, offerKey: 'FREE_TRIAL_15' as never }] })),
     one((({ description: _description, ...rest }) => rest)(campaign()) as never)];
   for (const value of bad) {
@@ -47,6 +47,9 @@ test('strict parse accepts only complete campaigns keyed by their own id; lenien
     assert.deepEqual(parsePromotionCampaignsLenient(value), {});
   }
   assert.deepEqual(parsePromotionCampaignsLenient(good), good);
+  // What an Admin reads when a campaign is refused: Thai, with the stable code beside it.
+  assert.deepEqual((() => { try { parsePromotionCampaigns([]); } catch (error: any) { return error.getResponse(); } })(),
+    { code: 'CONTROL_PROMOTION_INVALID', message: 'ข้อมูลแคมเปญไม่ถูกต้อง' });
 });
 
 test('a draft may be incomplete: it lists what is missing or wrong and refuses only unknown fields and a bad id', () => {
@@ -56,6 +59,8 @@ test('a draft may be incomplete: it lists what is missing or wrong and refuses o
   const full = { campaignId: 'c1', type: 'BONUS_MONTHS', internalName: 'ภายใน', description: null, displayName: 'ลูกค้าเห็น', rules: [rule],
     startsAt: '2026-10-10T00:00:00.000Z', endsAt: '2026-11-10T00:00:00.000Z', cap: null };
   assert.deepEqual(parsePromotionDraft(full), { values: full, validationErrors: [] });
+  // The bonus lot and its database CHECK need at least one receipt: a zero is a wrong rule in a draft too.
+  assert.deepEqual(parsePromotionDraft({ ...full, rules: [{ ...rule, bonusReceiptUnits: 0 }] }).validationErrors, [{ field: 'rules', code: 'INVALID' }]);
   const wrong = parsePromotionDraft({ ...full, displayName: '<i>x</i>', cap: 0, endsAt: '2026-10-01T00:00:00.000Z', rules: [{ ...rule, offerSignature: 'a'.repeat(64) }] });
   assert.deepEqual(wrong.validationErrors, [{ field: 'displayName', code: 'INVALID' }, { field: 'rules', code: 'INVALID' }, { field: 'cap', code: 'INVALID' },
     { field: 'endsAt', code: 'END_NOT_AFTER_START' }]);
@@ -75,8 +80,9 @@ test('the terms hash covers the terms and the revision, not pause or end', () =>
 
 test('status and admission: start is inside, end is outside; paused, ended and a stale catalog close new reservations', () => {
   const signatures = promotionSignatures(offers, tax), status = (item: BillingPromotionCampaign, now: Date) => promotionCampaignStatus(item, now, signatures);
-  const reason = (item: BillingPromotionCampaign, now: Date, offer = month, treatment: typeof tax | 'INCLUSIVE_VAT_7' = tax) => {
-    const result = promotionAdmission(item, offer, treatment, now);
+  // The application seam's call: the whole current catalog, the offer being bought as the caller priced it.
+  const reason = (item: BillingPromotionCampaign, now: Date, offer = month, treatment: typeof tax | 'INCLUSIVE_VAT_7' = tax, current = offers) => {
+    const result = promotionAdmission(item, offer, promotionSignatures([...current, offer], treatment), now);
     return 'reason' in result ? result.reason : null;
   };
   assert.equal(status(campaign(), at('2026-10-09T23:59:59.999Z')), 'SCHEDULED');
@@ -97,7 +103,12 @@ test('status and admission: start is inside, end is outside; paused, ended and a
   assert.equal(reason(campaign(), inside, month, 'INCLUSIVE_VAT_7'), 'CATALOG_STALE');
   assert.equal(reason(campaign(), inside, billingOffer('BASIC_499', 'month')), 'OFFER_NOT_COVERED');
   assert.equal(reason(campaign({ rules: [campaign().rules[0]!] }), inside, year), 'OFFER_NOT_COVERED');
-  const admitted = promotionAdmission(campaign(), year, tax, inside);
+  // Spec §4: ONE stale rule stops the whole campaign. Only the yearly offer changed; the monthly one, still current, is refused too.
+  const yearChanged = offers.map(offer => offer.offerKey === 'STARTER_249' && offer.interval === 'year' ? { ...offer, priceSatang: offer.priceSatang + 100 } : offer);
+  assert.equal(promotionCampaignStatus(campaign(), inside, promotionSignatures(yearChanged, tax)), 'CATALOG_STALE');
+  assert.equal(reason(campaign(), inside, month, tax, yearChanged), 'CATALOG_STALE');
+  assert.equal(reason(campaign({ rules: [campaign().rules[0]!] }), inside, month, tax, yearChanged), null, 'a campaign that does not cover the changed offer is untouched');
+  const admitted = promotionAdmission(campaign(), year, signatures, inside);
   assert.deepEqual('rule' in admitted && [admitted.rule.interval, admitted.rule.bonusMonths, admitted.rule.bonusReceiptUnits], ['year', 1, 30]);
   assert.deepEqual(promotionUnavailable('CAP_FULL').getResponse(), { code: 'PROMOTION_UNAVAILABLE', reason: 'CAP_FULL', message: 'สิทธิ์โปรโมชั่นนี้เต็มแล้ว' });
 });
