@@ -60,7 +60,7 @@ for (const width of [1280, 390]) {
     await expect.poll(() => s.log.attempts - readsBefore, { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
     await expect(waiting).toBeVisible();
     await expect(page.getByRole('heading', { name: 'กำลังตรวจสอบรายการชำระเงิน', exact: true })).toBeVisible();
-    for (const name of ['เลือกแพ็กเกจใหม่', 'กลับไปยังรายการเดิม', 'ยุติรายการที่ยังไม่ชำระ', 'เลือกแพ็กเกจ'])
+    for (const name of ['ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', 'ชำระเงินต่อ', 'ยกเลิกรายการนี้', 'เลือกแพ็กเกจ'])
       await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'เลือกแพ็กเกจ', exact: true })).toHaveCount(0);
     await expect(page.getByText('เลือกแพ็กเกจเพื่อเริ่มใช้งาน', { exact: true })).toHaveCount(0);
@@ -135,9 +135,9 @@ for (const width of [1280, 390]) {
 
     // G12/F09/F10: back without paying — said plainly, and one tap ends that Checkout for a new choice.
     await expect(page.getByRole('heading', { name: 'ยังไม่ได้ชำระ', exact: true })).toBeVisible();
-    const newChoice = page.getByRole('button', { name: 'เลือกแพ็กเกจใหม่', exact: true });
+    const newChoice = page.getByRole('button', { name: 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', exact: true });
     await expect(newChoice).toBeVisible();
-    await expect(page.getByRole('button', { name: 'ยุติรายการที่ยังไม่ชำระ' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'ยกเลิกรายการนี้', exact: true })).toHaveCount(0);
     await fits(page, width);
     await page.screenshot({ path: info.outputPath(`no-setup-canceled-${width}.png`), fullPage: true });
     await newChoice.click();
@@ -148,7 +148,7 @@ for (const width of [1280, 390]) {
     // The old Checkout turns out paid: no second purchase is offered.
     s.stage = 'checkout'; s.cancelResult = 'COMPLETED';
     await page.goto(`/companies/${companyId}/billing/return?attempt=${ATTEMPT}&checkout=canceled`);
-    await page.getByRole('button', { name: 'เลือกแพ็กเกจใหม่', exact: true }).click();
+    await page.getByRole('button', { name: 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', exact: true }).click();
     await expect(page.getByRole('status').filter({ hasText: 'รายการเดิมชำระสำเร็จแล้ว' })).toBeVisible();
     await expect(plans).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์', exact: true })).toBeVisible();
@@ -204,7 +204,7 @@ for (const width of [1280, 390]) {
     await expect(checkout).toHaveCount(0);
     await page.waitForTimeout(2500);
     expect(s.log.checkouts).toHaveLength(2);
-    await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงินอีกครั้ง', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true })).toBeVisible();
     await fits(page, width);
     await expectNoClientError(page);
   });

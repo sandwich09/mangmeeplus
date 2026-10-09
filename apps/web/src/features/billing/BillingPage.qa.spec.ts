@@ -15,7 +15,10 @@ test('a success return waits for Stripe: no cancel, resume, new choice or banner
   assert.match(page, /const canEndCheckout = !awaitingStripe && Boolean\(status\?\.canCancelCheckout && status\.attemptId\);/);
   assert.match(page, /const canResumePayment = canEndCheckout && /);
   assert.match(page, /const oneTapCancel = canEndCheckout && /);
-  assert.match(page, /\{canEndCheckout && !oneTapCancel && \(confirmCheckoutCancel \?/);
+  // The block of choices is drawn from those same flags (billing-pending-payment.ts decides what is shown; while the page waits for Stripe it offers neither resume nor end),
+  // and the two-step end keeps its confirmation for every attempt that is not a plain unpaid page.
+  assert.match(page, /canEnd: canEndCheckout, canResume: canResumePayment, oneTap: oneTapCancel,/);
+  assert.match(page, /const confirming = step\.key === 'cancel' && !oneTapCancel && confirmCheckoutCancel;/);
   // The no-package box ("เลือกแพ็กเกจเพื่อเริ่มใช้งาน") gives way to the waiting line.
   assert.match(page, /\{noPackage && awaitingStripe \? <div[^>]*>\s*<p[^>]*>กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน<\/p>/);
   // The locked banner's own "เลือกแพ็กเกจ" stays off the return page.

@@ -404,7 +404,7 @@ test('a right already opened is not told as "in use" once the package has ended;
   assert.deepEqual(promotionStatus(use({ benefitEnd: null }), false)!.lines.slice(0, 2), [NAME, 'กำลังเปิดสิทธิ์ให้ ไม่ต้องชำระซ้ำ']);
   assert.equal(promotionStatus(use({ benefitEnd: null, renewalSetupState: 'PENDING' }), false)!.checking, true);
   // The page passes whether access runs — on the return page also once the attempt itself is applied — and nothing else.
-  assert.match(page, /promotionStatus\(\(returning \? returnAttempt\?\.promotion : undefined\) \?\? status\?\.promotion, status\?\.accessState === 'ACTIVE' \|\| \(returning && returnComplete\)\)/);
+  assert.match(page, /const promotionUse = \(returning \? returnAttempt\?\.promotion : undefined\) \?\? status\?\.promotion;\s*const promotionBlock = promotionStatus\(promotionUse, status\?\.accessState === 'ACTIVE' \|\| \(returning && returnComplete\)\);/);
 });
 
 test('the history row of a promotion purchase says the free time and the bonus receipts, and leaves the invoice\'s own period and amount as they are', () => {
@@ -438,7 +438,7 @@ test('the page sends the benefit through promotionQuoteFields, routes PROMOTION_
   assert.match(page, /const fields: QuoteFields = dealId \? \{\} : promotionQuoteFields\(/, 'a deal never carries a benefit');
   assert.match(page, /promotions: paid\?\.promotions/, 'decided from the rows the buyer saw, not the ones read a moment ago');
   assert.match(page, /const lost = promotionLostNotice\(e\);\s*if \(lost\) \{ setPromotionLost\(lost\); setQuote\(null\); setAccepted\(false\);/);
-  assert.match(page, /else \{ setError\(errorText\(e\)\); setErrorCode\(apiErrorCode\(e\)\); \}/);
+  assert.match(page, /else \{\s*setError\(errorText\(e\)\); setErrorCode\(apiErrorCode\(e\)\);/);
   assert.match(page, /promotionQuoteBenefit\(quote\)\);/, 'asking again keeps the benefit of the quote');
   // An unavailable promotion never touches the card's buy button: its disabled list gains only the upgrade note.
   assert.match(page, /disabled=\{!!packageChangeUnavailable \|\| !!upgradeNote \|\| modeUnavailable \|\| busy \|\| catalogUnavailable \|\| Date\.parse\(data\.catalog\.validUntil\) <= Date\.now\(\) \|\| offer\.availability !== 'AVAILABLE'\}/);
