@@ -23,7 +23,7 @@ Provider webhook active:true, Contact/Social native replies stopped, how-to/pack
 Owner confirmed both cards received and actions working; supplemental acceptance signature verified. [Exact IDs, hashes, proof and recovery](../evidence/line-official-oa-isolated-publication-2026-10-04.md).
 
 
-## Release 2026-10-09 22:52 — UAT only (current for UAT)
+## Release 2026-10-09 22:52 — UAT only (superseded for UAT by the section above)
 
 UAT serves `main` `7cb86fa0e` since 2026-10-09 22:52 Bangkok: promotion campaigns release 1 (#1047/#1048, one migration `20261009120000_billing_promotion_campaigns`; inert until an Admin publishes a campaign), the LINE link sign-in fix (#1045/#1046) and everything else merged after `67c270d3c`. Production is NOT touched by this round and needs the owner's own go. Local Kamal path from the clean controller worktree; GitHub workflow ids (`UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`) are `NOT_DISPATCHED`. Times are Bangkok. Owner's words: "merge ขึ้น uat เลย ไวๆ", then "งั้นหยุดก่อน ค่อยทำต่อ" on hearing of the blocker below, then "ทำต่อเลย".
 
@@ -45,6 +45,24 @@ UAT serves `main` `7cb86fa0e` since 2026-10-09 22:52 Bangkok: promotion campaign
 **A host that no longer exists reads like a missing permission.** `ssm:StartSession` on the earlier instance ids answers AccessDenied for the deploy role; with the new instance ids the same call works. Read the enrolled target for the current ids before concluding anything about the role.
 
 **Not proven by this round.** The acceptance is the config and readiness smoke: nobody signed in, no campaign was created and no payment was made. Before a campaign is opened to real customers: a TEST campaign from the Starter template on UAT, a purchase with a test card in the pay-once and the auto-renew card modes, and the bound subscription's trial end (`docs/plans/starter-249-bonus-month-promotion-plan.md` §9).
+
+## Release 2026-10-10 01:02 — UAT only (current for UAT)
+
+UAT serves `main` `c1774b798` since 2026-10-10 01:02 Bangkok: the seven fixes from the UAT walk of the promotion campaign (#1053/#1054; no migration) on top of the section below. Production is NOT touched. Local Kamal path; GitHub workflow ids `NOT_DISPATCHED`. Owner's words: "เทสให้จบก่อน ค่อยแก้ทีเดียว", then "เสร็จแล้วขึ้น uat เลย". The walk itself is recorded in `docs/plans/starter-249-bonus-month-promotion-plan.md` §9.
+
+| Env | Operation | Source (main) | Result | Seconds |
+|---|---|---|---|---|
+| UAT | `20261009T173354Z-f5a65473` (prepare only) | `c1774b798` (#1053 twin = develop `f3211301f` via #1054) | PREPARED_NO_DEPLOYMENT 00:38. | 289.3 |
+| UAT | `20261009T173927Z-1d787897` (prepared by `f5a65473`) | `c1774b798` | **FAILED** 00:47 at `publish-and-pull`: the tools image push reached the 240 s limit with its 1 GB build layer still uploading; then the failure handler could not reach the host to release its lock ("ssh: command failed"), so `active.json` and the remote lock stayed. Nothing changed on UAT. | 483.3 |
+| UAT | `20261009T175711Z-4c26cc39` (prepared by `f5a65473`) | `c1774b798` | ACCEPTED_LINE_DEFERRED 01:02, smoke, 12/12 phases, no migration (database phase 76.0 s, rollout 100.1 s, publish-and-pull 46.5 s), AgentCore `kamal_uat_a` v3, signature verified, 19 builds retired, 2 SSM sessions closed. Probes 01:02:47: health 200, platform-access 200, `/login` 200. | 308.5 |
+
+**On a slow uplink every release trips the 240 s push limit, not only the first one after a registry rebuild.** The tools image carries its own 1 GB build layer, which changes with every source change; from this machine it needed 436 s that night (the 1.4 GB install layer had needed 384 s the evening before). The api-web image fitted with seconds to spare. Until the limit or the image changes, the working order is: prepare, push the prepared tools image tag once by hand (deploy role, throw-away registry login directory), then apply. Applying first only costs eight minutes and proves nothing.
+
+**A failed run that cannot release its own lock leaves two things behind, and both are its own.** When the failure handler's ssh fails, the remote lock directory `~/.kamal/<service prefix>-release-lock` on the API host keeps the operation id in its `owner` file and `.env.kamal/<env>/active.json` keeps the same id; the next ordinary deploy refuses to start. Reconciliation used here, in this order: read the result (`changed` empty, the failed phase before any pull), read the host (lock owner equals the operation id; the serving containers are the previous release), then do the handler's own two steps by hand — remove the lock with the owner assertion, move `active.json` into the run directory. Do not remove a lock whose owner is another operation, and never when `changed` is not empty.
+
+**A pre-check that counts release processes with a pattern naming the script counts the shell that runs it** (again; see the note of 2026-10-05 below): chained before the apply, it stopped the apply from starting at 00:39 and cost five minutes. Check processes in a separate command and read the run directories.
+
+**The controller worktree must be fresh.** The system's temp cleaner removed files older than a few days from `/private/tmp/mangmee-release-controller-20261005` around midnight, its `.git` pointer among them. A release controller worktree is created from `origin/main` for the round (with `.env.kamal` linked in), not kept for days.
 
 ## Release 2026-10-06 00:18 — Production (current for Production)
 

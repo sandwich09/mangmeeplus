@@ -1,6 +1,6 @@
 # Agent Memory: starter 249 bonus month promotion
 
-Status: Release 1 MERGED 2026-10-09 (main #1047, develop #1048) and ON UAT since 2026-10-09 22:52 (source `7cb86fa0e`, operation `20261009T154644Z-822c9df4`); not on Production. No campaign exists, so the capability is inert. Plan: `docs/plans/starter-249-bonus-month-promotion-plan.md` (decisions R1–R19, acceptance map §8, open items §9).
+Status: Release 1 MERGED 2026-10-09 (main #1047, develop #1048); the fixes from the UAT walk MERGED 2026-10-10 (#1053/#1054) and ON UAT since 2026-10-10 01:02 (source `c1774b798`, operation `20261009T175711Z-4c26cc39`); not on Production. No campaign exists, so the capability is inert. Plan: `docs/plans/starter-249-bonus-month-promotion-plan.md` (decisions R1–R19, acceptance map §8, open items §9).
 Owner: Thawatchai / Codex
 Scope: Admin console creates and manages campaigns; first campaign is STARTER_249 monthly buy one month get one month and annual purchase gets 13 months; bugs, gaps, impact, dependencies and change points.
 
@@ -72,5 +72,5 @@ Open:
 - Rollout: after the first promotion purchase never roll back past this release (an older binary fails closed on a `PROMOTION` lot).
 
 Next:
-- UAT round with the fixes from the walk, then the owner's look at the corrected screens. The TEST campaign of the walk is ENDED; five UAT shops hold a used right for it.
+- The owner's look at the corrected screens on UAT (deployed 2026-10-10 01:02). Then: run and tune `e2e/billing-promotion.spec.ts` (edited for the fixes, not run); the LINE reply about a held event discount still says "auto-charged" to a QR-bill shop (`line-event-discount.logic.ts`). The TEST campaign of the walk is ENDED; five UAT shops hold a used right for it.
 - Production promotion only on the Owner's explicit go.
