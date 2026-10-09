@@ -185,6 +185,14 @@ for (const width of WIDTHS) {
   });
 }
 
+// FXE-D14 (fixed): the test above only watches the page's scroll width, and `<main>` clips sideways overflow (overflow-x: clip). This one guards that the unbroken name wraps inside the choice box and the
+// plan cards instead of stretching them past the screen edge, where the name, the note under the choice and the cards' right edge were cut off.
+for (const width of WIDTHS) test(`PROMO-01 the longest customer-facing campaign name leaves no box of the chooser past the screen edge, not only no page scroll at ${width}px`, async ({ authedPage: page, companyId }) => {
+  const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { promotions: promotionRows(null, { displayName: LONG_NAME }) }));
+  await openChooser(page, w, width);
+  expect((await audit(page, width)).offscreen, 'boxes reaching past the screen edge').toEqual([]);
+});
+
 /* ================================================================ 2. choosing the promotion: the review and the checkout ================================================================ */
 
 for (const width of WIDTHS) for (const interval of ['month', 'year'] as const) {
