@@ -10,6 +10,8 @@ import { BillingSettlementService } from '../application/billing-settlement.serv
 import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
 import { BillingAddOnGrantDto, BillingEndPackageDto, BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingTimelineExportDto, BillingEmptyDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto, BillingRecipientPreviewDto, BillingRecipientOtpRequestDto, BillingRecipientOtpConfirmDto, BillingRecipientAdminDto, BillingDocumentResendAdminDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
+import { BillingPromotionDiscardDto, BillingPromotionDraftDto, BillingPromotionPreviewDto, BillingPromotionStateDto } from './billing.dto';
+import type { BillingPromotionDraftInput, BillingPromotionPreviewInput, BillingPromotionStateInput } from '@watchdog-bms/contracts';
 import { extractSid } from '../../auth/presentation/auth.controller';
 import { BillingRecipientOtpService } from '../application/billing-recipient-otp.service';
 import type { Request } from 'express';
@@ -49,6 +51,12 @@ function textField(value: unknown, max = 120): string {
 function uuid(value: unknown): string {
   const text = textField(value);
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(text)) invalid();
+  return text;
+}
+/** A campaign id is server-issued (a UUID) but only its shape is checked here; an unknown id is a 404 in the service. */
+function campaignParam(value: unknown): string {
+  const text = textField(value, 64);
+  if (!/^[a-zA-Z0-9_-]+$/.test(text)) invalid();
   return text;
 }
 /** The recipient OTP binds its challenge to this session, like the account email OTP controller. */
@@ -417,6 +425,52 @@ export class BillingAdminController {
     await this.operationLimit(req);
     return this.configuration.close(req.context, { expectedVersion: fields.expectedVersion as number, gates: fields.gates,
       reason: textField(fields.reason, 500) }, key ?? '');
+  }
+  // Promotion campaigns (promotion plan §6, lane C). Reading is system.billing.read; every command is checked for system.billing.policy.manage in
+  // the service. A campaign preview is an ordinary configuration change: configuration-changes/:id/{submit|approve|cancel} carry it.
+  @Get('promotion-campaigns') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  promotionCampaigns(@Req() req: AuthedRequest, @Query() query: unknown) { bodyFields(query, []); return this.configuration.promotionCampaigns(req.context); }
+  @Get('promotion-campaigns/:campaignId') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  promotionCampaign(@Req() req: AuthedRequest, @Param('campaignId') id: string, @Query() query: unknown) {
+    bodyFields(query, []); return this.configuration.promotionCampaign(req.context, campaignParam(id));
+  }
+  @Get('promotion-campaigns/:campaignId/report') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  promotionCampaignReport(@Req() req: AuthedRequest, @Param('campaignId') id: string, @Query() query: unknown) {
+    const fields = bodyFields(query, ['cursor']);
+    return this.configuration.promotionCampaignReport(req.context, campaignParam(id), fields.cursor === undefined ? undefined : uuid(fields.cursor));
+  }
+  @Post('promotion-campaign-drafts') @HttpCode(200) @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  async promotionDraft(@Req() req: AuthedRequest, @Body() body: BillingPromotionDraftDto, @Headers('idempotency-key') key?: string) {
+    const fields = bodyFields(body, ['campaignId', 'draftVersion', 'values', 'reason']);
+    if (fields.campaignId !== undefined) campaignParam(fields.campaignId);
+    if (fields.draftVersion !== undefined && (!Number.isInteger(fields.draftVersion) || Number(fields.draftVersion) < 0)) invalid();
+    await this.operationLimit(req);
+    return this.configuration.savePromotionDraft(req.context, fields as unknown as BillingPromotionDraftInput, key ?? '');
+  }
+  @Post('promotion-campaign-drafts/:campaignId/discard') @HttpCode(200) @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  async promotionDraftDiscard(@Req() req: AuthedRequest, @Param('campaignId') id: string, @Body() body: BillingPromotionDiscardDto) {
+    const fields = bodyFields(body, ['draftVersion']);
+    await this.operationLimit(req);
+    return this.configuration.discardPromotionDraft(req.context, campaignParam(id), fields.draftVersion as number);
+  }
+  @Post('promotion-campaigns/:campaignId/preview') @HttpCode(200) @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  async promotionPreview(@Req() req: AuthedRequest, @Param('campaignId') id: string, @Body() body: BillingPromotionPreviewDto) {
+    const fields = bodyFields(body, ['expectedVersion', 'draftVersion', 'action', 'reason']);
+    await this.operationLimit(req);
+    return this.configuration.previewPromotion(req.context, campaignParam(id), fields as unknown as BillingPromotionPreviewInput);
+  }
+  @Post('promotion-campaigns/:campaignId/pause') @HttpCode(200) @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  promotionPause(@Req() req: AuthedRequest, @Param('campaignId') id: string, @Body() body: BillingPromotionStateDto, @Headers('idempotency-key') key?: string) {
+    return this.promotionState(req, id, body, 'PAUSE', key);
+  }
+  @Post('promotion-campaigns/:campaignId/end') @HttpCode(200) @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  promotionEnd(@Req() req: AuthedRequest, @Param('campaignId') id: string, @Body() body: BillingPromotionStateDto, @Headers('idempotency-key') key?: string) {
+    return this.promotionState(req, id, body, 'END', key);
+  }
+  private async promotionState(req: AuthedRequest, id: string, body: BillingPromotionStateDto, action: 'PAUSE' | 'END', key?: string) {
+    const fields = bodyFields(body, ['expectedVersion', 'reason']);
+    await this.operationLimit(req);
+    return this.configuration.setPromotionState(req.context, campaignParam(id), action, fields as unknown as BillingPromotionStateInput, key ?? '');
   }
   private async operationLimit(req: AuthedRequest) {
     await this.admin.access(req.context, 'system.billing.read');
