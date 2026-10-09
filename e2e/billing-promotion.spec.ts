@@ -1,9 +1,21 @@
+// Promotion screens (starter-249 bonus-month promotion) in a real browser: the customer package page and the Admin campaign console.
+//
+// What is real: the Next app, the seeded owner session (customer page) and the seeded system admin signing in through the login form (Admin pages, whose /system layout
+// checks the session on the server). What is simulated: Billing and the campaign API, with `page.route` (see billing-promotion.fixture.ts; every body is typed with the
+// contract types). Every state runs at 390 (the primary device) and 1280 on a fixed clock (12:00 Bangkok on 9 Oct 2026), and leaves a full-page picture, readable
+// tiles of it, a first-screen picture where the first screen matters, and an audit record (machine tokens, boxes past the edge, small targets, clipped text) in test-results/.
+// The requests the page sent are asserted, and written next to the pictures (test-results/<test>/wire-*.json; PROMO_E2E_RECORDS=<file> also appends them to one file).
+//
+// `test.fixme` marks a product defect (named FXE-D<n> in the comment above it); it becomes a plain `test` when the defect is fixed.
+// Run (local only, like billing-admin-menu-ux.spec.ts): a migrated and seeded database, Redis, then
+//   pnpm exec playwright test e2e/billing-promotion.spec.ts --project=chromium
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { test, expect } from './harness/fixtures';
 import { SEED_USERS, ensureBrowserLegalAcceptance, expectNoClientError } from './harness/auth';
 import { chooseThemedOption } from './harness/e2e-utils';
 import type { Locator, Page, TestInfo } from '@playwright/test';
-import { ATTEMPT_ID, CAMPAIGN_ID, CAMPAIGN_NAME, FIXED_NOW, MANAGER, READ_ONLY, STARTER_RULES, addCampaign, addMonths, apiError, apiMessage, completeDraft, defaultCustomerWorld, failNext, forbidden, heldTicket,
+import type { BillingPromotionUse, BillingStatus } from '@watchdog-bms/contracts';
+import { ATTEMPT_ID, CAMPAIGN_ID, CAMPAIGN_NAME, FIXED_NOW, READ_ONLY, STARTER_RULES, addCampaign, addMonths, apiError, apiMessage, completeDraft, defaultCustomerWorld, failNext, forbidden, heldTicket,
   heldTicketView, inDays, inMs, installAdminRoutes, installCustomerRoutes, invoiceItem, newAdminWorld, newShopStatus, openOperation, paidShopStatus, promotionRows, promotionUnavailableAnswer,
   promotionUse, publishedCampaign, reportCompany, reportPage, thaiDateTime, thaiDay, trialShopStatus, type AdminWorld, type CustomerWorld } from './billing-promotion.fixture';
 
@@ -17,7 +29,11 @@ const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'curre
 const HIDE_DEV_BADGE = 'nextjs-portal, [data-nextjs-toast], [data-next-badge-root] { display: none !important; }';
 
 async function fits(page: Page, width: number) {
-  expect(await page.evaluate(() => document.documentElement.scrollWidth), 'page-level horizontal overflow').toBeLessThanOrEqual(width);
+  const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+  // name the culprits in the failure: the widest boxes that reach past the edge
+  const culprits = scrollWidth <= width ? [] : await page.evaluate(edge => Array.from(document.querySelectorAll('main *, [role="main"] *')).filter(el => el.getBoundingClientRect().right > edge + 1 && !el.closest('.sr-only'))
+    .slice(0, 6).map(el => `${el.tagName.toLowerCase()}.${String(el.className).split(' ').slice(0, 4).join('.')} right=${Math.round(el.getBoundingClientRect().right)} «${(el.textContent ?? '').trim().slice(0, 30)}»`), width);
+  expect(scrollWidth, `page-level horizontal overflow; reaching past the edge: ${culprits.join(' | ')}`).toBeLessThanOrEqual(width);
 }
 /** Open a page on the fixed clock at one width. */
 async function openAt(page: Page, width: number, url: string) {
@@ -75,10 +91,10 @@ async function settle(page: Page, info: TestInfo, width: number, name: string) {
   record(info, 'audit', name, width, found);
   await pictures(page, info, width, name);
 }
-/** One JSON file per record next to the pictures, and one line in a shared log (the list reporter prints neither stdout nor attachments). */
+/** One JSON file per record next to the pictures, and, with PROMO_E2E_RECORDS=<file>, one line per record in a shared log (the list reporter prints neither stdout nor attachments). */
 function record(info: TestInfo, kind: 'audit' | 'wire', name: string, width: number, data: unknown) {
   writeFileSync(info.outputPath(`${kind}-${name}-${width}.json`), JSON.stringify(data, null, 2));
-  appendFileSync('/tmp/promo-fxe-records.ndjson', `${JSON.stringify({ kind, name, width, data })}\n`);
+  if (process.env['PROMO_E2E_RECORDS']) appendFileSync(process.env['PROMO_E2E_RECORDS'], `${JSON.stringify({ kind, name, width, data })}\n`);
 }
 /** The requests the page sent. */
 function wire(info: TestInfo, name: string, width: number, data: unknown) { record(info, 'wire', name, width, data); }
@@ -148,6 +164,20 @@ for (const width of WIDTHS) {
   });
 }
 
+/** The longest name an Admin may give a campaign (80 characters, here without a single space) must not push a phone page sideways. */
+const LONG_NAME = 'Starter'.padEnd(80, 'x');
+for (const width of WIDTHS) {
+  test(`PROMO-01 the longest customer-facing campaign name (80 characters, no spaces) stays inside the card, the chooser and the review at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { promotions: promotionRows(null, { displayName: LONG_NAME }) }));
+    await openChooser(page, w, width);
+    await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' })).toContainText(LONG_NAME);
+    await settle(page, info, width, 'promo01-long-name-chooser');
+    await buyStarter(page).click();
+    await expect(promoReviewOf(page)).toContainText(`โปรโมชั่น ${LONG_NAME}`);
+    await settle(page, info, width, 'promo01-long-name-review');
+  });
+}
+
 /* ================================================================ 2. choosing the promotion: the review and the checkout ================================================================ */
 
 for (const width of WIDTHS) for (const interval of ['month', 'year'] as const) {
@@ -211,6 +241,42 @@ for (const width of WIDTHS) {
     expect(w.log.quotes.map(quote => quote.purchaseMode)).toEqual(['CARD_AUTO', 'PROMPTPAY_RENEW', 'PROMPTPAY_ONCE']);
     for (const quote of w.log.quotes) expect(quote).toMatchObject({ benefitChoice: 'PROMOTION', promotionCampaignId: CAMPAIGN_ID, eventDiscountChoice: 'DECLINE' });
     wire(info, 'quotes-by-mode', width, w.log.quotes);
+  });
+}
+
+for (const width of WIDTHS) {
+  // DEFECT FXE-D4: with the promotion picked, the Starter card prints two answers to "how much do I get": the promotion box says 60 receipts / 13 months and the lines under
+  // it still say "30 ใบ ได้ทันที…", "ใช้งาน 12 เดือน" and "เฉลี่ยเดือนละ" (price / 12). BillingPage.tsx:752-755 print the normal numbers whatever `cardBenefit` is.
+  test.fixme(`PROMO-01 with the promotion picked, the promoted card gives one receipt number and one length of time, not the normal ones beside them at ${width}px`, async ({ authedPage: page, companyId }) => {
+    const w = defaultCustomerWorld(companyId);
+    await openChooser(page, w, width);
+    await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' })).toContainText('ใบเสร็จ 60 ใบ');
+    await expect(starterOf(page)).not.toContainText('30 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
+    await page.getByRole('button', { name: 'รายปี', exact: true }).click();
+    await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' })).toContainText('13 เดือน');
+    await expect(starterOf(page)).not.toContainText('360 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
+    await expect(starterOf(page)).not.toContainText('ใช้งาน 12 เดือน');
+  });
+
+  // DEFECT FXE-D6 (phone only: at 1280 the block is on the first screen): after "เลือกแพ็กเกจนี้" the review opens on the document box, the tax lines and a big "ชำระวันนี้ ฿249.00"; the block
+  // that says what the promotion gives (paid and free time, receipts) starts at the very bottom of a 390x844 first screen (28% of it in view). BillingPage.tsx:827 renders it after the VAT sentence.
+  (width === 390 ? test.fixme : test)(`PROMO-02 the review's first screen already shows what the promotion gives (the promotion block is in view without scrolling) at ${width}px`, async ({ authedPage: page, companyId }) => {
+    const w = defaultCustomerWorld(companyId);
+    await openChooser(page, w, width);
+    await buyStarter(page).click();
+    await expect(promoReviewOf(page)).toBeVisible();
+    await page.waitForTimeout(600);
+    await expect(promoReviewOf(page)).toBeInViewport({ ratio: 0.5 });
+  });
+
+  // DEFECT FXE-D7: spec §3 step 6 wants the promotion shown "in the package / history page"; the contract carries it on every history item (BillingInvoiceItem.promotion) but the
+  // history row (BillingPage.tsx:887) prints only number, amount and date: nothing about the free months or the receipts.
+  test.fixme(`PROMO-08 the payment history row of a promotion purchase mentions the promotion or its free time at ${width}px`, async ({ authedPage: page, companyId }) => {
+    const w = defaultCustomerWorld(companyId, paidShopStatus(companyId, { promotion: promotionUse() }));
+    w.history = [invoiceItem({ promotion: { displayName: CAMPAIGN_NAME, paidEnd: addMonths(FIXED_NOW, 1), benefitEnd, bonusReceiptUnits: 30 } })];
+    await openOverview(page, w, width);
+    await page.getByRole('button', { name: 'ประวัติ', exact: true }).click();
+    await expect(regionNamed(page, 'ประวัติการชำระเงิน')).toContainText(new RegExp(`${CAMPAIGN_NAME}|แถมฟรี|${thaiDay(benefitEnd)}`));
   });
 }
 
@@ -632,7 +698,8 @@ for (const width of WIDTHS) {
 /* ================================================================ 8. after the payment ================================================================ */
 
 const benefitEnd = addMonths(FIXED_NOW, 2), until = thaiDay(benefitEnd), bonusLine = 'แถมฟรี 1 เดือน · ใบเสร็จเพิ่ม 30 ใบ', nameLine = `โปรโมชั่น ${CAMPAIGN_NAME}`;
-const AFTER_PAYMENT = [
+type AfterPayment = { key: string; use: BillingPromotionUse; status: Partial<BillingStatus>; title: string; lines: string[]; recheck: boolean };
+const AFTER_PAYMENT: AfterPayment[] = [
   { key: 'READY', use: promotionUse({ renewalSetupState: 'READY' }), status: { subscriptionState: 'active' },
     title: 'ใช้สิทธิ์โปรโมชั่นแล้ว', lines: [nameLine, `ใช้ได้ถึง ${until}`, `ตั้งต่ออายุแล้ว รอบถัดไปเรียกเก็บวันที่ ${until}`, bonusLine], recheck: false },
   { key: 'PENDING', use: promotionUse({ renewalSetupState: 'PENDING' }), status: { subscriptionState: 'NONE', nextChargeAt: null, allowedActions: [] },
@@ -643,7 +710,7 @@ const AFTER_PAYMENT = [
     title: 'ใช้สิทธิ์โปรโมชั่นแล้ว', lines: [nameLine, `ใช้ได้ถึง ${until}`, bonusLine], recheck: false },
   { key: 'CANCELLED', use: promotionUse({ renewalSetupState: 'CANCELLED', expectedNextChargeAt: null }), status: { cancelAtPeriodEnd: true, nextChargeAt: null },
     title: 'ใช้สิทธิ์โปรโมชั่นแล้ว', lines: [nameLine, `ใช้ได้ถึง ${until}`, bonusLine], recheck: false },
-] as const;
+];
 
 for (const width of WIDTHS) for (const state of AFTER_PAYMENT) {
   test(`PROMO-08 after payment, ${state.key}: the status says what was used, until when and what happens next at ${width}px`, async ({ authedPage: page, companyId }, info) => {
@@ -869,6 +936,41 @@ for (const width of WIDTHS) {
     await expect(page.getByText('ยังไม่เปิดใช้การชำระเงินในระบบนี้ จึงยังสร้างหรือใช้แคมเปญไม่ได้', { exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'สร้างแคมเปญ' })).toHaveCount(0);
     await settle(page, info, width, 'promo09-disabled');
+  });
+}
+
+const longNameWorld = () => {
+  const w = newAdminWorld();
+  addCampaign(w, { campaignId: 'camp-long', published: publishedCampaign({ campaignId: 'camp-long', internalName: LONG_INTERNAL, displayName: LONG_NAME }), usage: { reserved: 0, consumed: 1 } });
+  return w;
+};
+const LONG_INTERNAL = 'Internal'.padEnd(120, 'y');
+for (const width of WIDTHS) {
+  // DEFECT FXE-D5: the row's title link is `inline-flex` with no way to break a long word (BillingCampaignsPage.tsx:96); a 120-character internal name (the allowed maximum)
+  // pushes the whole page to 1121px wide at 390px. Fix: add `max-w-full [overflow-wrap:anywhere]` to that link.
+  test.fixme(`PROMO-09 the longest internal name (120 characters, no spaces) stays inside the list row at ${width}px`, async ({ page }, info) => {
+    await adminOpen(page, longNameWorld(), width, '/system/billing/campaigns');
+    await expect(articleOf(page, LONG_INTERNAL)).toBeVisible();
+    await settle(page, info, width, 'promo09-long-names-list');
+  });
+
+  test(`PROMO-09 the longest internal and customer-facing names (no spaces) stay inside the detail page at ${width}px`, async ({ page }, info) => {
+    await adminOpen(page, longNameWorld(), width, '/system/billing/campaigns/camp-long');
+    await expect(page.getByRole('heading', { name: LONG_INTERNAL, level: 1 })).toBeVisible();
+    await settle(page, info, width, 'promo09-long-names-detail');
+  });
+}
+
+for (const width of WIDTHS) {
+  // DEFECT FXE-D8 (1280 only): at 1280 the three filter columns give the cycle select 193px (BillingCampaignsPage.tsx:59, `sm:grid-cols-[2fr_1fr_1fr_auto]`), and "เริ่มต้น (STARTER) · รายปี" is cut to
+  // "เริ่มต้น (STARTER) …" — the one word that says which cycle is filtered (รายเดือน / รายปี) is the one that disappears.
+  (width === 1280 ? test.fixme : test)(`PROMO-09 the cycle filter still shows which cycle is chosen (the selected text is not cut off) at ${width}px`, async ({ page }) => {
+    const w = everyStatusWorld();
+    await adminOpen(page, w, width, '/system/billing/campaigns');
+    const select = page.getByRole('combobox', { name: 'แพ็กเกจและรอบ', exact: true });
+    await chooseThemedOption(page, select, 'เริ่มต้น (STARTER) · รายปี');
+    const cut = await select.evaluate(el => [el, ...Array.from(el.querySelectorAll('*'))].filter(node => getComputedStyle(node).overflowX !== 'visible' && node.scrollWidth > node.clientWidth + 1).length);
+    expect(cut, 'elements whose text is cut off').toBe(0);
   });
 }
 
@@ -1361,6 +1463,19 @@ for (const width of WIDTHS) {
     await expect(publish.getByRole('button', { name: 'ตรวจสอบก่อนเปิด', exact: true })).toBeDisabled();
     await expect(page.getByRole('button', { name: 'แก้ร่าง', exact: true })).toBeEnabled();
     await settle(page, info, width, 'promo14-blocker');
+  });
+
+  test(`PROMO-14 a live campaign whose catalog moved says so on every row, stops taking new rights (the shop buys normally) and offers "แก้เงื่อนไข" at ${width}px`, async ({ page }, info) => {
+    const w = activeWorld();
+    w.campaigns[0]!.stale = true;
+    w.blockers = { month: ['CONTROL_PROMOTION_CATALOG_STALE'], year: ['CONTROL_PROMOTION_CATALOG_STALE'] };
+    await adminOpen(page, w, width, `/system/billing/campaigns/${CAMPAIGN_ID}`);
+    await expect(page.getByText('ต้องตรวจแพ็กเกจใหม่', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('ราคา โควตา หรือภาษีของแพ็กเกจเปลี่ยนไปจากตอนเปิดแคมเปญ ระบบจึงหยุดรับสิทธิ์ใหม่ (ซื้อแพ็กเกจปกติได้) แก้เงื่อนไขแล้วตรวจตัวอย่างใหม่ก่อนเปิดอีกครั้ง')).toBeVisible();
+    const preview = region(page, 'ตัวอย่างเมื่อเปิดแคมเปญ');
+    await expect(preview.getByRole('alert')).toHaveCount(2);
+    await expect(page.getByRole('button', { name: 'แก้เงื่อนไข', exact: true })).toBeEnabled();
+    await settle(page, info, width, 'promo14-live-catalog-stale');
   });
 
   test(`PROMO-14 not found, a campaign ended elsewhere, and a permission that disappears while the page is open at ${width}px`, async ({ page }, info) => {
