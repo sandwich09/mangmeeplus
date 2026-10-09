@@ -89,6 +89,9 @@ const issueKinds: Record<string,string> = {
   EMAIL_RECIPIENT_REVIEW:'ต้องตรวจการเปลี่ยนอีเมลรับเอกสาร',
   // Sales-event discounts §6.3: a bill was paid at the discounted amount but its discount was not held for it.
   EVENT_DISCOUNT_REVIEW:'ต้องตรวจส่วนลดจากงานของบิลนี้',
+  // Promotion campaigns §6: a bill was paid with a promotion chosen but its right was not there to use, or a fully
+  // refunded promotion purchase could not be ended.
+  PROMOTION_REVIEW:'ต้องตรวจสิทธิ์โปรโมชั่นของบิลนี้',
 };
 export const billingIssueLabel = (value:string) => Object.hasOwn(issueKinds,value)?issueKinds[value]!:'รายการที่ต้องตรวจสอบ';
 const operationKinds: Record<string,string> = {

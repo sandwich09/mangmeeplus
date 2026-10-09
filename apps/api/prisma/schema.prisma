@@ -10452,7 +10452,6 @@ model ReceiptUnitEntry {
   @@index([grantId, kind])
 }
 
-/// Immutable customer consent for recurring collection from a service boundary.
 /// One row per company per campaign per logical environment (promotion spec §6): the reservation, its use and
 /// its release. The provider account is a binding, never part of the once-per-company identity (plan R12).
 /// CHECKs live in migration 20261009120000 (Prisma cannot model them) — do NOT let `prisma migrate diff` drop them:
@@ -10499,6 +10498,7 @@ model BillingPromotionRedemption {
   @@index([companyId])
 }
 
+/// Immutable customer consent for recurring collection from a service boundary.
 model BillingSubscriptionContract {
   revision          Int @default(autoincrement()) @unique
   id                String @id @default(uuid())
