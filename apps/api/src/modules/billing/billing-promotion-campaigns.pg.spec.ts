@@ -377,7 +377,7 @@ describe('promotion campaigns, Admin API, on PostgreSQL', { skip: !databaseUrl }
     assert.deepEqual([afterPause.usage, afterPause.pendingCheckouts], [{ reserved: 1, consumed: 0, taken: 1, cap: 10 }, 1]);
 
     // --- resume is a publication; usage is not reset and the buyer's earlier quote still holds (a pause is not a change of terms)
-    const resume = await preview(id, undefined, 'RESUME');
+    const resume = await preview(id, 3, 'RESUME'); // a draftVersion the client happens to hold is ignored: a resume never reads the draft
     assert.deepEqual([resume.operation.proposed.promotions![id]!.paused, resume.operation.proposed.promotions![id]!.revision, resume.operation.referenceId], [false, 1, null]);
     await publish(resume.operation);
     const resumed = await view(id);
