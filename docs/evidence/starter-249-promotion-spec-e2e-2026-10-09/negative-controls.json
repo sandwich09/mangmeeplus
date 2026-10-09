@@ -1,0 +1,108 @@
+{
+  "kind": "OFFLINE_MODEL_NEGATIVE_CONTROLS",
+  "date": "2026-10-09",
+  "specSha256": "ee094b6b94f6074ab47f042bf61c9c0e7b4260e70f1cbedb56e321b8158f4372",
+  "harnessSha256": "cdfee1a090b83acc4be40829ee1da7ce2004c558897ed565ce8aaa328a1f9e9c",
+  "mutationHarnessSha256": "027e43ca1acd7682c903de7e7632aa82f4f84b4f1dff20a0caca3b9eac033077",
+  "summary": {
+    "injected": 9,
+    "caught": 9
+  },
+  "limitations": "Defects are injected into a temporary reference model, not source code. Detecting them is not proof that a future implementation has no defects.",
+  "cases": [
+    {
+      "finding": "F01",
+      "mutation": "Ignore live offer signature",
+      "expectedFailCase": "R01",
+      "observedFailedCases": [
+        "R01"
+      ],
+      "result": "CAUGHT"
+    },
+    {
+      "finding": "F02",
+      "mutation": "Partition company usage by provider",
+      "expectedFailCase": "R03",
+      "observedFailedCases": [
+        "R03"
+      ],
+      "result": "CAUGHT"
+    },
+    {
+      "finding": "F03",
+      "mutation": "Recheck campaign end after accepted reservation",
+      "expectedFailCase": "R04",
+      "observedFailedCases": [
+        "R04"
+      ],
+      "result": "CAUGHT"
+    },
+    {
+      "finding": "F04",
+      "mutation": "Base-first on equal expiry",
+      "expectedFailCase": "R07",
+      "observedFailedCases": [
+        "R07",
+        "R09"
+      ],
+      "result": "CAUGHT"
+    },
+    {
+      "finding": "F05",
+      "mutation": "Read only paid AI segments",
+      "expectedFailCase": "R13",
+      "observedFailedCases": [
+        "R12",
+        "R13",
+        "R14",
+        "R15",
+        "R39"
+      ],
+      "result": "CAUGHT"
+    },
+    {
+      "finding": "F06",
+      "mutation": "Claim renewal ready before provider proof",
+      "expectedFailCase": "R17",
+      "observedFailedCases": [
+        "R17"
+      ],
+      "result": "CAUGHT"
+    },
+    {
+      "finding": "F07",
+      "mutation": "Promotion usage disables NORMAL",
+      "expectedFailCase": "R20",
+      "observedFailedCases": [
+        "R20"
+      ],
+      "result": "CAUGHT"
+    },
+    {
+      "finding": "F08",
+      "mutation": "Full refund leaves benefits applied",
+      "expectedFailCase": "R30",
+      "observedFailedCases": [
+        "R26",
+        "R27",
+        "R28",
+        "R29",
+        "R30",
+        "R32",
+        "R33",
+        "R45"
+      ],
+      "result": "CAUGHT"
+    },
+    {
+      "finding": "F09",
+      "mutation": "Publish cap without final usage check",
+      "expectedFailCase": "R35",
+      "observedFailedCases": [
+        "R35",
+        "R36"
+      ],
+      "result": "CAUGHT"
+    }
+  ]
+}

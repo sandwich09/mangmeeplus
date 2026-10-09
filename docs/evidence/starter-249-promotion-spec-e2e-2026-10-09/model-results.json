@@ -1,0 +1,1704 @@
+{
+  "kind": "OFFLINE_SPEC_REFERENCE_MODEL",
+  "date": "2026-10-09",
+  "specSha256": "ee094b6b94f6074ab47f042bf61c9c0e7b4260e70f1cbedb56e321b8158f4372",
+  "harnessSha256": "cdfee1a090b83acc4be40829ee1da7ce2004c558897ed565ce8aaa328a1f9e9c",
+  "summary": {
+    "cases": 82,
+    "modelPass": 82,
+    "modelFail": 0,
+    "baselineCases": 37,
+    "closureCases": 45,
+    "capInterleavings": 6
+  },
+  "limitations": [
+    "Atomic in-memory steps, not actual DB concurrency or lock correctness",
+    "Synthetic permission/payment/provider readback booleans",
+    "Receipt/group policy tested with fixture lots, not OCR API",
+    "Dispute and subscription states model desired behavior only",
+    "No browser, network, provider, customer data, migration or application mutations"
+  ],
+  "cases": [
+    {
+      "id": "S01",
+      "title": "Incomplete draft has no admission",
+      "criteria": [
+        "A23"
+      ],
+      "inputs": {},
+      "expected": [
+        "DRAFT",
+        0
+      ],
+      "observed": [
+        "DRAFT",
+        0
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S02",
+      "title": "Start inclusive end exclusive",
+      "criteria": [
+        "A15",
+        "A24"
+      ],
+      "inputs": {},
+      "expected": [
+        "SCHEDULED",
+        "ACTIVE",
+        "ENDED"
+      ],
+      "observed": [
+        "SCHEDULED",
+        "ACTIVE",
+        "ENDED"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S03",
+      "title": "Publication preserves sales gate",
+      "criteria": [
+        "A24"
+      ],
+      "inputs": {},
+      "expected": "PURCHASE_BLOCKED",
+      "observed": "PURCHASE_BLOCKED",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S04",
+      "title": "Stale quote and stale admin version",
+      "criteria": [
+        "A04",
+        "A26"
+      ],
+      "inputs": {},
+      "expected": [
+        "QUOTE_STALE",
+        "STALE_VERSION"
+      ],
+      "observed": [
+        "QUOTE_STALE",
+        "STALE_VERSION"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S05",
+      "title": "Unauthorized admission",
+      "criteria": [
+        "A19"
+      ],
+      "inputs": {},
+      "expected": "FORBIDDEN",
+      "observed": "FORBIDDEN",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S06",
+      "title": "Pause preserves accepted purchase",
+      "criteria": [
+        "A25"
+      ],
+      "inputs": {},
+      "expected": [
+        60,
+        "PAUSED"
+      ],
+      "observed": [
+        60,
+        "PAUSED"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S07",
+      "title": "End preserves accepted purchase",
+      "criteria": [
+        "A25"
+      ],
+      "inputs": {},
+      "expected": [
+        60,
+        "ENDED"
+      ],
+      "observed": [
+        60,
+        "ENDED"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S08",
+      "title": "Monthly exact paid/free units",
+      "criteria": [
+        "A01",
+        "A06",
+        "A07"
+      ],
+      "inputs": {},
+      "expected": [
+        24900,
+        "2026-11-05T03:00:00Z",
+        "2026-12-05T03:00:00Z",
+        60
+      ],
+      "observed": [
+        24900,
+        "2026-11-05T03:00:00Z",
+        "2026-12-05T03:00:00Z",
+        60
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S09",
+      "title": "Annual exact paid/free units",
+      "criteria": [
+        "A01",
+        "A06",
+        "A07"
+      ],
+      "inputs": {},
+      "expected": [
+        249000,
+        "2027-10-05T03:00:00Z",
+        "2027-11-05T03:00:00Z",
+        390
+      ],
+      "observed": [
+        249000,
+        "2027-10-05T03:00:00Z",
+        "2027-11-05T03:00:00Z",
+        390
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S10",
+      "title": "Active extends prior term",
+      "criteria": [
+        "A02",
+        "A06"
+      ],
+      "inputs": {},
+      "expected": [
+        "2026-10-20T03:00:00Z",
+        "2026-12-20T03:00:00Z"
+      ],
+      "observed": [
+        "2026-10-20T03:00:00Z",
+        "2026-12-20T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S11",
+      "title": "Lapsed restarts from paidAt",
+      "criteria": [
+        "A02",
+        "A06"
+      ],
+      "inputs": {},
+      "expected": [
+        "2026-10-05T03:00:00Z",
+        "2026-12-05T03:00:00Z"
+      ],
+      "observed": [
+        "2026-10-05T03:00:00Z",
+        "2026-12-05T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S12",
+      "title": "Jan31",
+      "criteria": [
+        "A05"
+      ],
+      "inputs": {
+        "startUTC": "2026-01-31T03:00:00Z"
+      },
+      "expected": [
+        "2026-02-28T03:00:00Z",
+        "2026-03-31T03:00:00Z"
+      ],
+      "observed": [
+        "2026-02-28T03:00:00Z",
+        "2026-03-31T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S13",
+      "title": "Leap annual",
+      "criteria": [
+        "A05"
+      ],
+      "inputs": {
+        "startUTC": "2028-02-29T03:00:00Z"
+      },
+      "expected": [
+        "2029-02-28T03:00:00Z",
+        "2029-03-29T03:00:00Z"
+      ],
+      "observed": [
+        "2029-02-28T03:00:00Z",
+        "2029-03-29T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S14",
+      "title": "December",
+      "criteria": [
+        "A05"
+      ],
+      "inputs": {
+        "startUTC": "2026-12-31T03:00:00Z"
+      },
+      "expected": [
+        "2027-01-31T03:00:00Z",
+        "2027-02-28T03:00:00Z"
+      ],
+      "observed": [
+        "2027-01-31T03:00:00Z",
+        "2027-02-28T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S15",
+      "title": "Thai 00:30 UTC anniversary",
+      "criteria": [
+        "A05"
+      ],
+      "inputs": {
+        "startUTC": "2026-01-30T17:30:00Z"
+      },
+      "expected": [
+        "2026-02-28T17:30:00Z",
+        "2026-03-30T17:30:00Z"
+      ],
+      "observed": [
+        "2026-02-28T17:30:00Z",
+        "2026-03-30T17:30:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S16",
+      "title": "CARD_ONCE desired boundary",
+      "criteria": [
+        "A10",
+        "A11"
+      ],
+      "inputs": {},
+      "expected": [
+        60,
+        "NOT_REQUIRED",
+        null
+      ],
+      "observed": [
+        60,
+        "NOT_REQUIRED",
+        null
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S17",
+      "title": "PROMPTPAY_ONCE desired boundary",
+      "criteria": [
+        "A10",
+        "A11"
+      ],
+      "inputs": {},
+      "expected": [
+        60,
+        "NOT_REQUIRED",
+        null
+      ],
+      "observed": [
+        60,
+        "NOT_REQUIRED",
+        null
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S18",
+      "title": "CARD_AUTO desired boundary",
+      "criteria": [
+        "A10",
+        "A11"
+      ],
+      "inputs": {},
+      "expected": [
+        60,
+        "READY",
+        "2026-12-05T03:00:00Z"
+      ],
+      "observed": [
+        60,
+        "READY",
+        "2026-12-05T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S19",
+      "title": "PROMPTPAY_RENEW desired boundary",
+      "criteria": [
+        "A10",
+        "A11"
+      ],
+      "inputs": {},
+      "expected": [
+        60,
+        "READY",
+        "2026-12-05T03:00:00Z"
+      ],
+      "observed": [
+        60,
+        "READY",
+        "2026-12-05T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S20",
+      "title": "Company monthly/yearly share usage",
+      "criteria": [
+        "A03"
+      ],
+      "inputs": {},
+      "expected": "USED_OR_RESERVED",
+      "observed": "USED_OR_RESERVED",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S21",
+      "title": "Distinct company",
+      "criteria": [
+        "A03"
+      ],
+      "inputs": {},
+      "expected": "RESERVED",
+      "observed": "RESERVED",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S22",
+      "title": "TEST/LIVE separated",
+      "criteria": [
+        "A03"
+      ],
+      "inputs": {},
+      "expected": "RESERVED",
+      "observed": "RESERVED",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S23",
+      "title": "Revision does not reset usage",
+      "criteria": [
+        "A03",
+        "A04"
+      ],
+      "inputs": {},
+      "expected": "USED_OR_RESERVED",
+      "observed": "USED_OR_RESERVED",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S24",
+      "title": "New explicit campaign",
+      "criteria": [
+        "A03"
+      ],
+      "inputs": {},
+      "expected": "RESERVED",
+      "observed": "RESERVED",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S25",
+      "title": "Verified unpaid releases",
+      "criteria": [
+        "A10",
+        "A16"
+      ],
+      "inputs": {},
+      "expected": [
+        "RELEASED",
+        0
+      ],
+      "observed": [
+        "RELEASED",
+        0
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S26",
+      "title": "Unknown retains slot",
+      "criteria": [
+        "A10",
+        "A16"
+      ],
+      "inputs": {},
+      "expected": [
+        "RETAINED",
+        1
+      ],
+      "observed": [
+        "RETAINED",
+        1
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S27",
+      "title": "Old generation cannot consume new",
+      "criteria": [
+        "A16"
+      ],
+      "inputs": {},
+      "expected": [
+        "SOURCE_MISMATCH",
+        0
+      ],
+      "observed": [
+        "SOURCE_MISMATCH",
+        0
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S28",
+      "title": "Paid held already consumed",
+      "criteria": [
+        "A16"
+      ],
+      "inputs": {},
+      "expected": [
+        1,
+        0,
+        60
+      ],
+      "observed": [
+        1,
+        0,
+        60
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S29",
+      "title": "Paid/apply replay no duplicate",
+      "criteria": [
+        "A16",
+        "A26"
+      ],
+      "inputs": {},
+      "expected": [
+        1,
+        60
+      ],
+      "observed": [
+        1,
+        60
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S30",
+      "title": "Browser success is not proof",
+      "criteria": [
+        "A10",
+        "A19"
+      ],
+      "inputs": {},
+      "expected": "UNVERIFIED",
+      "observed": "UNVERIFIED",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S31",
+      "title": "No refill replay at bonus start",
+      "criteria": [
+        "A07",
+        "A08"
+      ],
+      "inputs": {},
+      "expected": 40,
+      "observed": 40,
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S32",
+      "title": "Following normal period cadence",
+      "criteria": [
+        "A13"
+      ],
+      "inputs": {},
+      "expected": [
+        "2027-01-05T03:00:00Z",
+        30
+      ],
+      "observed": [
+        "2027-01-05T03:00:00Z",
+        30
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S33",
+      "title": "Both orders last slot",
+      "criteria": [
+        "A15"
+      ],
+      "inputs": {},
+      "expected": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "observed": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S34",
+      "title": "Accepted paid after campaign end",
+      "criteria": [
+        "A15",
+        "A16"
+      ],
+      "inputs": {},
+      "expected": [
+        60,
+        "2027-01-02T03:00:00Z"
+      ],
+      "observed": [
+        60,
+        "2027-01-02T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S35",
+      "title": "Quote alone not accepted",
+      "criteria": [
+        "A15"
+      ],
+      "inputs": {},
+      "expected": "ENDED",
+      "observed": "ENDED",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S36",
+      "title": "Paid-held occupies capacity",
+      "criteria": [
+        "A22"
+      ],
+      "inputs": {},
+      "expected": "CAP_FULL",
+      "observed": "CAP_FULL",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "S37",
+      "title": "Final dates follow paidAt",
+      "criteria": [
+        "A06"
+      ],
+      "inputs": {},
+      "expected": "2026-12-06T03:00:00Z",
+      "observed": "2026-12-06T03:00:00Z",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R01",
+      "title": "Catalog drift blocks only promo/template",
+      "criteria": [
+        "A28"
+      ],
+      "inputs": {},
+      "expected": [
+        "CATALOG_STALE",
+        "TEMPLATE_INVALID",
+        "NORMAL"
+      ],
+      "observed": [
+        "CATALOG_STALE",
+        "TEMPLATE_INVALID",
+        "NORMAL"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R02",
+      "title": "Accepted snapshot survives catalog changes",
+      "criteria": [
+        "A28"
+      ],
+      "inputs": {},
+      "expected": [
+        [
+          24900,
+          249000,
+          30,
+          360
+        ],
+        60
+      ],
+      "observed": [
+        [
+          24900,
+          249000,
+          30,
+          360
+        ],
+        60
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R03",
+      "title": "Provider migration cannot reset",
+      "criteria": [
+        "A29"
+      ],
+      "inputs": {},
+      "expected": "USED_OR_RESERVED",
+      "observed": "USED_OR_RESERVED",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R04",
+      "title": "Reserve end dispatch keeps promise",
+      "criteria": [
+        "A30"
+      ],
+      "inputs": {},
+      "expected": [
+        "DISPATCHED",
+        [
+          "a1",
+          "2026-10-05T03:39:00Z"
+        ]
+      ],
+      "observed": [
+        "DISPATCHED",
+        [
+          "a1",
+          "2026-10-05T03:39:00Z"
+        ]
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R05",
+      "title": "Undispatched expires and fences worker",
+      "criteria": [
+        "A30"
+      ],
+      "inputs": {},
+      "expected": [
+        "RELEASED",
+        "FENCED",
+        0
+      ],
+      "observed": [
+        "RELEASED",
+        "FENCED",
+        0
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R06",
+      "title": "Lost response retains original payload and slot",
+      "criteria": [
+        "A30"
+      ],
+      "inputs": {},
+      "expected": [
+        "RECOVER_ORIGINAL",
+        true,
+        "RETAINED",
+        1
+      ],
+      "observed": [
+        "RECOVER_ORIGINAL",
+        true,
+        "RETAINED",
+        1
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R07",
+      "title": "Equal expiry bonus before base",
+      "criteria": [
+        "A31"
+      ],
+      "inputs": {},
+      "expected": [
+        [
+          [
+            "bonus",
+            20
+          ]
+        ],
+        [
+          30,
+          10
+        ]
+      ],
+      "observed": [
+        [
+          [
+            "bonus",
+            20
+          ]
+        ],
+        [
+          30,
+          10
+        ]
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R08",
+      "title": "Earlier expiry overrides bonus preference",
+      "criteria": [
+        "A31"
+      ],
+      "inputs": {},
+      "expected": [
+        [
+          "base",
+          20
+        ]
+      ],
+      "observed": [
+        [
+          "base",
+          20
+        ]
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R09",
+      "title": "Repeat carries paid only bonus expires",
+      "criteria": [
+        "A31"
+      ],
+      "inputs": {},
+      "expected": 60,
+      "observed": 60,
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R10",
+      "title": "No preapply or expired bonus available",
+      "criteria": [
+        "A31"
+      ],
+      "inputs": {},
+      "expected": [
+        [],
+        []
+      ],
+      "observed": [
+        [],
+        []
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R11",
+      "title": "Package group preserved addon file restriction",
+      "criteria": [
+        "A08",
+        "A31"
+      ],
+      "inputs": {},
+      "expected": [
+        [
+          [
+            "base",
+            1
+          ]
+        ],
+        []
+      ],
+      "observed": [
+        [
+          [
+            "base",
+            1
+          ]
+        ],
+        []
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R12",
+      "title": "Free tail yields promotion cycle",
+      "criteria": [
+        "A09",
+        "A32"
+      ],
+      "inputs": {},
+      "expected": [
+        "2026-11-05T03:00:00Z",
+        "2026-12-05T03:00:00Z",
+        "PROMOTION",
+        "I1"
+      ],
+      "observed": [
+        "2026-11-05T03:00:00Z",
+        "2026-12-05T03:00:00Z",
+        "PROMOTION",
+        "I1"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R13",
+      "title": "Free gap yields promotion cycle",
+      "criteria": [
+        "A09",
+        "A32"
+      ],
+      "inputs": {},
+      "expected": [
+        "2026-11-05T03:00:00Z",
+        "2026-12-05T03:00:00Z",
+        "PROMOTION",
+        "I1"
+      ],
+      "observed": [
+        "2026-11-05T03:00:00Z",
+        "2026-12-05T03:00:00Z",
+        "PROMOTION",
+        "I1"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R14",
+      "title": "Jan31 bonus cycle retains original end",
+      "criteria": [
+        "A32"
+      ],
+      "inputs": {},
+      "expected": [
+        "2026-02-28T03:00:00Z",
+        "2026-03-31T03:00:00Z",
+        "PROMOTION",
+        "I1"
+      ],
+      "observed": [
+        "2026-02-28T03:00:00Z",
+        "2026-03-31T03:00:00Z",
+        "PROMOTION",
+        "I1"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R15",
+      "title": "Lazy cycle funding idempotency key",
+      "criteria": [
+        "A09",
+        "A32"
+      ],
+      "inputs": {},
+      "expected": [
+        1,
+        "PAID"
+      ],
+      "observed": [
+        1,
+        "PAID"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R16",
+      "title": "Revoked free segment no funding future preserved",
+      "criteria": [
+        "A32",
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        null,
+        "I2"
+      ],
+      "observed": [
+        null,
+        "I2"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R17",
+      "title": "Paid applied bind failure and verified retry",
+      "criteria": [
+        "A33"
+      ],
+      "inputs": {},
+      "expected": [
+        "REVIEW",
+        60,
+        null,
+        "READY",
+        "2026-12-05T03:00:00Z",
+        60
+      ],
+      "observed": [
+        "REVIEW",
+        60,
+        null,
+        "READY",
+        "2026-12-05T03:00:00Z",
+        60
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R18",
+      "title": "Cancellation intent survives bind retry",
+      "criteria": [
+        "A33"
+      ],
+      "inputs": {},
+      "expected": [
+        "CANCELLED",
+        null,
+        60
+      ],
+      "observed": [
+        "CANCELLED",
+        null,
+        60
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R19",
+      "title": "Explicit choice no campaign usage for alternatives",
+      "criteria": [
+        "A17",
+        "A34"
+      ],
+      "inputs": {},
+      "expected": [
+        "CAP_FULL",
+        "NORMAL",
+        "EVENT_DISCOUNT",
+        "DEAL",
+        0,
+        1
+      ],
+      "observed": [
+        "CAP_FULL",
+        "NORMAL",
+        "EVENT_DISCOUNT",
+        "DEAL",
+        0,
+        1
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R20",
+      "title": "Promo does not burn event ticket normal still available",
+      "criteria": [
+        "A34"
+      ],
+      "inputs": {},
+      "expected": [
+        0,
+        "NORMAL",
+        1
+      ],
+      "observed": [
+        0,
+        "NORMAL",
+        1
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R21",
+      "title": "Upgrade paid free or completed promo",
+      "criteria": [
+        "A14",
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        "DEFERRED",
+        "2026-12-05T03:00:00Z"
+      ],
+      "observed": [
+        "DEFERRED",
+        "2026-12-05T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R22",
+      "title": "Upgrade paid free or completed promo",
+      "criteria": [
+        "A14",
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        "DEFERRED",
+        "2026-12-05T03:00:00Z"
+      ],
+      "observed": [
+        "DEFERRED",
+        "2026-12-05T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R23",
+      "title": "Upgrade paid free or completed promo",
+      "criteria": [
+        "A14",
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        "NORMAL",
+        null
+      ],
+      "observed": [
+        "NORMAL",
+        null
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R24",
+      "title": "Future paid segment delays upgrade",
+      "criteria": [
+        "A14",
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        "DEFERRED",
+        "2027-01-05T03:00:00Z"
+      ],
+      "observed": [
+        "DEFERRED",
+        "2027-01-05T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R25",
+      "title": "Partial refund retains rights usage",
+      "criteria": [
+        "A18",
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        "PARTIAL_UNCHANGED",
+        60,
+        false,
+        1
+      ],
+      "observed": [
+        "PARTIAL_UNCHANGED",
+        60,
+        false,
+        1
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R26",
+      "title": "Full refund unused partially used fully used",
+      "criteria": [
+        "A18",
+        "A35"
+      ],
+      "inputs": {
+        "used": 0
+      },
+      "expected": [
+        "REVOKED_UNUSED",
+        0,
+        "REVOKED",
+        1,
+        "USED_OR_RESERVED"
+      ],
+      "observed": [
+        "REVOKED_UNUSED",
+        0,
+        "REVOKED",
+        1,
+        "USED_OR_RESERVED"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R27",
+      "title": "Full refund unused partially used fully used",
+      "criteria": [
+        "A18",
+        "A35"
+      ],
+      "inputs": {
+        "used": 20
+      },
+      "expected": [
+        "REVOKED_UNUSED",
+        20,
+        "REVOKED",
+        1,
+        "USED_OR_RESERVED"
+      ],
+      "observed": [
+        "REVOKED_UNUSED",
+        20,
+        "REVOKED",
+        1,
+        "USED_OR_RESERVED"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R28",
+      "title": "Full refund unused partially used fully used",
+      "criteria": [
+        "A18",
+        "A35"
+      ],
+      "inputs": {
+        "used": 60
+      },
+      "expected": [
+        "REVOKED_UNUSED",
+        60,
+        "REVOKED",
+        1,
+        "USED_OR_RESERVED"
+      ],
+      "observed": [
+        "REVOKED_UNUSED",
+        60,
+        "REVOKED",
+        1,
+        "USED_OR_RESERVED"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R29",
+      "title": "Cumulative partials reaching full revoke",
+      "criteria": [
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        "PARTIAL_UNCHANGED",
+        "REVOKED_UNUSED",
+        0
+      ],
+      "observed": [
+        "PARTIAL_UNCHANGED",
+        "REVOKED_UNUSED",
+        0
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R30",
+      "title": "Full refund before apply no late grants",
+      "criteria": [
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        "REVOKED",
+        0,
+        1
+      ],
+      "observed": [
+        "REVOKED",
+        0,
+        1
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R31",
+      "title": "Unknown refund does not guess revoke",
+      "criteria": [
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        "PENDING",
+        60,
+        false
+      ],
+      "observed": [
+        "PENDING",
+        60,
+        false
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R32",
+      "title": "In-flight settles before revoking unused",
+      "criteria": [
+        "A31",
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        "ENTITLEMENT_PENDING",
+        true,
+        "REVOKED_UNUSED",
+        5
+      ],
+      "observed": [
+        "ENTITLEMENT_PENDING",
+        true,
+        "REVOKED_UNUSED",
+        5
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R33",
+      "title": "Refund source does not cascade",
+      "criteria": [
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        true,
+        0
+      ],
+      "observed": [
+        true,
+        0
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R34",
+      "title": "Refund leaves original future service anchor",
+      "criteria": [
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        null,
+        "I2"
+      ],
+      "observed": [
+        null,
+        "I2"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R35",
+      "title": "All six cap reduction interleavings",
+      "criteria": [
+        "A15",
+        "A26",
+        "A36"
+      ],
+      "inputs": {
+        "interleavings": [
+          {
+            "order": "ABP",
+            "trace": [
+              "RESERVED",
+              "RESERVED",
+              "CAP_BELOW_TAKEN"
+            ],
+            "cap": 2,
+            "taken": 2,
+            "invariant": true
+          },
+          {
+            "order": "APB",
+            "trace": [
+              "RESERVED",
+              "PUBLISHED",
+              "CAP_FULL"
+            ],
+            "cap": 1,
+            "taken": 1,
+            "invariant": true
+          },
+          {
+            "order": "BAP",
+            "trace": [
+              "RESERVED",
+              "RESERVED",
+              "CAP_BELOW_TAKEN"
+            ],
+            "cap": 2,
+            "taken": 2,
+            "invariant": true
+          },
+          {
+            "order": "BPA",
+            "trace": [
+              "RESERVED",
+              "PUBLISHED",
+              "CAP_FULL"
+            ],
+            "cap": 1,
+            "taken": 1,
+            "invariant": true
+          },
+          {
+            "order": "PAB",
+            "trace": [
+              "PUBLISHED",
+              "RESERVED",
+              "CAP_FULL"
+            ],
+            "cap": 1,
+            "taken": 1,
+            "invariant": true
+          },
+          {
+            "order": "PBA",
+            "trace": [
+              "PUBLISHED",
+              "RESERVED",
+              "CAP_FULL"
+            ],
+            "cap": 1,
+            "taken": 1,
+            "invariant": true
+          }
+        ]
+      },
+      "expected": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "observed": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R36",
+      "title": "Old failing order now rejects cap change",
+      "criteria": [
+        "A36"
+      ],
+      "inputs": {},
+      "expected": "CAP_BELOW_TAKEN",
+      "observed": "CAP_BELOW_TAKEN",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R37",
+      "title": "Pause admission serialization",
+      "criteria": [
+        "A25",
+        "A36"
+      ],
+      "inputs": {},
+      "expected": [
+        "ACCEPTED",
+        "PAUSED"
+      ],
+      "observed": [
+        "ACCEPTED",
+        "PAUSED"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R38",
+      "title": "Release is idempotent",
+      "criteria": [
+        "A16",
+        "A36"
+      ],
+      "inputs": {},
+      "expected": [
+        "RELEASED",
+        "RELEASED",
+        0
+      ],
+      "observed": [
+        "RELEASED",
+        "RELEASED",
+        0
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R39",
+      "title": "Annual 12 paid plus one free cycles over time",
+      "criteria": [
+        "A09",
+        "A32"
+      ],
+      "inputs": {},
+      "expected": [
+        13,
+        "PAID",
+        "PROMOTION"
+      ],
+      "observed": [
+        13,
+        "PAID",
+        "PROMOTION"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R40",
+      "title": "Overlapping service sources fail closed",
+      "criteria": [
+        "A32"
+      ],
+      "inputs": {},
+      "expected": "REVIEW",
+      "observed": "REVIEW",
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R41",
+      "title": "Dispute won clears only own hold",
+      "criteria": [
+        "A18",
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        [
+          "SECURITY"
+        ],
+        40
+      ],
+      "observed": [
+        [
+          "SECURITY"
+        ],
+        40
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R42",
+      "title": "Original OCR allocation consumed once",
+      "criteria": [
+        "A07",
+        "A31"
+      ],
+      "inputs": {},
+      "expected": [
+        25,
+        0,
+        5
+      ],
+      "observed": [
+        25,
+        0,
+        5
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R43",
+      "title": "Continuing original anniversary after clamped February",
+      "criteria": [
+        "A05"
+      ],
+      "inputs": {},
+      "expected": [
+        "2026-03-31T03:00:00Z",
+        "2026-04-30T03:00:00Z"
+      ],
+      "observed": [
+        "2026-03-31T03:00:00Z",
+        "2026-04-30T03:00:00Z"
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R44",
+      "title": "Capacity scoped by logical environment and campaign",
+      "criteria": [
+        "A29",
+        "A36"
+      ],
+      "inputs": {},
+      "expected": [
+        true,
+        true,
+        1,
+        1
+      ],
+      "observed": [
+        true,
+        true,
+        1,
+        1
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    },
+    {
+      "id": "R45",
+      "title": "Verified full refund imports paid evidence before webhook",
+      "criteria": [
+        "A35"
+      ],
+      "inputs": {},
+      "expected": [
+        "CONSUMED",
+        0,
+        1,
+        true
+      ],
+      "observed": [
+        "CONSUMED",
+        0,
+        1,
+        true
+      ],
+      "status": "MODEL_PASS",
+      "error": null
+    }
+  ]
+}
