@@ -10,7 +10,7 @@ import BillingCampaignReportSection from './BillingCampaignReportSection';
 import { closeCampaign, confirmPassword, discardCampaignDraft, getCampaign, previewCampaign, stepOperation } from './billing-campaigns.api';
 import {
   CAMPAIGN_CLOSE_COPY, CAMPAIGN_MANAGE_PERMISSION, CAMPAIGN_OPERATION_STEP_TEXT, CAMPAIGN_SAVED_NOTICE, CAMPAIGN_TEXT_LIMITS, CAMPAIGN_TONE_CLASS, DETAIL_NEEDS, DRAFT_STALE_TEXT,
-  blockerText, campaignButtons, campaignError, campaignLoadFailure, campaignModeMarker, campaignRequest, campaignStatusMeta, campaignTerms, campaignTitle, draftErrorText, draftLockedText,
+  blockerText, campaignButtons, campaignError, campaignLoadFailure, campaignModeMarker, campaignRequest, campaignStatusHelp, campaignStatusMeta, campaignTerms, campaignTitle, draftErrorText, draftLockedText,
   isRequestOpen, operationStateText, operationSteps, pendingCheckoutsText, permissionNote, previewBlockedText, previewRowView, publishedTermsCopy, requestKey, resumeBlockedText, reuseIntent,
   termsFacts, type CampaignIntent, type CampaignLoadFailure, type CampaignOperationStep,
 } from './billing-campaigns.logic';
@@ -179,7 +179,7 @@ export default function BillingCampaignDetailPage({ campaignId }: { campaignId: 
 
   const campaign = detail.campaign, draft = campaign.draft, published = campaign.published;
   const buttons = campaignButtons(campaign.allowedActions);
-  const status = campaignStatusMeta(campaign.status), marker = campaignModeMarker(detail.mode), terms = campaignTerms(campaign);
+  const status = campaignStatusMeta(campaign.status), help = campaignStatusHelp(campaign), marker = campaignModeMarker(detail.mode), terms = campaignTerms(campaign);
   // Spec §4: while a request is open the draft is frozen (an edit would make the later approval stale), and a request that can no longer go on offers only "ยกเลิกคำขอ".
   const request = campaignRequest(operation, { settingsVersion: detail.settingsVersion, refused: refusedRequest });
   const steps = operationSteps(operation, request.usable);
@@ -231,7 +231,7 @@ export default function BillingCampaignDetailPage({ campaignId }: { campaignId: 
     <div>
       <button type="button" className={billingControl} disabled={loading || busy || editing} aria-busy={loading} onClick={() => setReload(value => value + 1)}>โหลดข้อมูลล่าสุด</button>
     </div>
-    {status.help && <p className="rounded-lg bg-gray-50 p-3 text-gray-700">{status.help}</p>}
+    {help && <p className="rounded-lg bg-gray-50 p-3 text-gray-700">{help}</p>}
     {error && <p ref={alertRef} role="alert" tabIndex={-1} className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-800">{error}</p>}
     {notice && <p ref={noticeRef} role="status" className="rounded-lg bg-green-50 p-4 text-green-800">{notice}</p>}
     {failure && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
