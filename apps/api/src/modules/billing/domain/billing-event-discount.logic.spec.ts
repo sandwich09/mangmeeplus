@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { billingOffer, BILLING_DRAFT_POLICY, type BillingQuote } from '@watchdog-bms/contracts';
+import { paymentCheckoutSnapshot, prepaidCardAuto } from './billing-checkout-mode';
 import { eventDiscountAmounts, eventDiscountBasis, eventDiscountCardAuto, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, pickEventDiscount, type EventDiscountSnapshot } from './billing-event-discount.logic';
 
 test('spec §5.1: 499 less 100 in all three tax treatments, whole baht only, never below ฿10 or the full price', () => {
@@ -41,6 +42,27 @@ test('SD-O13: only a CARD_AUTO snapshot that chose USE pays its first period onc
   assert.equal(eventDiscountCardAuto(card), false);
   assert.equal(eventDiscountCardAuto({ quote: { purchaseMode: 'PROMPTPAY_RENEW' }, eventDiscount: { choice: 'USE' } }), false, 'PROMPTPAY_RENEW is a payment Checkout already');
   assert.equal(eventDiscountCardAuto(undefined), false);
+});
+
+test('promotion spec §7: a CARD_AUTO promotion purchase is prepaid like the discounted first bill, read from its own snapshot', () => {
+  const promotion = { campaignId: 'c' }, auto = { quote: { purchaseMode: 'CARD_AUTO' as const } }, once = { quote: { purchaseMode: 'CARD_ONCE' as const } };
+  assert.equal(prepaidCardAuto({ ...auto, promotion }), true);
+  assert.equal(paymentCheckoutSnapshot({ ...auto, promotion }), true);
+  assert.equal(prepaidCardAuto({ ...auto, promotion, repeat: { subscriptionId: 'sub_1' } }), false, 'a repeat on a live subscription keeps its own path');
+  assert.equal(paymentCheckoutSnapshot({ ...auto, promotion, repeat: { subscriptionId: 'sub_1' } }), false);
+  // One-time modes and PROMPTPAY_RENEW were payment Checkouts already; a promotion changes nothing there.
+  assert.equal(prepaidCardAuto({ ...once, promotion }), false);
+  assert.equal(paymentCheckoutSnapshot({ ...once, promotion }), true);
+  assert.equal(prepaidCardAuto({ quote: { purchaseMode: 'PROMPTPAY_RENEW' }, promotion }), false);
+  assert.equal(paymentCheckoutSnapshot({ quote: { purchaseMode: 'PROMPTPAY_RENEW' }, promotion }), true);
+  // Without a promotion every answer is the event-discount one, unchanged.
+  assert.equal(prepaidCardAuto(auto), false); assert.equal(paymentCheckoutSnapshot(auto), false);
+  assert.equal(prepaidCardAuto({ ...auto, eventDiscount: { choice: 'USE' } }), true);
+  assert.equal(paymentCheckoutSnapshot({ ...auto, eventDiscount: { choice: 'USE' } }), true);
+  assert.equal(prepaidCardAuto({ ...auto, eventDiscount: { choice: 'USE' }, repeat: {} }), true, 'the event-discount rule is not narrowed');
+  assert.equal(prepaidCardAuto({ ...auto, eventDiscount: { choice: 'DECLINE' } }), false);
+  assert.equal(paymentCheckoutSnapshot({ ...auto, advanceDeal: {} }), true);
+  assert.equal(prepaidCardAuto(undefined), false); assert.equal(prepaidCardAuto(null), false);
 });
 
 test('spec §4.3: the card gets the ticket that takes most off it, in scope; ties go to the one expiring first, then id', () => {
