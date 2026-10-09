@@ -6,7 +6,8 @@ import type { BillingBenefitChoice, BillingPromotionOfferView, BillingPromotionU
 import { EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountHelpText } from './billing-event-discount';
 import { PROMOTION_NOT_PICKED, PROMOTION_ONCE, PROMOTION_ONE_PER_PURCHASE, promotionCard, promotionCardBenefit, promotionCardShowsPlainFacts, promotionChoiceCopy, promotionChoiceLabel,
   promotionHeadline, promotionInvoiceLine, promotionLostNotice, promotionOffered, promotionPageBenefit, promotionPick, promotionQuoteBenefit, promotionQuoteFields, promotionReasonText,
-  promotionReceipts, promotionReview, promotionRow, promotionStatus, promotionSwitchLabel, promotionUpgradeNote, statusDeadlines } from './billing-promotion';
+  promotionReceipts, promotionReview, promotionRow, promotionStatus, promotionSwitchLabel, promotionUpgradeNote, purchaseBlockQuiet, statusDeadlines } from './billing-promotion';
+import { errorText } from './billing-error-text';
 
 const CAMPAIGN = 'camp_9f3';
 const row = (over: Partial<BillingPromotionOfferView> = {}): BillingPromotionOfferView => ({ campaignId: CAMPAIGN, displayName: 'ซื้อ 1 แถม 1', offerKey: 'STARTER_249', interval: 'month',
@@ -223,7 +224,7 @@ test('the choice group reads as today without a promotion, and as three ways wit
   assert.deepEqual(promotionChoiceLabel([yearRow()], offers, 'year'), { title: 'ใช้โปรโมชั่น ซื้อ 1 แถม 1', lines: ['สตาร์ทเตอร์ รายปี 2,490 บาท ได้ 13 เดือน'] });
   assert.equal(promotionChoiceLabel([yearRow()], offers, 'month'), null, 'nothing on offer for this cadence');
   assert.equal(promotionChoiceLabel([row({ available: false, reason: 'CAP_FULL' })], offers, 'month'), null, 'a promotion that cannot be used is not a choice');
-  assert.equal(PROMOTION_ONE_PER_PURCHASE, 'ใช้ได้ครั้งละ 1 อย่างต่อการซื้อ สิ่งที่ไม่ได้เลือกจะไม่ถูกใช้');
+  assert.equal(PROMOTION_ONE_PER_PURCHASE, 'ใช้ได้ครั้งละ 1 อย่างต่อการซื้อ โปรโมชั่นใช้ได้เฉพาะแพ็กเกจที่แสดงโปรโมชั่น แพ็กเกจอื่นซื้อตามที่แสดงไว้ที่แพ็กเกจนั้น');
   assert.equal(PROMOTION_NOT_PICKED, 'ครั้งนี้ไม่ได้เลือกใช้โปรโมชั่นนี้');
 });
 
@@ -343,9 +344,105 @@ test('Q5: an upgrade card says when instead of offering the upgrade, only while 
   assert.doesNotMatch(note, MACHINE);
 });
 
+// UAT 2026-10-10: right after a successful purchase the package page showed an amber alert with a reference for the team ("เลขอ้างอิงสำหรับแจ้งทีมงาน") and a "ตรวจสถานะล่าสุด" button, because the API
+// reports `purchaseBlockCode` for two plain facts of a running shop: a card shop whose promotion still has time (`BILLING_REPEAT_NOT_READY`, with `upgradeDeferredUntil`) and a QR-bill shop
+// (`BILLING_PLAN_CHANGE_REQUIRED`). The table is the specification: surface = the package card (a quiet line) or the alert; state = what the status says.
+test('Q5 status: a running, paid shop that cannot buy another package gets one quiet line, never the alert; every other state keeps the alert', () => {
+  const now = Date.parse('2026-10-09T05:00:00.000Z'), UNTIL = '2026-12-05T03:00:00.000Z';
+  const running = { accessState: 'ACTIVE', paymentState: 'PAID', applyState: 'APPLIED', attemptId: null, packageChangesEnabled: true, upgradeDeferredUntil: UNTIL } as const;
+  const quiet = (over: Record<string, unknown>) => purchaseBlockQuiet({ ...running, ...over } as Parameters<typeof purchaseBlockQuiet>[0], now);
+  const DATE_LINE = 'ซื้อหรือเปลี่ยนแพ็กเกจได้หลังวันที่ 5 ธันวาคม 2569 เพราะแพ็กเกจปัจจุบันยังมีเวลาโปรโมชั่นที่ใช้ไม่หมด';
+  const REPEAT = errorText({ code: 'BILLING_REPEAT_NOT_READY' }), QR = errorText({ code: 'BILLING_PLAN_CHANGE_REQUIRED' });
+  // the two codes, in the state of the live API after a successful promotion purchase
+  assert.equal(quiet({ purchaseBlockCode: 'BILLING_REPEAT_NOT_READY' }), DATE_LINE, 'a card shop with promotion time left: the date, in Bangkok');
+  assert.equal(quiet({ purchaseBlockCode: 'BILLING_PLAN_CHANGE_REQUIRED' }), QR, 'a QR-bill shop: the sentence it always had');
+  assert.equal(quiet({ purchaseBlockCode: 'BILLING_PLAN_CHANGE_REQUIRED', upgradeDeferredUntil: undefined }), QR, 'a QR-bill shop with no promotion');
+  assert.equal(quiet({ purchaseBlockCode: 'BILLING_PLAN_CHANGE_REQUIRED' }), errorText({ code: 'BILLING_PLAN_CHANGE_REQUIRED' }), 'the QR sentence is not reworded by the promotion date');
+  // the date is told only while it lies ahead and the platform gate is open; otherwise the code's own sentence, still quiet
+  assert.equal(quiet({ purchaseBlockCode: 'BILLING_REPEAT_NOT_READY', upgradeDeferredUntil: undefined }), REPEAT, 'no date');
+  assert.equal(quiet({ purchaseBlockCode: 'BILLING_REPEAT_NOT_READY', upgradeDeferredUntil: '2026-10-09T05:00:00.000Z' }), REPEAT, 'the instant itself: no date left to wait for');
+  assert.equal(quiet({ purchaseBlockCode: 'BILLING_REPEAT_NOT_READY', upgradeDeferredUntil: '2026-10-01T00:00:00.000Z' }), REPEAT, 'a date gone by');
+  assert.equal(quiet({ purchaseBlockCode: 'BILLING_REPEAT_NOT_READY', packageChangesEnabled: false }), REPEAT, 'the gate for package changes is closed: the date would promise what it does not');
+  assert.equal(quiet({ purchaseBlockCode: 'BILLING_REPEAT_NOT_READY', packageChangesEnabled: undefined }), DATE_LINE, 'an older API that does not say: not closed');
+  // Bangkok date, whatever the machine: 01:30 on the 6th in Bangkok is still the 5th in UTC
+  assert.match(quiet({ purchaseBlockCode: 'BILLING_REPEAT_NOT_READY', upgradeDeferredUntil: '2026-12-05T18:30:00.000Z' })!, /หลังวันที่ 6 ธันวาคม 2569 /);
+  // the same date as the card's own note says for an upgrade
+  assert.match(promotionUpgradeNote({ upgradeDeferredUntil: UNTIL, accessState: 'ACTIVE', tierKey: 'STARTER_249', interval: 'month' }, BASIC_MONTH, now)!, /หลังวันที่ 5 ธันวาคม 2569 /);
+  // every state that is not "active, paid, applied, no payment in flight" keeps the alert, for both codes
+  const notQuiet: Record<string, Record<string, unknown>> = {
+    'locked shop': { accessState: 'EXPIRED' }, 'held by an admin': { accessState: 'HELD' },
+    'payment pending': { paymentState: 'PENDING' }, 'payment failed (a past-due charge)': { paymentState: 'FAILED' }, 'payment unknown': { paymentState: 'UNKNOWN' }, 'payment needs action': { paymentState: 'ACTION_REQUIRED' }, 'no payment': { paymentState: 'NONE' },
+    'not applied yet': { applyState: 'PENDING' }, 'held for the team': { applyState: 'HELD' }, 'apply failed': { applyState: 'FAILED' }, 'nothing applied': { applyState: 'NONE' },
+    'a payment in flight': { attemptId: '11111111-1111-4111-8111-111111111111' },
+  };
+  for (const code of ['BILLING_REPEAT_NOT_READY', 'BILLING_PLAN_CHANGE_REQUIRED']) for (const [name, over] of Object.entries(notQuiet)) assert.equal(quiet({ purchaseBlockCode: code, ...over }), null, `${code} / ${name}`);
+  // every other code keeps the alert, whatever the state
+  for (const code of ['BILLING_CHECKOUT_PENDING', 'BILLING_EMAIL_UPDATE_PENDING', 'BILLING_REFUND_PENDING', 'BILLING_COLLECTION_PENDING', 'BILLING_PLAN_CHANGE_PENDING', 'BILLING_SALES_CLOSED', 'BILLING_COMPANY_HELD',
+    'BILLING_MODE_NOT_READY', 'BILLING_SOURCE_REVIEW_REQUIRED', 'BILLING_PACKAGE_STATE_INVALID', 'SOMETHING_NEW', null, undefined, ''])
+    assert.equal(quiet({ purchaseBlockCode: code }), null, String(code));
+  // the line is quiet: no reference for the team, no check button, no machine word; every sentence is Thai
+  for (const line of [DATE_LINE, REPEAT, QR]) { assert.doesNotMatch(line, /เลขอ้างอิง|ตรวจสถานะล่าสุด|ลองใหม่|undefined|null|NaN/); assert.doesNotMatch(line, MACHINE); assert.match(line, /[ก-๛]/u); }
+});
+
+test('Q5 status wiring: the alert gives way to the line only through the pure decision, and the line sits in the package card, a note, with no support reference and no check button', () => {
+  const alert = page.slice(page.indexOf('{status.purchaseBlockCode && !quietBlock'), page.indexOf('{status.mode === \'TEST\''));
+  assert.match(page, /const quietBlock = status \? purchaseBlockQuiet\(status\) : null;/);
+  assert.match(page, /\{status\.purchaseBlockCode && !quietBlock && !\(status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' && pendingShown && pending\?\.inFlight\) && <div role="alert"/);
+  assert.match(alert, /เลขอ้างอิงสำหรับแจ้งทีมงาน/, 'the alert still carries its reference and its button for every other case');
+  assert.match(alert, />ตรวจสถานะล่าสุด<\/button>/);
+  const card = page.slice(page.indexOf('<section aria-label="สถานะแพ็กเกจ"'), page.indexOf("<div hidden={section !== 'payment'}"));
+  const line = /\{quietBlock && <p role="note" className="break-words text-sm leading-7 text-gray-600">\{quietBlock\}<\/p>\}/.exec(card);
+  assert.ok(line, 'the quiet line is a note inside the package card');
+  assert.equal((page.match(/\{quietBlock && </g) ?? []).length, 1, 'drawn once');
+  assert.doesNotMatch(card.slice(line!.index, line!.index + 200), /เลขอ้างอิง|ตรวจสถานะล่าสุด|role="alert"/);
+  // it comes after the buttons of the card and before the collapsed reference, which stays the very last thing
+  assert.ok(card.indexOf("{status.allowedActions.includes('new_sales') && !pending?.inFlight && <button") < line!.index && line!.index < card.indexOf('{supportReference && !confirmed && !applyHeld && <details'));
+});
+
 // The page is a client component behind effects, so — like BillingPage.qa.spec.ts — its wiring is pinned from source.
 const page = readFileSync(new URL('./BillingPage.tsx', import.meta.url), 'utf8');
 const logic = readFileSync(new URL('./billing-promotion.ts', import.meta.url), 'utf8');
+
+// UAT 2026-10-10: "สิ่งที่ไม่ได้เลือกจะไม่ถูกใช้" was false. With the promotion radio on by default, a package with no promotion still shows its held discount and is quoted with it (plan R19).
+// The sentence now says only what holds in every cell of: pick x held discount x the card (with the promotion / without it). The table below runs the page's own decisions for each cell and
+// checks the three claims against them: a promotion is used only on a card that shows it; any other card uses exactly what it shows (its discount line, or nothing); and the quote that goes out
+// is the one the card shows — so no cell makes the sentence untrue, and the quote that is sent is the quote that was already sent (the request table above pins those fields).
+test('the note under the choice is true in every cell: pick x held discount x card with / without the promotion', () => {
+  const rows = [row()], offered = (ticket: boolean) => promotionOffered(rows, 'month', ticket);
+  const cards = { 'a card with the promotion': STARTER_MONTH, 'a card without it': BASIC_MONTH } as const;
+  const held = { none: HELD.none, 'lowers this card': HELD.onCard, 'does not lower this card': HELD.offCard } as const;
+  let cells = 0;
+  for (const [cardName, card] of Object.entries(cards)) for (const [heldName, heldCase] of Object.entries(held)) for (const pick of PICKS) {
+    const where = `${cardName} / held discount ${heldName} / ${pick}`, hasPromotion = !!promotionRow(rows, card)?.available;
+    const shown = promotionCardBenefit(pick, offered(heldCase.ticket), { PROMOTION: hasPromotion, EVENT_DISCOUNT: heldCase.ticket && heldCase.ticketOnCard });
+    const sent = promotionQuoteFields({ pick, promotions: rows, card, ...heldCase });
+    const promotionUsed = sent.benefitChoice === 'PROMOTION', discountUsed = (sent.eventDiscountChoice === 'USE') && heldCase.ticketOnCard;
+    cells++;
+    // a promotion is used only on the packages that show it
+    if (promotionUsed) assert.equal(hasPromotion, true, where);
+    if (shown === 'PROMOTION') assert.equal(hasPromotion, true, where);
+    // any other package is bought as its own card shows: the discount line is on the card exactly when the discount is used, and nothing else is used
+    assert.equal(promotionUsed, shown === 'PROMOTION', `${where}: the promotion is used exactly when the card shows it as the benefit`);
+    assert.equal(discountUsed, shown === 'EVENT_DISCOUNT', `${where}: the discount is used exactly when the card shows its line`);
+    if (!hasPromotion) assert.notEqual(shown, 'PROMOTION', where);
+  }
+  assert.equal(cells, 2 * 3 * 4, 'every cell was checked');
+  // the sentence is the one of the three-way box, with and without a held discount, and the box without a promotion keeps its own older notes
+  const withPromotion = [promotionChoiceCopy({ promotion: true, ticket: false, firstBillOnly: false }), promotionChoiceCopy({ promotion: true, ticket: true, firstBillOnly: true })];
+  for (const copy of withPromotion) {
+    assert.equal(copy.notes[0], PROMOTION_ONE_PER_PURCHASE);
+    assert.doesNotMatch(copy.notes.join(' '), /ไม่ได้เลือกจะไม่ถูกใช้/);
+  }
+  for (const copy of [promotionChoiceCopy({ promotion: false, ticket: true, firstBillOnly: false }), promotionChoiceCopy({ promotion: false, ticket: true, firstBillOnly: true })]) {
+    assert.doesNotMatch(copy.notes.join(' '), /แพ็กเกจที่แสดงโปรโมชั่น/);
+    assert.equal(copy.notes[0], EVENT_DISCOUNT_ONE_PER_PAYMENT, 'the chooser for a discount alone is untouched');
+  }
+  assert.doesNotMatch(PROMOTION_ONE_PER_PURCHASE, MACHINE);
+  // the box with a promotion is drawn only while one is on offer on this cadence, so "the packages that show it" is never an empty set
+  assert.match(page, /\{\(promotionChoice \|\| ticketView\) && <section aria-label=\{choiceCopy\.section\}/);
+  assert.equal(promotionChoiceLabel([row({ available: false, reason: 'CAP_FULL' })], [], 'month'), null);
+  assert.equal(promotionOffered([row({ available: false, reason: 'ALREADY_USED' })], 'month', true).PROMOTION, false, 'a promotion that cannot be used falls back to the discount-only box');
+});
 
 test('the annual card keeps its per-month average on the paid price and the paid 12 months for a normal purchase, whatever a promotion adds', () => {
   assert.match(page, /\{interval === 'year' && plain && <p className="text-sm text-gray-600">เฉลี่ยเดือนละ \{money\(Math\.round\(offer\.priceSatang \/ 12\)\)\}<\/p>\}/);

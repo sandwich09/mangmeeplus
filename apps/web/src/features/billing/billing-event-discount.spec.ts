@@ -1,5 +1,6 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import type { BillingStatus } from '@watchdog-bms/contracts';
 import { EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountBaht, eventDiscountBlockedText, eventDiscountCard, eventDiscountCardText, eventDiscountChoiceLabel, eventDiscountChoices, eventDiscountFirstBillOnly,
   eventDiscountHeldNotice, eventDiscountHelpText, eventDiscountMode, eventDiscountNextRoundText, eventDiscountSerial, eventDiscountUsable } from './billing-event-discount';
@@ -46,15 +47,49 @@ it('spec §8.1 / SD-O12: a holder whose shop cannot pay in one go reads one plai
     chatCreditUnits: 0, receiptImageUnits: 0, expiresAt: '2026-10-30T16:59:59.000Z', state: 'AVAILABLE', batchSuspended: false, ...over });
   const held = 'คุณมีส่วนลดจากงาน event1 ลด 100 บาท ตอนจ่ายค่าแพ็กเกจ (ใช้ได้ถึง 30 ตุลาคม 2569)';
   const text = `${held} · ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้`;
-  assert.equal(eventDiscountHeldNotice({ path: 'CREDIT', tickets: [ticket()] }), text, 'an auto-renewing shop: why, with no date');
+  assert.equal(eventDiscountHeldNotice({ path: 'CREDIT', tickets: [ticket()] }, 'CARD_AUTO'), text, 'an auto-renewing shop: why, with no date');
   assert.equal(eventDiscountHeldNotice({ path: null, tickets: [ticket({ state: 'USED', eventName: 'งานเก่า' }), ticket()] }), held);
   // The biggest discount first, then the one that ends soonest.
-  assert.match(eventDiscountHeldNotice({ path: 'CREDIT', tickets: [ticket(), ticket({ eventName: 'งานใหญ่', discountSatang: 20000 })] }) ?? '', /^คุณมีส่วนลดจากงาน งานใหญ่ ลด 200 บาท/);
-  assert.equal(eventDiscountHeldNotice({ path: 'DISCOUNT', tickets: [ticket()] }), null);
+  assert.match(eventDiscountHeldNotice({ path: 'CREDIT', tickets: [ticket(), ticket({ eventName: 'งานใหญ่', discountSatang: 20000 })] }, 'CARD_AUTO') ?? '', /^คุณมีส่วนลดจากงาน งานใหญ่ ลด 200 บาท/);
+  assert.equal(eventDiscountHeldNotice({ path: 'DISCOUNT', tickets: [ticket()] }, 'CARD_AUTO'), null);
   for (const over of [{ state: 'EXPIRED' as const }, { state: 'USED' as const }, { batchSuspended: true }, { discountSatang: 0 }])
-    assert.equal(eventDiscountHeldNotice({ path: 'CREDIT', tickets: [ticket(over)] }), null);
+    assert.equal(eventDiscountHeldNotice({ path: 'CREDIT', tickets: [ticket(over)] }, 'CARD_AUTO'), null);
   assert.equal(eventDiscountHeldNotice(null), null);
   assert.doesNotMatch(text, /MHFVR743|ตั๋ว|[A-Z]{3,}_[A-Z]/);
+});
+
+// UAT 2026-10-10: the second half of the note said "ต่ออายุแบบตัดเงินอัตโนมัติ" to a shop that is sent a QR bill each period and scans it. The note appears for the same shops as before (path CREDIT,
+// a usable ticket); only what it says after the dot follows the way the shop renews.
+it('the second half follows the renewal mode: a card is charged by itself, a QR bill is scanned by the shop, any other mode gets the one fact that holds for all', () => {
+  const ticket = (): BillingEventDiscountTicket => ({ serial: 'MHFVR743', eventName: 'event3', discountSatang: 12000, chatCreditUnits: 0, receiptImageUnits: 0, expiresAt: '2026-10-30T16:59:59.000Z', state: 'AVAILABLE', batchSuspended: false });
+  const held = 'คุณมีส่วนลดจากงาน event3 ลด 120 บาท ตอนจ่ายค่าแพ็กเกจ (ใช้ได้ถึง 30 ตุลาคม 2569)';
+  const credit = { path: 'CREDIT' as const, tickets: [ticket()] };
+  const SAYS: Record<string, string> = {
+    CARD_AUTO: 'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้',
+    PROMPTPAY_RENEW: 'ร้านนี้ต่ออายุด้วยบิล QR ทุกงวด ส่วนลดจากงานยังใช้กับบิล QR รอบต่ออายุไม่ได้',
+    NONE: 'ตอนนี้ร้านนี้ยังใช้ส่วนลดจากงานไม่ได้',
+  };
+  for (const [mode, why] of Object.entries(SAYS)) assert.equal(eventDiscountHeldNotice(credit, mode as BillingStatus['renewalMode']), `${held} · ${why}`, mode);
+  // a mode that cannot reach this path from the API (a one-time shop is on the discount path) still reads true if it ever did
+  for (const mode of ['CARD_ONCE', 'PROMPTPAY_ONCE'] as const) assert.equal(eventDiscountHeldNotice(credit, mode), `${held} · ${SAYS.NONE}`, mode);
+  assert.equal(eventDiscountHeldNotice(credit), `${held} · ${SAYS.NONE}`, 'no mode known: nothing is claimed about how the shop renews');
+  // Each way of renewing is told only its own: the QR shop is never told its card is charged by itself, the card shop is never told about a bill.
+  assert.doesNotMatch(eventDiscountHeldNotice(credit, 'PROMPTPAY_RENEW')!, /ตัดเงินอัตโนมัติ|ตัดบัตร/);
+  assert.doesNotMatch(eventDiscountHeldNotice(credit, 'CARD_AUTO')!, /QR|บิล/);
+  for (const mode of ['NONE', undefined] as const) assert.doesNotMatch(eventDiscountHeldNotice(credit, mode)!, /QR|บิล|ตัดเงิน|ตัดบัตร|ต่ออายุ/, String(mode));
+  // When the note appears is untouched by the mode: no note on the discount path, none without a usable ticket, whatever the mode.
+  for (const mode of ['CARD_AUTO', 'PROMPTPAY_RENEW', 'NONE', 'CARD_ONCE', undefined] as const) {
+    assert.equal(eventDiscountHeldNotice({ path: 'DISCOUNT', tickets: [ticket()] }, mode), null, `DISCOUNT ${mode}`);
+    assert.equal(eventDiscountHeldNotice({ path: null, tickets: [ticket()] }, mode), held, `null path ${mode}`);
+    assert.equal(eventDiscountHeldNotice({ path: 'CREDIT', tickets: [] }, mode), null, `no ticket ${mode}`);
+    assert.equal(eventDiscountHeldNotice(null, mode), null, `no view ${mode}`);
+  }
+  for (const text of Object.values(SAYS)) assert.doesNotMatch(text, /[A-Z]{3,}_[A-Z]|undefined|null/);
+  // The page hands it the shop's own renewal mode, read from the status that is on screen.
+  const page = readFileSync(new URL('./BillingPage.tsx', import.meta.url), 'utf8');
+  assert.match(page, /const heldDiscount = eventDiscountHeldNotice\(heldView, status\?\.renewalMode\);/);
+  assert.match(page, /api\.eventDiscount\(\)\.then\(view => \{ if \(live\) setHeldView\(view\); \}/);
+  assert.doesNotMatch(page, /setHeldDiscount/);
 });
 
 it('Owner 2026-09-29: one row per held discount, best first and the default; the card lines follow the ticket picked', () => {
