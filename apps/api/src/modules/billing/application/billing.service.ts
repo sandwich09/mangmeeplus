@@ -1114,9 +1114,10 @@ export class BillingService {
         offers: BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval => billingOffer(tier, interval, settings.policy))) }))
         .map(view => view.available && activePaid && (!oneTimeMode(renewalMode) || account!.baseSubscriptionId || snapshot?.offerKey !== view.offerKey || snapshot.interval !== view.interval)
           ? { ...view, available: false, reason: 'PURCHASE_KIND_UNSUPPORTED' as const } : view) : [];
-    // The newest right this shop holds: reserved for a Checkout, or used and still giving free time.
+    // The newest right this shop holds: reserved for a Checkout, or used and still giving free time (one ended by a full
+    // refund — `entitlementAdjustedAt` — gives none, so it is not shown as in use).
     const right = account ? await this.prisma.client.billingPromotionRedemption.findFirst({ where: { companyId: company.id,
-      promotionEnvironmentId: promotionEnvironment(account.livemode), OR: [{ state: 'RESERVED' }, { state: 'CONSUMED', bonusEnd: { gt: new Date() } }] },
+      promotionEnvironmentId: promotionEnvironment(account.livemode), OR: [{ state: 'RESERVED' }, { state: 'CONSUMED', bonusEnd: { gt: new Date() }, entitlementAdjustedAt: null }] },
       orderBy: { acceptedAt: 'desc' } }) : null;
     const rightAttempt = right?.attemptId ? await this.prisma.client.billingAttempt.findFirst({ where: { id: right.attemptId, billingAccountId: account!.id } }) : null;
     const deferral = account ? await promotionUpgradeDeferral(this.prisma.client, account) : null;
@@ -1233,7 +1234,7 @@ export class BillingService {
       // Sales-event spec §3.6: the ticket is used once the payment is confirmed; a Checkout that ended unpaid released it.
       ...(snapshot.eventDiscount?.choice === 'USE' && !['FAILED', 'EXPIRED'].includes(attempt.status) ? { eventDiscount: {
         shownDiscountSatang: snapshot.eventDiscount.shownDiscountSatang, state: invoice?.providerStatus === 'paid' ? 'USED' as const : 'IN_PAYMENT' as const } } : {}),
-      ...(right && right.state !== 'RELEASED' ? { promotion: promotionUse(right, snapshot, account!, await renewalSetupIssue(this.prisma.client, account!, right)) } : {}) };
+      ...(right && right.state !== 'RELEASED' && !(right.state === 'RESERVED' && ['FAILED', 'EXPIRED'].includes(attempt.status)) ? { promotion: promotionUse(right, snapshot, account!, await renewalSetupIssue(this.prisma.client, account!, right)) } : {}) };
   }
 
   async resume(context: RequestContext, id: string): Promise<BillingCheckoutResult> {
