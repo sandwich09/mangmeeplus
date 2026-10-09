@@ -61,6 +61,8 @@ export type CustomerWorld = {
   purchase: 'INITIAL' | 'REPEAT';
   /** What the shop ran on before this purchase (`quote.previousSource`): NO_TERM for a new shop, TRIAL for a legacy trial. */
   source: BillingPurchaseSource;
+  /** Receipts a legacy trial hands over to the first package (`quote.purchase.trialCarryover`); 0 = none. */
+  trialCarryoverUnits: number;
   history: BillingInvoiceItem[];
   attempt: BillingAttemptView | null;
   /** `GET …/event-discount`: what the holder's own tickets say. */
@@ -68,7 +70,9 @@ export type CustomerWorld = {
   /** Quote answers by order of the request (1-based); anything not listed is answered by the default simulation. */
   quoteOverride: (n: number, body: QuoteBody) => Answer | undefined;
   checkoutOverride: (n: number) => Answer | undefined;
-  log: { quotes: QuoteBody[]; checkouts: CheckoutCall[]; statusReads: number; refreshes: number; others: string[] };
+  /** `POST …/attempts/:id/resume` ("กลับไปยังรายการเดิม"): the Checkout URL of the open payment, or what the API refuses with. */
+  resumeOverride: (n: number) => Answer | undefined;
+  log: { quotes: QuoteBody[]; checkouts: CheckoutCall[]; statusReads: number; refreshes: number; resumes: number; others: string[] };
 };
 
 export const offers = (): BillingOffer[] => BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval =>
@@ -127,8 +131,8 @@ export const trialShopStatus = (companyId: string, over: Partial<BillingStatus> 
   tierKey: 'FREE_TRIAL_15', termEndsAt: inDays(20), usage: { used: 3, limit: 15, remaining: 12, cadence: 'LEGACY_MONTH', resetsAt: inDays(20), expiresAt: null }, ...over });
 
 export function defaultCustomerWorld(companyId: string, status: BillingStatus = newShopStatus(companyId)): CustomerWorld {
-  return { companyId, status, purchase: 'INITIAL', source: 'NO_TERM', history: [], attempt: null, heldDiscount: { path: null, tickets: [] },
-    quoteOverride: () => undefined, checkoutOverride: () => undefined, log: { quotes: [], checkouts: [], statusReads: 0, refreshes: 0, others: [] } };
+  return { companyId, status, purchase: 'INITIAL', source: 'NO_TERM', trialCarryoverUnits: 0, history: [], attempt: null, heldDiscount: { path: null, tickets: [] },
+    quoteOverride: () => undefined, checkoutOverride: () => undefined, resumeOverride: () => undefined, log: { quotes: [], checkouts: [], statusReads: 0, refreshes: 0, resumes: 0, others: [] } };
 }
 
 /** The 409 the API raises (`promotionUnavailable`): `{ code, reason, message }`, the message in the API's own words. */
@@ -157,6 +161,10 @@ export function answerQuote(w: CustomerWorld, body: QuoteBody, n: number): Answe
     purchase: { kind: repeat ? 'REPEAT' : 'INITIAL', ...(repeat ? { previousInterval: w.status.interval ?? 'month' } : {}), previousPaidThrough: previous, projectedPaidThrough: paidEnd,
       receiptUnitsAdded: offer.receiptAllowance, projectedRemainingReceipts: (repeat ? w.status.usage.remaining ?? 0 : 0) + offer.receiptAllowance },
   };
+  if (!repeat && w.source === 'TRIAL' && w.trialCarryoverUnits > 0) {
+    quote.purchase!.trialCarryover = { receiptUnits: w.trialCarryoverUnits, expiresAt: paidEnd };
+    quote.purchase!.projectedRemainingReceipts += w.trialCarryoverUnits;
+  }
   if (body.benefitChoice === 'PROMOTION') {
     const row = (w.status.promotions ?? []).find(item => item.campaignId === body.promotionCampaignId && item.offerKey === body.offerKey && item.interval === body.interval);
     if (!row) return promotionUnavailableAnswer('CHANGED');
@@ -228,6 +236,11 @@ export async function installCustomerRoutes(page: Page, w: CustomerWorld): Promi
         return json({ attemptId: ATTEMPT_ID, state: 'OPEN', checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_promo' });
       }
       if (path === `${base}/refresh`) { w.log.refreshes++; return json({ queued: true }, 202); }
+      if (path === `${base}/attempts/${ATTEMPT_ID}/resume`) {
+        w.log.resumes++;
+        const forced = w.resumeOverride(w.log.resumes);
+        return forced ? json(forced.json, forced.status) : json({ attemptId: ATTEMPT_ID, state: 'OPEN', checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_promo' });
+      }
     }
     return route.continue();
   });
@@ -434,7 +447,8 @@ async function answerAdmin(w: AdminWorld, route: Route, method: string, tail: st
     if (!record) return json(apiError(404, 'CONTROL_PROMOTION_NOT_FOUND').body, 404);
     const input = body as { action: 'PUBLISH' | 'RESUME' };
     const source = input.action === 'RESUME' ? record.published : record.draft?.values;
-    record.operation = openOperation({ state: 'PREVIEW', allowedActions: ['submit', 'cancel'], reason: String(body?.reason ?? ''), referenceId: record.draft?.operationId ?? null });
+    record.operation = openOperation({ state: 'PREVIEW', allowedActions: ['submit', 'cancel'], reason: String(body?.reason ?? ''), referenceId: record.draft?.operationId ?? null,
+      sourceVersion: Number(body?.expectedVersion ?? w.settingsVersion) });
     return json({ operation: record.operation, previewRows: previewRowsFor(source ?? {}) });
   }
   if (method === 'POST' && (one?.[2] === 'pause' || one?.[2] === 'end')) {
