@@ -6,7 +6,7 @@ import { sameScheduleTaxes, simpleCollection, type ScheduledChange } from './bil
 import { PRICE_RETURN_TYPE } from './billing-price-return';
 import { BadRequestException, ConflictException, Injectable, Optional, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { BILLING_EVENT_DISCOUNT_REVIEW_ISSUE, STRIPE_API_VERSION } from '@watchdog-bms/contracts';
+import { BILLING_EVENT_DISCOUNT_REVIEW_ISSUE, BILLING_PROMOTION_REVIEW_ISSUE, STRIPE_API_VERSION } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { Prisma, type BillingAccount, type BillingAttempt, type BillingOperation } from '../../../generated/prisma/client';
@@ -52,9 +52,6 @@ export function validBillingEvent(event: StripeObject, accountId: string, livemo
     (event.account === undefined || event.account === accountId) && typeof event.type === 'string' &&
     typeof event.data?.object?.id === 'string' && /^[a-z]+_[a-zA-Z0-9_]+$/.test(event.data.object.id));
 }
-
-/** A paid bill whose snapshot holds a promotion but whose right was not there to consume: applied as a normal purchase, then reviewed. */
-export const BILLING_PROMOTION_REVIEW_ISSUE = 'PROMOTION_REVIEW';
 
 /**
  * Promotion spec §5: the paid period and the free time of a one-time apply, or null when this snapshot cannot carry a bonus

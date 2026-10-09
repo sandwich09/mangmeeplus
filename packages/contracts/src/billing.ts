@@ -401,6 +401,9 @@ export type BillingOperatorCompany = {
 /** Sales-event discounts §6.3: the reconciler raised it because a bill was paid at the discounted amount
  *  but no ticket was RESERVED for that attempt. Apply is not blocked; an operator checks and closes it. */
 export const BILLING_EVENT_DISCOUNT_REVIEW_ISSUE = 'EVENT_DISCOUNT_REVIEW';
+/** Promotion spec §6: a paid bill whose snapshot holds a promotion but whose right could not be used for it (given back, or
+ *  used by another bill), or a fully refunded promotion purchase whose entitlement could not be ended. An operator reviews it. */
+export const BILLING_PROMOTION_REVIEW_ISSUE = 'PROMOTION_REVIEW';
 export type BillingOperatorIssue = { id: string; companyId: string | null; companyName?:string|null; kind: string; reference: string;
   operationType?:string|null;
   relatedInvoiceId?:string|null; relatedRefundOperationId?:string|null; resolvedAt?:string|null;
@@ -712,8 +715,8 @@ export type BillingPromotionReportCompany = { companyId: string; companyName: st
   /** Links into the existing Admin attempt / invoice pages (their own access checks apply); null = none yet. */
   attemptHref: string | null; invoiceHref: string | null };
 export type BillingPromotionCampaignReport = { campaignId: string; mode: BillingMode; generatedAt: string;
-  /** reserved: Checkout open. paidAwaitingApply: CONSUMED, not applied. applied: benefit applied. releasedBeforePay: RELEASED
-   *  rows. refunded: consumed with any refund. fullyRefunded: cumulative full refund. rightsActive: applied, not fully
+  /** reserved: Checkout open. paidAwaitingApply: CONSUMED, not applied. applied: benefit applied. releasedBeforePay: how many
+   *  times a reserved right was given back with an unpaid Checkout (kept when the shop reserves again). refunded: consumed with any refund. fullyRefunded: cumulative full refund. rightsActive: applied, not fully
    *  refunded, `benefitEnd` in the future. consumed rights = paidAwaitingApply + applied, whatever was refunded. */
   counts: { reserved: number; paidAwaitingApply: number; applied: number; releasedBeforePay: number; refunded: number; fullyRefunded: number; rightsActive: number };
   /** Sums over applied rights; free months are never revenue. */
