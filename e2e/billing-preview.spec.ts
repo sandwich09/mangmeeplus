@@ -470,7 +470,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   // the payment provider and offers no way to end, resume or redo it (the one-tap "ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่" is
   // driven in billing-no-setup.spec.ts).
   await scenario.selectOption('pending');
-  await expect(page.getByRole('heading', { name: 'กำลังตรวจสอบรายการชำระเงิน', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true })).toBeVisible();
   for (const name of ['ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', 'ชำระเงินต่อ', 'ยกเลิกรายการนี้'])
     await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);

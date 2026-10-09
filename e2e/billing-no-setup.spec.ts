@@ -59,7 +59,7 @@ for (const width of [1280, 390]) {
     const readsBefore = s.log.attempts;
     await expect.poll(() => s.log.attempts - readsBefore, { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
     await expect(waiting).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'กำลังตรวจสอบรายการชำระเงิน', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', exact: true })).toBeVisible();
     for (const name of ['ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', 'ชำระเงินต่อ', 'ยกเลิกรายการนี้', 'เลือกแพ็กเกจ'])
       await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'เลือกแพ็กเกจ', exact: true })).toHaveCount(0);
@@ -134,7 +134,7 @@ for (const width of [1280, 390]) {
     await page.waitForURL(/checkout=canceled/);
 
     // G12/F09/F10: back without paying — said plainly, and one tap ends that Checkout for a new choice.
-    await expect(page.getByRole('heading', { name: 'ยังไม่ได้ชำระ', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'มีรายการชำระเงินที่ยังไม่เสร็จ', exact: true })).toBeVisible();
     const newChoice = page.getByRole('button', { name: 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', exact: true });
     await expect(newChoice).toBeVisible();
     await expect(page.getByRole('button', { name: 'ยกเลิกรายการนี้', exact: true })).toHaveCount(0);

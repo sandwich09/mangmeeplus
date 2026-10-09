@@ -856,7 +856,7 @@ for (const width of WIDTHS) for (const state of AFTER_PAYMENT) {
     await expect(block).not.toContainText(/จองสิทธิ์|เมื่อชำระเงินสำเร็จ/);
     // a renewal still being set up brings the existing "check again" button and never an invitation to pay again
     await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true })).toHaveCount(state.recheck ? 1 : 0);
-    await expect(regionNamed(page, 'ระบบได้รับเงินแล้ว ไม่ต้องชำระซ้ำ')).toHaveCount(state.recheck ? 1 : 0);
+    await expect(regionNamed(page, 'ตรวจผลการชำระเงิน')).toHaveCount(state.recheck ? 1 : 0);
     await expect(page.getByRole('heading', { name: 'แพ็กเกจปัจจุบัน', exact: true })).toBeVisible();
     await expect(regionNamed(page, 'สถานะแพ็กเกจ')).toContainText(until);
     await settle(page, info, width, `promo08-${state.key.toLowerCase()}`);
@@ -892,7 +892,7 @@ for (const width of WIDTHS) {
       await expect(block).toContainText('กำลังตั้งค่ารอบถัดไป ไม่ต้องชำระซ้ำ');
       await expect(block).not.toContainText('จองสิทธิ์');
       // money received (or the renewal still being set up): the block with its one quiet check, never a way to pay again or to throw the payment away
-      await expect(regionNamed(page, 'ระบบได้รับเงินแล้ว ไม่ต้องชำระซ้ำ').getByRole('button')).toHaveText(['ตรวจผลการชำระเงิน']);
+      await expect(regionNamed(page, applied ? 'ตรวจผลการชำระเงิน' : 'ระบบได้รับเงินแล้ว ไม่ต้องชำระซ้ำ').getByRole('button')).toHaveText(['ตรวจผลการชำระเงิน']);
       await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true })).toBeVisible();
       for (const gone of ['ชำระเงินต่อ', 'ยกเลิกรายการนี้', 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่']) await expect(page.getByRole('button', { name: gone, exact: true })).toHaveCount(0);
       for (const invitation of ['เลือกแพ็กเกจใหม่', 'เลือกแพ็กเกจ', 'ซื้อหรือเปลี่ยนแพ็กเกจ']) await expect(page.getByRole('button', { name: invitation, exact: true })).toHaveCount(0);
@@ -1029,39 +1029,51 @@ for (const width of WIDTHS) {
 /* ================================================================ 9. a payment that is started and not finished: ONE titled block, in order ================================================================ */
 
 // `billing-pending-payment.ts` decides what the package page shows for a payment of the shop that is unfinished, in flight or being checked (its spec's state table is the specification).
-// These tests put every state a buyer can reach through the simulated status in a browser, at 390 and 1280: ONE region with a title (or the card's own words), the sentence that says what is
-// waiting, an ORDERED list of choices each tied to the line that says what it does, at most one green button (the first choice, or the page's generic one when no payment is open), what gave way
-// (the generic "choose a package", its invitation, the amber "checking" alert for an open page, the separate promotion box for a reserved right), and the reference for the team last in the card.
+// These tests put every state a buyer can reach through the simulated status in a browser, at 390 and 1280. Round 4: while a payment waits for the buyer or the provider the block LEADS the card
+// and its words are the card's heading (said once); received money and a last result keep the card's own heading and give the block a title. Then: the sentence that says what is waiting, an
+// ORDERED list of choices each tied to the line that says what it does, at most one green button on the whole screen, what gave way (the generic "choose a package", its invitation, the pointers,
+// the no-package box, the amber alert, the old "ยังยืนยันผลไม่ได้" paragraph, the banner's green button), and the reference for the team last in the card.
 // The simulated status is what the API sends while a Checkout is open: no `new_sales`, no promotion rows, `purchaseBlockCode` BILLING_CHECKOUT_PENDING (see openPaymentStatus).
 
-const OPEN_TITLE = 'มีรายการชำระเงินที่ยังไม่เสร็จ', RECEIVED_TITLE = 'ระบบได้รับเงินแล้ว ไม่ต้องชำระซ้ำ', CHECKING_TITLE = 'กำลังตรวจรายการชำระเงิน', LAST_TITLE = 'ผลการชำระเงินล่าสุด';
-const WAITING_NAME = 'ตรวจผลการชำระเงิน';
-const POINTER_OPEN = `${OPEN_TITLE} ดูตัวเลือกด้านล่าง`, POINTER_CHECKING = 'กำลังตรวจรายการชำระเงิน ยังไม่ต้องเริ่มรายการใหม่';
+const OPEN_TITLE = 'มีรายการชำระเงินที่ยังไม่เสร็จ', RECEIVED_TITLE = 'ระบบได้รับเงินแล้ว ไม่ต้องชำระซ้ำ', LAST_TITLE = 'ผลการชำระเงินล่าสุด';
+const WAITING_HEADING = 'กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', CHECKING_HEADING = 'กำลังตรวจสอบรายการชำระเงิน', REGION_CHECK = 'ตรวจผลการชำระเงิน';
+const AUTO = 'ระบบตรวจผลให้อัตโนมัติ ไม่ต้องชำระซ้ำ', ASKING = 'ระบบถามผู้ให้บริการรับชำระเงินอยู่ ยังไม่ต้องเริ่มรายการใหม่', CONTACT = 'ถ้าตรวจแล้วยังไม่ชัดเจน ให้ติดต่อทีมงานพร้อมเลขอ้างอิง';
 const UNPAID_PAGE = 'เปิดหน้าชำระเงินไว้แล้ว แต่ระบบยังไม่ได้รับผลการชำระเงิน';
 const RESERVED_LINE = `จองสิทธิ์โปรโมชั่น ${CAMPAIGN_NAME} ไว้ให้รายการนี้แล้ว สิทธิ์เริ่มใช้เมื่อชำระเงินสำเร็จ`;
 const RIGHT_BACK = 'สิทธิ์โปรโมชั่นที่จองไว้จะถูกคืน เลือกใช้ใหม่ได้ถ้าโปรโมชั่นยังเปิดอยู่';
 const PACKAGE_KEPT = 'แพ็กเกจที่ใช้อยู่ไม่เปลี่ยน';
 const CHECK_CAUTION = 'ระบบยังยืนยันผลจากผู้ให้บริการรับชำระเงินไม่ได้ กดตรวจก่อนชำระใหม่ เพื่อไม่ให้ชำระซ้ำ';
 const CONTINUE_CAUTION = 'ใช้เมื่อแน่ใจว่ายังไม่ได้ชำระ เปิดหน้าชำระเงินเดิมเพื่อจ่ายให้เสร็จ';
-const AMBER_TEXT = 'ระบบกำลังตรวจรายการชำระเงินเดิมกับผู้ให้บริการรับชำระเงิน กรุณารอสักครู่แล้วกดลองใหม่';
 const GENERIC_BUTTON = /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/;
 const INVITATIONS = ['เลือกแพ็กเกจเพื่อเริ่มใช้งาน', 'เลือกแพ็กเกจเพื่อใช้งานต่อ'];
-/** The four names the block is called by (a screen reader's region), and the labels the four old loose buttons wore. */
-const BLOCK_NAMES = [OPEN_TITLE, RECEIVED_TITLE, CHECKING_TITLE, LAST_TITLE, WAITING_NAME];
+/** The names a block is called by (a screen reader's region), the labels the four old loose buttons wore, and the words that left the screen in round 4. */
+const BLOCK_NAMES = [OPEN_TITLE, RECEIVED_TITLE, CHECKING_HEADING, LAST_TITLE, WAITING_HEADING, REGION_CHECK];
 const OLD_LABELS = ['กลับไปยังรายการเดิม', 'ตรวจผลการชำระเงินอีกครั้ง', 'เลือกแพ็กเกจใหม่', 'ยุติรายการที่ยังไม่ชำระ', 'ยืนยันยุติหน้าชำระเงิน', 'ยังไม่ยุติ'];
+const GONE_TEXT = ['มีรายการชำระเงินที่ยังไม่เสร็จ ดูตัวเลือกด้านล่าง', 'กำลังตรวจรายการชำระเงิน ยังไม่ต้องเริ่มรายการใหม่', 'ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง',
+  'ผู้ให้บริการรับชำระเงินแจ้งว่าการเก็บเงินครั้งล่าสุดไม่สำเร็จ'];
+/** The shell's banner: on the package page only what is the matter (no "เลือกแพ็กเกจ" in the sentence, no green button); the return page keeps the whole sentence, still with no button. */
+const BANNER_NONE = 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้', BANNER_EXPIRED = 'แพ็กเกจของร้านหมดอายุแล้ว', BANNER_RETURN = 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ · เลือกแพ็กเกจเพื่อเริ่มใช้งาน';
 
 type Step = { label: string; captions: string[]; green?: true };
-type Block = { name: string; title: string | null; intro: string[]; steps: Step[] };
+/** `heading` = the card's own h2, which the block leads (a payment open, awaited or being checked); `title` = the block's own h3 (received money, a last result). The block is named by whichever it has. */
+type Block = { heading: string | null; title: string | null; intro: string[]; steps: Step[] };
+const blockName = (block: Block) => block.heading ?? block.title ?? REGION_CHECK;
 const CONTINUE_OPEN: Step = { label: 'ชำระเงินต่อ', green: true, captions: ['เปิดหน้าชำระเงินเดิมเพื่อจ่ายให้เสร็จ'] };
 const CHECK_CLAIM: Step = { label: 'ชำระแล้ว ตรวจผลการชำระเงิน', captions: ['กดเมื่อจ่ายเงินแล้วแต่หน้านี้ยังไม่เปลี่ยน'] };
 const cancelOneTap = (...more: string[]): Step => ({ label: 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', captions: ['รายการเดิมจะถูกยกเลิก', ...more] });
 const cancelAsking = (...more: string[]): Step => ({ label: 'ยกเลิกรายการนี้', captions: ['ระบบจะตรวจผลกับผู้ให้บริการรับชำระเงินก่อน จึงเลือกแพ็กเกจใหม่ได้', ...more] });
 const checkOnly = (caption: string, green = false): Step => ({ label: 'ตรวจผลการชำระเงิน', captions: [caption], ...(green ? { green: true as const } : {}) });
 
-/** The block as a buyer reads it, top to bottom: its title, the sentences that say what is waiting, then the choices in order, each a button tied to the line that says what it does. */
+/** The block as a buyer reads it, top to bottom: the heading of the card it leads (or its own title), the sentences that say what is waiting, then the choices in order, each a button tied to the line that says what it does. */
 async function expectBlock(page: Page, block: Block) {
-  const region = regionNamed(page, block.name);
+  const region = regionNamed(page, blockName(block)), card = regionNamed(page, 'สถานะแพ็กเกจ');
   await expect(region).toHaveCount(1);
+  // the words of the payment are said ONCE: the card's heading (and the block right under it) or the block's own title, never a pointer, never twice
+  if (block.heading || block.title) await expect(page.getByText(blockName(block), { exact: true }), 'said once').toHaveCount(1);
+  if (block.heading) {
+    await expect(card.getByRole('heading', { level: 2 })).toHaveText(block.heading);
+    await expect(card.locator(':scope > *').nth(1), 'the block leads the card, right under its heading').toHaveAttribute('aria-label', block.heading);
+  }
   await expect(region.getByRole('heading')).toHaveText(block.title ? [block.title] : []);
   await expect(region.locator(':scope > p')).toHaveText(block.intro);
   const items = region.locator(':scope > ol > li');
@@ -1116,86 +1128,100 @@ const runningShopWorld = (companyId: string, over: Partial<BillingStatus> = {}) 
   return { w, previous };
 };
 
-// `amber` = the amber "ระบบกำลังตรวจรายการชำระเงินเดิม …" alert (with its own "ตรวจสถานะล่าสุด" and a copy of the reference) that the status's BILLING_CHECKOUT_PENDING puts above the card. The page hides it for an
-// open payment page only (billing-pending-payment.spec.ts pins that); for the other kinds it stays beside the block, which is what these rows record (see the report: it repeats the block's one check).
-type PendingCase = { key: string; title: string; world: (companyId: string) => CustomerWorld; route?: string; block: Block | null; hint?: string | null; generic: boolean; amber: boolean; promoBox: boolean; reference: boolean; facts?: string[] };
+// `banner` = the sentence of the shell's banner for a shop with no package (never a green button there); `noBox` = no "แพ็กเกจ / ยังไม่มีแพ็กเกจ" box under the heading (the badge already says it);
+// `hint` = the invitation that stays where no payment is in flight; `promoBox` = the promotion's own green box; `reference` = the collapsed reference for the team, last in the card.
+type PendingCase = { key: string; title: string; world: (companyId: string) => CustomerWorld; route?: string; block: Block | null; hint?: string; generic: boolean; promoBox: boolean; reference: boolean;
+  banner: string | null; noBox?: boolean; facts?: string[] };
 const PENDING_CASES: PendingCase[] = [
   { key: 'open-reserved', title: 'an unpaid payment page is open and holds the promotion, the shop has no package yet (the owner\'s screen)', world: c => openWorld(c, freeShop(c)),
-    block: { name: OPEN_TITLE, title: OPEN_TITLE, intro: [UNPAID_PAGE, RESERVED_LINE], steps: [CONTINUE_OPEN, CHECK_CLAIM, cancelOneTap(RIGHT_BACK)] },
-    hint: POINTER_OPEN, generic: false, amber: false, promoBox: false, reference: true },
+    block: { heading: OPEN_TITLE, title: null, intro: [UNPAID_PAGE, RESERVED_LINE], steps: [CONTINUE_OPEN, CHECK_CLAIM, cancelOneTap(RIGHT_BACK)] },
+    generic: false, promoBox: false, reference: true, banner: BANNER_NONE, noBox: true },
   { key: 'open-plain', title: 'the same without a promotion', world: c => openWorld(c, newShopStatus(c, { promotions: undefined }), {}, false),
-    block: { name: OPEN_TITLE, title: OPEN_TITLE, intro: [UNPAID_PAGE], steps: [CONTINUE_OPEN, CHECK_CLAIM, cancelOneTap()] },
-    hint: POINTER_OPEN, generic: false, amber: false, promoBox: false, reference: true },
+    block: { heading: OPEN_TITLE, title: null, intro: [UNPAID_PAGE], steps: [CONTINUE_OPEN, CHECK_CLAIM, cancelOneTap()] },
+    generic: false, promoBox: false, reference: true, banner: BANNER_NONE, noBox: true },
   { key: 'open-running', title: 'the same for a shop whose package runs: its facts stay, and the cancel choice says the package does not change', world: c => runningShopWorld(c).w,
-    block: { name: OPEN_TITLE, title: OPEN_TITLE, intro: [UNPAID_PAGE, RESERVED_LINE], steps: [CONTINUE_OPEN, CHECK_CLAIM, cancelOneTap(RIGHT_BACK, PACKAGE_KEPT)] },
-    hint: null, generic: false, amber: false, promoBox: false, reference: true, facts: ['เริ่มต้น (STARTER)', thaiDay('2026-10-25T05:00:00.000Z'), '20 ใบ', 'จ่ายครั้งเดียว'] },
+    block: { heading: OPEN_TITLE, title: null, intro: [UNPAID_PAGE, RESERVED_LINE], steps: [CONTINUE_OPEN, CHECK_CLAIM, cancelOneTap(RIGHT_BACK, PACKAGE_KEPT)] },
+    generic: false, promoBox: false, reference: true, banner: null, facts: ['เริ่มต้น (STARTER)', thaiDay('2026-10-25T05:00:00.000Z'), '20 ใบ', 'จ่ายครั้งเดียว'] },
   { key: 'unknown', title: 'the outcome is unknown: the check leads, paying again only when sure, ending asks first', world: c => openWorld(c, freeShop(c), { paymentState: 'UNKNOWN' }),
-    block: { name: OPEN_TITLE, title: OPEN_TITLE, intro: ['ระบบยังยืนยันผลการชำระเงินรายการนี้ไม่ได้', RESERVED_LINE],
+    block: { heading: OPEN_TITLE, title: null, intro: ['ระบบยังยืนยันผลการชำระเงินรายการนี้ไม่ได้', RESERVED_LINE],
       steps: [checkOnly(CHECK_CAUTION, true), { label: 'ชำระเงินต่อ', captions: [CONTINUE_CAUTION] }, cancelAsking(`ถ้ายังไม่ได้ชำระ ${RIGHT_BACK}`)] },
-    hint: POINTER_OPEN, generic: false, amber: false, promoBox: false, reference: true },
+    generic: false, promoBox: false, reference: true, banner: BANNER_NONE, noBox: true },
   { key: 'action-required', title: 'the payment page needs one more step: continue first', world: c => openWorld(c, freeShop(c), { paymentState: 'ACTION_REQUIRED' }, false),
-    block: { name: OPEN_TITLE, title: OPEN_TITLE, intro: ['การชำระเงินรายการนี้ยังต้องทำขั้นตอนเพิ่มที่หน้าชำระเงิน'],
+    block: { heading: OPEN_TITLE, title: null, intro: ['การชำระเงินรายการนี้ยังต้องทำขั้นตอนเพิ่มที่หน้าชำระเงิน'],
       steps: [{ label: 'ชำระเงินต่อ', green: true, captions: ['เปิดหน้าชำระเงินเดิมเพื่อทำขั้นตอนที่เหลือให้เสร็จ'] },
         { label: 'ตรวจผลการชำระเงิน', captions: ['กดเมื่อทำขั้นตอนที่หน้าชำระเงินเสร็จแล้วแต่หน้านี้ยังไม่เปลี่ยน'] }, cancelAsking()] },
-    hint: POINTER_OPEN, generic: false, amber: false, promoBox: false, reference: true },
-  { key: 'waiting', title: 'back from the payment page and the first answer is pending: the card says it, the block has no title and one quiet check', route: RETURN_PAGE,
+    generic: false, promoBox: false, reference: true, banner: BANNER_NONE, noBox: true },
+  { key: 'waiting', title: 'back from the payment page and the first answer is pending: the heading says it, the block adds that the page checks by itself, and one quiet check', route: RETURN_PAGE,
     world: c => { const w = openWorld(c, freeShop(c)); w.attempt = returnAttempt({ promotion: RESERVED_USE }); return w; },
-    block: { name: WAITING_NAME, title: null, intro: [RESERVED_LINE], steps: [checkOnly('กดเมื่ออยากให้ตรวจผลทันที')] },
-    generic: false, amber: true, promoBox: false, reference: true, facts: ['กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', 'ระบบตรวจผลให้อัตโนมัติ ไม่ต้องชำระซ้ำ'] },
-  { key: 'waiting-running', title: 'the same for a shop whose package runs: the block says the waiting itself', route: RETURN_PAGE,
+    block: { heading: WAITING_HEADING, title: null, intro: [AUTO, RESERVED_LINE], steps: [checkOnly('กดเมื่ออยากให้ตรวจผลทันที')] },
+    generic: false, promoBox: false, reference: true, banner: BANNER_RETURN, noBox: true },
+  { key: 'waiting-running', title: 'the same for a shop whose package runs: the same words, there is no second version', route: RETURN_PAGE,
     world: c => { const { w } = runningShopWorld(c); w.attempt = returnAttempt({ promotion: RESERVED_USE }); return w; },
-    block: { name: WAITING_NAME, title: null, intro: ['กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน ระบบตรวจผลให้อัตโนมัติ ไม่ต้องชำระซ้ำ', RESERVED_LINE], steps: [checkOnly('กดเมื่ออยากให้ตรวจผลทันที')] },
-    generic: false, amber: true, promoBox: false, reference: true },
-  { key: 'received-applying', title: 'the money is received and the package is being applied: the check alone, never a way to pay again', hint: RECEIVED_TITLE,
+    block: { heading: WAITING_HEADING, title: null, intro: [AUTO, RESERVED_LINE], steps: [checkOnly('กดเมื่ออยากให้ตรวจผลทันที')] },
+    generic: false, promoBox: false, reference: true, banner: null },
+  { key: 'received-applying', title: 'the money is received and the package is being applied: the check alone, never a way to pay again',
     world: c => defaultCustomerWorld(c, newShopStatus(c, { paymentState: 'PAID', applyState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: false, purchaseBlockCode: 'BILLING_CHECKOUT_PENDING',
       allowedActions: [], promotions: undefined })),
-    block: { name: RECEIVED_TITLE, title: RECEIVED_TITLE, intro: [], steps: [checkOnly('กดเมื่ออยากตรวจผลล่าสุด')] },
-    generic: false, amber: true, promoBox: false, reference: true },
-  { key: 'received-renewal', title: 'paid and running, the renewal is still being set up: the check alone', hint: null,
+    block: { heading: null, title: RECEIVED_TITLE, intro: [], steps: [checkOnly('กดเมื่ออยากตรวจผลล่าสุด')] },
+    generic: false, promoBox: false, reference: true, banner: BANNER_NONE, noBox: true },
+  { key: 'received-renewal', title: 'paid and running, the renewal is still being set up: the promotion\'s own box says it, the block has no title and the check alone',
     world: c => defaultCustomerWorld(c, paidShopStatus(c, { promotion: promotionUse({ renewalSetupState: 'PENDING' }), subscriptionState: 'NONE', nextChargeAt: null, allowedActions: [] })),
-    block: { name: RECEIVED_TITLE, title: RECEIVED_TITLE, intro: [], steps: [checkOnly('กดเมื่ออยากตรวจผลล่าสุด')] },
-    generic: false, amber: false, promoBox: true, reference: false, facts: ['แพ็กเกจปัจจุบัน'] },
-  { key: 'last-result-failed', title: 'a renewal charge failed (past due): the check alone, with the sentence that says so', hint: null,
+    block: { heading: null, title: null, intro: [], steps: [checkOnly('กดเมื่ออยากตรวจผลล่าสุด')] },
+    generic: false, promoBox: true, reference: false, banner: null, facts: ['แพ็กเกจปัจจุบัน'] },
+  { key: 'last-result-failed', title: 'a renewal charge failed (past due): the card heading says so, the block is the check alone',
     world: c => defaultCustomerWorld(c, paidShopStatus(c, { paymentState: 'FAILED', subscriptionState: 'past_due', allowedActions: ['portal_payment_method', 'portal_cancel_subscription'] })),
-    block: { name: LAST_TITLE, title: LAST_TITLE, intro: ['ผู้ให้บริการรับชำระเงินแจ้งว่าการเก็บเงินครั้งล่าสุดไม่สำเร็จ'], steps: [checkOnly('กดเมื่อจ่ายเงินแล้ว เพื่อตรวจผลล่าสุดอีกครั้ง')] },
-    generic: false, amber: false, promoBox: false, reference: true },
-  { key: 'checking', title: 'a payment is in flight and has no page to resume or end yet: wait, do not start another', hint: POINTER_CHECKING,
+    block: { heading: null, title: LAST_TITLE, intro: [], steps: [checkOnly('กดเมื่อจ่ายเงินแล้ว เพื่อตรวจผลล่าสุดอีกครั้ง')] },
+    generic: false, promoBox: false, reference: true, banner: null, facts: ['เรียกเก็บเงินไม่สำเร็จ'] },
+  { key: 'checking', title: 'a payment is in flight and has no page to resume or end yet: the heading says it is being checked, the block says do not start another',
     world: c => openWorld(c, freeShop(c), { canCancelCheckout: false }, false),
-    block: { name: CHECKING_TITLE, title: CHECKING_TITLE, intro: ['ระบบกำลังตรวจรายการชำระเงินนี้กับผู้ให้บริการรับชำระเงิน ยังไม่ต้องเริ่มรายการใหม่'], steps: [checkOnly('กดเพื่อให้ระบบตรวจผลล่าสุดกับผู้ให้บริการรับชำระเงิน')] },
-    generic: false, amber: true, promoBox: false, reference: true },
+    block: { heading: CHECKING_HEADING, title: null, intro: [ASKING], steps: [checkOnly('กดเพื่อให้ระบบตรวจผลล่าสุดกับผู้ให้บริการรับชำระเงิน')] },
+    generic: false, promoBox: false, reference: true, banner: BANNER_NONE, noBox: true },
   { key: 'last-result-old-paid', title: 'an old paid record on a shop whose package ran out: the check stays, and the way to a new purchase stays too', hint: 'เลือกแพ็กเกจเพื่อใช้งานต่อ',
     world: c => defaultCustomerWorld(c, paidShopStatus(c, { accessState: 'EXPIRED', lockReason: 'trial_ended', termEndsAt: inDays(-3), paidThrough: inDays(-3), subscriptionState: 'canceled', nextChargeAt: null,
       allowedActions: ['new_sales'], promotions: promotionRows() })),
-    block: { name: LAST_TITLE, title: LAST_TITLE, intro: [], steps: [checkOnly('ให้ระบบถามผู้ให้บริการรับชำระเงินอีกครั้งว่ามีผลล่าสุดหรือไม่')] },
-    generic: true, amber: false, promoBox: false, reference: true },
-  { key: 'none', title: 'no payment at all: exactly the single button, as before', world: c => defaultCustomerWorld(c), block: null, hint: 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน', generic: true, amber: false, promoBox: false, reference: false },
+    block: { heading: null, title: LAST_TITLE, intro: [], steps: [checkOnly('ให้ระบบถามผู้ให้บริการรับชำระเงินอีกครั้งว่ามีผลล่าสุดหรือไม่')] },
+    generic: true, promoBox: false, reference: true, banner: BANNER_EXPIRED },
+  { key: 'none', title: 'no payment at all: exactly the single button, as before', world: c => defaultCustomerWorld(c), block: null, hint: 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน', generic: true, promoBox: false, reference: false, banner: BANNER_NONE },
 ];
 
 for (const width of WIDTHS) for (const state of PENDING_CASES) {
   test(`PENDING ${state.key}: ${state.title} at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     const w = state.world(companyId);
     await openOverview(page, w, width, state.route);
-    await expect(regionNamed(page, 'สถานะแพ็กเกจ')).toBeVisible();
+    const card = regionNamed(page, 'สถานะแพ็กเกจ');
+    await expect(card).toBeVisible();
     if (state.block) await expectBlock(page, state.block);
     else await expect(page.getByRole('region', { name: new RegExp(`^(${BLOCK_NAMES.join('|')})$`) })).toHaveCount(0);
     // the old loose buttons are gone in every state
     for (const old of OLD_LABELS) await expect(page.getByRole('button', { name: old, exact: true }), old).toHaveCount(0);
     // the generic "choose a package" button exists only where no payment is open or in flight
     await expect(page.getByRole('button', { name: GENERIC_BUTTON })).toHaveCount(state.generic ? 1 : 0);
-    // the sentence in the no-package box: the invitation, or the pointer that stands where it was
-    if (state.hint === null) for (const invitation of [...INVITATIONS, POINTER_OPEN]) await expect(page.getByText(invitation, { exact: true }), invitation).toHaveCount(0);
-    else if (state.hint !== undefined) await expect(page.getByText(state.hint, { exact: true }).first()).toBeVisible();
+    // what gave way in round 4: the pointers, the old paragraph, the intro of a failed block, the amber alert, the no-package box while a payment is in flight
+    if (state.hint) await expect(page.getByText(state.hint, { exact: true })).toBeVisible();
     if (state.block && !state.generic) for (const invitation of INVITATIONS) await expect(page.getByText(invitation, { exact: true }), invitation).toHaveCount(0);
-    await expect(page.getByRole('alert').filter({ hasText: AMBER_TEXT }), 'the amber "checking" alert').toHaveCount(state.amber ? 1 : 0);
+    for (const gone of GONE_TEXT) await expect(page.getByText(gone, { exact: true }), gone).toHaveCount(0);
+    await expect(page.getByRole('alert').filter({ hasText: 'ระบบกำลังตรวจรายการชำระเงินเดิม' }), 'the amber "checking" alert').toHaveCount(0);
+    if (state.noBox) await expect(card.locator('dt', { hasText: /^แพ็กเกจ$/ }), 'the no-package box').toHaveCount(0);
     await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' }), 'the separate promotion box').toHaveCount(state.promoBox ? 1 : 0);
-    for (const fact of state.facts ?? []) await expect(regionNamed(page, 'สถานะแพ็กเกจ')).toContainText(fact);
-    // at most one green button on the page, and it is the one the block (or, with no payment, the page) leads with
+    // the shell's banner: its sentence, and never a "เลือกแพ็กเกจ" link on the package page or the return page
+    if (state.banner) await expect(page.getByText(state.banner, { exact: true }), 'the banner').toBeVisible();
+    await expect(page.getByRole('link', { name: 'เลือกแพ็กเกจ', exact: true }), 'the banner\'s button').toHaveCount(0);
+    for (const fact of state.facts ?? []) await expect(card).toContainText(fact);
+    // at most one green button on the WHOLE screen (the shell's banner included), and it is the one the block (or, with no payment, the page) leads with
     const wanted = [...(state.block?.steps.filter(step => step.green).map(step => step.label) ?? [])];
     if (state.generic) wanted.push((await page.getByRole('button', { name: GENERIC_BUTTON }).textContent())!.trim());
-    expect(await greenControls(page), 'solid green controls on the page').toEqual(wanted);
+    expect(await greenControls(page, 'screen'), 'solid green controls on the whole screen').toEqual(wanted);
     expect(wanted.length).toBeLessThanOrEqual(1);
-    if (state.reference) await expectReferenceLast(page, state.block?.name ?? null);
+    if (state.reference) await expectReferenceLast(page, state.block ? blockName(state.block) : null);
     else await expect(page.getByText('เลขอ้างอิงสำหรับแจ้งทีมงาน', { exact: true })).toHaveCount(0);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    // The owner's state: where the first choice ends, measured at the top of the page (the first screen is what a buyer sees before scrolling).
+    if (state.key === 'open-reserved') {
+      const box = (await ownerBlock(page).getByRole('button', { name: 'ชำระเงินต่อ', exact: true }).boundingBox())!, height = page.viewportSize()!.height, bottom = Math.round(box.y + box.height);
+      wire(info, 'continue-button-box', width, { x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.width), height: Math.round(box.height), bottom, viewportHeight: height, insideFirstScreen: bottom <= height });
+      // measured in round 4: at 390x844 it ends at y=819 and at 1280x900 at y=607, so the first choice is on the first screen at both widths (this local stack also shows the preview button and the TEST badge)
+      expect(bottom, `"ชำระเงินต่อ" ends inside the ${width}x${height} first screen`).toBeLessThanOrEqual(height);
+    }
     await firstScreen(page, info, width, `pending-${state.key}`);
     await settle(page, info, width, `pending-${state.key}`);
   });
@@ -1262,10 +1288,10 @@ for (const width of WIDTHS) {
     await settle(page, info, width, 'pending-owner-after-cancel');
   });
 
-  // DEFECT FXE-D12: the answer of the check ("ส่งคำขอตรวจสอบแล้ว …") is a plain paragraph under the pressed button (BillingPage.tsx:600, the check choice of pendingSection): it takes no ref, no focus, no scroll.
-  // At 1280x900 the choice sits at the bottom of the first screen without any scrolling (its button ends at y=891 of 900), so the answer lands at y=931, below the fold, and nothing visibly happens.
-  // Here the button is put at the bottom edge of the screen (the worst place, and the natural one on a desktop). Fix: a ref and `scrollIntoView({ block: 'nearest' })` on the notice, like the other three.
-  test.fixme(`PENDING the owner's state: the answer of "ชำระแล้ว ตรวจผลการชำระเงิน" is in sight even when the button was at the bottom edge of the screen at ${width}px`, async ({ authedPage: page, companyId }) => {
+  // FXE-D12 (fixed in web round 4): the answer of the check ("ส่งคำขอตรวจสอบแล้ว …", with its own "อัปเดตข้อมูล") is one status container with a ref, focus and a `scrollIntoView({ block: 'nearest' })` like the other
+  // notices. At 1280x900 the choice sits at the bottom of the first screen without any scrolling (its button ends at y=891 of 900), so the answer used to land at y=931, below the fold. Here the button is
+  // put at the bottom edge of the screen (the worst place, and the natural one on a desktop).
+  test(`PENDING the owner's state: the answer of "ชำระแล้ว ตรวจผลการชำระเงิน" is in sight even when the button was at the bottom edge of the screen at ${width}px`, async ({ authedPage: page, companyId }) => {
     const w = ownerWorld(companyId);
     await openOverview(page, w, width);
     const block = ownerBlock(page), button = block.getByRole('button', { name: 'ชำระแล้ว ตรวจผลการชำระเงิน', exact: true });
@@ -1278,10 +1304,9 @@ for (const width of WIDTHS) {
     expect(seen.visibleToBuyer, JSON.stringify(seen)).toBe(true);
   });
 
-  // DEFECT FXE-D13: after the one-tap cancel the notice that says so ("ยกเลิกรายการเดิมแล้ว …") is brought into view, and then the choice of packages opens and the chooser-heading effect
-  // (BillingPage.tsx:138, `scrollIntoView({ block: 'start' })`) scrolls past it; the notice effect (BillingPage.tsx:148) depends on the notice alone, so it does not run again. The notice ends 63px
-  // above the top of a 390x844 screen (91px above 1280x900), and the buyer sees a chooser with no word about the payment that was just ended. Fix: add `choosing` to that effect's dependencies.
-  test.fixme(`PENDING the owner's state: the notice after "ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่" is still in sight once the choice of packages has opened at ${width}px`, async ({ authedPage: page, companyId }) => {
+  // FXE-D13 (fixed in web round 4): after the one-tap cancel the choice of packages opens a read later and its heading scrolled past the notice that says so ("ยกเลิกรายการเดิมแล้ว …"; it ended 63px above
+  // a 390x844 screen, 91px above 1280x900); the reopening now bumps a counter in the same batch so the notice effect runs again and is the last to scroll.
+  test(`PENDING the owner's state: the notice after "ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่" is still in sight once the choice of packages has opened at ${width}px`, async ({ authedPage: page, companyId }) => {
     const w = ownerWorld(companyId);
     await openOverview(page, w, width);
     await ownerBlock(page).getByRole('button', { name: 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', exact: true }).click();
@@ -1293,10 +1318,9 @@ for (const width of WIDTHS) {
     expect(seen.visibleToBuyer, JSON.stringify(seen)).toBe(true);
   });
 
-  // DEFECT FXE-D11: the shell's banner for a shop with no package (PlanTermBanner.tsx:41) keeps its own green "เลือกแพ็กเกจ" and the sentence "… เลือกแพ็กเกจเพื่อเริ่มใช้งาน" at the top of the
-  // package page while a payment is open or its money is received. It is the first and biggest green button of the screen at 390 (above "ชำระเงินต่อ"), it leads to the page the buyer is on, and it
-  // invites a second purchase on a page whose whole block says not to (the return page already hides it for that reason: `onReturnPage`). Fix: hide that button on the package page itself too.
-  for (const key of ['open-reserved', 'received-applying'] as const) test.fixme(`PENDING ${key}: the shell's banner does not offer a second "เลือกแพ็กเกจ": one green button on the whole screen at ${width}px`, async ({ authedPage: page, companyId }) => {
+  // FXE-D11 (fixed in web round 4): the shell's banner for a shop with no package kept its own green "เลือกแพ็กเกจ" and "… เลือกแพ็กเกจเพื่อเริ่มใช้งาน" on the package page while a payment was open or its money
+  // received: the first and biggest green button of the screen at 390, above "ชำระเงินต่อ". On the package page it is now only what is the matter, with no button (the return page keeps the sentence, no button).
+  for (const key of ['open-reserved', 'received-applying'] as const) test(`PENDING ${key}: the shell's banner does not offer a second "เลือกแพ็กเกจ": one green button on the whole screen at ${width}px`, async ({ authedPage: page, companyId }) => {
     const state = PENDING_CASES.find(item => item.key === key)!;
     await openOverview(page, state.world(companyId), width);
     await expectBlock(page, state.block!);
@@ -1335,7 +1359,7 @@ for (const width of WIDTHS) {
     const w = openWorld(companyId, freeShop(companyId));
     w.attempt = returnAttempt({ promotion: RESERVED_USE });
     await openOverview(page, w, width, RETURN_PAGE);
-    const block = regionNamed(page, WAITING_NAME);
+    const block = regionNamed(page, WAITING_HEADING);
     await expect(block).toBeVisible();
     const before = w.log.refreshes;
     await block.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true }).click();
@@ -1387,11 +1411,12 @@ for (const width of WIDTHS) {
     await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
     await page.clock.install({ time: new Date(FIXED_NOW) });
     await page.goto(`/companies/${companyId}${RETURN_PAGE}`);
-    await expect(regionNamed(page, WAITING_NAME)).toBeVisible();
+    await expect(regionNamed(page, WAITING_HEADING)).toBeVisible();
     await page.clock.fastForward(185_000);
-    await expectBlock(page, { name: OPEN_TITLE, title: OPEN_TITLE, intro: ['กลับจากหน้าชำระเงินแล้ว แต่ระบบยังยืนยันผลการชำระเงินไม่ได้', RESERVED_LINE],
+    await expectBlock(page, { heading: OPEN_TITLE, title: null, intro: [`กลับจากหน้าชำระเงินแล้ว แต่ระบบยังยืนยันผลการชำระเงินไม่ได้ ${CONTACT}`, RESERVED_LINE],
       steps: [checkOnly(CHECK_CAUTION, true), { label: 'ชำระเงินต่อ', captions: [CONTINUE_CAUTION] }, cancelOneTap(RIGHT_BACK)] });
-    await expect(page.getByText('ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง', { exact: true })).toBeVisible();
+    // the old paragraph beside the block is gone: the way out (the team) is said once, in the block's first sentence
+    await expect(page.getByText('ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: GENERIC_BUTTON })).toHaveCount(0);
     expect(await greenControls(page)).toEqual(['ตรวจผลการชำระเงิน']);
     await firstScreen(page, info, width, 'pending-gave-up');
