@@ -557,13 +557,14 @@ export class BillingConfigurationService {
   }
 
   /**
-   * PUBLISH builds the campaign on the server from the saved draft (never from client terms); RESUME reopens a paused one. Either way
+   * PUBLISH (which needs the `draftVersion` that was reviewed) builds the campaign on the server from the saved draft (never from client
+   * terms); RESUME reopens a paused one and ignores any `draftVersion`. Either way
    * the result is an ordinary PUBLISH_POLICY preview carrying the CURRENT policy and gates plus the campaign map with this one campaign
    * replaced, so `configuration-changes/:id/{submit|approve|cancel}` carry it. Admission is decided again, under the fence, at approval.
    */
   async previewPromotion(context: RequestContext, campaignId: string, input: BillingPromotionPreviewInput): Promise<BillingPromotionPreviewResult> {
     if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 0 || (input.action !== 'PUBLISH' && input.action !== 'RESUME') || typeof input.reason !== 'string' ||
-        !input.reason.trim() || input.reason.length > 500 || (input.action === 'PUBLISH' ? !Number.isInteger(input.draftVersion) || input.draftVersion! < 0 : input.draftVersion !== undefined))
+        !input.reason.trim() || input.reason.length > 500 || (input.draftVersion !== undefined ? !Number.isInteger(input.draftVersion) || input.draftVersion < 0 : input.action === 'PUBLISH'))
       throw new BadRequestException('Invalid campaign preview');
     await this.platform(context, permission('PUBLISH_POLICY'));
     const first = await this.billing.settings(), reason = input.reason.trim();
