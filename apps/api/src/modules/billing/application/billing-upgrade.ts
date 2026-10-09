@@ -10,16 +10,36 @@ export type UpgradeSegment = { grantId: string; invoiceId: string; start: string
 export type UpgradeSource = { prorationAt: string; sourceHash: string; segments: UpgradeSegment[]; amountSatang: number;
   receiptUnitsAdded: number; previewId: string; previewHash: string };
 const review = () => billingError('BILLING_UPGRADE_REVIEW', 'ข้อมูลส่วนต่างแพ็กเกจต้องตรวจสอบ กรุณาติดต่อทีมงานหรือกลับไปดูสถานะสมาชิก');
-export function isUpgrade(old: BillingOffer, next: BillingOffer) {
+export function isUpgrade(old: Pick<BillingOffer, 'offerKey' | 'interval'>, next: Pick<BillingOffer, 'offerKey' | 'interval'>) {
   return old.interval === next.interval && BILLING_PAID_TIERS.indexOf(next.offerKey as typeof BILLING_PAID_TIERS[number]) >
     BILLING_PAID_TIERS.indexOf(old.offerKey as typeof BILLING_PAID_TIERS[number]);
 }
+
+/**
+ * Promotion spec Q5 (plan §2): while a promotion purchase still gives service — paid time, free time, or a promotion
+ * period that has not started — an immediate upgrade (differential or full-package) waits. Null = no such purchase.
+ * `until` = max(benefitEnd, paidThrough): everything already committed ends first; the free time has no money value
+ * to prorate. A cumulative-full refund ends that source's claim (lane D revokes its entitlement).
+ */
+export async function promotionUpgradeDeferral(db: Prisma.TransactionClient, account: Pick<BillingAccount, 'id' | 'paidThrough'>, now = new Date()):
+  Promise<{ until: Date; offer: Pick<BillingOffer, 'offerKey' | 'interval'> } | null> {
+  const rows = (await db.billingInvoice.findMany({ where: { billingAccountId: account.id, productKind: 'PACKAGE', applyStatus: 'APPLIED', benefitEnd: { gt: now } } }))
+    .filter(row => row.benefitEnd && row.benefitEnd > now && row.refundedSatang < row.paidSatang).sort((a, b) => b.benefitEnd!.getTime() - a.benefitEnd!.getTime());
+  if (!rows.length) return null;
+  const until = new Date(Math.max(account.paidThrough?.getTime() ?? 0, ...rows.map(row => row.benefitEnd!.getTime())));
+  return { until, offer: rows[0]!.offerSnapshot as unknown as BillingOffer };
+}
+export const promotionUpgradeDeferred = (until: Date) => billingError('PROMOTION_UPGRADE_DEFERRED',
+  `แพ็กเกจนี้อยู่ในช่วงสิทธิ์โปรโมชั่น เปลี่ยนเป็นแพ็กเกจที่สูงขึ้นได้ตั้งแต่ ${until.toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'long' })}`);
 
 /** Only persisted verified invoices establish credit; consumption is intentionally outside this source hash. */
 export async function upgradeHistory(db: Prisma.TransactionClient, account: BillingAccount, offer: BillingOffer,
   policy: BillingPolicy, prorationAt: string) {
   const at = new Date(prorationAt);
   if (!Number.isSafeInteger(at.getTime()) || !account.paidThrough || at >= account.paidThrough) throw review();
+  // Covers the quote, the locked Checkout recheck and the paid apply: no upgrade is priced over a promotion purchase.
+  const deferral = await promotionUpgradeDeferral(db, account, at);
+  if (deferral) throw promotionUpgradeDeferred(deferral.until);
   const grants = await db.billingReceiptGrant.findMany({ where: { billingAccountId: account.id, companyId: account.companyId,
     serviceEnd: { gt: at }, revokedAt: null }, orderBy: [{ availableAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }] });
   const invoices = await db.billingInvoice.findMany({ where: { billingAccountId: account.id, id: { in: grants.map(g => g.sourceKey) } } });

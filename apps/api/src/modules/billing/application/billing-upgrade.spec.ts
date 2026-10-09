@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BILLING_DRAFT_POLICY, billingOffer } from '@watchdog-bms/contracts';
 import { proratedPackagePrice } from '../domain/billing-package';
-import { upgradePreview, upgradeHistory } from './billing-upgrade';
+import { promotionUpgradeDeferral, upgradePreview, upgradeHistory } from './billing-upgrade';
 import { BillingRepeat } from './billing-repeat';
 
 test('money proration uses actual seconds and rounds half up per prepaid segment', () => {
@@ -126,4 +126,43 @@ test('zero-valued cadence invoices are recognized only when the completed journa
   assert.equal(await repeat.ownedZeroInvoice(account,{...invoice,customer:'foreign'},[line]),false);
   assert.equal(await repeat.ownedZeroInvoice(account,invoice,[{...line,period:{start,end:end+1}}]),false);
   journal.completed=false;assert.equal(await repeat.ownedZeroInvoice(account,invoice,[line]),false);
+});
+
+test('an immediate upgrade waits while a promotion purchase still gives service (promotion spec Q5)', async () => {
+  const start = new Date('2026-10-01T00:00:00Z'), paidEnd = new Date('2026-11-01T00:00:00Z'), benefitEnd = new Date('2026-12-01T00:00:00Z');
+  const starter = billingOffer('STARTER_249', 'month');
+  const promo: any = { id: 'promo', productKind: 'PACKAGE', appliedAt: start, applyStatus: 'APPLIED', providerStatus: 'paid', paidSatang: 24900, totalSatang: 24900,
+    refundedSatang: 0, disputed: false, evidenceHash: 'promo', periodStart: start, periodEnd: paidEnd, benefitEnd, offerSnapshot: starter,
+    contractSnapshot: { quote: { offer: starter }, policy: BILLING_DRAFT_POLICY } };
+  let invoices: any[] = [promo];
+  // The fake honours the query's own filters, so the test proves the query and the in-memory guard agree.
+  const db: any = { billingInvoice: { findMany: async ({ where }: any) => invoices.filter(row => !where.benefitEnd ||
+    (row.productKind === where.productKind && row.applyStatus === where.applyStatus && row.benefitEnd && row.benefitEnd > where.benefitEnd.gt)) },
+    billingReceiptGrant: { findMany: async () => [] }, billingOperation: { findMany: async () => [] } };
+  const account: any = { id: 'account', companyId: 'company', baseSubscriptionId: null, paidThrough: benefitEnd };
+  const at = (iso: string) => promotionUpgradeDeferral(db, account, new Date(iso));
+  // Inside the paid time and inside the free time: until the end of the free time.
+  assert.deepEqual(await at('2026-10-15T00:00:00Z'), { until: benefitEnd, offer: starter });
+  assert.deepEqual((await at('2026-11-15T00:00:00Z'))?.until, benefitEnd);
+  // A later normal period bought on top: everything committed ends first.
+  const later = new Date('2027-01-01T00:00:00Z');
+  assert.deepEqual((await promotionUpgradeDeferral(db, { ...account, paidThrough: later }, new Date('2026-10-15T00:00:00Z')))?.until, later);
+  // A promotion period that has not started yet (bought on top of a running package) defers just the same.
+  invoices = [{ ...promo, periodStart: paidEnd, periodEnd: benefitEnd, benefitEnd: later }];
+  assert.deepEqual((await promotionUpgradeDeferral(db, { ...account, paidThrough: later }, new Date('2026-10-15T00:00:00Z')))?.until, later);
+  invoices = [promo];
+  // After the free time ended, and for a fully refunded or never-applied source, the normal guards apply again.
+  assert.equal(await at('2026-12-01T00:00:00Z'), null);
+  invoices = [{ ...promo, refundedSatang: 24900 }];
+  assert.equal(await at('2026-10-15T00:00:00Z'), null);
+  invoices = [{ ...promo, refundedSatang: 100 }];
+  assert.deepEqual((await at('2026-10-15T00:00:00Z'))?.until, benefitEnd, 'a partial refund keeps everything');
+  invoices = [{ ...promo, applyStatus: 'HELD' }];
+  assert.equal(await at('2026-10-15T00:00:00Z'), null);
+  invoices = [{ ...promo, benefitEnd: null }];
+  assert.equal(await at('2026-10-15T00:00:00Z'), null, 'an invoice without free time never defers');
+  // The priced upgrade itself refuses: the quote, the locked Checkout recheck and the paid apply all go through it.
+  invoices = [promo];
+  await assert.rejects(upgradeHistory(db, account, billingOffer('BASIC_499', 'month'), BILLING_DRAFT_POLICY, '2026-10-15T00:00:00.000Z'),
+    (error: any) => error.getResponse().code === 'PROMOTION_UPGRADE_DEFERRED' && /2569/.test(error.getResponse().message));
 });

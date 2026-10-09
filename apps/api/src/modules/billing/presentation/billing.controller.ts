@@ -610,10 +610,16 @@ export class BillingController {
   }
   @Post('quote') @HttpCode(200)
   async quote(@Req() req: AuthedRequest, @Body() body: BillingQuoteDto) {
-    const fields = bodyFields(body, ['offerKey', 'interval', 'billingEmail', 'capacity', 'purchaseMode', 'purchaseIntent', 'dealId', 'eventDiscountChoice', 'eventDiscountTicketSerial']);
+    const fields = bodyFields(body, ['offerKey', 'interval', 'billingEmail', 'capacity', 'purchaseMode', 'purchaseIntent', 'dealId', 'eventDiscountChoice', 'eventDiscountTicketSerial', 'benefitChoice', 'promotionCampaignId']);
     if (fields.purchaseMode !== undefined && !['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(String(fields.purchaseMode))) invalid();
     if (fields.purchaseIntent !== undefined && fields.purchaseIntent !== 'FULL_PACKAGE') invalid();
     if (fields.eventDiscountChoice !== undefined && fields.eventDiscountChoice !== 'USE' && fields.eventDiscountChoice !== 'DECLINE') invalid();
+    // Promotion spec Q4: one benefit per purchase. A choice other than the ticket cannot also ask to use one; a campaign is named only with PROMOTION.
+    const benefitChoice = fields.benefitChoice as 'NORMAL' | 'PROMOTION' | 'EVENT_DISCOUNT' | undefined;
+    if (benefitChoice !== undefined && (!['NORMAL', 'PROMOTION', 'EVENT_DISCOUNT'].includes(String(benefitChoice)) ||
+        (benefitChoice !== 'EVENT_DISCOUNT' && (fields.eventDiscountChoice === 'USE' || fields.eventDiscountTicketSerial !== undefined)) ||
+        (benefitChoice === 'EVENT_DISCOUNT' && fields.eventDiscountChoice === 'DECLINE'))) invalid();
+    if (fields.promotionCampaignId !== undefined && benefitChoice !== 'PROMOTION') invalid();
     // A deal quote names the offer with `dealId`; its base tier and month come from the APPROVED
     // row, so `offerKey`/`interval` are optional there and ignored by the service (S36).
     const dealId = fields.dealId === undefined ? undefined : textField(fields.dealId, 40);
@@ -622,7 +628,8 @@ export class BillingController {
       ...(typeof fields.billingEmail === 'string' && fields.billingEmail !== '' ? { billingEmail: textField(fields.billingEmail, 320) } : {}),
       capacity: fields.capacity, purchaseMode: fields.purchaseMode as BillingPurchaseMode | undefined,
       purchaseIntent: fields.purchaseIntent as 'FULL_PACKAGE' | undefined, eventDiscountChoice: fields.eventDiscountChoice as 'USE' | 'DECLINE' | undefined,
-      ...(fields.eventDiscountTicketSerial === undefined ? {} : { eventDiscountTicketSerial: textField(fields.eventDiscountTicketSerial, 40) }) };
+      ...(fields.eventDiscountTicketSerial === undefined ? {} : { eventDiscountTicketSerial: textField(fields.eventDiscountTicketSerial, 40) }),
+      ...(benefitChoice ? { benefitChoice } : {}), ...(fields.promotionCampaignId === undefined ? {} : { promotionCampaignId: textField(fields.promotionCampaignId, 64) }) };
     await this.limit(req);
     return this.billing.quote(req.context, input);
   }
