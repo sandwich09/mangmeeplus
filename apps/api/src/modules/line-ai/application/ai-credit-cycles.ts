@@ -76,16 +76,22 @@ function basePeriods(periods: readonly AiCreditPaidPeriod[]): AiCreditPaidPeriod
 
 type Run = AiCreditPaidPeriod & { promo?: AiCreditPromoSegment };
 
-/**
- * The kept paid periods and the free times as one chain, oldest first. A free time that overlaps a kept
- * paid period (or another free time) is inconsistent data: null, so funding stops instead of choosing one
- * by row order (plan R9, spec §5). With no free time this is `periods` itself.
- */
-function runsOf(periods: readonly AiCreditPaidPeriod[], segments: readonly AiCreditPromoSegment[]): Run[] | null {
+/** The kept paid periods and the free times as one chain, oldest first. With no free time this is `periods` itself. */
+function runsOf(periods: readonly AiCreditPaidPeriod[], segments: readonly AiCreditPromoSegment[]): Run[] {
   const free = segments.filter(s => s.end.getTime() > s.start.getTime())
     .map(promo => ({ id: promo.invoiceId, periodStart: promo.start, periodEnd: promo.end, promo }));
-  const runs: Run[] = [...periods, ...free].sort((a, b) => a.periodStart.getTime() - b.periodStart.getTime());
-  return runs.some((run, i) => i > 0 && run.periodStart.getTime() < runs[i - 1]!.periodEnd.getTime()) ? null : runs;
+  return [...periods, ...free].sort((a, b) => a.periodStart.getTime() - b.periodStart.getTime());
+}
+
+/**
+ * Whether a free time overlaps a kept paid period (or another free time) among the runs that are not over before `run` starts: the
+ * run a cycle is cut from, what reaches into it and what follows. That is inconsistent data, so funding stops instead of choosing
+ * one by row order (plan R9, spec §5). Runs wholly behind `run` are history and decide nothing about its cycle: an old overlap
+ * among them must not switch a paying shop's credit off for good.
+ */
+function clashes(runs: readonly Run[], run: Run): boolean {
+  const near = runs.filter(other => other.periodEnd.getTime() > run.periodStart.getTime());
+  return near.some((other, i) => i > 0 && other.periodStart.getTime() < near[i - 1]!.periodEnd.getTime());
 }
 
 /**
@@ -108,7 +114,7 @@ const cycleKey = (accountId: string, start: Date) => `${accountId}:${start.toISO
 /**
  * The cycle in force at `at`, or null when the company has no paid package cycle then (package
  * ended, grace over, renewal under review, no paid history — spec §11.3 legacy — or promotion dates that
- * overlap a paid period, which are never guessed at).
+ * overlap a paid period at or after the run in force, which are never guessed at; see {@link clashes}).
  */
 export function aiCreditCycleAt(input: {
   account: AiCreditCycleAccount;
@@ -124,19 +130,19 @@ export function aiCreditCycleAt(input: {
   const { account, at } = input;
   const runs = runsOf(basePeriods(input.periods), input.promoSegments ?? []);
   const time = at.getTime();
-  if (!runs || !Number.isSafeInteger(time) || !account.paidThrough) return null;
+  if (!Number.isSafeInteger(time) || !account.paidThrough) return null;
   const paidThrough = account.paidThrough.getTime();
 
   const last = runs[runs.length - 1];
   if (time < paidThrough) {
-    // Paid periods and free times never overlap here (runsOf), so one search finds the only run in force.
+    // Paid periods and free times do not overlap at the run in force (checked below), so one search finds the only run in force.
     let period = runs.find(p => p.periodStart.getTime() <= time && time < p.periodEnd.getTime());
     // Admin gift days move paidThrough with no invoice (`billing-free-days.ts`, `aiQuotaAdded: 0`): the
     // cycle of whichever run ended last (a free time too) stretches over them and no allowance is added.
     // ponytail: stretch, not a new cycle; revisit if the Owner wants gift days to carry AI credit.
     const gift = !period && !!last && time >= last.periodEnd.getTime();
     if (gift) period = last;
-    if (!period) return null;
+    if (!period || clashes(runs, period)) return null;
     if (period.promo) {
       // Plan R9 / Q2: one cycle for the whole free time, whether it is a tail or a gap before a later paid period.
       const { start, end, invoiceId } = period.promo;
@@ -166,7 +172,7 @@ export function aiCreditCycleAt(input: {
     ?? (input.graceDays === null ? null : paidThrough + input.graceDays * DAY_MS);
   if (graceEnd === null || time >= graceEnd) return null;
   // The run ending at paidThrough (a free time too), or the last one when gift days stretched coverage past it.
-  if (!last || last.periodEnd.getTime() > paidThrough) return null;
+  if (!last || last.periodEnd.getTime() > paidThrough || clashes(runs, last)) return null;
   const start = new Date(paidThrough);
   const end = appendPackageInterval(start, 'month', account.billingAnchorDay ?? chainStart(runs, last).getUTCDate());
   if (time >= end.getTime()) return null;

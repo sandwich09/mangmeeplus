@@ -1,5 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { BILLING_PAID_TIERS, BILLING_PROMOTION_STARTER_TEMPLATE, billingOffer, type BillingInterval, type BillingOffer, type BillingPolicy, type BillingPromotionCampaign,
+import { BILLING_PAID_TIERS, BILLING_PROMOTION_REVIEW_ISSUE, BILLING_PROMOTION_STARTER_TEMPLATE, billingOffer, type BillingInterval, type BillingOffer, type BillingPolicy, type BillingPromotionCampaign,
   type BillingPromotionCampaignAction, type BillingPromotionCampaignDraft, type BillingPromotionCampaignReport, type BillingPromotionCampaignView,
   type BillingPromotionEntitlementAdjustmentState, type BillingPromotionPreviewRow, type PaidTier } from '@watchdog-bms/contracts';
 import { Prisma, type BillingOperation } from '../../../generated/prisma/client';
@@ -71,8 +71,9 @@ export async function readCampaigns(tx: Tx, state: State, now: Date, only?: stri
   const drafts = { ...scope(state), type: PROMOTION_DRAFT_TYPE, ...(only ? { referenceId: only } : {}) };
   const open = await tx.billingOperation.findMany({ where: { ...drafts, state: 'DRAFT' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
   const born = await tx.billingOperation.groupBy({ by: ['referenceId'], where: drafts, _min: { createdAt: true } });
-  const publications = await tx.billingOperation.findMany({ where: { ...scope(state), type: 'PUBLISH_POLICY', state: { in: ['PREVIEW', 'AWAITING_APPROVAL'] }, expiresAt: { gt: now } },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+  // Submit and approve refuse a publication previewed on another settings version, so one is pending only while the settings are still those.
+  const publications = await tx.billingOperation.findMany({ where: { ...scope(state), type: 'PUBLISH_POLICY', state: { in: ['PREVIEW', 'AWAITING_APPROVAL'] }, expiresAt: { gt: now },
+    sourceVersion: state.settings.version }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
   const draftBy = new Map<string, BillingOperation>(), pendingBy = new Map<string, BillingOperation>(), createdBy = new Map(born.map(item => [item.referenceId, item._min.createdAt]));
   for (const row of open) if (row.referenceId && !draftBy.has(row.referenceId)) draftBy.set(row.referenceId, row);
   for (const row of publications) { const id = (row.proposedJson as { campaignId?: string }).campaignId; if (id && !pendingBy.has(id)) pendingBy.set(id, row); }
@@ -217,11 +218,15 @@ export async function promotionReport(tx: Tx, input: { state: State; campaignId:
   if (!totals!.total && !state.promotions[campaignId] && !await tx.billingOperation.count({ where: { ...scope(state), type: PROMOTION_DRAFT_TYPE, referenceId: campaignId } })) throw campaignNotFound();
   const anchor = input.cursor ? await tx.billingPromotionRedemption.findFirst({ where: { ...where, id: input.cursor } }) : null;
   if (input.cursor && !anchor) throw campaignNotFound();
-  const rows = await tx.billingPromotionRedemption.findMany({ orderBy: [{ acceptedAt: 'desc' }, { id: 'desc' }], take: 26,
-    where: { ...where, ...(anchor ? { OR: [{ acceptedAt: { lt: anchor.acceptedAt } }, { acceptedAt: anchor.acceptedAt, id: { lt: anchor.id } }] } : {}) } });
+  // Paged on createdAt: a re-reservation rewrites acceptedAt, which would move a row between two pages.
+  const rows = await tx.billingPromotionRedemption.findMany({ orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 26,
+    where: { ...where, ...(anchor ? { OR: [{ createdAt: { lt: anchor.createdAt } }, { createdAt: anchor.createdAt, id: { lt: anchor.id } }] } : {}) } });
   const page = rows.slice(0, 25), invoiceIds = page.flatMap(row => row.invoiceId ? [row.invoiceId] : []);
   const invoices = new Map((invoiceIds.length ? await tx.billingInvoice.findMany({ where: { id: { in: invoiceIds } }, select: { id: true, paidSatang: true, refundedSatang: true } }) : []).map(row => [row.id, row]));
   const names = new Map((await tx.company.findMany({ where: { id: { in: page.map(row => row.companyId) } }, select: { id: true, name: true } })).map(row => [row.id, row.name]));
+  // The refund's terminal step opens this on the bill when it could not end the entitlement itself; staff close it once they have adjusted it.
+  const reviewed = new Set((invoiceIds.length ? await tx.billingIssue.findMany({ where: { livemode: state.settings.livemode, kind: BILLING_PROMOTION_REVIEW_ISSUE,
+    referenceId: { in: invoiceIds }, state: { not: 'RESOLVED' } }, select: { referenceId: true } }) : []).map(issue => issue.referenceId));
   return { campaignId, mode: state.settings.livemode ? 'LIVE' : 'TEST', generatedAt: input.now.toISOString(), bonusMonthsGranted: totals!.bonusMonthsGranted,
     bonusReceiptUnitsGranted: totals!.bonusReceiptUnitsGranted, moneyReceivedSatang: input.financial ? totals!.moneyReceivedSatang : null,
     refundedSatang: input.financial ? totals!.refundedSatang : null,
@@ -229,7 +234,8 @@ export async function promotionReport(tx: Tx, input: { state: State; campaignId:
       refunded: totals!.refunded, fullyRefunded: totals!.fullyRefunded, rightsActive: totals!.rightsActive },
     companies: page.map(row => {
       const refund = refundOf(row.invoiceId ? invoices.get(row.invoiceId) : undefined);
-      const adjustment: BillingPromotionEntitlementAdjustmentState = refund !== 'FULL' ? 'NOT_REQUIRED' : row.entitlementAdjustedAt ? 'ADJUSTED' : 'PENDING';
+      const adjustment: BillingPromotionEntitlementAdjustmentState = refund !== 'FULL' ? 'NOT_REQUIRED' : row.entitlementAdjustedAt ? 'ADJUSTED'
+        : reviewed.has(row.invoiceId!) ? 'REVIEW' : 'PENDING';
       return { companyId: row.companyId, companyName: names.get(row.companyId) ?? row.companyId, state: row.state as 'RESERVED' | 'CONSUMED' | 'RELEASED',
         offerKey: row.offerKey as PaidTier, interval: row.interval as BillingInterval, acceptedAt: row.acceptedAt.toISOString(), consumedAt: row.consumedAt?.toISOString() ?? null,
         benefitAppliedAt: row.benefitAppliedAt?.toISOString() ?? null, releasedAt: row.releasedAt?.toISOString() ?? null, paidEnd: row.paidEnd?.toISOString() ?? null,
