@@ -186,12 +186,15 @@ V1 ไม่มี coupon, ส่วนลด, ตั๋วงานอีเว
 | `BillingReceiptGrant.kind` INITIAL / RENEWAL / REPEAT / UPGRADE | ซื้อ/ต่อแพ็กเกจ (`billing-receipt-grants.ts:25-60`, `billing-reconciler.service.ts:625-629,1359-1361`) | แพ็กเกจ | จากแพ็กเกจ |
 | TRIAL_CARRYOVER | ยอดทดลองที่ยกไปแพ็กแรก (`billing-trial-carryover.ts:23-40`) | แพ็กเกจ | จากแพ็กเกจ |
 | ฐานรายเดือนแบบ legacy (ไม่มีแถว grant, cadence `LEGACY_MONTH`) | `company-ocr-governance.ts:100-108` | แพ็กเกจ | จากแพ็กเกจ |
+| `PROMOTION` (ใหม่) | แคมเปญโปรโมชั่นที่ร้านใช้สิทธิ์ตอนซื้อ (ใบเสร็จโบนัส) | แพ็กเกจ | จากแพ็กเกจ |
 | ADMIN_ADJUSTMENT (เดิม, อายุไม่เกินแพ็กเกจ) | การปรับใบเสร็จโดยทีมงานแบบเดิม (`billing-receipt-adjustments.service.ts:186-188`) | ทีมงาน | ยอดเพิ่มเติม |
 | **ADD_ON_ADMIN** (ใหม่) | ทีมงานเพิ่มยอดผ่านกลไก ADD_ON (§16) | ทีมงาน | ยอดเพิ่มเติม |
 | **ADD_ON_PAID** (ใหม่) | ลูกค้าซื้อ (§9) | ซื้อ | ยอดเพิ่มเติม |
 | **SALES_EVENT** (ใหม่) | ร้านเดิมรับเครดิตจากงานขายด้วยส่วนลดจากงาน ([สเปกส่วนลดจากงาน](sales-event-discounts-spec-th.md) SD-O6, §5.6) ผ่าน grant seam เดียวกับ §16 | ทีมงาน (ยอดแถม) | ยอดเพิ่มเติม |
 | `AiCreditGrant.sourceKind` INCLUDED_CYCLE (ใหม่) | รอบเครดิต AI จากแพ็กเกจ (§5.1) | แพ็กเกจ | จากแพ็กเกจ |
 | ADD_ON_ADMIN / ADD_ON_PAID / SALES_EVENT ของเครดิต AI (ใหม่) | เหมือนแถว ADD_ON_ADMIN / ADD_ON_PAID / SALES_EVENT ข้างบน | ทีมงาน / ซื้อ / ทีมงาน | ยอดเพิ่มเติม |
+
+PROMOTION คือใบเสร็จโบนัสจากแคมเปญโปรโมชั่น อยู่กลุ่มแพ็กเกจ ใช้ได้กับไฟล์ทุกแบบเหมือนโควตาแพ็กเกจ หมดอายุตายตัวเมื่อสิ้นช่วงแถม ไม่ยกยอด และเมื่อหมดอายุพร้อมโควตาหลักจะถูกหักก่อน (ดู starter-249-bonus-month-promotion-spec-th.md §5)
 
 Flow ของแพ็กเกจต้องอ่านเฉพาะยอดกลุ่มแพ็กเกจ: projection ใน quote (`billing.service.ts:495`) และตอน apply (`billing-reconciler.service.ts:600`) ใช้ helper ใหม่ที่นับเฉพาะ kind ของแพ็กเกจ ไม่นับยอด ADD_ON เป็นยอดแพ็กที่ยกไป. Whitelist ของ writer ฝั่งแพ็กเกจคงเดิมและไม่รวม kind ใหม่ (`billing-receipt-grants.ts:48-54`, `billing-free-days.ts:183-184`, `billing-reconciler.service.ts:1221-1222,1349-1350`, `billing-end-package.ts:63-64`, `billing-package-request.ts:21-22`; `billing-upgrade.ts:23-26` อ่านทุก kind แล้วกรองเอง) (C06)
 
