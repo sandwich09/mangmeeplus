@@ -141,7 +141,7 @@ for (const width of WIDTHS) {
     await expect(promo).toContainText(CAMPAIGN_NAME);
     await expect(promo).toContainText('249 บาท ได้ 2 เดือน');
     await expect(promo).toContainText('ชำระ 1 เดือน แถมฟรี 1 เดือน');
-    await expect(promo).toContainText('ใบเสร็จ 60 ใบ (รวมแถม 30 ใบ)');
+    await expect(promo).toContainText('ใบเสร็จ 60 ใบ (รวมแถม 30 ใบ) ได้ทันทีเมื่อชำระสำเร็จ');
     await expect(promo).toContainText('ใช้ได้ครั้งเดียวต่อร้าน');
     await expect(promo).toContainText('โปรโมชั่นสิ้นสุด 31 ตุลาคม 2569 เวลา 23:59 น.');
     await expect(regionNamed(page, 'เลือกแพ็กเกจ').getByRole('region', { name: /^โปรโมชั่น / })).toHaveCount(1);
@@ -156,7 +156,7 @@ for (const width of WIDTHS) {
     const yearly = starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' });
     await expect(yearly).toContainText('2,490 บาท ได้ 13 เดือน');
     await expect(yearly).toContainText('ชำระ 12 เดือน แถมฟรี 1 เดือน');
-    await expect(yearly).toContainText('ใบเสร็จ 390 ใบ (รวมแถม 30 ใบ)');
+    await expect(yearly).toContainText('ใบเสร็จ 390 ใบ (รวมแถม 30 ใบ) ได้ทันทีเมื่อชำระสำเร็จ');
     await expect(regionNamed(page, 'เลือกแพ็กเกจ').getByRole('region', { name: /^โปรโมชั่น / })).toHaveCount(1);
     await expect(choice.getByRole('radio', { name: /ใช้โปรโมชั่น/ })).toBeChecked();
     await settle(page, info, width, 'promo01-year');
@@ -245,21 +245,37 @@ for (const width of WIDTHS) {
 }
 
 for (const width of WIDTHS) {
-  // DEFECT FXE-D4: with the promotion picked, the Starter card prints two answers to "how much do I get": the promotion box says 60 receipts / 13 months and the lines under
-  // it still say "30 ใบ ได้ทันที…", "ใช้งาน 12 เดือน" and "เฉลี่ยเดือนละ" (price / 12). BillingPage.tsx:752-755 print the normal numbers whatever `cardBenefit` is.
-  test.fixme(`PROMO-01 with the promotion picked, the promoted card gives one receipt number and one length of time, not the normal ones beside them at ${width}px`, async ({ authedPage: page, companyId }) => {
+  // FXE-D4 (fixed in round 2): a card that takes the promotion says its months and receipts once, in the promotion block; the plain lines (30 / 360 receipts, "ใช้งาน 12 เดือน · ประหยัด",
+  // "เฉลี่ยเดือนละ") are for a normal purchase and come back when the buyer picks it. Another package keeps them whatever the buyer picked.
+  test(`PROMO-01 a card that takes the promotion states months and receipts once; the plain lines return when the buyer picks normal at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     const w = defaultCustomerWorld(companyId);
     await openChooser(page, w, width);
-    await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' })).toContainText('ใบเสร็จ 60 ใบ');
-    await expect(starterOf(page)).not.toContainText('30 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
+    const starter = starterOf(page), promo = starter.getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' });
+    await expect(promo).toContainText('ใบเสร็จ 60 ใบ (รวมแถม 30 ใบ) ได้ทันทีเมื่อชำระสำเร็จ');
+    await expect(starter).not.toContainText('30 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
+    await expect(starter).toContainText('ชำระรายเดือน');
+    await expect(starter).toContainText('1 สาขา · 2 ผู้ใช้');
+    await expect(cardOf(page, 'เติบโต (BASIC)')).toContainText('50 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
+    await settle(page, info, width, 'promo01r2-month-promoted');
     await page.getByRole('button', { name: 'รายปี', exact: true }).click();
-    await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' })).toContainText('13 เดือน');
-    await expect(starterOf(page)).not.toContainText('360 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
-    await expect(starterOf(page)).not.toContainText('ใช้งาน 12 เดือน');
+    await expect(promo).toContainText('2,490 บาท ได้ 13 เดือน');
+    await expect(promo).toContainText('ใบเสร็จ 390 ใบ (รวมแถม 30 ใบ) ได้ทันทีเมื่อชำระสำเร็จ');
+    for (const plain of ['360 ใบ ได้ทันทีเมื่อชำระสำเร็จ', 'ใช้งาน 12 เดือน', 'ประหยัด', 'เฉลี่ยเดือนละ']) await expect(starter, plain).not.toContainText(plain);
+    const basic = cardOf(page, 'เติบโต (BASIC)');
+    await expect(basic).toContainText('600 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
+    await expect(basic).toContainText(`ใช้งาน 12 เดือน · ประหยัด ${money(99_800)}`);
+    await expect(basic).toContainText(`เฉลี่ยเดือนละ ${money(41_583)}`);
+    await settle(page, info, width, 'promo01r2-year-promoted');
+    await regionNamed(page, 'สิทธิ์ที่ใช้ในการซื้อครั้งนี้').getByRole('radio', { name: 'ซื้อแบบปกติ' }).check();
+    await expect(starter).toContainText('360 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
+    await expect(starter).toContainText(`ใช้งาน 12 เดือน · ประหยัด ${money(49_800)}`);
+    await expect(starter).toContainText(`เฉลี่ยเดือนละ ${money(20_750)}`);
+    await expect(promo).toContainText('ครั้งนี้ไม่ได้เลือกใช้โปรโมชั่นนี้');
+    await settle(page, info, width, 'promo01r2-year-normal');
   });
 
   // DEFECT FXE-D6 (phone only: at 1280 the block is on the first screen): after "เลือกแพ็กเกจนี้" the review opens on the document box, the tax lines and a big "ชำระวันนี้ ฿249.00"; the block
-  // that says what the promotion gives (paid and free time, receipts) starts at the very bottom of a 390x844 first screen (28% of it in view). BillingPage.tsx:827 renders it after the VAT sentence.
+  // that says what the promotion gives (paid and free time, receipts) starts at the very bottom of a 390x844 first screen (28% of it in view). BillingPage.tsx:832 renders it after the VAT sentence.
   (width === 390 ? test.fixme : test)(`PROMO-02 the review's first screen already shows what the promotion gives (the promotion block is in view without scrolling) at ${width}px`, async ({ authedPage: page, companyId }) => {
     const w = defaultCustomerWorld(companyId);
     await openChooser(page, w, width);
@@ -269,14 +285,20 @@ for (const width of WIDTHS) {
     await expect(promoReviewOf(page)).toBeInViewport({ ratio: 0.5 });
   });
 
-  // DEFECT FXE-D7: spec §3 step 6 wants the promotion shown "in the package / history page"; the contract carries it on every history item (BillingInvoiceItem.promotion) but the
-  // history row (BillingPage.tsx:887) prints only number, amount and date: nothing about the free months or the receipts.
-  test.fixme(`PROMO-08 the payment history row of a promotion purchase mentions the promotion or its free time at ${width}px`, async ({ authedPage: page, companyId }) => {
+  // FXE-D7 (fixed in round 2): the history row of a promotion purchase carries one more line — the free time and the bonus receipts — while the invoice's own number, amount and date stay.
+  test(`PROMO-08 the payment history row of a promotion purchase says the free time and the bonus receipts at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     const w = defaultCustomerWorld(companyId, paidShopStatus(companyId, { promotion: promotionUse() }));
-    w.history = [invoiceItem({ promotion: { displayName: CAMPAIGN_NAME, paidEnd: addMonths(FIXED_NOW, 1), benefitEnd, bonusReceiptUnits: 30 } })];
+    const paidEnd = addMonths(FIXED_NOW, 1);
+    w.history = [invoiceItem({ promotion: { displayName: CAMPAIGN_NAME, paidEnd, benefitEnd, bonusReceiptUnits: 30 } }), invoiceItem({ id: 'plain-invoice', number: 'PLAIN-0001', createdAt: addMonths(FIXED_NOW, -2) })];
     await openOverview(page, w, width);
     await page.getByRole('button', { name: 'ประวัติ', exact: true }).click();
-    await expect(regionNamed(page, 'ประวัติการชำระเงิน')).toContainText(new RegExp(`${CAMPAIGN_NAME}|แถมฟรี|${thaiDay(benefitEnd)}`));
+    const rows = regionNamed(page, 'ประวัติการชำระเงิน').locator('article');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0).locator('p')).toHaveText([`PROMO-0001 · ${money(24_900)} · ${thaiDay(FIXED_NOW)}`, `โปรโมชั่น ${CAMPAIGN_NAME} · แถมฟรี ${thaiDay(paidEnd)} – ${thaiDay(benefitEnd)} · ใบเสร็จเพิ่ม 30 ใบ`]);
+    // an invoice with no promotion reads as before
+    await expect(rows.nth(1).locator('p')).toHaveText([`PLAIN-0001 · ${money(24_900)} · ${thaiDay(addMonths(FIXED_NOW, -2))}`]);
+    await expect(rows.nth(0).getByRole('link', { name: 'ดูเอกสาร', exact: true })).toBeVisible();
+    await settle(page, info, width, 'promo08r2-history');
   });
 }
 
@@ -410,15 +432,55 @@ for (const width of WIDTHS) {
     await settle(page, info, width, 'promo02-repeat-review');
   });
 
-  // DEFECT FXE-D3: `quote.purchase.projectedRemainingReceipts` is the shop's remaining quota plus the BASE 30 units: billing.service.ts:568-589 never adds the promotion's bonus
-  // (quote.promotion.bonusReceiptUnits), and BillingPage.tsx:833 prints it as "หลังซื้อคงเหลือประมาณ N ใบ". Beside "โควตาที่เพิ่ม 60 ใบ" the sentence is short by the 30 bonus receipts.
-  test.fixme(`PROMO-02 a repeat purchase with the promotion: "หลังซื้อคงเหลือประมาณ" counts the bonus receipts too at ${width}px`, async ({ authedPage: page, companyId }) => {
+  // FXE-D3 (fixed in round 2, in the web): `purchase.projectedRemainingReceipts` counts the base 30 only (the API tells the bonus in `promotion`), so the page adds the bonus: 20 left + 60 bought = 80.
+  test(`PROMO-02 a repeat purchase with the promotion: "หลังซื้อคงเหลือประมาณ" counts the bonus receipts too at ${width}px`, async ({ authedPage: page, companyId }) => {
     const { w } = repeatWorld(companyId);
     await openChooser(page, w, width);
     await buyStarter(page).click();
     await expect(promoReviewOf(page)).toBeVisible();
-    // 20 left + 60 bought (30 + 30 bonus) = 80
+    await expect(reviewOf(page)).toContainText('โควตาที่เพิ่ม60 ใบ');
     await expect(reviewOf(page)).toContainText('หลังซื้อคงเหลือประมาณ 80 ใบ');
+    await expect(reviewOf(page)).not.toContainText('หลังซื้อคงเหลือประมาณ 50 ใบ');
+  });
+
+  // FXE-D3 (the trial-carry-over rows): the package row names the bonus, and the total adds it: (30 + 30 bonus) + 12 carried over = 72.
+  test(`PROMO-03 a legacy trial that hands over receipts: the package row says "รวมแถม 30 ใบ" and the total adds the bonus at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = defaultCustomerWorld(companyId, trialShopStatus(companyId, { promotions: promotionRows() }));
+    w.source = 'TRIAL'; w.trialCarryoverUnits = 12;
+    await openChooser(page, w, width);
+    await buyStarter(page).click();
+    const review = reviewOf(page), rows = review.locator('dl').filter({ has: page.locator('dt', { hasText: 'ยกยอดจากทดลองใช้' }) });
+    await expect(rows.locator('dt')).toHaveText(['โควตาแพ็กเกจ (รวมแถม 30 ใบ)', 'ยกยอดจากทดลองใช้', 'รวมหลังชำระสำเร็จโดยประมาณ']);
+    await expect(rows.locator('dd')).toHaveText(['60 ใบ', '12 ใบ', '72 ใบ']);
+    await expect(review).toContainText('ชำระสำเร็จแล้ว ใช้งานได้ 2 เดือน (ชำระ 1 เดือน แถมฟรี 1 เดือน)');
+    await settle(page, info, width, 'promo03r2-trial-carryover-review');
+    // the same shop buying normally: the package row is the plain 30
+    await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
+    await regionNamed(page, 'สิทธิ์ที่ใช้ในการซื้อครั้งนี้').getByRole('radio', { name: 'ซื้อแบบปกติ' }).check();
+    await buyStarter(page).click();
+    const plain = reviewOf(page).locator('dl').filter({ has: page.locator('dt', { hasText: 'ยกยอดจากทดลองใช้' }) });
+    await expect(plain.locator('dt')).toHaveText(['โควตาแพ็กเกจ', 'ยกยอดจากทดลองใช้', 'รวมหลังชำระสำเร็จโดยประมาณ']);
+    await expect(plain.locator('dd')).toHaveText(['30 ใบ', '12 ใบ', '42 ใบ']);
+  });
+}
+
+for (const width of WIDTHS) {
+  // Round 2: the page re-reads its status at the end of each promotion on offer, so a campaign that ends by the clock stops being offered without a click.
+  test(`PROMO-04 a campaign that ends by the clock stops being offered on the card without a click at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { promotions: promotionRows(null, { endsAt: inMs(3_000) }) }));
+    await openChooser(page, w, width);
+    const promo = starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' });
+    await expect(promo).toBeVisible();
+    await expect(regionNamed(page, 'สิทธิ์ที่ใช้ในการซื้อครั้งนี้')).toBeVisible();
+    const reads = w.log.statusReads;
+    // the campaign is over on the server now; nobody clicks anything
+    w.status = { ...w.status, promotions: undefined };
+    await expect(promo).toHaveCount(0, { timeout: 15_000 });
+    await expect(regionNamed(page, 'สิทธิ์ที่ใช้ในการซื้อครั้งนี้')).toHaveCount(0);
+    expect(w.log.statusReads).toBeGreaterThan(reads);
+    await expect(regionNamed(page, 'เลือกแพ็กเกจ')).toBeVisible();
+    await expect(buyStarter(page)).toBeEnabled();
+    await settle(page, info, width, 'promo04r2-campaign-ended-by-clock');
   });
 }
 
@@ -551,8 +613,8 @@ for (const width of WIDTHS) {
     wire(info, 'lost-notice-position', width, { onQuote, onCheckout });
   });
 
-  // DEFECT FXE-D2: the notice is rendered above the tabs (BillingPage.tsx:502) and nothing scrolls to it. After a refused quote the buyer is ~1000px below it;
-  // after a refused checkout the effect at BillingPage.tsx:129 scrolls to the chooser heading, which sits below the notice, so the notice ends up under the sticky header.
+  // DEFECT FXE-D2: the notice is rendered above the tabs (BillingPage.tsx:505) and nothing scrolls to it. After a refused quote the buyer is ~1000px below it;
+  // after a refused checkout the effect at BillingPage.tsx:130 scrolls to the chooser heading, which sits below the notice, so the notice ends up under the sticky header.
   for (const refused of ['quote', 'checkout'] as const) test.fixme(`PROMO-05 the lost-promotion notice is on screen after the ${refused} is refused (a person can see it) at ${width}px`, async ({ authedPage: page, companyId }) => {
     const w = defaultCustomerWorld(companyId);
     if (refused === 'quote') w.quoteOverride = n => n === 1 ? promotionUnavailableAnswer('CAP_FULL') : undefined; else w.checkoutOverride = n => n === 1 ? promotionUnavailableAnswer('CHANGED') : undefined;
@@ -609,8 +671,6 @@ for (const width of WIDTHS) {
   });
 }
 
-/** Flip to true once the lane that makes the page send exactly the legacy request for a ticket-only shop has landed. */
-const TICKET_QUOTE_IS_LEGACY = false;
 const TICKET_BOX = {
   legend: 'ส่วนลดจากงาน', ticket: 'ส่วนลดจากงาน งานสัมมนาร้านค้า −50 บาท · ใช้ได้ถึง 31 ธันวาคม 2569', decline: 'ไม่ใช้ครั้งนี้',
   notes: ['ใช้ได้ครั้งละ 1 ส่วนลดต่อการจ่าย ส่วนลดที่ไม่ได้เลือกยังเก็บไว้ใช้ครั้งถัดไปได้', 'ลดเฉพาะบิลแรก รอบถัดไปคิดราคาเต็ม งานเดียวกันใช้ได้ร้านละครั้ง'],
@@ -651,25 +711,83 @@ for (const width of WIDTHS) {
     await section.getByRole('button', { name: 'ไม่ใช้ส่วนลดครั้งนี้', exact: true }).click();
     await expect(reviewOf(page).getByRole('region', { name: 'ส่วนลดจากงาน' }).getByRole('button', { name: 'ใช้ส่วนลด', exact: true })).toBeVisible();
     const declined = w.log.quotes[1]!;
-    // THE WIRE, as sent on this tree (origin/main sent only offerKey, interval, purchaseMode and eventDiscountChoice USE / DECLINE)
+    // THE WIRE: origin/main's own request (offerKey, interval, purchaseMode and eventDiscountChoice USE / DECLINE), byte for byte
     wire(info, 'ticket-only-quotes', width, { use: used, decline: declined });
-    expect(used).toMatchObject({ offerKey: 'STARTER_249', interval: 'month', purchaseMode: 'CARD_AUTO', eventDiscountChoice: 'USE' });
-    expect(declined).toMatchObject({ offerKey: 'STARTER_249', interval: 'month', purchaseMode: 'CARD_AUTO', eventDiscountChoice: 'DECLINE' });
+    expect(used).toEqual({ offerKey: 'STARTER_249', interval: 'month', purchaseMode: 'CARD_AUTO', eventDiscountChoice: 'USE' });
+    expect(declined).toEqual({ offerKey: 'STARTER_249', interval: 'month', purchaseMode: 'CARD_AUTO', eventDiscountChoice: 'DECLINE' });
   });
 
-  (TICKET_QUOTE_IS_LEGACY ? test : test.fixme)(`PROMO-06 a ticket-only shop's quote request is exactly the legacy one (eventDiscountChoice only, no benefitChoice) at ${width}px`, async ({ authedPage: page, companyId }) => {
-    // DEFECT FXE-D1: BillingPage sends `benefitChoice: 'EVENT_DISCOUNT'` (USE) and `benefitChoice: 'NORMAL'` (DECLINE) for a shop with a ticket and no promotion
-    // (promotionQuoteFields, billing-promotion.ts:112-116). origin/main sent only `eventDiscountChoice`. The lane fixing it should make this test pass.
+  // FXE-D1 (fixed in round 2): a card with no AVAILABLE promotion row sends origin/main's request, whatever the shop holds. The browser asserts the cells of the unit table
+  // (billing-promotion.spec.ts) a buyer can reach: ticket only (the review switch and the radio), a row that only says why not, and a promotion on Starter while the buyer taps Basic.
+  test(`PROMO-06 a ticket-only shop's quote request is exactly the legacy one (eventDiscountChoice only, no benefitChoice), from the review switch and from the radio at ${width}px`, async ({ authedPage: page, companyId }) => {
     const w = ticketOnlyWorld(companyId);
     await openChooser(page, w, width);
     await buyStarter(page).click();
     await expect(reviewOf(page)).toBeVisible();
     await reviewOf(page).getByRole('region', { name: 'ส่วนลดจากงาน' }).getByRole('button', { name: 'ไม่ใช้ส่วนลดครั้งนี้', exact: true }).click();
     await expect(reviewOf(page).getByRole('button', { name: 'ใช้ส่วนลด', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
+    // the radio: "ไม่ใช้ครั้งนี้" declines, the ticket's own radio takes it again
+    await regionNamed(page, 'ส่วนลดจากงาน').getByRole('radio', { name: 'ไม่ใช้ครั้งนี้' }).check();
+    await buyStarter(page).click();
+    await expect(reviewOf(page).getByRole('button', { name: 'ใช้ส่วนลด', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
+    await regionNamed(page, 'ส่วนลดจากงาน').getByRole('radio', { name: /ส่วนลดจากงาน งานสัมมนาร้านค้า/ }).check();
+    await buyStarter(page).click();
+    await expect(reviewOf(page).getByRole('button', { name: 'ไม่ใช้ส่วนลดครั้งนี้', exact: true })).toBeVisible();
+    const legacy = { offerKey: 'STARTER_249', interval: 'month', purchaseMode: 'CARD_AUTO' };
+    expect(w.log.quotes).toEqual([{ ...legacy, eventDiscountChoice: 'USE' }, { ...legacy, eventDiscountChoice: 'DECLINE' }, { ...legacy, eventDiscountChoice: 'DECLINE' }, { ...legacy, eventDiscountChoice: 'USE' }]);
+    for (const quote of w.log.quotes) expect(quote).not.toHaveProperty('benefitChoice');
+  });
+
+  test(`PROMO-06 a held discount beside a promotion row that only says why not still sends the legacy request at ${width}px`, async ({ authedPage: page, companyId }) => {
+    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { promotions: promotionRows('ALREADY_USED'), eventDiscount: heldTicket() }));
+    w.heldDiscount = heldTicketView();
+    await openChooser(page, w, width);
+    await expect(starterOf(page).getByRole('note').filter({ hasText: REASON.ALREADY_USED })).toBeVisible();
+    await expect(regionNamed(page, 'ส่วนลดจากงาน')).toBeVisible();
+    await expect(regionNamed(page, 'สิทธิ์ที่ใช้ในการซื้อครั้งนี้')).toHaveCount(0);
+    await buyStarter(page).click();
+    await expect(reviewOf(page).getByRole('region', { name: 'ส่วนลดจากงาน' })).toContainText(`ส่วนลดจากงาน งานสัมมนาร้านค้า`);
+    expect(w.log.quotes).toEqual([{ offerKey: 'STARTER_249', interval: 'month', purchaseMode: 'CARD_AUTO', eventDiscountChoice: 'USE' }]);
+  });
+
+  test(`PROMO-06 a promotion on Starter and a held discount: Basic gets the legacy request, Starter the benefit the buyer chose at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { eventDiscount: heldTicket() }));
+    w.heldDiscount = heldTicketView();
+    await openChooser(page, w, width);
+    const choice = regionNamed(page, 'สิทธิ์ที่ใช้ในการซื้อครั้งนี้');
+    const tap = async (title: string) => {
+      await cardOf(page, title).getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
+      await expect(reviewOf(page)).toBeVisible();
+      await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
+      await expect(regionNamed(page, 'เลือกแพ็กเกจ')).toBeVisible();
+    };
+    // nothing touched: the promotion radio is the default, Starter has the promotion and Basic has only the held discount, which lowers it
+    await expect(cardOf(page, 'เติบโต (BASIC)')).toContainText('ส่วนลดจากงาน งานสัมมนาร้านค้า −50 บาท');
+    await settle(page, info, width, 'promo06r2-basic-with-ticket-chooser');
+    await tap('เติบโต (BASIC)');
+    // the buyer picks the promotion on purpose (the radio looks checked from the start, so choose another first) and taps Basic: no promotion there, and the discount stays unspent (main's own word)
+    await choice.getByRole('radio', { name: 'ซื้อแบบปกติ' }).check();
+    await choice.getByRole('radio', { name: /ใช้โปรโมชั่น/ }).check();
+    await expect(cardOf(page, 'เติบโต (BASIC)')).not.toContainText('ส่วนลดจากงาน งานสัมมนาร้านค้า −50 บาท');
+    await tap('เติบโต (BASIC)');
+    await tap('เริ่มต้น (STARTER)');
+    await choice.getByRole('radio', { name: /ส่วนลดจากงาน/ }).check();
+    await tap('เริ่มต้น (STARTER)');
+    await choice.getByRole('radio', { name: 'ซื้อแบบปกติ' }).check();
+    await tap('เริ่มต้น (STARTER)');
+    await tap('เติบโต (BASIC)');
+    const base = { interval: 'month', purchaseMode: 'CARD_AUTO' };
     expect(w.log.quotes).toEqual([
-      { offerKey: 'STARTER_249', interval: 'month', purchaseMode: 'CARD_AUTO', eventDiscountChoice: 'USE' },
-      { offerKey: 'STARTER_249', interval: 'month', purchaseMode: 'CARD_AUTO', eventDiscountChoice: 'DECLINE' },
+      { ...base, offerKey: 'BASIC_499', eventDiscountChoice: 'USE' },
+      { ...base, offerKey: 'BASIC_499', eventDiscountChoice: 'DECLINE' },
+      { ...base, offerKey: 'STARTER_249', benefitChoice: 'PROMOTION', promotionCampaignId: CAMPAIGN_ID, eventDiscountChoice: 'DECLINE' },
+      { ...base, offerKey: 'STARTER_249', benefitChoice: 'EVENT_DISCOUNT', eventDiscountChoice: 'USE' },
+      { ...base, offerKey: 'STARTER_249', benefitChoice: 'NORMAL', eventDiscountChoice: 'DECLINE' },
+      { ...base, offerKey: 'BASIC_499', eventDiscountChoice: 'DECLINE' },
     ]);
+    wire(info, 'quotes-promotion-and-ticket-by-card', width, w.log.quotes);
   });
 
   test(`PROMO-07 a shop with neither a promotion nor a ticket: no new section, no new field, the same review as before at ${width}px`, async ({ authedPage: page, companyId }, info) => {
@@ -763,6 +881,82 @@ for (const width of WIDTHS) {
     });
   }
 
+  // Round 2: "ใช้สิทธิ์โปรโมชั่นแล้ว … ใช้ได้ถึง" is told only while the package runs; an ended, lapsed or held shop is not "using" a right that already has its end date.
+  for (const access of ['EXPIRED', 'HELD'] as const) test(`PROMO-08 a shop whose access is ${access} is not told it is using a right that already has an end date at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const lapsed = access === 'EXPIRED';
+    const w = defaultCustomerWorld(companyId, paidShopStatus(companyId, { accessState: access, promotion: promotionUse(), attemptId: null, reference: null, allowedActions: lapsed ? ['new_sales'] : [],
+      ...(lapsed ? { lockReason: 'trial_ended' as const, termEndsAt: inDays(-3), paidThrough: inDays(-3), subscriptionState: 'canceled', nextChargeAt: null } : {}) }));
+    await openOverview(page, w, width);
+    await expect(page.getByRole('heading', { name: lapsed ? 'แพ็กเกจหมดอายุแล้ว' : 'แพ็กเกจปัจจุบัน', exact: true }).first()).toBeVisible();
+    await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' })).toHaveCount(0);
+    await expect(page.getByText(/ใช้สิทธิ์โปรโมชั่นแล้ว|แถมฟรี 1 เดือน · ใบเสร็จเพิ่ม 30 ใบ/)).toHaveCount(0);
+    await settle(page, info, width, `promo08r2-access-${access.toLowerCase()}`);
+  });
+
+  // Round 2: an open payment the reconciler expired before it ever started is refused on "กลับไปยังรายการเดิม" with its own sentence ("เริ่มรายการใหม่"), and the right is back.
+  test(`PROMO-08 resuming a payment that never started says so in plain Thai, and the shop can start again with the promotion at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    const open = { paymentState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: true, allowedActions: ['new_sales'],
+      promotion: promotionUse({ state: 'RESERVED', paidEnd: null, benefitEnd: null, renewalSetupState: 'PENDING', expectedNextChargeAt: null }) } as const;
+    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { ...open, allowedActions: [...open.allowedActions], promotions: undefined }));
+    w.resumeOverride = () => ({ status: 409, json: { code: 'BILLING_CHECKOUT_NOT_STARTED', message: 'Checkout was never started' } });
+    await openOverview(page, w, width);
+    await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' })).toContainText('จองสิทธิ์โปรโมชั่นไว้ให้รายการชำระนี้แล้ว');
+    // the reconciler has expired it by the time the buyer taps: the next read shows a free shop and the right back on offer
+    w.status = newShopStatus(companyId, { promotions: promotionRows() });
+    await page.getByRole('button', { name: 'กลับไปยังรายการเดิม', exact: true }).click();
+    const banner = page.getByRole('alert').filter({ hasText: 'รายการชำระเงินนี้ยังไม่ได้เริ่ม ระบบยกเลิกให้แล้ว กรุณาเริ่มรายการใหม่' });
+    await expect(banner).toBeVisible();
+    await page.waitForTimeout(500);
+    wire(info, 'resume-refused-position', width, await inViewNow(banner));
+    await firstScreen(page, info, width, 'promo08r2-resume-refused-first-screen');
+    await settle(page, info, width, 'promo08r2-resume-not-started');
+    // "ลองใหม่" in the banner reads the status again: the dead payment and its reserved right are gone, the shop can choose
+    await banner.getByRole('button', { name: 'ลองใหม่', exact: true }).click();
+    await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true }).first().click();
+    await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' })).toBeVisible();
+  });
+
+  // DEFECT FXE-D9: the refusal says "ระบบยกเลิกให้แล้ว กรุณาเริ่มรายการใหม่", but `action()`'s catch (BillingPage.tsx:260) only shows the banner: the page keeps the cancelled payment, its
+  // "จองสิทธิ์โปรโมชั่นไว้ให้รายการชำระนี้แล้ว" block and "กลับไปยังรายการเดิม" until the buyer finds "ลองใหม่" in the banner. Fix: read the status again when the code is BILLING_CHECKOUT_NOT_STARTED.
+  test.fixme(`PROMO-08 after "ยังไม่ได้เริ่ม" the page reads the status itself: the cancelled payment and its reserved right are gone without another tap at ${width}px`, async ({ authedPage: page, companyId }) => {
+    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { paymentState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: true, promotions: undefined,
+      promotion: promotionUse({ state: 'RESERVED', paidEnd: null, benefitEnd: null, renewalSetupState: 'PENDING', expectedNextChargeAt: null }) }));
+    w.resumeOverride = () => ({ status: 409, json: { code: 'BILLING_CHECKOUT_NOT_STARTED', message: 'Checkout was never started' } });
+    await openOverview(page, w, width);
+    w.status = newShopStatus(companyId, { promotions: promotionRows() });
+    await page.getByRole('button', { name: 'กลับไปยังรายการเดิม', exact: true }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'รายการชำระเงินนี้ยังไม่ได้เริ่ม' })).toBeVisible();
+    await expect(page.getByRole('status', { name: 'สถานะโปรโมชั่น' })).toHaveCount(0);
+  });
+
+  // DEFECT FXE-D10 (the same class as D2, for the page's ordinary red banner): the error banner is the first thing on the page (BillingPage.tsx:485) and nothing scrolls to it. After a refused
+  // "กลับไปยังรายการเดิม" the buyer is down at that button, the banner is 315px above the 390x844 viewport (177px at 1280), and nothing visibly happens. Same fix as D2: scroll and focus it.
+  test.fixme(`PROMO-08 the red error banner is on screen after a refused "กลับไปยังรายการเดิม" (a person can see it) at ${width}px`, async ({ authedPage: page, companyId }) => {
+    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { paymentState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: true, promotions: undefined,
+      promotion: promotionUse({ state: 'RESERVED', paidEnd: null, benefitEnd: null, renewalSetupState: 'PENDING', expectedNextChargeAt: null }) }));
+    w.resumeOverride = () => ({ status: 409, json: { code: 'BILLING_CHECKOUT_NOT_STARTED', message: 'Checkout was never started' } });
+    await openOverview(page, w, width);
+    await page.getByRole('button', { name: 'กลับไปยังรายการเดิม', exact: true }).click();
+    const banner = page.getByRole('alert').filter({ hasText: 'รายการชำระเงินนี้ยังไม่ได้เริ่ม' });
+    await expect(banner).toBeVisible();
+    await page.waitForTimeout(500);
+    expect((await inViewNow(banner)).visibleToBuyer).toBe(true);
+  });
+
+  test(`PROMO-08 a payment that failed leaves the return page without any word about a reserved right at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    // the API no longer sends `promotion` for a RESERVED right on a FAILED / EXPIRED attempt (status carries none either: the right went back)
+    const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { paymentState: 'FAILED', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, promotions: promotionRows() }));
+    w.attempt = { attemptId: ATTEMPT_ID, state: 'EXPIRED', errorCode: null, observedAt: FIXED_NOW, paymentState: 'FAILED', applyState: 'NONE', invoiceReference: null };
+    await openOverview(page, w, width, `/billing/return?attempt=${ATTEMPT_ID}`);
+    await expect(page.getByRole('heading', { name: 'รายการชำระเงินนี้ไม่สำเร็จ', exact: true })).toBeVisible();
+    await expect(page.getByText(/จองสิทธิ์|สิทธิ์โปรโมชั่น|ใช้สิทธิ์โปรโมชั่นแล้ว/)).toHaveCount(0);
+    // the promotion is on offer again for the next try
+    await page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true }).first().click();
+    await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น (STARTER)' })).toBeVisible();
+    await settle(page, info, width, 'promo08r2-return-failed');
+  });
+
   test(`PROMO-08 the higher packages explain the date instead of offering an immediate upgrade at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     const w = defaultCustomerWorld(companyId, paidShopStatus(companyId, { promotion: promotionUse(), upgradeDeferredUntil: benefitEnd, availablePurchaseModes: ['CARD_AUTO'] }));
     w.purchase = 'REPEAT';
@@ -776,17 +970,6 @@ for (const width of WIDTHS) {
     await expect(starterOf(page).getByRole('button', { name: 'ซื้อแพ็กเกจเดิมเพิ่ม', exact: true })).toBeEnabled();
     await expect(starterOf(page)).toContainText('แพ็กเกจปัจจุบัน');
     await settle(page, info, width, 'promo08-upgrade-deferred');
-  });
-
-  test(`PROMO-08 the payment history of a promotion purchase shows its paid amount and date, and what it says about the free time at ${width}px`, async ({ authedPage: page, companyId }, info) => {
-    const w = defaultCustomerWorld(companyId, paidShopStatus(companyId, { promotion: promotionUse() }));
-    w.history = [invoiceItem({ promotion: { displayName: CAMPAIGN_NAME, paidEnd: addMonths(FIXED_NOW, 1), benefitEnd, bonusReceiptUnits: 30 } })];
-    await openOverview(page, w, width);
-    await page.getByRole('button', { name: 'ประวัติ', exact: true }).click();
-    const history = regionNamed(page, 'ประวัติการชำระเงิน');
-    await expect(history).toContainText(`PROMO-0001 · ${money(24_900)} · ${thaiDay(FIXED_NOW)}`);
-    wire(info, 'history-row-text', width, { text: (await history.innerText()).replace(/\s+/g, ' ') });
-    await settle(page, info, width, 'promo08-history');
   });
 }
 
@@ -807,6 +990,8 @@ async function adminOpen(page: Page, w: AdminWorld, width: number, path: string)
 }
 const callsTo = (w: AdminWorld, method: string, pattern: RegExp) => w.calls.filter(call => call.method === method && pattern.test(call.path));
 const KEY = /^billing-campaign-draft-[0-9a-f-]{36}$/;
+/** Two causes share this code: the campaign's own fields, and a catalog that no longer matches the template (which editing the campaign cannot fix). */
+const INVALID_TEXT = 'ข้อมูลแคมเปญไม่ตรงกับแบบตั้งต้น ตรวจชื่อ ช่วงเวลา และรอบที่เลือก อีกสาเหตุคือแพ็กเกจเริ่มต้นไม่ตรงกับแบบตั้งต้น ซึ่งใช้ได้เฉพาะเมื่อราคารายเดือน 249 บาท และใบเสร็จ 30 ใบต่อเดือน 360 ใบต่อปี เรื่องนี้แก้ที่แคมเปญไม่ได้ เมื่อแก้ครบแล้วให้ตรวจสอบก่อนเปิดอีกครั้ง';
 const articleOf = (page: Page, name: string) => page.getByRole('article', { name, exact: true });
 
 /** One campaign in each of the seven statuses the list can show. */
@@ -902,6 +1087,8 @@ for (const width of WIDTHS) {
 
   test(`PROMO-09 the list: "สร้างแคมเปญ" only with the policy permission at ${width}px`, async ({ page }, info) => {
     const w = everyStatusWorld({ capabilities: READ_ONLY });
+    // a view-only caller may not approve the request that is waiting either (the request's own answer for this caller lists nothing)
+    w.campaigns.find(item => item.campaignId === 'camp-await')!.operation = openOperation({ state: 'AWAITING_APPROVAL', allowedActions: [] });
     await adminOpen(page, w, width, '/system/billing/campaigns');
     await expect(page.getByRole('status').filter({ hasText: 'แสดง 7 จาก 7 แคมเปญ' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'สร้างแคมเปญ' })).toHaveCount(0);
@@ -1068,7 +1255,7 @@ for (const width of WIDTHS) {
     await settle(page, info, width, 'promo10-save-unconfirmed');
     failNext(w, 'POST promotion-campaign-drafts', apiError(400, 'CONTROL_PROMOTION_INVALID'));
     await form.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
-    await expect(page.getByRole('alert').filter({ hasText: 'ข้อมูลแคมเปญยังไม่ถูกต้องหรือไม่ตรงกับแบบตั้งต้น' })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: INVALID_TEXT })).toBeVisible();
     await form.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
     await expect(page).toHaveURL(/\/system\/billing\/campaigns\/camp-new-1$/);
     const keys = callsTo(w, 'POST', /^promotion-campaign-drafts$/).map(call => call.key);
@@ -1306,7 +1493,9 @@ for (const width of WIDTHS) {
     wire(info, 'end', width, end);
     await expect(page.getByText('จบแล้ว', { exact: true }).first()).toBeVisible();
     await expect(page.getByText('ปิดรับสิทธิ์แล้ว ดูประวัติได้ แต่เปิดใหม่ด้วยแคมเปญเดิมไม่ได้ ถ้าจะจัดรอบใหม่ต้องสร้างแคมเปญใหม่')).toBeVisible();
-    await expect(region(page, 'เงื่อนไขที่ใช้อยู่')).toContainText(`จบเมื่อ ${thaiDateTime(FIXED_NOW)}`);
+    await expect(region(page, 'เงื่อนไขของแคมเปญที่จบแล้ว')).toContainText(`จบเมื่อ ${thaiDateTime(FIXED_NOW)}`);
+    await expect(region(page, 'เงื่อนไขของแคมเปญที่จบแล้ว')).toContainText('ปิดรับสิทธิ์แล้ว เก็บไว้ให้ดูเป็นประวัติ เวลาแสดงเป็นเวลาประเทศไทย');
+    await expect(region(page, 'เงื่อนไขที่ใช้อยู่')).toHaveCount(0);
     for (const name of ['พักแคมเปญ', 'จบแคมเปญ', 'กลับมาเปิด', 'ตรวจสอบก่อนเปิด', 'แก้เงื่อนไข', 'แก้ร่าง', 'ส่งคำขอ']) await expect(page.getByRole('button', { name, exact: true }), name).toHaveCount(0);
     await expect(region(page, 'พักหรือจบแคมเปญ')).toHaveCount(0);
     await settle(page, info, width, 'promo12-ended');
@@ -1433,7 +1622,7 @@ for (const width of WIDTHS) {
     { key: 'cap', code: 'CONTROL_PROMOTION_CAP_BELOW_USED', text: 'จำนวนสิทธิ์สูงสุดต่ำกว่าจำนวนที่ร้านจองและใช้ไปแล้ว ตั้งให้ไม่น้อยกว่านั้น หรือเลือก "ไม่จำกัด"' },
     { key: 'overlap', code: 'CONTROL_PROMOTION_OVERLAP', text: 'มีแคมเปญอื่นของแพ็กเกจและรอบเดียวกันในช่วงเวลานี้อยู่แล้ว เลื่อนช่วงเวลาหรือจบแคมเปญเดิมก่อน' },
     { key: 'catalog', code: 'CONTROL_PROMOTION_CATALOG_STALE', text: 'ราคา โควตา หรือภาษีของแพ็กเกจเปลี่ยนไปแล้ว ตรวจสอบตัวอย่างใหม่ก่อนเปิดแคมเปญ' },
-    { key: 'invalid', code: 'CONTROL_PROMOTION_INVALID', text: 'ข้อมูลแคมเปญยังไม่ถูกต้องหรือไม่ตรงกับแบบตั้งต้น ตรวจชื่อ ช่วงเวลา และรอบที่เลือก แล้วตรวจสอบก่อนเปิดอีกครั้ง' },
+    { key: 'invalid', code: 'CONTROL_PROMOTION_INVALID', text: INVALID_TEXT },
   ] as const;
   for (const refusal of REFUSALS) test(`PROMO-14 refused on preview (${refusal.key}): the Thai sentence, the draft stays and can be edited at ${width}px`, async ({ page }, info) => {
     const w = draftWorld();
@@ -1504,5 +1693,170 @@ for (const width of WIDTHS) {
     await expect(page.getByRole('button', { name: 'แก้เงื่อนไข', exact: true })).toHaveCount(0);
     await expect(page.getByText('บัญชีนี้ดูแคมเปญได้อย่างเดียว การแก้ไข เปิด พัก และจบแคมเปญต้องมีสิทธิ์ “ตั้งนโยบาย”')).toBeVisible();
     await settle(page, info, width, 'promo14-permission-gone');
+  });
+}
+
+/* ================================================================ Round 2: the Admin screens stop at an open request and say what is true ================================================================ */
+
+/** A complete draft whose publication request is open: PREVIEW (its owner may submit or cancel) or AWAITING_APPROVAL (an approver may approve; its owner may cancel). */
+function requestWorld(state: 'PREVIEW' | 'AWAITING_APPROVAL', over: { world?: Parameters<typeof newAdminWorld>[0]; actions?: ('submit' | 'approve' | 'cancel')[]; expiresAt?: string; sourceVersion?: number } = {}) {
+  const w = newAdminWorld({ reauthUntil: inMs(300_000), ...over.world });
+  const record = addCampaign(w, { campaignId: 'camp-new', draft: { operationId: 'draft-1', version: 3, values: completeDraft('camp-new', { startsAt: '2026-10-08T03:00:00.000Z', endsAt: '2026-10-31T16:59:00.000Z', cap: 200 }) } });
+  record.operation = openOperation({ state, reason: 'เปิดโปรเดือนตุลาคม', allowedActions: over.actions ?? (state === 'PREVIEW' ? ['submit', 'cancel'] : ['approve', 'cancel']),
+    sourceVersion: over.sourceVersion ?? w.settingsVersion, ...(over.expiresAt ? { expiresAt: over.expiresAt } : {}) });
+  return { w, record };
+}
+const LOCKED = 'มีคำขอเปิดแคมเปญค้างอยู่ จึงแก้หรือยกเลิกร่างไม่ได้ ต้องกด “ยกเลิกคำขอ” ก่อน';
+const LOCKED_FOR_OWNER = 'มีคำขอเปิดแคมเปญค้างอยู่ จึงแก้หรือยกเลิกร่างไม่ได้ ต้องให้ผู้ส่งคำขอกด “ยกเลิกคำขอ” ก่อน';
+
+for (const width of WIDTHS) {
+  for (const state of ['PREVIEW', 'AWAITING_APPROVAL'] as const) test(`PROMO-11 while a request is open (${state}) the draft cannot be edited or discarded, and says why; cancelling the request frees it at ${width}px`, async ({ page }, info) => {
+    const { w } = requestWorld(state);
+    await adminOpen(page, w, width, '/system/billing/campaigns/camp-new');
+    const draft = region(page, 'ร่างที่กำลังแก้'), publish = region(page, 'เปิดใช้แคมเปญ');
+    await expect(draft.getByRole('note')).toHaveText(LOCKED);
+    await expect(draft.getByRole('button', { name: 'แก้ร่าง', exact: true })).toBeDisabled();
+    await expect(draft.getByRole('button', { name: 'ยกเลิกร่าง', exact: true })).toBeDisabled();
+    await expect(publish.getByRole('button', { name: 'ยกเลิกคำขอ', exact: true })).toBeEnabled();
+    await expect(publish).toContainText(state === 'PREVIEW' ? 'ตรวจตัวอย่างแล้ว ส่งคำขอเพื่อให้ผู้อนุมัติยืนยัน' : 'ส่งคำขอแล้ว รอยืนยันเปิดใช้');
+    await expect(publish).toContainText(`ใช้คำขอได้ถึง ${thaiDateTime(inMs(600_000))}`);
+    await settle(page, info, width, `promo11r2-request-open-${state.toLowerCase()}`);
+    await publish.getByRole('button', { name: 'ยกเลิกคำขอ', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'ยกเลิกคำขอแล้ว ยังไม่มีการเปลี่ยนแปลงกับแคมเปญ' })).toBeVisible();
+    await expect(draft.getByRole('note')).toHaveCount(0);
+    await expect(draft.getByRole('button', { name: 'แก้ร่าง', exact: true })).toBeEnabled();
+    await expect(draft.getByRole('button', { name: 'ยกเลิกร่าง', exact: true })).toBeEnabled();
+    await expect(publish.getByRole('button', { name: 'ตรวจสอบก่อนเปิด', exact: true })).toBeVisible();
+    expect(callsTo(w, 'POST', /\/cancel$/)).toHaveLength(1);
+    await settle(page, info, width, 'promo11r2-request-cancelled');
+  });
+
+  test(`PROMO-11 a request someone else must cancel says so in the draft's lock sentence, and a paused campaign's "แก้เงื่อนไข" is locked too at ${width}px`, async ({ page }) => {
+    // an approver who may also manage, but is not the one who sent the request: no "ยกเลิกคำขอ" of their own
+    const { w } = requestWorld('AWAITING_APPROVAL', { actions: ['approve'] });
+    await adminOpen(page, w, width, '/system/billing/campaigns/camp-new');
+    await expect(region(page, 'ร่างที่กำลังแก้').getByRole('note')).toHaveText(LOCKED_FOR_OWNER);
+    await expect(region(page, 'ร่างที่กำลังแก้').getByRole('button', { name: 'แก้ร่าง', exact: true })).toBeDisabled();
+    // a RESUME request on a paused campaign with no draft: "แก้เงื่อนไข" waits for it as well
+    const paused = newAdminWorld({ reauthUntil: inMs(300_000) });
+    const record = addCampaign(paused, { campaignId: CAMPAIGN_ID, published: publishedCampaign({ paused: true }) });
+    record.operation = openOperation({ state: 'PREVIEW', allowedActions: ['submit', 'cancel'], sourceVersion: paused.settingsVersion });
+    await installAdminRoutes(page, paused);
+    await page.goto(`/system/billing/campaigns/${CAMPAIGN_ID}`);
+    await expect(region(page, 'ร่างที่กำลังแก้').getByRole('note')).toHaveText(LOCKED);
+    await expect(region(page, 'ร่างที่กำลังแก้').getByRole('button', { name: 'แก้เงื่อนไข', exact: true })).toBeDisabled();
+  });
+
+  // A request that can no longer go on: expired, the billing settings moved after the preview, or the server already answered stale. Only "ยกเลิกคำขอ" is offered, with one sentence that leads out.
+  const DEAD = [
+    { key: 'expired', build: () => requestWorld('PREVIEW', { expiresAt: inMs(-60_000) }), note: `คำขอนี้หมดอายุเมื่อ ${thaiDateTime(inMs(-60_000))} ยกเลิกคำขอนี้แล้วตรวจสอบก่อนเปิดอีกครั้ง` },
+    { key: 'settings-moved', build: () => requestWorld('AWAITING_APPROVAL', { sourceVersion: 5 }), note: 'คำขอนี้ใช้ต่อไม่ได้แล้ว เพราะข้อมูลเปลี่ยนไปหลังตรวจสอบก่อนเปิด ยกเลิกคำขอนี้แล้วตรวจสอบก่อนเปิดอีกครั้ง' },
+  ] as const;
+  for (const dead of DEAD) test(`PROMO-14 a request that is ${dead.key} offers only "ยกเลิกคำขอ" and one sentence that leads out at ${width}px`, async ({ page }, info) => {
+    const { w } = dead.build();
+    await adminOpen(page, w, width, '/system/billing/campaigns/camp-new');
+    const publish = region(page, 'เปิดใช้แคมเปญ');
+    await expect(publish.getByRole('alert')).toHaveText(dead.note);
+    await expect(publish.getByRole('button')).toHaveText(['ยกเลิกคำขอ']);
+    await expect(publish.getByText(/^ใช้คำขอได้ถึง/)).toHaveCount(0);
+    await expect(region(page, 'ยืนยันรหัสผ่าน')).toHaveCount(0);
+    await expect(region(page, 'ร่างที่กำลังแก้').getByRole('note')).toHaveText(LOCKED);
+    await settle(page, info, width, `promo14r2-dead-request-${dead.key}`);
+    await publish.getByRole('button', { name: 'ยกเลิกคำขอ', exact: true }).click();
+    await expect(publish.getByRole('button', { name: 'ตรวจสอบก่อนเปิด', exact: true })).toBeVisible();
+    await expect(region(page, 'ร่างที่กำลังแก้').getByRole('button', { name: 'แก้ร่าง', exact: true })).toBeEnabled();
+  });
+
+  test(`PROMO-14 a request the server answered stale is not offered again as it is: only "ยกเลิกคำขอ", then a new review at ${width}px`, async ({ page }, info) => {
+    const { w } = requestWorld('AWAITING_APPROVAL');
+    await adminOpen(page, w, width, '/system/billing/campaigns/camp-new');
+    const publish = region(page, 'เปิดใช้แคมเปญ');
+    await expect(publish.getByRole('button', { name: 'อนุมัติและเปิดใช้', exact: true })).toBeEnabled();
+    failNext(w, 'POST configuration-changes/:id/approve', apiError(409, 'CONTROL_PREVIEW_STALE'));
+    await publish.getByRole('button', { name: 'อนุมัติและเปิดใช้', exact: true }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'ข้อมูลเปลี่ยนไประหว่างที่เปิดหน้านี้ หรือคำขอหมดอายุ ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจสอบอีกครั้งก่อนดำเนินการต่อ' })).toBeVisible();
+    // the server leaves the request as it was; the page no longer offers it
+    await expect(publish.getByRole('alert').filter({ hasText: 'คำขอนี้ใช้ต่อไม่ได้แล้ว เพราะข้อมูลเปลี่ยนไปหลังตรวจสอบก่อนเปิด ยกเลิกคำขอนี้แล้วตรวจสอบก่อนเปิดอีกครั้ง' })).toBeVisible();
+    await expect(publish.getByRole('button')).toHaveText(['ยกเลิกคำขอ']);
+    expect(callsTo(w, 'POST', /\/approve$/)).toHaveLength(1);
+    await settle(page, info, width, 'promo14r2-answered-stale');
+    await publish.getByRole('button', { name: 'ยกเลิกคำขอ', exact: true }).click();
+    await publish.getByLabel('เหตุผล').fill('เปิดโปรอีกครั้ง');
+    await publish.getByRole('button', { name: 'ตรวจสอบก่อนเปิด', exact: true }).click();
+    await expect(publish).toContainText('ตรวจตัวอย่างแล้ว ส่งคำขอเพื่อให้ผู้อนุมัติยืนยัน');
+    await expect(publish.getByRole('button', { name: 'ส่งคำขอ', exact: true })).toBeEnabled();
+  });
+
+  test(`PROMO-11 "กลับมาเปิด" is not held back by the gaps of a draft: it reopens the published terms at ${width}px`, async ({ page }, info) => {
+    const w = newAdminWorld({ reauthUntil: inMs(300_000) });
+    addCampaign(w, { campaignId: CAMPAIGN_ID, published: publishedCampaign({ paused: true }), draft: { operationId: 'draft-gaps', version: 2, values: { campaignId: CAMPAIGN_ID, type: 'BONUS_MONTHS', internalName: 'ร่างที่ยังไม่ครบ' } } });
+    await adminOpen(page, w, width, `/system/billing/campaigns/${CAMPAIGN_ID}`);
+    await expect(region(page, 'ร่างที่กำลังแก้')).toContainText('ร่างยังไม่ครบ');
+    const publish = region(page, 'เปิดใช้แคมเปญ');
+    await expect(publish.getByRole('button', { name: 'ตรวจสอบก่อนเปิด', exact: true })).toHaveCount(0);
+    const resume = publish.getByRole('button', { name: 'กลับมาเปิด', exact: true });
+    await expect(resume).toBeDisabled();
+    await publish.getByLabel('เหตุผล').fill('ตรวจราคาเสร็จแล้ว');
+    await expect(resume).toBeEnabled();
+    await expect(publish.getByText(/ร่างยังไม่ครบ เติมข้อมูล|ตัวอย่างพบเรื่องที่ต้องแก้/)).toHaveCount(0);
+    await settle(page, info, width, 'promo11r2-resume-with-draft-gaps');
+    await resume.click();
+    const [call] = callsTo(w, 'POST', /\/preview$/);
+    expect(call!.body).toEqual({ expectedVersion: w.settingsVersion, action: 'RESUME', reason: 'ตรวจราคาเสร็จแล้ว' });
+    wire(info, 'resume-preview-with-draft-gaps', width, call);
+    await expect(publish).toContainText('ตรวจตัวอย่างแล้ว ส่งคำขอเพื่อให้ผู้อนุมัติยืนยัน');
+  });
+
+  test(`PROMO-12 the published terms are worded for the status: ใช้อยู่, ตั้งเวลาไว้, พักไว้, จบแล้ว, เผยแพร่ไว้ at ${width}px`, async ({ page }, info) => {
+    const w = newAdminWorld();
+    const note = (text: string) => `${text} เวลาแสดงเป็นเวลาประเทศไทย`;
+    const cases = [
+      { id: 'camp-active', status: 'กำลังใช้งาน', title: 'เงื่อนไขที่ใช้อยู่', note: note('ลูกค้าเห็นและใช้สิทธิ์ตามเงื่อนไขนี้') },
+      { id: 'camp-scheduled', status: 'ตั้งเวลาแล้ว', title: 'เงื่อนไขที่ตั้งเวลาไว้', note: note('ยังไม่ถึงเวลาเริ่ม ลูกค้ายังใช้สิทธิ์ตามเงื่อนไขนี้ไม่ได้') },
+      { id: 'camp-paused', status: 'พัก', title: 'เงื่อนไขที่พักไว้', note: note('ตอนนี้ลูกค้าใช้สิทธิ์ใหม่ตามเงื่อนไขนี้ไม่ได้ รายการที่จองสิทธิ์ไว้แล้วยังได้รับตามเดิม') },
+      { id: 'camp-ended', status: 'จบแล้ว', title: 'เงื่อนไขของแคมเปญที่จบแล้ว', note: note('ปิดรับสิทธิ์แล้ว เก็บไว้ให้ดูเป็นประวัติ') },
+      { id: 'camp-stale', status: 'ต้องตรวจแพ็กเกจใหม่', title: 'เงื่อนไขที่เผยแพร่ไว้', note: note('ระบบหยุดรับสิทธิ์ใหม่ เพราะราคา โควตา หรือภาษีของแพ็กเกจเปลี่ยนไปจากตอนเปิดแคมเปญ') },
+    ] as const;
+    addCampaign(w, { campaignId: 'camp-active', published: publishedCampaign({ campaignId: 'camp-active' }) });
+    addCampaign(w, { campaignId: 'camp-scheduled', published: publishedCampaign({ campaignId: 'camp-scheduled', startsAt: '2026-11-20T03:00:00.000Z', endsAt: '2026-11-30T16:59:00.000Z' }) });
+    addCampaign(w, { campaignId: 'camp-paused', published: publishedCampaign({ campaignId: 'camp-paused', paused: true }) });
+    addCampaign(w, { campaignId: 'camp-ended', published: publishedCampaign({ campaignId: 'camp-ended', endedAt: '2026-10-05T10:00:00.000Z' }) });
+    addCampaign(w, { campaignId: 'camp-stale', published: publishedCampaign({ campaignId: 'camp-stale' }), stale: true });
+    await adminOpen(page, w, width, '/system/billing/campaigns/camp-active');
+    for (const item of cases) {
+      if (item.id !== 'camp-active') await page.goto(`/system/billing/campaigns/${item.id}`);
+      const terms = region(page, item.title);
+      await expect(terms, item.id).toBeVisible();
+      await expect(terms.locator('p').first()).toHaveText(item.note);
+      await expect(page.getByText(item.status, { exact: true }).first()).toBeVisible();
+      await settle(page, info, width, `promo12r2-terms-${item.id.replace('camp-', '')}`);
+    }
+  });
+
+  test(`PROMO-09 the permission note: a view-only account, and a reviewer who may approve but not manage (list and detail) at ${width}px`, async ({ page }, info) => {
+    // view-only: nothing waits for it
+    const viewOnly = newAdminWorld({ capabilities: READ_ONLY });
+    addCampaign(viewOnly, { campaignId: CAMPAIGN_ID, published: publishedCampaign() });
+    await adminOpen(page, viewOnly, width, '/system/billing/campaigns');
+    await expect(page.getByText('บัญชีนี้ดูแคมเปญได้อย่างเดียว การสร้างแคมเปญต้องมีสิทธิ์ “ตั้งนโยบาย”', { exact: true })).toBeVisible();
+    await page.goto(`/system/billing/campaigns/${CAMPAIGN_ID}`);
+    await expect(page.getByText('บัญชีนี้ดูแคมเปญได้อย่างเดียว การแก้ไข เปิด พัก และจบแคมเปญต้องมีสิทธิ์ “ตั้งนโยบาย”', { exact: true })).toBeVisible();
+    for (const name of ['พักแคมเปญ', 'จบแคมเปญ', 'แก้เงื่อนไข']) await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
+    await settle(page, info, width, 'promo09r2-note-view-only');
+    // approver: a request waits for this account to approve, which it may do; it may not manage
+    const approver = newAdminWorld({ capabilities: READ_ONLY });
+    const record = addCampaign(approver, { campaignId: 'camp-new', draft: { operationId: 'draft-1', version: 3, values: completeDraft('camp-new', { startsAt: '2026-10-08T03:00:00.000Z', endsAt: '2026-10-31T16:59:00.000Z', cap: 200 }) } });
+    record.operation = openOperation({ state: 'AWAITING_APPROVAL', allowedActions: ['approve'], sourceVersion: approver.settingsVersion, initiatorUserId: 'someone-else' });
+    await installAdminRoutes(page, approver);
+    await page.goto('/system/billing/campaigns');
+    await expect(page.getByText('บัญชีนี้อนุมัติคำขอเปิดแคมเปญที่ส่งมาแล้วได้ แต่การสร้างแคมเปญต้องมีสิทธิ์ “ตั้งนโยบาย”', { exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'สร้างแคมเปญ' })).toHaveCount(0);
+    await settle(page, info, width, 'promo09r2-note-approver-list');
+    await page.goto('/system/billing/campaigns/camp-new');
+    await expect(page.getByText('บัญชีนี้อนุมัติคำขอเปิดแคมเปญที่ส่งมาแล้วได้ แต่การแก้ไข เปิด พัก และจบแคมเปญต้องมีสิทธิ์ “ตั้งนโยบาย”', { exact: true })).toBeVisible();
+    await expect(region(page, 'เปิดใช้แคมเปญ').getByRole('button', { name: 'อนุมัติและเปิดใช้', exact: true })).toBeDisabled();
+    await expect(region(page, 'ยืนยันรหัสผ่าน')).toBeVisible();
+    await expect(region(page, 'ร่างที่กำลังแก้').getByRole('button')).toHaveCount(0);
+    await settle(page, info, width, 'promo09r2-note-approver-detail');
   });
 }
