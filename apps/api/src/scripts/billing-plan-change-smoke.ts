@@ -34,7 +34,9 @@ export async function checkBillingPlanChange(input: {
   const policy:BillingPolicy={...snapshot.policy,priceIds:{'BASIC_499:month':'price_BasicMonth','STARTER_249:month':'price_StarterMonth','PRO_999:month':'price_ProMonth','STARTER_249:year':'price_StarterYear','BASIC_499:year':'price_BasicYear','PRO_999:year':'price_ProYear'},
     zeroPriceIds:{'BASIC_499:month':'price_ZeroBasicMonth','STARTER_249:month':'price_ZeroStarterMonth','PRO_999:month':'price_ZeroProMonth','STARTER_249:year':'price_ZeroStarterYear','BASIC_499:year':'price_ZeroBasicYear','PRO_999:year':'price_ZeroProYear'}};
   const settings=await client.billingSettings.findUniqueOrThrow({where:{stripeAccountId_livemode:{stripeAccountId:source.stripeAccountId,livemode:false}}});
-  const revision=await client.billingPolicyRevision.create({data:{stripeAccountId:source.stripeAccountId,livemode:false,version:settings.version+2000,state:'ACTIVE',policyJson:policy as unknown as Prisma.InputJsonValue,createdByUserId:input.userId}});
+  // Campaigns live beside the policy (promotionJson): a revision made from another one must carry them, or they vanish.
+  const activeRevision=await client.billingPolicyRevision.findUniqueOrThrow({where:{id:settings.policyRevisionId!}});
+  const revision=await client.billingPolicyRevision.create({data:{stripeAccountId:source.stripeAccountId,livemode:false,version:settings.version+2000,state:'ACTIVE',policyJson:policy as unknown as Prisma.InputJsonValue,promotionJson:(activeRevision.promotionJson??undefined) as Prisma.InputJsonValue|undefined,createdByUserId:input.userId}});
   await client.billingSettings.update({where:{id:settings.id},data:{policyRevisionId:revision.id,version:{increment:1}}});
   await client.company.create({data:{id:companyId,name:'Synthetic scheduled change',addressJson:BILLING_TEST_ADDRESS}});
   const role=await client.role.create({data:{companyId,scopeKey:companyId,key:'OWNER',name:'Synthetic upgrade owner'}});
@@ -179,7 +181,7 @@ export async function checkBillingPlanChange(input: {
   const changedPolicy:BillingPolicy={...policy,offerTerms:{...policy.offerTerms,STARTER_249:{monthlyPriceSatang:24900,
     annualPriceSatang:249000,monthlyReceiptAllowance:30,branchLimit:2,employeeLimit:3}}};
   const changedRevision=await client.billingPolicyRevision.create({data:{stripeAccountId:source.stripeAccountId,livemode:false,
-    version:revision.version+1,state:'ACTIVE',policyJson:changedPolicy as unknown as Prisma.InputJsonValue,createdByUserId:input.userId}});
+    version:revision.version+1,state:'ACTIVE',policyJson:changedPolicy as unknown as Prisma.InputJsonValue,promotionJson:(revision.promotionJson??undefined) as Prisma.InputJsonValue|undefined,createdByUserId:input.userId}});
   await client.billingSettings.update({where:{id:settings.id},data:{policyRevisionId:changedRevision.id,version:{increment:1}}});
   const newCapacity=await options();assert.equal(newCapacity.branchLimit,2);assert.equal(newCapacity.employeeLimit,3);
   const quote=async(tier:string)=>{const q=await request(`${base}/quote`,'POST',{offerKey:tier,interval:'year',billingEmail:'owner@example.test'});assert.equal(q.status,200,JSON.stringify(q));return q.body;};

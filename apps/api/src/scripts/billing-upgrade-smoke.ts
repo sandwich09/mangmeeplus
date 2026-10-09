@@ -33,7 +33,9 @@ export async function checkBillingUpgrade(input: {
   const policy:BillingPolicy={...snapshot.policy,priceIds:{'STARTER_249:year':'price_StarterYear','BASIC_499:year':'price_BasicYear','PRO_999:year':'price_ProYear'},
     zeroPriceIds:{'STARTER_249:year':'price_ZeroStarterYear','BASIC_499:year':'price_ZeroBasicYear','PRO_999:year':'price_ZeroProYear'}};
   const settings=await client.billingSettings.findUniqueOrThrow({where:{stripeAccountId_livemode:{stripeAccountId:source.stripeAccountId,livemode:false}}});
-  const revision=await client.billingPolicyRevision.create({data:{stripeAccountId:source.stripeAccountId,livemode:false,version:settings.version+1000,state:'ACTIVE',policyJson:policy as unknown as Prisma.InputJsonValue,createdByUserId:input.userId}});
+  // Campaigns live beside the policy (promotionJson): a revision made from another one must carry them, or they vanish.
+  const activeRevision=await client.billingPolicyRevision.findUniqueOrThrow({where:{id:settings.policyRevisionId!}});
+  const revision=await client.billingPolicyRevision.create({data:{stripeAccountId:source.stripeAccountId,livemode:false,version:settings.version+1000,state:'ACTIVE',policyJson:policy as unknown as Prisma.InputJsonValue,promotionJson:(activeRevision.promotionJson??undefined) as Prisma.InputJsonValue|undefined,createdByUserId:input.userId}});
   await client.billingSettings.update({where:{id:settings.id},data:{policyRevisionId:revision.id,version:{increment:1}}});
   await client.company.create({data:{id:companyId,name:'Synthetic prepaid upgrade',addressJson:BILLING_TEST_ADDRESS}});
   const role=await client.role.create({data:{companyId,scopeKey:companyId,key:'OWNER',name:'Synthetic upgrade owner'}});
