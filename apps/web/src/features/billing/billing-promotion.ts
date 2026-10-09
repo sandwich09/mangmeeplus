@@ -1,5 +1,5 @@
-import { BILLING_PAID_TIERS, type BillingBenefitChoice, type BillingOffer, type BillingPromotionOfferView, type BillingPromotionUnavailableReason, type BillingPromotionUse,
-  type BillingQuote, type BillingStatus } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, type BillingBenefitChoice, type BillingInvoiceItem, type BillingOffer, type BillingPromotionOfferView, type BillingPromotionUnavailableReason,
+  type BillingPromotionUse, type BillingQuote, type BillingStatus } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
 import { EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountBaht, eventDiscountHelpText } from './billing-event-discount';
 
@@ -51,10 +51,16 @@ export const PROMOTION_NOT_PICKED = 'ครั้งนี้ไม่ได้�
 export function promotionCard(row: Row, offer: Priced) {
   return { name: row.displayName, headline: promotionHeadline(row, offer), lines: [
     `ชำระ ${row.totalMonths - row.bonusMonths} เดือน แถมฟรี ${row.bonusMonths} เดือน`,
-    `ใบเสร็จ ${row.totalReceiptUnits} ใบ (รวมแถม ${row.bonusReceiptUnits} ใบ)`,
+    `ใบเสร็จ ${row.totalReceiptUnits} ใบ (รวมแถม ${row.bonusReceiptUnits} ใบ) ได้ทันทีเมื่อชำระสำเร็จ`,
     PROMOTION_ONCE,
     `โปรโมชั่นสิ้นสุด ${day(row.endsAt)} เวลา ${clock(row.endsAt)} น.`] };
 }
+/**
+ * The plain lines of a card about time and receipts ("ใช้งาน 12 เดือน", "360 ใบ", the per-month average on the paid price) describe a
+ * normal purchase. A card that takes the promotion says its months and receipts once, in the promotion block above, so they are not
+ * printed beside it. A card whose promotion is not the benefit this time keeps them: they are then exactly what the buyer gets.
+ */
+export const promotionCardShowsPlainFacts = (benefit: BillingBenefitChoice) => benefit !== 'PROMOTION';
 
 /* ---- one benefit per purchase (Q4) ---- */
 
@@ -156,6 +162,14 @@ export function promotionReview(quote: Pick<BillingQuote, 'promotion' | 'offer' 
     benefitEnd: p.benefitEnd,
   };
 }
+/**
+ * `purchase.projectedRemainingReceipts` and the package row count the base allowance only (the API tells the bonus in `promotion`), so
+ * beside the promotion's "30 + แถม 30 = 60 ใบ" the page adds the bonus to both: one total per review. Without a promotion nothing moves.
+ */
+export function promotionReceipts(quote: Pick<BillingQuote, 'promotion' | 'offer' | 'purchase'>) {
+  const bonus = quote.promotion?.bonusReceiptUnits ?? 0;
+  return { bonus, packageUnits: quote.offer.receiptAllowance + bonus, projected: (quote.purchase?.projectedRemainingReceipts ?? 0) + bonus };
+}
 /** The held-discount switch on the review. Beside a promotion it says that the discount replaces it. */
 export const promotionSwitchLabel = (quote: Pick<BillingQuote, 'benefitChoice' | 'eventDiscount'>) =>
   quote.eventDiscount?.applied ? 'ไม่ใช้ส่วนลดครั้งนี้' : quote.benefitChoice === 'PROMOTION' ? 'ใช้ส่วนลดแทนโปรโมชั่น' : 'ใช้ส่วนลด';
@@ -182,8 +196,11 @@ export type PromotionLostNotice = NonNullable<ReturnType<typeof promotionLostNot
 /* ---- after the payment ---- */
 
 /** The right this shop holds, on the status and on the return page. `checking` = offer the existing "check again" control. */
-export function promotionStatus(use: BillingPromotionUse | null | undefined) {
+export function promotionStatus(use: BillingPromotionUse | null | undefined, running = true) {
   if (!use) return null;
+  // A right already opened (it has an end date) is told only while the shop's access is running: once the package has ended or lapsed it is not "in use".
+  // A right still waiting — reserved for an open Checkout, or paid and being opened — belongs to the purchase in front of the buyer, whatever the access.
+  if (!running && use.state === 'CONSUMED' && use.benefitEnd) return null;
   const name = `โปรโมชั่น ${use.displayName}`;
   // The right is held for a Checkout still open: not used yet, and the words must not say it was.
   if (use.state === 'RESERVED') return { title: 'จองสิทธิ์โปรโมชั่นไว้ให้รายการชำระนี้แล้ว', lines: [name, 'สิทธิ์จะเริ่มใช้เมื่อชำระเงินสำเร็จ'], checking: false };
@@ -199,6 +216,22 @@ export function promotionStatus(use: BillingPromotionUse | null | undefined) {
   return { title: 'ใช้สิทธิ์โปรโมชั่นแล้ว', checking: pending,
     lines: [name, ...(pending ? [] : [until ? `ใช้ได้ถึง ${until}` : 'กำลังเปิดสิทธิ์ให้ ไม่ต้องชำระซ้ำ']), ...(renewal ? [renewal] : []), ...(bonus ? [bonus] : [])] };
 }
+
+/** One line under a history row for a promotion purchase: the free time and the bonus receipts. The invoice's own period and amount stay as they are. */
+export function promotionInvoiceLine(promotion: NonNullable<BillingInvoiceItem['promotion']>): string {
+  return [`โปรโมชั่น ${promotion.displayName}`, `แถมฟรี ${day(promotion.paidEnd)} – ${day(promotion.benefitEnd)}`,
+    ...(promotion.bonusReceiptUnits > 0 ? [`ใบเสร็จเพิ่ม ${promotion.bonusReceiptUnits} ใบ`] : [])].join(' · ');
+}
+
+/* ---- the clock ---- */
+
+/**
+ * The instants at which the status can change by the clock alone, only those still ahead: the term deadlines, and the end of each
+ * promotion still on offer, so a campaign that ends by the clock stops being offered without a click.
+ */
+export const statusDeadlines = (status: Pick<BillingStatus, 'paidThrough' | 'termEndsAt' | 'graceEndsAt' | 'promotions'>, now: number = Date.now()): number[] =>
+  [status.paidThrough, status.termEndsAt, status.graceEndsAt, ...(status.promotions ?? []).filter(row => row.available).map(row => row.endsAt)]
+    .filter((value): value is string => !!value).map(value => Date.parse(value)).filter(at => at > now);
 
 /* ---- upgrade (Q5) ---- */
 
