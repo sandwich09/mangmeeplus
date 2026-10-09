@@ -1,7 +1,7 @@
 'use client';
 import type { BillingEmailRecipient, BillingEmailRecipientOperation, BillingCatalog, BillingQuote, BillingStatus, BillingCheckoutBody, BillingCheckoutResult, BillingInvoiceItem, BillingAttemptView, BillingCollectionAction, BillingCollectionOperation, BillingPurchaseMode, BillingRecipientOtpChallenge, BillingRecipientOtpProof, BillingDocumentResendResult } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
-import type { BillingCapacityOptions, BillingCapacitySelection, BillingEventDiscountView } from '@watchdog-bms/contracts';
+import type { BillingBenefitChoice, BillingCapacityOptions, BillingCapacitySelection, BillingEventDiscountView } from '@watchdog-bms/contracts';
 
 export type BillingHistory = { items: BillingInvoiceItem[]; nextCursor: string | null };
 export function billingApi(companyId: string) {
@@ -28,8 +28,12 @@ export function billingApi(companyId: string) {
     // approved snapshot, never from this body (S36). No recipient yet = no key: Checkout asks (RV05).
     // Sales-event spec §7.2: `eventDiscountChoice` is sent only while the page offers the discount.
     // Owner 2026-09-29: `eventDiscountTicketSerial` names the held discount the buyer picked; omitted = the best one for this card.
-    quote: (offerKey: string, interval: string, billingEmail: string, capacity?: BillingCapacitySelection, purchaseMode: BillingPurchaseMode = 'CARD_AUTO', dealId?: string, purchaseIntent?: 'FULL_PACKAGE', eventDiscountChoice?: 'USE' | 'DECLINE', eventDiscountTicketSerial?: string) =>
-      post<BillingQuote>('/quote', { offerKey, interval, ...(billingEmail ? { billingEmail } : {}), capacity, purchaseMode, ...(dealId ? { dealId } : {}), ...(purchaseIntent ? { purchaseIntent } : {}), ...(eventDiscountChoice ? { eventDiscountChoice } : {}), ...(eventDiscountTicketSerial ? { eventDiscountTicketSerial } : {}) }),
+    // Promotion spec Q4: `benefitChoice` names the ONE benefit of this purchase, and `promotionCampaignId` the campaign when it is the promotion.
+    // Both are omitted while the shop has neither a promotion nor a held discount, so that request is exactly what it was.
+    quote: (offerKey: string, interval: string, billingEmail: string, capacity?: BillingCapacitySelection, purchaseMode: BillingPurchaseMode = 'CARD_AUTO', dealId?: string, purchaseIntent?: 'FULL_PACKAGE', eventDiscountChoice?: 'USE' | 'DECLINE', eventDiscountTicketSerial?: string,
+      benefitChoice?: BillingBenefitChoice, promotionCampaignId?: string) =>
+      post<BillingQuote>('/quote', { offerKey, interval, ...(billingEmail ? { billingEmail } : {}), capacity, purchaseMode, ...(dealId ? { dealId } : {}), ...(purchaseIntent ? { purchaseIntent } : {}), ...(eventDiscountChoice ? { eventDiscountChoice } : {}), ...(eventDiscountTicketSerial ? { eventDiscountTicketSerial } : {}),
+        ...(benefitChoice ? { benefitChoice } : {}), ...(promotionCampaignId ? { promotionCampaignId } : {}) }),
     capacity: (offerKey: string, interval: string) => get<BillingCapacityOptions>(`${base}/capacity?offerKey=${encodeURIComponent(offerKey)}&interval=${encodeURIComponent(interval)}`),
     repairCapacity: (attemptId: string, expectedVersion: number, selection: BillingCapacitySelection, key: string) => post<{ operationId: string; queued: boolean }>(`/attempts/${encodeURIComponent(attemptId)}/capacity`, { expectedVersion, selection, accepted: true }, key),
     checkout: (body: BillingCheckoutBody, key: string) => post<BillingCheckoutResult>('/checkout', body, key),
