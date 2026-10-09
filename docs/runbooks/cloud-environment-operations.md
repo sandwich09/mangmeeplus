@@ -64,7 +64,7 @@ UAT serves `main` `c1774b798` since 2026-10-10 01:02 Bangkok: the seven fixes fr
 
 **The controller worktree must be fresh.** The system's temp cleaner removed files older than a few days from `/private/tmp/mangmee-release-controller-20261005` around midnight, its `.git` pointer among them. A release controller worktree is created from `origin/main` for the round (with `.env.kamal` linked in), not kept for days.
 
-## Release 2026-10-10 04:46 — UAT only (current for UAT), and the Production preparation
+## Release 2026-10-10 04:46 — UAT only (superseded for UAT by the section below), and the Production preparation
 
 UAT serves `main` `e1425bf02` since 2026-10-10 04:46 Bangkok: the LINE event-discount sentence per renewal mode and the release tool's `--prepare --publish-images` (#1057/#1058; no migration), on top of the section above. Production is NOT touched: it still serves `bdb65d8e8` (restored 2026-10-09). Local Kamal path; GitHub workflow ids `NOT_DISPATCHED`. Owner's words: "ทำต่อเลย", "เสร็จแล้วขึ้น uat เลย", then at about 04:30 "ขึ้น uat เสร็จแล้ว ทดสอบซ้ำ อนุญาตทั้งหมด ให้กรอกข้อมูลเอง ถ้าผ่านแล้วทั้งหมด ให้ขึ้น prod ได้เลย". That is a conditional go for this promotion only, after the UAT re-test passes; the agent still does not type a password or a card number, and the Production acceptance needs the owner's own sign-in.
 
@@ -84,6 +84,21 @@ UAT serves `main` `e1425bf02` since 2026-10-10 04:46 Bangkok: the LINE event-dis
 **A Production `--prepare` needs the acceptance mode on its command line.** `deploy-prod --prepare` alone stops in argument validation with "Acceptance credentials file is missing", before a run directory or a cloud read; add `--production-browser-acceptance` (README corrected).
 
 **Find the stops of a rebuilt environment before the owner is at the keyboard.** The Production prepare is read-only, takes four minutes with a warm build cache, and found a stop that the promotion would otherwise have hit with the owner waiting to sign in. When a stop is a tracked setting, rehearse the rest of the prepare with that one value changed in memory before merging, so that one merge and one UAT round carry every fix (the protocol's "inspect the next steps read-only").
+
+## Release 2026-10-10 05:10 — UAT only (current for UAT); Production prepared, not promoted
+
+UAT serves `main` `e414d3a24` since 2026-10-10 05:10 Bangkok: the production settings without the retired Official OA entry and the phone-width fixes for long names (#1059/#1060; web and settings only, no API change, no migration), on top of the section above. This run is the candidate for Production; its receipt is valid for promotion until 2026-10-11 05:09. Production is NOT touched and still serves `bdb65d8e8`. Local Kamal path; GitHub workflow ids `NOT_DISPATCHED`.
+
+| Env | Operation | Source (main) | Result | Seconds |
+|---|---|---|---|---|
+| UAT | `20261009T220107Z-b5865c95` (prepare, images published) | `e414d3a24` (#1059 twin = develop `512f462fe` via #1060) | PREPARED_NO_DEPLOYMENT 05:05. | 279.8 |
+| UAT | `20261009T220600Z-1be0d474` (prepared by `b5865c95`) | `e414d3a24` | ACCEPTED_LINE_DEFERRED 05:09:58 at the first try, smoke, 12/12 phases, no migration (publish-and-pull 32.0 s, database phase 57.1 s, rollout 88.3 s), AgentCore `kamal_uat_a` v5, signature verified, 19 builds retired, 2 SSM sessions closed. Probes 05:10: health 200, platform-access 200, `/login` 200. | 238.2 |
+| Production | `20261009T221020Z-c854916b` (prepare, images published) | `e414d3a24` | PREPARED_NO_DEPLOYMENT 05:13 with the merged settings: capture from the enrolled baseline, config validation, host storage, second read, then the four `prepared-` tags uploaded to the Production registry (16.1 s). Nothing installed. | 163.3 |
+| Production | `20261009T221329Z-c4a7dd96` (promotion preflight, UAT run `1be0d474`) | controller at `e414d3a24` | PREFLIGHT_PASSED_NO_DEPLOYMENT 05:14. | 15.7 |
+
+**What the Production preparation proves, and what it does not.** Proven: the enrolled baseline renders the serving configuration (prepared against serving, by key and hash: only `GIT_SHA`, `SERVICE_VERSION`, `AGENTCORE_EXPECTED_SOURCE_COMMIT`, and the three `LINE_OFFICIAL_*` keys that now go); the layers of the four prepared images equal the layers of the four signed UAT images (36, 22, 17 and 43 layers), so the promotion's push inside its 240 s limit finds every layer in the registry; the UAT receipt's signature verifies with the trusted UAT key under the Production role, and its AgentCore archive hash matches. Not proven until the promotion runs: the one migration against Production data (`20261009120000_billing_promotion_campaigns`, additive; applied on UAT on 2026-10-09), the AgentCore update on the spare endpoint, the rollout on four hosts, and the acceptance with the owner signed in.
+
+**The promotion waits for the owner twice.** His go of about 04:30 is conditional on the UAT re-test, and the re-test needs two things only he types: his password at the campaign's re-authentication and a shop-owner sign-in. The Production acceptance needs his own sign-in on Production within minutes of website-ready. `main` stays at `e414d3a24` until then.
 
 ## Release 2026-10-06 00:18 — Production (current for Production)
 
