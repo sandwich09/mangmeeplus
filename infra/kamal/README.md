@@ -348,6 +348,16 @@ values cannot be invented by deployment. Candidate image validators reject missi
 Before mutation, a second read verifies that baseline config and secret versions have not changed.
 The new container's entire environment is compared, including unexpected leftover keys.
 
+An environment rebuilt without its ECS services (UAT and Production since 2026-10-09) has no ECS
+configuration to read. Enroll `.env.kamal/<environment>/config-baseline/<service>.configuration.json`
+for the three services: the last captured configuration bodies (plain values and secret references,
+never secret values), corrected to what serves now. Where that directory exists the release reads it
+instead of ECS; everything after the read is unchanged: current secret versions are resolved
+privately, `config.json` supplies tracked changes, and the second read before mutation compares the
+bodies and the secret versions. An incomplete enrollment stops the release. Prove an enrollment
+before its first release: the prepared environments must equal the serving containers' environments
+except the keys a release sets. Do not recreate ECS services to supply a baseline.
+
 Hotfix refuses any unapplied migration and runs catalog/sync/feature-authority checks. Normal mode
 uses the existing pending-migration safety checks before applying migrations. It is not a substitute
 for a Production migration compatibility rehearsal required by the active release protocol.
