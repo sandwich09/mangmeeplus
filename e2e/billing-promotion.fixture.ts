@@ -75,6 +75,8 @@ export type CustomerWorld = {
   /** `POST …/attempts/:id/cancel` ("ยกเลิกรายการนี้ …"): what the API refuses with. A cancel that goes through answers `cancelState`. */
   cancelOverride: (n: number) => Answer | undefined;
   cancelState: 'EXPIRED' | 'COMPLETED' | 'PENDING';
+  /** Holds back every status read that comes after an open payment was ended (the read the page makes next), so a test can look at the screen while the answer is still on its way. null = answered at once. */
+  statusHold: Promise<void> | null;
   /** The shop once its open payment is ended (EXPIRED): the same shop with no attempt, the reserved right given back and the promotion on offer again. null = unchanged. */
   afterCancel: BillingStatus | null;
   /** Every POST the page sent to the billing API, in order (path relative to `…/billing`). */
@@ -123,6 +125,21 @@ export function promotionUse(over: Partial<BillingPromotionUse> = {}): BillingPr
     renewalSetupState: 'READY', expectedNextChargeAt: benefitEnd, ...over };
 }
 
+/**
+ * A card auto-renew shop right after a successful promotion purchase, as the live API reported it on UAT (2026-10-10): active, paid, applied, the promotion CONSUMED with its free time still ahead.
+ * `new_sales` is not allowed while that time runs, so the API says why with `purchaseBlockCode` BILLING_REPEAT_NOT_READY and `upgradeDeferredUntil` (= the promotion's benefit end); only the card
+ * actions are left. The page shows this as one quiet line inside the package card, not as an alert.
+ */
+export function deferredShopStatus(companyId: string, over: Partial<BillingStatus> = {}): BillingStatus {
+  const use = promotionUse();
+  return paidShopStatus(companyId, { promotion: use, upgradeDeferredUntil: addMonths(FIXED_NOW, 2), purchaseBlockCode: 'BILLING_REPEAT_NOT_READY',
+    allowedActions: ['portal_payment_method', 'portal_cancel_subscription'], availablePurchaseModes: ['CARD_AUTO'], ...over });
+}
+/** The same moment for a shop that pays a QR bill every period (PROMPTPAY_RENEW): the API answers BILLING_PLAN_CHANGE_REQUIRED and no `new_sales`; nothing is charged by itself. */
+export function qrShopStatus(companyId: string, over: Partial<BillingStatus> = {}): BillingStatus {
+  return deferredShopStatus(companyId, { renewalMode: 'PROMPTPAY_RENEW', purchaseBlockCode: 'BILLING_PLAN_CHANGE_REQUIRED', allowedActions: [], availablePurchaseModes: ['PROMPTPAY_RENEW'], ...over });
+}
+
 /** One held sales-event discount (50 baht off every card), as `status.eventDiscount` carries it. */
 export function heldTicket(): NonNullable<BillingStatus['eventDiscount']> {
   const serial = 'K7M2Q9XA', eventName = 'งานสัมมนาร้านค้า', expiresAt = '2026-12-31T16:59:00.000Z';
@@ -153,7 +170,7 @@ export const trialShopStatus = (companyId: string, over: Partial<BillingStatus> 
 
 export function defaultCustomerWorld(companyId: string, status: BillingStatus = newShopStatus(companyId)): CustomerWorld {
   return { companyId, status, purchase: 'INITIAL', source: 'NO_TERM', trialCarryoverUnits: 0, history: [], attempt: null, heldDiscount: { path: null, tickets: [] },
-    quoteOverride: () => undefined, checkoutOverride: () => undefined, resumeOverride: () => undefined, cancelOverride: () => undefined, cancelState: 'EXPIRED', afterCancel: null,
+    quoteOverride: () => undefined, checkoutOverride: () => undefined, resumeOverride: () => undefined, cancelOverride: () => undefined, cancelState: 'EXPIRED', statusHold: null, afterCancel: null,
     log: { quotes: [], checkouts: [], statusReads: 0, refreshes: 0, resumes: 0, cancels: 0, calls: [], others: [] } };
 }
 
@@ -238,7 +255,7 @@ export async function installCustomerRoutes(page: Page, w: CustomerWorld): Promi
     if (method === 'GET') {
       if (path === '/api/v1/plan-term/notice') return json(planNotice(w));
       if (path === '/api/v1/billing/catalog') return json(catalog());
-      if (path === base) { w.log.statusReads++; return json(w.status); }
+      if (path === base) { w.log.statusReads++; if (w.statusHold && w.log.cancels > 0) await w.statusHold; return json(w.status); }
       if (path === `${base}/history`) return json({ items: w.history, nextCursor: null });
       if (path === `${base}/event-discount`) return json(w.heldDiscount);
       if (path === `${base}/recipient`) return json({ email: null, hasCustomer: false, operation: null });
