@@ -62,6 +62,8 @@ Implementation 2026-10-09 (controller + lanes):
 - One additive migration `20261009120000_billing_promotion_campaigns` (redemption table with CHECKs, two nullable columns, `PROMOTION` in the lot-kind CHECK).
 - Release-1 matrix: INITIAL / RESTART in all four modes; REPEAT on an active one-time Starter of the same interval in the one-time modes. Refused with a reason (NORMAL stays purchasable): repeat on a live card subscription, scheduled change, upgrade, deal.
 - Three independent reviews of the integrated diff found no P1 in the API and one in the web (a ticket-only shop sent the new quote field); fixes are R15–R19.
+- Customer package page, a payment that was started but not finished (Owner 2026-10-09: the buttons had no order and no stated purpose): one block under one true heading, three ordered choices with a one-line purpose each (continue paying, check the result, cancel and choose again), nothing repeated, no second way to the chooser, the first choice on the first phone screen. The decision is pure in `apps/web/src/features/billing/billing-pending-payment.ts`.
+- Browser: `e2e/billing-promotion.spec.ts` (simulated Billing API) covers every state of the Admin and customer screens at 390 px and 1280 px: 224 passed, 0 failed, none parked; the three older billing e2e specs pass with the new headings. Web suite 3,365 passed.
 - Test wiring: new unit spec in `scripts/line-ai-whole-chain-acceptance.catalog.mjs`; four `billing-promotion*.pg.spec.ts` in the PostgreSQL step of `.github/workflows/ci.yml`. GitHub Actions was in `startup_failure`, so the gate ran locally (mirror of the PR jobs, PostgreSQL step against a throwaway database).
 
 Open:
