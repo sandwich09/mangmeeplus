@@ -490,6 +490,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/billing/application/billing-addon-admin-grants.spec.ts',
       // Sales-event discounts SD-C: first-bill amounts per tax treatment, eligibility, ticket choice and stale rules.
       'src/modules/billing/domain/billing-event-discount.logic.spec.ts',
+      // Promotion campaigns (plan starter-249-bonus-month-promotion): terms, publication rules and the support matrix.
+      'src/modules/billing/domain/billing-promotion.spec.ts',
       // Add-ons PR C: AI credit cycles follow the paid package periods (spec §5.1, T-01, O-01; A06/A34).
       'src/modules/line-ai/application/ai-credit-cycles.spec.ts',
       'src/modules/system-partner-management/domain/logic/plan-capacity.spec.ts',

@@ -14,9 +14,17 @@ import { stripeId } from '../infrastructure/stripe.client';
 import { configurationImpact } from './billing-configuration-impact';
 import { randomUUID } from 'node:crypto';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
+import { BILLING_PROMOTION_STARTER_TEMPLATE, type BillingPromotionCampaign, type BillingPromotionCampaignDetail, type BillingPromotionCampaignList, type BillingPromotionCampaignReport,
+  type BillingPromotionDraftInput, type BillingPromotionPreviewInput, type BillingPromotionPreviewResult, type BillingPromotionStateInput } from '@watchdog-bms/contracts';
+import { parsePromotionCampaigns, parsePromotionDraft } from '../domain/billing-promotion';
+import { lockPromotionFence, promotionEnvironment } from './billing-promotion';
+import { PROMOTION_DRAFT_TYPE, activePromotionJson, assertCampaignPublication, campaignEnded, campaignInvalid, campaignNotFound, campaignPublication, campaignSignatures, campaignView,
+  closeCampaignDraft, isCampaignEnded, openCampaignDraft, previewRows, promotionColumn, promotionReport, publishedDraftValues, readCampaigns } from './billing-promotion-campaigns';
 
 type Proposed = { policy: BillingPolicy; gates: BillingConfiguration['gates']; impact: BillingConfigurationImpact|null;
-  sourcePolicyRevision: string | null; membershipId: string; actorCompanyId: string; sessionId: string;draftVersion?:number;draftCreateHash?:string;effectiveAt?:string };
+  sourcePolicyRevision: string | null; membershipId: string; actorCompanyId: string; sessionId: string;draftVersion?:number;draftCreateHash?:string;effectiveAt?:string;
+  /** A campaign publication (promotion plan R1): the whole campaign map this publication stores, and the one campaign it changes. */
+  promotions?: Record<string, BillingPromotionCampaign>; campaignId?: string };
 type ScheduledApproval={membershipId:string;companyId:string;credentialVersion:string;initiatorCredentialVersion:string;approvedAt:string};
 function scheduledTime(value:unknown,review=false):string|undefined {
   if(value==null)return undefined;
@@ -150,7 +158,7 @@ export class BillingConfigurationService {
       scope: { kind: 'PLATFORM', mode: row.livemode ? 'LIVE' : 'TEST' }, version: row.version, reason: row.reason, initiatorUserId: row.initiatorUserId,
       approverUserId: row.approverUserId, approvalMode: billingApprovalMode(row), errorCode: row.errorCode, createdAt: row.createdAt.toISOString(), observedAt: row.observedAt?.toISOString() ?? null,
       expiresAt: row.expiresAt.toISOString(), referenceId: row.referenceId, sourceVersion: row.sourceVersion, previewHash: row.requestHash,
-      proposed: { policy: p.policy, gates: effectiveBillingGates(p.gates),...p.effectiveAt?{effectiveAt:p.effectiveAt}:{} }, impact: p.impact, activeRevisionId: (row.resultJson as { activeRevisionId?: string } | null)?.activeRevisionId ?? null,
+      proposed: { policy: p.policy, gates: effectiveBillingGates(p.gates),...p.effectiveAt?{effectiveAt:p.effectiveAt}:{},...p.promotions?{promotions:p.promotions,campaignId:p.campaignId}:{} }, impact: p.impact, activeRevisionId: (row.resultJson as { activeRevisionId?: string } | null)?.activeRevisionId ?? null,
       scheduledFor:row.scheduledFor?.toISOString()??null,scheduleDue:Boolean(row.scheduledFor&&row.scheduledFor<=new Date()),
       salesCompanies: await this.salesCompanies(p.policy.salesCompanyIds),
       canEditDraft:row.state==='DRAFT'&&own&&access.capabilities.includes(permission(row.type)),sourceDraftVersion:p.draftVersion,
@@ -284,6 +292,8 @@ export class BillingConfigurationService {
     const proposed = candidate.proposedJson as unknown as Proposed;
     await this.validateProvider(proposed.policy);
     const row = await this.prisma.client.$transaction(async tx => {
+      // Promotion plan R4: a campaign publication changes admission, so its fence is the FIRST lock, before the companies.
+      if (proposed.promotions) await lockPromotionFence(tx, promotionEnvironment(this.billing.stripe.livemode));
       // Match purchase/lifecycle lock order: companies first, then BillingSettings.
       const companyIds = [...new Set([...(proposed.impact?.salesCohort?.before ?? []), ...(proposed.policy.salesCompanyIds ?? [])])].sort();
       if (companyIds.length) await tx.$queryRaw(Prisma.sql`SELECT id FROM "Company" WHERE id IN (${Prisma.join(companyIds)}) ORDER BY id FOR SHARE`);
@@ -296,7 +306,9 @@ export class BillingConfigurationService {
       await this.platform(initiator, permission(current.type), tx);
       if (configurationHash(effectiveBillingGates(proposed.gates)) !== configurationHash(state.gates)) await this.platform(initiator, 'system.billing.gate.manage', tx);
       await this.validateCompanies(proposed.policy, tx);
-      if (configurationHash(await this.impact(proposed.policy, state.policy, tx)) !== configurationHash(proposed.impact)) throw stale();
+      // A campaign publication carries the policy unchanged, so it has no policy impact to compare; the preview's numbers are never trusted.
+      if (proposed.promotions) await assertCampaignPublication(tx, state, current, { ...proposed, promotions: proposed.promotions }, new Date());
+      else if (configurationHash(await this.impact(proposed.policy, state.policy, tx)) !== configurationHash(proposed.impact)) throw stale();
       if(proposed.effectiveAt){
         const at=new Date(proposed.effectiveAt);if(!Number.isFinite(at.getTime())||at<=new Date())throw billingError('CONTROL_SCHEDULE_TIME','เวลาที่เลือกผ่านไปแล้ว กรุณาตรวจผลกระทบพร้อมกำหนดเวลาใหม่');
         await tx.$queryRaw`SELECT "userId" FROM "UserCredential" WHERE "userId" = ${current.initiatorUserId} FOR SHARE`;
@@ -358,6 +370,7 @@ export class BillingConfigurationService {
       const proposed=candidate.proposedJson as Proposed,state=await this.billing.settings();
       await this.scheduledActors(candidate,state,this.prisma.client);await this.validateProvider(proposed.policy);
       await this.prisma.client.$transaction(async tx=>{
+        if(proposed.promotions)await lockPromotionFence(tx,promotionEnvironment(this.billing.stripe.livemode)); // plan R4: first lock
         const approval=(candidate.resultJson as {scheduledApproval:ScheduledApproval}).scheduledApproval;
         const companyIds=[...new Set([...proposed.impact?.salesCohort?.before??[],...proposed.policy.salesCompanyIds??[],proposed.actorCompanyId,approval.companyId])].sort();
         if(companyIds.length)await tx.$queryRaw(Prisma.sql`SELECT id FROM "Company" WHERE id IN (${Prisma.join(companyIds)}) ORDER BY id FOR SHARE`);
@@ -368,7 +381,8 @@ export class BillingConfigurationService {
         const approver=await this.scheduledActors(current,active,tx);
         if(caller){await this.platform(caller,permission(current.type),tx);await this.requireProof(caller,tx);}
         await this.validateCompanies(proposed.policy,tx);
-        if(configurationHash(await this.impact(proposed.policy,active.policy,tx))!==configurationHash(proposed.impact))throw stale();
+        if(proposed.promotions)await assertCampaignPublication(tx,active,current,{...proposed,promotions:proposed.promotions},new Date());
+        else if(configurationHash(await this.impact(proposed.policy,active.policy,tx))!==configurationHash(proposed.impact))throw stale();
         await this.publish(tx,active,current,proposed,caller??approver,!caller);
         await resolveBillingIssue(tx,{companyId:null,stripeAccountId:current.stripeAccountId,livemode:current.livemode,kind:'CONFIGURATION_SCHEDULE_REVIEW',referenceId:current.id},'SCHEDULED_CONFIGURATION_PUBLISHED');
       });return true;
@@ -403,7 +417,10 @@ export class BillingConfigurationService {
       if (current.type === 'PUBLISH_POLICY') {
         const max = await tx.billingPolicyRevision.aggregate({ where: { stripeAccountId: current.stripeAccountId, livemode: current.livemode }, _max: { version: true } });
         const revision = await tx.billingPolicyRevision.create({ data: { stripeAccountId: current.stripeAccountId, livemode: current.livemode, version: (max._max.version ?? 0) + 1,
-          state: 'ACTIVE', policyJson: proposed.policy as unknown as Prisma.InputJsonValue, createdByUserId: current.initiatorUserId, approvedByUserId: current.approverUserId??context.userId, approvedAt: scheduledApproval?new Date(scheduledApproval.approvedAt):new Date() } });
+          // A campaign publication carries the active policy exactly as stored (plan R3: the revision hash an open Checkout was reserved under must not move).
+          state: 'ACTIVE', policyJson: (proposed.promotions ? state.revision?.policyJson ?? proposed.policy : proposed.policy) as unknown as Prisma.InputJsonValue, createdByUserId: current.initiatorUserId, approvedByUserId: current.approverUserId??context.userId, approvedAt: scheduledApproval?new Date(scheduledApproval.approvedAt):new Date(),
+          // Plan R1: every revision carries the campaigns — this publication's own, or the active revision's exactly as they are.
+          promotionJson: promotionColumn(proposed.promotions ?? await activePromotionJson(tx, state.settings)) } });
         revisionId = revision.id;
       }
       await tx.billingSettings.update({ where: { id: state.settings.id }, data: { policyRevisionId: revisionId, gatesJson: effectiveBillingGates(proposed.gates), version: { increment: 1 } } });
@@ -412,6 +429,7 @@ export class BillingConfigurationService {
         version: { increment: 1 }, resultJson: { ...scheduledApproval?{scheduledApproval}:{}, activeRevisionId: revisionId, settingsVersion: state.settings.version + 1 } } });
       if(!changed.count)throw stale();
       const updated=await tx.billingOperation.findUniqueOrThrow({where:{id:current.id}});
+      if(proposed.campaignId&&current.referenceId)await closeCampaignDraft(tx,current.referenceId,current.id);
       await this.audit(tx, context, updated, 'published',worker); return updated;
   }
   async cancel(context: RequestContext, id: string, expectedVersion: number) {
@@ -449,5 +467,159 @@ export class BillingConfigurationService {
         resultJson: { activeRevisionId: state.revision?.id ?? null, settingsVersion: state.settings.version + 1 } } });
       await this.audit(tx, context, operation, 'emergency_closed'); return operation;
     }); return this.view(row, context);
+  }
+
+  // ---- Promotion campaigns (docs/plans/starter-249-bonus-month-promotion-plan.md §6, lane C) ----
+  // Terms live in the ACTIVE revision's `promotionJson` (R1). A draft is a PROMOTION_CAMPAIGN_DRAFT operation. Publishing goes
+  // preview → submit → approve like any policy change; pause and end are one-step commands (R5). The routes check `system.billing.read`;
+  // `system.billing.policy.manage` is enforced here, as for PUBLISH_POLICY.
+  private async campaigns(context: RequestContext, access: Awaited<ReturnType<BillingAdminService['access']>>, state: Awaited<ReturnType<BillingService['settings']>>, only?: string) {
+    const now = new Date(), signatures = campaignSignatures(state.policy ?? BILLING_DRAFT_POLICY), manage = access.capabilities.includes(permission('PUBLISH_POLICY'));
+    return Promise.all((await readCampaigns(this.prisma.client, state, now, only)).map(async record => {
+      const operation = record.pending ? await this.view(record.pending, context) : null;
+      return { operation, view: campaignView(record, { now, signatures, manage, workflow: operation?.allowedActions ?? [] }) };
+    }));
+  }
+  async promotionCampaigns(context: RequestContext): Promise<BillingPromotionCampaignList> {
+    const access = await this.platform(context, 'system.billing.read');
+    if (!this.billing.stripe.enabled) return { mode: 'DISABLED', settingsVersion: 0, capabilities: access.capabilities, campaigns: [], template: BILLING_PROMOTION_STARTER_TEMPLATE };
+    const state = await this.billing.settings();
+    return { mode: this.billing.stripe.livemode ? 'LIVE' : 'TEST', settingsVersion: state.settings.version, capabilities: access.capabilities,
+      campaigns: (await this.campaigns(context, access, state)).map(item => item.view), template: BILLING_PROMOTION_STARTER_TEMPLATE };
+  }
+  async promotionCampaign(context: RequestContext, campaignId: string): Promise<BillingPromotionCampaignDetail> {
+    const access = await this.platform(context, 'system.billing.read');
+    if (!this.billing.stripe.enabled) throw campaignNotFound();
+    const state = await this.billing.settings(), [item] = await this.campaigns(context, access, state, campaignId);
+    if (!item) throw campaignNotFound();
+    const { draft, published } = item.view, source = draft?.values.rules?.length ? { rules: draft.values.rules, window: draft.values } : published ? { rules: published.rules, window: published } : null;
+    return { mode: this.billing.stripe.livemode ? 'LIVE' : 'TEST', settingsVersion: state.settings.version, capabilities: access.capabilities,
+      reauthenticatedUntil: (await this.proof(context)).until?.toISOString() ?? null, campaign: item.view, operation: item.operation,
+      previewRows: source ? previewRows({ ...source, selfId: campaignId, policy: state.policy ?? BILLING_DRAFT_POLICY, published: state.promotions, now: new Date() }) : [] };
+  }
+  async promotionCampaignReport(context: RequestContext, campaignId: string, cursor?: string): Promise<BillingPromotionCampaignReport> {
+    const access = await this.platform(context, 'system.billing.read');
+    if (!this.billing.stripe.enabled) throw campaignNotFound();
+    return promotionReport(this.prisma.client, { state: await this.billing.settings(), campaignId, cursor, now: new Date(),
+      financial: access.capabilities.includes('system.billing.financial.read') });
+  }
+
+  /**
+   * Create (no `campaignId`: the server mints it) or save the one open draft of a campaign; an incomplete draft is kept and the
+   * response lists what is missing. Saving needs the draft's `draftVersion`; the first draft of a published campaign starts from its terms.
+   */
+  async savePromotionDraft(context: RequestContext, input: BillingPromotionDraftInput, key: string): Promise<BillingPromotionCampaignDetail> {
+    if (typeof input.reason !== 'string' || !input.reason.trim() || input.reason.length > 500 || !/^[a-zA-Z0-9_-]{16,120}$/.test(key) ||
+        (input.draftVersion !== undefined && (!Number.isInteger(input.draftVersion) || input.draftVersion < 0 || input.campaignId === undefined))) throw new BadRequestException('Invalid campaign draft');
+    const reason = input.reason.trim(), hash = configurationHash([input.campaignId ?? null, input.draftVersion ?? null, input.values, reason]);
+    const campaignId = await this.prisma.client.$transaction(async tx => {
+      await this.platform(context, permission('PUBLISH_POLICY'), tx);
+      const state = await this.lock(tx), now = new Date(), id = input.campaignId ?? randomUUID(), published = state.promotions[id];
+      const scope = { stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode };
+      // A retried create answers with the draft it made. `requestHash` stays the create hash for good, so this holds after later saves too.
+      const replay = await tx.billingOperation.findUnique({ where: { stripeAccountId_livemode_idempotencyKey: { ...scope, idempotencyKey: key } } });
+      if (replay) { if (replay.type !== PROMOTION_DRAFT_TYPE || replay.initiatorUserId !== context.userId || replay.requestHash !== hash) throw stale(); return replay.referenceId!; }
+      const current = await openCampaignDraft(tx, state, id);
+      if (current) {
+        const done = await tx.auditLog.findFirst({ where: { targetType: 'BillingOperation', targetId: current.id, action: 'billing.configuration.promotion_draft_saved',
+          metadataJson: { path: ['commandKey'], equals: key } } });
+        if (done) { if ((done.metadataJson as { hash?: string }).hash !== hash) throw stale(); return id; }
+        if (input.draftVersion !== current.version) throw stale();
+      } else if (input.draftVersion !== undefined) throw stale();
+      if (published && isCampaignEnded(published, now)) throw campaignEnded();
+      if (!current && input.campaignId !== undefined && !published) throw campaignNotFound();
+      const { values } = parsePromotionDraft({ ...(!current && published ? publishedDraftValues(published) : {}), ...(input.values as object), campaignId: id });
+      let saved: BillingOperation;
+      if (current) {
+        const changed = await tx.billingOperation.updateMany({ where: { id: current.id, state: 'DRAFT', version: current.version },
+          data: { reason, proposedJson: values as unknown as Prisma.InputJsonValue, sourceVersion: state.settings.version, version: { increment: 1 } } });
+        if (!changed.count) throw stale();
+        saved = await tx.billingOperation.findUniqueOrThrow({ where: { id: current.id } });
+      } else saved = await tx.billingOperation.create({ data: { ...scope, type: PROMOTION_DRAFT_TYPE, state: 'DRAFT', referenceId: id, reason, sourceVersion: state.settings.version,
+        initiatorUserId: context.userId, idempotencyKey: key, requestHash: hash, expiresAt: now, proposedJson: values as unknown as Prisma.InputJsonValue } });
+      await tx.auditLog.create({ data: { companyId: context.companyId, actorUserId: context.userId, action: 'billing.configuration.promotion_draft_saved', targetType: 'BillingOperation',
+        targetId: saved.id, requestId: context.requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { commandKey: key, hash, version: saved.version, type: saved.type, campaignId: id } } });
+      return id;
+    });
+    return this.promotionCampaign(context, campaignId);
+  }
+  async discardPromotionDraft(context: RequestContext, campaignId: string, draftVersion: number): Promise<BillingPromotionCampaignList> {
+    if (!Number.isInteger(draftVersion) || draftVersion < 0) throw new BadRequestException('Invalid campaign draft');
+    await this.prisma.client.$transaction(async tx => {
+      await this.platform(context, permission('PUBLISH_POLICY'), tx);
+      const current = await openCampaignDraft(tx, await this.lock(tx), campaignId);
+      if (!current || current.version !== draftVersion) throw stale();
+      const changed = await tx.billingOperation.updateMany({ where: { id: current.id, state: 'DRAFT', version: draftVersion }, data: { state: 'CANCELLED', version: { increment: 1 } } });
+      if (!changed.count) throw stale();
+      await this.audit(tx, context, current, 'promotion_draft_discarded');
+    });
+    return this.promotionCampaigns(context);
+  }
+
+  /**
+   * PUBLISH (which needs the `draftVersion` that was reviewed) builds the campaign on the server from the saved draft (never from client
+   * terms); RESUME reopens a paused one and ignores any `draftVersion`. Either way
+   * the result is an ordinary PUBLISH_POLICY preview carrying the CURRENT policy and gates plus the campaign map with this one campaign
+   * replaced, so `configuration-changes/:id/{submit|approve|cancel}` carry it. Admission is decided again, under the fence, at approval.
+   */
+  async previewPromotion(context: RequestContext, campaignId: string, input: BillingPromotionPreviewInput): Promise<BillingPromotionPreviewResult> {
+    if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 0 || (input.action !== 'PUBLISH' && input.action !== 'RESUME') || typeof input.reason !== 'string' ||
+        !input.reason.trim() || input.reason.length > 500 || (input.draftVersion !== undefined ? !Number.isInteger(input.draftVersion) || input.draftVersion < 0 : input.action === 'PUBLISH'))
+      throw new BadRequestException('Invalid campaign preview');
+    await this.platform(context, permission('PUBLISH_POLICY'));
+    const first = await this.billing.settings(), reason = input.reason.trim();
+    if (first.settings.version !== input.expectedVersion) throw stale();
+    if (!first.policy) throw billingError('CONTROL_POLICY_NOT_READY', 'ต้องเผยแพร่นโยบายการชำระเงินก่อนเปิดแคมเปญ');
+    await this.validateProvider(first.policy);
+    const { row, rows } = await this.prisma.client.$transaction(async tx => {
+      await this.platform(context, permission('PUBLISH_POLICY'), tx);
+      const state = await this.lock(tx);
+      if (state.settings.version !== input.expectedVersion || !state.policy || !state.revision) throw stale();
+      const { after, draft, rows } = await campaignPublication(tx, state, campaignId, input, new Date());
+      const proposed: Proposed = { policy: state.policy, gates: state.gates, impact: null, sourcePolicyRevision: state.revision.id, membershipId: context.membershipId,
+        actorCompanyId: context.companyId, sessionId: context.sessionId ?? '', promotions: after, campaignId, ...draft ? { draftVersion: draft.version } : {} };
+      const row = await tx.billingOperation.create({ data: { stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode, type: 'PUBLISH_POLICY',
+        sourceVersion: input.expectedVersion, reason, proposedJson: proposed as unknown as Prisma.InputJsonValue, referenceId: draft?.id, initiatorUserId: context.userId,
+        requestHash: configurationHash(['PUBLISH_POLICY', input.expectedVersion, proposed, reason, draft?.id ?? null]), expiresAt: new Date(Date.now() + 600_000) } });
+      return { row, rows };
+    });
+    return { operation: await this.view(row, context), previewRows: rows };
+  }
+
+  /**
+   * Pause or end now (plan R5), modelled on `close()`: one transaction — fence first, then the BillingSettings lock — with reauthentication,
+   * `expectedVersion`, an Idempotency-Key and a reason. It writes a new ACTIVE revision with the policy as it is and this campaign paused
+   * or ended; redemption rows are not touched, so a reserved Checkout keeps its right.
+   */
+  async setPromotionState(context: RequestContext, campaignId: string, action: 'PAUSE' | 'END', input: BillingPromotionStateInput, key: string): Promise<BillingPromotionCampaignDetail> {
+    if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 0 || typeof input.reason !== 'string' || !input.reason.trim() || input.reason.length > 500 ||
+        !/^[a-zA-Z0-9_-]{16,120}$/.test(key)) throw new BadRequestException('Invalid campaign command');
+    const reason = input.reason.trim(), hash = configurationHash([`PROMOTION_${action}`, campaignId, input.expectedVersion, reason]);
+    await this.prisma.client.$transaction(async tx => {
+      await lockPromotionFence(tx, promotionEnvironment(this.billing.stripe.livemode)); // plan R4: the first lock
+      await this.platform(context, permission('PUBLISH_POLICY'), tx);
+      const state = await this.lock(tx);
+      const replay = await tx.billingOperation.findUnique({ where: { stripeAccountId_livemode_idempotencyKey: { stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode, idempotencyKey: key } } });
+      if (replay) { if (replay.requestHash !== hash || replay.initiatorUserId !== context.userId) throw stale(); return; }
+      await this.requireProof(context, tx);
+      if (state.settings.version !== input.expectedVersion || !state.policy || !state.revision) throw stale();
+      const before = parsePromotionCampaigns(state.revision.promotionJson), prev = before[campaignId], now = new Date();
+      if (!prev) throw campaignNotFound();
+      if (isCampaignEnded(prev, now)) throw campaignEnded();
+      if (action === 'PAUSE' && prev.paused) throw campaignInvalid('แคมเปญนี้พักอยู่แล้ว');
+      const after = parsePromotionCampaigns({ ...before, [campaignId]: action === 'PAUSE' ? { ...prev, paused: true } : { ...prev, endedAt: now.toISOString() } });
+      const max = await tx.billingPolicyRevision.aggregate({ where: { stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode }, _max: { version: true } });
+      const revision = await tx.billingPolicyRevision.create({ data: { stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode, version: (max._max.version ?? 0) + 1,
+        state: 'ACTIVE', policyJson: state.revision.policyJson as Prisma.InputJsonValue, promotionJson: after as unknown as Prisma.InputJsonValue, createdByUserId: context.userId,
+        approvedByUserId: context.userId, approvedAt: now } });
+      await tx.billingSettings.update({ where: { id: state.settings.id }, data: { policyRevisionId: revision.id, version: { increment: 1 } } });
+      const proposed: Proposed = { policy: state.policy, gates: state.gates, impact: null, sourcePolicyRevision: state.revision.id, membershipId: context.membershipId,
+        actorCompanyId: context.companyId, sessionId: context.sessionId ?? '', promotions: after, campaignId };
+      const operation = await tx.billingOperation.create({ data: { stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode, type: 'PUBLISH_POLICY', state: 'SUCCEEDED',
+        sourceVersion: input.expectedVersion, proposedJson: proposed as unknown as Prisma.InputJsonValue, reason, initiatorUserId: context.userId, idempotencyKey: key, requestHash: hash,
+        expiresAt: now, observedAt: now, resultJson: { activeRevisionId: revision.id, settingsVersion: state.settings.version + 1 } } });
+      await this.audit(tx, context, operation, action === 'PAUSE' ? 'promotion_paused' : 'promotion_ended');
+    });
+    return this.promotionCampaign(context, campaignId);
   }
 }

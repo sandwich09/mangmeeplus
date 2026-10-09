@@ -1,0 +1,63 @@
+{
+  "kind": "EXACT_SOURCE_PURE_FUNCTION_PROBE",
+  "sourceRef": "fddfd05baf97be683796f6b7db4d2e72157197db",
+  "sourceHashes": {
+    "apps/api/src/modules/billing/domain/billing-package.ts": "9932863a7c5594d304fb3bb2f072e229bddd33a9fe796e980ea39a5c5a06ce75",
+    "apps/api/src/modules/line-ai/application/ai-credit-cycles.ts": "42cd406c8062137c423a323bb053fbce3e6d9128601069c5213b570ff18ca286"
+  },
+  "disclaimer": "Synthetic account/period rows and transpiled pure functions only. No DB, provider, grant creation or customer calls. billingError is a stub for unused error handling; calendar and cycle algorithms are exact Git source.",
+  "assertions": 6,
+  "status": "PASS_REPRODUCTION",
+  "finding": "F05",
+  "scenarios": [
+    {
+      "id": "P01",
+      "description": "During paid period",
+      "actual": {
+        "cycleKey": "synthetic-account:2026-10-05T03:00:00.000Z",
+        "billingAccountId": "synthetic-account",
+        "start": "2026-10-05T03:00:00.000Z",
+        "end": "2026-11-05T03:00:00.000Z",
+        "state": "PAID",
+        "invoiceId": "paid-original",
+        "renewalPaymentDueAt": null
+      }
+    },
+    {
+      "id": "P02",
+      "description": "Gift at end of paid history keeps the previous cycle key",
+      "actual": {
+        "cycleKey": "synthetic-account:2026-10-05T03:00:00.000Z",
+        "billingAccountId": "synthetic-account",
+        "start": "2026-10-05T03:00:00.000Z",
+        "end": "2026-12-05T03:00:00.000Z",
+        "state": "PAID",
+        "invoiceId": "paid-original",
+        "renewalPaymentDueAt": null
+      }
+    },
+    {
+      "id": "P03",
+      "description": "Early repeat adds a future paid period; intermediate free gap has no cycle",
+      "actual": null
+    },
+    {
+      "id": "P04",
+      "description": "Next paid period is found after its start",
+      "actual": {
+        "cycleKey": "synthetic-account:2026-12-05T03:00:00.000Z",
+        "billingAccountId": "synthetic-account",
+        "start": "2026-12-05T03:00:00.000Z",
+        "end": "2027-01-05T03:00:00.000Z",
+        "state": "PAID",
+        "invoiceId": "paid-repeat",
+        "renewalPaymentDueAt": null
+      }
+    }
+  ],
+  "temporaryHarness": {
+    "path": "/var/folders/vc/hbfllfl96mn49byp8f0q_cpr0000gn/T/starter-promo-e2e-20261005-kjtvssyr/source-probe.cjs",
+    "sha256": "7e36ce858139315e2d09d75cd4129a794299f2fb56b6d4290bf9cf7db6fffab8",
+    "retention": "Temporary local diagnostic; no application or repository script edited."
+  }
+}

@@ -1,7 +1,11 @@
 /**
  * AI credit funding on real PostgreSQL (add-on plan PR C3/C5; spec §5.1–§5.3, §8.3, A05/A07/A09/A34/A36).
  * Drives `reserveAiBudgetStep` the way the LINE v2 issuer does (a rendered authority), so cycle time,
- * month and races are controlled exactly. Runs with the reliability PostgreSQL suites.
+ * month and races are controlled exactly. Runs with the reliability PostgreSQL suites. The promotion free time (plan R9, Q2;
+ * A09, A32) is read from a real bonus receipt lot written by the grant seam.
+ *
+ * Run with: AI_BUDGET_RESERVATION_TEST_DATABASE_URL='postgresql://…@127.0.0.1:5432/<local>_ci' \
+ *   pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/application/ai-credit-funding.pg.spec.ts
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +15,8 @@ import { PrismaClient } from '../../../generated/prisma/client';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import type { AppConfigService } from '../../../common/config/app-config.service';
 import { priceRenderedAiInvocationV2 } from './ai-model-pricing';
-import { appendPackageInterval } from '../../billing/domain/billing-package';
+import { appendPackageInterval, promotionBoundaries } from '../../billing/domain/billing-package';
+import { grantPromotionPackageReceipts } from '../../billing/application/billing-receipt-grants';
 import {
   cancelAiBudgetStep, chargeAiBudgetHoldAtBound, releaseAiBudgetHoldByOperator, reserveAiBudgetStep, settleAiBudgetStep,
   type RenderedAiReservationAuthority,
@@ -50,6 +55,7 @@ describe('AI credit funding of LINE v2 CHAT holds on PostgreSQL', { skip: !url }
     await client.auditLog.deleteMany({ where: { companyId: { startsWith: tag } } });
     await client.aiBudgetReservation.deleteMany({ where: { companyId: { startsWith: tag } } });
     await client.companyPlanTerm.deleteMany({ where: { companyId: { startsWith: tag } } });
+    await client.billingReceiptGrant.deleteMany({ where: { companyId: { startsWith: tag } } });
     const accounts = await client.billingAccount.findMany({ where: { companyId: { startsWith: tag } }, select: { id: true } });
     await client.billingInvoice.deleteMany({ where: { billingAccountId: { in: accounts.map(row => row.id) } } });
     await client.billingAccount.deleteMany({ where: { companyId: { startsWith: tag } } });
@@ -86,6 +92,26 @@ describe('AI credit funding of LINE v2 CHAT holds on PostgreSQL', { skip: !url }
     }
     return { companyId, accountId: account.id };
   }
+  /**
+   * A shop that bought a month with a free month, `startDaysAgo` days back: paid `[start, paidEnd)`, free `[paidEnd, benefitEnd)` (a month is
+   * 28–31 days, so 40 days back puts today inside the free time and 75 days back just after it). The base invoice keeps `periodEnd = paidEnd`
+   * and carries `benefitEnd`; the bonus lot comes from the real grant seam. `later` adds a paid month starting at `benefitEnd` (a gap, not a tail).
+   */
+  async function promoFixture(suffix: string, opts: { startDaysAgo: number; allowance?: number; later?: boolean; paidThrough?: Date }) {
+    const start = daysFromNow(-opts.startDaysAgo);
+    const { paidEnd, benefitEnd } = promotionBoundaries({ serviceStartsAt: start, interval: 'month', bonusMonths: 1 });
+    const periods: Array<readonly [Date, Date]> = [[start, paidEnd]];
+    if (opts.later) periods.push([benefitEnd, appendPackageInterval(benefitEnd, 'month', start.getUTCDate())]);
+    const paidThrough = opts.paidThrough ?? (opts.later ? periods[1]![1] : benefitEnd);
+    const shop = await fixture(suffix, { allowance: opts.allowance, periods, account: { paidThrough } });
+    await client.companyPlanTerm.update({ where: { companyId: shop.companyId }, data: { termEndsAt: paidThrough } });
+    const invoice = await client.billingInvoice.findFirstOrThrow({ where: { billingAccountId: shop.accountId }, orderBy: { periodStart: 'asc' } });
+    await client.billingInvoice.update({ where: { id: invoice.id }, data: { benefitEnd } });
+    const { bonus } = await client.$transaction(tx => grantPromotionPackageReceipts(tx, { companyId: shop.companyId, billingAccountId: shop.accountId,
+      invoiceId: invoice.id, policyRevisionId: 'synthetic', kind: 'INITIAL', baseUnits: 30, bonusUnits: 30, serviceStart: start, paidEnd, benefitEnd, availableAt: start }));
+    return { ...shop, invoiceId: invoice.id, bonusLotId: bonus.id, start, paidEnd, benefitEnd };
+  }
+  const cycleLots = (companyId: string) => client.aiCreditGrant.findMany({ where: { companyId, sourceKind: 'INCLUDED_CYCLE' }, orderBy: { availableAt: 'asc' } });
   const rendered = (over: Partial<RenderedAiReservationAuthority> = {}): RenderedAiReservationAuthority & { claims: Array<unknown> } => {
     const claims: Array<unknown> = [];
     return { upperBoundSatang: BOUND, maxCalls: 4, snapshot: structuredClone(priced.snapshot) as never, fundsAiCredit: true, fundingAsOf: now,
@@ -291,5 +317,68 @@ describe('AI credit funding of LINE v2 CHAT holds on PostgreSQL', { skip: !url }
     assert.deepEqual(read.items.map(item => [item.monthKey, item.status]), [[oldMonth, 'UNRESOLVED'], [olderMonth, 'UNRESOLVED']]);
     assert.ok(read.monthKeys.includes(olderMonth));
     assert.equal(read.nextCursor, null);
+  });
+
+  it('funds the free time of a promotion lazily, once, as one cycle keyed on the paid end — two reads, one lot (plan R9, Q2; A09, A32)', async () => {
+    const f = await promoFixture('promo-tail', { startDaysAgo: 40, allowance: BOUND * 4 });
+    const key = `${f.accountId}:${f.paidEnd.toISOString()}`;
+    const read = await balance(f.companyId);
+    assert.deepEqual([read.cycle?.cycleKey, read.cycle?.fundingSource, read.packageRemainingUnits], [key, 'PROMOTION', BOUND * 4], 'the free time is projected at the normal allowance');
+    assert.equal(await client.aiCreditGrant.count({ where: { companyId: f.companyId } }), 0, 'reading funds nothing: a cycle nobody used gets no lot');
+    const first = await reserve(f.companyId, 'f1'); assert.ok(first.ok);
+    const second = await reserve(f.companyId, 'f2'); assert.ok(second.ok);
+    const lots = await cycleLots(f.companyId);
+    assert.equal(lots.length, 1, 'two reads, one lot — and no lot for the 13 months a longer promotion would span');
+    const [lot] = lots;
+    assert.deepEqual([lot!.cycleKey, lot!.cycleState, lot!.invoiceId, lot!.availableAt.toISOString(), lot!.expiresAt.toISOString(), lot!.units, lot!.allowanceSource],
+      [key, 'PAID', f.invoiceId, f.paidEnd.toISOString(), f.benefitEnd.toISOString(), BOUND * 4, 'SALES_DEAL']);
+    assert.deepEqual([...new Set((await entries(f.companyId)).map(row => row.grantId))], [lot!.id], 'both holds draw the one free-time lot');
+    assert.equal((await balance(f.companyId)).packageRemainingUnits, BOUND * 2);
+  });
+
+  it('opens the free-time cycle once after the paid month used its own, closes the paid one, and funds the same lot in a gap before a later paid period (A32)', async () => {
+    const f = await promoFixture('promo-gap', { startDaysAgo: 40, allowance: BOUND * 4, later: true });
+    const paidMonth = await reserve(f.companyId, 'g0', rendered({ fundingAsOf: daysFromNow(-30) })); assert.ok(paidMonth.ok);
+    const free = await reserve(f.companyId, 'g1'); assert.ok(free.ok);
+    await reserve(f.companyId, 'g2');
+    const lots = await cycleLots(f.companyId);
+    assert.deepEqual(lots.map(lot => [lot.cycleKey, lot.cycleState]), [[`${f.accountId}:${f.start.toISOString()}`, 'CLOSED'], [`${f.accountId}:${f.paidEnd.toISOString()}`, 'PAID']]);
+    assert.equal(lots[1]!.invoiceId, f.invoiceId);
+    assert.equal(await client.auditLog.count({ where: { companyId: f.companyId, action: 'ai_credit.cycle.opened' } }), 1, 'the free time opened exactly one cycle');
+    // Before this change the gap had no cycle at all (the paid period ended, the next one has not begun) and the call was refused.
+    assert.equal((await balance(f.companyId)).cycle?.fundingSource, 'PROMOTION');
+  });
+
+  it('opens no free-time cycle once the bonus lot is revoked, and a fully refunded promotion funds nothing at all (A32)', async () => {
+    // Revoked bonus lot, term still running: no free time is known, so today's rule for gift days applies — the last paid cycle stretches.
+    const open = await promoFixture('promo-revoked', { startDaysAgo: 40, allowance: BOUND * 4 });
+    await client.billingReceiptGrant.update({ where: { id: open.bonusLotId }, data: { revokedAt: now } });
+    assert.ok((await reserve(open.companyId, 'r1')).ok);
+    assert.deepEqual((await cycleLots(open.companyId)).map(lot => lot.cycleKey), [`${open.accountId}:${open.start.toISOString()}`], 'never the free-time key');
+    // A full refund also revokes the base lot and ends the term at the refund: nothing is funded, not a lot, not a hold.
+    const refunded = await promoFixture('promo-refunded', { startDaysAgo: 40, allowance: BOUND * 4 });
+    await client.billingReceiptGrant.updateMany({ where: { companyId: refunded.companyId }, data: { revokedAt: now } });
+    await client.billingAccount.update({ where: { id: refunded.accountId }, data: { paidThrough: daysFromNow(-1) } });
+    const refusal = await reserve(refunded.companyId, 'r2');
+    assert.deepEqual(!refusal.ok && [refusal.reason, 'aiCredit' in refusal && refusal.aiCredit], ['unavailable', 'PACKAGE_REQUIRED']);
+    assert.equal(await client.aiCreditGrant.count({ where: { companyId: refunded.companyId } }), 0);
+  });
+
+  it('adds no lot for plain admin gift days, after a free month or without one — the running cycle stretches (A09, A32)', async () => {
+    // Without a promotion: the paid month's lot already exists; gift days after it reuse it.
+    const plainStart = daysFromNow(-35);
+    const plain = await fixture('gift-plain', { allowance: BOUND * 4, periods: months(plainStart, 1), account: { paidThrough: daysFromNow(10) } });
+    assert.ok((await reserve(plain.companyId, 'k1', rendered({ fundingAsOf: daysFromNow(-20) }))).ok);
+    assert.ok((await reserve(plain.companyId, 'k2')).ok, 'today is past the paid month, inside the gift days');
+    assert.equal((await cycleLots(plain.companyId)).length, 1);
+    // With one: the free month ended, gift days run on — they stretch the FREE-TIME cycle, not the closed paid one.
+    const f = await promoFixture('gift-promo', { startDaysAgo: 75, allowance: BOUND * 4, paidThrough: daysFromNow(5) });
+    assert.ok((await reserve(f.companyId, 'p0', rendered({ fundingAsOf: daysFromNow(-55) }))).ok, 'a read in the paid month');
+    assert.ok((await reserve(f.companyId, 'p1', rendered({ fundingAsOf: daysFromNow(-30) }))).ok, 'a read in the free month');
+    assert.ok((await reserve(f.companyId, 'p2')).ok, 'a read in the gift days');
+    const lots = await cycleLots(f.companyId);
+    assert.deepEqual(lots.map(lot => lot.cycleKey), [`${f.accountId}:${f.start.toISOString()}`, `${f.accountId}:${f.paidEnd.toISOString()}`], 'two lots, none for the gift days');
+    const read = await balance(f.companyId);
+    assert.deepEqual([read.cycle?.cycleKey, read.cycle?.end.toISOString(), read.cycle?.fundingSource], [lots[1]!.cycleKey, daysFromNow(5).toISOString(), 'PROMOTION']);
   });
 });

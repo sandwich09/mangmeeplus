@@ -174,7 +174,8 @@ export async function checkBillingRestart(input: {
   const policy = structuredClone(revision.policyJson) as unknown as BillingSnapshot['policy'];
   policy.priceIds['STARTER_249:year'] = 'price_StarterYear'; policy.zeroPriceIds!['STARTER_249:year'] = 'price_ZeroStarterYear';
   const maxRevision = await client.billingPolicyRevision.aggregate({ where: { stripeAccountId: account.stripeAccountId, livemode: false }, _max: { version: true } });
-  const nextRevision = await client.billingPolicyRevision.create({ data: { stripeAccountId: account.stripeAccountId, livemode: false, version: (maxRevision._max.version ?? 0)+1, state: 'ACTIVE', policyJson: policy as unknown as Prisma.InputJsonValue, createdByUserId: original.initiatingUserId } });
+  // Campaigns live beside the policy (promotionJson): a revision made from another one must carry them, or they vanish.
+  const nextRevision = await client.billingPolicyRevision.create({ data: { stripeAccountId: account.stripeAccountId, livemode: false, version: (maxRevision._max.version ?? 0)+1, state: 'ACTIVE', policyJson: policy as unknown as Prisma.InputJsonValue, promotionJson: (revision.promotionJson ?? undefined) as Prisma.InputJsonValue | undefined, createdByUserId: original.initiatingUserId } });
   await client.billingSettings.update({ where: { id: settings.id }, data: { policyRevisionId: nextRevision.id, version: { increment: 1 } } });
   assert.equal((await quote('STARTER_249')).body.code, 'BILLING_CAP_SELECTION_REQUIRED');
   const choices = await request(`${base}/capacity?offerKey=STARTER_249&interval=year`); assert.equal(choices.status, 200, JSON.stringify(choices.body));

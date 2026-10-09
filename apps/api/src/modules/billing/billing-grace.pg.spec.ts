@@ -278,8 +278,8 @@ test('renewal grace with real PostgreSQL and simulated Stripe (not native channe
       assert.equal((await client.billingAccount.findUniqueOrThrow({ where: { id: f.accountId } })).graceEndsAt, null);
       assert.equal(f.deletes(), 0);
     });
-    await t.test('grace and recovery preserve the fixed expiry of Admin and trial receipts', async () => {
-      for (const kind of ['ADMIN_ADJUSTMENT', 'TRIAL_CARRYOVER']) {
+    await t.test('grace and recovery preserve the fixed expiry of Admin, trial and promotion receipts', async () => {
+      for (const kind of ['ADMIN_ADJUSTMENT', 'TRIAL_CARRYOVER', 'PROMOTION']) {
       const f=await fixture(),end=new Date(f.end*1000),start=new Date(end.getTime()-86400000);
       const gift=await client.billingReceiptGrant.create({data:{companyId:f.companyId,billingAccountId:f.accountId,sourceKey:'synthetic-admin-grace',sourceHash:'synthetic-admin-proof',
         kind,units:3,availableAt:start,serviceStart:start,serviceEnd:end,expiresAt:end,policyRevisionId:'TEST_ONLY'}});

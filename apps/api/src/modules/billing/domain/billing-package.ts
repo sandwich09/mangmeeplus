@@ -33,6 +33,19 @@ export function appendPackageInterval(start: Date, interval: BillingInterval, an
   return end;
 }
 
+/**
+ * Promotion spec §5: the paid period `[S, paidEnd)` and the free time `[paidEnd, benefitEnd)`. Months are counted once
+ * from `S`, so a clamped paid end keeps the anniversary (31 Jan → 28 Feb → 31 Mar). Bonus time never goes through
+ * `intervalCount` (plan R13).
+ */
+export function promotionBoundaries(input: { serviceStartsAt: Date; interval: BillingInterval; anchorDay?: number; bonusMonths: number }) {
+  if (!Number.isInteger(input.bonusMonths) || input.bonusMonths < 1) throw invalid();
+  return { paidEnd: appendPackageInterval(input.serviceStartsAt, input.interval, input.anchorDay),
+    benefitEnd: appendPackageInterval(input.serviceStartsAt, 'month', input.anchorDay, (input.interval === 'year' ? 12 : 1) + input.bonusMonths) };
+}
+/** Plan R2: the one answer to "until when does this invoice give service?" — every comparison with `paidThrough` reads it. */
+export const invoiceServiceEnd = (invoice: { periodEnd: Date; benefitEnd?: Date | null }): Date => invoice.benefitEnd ?? invoice.periodEnd;
+
 /** Server-owned paid history only: callers must not pass trial dates or browser-submitted balances. */
 export function fullPackagePurchaseImpact(input: {
   tier: unknown; interval: unknown; verifiedPaidAt: Date; paidThrough: Date | null;

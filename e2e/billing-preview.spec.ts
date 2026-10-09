@@ -74,8 +74,8 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(page.locator('input')).toHaveCount(0);
   await page.getByRole('button', { name: 'จำลองชำระสำเร็จ', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'ชำระแล้ว เปิดใช้งานแล้ว', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'กลับไปยังรายการเดิม', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงินอีกครั้ง', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'ชำระเงินต่อ', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงิน' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'จัดการการต่ออายุ', exact: true })).toHaveCount(0);
   await expect(plans).toHaveCount(0);
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -467,12 +467,12 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await page.getByRole('button', { name: 'เลือกสิทธิ์สำหรับรอบที่จ่ายแล้ว', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'เลือกสาขาและผู้ใช้ที่จะใช้งานต่อ', exact: true })).toBeVisible();
   // 'pending' is a return from Checkout whose attempt is still open: since 9217e6227 the page waits for
-  // the payment provider and offers no way to end, resume or redo it (the one-tap "เลือกแพ็กเกจใหม่" is
+  // the payment provider and offers no way to end, resume or redo it (the one-tap "ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่" is
   // driven in billing-no-setup.spec.ts).
   await scenario.selectOption('pending');
-  await expect(page.getByRole('heading', { name: 'กำลังตรวจสอบรายการชำระเงิน', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงินอีกครั้ง', exact: true })).toBeVisible();
-  for (const name of ['เลือกแพ็กเกจใหม่', 'กลับไปยังรายการเดิม', 'ยุติรายการที่ยังไม่ชำระ'])
+  await expect(page.getByRole('heading', { name: 'กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true })).toBeVisible();
+  for (const name of ['ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', 'ชำระเงินต่อ', 'ยกเลิกรายการนี้'])
     await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
   await expect(plans).toHaveCount(0);
   await scenario.selectOption('start');

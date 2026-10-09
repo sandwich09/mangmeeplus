@@ -37,8 +37,9 @@ export async function checkBillingApplyRetry(input:{
   try{
     // Synthetic publication snapshot: keep the original consent's immutable revision intact.
     const max=await db.billingPolicyRevision.aggregate({where:{stripeAccountId:input.stripeAccountId,livemode:false},_max:{version:true}});
+    // Campaigns live beside the policy (promotionJson): a revision made from another one must carry them, or they vanish.
     const closed=await db.billingPolicyRevision.create({data:{stripeAccountId:input.stripeAccountId,livemode:false,version:(max._max.version??0)+1,
-      state:'ACTIVE',policyJson:{...(policy.policyJson as Prisma.JsonObject),salesCompanyIds:[]},createdByUserId:policy.createdByUserId}});closedRevision=closed.id;
+      state:'ACTIVE',policyJson:{...(policy.policyJson as Prisma.JsonObject),salesCompanyIds:[]},promotionJson:(policy.promotionJson??undefined) as Prisma.InputJsonValue|undefined,createdByUserId:policy.createdByUserId}});closedRevision=closed.id;
     await db.billingSettings.update({where:{id:settings.id},data:{policyRevisionId:closed.id,version:{increment:1}}});
     assert.equal((await input.request(`/v1/companies/${companyId}/billing`)).body.purchaseEligibility,'COMPANY_SALES_CLOSED');
     await db.user.create({data:{id:userId,displayName:'Synthetic apply operator',email:`${userId}@example.test`}});

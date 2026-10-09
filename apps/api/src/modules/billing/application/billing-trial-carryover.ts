@@ -19,7 +19,11 @@ export async function trialReceiptCarryover(db: Prisma.TransactionClient, compan
   return units > 0 ? { units, trialEndsAt: term.termEndsAt.toISOString() } : undefined;
 }
 
-/** Caller holds OCR/company locks after paid evidence/capacity checks, before replacing the trial term. */
+/**
+ * Caller holds OCR/company locks after paid evidence/capacity checks, before replacing the trial term.
+ * `periodEnd` is the PAID end of the purchase (the invoice's `periodEnd`), never the end of a promotion's free time
+ * (`benefitEnd`): the carryover lot expires there, and the free month must not stretch a trial gift (promotion plan G13).
+ */
 export async function grantTrialReceiptCarryover(db: Prisma.TransactionClient, input: {
   companyId: string; billingAccountId: string; invoiceId: string; policyRevisionId: string;
   source?: TrialCarryoverSource; paidAt?: Date; periodEnd: Date;

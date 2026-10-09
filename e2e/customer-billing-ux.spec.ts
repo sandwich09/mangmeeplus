@@ -15,7 +15,7 @@ for (const width of [1280, 390]) {
     await expect(page.locator('aside')).toHaveCount(1);
     await expect(page.getByRole('link', { name: /กลับแดชบอร์ด|กลับไปใช้งาน/ })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'เลือกบริษัทอื่น', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงินอีกครั้ง' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงิน' })).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toContainText('ใบเสร็จคงเหลือ');
     const emailPanel = page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true });
     await expect(emailPanel).toHaveCount(0);
@@ -110,7 +110,7 @@ test('BILLING-UX payment recheck tells the truth and documents return to history
     await route.fulfill({ status: fail ? 503 : 200, json: fail ? { message: 'Temporary test outage' } : { queued: true } });
   });
   await page.goto(`/companies/${companyId}/billing`);
-  const check = page.getByRole('button', { name: 'ตรวจผลการชำระเงินอีกครั้ง', exact: true });
+  const check = page.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true });
   await expect(check).toBeVisible();
   expect(refreshes).toBe(0);
   await check.click();

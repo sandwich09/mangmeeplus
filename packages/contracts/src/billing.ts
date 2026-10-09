@@ -181,6 +181,11 @@ export type BillingQuote = {
    *  ticket this purchase can use. `totalSatang` above stays the undiscounted charge; "ชำระวันนี้" is `applied.totalSatang`
    *  when the buyer chose USE. DECLINE keeps the offer so the confirm step can switch back. */
   eventDiscount?: BillingQuoteEventDiscount;
+  /** Promotion spec Q4: the one benefit this purchase takes. Absent = a quote from before promotions (NORMAL, or
+   *  EVENT_DISCOUNT when `eventDiscount.choice` is USE). */
+  benefitChoice?: BillingBenefitChoice;
+  /** Present only when `benefitChoice` is PROMOTION. `totalSatang` and `purchase.projectedPaidThrough` stay the paid period's. */
+  promotion?: BillingQuotePromotion;
 };
 export type BillingEventDiscountChoice = 'USE' | 'DECLINE';
 export type BillingQuoteEventDiscount = {
@@ -276,6 +281,13 @@ export type BillingStatus = {
     offers: { offerKey: string; interval: BillingInterval; eventName: string; shownDiscountSatang: number }[];
     tickets?: { ticketSerial: string; eventName: string; discountSatang: number; expiresAt: string;
       offers: { offerKey: string; interval: BillingInterval; shownDiscountSatang: number }[] }[] };
+  /** Promotion campaigns this shop sees on the package page now, one row per campaign rule, each with whether it can
+   *  take it and why not. Absent or empty = nothing to advertise. NORMAL stays purchasable whatever `reason` says. */
+  promotions?: BillingPromotionOfferView[];
+  /** The newest promotion right this shop reserved or used. Absent = none. */
+  promotion?: BillingPromotionUse;
+  /** Promotion spec Q5: an immediate upgrade is refused (`PROMOTION_UPGRADE_DEFERRED`) until this instant. */
+  upgradeDeferredUntil?: string;
 };
 /** Spec §17.3: one server snapshot for both products; the client never adds numbers itself. Integer units per `unitScale`. */
 export type BillingAddOnBalance = { productKind: BillingAddOnProductKind; unitScale: 100 | 1;
@@ -305,11 +317,15 @@ export type BillingAttemptView = {
   advanceDeal?: { startsAt: string; firstCycleEndsAt: string; nextChargeAt: string };
   /** Sales-event discount on this Checkout: used once the payment is confirmed (sales-event spec §3.6). */
   eventDiscount?: { shownDiscountSatang: number; state: 'IN_PAYMENT' | 'USED' };
+  /** The promotion right this Checkout reserved (RESERVED) or used once paid (CONSUMED); dates are null until applied. */
+  promotion?: BillingPromotionUse;
 };
 export type BillingInvoiceItem = { id: string; number: string | null; currency: 'THB'; amountSatang: number;
   refundedSatang: number; disputed: boolean; financialObservedAt: string | null;
   paymentState: string; applyState: string; periodStart: string; periodEnd: string; createdAt: string; hasDocuments: boolean;
-  documentActions?: { canResend: boolean } };
+  documentActions?: { canResend: boolean };
+  /** A promotion purchase: `periodEnd` above is the paid period's end (= `paidEnd`); the free time runs to `benefitEnd`. */
+  promotion?: { displayName: string; paidEnd: string; benefitEnd: string; bonusReceiptUnits: number } };
 export type BillingAdjustmentKind = 'refunds' | 'credit-notes';
 /** Implemented customer recovery pages only; this never grants business or Admin access. */
 export function isBillingCustomerRecoveryPath(path: string, companyId: string): boolean {
@@ -330,7 +346,10 @@ export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED';
   aiMonthlyBudgetSatang: number;
   /** R1: no longer emitted — new signups get no trial (Owner 2026-09-20). Optional rather than
    *  removed so an older client that still reads it keeps compiling against this contract. */
-  trial?: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
+  trial?: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 };
+  /** Campaigns open for reservation at `generatedAt`, announceable fields only — no company, usage or cap data.
+   *  Whether a given shop may take one comes from its `BillingStatus.promotions`. */
+  promotions?: BillingCatalogPromotion[] };
 
 export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_FREE_DAYS' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS' | 'SCHEDULE_PRICE_RETURN' | 'APPLY_PLAN_MENUS' | 'UPDATE_BILLING_EMAIL' | 'CUSTOMER_PROFILE_SYNC' | 'ADDON_ADMIN_GRANT' | 'ADDON_ADMIN_REVOKE';
 export type BillingOperationState = 'DRAFT' | 'PREVIEW' | 'AWAITING_APPROVAL' | 'SCHEDULED' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'UNKNOWN' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
@@ -382,6 +401,9 @@ export type BillingOperatorCompany = {
 /** Sales-event discounts §6.3: the reconciler raised it because a bill was paid at the discounted amount
  *  but no ticket was RESERVED for that attempt. Apply is not blocked; an operator checks and closes it. */
 export const BILLING_EVENT_DISCOUNT_REVIEW_ISSUE = 'EVENT_DISCOUNT_REVIEW';
+/** Promotion spec §6: a paid bill whose snapshot holds a promotion but whose right could not be used for it (given back, or
+ *  used by another bill), or a fully refunded promotion purchase whose entitlement could not be ended. An operator reviews it. */
+export const BILLING_PROMOTION_REVIEW_ISSUE = 'PROMOTION_REVIEW';
 export type BillingOperatorIssue = { id: string; companyId: string | null; companyName?:string|null; kind: string; reference: string;
   operationType?:string|null;
   relatedInvoiceId?:string|null; relatedRefundOperationId?:string|null; resolvedAt?:string|null;
@@ -456,7 +478,9 @@ export type BillingConfigurationImpactItem = { reference: string; kind: BillingC
 export type BillingConfigurationImpactPage = { kind: BillingConfigurationImpactKind; items: (BillingConfigurationImpactItem & { companyName: string })[];
   sourceHash: string; matchesPreview: boolean; nextCursor: string | null; observedAt: string };
 export type BillingConfigurationOperation = BillingOperationView & { sourceVersion: number; previewHash: string;
-  proposed: { policy: BillingPolicy; gates: Record<BillingAction, boolean>; effectiveAt?:string|null }; impact: BillingConfigurationImpact|null;canEditDraft?:boolean;sourceDraftVersion?:number; salesCompanies?: BillingSalesCompany[];
+  proposed: { policy: BillingPolicy; gates: Record<BillingAction, boolean>; effectiveAt?:string|null;
+    /** A campaign publication: the whole campaign map this publication would store, and the one campaign it changes. */
+    promotions?: Record<string, BillingPromotionCampaign>; campaignId?: string }; impact: BillingConfigurationImpact|null;canEditDraft?:boolean;sourceDraftVersion?:number; salesCompanies?: BillingSalesCompany[];
   scheduledFor?:string|null; scheduleDue?:boolean;
   allowedActions: ('submit' | 'approve' | 'cancel' | 'apply')[]; activeRevisionId: string | null };
 
@@ -577,3 +601,158 @@ export type BillingRecipientAdminOperation = BillingOperationView & { type: 'UPD
 export type BillingDocumentAdminResendInput = { reason: string };
 /** `EVENT_TICKET`: the 8-character serial of a sales-event discount the shop used (sales-event spec §7.1). */
 export type BillingReferenceLookup = { kind: 'INVOICE' | 'ATTEMPT' | 'OPERATION' | 'ISSUE' | 'EVENT_TICKET'; id: string; companyId: string; companyName: string; href: string };
+
+/**
+ * Promotion campaigns (docs/specs/starter-249-bonus-month-promotion-spec-th.md; plan
+ * docs/plans/starter-249-bonus-month-promotion-plan.md §4). Release 1 knows one type: buy a package period, get
+ * whole free months and bonus receipts, once per company per campaign.
+ */
+/** Spec Q4: exactly one benefit per purchase; the one not chosen is never used. */
+export type BillingBenefitChoice = 'NORMAL' | 'PROMOTION' | 'EVENT_DISCOUNT';
+/** The permanent namespace of the once-per-company right: Stripe's livemode, never a Stripe account or a deploy. */
+export type BillingPromotionEnvironment = 'LIVE' | 'TEST';
+/** `offerSignature` pins the catalog offer the rule was published against (tier, cadence, price, tax, base receipts). */
+export type BillingPromotionRule = { offerKey: PaidTier; interval: BillingInterval; bonusMonths: number; bonusReceiptUnits: number; offerSignature: string };
+/** Published terms inside BillingPolicyRevision.promotionJson[campaignId]. */
+export type BillingPromotionCampaign = { campaignId: string; type: 'BONUS_MONTHS'; revision: number;
+  internalName: string; description: string | null; displayName: string; rules: BillingPromotionRule[];
+  startsAt: string; endsAt: string; cap: number | null; paused: boolean; endedAt: string | null };
+export type BillingPromotionCampaignStatus = 'DRAFT' | 'AWAITING_APPROVAL' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'ENDED' | 'CATALOG_STALE';
+export type BillingPromotionUnavailableReason = 'NOT_STARTED' | 'ENDED' | 'PAUSED' | 'CAP_FULL' | 'ALREADY_USED' | 'IN_PROGRESS'
+  | 'CATALOG_STALE' | 'OFFER_NOT_COVERED' | 'PURCHASE_KIND_UNSUPPORTED' | 'CHANGED';
+/** Pinned into BillingSnapshot.promotion at quote; the reservation and the apply read only this. */
+export type BillingPromotionSnapshot = { environmentId: BillingPromotionEnvironment; campaignId: string; revision: number; termsHash: string;
+  displayName: string; offerKey: PaidTier; interval: BillingInterval; offerSignature: string; bonusMonths: number; bonusReceiptUnits: number };
+/** Dates are the quote's estimate (apply uses the verified payment time). `expectedNextChargeAt` is null for a one-time mode. */
+export type BillingQuotePromotion = { campaignId: string; displayName: string; bonusMonths: number; bonusReceiptUnits: number;
+  totalReceiptUnits: number; paidStart: string; paidEnd: string; benefitEnd: string; expectedNextChargeAt: string | null };
+/** Company-scoped view on BillingStatus.promotions: what the package page may advertise and why not. */
+export type BillingPromotionOfferView = { campaignId: string; displayName: string; offerKey: PaidTier; interval: BillingInterval;
+  bonusMonths: number; bonusReceiptUnits: number; totalMonths: number; totalReceiptUnits: number; endsAt: string;
+  available: boolean; reason: BillingPromotionUnavailableReason | null };
+/** `BillingCatalog.promotions`: the announceable part of an offer view. */
+export type BillingCatalogPromotion = Omit<BillingPromotionOfferView, 'campaignId' | 'available' | 'reason'>;
+/** NOT_REQUIRED: one-time mode. PENDING: paid and applied, renewal not bound yet. READY: subscription bound, first
+ *  charge at `benefitEnd`. REVIEW: binding older than 23 h or an open issue. CANCELLED: the buyer stopped renewal. */
+export type BillingRenewalSetupState = 'NOT_REQUIRED' | 'PENDING' | 'READY' | 'REVIEW' | 'CANCELLED';
+export type BillingPromotionUse = { campaignId: string; displayName: string; state: 'RESERVED' | 'CONSUMED'; paidEnd: string | null;
+  benefitEnd: string | null; bonusMonths: number; bonusReceiptUnits: number; renewalSetupState: BillingRenewalSetupState; expectedNextChargeAt: string | null };
+/** After a refund of a promotion purchase (spec Q6): NOT_REQUIRED = no refund or a partial one (everything kept);
+ *  PENDING = fully refunded, unused entitlement not ended yet; REVIEW = needs staff; ADJUSTED = ended and stamped. */
+export type BillingPromotionEntitlementAdjustmentState = 'NOT_REQUIRED' | 'PENDING' | 'REVIEW' | 'ADJUSTED';
+
+/** Release-1 template (spec §4 "Catalog ที่แคมเปญยอมรับ"): the only rules a campaign may publish. `baseReceiptUnits` and
+ *  `monthlyPriceSatang` are what the CURRENT catalog offer must be, or publication is refused. */
+export const BILLING_PROMOTION_STARTER_TEMPLATE = { type: 'BONUS_MONTHS', offerKey: 'STARTER_249', monthlyPriceSatang: 24900,
+  rules: [{ interval: 'month', bonusMonths: 1, bonusReceiptUnits: 30, baseReceiptUnits: 30 },
+    { interval: 'year', bonusMonths: 1, bonusReceiptUnits: 30, baseReceiptUnits: 360 }] } as const;
+export type BillingPromotionTemplate = typeof BILLING_PROMOTION_STARTER_TEMPLATE;
+
+/**
+ * Admin campaign console. A draft is what an Admin typed and may be incomplete: `campaignId` (server-issued, never
+ * changes) plus any of the editable fields. `revision`, `paused`, `endedAt` and each rule's `offerSignature` are
+ * server-owned and never part of a draft — the server fills them when it builds the publication.
+ */
+export type BillingPromotionCampaignDraft = { campaignId: string; type?: 'BONUS_MONTHS'; internalName?: string; description?: string | null;
+  displayName?: string; rules?: Omit<BillingPromotionRule, 'offerSignature'>[];
+  /** ISO-8601 UTC instants (the form shows Asia/Bangkok). */
+  startsAt?: string; endsAt?: string;
+  /** null = unlimited (chosen explicitly); absent = not chosen yet. */
+  cap?: number | null };
+export type BillingPromotionDraftField = Exclude<keyof BillingPromotionCampaignDraft, 'campaignId'>;
+/** REQUIRED: absent. INVALID: present but not publishable. END_NOT_AFTER_START: only on `endsAt`. */
+export type BillingPromotionDraftError = { field: BillingPromotionDraftField; code: 'REQUIRED' | 'INVALID' | 'END_NOT_AFTER_START' };
+/** EDIT = create or save a draft; DISCARD_DRAFT = cancel the draft operation; PREVIEW/SUBMIT/APPROVE/CANCEL = the existing
+ *  publication workflow on the draft or the pending operation; PAUSE/END = one-step closing commands; RESUME = publication workflow. */
+export type BillingPromotionCampaignAction = 'EDIT' | 'DISCARD_DRAFT' | 'PREVIEW' | 'SUBMIT' | 'APPROVE' | 'CANCEL' | 'PAUSE' | 'RESUME' | 'END';
+export type BillingPromotionCampaignView = {
+  campaignId: string;
+  /** DRAFT / AWAITING_APPROVAL only while nothing is published; otherwise the published campaign's status now. */
+  status: BillingPromotionCampaignStatus;
+  /** The terms in the ACTIVE policy revision; null = never published. */
+  published: BillingPromotionCampaign | null;
+  /** The newest open `PROMOTION_CAMPAIGN_DRAFT` operation of this campaign; `version` is its expectedVersion. */
+  draft: { operationId: string; version: number; values: BillingPromotionCampaignDraft; validationErrors: BillingPromotionDraftError[] } | null;
+  /** A publication of this campaign in preview, awaiting approval or scheduled; null = none. */
+  pendingOperationId: string | null;
+  /** Live counts in this mode. `taken` = reserved + consumed (a refund never lowers it); `cap` null = unlimited or unpublished. */
+  usage: { reserved: number; consumed: number; taken: number; cap: number | null };
+  /** What this caller may do now, by state and permission. */
+  allowedActions: BillingPromotionCampaignAction[];
+  /** Reserved Checkouts still open: they keep their right after a pause or an end (= `usage.reserved`). */
+  pendingCheckouts: number };
+export type BillingPromotionCampaignList = {
+  mode: BillingMode | 'DISABLED';
+  /** BillingSettings.version: the expectedVersion of every campaign command. */
+  settingsVersion: number;
+  /** The caller's `system.billing.*` permissions. */
+  capabilities: string[];
+  /** Newest first; includes campaigns that exist only as a draft. */
+  campaigns: BillingPromotionCampaignView[];
+  /** What "สร้างแคมเปญ" pre-fills. */
+  template: BillingPromotionTemplate };
+/** One row per rule of a draft or published campaign, computed by the server from the policy that would apply. */
+export type BillingPromotionPreviewRow = { offerKey: PaidTier; interval: BillingInterval;
+  /** The current catalog offer's signature, which the publication will pin. */
+  offerSignature: string;
+  /** Catalog price before tax treatment, and the quote totals a buyer pays today. */
+  priceSatang: number; subtotalSatang: number; taxSatang: number; totalSatang: number;
+  /** 1 or 12; `totalMonths` = paid + bonus. */
+  paidMonths: number; bonusMonths: number; totalMonths: number;
+  /** Base from the catalog offer; `totalReceiptUnits` = base + bonus. */
+  baseReceiptUnits: number; bonusReceiptUnits: number; totalReceiptUnits: number;
+  /** A new shop paying at `exampleStartsAt`: the paid period ends at `paidEnd`, the free time at `benefitEnd`. */
+  exampleStartsAt: string; paidEnd: string; benefitEnd: string;
+  /** The next cycle's full-price total, charged at `benefitEnd` in a renewing mode. */
+  renewalTotalSatang: number;
+  /** Stable codes that block publication of this row (e.g. CONTROL_PROMOTION_CATALOG_STALE); empty = publishable. */
+  blockers: string[] };
+export type BillingPromotionReportCompany = { companyId: string; companyName: string;
+  state: 'RESERVED' | 'CONSUMED' | 'RELEASED'; offerKey: PaidTier; interval: BillingInterval;
+  acceptedAt: string; consumedAt: string | null; benefitAppliedAt: string | null; releasedAt: string | null;
+  paidEnd: string | null; benefitEnd: string | null;
+  refund: 'NONE' | 'PARTIAL' | 'FULL'; entitlementAdjustmentState: BillingPromotionEntitlementAdjustmentState;
+  /** Links into the existing Admin attempt / invoice pages (their own access checks apply); null = none yet. */
+  attemptHref: string | null; invoiceHref: string | null };
+export type BillingPromotionCampaignReport = { campaignId: string; mode: BillingMode; generatedAt: string;
+  /** reserved: Checkout open. paidAwaitingApply: CONSUMED, not applied. applied: benefit applied. releasedBeforePay: how many
+   *  times a reserved right was given back with an unpaid Checkout (kept when the shop reserves again). refunded: consumed with any refund. fullyRefunded: cumulative full refund. rightsActive: applied, not fully
+   *  refunded, `benefitEnd` in the future. consumed rights = paidAwaitingApply + applied, whatever was refunded. */
+  counts: { reserved: number; paidAwaitingApply: number; applied: number; releasedBeforePay: number; refunded: number; fullyRefunded: number; rightsActive: number };
+  /** Sums over applied rights; free months are never revenue. */
+  bonusMonthsGranted: number; bonusReceiptUnitsGranted: number;
+  /** Real money of the source invoices; null without `system.billing.financial.read`. */
+  moneyReceivedSatang: number | null; refundedSatang: number | null;
+  /** Newest first; `nextCursor` null = last page. */
+  companies: BillingPromotionReportCompany[]; nextCursor: string | null };
+
+/**
+ * Admin campaign API wire shapes (plan §6: lane C serves them, lane E calls them). Every route is under
+ * `/v1/system/billing`; reading needs `system.billing.read`, every command `system.billing.policy.manage`.
+ *
+ *   GET  promotion-campaigns                         -> BillingPromotionCampaignList
+ *   GET  promotion-campaigns/:campaignId             -> BillingPromotionCampaignDetail
+ *   GET  promotion-campaigns/:campaignId/report      -> BillingPromotionCampaignReport          (?cursor=)
+ *   POST promotion-campaign-drafts                   -> BillingPromotionCampaignDetail          (BillingPromotionDraftInput, Idempotency-Key)
+ *   POST promotion-campaign-drafts/:campaignId/discard -> BillingPromotionCampaignList          ({ draftVersion })
+ *   POST promotion-campaigns/:campaignId/preview     -> BillingPromotionPreviewResult           (BillingPromotionPreviewInput)
+ *   POST promotion-campaigns/:campaignId/pause | end -> BillingPromotionCampaignDetail          (BillingPromotionStateInput, Idempotency-Key, reauthentication)
+ *
+ * A preview creates an ordinary configuration change; it is submitted, approved or cancelled through the existing
+ * `configuration-changes/:id/{submit|approve|cancel}` routes, and reauthentication is the existing `reauthenticate` route.
+ */
+export type BillingPromotionCampaignDetail = { mode: BillingMode | 'DISABLED'; settingsVersion: number; capabilities: string[];
+  /** As on BillingConfiguration: until when this session's password confirmation is valid; null = confirm first. */
+  reauthenticatedUntil: string | null;
+  campaign: BillingPromotionCampaignView;
+  /** Rows for the draft when one exists and has rules, otherwise for the published terms; empty when neither can be priced. */
+  previewRows: BillingPromotionPreviewRow[];
+  /** The open publication of this campaign (preview or awaiting approval), with its allowed actions; null = none. */
+  operation: BillingConfigurationOperation | null };
+/** Save a draft. No `campaignId` = create a campaign (the server mints the id). `draftVersion` = the draft's version when updating one. */
+export type BillingPromotionDraftInput = { campaignId?: string; draftVersion?: number; values: Omit<BillingPromotionCampaignDraft, 'campaignId'>; reason: string };
+/** PUBLISH = publish the saved draft (strictly validated); RESUME = reopen a paused campaign unchanged. `expectedVersion` = settingsVersion. */
+export type BillingPromotionPreviewInput = { expectedVersion: number; draftVersion?: number; action: 'PUBLISH' | 'RESUME'; reason: string };
+export type BillingPromotionPreviewResult = { operation: BillingConfigurationOperation; previewRows: BillingPromotionPreviewRow[] };
+/** Pause or end now. `expectedVersion` = settingsVersion. */
+export type BillingPromotionStateInput = { expectedVersion: number; reason: string };
