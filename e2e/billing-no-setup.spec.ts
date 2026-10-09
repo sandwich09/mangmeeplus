@@ -142,7 +142,7 @@ for (const width of [1280, 390]) {
     await page.screenshot({ path: info.outputPath(`no-setup-canceled-${width}.png`), fullPage: true });
     await newChoice.click();
     await expect.poll(() => s.log.cancels).toBe(1);
-    await expect(page.getByText('ยุติหน้าชำระเงินเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย', { exact: true })).toBeVisible();
+    await expect(page.getByText('ยกเลิกรายการเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย', { exact: true })).toBeVisible();
     await expect(plans).toBeVisible();
 
     // The old Checkout turns out paid: no second purchase is offered.

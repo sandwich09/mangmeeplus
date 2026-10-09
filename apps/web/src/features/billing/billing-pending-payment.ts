@@ -123,7 +123,7 @@ export function pendingPayment(input: PendingPaymentInput): PendingPayment | nul
     for (const step of lead === 'check' ? [checkStep, continueStep] : [continueStep, checkStep]) if (step) steps.push(step);
     // Giving the payment up is quiet and last. One tap for an unpaid page; the confirmation stays for an outcome that is unknown or needs action.
     steps.push({ key: 'cancel', emphasis: 'quiet', label: input.oneTap ? PENDING_TEXT.labelCancelNew : PENDING_TEXT.labelCancel,
-      caption: [input.oneTap ? 'รายการเดิมจะถูกยุติ' : 'ระบบจะตรวจผลกับผู้ให้บริการรับชำระเงินก่อน จึงเลือกแพ็กเกจใหม่ได้',
+      caption: [input.oneTap ? 'รายการเดิมจะถูกยกเลิก' : 'ระบบจะตรวจผลกับผู้ให้บริการรับชำระเงินก่อน จึงเลือกแพ็กเกจใหม่ได้',
         ...(reserved ? [input.oneTap ? RIGHT_BACK : `ถ้ายังไม่ได้ชำระ ${RIGHT_BACK}`] : []), ...(input.hasPackage ? [PACKAGE_KEPT] : [])] });
     return { kind: 'OPEN', title: PENDING_TEXT.titleOpen, tone: 'attention', intro: [intro, ...reservedLine], steps, hideChoosePackage: true, hidePurchaseHint: true,
       pointer: 'มีรายการชำระเงินที่ยังไม่เสร็จ ดูตัวเลือกด้านล่าง', showsReservedPromotion: !!reserved };

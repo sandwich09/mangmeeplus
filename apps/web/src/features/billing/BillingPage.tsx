@@ -570,7 +570,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       // F09/F10: an unpaid Checkout is ended and replaced in one tap; the two-step confirm stays for attempts whose outcome is unknown or needs action.
       cancel: oneTapCancel ? () => action(async () => {
         const result = await api.cancelCheckout(status.attemptId!);
-        if (result.state === 'EXPIRED') { reopenChooser.current = true; setCheckoutCancelNotice({ text: 'ยุติหน้าชำระเงินเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย', checking: false }); }
+        if (result.state === 'EXPIRED') { reopenChooser.current = true; setCheckoutCancelNotice({ text: 'ยกเลิกรายการเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย', checking: false }); }
         else if (result.state === 'COMPLETED') setCheckoutCancelNotice({ text: 'รายการเดิมชำระสำเร็จแล้ว ระบบกำลังเปิดสิทธิ์ให้ ไม่ต้องซื้อใหม่', checking: true });
         else setCheckoutCancelNotice({ text: 'กำลังตรวจผลรายการเดิมกับผู้ให้บริการรับชำระเงิน กรุณารอสักครู่แล้วกดอัปเดตข้อมูล', checking: true });
         setReload(value => value + 1);
@@ -589,7 +589,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
               <div className="flex flex-col gap-3 sm:flex-row"><button className={STEP_CLASS.secondary} disabled={busy} aria-busy={busy} onClick={() => action(async () => {
                 const result = await api.cancelCheckout(status.attemptId!);
                 setConfirmCheckoutCancel(false);
-                setCheckoutCancelNotice(result.state === 'EXPIRED' ? { text: 'ยุติหน้าชำระเงินแล้ว เลือกแพ็กเกจใหม่ได้', checking: false }
+                setCheckoutCancelNotice(result.state === 'EXPIRED' ? { text: 'ยกเลิกรายการแล้ว เลือกแพ็กเกจใหม่ได้', checking: false }
                   : { text: 'กำลังตรวจผลรายการเดิม กรุณากดอัปเดตข้อมูลก่อนเริ่มรายการใหม่', checking: true });
                 setReload(value => value + 1);
               })}>{PENDING_TEXT.confirmYes}</button><button className={STEP_CLASS.secondary} disabled={busy} onClick={() => setConfirmCheckoutCancel(false)}>{PENDING_TEXT.confirmNo}</button></div>
