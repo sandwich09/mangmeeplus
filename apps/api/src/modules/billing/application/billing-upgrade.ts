@@ -18,16 +18,15 @@ export function isUpgrade(old: Pick<BillingOffer, 'offerKey' | 'interval'>, next
 /**
  * Promotion spec Q5 (plan §2): while a promotion purchase still gives service — paid time, free time, or a promotion
  * period that has not started — an immediate upgrade (differential or full-package) waits. Null = no such purchase.
- * `until` = max(benefitEnd, paidThrough): everything already committed ends first; the free time has no money value
- * to prorate. A cumulative-full refund ends that source's claim (lane D revokes its entitlement).
+ * `until` = the latest promotion `benefitEnd`, the instant this block lifts — a normal purchase stacked after it does not
+ * move the date. The free time has no money value to prorate. A cumulative-full refund ends that source's claim.
  */
-export async function promotionUpgradeDeferral(db: Prisma.TransactionClient, account: Pick<BillingAccount, 'id' | 'paidThrough'>, now = new Date()):
+export async function promotionUpgradeDeferral(db: Prisma.TransactionClient, account: Pick<BillingAccount, 'id'>, now = new Date()):
   Promise<{ until: Date; offer: Pick<BillingOffer, 'offerKey' | 'interval'> } | null> {
   const rows = (await db.billingInvoice.findMany({ where: { billingAccountId: account.id, productKind: 'PACKAGE', applyStatus: 'APPLIED', benefitEnd: { gt: now } } }))
     .filter(row => row.benefitEnd && row.benefitEnd > now && row.refundedSatang < row.paidSatang).sort((a, b) => b.benefitEnd!.getTime() - a.benefitEnd!.getTime());
   if (!rows.length) return null;
-  const until = new Date(Math.max(account.paidThrough?.getTime() ?? 0, ...rows.map(row => row.benefitEnd!.getTime())));
-  return { until, offer: rows[0]!.offerSnapshot as unknown as BillingOffer };
+  return { until: rows[0]!.benefitEnd!, offer: rows[0]!.offerSnapshot as unknown as BillingOffer };
 }
 export const promotionUpgradeDeferred = (until: Date) => billingError('PROMOTION_UPGRADE_DEFERRED',
   `แพ็กเกจนี้อยู่ในช่วงสิทธิ์โปรโมชั่น เปลี่ยนเป็นแพ็กเกจที่สูงขึ้นได้ตั้งแต่ ${until.toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'long' })}`);

@@ -13,7 +13,7 @@ type Tax = BillingPolicy['taxTreatment'];
 type SignedOffer = Pick<BillingOffer, 'offerKey' | 'interval' | 'intervalCount' | 'currency' | 'priceSatang' | 'receiptAllowance'>;
 export type PromotionCampaigns = Record<string, BillingPromotionCampaign>;
 
-const invalid = () => new BadRequestException({ code: 'CONTROL_PROMOTION_INVALID', message: 'Invalid promotion campaign' });
+const invalid = () => new BadRequestException({ code: 'CONTROL_PROMOTION_INVALID', message: 'ข้อมูลแคมเปญไม่ถูกต้อง' });
 const TEXT: Record<BillingPromotionUnavailableReason, string> = {
   NOT_STARTED: 'โปรโมชั่นนี้ยังไม่เริ่ม', ENDED: 'โปรโมชั่นนี้สิ้นสุดแล้ว', PAUSED: 'โปรโมชั่นนี้พักรับสิทธิ์ชั่วคราว', CAP_FULL: 'สิทธิ์โปรโมชั่นนี้เต็มแล้ว',
   ALREADY_USED: 'ร้านนี้ใช้สิทธิ์โปรโมชั่นนี้แล้ว', IN_PROGRESS: 'ร้านนี้มีรายการชำระเงินที่ใช้สิทธิ์โปรโมชั่นนี้ค้างอยู่',
@@ -43,7 +43,7 @@ const rules = (signed: boolean) => (value: unknown) => {
   return new Set(value.map(rule => rule && typeof rule === 'object' ? promotionOfferKey(rule) : '')).size === value.length && value.every(rule =>
     rule && typeof rule === 'object' && !Array.isArray(rule) && Object.keys(rule).length === keys.length && keys.every(key => key in rule) &&
     BILLING_PAID_TIERS.includes(rule.offerKey) && ['month', 'year'].includes(rule.interval) && whole(rule.bonusMonths, 1, 12) &&
-    whole(rule.bonusReceiptUnits, 0, 100_000) && (!signed || /^[0-9a-f]{64}$/.test(rule.offerSignature)));
+    whole(rule.bonusReceiptUnits, 1, 100_000) && (!signed || /^[0-9a-f]{64}$/.test(rule.offerSignature)));
 };
 /** One validator per editable field, shared by the strict publication parse and the draft's "what is missing" list. */
 const FIELD: Record<BillingPromotionDraftField, (value: unknown) => boolean> = {
@@ -96,27 +96,33 @@ export function promotionTermsHash(campaign: BillingPromotionCampaign): string {
 }
 const ended = (campaign: BillingPromotionCampaign, now: Date) => campaign.endedAt !== null || now.toISOString() >= campaign.endsAt;
 
+/** Spec §4: one rule whose pinned offer differs from the current one makes the whole campaign stale — shown and refused alike. */
+const stale = (campaign: BillingPromotionCampaign, currentSignatures: Readonly<Record<string, string>>) =>
+  campaign.rules.some(rule => currentSignatures[promotionOfferKey(rule)] !== rule.offerSignature);
+
 /** Status by the clock (`startsAt <= now < endsAt`). CATALOG_STALE: a rule's pinned offer differs from the current one. */
 export function promotionCampaignStatus(campaign: BillingPromotionCampaign, now: Date, currentSignatures: Readonly<Record<string, string>>):
   'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'ENDED' | 'CATALOG_STALE' {
   if (ended(campaign, now)) return 'ENDED';
   if (campaign.paused) return 'PAUSED';
-  if (campaign.rules.some(rule => currentSignatures[promotionOfferKey(rule)] !== rule.offerSignature)) return 'CATALOG_STALE';
+  if (stale(campaign, currentSignatures)) return 'CATALOG_STALE';
   return now.toISOString() < campaign.startsAt ? 'SCHEDULED' : 'ACTIVE';
 }
 
 /**
  * May this offer be reserved under this campaign at `now`? The one admission rule behind the quote, the status view and
- * the reservation; the caller adds once-per-company and the cap. Only the rule of the offer bought must be current.
+ * the reservation; the caller adds once-per-company and the cap. `currentSignatures` (`promotionSignatures`) must hold
+ * every offer the campaign covers: any stale rule stops admission for the whole campaign, as the console shows it.
  */
-export function promotionAdmission(campaign: BillingPromotionCampaign, offer: SignedOffer, tax: Tax, now: Date):
+export function promotionAdmission(campaign: BillingPromotionCampaign, offer: Pick<SignedOffer, 'offerKey' | 'interval'>,
+  currentSignatures: Readonly<Record<string, string>>, now: Date):
   { rule: BillingPromotionRule } | { reason: BillingPromotionUnavailableReason } {
   if (ended(campaign, now)) return { reason: 'ENDED' };
   if (campaign.paused) return { reason: 'PAUSED' };
   if (now.toISOString() < campaign.startsAt) return { reason: 'NOT_STARTED' };
   const rule = campaign.rules.find(item => promotionOfferKey(item) === promotionOfferKey(offer));
   if (!rule) return { reason: 'OFFER_NOT_COVERED' };
-  return rule.offerSignature === promotionOfferSignature(offer, tax) ? { rule } : { reason: 'CATALOG_STALE' };
+  return stale(campaign, currentSignatures) ? { reason: 'CATALOG_STALE' } : { rule };
 }
 
 /**

@@ -144,9 +144,10 @@ test('an immediate upgrade waits while a promotion purchase still gives service 
   // Inside the paid time and inside the free time: until the end of the free time.
   assert.deepEqual(await at('2026-10-15T00:00:00Z'), { until: benefitEnd, offer: starter });
   assert.deepEqual((await at('2026-11-15T00:00:00Z'))?.until, benefitEnd);
-  // A later normal period bought on top: everything committed ends first.
+  // A later normal period bought on top does not move the date: the block lifts when the promotion's own service ends.
   const later = new Date('2027-01-01T00:00:00Z');
-  assert.deepEqual((await promotionUpgradeDeferral(db, { ...account, paidThrough: later }, new Date('2026-10-15T00:00:00Z')))?.until, later);
+  assert.deepEqual((await promotionUpgradeDeferral(db, { ...account, paidThrough: later }, new Date('2026-10-15T00:00:00Z')))?.until, benefitEnd);
+  assert.equal(await promotionUpgradeDeferral(db, { ...account, paidThrough: later }, benefitEnd), null, 'and from that instant the upgrade is accepted');
   // A promotion period that has not started yet (bought on top of a running package) defers just the same.
   invoices = [{ ...promo, periodStart: paidEnd, periodEnd: benefitEnd, benefitEnd: later }];
   assert.deepEqual((await promotionUpgradeDeferral(db, { ...account, paidThrough: later }, new Date('2026-10-15T00:00:00Z')))?.until, later);

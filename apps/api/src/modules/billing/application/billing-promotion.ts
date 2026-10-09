@@ -3,7 +3,7 @@ import { billingOffer, type BillingOffer, type BillingPolicy, type BillingPromot
 import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { parseBillingPolicy } from '../domain/billing-policy';
-import { parsePromotionCampaignsLenient, promotionAdmission, promotionOfferKey, promotionTermsHash, type PromotionCampaigns } from '../domain/billing-promotion';
+import { parsePromotionCampaignsLenient, promotionAdmission, promotionOfferKey, promotionSignatures, promotionTermsHash, type PromotionCampaigns } from '../domain/billing-promotion';
 
 /**
  * Promotion campaigns, database side (docs/plans/starter-249-bonus-month-promotion-plan.md §5, R4; spec §6). One
@@ -15,7 +15,11 @@ type Tx = Prisma.TransactionClient;
 type Tax = BillingPolicy['taxTreatment'];
 type Reason = BillingPromotionUnavailableReason;
 /** What `BillingService.settings()` returns, as far as promotions read it. */
-export type PromotionSettings = { settings: { livemode: boolean }; promotions: PromotionCampaigns };
+export type PromotionSettings = { settings: { livemode: boolean }; policy: BillingPolicy | null; promotions: PromotionCampaigns };
+/** The current signature of every offer a campaign covers (spec §4: one stale rule stops the whole campaign); the offer
+ *  being bought counts as the caller priced it. */
+const currentSignatures = (campaign: BillingPromotionCampaign, policy: BillingPolicy | null, tax: Tax, offer?: BillingOffer) =>
+  promotionSignatures([...campaign.rules.map(rule => billingOffer(rule.offerKey, rule.interval, policy)), ...(offer ? [offer] : [])], tax);
 const TAKEN = ['RESERVED', 'CONSUMED'];
 /** Spec Q3: the first Checkout dispatch must start within 10 minutes of the reservation commit. */
 const CREATE_BY_MS = 10 * 60_000;
@@ -60,7 +64,7 @@ export async function promotionOffers(tx: Tx, input: { settings: PromotionSettin
     for (const rule of campaign.rules) {
       const offer = input.offers.find(item => promotionOfferKey(item) === promotionOfferKey(rule));
       if (!offer) continue;
-      const admission = promotionAdmission(campaign, offer, input.tax, input.now), reason = 'reason' in admission ? admission.reason : company.reason;
+      const admission = promotionAdmission(campaign, offer, currentSignatures(campaign, input.settings.policy, input.tax, offer), input.now), reason = 'reason' in admission ? admission.reason : company.reason;
       views.push({ campaignId: campaign.campaignId, displayName: campaign.displayName, offerKey: rule.offerKey, interval: rule.interval,
         bonusMonths: rule.bonusMonths, bonusReceiptUnits: rule.bonusReceiptUnits, totalMonths: (rule.interval === 'year' ? 12 : 1) + rule.bonusMonths,
         totalReceiptUnits: offer.receiptAllowance + rule.bonusReceiptUnits, endsAt: campaign.endsAt, available: !reason, reason });
@@ -81,7 +85,7 @@ export async function promotionEligibility(tx: Tx, input: { settings: PromotionS
     : campaign.rules.some(rule => promotionOfferKey(rule) === promotionOfferKey(input.offer)));
   if (input.campaignId && !campaigns.length) return { ok: false, reason: 'CHANGED' };
   for (const campaign of campaigns) {
-    const admission = promotionAdmission(campaign, input.offer, input.tax, input.now);
+    const admission = promotionAdmission(campaign, input.offer, currentSignatures(campaign, input.settings.policy, input.tax, input.offer), input.now);
     const reason = 'reason' in admission ? admission.reason : (await companyAdmission(tx, env, campaign, input.companyId)).reason;
     if ('reason' in admission || reason) { reasons.push(reason!); continue; }
     const { rule } = admission;
@@ -113,7 +117,7 @@ export async function reservePromotion(tx: Tx, input: { snapshot: BillingPromoti
   try { policy = parseBillingPolicy(revision.policyJson); } catch (error) { if (error instanceof BadRequestException) return 'CHANGED'; throw error; }
   const campaign = parsePromotionCampaignsLenient(revision.promotionJson)[snapshot.campaignId];
   if (!campaign) return 'CHANGED';
-  const admission = promotionAdmission(campaign, billingOffer(snapshot.offerKey, snapshot.interval, policy), policy.taxTreatment, now);
+  const admission = promotionAdmission(campaign, snapshot, currentSignatures(campaign, policy, policy.taxTreatment), now);
   if ('reason' in admission) return admission.reason;
   if (campaign.revision !== snapshot.revision || promotionTermsHash(campaign) !== snapshot.termsHash || admission.rule.offerSignature !== snapshot.offerSignature) return 'CHANGED';
   const { row, reason } = await companyAdmission(tx, env, campaign, input.companyId);
