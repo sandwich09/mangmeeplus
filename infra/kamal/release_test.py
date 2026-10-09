@@ -874,5 +874,45 @@ class Contracts(unittest.TestCase):
                 with self.assertRaises(ValueError):r.rollback(r.state/'active.json')
                 self.assertEqual(calls,[])
 
+    def test_enrolled_baseline_replaces_the_retired_ecs_read(self):
+        ref=f'arn:aws:secretsmanager:{m.REGION}:{m.ACCOUNT}:secret:watchdog-bms/uat/jwt-AbCdEf'
+        body=lambda service:{'scalingTarget':{'min':1},'primaryContainer':{'image':'registry/'+service,
+            'environment':[{'name':'APP_ENV','value':'production'},{'name':'DEPLOY_ENVIRONMENT','value':'uat'}],
+            'secrets':[{'name':'JWT_SECRET','valueFrom':ref}]}}
+        # Every AWS call is logged; an ECS call fails, so a pass proves the enrolled directory was the only source.
+        aws='#!/bin/sh\necho "$@" >> "$AWS_STUB_LOG"\ncase "$*" in\n' \
+            '*"sts get-caller-identity"*) echo \'{"Account":"%s","Arn":"arn:aws:sts::%s:assumed-role/deploy/s"}\';;\n' \
+            '*"secretsmanager describe-secret"*) echo \'{"VersionIdsToStages":{"v1":["AWSCURRENT"]}}\';;\n' \
+            '*) exit 9;;\nesac\n' % (m.ACCOUNT,m.ACCOUNT)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);bins=root/'bin';bins.mkdir();(bins/'aws').write_text(aws);(bins/'aws').chmod(0o755)
+            env={**os.environ,'PATH':str(bins)+os.pathsep+os.environ['PATH'],'AWS_STUB_LOG':str(root/'aws.log')}
+            def capture(name,baseline):
+                return subprocess.run([sys.executable,str(m.HELPERS/'capture-config.py'),'--environment','uat','--profile','',
+                    '--private-output',str(root/name),'--evidence',str(root/(name+'.json')),'--baseline',str(baseline)],
+                    env=env,capture_output=True,text=True)
+            enrolled=root/'config-baseline';enrolled.mkdir()
+            for service in m.SERVICES:m.write(enrolled/(service+'.configuration.json'),body(service))
+            self.assertEqual(capture('first',enrolled).returncode,0)
+            evidence=m.read(root/'first.json')
+            self.assertEqual((evidence['status'],evidence['configurationSource']),('passed','enrolled-baseline'))
+            self.assertEqual(evidence['secretVersions'],{ref:'v1'})
+            self.assertEqual(m.read(root/'first'/'workers.configuration.json'),body('workers'))
+            self.assertEqual(evidence['services']['api-web']['configurationSha256'],
+                hashlib.sha256(json.dumps(body('api-web'),sort_keys=True).encode()).hexdigest())
+            self.assertNotIn(' ecs ',(root/'aws.log').read_text())
+            # An incomplete enrollment stops the release; it never falls back to another source.
+            (enrolled/'workers.configuration.json').unlink()
+            self.assertNotEqual(capture('second',enrolled).returncode,0)
+            evidence=m.read(root/'second.json')
+            self.assertEqual(evidence['status'],'blocked')
+            self.assertEqual(evidence['errors'],['baseline:workers: enrolled configuration is missing or malformed'])
+            self.assertNotIn(' ecs ',(root/'aws.log').read_text())
+            # The release passes the option only where a baseline is enrolled beside the target.
+            r=m.Release.__new__(m.Release);r.state=root
+            self.assertEqual(r.enrolled_baseline(),['--baseline',str(enrolled)])
+            r.state=root/'bin'
+            self.assertEqual(r.enrolled_baseline(),[])
+
 
 if __name__=='__main__':unittest.main(verbosity=2)
