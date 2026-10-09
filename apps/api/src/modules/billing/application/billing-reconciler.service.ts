@@ -114,6 +114,32 @@ export class BillingReconcilerService {
     return true;
   }
 
+  /**
+   * Promotion spec §6: a right reserved for a Checkout that was never requested goes back once its `createBy` has passed.
+   * The caller has just read the provider and found no Checkout session of this attempt (or no Customer to hold one). The
+   * journal's proof that no request was sent is the status itself: only the pre-dispatch barrier moves `CREATING` on, and
+   * it does so guarded on `CREATING` under this same Company lock, so after this commit the old request can never be sent.
+   * An attempt that reached REQUESTING or UNKNOWN is never released by elapsed time, and one without a promotion is not
+   * touched at all. False = not this case; the caller fails the pass exactly as before.
+   */
+  private async releaseUndispatchedPromotion(account: BillingAccount, attempt: BillingAttempt, lease: string): Promise<boolean> {
+    if (attempt.status !== 'CREATING' || attempt.checkoutSessionId || !(attempt.quoteSnapshot as unknown as BillingSnapshot).promotion) return false;
+    const right = await promotionForAttempt(this.prisma.client, attempt.id);
+    if (right?.state !== 'RESERVED' || right.createBy > new Date()) return false;
+    await this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+      const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: 'CREATING', checkoutSessionId: null },
+        data: { status: 'EXPIRED', errorCode: 'BILLING_CHECKOUT_NOT_STARTED', version: { increment: 1 } } });
+      if (changed.count !== 1) throw new Error('billing.one_time_source_changed');
+      await tx.billingAccount.updateMany({ where: { id: account.id, activeAttemptId: attempt.id }, data: { activeAttemptId: null, observedAt: new Date(), version: { increment: 1 } } });
+      await releaseUnpaidPromotion(tx, account, attempt, 'checkout_never_started');
+      // The passes before `createBy` could only fail; this one settled what they could not.
+      await tx.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
+        kind: 'RECONCILIATION_FAILED', referenceId: account.id, state: { not: 'RESOLVED' } }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
+    });
+    return true;
+  }
+
   async receive(raw: Buffer | undefined, signature: string | undefined): Promise<{ accepted: true }> {
     if (!this.stripe.enabled || !this.config.stripeWebhookSecret) throw new ServiceUnavailableException('Stripe receiver is not configured');
     if (!raw || !verifyStripeSignature(raw, signature, this.config.stripeWebhookSecret)) throw new UnauthorizedException('Invalid Stripe signature');
@@ -231,6 +257,8 @@ export class BillingReconcilerService {
         // Durable metadata lookup, never recreating a customer after an ambiguous old request.
         const customers = await this.stripe.list('/customers', { created: { gte: Math.floor(attempt.createdAt.getTime() / 1000) - 300 } });
         const matches = customers.filter((c) => c.metadata?.billingAccountId === account.id);
+        // No Customer at the provider means no Checkout either: a promotion right stranded before any request goes back.
+        if (!matches.length && await this.releaseUndispatchedPromotion(account, attempt, leaseToken)) return;
         if (matches.length !== 1) throw new Error('billing.customer_unknown');
         await this.prisma.client.billingAccount.updateMany({ where: { id: account.id, leaseToken, leaseUntil: { gt: new Date() }, customerId: null }, data: { customerId: matches[0]!.id } });
         account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
@@ -521,6 +549,7 @@ export class BillingReconcilerService {
     const sessions = originalSession ? [originalSession] : attempt.checkoutSessionId
       ? [await this.stripe.request('GET', `/checkout/sessions/${attempt.checkoutSessionId}`)]
       : (await this.stripe.list('/checkout/sessions', { customer: account.customerId })).filter(s => s.metadata?.billingAttemptId === attempt.id);
+    if (!sessions.length && !recordOnly && await this.releaseUndispatchedPromotion(account, attempt, lease)) return;
     if (sessions.length !== 1) throw new Error('billing.checkout_unknown');
     const session = sessions[0]!;
     if (session.object !== 'checkout.session' || session.mode !== 'payment' || session.livemode !== account.livemode ||

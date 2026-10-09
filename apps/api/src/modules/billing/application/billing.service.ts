@@ -84,14 +84,15 @@ export const invoiceServiceEndsAt = (at: Date): Prisma.BillingInvoiceWhereInput 
 /**
  * Promotion plan R11: the right as the buyer sees it, the renewal setup derived from the account — no state column.
  * One-time: nothing to set up. Renewing: READY once a subscription is bound, PENDING while the paid attempt still holds
- * the account slot (REVIEW after 23 h or with an open issue), CANCELLED once renewal was stopped or the slot let go.
+ * the account slot (REVIEW after 23 h or with an open issue about this purchase — `renewalSetupIssue`), CANCELLED once
+ * renewal was stopped or the slot let go.
  */
 function promotionUse(row: BillingPromotionRedemption, snapshot: BillingSnapshot, account: Pick<BillingAccount, 'baseSubscriptionId' | 'subscriptionState' | 'cancelAtPeriodEnd' | 'activeAttemptId'>,
-  openIssue: boolean, now = new Date()): BillingPromotionUse {
+  renewalIssue: boolean, now = new Date()): BillingPromotionUse {
   const renewalSetupState = oneTimeMode(snapshot.quote.purchaseMode) ? 'NOT_REQUIRED' : row.state === 'RESERVED' ? 'PENDING'
     : account.baseSubscriptionId ? account.cancelAtPeriodEnd || ['canceled', 'incomplete_expired'].includes(account.subscriptionState) ? 'CANCELLED' : 'READY'
     : account.activeAttemptId !== row.attemptId ? 'CANCELLED'
-    : openIssue || (row.consumedAt && now.getTime() - row.consumedAt.getTime() > 23 * 3_600_000) ? 'REVIEW' : 'PENDING';
+    : renewalIssue || (row.consumedAt && now.getTime() - row.consumedAt.getTime() > 23 * 3_600_000) ? 'REVIEW' : 'PENDING';
   return { campaignId: row.campaignId, displayName: snapshot.promotion?.displayName ?? '', state: row.state as 'RESERVED' | 'CONSUMED',
     paidEnd: row.paidEnd?.toISOString() ?? null, benefitEnd: row.bonusEnd?.toISOString() ?? null, bonusMonths: row.bonusMonths, bonusReceiptUnits: row.bonusReceiptUnits,
     renewalSetupState, expectedNextChargeAt: ['NOT_REQUIRED', 'CANCELLED'].includes(renewalSetupState) ? null : row.bonusEnd?.toISOString() ?? null };
@@ -120,6 +121,34 @@ export function canResendDocuments(row: { providerStatus: string; applyStatus: s
   // The command itself refuses BILLING_RECIPIENT_BOUNCED (billing-document-resend.ts); the button must
   // agree, or it offers a resend that can only fail.
   return row.providerStatus === 'paid' && row.applyStatus === 'APPLIED' && !!account.recipientEmail && !account.activeEmailOperationId && !account.recipientBouncedAt;
+}
+
+/**
+ * Promotion plan R3, for every attempt: publishing, pausing or ending a campaign mints a new revision with the SAME base
+ * policy and bumps the settings version. Neither withdraws a reserved right, and neither may stop a purchase that has no
+ * promotion at all. So a different revision or settings version counts as unchanged while the base policy is the one the
+ * attempt pinned. The settings version also moves with a gate: the caller reads `new_sales` and the payment-mode gate as
+ * always, and the one other gate Checkout relied on (`plan_changes`, for an upgrade or a scheduled change) is read here.
+ */
+async function basePolicyUnchanged(db: Prisma.TransactionClient, state: Awaited<ReturnType<BillingService['settings']>>,
+  attempt: { quoteSnapshot: unknown; policyRevisionId: string }): Promise<boolean> {
+  const snapshot = attempt.quoteSnapshot as BillingSnapshot | null;
+  if (!state.revision || ((snapshot?.upgrade || snapshot?.oneTimeChange) && !state.gates.plan_changes)) return false;
+  if (state.revision.id === attempt.policyRevisionId) return true;
+  const pinned = await db.billingPolicyRevision.findUnique({ where: { id: attempt.policyRevisionId }, select: { policyJson: true } });
+  return !!pinned && configurationHash(pinned.policyJson) === configurationHash(state.revision.policyJson);
+}
+
+/**
+ * Promotion plan R11: is the renewal setup of THIS purchase under review? Only an open issue about the purchase itself
+ * counts — its attempt (an unconfirmed Checkout), its invoice (paid but held or not applied), or the account the
+ * reconciler could not finish (where a failed renewal bind lands). A refund or dispute review of other money does not.
+ */
+async function renewalSetupIssue(db: Prisma.TransactionClient, account: Pick<BillingAccount, 'id' | 'companyId' | 'stripeAccountId' | 'livemode'>,
+  right: Pick<BillingPromotionRedemption, 'attemptId' | 'invoiceId'>): Promise<boolean> {
+  return !!await db.billingIssue.findFirst({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
+    livemode: account.livemode, state: { not: 'RESOLVED' }, referenceId: { in: [account.id, right.attemptId, right.invoiceId].filter((id): id is string => !!id) } },
+    select: { id: true } });
 }
 
 @Injectable()
@@ -805,7 +834,7 @@ export class BillingService {
         const state = await this.settings(tx);
         if (!state.gates.new_sales || !state.gates[gateForMode(snapshot.quote.purchaseMode ?? 'CARD_AUTO')] ||
             ((state.revision?.id !== attempt.policyRevisionId || state.settings.version !== snapshot.settingsVersion) &&
-              !await this.promotionPolicyKept(tx, state, attempt))) throw billingError('BILLING_SALES_CLOSED', 'หยุดรับรายการใหม่ชั่วคราว');
+              !await basePolicyUnchanged(tx, state, attempt))) throw billingError('BILLING_SALES_CLOSED', 'หยุดรับรายการใหม่ชั่วคราว');
         assertCompanyCanBuy(state.policy, context.companyId);
         const company = await tx.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
         if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ');
@@ -920,18 +949,6 @@ export class BillingService {
       await this.issue(context.companyId, 'UNKNOWN_ATTEMPT', attempt.id);
       return { attemptId: attempt.id, state: 'UNKNOWN', checkoutUrl: null };
     }
-  }
-
-  /**
-   * Promotion plan R3: a reserved right is a promise. Pausing or ending a campaign publishes a new revision, so for an
-   * attempt holding a promotion a different revision or settings version still counts as unchanged while the base policy
-   * is the same one. Gates are checked by the caller as always; an attempt without a promotion never gets here as kept.
-   */
-  private async promotionPolicyKept(db: Prisma.TransactionClient, state: Awaited<ReturnType<BillingService['settings']>>,
-    attempt: { quoteSnapshot: unknown; policyRevisionId: string }): Promise<boolean> {
-    if (!(attempt.quoteSnapshot as BillingSnapshot | null)?.promotion || !state.revision) return false;
-    const pinned = await db.billingPolicyRevision.findUnique({ where: { id: attempt.policyRevisionId }, select: { policyJson: true } });
-    return !!pinned && configurationHash(pinned.policyJson) === configurationHash(state.revision.policyJson);
   }
 
   async issue(companyId: string | null, kind: string, referenceId: string) {
@@ -1131,7 +1148,7 @@ export class BillingService {
       graceEndsAt: account?.graceEndsAt?.toISOString() ?? null,
       allowedActions: finalActions, ...(deal ? { deal } : {}), ...(eventDiscount ? { eventDiscount } : {}),
       ...(promotions.length ? { promotions } : {}),
-      ...(right && rightAttempt ? { promotion: promotionUse(right, rightAttempt.quoteSnapshot as unknown as BillingSnapshot, account!, issues.length > 0) } : {}),
+      ...(right && rightAttempt ? { promotion: promotionUse(right, rightAttempt.quoteSnapshot as unknown as BillingSnapshot, account!, await renewalSetupIssue(this.prisma.client, account!, right)) } : {}),
       ...(deferral ? { upgradeDeferredUntil: deferral.until.toISOString() } : {}),
       usage: await this.usage(company.id),
       pendingPlanChange: pending,
@@ -1207,8 +1224,6 @@ export class BillingService {
     const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
     // The right this Checkout holds; one given back with an unpaid Checkout no longer names the attempt, so nothing shows.
     const right = snapshot.promotion ? await promotionForAttempt(this.prisma.client, attempt.id) : null;
-    const openIssue = right ? !!await this.prisma.client.billingIssue.findFirst({ where: { companyId: context.companyId, stripeAccountId: account!.stripeAccountId,
-      livemode: account!.livemode, state: { not: 'RESOLVED' } }, select: { id: true } }) : false;
     return { attemptId: attempt.id, state: attempt.status, errorCode: attempt.errorCode, observedAt: attempt.updatedAt.toISOString(),
       paymentState: invoice?.providerStatus === 'paid' ? 'PAID' : ['FAILED', 'EXPIRED'].includes(attempt.status) ? 'FAILED' : 'PENDING',
       applyState: invoice ? invoice.applyStatus as BillingStatus['applyState'] : 'NONE', invoiceReference: invoice?.id ?? null,
@@ -1218,7 +1233,7 @@ export class BillingService {
       // Sales-event spec §3.6: the ticket is used once the payment is confirmed; a Checkout that ended unpaid released it.
       ...(snapshot.eventDiscount?.choice === 'USE' && !['FAILED', 'EXPIRED'].includes(attempt.status) ? { eventDiscount: {
         shownDiscountSatang: snapshot.eventDiscount.shownDiscountSatang, state: invoice?.providerStatus === 'paid' ? 'USED' as const : 'IN_PAYMENT' as const } } : {}),
-      ...(right && right.state !== 'RELEASED' ? { promotion: promotionUse(right, snapshot, account!, openIssue) } : {}) };
+      ...(right && right.state !== 'RELEASED' ? { promotion: promotionUse(right, snapshot, account!, await renewalSetupIssue(this.prisma.client, account!, right)) } : {}) };
   }
 
   async resume(context: RequestContext, id: string): Promise<BillingCheckoutResult> {
@@ -1230,7 +1245,7 @@ export class BillingService {
     const state = await this.settings();
     const purchaseMode = (attempt.quoteSnapshot as unknown as BillingSnapshot).quote.purchaseMode ?? 'CARD_AUTO';
     if (!state.gates.new_sales || !state.gates[gateForMode(purchaseMode)] ||
-        (state.revision?.id !== attempt.policyRevisionId && !await this.promotionPolicyKept(this.prisma.client, state, attempt))) return result;
+        (state.revision?.id !== attempt.policyRevisionId && !await basePolicyUnchanged(this.prisma.client, state, attempt))) return result;
     await this.stripe.assertAccount();
     const session = await this.stripe.request('GET', `/checkout/sessions/${attempt.checkoutSessionId}`);
     if (session.mode !== ((attempt.quoteSnapshot as unknown as BillingSnapshot).repeat || paymentCheckoutSnapshot(attempt.quoteSnapshot as unknown as BillingSnapshot) ? 'payment' : 'subscription') || stripeId(session.customer) !== account.customerId || session.metadata?.billingAccountId !== account.id || session.metadata?.billingAttemptId !== id) throw billingError('BILLING_MAPPING_MISMATCH', 'กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง');
