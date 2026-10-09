@@ -100,6 +100,10 @@ const NOT_USER_FACING = new Set([
   // the `blocker` of the claim detail, never an HTTP answer by itself. The claim page words it through
   // `cancellationBlockerText`; a cancel refused for the same reason answers `reimbursement_cancellation_<code>`.
   'expense_not_voidable', 'posting_unresolved', 'reason_too_short',
+  // Promotion campaign drafts (`billing/domain/billing-promotion.ts`, `parsePromotionDraft`): what is still missing
+  // in one field of a saved draft, listed in the Admin draft view (`validationErrors`), never an HTTP answer. The
+  // campaign form words each field's finding itself.
+  'REQUIRED', 'INVALID', 'END_NOT_AFTER_START',
 ]);
 
 describe('Thai coverage for default-open feature error codes', () => {
