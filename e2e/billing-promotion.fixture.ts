@@ -70,10 +70,17 @@ export type CustomerWorld = {
   /** Quote answers by order of the request (1-based); anything not listed is answered by the default simulation. */
   quoteOverride: (n: number, body: QuoteBody) => Answer | undefined;
   checkoutOverride: (n: number) => Answer | undefined;
-  /** `POST …/attempts/:id/resume` ("กลับไปยังรายการเดิม"): the Checkout URL of the open payment, or what the API refuses with. */
+  /** `POST …/attempts/:id/resume` ("ชำระเงินต่อ"): the Checkout URL of the open payment, or what the API refuses with. */
   resumeOverride: (n: number) => Answer | undefined;
-  log: { quotes: QuoteBody[]; checkouts: CheckoutCall[]; statusReads: number; refreshes: number; resumes: number; others: string[] };
+  /** `POST …/attempts/:id/cancel` ("ยกเลิกรายการนี้ …"): what the API refuses with. A cancel that goes through answers `cancelState`. */
+  cancelOverride: (n: number) => Answer | undefined;
+  cancelState: 'EXPIRED' | 'COMPLETED' | 'PENDING';
+  /** The shop once its open payment is ended (EXPIRED): the same shop with no attempt, the reserved right given back and the promotion on offer again. null = unchanged. */
+  afterCancel: BillingStatus | null;
+  /** Every POST the page sent to the billing API, in order (path relative to `…/billing`). */
+  log: { quotes: QuoteBody[]; checkouts: CheckoutCall[]; statusReads: number; refreshes: number; resumes: number; cancels: number; calls: SentCall[]; others: string[] };
 };
+export type SentCall = { method: string; path: string; body: unknown; key: string | null };
 
 export const offers = (): BillingOffer[] => BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval =>
   ({ ...billingOffer(tier, interval), availability: 'AVAILABLE' as const, reason: null })));
@@ -105,7 +112,7 @@ export function newShopStatus(companyId: string, over: Partial<BillingStatus> = 
 export function paidShopStatus(companyId: string, over: Partial<BillingStatus> = {}): BillingStatus {
   const end = addMonths(FIXED_NOW, 2);
   return { ...newShopStatus(companyId), billingProfile: PROFILE_FULL, paymentState: 'PAID', applyState: 'APPLIED', purchaseSource: 'PAID_CURRENT_MODE', renewalMode: 'CARD_AUTO',
-    accessState: 'ACTIVE', lockReason: undefined, subscriptionState: 'active', attemptId: ATTEMPT_ID, reference: INVOICE_ID, tierKey: 'STARTER_249', interval: 'month',
+    accessState: 'ACTIVE', lockReason: undefined, subscriptionState: 'active', attemptId: null, reference: INVOICE_ID, tierKey: 'STARTER_249', interval: 'month',
     termEndsAt: end, paidThrough: end, nextChargeAt: end, allowedActions: ['new_sales', 'portal_cancel_subscription', 'portal_payment_method'], promotions: undefined,
     usage: { used: 0, limit: 60, remaining: 60, cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: end }, ...over };
 }
@@ -126,13 +133,28 @@ export function heldTicket(): NonNullable<BillingStatus['eventDiscount']> {
 /** The holder's own view of that ticket (`GET …/event-discount`): DISCOUNT = the discount box on the package page. */
 export const heldTicketView = (): BillingEventDiscountView => ({ path: 'DISCOUNT', tickets: [{ serial: 'K7M2Q9XA', eventName: 'งานสัมมนาร้านค้า', discountSatang: 5000,
   chatCreditUnits: 0, receiptImageUnits: 0, expiresAt: '2026-12-31T16:59:00.000Z', state: 'AVAILABLE', batchSuspended: false }] });
+/**
+ * `status()` while a Checkout of the shop is open (`account.activeAttemptId` set). `free` is the same shop with no payment open.
+ * What the API does then (billing.service.ts status()): `new_sales`, `plan_changes` and `portal_cancel_subscription` all need `!activeAttemptId`, so only `portal_payment_method`
+ * can be left; `promotions` and `eventDiscount` are computed only where `new_sales` is allowed, so a status in this state carries neither (the shop's `promotion` right is not gated: a reserved or running one stays); `purchaseBlockCode` is
+ * BILLING_CHECKOUT_PENDING; `attemptId` and `reference` name the attempt (no invoice of its own yet); `canCancelCheckout` is true while the Checkout session can still be ended.
+ */
+export function openPaymentStatus(free: BillingStatus, over: Partial<BillingStatus> = {}): BillingStatus {
+  const open: BillingStatus = { ...free, paymentState: 'PENDING', attemptId: ATTEMPT_ID, reference: ATTEMPT_ID, canCancelCheckout: true, purchaseBlockCode: 'BILLING_CHECKOUT_PENDING',
+    allowedActions: free.allowedActions.filter(action => action === 'portal_payment_method'), ...over };
+  if (!('promotions' in over)) delete open.promotions;
+  if (!('eventDiscount' in over)) delete open.eventDiscount;
+  return open;
+}
+
 /** A legacy trial that is still running: it buys through INITIAL, and the page tells how long the new package runs. */
 export const trialShopStatus = (companyId: string, over: Partial<BillingStatus> = {}) => newShopStatus(companyId, { accessState: 'ACTIVE', lockReason: undefined, purchaseSource: 'TRIAL',
   tierKey: 'FREE_TRIAL_15', termEndsAt: inDays(20), usage: { used: 3, limit: 15, remaining: 12, cadence: 'LEGACY_MONTH', resetsAt: inDays(20), expiresAt: null }, ...over });
 
 export function defaultCustomerWorld(companyId: string, status: BillingStatus = newShopStatus(companyId)): CustomerWorld {
   return { companyId, status, purchase: 'INITIAL', source: 'NO_TERM', trialCarryoverUnits: 0, history: [], attempt: null, heldDiscount: { path: null, tickets: [] },
-    quoteOverride: () => undefined, checkoutOverride: () => undefined, resumeOverride: () => undefined, log: { quotes: [], checkouts: [], statusReads: 0, refreshes: 0, resumes: 0, others: [] } };
+    quoteOverride: () => undefined, checkoutOverride: () => undefined, resumeOverride: () => undefined, cancelOverride: () => undefined, cancelState: 'EXPIRED', afterCancel: null,
+    log: { quotes: [], checkouts: [], statusReads: 0, refreshes: 0, resumes: 0, cancels: 0, calls: [], others: [] } };
 }
 
 /** The 409 the API raises (`promotionUnavailable`): `{ code, reason, message }`, the message in the API's own words. */
@@ -224,6 +246,7 @@ export async function installCustomerRoutes(page: Page, w: CustomerWorld): Promi
     }
     if (method === 'POST') {
       const body = (request.postDataJSON() ?? {}) as Record<string, unknown>;
+      w.log.calls.push({ method, path: path.slice(base.length), body, key: request.headers()['idempotency-key'] ?? null });
       if (path === `${base}/quote`) {
         w.log.quotes.push(body as QuoteBody);
         const answer = answerQuote(w, body as QuoteBody, w.log.quotes.length);
@@ -236,6 +259,13 @@ export async function installCustomerRoutes(page: Page, w: CustomerWorld): Promi
         return json({ attemptId: ATTEMPT_ID, state: 'OPEN', checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_promo' });
       }
       if (path === `${base}/refresh`) { w.log.refreshes++; return json({ queued: true }, 202); }
+      if (path === `${base}/attempts/${ATTEMPT_ID}/cancel`) {
+        w.log.cancels++;
+        const forced = w.cancelOverride(w.log.cancels);
+        if (forced) return json(forced.json, forced.status);
+        if (w.cancelState === 'EXPIRED' && w.afterCancel) w.status = w.afterCancel;
+        return json({ state: w.cancelState });
+      }
       if (path === `${base}/attempts/${ATTEMPT_ID}/resume`) {
         w.log.resumes++;
         const forced = w.resumeOverride(w.log.resumes);
