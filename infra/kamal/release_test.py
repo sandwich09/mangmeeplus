@@ -891,7 +891,7 @@ class Contracts(unittest.TestCase):
                 return subprocess.run([sys.executable,str(m.HELPERS/'capture-config.py'),'--environment','uat','--profile','',
                     '--private-output',str(root/name),'--evidence',str(root/(name+'.json')),'--baseline',str(baseline)],
                     env=env,capture_output=True,text=True)
-            enrolled=root/'config-baseline';enrolled.mkdir()
+            enrolled=root/'uat'/'config-baseline';enrolled.mkdir(parents=True)
             for service in m.SERVICES:m.write(enrolled/(service+'.configuration.json'),body(service))
             self.assertEqual(capture('first',enrolled).returncode,0)
             evidence=m.read(root/'first.json')
@@ -908,10 +908,22 @@ class Contracts(unittest.TestCase):
             self.assertEqual(evidence['status'],'blocked')
             self.assertEqual(evidence['errors'],['baseline:workers: enrolled configuration is missing or malformed'])
             self.assertNotIn(' ecs ',(root/'aws.log').read_text())
-            # The release passes the option only where a baseline is enrolled beside the target.
-            r=m.Release.__new__(m.Release);r.state=root
-            self.assertEqual(r.enrolled_baseline(),['--baseline',str(enrolled)])
-            r.state=root/'bin'
+            # A repeated secret name in a hand-written body is refused, not collapsed.
+            repeated=body('workers');repeated['primaryContainer']['secrets']*=2
+            m.write(enrolled/'workers.configuration.json',repeated)
+            self.assertIn('duplicate/conflicting config key',capture('third',enrolled).stderr)
+            # Both reads of a release carry the option: the capture and the second read before mutation.
+            seen=[]
+            class Stop(Exception):pass
+            def command(cmd,**_):
+                seen.append(cmd);raise Stop
+            r=m.Release.__new__(m.Release);r.state=root/'uat';r.work=root;r.receipt={};r.command=command
+            r.args=argparse.Namespace(environment='uat',profile='')
+            for read in (r.configuration,r.config_freshness):
+                with self.assertRaises(Stop):read()
+                self.assertEqual(seen[-1][-2:],['--baseline',str(enrolled)])
+            # An environment with nothing enrolled keeps the ECS read.
+            r.args.environment='production'
             self.assertEqual(r.enrolled_baseline(),[])
 
 

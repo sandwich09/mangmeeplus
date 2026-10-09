@@ -81,7 +81,8 @@ def main():
         container = config['primaryContainer']
         values = {row['name']: row['value'] for row in container.get('environment', [])}
         secrets = {row['name']: row['valueFrom'] for row in container.get('secrets', [])}
-        if len(values) != len(container.get('environment', [])) or set(values) & set(secrets):
+        if (len(values) != len(container.get('environment', [])) or len(secrets) != len(container.get('secrets', []))
+                or set(values) & set(secrets)):
             raise SystemExit(service + ': duplicate/conflicting config key')
         if values.get('APP_ENV') != 'production' or values.get('DEPLOY_ENVIRONMENT') != env:
             raise SystemExit(service + ': wrong environment identity')
