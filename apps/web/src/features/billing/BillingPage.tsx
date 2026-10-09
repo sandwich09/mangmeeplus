@@ -28,11 +28,14 @@ import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog
 const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(satang / 100);
 const date = (value: string | null | undefined) => value ? new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
 const button = billingControl;
-/** The choices of the pending-payment block: the first is green, the second the normal button, giving the payment up is quiet. Full width on a phone, 44px high at every width. */
+/**
+ * The choices of the pending-payment block: the first is green, the second the normal button, giving the payment up is quiet. Full width on a phone, 44px high at every width.
+ * The quiet one is a line of text under its own words, so it starts where its captions start (no inset) and wraps balanced (a last word never stands alone on a line).
+ */
 const STEP_CLASS = {
   primary: `${billingPrimaryControl} w-full sm:w-auto`,
   secondary: `${billingControl} w-full sm:w-auto`,
-  quiet: 'inline-flex min-h-11 w-full items-center justify-center rounded-xl px-4 py-2 text-base font-semibold text-gray-600 underline underline-offset-4 hover:text-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto',
+  quiet: 'inline-flex min-h-11 w-full items-center justify-start rounded-xl py-2 text-left text-base font-semibold text-gray-600 underline underline-offset-4 [text-wrap:balance] hover:text-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto',
 } as const;
 const PENDING_TONE = { attention: 'border-amber-300 bg-amber-50', ok: 'border-brand-200 bg-brand-50', neutral: 'border-gray-200 bg-gray-50' } as const;
 const enterpriseMenuSummary = 'เพิ่มสิทธิ์ออก ภ.ง.ด.53 และพิมพ์หนังสือรับรอง 50 ทวิในระบบ';
@@ -140,12 +143,19 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   // checkout also scrolls to the chooser heading just above. Declared after that effect so this one has the last word: the notice lands under the sticky header and is announced.
   const lostNotice = useRef<HTMLDivElement>(null);
   useEffect(() => { if (promotionLost) { lostNotice.current?.scrollIntoView({ block: 'start' }); lostNotice.current?.focus({ preventScroll: true }); } }, [promotionLost]);
-  // The ordinary messages sit at the top too: the red banner after a refused action, and the notice after ending or resuming a payment. The buyer is at the button that was pressed, so each is
-  // brought into view under the sticky header (only if it is not already fully visible: `nearest`) and takes focus. Last in the order: a message always wins over "go to the chooser heading";
-  // the lost-promotion notice and the banner never come together (`action` sets one or the other); a recipient error has its own destination (the email panel), so the banner leaves it alone.
-  const errorBanner = useRef<HTMLDivElement>(null), checkoutNotice = useRef<HTMLDivElement>(null);
+  // The ordinary messages sit at the top too: the red banner after a refused action, the notice after ending or resuming a payment, and the answer of the check. The buyer is at the button that
+  // was pressed, so each is brought into view under the sticky header (only if it is not already fully visible: `nearest`) and takes focus. Last in the order: a message always wins over
+  // "go to the chooser heading"; the lost-promotion notice and the banner never come together (`action` sets one or the other); a recipient error has its own destination (the email panel),
+  // so the banner leaves it alone. The order the scroll/focus effects run in (the later one wins, within one commit): the cadence notice (declared first, inside the chooser, never in the
+  // same commit as a chooser change), the chooser heading, the lost-promotion notice, the banner, the cancel notice, the answer of the check, the recipient destinations.
+  const errorBanner = useRef<HTMLDivElement>(null), checkoutNotice = useRef<HTMLDivElement>(null), refreshAnswer = useRef<HTMLDivElement>(null);
+  // Ending a payment reopens the chooser a read later, in a commit of its own, and the chooser heading scrolls past the notice that says why. That reopening bumps this counter in the SAME
+  // batch as `setChoosing(true)`, so the notice effect (declared after the chooser's) runs again in that commit and is the last to scroll. Opening the chooser by hand does not bump it:
+  // an old notice never pulls the page back to itself.
+  const [noticeAgain, setNoticeAgain] = useState(0);
   useEffect(() => { if (error && !RECIPIENT_ERROR_CODES.includes(errorCode ?? '')) { errorBanner.current?.scrollIntoView({ block: 'nearest' }); errorBanner.current?.focus({ preventScroll: true }); } }, [error, errorCode]);
-  useEffect(() => { if (checkoutCancelNotice) { checkoutNotice.current?.scrollIntoView({ block: 'nearest' }); checkoutNotice.current?.focus({ preventScroll: true }); } }, [checkoutCancelNotice]);
+  useEffect(() => { if (checkoutCancelNotice) { checkoutNotice.current?.scrollIntoView({ block: 'nearest' }); checkoutNotice.current?.focus({ preventScroll: true }); } }, [checkoutCancelNotice, noticeAgain]);
+  useEffect(() => { if (refreshNotice) { refreshAnswer.current?.scrollIntoView({ block: 'nearest' }); refreshAnswer.current?.focus({ preventScroll: true }); } }, [refreshNotice]);
   useEffect(() => { if (error && RECIPIENT_ERROR_CODES.includes(errorCode ?? '')) { setSection('payment'); emailSettings.current?.scrollIntoView({ block: 'start' }); } }, [error, errorCode]);
   // The renewal tab renders first; only then is there a recipient panel to scroll to.
   useEffect(() => { if (recipientOpen) emailSettings.current?.scrollIntoView({ block: 'start' }); }, [recipientOpen]);
@@ -189,7 +199,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       if (read !== statusRead.current) return;
       if (!status.attemptId) setCheckoutCancelNotice(notice => notice?.checking ? null : notice);
       // F09/F10: after a one-tap cancel, the chooser opens only on a status that allows a new sale.
-      if (reopenChooser.current && status.allowedActions.includes('new_sales') && !status.attemptId) { reopenChooser.current = false; setChoosing(true); setSection('package'); }
+      if (reopenChooser.current && status.allowedActions.includes('new_sales') && !status.attemptId) { reopenChooser.current = false; setChoosing(true); setSection('package'); setNoticeAgain(value => value + 1); }
     }).catch(e => { if (active) { setData(null); setError(errorText(e)); setErrorCode(apiErrorCode(e)); } });
     if (returning) {
       if (!returnAttemptId) setReturnError('ลิงก์ไม่มีเลขรายการที่ถูกต้อง กรุณาดูสถานะและประวัติการชำระเงินของร้าน');
@@ -499,11 +509,14 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const saleClosedUnexplained = !!status && !status.purchaseBlockCode && !canBuy && !status.attemptId && !status.refundReviewPending
     && status.purchaseEligibility === 'ELIGIBLE' && status.accessState !== 'HELD';
   // Round 3: while a payment of this shop is unfinished, in flight or being checked, ONE block says what is waiting and what to press (billing-pending-payment.ts); the generic
-  // "choose a package" button and the hint that invites a new purchase give way to it.
+  // "choose a package" button and the hint that invites a new purchase give way to it. Round 4: for a payment that waits for the buyer or the provider the block LEADS the card and its title
+  // is the card's heading; the amber "still checking" alert, a no-package box with nothing but the pointer, and the old "ยังยืนยันผลไม่ได้" paragraph are gone — one message per fact.
   const pending = status ? pendingPayment({ paymentState: status.paymentState, hasAttempt: !!status.attemptId, awaiting: awaitingStripe, unconfirmed: returning && !checkoutCanceled && !awaitingStripe,
     canEnd: canEndCheckout, canResume: canResumePayment, oneTap: oneTapCancel, canCheck: !!hasPaymentToCheck, moneyReceived: paidNotApplied, renewalSetup: !!promotionBlock?.checking,
     failed: returnFailed, hasPackage: !noPackage, reservedPromotion: promotionReservedName(promotionUse) }) : null;
-  const purchaseHint = pending?.hidePurchaseHint ? pending.pointer : canBuy || oneTapCancel ? lockReason === 'no_package' ? 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน' : 'เลือกแพ็กเกจเพื่อใช้งานต่อ'
+  const pendingShown = !!pending && !!(pending.heading || pending.title || pending.intro.length > 0 || pending.steps.length > 0);
+  const pendingLeads = pendingShown && !!pending?.heading;
+  const purchaseHint = pending?.inFlight ? null : canBuy || oneTapCancel ? lockReason === 'no_package' ? 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน' : 'เลือกแพ็กเกจเพื่อใช้งานต่อ'
     : saleClosedUnexplained ? 'ยังเปิดรับชำระไม่ได้ชั่วคราว กรุณาลองใหม่ภายหลัง' : null;
   const recipientLocked = !!status && billingRecipientLocked(status);
   const purchasing = (choosing && canBuy) || !!quote || !!capacity;
@@ -576,7 +589,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         setReload(value => value + 1);
       }) : () => setConfirmCheckoutCancel(true),
     };
-    return <section aria-label={block.title ?? PENDING_TEXT.regionName} className={`space-y-4 rounded-xl border p-4 ${PENDING_TONE[block.tone]}`}>
+    return <section aria-label={block.heading ?? block.title ?? PENDING_TEXT.regionName} className={`space-y-4 rounded-xl border p-4 ${PENDING_TONE[block.tone]}`}>
       {block.title && <h3 className="text-lg font-bold text-gray-900">{block.title}</h3>}
       {block.intro.map(line => <p key={line} className="break-words leading-7 text-gray-800">{line}</p>)}
       {block.steps.length > 0 && <ol className="space-y-4">
@@ -597,8 +610,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
               <button type="button" className={STEP_CLASS[step.emphasis]} disabled={busy} aria-busy={busy} aria-describedby={ids.join(' ')} onClick={run[step.key]}>{step.label}</button>
               {step.caption.map((line, index) => <p key={line} id={ids[index]} className="break-words text-sm leading-6 text-gray-600">{line}</p>)}
             </>}
-            {step.key === 'check' && refreshNotice && <div className="space-y-2">
-              <p role="status" className="text-sm leading-6 text-gray-700">{refreshNotice}</p>
+            {step.key === 'check' && refreshNotice && <div ref={refreshAnswer} tabIndex={-1} role="status" className="scroll-mt-[calc(var(--app-header-h,0px)+1.5rem)] space-y-2">
+              <p className="text-sm leading-6 text-gray-700">{refreshNotice}</p>
               <button type="button" className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto" disabled={busy} onClick={() => setReload(value => value + 1)}>อัปเดตข้อมูล</button>
             </div>}
           </li>;
@@ -621,8 +634,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       {checkoutCancelNotice.checking && <button className={button} disabled={busy} onClick={() => setReload(value => value + 1)}>อัปเดตข้อมูล</button>}</div>}
     {!data && !error && <p role="status">กำลังตรวจสอบสิทธิ์และรายการชำระเงิน…</p>}
     {data && status && <>
-      {status.purchaseBlockCode && !(pending?.kind === 'OPEN' && status.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING') && <div role="alert" className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
-        <p>{errorText({ code: status.purchaseBlockCode })}</p>
+      {status.purchaseBlockCode && !(status.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' && pendingShown && pending?.inFlight) && <div role="alert" className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
+        <p>{status.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' ? PENDING_TEXT.alertCheckoutPending : errorText({ code: status.purchaseBlockCode })}</p>
         {supportReference && <p className="break-all text-sm">เลขอ้างอิงสำหรับแจ้งทีมงาน: {supportReference}</p>}
         {status.purchaseBlockCode === 'BILLING_EMAIL_UPDATE_PENDING'
           ? <button className={button} onClick={() => { setChoosing(false); openRecipientEditor(); }}>จัดการผู้รับเอกสาร</button>
@@ -650,20 +663,20 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       </p>}
       {bounceBanner}
       <section aria-label="สถานะแพ็กเกจ" className="mangmee-card space-y-5 p-5 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-bold">{returnFailed ? 'รายการชำระเงินนี้ไม่สำเร็จ' : status.pendingDeal ? status.pendingDeal.state === 'HELD' ? 'ชำระแล้ว ต้องตรวจสอบก่อนเริ่มดีล' : status.pendingDeal.state === 'PAID' ? 'ชำระดีลแล้ว รอเริ่มสิทธิ์' : 'ชำระแล้ว กำลังยืนยันการต่ออายุ' : confirmed ? returning ? dealReturn ? 'ใช้งานข้อเสนอพิเศษแล้ว' : 'ชำระแล้ว เปิดใช้งานแล้ว' : 'แพ็กเกจปัจจุบัน' : paidNotApplied ? 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์' : status.paymentState === 'FAILED' ? 'เรียกเก็บเงินไม่สำเร็จ' : checkoutCanceled && returnAttempt?.paymentState !== 'PAID' && !confirmed ? 'ยังไม่ได้ชำระ' : status.attemptId ? 'กำลังตรวจสอบรายการชำระเงิน' : packageHeading}</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-bold">{pending?.heading ?? (returnFailed ? 'รายการชำระเงินนี้ไม่สำเร็จ' : status.pendingDeal ? status.pendingDeal.state === 'HELD' ? 'ชำระแล้ว ต้องตรวจสอบก่อนเริ่มดีล' : status.pendingDeal.state === 'PAID' ? 'ชำระดีลแล้ว รอเริ่มสิทธิ์' : 'ชำระแล้ว กำลังยืนยันการต่ออายุ' : confirmed ? returning ? dealReturn ? 'ใช้งานข้อเสนอพิเศษแล้ว' : 'ชำระแล้ว เปิดใช้งานแล้ว' : 'แพ็กเกจปัจจุบัน' : paidNotApplied ? 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์' : status.paymentState === 'FAILED' ? 'เรียกเก็บเงินไม่สำเร็จ' : checkoutCanceled && returnAttempt?.paymentState !== 'PAID' && !confirmed ? 'ยังไม่ได้ชำระ' : status.attemptId ? 'กำลังตรวจสอบรายการชำระเงิน' : packageHeading)}</h2>
           <MangmeeBadge tone={status.accessState === 'ACTIVE' ? 'brand' : 'amber'}>{status.accessState === 'HELD' ? 'ถูกพักใช้งานโดยผู้ดูแล' : planTermStateLabel(status.accessState === 'ACTIVE' ? 'ACTIVE' : lockReason === 'no_package' ? 'NO_PACKAGE' : 'EXPIRED')}</MangmeeBadge>
         </div>
-        {noPackage && awaitingStripe ? <div className="space-y-1 rounded-xl bg-gray-50 p-4">
-          <p className="text-lg font-bold text-gray-900">กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน</p>
-          <p className="text-sm text-gray-600">ระบบตรวจผลให้อัตโนมัติ ไม่ต้องชำระซ้ำ</p>
-        </div> : noPackage ? <dl className="grid gap-5 rounded-xl bg-gray-50 p-4">
+        {pending && pendingLeads && pendingSection(status, pending)}
+        {/* While a payment is in flight the badge already says "ยังไม่มีแพ็กเกจ" and the block says what is happening: a box that would repeat both has nothing left to say.
+            An expired shop keeps the one fact the box holds besides: when its package ended. */}
+        {noPackage ? (pending?.inFlight && !(lockReason === 'trial_ended' && status.termEndsAt) ? null : <dl className="grid gap-5 rounded-xl bg-gray-50 p-4">
           {/* R2/R10: the same title PLAN_LOCK_COPY gives the heading above, on an expired shop — never
               a second, hardcoded "ยังไม่มีแพ็กเกจ" that would say something else under "แพ็กเกจหมดอายุแล้ว". */}
           <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{PLAN_LOCK_COPY[lockReason].title}</dd>
             {purchaseHint && <p className="mt-1 text-sm text-gray-600">{purchaseHint}</p>}
             {/* Only when a term really ran out: a shop that never had one starts and ends today. */}
             {lockReason === 'trial_ended' && status.termEndsAt && <p className="mt-1 text-sm text-gray-500">หมดอายุเมื่อ {date(status.termEndsAt)}</p>}</div>
-        </dl> : <dl className="grid gap-5 rounded-xl bg-gray-50 p-4 sm:grid-cols-3">
+        </dl>) : <dl className="grid gap-5 rounded-xl bg-gray-50 p-4 sm:grid-cols-3">
           <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.tierKey && status.tierKey in PLAN_TIER_PRESETS ? PLAN_TIER_PRESETS[status.tierKey as PlanTierKey].labelTh : status.tierKey ? 'ต้องตรวจสอบข้อมูล' : 'ยังไม่มีข้อมูลแพ็กเกจ'}</dd></div>
           <div><dt className="text-sm text-gray-500">{status.pendingPlanChange?.action === 'PREPAID_PLAN_CHANGE' ? 'แพ็กเกจปัจจุบันใช้ถึง' : 'ใช้งานได้ถึง'}</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.pendingPlanChange?.action === 'PREPAID_PLAN_CHANGE' ? date(status.pendingPlanChange.effectiveAt) : status.termEndsAt ? date(status.termEndsAt) : 'ยังไม่ระบุ'}</dd></div>
           <div><dt className="text-sm text-gray-500">ใบเสร็จคงเหลือ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.purchaseSource === 'NO_TERM' && status.usage.remaining === null ? 'ยังไม่ได้กำหนดโควตาแพ็กเกจ' : status.usage.remaining ?? 'ไม่จำกัด'} {status.usage.remaining !== null && 'ใบ'}</dd>{(quotaReset || (quotaExpiry && date(quotaExpiry) !== date(status.termEndsAt))) && <p className="mt-1 text-sm text-gray-500">{quotaReset ? `เริ่มรอบใหม่ ${date(quotaReset)}` : `ใบที่หมดอายุก่อนใช้ได้ถึง ${date(quotaExpiry)}`}</p>}</div>
@@ -702,12 +715,11 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {applyHeld && <p role="status" className="break-all rounded-xl bg-amber-50 p-3">ทีมงานกำลังตรวจสอบก่อนเปิดสิทธิ์{supportReference && ` · เลขอ้างอิง ${supportReference}`}</p>}
         {/* A shop that never had a package has no "เดิม" to keep. */}
         {returnFailed && <p role="status" className="rounded-xl bg-amber-50 p-3 text-amber-900">รายการนี้ไม่ได้ชำระสำเร็จหรือรายการหมดอายุ {noPackage && lockReason === 'no_package' ? 'ไม่มีการเรียกเก็บเงินจากรายการนี้' : 'สิทธิ์แพ็กเกจเดิมยังคงเดิม'}</p>}
-        {/* A paid advance deal applies on its start date: it is never told to contact the team. */}
-        {returning && !confirmed && timedOut && !status.pendingDeal && <p role="status">ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง</p>}
-        {pending && (pending.title || pending.intro.length > 0 || pending.steps.length > 0) && pendingSection(status, pending)}
+        {/* A paid advance deal applies on its start date: it is never told to contact the team (the contact line is in the block of an unpaid payment only). */}
+        {pending && pendingShown && !pendingLeads && pendingSection(status, pending)}
         {/* R10: the offer is the first card behind this button, so the button itself has to say so —
             a locked shop with a three-day deal must not have to guess that "เลือกแพ็กเกจ" holds it. */}
-        {status.allowedActions.includes('new_sales') && !pending?.hideChoosePackage && <button className="mangmee-btn mangmee-btn-primary" onClick={() => setChoosing(true)}>{deal ? 'ดูข้อเสนอพิเศษสำหรับร้านคุณ' : status.subscriptionState === 'NONE' ? 'เลือกแพ็กเกจ' : 'ซื้อหรือเปลี่ยนแพ็กเกจ'}</button>}
+        {status.allowedActions.includes('new_sales') && !pending?.inFlight && <button className="mangmee-btn mangmee-btn-primary" onClick={() => setChoosing(true)}>{deal ? 'ดูข้อเสนอพิเศษสำหรับร้านคุณ' : status.subscriptionState === 'NONE' ? 'เลือกแพ็กเกจ' : 'ซื้อหรือเปลี่ยนแพ็กเกจ'}</button>}
         {/* Support information, not a step: the very last thing in the card. */}
         {supportReference && !confirmed && !applyHeld && <details className="text-sm text-gray-500"><summary className="min-h-11 cursor-pointer py-2">เลขอ้างอิงสำหรับแจ้งทีมงาน</summary><p className="break-all">{supportReference}</p></details>}
       </section>
