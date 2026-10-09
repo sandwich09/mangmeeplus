@@ -1,7 +1,8 @@
 /**
  * A promotion purchase through the real quote, Checkout, status, attempt, history and catalog code against real PostgreSQL
  * (docs/plans/starter-249-bonus-month-promotion-plan.md §1 R2/R3/R10, §2, §6 "Purchase-flow rules"; spec §3, §6, §7;
- * A01, A03, A04, A10, A15, A17, A30, A34, A36). Stripe is a fake; nothing here proves native provider behaviour.
+ * A01, A03, A04, A10, A15, A17, A30, A34, A36). A paid Checkout is applied by the real reconciler through its public
+ * `reconcileAccount`, renewal bind included. Stripe is a fake; nothing here proves native provider behaviour.
  *
  * Run with:
  *   BILLING_PROMOTION_TEST_DATABASE_URL='postgresql://…@127.0.0.1:5432/watchdog_step0_ci' \
@@ -13,11 +14,11 @@ import { randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, billingOffer, type BillingBenefitChoice, type BillingPolicy, type BillingPromotionCampaign,
   type BillingPurchaseMode, type BillingQuote } from '@watchdog-bms/contracts';
-import { PrismaClient } from '../../generated/prisma/client';
+import { Prisma, PrismaClient } from '../../generated/prisma/client';
 import { BillingService, type BillingSnapshot } from './application/billing.service';
 import { BillingReconcilerService } from './application/billing-reconciler.service';
-import { consumePromotion, markPromotionApplied, promotionUsage } from './application/billing-promotion';
-import { appendPackageInterval, promotionBoundaries } from './domain/billing-package';
+import { promotionUsage } from './application/billing-promotion';
+import { appendPackageInterval } from './domain/billing-package';
 import { termProjectionHash } from './domain/paid-invoice';
 import { promotionOfferSignature } from './domain/billing-promotion';
 import { StripeRequestError } from './infrastructure/stripe.client';
@@ -28,7 +29,7 @@ type Body = { offerKey?: string; interval?: string; purchaseMode?: BillingPurcha
   purchaseIntent?: 'FULL_PACKAGE' };
 
 describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: !databaseUrl }, () => {
-  let client: PrismaClient, service: BillingService;
+  let client: PrismaClient, service: BillingService, reconciler: BillingReconcilerService;
   const run = randomUUID().replaceAll('-', '').slice(0, 12), stripeAccountId = `acct_${run}`, owner = `promo-owner-${run}`, holder = `promo-holder-${run}`;
   const companyIds: string[] = [], batchIds: string[] = [], customers = new Map<string, Record<string, unknown>>(), sessions: Record<string, any>[] = [];
   const address = { line1: '99 ถนนทดสอบ', subdistrict: 'คลองเตย', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' };
@@ -36,7 +37,10 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     'STARTER_249:month': 'price_StarterMonth', 'STARTER_249:year': 'price_StarterYear', 'BASIC_499:month': 'price_BasicMonth', 'BASIC_499:year': 'price_BasicYear',
     'PRO_999:month': 'price_ProMonth', 'PRO_999:year': 'price_ProYear', 'ENTERPRISE_1999:month': 'price_EntMonth', 'ENTERPRISE_1999:year': 'price_EntYear' } };
   const tax = policy.taxTreatment, month = billingOffer('STARTER_249', 'month', policy), year = billingOffer('STARTER_249', 'year', policy);
-  let sequence = 0, keys = 0, paid: Record<string, any> = {};
+  let sequence = 0, keys = 0;
+  /** Everything the fake Stripe holds about paid money and bound renewals, by id. `loseNextSubscription`: the next bind request fails before Stripe acts. */
+  const paid = { intents: new Map<string, any>(), charges: new Map<string, any>(), invoices: new Map<string, any>(), payments: new Map<string, any[]>(),
+    lines: new Map<string, any[]>(), subscriptions: new Map<string, any>(), loseNextSubscription: false };
   /** Runs once inside the next Checkout, after its reservation committed and before the pre-dispatch barrier. */
   let probe: null | (() => Promise<void>) = null;
   let sessionFailure: StripeRequestError | null = null;
@@ -53,7 +57,22 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
         if (method === 'POST') customers.set(id, params);
         return { id, metadata: { billingAccountId: account.id }, ...customers.get(id) };
       }
-      if (path.startsWith('/payment_intents/')) return paid.intent;
+      const id = path.split('/').at(-1)!;
+      if (path.startsWith('/payment_intents/')) return paid.intents.get(id);
+      if (path.startsWith('/charges/')) return paid.charges.get(id);
+      if (method === 'GET' && path.startsWith('/invoices/')) return paid.invoices.get(id);
+      if (path.startsWith('/payment_methods/')) return { id, object: 'payment_method', type: 'card', customer: [...paid.intents.values()].find(intent => intent.payment_method === id)?.customer };
+      if (method === 'POST' && path === '/subscriptions') {
+        if (paid.loseNextSubscription) { paid.loseNextSubscription = false; throw new Error('synthetic: the bind request never reached Stripe'); }
+        const subId = `sub_${run}b${paid.subscriptions.size + 1}`, item = params.items[0];
+        paid.subscriptions.set(subId, { id: subId, object: 'subscription', livemode: false, customer: params.customer, status: 'trialing', metadata: params.metadata,
+          billing_mode: params.billing_mode, collection_method: params.collection_method, payment_settings: params.payment_settings,
+          default_payment_method: params.default_payment_method ?? null, trial_end: params.trial_end, trial_settings: params.trial_settings, cancel_at_period_end: false,
+          items: { has_more: false, data: [{ id: `si_${subId}`, price: item.price, quantity: item.quantity, tax_rates: item.tax_rates ?? [],
+            current_period_start: Math.floor(Date.now() / 1000), current_period_end: params.trial_end }] } });
+        return structuredClone(paid.subscriptions.get(subId));
+      }
+      if (path.startsWith('/subscriptions/') && paid.subscriptions.has(id)) return structuredClone(paid.subscriptions.get(id));
       if (method === 'POST' && path === '/checkout/sessions') {
         if (sessionFailure) { const failure = sessionFailure; sessionFailure = null; throw failure; }
         const session = { id: `cs_${run}${sessions.length + 1}`, object: 'checkout.session', livemode: false, mode: params.mode, status: 'open',
@@ -70,8 +89,17 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
       }
       throw new Error(`unmocked Stripe request ${method} ${path}`);
     },
-    list: async (path: string) => path === '/invoice_payments' ? paid.payments ?? [] : path.endsWith('/line_items') ? paid.checkoutLines ?? []
-      : path.endsWith('/lines') ? paid.invoiceLines ?? [] : [] };
+    list: async (path: string, params?: any): Promise<any[]> => {
+      if (path === '/checkout/sessions') return sessions.map(item => item.session).filter(session => session.customer === params.customer);
+      if (path === '/subscriptions') return [...paid.subscriptions.values()].filter(sub => sub.customer === params.customer).map(sub => structuredClone(sub));
+      // A subscription bound trialing has only its $0 subscription_create invoice.
+      if (path === '/invoices') return params?.subscription ? [{ id: `in_zero_${params.subscription}`, object: 'invoice', livemode: false,
+        customer: paid.subscriptions.get(params.subscription).customer, status: 'paid', billing_reason: 'subscription_create', total: 0, amount_paid: 0, created: 1,
+        parent: { subscription_details: { subscription: params.subscription } } }] : [];
+      if (path === '/invoice_payments') return paid.payments.get(params.invoice) ?? [];
+      if (path.endsWith('/line_items') || path.endsWith('/lines')) return paid.lines.get(path.split('/').at(-2)!) ?? [];
+      return [];
+    } };
 
   before(async () => {
     const url = new URL(databaseUrl!);
@@ -81,6 +109,7 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     service = new BillingService({ client } as any, { stripeAccountId, sesWebBaseUrl: 'https://app.example.test', aiMonthlyBudgetSatang: 0 } as any, stripe as any);
     service.assertOwner = async () => {}; service.assertTaxSettings = async () => {};
     service.usage = async () => ({ used: 0, limit: null, remaining: null, resetsAt: null, cadence: 'PAID_GRANTS', expiresAt: null });
+    reconciler = new BillingReconcilerService({ client } as any, {} as any, stripe as any, service, {} as any);
     for (const id of [owner, holder]) await client.user.create({ data: { id, displayName: id, email: `${id}@example.test`, emailVerifiedAt: new Date() } });
     await client.externalIdentity.create({ data: { userId: holder, provider: 'LINE', providerChannelId: `ch-${run}`, providerUserId: `U${run}` } });
   });
@@ -139,43 +168,39 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     where: { promotionEnvironmentId_campaignId_companyId: { promotionEnvironmentId: 'TEST', campaignId, companyId } } });
   const snapshotOf = async (quoteId: string) => (await client.billingQuote.findUniqueOrThrow({ where: { id: quoteId } })).snapshotJson as unknown as BillingSnapshot;
   /**
-   * A verified one-time payment applied by the real reconciler. Lane A2 makes that apply promotion-aware; until it lands,
-   * the promotion part is written here exactly as plan §6 says it will be (every step is idempotent, so it stays true after).
+   * The buyer pays the open Checkout of this attempt at the fake Stripe — session complete and paid a minute ago, its invoice,
+   * payment, charge and lines — and the reconciler's public pass does everything else: evidence, apply, promotion, bind.
    */
-  async function applyPaid(companyId: string, attemptId: string) {
+  async function pay(attemptId: string) {
     const attempt = await client.billingAttempt.findUniqueOrThrow({ where: { id: attemptId } }), snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
-    const n = sequence += 1, lease = `lease-${run}-${n}`, amount = snapshot.quote.offer.priceSatang, created = Math.floor(Date.now() / 1000) - 60;
-    const locked = await client.billingAccount.update({ where: { id: attempt.billingAccountId }, data: { leaseToken: lease, leaseUntil: new Date(Date.now() + 120_000) } });
-    const customerId = locked.customerId!, meta = { billingAttemptId: attempt.id, billingAccountId: locked.id };
-    const charge = { id: `ch_${run}${n}`, livemode: false, status: 'succeeded', paid: true, captured: true, currency: 'thb', amount, customer: customerId,
-      payment_intent: `pi_${run}${n}`, payment_method_details: { type: 'card' }, amount_refunded: 0, disputed: false, balance_transaction: null };
-    paid = { intent: { id: `pi_${run}${n}`, livemode: false, status: 'succeeded', currency: 'thb', amount_received: amount, customer: customerId, latest_charge: charge },
-      payments: [{ object: 'invoice_payment', livemode: false, status: 'paid', invoice: `in_${run}${n}`, payment: { type: 'payment_intent', payment_intent: `pi_${run}${n}` }, amount_paid: amount, currency: 'thb' }],
-      checkoutLines: [{ quantity: 1, currency: 'thb', amount_total: amount, amount_tax: 0, amount_discount: 0,
-        price: { id: `price_inline${run}${n}`, product: 'prod_Synthetic', type: 'one_time', active: false, recurring: null, livemode: false, currency: 'thb', unit_amount: amount } }],
-      invoiceLines: [{ parent: { type: 'invoice_item_details', invoice_item_details: { invoice_item: `ii_${run}${n}`, subscription: null, proration: false } },
-        pricing: { price_details: { price: `price_inline${run}${n}`, product: 'prod_Synthetic' } }, amount, currency: 'thb', livemode: false, quantity: 1 }] };
-    const session = { id: attempt.checkoutSessionId, object: 'checkout.session', livemode: false, mode: 'payment', status: 'complete', payment_status: 'paid',
-      subscription: null, customer: customerId, client_reference_id: attempt.id, metadata: meta, invoice: `in_${run}${n}`, payment_intent: `pi_${run}${n}`,
-      invoice_creation: { enabled: true }, currency: 'thb', amount_total: amount, total_details: { amount_tax: 0, amount_discount: 0, amount_shipping: 0 }, created,
-      customer_details: { email: `${owner}@example.test` } };
-    const invoice = { id: `in_${run}${n}`, object: 'invoice', livemode: false, customer: customerId, metadata: meta, status: 'paid', billing_reason: 'manual',
+    const current = await client.billingAccount.findUniqueOrThrow({ where: { id: attempt.billingAccountId } });
+    const n = `${run}${sequence += 1}`, amount = snapshot.quote.offer.priceSatang, created = Math.floor(Date.now() / 1000) - 60;
+    const customerId = current.customerId!, meta = { billingAttemptId: attempt.id, billingAccountId: current.id }, card = !snapshot.quote.purchaseMode!.startsWith('PROMPTPAY');
+    const charge = { id: `ch_${n}`, livemode: false, status: 'succeeded', paid: true, captured: true, currency: 'thb', amount, customer: customerId,
+      payment_intent: `pi_${n}`, payment_method_details: { type: card ? 'card' : 'promptpay' }, amount_refunded: 0, disputed: false, balance_transaction: null };
+    paid.charges.set(charge.id, charge);
+    paid.intents.set(`pi_${n}`, { id: `pi_${n}`, livemode: false, status: 'succeeded', currency: 'thb', amount_received: amount, customer: customerId, latest_charge: charge,
+      payment_method: card ? `pm_${n}` : null, setup_future_usage: sessions.find(item => item.session.id === attempt.checkoutSessionId)!.payment_intent_data.setup_future_usage ?? null });
+    paid.payments.set(`in_${n}`, [{ object: 'invoice_payment', livemode: false, status: 'paid', invoice: `in_${n}`, payment: { type: 'payment_intent', payment_intent: `pi_${n}` }, amount_paid: amount, currency: 'thb' }]);
+    paid.lines.set(attempt.checkoutSessionId!, [{ quantity: 1, currency: 'thb', amount_total: amount, amount_tax: 0, amount_discount: 0,
+      price: { id: `price_inline${n}`, product: 'prod_Synthetic', type: 'one_time', active: false, recurring: null, livemode: false, currency: 'thb', unit_amount: amount } }]);
+    paid.lines.set(`in_${n}`, [{ parent: { type: 'invoice_item_details', invoice_item_details: { invoice_item: `ii_${n}`, subscription: null, proration: false } },
+      pricing: { price_details: { price: `price_inline${n}`, product: 'prod_Synthetic' } }, amount, currency: 'thb', livemode: false, quantity: 1 }]);
+    paid.invoices.set(`in_${n}`, { id: `in_${n}`, object: 'invoice', livemode: false, customer: customerId, metadata: meta, status: 'paid', billing_reason: 'manual',
       collection_method: 'send_invoice', parent: null, currency: 'thb', total: amount, amount_paid: amount, amount_remaining: 0, starting_balance: 0,
-      status_transitions: { paid_at: created + 3 }, number: `PR-${run}-${n}` };
-    await (new BillingReconcilerService({ client } as any, {} as any, stripe as any, service, {} as any) as any).reconcileOneTime(locked, attempt, lease, undefined, session, invoice);
-    const row = await client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: attempt.id } });
+      status_transitions: { paid_at: created + 3 }, number: `PR-${n}` });
+    Object.assign(sessions.find(item => item.session.id === attempt.checkoutSessionId)!.session, { status: 'complete', payment_status: 'paid', subscription: null,
+      invoice: `in_${n}`, payment_intent: `pi_${n}`, invoice_creation: { enabled: true }, currency: 'thb', amount_total: amount,
+      total_details: { amount_tax: 0, amount_discount: 0, amount_shipping: 0 }, created, customer_details: { email: `${owner}@example.test` } });
+    return new Date((created + 3) * 1000);
+  }
+  /** Pays, runs the reconciler once, and returns the applied bill. */
+  async function applyPaid(attemptId: string) {
+    await pay(attemptId);
+    await reconciler.reconcileAccount((await client.billingAttempt.findUniqueOrThrow({ where: { id: attemptId } })).billingAccountId);
+    const row = await client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: attemptId } });
     assert.equal(row.applyStatus, 'APPLIED');
-    if (snapshot.promotion) {
-      const { paidEnd, benefitEnd } = promotionBoundaries({ serviceStartsAt: row.periodStart, interval: snapshot.promotion.interval, anchorDay: snapshot.oneTime?.anchorDay,
-        bonusMonths: snapshot.promotion.bonusMonths });
-      assert.equal(row.periodEnd.getTime(), paidEnd.getTime(), 'the financial period is the paid one');
-      assert.equal(await consumePromotion(client, { attemptId: attempt.id, invoiceId: row.id, companyId, now: new Date() }), true);
-      await markPromotionApplied(client, { invoiceId: row.id, paidStart: row.periodStart, paidEnd, bonusEnd: benefitEnd, now: new Date() });
-      await client.billingInvoice.update({ where: { id: row.id }, data: { benefitEnd } });
-      const term = await client.companyPlanTerm.update({ where: { companyId }, data: { termEndsAt: benefitEnd } });
-      await client.billingAccount.update({ where: { id: locked.id }, data: { paidThrough: benefitEnd, termProjectionHash: termProjectionHash(term) } });
-    }
-    return client.billingInvoice.findUniqueOrThrow({ where: { id: row.id } });
+    return row;
   }
 
   it('quotes 2 and 13 months with 60 and 390 receipts for a new shop, refuses another tier, and never changes a quote that names no benefit (A01)', async () => {
@@ -290,7 +315,7 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
   it('keeps a reserved right when the campaign is paused or ended before dispatch, and gives it back when the base policy changed (A04, A30, plan R3)', async () => {
     const live = campaign();
     await publish([live]);
-    const [kept, ended, changed, plain] = [await shop(), await shop(), await shop(), await shop()];
+    const [kept, ended, changed, plain, plainChanged, gated] = [await shop(), await shop(), await shop(), await shop(), await shop(), await shop()];
     const dispatched = async (companyId: string, next: BillingPromotionCampaign) => {
       const q = await quote(companyId, 'PROMOTION', { purchaseMode: 'PROMPTPAY_ONCE' });
       probe = () => publish([next]);
@@ -306,15 +331,36 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     await dispatched(kept, { ...live, paused: true });
     await dispatched(ended, { ...live, endedAt: new Date().toISOString() });
 
-    // A purchase without a promotion keeps today's rule exactly: any new revision stops it before dispatch and hides its link.
-    const normal = await quote(plain, 'NORMAL');
+    // A purchase with NO promotion is not disturbed by a campaign either: the pause lands between its reservation and its
+    // dispatch (a new revision, the same base policy) and it still dispatches; a later publication does not hide its link.
+    const normal = await quote(plain, 'NORMAL'), sent = sessions.length;
     probe = () => publish([{ ...live, paused: true }]);
-    await refused(checkout(plain, normal), 'BILLING_SALES_CLOSED');
-    assert.equal((await account(plain)).activeAttemptId, null);
+    const open = await checkout(plain, normal);
+    assert.deepEqual([open.state, sessions.length, (await account(plain)).activeAttemptId], ['OPEN', sent + 1, open.attemptId]);
+    assert.equal((await service.resume(ctx(plain), open.attemptId)).checkoutUrl, open.checkoutUrl, 'the buyer can come back to the open Checkout after a pause');
     await publish([live]);
-    const open = await checkout(plain, await quote(plain, 'NORMAL'));
-    await publish([live]);
+    assert.equal((await service.resume(ctx(plain), open.attemptId)).checkoutUrl, open.checkoutUrl);
+    // A gate that this purchase does not depend on changed (settings version only): it still dispatches.
+    const settingsId = `${stripeAccountId}:test`, gates = Object.fromEntries(BILLING_ACTIONS.map(action => [action, true]));
+    const setGates = (over: Record<string, boolean>) => client.billingSettings.update({ where: { id: settingsId }, data: { gatesJson: { ...gates, ...over }, version: { increment: 1 } } });
+    const gatedQuote = await quote(gated, 'NORMAL');
+    probe = async () => { await setGates({ portal_cancel_subscription: false }); };
+    assert.equal((await checkout(gated, gatedQuote)).state, 'OPEN');
+    // Its own gates stay the barrier they were: sales closed between the reservation and the dispatch stops it, and hides the open link.
+    const [late, stopped] = [await shop(), sessions.length];
+    const lateQuote = await quote(late, 'NORMAL');
+    probe = async () => { await setGates({ new_sales: false }); };
+    await refused(checkout(late, lateQuote), 'BILLING_SALES_CLOSED');
+    assert.deepEqual([sessions.length, (await account(late)).activeAttemptId], [stopped, null]);
     assert.equal((await service.resume(ctx(plain), open.attemptId)).checkoutUrl, null);
+    await setGates({});
+    // A base-policy change still fails closed for a normal purchase, and hides the link of the one already open.
+    const priced = await quote(plainChanged, 'NORMAL');
+    probe = () => publish([live], { ...policy, graceDays: 3 });
+    await refused(checkout(plainChanged, priced), 'BILLING_SALES_CLOSED');
+    assert.deepEqual([sessions.length, (await account(plainChanged)).activeAttemptId], [stopped, null]);
+    assert.equal((await service.resume(ctx(plain), open.attemptId)).checkoutUrl, null);
+    await publish([live]);
 
     // The base policy changed between the reservation and the dispatch: fail closed, release, tell the audit which attempt.
     const q = await quote(changed, 'PROMOTION'), count = sessions.length;
@@ -391,12 +437,18 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     await refused(quote(await shop(), 'EVENT_DISCOUNT'), 'SALES_EVENT_TICKET_UNAVAILABLE');
   });
 
-  it('after the purchase applied: the source stays readable, an upgrade waits, the right is used once, and the views tell the free time (A03, plan R2, Q5)', async () => {
+  it('journey, CARD_ONCE month: quote → Checkout → paid → the real apply → two months and 60 receipts; once per shop; a normal repeat starts at benefitEnd; an upgrade waits until benefitEnd (A01, A03, plan R2, Q5)', async () => {
     const live = campaign();
     await publish([live]);
-    const s = await shop(), opened = await checkout(s, await quote(s, 'PROMOTION'));
-    const invoice = await applyPaid(s, opened.attemptId), paidThrough = (await account(s)).paidThrough!;
+    const s = await shop(), quoted = await quote(s, 'PROMOTION'), opened = await checkout(s, quoted);
+    const invoice = await applyPaid(opened.attemptId), paidThrough = (await account(s)).paidThrough!;
     assert.equal(paidThrough.getTime(), invoice.benefitEnd!.getTime()); assert.ok(invoice.periodEnd < invoice.benefitEnd!);
+    // Counted from the verified payment: one paid month, then one free month. 30 base + 30 bonus receipts, all usable now.
+    assert.deepEqual([invoice.totalSatang, invoice.periodEnd.toISOString(), invoice.benefitEnd!.toISOString()],
+      [24900, appendPackageInterval(invoice.periodStart, 'month').toISOString(), appendPackageInterval(invoice.periodStart, 'month', undefined, 2).toISOString()]);
+    assert.ok(Math.abs(invoice.periodStart.getTime() - Date.parse(quoted.promotion!.paidStart)) < 120_000, 'the dates the quote told, from the real payment time');
+    const usage = await BillingService.prototype.usage.call(service, s);
+    assert.deepEqual([usage.limit, usage.remaining, usage.expiresAt], [60, 60, paidThrough.toISOString()]);
     const used = (await right(s, live.campaignId))!;
     assert.deepEqual([used.state, used.invoiceId, used.paidEnd?.getTime(), used.bonusEnd?.getTime()], ['CONSUMED', invoice.id, invoice.periodEnd.getTime(), invoice.benefitEnd!.getTime()]);
 
@@ -420,20 +472,140 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     // Q5: an immediate upgrade over the promotion purchase waits until everything committed ended — differential or full-package.
     await refused(quote(s, 'NORMAL', { offerKey: 'BASIC_499' }), 'PROMOTION_UPGRADE_DEFERRED');
     await refused(quote(s, undefined, { offerKey: 'PRO_999', purchaseIntent: 'FULL_PACKAGE' }), 'PROMOTION_UPGRADE_DEFERRED');
-    // The locked Checkout recheck reads the same source: the normal repeat opens.
-    assert.equal((await checkout(s, repeat)).state, 'OPEN');
+    // The locked Checkout recheck reads the same source: the normal repeat opens, is paid, and its service starts at benefitEnd.
+    const again = await checkout(s, repeat);
+    assert.equal(again.state, 'OPEN');
+    const second = await applyPaid(again.attemptId), stacked = (await account(s)).paidThrough!;
+    assert.deepEqual([second.periodStart.toISOString(), second.periodEnd.toISOString(), second.benefitEnd, stacked.toISOString()],
+      [paidThrough.toISOString(), repeat.purchase!.projectedPaidThrough, null, repeat.purchase!.projectedPaidThrough]);
+    assert.equal((await right(s, live.campaignId))!.version, used.version, 'a normal purchase never touches the right');
+    // With normal time stacked behind the promotion, the upgrade still opens when the promotion's own service ends — not later.
+    await refused(quote(s, 'NORMAL', { offerKey: 'BASIC_499' }), 'PROMOTION_UPGRADE_DEFERRED');
+    assert.equal((await service.status(ctx(s))).upgradeDeferredUntil, paidThrough.toISOString());
+    await refused(quote(s, 'PROMOTION'), 'PROMOTION_UNAVAILABLE', 'ALREADY_USED');
+    assert.equal((await quote(s, 'NORMAL')).purchase?.kind, 'REPEAT', 'NORMAL stays purchasable');
 
     // A second campaign is a new right: bought as a repeat, it starts where the free time ends and keeps the anchor day.
-    const other = await shop(), first = await checkout(other, await quote(other, 'PROMOTION')), source = await applyPaid(other, first.attemptId);
+    const other = await shop(), first = await checkout(other, await quote(other, 'PROMOTION')), source = await applyPaid(first.attemptId);
     const next = campaign({ displayName: 'แคมเปญที่สอง' });
     await publish([live, next]);
-    const second = await quote(other, 'PROMOTION'), anchorDay = (await account(other)).billingAnchorDay!;
-    assert.deepEqual([second.purchase?.kind, second.promotion?.campaignId, second.promotion?.paidStart, second.promotion?.paidEnd, second.promotion?.benefitEnd],
+    const further = await quote(other, 'PROMOTION'), anchorDay = (await account(other)).billingAnchorDay!;
+    assert.deepEqual([further.purchase?.kind, further.promotion?.campaignId, further.promotion?.paidStart, further.promotion?.paidEnd, further.promotion?.benefitEnd],
       ['REPEAT', next.campaignId, source.benefitEnd!.toISOString(), appendPackageInterval(source.benefitEnd!, 'month', anchorDay).toISOString(),
         appendPackageInterval(source.benefitEnd!, 'month', anchorDay, 2).toISOString()]);
-    assert.equal(second.purchase?.projectedPaidThrough, second.promotion?.paidEnd);
-    assert.equal((await checkout(other, second)).state, 'OPEN');
+    assert.equal(further.purchase?.projectedPaidThrough, further.promotion?.paidEnd);
+    assert.equal((await checkout(other, further)).state, 'OPEN');
     assert.equal((await right(other, next.campaignId))?.state, 'RESERVED');
+  });
+
+  it('journey, CARD_AUTO year: paid → applied → renewal bound at benefitEnd (13 months); setup is PENDING → READY, REVIEW only for an issue about this purchase; the $0 trial invoice grants nothing (A05, plan R11)', async () => {
+    const live = campaign();
+    await publish([live]);
+    const s = await shop(), quoted = await quote(s, 'PROMOTION', { interval: 'year', purchaseMode: 'CARD_AUTO' }), opened = await checkout(s, quoted);
+    const setup = async () => { const use = (await service.status(ctx(s))).promotion!; return [use.state, use.renewalSetupState, use.expectedNextChargeAt]; };
+    assert.deepEqual(await setup(), ['RESERVED', 'PENDING', null]);
+
+    // Paid and applied, but the request that binds the renewal never reached Stripe: the money and the service are kept.
+    const paidAt = await pay(opened.attemptId), accountId = (await account(s)).id, benefitEnd = appendPackageInterval(paidAt, 'month', undefined, 13);
+    paid.loseNextSubscription = true;
+    await assert.rejects(reconciler.reconcileAccount(accountId), /never reached Stripe/);
+    const invoice = await client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: opened.attemptId } });
+    assert.deepEqual([invoice.applyStatus, invoice.totalSatang, invoice.periodStart.toISOString(), invoice.periodEnd.toISOString(), invoice.benefitEnd?.toISOString()],
+      ['APPLIED', 249000, paidAt.toISOString(), appendPackageInterval(paidAt, 'year').toISOString(), benefitEnd.toISOString()]);
+    assert.deepEqual([(await account(s)).paidThrough?.toISOString(), (await account(s)).activeAttemptId, (await account(s)).baseSubscriptionId], [benefitEnd.toISOString(), opened.attemptId, null]);
+    assert.deepEqual(await setup(), ['CONSUMED', 'PENDING', benefitEnd.toISOString()]);
+    // An open review of other money of this shop says nothing about this purchase's renewal: still PENDING, here and on the attempt.
+    const unrelated = await service.issue(s, 'FINANCIAL_REVIEW', `ch_other_${run}`);
+    assert.deepEqual(await setup(), ['CONSUMED', 'PENDING', benefitEnd.toISOString()]);
+    assert.equal((await service.attempt(ctx(s), opened.attemptId)).promotion?.renewalSetupState, 'PENDING');
+    // What the scan records when a pass over this account fails — that one is about this purchase.
+    await service.issue(s, 'RECONCILIATION_FAILED', accountId);
+    assert.deepEqual(await setup(), ['CONSUMED', 'REVIEW', benefitEnd.toISOString()]);
+    assert.equal((await service.attempt(ctx(s), opened.attemptId)).promotion?.renewalSetupState, 'REVIEW');
+
+    // The next pass binds: full catalog price and cadence, the saved card, first charge when the free time ends.
+    await reconciler.reconcileAccount(accountId);
+    const [sub] = [...paid.subscriptions.values()].filter(item => item.metadata.billingAttemptId === opened.attemptId);
+    assert.deepEqual([sub.trial_end, sub.items.data[0].price, sub.collection_method, sub.default_payment_method], [benefitEnd.getTime() / 1000, 'price_StarterYear', 'charge_automatically', paid.intents.get(sessions.at(-1)!.session.payment_intent).payment_method]);
+    let bound = await account(s);
+    assert.deepEqual([bound.renewalMode, bound.baseSubscriptionId, bound.activeAttemptId, bound.subscriptionState, bound.paidThrough?.toISOString(), bound.nextChargeAt?.toISOString()],
+      ['CARD_AUTO', sub.id, null, 'trialing', benefitEnd.toISOString(), benefitEnd.toISOString()]);
+    assert.deepEqual(await setup(), ['CONSUMED', 'READY', benefitEnd.toISOString()]);
+    const usage = await BillingService.prototype.usage.call(service, s);
+    assert.deepEqual([usage.limit, usage.remaining], [390, 390]);
+
+    // The ordinary pass over the bound subscription meets its $0 trial invoice: no bill, no receipts, no review, the right untouched.
+    const before = [await client.billingReceiptGrant.count({ where: { companyId: s } }), (await right(s, live.campaignId))!.version];
+    await reconciler.reconcileAccount(accountId);
+    bound = await account(s);
+    assert.deepEqual([await client.billingInvoice.count({ where: { billingAccountId: accountId } }), await client.billingReceiptGrant.count({ where: { companyId: s } }),
+      (await right(s, live.campaignId))!.version, bound.paidThrough?.toISOString(), [...paid.subscriptions.values()].filter(item => item.customer === bound.customerId).length],
+      [1, before[0], before[1], benefitEnd.toISOString(), 1]);
+    assert.deepEqual((await client.billingIssue.findMany({ where: { companyId: s, state: { not: 'RESOLVED' } }, select: { id: true } })).map(issue => issue.id), [unrelated.id]);
+    assert.deepEqual(await setup(), ['CONSUMED', 'READY', benefitEnd.toISOString()]);
+  });
+
+  it('gives back a right stranded on a Checkout that was never requested once createBy passed — and only then (spec §6, A30)', async () => {
+    const live = campaign({ cap: 2 });
+    await publish([live]);
+    /** The process died right after the reservation committed: the attempt as that commit left it, and nothing at the provider. */
+    const stranded = async (choice: 'PROMOTION' | 'NORMAL') => {
+      const s = await shop();
+      sessionFailure = new StripeRequestError('UNKNOWN', 'synthetic_timeout');
+      const lost = await checkout(s, await quote(s, choice));
+      await client.billingAttempt.update({ where: { id: lost.attemptId }, data: { status: 'CREATING', version: 0, errorCode: null, collectionJson: Prisma.DbNull } });
+      await client.billingIssue.deleteMany({ where: { companyId: s } });
+      return { s, attemptId: lost.attemptId, accountId: (await account(s)).id };
+    };
+    const overdue = (companyId: string) => client.billingPromotionRedemption.updateMany({ where: { companyId, campaignId: live.campaignId },
+      data: { acceptedAt: new Date(Date.now() - 11 * 60_000), createBy: new Date(Date.now() - 60_000) } });
+    const held = async (shopOf: { s: string; attemptId: string }, status: string) => assert.deepEqual(
+      [(await client.billingAttempt.findUniqueOrThrow({ where: { id: shopOf.attemptId } })).status, (await account(shopOf.s)).activeAttemptId, (await right(shopOf.s, live.campaignId))?.state],
+      [status, shopOf.attemptId, 'RESERVED']);
+
+    // Before createBy the first request may still start: nothing is released, the pass fails as it always did.
+    const a = await stranded('PROMOTION');
+    await assert.rejects(reconciler.reconcileAccount(a.accountId), /billing\.checkout_unknown/);
+    await held(a, 'CREATING');
+    // Past createBy, never requested, nothing at the provider: terminal, the slot and the cap seat free, the audit names the attempt.
+    await service.issue(a.s, 'RECONCILIATION_FAILED', a.accountId);
+    await overdue(a.s);
+    await reconciler.reconcileAccount(a.accountId);
+    const attempt = await client.billingAttempt.findUniqueOrThrow({ where: { id: a.attemptId } }), released = (await right(a.s, live.campaignId))!;
+    assert.deepEqual([attempt.status, attempt.errorCode, attempt.checkoutSessionId, (await account(a.s)).activeAttemptId], ['EXPIRED', 'BILLING_CHECKOUT_NOT_STARTED', null, null]);
+    assert.deepEqual([released.state, released.attemptId, released.releaseCount], ['RELEASED', null, 1]);
+    assert.deepEqual(await promotionUsage(client, 'TEST', live.campaignId), { reserved: 0, consumed: 0, taken: 0 });
+    const audit = await client.auditLog.findFirstOrThrow({ where: { companyId: a.s, action: 'billing.promotion.released', targetId: released.id } });
+    assert.deepEqual(audit.metadataJson, { attemptId: a.attemptId, campaignId: live.campaignId, reason: 'checkout_never_started' });
+    assert.equal(await client.billingIssue.count({ where: { companyId: a.s, state: { not: 'RESOLVED' } } }), 0, 'the failed passes before createBy are settled');
+    // The request that never started can never start now: the barrier's own guard finds no CREATING attempt.
+    assert.equal((await client.billingAttempt.updateMany({ where: { id: a.attemptId, status: 'CREATING', version: 0 }, data: { status: 'REQUESTING' } })).count, 0);
+    assert.equal('promotion' in await service.status(ctx(a.s)), false);
+    assert.equal((await checkout(a.s, await quote(a.s, 'PROMOTION'))).state, 'OPEN', 'the shop buys with the campaign again');
+
+    // A request that was started, or whose outcome is unknown, is never released by elapsed time: it stays in review and keeps its seat.
+    for (const status of ['REQUESTING', 'UNKNOWN']) {
+      const b = await stranded('PROMOTION');
+      await client.billingAttempt.update({ where: { id: b.attemptId }, data: { status, version: 1 } });
+      await overdue(b.s);
+      await assert.rejects(reconciler.reconcileAccount(b.accountId), /billing\.checkout_unknown/);
+      await held(b, status);
+      assert.equal(await client.auditLog.count({ where: { companyId: b.s, action: 'billing.promotion.released' } }), 0);
+      await client.billingPromotionRedemption.deleteMany({ where: { companyId: b.s } });
+    }
+    // The shop that died before it even had a Customer at the provider: no Customer means no Checkout, the same release.
+    const c = await stranded('PROMOTION');
+    await client.billingAccount.update({ where: { id: c.accountId }, data: { customerId: null } });
+    await assert.rejects(reconciler.reconcileAccount(c.accountId), /billing\.customer_unknown/);
+    await overdue(c.s);
+    await reconciler.reconcileAccount(c.accountId);
+    assert.deepEqual([(await client.billingAttempt.findUniqueOrThrow({ where: { id: c.attemptId } })).status, (await account(c.s)).activeAttemptId, (await right(c.s, live.campaignId))?.state],
+      ['EXPIRED', null, 'RELEASED']);
+    // An attempt without a promotion behaves exactly as before, whatever its age: the pass fails and the slot stays held.
+    const d = await stranded('NORMAL');
+    await client.billingAttempt.update({ where: { id: d.attemptId }, data: { createdAt: new Date(Date.now() - 3 * HOUR) } });
+    await assert.rejects(reconciler.reconcileAccount(d.accountId), /billing\.checkout_unknown/);
+    assert.deepEqual([(await client.billingAttempt.findUniqueOrThrow({ where: { id: d.attemptId } })).status, (await account(d.s)).activeAttemptId], ['CREATING', d.attemptId]);
   });
 
   it('refuses a promotion on an upgrade, a scheduled change and a live card subscription, and still sells them normally (plan R10)', async () => {
@@ -441,7 +613,7 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     await publish([live]);
     // An active one-time Starter month bought normally.
     const s = await shop();
-    await applyPaid(s, (await checkout(s, await quote(s, 'NORMAL'))).attemptId);
+    await applyPaid((await checkout(s, await quote(s, 'NORMAL'))).attemptId);
     for (const [body, kind] of [[{ offerKey: 'BASIC_499' }, 'UPGRADE'], [{ interval: 'year' }, 'SCHEDULED_CHANGE']] as const) {
       await refused(quote(s, 'PROMOTION', body), 'PROMOTION_UNAVAILABLE', 'PURCHASE_KIND_UNSUPPORTED');
       assert.equal((await quote(s, 'NORMAL', body)).purchase?.kind, kind);
