@@ -874,7 +874,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             {cardBenefit !== 'PROMOTION' && <p className="text-sm font-semibold">{PROMOTION_NOT_PICKED}</p>}</section>}
           {/* A promotion that cannot be used says why, and never closes the normal purchase below. */}
           {promo && !promo.available && <p role="note" className="break-words text-sm text-gray-600">{promotionReasonText(promo.reason)}</p>}
-          {eventCard && <p className="break-words text-sm font-semibold text-brand-700">{eventDiscountCardText(eventCard.eventName, eventCard.shownDiscountSatang)}</p>}
+          {eventCard && <p className="text-sm font-semibold text-brand-700 [overflow-wrap:anywhere]">{eventDiscountCardText(eventCard.eventName, eventCard.shownDiscountSatang)}</p>}
           {interval === 'year' && plain && <p className="text-sm text-gray-600">เฉลี่ยเดือนละ {money(Math.round(offer.priceSatang / 12))}</p>}
           {data.catalog.taxTreatment === 'EXCLUSIVE_VAT_7' && <p className="text-sm text-gray-600">ราคายังไม่รวม VAT 7%</p>}
           {(plain || interval === 'month') && <p className="text-sm text-brand-700">{interval === 'year' ? `ใช้งาน 12 เดือน${saving > 0 ? ` · ประหยัด ${money(saving)}` : ''}` : 'ชำระรายเดือน'}</p>}<p>{offer.branchLimit} สาขา · {offer.employeeLimit} ผู้ใช้</p>
