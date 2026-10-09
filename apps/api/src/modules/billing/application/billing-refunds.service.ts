@@ -15,11 +15,14 @@ import { BillingConfigurationService } from './billing-configuration.service';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import { recordBillingFinancials } from './billing-financial';
 import { pendingRefund, refundSource, refundParams, refundPreview, observedRefund, refundReviewRequired } from './billing-refund-source';
-import { endPackageBlock, endPackageError, endPaidPackage, refundEndsPackage } from './billing-end-package';
+import { endPackageBlock, endPackageError, endPaidPackage, refundEndsPackage, stampSpentPromotion } from './billing-end-package';
+import { promotionForInvoice } from './billing-promotion';
 
 type Proposed={accountId:string;customerId:string;chargeId:string;membershipId:string;actorCompanyId:string;sourceHash:string;localHash:string;providerSourceHash:string;
   settingsVersion:number;policyRevisionId:string;amountSatang:number;memo:string;notifyCustomer:boolean;invoiceNumber:string|null;
-  paidSatang:number;previousRefundedSatang:number;usage:BillingStatus['usage'];projection:Awaited<ReturnType<typeof refundPreview>>;params:Record<string,unknown>;endPackage?:boolean};
+  paidSatang:number;previousRefundedSatang:number;usage:BillingStatus['usage'];projection:Awaited<ReturnType<typeof refundPreview>>;params:Record<string,unknown>;endPackage?:boolean;
+  /** The promotion redemption of the refunded invoice, pinned at preview so every later step answers for the same source (spec Q6). */
+  promotionRedemptionId?:string};
 type Journal={submittedCredentialVersion?:string;approval?:{membershipId:string;companyId:string;credentialVersion:string;approvedAt:string};
   dispatchedAt?:string;providerKey?:string;paramsHash?:string;mutationResolved?:boolean;creditNoteId?:string;creditNoteNumber?:string;refundId?:string;refundState?:BillingRefundOperation['refundState'];packageEnded?:boolean};
 const stale=()=>billingError('CONTROL_PREVIEW_STALE','รายการเปลี่ยนหรือหมดอายุ กรุณาโหลดข้อมูลล่าสุดแล้วตรวจใหม่');
@@ -40,6 +43,25 @@ export class BillingRefundsService {
   private async packageBlock(tx:Prisma.TransactionClient,account:BillingAccount,invoiceId:string,requireFullRefund=false){
     const company=await tx.company.findUniqueOrThrow({where:{id:account.companyId},include:{planTerm:true}});
     return endPackageBlock(company,account,await this.invoice(account,invoiceId,tx),requireFullRefund);
+  }
+  /**
+   * Spec Q6, decided at preview and pinned in the proposal. A refund that brings a promotion purchase to its full paid amount (cumulative,
+   * real money only) always ends its unused entitlement, whatever the operator asked; a partial one keeps time and quota, so asking to end
+   * it is refused. Any other invoice: the operator's choice, as before.
+   */
+  private async refundEnd(invoiceId:string,paidSatang:number,previousRefundedSatang:number,input:Pick<BillingRefundInput,'amountSatang'|'endPackage'>){
+    const promo=await promotionForInvoice(this.prisma.client,invoiceId),full=previousRefundedSatang+input.amountSatang>=paidSatang;
+    if(promo&&!full&&input.endPackage===true)throw endPackageError('BILLING_END_PACKAGE_NOT_REFUNDED');
+    return {endPackage:input.endPackage===true||(!!promo&&full),...promo?{promotionRedemptionId:promo.id}:{}};
+  }
+  /** Why the package end this refund asks for cannot run now, or null. For a pinned promotion purchase "nothing is running" is no reason (the refund still goes, staff adjust the entitlement); a live renewal or a pending purchase still is. */
+  private async refundBlock(tx:Prisma.TransactionClient,account:BillingAccount,invoiceId:string,p:Pick<Proposed,'endPackage'|'promotionRedemptionId'>){
+    const block=p.endPackage?await this.packageBlock(tx,account,invoiceId):null;
+    return block==='BILLING_END_PACKAGE_NOT_CURRENT'&&p.promotionRedemptionId?null:block;
+  }
+  /** The invoice is still the promotion purchase the proposal pinned (or still none), so execute answers for the source it previewed. */
+  private async pinned(tx:Prisma.TransactionClient,invoiceId:string,p:Pick<Proposed,'promotionRedemptionId'>){
+    return ((await promotionForInvoice(tx,invoiceId))?.id??null)===(p.promotionRedemptionId??null);
   }
   private async row(context:RequestContext,id:string,tx:Prisma.TransactionClient=this.prisma.client){
     const row=await tx.billingOperation.findFirst({where:{id,type:'REFUND',stripeAccountId:this.billing.stripe.accountId,livemode:this.billing.stripe.livemode}});
@@ -88,16 +110,17 @@ export class BillingRefundsService {
       typeof input.memo!=='string'||input.memo.length>500||typeof input.notifyCustomer!=='boolean'||(input.endPackage!==undefined&&typeof input.endPackage!=='boolean')||typeof input.sourceHash!=='string'||!/^[a-f0-9]{64}$/.test(input.sourceHash))throw new BadRequestException();
     await this.access(context,companyId,'system.billing.refund.manage');const s=await this.source(context,companyId,invoiceId),state=await this.policy(input.amountSatang);
     if(s.sourceHash!==input.sourceHash||state.settings.version!==s.state.settings.version)throw stale();
+    const end=await this.refundEnd(invoiceId,s.row.paidSatang,s.source.charge.amount_refunded,input);
     const id=randomUUID(),memo=input.memo.trim(),params=await refundParams(this.billing.stripe,s.account,s.row,s.source,id,input.amountSatang,memo,input.notifyCustomer);
     const projection=await refundPreview(this.billing.stripe,s.account,s.row,s.source,params),usage=await this.billing.usage(companyId);
     const p:Proposed={accountId:s.account.id,customerId:s.account.customerId!,chargeId:s.row.providerChargeId!,membershipId:context.membershipId,actorCompanyId:context.companyId,sourceHash:s.sourceHash,localHash:localHash(s.account,s.row),
       providerSourceHash:s.source.sourceHash,settingsVersion:state.settings.version,policyRevisionId:state.revision!.id,amountSatang:input.amountSatang,memo,notifyCustomer:input.notifyCustomer,
-      invoiceNumber:s.row.providerNumber,paidSatang:s.row.paidSatang,previousRefundedSatang:s.source.charge.amount_refunded,usage,projection,params,endPackage:input.endPackage===true};
+      invoiceNumber:s.row.providerNumber,paidSatang:s.row.paidSatang,previousRefundedSatang:s.source.charge.amount_refunded,usage,projection,params,...end};
     const row=await this.prisma.client.$transaction(async tx=>{
       await lockPlanTermCompany(tx,companyId);const {account}=await this.access(context,companyId,'system.billing.refund.manage',tx);
       if(localHash(account,await this.invoice(account,invoiceId,tx))!==p.localHash||(await this.policy(p.amountSatang,tx)).settings.version!==p.settingsVersion)throw stale();
       if(account.activeAttemptId||account.activeCollectionOperationId||await pendingRefund(tx,account))throw billingError('BILLING_REFUND_PENDING','ตรวจคำสั่งเดิมให้เสร็จก่อนเริ่มคำขอคืนเงิน');
-      const block=p.endPackage?await this.packageBlock(tx,account,invoiceId):null;if(block)throw endPackageError(block);
+      const block=await this.refundBlock(tx,account,invoiceId,p);if(block)throw endPackageError(block);
       return tx.billingOperation.create({data:{id,companyId,stripeAccountId:account.stripeAccountId,livemode:account.livemode,type:'REFUND',referenceId:invoiceId,
         sourceVersion:s.row.version,proposedJson:json(p),reason:input.reason.trim(),initiatorUserId:context.userId,
         requestHash:configurationHash([id,invoiceId,p,input.reason.trim()]),expiresAt:new Date(Date.now()+600000)}});
@@ -133,8 +156,9 @@ export class BillingRefundsService {
     if(localHash(account,await this.invoice(account,row.referenceId!,tx))!==p.localHash)throw stale();
     const state=await this.policy(p.amountSatang,tx);if(state.settings.version!==p.settingsVersion||state.revision?.id!==p.policyRevisionId)throw stale();
     if(account.activeAttemptId||account.activeCollectionOperationId||await pendingRefund(tx,account,row.id))throw billingError('BILLING_REFUND_PENDING','ยังมีคำสั่งเดิมที่ต้องตรวจสอบ');
+    if(!await this.pinned(tx,row.referenceId!,p))throw stale();
     // Submit, approve and dispatch all re-check, so money never moves on a package this refund cannot end.
-    const block=p.endPackage?await this.packageBlock(tx,account,row.referenceId!):null;if(block)throw endPackageError(block);return account;
+    const block=await this.refundBlock(tx,account,row.referenceId!,p);if(block)throw endPackageError(block);return account;
   }
   private audit(tx:Prisma.TransactionClient,row:BillingOperation,action:string,actor?:string){
     return tx.auditLog.create({data:{companyId:row.companyId,actorUserId:actor??null,...!actor?{actorType:'SERVICE',actorRefId:'billing-refund-worker'}:{},action:`billing.refund.${action}`,targetType:'BillingOperation',targetId:row.id,requestId:row.id,
@@ -244,11 +268,15 @@ export class BillingRefundsService {
     }finally{await this.prisma.client.billingAccount.updateMany({where:{id:p.accountId,leaseToken:lease},data:{leaseToken:null,leaseUntil:null,nextReconcileAt:new Date()}});}
   }
   /** A term that already ended or moved to another purchase is left alone; a live renewal or pending purchase waits for staff. */
-  private async endRefundedPackage(tx:Prisma.TransactionClient,p:Pick<Proposed,'endPackage'>,terminal:string,row:BillingOperation,account:BillingAccount){
+  private async endRefundedPackage(tx:Prisma.TransactionClient,p:Pick<Proposed,'endPackage'|'promotionRedemptionId'>,terminal:string,row:BillingOperation,account:BillingAccount){
     if(!refundEndsPackage(p,terminal))return undefined;
+    if(!await this.pinned(tx,row.referenceId!,p))throw refundReviewRequired();
     const block=await endPaidPackage(tx,this.lifecycle,{companyId:row.companyId!,accountId:account.id,invoiceId:row.referenceId!,requireFullRefund:false,
       actorUserId:null,requestId:row.id,reason:row.reason,refundOperationId:row.id});
-    if(block&&block!=='BILLING_END_PACKAGE_NOT_CURRENT')throw endPackageError(block);return !block;
+    if(block&&block!=='BILLING_END_PACKAGE_NOT_CURRENT')throw endPackageError(block);
+    // Spec Q6: nothing of a promotion source is running, so only a source with nothing left of it is settled; any other waits for staff.
+    if(block&&p.promotionRedemptionId)await stampSpentPromotion(tx,{accountId:account.id,invoiceId:row.referenceId!});
+    return !block;
   }
   async endPackageReview(context:RequestContext,companyId:string,invoiceId:string):Promise<BillingEndPackageReview>{
     const {account,access}=await this.access(context,companyId),block=await this.packageBlock(this.prisma.client,account,invoiceId,true);
