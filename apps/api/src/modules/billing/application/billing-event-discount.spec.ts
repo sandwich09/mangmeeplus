@@ -65,6 +65,31 @@ describe('sales-event holder view', () => {
     await assert.rejects(lineRead.call(denied, context), /สิทธิ์จัดการแพ็กเกจ/);
   });
 
+  // UAT 2026-10-10: LINE told a shop sent a QR bill each period that its card is charged by itself. The read now carries how the shop renews, from the account it already loads (no extra query).
+  it('the read says how the shop renews, the way the package status reads it, so each reply can say what is true for that shop', async () => {
+    const read = (BillingService.prototype as any).eventDiscount;
+    const context = { userId: 'user-1', companyId: 'company-1' };
+    // `source` is what purchaseSource decided (it has its own specs); this is only the account → mode reading.
+    const self = (account: any, source: string) => { const asked: any[] = []; return { asked, assertOwner: async (ctx: any) => { asked.push(ctx); }, account: async () => account, purchaseSource: async () => source,
+      prisma: { client: { company: { findUnique: async () => ({ planTerm: null }) }, externalIdentity: { findMany: async () => [] } } } }; };
+    const paid = 'PAID_CURRENT_MODE';
+    for (const [account, source, path, mode] of [
+      [{ renewalMode: 'CARD_AUTO', baseSubscriptionId: 'sub_1' }, paid, 'CREDIT', 'CARD_AUTO'],
+      [{ renewalMode: 'PROMPTPAY_RENEW', baseSubscriptionId: 'sub_1' }, paid, 'CREDIT', 'PROMPTPAY_RENEW'],
+      // first QR bill paid, subscription not bound yet
+      [{ renewalMode: 'PROMPTPAY_RENEW', baseSubscriptionId: null }, paid, 'CREDIT', 'PROMPTPAY_RENEW'],
+      // a card subscription whose column still says NONE is a card charged by itself, as status() reads it
+      [{ renewalMode: 'NONE', baseSubscriptionId: 'sub_1' }, paid, 'CREDIT', 'CARD_AUTO'],
+      [{ renewalMode: 'NONE', baseSubscriptionId: null }, paid, 'CREDIT', 'NONE'],
+      [{ renewalMode: 'CARD_ONCE', baseSubscriptionId: null }, paid, 'DISCOUNT', 'CARD_ONCE'],
+      [{ renewalMode: 'PROMPTPAY_RENEW', baseSubscriptionId: null }, 'SOURCE_INCONSISTENT', null, 'PROMPTPAY_RENEW'],
+      [null, 'NO_TERM', 'DISCOUNT', undefined],
+    ] as const) {
+      const shop = self(account, source), view = await read.call(shop, context);
+      assert.deepEqual([view.path, view.renewalMode, view.tickets, shop.asked], [path, mode, [], [context]], JSON.stringify([account, source]));
+    }
+  });
+
   it('Owner 2026-09-29: the view lists every discount usable here, best first, each with its own cards; a quote can take a chosen one', async () => {
     const scope = { tiers: ['BASIC_499', 'PRO_999'], intervals: ['month'] };
     const row = (id: string, serial: string, eventName: string, discountSatang: number, day: number) =>
