@@ -80,6 +80,22 @@ describe('package page error text', () => {
     assert.equal(errorText({ code: 'BILLING_LEGACY_REVIEW_REQUIRED' }), BILLING_GENERIC_ERROR);
     assert.match(errorText({ code: 'BILLING_REPEAT_NOT_READY' }), /ระหว่างรอบ/);
   });
+
+  // The promotion codes have no page-specific copy: the purchase page and the admin screens read the same shared sentence.
+  it('answers the promotion campaign codes with their exact Thai', () => {
+    for (const [code, text] of [
+      ['PROMOTION_UNAVAILABLE', 'โปรโมชั่นนี้ใช้ไม่ได้แล้ว กรุณาตรวจสอบรายการใหม่'],
+      ['PROMOTION_UPGRADE_DEFERRED', 'แพ็กเกจนี้อยู่ในช่วงสิทธิ์โปรโมชั่น อัปเกรดได้หลังสิทธิ์ที่ซื้อไว้สิ้นสุด'],
+      ['CONTROL_PROMOTION_INVALID', 'ข้อมูลแคมเปญยังไม่ครบหรือไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่'],
+      ['CONTROL_PROMOTION_NOT_FOUND', 'ไม่พบแคมเปญนี้ กรุณาโหลดรายการแคมเปญใหม่'],
+      ['CONTROL_PROMOTION_ENDED', 'แคมเปญนี้จบแล้ว แก้ไขหรือเปิดใหม่ไม่ได้ กรุณาสร้างแคมเปญใหม่'],
+      ['CONTROL_PROMOTION_OVERLAP', 'มีแคมเปญอื่นของแพ็กเกจและรอบเดียวกันในช่วงเวลานี้แล้ว'],
+      ['CONTROL_PROMOTION_CAP_BELOW_USED', 'ลดจำนวนสิทธิ์ต่ำกว่าที่มีผู้จองหรือใช้ไปแล้วไม่ได้'],
+      ['CONTROL_PROMOTION_CATALOG_STALE', 'ราคาหรือโควตาของแพ็กเกจเปลี่ยนแล้ว กรุณาตรวจสอบตัวอย่างและเผยแพร่แคมเปญใหม่'],
+    ] as const) {
+      assert.equal(errorText({ code, status: 409 }), text, code);
+    }
+  });
 });
 
 describe('resend result copy', () => {
