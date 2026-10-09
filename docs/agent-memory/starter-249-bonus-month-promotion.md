@@ -1,6 +1,6 @@
 # Agent Memory: starter 249 bonus month promotion
 
-Status: Revised specification closes F01–F09 on 2026-10-09. Owner confirmed bonus/CHAT/stacking/deferred-upgrade/refund policies. Offline resimulation: 82/82 model cases, 9/9 negative controls caught, 6 unchanged-source probe assertions. No application implementation or activation.
+Status: Release 1 IMPLEMENTED on branch `claude/starter-249-promotion-20261009` (2026-10-09) from the revised spec; no campaign exists, so the capability is inert. Plan: `docs/plans/starter-249-bonus-month-promotion-plan.md` (decisions R1–R19, acceptance map §8, open items §9).
 Owner: Thawatchai / Codex
 Scope: Admin console creates and manages campaigns; first campaign is STARTER_249 monthly buy one month get one month and annual purchase gets 13 months; bugs, gaps, impact, dependencies and change points.
 
@@ -57,7 +57,18 @@ Verification:
 
 - PASS final 2026-10-09 document audit: 8 task files, 21 local links, A01–A36/G01–G18/F01–F09, JSON/result/spec/harness hash consistency and whitespace. Extracted the durable replay.md commands and successfully reran all 82 cases, 9 negative controls and 6 probes. Application diff hash across apps/packages/e2e/infra stayed identical to turn start.
 
+Implementation 2026-10-09 (controller + lanes):
+- Owner asked for review + implementation with the work split across model lanes by complexity, then admin-merge to main and develop. Five read-only source reviews came first; their findings changed the literal design (plan §1): campaign terms in `BillingPolicyRevision.promotionJson` beside the policy; `BillingInvoice.benefitEnd` and one `invoiceServiceEnd` helper for every reader that equated `periodEnd` with `paidThrough`; the pre-dispatch barrier compares the base policy hash; the fence only where `taken` can rise; pause/end as one-step closing commands; bonus-first tie in the allocator.
+- One additive migration `20261009120000_billing_promotion_campaigns` (redemption table with CHECKs, two nullable columns, `PROMOTION` in the lot-kind CHECK).
+- Release-1 matrix: INITIAL / RESTART in all four modes; REPEAT on an active one-time Starter of the same interval in the one-time modes. Refused with a reason (NORMAL stays purchasable): repeat on a live card subscription, scheduled change, upgrade, deal.
+- Three independent reviews of the integrated diff found no P1 in the API and one in the web (a ticket-only shop sent the new quote field); fixes are R15–R19.
+- Test wiring: new unit spec in `scripts/line-ai-whole-chain-acceptance.catalog.mjs`; four `billing-promotion*.pg.spec.ts` in the PostgreSQL step of `.github/workflows/ci.yml`. GitHub Actions was in `startup_failure`, so the gate ran locally (mirror of the PR jobs, PostgreSQL step against a throwaway database).
+
+Open:
+- Native Stripe test-mode proof and browser acceptance on UAT before any campaign is opened to real customers.
+- Refused combinations and staff-handled refund cases listed in plan §9.
+- Rollout: after the first promotion purchase never roll back past this release (an older binary fails closed on a `PROMOTION` lot).
+
 Next:
-- Stop at revised specification and simulation as requested. If implementation is requested later, create a scoped plan against current source, retaining all confirmed rules and integration obligations.
-- Reuse main's paymentCheckoutSnapshot, event-discount CARD_AUTO first-payment binding and receipt/AI/financial ledgers, then add real DB/provider/UI tests; do not start from the old checkout assuming those dependencies are missing.
-- Before any cloud/release activity follow the mandatory runbooks. This task authorizes neither implementation nor live configuration/deployment.
+- UAT deploy by the mandatory protocol (`docs/runbooks/uat-production-v2-deployment.md`), then on UAT: create a TEST campaign from the Starter template, buy with a test card in CARD_ONCE and CARD_AUTO, and check the bound subscription's trial end.
+- Production promotion only on the Owner's explicit go.
