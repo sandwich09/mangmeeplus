@@ -1,0 +1,1057 @@
+{
+  "kind": "OFFLINE_SPEC_REFERENCE_MODEL",
+  "date": "2026-10-05",
+  "auditedSpecSha256": "fb859fecc07485e79903ffaa51466e17e87ce6f03ac99edcd4c1c0773031e97b",
+  "disclaimer": "Model assertions do not execute product APIs, database transactions, browser UI, Stripe, LINE, OCR or AI funding.",
+  "modelAssumptions": [
+    "Mutations are serialized Python steps; no real concurrency.",
+    "UTC calendar arithmetic follows the input spec.",
+    "Payment evidence and authorization are synthetic booleans.",
+    "Receipt immediate availability is conditional, not an approved commercial decision.",
+    "Successful recurring binding is assumed only in the four mode projection cases."
+  ],
+  "summary": {
+    "cases": 37,
+    "modelPass": 37,
+    "modelFail": 0,
+    "conditionalCases": 7,
+    "counterexamples": 6
+  },
+  "cases": [
+    {
+      "id": "S01",
+      "title": "Incomplete draft never admits purchases",
+      "criteria": [
+        "A23"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "state": "DRAFT",
+        "redemptions": 0
+      }
+    },
+    {
+      "id": "S02",
+      "title": "Inclusive start and exclusive end",
+      "criteria": [
+        "A15",
+        "A24"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "2026-09-30T23:59:59Z": "SCHEDULED",
+        "2026-10-01T00:00:00Z": "ACTIVE",
+        "2026-10-31T23:59:59Z": "ACTIVE",
+        "2026-11-01T00:00:00Z": "ENDED"
+      }
+    },
+    {
+      "id": "S03",
+      "title": "Publishing never opens the separate sales gate",
+      "criteria": [
+        "A24"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "published": true,
+        "salesGate": false
+      }
+    },
+    {
+      "id": "S04",
+      "title": "Stale admin edit and stale quote are refused",
+      "criteria": [
+        "A04",
+        "A26"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "version": 3,
+        "reservations": 0
+      }
+    },
+    {
+      "id": "S05",
+      "title": "Unauthorized publication leaves the draft unchanged",
+      "criteria": [
+        "A19"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "state": "DRAFT"
+      }
+    },
+    {
+      "id": "S06",
+      "title": "Pause blocks new reservations but preserves the accepted purchase",
+      "criteria": [
+        "A15",
+        "A25"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "trace": [
+          {
+            "action": "publish",
+            "state": "ACTIVE",
+            "version": 2
+          },
+          {
+            "action": "quote",
+            "company": "shop-a",
+            "interval": "month"
+          },
+          {
+            "action": "reserve",
+            "attempt": "attempt-a",
+            "company": "shop-a"
+          },
+          {
+            "action": "pause",
+            "state": "PAUSED",
+            "version": 3
+          },
+          {
+            "action": "verified_payment",
+            "invoice": "invoice-a",
+            "held": false
+          },
+          {
+            "action": "apply",
+            "added": 60,
+            "benefitEnd": "2026-12-05T03:00:00Z"
+          },
+          {
+            "action": "resume",
+            "state": "ACTIVE",
+            "version": 4
+          },
+          {
+            "action": "quote",
+            "company": "shop-a",
+            "interval": "month"
+          }
+        ],
+        "state": "ACTIVE",
+        "allowance": 60
+      }
+    },
+    {
+      "id": "S07",
+      "title": "End is terminal while accepted payment still applies",
+      "criteria": [
+        "A25"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "trace": [
+          {
+            "action": "publish",
+            "state": "ACTIVE",
+            "version": 2
+          },
+          {
+            "action": "quote",
+            "company": "shop-a",
+            "interval": "month"
+          },
+          {
+            "action": "reserve",
+            "attempt": "attempt-a",
+            "company": "shop-a"
+          },
+          {
+            "action": "end",
+            "state": "ENDED",
+            "version": 3
+          },
+          {
+            "action": "verified_payment",
+            "invoice": "invoice-a",
+            "held": false
+          },
+          {
+            "action": "apply",
+            "added": 60,
+            "benefitEnd": "2026-12-05T03:00:00Z"
+          }
+        ],
+        "campaignState": "ENDED"
+      }
+    },
+    {
+      "id": "S08",
+      "title": "New shop month purchase",
+      "criteria": [
+        "A01",
+        "A06",
+        "A07"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [
+        "Proposed receipt availability: all included units at paid apply"
+      ],
+      "observed": {
+        "trace": [
+          {
+            "action": "publish",
+            "state": "ACTIVE",
+            "version": 2
+          },
+          {
+            "action": "quote",
+            "company": "shop-a",
+            "interval": "month"
+          },
+          {
+            "action": "reserve",
+            "attempt": "attempt-a",
+            "company": "shop-a"
+          },
+          {
+            "action": "verified_payment",
+            "invoice": "invoice-a",
+            "held": false
+          },
+          {
+            "action": "apply",
+            "added": 60,
+            "benefitEnd": "2026-12-05T03:00:00Z"
+          }
+        ],
+        "impact": {
+          "start": "2026-10-05T03:00:00Z",
+          "paidEnd": "2026-11-05T03:00:00Z",
+          "benefitEnd": "2026-12-05T03:00:00Z",
+          "paidReceipts": 30,
+          "bonusReceipts": 30,
+          "totalReceipts": 60,
+          "chargedSatang": 24900
+        }
+      }
+    },
+    {
+      "id": "S09",
+      "title": "New shop year purchase",
+      "criteria": [
+        "A01",
+        "A06",
+        "A07"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [
+        "Proposed receipt availability: all included units at paid apply"
+      ],
+      "observed": {
+        "trace": [
+          {
+            "action": "publish",
+            "state": "ACTIVE",
+            "version": 2
+          },
+          {
+            "action": "quote",
+            "company": "shop-a",
+            "interval": "year"
+          },
+          {
+            "action": "reserve",
+            "attempt": "attempt-a",
+            "company": "shop-a"
+          },
+          {
+            "action": "verified_payment",
+            "invoice": "invoice-a",
+            "held": false
+          },
+          {
+            "action": "apply",
+            "added": 390,
+            "benefitEnd": "2027-11-05T03:00:00Z"
+          }
+        ],
+        "impact": {
+          "start": "2026-10-05T03:00:00Z",
+          "paidEnd": "2027-10-05T03:00:00Z",
+          "benefitEnd": "2027-11-05T03:00:00Z",
+          "paidReceipts": 360,
+          "bonusReceipts": 30,
+          "totalReceipts": 390,
+          "chargedSatang": 249000
+        }
+      }
+    },
+    {
+      "id": "S10",
+      "title": "Existing shop extends from its existing entitlement end",
+      "criteria": [
+        "A02",
+        "A06"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "start": "2026-10-20T03:00:00Z",
+        "paidEnd": "2026-11-20T03:00:00Z",
+        "benefitEnd": "2026-12-20T03:00:00Z",
+        "paidReceipts": 30,
+        "bonusReceipts": 30,
+        "totalReceipts": 60,
+        "chargedSatang": 24900
+      }
+    },
+    {
+      "id": "S11",
+      "title": "Lapsed shop starts at verified paid time",
+      "criteria": [
+        "A02",
+        "A06"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "start": "2026-10-05T03:00:00Z",
+        "paidEnd": "2026-11-05T03:00:00Z",
+        "benefitEnd": "2026-12-05T03:00:00Z",
+        "paidReceipts": 30,
+        "bonusReceipts": 30,
+        "totalReceipts": 60,
+        "chargedSatang": 24900
+      }
+    },
+    {
+      "id": "S12",
+      "title": "January 31 clamp without anniversary drift",
+      "criteria": [
+        "A05"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "start": "2026-01-31T03:00:00Z",
+        "paidEnd": "2026-02-28T03:00:00Z",
+        "benefitEnd": "2026-03-31T03:00:00Z",
+        "paidReceipts": 30,
+        "bonusReceipts": 30,
+        "totalReceipts": 60,
+        "chargedSatang": 24900
+      }
+    },
+    {
+      "id": "S13",
+      "title": "Leap-day annual bonus",
+      "criteria": [
+        "A05"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "start": "2028-02-29T03:00:00Z",
+        "paidEnd": "2029-02-28T03:00:00Z",
+        "benefitEnd": "2029-03-29T03:00:00Z",
+        "paidReceipts": 360,
+        "bonusReceipts": 30,
+        "totalReceipts": 390,
+        "chargedSatang": 249000
+      }
+    },
+    {
+      "id": "S14",
+      "title": "December year crossing",
+      "criteria": [
+        "A05"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "start": "2026-12-31T03:00:00Z",
+        "paidEnd": "2027-01-31T03:00:00Z",
+        "benefitEnd": "2027-02-28T03:00:00Z",
+        "paidReceipts": 30,
+        "bonusReceipts": 30,
+        "totalReceipts": 60,
+        "chargedSatang": 24900
+      }
+    },
+    {
+      "id": "S15",
+      "title": "Thai early-morning boundary uses the stated UTC convention",
+      "criteria": [
+        "A05"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "impact": {
+          "start": "2026-01-30T17:30:00Z",
+          "paidEnd": "2026-02-28T17:30:00Z",
+          "benefitEnd": "2026-03-30T17:30:00Z",
+          "paidReceipts": 30,
+          "bonusReceipts": 30,
+          "totalReceipts": 60,
+          "chargedSatang": 24900
+        },
+        "paidEndBangkok": "2026-03-01T00:30:00+07:00",
+        "note": "Specified UTC anniversary, not Bangkok calendar arithmetic"
+      }
+    },
+    {
+      "id": "S16",
+      "title": "Target dates for CARD_ONCE",
+      "criteria": [
+        "A10",
+        "A11"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [
+        "Provider binding is an assumed successful model step, not a native payment test"
+      ],
+      "observed": {
+        "mode": "CARD_ONCE",
+        "paidEnd": "2026-11-05T03:00:00Z",
+        "benefitEnd": "2026-12-05T03:00:00Z",
+        "nextCharge": null
+      }
+    },
+    {
+      "id": "S17",
+      "title": "Target dates for PROMPTPAY_ONCE",
+      "criteria": [
+        "A10",
+        "A11"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [
+        "Provider binding is an assumed successful model step, not a native payment test"
+      ],
+      "observed": {
+        "mode": "PROMPTPAY_ONCE",
+        "paidEnd": "2026-11-05T03:00:00Z",
+        "benefitEnd": "2026-12-05T03:00:00Z",
+        "nextCharge": null
+      }
+    },
+    {
+      "id": "S18",
+      "title": "Target dates for CARD_AUTO",
+      "criteria": [
+        "A10",
+        "A11"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [
+        "Provider binding is an assumed successful model step, not a native payment test"
+      ],
+      "observed": {
+        "mode": "CARD_AUTO",
+        "paidEnd": "2026-11-05T03:00:00Z",
+        "benefitEnd": "2026-12-05T03:00:00Z",
+        "nextCharge": "2026-12-05T03:00:00Z"
+      }
+    },
+    {
+      "id": "S19",
+      "title": "Target dates for PROMPTPAY_RENEW",
+      "criteria": [
+        "A10",
+        "A11"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [
+        "Provider binding is an assumed successful model step, not a native payment test"
+      ],
+      "observed": {
+        "mode": "PROMPTPAY_RENEW",
+        "paidEnd": "2026-11-05T03:00:00Z",
+        "benefitEnd": "2026-12-05T03:00:00Z",
+        "nextCharge": "2026-12-05T03:00:00Z"
+      }
+    },
+    {
+      "id": "S20",
+      "title": "Same shop cannot use monthly and annual variants twice",
+      "criteria": [
+        "A03"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "redemptions": 1,
+        "secondBuyer": "ALREADY_TAKEN"
+      }
+    },
+    {
+      "id": "S21",
+      "title": "Distinct shops have separate campaign entitlement",
+      "criteria": [
+        "A03"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "redemptions": 2
+      }
+    },
+    {
+      "id": "S22",
+      "title": "TEST and LIVE do not consume each other",
+      "criteria": [
+        "A03"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "keys": [
+          [
+            "acct-a",
+            "TEST",
+            "campaign-249",
+            "shop-a"
+          ],
+          [
+            "acct-a",
+            "LIVE",
+            "campaign-249",
+            "shop-a"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "S23",
+      "title": "Campaign revision does not reset lifetime shop usage",
+      "criteria": [
+        "A04"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "version": 3,
+        "redemptions": 1
+      }
+    },
+    {
+      "id": "S24",
+      "title": "A genuinely new campaign has separate entitlement",
+      "criteria": [
+        "A03"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "campaignIds": [
+          "campaign-249",
+          "campaign-new"
+        ]
+      }
+    },
+    {
+      "id": "S25",
+      "title": "Verified unpaid terminal attempt releases its reservation",
+      "criteria": [
+        "A10",
+        "A16"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "trace": [
+          {
+            "action": "publish",
+            "state": "ACTIVE",
+            "version": 2
+          },
+          {
+            "action": "quote",
+            "company": "shop-a",
+            "interval": "month"
+          },
+          {
+            "action": "reserve",
+            "attempt": "attempt-a",
+            "company": "shop-a"
+          },
+          {
+            "action": "release",
+            "attempt": "attempt-a",
+            "noPaymentProof": true
+          },
+          {
+            "action": "reserve",
+            "attempt": "attempt-b",
+            "company": "shop-a"
+          }
+        ]
+      }
+    },
+    {
+      "id": "S26",
+      "title": "Unknown or timed-out payment cannot release entitlement",
+      "criteria": [
+        "A10",
+        "A16"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "state": "RESERVED"
+      }
+    },
+    {
+      "id": "S27",
+      "title": "Old callback cannot consume a replacement reservation",
+      "criteria": [
+        "A16"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "activeAttempt": "attempt-b"
+      }
+    },
+    {
+      "id": "S28",
+      "title": "Paid-held consumes campaign usage and retry applies only once",
+      "criteria": [
+        "A16"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "before": {
+          "attempt": "attempt-a",
+          "quote": {
+            "company": "shop-a",
+            "interval": "month",
+            "mode": "CARD_ONCE",
+            "campaign": "campaign-249",
+            "revision": 2,
+            "at": "2026-10-05T03:00:00Z"
+          },
+          "state": "CONSUMED",
+          "invoice": "invoice-a",
+          "applied": false,
+          "allowance": 0,
+          "impact": {
+            "start": "2026-10-05T03:00:00Z",
+            "paidEnd": "2026-11-05T03:00:00Z",
+            "benefitEnd": "2026-12-05T03:00:00Z",
+            "paidReceipts": 30,
+            "bonusReceipts": 30,
+            "totalReceipts": 60,
+            "chargedSatang": 24900
+          }
+        },
+        "after": {
+          "attempt": "attempt-a",
+          "quote": {
+            "company": "shop-a",
+            "interval": "month",
+            "mode": "CARD_ONCE",
+            "campaign": "campaign-249",
+            "revision": 2,
+            "at": "2026-10-05T03:00:00Z"
+          },
+          "state": "CONSUMED",
+          "invoice": "invoice-a",
+          "applied": true,
+          "allowance": 60,
+          "impact": {
+            "start": "2026-10-05T03:00:00Z",
+            "paidEnd": "2026-11-05T03:00:00Z",
+            "benefitEnd": "2026-12-05T03:00:00Z",
+            "paidReceipts": 30,
+            "bonusReceipts": 30,
+            "totalReceipts": 60,
+            "chargedSatang": 24900
+          },
+          "renewalAt": null
+        },
+        "trace": [
+          {
+            "action": "publish",
+            "state": "ACTIVE",
+            "version": 2
+          },
+          {
+            "action": "quote",
+            "company": "shop-a",
+            "interval": "month"
+          },
+          {
+            "action": "reserve",
+            "attempt": "attempt-a",
+            "company": "shop-a"
+          },
+          {
+            "action": "verified_payment",
+            "invoice": "invoice-a",
+            "held": true
+          },
+          {
+            "action": "quote",
+            "company": "shop-a",
+            "interval": "month"
+          },
+          {
+            "action": "verified_payment",
+            "invoice": "invoice-a",
+            "held": false
+          },
+          {
+            "action": "apply",
+            "added": 60,
+            "benefitEnd": "2026-12-05T03:00:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "id": "S29",
+      "title": "Checkout and paid replay are idempotent in the model",
+      "criteria": [
+        "A16",
+        "A26"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "trace": [
+          {
+            "action": "publish",
+            "state": "ACTIVE",
+            "version": 2
+          },
+          {
+            "action": "quote",
+            "company": "shop-a",
+            "interval": "month"
+          },
+          {
+            "action": "reserve",
+            "attempt": "attempt-a",
+            "company": "shop-a"
+          },
+          {
+            "action": "verified_payment",
+            "invoice": "invoice-a",
+            "held": false
+          },
+          {
+            "action": "apply",
+            "added": 60,
+            "benefitEnd": "2026-12-05T03:00:00Z"
+          },
+          {
+            "action": "verified_payment",
+            "invoice": "invoice-a",
+            "held": false
+          }
+        ],
+        "redemptions": 1,
+        "receiptUnits": 60
+      }
+    },
+    {
+      "id": "S30",
+      "title": "Unverified return signal does not grant benefits",
+      "criteria": [
+        "A10",
+        "A19"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "receiptUnits": 0
+      }
+    },
+    {
+      "id": "S31",
+      "title": "Entering bonus month or replaying payment cannot refill receipt quota",
+      "criteria": [
+        "A07",
+        "A08"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [
+        "Proposed availability at apply; quota use simulated, no OCR admission calls"
+      ],
+      "observed": {
+        "granted": 60,
+        "used": 47,
+        "remaining": 13
+      }
+    },
+    {
+      "id": "S32",
+      "title": "Next renewal uses normal interval and quota",
+      "criteria": [
+        "A11",
+        "A13"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "month": {
+          "first": {
+            "start": "2026-10-05T03:00:00Z",
+            "paidEnd": "2026-11-05T03:00:00Z",
+            "benefitEnd": "2026-12-05T03:00:00Z",
+            "paidReceipts": 30,
+            "bonusReceipts": 30,
+            "totalReceipts": 60,
+            "chargedSatang": 24900
+          },
+          "next": {
+            "start": "2026-12-05T03:00:00Z",
+            "paidEnd": "2027-01-05T03:00:00Z",
+            "benefitEnd": "2027-01-05T03:00:00Z",
+            "paidReceipts": 30,
+            "bonusReceipts": 0,
+            "totalReceipts": 30,
+            "chargedSatang": 24900
+          }
+        },
+        "year": {
+          "first": {
+            "start": "2026-10-05T03:00:00Z",
+            "paidEnd": "2027-10-05T03:00:00Z",
+            "benefitEnd": "2027-11-05T03:00:00Z",
+            "paidReceipts": 360,
+            "bonusReceipts": 30,
+            "totalReceipts": 390,
+            "chargedSatang": 249000
+          },
+          "next": {
+            "start": "2027-11-05T03:00:00Z",
+            "paidEnd": "2028-11-05T03:00:00Z",
+            "benefitEnd": "2028-11-05T03:00:00Z",
+            "paidReceipts": 360,
+            "bonusReceipts": 0,
+            "totalReceipts": 360,
+            "chargedSatang": 249000
+          }
+        }
+      }
+    },
+    {
+      "id": "S33",
+      "title": "Last slot yields one winner in either serialized order",
+      "criteria": [
+        "A15"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "serialOrders": [
+          {
+            "order": [
+              "shop-a",
+              "shop-b"
+            ],
+            "winner": "shop-a",
+            "reserved": 1
+          },
+          {
+            "order": [
+              "shop-b",
+              "shop-a"
+            ],
+            "winner": "shop-b",
+            "reserved": 1
+          }
+        ],
+        "note": "Atomic reference model only; not database concurrency proof"
+      }
+    },
+    {
+      "id": "S34",
+      "title": "Accepted Checkout paid after campaign end keeps its entitlement",
+      "criteria": [
+        "A15",
+        "A16"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "trace": [
+          {
+            "action": "publish",
+            "state": "ACTIVE",
+            "version": 2
+          },
+          {
+            "action": "quote",
+            "company": "shop-a",
+            "interval": "month"
+          },
+          {
+            "action": "reserve",
+            "attempt": "attempt-a",
+            "company": "shop-a"
+          },
+          {
+            "action": "verified_payment",
+            "invoice": "invoice-a",
+            "held": false
+          },
+          {
+            "action": "apply",
+            "added": 60,
+            "benefitEnd": "2027-01-01T00:05:00Z"
+          }
+        ],
+        "impact": {
+          "start": "2026-11-01T00:05:00Z",
+          "paidEnd": "2026-12-01T00:05:00Z",
+          "benefitEnd": "2027-01-01T00:05:00Z",
+          "paidReceipts": 30,
+          "bonusReceipts": 30,
+          "totalReceipts": 60,
+          "chargedSatang": 24900
+        }
+      }
+    },
+    {
+      "id": "S35",
+      "title": "Quote alone does not preserve entitlement after campaign end",
+      "criteria": [
+        "A15"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "reservations": 0
+      }
+    },
+    {
+      "id": "S36",
+      "title": "Paid-held still occupies campaign capacity",
+      "criteria": [
+        "A15",
+        "A22"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "consumed": 1,
+        "applied": 0,
+        "capacityAvailable": 0
+      }
+    },
+    {
+      "id": "S37",
+      "title": "Final term uses verified paid time instead of stale quote time",
+      "criteria": [
+        "A06"
+      ],
+      "status": "MODEL_PASS",
+      "conditionalOn": [],
+      "observed": {
+        "quoteProjection": {
+          "start": "2026-10-05T03:00:00Z",
+          "paidEnd": "2026-11-05T03:00:00Z",
+          "benefitEnd": "2026-12-05T03:00:00Z",
+          "paidReceipts": 30,
+          "bonusReceipts": 30,
+          "totalReceipts": 60,
+          "chargedSatang": 24900
+        },
+        "applied": {
+          "start": "2026-10-06T03:00:00Z",
+          "paidEnd": "2026-11-06T03:00:00Z",
+          "benefitEnd": "2026-12-06T03:00:00Z",
+          "paidReceipts": 30,
+          "bonusReceipts": 30,
+          "totalReceipts": 60,
+          "chargedSatang": 24900
+        }
+      }
+    }
+  ],
+  "counterexamples": [
+    {
+      "id": "W01",
+      "title": "Provider-partitioned unique key permits the same shop/campaign twice",
+      "status": "COUNTEREXAMPLE_REPRODUCED",
+      "observed": 2,
+      "requiredOrAlternative": 1,
+      "finding": "F02",
+      "scope": "Logical witness from proposed spec shape; not an observed production defect"
+    },
+    {
+      "id": "W02",
+      "title": "Changed base allowance plus fixed bonus changes advertised monthly total",
+      "status": "COUNTEREXAMPLE_REPRODUCED",
+      "observed": 80,
+      "requiredOrAlternative": 60,
+      "finding": "F01",
+      "scope": "Logical witness from proposed spec shape; not an observed production defect"
+    },
+    {
+      "id": "W03",
+      "title": "Changed base allowance plus fixed bonus changes advertised annual total",
+      "status": "COUNTEREXAMPLE_REPRODUCED",
+      "observed": 630,
+      "requiredOrAlternative": 390,
+      "finding": "F01",
+      "scope": "Logical witness from proposed spec shape; not an observed production defect"
+    },
+    {
+      "id": "W04",
+      "title": "Receipt tie order changes balance after later repeat purchase",
+      "status": "COUNTEREXAMPLE_REPRODUCED",
+      "observed": {
+        "paidFirst": 40,
+        "bonusFirst": 60
+      },
+      "requiredOrAlternative": {
+        "policy": "one explicit deterministic order"
+      },
+      "finding": "F04",
+      "scope": "Logical witness from proposed spec shape; not an observed production defect"
+    },
+    {
+      "id": "W05",
+      "title": "Reserve committed before end but session not yet created has two possible readings",
+      "status": "COUNTEREXAMPLE_REPRODUCED",
+      "observed": {
+        "reservationBoundary": "honor snapshot",
+        "sessionBoundary": "refuse"
+      },
+      "requiredOrAlternative": {
+        "policy": "one defined acceptance boundary and recovery deadline"
+      },
+      "finding": "F03",
+      "scope": "Logical witness from proposed spec shape; not an observed production defect"
+    },
+    {
+      "id": "W06",
+      "title": "Capacity publication needs the same final lock as reservations",
+      "status": "COUNTEREXAMPLE_REPRODUCED",
+      "observed": {
+        "newCap": 1,
+        "taken": 2,
+        "validatedTaken": 0
+      },
+      "requiredOrAlternative": {
+        "newCap": 1,
+        "takenAtMost": 1
+      },
+      "finding": "F09",
+      "scope": "Logical witness from proposed spec shape; not an observed production defect"
+    }
+  ],
+  "temporaryHarness": {
+    "path": "/var/folders/vc/hbfllfl96mn49byp8f0q_cpr0000gn/T/starter-promo-e2e-20261005-kjtvssyr/simulate.py",
+    "sha256": "ebc1fed1fbe2c3a9f20f92c04870610bd6d050b7cbe1f6bda6254d7b129426b4",
+    "retention": "Temporary local diagnostic; no application or repository script edited."
+  }
+}

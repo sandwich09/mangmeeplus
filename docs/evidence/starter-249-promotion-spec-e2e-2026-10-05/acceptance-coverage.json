@@ -1,0 +1,304 @@
+{
+  "kind": "SPEC_ACCEPTANCE_COVERAGE_NOT_IMPLEMENTATION_RESULTS",
+  "criteria": 27,
+  "summary": {
+    "MODEL_ONLY": 11,
+    "NOT_RUN": 4,
+    "POLICY_PENDING": 5,
+    "SPEC_GAP": 7
+  },
+  "coverage": [
+    {
+      "criterion": "A01",
+      "status": "MODEL_ONLY",
+      "findings": [],
+      "modelCases": [
+        "S08",
+        "S09"
+      ],
+      "note": "ค่ารายเดือน/ปีตาม fixture ถูกต้อง ยังไม่ใช่ public catalog หรือ purchase API"
+    },
+    {
+      "criterion": "A02",
+      "status": "SPEC_GAP",
+      "findings": [
+        "F07"
+      ],
+      "modelCases": [
+        "S10",
+        "S11"
+      ],
+      "note": "จำลองเวลา existing/restart แล้ว แต่เมนูซื้อปกติและทุก source/mode ยังไม่ระบุครบ"
+    },
+    {
+      "criterion": "A03",
+      "status": "SPEC_GAP",
+      "findings": [
+        "F02"
+      ],
+      "modelCases": [
+        "S20",
+        "S21",
+        "S22",
+        "S24"
+      ],
+      "note": "กันซ้ำได้ใน provider เดียว แต่ unique key ที่เสนอเปิดซ้ำข้ามบัญชี Stripe"
+    },
+    {
+      "criterion": "A04",
+      "status": "MODEL_ONLY",
+      "findings": [],
+      "modelCases": [
+        "S04",
+        "S23"
+      ],
+      "note": "version และ campaign ID เดิมคง usage ในแบบจำลอง"
+    },
+    {
+      "criterion": "A05",
+      "status": "MODEL_ONLY",
+      "findings": [],
+      "modelCases": [
+        "S12",
+        "S13",
+        "S14",
+        "S15"
+      ],
+      "note": "calendar ตาม UTC ผ่าน รวมขอบต้นวันไทย"
+    },
+    {
+      "criterion": "A06",
+      "status": "MODEL_ONLY",
+      "findings": [],
+      "modelCases": [
+        "S08",
+        "S09",
+        "S10",
+        "S11",
+        "S37"
+      ],
+      "note": "วันเริ่ม/สิ้นสุดและ paidAt drift ผ่าน oracle"
+    },
+    {
+      "criterion": "A07",
+      "status": "POLICY_PENDING",
+      "findings": [
+        "F04"
+      ],
+      "modelCases": [
+        "S08",
+        "S09",
+        "S31"
+      ],
+      "note": "จำนวน 60/390 ชัด แต่ availability และ carryover ของ bonus ยังเป็นข้อเสนอ"
+    },
+    {
+      "criterion": "A08",
+      "status": "SPEC_GAP",
+      "findings": [
+        "F04"
+      ],
+      "modelCases": [
+        "S31"
+      ],
+      "note": "ยังไม่กำหนดการเลือกใช้ base/bonus กรณี expiry เท่ากัน"
+    },
+    {
+      "criterion": "A09",
+      "status": "POLICY_PENDING",
+      "findings": [
+        "F05"
+      ],
+      "modelCases": [],
+      "note": "Q2 ยังไม่ตัดสินใจ; exact-source probe แสดง cycle เดิมไม่รองรับช่วงฟรีคั่นกลาง"
+    },
+    {
+      "criterion": "A10",
+      "status": "MODEL_ONLY",
+      "findings": [],
+      "modelCases": [
+        "S16",
+        "S17",
+        "S18",
+        "S19",
+        "S25",
+        "S26",
+        "S30"
+      ],
+      "note": "payment/expiry projection ผ่านด้วย synthetic proof ไม่ใช่ Stripe evidence reader"
+    },
+    {
+      "criterion": "A11",
+      "status": "SPEC_GAP",
+      "findings": [
+        "F06"
+      ],
+      "modelCases": [
+        "S16",
+        "S17",
+        "S18",
+        "S19",
+        "S32"
+      ],
+      "note": "วันเก็บรอบถัดไปจำลองได้ แต่ bind recurring ไม่สำเร็จหลัง apply ต้องมี state/recovery"
+    },
+    {
+      "criterion": "A12",
+      "status": "NOT_RUN",
+      "findings": [],
+      "modelCases": [],
+      "note": "ต้องมี native existing-subscription schedule/collection proof"
+    },
+    {
+      "criterion": "A13",
+      "status": "NOT_RUN",
+      "findings": [],
+      "modelCases": [
+        "S32"
+      ],
+      "note": "มีการคำนวณรอบปกติ แต่ไม่รัน cancel/resume/grace/sweep/scheduled change จริง"
+    },
+    {
+      "criterion": "A14",
+      "status": "POLICY_PENDING",
+      "findings": [
+        "F08"
+      ],
+      "modelCases": [],
+      "note": "Q5 ยังไม่มีคำตอบ จึงไม่เลือกกติกา upgrade แทนผู้ใช้"
+    },
+    {
+      "criterion": "A15",
+      "status": "SPEC_GAP",
+      "findings": [
+        "F03",
+        "F09"
+      ],
+      "modelCases": [
+        "S02",
+        "S06",
+        "S33",
+        "S34",
+        "S35",
+        "S36"
+      ],
+      "note": "ขอบ reservation และการลด cap พร้อม reserve ต้องล็อก protocol"
+    },
+    {
+      "criterion": "A16",
+      "status": "MODEL_ONLY",
+      "findings": [],
+      "modelCases": [
+        "S25",
+        "S26",
+        "S27",
+        "S28",
+        "S29",
+        "S34"
+      ],
+      "note": "replay/held/release/late callback ผ่าน model ไม่มี worker/DB/provider calls"
+    },
+    {
+      "criterion": "A17",
+      "status": "POLICY_PENDING",
+      "findings": [
+        "F07"
+      ],
+      "modelCases": [],
+      "note": "Q4 และ explicit benefit choice/fallback ยังไม่ปิด"
+    },
+    {
+      "criterion": "A18",
+      "status": "POLICY_PENDING",
+      "findings": [
+        "F08"
+      ],
+      "modelCases": [],
+      "note": "Q6 และผลต่อ bonus/time หลัง refund ยังไม่ปิด"
+    },
+    {
+      "criterion": "A19",
+      "status": "MODEL_ONLY",
+      "findings": [],
+      "modelCases": [
+        "S05",
+        "S30"
+      ],
+      "note": "synthetic authority/verified flags ผ่าน ไม่ได้ทดสอบ HTTP/ABAC จริง"
+    },
+    {
+      "criterion": "A20",
+      "status": "SPEC_GAP",
+      "findings": [
+        "F01",
+        "F07"
+      ],
+      "modelCases": [],
+      "note": "quota drift และ promo-ineligible fallback ต้องชัด; ไม่มี UI ให้ทดสอบ"
+    },
+    {
+      "criterion": "A21",
+      "status": "NOT_RUN",
+      "findings": [],
+      "modelCases": [],
+      "note": "ไม่มี migration/rolling deployment ใหม่"
+    },
+    {
+      "criterion": "A22",
+      "status": "MODEL_ONLY",
+      "findings": [],
+      "modelCases": [
+        "S36"
+      ],
+      "note": "นับ paid-held ใน cap ได้ แต่ยังไม่รันรายงาน/financial ledger จริง"
+    },
+    {
+      "criterion": "A23",
+      "status": "MODEL_ONLY",
+      "findings": [],
+      "modelCases": [
+        "S01"
+      ],
+      "note": "draft validation model ผ่าน ไม่ได้พิสูจน์ browser save/reload หรือ persistence"
+    },
+    {
+      "criterion": "A24",
+      "status": "MODEL_ONLY",
+      "findings": [],
+      "modelCases": [
+        "S02",
+        "S03"
+      ],
+      "note": "เวลาและแยก sales gate ผ่าน model ไม่มี scheduler หรือ API ใหม่"
+    },
+    {
+      "criterion": "A25",
+      "status": "MODEL_ONLY",
+      "findings": [],
+      "modelCases": [
+        "S06",
+        "S07"
+      ],
+      "note": "pause/end/replay/usage model ผ่าน ยังไม่มี command/provider integration"
+    },
+    {
+      "criterion": "A26",
+      "status": "SPEC_GAP",
+      "findings": [
+        "F09"
+      ],
+      "modelCases": [
+        "S04",
+        "S29"
+      ],
+      "note": "stale/replay model ผ่าน แต่ cap mutation กับ admission ยังขาด lock protocol ที่ชัด"
+    },
+    {
+      "criterion": "A27",
+      "status": "NOT_RUN",
+      "findings": [],
+      "modelCases": [],
+      "note": "ไม่มีหน้า campaign ที่ implement แล้วให้ทดสอบ mobile/desktop/error/permissions"
+    }
+  ]
+}

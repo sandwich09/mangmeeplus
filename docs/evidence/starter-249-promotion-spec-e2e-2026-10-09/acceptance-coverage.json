@@ -1,0 +1,418 @@
+{
+  "date": "2026-10-09",
+  "specSha256": "ee094b6b94f6074ab47f042bf61c9c0e7b4260e70f1cbedb56e321b8158f4372",
+  "summary": {
+    "MODEL_PARTIAL": 32,
+    "NOT_EXECUTED": 4
+  },
+  "acceptance": [
+    {
+      "acceptance": "A01",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S08",
+        "S09"
+      ],
+      "remaining": "ยังไม่เรียก catalog/API ของ tier อื่นหรือคำนวณ VAT จริง"
+    },
+    {
+      "acceptance": "A02",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S10",
+        "S11"
+      ],
+      "remaining": "ยังไม่ทดสอบ legacy trial, debt/source/capacity และ active-subscription จริง"
+    },
+    {
+      "acceptance": "A03",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S20",
+        "S21",
+        "S22",
+        "S23",
+        "S24"
+      ],
+      "remaining": "key ใน memory; ยังไม่แข่ง DB ผ่านสอง user/Web/LINE จริง"
+    },
+    {
+      "acceptance": "A04",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S04",
+        "S23"
+      ],
+      "remaining": "ยังไม่ผ่าน HTTP preview/quote persistence"
+    },
+    {
+      "acceptance": "A05",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S12",
+        "S13",
+        "S14",
+        "S15",
+        "R43"
+      ],
+      "remaining": "UTC model และ helper probe; ยังไม่ตรวจ dates ที่ render ทุกจอ"
+    },
+    {
+      "acceptance": "A06",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S08",
+        "S09",
+        "S10",
+        "S11",
+        "S37"
+      ],
+      "remaining": "fixture paidAt; ไม่มี native delayed settlement"
+    },
+    {
+      "acceptance": "A07",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S08",
+        "S09",
+        "S31",
+        "R42"
+      ],
+      "remaining": "fixture grant/consumption; ยังไม่มี OCR admission worker"
+    },
+    {
+      "acceptance": "A08",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S31",
+        "R11"
+      ],
+      "remaining": "fixture allocation; migration unknown-kind ยังไม่รัน"
+    },
+    {
+      "acceptance": "A09",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R12",
+        "R13",
+        "R15",
+        "R39"
+      ],
+      "remaining": "segment/key model; ยังไม่ fund AI ledger หรือใช้ budget override จริง"
+    },
+    {
+      "acceptance": "A10",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S16",
+        "S17",
+        "S18",
+        "S19",
+        "S25",
+        "S26",
+        "S30"
+      ],
+      "remaining": "synthetic paid/unpaid proof; ไม่มี Checkout จริง"
+    },
+    {
+      "acceptance": "A11",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S16",
+        "S17",
+        "S18",
+        "S19"
+      ],
+      "remaining": "target date/readiness model; ไม่มี subscription readback จริง"
+    },
+    {
+      "acceptance": "A12",
+      "specStatus": "DEFINED",
+      "verification": "NOT_EXECUTED",
+      "cases": [],
+      "remaining": "ต้องทดสอบ existing renewal collection hold/schedule กับ provider"
+    },
+    {
+      "acceptance": "A13",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S32"
+      ],
+      "remaining": "ทดสอบ normal period/date บางส่วน; grace/sweep/resume จริงยังไม่รัน"
+    },
+    {
+      "acceptance": "A14",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R21",
+        "R22",
+        "R23",
+        "R24"
+      ],
+      "remaining": "deferred-date model; scheduled change/capacity/native quote ยังไม่รัน"
+    },
+    {
+      "acceptance": "A15",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S02",
+        "S33",
+        "S34",
+        "S35",
+        "R35"
+      ],
+      "remaining": "serialize memory steps; ไม่ใช่ PostgreSQL race test"
+    },
+    {
+      "acceptance": "A16",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S25",
+        "S26",
+        "S27",
+        "S28",
+        "S29",
+        "S34",
+        "R38"
+      ],
+      "remaining": "attempt generation/idempotency model; worker restart/import/outbox จริงยังไม่รัน"
+    },
+    {
+      "acceptance": "A17",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R19"
+      ],
+      "remaining": "choice counters; ticket/deal DB และ historical snapshot จริงยังไม่รัน"
+    },
+    {
+      "acceptance": "A18",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R25",
+        "R26",
+        "R27",
+        "R28",
+        "R41"
+      ],
+      "remaining": "refund/dispute logical subset; provider credit note/settlement/holds จริงยังไม่รัน"
+    },
+    {
+      "acceptance": "A19",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S05",
+        "S30"
+      ],
+      "remaining": "boolean permission; HTTP ABAC/reauth/revoke ระหว่างคำสั่งยังไม่รัน"
+    },
+    {
+      "acceptance": "A20",
+      "specStatus": "DEFINED",
+      "verification": "NOT_EXECUTED",
+      "cases": [],
+      "remaining": "ยังไม่มี UI/LINE/catalog consumer implementation ให้ทดสอบ"
+    },
+    {
+      "acceptance": "A21",
+      "specStatus": "DEFINED",
+      "verification": "NOT_EXECUTED",
+      "cases": [],
+      "remaining": "ยังไม่มี schema/mixed-binary/rollback migration ให้ทดสอบ"
+    },
+    {
+      "acceptance": "A22",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S36"
+      ],
+      "remaining": "model นับ held/consumed เท่านั้น ไม่ได้ reconcile financial/report/attribution"
+    },
+    {
+      "acceptance": "A23",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S01"
+      ],
+      "remaining": "draft boolean ไม่มี durable save/reload/browser"
+    },
+    {
+      "acceptance": "A24",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S02",
+        "S03"
+      ],
+      "remaining": "clock/gate model ไม่มี scheduler/API"
+    },
+    {
+      "acceptance": "A25",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S06",
+        "S07",
+        "R37"
+      ],
+      "remaining": "pause/end ordering; persistent resume/terminal enforcement ยังไม่รัน"
+    },
+    {
+      "acceptance": "A26",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "S04",
+        "S29",
+        "R35"
+      ],
+      "remaining": "version/cap model; multi-admin DB/idempotent create ยังไม่รัน"
+    },
+    {
+      "acceptance": "A27",
+      "specStatus": "DEFINED",
+      "verification": "NOT_EXECUTED",
+      "cases": [],
+      "remaining": "ยังไม่มี Admin campaign UI ให้ตรวจ mobile/desktop/permission"
+    },
+    {
+      "acceptance": "A28",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R01",
+        "R02"
+      ],
+      "remaining": "signature/template model; cache invalidation และ policy publish จริงยังไม่รัน"
+    },
+    {
+      "acceptance": "A29",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R03",
+        "R44"
+      ],
+      "remaining": "scope/key model; migration/deduplication จริงยังไม่รัน"
+    },
+    {
+      "acceptance": "A30",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R04",
+        "R05",
+        "R06"
+      ],
+      "remaining": "journal/deadline model; recovery lease/23-hour/native payload constraints ยังไม่รัน"
+    },
+    {
+      "acceptance": "A31",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R11",
+        "R32",
+        "R42"
+      ],
+      "remaining": "package FEFO/bonus tie/expiry/OCR fixture; inter-worker allocation จริงยังไม่รัน"
+    },
+    {
+      "acceptance": "A32",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R12",
+        "R13",
+        "R14",
+        "R15",
+        "R16",
+        "R39",
+        "R40"
+      ],
+      "remaining": "segment/cycle/annual/revocation model; lazy fund/provenance migration จริงยังไม่รัน"
+    },
+    {
+      "acceptance": "A33",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R17",
+        "R18"
+      ],
+      "remaining": "synthetic readback/cancel intent; subscription uniqueness จริงยังไม่รัน"
+    },
+    {
+      "acceptance": "A34",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R19",
+        "R20"
+      ],
+      "remaining": "choice/normal path model; UI explicit reconfirm และ atomic ticket reservation จริงยังไม่รัน"
+    },
+    {
+      "acceptance": "A35",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R16",
+        "R21",
+        "R22",
+        "R23",
+        "R24",
+        "R25",
+        "R26",
+        "R27",
+        "R28",
+        "R29",
+        "R30",
+        "R31",
+        "R32",
+        "R33",
+        "R34",
+        "R41",
+        "R45"
+      ],
+      "remaining": "refund/upgrade matrix มี expected result แล้ว; model ตรวจแกนหลัก แต่ยังไม่มี financial/access projection จริงครบทุก caller"
+    },
+    {
+      "acceptance": "A36",
+      "specStatus": "DEFINED",
+      "verification": "MODEL_PARTIAL",
+      "cases": [
+        "R35",
+        "R36",
+        "R37",
+        "R38",
+        "R44"
+      ],
+      "remaining": "6 cap serializations และ pause/release; ไม่ได้พิสูจน์ lock order/deadlock ใน DB"
+    }
+  ]
+}
