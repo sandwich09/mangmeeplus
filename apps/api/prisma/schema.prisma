@@ -10315,6 +10315,9 @@ model BillingPolicyRevision {
   version         Int
   state           String @default("DRAFT")
   policyJson      Json
+  /// Promotion campaigns, `Record<campaignId, BillingPromotionCampaign>`. A sibling of `policyJson` so a binary
+  /// that does not know campaigns still parses the policy (promotion plan R1). Null = no campaign.
+  promotionJson   Json?
   createdByUserId  String
   approvedByUserId String?
   approvedAt      DateTime?
@@ -10450,6 +10453,52 @@ model ReceiptUnitEntry {
 }
 
 /// Immutable customer consent for recurring collection from a service boundary.
+/// One row per company per campaign per logical environment (promotion spec §6): the reservation, its use and
+/// its release. The provider account is a binding, never part of the once-per-company identity (plan R12).
+/// CHECKs live in migration 20261009120000 (Prisma cannot model them) — do NOT let `prisma migrate diff` drop them:
+/// `_environment_check`, `_state_check` (RESERVED holds an attempt, CONSUMED an invoice, RELEASED no attempt).
+model BillingPromotionRedemption {
+  id                     String @id @default(uuid())
+  /// 'LIVE' | 'TEST' — equals `livemode`.
+  promotionEnvironmentId String
+  campaignId             String
+  companyId              String
+  billingAccountId       String
+  stripeAccountId        String
+  livemode               Boolean
+  /// 'RESERVED' | 'CONSUMED' | 'RELEASED'. `taken` = RESERVED + CONSUMED.
+  state                  String
+  policyRevisionId       String
+  campaignRevision       Int
+  termsHash              String
+  offerKey               String
+  interval               String
+  offerSignature         String
+  bonusMonths            Int
+  bonusReceiptUnits      Int
+  /// Cleared by a release; the released attempt's id lives in that release's audit row.
+  attemptId              String? @unique
+  invoiceId              String? @unique
+  acceptedAt             DateTime
+  /// acceptedAt + 10 minutes: the first Checkout dispatch must start before it.
+  createBy               DateTime
+  consumedAt             DateTime?
+  benefitAppliedAt       DateTime?
+  releasedAt             DateTime?
+  entitlementAdjustedAt  DateTime?
+  paidStart              DateTime?
+  paidEnd                DateTime?
+  bonusEnd               DateTime?
+  releaseCount           Int @default(0)
+  version                Int @default(0)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@unique([promotionEnvironmentId, campaignId, companyId])
+  @@index([promotionEnvironmentId, campaignId, state])
+  @@index([companyId])
+}
+
 model BillingSubscriptionContract {
   revision          Int @default(autoincrement()) @unique
   id                String @id @default(uuid())
@@ -10530,6 +10579,9 @@ model BillingInvoice {
   providerChargeId  String?
   periodStart       DateTime
   periodEnd         DateTime
+  /// Service end including a promotion's free time; null = `periodEnd`. Read through `invoiceServiceEnd()`
+  /// only (promotion plan R2). The financial period above is never stretched.
+  benefitEnd        DateTime?
   providerStatus    String
   evidenceHash      String
   applyStatus       String @default("PENDING")

@@ -54,6 +54,8 @@ import type { BillingEventDiscountView } from '@watchdog-bms/contracts';
 import { eventDiscountBasis, eventDiscountCardAuto, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
 import { eventDiscountHolderBlock, eventDiscountOffer, eventDiscountPath, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
 import { paymentCheckoutMode, paymentCheckoutSnapshot } from '../domain/billing-checkout-mode';
+import type { BillingPromotionSnapshot } from '@watchdog-bms/contracts';
+import { parsePromotionCampaignsLenient } from '../domain/billing-promotion';
 
 /** D-P5-6: the future contract a `SCHEDULE_PRICE_RETURN` writes. The invoice that applies it puts
  *  the shop back on the tier's default menus, AI credit and limits (Q1) even though it is a RENEWAL. */
@@ -61,7 +63,9 @@ export type DealReturnSource = { dealRequestId: string; returnAt: string; credit
 /** `emailProof` is read from snapshots written before purchase-without-setup only; new quotes carry none. */
 export type BillingSnapshot = { productKind?: BillingProductKind; trialCarryover?: TrialCarryoverSource; emailProof?: EmailProof; quote: BillingQuote; deal?: DealSource; dealReturn?: DealReturnSource; subscriptionConversion?: { subscriptionId: string; paidThrough: string }; advanceDeal?: { invoiceId: string; contractAttemptId: string; paidThrough: string; firstCycleEndsAt: string; anchorDay: number }; priceId: string; productId?: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; featurePlan?: BillingFeaturePlan; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; oneTime?: { invoiceId: string; paidThrough: string; anchorDay: number; offerKey: string; interval: string }; oneTimeChange?: { effectiveAt: string; currentOffer: BillingOffer }; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange };
   /** Sales-event first-bill discount (spec §7.2): the ticket chosen (USE) or the one declined; absent = no offer at quote. */
-  eventDiscount?: EventDiscountSnapshot };
+  eventDiscount?: EventDiscountSnapshot;
+  /** Promotion campaign accepted at quote (promotion plan §4): the reservation and the apply read only this. */
+  promotion?: BillingPromotionSnapshot };
 /** Add-on foundation (plan PR A, A5): absent = PACKAGE, the only kind before add-ons; an unknown kind is never guessed. */
 export function snapshotProductKind(snapshot: Pick<BillingSnapshot, 'productKind'>): BillingProductKind {
   const kind = billingProductKind(snapshot.productKind);
@@ -166,7 +170,9 @@ export class BillingService {
     if(revision&&revision.stripeAccountId===stripeAccountId&&revision.livemode===livemode&&revision.state==='ACTIVE') {
       try{policy=parseBillingPolicy(revision.policyJson);}catch(error){if(!(error instanceof BadRequestException))throw error;}
     }
-    return { settings, revision: policy ? revision : null, policy, gates: effectiveBillingGates(settings.gatesJson) };
+    return { settings, revision: policy ? revision : null, policy, gates: effectiveBillingGates(settings.gatesJson),
+      // Lenient (promotion plan R1): a campaign that does not parse is not admissible and never closes sales.
+      promotions: policy ? parsePromotionCampaignsLenient(revision!.promotionJson) : {} };
   }
 
   async account(companyId: string, tx: Prisma.TransactionClient = this.prisma.client): Promise<BillingAccount | null> {
