@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { isDeepStrictEqual } from 'node:util';
 import type { BillingBenefitChoice, BillingPromotionOfferView, BillingPromotionUnavailableReason, BillingPromotionUse, BillingRenewalSetupState } from '@watchdog-bms/contracts';
 import { EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountHelpText } from './billing-event-discount';
 import { PROMOTION_NOT_PICKED, PROMOTION_ONCE, PROMOTION_ONE_PER_PURCHASE, promotionCard, promotionCardBenefit, promotionChoiceCopy, promotionChoiceLabel, promotionHeadline,
@@ -123,17 +124,74 @@ test('Q4: the exact request fields of each choice; a shop with neither sends tod
   // A held discount: today's fields plus the benefit.
   assert.deepEqual(fields({ pick: 'EVENT_DISCOUNT', ticket: true, ticketOnCard: true }), { benefitChoice: 'EVENT_DISCOUNT', eventDiscountChoice: 'USE' });
   assert.deepEqual(fields({ pick: 'EVENT_DISCOUNT', ticket: true, ticketOnCard: true, serial: 'EVT2AAAA' }), { benefitChoice: 'EVENT_DISCOUNT', eventDiscountChoice: 'USE', eventDiscountTicketSerial: 'EVT2AAAA' });
-  assert.deepEqual(fields({ promotions: undefined, ticket: true, ticketOnCard: true }), { benefitChoice: 'EVENT_DISCOUNT', eventDiscountChoice: 'USE' }, 'a discount-only shop keeps its default, now named');
+  assert.deepEqual(fields({ promotions: undefined, ticket: true, ticketOnCard: true }), { eventDiscountChoice: 'USE' }, 'a discount-only shop sends main\'s request: no new field');
   // Normal: no benefit; DECLINE only when there is a discount to decline.
   assert.deepEqual(fields({ pick: 'NORMAL' }), { benefitChoice: 'NORMAL' });
   assert.deepEqual(fields({ pick: 'NORMAL', ticket: true, ticketOnCard: true }), { benefitChoice: 'NORMAL', eventDiscountChoice: 'DECLINE' });
-  assert.deepEqual(fields({ promotions: undefined, pick: 'NORMAL', ticket: true, ticketOnCard: true }), { benefitChoice: 'NORMAL', eventDiscountChoice: 'DECLINE' });
-  assert.deepEqual(fields({ promotions: undefined, ticket: true, ticketOnCard: false }), { benefitChoice: 'NORMAL', eventDiscountChoice: 'DECLINE' }, 'a discount that does not lower this card');
-  // A pick for the promotion on another package: this card is a normal purchase and the discount stays unspent.
-  assert.deepEqual(fields({ card: BASIC_MONTH, pick: 'PROMOTION', ticket: true, ticketOnCard: true }), { benefitChoice: 'NORMAL', eventDiscountChoice: 'DECLINE' });
-  assert.deepEqual(fields({ card: BASIC_MONTH, ticket: true, ticketOnCard: true }), { benefitChoice: 'EVENT_DISCOUNT', eventDiscountChoice: 'USE' }, 'with no pick, the discount that lowers it, as before');
+  assert.deepEqual(fields({ promotions: undefined, pick: 'NORMAL', ticket: true, ticketOnCard: true }), { eventDiscountChoice: 'DECLINE' }, 'declined by the buyer: main\'s own word');
+  assert.deepEqual(fields({ promotions: undefined, ticket: true, ticketOnCard: false }), { eventDiscountChoice: 'USE' }, 'a discount that does not lower this card is not declined for the buyer: main asked for it and got an ordinary quote');
+  // A pick for the promotion on another package: this card has no promotion, so the request is main's; the buyer chose against the discount, so it stays unspent.
+  assert.deepEqual(fields({ card: BASIC_MONTH, pick: 'PROMOTION', ticket: true, ticketOnCard: true }), { eventDiscountChoice: 'DECLINE' });
+  assert.deepEqual(fields({ card: BASIC_MONTH, ticket: true, ticketOnCard: true }), { eventDiscountChoice: 'USE' }, 'with no pick, the discount that lowers it, as before');
   // A promotion that is gone from the screen is not asked for.
-  assert.deepEqual(fields({ promotions: [], pick: 'PROMOTION', ticket: true, ticketOnCard: true }), { benefitChoice: 'EVENT_DISCOUNT', eventDiscountChoice: 'USE' });
+  assert.deepEqual(fields({ promotions: [], pick: 'PROMOTION', ticket: true, ticketOnCard: true }), { eventDiscountChoice: 'USE' });
+});
+
+// origin/main sent only `eventDiscountChoice` (BillingPage `discountChoice = ticket ? choice ?? eventChoice : undefined`) and the ticket serial
+// with USE and a non-default pick. The API treats a present `benefitChoice` as authoritative: EVENT_DISCOUNT with no ticket that fits the quoted
+// amount is SALES_EVENT_TICKET_UNAVAILABLE, where the request without it was an ordinary quote. So the new fields go out only when a promotion
+// is available on the card being quoted, or the request asks for a promotion by name; every other request is main's, byte for byte.
+type Fields = ReturnType<typeof promotionQuoteFields>;
+const USE: Fields = { eventDiscountChoice: 'USE' }, DECLINE: Fields = { eventDiscountChoice: 'DECLINE' };
+const PROMOTION_FIELDS: Fields = { benefitChoice: 'PROMOTION', promotionCampaignId: CAMPAIGN, eventDiscountChoice: 'DECLINE' };
+const PICKS = [null, 'PROMOTION', 'EVENT_DISCOUNT', 'NORMAL'] as const;
+/** Held discount: none, one that lowers the card, one that does not. */
+const HELD = { none: { ticket: false, ticketOnCard: false }, onCard: { ticket: true, ticketOnCard: true }, offCard: { ticket: true, ticketOnCard: false } } as const;
+type Held = keyof typeof HELD;
+const LEGACY_ROWS: Record<string, { promotions: BillingPromotionOfferView[]; expected: Record<Held, Fields[]> }> = {
+  // Expected in PICKS order: no pick, the promotion, the discount, normal. A pick of the promotion that is gone from this cadence is the default again.
+  'no promotion row': { promotions: [], expected: { none: [{}, {}, {}, {}], onCard: [USE, USE, USE, DECLINE], offCard: [USE, USE, USE, DECLINE] } },
+  'a row that only says why not': { promotions: [row({ available: false, reason: 'ALREADY_USED' })], expected: { none: [{}, {}, {}, {}], onCard: [USE, USE, USE, DECLINE], offCard: [USE, USE, USE, DECLINE] } },
+  'an available row on the other cadence': { promotions: [yearRow()], expected: { none: [{}, {}, {}, {}], onCard: [USE, USE, USE, DECLINE], offCard: [USE, USE, USE, DECLINE] } },
+  // The promotion is on offer on this cadence for ANOTHER package: a buyer who picked it chose against the discount, so it stays unspent (DECLINE, main's own word).
+  'an available row on another package of this cadence': { promotions: [row({ offerKey: 'BASIC_499' })], expected: { none: [{}, {}, {}, {}], onCard: [USE, DECLINE, USE, DECLINE], offCard: [USE, DECLINE, USE, DECLINE] } },
+};
+const ROW_ON_CARD: { promotions: BillingPromotionOfferView[]; expected: Record<Held, Fields[]> } = { promotions: [row()], expected: {
+  none: [PROMOTION_FIELDS, PROMOTION_FIELDS, PROMOTION_FIELDS, { benefitChoice: 'NORMAL' }],
+  onCard: [PROMOTION_FIELDS, PROMOTION_FIELDS, { benefitChoice: 'EVENT_DISCOUNT', eventDiscountChoice: 'USE' }, { benefitChoice: 'NORMAL', eventDiscountChoice: 'DECLINE' }],
+  offCard: [PROMOTION_FIELDS, PROMOTION_FIELDS, { benefitChoice: 'NORMAL', eventDiscountChoice: 'DECLINE' }, { benefitChoice: 'NORMAL', eventDiscountChoice: 'DECLINE' }],
+} };
+
+test('table: the request fields for {held discount} x {promotion row} x {pick}; a card with no available row sends main\'s request, byte for byte', () => {
+  const cells: string[] = [], wrong: string[] = [];
+  const ALL_ROWS: [string, typeof ROW_ON_CARD][] = [...Object.entries(LEGACY_ROWS), ['an available row on this card', ROW_ON_CARD]];
+  for (const [name, { promotions, expected }] of ALL_ROWS) {
+    for (const held of Object.keys(HELD) as Held[]) PICKS.forEach((pick, index) => {
+      const fields = promotionQuoteFields({ pick, promotions, card: STARTER_MONTH, ...HELD[held] }), cell = `${name} / ${held} / ${pick}`;
+      cells.push(cell);
+      if (!isDeepStrictEqual(fields, expected[held][index])) wrong.push(`${cell}: got ${JSON.stringify(fields)}, want ${JSON.stringify(expected[held][index])}`);
+      // Without an available row on the card, nothing new is named at all.
+      if (name !== 'an available row on this card' && ('benefitChoice' in fields || 'promotionCampaignId' in fields)) wrong.push(`${cell}: names a new field`);
+    });
+  }
+  assert.equal(cells.length, 5 * 3 * 4, 'every cell was checked');
+  assert.deepEqual(wrong, [], 'cells that differ from the expectation');
+  // The serial rides with USE only, as on main: a non-default pick of a held discount; DECLINE never carries it.
+  const serial = 'EVT2AAAA';
+  assert.deepEqual(promotionQuoteFields({ pick: null, promotions: [], card: STARTER_MONTH, ...HELD.onCard, serial }), { eventDiscountChoice: 'USE', eventDiscountTicketSerial: serial });
+  assert.deepEqual(promotionQuoteFields({ pick: 'NORMAL', promotions: [], card: STARTER_MONTH, ...HELD.onCard, serial }), DECLINE);
+  assert.deepEqual(promotionQuoteFields({ pick: null, promotions: [], card: STARTER_MONTH, ...HELD.none, serial }), {}, 'no held discount, no serial');
+  assert.deepEqual(promotionQuoteFields({ pick: 'EVENT_DISCOUNT', promotions: [row()], card: STARTER_MONTH, ...HELD.onCard, serial }), { benefitChoice: 'EVENT_DISCOUNT', eventDiscountChoice: 'USE', eventDiscountTicketSerial: serial });
+});
+
+test('table: a request that names its benefit (asking again, or the review switch) asks for a promotion by name wherever it went, and says the others in main\'s words', () => {
+  for (const [name, { promotions }] of Object.entries(LEGACY_ROWS)) for (const held of Object.keys(HELD) as Held[]) {
+    const ask = (explicit: Parameters<typeof promotionQuoteFields>[0]['explicit']) => promotionQuoteFields({ pick: 'EVENT_DISCOUNT', explicit, promotions, card: STARTER_MONTH, ...HELD[held] });
+    const ticket = HELD[held].ticket;
+    assert.deepEqual(ask({ choice: 'PROMOTION', campaignId: CAMPAIGN }), PROMOTION_FIELDS, `${name} / ${held}: a promotion is asked for by name, never swapped`);
+    assert.deepEqual(ask({ choice: 'EVENT_DISCOUNT' }), ticket ? USE : {}, `${name} / ${held}`);
+    assert.deepEqual(ask({ choice: 'NORMAL' }), ticket ? DECLINE : {}, `${name} / ${held}`);
+  }
 });
 
 test('asking again keeps the benefit of the quote, and a promotion that left the screen is still asked for by name, never swapped', () => {

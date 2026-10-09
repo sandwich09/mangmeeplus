@@ -100,17 +100,24 @@ export function promotionChoiceLabel(rows: readonly Row[] | undefined, offers: r
 export type QuoteBenefit = { choice: BillingBenefitChoice; campaignId?: string };
 export type QuoteFields = { eventDiscountChoice?: 'USE' | 'DECLINE'; eventDiscountTicketSerial?: string; benefitChoice?: BillingBenefitChoice; promotionCampaignId?: string };
 /**
- * The benefit fields of one quote request, decided from what the buyer SAW (`promotions` as displayed). A shop with neither a
- * promotion nor a held discount sends exactly today's request: no field at all. The promotion and a normal purchase say
- * DECLINE so the API's own default (USE) never spends a discount the buyer did not choose.
+ * The benefit fields of one quote request, decided from what the buyer SAW (`promotions` as displayed). The new fields
+ * (`benefitChoice`, `promotionCampaignId`) go out only when a promotion is available on THIS card, or the request asks for one by
+ * name: the API treats a present `benefitChoice` as authoritative, so EVENT_DISCOUNT where no held discount fits the quoted
+ * amount is an error where main's request was an ordinary quote. Every other request is exactly what main sent: nothing without a
+ * held discount, else `eventDiscountChoice` USE (with the serial of a non-default pick) or DECLINE when the buyer chose something
+ * else. The promotion and a normal purchase say DECLINE so the API's own default (USE) never spends a discount the buyer did not choose.
  */
 export function promotionQuoteFields(input: { pick: BillingBenefitChoice | null; explicit?: QuoteBenefit; promotions: readonly Row[] | undefined; card: Card;
   ticket: boolean; ticketOnCard: boolean; serial?: string }): QuoteFields {
   const shown = promotionRow(input.promotions, input.card), row = shown?.available ? shown : undefined;
   const campaignId = input.explicit?.choice === 'PROMOTION' ? input.explicit.campaignId : row?.campaignId;
-  if (!input.ticket && !row && !campaignId) return {};
-  const choice = input.explicit?.choice ?? promotionCardBenefit(input.pick, promotionOffered(input.promotions, input.card.interval, input.ticket),
-    { PROMOTION: !!row, EVENT_DISCOUNT: input.ticket && input.ticketOnCard });
+  const offered = promotionOffered(input.promotions, input.card.interval, input.ticket);
+  if (!row && !campaignId) {
+    if (!input.ticket) return {};
+    const chosen = input.explicit?.choice ?? promotionPick(input.pick, offered);
+    return chosen && chosen !== 'EVENT_DISCOUNT' ? { eventDiscountChoice: 'DECLINE' } : { eventDiscountChoice: 'USE', ...(input.serial ? { eventDiscountTicketSerial: input.serial } : {}) };
+  }
+  const choice = input.explicit?.choice ?? promotionCardBenefit(input.pick, offered, { PROMOTION: !!row, EVENT_DISCOUNT: input.ticket && input.ticketOnCard });
   if (choice === 'PROMOTION' && campaignId) return { benefitChoice: 'PROMOTION', promotionCampaignId: campaignId, eventDiscountChoice: 'DECLINE' };
   if (choice === 'EVENT_DISCOUNT') return { benefitChoice: 'EVENT_DISCOUNT', eventDiscountChoice: 'USE', ...(input.serial ? { eventDiscountTicketSerial: input.serial } : {}) };
   return { benefitChoice: 'NORMAL', ...(input.ticket ? { eventDiscountChoice: 'DECLINE' as const } : {}) };
