@@ -28,10 +28,12 @@ API hosts must span two AZs and be separate from AI/workers. AI and workers may 
 After enrollment, run from the checkout containing the command:
 
 ```sh
-infra/kamal/deploy-prod --profile <non-root-production-profile> --prepare
+infra/kamal/deploy-prod --profile <non-root-production-profile> --prepare --production-browser-acceptance
 ```
 
-This runs the existing target preflight, fetches and pins `origin/main`, builds TypeScript and all
+The acceptance mode is named even to prepare: without it the command stops in argument validation
+("Acceptance credentials file is missing"). This runs the existing target preflight, fetches and
+pins `origin/main`, builds TypeScript and all
 four images plus AgentCore, validates the complete Production environment/secrets against the built
 images and migration/sync artifact catalog, renders all three native Kamal configs, and rereads
 baseline configuration/secret versions for drift. A local controller can be prepared before merge;

@@ -830,7 +830,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {eventDiscountUsable(status.eventDiscount) && !ticketView && <div role="note" className="space-y-2 rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm leading-7"><p className="break-words">{eventDiscountOneTimeOnlyText(status.eventDiscount)}</p>
           {availableModes.some(mode => eventDiscountMode(mode)) && <button type="button" className={button} onClick={() => { setPurchaseMode(availableModes.find(mode => eventDiscountMode(mode))!); setQuote(null); setCapacity(null); }}>เลือกจ่ายครั้งเดียว</button>}</div>}
         {(promotionChoice || ticketView) && <section aria-label={choiceCopy.section} className="rounded-xl border border-brand-200 bg-brand-50 p-4">
-          <fieldset className="space-y-2"><legend className="font-semibold">{choiceCopy.legend}</legend>
+          <fieldset className="min-w-0 space-y-2"><legend className="font-semibold">{choiceCopy.legend}</legend>
             {promotionChoice && <label className="flex min-h-11 items-center gap-3"><input type="radio" name="benefitChoice" className="shrink-0" checked={pageBenefit === 'PROMOTION'}
               onChange={() => { setBenefitPick('PROMOTION'); setQuote(null); }} /><span className="min-w-0 break-words"><span className="block font-semibold">{promotionChoice.title}</span>
               {promotionChoice.lines.map(line => <span key={line} className="block text-sm text-gray-600">{line}</span>)}</span></label>}
@@ -869,12 +869,12 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           {current && <MangmeeBadge className="absolute -top-3 right-4 border">แพ็กเกจปัจจุบัน</MangmeeBadge>}
           <h3 className="font-bold">{offer.label}</h3><p className="text-xl font-bold">{money(offer.priceSatang)} / {interval === 'month' ? 'เดือน' : 'ปี'}</p>
           {promoCard && <section aria-label={`โปรโมชั่น ${offer.label}`} className={`space-y-1 rounded-xl border p-3 ${cardBenefit === 'PROMOTION' ? 'border-brand-300 bg-brand-50' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
-            <p className="break-words text-sm font-semibold">{promoCard.name}</p><p className="text-lg font-bold">{promoCard.headline}</p>
-            {promoCard.lines.map(line => <p key={line} className="break-words text-sm">{line}</p>)}
+            <p className="text-sm font-semibold [overflow-wrap:anywhere]">{promoCard.name}</p><p className="text-lg font-bold">{promoCard.headline}</p>
+            {promoCard.lines.map(line => <p key={line} className="text-sm [overflow-wrap:anywhere]">{line}</p>)}
             {cardBenefit !== 'PROMOTION' && <p className="text-sm font-semibold">{PROMOTION_NOT_PICKED}</p>}</section>}
           {/* A promotion that cannot be used says why, and never closes the normal purchase below. */}
           {promo && !promo.available && <p role="note" className="break-words text-sm text-gray-600">{promotionReasonText(promo.reason)}</p>}
-          {eventCard && <p className="break-words text-sm font-semibold text-brand-700">{eventDiscountCardText(eventCard.eventName, eventCard.shownDiscountSatang)}</p>}
+          {eventCard && <p className="text-sm font-semibold text-brand-700 [overflow-wrap:anywhere]">{eventDiscountCardText(eventCard.eventName, eventCard.shownDiscountSatang)}</p>}
           {interval === 'year' && plain && <p className="text-sm text-gray-600">เฉลี่ยเดือนละ {money(Math.round(offer.priceSatang / 12))}</p>}
           {data.catalog.taxTreatment === 'EXCLUSIVE_VAT_7' && <p className="text-sm text-gray-600">ราคายังไม่รวม VAT 7%</p>}
           {(plain || interval === 'month') && <p className="text-sm text-brand-700">{interval === 'year' ? `ใช้งาน 12 เดือน${saving > 0 ? ` · ประหยัด ${money(saving)}` : ''}` : 'ชำระรายเดือน'}</p>}<p>{offer.branchLimit} สาขา · {offer.employeeLimit} ผู้ใช้</p>
