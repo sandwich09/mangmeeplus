@@ -2,13 +2,13 @@ import type { BillingAccount, BillingInvoice, Prisma } from '../../../generated/
 import type { BillingAdjustmentItem } from '@watchdog-bms/contracts';
 import { billingError, configurationHash } from '../domain/billing-policy';
 import { stripeId, type StripeClient, type StripeObject } from '../infrastructure/stripe.client';
-import { originalInvoice, adjustment } from './billing-invoice-details';
+import { originalInvoice, adjustment, chargeIdPrefix, refundIdPrefix } from './billing-invoice-details';
 import { assertMappedCharge } from './billing-financial';
 import type { BillingSnapshot } from './billing.service';
 
 export const refundReviewRequired=()=>billingError('CONTROL_REFUND_SOURCE_CHANGED','หลักฐานการคืนเงินเปลี่ยนหรือยังไม่ครบ กรุณาตรวจรายการเดิมอีกครั้ง');
 const integer=(v:unknown)=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0;
-const nativeId=(v:unknown,prefix:string):v is string=>typeof v==='string'&&new RegExp(`^${prefix}_[A-Za-z0-9_]{1,120}$`).test(v);
+export const nativeId=(v:unknown,prefix:string):v is string=>typeof v==='string'&&new RegExp(`^${prefix}_[A-Za-z0-9_]{1,120}$`).test(v);
 
 /** A retained unknown create blocks another mutation; a verified issued note only needs observation. */
 export async function pendingRefund(tx:Prisma.TransactionClient,account:Pick<BillingAccount,'companyId'|'stripeAccountId'|'livemode'>,except?:string) {
@@ -49,13 +49,13 @@ export async function assertOriginalInvoiceCharge(stripe:StripeClient,account:Bi
 }
 
 export async function refundSource(stripe:StripeClient,account:BillingAccount,row:BillingInvoice) {
-  if(row.currency!=='THB'||row.providerStatus!=='paid'||!integer(row.paidSatang)||row.paidSatang===0||row.paidSatang!==row.totalSatang||!nativeId(row.providerChargeId,'ch'))throw refundReviewRequired();
+  if(row.currency!=='THB'||row.providerStatus!=='paid'||!integer(row.paidSatang)||row.paidSatang===0||row.paidSatang!==row.totalSatang||!nativeId(row.providerChargeId,chargeIdPrefix))throw refundReviewRequired();
   const invoice=await originalInvoice(stripe,account,row),charge=await stripe.request('GET',`/charges/${row.providerChargeId}`);
   assertMappedCharge(charge,account,row);
   if(invoice.object!=='invoice'||invoice.amount_remaining!==0||invoice.starting_balance!==0||invoice.paid_out_of_band===true||
     (invoice.pre_payment_credit_notes_amount??0)!==0||!integer(invoice.post_payment_credit_notes_amount??0)||(invoice.amount_overpaid??0)!==0)throw refundReviewRequired();
   await assertOriginalInvoiceCharge(stripe,account,row,charge);
-  const notes=await completeList(stripe,'/credit_notes',{invoice:row.providerInvoiceId},'cn'),refunds=await completeList(stripe,'/refunds',{charge:row.providerChargeId},'re');
+  const notes=await completeList(stripe,'/credit_notes',{invoice:row.providerInvoiceId},'cn'),refunds=await completeList(stripe,'/refunds',{charge:row.providerChargeId},refundIdPrefix);
   const adjustments=[...notes.map(n=>adjustment(n,'credit-notes',account,row)),...refunds.map(r=>adjustment(r,'refunds',account,row))].sort((a,b)=>a.id.localeCompare(b.id));
   const issued=notes.filter(n=>n.status==='issued');
   if((invoice.post_payment_credit_notes_amount??0)>row.paidSatang||issued.reduce((s,n)=>s+n.amount,0)>row.paidSatang||
@@ -63,7 +63,7 @@ export async function refundSource(stripe:StripeClient,account:BillingAccount,ro
   for(const n of issued){
     if(n.type!=='post_payment'||!Array.isArray(n.refunds))throw refundReviewRequired();const seen=new Set<string>();let linkedAmount=0;
     for(const linked of n.refunds){const id=stripeId(linked.refund),r=refunds.find(r=>r.id===id);
-      if(!nativeId(id,'re')||seen.has(id)||!r||!integer(linked.amount_refunded)||linked.amount_refunded<1||linked.amount_refunded>r.amount||linked.payment_record_refund!=null||
+      if(!nativeId(id,refundIdPrefix)||seen.has(id)||!r||!integer(linked.amount_refunded)||linked.amount_refunded<1||linked.amount_refunded>r.amount||linked.payment_record_refund!=null||
         (linked.type!=null&&linked.type!=='refund'))throw refundReviewRequired();seen.add(id);linkedAmount+=linked.amount_refunded;
     }
     if(linkedAmount>n.amount)throw refundReviewRequired();
@@ -151,7 +151,7 @@ export async function observedRefund(stripe:StripeClient,account:BillingAccount,
     (note.memo??'')!==memo||configurationHash(refundNoteProjection(note,account,row,source.invoice,amount))!==projectionHash||
     !Array.isArray(note.refunds)||note.refunds.length!==1)throw refundReviewRequired();
   const linked=note.refunds[0]!,id=stripeId(linked.refund);
-  if(!nativeId(id,'re')||linked.amount_refunded!==amount||linked.payment_record_refund!=null||(linked.type!=null&&linked.type!=='refund'))throw refundReviewRequired();
+  if(!nativeId(id,refundIdPrefix)||linked.amount_refunded!==amount||linked.payment_record_refund!=null||(linked.type!=null&&linked.type!=='refund'))throw refundReviewRequired();
   const refund=await stripe.request('GET',`/refunds/${id}`),view=adjustment(refund,'refunds',account,row);
   if(view.id!==id||view.amountSatang!==amount||!source.refunds.some(r=>r.id===id&&r.amount===amount))throw refundReviewRequired();
   return {creditNoteId:note.id as string,creditNoteNumber:note.number as string,refundId:id,refundState:view.status as BillingAdjustmentItem['status']};
