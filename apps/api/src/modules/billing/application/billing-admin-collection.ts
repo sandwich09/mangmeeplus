@@ -76,7 +76,8 @@ export class BillingAdminCollection {
       return hashBilling(pause)===hashBilling(source.after)||
         (source.action==='PAUSE'&&source.after?.resumesAt&&Date.parse(source.after.resumesAt)<=Date.now()&&!pause);
     };
-    // Over without a change (2026-10-10): nothing is sent, the account is released in this transaction, the review case stays open.
+    // Over without a change (2026-10-10): nothing is sent, the account is released in this transaction. Not applied keeps its review case;
+    // never sent leaves nothing to review, so it opens none and closes one an older pass opened.
     const end=async(errorCode:'CONTROL_COLLECTION_NOT_SENT'|'CONTROL_COLLECTION_NOT_APPLIED')=>{
       await this.prisma.client.$transaction(async tx=>{
         await fence(tx);
@@ -84,8 +85,10 @@ export class BillingAdminCollection {
         await tx.billingOperation.update({where:{id:row.id},data:{state:'FAILED',errorCode,resultJson:json(journal),version:{increment:1}}});
         await tx.auditLog.create({data:{companyId:account.companyId,actorUserId:row.approverUserId,action:'billing.collection_control.ended',targetType:'BillingOperation',targetId:row.id,
           requestId:row.id,result:'FAILED',riskLevel:'CRITICAL',metadataJson:{errorCode,reason:row.reason,action:source.action,before:json(source.before)}}});
+        if(errorCode==='CONTROL_COLLECTION_NOT_SENT')await tx.billingIssue.updateMany({where:{companyId:account.companyId,stripeAccountId:account.stripeAccountId,livemode:account.livemode,kind:'CUSTOMER_COLLECTION_REVIEW',referenceId:row.id},
+          data:{state:'RESOLVED',resolvedAt:new Date(),version:{increment:1}}});
       });
-      await this.billing.issue(account.companyId,'CUSTOMER_COLLECTION_REVIEW',row.id);
+      if(errorCode==='CONTROL_COLLECTION_NOT_APPLIED')await this.billing.issue(account.companyId,'CUSTOMER_COLLECTION_REVIEW',row.id);
     };
     try{
       let graph=await subscriptionGraph(this.billing.stripe,account);
@@ -93,8 +96,7 @@ export class BillingAdminCollection {
         // No send can leave after expiresAt (`fence(tx,true)`), so an hour later nothing is in flight. Our id travels in the same request as
         // the pause: a subscription without it never took this command.
         if(progress.dispatchedAt&&Date.now()-row.expiresAt.getTime()>=SETTLE_MS&&graph.sub.metadata?.mangmeeCollectionControl!==row.id)return await end('CONTROL_COLLECTION_NOT_APPLIED');
-        if((progress.dispatchedAt&&Date.now()-Date.parse(progress.dispatchedAt)>=23*3600000)||
-          (source.after?.resumesAt&&Date.parse(source.after.resumesAt)<=Date.now()+60000)||
+        if((source.after?.resumesAt&&Date.parse(source.after.resumesAt)<=Date.now()+60000)||
           collectionSourceHash(graph.sub,graph.schedule)!==source.providerHash||(await this.invoices(account)).invoiceHash!==source.invoiceHash)throw review();
         // The marker is kept only when it was stored, so that the send really follows it.
         const dispatchedAt=progress.dispatchedAt??new Date().toISOString();

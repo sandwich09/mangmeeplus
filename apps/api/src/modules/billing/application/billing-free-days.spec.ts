@@ -52,25 +52,25 @@ async function gift(progress: Record<string, string>, expiredMinutes: number, sc
     proposedJson: { accountId: 'account', dayExtension: { subscriptionId: 'sub', before: before.toISOString(), after: new Date(before.getTime() + 86400000).toISOString(),
       pendingId: null, termHash: termProjectionHash(null), cancel: false, originalScheduleId: null, providerHash: collectionSourceHash(sub, null), phases: [], future: { policy: { taxRateId: null } } } } };
   if (schedule) sub.schedule = schedule.id;
-  let writes = 0;
-  const tx: any = { $executeRaw: async () => 0, $queryRaw: async () => [], auditLog: { create: async () => ({}) },
+  let writes = 0, cases = 0; // review cases opened minus cases closed
+  const tx: any = { $executeRaw: async () => 0, $queryRaw: async () => [], auditLog: { create: async () => ({}) }, billingIssue: { updateMany: async () => { cases--; return { count: 1 }; } },
     billingAccount: { findUniqueOrThrow: async () => account, update: async ({ data }: any) => Object.assign(account, data) },
     company: { findUniqueOrThrow: async () => ({ status: 'ACTIVE', planTerm: null }) },
     billingOperation: { update: async ({ data }: any) => Object.assign(row, data, { version: row.version + 1 }) } };
   const stripe = { assertAccount: async () => {}, list: async () => [sub],
     request: async (method: string, path: string) => { if (method !== 'GET') writes++; return structuredClone(path.startsWith('/subscription_schedules') ? schedule : sub); } };
-  await new BillingFreeDays({ client: { ...tx, $transaction: async (run: any) => run(tx) } } as any, { stripe, issue: async () => {} } as any).advance(account, row, 'lease', async () => {});
-  return [writes, row.state, row.errorCode, row.resultJson.freeDays?.createAt ?? null, account.activeCollectionOperationId];
+  await new BillingFreeDays({ client: { ...tx, $transaction: async (run: any) => run(tx) } } as any, { stripe, issue: async () => { cases++; } } as any).advance(account, row, 'lease', async () => {});
+  return [writes, row.state, row.errorCode, row.resultJson.freeDays?.createAt ?? null, account.activeCollectionOperationId, cases];
 }
 
 test('AUDIT: a gift that could not be sent (approval window over) records no dispatch marker and ends at once', async () => {
-  assert.deepEqual(await gift({}, 1), [0, 'FAILED', 'CONTROL_FREE_DAYS_NOT_SENT', null, null]);
+  assert.deepEqual(await gift({}, 1), [0, 'FAILED', 'CONTROL_FREE_DAYS_NOT_SENT', null, null, -1]);
 });
 
 test('AUDIT: a sent gift the provider holds nothing of ends one hour after it could last be sent; a schedule left by its create keeps waiting', async () => {
   const createAt = new Date(Date.now() - 75 * 60000).toISOString();
-  assert.deepEqual(await gift({ createAt }, 61), [0, 'FAILED', 'CONTROL_FREE_DAYS_NOT_APPLIED', createAt, null]);
-  assert.deepEqual(await gift({ createAt }, 59), [0, 'UNKNOWN', 'CONTROL_FREE_DAYS_REVIEW', createAt, 'op'], 'inside the hour it waits');
+  assert.deepEqual(await gift({ createAt }, 61), [0, 'FAILED', 'CONTROL_FREE_DAYS_NOT_APPLIED', createAt, null, 1]);
+  assert.deepEqual(await gift({ createAt }, 59), [0, 'UNKNOWN', 'CONTROL_FREE_DAYS_REVIEW', createAt, 'op', 1], 'inside the hour it waits');
   assert.deepEqual(await gift({ createAt }, 61, { id: 'sched', object: 'subscription_schedule', customer: 'cus', subscription: 'sub', livemode: false, status: 'active', metadata: {}, phases: [] }),
-    [0, 'UNKNOWN', 'CONTROL_FREE_DAYS_REVIEW', createAt, 'op'], 'ending this one would need a release at the provider');
+    [0, 'UNKNOWN', 'CONTROL_FREE_DAYS_REVIEW', createAt, 'op', 1], 'ending this one would need a release at the provider');
 });
