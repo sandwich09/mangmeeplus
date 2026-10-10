@@ -27,6 +27,10 @@ type Target = { email: string; source: 'ACCOUNT_EMAIL' | 'CUSTOMER_OTP' | 'ADMIN
 type Proposed = { accountId: string; customerId: string; previousEmail: string | null; target?: Target; emailProof?: EmailProof };
 const targetOf = (p: Proposed): Target => p.target ?? { email: p.emailProof!.email, source: 'ACCOUNT_EMAIL', emailProof: p.emailProof };
 type Journal = { startedAt?: string };
+// The shop waits on this command: re-send for one hour from the first send, then only read; ten quiet minutes later nothing sent can still be in flight.
+const RESEND_WINDOW_MS = 3_600_000, QUIET_MARGIN_MS = 600_000;
+/** The request ended because, after that bound, the provider's customer e-mail was not this request's new address. */
+const NOT_TARGET = 'provider_email_not_target';
 const issueIdentity = (account: BillingAccount, id: string) => ({ companyId: account.companyId, stripeAccountId: account.stripeAccountId,
   livemode: account.livemode, kind: 'EMAIL_RECIPIENT_REVIEW', referenceId: id });
 const review = () => billingError('BILLING_EMAIL_CHANGED', 'ข้อมูลผู้รับเอกสารเปลี่ยนแล้ว กรุณาโหลดข้อมูลและตรวจรายการใหม่');
@@ -93,7 +97,7 @@ export class BillingEmailRecipient {
   private view(row: BillingOperation, actorUserId = row.initiatorUserId) {
     const proposed = row.proposedJson as unknown as Proposed, journal = row.resultJson as Journal | null, target = targetOf(proposed);
     return { id: row.id, state: row.state, version: row.version, previewHash: row.requestHash, expiresAt: row.expiresAt.toISOString(),
-      previousEmail: proposed.previousEmail, newEmail: target.email, source: target.source as BillingRecipientSource,
+      previousEmail: proposed.previousEmail, newEmail: target.email, source: target.source as BillingRecipientSource, errorCode: row.errorCode,
       canSubmit: actorUserId === row.initiatorUserId && row.state === 'PREVIEW' && row.expiresAt > new Date(),
       canCancel: !journal?.startedAt && ['PREVIEW', 'QUEUED', 'BLOCKED'].includes(row.state) };
   }
@@ -199,8 +203,7 @@ export class BillingEmailRecipient {
     const row = await this.prisma.client.billingOperation.findFirstOrThrow({ where: { id: account.activeEmailOperationId!, type: TYPE,
       companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode } });
     const proposed = row.proposedJson as unknown as Proposed, target = targetOf(proposed);
-    let journal = (row.resultJson as Journal | null) ?? {};
-    if (row.state === 'BLOCKED' && !journal.startedAt) return;
+    let journal = (row.resultJson as Journal | null) ?? {}, notTarget = false;
     const finish = async () => this.prisma.client.$transaction(async tx => {
       await this.fence(tx, account, row.id, lease);
       const updated = await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'COMPLETED', errorCode: null, observedAt: new Date(), version: { increment: 1 } } });
@@ -226,10 +229,16 @@ export class BillingEmailRecipient {
         payloadJson: { schemaVersion: 1, data: { operationId: row.id, ...(noticeAttemptId ? { noticeAttemptId } : {}) } } } });
     });
     try {
+      // Never sent and no pass will send it (a row left BLOCKED before this rule): it ends in the catch below.
+      if (row.state === 'BLOCKED' && !journal.startedAt) throw review();
       if (proposed.accountId !== account.id || proposed.customerId !== account.customerId) throw review();
       const email = this.customer(await this.stripe.request('GET', `/customers/${account.customerId}`), account);
       if (journal.startedAt && email === target.email) { await finish(); return; }
-      if (email !== proposed.previousEmail || (journal.startedAt && Date.now() - Date.parse(journal.startedAt) >= 23 * 3_600_000)) throw review();
+      const age = journal.startedAt ? Date.now() - Date.parse(journal.startedAt) : 0;
+      // The last send left within the re-send window, so after the quiet margin nothing is in flight and nothing is sent again; the read above
+      // shows the provider does not hold the new address (the previous one or any other). The request ends in the catch below, review case kept.
+      if (age >= RESEND_WINDOW_MS + QUIET_MARGIN_MS) { notTarget = true; throw review(); }
+      if (email !== proposed.previousEmail || age >= RESEND_WINDOW_MS) throw review();
       if (!journal.startedAt) {
         journal = { startedAt: new Date().toISOString() };
         await this.prisma.client.$transaction(async tx => {
@@ -252,14 +261,18 @@ export class BillingEmailRecipient {
         const persisted = await tx.billingOperation.findUniqueOrThrow({ where: { id: row.id } });
         const started = Boolean((persisted.resultJson as Journal | null)?.startedAt);
         const rejected = error instanceof StripeRequestError && error.outcome === 'REJECTED';
-        await tx.billingOperation.update({ where: { id: row.id }, data: { state: started && !rejected ? 'RECONCILING' : 'BLOCKED',
-          errorCode: started ? 'provider_result_unconfirmed' : 'email_authorization_changed', version: { increment: 1 } } });
+        // A provider read that failed before any send decides nothing: the request waits for the next pass while it can still be sent.
+        if (!started && error instanceof StripeRequestError && !rejected && persisted.state !== 'BLOCKED' && persisted.expiresAt > new Date()) return;
+        // Only an uncertain external update inside its bound keeps its reservation. A request that was never sent (no pass sends it later), one the
+        // provider refused, and one the provider does not hold after the bound are over: they end here and release the shop in this transaction.
+        const waiting = started && !rejected && !notTarget;
+        const updated = await tx.billingOperation.update({ where: { id: row.id }, data: { state: waiting ? 'RECONCILING' : 'FAILED',
+          errorCode: notTarget ? NOT_TARGET : started ? 'provider_result_unconfirmed' : 'email_authorization_changed', version: { increment: 1 } } });
         if (started && !rejected) await detectBillingIssue(tx, issueIdentity(account, row.id));
-        // A rejected preflight can be cancelled; an uncertain external update keeps its reservation.
-        if (rejected && started) {
-          await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'FAILED' } });
-          await resolveBillingIssue(tx, issueIdentity(account, row.id), 'PROVIDER_REJECTED_EMAIL_UPDATE');
+        if (!waiting) {
+          if (started && rejected) await resolveBillingIssue(tx, issueIdentity(account, row.id), 'PROVIDER_REJECTED_EMAIL_UPDATE');
           await tx.billingAccount.update({ where: { id: account.id }, data: { activeEmailOperationId: null, version: { increment: 1 } } });
+          await this.audit(tx, updated, notTarget ? 'not_changed' : 'failed');
         }
       });
     }
