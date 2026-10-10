@@ -55,24 +55,29 @@ export function eventDiscountBlockedText(view: View | undefined): string[] {
   return [];
 }
 /**
- * Why a shop that keeps renewing (the API's CREDIT path) cannot use the discount, said for the way it renews: a card is charged by itself, a QR bill is sent each period for the shop to scan.
- * A renewal mode this page has no word for gets the one fact that holds for all of them.
+ * Why a shop on the API's CREDIT path cannot use the discount, said only of what is known (sales-event spec §8.1, table of 2026-10-10): a renewal that is running is told by the way it
+ * renews (a card is charged by itself, a QR bill is sent each period for the shop to scan); one switched off or unpaid says so; anything not settled, or from an API that does not
+ * say, gets the one fact that holds for all. LINE says the same words with "ค่ะ" (apps/api .../line-event-discount.logic.ts CREDIT_WHY).
  */
 const CREDIT_WHY = {
   CARD_AUTO: 'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้',
   PROMPTPAY_RENEW: 'ร้านนี้ต่ออายุด้วยบิล QR ทุกงวด ส่วนลดจากงานยังใช้กับบิล QR รอบต่ออายุไม่ได้',
+  STOPPED: 'การต่ออายุของร้านนี้ปิดอยู่ แต่แพ็กเกจรอบปัจจุบันยังไม่หมด ตอนนี้จึงยังใช้ส่วนลดจากงานไม่ได้',
+  UNPAID: 'ร้านนี้มีค่าต่ออายุที่ยังชำระไม่สำเร็จ ส่วนลดจากงานใช้กับยอดต่ออายุนี้ไม่ได้',
   OTHER: 'ตอนนี้ร้านนี้ยังใช้ส่วนลดจากงานไม่ได้',
 } as const;
+const creditWhy = ({ renewalState, renewalMode }: BillingEventDiscountView) => CREDIT_WHY[renewalState === 'STOPPED' || renewalState === 'UNPAID' ? renewalState
+  : renewalState === 'RUNNING' && (renewalMode === 'CARD_AUTO' || renewalMode === 'PROMPTPAY_RENEW') ? renewalMode : 'OTHER'];
 /**
  * Sales-event spec §8.1 (Owner UAT 2026-09-29, SD-O12): the holder has a usable ticket but this shop cannot pay for a
- * package now (a running automatic renewal, or payment records under review), so the discount box never shows. One plain
- * line says the discount exists and why it does not apply here; never a date for when it will. `renewalMode` is the shop's (`BillingStatus.renewalMode`).
+ * package now (a paid package still running in a renewing mode, or payment records under review), so the discount box never shows. One plain
+ * line says the discount exists and why it does not apply here; never a date for when it will. The renewal facts are the view's own (`renewalMode`, `renewalState`), read in the same answer as the tickets.
  */
-export function eventDiscountHeldNotice(view: BillingEventDiscountView | null | undefined, renewalMode?: BillingStatus['renewalMode']): string | null {
+export function eventDiscountHeldNotice(view: BillingEventDiscountView | null | undefined): string | null {
   if (!view || view.path === 'DISCOUNT') return null;
   const best = view.tickets.filter(ticket => ticket.state === 'AVAILABLE' && !ticket.batchSuspended && ticket.discountSatang > 0)
     .sort((a, b) => b.discountSatang - a.discountSatang || Date.parse(a.expiresAt) - Date.parse(b.expiresAt))[0];
   if (!best) return null;
   const held = `คุณมีส่วนลดจากงาน ${best.eventName} ลด ${eventDiscountBaht(best.discountSatang)} บาท ตอนจ่ายค่าแพ็กเกจ (ใช้ได้ถึง ${day(best.expiresAt)})`;
-  return view.path === 'CREDIT' ? `${held} · ${renewalMode === 'CARD_AUTO' || renewalMode === 'PROMPTPAY_RENEW' ? CREDIT_WHY[renewalMode] : CREDIT_WHY.OTHER}` : held;
+  return view.path === 'CREDIT' ? `${held} · ${creditWhy(view)}` : held;
 }

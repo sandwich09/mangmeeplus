@@ -10,11 +10,13 @@ export const refundReviewRequired=()=>billingError('CONTROL_REFUND_SOURCE_CHANGE
 const integer=(v:unknown)=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0;
 export const nativeId=(v:unknown,prefix:string):v is string=>typeof v==='string'&&new RegExp(`^${prefix}_[A-Za-z0-9_]{1,120}$`).test(v);
 
-/** A retained unknown create blocks another mutation; a verified issued note only needs observation. */
+/** A retained unknown create blocks another mutation; a verified issued note only needs observation.
+ *  A request never sent to the provider holds nothing once it has expired: `current` refuses to dispatch it, so nothing is in flight. */
 export async function pendingRefund(tx:Prisma.TransactionClient,account:Pick<BillingAccount,'companyId'|'stripeAccountId'|'livemode'>,except?:string) {
   const rows=await tx.$queryRaw<{id:string}[]>`SELECT id FROM "BillingOperation" WHERE "companyId"=${account.companyId}
     AND "stripeAccountId"=${account.stripeAccountId} AND livemode=${account.livemode} AND type='REFUND'
     AND state IN ('QUEUED','RUNNING','UNKNOWN','BLOCKED') AND id<>${except??''}
+    AND (state IN ('RUNNING','UNKNOWN') OR "resultJson"->>'dispatchedAt' IS NOT NULL OR "expiresAt">${new Date()})
     AND COALESCE("resultJson"->>'mutationResolved','false')<>'true' ORDER BY "createdAt",id LIMIT 1`;
   return rows[0]??null;
 }
