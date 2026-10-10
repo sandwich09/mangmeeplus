@@ -386,7 +386,9 @@ export type BillingRefundOperation = BillingOperationView & { type:'REFUND'; sou
   paidSatang:number; previousRefundedSatang:number; usage:BillingStatus['usage'];
   allowedActions:('submit'|'approve'|'cancel'|'run')[]; dispatchedAt:string|null; creditNoteId:string|null; creditNoteNumber:string|null;
   refundId:string|null; refundState:BillingAdjustmentItem['status']|null; reviewCaseId:string|null; bankReceiptConfirmed:false;
-  endPackage:boolean; packageEnded:boolean|null; promotion?:BillingRefundPromotion };
+  endPackage:boolean; packageEnded:boolean|null; promotion?:BillingRefundPromotion;
+  /** The provider's own error code and type of its last rejection while this request still has an error (safe tokens only, never its message), for staff to read. */
+  providerErrorCode?:string|null; providerErrorType?:string|null };
 
 export type BillingOperatorCompany = {
   accountId: string | null; companyId: string; companyName: string; mode: BillingMode | 'DISABLED'; version: number;

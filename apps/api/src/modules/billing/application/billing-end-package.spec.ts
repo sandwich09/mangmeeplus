@@ -4,6 +4,7 @@ import { termProjectionHash } from '../domain/paid-invoice';
 import { endPackageBlock, endPaidPackage, refundEndsPackage, stampSpentPromotion } from './billing-end-package';
 import { BillingRefundsService } from './billing-refunds.service';
 import { BillingReconcilerService } from './billing-reconciler.service';
+import { StripeRequestError } from '../infrastructure/stripe.client';
 
 const now = new Date('2026-09-24T03:00:00.000Z');
 const start = new Date('2026-09-10T00:00:00.000Z'), end = new Date('2026-10-10T00:00:00.000Z');
@@ -432,4 +433,51 @@ test('plan R14: a fully refunded promotion source nothing could end or settle is
     const r = await run(needStaff['not started'] as object, p, terminal);
     assert.deepEqual([r.ended, r.db.issues.length, r.db.writes], [undefined, 0, []]);
   }
+});
+
+test('a provider rejection of the refund run is journaled and logged as the provider\'s own code and type, and read back only while the request has an error', async () => {
+  const dispatched = { submittedCredentialVersion: 'v1', dispatchedAt: '2026-10-10T03:00:00.000Z', providerKey: 'billing-refund-refund', paramsHash: 'hash' };
+  const context = { userId: 'admin' } as never;
+  /** `execute` of a dispatched refund whose run fails with `error`: the claim, fence, journal write, review case and audit are the real code on an in-memory row. */
+  const run = async (error: Error) => {
+    const db = fakeDb(), logged: unknown[] = [];
+    const op: Record<string, any> = { id: 'refund', companyId: 'company', stripeAccountId: 'acct', livemode: true, type: 'REFUND', state: 'UNKNOWN', version: 3, referenceId: 'invoice', initiatorUserId: 'admin',
+      approverUserId: 'admin', errorCode: null, reason: 'r', requestHash: 'hash', sourceVersion: 1, leaseToken: null, leaseUntil: null, observedAt: null, createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 600_000), proposedJson: { accountId: 'account', projection: { taxSatang: 0 } }, resultJson: dispatched };
+    const apply = (data: Record<string, any>) => Object.assign(op, data, data.version ? { version: op.version + 1 } : {});
+    const account = { id: 'account', leaseToken: null as string | null, leaseUntil: null as Date | null };
+    const own: Record<string, unknown> = {
+      billingOperation: { findUniqueOrThrow: async () => op, update: async ({ data }: any) => apply(data), updateMany: async ({ data }: any) => (apply(data), { count: 1 }) },
+      billingAccount: { updateMany: async ({ data }: any) => (Object.assign(account, data), { count: 1 }) },
+      // The first read inside the run's `try`. Reaching the real credit-note POST takes the whole provider-source fixture, and the catch does not care where the error came from.
+      billingInvoice: { findFirst: async () => { throw error; } },
+    };
+    const tx: any = new Proxy({}, { get: (_, key: string) => key === '$transaction' ? (fn: (inner: unknown) => unknown) => fn(tx) : own[key] ?? (db.tx as any)[key] });
+    const admin = { scopedCompany: async () => ({ account, company: { name: 'ร้านทดสอบ' }, access: { capabilities: ['system.billing.financial.read'], platformScope: false } }), access: async () => undefined };
+    const service = new BillingRefundsService({ client: tx } as never, { account: async () => account, stripe: { accountId: 'acct', livemode: true } } as never, admin as never, {} as never, {} as never);
+    Object.assign(service, { logger: { warn: (line: unknown) => logged.push(line) } });
+    await service['execute'](op as never);
+    return { op, logged, view: () => service['view'](context, op as never) };
+  };
+
+  const rejected = await run(new StripeRequestError('REJECTED', 'request_rejected', 60, 'balance_insufficient', 'invalid_request_error'));
+  assert.deepEqual([rejected.op.state, rejected.op.errorCode], ['UNKNOWN', 'CONTROL_REFUND_PROVIDER_UNAVAILABLE'], 'the state logic is the one it was');
+  const { at, ...providerError } = rejected.op.resultJson.providerError;
+  assert.deepEqual(providerError, { outcome: 'REJECTED', code: 'balance_insufficient', type: 'invalid_request_error' });
+  assert.ok(Number.isFinite(Date.parse(at)), 'when the provider said no');
+  assert.deepEqual({ ...rejected.op.resultJson, providerError: undefined }, { ...dispatched, providerError: undefined }, 'the rest of the journal is kept');
+  assert.deepEqual(rejected.logged, [{ msg: 'billing.refund.provider_rejected', operationId: 'refund', outcome: 'REJECTED', providerCode: 'balance_insufficient', providerType: 'invalid_request_error' }], 'one line, nothing of the response');
+  const shown = await rejected.view();
+  assert.deepEqual([shown.providerErrorCode, shown.providerErrorType], ['balance_insufficient', 'invalid_request_error']);
+  rejected.op.errorCode = null; // a later retry went through: nothing is left to explain
+  const settled = await rejected.view();
+  assert.deepEqual([settled.providerErrorCode, settled.providerErrorType], [null, null]);
+
+  // A provider that gave no usable code still leaves its outcome, and anything that is not a provider error leaves the journal as it was.
+  const bare = await run(new StripeRequestError('UNKNOWN', 'unavailable'));
+  assert.deepEqual([bare.op.resultJson.providerError.outcome, bare.op.resultJson.providerError.code, bare.op.resultJson.providerError.type], ['UNKNOWN', null, null]);
+  assert.deepEqual([bare.logged.length, (await bare.view()).providerErrorCode], [1, null]);
+  const other = await run(new Error('boom'));
+  assert.deepEqual([other.op.errorCode, other.op.resultJson, other.logged], ['CONTROL_REFUND_REVIEW', dispatched, []]);
+  assert.deepEqual([(await other.view()).providerErrorCode, (await other.view()).providerErrorType], [null, null]);
 });
