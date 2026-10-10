@@ -11,7 +11,7 @@ import type { BillingOperationsService } from '../modules/billing/application/bi
 type ObjectValue = Record<string, any>;
 export function repeatProviderFixture(run: string, provider: Record<string, ObjectValue[]>) {
   const schedules: ObjectValue[] = [], checkoutLines = new Map<string, ObjectValue[]>(), invoiceLines = new Map<string, ObjectValue[]>();
-  let loseAfter = '', checkoutCalls = 0, raceOnHold = false, loseRead = false, dropPath: RegExp | null = null;
+  let loseAfter = '', checkoutCalls = 0, raceOnHold = false, loseRead = false, dropPath: RegExp | null = null, answer: { path: RegExp; status: number } | null = null;
   const calls = new Map<string, number>();
   const commands = new Map<string, ObjectValue>();
   const list = (data: ObjectValue[]) => ({ object: 'list', data, has_more: false });
@@ -57,6 +57,9 @@ export function repeatProviderFixture(run: string, provider: Record<string, Obje
     if (key && commands.has(key)) return commands.get(key);
     // The provider never received (or never applied) this request: nothing is committed and nothing is stored under the key.
     if (dropPath?.test(path)) { dropPath = null; throw new Error('Synthetic request lost before provider commit'); }
+    // The provider answers this one request with an error status; nothing is committed.
+    if (answer?.path.test(path)) { const status = answer.status; answer = null;
+      return new Response(JSON.stringify({ error: { type: 'invalid_request_error' } }), { status, headers: { 'content-type': 'application/json' } }); }
     let result: ObjectValue | undefined, step = '';
     const customer = provider.customers!.find(c => path === `/customers/${c.id}`);
     if (customer && form.has('address[line1]')) { result = applySyntheticCustomerFields(customer, form); step = 'billingProfile'; }
@@ -145,7 +148,8 @@ export function repeatProviderFixture(run: string, provider: Record<string, Obje
       return stored;
     }
   }
-  return { request, complete, schedules, calls, heldInvoice, failNextRead: () => { loseRead = true; }, race: () => { raceOnHold = true; }, lose: (step: string) => { loseAfter = step; }, drop: (path: RegExp) => { dropPath = path; }, checkoutCalls: () => checkoutCalls };
+  return { request, complete, schedules, calls, heldInvoice, failNextRead: () => { loseRead = true; }, race: () => { raceOnHold = true; }, lose: (step: string) => { loseAfter = step; }, drop: (path: RegExp) => { dropPath = path; },
+    answerOnce: (path: RegExp, status: number) => { answer = { path, status }; }, checkoutCalls: () => checkoutCalls };
 }
 
 export async function checkRepeatPurchase(input: {
@@ -283,17 +287,31 @@ export async function checkRepeatPurchase(input: {
     companyId, billingReceiptGrantId: grant.id, sourceRoute: 'receipt-ocr-web', requestId: `exhaust-${grant.id}-${i}`, monthKey: '2026-09' })) });
   assert.equal((await request(base)).body.usage.remaining, 0);
   const again = await checkout(await quote()); assert.equal(again.body.state, 'OPEN', JSON.stringify(again));
-  // 2026-10-10 (P-1..P-3): paid, and the schedule update never reached the provider. Past the hour the old key cannot succeed,
-  // so after the quiet margin the pass that reads "not there" sends a new generation under a new key and completes the purchase.
-  fixture.complete(provider.sessions!.at(-1)!); fixture.drop(/^\/subscription_schedules\/[^/]+$/); await reconciler.reconcileAccount(account.id);
-  assert.equal((await request(`${base}/attempts/${again.body.attemptId}`)).body.applyState, 'PENDING');
-  const updates = fixture.calls.get('scheduleUpdate');
-  await ageCommand(again.body.attemptId, 'scheduleUpdate', 65 * 60000); await reconciler.reconcileAccount(account.id);
-  assert.equal(fixture.calls.get('scheduleUpdate'), updates, 'between one hour and one hour ten a pass only reads');
+  // 2026-10-10 (P-1..P-4): paid, and the schedule update is not at the provider. Past the hour the old key cannot succeed, so after
+  // the quiet margin the pass that reads "not there" sends a new generation under a new key — unless the provider refused the step.
+  const schedulePath = /^\/subscription_schedules\/[^/]+$/, updates = fixture.calls.get('scheduleUpdate');
+  const scheduleCommand = async () => ((await client.billingAttempt.findUniqueOrThrow({ where: { id: again.body.attemptId } })).collectionJson as any).commands.scheduleUpdate;
+  const applyState = async () => (await request(`${base}/attempts/${again.body.attemptId}`)).body.applyState;
+  // A 400 is the provider's answer about this step: marked, no further generation, the review case stays.
+  fixture.complete(provider.sessions!.at(-1)!); fixture.answerOnce(schedulePath, 400); await reconciler.reconcileAccount(account.id);
+  assert.equal(await applyState(), 'PENDING'); assert.equal((await scheduleCommand()).refused, true, 'a 400 marks the step refused');
   await ageCommand(again.body.attemptId, 'scheduleUpdate'); await reconciler.reconcileAccount(account.id);
-  assert.equal((await request(`${base}/attempts/${again.body.attemptId}`)).body.applyState, 'APPLIED', 'a paid repeat purchase completes by itself after its schedule update was lost');
+  assert.equal(fixture.calls.get('scheduleUpdate'), updates, 'a refused step is not sent again');
+  assert.equal((await scheduleCommand()).gen, undefined, 'and starts no new generation'); assert.equal(await applyState(), 'PENDING');
+  assert.equal(await client.billingIssue.count({ where: { companyId, kind: 'REPEAT_RECOVERY', referenceId: again.body.attemptId, state: { not: 'RESOLVED' } } }), 1);
+  // The rest of the journey needs this attempt: take the marker away, as if the step had never been refused.
+  const unmarked = (await client.billingAttempt.findUniqueOrThrow({ where: { id: again.body.attemptId } })).collectionJson as any;
+  delete unmarked.commands.scheduleUpdate.refused; await client.billingAttempt.update({ where: { id: again.body.attemptId }, data: { collectionJson: unmarked } });
+  // A 401 is a key or account problem, not an answer about the step: no marker, and the next generation follows.
+  fixture.answerOnce(schedulePath, 401); await reconciler.reconcileAccount(account.id);
+  assert.equal((await scheduleCommand()).gen, 1); assert.equal((await scheduleCommand()).refused, undefined, 'a 401 leaves no refusal marker');
+  assert.equal(await applyState(), 'PENDING');
+  await ageCommand(again.body.attemptId, 'scheduleUpdate', 65 * 60000); await reconciler.reconcileAccount(account.id);
+  assert.equal((await scheduleCommand()).gen, 1, 'between one hour and one hour ten a pass only reads'); assert.equal(fixture.calls.get('scheduleUpdate'), updates);
+  await ageCommand(again.body.attemptId, 'scheduleUpdate'); await reconciler.reconcileAccount(account.id);
+  assert.equal(await applyState(), 'APPLIED', 'a paid repeat purchase completes by itself after its schedule update was not applied');
   assert.equal(fixture.calls.get('scheduleUpdate'), updates! + 1); assert.equal(sub.pause_collection, null);
-  assert.equal(((await client.billingAttempt.findUniqueOrThrow({ where: { id: again.body.attemptId } })).collectionJson as any).commands.scheduleUpdate.gen, 1);
+  assert.equal((await scheduleCommand()).gen, 2);
   await reconciler.reconcileAccount(account.id);
   const extended = (await request(base)).body;
   assert.equal(extended.usage.remaining, 1200);
@@ -303,7 +321,7 @@ export async function checkRepeatPurchase(input: {
   assert.equal(await client.billingReceiptGrant.count({ where: { companyId } }), 3);
   assert.equal(await client.billingSubscriptionContract.count({ where: { billingAccountId: account.id } }), 3);
   return ['repeat-profile-timeout-settles-original-command-before-abort-or-new-purchase', 'repeat-renewal-race-blocks-checkout-and-restores-original-collection', 'repeat-exact-held-renewal-finalized-without-charge-and-voided', 'repeat-exhausted-quota-and-multiple-prepaid-years-use-one-subscription-two-phases', 'repeat-concurrent-intent-reservation', 'repeat-expired-checkout-restores-collection-without-quota', 'repeat-lost-checkout-response-reuses-single-session',
-    'repeat-unpaid-stuck-profile-or-checkout-ends-and-unpauses', 'repeat-paid-lost-schedule-update-resent-under-new-generation',
+    'repeat-unpaid-stuck-profile-or-checkout-ends-and-unpauses', 'repeat-paid-schedule-update-refused-400-stays-in-review', 'repeat-paid-schedule-update-401-resent-under-new-generation',
     'repeat-paid-schedule-and-unpause-crash-recovery-grants-once', 'repeat-calendar-extension-old-quota-carry-and-invoice-receipt',
     ...(browser ? ['browser-repeat-quote-and-verified-return'] : []),...applyCases];
 }
