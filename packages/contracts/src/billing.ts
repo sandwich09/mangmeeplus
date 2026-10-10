@@ -382,7 +382,9 @@ export type BillingRefundReview = { companyId:string; companyName:string; invoic
   paidSatang:number; refundedSatang:number; disputed:boolean; refundLimitSatang:number|null; canCreate:boolean; blockedReason:string|null;
   sourceHash:string; observedAt:string; usage:BillingStatus['usage']; adjustments:BillingAdjustmentItem[]; promotion?:BillingRefundPromotion;
   /** How the invoice was paid: the provider refunds a PromptPay payment only after the customer answers its e-mail. */
-  paymentMethod?:'card'|'promptpay' };
+  paymentMethod?:'card'|'promptpay';
+  /** This purchase still holds the shop and the system cannot set up its next round: the refund is the way out. RENEWAL (QR bills, prepaid card): only a full refund releases the shop. */
+  unrepairedBinding?:'RENEWAL'|'ADVANCE_DEAL' };
 export type BillingRefundOperation = BillingOperationView & { type:'REFUND'; sourceVersion:number; previewHash:string;
   companyName:string; invoiceNumber:string|null; amountSatang:number; taxSatang:number; memo:string; notifyCustomer:boolean;
   paidSatang:number; previousRefundedSatang:number; usage:BillingStatus['usage'];
