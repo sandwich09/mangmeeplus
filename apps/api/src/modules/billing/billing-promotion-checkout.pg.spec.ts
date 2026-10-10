@@ -583,7 +583,8 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     assert.equal('promotion' in await service.status(ctx(a.s)), false);
     assert.equal((await checkout(a.s, await quote(a.s, 'PROMOTION'))).state, 'OPEN', 'the shop buys with the campaign again');
 
-    // A request that was started, or whose outcome is unknown, is never released by elapsed time: it stays in review and keeps its seat.
+    // A request that was started, or whose outcome is unknown, is never released by time alone: within ten minutes of its last
+    // write it stays held; after that a provider read that finds no session of the attempt ends it (2026-10-10).
     for (const status of ['REQUESTING', 'UNKNOWN']) {
       const b = await stranded('PROMOTION');
       await client.billingAttempt.update({ where: { id: b.attemptId }, data: { status, version: 1 } });
@@ -591,6 +592,11 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
       await assert.rejects(reconciler.reconcileAccount(b.accountId), /billing\.checkout_unknown/);
       await held(b, status);
       assert.equal(await client.auditLog.count({ where: { companyId: b.s, action: 'billing.promotion.released' } }), 0);
+      await client.billingAttempt.update({ where: { id: b.attemptId }, data: { updatedAt: new Date(Date.now() - 11 * 60_000) } });
+      await reconciler.reconcileAccount(b.accountId);
+      const over = await client.billingAttempt.findUniqueOrThrow({ where: { id: b.attemptId } });
+      assert.deepEqual([over.status, over.errorCode, (await account(b.s)).activeAttemptId, (await right(b.s, live.campaignId))?.state], ['EXPIRED', 'BILLING_CHECKOUT_NOT_STARTED', null, 'RELEASED']);
+      assert.equal(await client.auditLog.count({ where: { companyId: b.s, action: 'billing.checkout.not_started', targetId: b.attemptId } }), 1);
       await client.billingPromotionRedemption.deleteMany({ where: { companyId: b.s } });
     }
     // The shop that died before it even had a Customer at the provider: no Customer means no Checkout, the same release.
@@ -601,11 +607,19 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     await reconciler.reconcileAccount(c.accountId);
     assert.deepEqual([(await client.billingAttempt.findUniqueOrThrow({ where: { id: c.attemptId } })).status, (await account(c.s)).activeAttemptId, (await right(c.s, live.campaignId))?.state],
       ['EXPIRED', null, 'RELEASED']);
-    // An attempt without a promotion behaves exactly as before, whatever its age: the pass fails and the slot stays held.
+    // An attempt without a promotion has no createBy: held within ten minutes of its last write, ended by the same read after.
     const d = await stranded('NORMAL');
-    await client.billingAttempt.update({ where: { id: d.attemptId }, data: { createdAt: new Date(Date.now() - 3 * HOUR) } });
     await assert.rejects(reconciler.reconcileAccount(d.accountId), /billing\.checkout_unknown/);
     assert.deepEqual([(await client.billingAttempt.findUniqueOrThrow({ where: { id: d.attemptId } })).status, (await account(d.s)).activeAttemptId], ['CREATING', d.attemptId]);
+    await client.billingAttempt.update({ where: { id: d.attemptId }, data: { updatedAt: new Date(Date.now() - 11 * 60_000) } });
+    await reconciler.reconcileAccount(d.accountId);
+    assert.deepEqual([(await client.billingAttempt.findUniqueOrThrow({ where: { id: d.attemptId } })).status, (await account(d.s)).activeAttemptId], ['EXPIRED', null]);
+    // The shop's own cancel waits 60 seconds instead of ten minutes, on the same read.
+    const e = await stranded('NORMAL');
+    await client.billingAttempt.update({ where: { id: e.attemptId }, data: { status: 'UNKNOWN', version: 1, updatedAt: new Date(Date.now() - 61_000) } });
+    await assert.rejects(reconciler.reconcileAccount(e.accountId), /billing\.checkout_unknown/);
+    await reconciler.reconcileAccount(e.accountId, undefined, undefined, undefined, 60_000);
+    assert.deepEqual([(await client.billingAttempt.findUniqueOrThrow({ where: { id: e.attemptId } })).status, (await account(e.s)).activeAttemptId], ['EXPIRED', null]);
   });
 
   it('refuses a promotion on an upgrade, a scheduled change and a live card subscription, and still sells them normally (plan R10)', async () => {
