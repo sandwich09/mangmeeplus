@@ -561,7 +561,7 @@ export type BillingPlanAdjustments = {companyId:string;companyName:string;source
   unchanged:BillingPlanAdjustmentUnchanged|null;items:BillingPlanAdjustmentOperation[];nextCursor:string|null};
 
 export type BillingEmailRecipientOperation = { id: string; state: string; version: number; previewHash: string; expiresAt: string;
-  previousEmail: string | null; newEmail: string; canSubmit: boolean; canCancel: boolean; source?: BillingRecipientSource };
+  previousEmail: string | null; newEmail: string; canSubmit: boolean; canCancel: boolean; source?: BillingRecipientSource; errorCode?: string | null };
 /** `email` is the Stripe Customer's; `stored` is the column this system owns (they differ only after a Dashboard edit). */
 export type BillingEmailRecipient = { email: string | null; hasCustomer: boolean; busy?: boolean; operation: BillingEmailRecipientOperation | null;
   stored?: BillingRecipientInfo };

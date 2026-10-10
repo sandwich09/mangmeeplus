@@ -24,6 +24,11 @@ type Journal = { startedAt?: string; observed?: boolean; createStartedAt?: strin
 const TYPES = ['GRANT_FREE_DAYS', 'CHANGE_COLLECTION', 'CUSTOMER_CANCEL_RENEWAL', 'CUSTOMER_RESUME_RENEWAL', 'CUSTOMER_SCHEDULE_DOWNGRADE', 'CUSTOMER_CANCEL_DOWNGRADE', 'CUSTOMER_PREPAID_PLAN_CHANGE'];
 const changing = (action: BillingCollectionAction) => action === 'SCHEDULE_DOWNGRADE' || action === 'CANCEL_DOWNGRADE';
 const review = () => billingError('BILLING_COLLECTION_REVIEW', 'ข้อมูลการต่ออายุเปลี่ยน กรุณาตรวจสถานะเดิมหรือติดต่อทีมงานพร้อมเลขอ้างอิง');
+// 2026-10-10: the same key is re-sent for one hour from the first send; ten minutes after that nothing sent can still be in flight.
+// (23 hours was the life of the idempotency key, not a decision about how long a shop may be held.)
+const RESEND_WINDOW_MS = 3_600_000, QUIET_MARGIN_MS = 600_000;
+/** The first provider mutation of a command. `startedAt` alone only says a pass began: nothing has been sent yet. */
+const sentAt = (journal: Journal | null) => journal?.createStartedAt ?? journal?.updateStartedAt;
 export const collectionSourceHash = (sub: StripeObject, schedule: StripeObject | null) => hashBilling([sub.id, sub.status, sub.cancel_at_period_end === true,
   sub.billing_mode ?? null, sub.billing_cycle_anchor ?? null, sub.cancel_at ?? null, sub.pause_collection ?? null, sub.pending_update ?? null,
   sub.collection_method, sub.automatic_tax, sub.discounts, sub.default_tax_rates, sub.transfer_data, sub.application_fee_percent,
@@ -58,7 +63,7 @@ export class BillingCollection {
       observedAt: row.observedAt?.toISOString() ?? null, errorCode: row.errorCode,
       ...(p.change ? { targetOffer: p.snapshot.quote.offer, currentOffer: p.change.currentSnapshot.quote.offer, capacity: p.snapshot.quote.capacity } : {}),
       allowedActions: [...(row.state === 'PREVIEW' && row.expiresAt > new Date() && row.initiatorUserId === userId ? ['submit' as const] : []),
-        ...(['PREVIEW', 'QUEUED', 'BLOCKED'].includes(row.state) && p.action !== 'PREPAID_PLAN_CHANGE' && !journal?.startedAt ? ['withdraw' as const] : [])] };
+        ...(['PREVIEW', 'QUEUED', 'BLOCKED'].includes(row.state) && p.action !== 'PREPAID_PLAN_CHANGE' && !sentAt(journal) ? ['withdraw' as const] : [])] };
   }
   async get(context: RequestContext, id: string) {
     await this.billing.assertOwner(context);
@@ -182,7 +187,7 @@ export class BillingCollection {
       await lockPlanTermCompany(tx, context.companyId); await this.billing.assertOwner(context, tx);
       const current = await tx.billingOperation.findUniqueOrThrow({ where: { id } }), account = await this.billing.account(context.companyId, tx);
       if (['GRANT_FREE_DAYS','CHANGE_COLLECTION','CUSTOMER_PREPAID_PLAN_CHANGE'].includes(current.type)) throw new BadRequestException();
-      if (current.version !== expectedVersion || !['PREVIEW', 'QUEUED', 'BLOCKED'].includes(current.state) || (current.resultJson as Journal | null)?.startedAt ||
+      if (current.version !== expectedVersion || !['PREVIEW', 'QUEUED', 'BLOCKED'].includes(current.state) || sentAt(current.resultJson as Journal | null) ||
         (account?.leaseUntil && account.leaseUntil > new Date())) throw review();
       const changed = await tx.billingOperation.updateMany({ where: { id, state: current.state, version: expectedVersion }, data: { state: 'CANCELLED', version: { increment: 1 } } });
       if (!changed.count) throw review();
@@ -199,6 +204,19 @@ export class BillingCollection {
   private audit(tx: Prisma.TransactionClient, row: BillingOperation, action: string) {
     return tx.auditLog.create({ data: { companyId: row.companyId!, actorUserId: row.initiatorUserId, action: `billing.collection.${action}`, targetType: 'BillingOperation',
       targetId: row.id, requestId: row.id, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { type: row.type, sourceVersion: row.sourceVersion, previewHash: row.requestHash } } });
+  }
+  /** Over without a change (2026-10-10): nothing is sent, the account is released in this transaction. Not applied keeps its review case;
+   *  never sent leaves nothing to review, so it opens none and closes one an older pass opened. */
+  private async end(account: BillingAccount, row: BillingOperation, lease: string, journal: Journal, errorCode: 'BILLING_COLLECTION_NOT_SENT' | 'BILLING_COLLECTION_NOT_APPLIED') {
+    await this.prisma.client.$transaction(async tx => {
+      await this.fence(tx, account, row, lease);
+      await tx.billingAccount.update({ where: { id: account.id }, data: { activeCollectionOperationId: null, version: { increment: 1 } } });
+      await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'FAILED', resultJson: journal as Prisma.InputJsonValue, errorCode, version: { increment: 1 } } });
+      await this.audit(tx, row, errorCode === 'BILLING_COLLECTION_NOT_SENT' ? 'not_sent' : 'not_applied');
+      if (errorCode === 'BILLING_COLLECTION_NOT_SENT') await tx.billingIssue.updateMany({ where: { stripeAccountId: account.stripeAccountId, livemode: account.livemode, companyId: account.companyId,
+        kind: 'CUSTOMER_COLLECTION_REVIEW', referenceId: row.id }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
+    });
+    if (errorCode === 'BILLING_COLLECTION_NOT_APPLIED') await this.billing.issue(account.companyId, 'CUSTOMER_COLLECTION_REVIEW', row.id);
   }
   private observed(p: Proposed, sub: StripeObject, schedule: StripeObject | null, id: string) {
     const cancel = p.action === 'CANCEL_RENEWAL', target = Date.parse(p.paidThrough) / 1000;
@@ -232,22 +250,39 @@ export class BillingCollection {
       stripeAccountId: account.stripeAccountId, livemode: account.livemode, type: { in: TYPES } } });
     const proposed = row.proposedJson as unknown as Proposed, journal: Journal = (row.resultJson as Journal | null) ?? {};
     if (proposed.accountId !== account.id || proposed.subscriptionId !== account.baseSubscriptionId) throw review();
-    if (row.state === 'BLOCKED' && !journal.startedAt) return;
+    const first = sentAt(journal), age = first ? Date.now() - Date.parse(first) : 0, resend = !first || age < RESEND_WINDOW_MS;
+    // Never sent, and no pass will send it: a blocked command is not retried, and a start older than the window is too old to act on.
+    if (!first && (row.state === 'BLOCKED' || (journal.startedAt && !(Date.now() - Date.parse(journal.startedAt) < RESEND_WINDOW_MS))))
+      return this.end(account, row, lease, journal, 'BILLING_COLLECTION_NOT_SENT');
+    const save = () => this.prisma.client.$transaction(async tx => { await this.fence(tx, account, row, lease);
+      await tx.billingOperation.update({ where: { id: row.id }, data: { resultJson: journal as Prisma.InputJsonValue } }); });
+    // A send marker is kept only when it was stored, so that the send really follows it.
+    const mark = async (key: 'createStartedAt' | 'updateStartedAt') => {
+      if (journal[key]) return;
+      journal[key] = new Date().toISOString();
+      try { await save(); } catch (error) { delete journal[key]; throw error; }
+    };
     try {
       // A lost from_subscription response must replay that exact command before adopting any schedule.
       const create = async () => {
-        if (!journal.createStartedAt || Date.now()-Date.parse(journal.createStartedAt) >= 23*3600000) throw review();
+        if (!journal.createStartedAt || !resend) throw review();
         const created = await this.stripe.request('POST', '/subscription_schedules', { from_subscription: proposed.subscriptionId }, `mm:collection:${row.id}:create`);
         if (created.object !== 'subscription_schedule' || created.livemode !== account.livemode || stripeId(created.customer) !== account.customerId ||
           stripeId(created.subscription) !== proposed.subscriptionId) throw review();
         journal.scheduleId = created.id; journal.createdScheduleHash = collectionSourceHash({ id: proposed.subscriptionId }, created);
-        await this.prisma.client.$transaction(async tx => { await this.fence(tx, account, row, lease);
-          await tx.billingOperation.update({ where: { id: row.id }, data: { resultJson: journal as Prisma.InputJsonValue } }); });
+        await save();
       };
-      if (journal.createStartedAt && !journal.scheduleId) await create();
+      if (journal.createStartedAt && !journal.scheduleId && resend) await create();
       let { sub, schedule } = await this.provider(account);
       if (!this.observed(proposed, sub, schedule, row.id)) {
-        if (journal.startedAt && (!Number.isFinite(Date.parse(journal.startedAt)) || Date.now() - Date.parse(journal.startedAt) >= 23 * 3600000)) throw review();
+        if (!resend) {
+          // From one hour on a pass only reads. Our id travels in the same request as the change (subscription or schedule metadata; a DELETE
+          // shows as status), and the source hash covers everything else: neither there = the provider never applied this command.
+          // An id without the change, a changed source or a schedule left by our create keeps waiting with its review case.
+          if (age >= RESEND_WINDOW_MS + QUIET_MARGIN_MS && sub.metadata?.mangmeeCollectionOperation !== row.id && schedule?.metadata?.mangmeeCollectionOperation !== row.id &&
+            collectionSourceHash(sub, schedule) === proposed.sourceHash) return await this.end(account, row, lease, journal, 'BILLING_COLLECTION_NOT_APPLIED');
+          throw review();
+        }
         if (collectionSourceHash(sub, journal.scheduleId && !proposed.originalScheduleId ? null : schedule) !== proposed.sourceHash ||
           (journal.scheduleId && schedule?.id !== journal.scheduleId) || (journal.createdScheduleHash &&
           collectionSourceHash({ id: proposed.subscriptionId }, schedule) !== journal.createdScheduleHash)) throw review();
@@ -268,18 +303,14 @@ export class BillingCollection {
         });
         journal.startedAt = startedAt;
         if (proposed.change && !proposed.originalScheduleId && !journal.scheduleId) {
-          journal.createStartedAt ??= startedAt;
-          await this.prisma.client.$transaction(async tx => { await this.fence(tx, account, row, lease);
-            await tx.billingOperation.update({ where: { id: row.id }, data: { resultJson: journal as Prisma.InputJsonValue } }); });
+          await mark('createStartedAt');
           await create();
         }
         const path = journal.scheduleId ? `/subscription_schedules/${journal.scheduleId}` : proposed.path;
         const params = { ...proposed.params, ...(proposed.method === 'POST' ? { metadata: { billingAccountId: account.id, mangmeeCollectionOperation: row.id } } : {}) };
         const updateHash = hashBilling([proposed.method, path, params]);
         if (journal.updateHash && journal.updateHash !== updateHash) throw review();
-        journal.updateHash = updateHash; journal.updateStartedAt ??= new Date().toISOString();
-        await this.prisma.client.$transaction(async tx => { await this.fence(tx, account, row, lease);
-          await tx.billingOperation.update({ where: { id: row.id }, data: { resultJson: journal as Prisma.InputJsonValue } }); });
+        journal.updateHash = updateHash; await mark('updateStartedAt');
         await this.stripe.request(proposed.method, path, params, `mm:collection:${row.id}`);
         ({ sub, schedule } = await this.provider(account));
         if (!this.observed(proposed, sub, schedule, row.id)) throw review();
@@ -304,9 +335,11 @@ export class BillingCollection {
         await this.audit(tx, row, 'observed');
       });
     } catch {
+      // Nothing was sent and no later pass retries this state: over at once, the shop starts a new command.
+      if (!sentAt(journal)) return this.end(account, row, lease, journal, 'BILLING_COLLECTION_NOT_SENT');
       await this.prisma.client.$transaction(async tx => {
         await this.fence(tx, account, row, lease);
-        await tx.billingOperation.update({ where: { id: row.id }, data: { state: journal.startedAt ? 'UNKNOWN' : 'BLOCKED', resultJson: journal as Prisma.InputJsonValue,
+        await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'UNKNOWN', resultJson: journal as Prisma.InputJsonValue,
           errorCode: 'BILLING_COLLECTION_REVIEW', version: { increment: 1 } } });
       });
       await this.billing.issue(account.companyId, 'CUSTOMER_COLLECTION_REVIEW', row.id);

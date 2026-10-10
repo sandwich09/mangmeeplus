@@ -16,7 +16,15 @@ export async function checkBillingFinancial(input: {
   const charge = provider.charges!.find(c => c.id === invoice.providerChargeId)!; assert.ok(charge);
   const grants = await client.billingReceiptGrant.findMany({ where: { companyId }, orderBy: { id: 'asc' } });
   const term = await client.companyPlanTerm.findUniqueOrThrow({ where: { companyId } });
-  const quote = () => request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'owner@example.test' });
+  // The journeys before this one share the shop's command limiter (30 per window): the window may be full here. Wait it out, as billing-configuration-smoke does.
+  const quote = async () => {
+    for (let tries = 0; ; tries++) {
+      const result = await request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'owner@example.test' });
+      if (result.status !== 429 || tries >= 2) return result;
+      assert.ok(result.body.retryAfterSeconds <= 60);
+      await new Promise(resolve => setTimeout(resolve, Math.min(60, result.body.retryAfterSeconds + 1) * 1000));
+    }
+  };
   charge.amount_refunded = 5000;
   const refused = await quote(); assert.equal(refused.status, 409, JSON.stringify(refused.body));
   await input.reconcile(account.id); await input.reconcile(account.id);

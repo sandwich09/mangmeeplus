@@ -57,7 +57,14 @@ export class BillingCheckoutExpiryService{
     await this.billing.assertOwner(context);
     const account=await this.billing.account(context.companyId),attempt=account?.activeAttemptId===id?await this.prisma.client.billingAttempt.findFirst({where:{id,billingAccountId:account.id}}):null;
     if(!account||!attempt)throw new NotFoundException();
-    if(!attempt.checkoutSessionId)throw billingError('BILLING_CHECKOUT_PENDING','กำลังตรวจรายการเดิม กรุณาลองใหม่อีกครั้ง');
+    if(!attempt.checkoutSessionId){
+      // No session id (2026-10-10): the reconciler's own provider read ends it when it finds no session of this attempt and the
+      // attempt's last write is at least 60 seconds old; a session it finds is adopted, and the next press takes the path below.
+      try{await this.reconciler.reconcileAccount(account.id,undefined,undefined,undefined,60000);}catch{/* decided by the state read below */}
+      if((await this.billing.account(context.companyId))?.activeAttemptId===id)throw billingError('BILLING_CHECKOUT_PENDING','กำลังตรวจรายการเดิม กรุณาลองใหม่อีกครั้ง');
+      const ended=await this.prisma.client.billingAttempt.findUniqueOrThrow({where:{id}});
+      return {state:ended.status==='COMPLETED'?'COMPLETED':'EXPIRED'};
+    }
     const source=await readCheckoutExpiry(this.billing.stripe,account,attempt),lease=randomUUID();
     await this.prisma.client.$transaction(async tx=>{
       await lockPlanTermCompany(tx,context.companyId);await this.billing.assertOwner(context,tx);
