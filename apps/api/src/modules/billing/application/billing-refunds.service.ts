@@ -252,7 +252,7 @@ export class BillingRefundsService {
         // Never created: `current` refuses every send once expiresAt has passed, so the last send of this request left at or before expiresAt (plus the 120 s lease at most). An hour later nothing is in flight
         // and nothing will be sent again, and the read above listed every credit note of the invoice (completeList) with none carrying this operation's id; a create that did land is found by observedRefund
         // and never comes here. So the request ends without a refund, in the catch below, and stops holding the company's other refunds. (This is always earlier than the former 23-hour ceiling on a resend.)
-        if(journal.dispatchedAt&&Date.now()-claim.expiresAt.getTime()>=3600000)throw billingError('CONTROL_REFUND_NOT_CREATED','ตรวจกับผู้ให้บริการรับชำระเงินแล้ว ไม่พบการคืนเงินของคำขอนี้ ยังไม่มีการคืนเงินเกิดขึ้น สร้างคำขอใหม่ได้');
+        if(journal.dispatchedAt&&Date.now()-claim.expiresAt.getTime()>=3600000)throw billingError('CONTROL_REFUND_NOT_CREATED','ตรวจกับผู้ให้บริการรับชำระเงินแล้ว ไม่พบการคืนเงินของคำขอนี้ คำขอนี้จึงไม่ได้คืนเงิน ถ้ายังต้องการคืน ให้สร้างคำขอใหม่');
         if(source.sourceHash!==p.providerSourceHash||configurationHash(await refundPreview(this.billing.stripe,account!,invoice,source,p.params))!==configurationHash(p.projection))throw refundReviewRequired();
         journal=await this.prisma.client.$transaction(async tx=>{
           const {row}=await this.fence(tx,claim.id,lease);this.valid(row,row.version,row.requestHash);await this.actors(row,tx);await this.current(row,tx);

@@ -284,7 +284,7 @@ export class BillingDocumentAdminService {
       // 120 s lease at most). An hour later nothing is in flight and nothing will be sent again, and the read above shows the provider does not hold
       // the target address. So the request ends without a change, in the catch below. (Same rule as billing-refunds.service.ts's
       // CONTROL_REFUND_NOT_CREATED; always earlier than the former 23-hour CONTROL_RECIPIENT_AGED_UNKNOWN.)
-      if (journal.dispatchedAt && Date.now() - claim.expiresAt.getTime() >= 3_600_000) throw billingError('CONTROL_RECIPIENT_NOT_CHANGED', 'ตรวจกับผู้ให้บริการรับชำระเงินแล้ว อีเมลผู้รับเอกสารยังไม่ถูกเปลี่ยนจากคำขอนี้ สร้างคำขอใหม่ได้');
+      if (journal.dispatchedAt && Date.now() - claim.expiresAt.getTime() >= 3_600_000) throw billingError('CONTROL_RECIPIENT_NOT_CHANGED', 'ตรวจกับผู้ให้บริการรับชำระเงินแล้ว อีเมลผู้รับเอกสารตอนนี้ไม่ใช่อีเมลใหม่ตามคำขอนี้ ถ้ายังต้องการเปลี่ยน ให้สร้างคำขอใหม่');
       if (email !== p.previousEmail) throw stale();
       // Only a readback equal to the target finishes the request. A dispatched send that never applied is sent again here, same key, while the request is still valid.
       journal = await this.prisma.client.$transaction(async tx => {
