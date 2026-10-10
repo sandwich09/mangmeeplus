@@ -125,3 +125,71 @@ test('a price return sent and not applied ends from the provider read after the 
   await other.run();
   assert.deepEqual(other.writes, ['operation:UNKNOWN:SPECIAL_PRICE_RETURN_REVIEW']);
 });
+
+// 2026-10-10: a return that ended failed is queued again by the sweep, a new row once a day, until it succeeds.
+function retry(input: { failed?: Record<string, unknown>; account?: Record<string, unknown>; live?: Record<string, unknown>; item?: Record<string, unknown> } = {}) {
+  const boundary = new Date(Date.now() + 86400_000 - (Date.now() % 1000)), at = boundary.getTime() / 1000;
+  const account: Record<string, any> = { id: 'acct_1', companyId: 'company', stripeAccountId: 'acct_stripe', livemode: false, customerId: 'cus_1', baseSubscriptionId: SUB,
+    renewalMode: 'CARD_AUTO', subscriptionState: 'active', paidThrough: boundary, version: 7, termProjectionHash: 'term', ...input.account };
+  const deal = { id: 'deal_1', companyId: 'company', offerSnapshotJson: {}, returnAt: boundary };
+  const failed: Record<string, any> = { id: 'op_1', type: 'SCHEDULE_PRICE_RETURN', state: 'FAILED', errorCode: 'SPECIAL_PRICE_RETURN_NOT_APPLIED', referenceId: 'deal_1', companyId: 'company',
+    idempotencyKey: `deal-return:deal_1:${boundary.toISOString()}`, observedAt: new Date(Date.now() - 25 * 3600_000), scheduledFor: null,
+    proposedJson: { ...proposed, paidThrough: boundary.toISOString() }, ...input.failed };
+  const created: Record<string, any>[] = [], sent: unknown[][] = [];
+  const operations = () => [failed, ...created];
+  const tx = { $queryRaw: async () => [], auditLog: { create: async () => ({}) },
+    billingAccount: { findUniqueOrThrow: async () => account, update: async (args: any) => Object.assign(account, { activeCollectionOperationId: args.data.activeCollectionOperationId }) },
+    packageChangeRequest: { findMany: async () => [deal], findFirst: async () => deal },
+    billingOperation: {
+      findFirst: async (args: any) => operations().find(row => !(args.where.state?.notIn ?? []).includes(row.state)) ?? null,
+      findMany: async (args: any) => operations().filter(row => row.state === args.where.state && (!args.where.errorCode || row.errorCode === args.where.errorCode) &&
+        (!row.scheduledFor || row.scheduledFor <= new Date()) && row.observedAt <= args.where.observedAt.lte),
+      count: async () => operations().length,
+      update: async (args: any) => Object.assign(operations().find(row => row.id === args.where.id)!, args.data),
+      create: async (args: any) => { if (operations().some(row => row.idempotencyKey === args.data.idempotencyKey)) throw new Error('P2002 unique idempotencyKey');
+        const row = { id: `op_${operations().length + 1}`, ...args.data }; created.push(row); return row; } } };
+  const prisma = { client: { ...tx, $transaction: async (fn: (client: unknown) => unknown) => fn(tx) } };
+  const stripe = { enabled: true, accountId: 'acct_stripe', livemode: false, assertAccount: async () => undefined, list: async () => [], request: async (...args: unknown[]) => {
+    if (args[0] !== 'GET') { sent.push(args); throw new Error('the sweep sends nothing'); }
+    if (String(args[1]).startsWith('/subscription_schedules/')) return { id: 'sub_sched_1', object: 'subscription_schedule', customer: 'cus_1', subscription: SUB, livemode: false };
+    return { object: 'subscription', customer: 'cus_1', livemode: false, metadata: { billingAccountId: 'acct_1' }, ...sub(input.live, { price: DEAL, current_period_end: at, ...input.item }) }; } };
+  const service = new BillingPriceReturn(prisma as any, stripe as any, { account: async () => account, assertTaxSettings: async () => undefined } as any);
+  (service as any).catalogSnapshot = async () => proposed.snapshot;
+  return { service, account, failed, created, sent };
+}
+
+test('a failed price return is queued again as a new row, at most once a day', async () => {
+  const again = retry();
+  assert.deepEqual(await again.service.sweep(), { queued: 1 });
+  // A new row, so a new provider idempotency key; the failed one is replaced and its review case stays open.
+  assert.deepEqual([again.created.length, again.created[0]!.idempotencyKey, again.created[0]!.state, again.failed.state, again.account.activeCollectionOperationId, again.sent.length],
+    [1, `${again.failed.idempotencyKey}:2`, 'QUEUED', 'SUPERSEDED', again.created[0]!.id, 0]);
+  // While that attempt is in flight, and within 24 hours of the last attempt's end, nothing more is queued.
+  assert.deepEqual(await again.service.sweep(), { queued: 0 });
+  assert.deepEqual(await retry({ failed: { observedAt: new Date(Date.now() - 23 * 3600_000) } }).service.sweep(), { queued: 0 });
+});
+
+test('a retry writes no row when the account is not ready or the subscription is not the one that failed, and never after a provider refusal', async () => {
+  const waits = [
+    retry({ account: { activeAttemptId: 'attempt_1' } }), retry({ account: { activeCollectionOperationId: 'op_shop' } }),
+    retry({ account: { paidThrough: new Date(Date.now() + 3600_000) } }), retry({ live: { cancel_at_period_end: true } }),
+    retry({ live: { schedule: 'sub_sched_1' } }), retry({ item: { id: 'si_2' } }), retry({ item: { price: 'price_other' } }),
+  ];
+  for (const wait of waits) {
+    assert.deepEqual([await wait.service.sweep(), wait.created.length, wait.failed.state], [{ queued: 0 }, 0, 'FAILED']);
+    // Looked at again tomorrow, not on every 15-minute tick.
+    assert.ok(wait.failed.scheduledFor > new Date(Date.now() + 23 * 3600_000), `case ${waits.indexOf(wait)}`);
+    assert.deepEqual(await wait.service.sweep(), { queued: 0 });
+  }
+  const refused = retry({ failed: { errorCode: 'SPECIAL_PRICE_RETURN_REJECTED' } });
+  assert.deepEqual([await refused.service.sweep(), refused.failed.scheduledFor], [{ queued: 0 }, null]);
+  // Already on the catalog price: an attempt is queued so that `advance` records it from the read, without sending.
+  const done = retry({ item: { price: CATALOG } });
+  assert.deepEqual([await done.service.sweep(), done.created[0]!.proposedJson.dealPriceId, done.sent.length], [{ queued: 1 }, DEAL, 0]);
+});
+
+test('a return the provider itself refused ends under its own code, which the sweep never retries', async () => {
+  const refused = pass({ state: 'UNKNOWN', errorCode: 'SPECIAL_PRICE_RETURN_REVIEW', resultJson: { startedAt: ago(71), rejected: 'resource_missing' } }, sub({}, { price: DEAL }));
+  await refused.run();
+  assert.deepEqual([refused.writes[0], refused.sent.length], ['operation:FAILED:SPECIAL_PRICE_RETURN_REJECTED', 0]);
+});
