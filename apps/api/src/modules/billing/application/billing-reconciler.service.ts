@@ -990,7 +990,7 @@ export class BillingReconcilerService {
    * under a new key (a key that stored a 5xx replays it for its life). The generation and its first-send time are journalled
    * before the send, guarded on the journal just read, so at most one generation starts per seventy minutes and two passes
    * never start two. Nothing is sent while a refund touches the payment, and nothing after the provider refused the request
-   * (a 4xx that is no rate limit and no idempotency conflict): that keeps its review case for staff. Null = nothing sent.
+   * (a 400 or 402 that is no idempotency error, the refund create's test; a 401, 403, 409 or 429 is retried): that keeps its review case for staff. Null = nothing sent.
    * `key` is generation 1 (the key every earlier send used); generation n is `<key>:g<n>`.
    */
   private async createBindingSubscription(account: BillingAccount, attempt: BillingAttempt, lease: string,
@@ -1018,7 +1018,7 @@ export class BillingReconcilerService {
     }
     try { return await this.stripe.request('POST', '/subscriptions', params, generation === 1 ? key : `${key}:g${generation}`); }
     catch (error) {
-      if (error instanceof StripeRequestError && error.outcome === 'REJECTED' && error.status && error.status !== 409 && error.providerType !== 'idempotency_error')
+      if (error instanceof StripeRequestError && error.outcome === 'REJECTED' && (error.status === 400 || error.status === 402) && error.providerType !== 'idempotency_error')
         await save({ [`${field}Refused`]: { generation, at: new Date().toISOString(), status: error.status, code: error.providerCode ?? null } });
       throw error;
     }
