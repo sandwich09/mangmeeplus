@@ -11,7 +11,7 @@ import type { BillingOperationsService } from '../modules/billing/application/bi
 type ObjectValue = Record<string, any>;
 export function repeatProviderFixture(run: string, provider: Record<string, ObjectValue[]>) {
   const schedules: ObjectValue[] = [], checkoutLines = new Map<string, ObjectValue[]>(), invoiceLines = new Map<string, ObjectValue[]>();
-  let loseAfter = '', checkoutCalls = 0, raceOnHold = false, loseRead = false;
+  let loseAfter = '', checkoutCalls = 0, raceOnHold = false, loseRead = false, dropPath: RegExp | null = null;
   const calls = new Map<string, number>();
   const commands = new Map<string, ObjectValue>();
   const list = (data: ObjectValue[]) => ({ object: 'list', data, has_more: false });
@@ -55,6 +55,8 @@ export function repeatProviderFixture(run: string, provider: Record<string, Obje
     }
     if (method !== 'POST') return;
     if (key && commands.has(key)) return commands.get(key);
+    // The provider never received (or never applied) this request: nothing is committed and nothing is stored under the key.
+    if (dropPath?.test(path)) { dropPath = null; throw new Error('Synthetic request lost before provider commit'); }
     let result: ObjectValue | undefined, step = '';
     const customer = provider.customers!.find(c => path === `/customers/${c.id}`);
     if (customer && form.has('address[line1]')) { result = applySyntheticCustomerFields(customer, form); step = 'billingProfile'; }
@@ -143,7 +145,7 @@ export function repeatProviderFixture(run: string, provider: Record<string, Obje
       return stored;
     }
   }
-  return { request, complete, schedules, calls, heldInvoice, failNextRead: () => { loseRead = true; }, race: () => { raceOnHold = true; }, lose: (step: string) => { loseAfter = step; }, checkoutCalls: () => checkoutCalls };
+  return { request, complete, schedules, calls, heldInvoice, failNextRead: () => { loseRead = true; }, race: () => { raceOnHold = true; }, lose: (step: string) => { loseAfter = step; }, drop: (path: RegExp) => { dropPath = path; }, checkoutCalls: () => checkoutCalls };
 }
 
 export async function checkRepeatPurchase(input: {
@@ -199,6 +201,38 @@ export async function checkRepeatPurchase(input: {
   provider.sessions!.at(-1)!.status = 'expired'; await reconciler.reconcileAccount(account.id);
   assert.equal((await request(`${base}/attempts/${expired.body.attemptId}`)).body.state, 'EXPIRED');
   assert.equal(sub.pause_collection, null); assert.equal((await request(base)).body.paidThrough, before.paidThrough);
+  // 2026-10-10: an attempt that can no longer proceed and has nothing paid ends from the pass's own provider read and
+  // un-pauses the subscription. A journalled command is aged in the database; the provider's state is what the fake holds.
+  const ageCommand = async (id: string, step: string, ms = 24 * 3600000) => {
+    const journal = (await client.billingAttempt.findUniqueOrThrow({ where: { id } })).collectionJson as any;
+    journal.commands[step].at = new Date(Date.now() - ms).toISOString();
+    await client.billingAttempt.update({ where: { id }, data: { collectionJson: journal } });
+  };
+  const providerCustomer = provider.customers!.find(c => c.id === account.customerId)!, syncedName = providerCustomer.name;
+  providerCustomer.name = 'ชื่อเดิมที่ผู้ให้บริการ'; fixture.lose('billingProfile');
+  const profileStuck = await checkout(await quote()); assert.equal(profileStuck.body.state, 'UNKNOWN', JSON.stringify(profileStuck));
+  // The provider did not keep the write, and the command is past every window in which it could be sent again.
+  providerCustomer.name = 'ชื่อเดิมที่ผู้ให้บริการ'; await ageCommand(profileStuck.body.attemptId, 'billingProfile');
+  const profileCalls = fixture.calls.get('billingProfile'), sessionCalls = fixture.checkoutCalls(); assert.equal(provider.subscriptions![0]!.pause_collection?.behavior, 'keep_as_draft');
+  await reconciler.reconcileAccount(account.id);
+  assert.equal((await client.billingAttempt.findUniqueOrThrow({ where: { id: profileStuck.body.attemptId } })).status, 'FAILED', 'an unpaid repeat purchase whose profile write can no longer be sent ends');
+  assert.equal(sub.pause_collection, null, 'and the subscription renews again');
+  assert.equal((await client.billingAccount.findUniqueOrThrow({ where: { id: account.id } })).activeAttemptId, null);
+  assert.equal(fixture.calls.get('billingProfile'), profileCalls, 'nothing is re-sent after the one-hour window');
+  assert.equal(fixture.checkoutCalls(), sessionCalls);
+  providerCustomer.name = syncedName;
+  fixture.drop(/^\/checkout\/sessions$/);
+  const neverCreated = await checkout(await quote()); assert.equal(neverCreated.body.state, 'UNKNOWN', JSON.stringify(neverCreated));
+  assert.equal(fixture.checkoutCalls(), sessionCalls); assert.equal(provider.subscriptions![0]!.pause_collection?.behavior, 'keep_as_draft');
+  // Inside the first hour the same request is sent again under its key only; past one hour, before the quiet margin, a pass only reads.
+  await ageCommand(neverCreated.body.attemptId, 'checkout', 65 * 60000); await reconciler.reconcileAccount(account.id);
+  assert.equal(fixture.checkoutCalls(), sessionCalls, 'no Checkout request after the one-hour window');
+  assert.equal((await client.billingAccount.findUniqueOrThrow({ where: { id: account.id } })).activeAttemptId, neverCreated.body.attemptId);
+  await ageCommand(neverCreated.body.attemptId, 'checkout'); await reconciler.reconcileAccount(account.id);
+  assert.equal((await client.billingAttempt.findUniqueOrThrow({ where: { id: neverCreated.body.attemptId } })).status, 'FAILED', 'an unpaid repeat purchase whose Checkout the provider never created ends');
+  assert.equal(sub.pause_collection, null, 'and the subscription renews again');
+  assert.equal((await client.billingAccount.findUniqueOrThrow({ where: { id: account.id } })).activeAttemptId, null);
+  assert.equal(fixture.checkoutCalls(), sessionCalls);
   const q = await quote();
   if (browser) {
     const page = browser.page;
@@ -233,7 +267,7 @@ export async function checkRepeatPurchase(input: {
   assert.equal(fixture.calls.get('scheduleUpdate'), 1);
   assert.equal(held.status, 'void'); assert.equal(held.amount_paid, 0);
   assert.equal(fixture.calls.get('finalize'), 1); assert.equal(fixture.calls.get('void'), 1);
-  assert.equal(fixture.calls.get('resume'), 4, 'profile timeout, raced/expired checkouts restore collection and paid repeat resumes once');
+  assert.equal(fixture.calls.get('resume'), 6, 'profile timeout, raced/expired checkouts and the two ended stuck attempts restore collection, and paid repeat resumes once');
   assert.equal(await client.auditLog.count({ where: { companyId, action: 'billing.package.repeated' } }), 1);
   for (const kind of ['invoice', 'pdf', 'receipt']) assert.equal((await request(`${base}/documents/${paidPending.invoiceReference}/open`, 'POST', { kind })).status, 200);
   if (browser) {
@@ -249,7 +283,18 @@ export async function checkRepeatPurchase(input: {
     companyId, billingReceiptGrantId: grant.id, sourceRoute: 'receipt-ocr-web', requestId: `exhaust-${grant.id}-${i}`, monthKey: '2026-09' })) });
   assert.equal((await request(base)).body.usage.remaining, 0);
   const again = await checkout(await quote()); assert.equal(again.body.state, 'OPEN', JSON.stringify(again));
-  fixture.complete(provider.sessions!.at(-1)!); await reconciler.reconcileAccount(account.id); await reconciler.reconcileAccount(account.id);
+  // 2026-10-10 (P-1..P-3): paid, and the schedule update never reached the provider. Past the hour the old key cannot succeed,
+  // so after the quiet margin the pass that reads "not there" sends a new generation under a new key and completes the purchase.
+  fixture.complete(provider.sessions!.at(-1)!); fixture.drop(/^\/subscription_schedules\/[^/]+$/); await reconciler.reconcileAccount(account.id);
+  assert.equal((await request(`${base}/attempts/${again.body.attemptId}`)).body.applyState, 'PENDING');
+  const updates = fixture.calls.get('scheduleUpdate');
+  await ageCommand(again.body.attemptId, 'scheduleUpdate', 65 * 60000); await reconciler.reconcileAccount(account.id);
+  assert.equal(fixture.calls.get('scheduleUpdate'), updates, 'between one hour and one hour ten a pass only reads');
+  await ageCommand(again.body.attemptId, 'scheduleUpdate'); await reconciler.reconcileAccount(account.id);
+  assert.equal((await request(`${base}/attempts/${again.body.attemptId}`)).body.applyState, 'APPLIED', 'a paid repeat purchase completes by itself after its schedule update was lost');
+  assert.equal(fixture.calls.get('scheduleUpdate'), updates! + 1); assert.equal(sub.pause_collection, null);
+  assert.equal(((await client.billingAttempt.findUniqueOrThrow({ where: { id: again.body.attemptId } })).collectionJson as any).commands.scheduleUpdate.gen, 1);
+  await reconciler.reconcileAccount(account.id);
   const extended = (await request(base)).body;
   assert.equal(extended.usage.remaining, 1200);
   assert.equal(extended.paidThrough, appendPackageInterval(expectedEnd, 'year').toISOString());
@@ -258,6 +303,7 @@ export async function checkRepeatPurchase(input: {
   assert.equal(await client.billingReceiptGrant.count({ where: { companyId } }), 3);
   assert.equal(await client.billingSubscriptionContract.count({ where: { billingAccountId: account.id } }), 3);
   return ['repeat-profile-timeout-settles-original-command-before-abort-or-new-purchase', 'repeat-renewal-race-blocks-checkout-and-restores-original-collection', 'repeat-exact-held-renewal-finalized-without-charge-and-voided', 'repeat-exhausted-quota-and-multiple-prepaid-years-use-one-subscription-two-phases', 'repeat-concurrent-intent-reservation', 'repeat-expired-checkout-restores-collection-without-quota', 'repeat-lost-checkout-response-reuses-single-session',
+    'repeat-unpaid-stuck-profile-or-checkout-ends-and-unpauses', 'repeat-paid-lost-schedule-update-resent-under-new-generation',
     'repeat-paid-schedule-and-unpause-crash-recovery-grants-once', 'repeat-calendar-extension-old-quota-carry-and-invoice-receipt',
     ...(browser ? ['browser-repeat-quote-and-verified-return'] : []),...applyCases];
 }
