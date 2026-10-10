@@ -421,7 +421,9 @@ export class BillingDocumentAdminService {
       if (current.companyId !== candidate.companyId || current.type !== SYNC_TYPE || current.version !== candidate.version || !['QUEUED', 'RUNNING', 'UNKNOWN'].includes(current.state) ||
         !account || account.id !== p.accountId || (current.leaseUntil && current.leaseUntil > now) || (account.leaseUntil && account.leaseUntil > now)) return null;
       // A purchase in flight syncs the profile itself (billing.service.ts `mm:<attempt>:billing-profile`) — defer rather than race it.
-      if (account.activeAttemptId) { await tx.billingOperation.update({ where: { id: current.id }, data: { scheduledFor: new Date(now.getTime() + 300_000) } }); return null; }
+      // A recipient change in flight (the shop's own or the team's) too: the column still holds the old address until that change ends, and sending it here
+      // would write it back over a change the provider already applied. Both end within about seventy minutes at most, so this wait is bounded.
+      if (account.activeAttemptId || account.activeEmailOperationId || await pendingAdminRecipientChange(tx, account)) { await tx.billingOperation.update({ where: { id: current.id }, data: { scheduledFor: new Date(now.getTime() + 300_000) } }); return null; }
       const got = await tx.billingAccount.updateMany({ where: { id: account.id, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, data: { leaseToken: lease, leaseUntil: new Date(now.getTime() + 120_000) } });
       if (!got.count) return null;
       return tx.billingOperation.update({ where: { id: current.id }, data: { state: 'RUNNING', leaseToken: lease, leaseUntil: new Date(now.getTime() + 120_000), version: { increment: 1 } } });

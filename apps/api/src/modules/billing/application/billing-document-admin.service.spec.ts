@@ -60,6 +60,7 @@ function makeStore(overrides: {
   function matches(row: any, where: any): boolean {
     if (!where) return true;
     return Object.entries(where).every(([key, value]) => {
+      if (key === 'AND' || key === 'OR') return true; // lease/schedule windows: the drain tests queue rows that are due and unleased
       if (key === 'proposedJson' && value && typeof value === 'object' && 'path' in (value as any)) {
         const path = (value as any).path as string[], equals = (value as any).equals;
         let cursor: any = row.proposedJson; for (const segment of path) cursor = cursor?.[segment];
@@ -378,5 +379,29 @@ describe('BillingDocumentAdminService.run — a dispatched recipient change fini
     const { run, posts, account } = await dispatched({ held: 'new@example.com', expiresAt: new Date(Date.now() - 48 * HOUR), dispatchedAgoMs: 49 * HOUR });
     const result = await run();
     assert.deepEqual([result.state, posts.length, account.recipientEmail], ['SUCCEEDED', 0, 'new@example.com']);
+  });
+});
+
+describe('BillingDocumentAdminService.drain — the profile sync waits for a recipient change in flight', () => {
+  /** A `CUSTOMER_PROFILE_SYNC` row due now, and a provider fake that records every POST. */
+  async function queued(hold: 'none' | 'shop' | 'admin') {
+    const posts: any[] = [];
+    const store = makeStore({ stripeRequest: async (...args: unknown[]) => { if (args[0] === 'POST') posts.push(args[2]); throw new Error('provider timeout'); } });
+    store.client.company = { findUniqueOrThrow: async () => ({ id: 'co-1', name: 'ร้านทดสอบ' }) };
+    if (hold === 'shop') store.account.activeEmailOperationId = 'op-shop';
+    if (hold === 'admin') store.client.$queryRaw = async () => [{ id: 'op-admin' }];
+    const op = await store.client.billingOperation.create({ data: { type: 'CUSTOMER_PROFILE_SYNC', state: 'QUEUED', companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false,
+      proposedJson: { accountId: 'acct-1', customerId: 'cus_1' }, scheduledFor: new Date(Date.now() - 1000), expiresAt: new Date(Date.now() + 86_400_000) } });
+    await store.service.drain();
+    return { op, posts };
+  }
+  it('sends the stored address when nothing holds the recipient', async () => {
+    const { posts } = await queued('none');
+    assert.deepEqual(posts.map(body => body.email), ['old@example.com']);
+  });
+  for (const hold of ['shop', 'admin'] as const) it(`sends nothing and stays queued for its next pass while a ${hold} recipient change is in flight`, async () => {
+    const { op, posts } = await queued(hold);
+    assert.deepEqual([posts.length, op.state], [0, 'QUEUED']);
+    assert.ok(op.scheduledFor > new Date() && op.scheduledFor.getTime() <= Date.now() + 300_000);
   });
 });
