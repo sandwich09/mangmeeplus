@@ -1263,7 +1263,10 @@ export class BillingReconcilerService {
       throw new Error('billing.promptpay_renewal_duplicate');
     let sub = existing[0];
     if (!sub) {
-      if (paidThrough.getTime() <= Date.now() + 3600000) throw new Error('billing.promptpay_renewal_boundary');
+      if (paidThrough.getTime() <= Date.now() + 3600000) {
+        if (!await this.endUnboundRenewal(account, attempt, lease, paidThrough)) throw new Error('billing.promptpay_renewal_boundary');
+        return;
+      }
       // One journal name for both modes (named when only QR bound here); an attempt is one mode or the other.
       const created = await this.createBindingSubscription(account, attempt, lease, 'qrSubscription', `mm:${attempt.id}:${card ? 'card' : 'promptpay'}-renewal`, {
         customer: account.customerId,
@@ -1314,6 +1317,37 @@ export class BillingReconcilerService {
         subscriptionState: sub.status, nextChargeAt: paidThrough, activeAttemptId: null,
         observedAt: new Date(), version: { increment: 1 } } });
     });
+  }
+
+  /**
+   * 2026-10-10: the paid period of a QR-bills or prepaid-card purchase is within an hour of its end (or over) and its renewal
+   * subscription was never made, so none can be made any more. The caller's list of this pass found no subscription of the
+   * attempt. When no send can be in flight — nothing was ever sent, the current generation's first send is one hour ten old,
+   * or the provider refused — the binding is over: the paid period was delivered in full, so the account becomes what it now
+   * is, a paid period with no renewal (the one-time mode of the same payment method), and the slot is released; the shop buys
+   * again like any shop whose package ends. Nothing is sent to the provider and the review case stays. False = keep waiting.
+   */
+  private async endUnboundRenewal(account: BillingAccount, attempt: BillingAttempt, lease: string, paidThrough: Date): Promise<boolean> {
+    const journal = ((await this.prisma.client.billingAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).collectionJson ?? null) as Record<string, unknown> | null;
+    const at = journal?.qrSubscriptionRequestedAt, requestedAt = typeof at === 'string' ? Date.parse(at) : null;
+    if (at != null && !Number.isSafeInteger(requestedAt)) return false;
+    if (!journal?.qrSubscriptionRefused && requestedAt !== null && Date.now() - requestedAt < RESEND_WINDOW_MS + QUIET_MARGIN_MS) return false;
+    await this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      const renewalMode = current.renewalMode === 'PROMPTPAY_RENEW' ? 'PROMPTPAY_ONCE' : current.renewalMode === 'CARD_AUTO' ? 'CARD_ONCE' : null;
+      // Guarded on the journal just read: a send journalled meanwhile keeps the binding alive.
+      const stored = await tx.billingAttempt.updateMany({ where: { id: attempt.id, collectionJson: journal ? { equals: journal as Prisma.InputJsonValue } : { equals: Prisma.AnyNull } },
+        data: { collectionJson: { ...journal, qrSubscriptionEndedAt: new Date().toISOString() } as Prisma.InputJsonValue, version: { increment: 1 } } });
+      if (current.activeAttemptId !== attempt.id || current.baseSubscriptionId || current.paidThrough?.getTime() !== paidThrough.getTime() || !renewalMode || stored.count !== 1)
+        throw new Error('billing.promptpay_renewal_source_changed');
+      await tx.billingAccount.update({ where: { id: account.id }, data: { activeAttemptId: null, renewalMode, nextChargeAt: null, observedAt: new Date(), version: { increment: 1 } } });
+      await tx.auditLog.create({ data: { companyId: account.companyId, actorUserId: attempt.initiatingUserId, action: 'billing.renewal_binding.ended',
+        targetType: 'BillingAttempt', targetId: attempt.id, requestId: attempt.id, result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: { reason: 'renewal_boundary', previousRenewalMode: current.renewalMode, renewalMode, paidThrough: paidThrough.toISOString(),
+          generation: (journal?.qrSubscriptionGeneration ?? (requestedAt === null ? 0 : 1)) as number, refused: !!journal?.qrSubscriptionRefused } } });
+    });
+    return true;
   }
 
   private async verifyAndApplyInvoice(account:BillingAccount,contract:BillingAttempt,invoice:StripeObject,subscription:StripeObject,lines:StripeObject[],snapshot:BillingSnapshot,lease:string,recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>,capture:RecipientCapture|null=null) {

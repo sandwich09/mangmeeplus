@@ -376,6 +376,49 @@ test('PROMPTPAY_RENEW paid, the provider refuses the subscription: no blind retr
 });
 
 /**
+ * 2026-10-10: the paid period ends and its renewal subscription was never made. Once no send can be in flight the binding is
+ * over: the account reads as a paid period with no renewal, the slot is free, and after the period the shop buys again.
+ */
+test('PROMPTPAY_RENEW paid, never bound, the period reaches its end: the slot is released and the shop can buy again', { skip: !databaseUrl }, async (t) => {
+  const client = connect(), f = await fixture(client, [{ name: 'งานสิ้นงวด', discountSatang: 10000 }]);
+  t.mock.timers.enable({ apis: ['Date'], now: new Date() });
+  try {
+    const quoted = await f.quote('PROMPTPAY_RENEW'), opened = await f.checkout(quoted.quoteId, quoted.consentRevision);
+    const paid = await f.pay(opened.attemptId, 39900, 'promptpay');
+    f.stripeState.subscriptionError = new StripeRequestError('UNKNOWN', 'unavailable', 60, undefined, undefined, 503);
+    await assert.rejects(f.reconcileOneTime(paid), /stripe\.unavailable/);
+    const paidThrough = (await f.current()).paidThrough!;
+    const sentAgo = async (ms: number) => client.billingAttempt.update({ where: { id: opened.attemptId }, data: {
+      collectionJson: { qrSubscriptionRequestedAt: new Date(Date.now() - ms).toISOString() } } });
+    // Half an hour before the end, a send of five minutes ago may still be in flight: the pass waits as before.
+    t.mock.timers.setTime(paidThrough.getTime() - 30 * 60_000);
+    await sentAgo(5 * 60_000);
+    await assert.rejects(f.reconcileOneTime(paid), /billing\.promptpay_renewal_boundary/);
+    assert.equal((await f.current()).activeAttemptId, opened.attemptId);
+    // One hour ten after the generation's first send nothing can be in flight: the binding is over, nothing is sent.
+    await sentAgo(71 * 60_000);
+    await f.reconcileOneTime(paid);
+    assert.equal(f.calls.filter(call => call.method === 'POST' && call.path === '/subscriptions').length, 1);
+    let account = await f.current();
+    assert.deepEqual([account.activeAttemptId, account.renewalMode, account.baseSubscriptionId, account.contractAttemptId, account.nextChargeAt, account.paidThrough?.toISOString()],
+      [null, 'PROMPTPAY_ONCE', null, opened.attemptId, null, paidThrough.toISOString()], 'a paid period with no renewal, as stored');
+    assert.equal((await client.billingAttempt.findUniqueOrThrow({ where: { id: opened.attemptId } })).status, 'COMPLETED');
+    assert.equal(await client.auditLog.count({ where: { companyId: f.companyId, action: 'billing.renewal_binding.ended', targetId: opened.attemptId } }), 1);
+    let status = await BillingService.prototype.status.call(f.service, f.context);
+    assert.deepEqual([status.purchaseSource, status.renewalMode, status.nextChargeAt], ['PAID_CURRENT_MODE', 'PROMPTPAY_ONCE', null]);
+    // After the period: a shop whose package ended, and a new purchase is quoted.
+    t.mock.timers.setTime(paidThrough.getTime() + 60_000);
+    status = await BillingService.prototype.status.call(f.service, f.context);
+    assert.deepEqual([status.purchaseSource, status.purchaseBlockCode ?? null], ['PAID_EXPIRED_CURRENT_MODE', null]);
+    const again = await f.quote('PROMPTPAY_RENEW');
+    assert.equal(again.totalSatang, 49900);
+  } finally {
+    t.mock.timers.reset();
+    await f.cleanup(); await client.$disconnect();
+  }
+});
+
+/**
  * Owner 2026-09-29: a holder with discounts from two events picks the smaller one for this payment; the other stays ISSUED
  * and is the one offered on the next payment. A pick this shop cannot use is refused in plain Thai, never swapped silently.
  */
