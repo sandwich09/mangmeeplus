@@ -5,7 +5,9 @@ import { safeStripeUrl, stripeId, type StripeClient, type StripeObject } from '.
 import { assertMappedCharge } from './billing-financial';
 
 const mismatch = () => billingError('BILLING_DOCUMENT_BINDING', 'กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง');
-const idPattern = /^(re|cn)_[A-Za-z0-9_]{1,120}$/;
+/** The one place the provider's id shapes are named: a card charge is ch_ and its refund re_; a PromptPay charge is py_ and its refund pyr_. */
+export const chargeIdPrefix = '(?:ch|py)', refundIdPrefix = '(?:re|pyr)';
+const idPattern = new RegExp(`^(?:${refundIdPrefix}|cn)_[A-Za-z0-9_]{1,120}$`);
 export function sameInvoiceSource(account: BillingAccount, row: BillingInvoice, currentAccount: BillingAccount, current: BillingInvoice) {
   const source = (a: BillingAccount, i: BillingInvoice) => JSON.stringify([a.id,a.companyId,a.customerId,a.stripeAccountId,a.livemode,
     i.id,i.billingAccountId,i.providerInvoiceId,i.providerChargeId,i.subscriptionId,i.totalSatang,i.paidSatang]);
@@ -25,7 +27,7 @@ export function adjustment(value: StripeObject, kind: BillingAdjustmentKind, acc
     !Number.isSafeInteger(value.amount) || value.amount <= 0 || value.amount > row.totalSatang ||
     !Number.isSafeInteger(value.created) || value.created <= 0 || value.created > Math.floor(Date.now()/1000)+60) throw mismatch();
   if (kind === 'refunds') {
-    if (!value.id.startsWith('re_') || value.object !== 'refund' || stripeId(value.charge) !== row.providerChargeId ||
+    if (value.id.startsWith('cn_') || value.object !== 'refund' || stripeId(value.charge) !== row.providerChargeId ||
       value.amount > row.paidSatang || (value.customer != null && stripeId(value.customer) !== account.customerId) ||
       (value.livemode !== undefined && value.livemode !== account.livemode) ||
       (value.status != null && !['pending','requires_action','succeeded','failed','canceled'].includes(value.status))) throw mismatch();
