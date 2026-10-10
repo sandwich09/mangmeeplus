@@ -153,7 +153,8 @@ export class BillingRefundsService {
       amountSatang:p.amountSatang,taxSatang:p.projection.taxSatang,memo:p.memo,notifyCustomer:p.notifyCustomer,paidSatang:p.paidSatang,previousRefundedSatang:p.previousRefundedSatang,usage:p.usage,
       allowedActions:[...(own&&manage&&fresh&&row.state==='PREVIEW'?['submit' as const]:[]),...(canApproveBillingChange(access,row.initiatorUserId,context.userId,'system.billing.refund.manage')&&fresh&&row.state==='AWAITING_APPROVAL'?['approve' as const]:[]),
         ...(!j.dispatchedAt&&['PREVIEW','AWAITING_APPROVAL','QUEUED','BLOCKED'].includes(row.state)&&(manage||approve)&&(!row.leaseUntil||row.leaseUntil<=new Date())?['cancel' as const]:[]),
-        ...((manage||approve)&&['QUEUED','RUNNING','UNKNOWN','BLOCKED','FAILED'].includes(row.state)&&(!row.leaseUntil||row.leaseUntil<=new Date())?['run' as const]:[])],
+        // A rejected create is over: running it again would only send the same request the provider already refused, so staff start a new one.
+        ...((manage||approve)&&['QUEUED','RUNNING','UNKNOWN','BLOCKED','FAILED'].includes(row.state)&&row.errorCode!=='CONTROL_REFUND_PROVIDER_REJECTED'&&(!row.leaseUntil||row.leaseUntil<=new Date())?['run' as const]:[])],
       dispatchedAt:j.dispatchedAt??null,creditNoteId:j.creditNoteId??null,creditNoteNumber:j.creditNoteNumber??null,refundId:j.refundId??null,refundState:j.refundState??null,providerErrorCode:providerError?.code??null,providerErrorType:providerError?.type??null,reviewCaseId:issue?.id??null,bankReceiptConfirmed:false,endPackage:p.endPackage===true,packageEnded:j.packageEnded??null,
       ...p.promotionRedemptionId?await this.promotion(await this.prisma.client.billingInvoice.findUnique({where:{id:row.referenceId!}})):{}};
   }
@@ -241,7 +242,7 @@ export class BillingRefundsService {
       const got=await tx.billingAccount.updateMany({where:{id:account.id,OR:[{leaseUntil:null},{leaseUntil:{lte:now}}]},data:{leaseToken:lease,leaseUntil:new Date(now.getTime()+120000)}});if(!got.count)return null;
       return tx.billingOperation.update({where:{id:current.id},data:{state:'RUNNING',leaseToken:lease,leaseUntil:new Date(now.getTime()+120000),version:{increment:1}}});
     });if(!claim)return;
-    const p=claim.proposedJson as unknown as Proposed;
+    const p=claim.proposedJson as unknown as Proposed;let creating=false;
     try{
       const account=await this.billing.account(claim.companyId!),invoice=await this.invoice(account!,claim.referenceId!);
       if(account!.customerId!==p.customerId||invoice.providerChargeId!==p.chargeId||invoice.providerInvoiceId!==p.params.invoice)throw refundReviewRequired();
@@ -257,7 +258,7 @@ export class BillingRefundsService {
           const updated={...j,dispatchedAt:j.dispatchedAt??new Date().toISOString(),providerKey,paramsHash};
           const saved=await this.writeLeased(tx,row,lease,{resultJson:json(updated)});await this.audit(tx,saved,j.dispatchedAt?'redispatch':'dispatch');return updated;
         });
-        await this.billing.stripe.request('POST','/credit_notes',p.params,journal.providerKey);
+        creating=true;await this.billing.stripe.request('POST','/credit_notes',p.params,journal.providerKey);creating=false;
         source=await refundSource(this.billing.stripe,account!,invoice);
         observed=await observedRefund(this.billing.stripe,account!,invoice,source,claim.id,p.providerSourceHash,p.amountSatang,p.memo,configurationHash(p.projection));
         if(!observed)throw refundReviewRequired();
@@ -279,12 +280,15 @@ export class BillingRefundsService {
       // The provider's own error code and type say why it refused; nothing else of its response is kept (stripe.client.ts).
       const providerError=error instanceof StripeRequestError?{outcome:error.outcome,code:error.providerCode??null,type:error.providerType??null,at:new Date().toISOString()}:null;
       if(providerError)this.logger.warn({msg:'billing.refund.provider_rejected',operationId:claim.id,outcome:providerError.outcome,providerCode:providerError.code,providerType:providerError.type});
+      // The create itself answered 400 or 402: the provider made nothing, and the same idempotency key would only replay that answer, so the request ends here
+      // and stops holding the company's other refunds. 409 (key still in use), 429, 5xx, no answer, any error of a read, and a key the provider says was used with other parameters stay unknown as before.
+      const rejected=creating&&error instanceof StripeRequestError&&error.outcome==='REJECTED'&&(error.status===400||error.status===402)&&error.providerType!=='idempotency_error';
       await this.prisma.client.$transaction(async tx=>{
         const {row}=await this.fence(tx,claim.id,lease),j=(row.resultJson??{}) as Journal;
-        const code=error instanceof ForbiddenException?'CONTROL_PERMISSION_CHANGED':error instanceof StripeRequestError?'CONTROL_REFUND_PROVIDER_UNAVAILABLE':
+        const code=rejected?'CONTROL_REFUND_PROVIDER_REJECTED':error instanceof ForbiddenException?'CONTROL_PERMISSION_CHANGED':error instanceof StripeRequestError?'CONTROL_REFUND_PROVIDER_UNAVAILABLE':
           (error as {getResponse?:()=>{code?:string}}).getResponse?.()?.code??'CONTROL_REFUND_REVIEW';
-        const saved=await this.writeLeased(tx,row,lease,{state:j.dispatchedAt?'UNKNOWN':'BLOCKED',errorCode:code,...providerError?{resultJson:json({...j,providerError})}:{},scheduledFor:new Date(Date.now()+300000),leaseToken:null,leaseUntil:null,version:{increment:1}});
-        await detectBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id});await this.audit(tx,saved,'review');
+        const saved=await this.writeLeased(tx,row,lease,{state:rejected?'FAILED':j.dispatchedAt?'UNKNOWN':'BLOCKED',errorCode:code,...providerError?{resultJson:json({...j,providerError,...rejected?{mutationResolved:true}:{}})}:{},scheduledFor:new Date(Date.now()+300000),leaseToken:null,leaseUntil:null,version:{increment:1}});
+        await detectBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id});await this.audit(tx,saved,rejected?'rejected':'review');
       });
     }finally{await this.prisma.client.billingAccount.updateMany({where:{id:p.accountId,leaseToken:lease},data:{leaseToken:null,leaseUntil:null,nextReconcileAt:new Date()}});}
   }

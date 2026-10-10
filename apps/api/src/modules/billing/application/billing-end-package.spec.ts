@@ -5,6 +5,8 @@ import { endPackageBlock, endPaidPackage, refundEndsPackage, stampSpentPromotion
 import { BillingRefundsService } from './billing-refunds.service';
 import { BillingReconcilerService } from './billing-reconciler.service';
 import { StripeRequestError } from '../infrastructure/stripe.client';
+import { configurationHash } from '../domain/billing-policy';
+import { refundParams, refundPreview, refundSource } from './billing-refund-source';
 
 const now = new Date('2026-09-24T03:00:00.000Z');
 const start = new Date('2026-09-10T00:00:00.000Z'), end = new Date('2026-10-10T00:00:00.000Z');
@@ -435,30 +437,59 @@ test('plan R14: a fully refunded promotion source nothing could end or settle is
   }
 });
 
-test('a provider rejection of the refund run is journaled and logged as the provider\'s own code and type, and read back only while the request has an error', async () => {
-  const dispatched = { submittedCredentialVersion: 'v1', dispatchedAt: '2026-10-10T03:00:00.000Z', providerKey: 'billing-refund-refund', paramsHash: 'hash' };
-  const context = { userId: 'admin' } as never;
-  /** `execute` of a dispatched refund whose run fails with `error`: the claim, fence, journal write, review case and audit are the real code on an in-memory row. */
-  const run = async (error: Error) => {
-    const db = fakeDb(), logged: unknown[] = [];
-    const op: Record<string, any> = { id: 'refund', companyId: 'company', stripeAccountId: 'acct', livemode: true, type: 'REFUND', state: 'UNKNOWN', version: 3, referenceId: 'invoice', initiatorUserId: 'admin',
-      approverUserId: 'admin', errorCode: null, reason: 'r', requestHash: 'hash', sourceVersion: 1, leaseToken: null, leaseUntil: null, observedAt: null, createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 600_000), proposedJson: { accountId: 'account', projection: { taxSatang: 0 } }, resultJson: dispatched };
-    const apply = (data: Record<string, any>) => Object.assign(op, data, data.version ? { version: op.version + 1 } : {});
-    const account = { id: 'account', leaseToken: null as string | null, leaseUntil: null as Date | null };
-    const own: Record<string, unknown> = {
-      billingOperation: { findUniqueOrThrow: async () => op, update: async ({ data }: any) => apply(data), updateMany: async ({ data }: any) => (apply(data), { count: 1 }) },
-      billingAccount: { updateMany: async ({ data }: any) => (Object.assign(account, data), { count: 1 }) },
-      // The first read inside the run's `try`. Reaching the real credit-note POST takes the whole provider-source fixture, and the catch does not care where the error came from.
-      billingInvoice: { findFirst: async () => { throw error; } },
-    };
-    const tx: any = new Proxy({}, { get: (_, key: string) => key === '$transaction' ? (fn: (inner: unknown) => unknown) => fn(tx) : own[key] ?? (db.tx as any)[key] });
-    const admin = { scopedCompany: async () => ({ account, company: { name: 'ร้านทดสอบ' }, access: { capabilities: ['system.billing.financial.read'], platformScope: false } }), access: async () => undefined };
-    const service = new BillingRefundsService({ client: tx } as never, { account: async () => account, stripe: { accountId: 'acct', livemode: true } } as never, admin as never, {} as never, {} as never);
-    Object.assign(service, { logger: { warn: (line: unknown) => logged.push(line) } });
-    await service['execute'](op as never);
-    return { op, logged, view: () => service['view'](context, op as never) };
+/** `execute` of an approved refund on an in-memory row, with a provider whose answers pass every source check, so the run reaches the real `POST /credit_notes`.
+ *  `error` is thrown by the `nth` call of `at`. The claim, fence, dispatch, journal write, review case and audit are the real code; the actor and staleness gates are not under test. */
+async function refundRun(error: Error, at = 'GET /invoices/in_1', journal: Record<string, unknown> = {}, nth = 1) {
+  const db = fakeDb(), logged: unknown[] = [], calls: string[] = [], paid = 24_900, amount = 10_000;
+  const account = { id: 'account', companyId: 'company', stripeAccountId: 'acct', livemode: true, customerId: 'cus_1', leaseToken: null as string | null, leaseUntil: null as Date | null };
+  const inv = { id: 'invoice', billingAccountId: 'account', providerInvoiceId: 'in_1', providerChargeId: 'ch_1', subscriptionId: null, currency: 'THB', providerStatus: 'paid',
+    paidSatang: paid, totalSatang: paid, taxSatang: 0, contractSnapshot: { quote: { purchaseMode: 'PROMPTPAY_ONCE' } } };
+  const list = (data: unknown[]) => ({ object: 'list', data, has_more: false });
+  const answers: Record<string, (params: Record<string, any>) => unknown> = {
+    'GET /invoices/in_1': () => ({ id: 'in_1', object: 'invoice', livemode: true, customer: 'cus_1', currency: 'thb', status: 'paid', total: paid, amount_paid: paid, amount_remaining: 0, starting_balance: 0,
+      paid_out_of_band: false, post_payment_credit_notes_amount: 0, total_taxes: [] }),
+    'GET /charges/ch_1': () => ({ id: 'ch_1', livemode: true, customer: 'cus_1', currency: 'thb', status: 'succeeded', paid: true, captured: true, amount: paid, amount_refunded: 0, disputed: false,
+      payment_intent: 'pi_1', payment_method_details: { type: 'promptpay' } }),
+    'GET /invoice_payments': () => list([{ id: 'inpay_1', object: 'invoice_payment', livemode: true, invoice: 'in_1', status: 'paid', currency: 'thb', amount_paid: paid, payment: { type: 'payment_intent', payment_intent: 'pi_1' } }]),
+    'GET /payment_intents/pi_1': () => ({ id: 'pi_1', object: 'payment_intent', livemode: true, customer: 'cus_1', currency: 'thb', status: 'succeeded', amount_received: paid, latest_charge: 'ch_1' }),
+    'GET /credit_notes': () => list([]), 'GET /refunds': () => list([]),
+    'GET /invoices/in_1/lines': () => list([{ id: 'il_1', livemode: true, currency: 'thb', amount: paid }]),
+    'GET /credit_notes/preview': params => ({ object: 'credit_note', livemode: true, currency: 'thb', invoice: 'in_1', customer: 'cus_1', amount: params.refund_amount, total: params.refund_amount, type: 'post_payment',
+      pre_payment_amount: 0, post_payment_amount: params.refund_amount, status: 'issued', customer_balance_transaction: null, out_of_band_amount: 0, amount_shipping: 0, total_excluding_tax: params.refund_amount, total_taxes: [],
+      lines: list(params.lines.map((line: Record<string, unknown>) => ({ object: 'credit_note_line_item', livemode: true, taxes: [], ...line }))) }),
+    'POST /credit_notes': () => ({}), // nothing is listed afterwards: a create that answered but left no note is a review, never a success
   };
+  let armed = false, seen = 0;
+  const stripe = { accountId: 'acct', livemode: true, assertAccount: async () => undefined, request: async (method: string, path: string, params: Record<string, any> = {}) => {
+    const key = `${method} ${path}`; if (armed) calls.push(key);
+    if (armed && key === at && ++seen === nth) throw error;
+    return answers[key]!(params);
+  } };
+  const source = await refundSource(stripe as never, account as never, inv as never), params = await refundParams(stripe as never, account as never, inv as never, source, 'refund', amount, '', false);
+  const proposed = { accountId: 'account', customerId: 'cus_1', chargeId: 'ch_1', providerSourceHash: source.sourceHash, amountSatang: amount, memo: '', endPackage: true, params,
+    projection: await refundPreview(stripe as never, account as never, inv as never, source, params) };
+  const op: Record<string, any> = { id: 'refund', companyId: 'company', stripeAccountId: 'acct', livemode: true, type: 'REFUND', state: journal.dispatchedAt ? 'UNKNOWN' : 'QUEUED', version: 3, referenceId: 'invoice', initiatorUserId: 'admin',
+    approverUserId: 'admin', errorCode: null, reason: 'r', requestHash: configurationHash(['refund', 'invoice', proposed, 'r']), sourceVersion: 1, leaseToken: null, leaseUntil: null, observedAt: null, createdAt: new Date(),
+    expiresAt: new Date(Date.now() + 600_000), proposedJson: proposed, resultJson: journal };
+  const apply = (data: Record<string, any>) => Object.assign(op, data, data.version ? { version: op.version + 1 } : {});
+  const own: Record<string, unknown> = {
+    billingOperation: { findUniqueOrThrow: async () => op, update: async ({ data }: any) => apply(data), updateMany: async ({ data }: any) => (apply(data), { count: 1 }) },
+    billingAccount: { updateMany: async ({ data }: any) => (Object.assign(account, data), { count: 1 }) },
+    billingInvoice: { findFirst: async () => inv, findUnique: async () => inv },
+  };
+  const tx: any = new Proxy({}, { get: (_, key: string) => key === '$transaction' ? (fn: (inner: unknown) => unknown) => fn(tx) : own[key] ?? (db.tx as any)[key] });
+  const admin = { scopedCompany: async () => ({ account, company: { name: 'ร้านทดสอบ' }, access: { capabilities: ['system.billing.financial.read', 'system.billing.refund.manage'], platformScope: false } }), access: async () => undefined };
+  const service = new BillingRefundsService({ client: tx } as never, { account: async () => account, stripe } as never, admin as never, {} as never, db.lifecycle as never);
+  Object.assign(service, { logger: { warn: (line: unknown) => logged.push(line) }, actors: async () => undefined, current: async () => account });
+  armed = true; await service['execute'](op as never);
+  return { op, db, logged, calls, view: () => service['view']({ userId: 'admin' } as never, op as never) };
+}
+const providerAnswer = (status: number, code?: string, type = 'invalid_request_error') =>
+  new StripeRequestError(status >= 500 ? 'UNKNOWN' : status === 429 ? 'RETRY' : 'REJECTED', status === 429 ? 'rate_limited' : status >= 500 ? 'unavailable' : 'request_rejected', 60, code, type, status);
+
+test('a provider rejection of the refund run is journaled and logged as the provider\'s own code and type, and read back only while the request has an error', async () => {
+  const dispatched = { submittedCredentialVersion: 'v1', dispatchedAt: new Date(Date.now() - 600_000).toISOString(), providerKey: 'billing-refund-refund', paramsHash: 'hash' };
+  const run = (error: Error) => refundRun(error, 'GET /invoices/in_1', dispatched); // the first read inside the run's `try`
 
   const rejected = await run(new StripeRequestError('REJECTED', 'request_rejected', 60, 'balance_insufficient', 'invalid_request_error'));
   assert.deepEqual([rejected.op.state, rejected.op.errorCode], ['UNKNOWN', 'CONTROL_REFUND_PROVIDER_UNAVAILABLE'], 'the state logic is the one it was');
@@ -480,4 +511,49 @@ test('a provider rejection of the refund run is journaled and logged as the prov
   const other = await run(new Error('boom'));
   assert.deepEqual([other.op.errorCode, other.op.resultJson, other.logged], ['CONTROL_REFUND_REVIEW', dispatched, []]);
   assert.deepEqual([(await other.view()).providerErrorCode, (await other.view()).providerErrorType], [null, null]);
+});
+
+test('a 400 or 402 answer to the credit-note create itself ends the refund request; every other failure waits as before', async () => {
+  const approved = { submittedCredentialVersion: 'v1' };
+  const audited = (r: Awaited<ReturnType<typeof refundRun>>) => r.db.audits.map(a => String(a.action)).filter(action => action.startsWith('billing.refund.')).map(action => action.slice(15));
+  const reviews = (r: Awaited<ReturnType<typeof refundRun>>) => r.db.issues.map(issue => [issue.kind, issue.referenceId, issue.state]);
+
+  // UAT 2026-10-10: a PromptPay refund answered 400 invalid_request_error with no code ("Cannot send email …").
+  for (const error of [providerAnswer(400), providerAnswer(402, 'charge_already_refunded')]) {
+    const r = await refundRun(error, 'POST /credit_notes', approved);
+    assert.equal(r.calls.at(-1), 'POST /credit_notes', 'the create was reached and nothing was read after its refusal');
+    assert.deepEqual([r.op.state, r.op.errorCode, r.op.leaseToken, r.op.observedAt], ['FAILED', 'CONTROL_REFUND_PROVIDER_REJECTED', null, null]);
+    // pendingRefund (billing-refund-source.ts) holds a company on QUEUED/RUNNING/UNKNOWN/BLOCKED rows whose journal is not mutationResolved: this row is neither.
+    assert.equal(r.op.resultJson.mutationResolved, true);
+    assert.deepEqual([r.op.resultJson.providerError.outcome, r.op.resultJson.providerError.code, r.op.resultJson.providerError.type], ['REJECTED', error.providerCode ?? null, 'invalid_request_error']);
+    assert.deepEqual([typeof r.op.resultJson.dispatchedAt, r.op.resultJson.providerKey, r.op.resultJson.creditNoteId], ['string', 'billing-refund-refund', undefined], 'the dispatch stays on record, with no note');
+    assert.deepEqual(reviews(r), [['CONTROL_OPERATION_REVIEW', 'refund', 'OPEN']]);
+    assert.deepEqual(audited(r), ['dispatch', 'rejected']);
+    assert.deepEqual([r.db.lifecycle.calls, r.db.writes.filter(write => !/^(auditLog|billingIssue)\./.test(write))], [[], []], 'the package this refund asked to end is untouched');
+    const view = await r.view();
+    assert.deepEqual([view.state, view.errorCode, view.providerErrorType, view.allowedActions], ['FAILED', 'CONTROL_REFUND_PROVIDER_REJECTED', 'invalid_request_error', []], 'nothing left to run: the same request would be refused again');
+  }
+
+  // A retry of a create whose first answer was lost: no note carries this request, the same key is sent again, and a 400 now is the provider's answer to that create.
+  const retried = await refundRun(providerAnswer(400), 'POST /credit_notes', { ...approved, dispatchedAt: new Date(Date.now() - 3_600_000).toISOString(), providerKey: 'billing-refund-refund', paramsHash: undefined });
+  assert.deepEqual([retried.op.state, retried.op.errorCode, retried.op.resultJson.mutationResolved, audited(retried)], ['UNKNOWN', 'CONTROL_REFUND_SOURCE_CHANGED', undefined, ['review']], 'a journal that does not match the request is never sent again');
+  const paramsHash = configurationHash(retried.op.proposedJson.params);
+  const replayed = await refundRun(providerAnswer(400), 'POST /credit_notes', { ...approved, dispatchedAt: new Date(Date.now() - 3_600_000).toISOString(), providerKey: 'billing-refund-refund', paramsHash });
+  assert.deepEqual([replayed.op.state, replayed.op.errorCode, replayed.op.resultJson.mutationResolved, audited(replayed)], ['FAILED', 'CONTROL_REFUND_PROVIDER_REJECTED', true, ['redispatch', 'rejected']]);
+
+  // Not definite: the key is still in use (409), the key was used with other parameters, a rate limit, a server failure, no answer, no permission, not found.
+  const unsure: Error[] = [providerAnswer(409), providerAnswer(400, undefined, 'idempotency_error'), providerAnswer(429), providerAnswer(500), new StripeRequestError('UNKNOWN', 'transport_unknown'),
+    providerAnswer(401), providerAnswer(403), providerAnswer(404), new StripeRequestError('REJECTED', 'configuration_unavailable')];
+  for (const error of unsure) {
+    const r = await refundRun(error, 'POST /credit_notes', approved);
+    assert.equal(r.calls.at(-1), 'POST /credit_notes');
+    assert.deepEqual([r.op.state, r.op.errorCode, r.op.resultJson.mutationResolved, r.op.scheduledFor > new Date()], ['UNKNOWN', 'CONTROL_REFUND_PROVIDER_UNAVAILABLE', undefined, true], error.message);
+    assert.deepEqual([audited(r), reviews(r), (await r.view()).allowedActions], [['dispatch', 'review'], [['CONTROL_OPERATION_REVIEW', 'refund', 'OPEN']], ['run']]);
+  }
+
+  // The same 400 from a read is no answer to the create: before the dispatch nothing was sent (BLOCKED), after it the outcome is unknown.
+  const before = await refundRun(providerAnswer(400), 'GET /charges/ch_1', approved);
+  assert.deepEqual([before.op.state, before.op.errorCode, before.op.resultJson.mutationResolved, before.calls.includes('POST /credit_notes')], ['BLOCKED', 'CONTROL_REFUND_PROVIDER_UNAVAILABLE', undefined, false]);
+  const after = await refundRun(providerAnswer(400), 'GET /invoices/in_1', approved, 2);
+  assert.deepEqual([after.op.state, after.op.errorCode, after.op.resultJson.mutationResolved, after.calls.includes('POST /credit_notes')], ['UNKNOWN', 'CONTROL_REFUND_PROVIDER_UNAVAILABLE', undefined, true]);
 });

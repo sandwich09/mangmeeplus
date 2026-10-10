@@ -35,7 +35,7 @@ test('a rejection keeps only the safe error code and type of the provider, never
     doc_url: 'https://stripe.com/docs/error-codes', request_log_url: 'https://dashboard.stripe.com/logs/req_Synthetic' })), (e: unknown) => {
     assert.ok(e instanceof StripeRequestError);
     assert.deepEqual([e.outcome, e.code, e.message, e.providerCode, e.providerType], ['REJECTED', 'request_rejected', 'stripe.request_rejected', 'balance_insufficient', 'invalid_request_error']);
-    assert.deepEqual(Object.keys(e).sort(), ['code', 'outcome', 'providerCode', 'providerType', 'retryAfterSeconds'], 'no other field of the body rides on the error');
+    assert.deepEqual(Object.keys(e).sort(), ['code', 'outcome', 'providerCode', 'providerType', 'retryAfterSeconds', 'status'], 'no other field of the body rides on the error');
     const kept = JSON.stringify({ ...e, message: e.message });
     for (const leaked of ['cus_123', 'refund_amount', 'generic_decline', 'doc_url', 'stripe.com', 'req_Synthetic']) assert.ok(!kept.includes(leaked), leaked);
     return true;
@@ -49,6 +49,14 @@ test('a rejection keeps only the safe error code and type of the provider, never
     (e: unknown) => e instanceof StripeRequestError && e.outcome === 'RETRY' && e.code === 'rate_limited' && e.retryAfterSeconds === 7 && e.providerCode === 'rate_limit');
   await assert.rejects(reject(body({ type: 'api_error', message: 'internal cus_123' }), 503),
     (e: unknown) => e instanceof StripeRequestError && e.outcome === 'UNKNOWN' && e.code === 'unavailable' && e.providerType === 'api_error' && !e.message.includes('cus_123'));
+});
+test('a non-ok answer carries its HTTP status and keeps its classification; a failure with no answer carries none', async () => {
+  const answer = (status: number) => new StripeClient(config, (async () => new Response(JSON.stringify({ error: { type: 'invalid_request_error' } }), { status })) as typeof fetch).request('POST', '/credit_notes');
+  for (const [status, outcome, code] of [[400, 'REJECTED', 'request_rejected'], [402, 'REJECTED', 'request_rejected'], [409, 'REJECTED', 'request_rejected'], [429, 'RETRY', 'rate_limited'], [500, 'UNKNOWN', 'unavailable']] as const)
+    await assert.rejects(answer(status), (e: unknown) => { assert.ok(e instanceof StripeRequestError); assert.deepEqual([e.status, e.outcome, e.code], [status, outcome, code]); return true; });
+  const silent = new StripeClient(config, (async () => { throw new Error('socket'); }) as typeof fetch);
+  await assert.rejects(silent.request('POST', '/credit_notes'), (e: unknown) => e instanceof StripeRequestError && e.outcome === 'UNKNOWN' && e.status === undefined);
+  await assert.rejects(new StripeClient({ ...config, stripeSecretKey: '' }, fetch).request('POST', '/credit_notes'), (e: unknown) => e instanceof StripeRequestError && e.outcome === 'REJECTED' && e.status === undefined);
 });
 test('pagination must finish and use a progressing cursor before reconciliation trusts the set', async () => {
   let calls = 0;
