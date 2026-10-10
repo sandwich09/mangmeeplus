@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import type {BillingAccount,BillingInvoice} from '../../../generated/prisma/client';
 import {configurationHash} from '../domain/billing-policy';
-import {assertOriginalInvoiceCharge,refundNoteProjection,refundParams,refundPreview,observedRefund} from './billing-refund-source';
+import {assertOriginalInvoiceCharge,refundNoteProjection,refundParams,refundPreview,refundSource,observedRefund} from './billing-refund-source';
 import {StripeRequestError,type StripeClient} from '../infrastructure/stripe.client';
 
 const account={id:'account',customerId:'cus_Test',livemode:false} as BillingAccount;
@@ -84,4 +84,39 @@ test('refund source accepts only the payment method in the original paid contrac
   await assert.doesNotReject(assertOriginalInvoiceCharge(stripe, account, qrInvoice, charge));
   charge.payment_method_details.type = 'card';
   await assert.rejects(assertOriginalInvoiceCharge(stripe, account, qrInvoice, charge));
+});
+test('a PromptPay payment is refundable under its own provider ids (py_ charge, pyr_ refund); a foreign shape or charge is not',async()=>{
+  const created=Math.floor(Date.now()/1000);
+  for(const [mode,method,chargeId,refundId] of [['PROMPTPAY_ONCE','promptpay','py_Test','pyr_Test'],['PROMPTPAY_RENEW','promptpay','py_Test','pyr_Test'],['CARD_RENEW','card','ch_Test','re_Test']] as const){
+    const acct={...account,stripeAccountId:'acct_Test'} as BillingAccount;
+    const row={...invoice,billingAccountId:'account',subscriptionId:'sub_Test',providerChargeId:chargeId,currency:'THB',providerStatus:'paid',contractSnapshot:{quote:{purchaseMode:mode}}} as unknown as BillingInvoice;
+    const n=note();n.refunds[0]!.refund=refundId;
+    const charge:any={id:chargeId,object:'charge',livemode:false,customer:'cus_Test',currency:'thb',status:'succeeded',paid:true,captured:true,amount:10700,amount_refunded:1070,disputed:false,
+      payment_intent:'pi_Test',payment_method_details:{type:method}};
+    const refund:any={id:refundId,object:'refund',livemode:false,currency:'thb',amount:1070,charge:chargeId,status:'pending',created};
+    const list=(data:unknown[])=>({object:'list',has_more:false,data});
+    const stripe={accountId:'acct_Test',livemode:false,assertAccount:async()=>{},request:async(method:string,path:string)=>{assert.equal(method,'GET');
+      if(path==='/invoices/in_Test')return {id:'in_Test',object:'invoice',livemode:false,customer:'cus_Test',parent:{subscription_details:{subscription:'sub_Test'}},currency:'thb',status:'paid',
+        total:10700,amount_paid:10700,amount_remaining:0,starting_balance:0,post_payment_credit_notes_amount:1070,total_taxes:[tax(700)]};
+      if(path===`/charges/${row.providerChargeId}`)return charge;
+      if(path==='/invoice_payments')return list([{id:'inpay_Test',object:'invoice_payment',livemode:false,status:'paid',invoice:'in_Test',payment:{type:'payment_intent',payment_intent:'pi_Test'},amount_paid:10700,currency:'thb'}]);
+      if(path==='/payment_intents/pi_Test')return {id:'pi_Test',object:'payment_intent',livemode:false,currency:'thb',status:'succeeded',customer:'cus_Test',amount_received:10700,latest_charge:chargeId};
+      if(path==='/credit_notes')return list([n]);
+      if(path==='/refunds')return list([refund]);
+      if(path===`/refunds/${refund.id}`)return refund;
+      throw new Error(path);
+    }} as unknown as StripeClient;
+    const source=await refundSource(stripe,acct,row);
+    assert.deepEqual(source.adjustments.map(a=>[a.id,a.amountSatang,a.status]),[['cn_Test',1070,'issued'],[refundId,1070,'pending']]);
+    const projection=configurationHash(refundNoteProjection(n,acct,row,source.invoice,1070));
+    assert.equal((await observedRefund(stripe,acct,row,source,'command','source',1070,'คืนเงิน',projection))!.refundId,refundId);
+    for(const foreign of ['xx_Test','',mode==='CARD_RENEW'?'pyr_Other':'re_Other']){
+      n.refunds[0]!.refund=foreign;await assert.rejects(refundSource(stripe,acct,row),`linked ${foreign}`);await assert.rejects(observedRefund(stripe,acct,row,source,'command','source',1070,'คืนเงิน',projection));
+      n.refunds[0]!.refund=refundId;refund.id=foreign;await assert.rejects(refundSource(stripe,acct,row),`listed ${foreign}`);refund.id=refundId;
+    }
+    refund.charge='py_Other';await assert.rejects(refundSource(stripe,acct,row),'a refund of another charge');refund.charge=chargeId;
+    charge.payment_method_details.type=method==='card'?'promptpay':'card';await assert.rejects(refundSource(stripe,acct,row),'the paid contract names the method');charge.payment_method_details.type=method;
+    for(const id of ['xx_Test','','py_','pi_Test'])await assert.rejects(refundSource(stripe,acct,{...row,providerChargeId:id} as BillingInvoice),`charge ${id}`);
+    await assert.doesNotReject(refundSource(stripe,acct,row));
+  }
 });
