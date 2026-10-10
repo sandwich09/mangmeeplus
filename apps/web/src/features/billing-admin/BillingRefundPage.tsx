@@ -8,9 +8,10 @@ import type { BillingRefundReview, BillingRefundOperation } from '@watchdog-bms/
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { billingApprovalLabel, billingControl as button } from '@/features/billing/billing-display';
-import { refundPromotionLines } from './billing-refund-promotion';
+import { refundPaymentMethodLines, refundPromotionLines } from './billing-refund-promotion';
 const field=billingField;
 const promotionBlock=(lines:string[])=>lines.length>0&&<div className="space-y-1 rounded-xl bg-amber-50 p-3" role="note" aria-label="โปรโมชั่นของใบแจ้งหนี้นี้">{lines.map(line=><p key={line}>{line}</p>)}</div>;
+const methodNote=(lines:string[])=>lines.length>0&&<div className="space-y-1" role="note" aria-label="การคืนเงินของรายการที่จ่ายด้วยพร้อมเพย์">{lines.map(line=><p key={line}>{line}</p>)}</div>;
 const money=(value:number)=>new Intl.NumberFormat('th-TH',{style:'currency',currency:'THB'}).format(value/100);
 const time=(value:string|null)=>value?formatThaiDateTime(value):'ยังไม่มีผลตรวจ';
 
@@ -84,6 +85,7 @@ export default function BillingRefundPage({companyId,invoiceId,operationId}:{com
           <label className="flex min-h-11 items-center gap-3"><input type="radio" name="after-refund" checked={endPackage} disabled={busy} onChange={()=>setEndPackage(true)}/>ยุติแพ็กเกจทันที</label>
           {endPackage&&<p className="text-gray-600">เมื่อ Stripe คืนเงินสำเร็จ ร้านจะเข้าได้เฉพาะหน้าตั้งค่าและหน้าแพ็กเกจ ข้อมูลยังเก็บไว้ครบ และซื้อแพ็กเกจใหม่ได้ตามปกติ</p>}
         </fieldset>
+        {methodNote(refundPaymentMethodLines(review.paymentMethod))}
         {promotionBlock(refundPromotionLines(review.promotion,{paidSatang:review.paidSatang,refundedSatang:review.refundedSatang,amountSatang:amountValue(amount),endPackage}))}
         <p>ขั้นต่อไปตรวจยอดและผลกระทบ ยังไม่คืนเงินจนกว่าจะยืนยันคำขอ</p><button className={button} disabled={busy} aria-busy={Boolean(busy)}>ตรวจยอดและผลกระทบ</button>
       </form>:<p role="status" className="rounded-xl border border-gray-200 p-4 bg-white">{errors[review.blockedReason??'']??'ยังเริ่มคำขอไม่ได้ ตรวจวงเงินและช่องทางคืนเงินในหน้าตั้งค่าการชำระเงิน'}</p>}
@@ -97,6 +99,8 @@ export default function BillingRefundPage({companyId,invoiceId,operationId}:{com
         <p>{operation.companyName} · {operation.scope.mode==='TEST'?'โหมดทดสอบ · ไม่มีการคืนเงินจริง':'โหมดใช้งานจริง'}</p><p>ใบแจ้งหนี้ {operation.invoiceNumber??'ยังไม่มีเลขเอกสาร'}</p>
         <p>ขอคืน {money(operation.amountSatang)} · ภาษีในเอกสารปรับยอด {money(operation.taxSatang)}</p><p>ยอดจ่ายเดิม {money(operation.paidSatang)} · เคยคืนแล้ว ณ เวลาตรวจ {money(operation.previousRefundedSatang)}</p>
         <p>ใช้สิทธิ์อ่านใบเสร็จแล้ว {operation.usage.used.toLocaleString('th-TH')} ใบ ณ เวลาตรวจคำขอ</p><p>{!operation.endPackage?'หลังคืนเงิน: คงแพ็กเกจไว้ วันหมดอายุ โควตา สาขา และผู้ใช้ของแพ็กเกจยังคงเดิม':operation.packageEnded===true?'หลังคืนเงิน: ยุติแพ็กเกจแล้ว ร้านเข้าได้เฉพาะหน้าตั้งค่าและหน้าแพ็กเกจ ข้อมูลยังเก็บไว้ครบ':operation.packageEnded===false?'หลังคืนเงิน: ไม่ได้ยุติแพ็กเกจ เพราะรายการนี้ไม่ใช่แพ็กเกจที่ร้านใช้งานอยู่แล้ว':'หลังคืนเงิน: ยุติแพ็กเกจทันทีเมื่อ Stripe คืนเงินสำเร็จ ร้านจะเข้าได้เฉพาะหน้าตั้งค่าและหน้าแพ็กเกจ ข้อมูลยังเก็บไว้ครบ'}</p>
+        {/* The note speaks of what is still to come, so a request that already ended does not show it. */}
+        {!['SUCCEEDED','FAILED','CANCELLED'].includes(operation.state)&&methodNote(refundPaymentMethodLines(operation.paymentMethod))}
         {promotionBlock(refundPromotionLines(operation.promotion,{...operation,refundedSatang:operation.previousRefundedSatang}))}
         <p>เหตุผลภายใน: {operation.reason}</p><p>ข้อความให้ลูกค้า: {operation.memo||'ไม่มีข้อความเพิ่มเติม'}</p><p>{operation.notifyCustomer?'ให้ Stripe ส่งอีเมลเอกสารปรับยอด':'ไม่ส่งอีเมลเอกสารปรับยอด'}</p>
         {operation.approvalMode&&<p>{billingApprovalLabel(operation.approvalMode)}</p>}

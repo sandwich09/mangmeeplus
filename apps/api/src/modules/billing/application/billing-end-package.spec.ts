@@ -531,6 +531,7 @@ test('a 400 or 402 answer to the credit-note create itself ends the refund reque
     assert.deepEqual(audited(r), ['dispatch', 'rejected']);
     assert.deepEqual([r.db.lifecycle.calls, r.db.writes.filter(write => !/^(auditLog|billingIssue)\./.test(write))], [[], []], 'the package this refund asked to end is untouched');
     const view = await r.view();
+    assert.equal(view.paymentMethod, 'promptpay', 'the invoice was bought with PromptPay');
     assert.deepEqual([view.state, view.errorCode, view.providerErrorType, view.allowedActions], ['FAILED', 'CONTROL_REFUND_PROVIDER_REJECTED', 'invalid_request_error', []], 'nothing left to run: the same request would be refused again');
   }
 

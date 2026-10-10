@@ -15,7 +15,7 @@ import { BillingAdminService } from './billing-admin.service';
 import { BillingConfigurationService } from './billing-configuration.service';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import { recordBillingFinancials } from './billing-financial';
-import { pendingRefund, refundSource, refundParams, refundPreview, observedRefund, refundReviewRequired } from './billing-refund-source';
+import { invoicePaymentMethod, pendingRefund, refundSource, refundParams, refundPreview, observedRefund, refundReviewRequired } from './billing-refund-source';
 import { endPackageBlock, endPackageError, endPaidPackage, refundEndsPackage, renewalIsLive, stampSpentPromotion } from './billing-end-package';
 import { promotionForInvoice } from './billing-promotion';
 
@@ -117,7 +117,7 @@ export class BillingRefundsService {
           s.source.charge.amount_refunded>=s.row.paidSatang||s.source.invoice.post_payment_credit_notes_amount>=s.row.paidSatang?'CONTROL_REFUND_FULL':null;
     return {companyId,companyName:s.company.name,invoiceId,invoiceNumber:s.row.providerNumber,mode:s.account.livemode?'LIVE':'TEST',
       paidSatang:s.row.paidSatang,refundedSatang:s.source.charge.amount_refunded,disputed:s.source.charge.disputed,refundLimitSatang:limit,
-      canCreate:blocked===null,blockedReason:blocked,sourceHash:s.sourceHash,observedAt:new Date().toISOString(),usage:await this.billing.usage(companyId),adjustments:s.source.adjustments,...await this.promotion(s.row)};
+      canCreate:blocked===null,blockedReason:blocked,sourceHash:s.sourceHash,observedAt:new Date().toISOString(),usage:await this.billing.usage(companyId),adjustments:s.source.adjustments,paymentMethod:invoicePaymentMethod(s.row),...await this.promotion(s.row)};
   }
   async preview(context:RequestContext,companyId:string,invoiceId:string,input:BillingRefundInput){
     assertKeys(input,['amountSatang','reason','memo','notifyCustomer','sourceHash','endPackage']);
@@ -146,7 +146,7 @@ export class BillingRefundsService {
     const own=row.initiatorUserId===context.userId,fresh=row.expiresAt>new Date(),manage=access.capabilities.includes('system.billing.refund.manage'),approve=access.capabilities.includes('system.billing.approval.approve');
     const issue=await this.prisma.client.billingIssue.findFirst({where:{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id}});
     // The journal keeps the last rejection, but it explains an error only while the request still has one (a retry that went through leaves nothing to explain).
-    const providerError=row.errorCode?j.providerError:undefined;
+    const providerError=row.errorCode?j.providerError:undefined,invoice=await this.prisma.client.billingInvoice.findUnique({where:{id:row.referenceId!}});
     return {id:row.id,type:'REFUND',state:row.state as BillingRefundOperation['state'],scope:{kind:'COMPANY',companyId:row.companyId!,mode:row.livemode?'LIVE':'TEST'},version:row.version,
       reason:row.reason,initiatorUserId:row.initiatorUserId,approverUserId:row.approverUserId,approvalMode:billingApprovalMode(row),errorCode:row.errorCode,createdAt:row.createdAt.toISOString(),observedAt:row.observedAt?.toISOString()??null,
       expiresAt:row.expiresAt.toISOString(),referenceId:row.referenceId,sourceVersion:row.sourceVersion,previewHash:row.requestHash,companyName:company.name,invoiceNumber:p.invoiceNumber,
@@ -156,7 +156,7 @@ export class BillingRefundsService {
         // A rejected create is over: running it again would only send the same request the provider already refused, so staff start a new one.
         ...((manage||approve)&&['QUEUED','RUNNING','UNKNOWN','BLOCKED','FAILED'].includes(row.state)&&row.errorCode!=='CONTROL_REFUND_PROVIDER_REJECTED'&&(!row.leaseUntil||row.leaseUntil<=new Date())?['run' as const]:[])],
       dispatchedAt:j.dispatchedAt??null,creditNoteId:j.creditNoteId??null,creditNoteNumber:j.creditNoteNumber??null,refundId:j.refundId??null,refundState:j.refundState??null,providerErrorCode:providerError?.code??null,providerErrorType:providerError?.type??null,reviewCaseId:issue?.id??null,bankReceiptConfirmed:false,endPackage:p.endPackage===true,packageEnded:j.packageEnded??null,
-      ...p.promotionRedemptionId?await this.promotion(await this.prisma.client.billingInvoice.findUnique({where:{id:row.referenceId!}})):{}};
+      ...invoice?{paymentMethod:invoicePaymentMethod(invoice)}:{},...p.promotionRedemptionId?await this.promotion(invoice):{}};
   }
   async get(context:RequestContext,id:string){return this.view(context,await this.row(context,id));}
   async list(context:RequestContext,companyId:string,invoiceId:string,cursor?:string){

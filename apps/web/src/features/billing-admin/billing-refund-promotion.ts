@@ -4,6 +4,12 @@
 import type { BillingRefundPromotion } from '@watchdog-bms/contracts';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 
+/** What staff must know before a refund of this payment method: a PromptPay refund waits for the customer; a card refund needs no note. */
+export const refundPaymentMethodLines = (method: 'card' | 'promptpay' | null | undefined): string[] => method !== 'promptpay' ? [] : [
+  'รายการนี้จ่ายด้วยพร้อมเพย์ QR ผู้ให้บริการรับชำระเงินจะส่งอีเมลให้ลูกค้ากรอกบัญชีรับเงินคืน เงินจะคืนเมื่อลูกค้ากรอกเสร็จ ไม่ได้คืนทันทีเหมือนบัตร',
+  'ก่อนส่งคำขอ ตรวจว่าอีเมลของร้านถูกต้องและลูกค้าเปิดอ่านได้ ระหว่างรอลูกค้า คำขอนี้จะอยู่ในสถานะรอผล',
+];
+
 /** `amountSatang` NaN = nothing valid typed yet. `packageEnded`: the saved request's result (null/absent = not decided yet). */
 export type RefundPromotionCase = { paidSatang: number; refundedSatang: number; amountSatang: number; endPackage: boolean; packageEnded?: boolean | null };
 
