@@ -21,6 +21,7 @@ import { movePlanMenus, queuePlanMenuMove, type PlanMenuMove } from './billing-p
 import type { BillingService, BillingSnapshot } from './billing.service';
 import { assertBillingProfileUnchanged, billingProfileComplete, stripeCustomerSyncPayload, stripeCustomerSynced } from './billing-company-profile';
 import { readRecipientCapture, recordRecipientCapture, type RecipientCapture } from './billing-recipient-capture';
+import { refundStopsBinding } from './billing-refund-source';
 
 export type RepeatSource = { subscriptionId: string; paidThrough: string; productId: string; zeroPriceId: string;
   sourceInterval?: BillingOffer['interval'];
@@ -354,7 +355,7 @@ export class BillingRepeat {
         (evidence.paidAt < new Date(snapshot.upgrade.prorationAt) || evidence.paidAt.getTime() >= Date.parse(snapshot.upgrade.segments[0]!.end)))) throw review();
       await this.prisma.client.$transaction(async tx => { await this.fence(tx, account, attempt, lease); await this.sourceFence(tx, account, attempt, snapshot); });
       // P-5: a refund of this payment stops the repair; refunded money on the charge already stopped it above.
-      if (await this.refundRequested(account, attempt)) throw review();
+      if (await refundStopsBinding(this.prisma.client, account, attempt.id)) throw review();
       sub = await this.stripe.request('GET', `/subscriptions/${source.subscriptionId}`); this.assertSubscription(sub, account);
       let scheduleId = journal.scheduleId ?? stripeId(sub.schedule);
       if (!scheduleId) {
@@ -413,14 +414,6 @@ export class BillingRepeat {
       await this.billing.issue(account.companyId, 'REPEAT_RECOVERY', attempt.id);
       return { attemptId: attempt.id, state: 'UNKNOWN', checkoutUrl: null };
     }
-  }
-
-  /** P-5: a refund request for this attempt's invoice in any state except cancelled, never confirmed, or ended with no money moved. */
-  private async refundRequested(account: BillingAccount, attempt: BillingAttempt): Promise<boolean> {
-    const invoice = await this.prisma.client.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id }, select: { id: true } });
-    return !!invoice && await this.prisma.client.billingOperation.count({ where: { type: 'REFUND', referenceId: invoice.id, companyId: account.companyId,
-      stripeAccountId: account.stripeAccountId, livemode: account.livemode, state: { notIn: ['PREVIEW', 'CANCELLED'] },
-      NOT: { state: 'FAILED', errorCode: { in: ['CONTROL_REFUND_PROVIDER_REJECTED', 'CONTROL_REFUND_NOT_CREATED'] } } } }) > 0;
   }
 
   private async restoreHeldInvoices(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot, journal: Journal,
