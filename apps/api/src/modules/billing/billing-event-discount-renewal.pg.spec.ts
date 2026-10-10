@@ -7,6 +7,7 @@ import { PrismaClient } from '../../generated/prisma/client';
 import { BillingService } from './application/billing.service';
 import { BillingReconcilerService } from './application/billing-reconciler.service';
 import { BillingCollection } from './application/billing-collection';
+import { StripeRequestError } from './infrastructure/stripe.client';
 
 const databaseUrl = process.env.BILLING_EVENT_DISCOUNT_RENEWAL_TEST_DATABASE_URL;
 const address = { line1: '99 ถนนทดสอบ', subdistrict: 'คลองเตย', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' };
@@ -23,7 +24,7 @@ async function fixture(client: PrismaClient, events: { name: string; discountSat
   const customerId = `cus_${run}`, state = { policy, revision: { id: 'synthetic-revision' }, settings: { version: 1 }, gates: Object.fromEntries(BILLING_ACTIONS.map(action => [action, true])) };
   const customers = new Map<string, Record<string, unknown>>(), sessions: Record<string, any>[] = [], subscriptions = new Map<string, any>();
   const calls: { method: string; path: string; params?: any; key?: string }[] = [];
-  const stripeState = { paid: {} as Record<string, any>, failNextSubscription: false };
+  const stripeState = { paid: {} as Record<string, any>, failNextSubscription: false, subscriptionError: null as Error | null };
   const stripe = { enabled: true, accountId: stripeAccountId, livemode: false, assertAccount: async () => {},
     request: async (method: string, path: string, params?: any, key?: string): Promise<any> => {
       calls.push({ method, path, params, key });
@@ -44,6 +45,7 @@ async function fixture(client: PrismaClient, events: { name: string; discountSat
           customer: params.customer, metadata: params.metadata, url: `https://checkout.stripe.com/c/pay/cs_${run}${sessions.length}` };
       }
       if (method === 'POST' && path === '/subscriptions') {
+        if (stripeState.subscriptionError) throw stripeState.subscriptionError; // Stripe answered without creating anything.
         const id = `sub_${run}${subscriptions.size + 1}`, item = params.items[0];
         subscriptions.set(id, { id, object: 'subscription', livemode: false, customer: params.customer, status: 'trialing', metadata: params.metadata,
           billing_mode: params.billing_mode, collection_method: params.collection_method, payment_settings: params.payment_settings,
@@ -270,6 +272,86 @@ test('PROMPTPAY_RENEW first bill: discounted QR payment, then a full-price send_
     assert.deepEqual([contract.effectiveAt.toISOString(), (contract.snapshotJson as any).quote.totalSatang], [account.paidThrough!.toISOString(), 49900]);
     assert.deepEqual([(await f.ticket(f.serials[0]!)).state, (await client.billingInvoice.findFirstOrThrow({ where: { sourceAttemptId: opened.attemptId } })).totalSatang],
       ['USED', 39900]);
+  } finally {
+    await f.cleanup(); await client.$disconnect();
+  }
+});
+
+/**
+ * Owner 2026-10-10, option "ค": a paid purchase whose renewal subscription the provider never created is repaired by the
+ * system itself. The first period is delivered before the binding; the binding is re-sent under its key for one hour, sends
+ * nothing for ten quiet minutes, then goes out again under a new key, as often as it takes. Never a send while a refund
+ * touches the payment, and never again after the provider refused the request.
+ */
+test('PROMPTPAY_RENEW paid, subscription never created: same key for an hour, then a new generation under a new key until it binds', { skip: !databaseUrl }, async () => {
+  const client = connect(), f = await fixture(client, [{ name: 'งานซ่อมรอบถัดไป', discountSatang: 10000 }]);
+  const posts = () => f.calls.filter(call => call.method === 'POST' && call.path === '/subscriptions');
+  const journal = async () => (await client.billingAttempt.findUniqueOrThrow({ where: { id: opened.attemptId } })).collectionJson as Record<string, any>;
+  const sentAgo = async (ms: number) => client.billingAttempt.update({ where: { id: opened.attemptId }, data: {
+    collectionJson: { ...await journal(), qrSubscriptionRequestedAt: new Date(Date.now() - ms).toISOString() } } });
+  let opened!: Awaited<ReturnType<typeof f.checkout>>;
+  try {
+    const quoted = await f.quote('PROMPTPAY_RENEW');
+    opened = await f.checkout(quoted.quoteId, quoted.consentRevision);
+    const paid = await f.pay(opened.attemptId, 39900, 'promptpay'), key = `mm:${opened.attemptId}:promptpay-renewal`;
+    f.stripeState.subscriptionError = new StripeRequestError('UNKNOWN', 'unavailable', 60, undefined, undefined, 503);
+    await assert.rejects(f.reconcileOneTime(paid), /stripe\.unavailable/);
+    // The paid period is delivered before the binding; only the slot waits.
+    assert.equal((await client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: opened.attemptId } })).applyStatus, 'APPLIED');
+    assert.deepEqual([(await f.current()).activeAttemptId, (await f.current()).baseSubscriptionId], [opened.attemptId, null]);
+    // Inside the hour: the same key again.
+    await sentAgo(30 * 60_000);
+    await assert.rejects(f.reconcileOneTime(paid), /stripe\.unavailable/);
+    assert.deepEqual(posts().map(call => call.key), [key, key]);
+    // Between one hour and one hour ten: the pass reads and sends nothing.
+    await sentAgo(65 * 60_000);
+    await f.reconcileOneTime(paid);
+    assert.equal(posts().length, 2, 'ten quiet minutes after the last possible send of a generation');
+    assert.equal((await f.current()).activeAttemptId, opened.attemptId);
+    // A day later the provider still holds nothing: generation 2 under a new key, journalled before the send.
+    await sentAgo(24 * 3_600_000);
+    await assert.rejects(f.reconcileOneTime(paid), /stripe\.unavailable/);
+    assert.equal(posts().at(-1)!.key, `${key}:g2`, 'a key that stored a 5xx replays it: the next generation has its own');
+    assert.equal((await journal()).qrSubscriptionGeneration, 2);
+    assert.ok(Date.now() - Date.parse((await journal()).qrSubscriptionRequestedAt) < 60_000, 'the generation starts its own hour');
+    await assert.rejects(f.reconcileOneTime(paid), /stripe\.unavailable/);
+    assert.deepEqual(posts().slice(-2).map(call => call.key), [`${key}:g2`, `${key}:g2`], 'never a second new generation inside seventy minutes');
+    // A staff refund request for this payment stops the repair.
+    const invoice = await client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: opened.attemptId } });
+    const refund = await client.billingOperation.create({ data: { companyId: f.companyId, stripeAccountId: f.account.stripeAccountId, livemode: false, type: 'REFUND',
+      state: 'AWAITING_APPROVAL', referenceId: invoice.id, sourceVersion: 0, proposedJson: {}, reason: 'synthetic', initiatorUserId: f.context.userId,
+      requestHash: `refund-${f.run}`, expiresAt: new Date(Date.now() + 600_000) } });
+    await sentAgo(71 * 60_000);
+    await f.reconcileOneTime(paid);
+    assert.equal(posts().length, 4, 'nothing is sent while a refund request exists for this payment');
+    await client.billingOperation.update({ where: { id: refund.id }, data: { state: 'CANCELLED' } });
+    // The provider works again: generation 3 binds and the shop is released.
+    f.stripeState.subscriptionError = null;
+    await f.reconcileOneTime(paid);
+    const account = await f.current(), [sub] = [...f.subscriptions.values()];
+    assert.equal(posts().at(-1)!.key, `${key}:g3`);
+    assert.deepEqual([f.subscriptions.size, account.baseSubscriptionId, account.activeAttemptId, sub.trial_end],
+      [1, sub.id, null, Math.floor(account.paidThrough!.getTime() / 1000)]);
+  } finally {
+    await f.cleanup(); await client.$disconnect();
+  }
+});
+
+test('PROMPTPAY_RENEW paid, the provider refuses the subscription: no blind retry, the case waits for staff', { skip: !databaseUrl }, async () => {
+  const client = connect(), f = await fixture(client, [{ name: 'งานถูกปฏิเสธ', discountSatang: 10000 }]);
+  const posts = () => f.calls.filter(call => call.method === 'POST' && call.path === '/subscriptions');
+  try {
+    const quoted = await f.quote('PROMPTPAY_RENEW'), opened = await f.checkout(quoted.quoteId, quoted.consentRevision);
+    const paid = await f.pay(opened.attemptId, 39900, 'promptpay');
+    f.stripeState.subscriptionError = new StripeRequestError('REJECTED', 'request_rejected', 60, 'resource_missing', 'invalid_request_error', 400);
+    await assert.rejects(f.reconcileOneTime(paid), /stripe\.request_rejected/);
+    const attempt = await client.billingAttempt.findUniqueOrThrow({ where: { id: opened.attemptId } }), journal = attempt.collectionJson as Record<string, any>;
+    assert.deepEqual([journal.qrSubscriptionRefused?.generation, journal.qrSubscriptionRefused?.status, journal.qrSubscriptionRefused?.code], [1, 400, 'resource_missing']);
+    f.stripeState.subscriptionError = null;
+    await client.billingAttempt.update({ where: { id: attempt.id }, data: { collectionJson: { ...journal, qrSubscriptionRequestedAt: new Date(Date.now() - 24 * 3_600_000).toISOString() } } });
+    await assert.rejects(f.reconcileOneTime(paid), /billing\.subscription_binding_refused/);
+    assert.equal(posts().length, 1, 'a refusal is never sent again by itself, under any key');
+    assert.equal((await f.current()).activeAttemptId, opened.attemptId);
   } finally {
     await f.cleanup(); await client.$disconnect();
   }

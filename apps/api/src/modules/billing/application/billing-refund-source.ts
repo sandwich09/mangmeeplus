@@ -24,6 +24,18 @@ export async function assertNoPendingRefund(tx:Prisma.TransactionClient,account:
   if(await pendingRefund(tx,account))throw billingError('BILLING_REFUND_PENDING','มีคำขอคืนเงินเดิมที่ยังต้องตรวจสอบ กรุณาติดต่อทีมงานก่อนทำรายการใหม่');
 }
 
+/** 2026-10-10 (P-5): a refund stops the repair of a paid purchase's subscription binding. True when the invoice of this attempt
+ *  shows refunded money, or a refund request exists for it in any state but cancelled or failed (a failed one moved no money, or
+ *  the refunded amount above shows it). As in `pendingRefund`, a request never sent holds nothing once it has expired. */
+export async function refundStopsBinding(tx:Prisma.TransactionClient,account:Pick<BillingAccount,'id'|'companyId'|'stripeAccountId'|'livemode'>,attemptId:string) {
+  const invoice=await tx.billingInvoice.findUnique({where:{sourceAttemptId:attemptId},select:{id:true,billingAccountId:true,refundedSatang:true}});
+  if(!invoice||invoice.billingAccountId!==account.id)return false;
+  if(invoice.refundedSatang)return true;
+  const rows=await tx.billingOperation.findMany({where:{companyId:account.companyId,stripeAccountId:account.stripeAccountId,livemode:account.livemode,
+    type:'REFUND',referenceId:invoice.id,state:{notIn:['CANCELLED','FAILED']}},select:{state:true,expiresAt:true,resultJson:true}});
+  return rows.some(row=>!['PREVIEW','AWAITING_APPROVAL','QUEUED','BLOCKED'].includes(row.state)||row.expiresAt>new Date()||!!(row.resultJson as {dispatchedAt?:string}|null)?.dispatchedAt);
+}
+
 /** Bounded complete pages, including empty-list and cross-page duplicate/cycle validation. */
 async function completeList(stripe:StripeClient,path:string,params:Record<string,unknown>,prefix:string) {
   const all:StripeObject[]=[],ids=new Set<string>();let cursor:string|undefined;
