@@ -29,11 +29,11 @@ describe('billing recipient authority, isolation and recovery on PostgreSQL', { 
     const account = await prisma.client.billingAccount.create({ data: { companyId, stripeAccountId, customerId, livemode: false,
       leaseToken: lease, leaseUntil: new Date(Date.now() + 120_000) } });
     const customer = { id: customerId, object: 'customer', livemode: false, email: `${id}@old.example.test`, metadata: { billingAccountId: account.id } };
-    let writes = 0, mode: 'ok' | 'unknown' | 'unknown-before' | 'reject' = 'ok';
+    let writes = 0, mode: 'ok' | 'unknown' | 'unknown-before' | 'reject' | 'read-fails' = 'ok';
     let beforeGet: (() => Promise<void>) | undefined;
     const stripe: any = { accountId: stripeAccountId, livemode: false, request: async (method: string, path: string, body?: any, key?: string) => {
       assert.equal(path, `/customers/${customerId}`);
-      if (method === 'GET') { const hook = beforeGet; beforeGet = undefined; await hook?.(); return { ...customer }; }
+      if (method === 'GET') { const hook = beforeGet; beforeGet = undefined; await hook?.(); if (mode === 'read-fails') throw new StripeRequestError('UNKNOWN', 'read_failed'); return { ...customer }; }
       assert.equal(method, 'POST'); assert.match(key!, /^mm:email-recipient:/); assert.deepEqual(Object.keys(body), ['email']);
       writes++;
       if (mode === 'reject') throw new StripeRequestError('REJECTED', 'invalid_request');
@@ -82,7 +82,8 @@ describe('billing recipient authority, isolation and recovery on PostgreSQL', { 
     const results = await Promise.allSettled([a, b].map(p => f.service.command(f.context, p.id, 'submit', p.version, p.previewHash, randomUUID())));
     assert.equal(results.filter(r => r.status === 'fulfilled').length, 1); assert.equal(f.writes(), 0);
   });
-  test('email or owner changes before first provider mutation are blocked and remain cancellable', async () => {
+  // 2026-10-10: a request refused before any send is over at once and holds nothing (it was BLOCKED until an owner cancelled).
+  test('email or owner changes before first provider mutation end the request and release the shop', async () => {
     for (const change of ['email', 'owner', 'company', 'version', 'expiry']) {
       const f = await fixture(), queued = await f.queue();
       f.beforeGet(async () => {
@@ -94,10 +95,12 @@ describe('billing recipient authority, isolation and recovery on PostgreSQL', { 
       });
       await f.advance(); assert.equal(f.writes(), 0, change);
       const row = await prisma.client.billingOperation.findUniqueOrThrow({ where: { id: queued.id } });
-      assert.equal(row.state, 'BLOCKED', change);
+      assert.deepEqual([row.state, row.errorCode], ['FAILED', 'email_authorization_changed'], change);
+      assert.equal((await prisma.client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } })).activeEmailOperationId, null, change);
+      assert.equal(await prisma.client.auditLog.count({ where: { action: 'billing.email_recipient.failed', targetId: row.id } }), 1, change);
       if (change === 'owner') await prisma.client.membershipRole.create({ data: { membershipId: f.membership.id, roleId: f.role.id } });
-      const current = await f.service.get(f.context, row.id); assert.equal(current.canCancel, true);
-      await f.service.command(f.context, row.id, 'cancel', current.version, current.previewHash, '');
+      if (change === 'company') await prisma.client.company.update({ where: { id: f.context.companyId }, data: { status: 'ACTIVE' } });
+      assert.equal((await f.service.get(f.context, row.id)).canCancel, false, change);
       assert.equal((await f.service.current(f.context)).busy, false);
     }
   });
@@ -110,17 +113,55 @@ describe('billing recipient authority, isolation and recovery on PostgreSQL', { 
     assert.equal((await f.service.get(f.context, row.id)).state, 'COMPLETED');
     assert.equal((await prisma.client.billingIssue.findFirstOrThrow({ where: { kind: 'EMAIL_RECIPIENT_REVIEW', referenceId: row.id } })).state, 'RESOLVED');
   });
-  test('an aged unknown outcome creates a tracked issue, never reposts, and resolves only after matching provider readback', async () => {
+  // 2026-10-10: the former 23-hour hold. Re-send for one hour, then read only; a read equal to the new address finishes at any age.
+  test('an unknown outcome is re-sent for one hour, then only read, and a matching readback finishes it', async () => {
     const f = await fixture(), row = await f.queue(); f.mode('unknown-before'); await f.advance();
-    await prisma.client.billingOperation.update({ where: { id: row.id }, data: { resultJson: { startedAt: new Date(Date.now() - 24 * 3600_000).toISOString() } } });
-    f.mode('ok'); await f.advance(); assert.equal(f.writes(), 1);
+    await f.advance(); assert.equal(f.writes(), 2, 're-sent inside the window');
+    await prisma.client.billingOperation.update({ where: { id: row.id }, data: { resultJson: { startedAt: new Date(Date.now() - 65 * 60_000).toISOString() } } });
+    f.mode('ok'); await f.advance(); assert.equal(f.writes(), 2, 'nothing is sent after one hour');
     const issue = await prisma.client.billingIssue.findFirstOrThrow({ where: { kind: 'EMAIL_RECIPIENT_REVIEW', referenceId: row.id } });
     assert.equal(issue.state, 'OPEN'); assert.equal((await f.service.current(f.context)).busy, true);
     assert.equal((await f.service.get(f.context, row.id)).canCancel, false);
-    // A later authoritative readback of the original consented update releases the reservation.
-    f.customer.email = f.email; await f.advance(); assert.equal(f.writes(), 1);
+    // A read that fails decides nothing, whatever the age.
+    await prisma.client.billingOperation.update({ where: { id: row.id }, data: { resultJson: { startedAt: new Date(Date.now() - 25 * 3600_000).toISOString() } } });
+    f.mode('read-fails'); await f.advance(); assert.equal((await f.service.get(f.context, row.id)).state, 'RECONCILING');
+    // A readback of the new address finishes the request at any age.
+    f.mode('ok'); f.customer.email = f.email; await f.advance(); assert.equal(f.writes(), 2);
+    assert.equal((await f.service.get(f.context, row.id)).state, 'COMPLETED');
     assert.equal((await f.service.current(f.context)).busy, false);
     assert.equal((await prisma.client.billingIssue.findUniqueOrThrow({ where: { id: issue.id } })).state, 'RESOLVED');
+  });
+  test('after the bound a third address at the provider ends the request the same way; before it the request waits', async () => {
+    const f = await fixture(), row = await f.queue(); f.mode('unknown-before'); await f.advance();
+    f.customer.email = 'someone-else@example.test'; f.mode('ok'); await f.advance();
+    assert.equal(f.writes(), 1); assert.equal((await f.service.get(f.context, row.id)).state, 'RECONCILING');
+    await prisma.client.billingOperation.update({ where: { id: row.id }, data: { resultJson: { startedAt: new Date(Date.now() - 71 * 60_000).toISOString() } } });
+    await f.advance(); assert.equal(f.writes(), 1);
+    const ended = await f.service.get(f.context, row.id);
+    assert.deepEqual([ended.state, ended.errorCode], ['FAILED', 'provider_email_not_target']);
+    assert.equal((await f.service.current(f.context)).busy, false);
+    assert.equal(await prisma.client.auditLog.count({ where: { action: 'billing.email_recipient.not_changed', targetId: row.id } }), 1);
+  });
+  test('a provider read that fails before any send leaves the request waiting and cancellable', async () => {
+    const f = await fixture(), row = await f.queue(); f.mode('read-fails'); await f.advance();
+    const waiting = await f.service.get(f.context, row.id); assert.deepEqual([waiting.state, waiting.canCancel], ['QUEUED', true]);
+    f.mode('ok'); await f.advance(); assert.equal((await f.service.get(f.context, row.id)).state, 'COMPLETED');
+  });
+  test('a dispatched change the provider never applied ends and frees the shop once nothing can still be in flight', async () => {
+    const f = await fixture(), row = await f.queue(); f.mode('unknown-before'); await f.advance();
+    await prisma.client.billingOperation.update({ where: { id: row.id }, data: { resultJson: { startedAt: new Date(Date.now() - 25 * 3600_000).toISOString() } } });
+    f.mode('ok'); await f.advance(); assert.equal(f.writes(), 1, 'nothing is sent again');
+    assert.notEqual(f.customer.email, f.email);
+    assert.equal((await prisma.client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } })).activeEmailOperationId, null, 'the shop is no longer held');
+    assert.equal((await f.service.get(f.context, row.id)).state, 'FAILED');
+    assert.equal((await prisma.client.billingIssue.findFirstOrThrow({ where: { kind: 'EMAIL_RECIPIENT_REVIEW', referenceId: row.id } })).state, 'OPEN', 'the review case is kept');
+  });
+  test('a request that was never sent and can no longer be sent holds nothing, also one left BLOCKED before this rule', async () => {
+    const f = await fixture(), row = await f.queue();
+    await prisma.client.billingOperation.update({ where: { id: row.id }, data: { state: 'BLOCKED', errorCode: 'email_authorization_changed' } });
+    await f.advance(); assert.equal(f.writes(), 0);
+    assert.equal((await f.service.get(f.context, row.id)).state, 'FAILED');
+    assert.equal((await prisma.client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } })).activeEmailOperationId, null, 'the shop is no longer held');
   });
   test('provider rejection releases the reservation and supports a fresh review', async () => {
     const f = await fixture(), row = await f.queue(); f.mode('reject'); await f.advance();

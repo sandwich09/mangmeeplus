@@ -12,7 +12,11 @@ const primary = 'mangmee-btn mangmee-btn-primary min-h-11';
 const field = 'mangmee-input mt-2 block min-h-11 w-full min-w-0';
 const IN_FLIGHT = ['QUEUED', 'RUNNING', 'RECONCILING'];
 type Step = 'idle' | 'choose' | 'code_sent' | 'previewed' | 'op_pending' | 'done';
-const opText = (state: string) => state === 'BLOCKED' ? 'ข้อมูลเปลี่ยนหรือยังดำเนินการไม่ได้ กรุณายกเลิกคำขอแล้วตรวจใหม่'
+// An ended request says why from its own code; the provider read only knows the current address, so the text claims no more than that.
+const opText = (state: string, errorCode?: string | null) => state === 'FAILED' && errorCode === 'provider_email_not_target'
+  ? 'ตรวจกับผู้ให้บริการรับชำระเงินแล้ว อีเมลผู้รับเอกสารตอนนี้ยังไม่ใช่อีเมลใหม่ที่ขอไว้ คำขอนี้จบแล้ว ถ้ายังต้องการเปลี่ยน ให้ทำรายการใหม่'
+  : state === 'FAILED' && errorCode === 'email_authorization_changed' ? 'ข้อมูลเปลี่ยนหรือคำขอหมดอายุก่อนเริ่มดำเนินการ คำขอนี้จบแล้ว ถ้ายังต้องการเปลี่ยน ให้ทำรายการใหม่'
+  : state === 'BLOCKED' ? 'ข้อมูลเปลี่ยนหรือยังดำเนินการไม่ได้ กรุณายกเลิกคำขอแล้วตรวจใหม่'
   : state === 'RECONCILING' ? 'กำลังตรวจผลกับผู้ให้บริการ หากยังไม่สำเร็จ ติดต่อทีมงานพร้อมเลขอ้างอิงด้านล่าง'
     : state === 'CANCELLED' ? 'ยกเลิกคำขอแล้ว' : state === 'FAILED' ? 'ดำเนินการไม่สำเร็จ กรุณาตรวจข้อมูลแล้วเริ่มคำขอใหม่' : 'กำลังดำเนินการ';
 
@@ -169,7 +173,7 @@ export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, o
     </form>}
     {(view === 'previewed' || view === 'op_pending') && operation && <div className="space-y-3 rounded-xl bg-gray-50 p-3">
       <p className="break-all">จาก {operation.previousEmail ?? 'ยังไม่ระบุ'} เป็น <strong>{operation.newEmail}</strong>{view === 'previewed' && ' · มีผลกับเอกสารใหม่ของร้านนี้'}</p>
-      {view === 'op_pending' && <p role="status">{opText(operation.state)}</p>}
+      {view === 'op_pending' && <p role="status">{opText(operation.state, operation.errorCode)}</p>}
       {view === 'op_pending' && operation.state === 'RECONCILING' && <details className="text-sm text-gray-500"><summary className="min-h-11 cursor-pointer py-2">เลขอ้างอิงสำหรับแจ้งทีมงาน</summary><p className="break-all">{billingSupportReference(operation.id)}</p></details>}
       <div className="flex flex-wrap gap-3">
         {view === 'previewed' && operation.canSubmit && <button className={primary} disabled={busy} aria-busy={busy} onClick={() => void submit()}>ยืนยันเปลี่ยนผู้รับเอกสาร</button>}
