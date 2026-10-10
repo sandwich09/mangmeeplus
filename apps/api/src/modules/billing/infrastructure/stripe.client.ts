@@ -7,8 +7,8 @@ export const STRIPE_FETCH = 'STRIPE_FETCH';
 // Untrusted provider objects remain inside this adapter/application boundary, never public DTOs.
 export type StripeObject = Record<string, any>;
 export class StripeRequestError extends Error {
-  /** providerCode/providerType: Stripe's own error identifiers (`errorToken`), the only part of a rejected response that is ever kept. */
-  constructor(readonly outcome: 'REJECTED' | 'UNKNOWN' | 'RETRY', readonly code: string, readonly retryAfterSeconds = 60, readonly providerCode?: string, readonly providerType?: string) { super(`stripe.${code}`); }
+  /** providerCode/providerType: Stripe's own error identifiers (`errorToken`), the only part of a rejected response that is ever kept. status: the HTTP status of a non-ok answer; absent when Stripe never answered. */
+  constructor(readonly outcome: 'REJECTED' | 'UNKNOWN' | 'RETRY', readonly code: string, readonly retryAfterSeconds = 60, readonly providerCode?: string, readonly providerType?: string, readonly status?: number) { super(`stripe.${code}`); }
 }
 // A machine-readable identifier such as `balance_insufficient` names no customer or object, unlike the message and param next to it.
 const errorToken = (value: unknown) => typeof value === 'string' && /^[a-z0-9_]{1,64}$/.test(value) ? value : undefined;
@@ -81,7 +81,7 @@ export class StripeClient {
       const delay = retry && /^\d+$/.test(retry) ? Math.min(86400, Math.max(1, Number(retry))) : 60;
       const outcome = response.status >= 500 ? 'UNKNOWN' : response.status === 429 ? 'RETRY' : 'REJECTED';
       // Never forward Stripe's body, keys, card data or customer details to application logs: only its error code and type, and only as safe tokens.
-      throw new StripeRequestError(outcome, response.status === 429 ? 'rate_limited' : response.status >= 500 ? 'unavailable' : 'request_rejected', delay, errorToken(data?.error?.code), errorToken(data?.error?.type));
+      throw new StripeRequestError(outcome, response.status === 429 ? 'rate_limited' : response.status >= 500 ? 'unavailable' : 'request_rejected', delay, errorToken(data?.error?.code), errorToken(data?.error?.type), response.status);
     }
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw new StripeRequestError('UNKNOWN', 'invalid_success');
     if (typeof data.livemode === 'boolean' && data.livemode !== this.livemode) throw new StripeRequestError('UNKNOWN', 'mode_mismatch');
