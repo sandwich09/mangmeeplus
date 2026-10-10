@@ -592,6 +592,10 @@ export type BillingEventDiscountView = {
   path: 'DISCOUNT' | 'CREDIT' | null;
   /** How this shop renews, read as `BillingStatus.renewalMode` reads it (LINE words why a running renewal cannot use a discount per mode). Absent = no billing account. */
   renewalMode?: BillingPurchaseMode | 'NONE';
+  /** Whether that renewal is running, read from the same account columns as `BillingStatus` (cancelAtPeriodEnd, subscriptionState, graceEndsAt, collectionPause):
+   *  RUNNING = bound and will charge or bill at the next period; STOPPED = switched off or cancelled while the package still runs; UNPAID = its charge failed or its bill is overdue.
+   *  Absent = nothing settled to say (no subscription bound yet, collection paused, no account) or an older API: both surfaces then say only the general sentence. */
+  renewalState?: 'RUNNING' | 'STOPPED' | 'UNPAID';
   tickets: BillingEventDiscountTicket[];
 };
 

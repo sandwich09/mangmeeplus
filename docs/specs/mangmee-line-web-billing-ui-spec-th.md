@@ -257,7 +257,7 @@ The annual conversion review must explain in Thai: payment today, receipts added
 
 
 Owner clarification — first purchase during trial (2026-09-17):
-- Separate what the customer gets from the trial consequence. Primary copy: “ชำระสำเร็จแล้ว ใช้งานได้ {1/12 เดือน} พร้อมโควตา {quote allowance} ใบ”. Show a separate secondary paragraph only when quote.purchase.kind is INITIAL and quote.trialEndsAt exists: “การทดลองใช้จะสิ้นสุดเมื่อชำระสำเร็จ วันทดลองที่เหลือจะไม่บวกเพิ่มในแพ็กเกจนี้”.
+- Separate what the customer gets from the trial consequence. Primary copy: “เมื่อชำระสำเร็จ ใช้งานได้ {1/12 เดือน} พร้อมโควตา {quote allowance} ใบ” (2026-10-10: this review is read before paying, so “ชำระสำเร็จแล้ว” read as already paid; the sibling sentences already say “เมื่อชำระสำเร็จ”). Show a separate secondary paragraph only when quote.purchase.kind is INITIAL and quote.trialEndsAt exists: “การทดลองใช้จะสิ้นสุดเมื่อชำระสำเร็จ วันทดลองที่เหลือจะไม่บวกเพิ่มในแพ็กเกจนี้”.
 - This restates the existing IMMEDIATE policy; it does not add trial days to the first paid term or change checkout, consent, grants or the separate repeat/restart/upgrade summaries.
 - Determine the starting state from the server quote: active trial term for the trial notice; accepted paid billing history for repeat/upgrade/restart. Never infer trial from the page entry point or selected new offer. Unclassified legacy packages retain the existing review-required block. Local preview labels must distinguish trial-first-purchase, existing BASIC package, and expired package; explain that the simulated state is independent of the selected company's real package.
 
