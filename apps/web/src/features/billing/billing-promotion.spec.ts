@@ -269,7 +269,7 @@ test('after payment: one block per renewal-setup state, and never an invitation 
   const EXPECT: Record<BillingRenewalSetupState, { lines: string[]; checking: boolean }> = {
     NOT_REQUIRED: { lines: [NAME, UNTIL, BONUS], checking: false },
     PENDING: { lines: [NAME, 'ชำระแล้ว ใช้ได้ถึง 5 ธันวาคม 2569 กำลังตั้งค่ารอบถัดไป ไม่ต้องชำระซ้ำ', BONUS], checking: true },
-    REVIEW: { lines: [NAME, UNTIL, 'ชำระแล้ว ทีมงานกำลังตรวจการตั้งรอบถัดไป ไม่ต้องชำระซ้ำ', BONUS], checking: false },
+    REVIEW: { lines: [NAME, UNTIL, 'ชำระแล้ว การตั้งรอบถัดไปยังไม่เสร็จ ไม่ต้องชำระซ้ำ', BONUS], checking: false },
     READY: { lines: [NAME, UNTIL, 'ตั้งต่ออายุแล้ว รอบถัดไปเรียกเก็บวันที่ 5 ธันวาคม 2569', BONUS], checking: false },
     CANCELLED: { lines: [NAME, UNTIL, BONUS], checking: false },
   };
