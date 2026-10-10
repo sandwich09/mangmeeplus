@@ -129,6 +129,8 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
     const expiredApproval=await queued(),expiryPosts=requests.length;
     await db.billingOperation.update({where:{id:expiredApproval.id},data:{expiresAt:new Date(Date.now()-1000)}});
     assert.equal((await execute(expiredApproval)).state,'BLOCKED');assert.equal(requests.length,expiryPosts);
+    // Never sent and expired: it holds nothing, so a new request of the same company can start while the old one is still there to cancel.
+    const afterExpiry=await preview();assert.equal(afterExpiry.status,200,JSON.stringify(afterExpiry.body));assert.equal((await command(afterExpiry.body,'cancel')).body.state,'CANCELLED');
     assert.equal((await command(await get(expiredApproval.id),'cancel')).body.state,'CANCELLED');
     cases.push('refund-approved-but-expired-command-cannot-dispatch-and-retains-cancel-review');
     const revoke=await queued(),memberships=await db.membershipRole.findMany({where:{membershipId:input.membershipId}});
