@@ -9,6 +9,8 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { StripeRequestError } from '../infrastructure/stripe.client';
+import { collectionSourceHash } from './billing-collection';
 import { BillingPriceReturn, priceReturnObserved, priceReturnParams, type PriceReturnProposed } from './billing-price-return';
 import type { BillingSnapshot } from './billing.service';
 
@@ -74,25 +76,27 @@ test('"returned" means the catalog price bills the NEXT cycle, and this one is u
 });
 
 // 2026-10-10: a price return holds the shop's slot, so it ends from a provider read instead of waiting for ever.
-function pass(row: Record<string, unknown>, live: Record<string, unknown> | Error) {
+function pass(row: Record<string, unknown>, live: Record<string, unknown> | Error, swap: Error = new Error('nothing may be sent')) {
   const past = new Date(Date.now() - 86400_000);
   const account = { id: 'acct_1', companyId: 'company', stripeAccountId: 'acct_stripe', livemode: false, customerId: 'cus_1', baseSubscriptionId: SUB,
-    activeCollectionOperationId: 'op_1', paidThrough: past, leaseToken: 'lease', leaseUntil: new Date(Date.now() + 60_000) };
-  const op = { id: 'op_1', expiresAt: past, proposedJson: { ...proposed, paidThrough: past.toISOString() }, ...row };
-  const writes: string[] = [], sent: unknown[][] = [];
-  const operation = async (input: any) => { if (input.data.state) writes.push(`operation:${input.data.state}:${input.data.errorCode}`); return op; };
+    activeCollectionOperationId: 'op_1', paidThrough: past, termProjectionHash: 'term', leaseToken: 'lease', leaseUntil: new Date(Date.now() + 60_000) };
+  const provider = (value: Record<string, unknown>) => ({ object: 'subscription', customer: 'cus_1', livemode: false, metadata: { billingAccountId: 'acct_1' }, ...value });
+  const op = { id: 'op_1', expiresAt: past, proposedJson: { ...proposed, paidThrough: past.toISOString(),
+    ...(live instanceof Error ? {} : { sourceHash: collectionSourceHash(provider(live), null) }) }, ...row };
+  const writes: string[] = [], sent: unknown[][] = [], journals: any[] = [];
+  const operation = async (input: any) => { if (input.data.resultJson) journals.push(input.data.resultJson); if (input.data.state) writes.push(`operation:${input.data.state}:${input.data.errorCode}`); return op; };
   const release = async (input: any) => { if (input.data.activeCollectionOperationId === null) writes.push('release'); return account; };
   const tx = { $queryRaw: async () => [], billingAccount: { findUniqueOrThrow: async () => account, update: release },
     billingOperation: { findFirstOrThrow: async () => op, update: operation },
     billingIssue: { updateMany: async () => ({ count: 0 }) }, auditLog: { create: async (input: any) => { writes.push(input.data.action); } } };
   const prisma = { client: { ...tx, $transaction: async (fn: (client: unknown) => unknown) => fn(tx) } };
   const stripe = { assertAccount: async () => undefined, list: async () => [], request: async (...args: unknown[]) => {
-    if (args[0] !== 'GET') { sent.push(args); throw new Error('nothing may be sent'); }
+    if (args[0] !== 'GET') { sent.push(args); throw swap; }
     if (live instanceof Error) throw live;
-    return { object: 'subscription', customer: 'cus_1', livemode: false, metadata: { billingAccountId: 'acct_1' }, ...live }; } };
+    return provider(live); } };
   const issues: string[] = [];
-  const service = new BillingPriceReturn(prisma as any, stripe as any, { issue: async (_: string, kind: string) => { issues.push(kind); } } as any);
-  return { writes, sent, issues, run: () => service.advance(account as any, 'lease') };
+  const service = new BillingPriceReturn(prisma as any, stripe as any, { issue: async (_: string, kind: string) => { issues.push(kind); }, assertTaxSettings: async () => undefined } as any);
+  return { writes, sent, issues, journals, run: () => service.advance(account as any, 'lease') };
 }
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 const ENDED = ['operation:FAILED:SPECIAL_PRICE_RETURN_NOT_APPLIED', 'release', 'billing.price_return.ended'];
@@ -186,6 +190,25 @@ test('a retry writes no row when the account is not ready or the subscription is
   // Already on the catalog price: an attempt is queued so that `advance` records it from the read, without sending.
   const done = retry({ item: { price: CATALOG } });
   assert.deepEqual([await done.service.sweep(), done.created[0]!.proposedJson.dealPriceId, done.sent.length], [{ queued: 1 }, DEAL, 0]);
+});
+
+test('only a real refusal of the swap ends a return for good: a 409 on the same key is "not applied" and is retried a day later', async () => {
+  const live = sub({}, { price: DEAL });
+  for (const [error, code] of [
+    [new StripeRequestError('REJECTED', 'request_rejected', 60, 'resource_missing', 'invalid_request_error', 400), 'SPECIAL_PRICE_RETURN_REJECTED'],
+    [new StripeRequestError('REJECTED', 'request_rejected', 60, 'idempotency_key_in_use', 'idempotency_error', 409), 'SPECIAL_PRICE_RETURN_NOT_APPLIED'],
+    [new StripeRequestError('REJECTED', 'request_rejected', 60, undefined, 'idempotency_error', 400), 'SPECIAL_PRICE_RETURN_NOT_APPLIED'],
+    [new StripeRequestError('RETRY', 'rate_limited', 60, undefined, undefined, 429), 'SPECIAL_PRICE_RETURN_NOT_APPLIED'],
+  ] as const) {
+    const first = pass({ state: 'QUEUED', errorCode: null, resultJson: null }, live, error);
+    await first.run();
+    assert.deepEqual([first.sent.length, first.writes.at(-1)], [1, 'operation:UNKNOWN:SPECIAL_PRICE_RETURN_REVIEW']);
+    // One hour ten later the read still shows the deal price: the journal the send left decides the code.
+    const later = pass({ state: 'UNKNOWN', errorCode: 'SPECIAL_PRICE_RETURN_REVIEW', resultJson: { ...first.journals.at(-1), startedAt: ago(71) } }, live);
+    await later.run();
+    assert.equal(later.writes[0], `operation:FAILED:${code}`);
+    assert.deepEqual(await retry({ failed: { errorCode: code } }).service.sweep(), { queued: code === 'SPECIAL_PRICE_RETURN_NOT_APPLIED' ? 1 : 0 });
+  }
 });
 
 test('a return the provider itself refused ends under its own code, which the sweep never retries', async () => {
