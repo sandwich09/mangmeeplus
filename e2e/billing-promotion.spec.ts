@@ -881,7 +881,7 @@ const AFTER_PAYMENT: AfterPayment[] = [
   { key: 'PENDING', use: promotionUse({ renewalSetupState: 'PENDING' }), status: { subscriptionState: 'NONE', nextChargeAt: null, allowedActions: [] },
     title: 'ใช้สิทธิ์โปรโมชั่นแล้ว', lines: [nameLine, `ชำระแล้ว ใช้ได้ถึง ${until} กำลังตั้งค่ารอบถัดไป ไม่ต้องชำระซ้ำ`, bonusLine], recheck: true },
   { key: 'REVIEW', use: promotionUse({ renewalSetupState: 'REVIEW' }), status: { subscriptionState: 'NONE', nextChargeAt: null, allowedActions: [] },
-    title: 'ใช้สิทธิ์โปรโมชั่นแล้ว', lines: [nameLine, `ใช้ได้ถึง ${until}`, 'ชำระแล้ว ทีมงานกำลังตรวจการตั้งรอบถัดไป ไม่ต้องชำระซ้ำ', bonusLine], recheck: false },
+    title: 'ใช้สิทธิ์โปรโมชั่นแล้ว', lines: [nameLine, `ใช้ได้ถึง ${until}`, 'ชำระแล้ว การตั้งรอบถัดไปยังไม่เสร็จ ไม่ต้องชำระซ้ำ', bonusLine], recheck: false },
   { key: 'NOT_REQUIRED', use: promotionUse({ renewalSetupState: 'NOT_REQUIRED', expectedNextChargeAt: null }), status: { renewalMode: 'CARD_ONCE', subscriptionState: 'NONE', nextChargeAt: null },
     title: 'ใช้สิทธิ์โปรโมชั่นแล้ว', lines: [nameLine, `ใช้ได้ถึง ${until}`, bonusLine], recheck: false },
   { key: 'CANCELLED', use: promotionUse({ renewalSetupState: 'CANCELLED', expectedNextChargeAt: null }), status: { cancelAtPeriodEnd: true, nextChargeAt: null },
