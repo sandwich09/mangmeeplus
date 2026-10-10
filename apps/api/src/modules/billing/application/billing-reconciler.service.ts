@@ -78,6 +78,9 @@ async function releaseUnpaidPromotion(tx: Prisma.TransactionClient, account: Bil
     metadataJson: { attemptId: attempt.id, campaignId: right.campaignId, reason } } });
 }
 
+/** 2026-10-10: a command the shop waits on is re-sent under its key for one hour; ten quiet minutes after a last send nothing of ours can still be in flight. */
+const RESEND_WINDOW_MS = 3600_000, QUIET_MARGIN_MS = 600_000;
+
 @Injectable()
 export class BillingReconcilerService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly stripe: StripeClient,
@@ -89,21 +92,25 @@ export class BillingReconcilerService {
     if (!marker || (marker.confirmed && attempt.status !== 'CREATING') || attempt.checkoutSessionId || !['CREATING', 'UNKNOWN'].includes(attempt.status)) return false;
     const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
     const age = Date.now() - Date.parse(marker.startedAt);
-    if (snapshot.repeat || !snapshot.quote.billingProfile || marker.customerId !== account.customerId || !Number.isFinite(age) || age >= 23 * 3600000)
+    if (snapshot.repeat || !snapshot.quote.billingProfile || marker.customerId !== account.customerId || !Number.isFinite(age))
       throw new Error('billing.profile_sync_review');
     if (age < 60_000) return true;
     const customer = await this.stripe.request('GET', `/customers/${account.customerId}`);
     if (customer.id !== account.customerId || customer.metadata?.billingAccountId !== account.id) throw new Error('billing.customer_binding');
-    const updated = marker.confirmed ? customer : await this.stripe.request('POST', `/customers/${account.customerId}`,
-      stripeCustomerSyncPayload(snapshot), `mm:${attempt.id}:billing-profile`);
-    if (updated.id !== account.customerId || updated.metadata?.billingAccountId !== account.id || !stripeCustomerSynced(updated, snapshot))
-      throw new Error('billing.profile_sync_unconfirmed');
+    // 2026-10-10: the write is re-sent under its key for one hour; after that a pass only reads. No Checkout was ever sent
+    // for this attempt, so once nothing sent can still be in flight it is over even unconfirmed: the next purchase writes the profile again.
+    const resend = !marker.confirmed && age < RESEND_WINDOW_MS;
+    const updated = resend ? await this.stripe.request('POST', `/customers/${account.customerId}`,
+      stripeCustomerSyncPayload(snapshot), `mm:${attempt.id}:billing-profile`) : customer;
+    const synced = updated.id === account.customerId && updated.metadata?.billingAccountId === account.id && stripeCustomerSynced(updated, snapshot);
+    if (!synced && resend) throw new Error('billing.profile_sync_unconfirmed');
+    if (!synced && age < RESEND_WINDOW_MS + QUIET_MARGIN_MS) return true;
     await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
       const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: { in: ['CREATING', 'UNKNOWN'] },
         checkoutSessionId: null, collectionJson: { equals: attempt.collectionJson as Prisma.InputJsonValue } },
         data: { status: 'FAILED', errorCode: 'BILLING_PROFILE_SYNC_RETRY', version: { increment: 1 },
-          collectionJson: { profileSync: { ...marker, confirmed: true } } } });
+          collectionJson: { profileSync: { ...marker, confirmed: synced } } } });
       if (!changed.count) throw new Error('billing.profile_sync_changed');
       await tx.billingAccount.updateMany({ where: { id: account.id, activeAttemptId: attempt.id }, data: { activeAttemptId: null, version: { increment: 1 } } });
       if (snapshot.eventDiscount?.choice === 'USE') await releaseEventDiscount(tx, attempt.id);
@@ -115,27 +122,37 @@ export class BillingReconcilerService {
   }
 
   /**
-   * Promotion spec §6: a right reserved for a Checkout that was never requested goes back once its `createBy` has passed.
-   * The caller has just read the provider and found no Checkout session of this attempt (or no Customer to hold one). The
-   * journal's proof that no request was sent is the status itself: only the pre-dispatch barrier moves `CREATING` on, and
-   * it does so guarded on `CREATING` under this same Company lock, so after this commit the old request can never be sent.
-   * An attempt that reached REQUESTING or UNKNOWN is never released by elapsed time, and one without a promotion is not
-   * touched at all. False = not this case; the caller fails the pass exactly as before.
+   * A purchase attempt with no Checkout at the provider stops holding the shop (promotion spec §6, widened 2026-10-10).
+   * The caller has just read the provider in this pass and found no Checkout session of this attempt (the customer's
+   * complete list, filtered on `metadata.billingAttemptId`), or no Customer to hold one. Never by elapsed time alone.
+   * `CREATING` was never requested: only the pre-dispatch barrier moves it on, guarded on `CREATING` under this same
+   * Company lock, so after this commit the old request can never be sent; a promotion right waits for its own `createBy`,
+   * any other attempt ten minutes after its last write. `REQUESTING` / `UNKNOWN` without a session id: ten minutes after
+   * the last write — the request is sent once and never re-sent, our call is cut off after 15 seconds, and a session
+   * created late could not be paid by anyone because its address was never delivered to the shop; it expires unpaid by
+   * itself. A shorter `quietMs` is the shop's own cancel (60 s, as `settleProfileSync` waits). A repeat purchase holds the
+   * subscription at the provider and is not ended here. False = not this case; the caller fails the pass as before.
    */
-  private async releaseUndispatchedPromotion(account: BillingAccount, attempt: BillingAttempt, lease: string): Promise<boolean> {
-    if (attempt.status !== 'CREATING' || attempt.checkoutSessionId || !(attempt.quoteSnapshot as unknown as BillingSnapshot).promotion) return false;
-    const right = await promotionForAttempt(this.prisma.client, attempt.id);
-    if (right?.state !== 'RESERVED' || right.createBy > new Date()) return false;
+  private async releaseUnstartedCheckout(account: BillingAccount, attempt: BillingAttempt, lease: string, quietMs = QUIET_MARGIN_MS): Promise<boolean> {
+    const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
+    if (attempt.checkoutSessionId || snapshot.repeat || !['CREATING', 'REQUESTING', 'UNKNOWN'].includes(attempt.status)) return false;
+    const right = snapshot.promotion ? await promotionForAttempt(this.prisma.client, attempt.id) : null;
+    if (attempt.status === 'CREATING' && right?.state === 'RESERVED' ? right.createBy > new Date() : Date.now() - attempt.updatedAt.getTime() < quietMs) return false;
     await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
-      const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: 'CREATING', checkoutSessionId: null },
+      const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: attempt.status, checkoutSessionId: null, updatedAt: attempt.updatedAt },
         data: { status: 'EXPIRED', errorCode: 'BILLING_CHECKOUT_NOT_STARTED', version: { increment: 1 } } });
       if (changed.count !== 1) throw new Error('billing.one_time_source_changed');
       await tx.billingAccount.updateMany({ where: { id: account.id, activeAttemptId: attempt.id }, data: { activeAttemptId: null, observedAt: new Date(), version: { increment: 1 } } });
-      await releaseUnpaidPromotion(tx, account, attempt, 'checkout_never_started');
-      // The passes before `createBy` could only fail; this one settled what they could not.
+      if (snapshot.eventDiscount?.choice === 'USE') await releaseEventDiscount(tx, attempt.id);
+      if (snapshot.promotion) await releaseUnpaidPromotion(tx, account, attempt, 'checkout_never_started');
+      await tx.auditLog.create({ data: { companyId: account.companyId, actorUserId: attempt.initiatingUserId, action: 'billing.checkout.not_started',
+        targetType: 'BillingAttempt', targetId: attempt.id, requestId: attempt.id, result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: { previousState: attempt.status, errorCode: attempt.errorCode } } });
+      // The attempt is over: its unknown-outcome case and the passes that could only fail are settled with it.
       await tx.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
-        kind: 'RECONCILIATION_FAILED', referenceId: account.id, state: { not: 'RESOLVED' } }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
+        OR: [{ kind: 'UNKNOWN_ATTEMPT', referenceId: attempt.id }, { kind: 'RECONCILIATION_FAILED', referenceId: account.id }], state: { not: 'RESOLVED' } },
+        data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
     });
     return true;
   }
@@ -242,7 +259,7 @@ export class BillingReconcilerService {
     await this.reconcileAccount(account.id, subscriptionId ?? undefined, financialEvent ? object.id : undefined);
   }
 
-  async reconcileAccount(accountId: string, hintedSubscriptionId?: string, financialChargeId?: string, onlyInvoiceId?: string): Promise<void> {
+  async reconcileAccount(accountId: string, hintedSubscriptionId?: string, financialChargeId?: string, onlyInvoiceId?: string, unstartedQuietMs?: number): Promise<void> {
     const now = new Date(), leaseToken = randomUUID();
     let nextReconcileAt: Date | null = null;
     const acquired = await this.prisma.client.billingAccount.updateMany({ where: { id: accountId, stripeAccountId: this.stripe.accountId, livemode: this.stripe.livemode,
@@ -257,8 +274,8 @@ export class BillingReconcilerService {
         // Durable metadata lookup, never recreating a customer after an ambiguous old request.
         const customers = await this.stripe.list('/customers', { created: { gte: Math.floor(attempt.createdAt.getTime() / 1000) - 300 } });
         const matches = customers.filter((c) => c.metadata?.billingAccountId === account.id);
-        // No Customer at the provider means no Checkout either: a promotion right stranded before any request goes back.
-        if (!matches.length && await this.releaseUndispatchedPromotion(account, attempt, leaseToken)) return;
+        // No Customer at the provider means no Checkout either: an attempt stranded there stops holding the shop.
+        if (!matches.length && await this.releaseUnstartedCheckout(account, attempt, leaseToken, unstartedQuietMs)) return;
         if (matches.length !== 1) throw new Error('billing.customer_unknown');
         await this.prisma.client.billingAccount.updateMany({ where: { id: account.id, leaseToken, leaseUntil: { gt: new Date() }, customerId: null }, data: { customerId: matches[0]!.id } });
         account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
@@ -300,7 +317,7 @@ export class BillingReconcilerService {
       if (!account.baseSubscriptionId && hintedSubscriptionId && activeSnapshot?.subscriptionConversion?.subscriptionId === hintedSubscriptionId) return;
       if (attempt && (activeSnapshot?.advanceDeal || ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(activeSnapshot?.quote.purchaseMode ?? '') ||
           prepaidCardAuto(activeSnapshot))) {
-        nextReconcileAt = await this.reconcileOneTime(account, attempt, leaseToken) ?? null;
+        nextReconcileAt = await this.reconcileOneTime(account, attempt, leaseToken, undefined, undefined, undefined, unstartedQuietMs) ?? null;
         return;
       }
       const restart = attempt ? (attempt.quoteSnapshot as unknown as BillingSnapshot).restart : undefined;
@@ -309,6 +326,7 @@ export class BillingReconcilerService {
       if (attempt) {
         const sessions = attempt.checkoutSessionId ? [await this.stripe.request('GET', `/checkout/sessions/${attempt.checkoutSessionId}`)] :
           (await this.stripe.list('/checkout/sessions', { customer: account.customerId })).filter((s) => s.metadata?.billingAttemptId === attempt!.id);
+        if (!sessions.length && await this.releaseUnstartedCheckout(account, attempt, leaseToken, unstartedQuietMs)) return;
         if (sessions.length !== 1) throw new Error('billing.checkout_unknown');
         const session = sessions[0]!;
         if (session.object !== 'checkout.session' || session.mode !== 'subscription' || session.livemode !== account.livemode ||
@@ -538,7 +556,7 @@ export class BillingReconcilerService {
   }
 
   private async reconcileOneTime(account: BillingAccount, attempt: BillingAttempt, lease: string,
-    recordOnly?: (tx: Prisma.TransactionClient) => Promise<void>, originalSession?: StripeObject, originalInvoice?: StripeObject) {
+    recordOnly?: (tx: Prisma.TransactionClient) => Promise<void>, originalSession?: StripeObject, originalInvoice?: StripeObject, unstartedQuietMs?: number) {
     const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
     const mode = snapshot.quote.purchaseMode;
     if (!(snapshot.advanceDeal ? ['CARD_AUTO', 'PROMPTPAY_RENEW'].includes(mode ?? '') :
@@ -549,7 +567,7 @@ export class BillingReconcilerService {
     const sessions = originalSession ? [originalSession] : attempt.checkoutSessionId
       ? [await this.stripe.request('GET', `/checkout/sessions/${attempt.checkoutSessionId}`)]
       : (await this.stripe.list('/checkout/sessions', { customer: account.customerId })).filter(s => s.metadata?.billingAttemptId === attempt.id);
-    if (!sessions.length && !recordOnly && await this.releaseUndispatchedPromotion(account, attempt, lease)) return;
+    if (!sessions.length && !recordOnly && await this.releaseUnstartedCheckout(account, attempt, lease, unstartedQuietMs)) return;
     if (sessions.length !== 1) throw new Error('billing.checkout_unknown');
     const session = sessions[0]!;
     if (session.object !== 'checkout.session' || session.mode !== 'payment' || session.livemode !== account.livemode ||
