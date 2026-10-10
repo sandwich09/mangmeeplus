@@ -22,6 +22,8 @@ non-root denial; both acceptance signatures use existing non-root Production KMS
 Provider webhook active:true, Contact/Social native replies stopped, how-to/package retained.
 Owner confirmed both cards received and actions working; supplemental acceptance signature verified. [Exact IDs, hashes, proof and recovery](../evidence/line-official-oa-isolated-publication-2026-10-04.md).
 
+**No longer true since 2026-10-07:** this separate service and its function were deleted with the cost shutdown of 2026-10-07 and were not restored. Since 2026-10-10 10:07 the Official OA webhook points at the ERP route instead; see "Release 2026-10-10 10:07" below.
+
 
 ## Release 2026-10-09 22:52 — UAT only (superseded for UAT by the sections below)
 
@@ -85,7 +87,7 @@ UAT serves `main` `e1425bf02` since 2026-10-10 04:46 Bangkok: the LINE event-dis
 
 **Find the stops of a rebuilt environment before the owner is at the keyboard.** The Production prepare is read-only, takes four minutes with a warm build cache, and found a stop that the promotion would otherwise have hit with the owner waiting to sign in. When a stop is a tracked setting, rehearse the rest of the prepare with that one value changed in memory before merging, so that one merge and one UAT round carry every fix (the protocol's "inspect the next steps read-only").
 
-## Release 2026-10-10 05:10 — UAT only (current for UAT); Production prepared (promoted in the section below)
+## Release 2026-10-10 05:10 — UAT only (superseded for UAT by the 10:07 section below); Production prepared (promoted in the section below)
 
 UAT serves `main` `e414d3a24` since 2026-10-10 05:10 Bangkok: the production settings without the retired Official OA entry and the phone-width fixes for long names (#1059/#1060; web and settings only, no API change, no migration), on top of the section above. This run is the candidate for Production; its receipt is valid for promotion until 2026-10-11 05:09. Production is NOT touched and still serves `bdb65d8e8`. Local Kamal path; GitHub workflow ids `NOT_DISPATCHED`.
 
@@ -100,7 +102,7 @@ UAT serves `main` `e414d3a24` since 2026-10-10 05:10 Bangkok: the production set
 
 **The promotion waits for the owner twice.** His go of about 04:30 is conditional on the UAT re-test, and the re-test needs two things only he types: his password at the campaign's re-authentication and a shop-owner sign-in. The Production acceptance needs his own sign-in on Production within minutes of website-ready. `main` stays at `e414d3a24` until then.
 
-## Release 2026-10-10 09:41 — Production (current for Production)
+## Release 2026-10-10 09:41 — Production (superseded for Production by the section below)
 
 Production serves `main` source `e414d3a24` since 2026-10-10 09:41 Bangkok, promoted with no rebuild from the signed UAT round of 05:10 above. Before it Production served `bdb65d8e8` (the hotfix of 2026-10-06, restored on 2026-10-09). UAT serves the same source. What it carries: promotion campaigns release 1 with every fix round (#1047, #1053, #1057, #1059; ONE migration `20261009120000_billing_promotion_campaigns`; inert until an Admin publishes a campaign on Production — none exists), the LINE link sign-in fix (#1045), the release tool changes (#1049, #1057) and the production settings without the retired Official OA entry (#1059). GitHub workflow ids (`UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`) are `NOT_DISPATCHED`: local Kamal path. Times are Bangkok.
 
@@ -118,7 +120,23 @@ Production serves `main` source `e414d3a24` since 2026-10-10 09:41 Bangkok, prom
 
 **Found on the UAT re-test, older than this work, NOT fixed by this release: the in-app refund review answers 409 for every invoice paid by PromptPay QR.** `GET …/invoices/<id>/refund-review` returned `CONTROL_REFUND_SOURCE_CHANGED` ("หลักฐานการคืนเงินเปลี่ยนหรือยังไม่ครบ") for all seven QR-paid invoices read on UAT — five promotion purchases and two normal purchases of 2026-09-29 — and 200 for the card-paid ones (with the promotion block where a promotion applies). Likely cause, read from the code and not yet proven against Stripe: `billing-refund-source.ts` accepts only a stored charge id that starts with `ch_`, and `billing-settlement.service.ts` has the same pattern, while Stripe gives a PromptPay payment an id that starts with `py_`. It fails closed: no refund can be created in the app for a QR payment and nothing wrong is paid out. Production runs the same code, so the same is expected there (not read). Until it is fixed, a refund of a QR payment is not possible through the Admin screen, and one made outside the app would bypass the entitlement and promotion-right handling: do not make one without reading the invoice first.
 
-## Release 2026-10-06 00:18 — Production (superseded for Production by the section above)
+## Release 2026-10-10 10:07 — Production and UAT (current for both): the Official OA reply route is back
+
+Production and UAT serve `main` source `9f8ad6924` since 2026-10-10 10:07 and 10:00 Bangkok. The only difference from the section above is `infra/kamal/config.json`: the production entry `LINE_OFFICIAL_REPLY_ENABLED` is back (#1063/#1064; the file is byte-equal to the version before #1059). Since 10:07:51 the LINE Official OA (`@107ewccg`) sends its webhook to the ERP route `https://origin.mangmeeplus.com/v1/line/official/webhook`, and the owner confirmed on his phone that both cards arrive ("กดแล้วผ่าน"). GitHub workflow ids are `NOT_DISPATCHED`: local Kamal path. Times are Bangkok.
+
+| Env | Operation | Source | Result | Seconds |
+|---|---|---|---|---|
+| UAT | `20261010T025416Z-fa22e6af` (prepare, images published) | `9f8ad6924` (#1063 twin = develop `503038b48` via #1064) | PREPARED_NO_DEPLOYMENT 09:57. | 166.7 |
+| UAT | `20261010T025703Z-dbea40f9` (prepared by `fa22e6af`) | `9f8ad6924` | ACCEPTED_LINE_DEFERRED 10:00:40 at the first try, smoke, 12/12 phases, no migration, AgentCore `kamal_uat_b` v6, signature verified. | 217.4 |
+| Production | `20261010T030308Z-7580ebbc` (promotion of UAT `dbea40f9`) | `9f8ad6924` | ACCEPTED_LINE_DEFERRED 10:07:41 at the first try, 12/12 phases, no migration, the two Official OA secrets read and the token checked with LINE before any mutation (`official-oa-readiness.json`: `@107ewccg`), publish-and-pull 17.1 s, rollout 72.2 s, AgentCore `kamal_production_a` v3, receipt signed and verified, 4 SSM sessions closed. Website-ready 10:06:41; ten acceptance checks 10:06:49–10:07:07 with the owner signed in himself; observation file in the run directory. Probes 10:08: health 200, platform-access 200, `/login` 200. | 272.8 |
+
+**Why, and what the 09:41 release got wrong about the Official OA.** #1059 removed the entry because a normal Production release could not read the two deleted Official OA secrets, and the ERP route had not received one request since the restore. Both facts were true, but the conclusion drawn in the owner message — "it affects nobody" — hid the real state: the separate Official OA service that sent the two cards (contact, social) was deleted on 2026-10-07 and never restored, the two native auto-replies it replaced had been switched off on 2026-10-04, so the Official OA's "ติดต่อมั่งมีทีม" and "โซเชียล" buttons had answered nothing for three days. Told that at about 09:50, the owner wrote "เอากลับมาด่วนที่สุด". When a retired dependency is found, say what the customer sees today, not only that the release is unaffected.
+
+**How it was brought back (about 17 minutes from the order to LINE's successful test call; the owner's phone check followed within minutes).** (1) The owner restored the two secrets himself with his own profile after `aws login` (the deploy role is denied `secretsmanager:RestoreSecret` by design and that was not worked around); both were inside the deletion recovery window, with their values intact. (2) The settings entry was put back, one UAT round signed the source, and the promotion read the secrets and checked the token with LINE in its configuration phase. No separate Production prepare was run this time: the promotion validates the same things before any mutation, and the upload had fitted easily that morning. (3) After the release the unsigned probe of the route answered 401 instead of 404. (4) The Official OA webhook was read at LINE (still the deleted service's function URL, active true), set to the ERP route, tested by LINE's own test call (success, 200 OK) and read back. The channel token was read from Secrets Manager under the deploy role into memory only, never printed and never on a command line. (5) The three icons of the social card are served by the Production website (`/assets/line/official-oa-*.png`, 200).
+
+**What the Official OA depends on from now on.** Its two cards are answered by the ERP API, so: the production settings entry `LINE_OFFICIAL_REPLY_ENABLED`, the two secrets `watchdog-bms/production/line-official/channel-secret` and `channel-access-token` (every normal Production release reads them and checks the token), and the webhook address at LINE. Deleting those secrets again stops every normal Production release at `fresh-config-and-image-validation` and, after the next release, the cards. The separate Official OA service of 2026-10-04 (section "Isolated Official OA live service" at the top of this file) no longer exists.
+
+## Release 2026-10-06 00:18 — Production (superseded for Production by the sections above)
 
 Production serves `main` source `67c270d3c` since 2026-10-06 00:18 Bangkok. Before it Production served the hotfix `0c6e888a8` (2026-10-05 13:19), which is an ancestor of this source. UAT serves the same source (round 2k). `main` HEAD was `a97a88fe8` at the promotion: docs only ahead of the source, which the promotion accepts (the signed UAT source must be an ancestor of `origin/main`; the controller files are compared with `origin/main`). GitHub workflow ids (`UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`) are `NOT_DISPATCHED`: local Kamal path, as every release since 2026-09-18.
 
