@@ -11,8 +11,8 @@ import { BillingAdminService } from './billing-admin.service';
 import { BillingConfigurationService } from './billing-configuration.service';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import { assertMappedCharge } from './billing-financial';
-import { assertOriginalInvoiceCharge } from './billing-refund-source';
-import { originalInvoice } from './billing-invoice-details';
+import { assertOriginalInvoiceCharge, nativeId } from './billing-refund-source';
+import { originalInvoice, chargeIdPrefix, refundIdPrefix } from './billing-invoice-details';
 import { settlementPage, settlementPayout, type SettlementMovement, type SettlementPayout } from './billing-settlement-source';
 import { scheduleConfig } from './billing-provider-scans.service';
 
@@ -117,13 +117,13 @@ export class BillingSettlementService{
     }
     if(movement.type!=='charge'&&movement.type!=='refund')return result;
     const sourceId=movement.sourceId;
-    if(!sourceId||!(movement.type==='charge'?/^ch_[A-Za-z0-9_]{1,120}$/:/^re_[A-Za-z0-9_]{1,120}$/).test(sourceId))throw new StripeRequestError('REJECTED','settlement_source_invalid');
+    if(!nativeId(sourceId,movement.type==='charge'?chargeIdPrefix:refundIdPrefix))throw new StripeRequestError('REJECTED','settlement_source_invalid');
     const value=await this.stripe.request('GET',`/${movement.type==='charge'?'charges':'refunds'}/${sourceId}`);
     if(value.id!==sourceId||value.object!==movement.type||(movement.type==='charge'?value.livemode!==this.stripe.livemode:value.livemode!==undefined&&value.livemode!==this.stripe.livemode)||value.currency!==movement.currency||stripeId(value.balance_transaction)!==movement.id||
       !Number.isSafeInteger(value.amount)||value.amount<1||movement.amount!==(movement.type==='charge'?value.amount:-value.amount))throw new StripeRequestError('REJECTED','settlement_source_invalid');
     if(movement.type==='refund'){if(!['pending','requires_action','succeeded','failed','canceled'].includes(value.status))throw new StripeRequestError('REJECTED','settlement_refund_state');result.refundState=value.status;}
     const chargeId=movement.type==='charge'?sourceId:stripeId(value.charge);
-    if(!chargeId||!/^ch_[A-Za-z0-9_]{1,120}$/.test(chargeId))throw new StripeRequestError('REJECTED','settlement_source_invalid');
+    if(!nativeId(chargeId,chargeIdPrefix))throw new StripeRequestError('REJECTED','settlement_source_invalid');
     const matches=await this.prisma.client.$queryRaw<Array<{id:string}>>`SELECT i.id FROM "BillingInvoice" i JOIN "BillingAccount" a ON a.id=i."billingAccountId"
       WHERE i."providerChargeId"=${chargeId} AND a."stripeAccountId"=${this.stripe.accountId} AND a.livemode=${this.stripe.livemode} LIMIT 2`;
     if(matches.length>1)throw new StripeRequestError('REJECTED','settlement_mapping_ambiguous');
