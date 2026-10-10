@@ -240,8 +240,9 @@ const CODE_LABELS: Record<string, string> = {
   CONTROL_PROMOTION_CAP_BELOW_USED: 'ลดจำนวนสิทธิ์ต่ำกว่าที่มีผู้จองหรือใช้ไปแล้วไม่ได้',
   CONTROL_PROMOTION_CATALOG_STALE: 'ราคาหรือโควตาของแพ็กเกจเปลี่ยนแล้ว กรุณาตรวจสอบตัวอย่างและเผยแพร่แคมเปญใหม่',
   CONTROL_PROVIDER_DISABLED: 'ยังไม่ได้ตั้งค่าบัญชีผู้ให้บริการ ติดต่อผู้ดูแลการเชื่อมต่อ',
-  // The 23h-unconfirmed rule of a recipient-email change. Refunds had the same rule until 2026-10-10 (CONTROL_REFUND_AGED_UNKNOWN below, now CONTROL_REFUND_NOT_CREATED).
+  // The former 23h-unconfirmed rule of a recipient-email change. No longer raised by the API (2026-10-10, now CONTROL_RECIPIENT_NOT_CHANGED); kept for requests and audit rows that already carry it.
   CONTROL_RECIPIENT_AGED_UNKNOWN: 'ยังยืนยันผลกับ Stripe ไม่ได้เกิน 23 ชั่วโมง ให้ตรวจที่ Stripe ก่อนทำรายการต่อ',
+  CONTROL_RECIPIENT_NOT_CHANGED: 'ตรวจกับผู้ให้บริการรับชำระเงินแล้ว อีเมลผู้รับเอกสารยังไม่ถูกเปลี่ยนจากคำขอนี้ สร้างคำขอใหม่ได้',
   CONTROL_REFUNDS_CLOSED: 'ยังไม่เปิดรับคำขอคืนเงิน ติดต่อผู้ดูแลการตั้งค่า',
   // No longer raised by the API (2026-10-10); kept for requests and audit rows that already carry it.
   CONTROL_REFUND_AGED_UNKNOWN: 'ยังยืนยันรายการเดิมไม่ได้ ให้เจ้าหน้าที่ตรวจ Stripe ก่อนดำเนินการต่อ',
