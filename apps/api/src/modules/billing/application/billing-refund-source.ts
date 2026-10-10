@@ -34,6 +34,10 @@ async function completeList(stripe:StripeClient,path:string,params:Record<string
   throw refundReviewRequired();
 }
 
+/** How the invoice was paid, from the purchase its own snapshot records: the provider refunds a PromptPay payment differently from a card. */
+export const invoicePaymentMethod=(row:Pick<BillingInvoice,'contractSnapshot'>)=>
+  (row.contractSnapshot as unknown as BillingSnapshot|null)?.quote.purchaseMode?.startsWith('PROMPTPAY')?'promptpay' as const:'card' as const;
+
 /** Verify the native invoice-payment-intent-charge chain shared by refund and settlement reads. */
 export async function assertOriginalInvoiceCharge(stripe:StripeClient,account:BillingAccount,row:BillingInvoice,charge:StripeObject){
   const payments=await completeList(stripe,'/invoice_payments',{invoice:row.providerInvoiceId},'inpay');
@@ -41,8 +45,7 @@ export async function assertOriginalInvoiceCharge(stripe:StripeClient,account:Bi
   if(payment.object!=='invoice_payment'||payment.livemode!==account.livemode||payment.status!=='paid'||stripeId(payment.invoice)!==row.providerInvoiceId||
     payment.payment?.type!=='payment_intent'||!nativeId(intentId,'pi')||payment.amount_paid!==row.paidSatang||payment.currency!=='thb')throw refundReviewRequired();
   const intent=await stripe.request('GET',`/payment_intents/${intentId}`);
-  const purchaseMode=(row.contractSnapshot as unknown as BillingSnapshot|null)?.quote.purchaseMode;
-  const paymentMethod=purchaseMode?.startsWith('PROMPTPAY')?'promptpay':'card';
+  const paymentMethod=invoicePaymentMethod(row);
   if(intent.id!==intentId||intent.object!=='payment_intent'||intent.livemode!==account.livemode||intent.currency!=='thb'||intent.status!=='succeeded'||
     stripeId(intent.customer)!==account.customerId||intent.amount_received!==row.paidSatang||stripeId(intent.latest_charge)!==row.providerChargeId||
     stripeId(charge.payment_intent)!==intent.id||charge.payment_method_details?.type!==paymentMethod)throw refundReviewRequired();

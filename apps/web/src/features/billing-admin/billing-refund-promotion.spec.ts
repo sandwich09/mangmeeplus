@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { REFUND_PROMOTION_RIGHT, refundPromotionLines, type RefundPromotionCase } from './billing-refund-promotion';
+import { REFUND_PROMOTION_RIGHT, refundPaymentMethodLines, refundPromotionLines, type RefundPromotionCase } from './billing-refund-promotion';
 
 const promotion = { displayName: 'ซื้อ 1 แถม 1', bonusMonths: 1, bonusReceiptUnits: 30, benefitEnd: '2026-12-05T10:00:00.000Z' };
 const at = (over: Partial<RefundPromotionCase>): RefundPromotionCase => ({ paidSatang: 24_900, refundedSatang: 0, amountSatang: 10_000, endPackage: false, ...over });
@@ -34,5 +34,19 @@ describe('refund of a promotion purchase (spec Q6, plan R14 / R17)', () => {
 
   it('a right used but never applied has no end date to show', () => {
     assert.equal(refundPromotionLines({ ...promotion, displayName: '', benefitEnd: null }, at({}))[0], 'ซื้อด้วยโปรโมชั่น · แถมฟรี 1 เดือน · ใบเสร็จแถม 30 ใบ · ยังไม่ได้เปิดสิทธิ์ที่แถม');
+  });
+});
+
+describe('refund note by payment method (UAT 2026-10-10: the provider e-mails the customer of a PromptPay payment for bank details)', () => {
+  it('a card payment, or an invoice whose method is not known, says nothing', () => {
+    for (const method of ['card', null, undefined] as const) assert.deepEqual(refundPaymentMethodLines(method), []);
+  });
+  it('a PromptPay payment says who is e-mailed, when the money goes back, and what to check first', () => {
+    const lines = refundPaymentMethodLines('promptpay');
+    assert.deepEqual(lines, [
+      'รายการนี้จ่ายด้วยพร้อมเพย์ QR ผู้ให้บริการรับชำระเงินจะส่งอีเมลให้ลูกค้ากรอกบัญชีรับเงินคืน เงินจะคืนเมื่อลูกค้ากรอกเสร็จ ไม่ได้คืนทันทีเหมือนบัตร',
+      'ก่อนส่งคำขอ ตรวจว่าอีเมลของร้านถูกต้องและลูกค้าเปิดอ่านได้ ระหว่างรอลูกค้า คำขอนี้จะอยู่ในสถานะรอผล',
+    ]);
+    assert.doesNotMatch(lines.join(' '), /[A-Z]{2,}_|undefined|null|promptpay/, 'no codes on screen');
   });
 });
