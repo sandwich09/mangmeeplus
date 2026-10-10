@@ -5,7 +5,7 @@ import type { BillingAccount, BillingAttempt, Prisma } from '../../../generated/
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import type { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
-import { StripeClient, stripeId, safeStripeUrl, type StripeObject } from '../infrastructure/stripe.client';
+import { StripeClient, StripeRequestError, stripeId, safeStripeUrl, type StripeObject } from '../infrastructure/stripe.client';
 import { assertCompanyCanBuy, assertStripePrice, billingError, hashBilling, quoteTotals } from '../domain/billing-policy';
 import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence, type PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
@@ -25,12 +25,16 @@ import { readRecipientCapture, recordRecipientCapture, type RecipientCapture } f
 export type RepeatSource = { subscriptionId: string; paidThrough: string; productId: string; zeroPriceId: string;
   sourceInterval?: BillingOffer['interval'];
   currentPriceId: string; currentPeriodStart: number; sourcePriceId: string; sourceTaxRateId: string | null; currentTaxRateId?: string | null; sourceTotal: number; anchorDay: number; billingCycleAnchor?: number; scheduleId: string | null };
-type Journal = { commands: Record<string, { at: string; hash: string }>; beforeInvoiceIds?: string[]; heldAt?: number;
+type Journal = { commands: Record<string, { at: string; hash: string; gen?: number; refused?: boolean }>; beforeInvoiceIds?: string[]; heldAt?: number;
   profileSynced?: boolean;
   zeroInvoiceIds?: string[];
   checkoutExpiresAt?: number; scheduleId?: string; phaseStart?: number; paidThrough?: string; serviceStart?: string;
   completed?: boolean; aborted?: boolean; abortRequested?: boolean };
 const json = (value: unknown) => value as Prisma.InputJsonValue;
+// 2026-10-10 (R-B, P-2, P-3): a command is re-sent under its key for one hour; nothing sent can still be in flight ten minutes later.
+const RESEND_WINDOW_MS = 3_600_000, QUIET_MARGIN_MS = 600_000;
+// Sent once to open the purchase; past their hour the attempt ends (nothing paid) instead of sending them again.
+const OPENING_STEPS = ['hold', 'billingEmail', 'billingProfile', 'checkout'];
 const review = () => billingError('BILLING_REPEAT_REVIEW', 'รายการซื้อซ้ำต้องตรวจสอบ กรุณาตรวจสถานะเดิมหรือติดต่อทีมงานพร้อมเลขอ้างอิง');
 
 /** Durable full-package purchase against the existing subscription. No receipt-only offer. */
@@ -196,11 +200,17 @@ export class BillingRepeat {
       await this.fence(tx, account, attempt, lease);
       await tx.billingAttempt.update({ where: { id: attempt.id }, data: { ...data, collectionJson: json(journal), version: { increment: 1 } } });
     });
-    // Persist exact command identity before I/O; never retry an aged ambiguous financial mutation.
+    // Persist exact command identity before I/O. Every caller has just read the provider in this pass and found the step not done.
+    // An opening step is never sent again past its hour. Any other step (the abort's and the after-payment ones) keeps its key for
+    // one hour (P-2); from one hour ten, a new generation under a new key (P-3), journalled before the send — a provider that
+    // stored a 5xx for a key replays it for the key's life, so the old key cannot succeed. A refusal (P-4) starts no generation.
     const command = async (step: string, path: string, params: Record<string, unknown>) => {
-      const hash = hashBilling([path, params]), old = journal.commands[step];
-      if (old && (old.hash !== hash || Date.now() - Date.parse(old.at) > 23 * 3600000)) throw review();
-      if (!old && ['hold', 'billingEmail', 'billingProfile', 'checkout'].includes(step) && !journal.commands.checkout) {
+      const hash = hashBilling([path, params]), old = journal.commands[step], age = old ? Date.now() - Date.parse(old.at) : 0;
+      if (old && (old.hash !== hash || !Number.isFinite(age))) throw review();
+      const next = !!old && age >= RESEND_WINDOW_MS;
+      if (next && (OPENING_STEPS.includes(step) || old.refused || age < RESEND_WINDOW_MS + QUIET_MARGIN_MS)) throw review();
+      const gen = (old?.gen ?? 0) + (next ? 1 : 0);
+      if (!old && OPENING_STEPS.includes(step) && !journal.commands.checkout) {
         await this.prisma.client.$transaction(async tx => {
           const current = await this.fence(tx, account, attempt, lease);
           await this.billing.assertOwner({ companyId: account.companyId, userId: attempt.initiatingUserId } as RequestContext, tx);
@@ -211,8 +221,18 @@ export class BillingRepeat {
           journal.commands[step] = { at: new Date().toISOString(), hash };
           await tx.billingAttempt.update({ where: { id: attempt.id }, data: { collectionJson: json(journal), version: { increment: 1 } } });
         });
-      } else { journal.commands[step] ??= { at: new Date().toISOString(), hash }; await save(); }
-      return this.stripe.request('POST', path, params, `mm:${attempt.id}:${step}`);
+      } else {
+        if (!old || next) journal.commands[step] = { at: new Date().toISOString(), hash, ...(gen ? { gen } : {}) };
+        // A marker is kept only when stored: a failed write leaves the journal as the last pass saw it, and nothing is sent.
+        try { await save(); } catch (error) { if (old) journal.commands[step] = old; else delete journal.commands[step]; throw error; }
+      }
+      try { return await this.stripe.request('POST', path, params, `mm:${attempt.id}:${step}${gen ? `:g${gen}` : ''}`); }
+      catch (error) {
+        // P-4: the provider refused the step itself (not a rate limit, not an idempotency conflict). The catch below stores it.
+        if (error instanceof StripeRequestError && error.outcome === 'REJECTED' && error.status && error.status !== 409 &&
+            error.providerType !== 'idempotency_error') journal.commands[step]!.refused = true;
+        throw error;
+      }
     };
     const authorizeSale = async () => this.prisma.client.$transaction(async tx => {
       await this.fence(tx, account, attempt, lease); await this.sourceFence(tx, account, attempt, snapshot);
@@ -237,9 +257,15 @@ export class BillingRepeat {
       await this.stripe.assertAccount();
       // Settle a timed-out profile command before releasing the old purchase barrier.
       if (journal.commands.billingProfile && !journal.profileSynced) {
-        const customer = await command('billingProfile', `/customers/${account.customerId}`, stripeCustomerSyncPayload(snapshot));
-        if (customer.id !== account.customerId || customer.metadata?.billingAccountId !== account.id || !stripeCustomerSynced(customer, snapshot)) throw review();
-        journal.profileSynced = true; await save();
+        // 2026-10-10 (R-B): re-sent under its key for one hour, then only read. From one hour ten nothing sent can still land,
+        // and no Checkout was ever requested after an unsettled profile write, so nothing is paid: the attempt ends below.
+        const age = Date.now() - Date.parse(journal.commands.billingProfile.at);
+        const customer = age < RESEND_WINDOW_MS ? await command('billingProfile', `/customers/${account.customerId}`, stripeCustomerSyncPayload(snapshot)) :
+          await this.stripe.request('GET', `/customers/${account.customerId}`);
+        if (customer.id !== account.customerId || customer.metadata?.billingAccountId !== account.id) throw review();
+        if (stripeCustomerSynced(customer, snapshot)) { journal.profileSynced = true; await save(); }
+        else if (journal.commands.checkout || !(age >= RESEND_WINDOW_MS + QUIET_MARGIN_MS)) throw review();
+        else journal.abortRequested = true;
       }
       if (journal.abortRequested) return await abort('FAILED');
       let sub = await this.stripe.request('GET', `/subscriptions/${source.subscriptionId}`);
@@ -265,6 +291,17 @@ export class BillingRepeat {
         (await this.stripe.list('/checkout/sessions', { customer: account.customerId })).filter(s => s.metadata?.billingAttemptId === attempt.id);
       if (sessions.length > 1) throw review();
       if (!sessions.length) {
+        // 2026-10-10 (R-B): the Checkout request keeps its key for one hour; then a pass only reads. From one hour ten, when the
+        // customer's complete session list and invoice list of this pass hold nothing of this attempt, nothing is paid and nothing
+        // can be: a session is the only way to pay, the request cannot create one any more (its `expires_at` is half an hour after
+        // the first send), and one created late would have expired unpaid. The attempt ends and the subscription is un-paused.
+        const sentAge = journal.commands.checkout ? Date.now() - Date.parse(journal.commands.checkout.at) : 0;
+        if (sentAge >= RESEND_WINDOW_MS) {
+          if (sentAge < RESEND_WINDOW_MS + QUIET_MARGIN_MS ||
+            (await this.stripe.list('/invoices', { customer: account.customerId })).some(i => i.metadata?.billingAttemptId === attempt.id)) throw review();
+          journal.abortRequested = true; await save();
+          return await abort('FAILED');
+        }
         // Before a first request, validate that no renewal invoice raced the collection hold.
         if (!journal.commands.checkout) {
           await this.assertOriginalCollection(await this.stripe.request('GET', `/subscriptions/${source.subscriptionId}`), account, source, snapshot.quote.offer.interval);
@@ -315,6 +352,8 @@ export class BillingRepeat {
       if (evidence.disputed || evidence.refundedSatang || evidence.paidAt > new Date() || (snapshot.upgrade &&
         (evidence.paidAt < new Date(snapshot.upgrade.prorationAt) || evidence.paidAt.getTime() >= Date.parse(snapshot.upgrade.segments[0]!.end)))) throw review();
       await this.prisma.client.$transaction(async tx => { await this.fence(tx, account, attempt, lease); await this.sourceFence(tx, account, attempt, snapshot); });
+      // P-5: a refund of this payment stops the repair; refunded money on the charge already stopped it above.
+      if (await this.refundRequested(account, attempt)) throw review();
       sub = await this.stripe.request('GET', `/subscriptions/${source.subscriptionId}`); this.assertSubscription(sub, account);
       let scheduleId = journal.scheduleId ?? stripeId(sub.schedule);
       if (!scheduleId) {
@@ -373,6 +412,14 @@ export class BillingRepeat {
       await this.billing.issue(account.companyId, 'REPEAT_RECOVERY', attempt.id);
       return { attemptId: attempt.id, state: 'UNKNOWN', checkoutUrl: null };
     }
+  }
+
+  /** P-5: a refund request for this attempt's invoice in any state except cancelled, never confirmed, or ended with no money moved. */
+  private async refundRequested(account: BillingAccount, attempt: BillingAttempt): Promise<boolean> {
+    const invoice = await this.prisma.client.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id }, select: { id: true } });
+    return !!invoice && await this.prisma.client.billingOperation.count({ where: { type: 'REFUND', referenceId: invoice.id, companyId: account.companyId,
+      stripeAccountId: account.stripeAccountId, livemode: account.livemode, state: { notIn: ['PREVIEW', 'CANCELLED'] },
+      NOT: { state: 'FAILED', errorCode: { in: ['CONTROL_REFUND_PROVIDER_REJECTED', 'CONTROL_REFUND_NOT_CREATED'] } } } }) > 0;
   }
 
   private async restoreHeldInvoices(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot, journal: Journal,
