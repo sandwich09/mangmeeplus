@@ -230,6 +230,10 @@ Open before a campaign is opened to real customers:
 3. Repeat on a live card subscription and a promotion on a scheduled change (refused today, R10).
 4. Automatic entitlement adjustment for a fully refunded promotion source that has not started, is held or was replaced, and for dispute outcomes (staff today; the report shows PENDING / REVIEW).
 5. `billing-grace.pg.spec.ts` is registered in no test runner; it was run by hand for this work.
+6. The UAT re-test of the fixes from the walk — done 2026-10-10 on source `e414d3a24` (see "UAT re-test" below); the release was promoted to Production the same morning. Still unproven by a real turn: the LINE event-discount sentence for a QR-bill shop.
+7. `e2e/billing-promotion.spec.ts` ran for real on 2026-10-10 (259 tests with the three older billing specs, 0 failed): the simulated-API screens at 390 px and 1280 px. It found FXE-D14, fixed in #1059: a long unbroken campaign name stretched the chooser and the plan cards past a phone screen.
+8. A shop whose renewal is switched off is still told that it renews, on the web event-discount note and in the LINE reply (older text, not from this work).
+9. The in-app refund review cannot open for an invoice paid by PromptPay QR (409 `CONTROL_REFUND_SOURCE_CHANGED`; older than this work; likely the `ch_`-only charge id check against Stripe's `py_` ids). A promotion purchase paid by QR therefore cannot be refunded in the app until it is fixed; the refund rules for a QR purchase (a partial refund keeps everything; a cumulative-full refund ends the unused entitlement and the right stays used) are unproven on UAT.
 
 ### UAT walk, 2026-10-09 23:00 – 2026-10-10 00:06 (Stripe test mode, source `7cb86fa0e`)
 
@@ -251,3 +255,26 @@ One TEST campaign from the Starter template ("ซื้อ Starter แถม 1 �
 | Pause, end | — | PAUSED with "resume" offered; ENDED, history kept |
 
 Defects found on the walk (none in the money path) and fixed in the follow-up change: an amber alert with a support reference after a promotion purchase in the two renewing modes; a chooser sentence untrue for packages without the promotion; the shell banner on the return address during an unfinished payment; the event-discount note calling a QR-bill shop "auto-charged"; the cancel notice shown together with the old pending block for a few seconds; the Admin refund review silent about the promotion; the Admin campaign page saying shops can use a right while the cap is full.
+
+### UAT re-test, 2026-10-10 07:04–07:25 and 09:30–09:45 (Stripe test mode, source `e414d3a24`)
+
+A second TEST campaign ("ซื้อ Starter แถม 1 เดือน (รอบทดสอบ 2)", cap 2, one week). The owner typed his password at the re-authentication and signed in (shop owner, then System Admin); the agent did the rest. PromptPay sandbox payments need no card.
+
+| Case | Result read from the screens and the API |
+|---|---|
+| After a promotion purchase, renewing modes (auto-renew card; QR bill monthly; QR bill annual) | no amber alert; a quiet line says when the package can be changed |
+| Event-discount note per renewal mode | QR-bill shop: the QR-bill sentence; card shop: the card sentence; pay-once chooser: "ลดเฉพาะการจ่ายครั้งนี้" |
+| Chooser sentence | "ใช้ได้ครั้งละ 1 อย่างต่อการซื้อ โปรโมชั่นใช้ได้เฉพาะแพ็กเกจที่แสดงโปรโมชั่น แพ็กเกจอื่นซื้อตามที่แสดงไว้ที่แพ็กเกจนั้น" |
+| Return address with an unfinished payment | shell banner shows its first clause only; block with three ordered choices; the reserved right is named |
+| Cancel before paying | the old block stays until the read, then the chooser with the notice; never both; the right is offered again; the report counts 1 cancelled |
+| QR bill every period, monthly (expired shop) | 249 THB; Starter for 2 months; 60 receipts; right CONSUMED; next QR bill at the end of the free month |
+| QR pay-once, ANNUAL (shop with no package; not walked before) | 2,490 THB; 13 months; 390 receipts; no next charge |
+| Cap 2 of 2 | every other shop reads `CAP_FULL`; the card says "สิทธิ์โปรโมชั่นครบจำนวนแล้ว" and keeps the normal purchase and the event discount |
+| Admin campaign page at the cap | "สิทธิ์ครบจำนวนแล้ว (2 จาก 2) ร้านที่ยังไม่ได้จองสิทธิ์เลือกใช้โปรโมชั่นนี้ไม่ได้ ส่วนการซื้อแพ็กเกจแบบปกติเป็นไปตามเดิม" |
+| Admin report | used 2, still active 2, cancelled before payment 1, free months 2, bonus receipts 60, received 2,739 THB |
+| Refund review, card-paid promotion invoices | 200 with the promotion block |
+| Refund review, QR-paid invoices | 409 `CONTROL_REFUND_SOURCE_CHANGED` for every one, promotion or not (two normal purchases of 2026-09-29 included): an older defect of the refund path, recorded in `docs/runbooks/cloud-environment-operations.md`, "Release 2026-10-10 09:41"; open item 9 |
+| A shop owner opening the Admin campaign page | "ไม่มีสิทธิ์เข้าถึง" |
+
+Seen on the way, older and not from this work: a shop whose card charge failed (subscription cancelled, in grace) shows the amber "การซื้อซ้ำหรือเปลี่ยนแพ็กเกจระหว่างรอบยังไม่เปิดให้บริการ" and the "auto-charged" event-discount sentence (open item 8); the review step says "ชำระสำเร็จแล้ว ใช้งานได้ 2 เดือน" before paying, which reads as "once paid" but could be clearer.
+
