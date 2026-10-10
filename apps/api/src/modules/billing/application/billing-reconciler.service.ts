@@ -20,7 +20,7 @@ import { stripeCustomerSyncPayload, stripeCustomerSynced } from './billing-compa
 import { readRecipientCapture, recordRecipientCapture, type RecipientCapture } from './billing-recipient-capture';
 import { restartFits, restartSource } from './billing-restart';
 import { observeBillingCharges, recordBillingFinancials } from './billing-financial';
-import { refundStopsBinding } from './billing-refund-source';
+import { advanceDealAtBoundary, refundStopsBinding } from './billing-refund-source';
 import { grantPaidPackageReceipts, grantPromotionPackageReceipts } from './billing-receipt-grants';
 import { grantTrialReceiptCarryover } from './billing-trial-carryover';
 import { appendPackageInterval, fullPackagePurchaseImpact, invoiceServiceEnd, promotionBoundaries } from '../domain/billing-package';
@@ -928,7 +928,7 @@ export class BillingReconcilerService {
     if (result.subscriptionId && subscription?.id !== result.subscriptionId)
       throw new Error('billing.advance_deal_subscription_changed');
     if (!subscription) {
-      if (firstCycleEndsAt.getTime() <= Date.now() + 3600000) throw new Error('billing.advance_deal_renewal_boundary');
+      if (advanceDealAtBoundary(snapshot)) throw new Error('billing.advance_deal_renewal_boundary');
       const created = await this.createBindingSubscription(account, attempt, lease, 'advanceSubscription', `mm:${attempt.id}:advance-renewal`, {
         customer: account.customerId, collection_method: card ? 'charge_automatically' : 'send_invoice',
         ...(card ? { default_payment_method: paymentMethodId,
@@ -1247,11 +1247,16 @@ export class BillingReconcilerService {
     lease: string, paidThrough: Date, intent: StripeObject) {
     const card = snapshot.quote.purchaseMode === 'CARD_AUTO';
     const current = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+    // 2026-10-10: the provider refused this renewal and staff refunded the purchase in full — the purchase is settled, there is
+    // nothing left to bind. (The refund may have ended the package, so `paidThrough` is no longer the period this pass computed.)
+    const bill = await this.prisma.client.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id } });
+    const settled = !!((await this.prisma.client.billingAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).collectionJson as Record<string, unknown> | null)?.qrSubscriptionRefused &&
+      !!bill && bill.paidSatang > 0 && bill.refundedSatang >= bill.paidSatang;
     if (current.activeAttemptId !== attempt.id || current.renewalMode !== (card ? 'CARD_AUTO' : 'PROMPTPAY_RENEW') ||
-        current.paidThrough?.getTime() !== paidThrough.getTime() || current.baseSubscriptionId)
+        (!settled && current.paidThrough?.getTime() !== paidThrough.getTime()) || current.baseSubscriptionId)
       throw new Error('billing.promptpay_renewal_source_changed');
     const paymentMethodId = card ? stripeId(intent.payment_method) : null;
-    if (card) {
+    if (card && !settled) {
       const method = paymentMethodId ? await this.stripe.request('GET', `/payment_methods/${paymentMethodId}`) : null;
       if (intent.setup_future_usage !== 'off_session' || !method || method.object !== 'payment_method' ||
           method.type !== 'card' || stripeId(method.customer) !== account.customerId) throw new Error('billing.card_renewal_card_not_saved');
@@ -1263,6 +1268,7 @@ export class BillingReconcilerService {
       throw new Error('billing.promptpay_renewal_duplicate');
     let sub = existing[0];
     if (!sub) {
+      if (settled && await this.endUnboundRenewal(account, attempt, lease, null)) return;
       if (paidThrough.getTime() <= Date.now() + 3600000) {
         if (!await this.endUnboundRenewal(account, attempt, lease, paidThrough)) throw new Error('billing.promptpay_renewal_boundary');
         return;
@@ -1326,8 +1332,11 @@ export class BillingReconcilerService {
    * or the provider refused — the binding is over: the paid period was delivered in full, so the account becomes what it now
    * is, a paid period with no renewal (the one-time mode of the same payment method), and the slot is released; the shop buys
    * again like any shop whose package ends. Nothing is sent to the provider and the review case stays. False = keep waiting.
+   * `paidThrough` null = the other ending: the provider refused the renewal and staff refunded the purchase in full (the caller
+   * checked both). The purchase is settled, so the pass's review case is resolved here; the package itself ends only by the
+   * refund's own end-package rule.
    */
-  private async endUnboundRenewal(account: BillingAccount, attempt: BillingAttempt, lease: string, paidThrough: Date): Promise<boolean> {
+  private async endUnboundRenewal(account: BillingAccount, attempt: BillingAttempt, lease: string, paidThrough: Date | null): Promise<boolean> {
     const journal = ((await this.prisma.client.billingAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).collectionJson ?? null) as Record<string, unknown> | null;
     const at = journal?.qrSubscriptionRequestedAt, requestedAt = typeof at === 'string' ? Date.parse(at) : null;
     if (at != null && !Number.isSafeInteger(requestedAt)) return false;
@@ -1339,13 +1348,15 @@ export class BillingReconcilerService {
       // Guarded on the journal just read: a send journalled meanwhile keeps the binding alive.
       const stored = await tx.billingAttempt.updateMany({ where: { id: attempt.id, collectionJson: journal ? { equals: journal as Prisma.InputJsonValue } : { equals: Prisma.AnyNull } },
         data: { collectionJson: { ...journal, qrSubscriptionEndedAt: new Date().toISOString() } as Prisma.InputJsonValue, version: { increment: 1 } } });
-      if (current.activeAttemptId !== attempt.id || current.baseSubscriptionId || current.paidThrough?.getTime() !== paidThrough.getTime() || !renewalMode || stored.count !== 1)
+      if (current.activeAttemptId !== attempt.id || current.baseSubscriptionId || (paidThrough && current.paidThrough?.getTime() !== paidThrough.getTime()) || !renewalMode || stored.count !== 1)
         throw new Error('billing.promptpay_renewal_source_changed');
       await tx.billingAccount.update({ where: { id: account.id }, data: { activeAttemptId: null, renewalMode, nextChargeAt: null, observedAt: new Date(), version: { increment: 1 } } });
       await tx.auditLog.create({ data: { companyId: account.companyId, actorUserId: attempt.initiatingUserId, action: 'billing.renewal_binding.ended',
         targetType: 'BillingAttempt', targetId: attempt.id, requestId: attempt.id, result: 'SUCCESS', riskLevel: 'HIGH',
-        metadataJson: { reason: 'renewal_boundary', previousRenewalMode: current.renewalMode, renewalMode, paidThrough: paidThrough.toISOString(),
+        metadataJson: { reason: paidThrough ? 'renewal_boundary' : 'refunded_in_full', previousRenewalMode: current.renewalMode, renewalMode, paidThrough: current.paidThrough?.toISOString() ?? null,
           generation: (journal?.qrSubscriptionGeneration ?? (requestedAt === null ? 0 : 1)) as number, refused: !!journal?.qrSubscriptionRefused } } });
+      if (!paidThrough) await tx.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
+        kind: 'RECONCILIATION_FAILED', referenceId: account.id, state: { not: 'RESOLVED' } }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
     });
     return true;
   }

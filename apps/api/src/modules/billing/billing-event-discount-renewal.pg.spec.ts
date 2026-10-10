@@ -8,6 +8,9 @@ import { BillingService } from './application/billing.service';
 import { BillingReconcilerService } from './application/billing-reconciler.service';
 import { BillingCollection } from './application/billing-collection';
 import { StripeRequestError } from './infrastructure/stripe.client';
+import { endPaidPackage } from './application/billing-end-package';
+import { unrepairableBinding } from './application/billing-refund-source';
+import { detectBillingIssue } from './application/billing-issues';
 
 const databaseUrl = process.env.BILLING_EVENT_DISCOUNT_RENEWAL_TEST_DATABASE_URL;
 const address = { line1: '99 ถนนทดสอบ', subdistrict: 'คลองเตย', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' };
@@ -414,6 +417,56 @@ test('PROMPTPAY_RENEW paid, never bound, the period reaches its end: the slot is
     assert.equal(again.totalSatang, 49900);
   } finally {
     t.mock.timers.reset();
+    await f.cleanup(); await client.$disconnect();
+  }
+});
+
+/**
+ * Owner 2026-10-10, option "ค", second half: the provider refused the renewal, so the system cannot repair it. Staff refund the
+ * purchase; a partial refund releases nothing, the full refund ends the package by its own rule and the next pass settles
+ * the purchase: slot free, the review case resolved, and the shop buys again.
+ */
+test('PROMPTPAY_RENEW paid, renewal refused, refunded in full: the package ends by the refund rule, the next pass releases the shop, a new quote is accepted', { skip: !databaseUrl }, async () => {
+  const client = connect(), f = await fixture(client, [{ name: 'งานคืนเงิน', discountSatang: 10000 }]);
+  const lifecycle = { execute: async (cmd: { companyId: string; targetStatus: string }, tx: any) => tx.company.update({ where: { id: cmd.companyId }, data: { status: cmd.targetStatus } }) };
+  try {
+    const quoted = await f.quote('PROMPTPAY_RENEW'), opened = await f.checkout(quoted.quoteId, quoted.consentRevision);
+    const paid = await f.pay(opened.attemptId, 39900, 'promptpay');
+    f.stripeState.subscriptionError = new StripeRequestError('REJECTED', 'request_rejected', 60, 'resource_missing', 'invalid_request_error', 400);
+    await assert.rejects(f.reconcileOneTime(paid), /stripe\.request_rejected/);
+    f.stripeState.subscriptionError = null;
+    const invoice = await client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: opened.attemptId } });
+    const issue = { companyId: f.companyId, stripeAccountId: f.account.stripeAccountId, livemode: false, kind: 'RECONCILIATION_FAILED' as const, referenceId: f.account.id };
+    await client.$transaction(tx => detectBillingIssue(tx, issue)); // what the scan opens when the pass fails
+    const binding = await unrepairableBinding(client as any, await f.current(), invoice);
+    assert.equal(binding?.kind, 'RENEWAL', 'the refund of this purchase is allowed although it holds the slot');
+    const end = (requireFullRefund = true) => client.$transaction(tx => endPaidPackage(tx, lifecycle as never, { companyId: f.companyId, accountId: f.account.id, invoiceId: invoice.id,
+      requireFullRefund, actorUserId: null, requestId: `end-${f.run}`, reason: 'refunded' }));
+    /** The provider's charge after a refund, and the invoice row as the refund's own observation records it. */
+    const refunded = async (satang: number) => { f.stripeState.paid.intent.latest_charge.amount_refunded = satang;
+      await client.billingInvoice.update({ where: { id: invoice.id }, data: { refundedSatang: satang } }); };
+
+    // A partial refund releases nothing and cannot end the package.
+    await refunded(10000);
+    assert.equal(await end(), 'BILLING_END_PACKAGE_NOT_REFUNDED');
+    await assert.rejects(f.reconcileOneTime(paid), /billing\.subscription_binding_refused/);
+    assert.equal((await f.current()).activeAttemptId, opened.attemptId);
+
+    // The full refund: the package ends through the refund's existing rule, then the pass settles the purchase.
+    await refunded(39900);
+    assert.equal(await end(), null, 'no renewal exists to cancel first, and this purchase is not a pending one to wait for');
+    await f.reconcileOneTime(paid);
+    const account = await f.current();
+    assert.deepEqual([account.activeAttemptId, account.renewalMode, account.baseSubscriptionId, account.contractAttemptId], [null, 'PROMPTPAY_ONCE', null, opened.attemptId]);
+    assert.equal(f.calls.filter(call => call.method === 'POST' && call.path === '/subscriptions').length, 1, 'nothing is sent to the provider');
+    const audit = await client.auditLog.findFirstOrThrow({ where: { companyId: f.companyId, action: 'billing.renewal_binding.ended', targetId: opened.attemptId } });
+    assert.equal((audit.metadataJson as any).reason, 'refunded_in_full');
+    assert.equal((await client.billingIssue.findFirstOrThrow({ where: { companyId: f.companyId, kind: 'RECONCILIATION_FAILED', referenceId: f.account.id } })).state, 'RESOLVED');
+    assert.equal(await unrepairableBinding(client as any, account, invoice), null);
+    const status = await BillingService.prototype.status.call(f.service, f.context);
+    assert.deepEqual([status.purchaseSource, status.renewalMode, status.purchaseBlockCode ?? null], ['PAID_EXPIRED_CURRENT_MODE', 'PROMPTPAY_ONCE', null]);
+    assert.equal((await f.quote('PROMPTPAY_RENEW')).totalSatang, 49900, 'the shop buys again');
+  } finally {
     await f.cleanup(); await client.$disconnect();
   }
 });

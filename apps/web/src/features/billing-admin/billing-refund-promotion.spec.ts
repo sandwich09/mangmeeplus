@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { REFUND_PROMOTION_RIGHT, refundPaymentMethodLines, refundPromotionLines, type RefundPromotionCase } from './billing-refund-promotion';
+import { REFUND_PROMOTION_RIGHT, refundBindingLines, refundPaymentMethodLines, refundPromotionLines, type RefundPromotionCase } from './billing-refund-promotion';
 
 const promotion = { displayName: 'ซื้อ 1 แถม 1', bonusMonths: 1, bonusReceiptUnits: 30, benefitEnd: '2026-12-05T10:00:00.000Z' };
 const at = (over: Partial<RefundPromotionCase>): RefundPromotionCase => ({ paidSatang: 24_900, refundedSatang: 0, amountSatang: 10_000, endPackage: false, ...over });
@@ -48,5 +48,22 @@ describe('refund note by payment method (UAT 2026-10-10: the provider e-mails th
       'แจ้งลูกค้าให้รอรับอีเมลนั้นและกรอกบัญชีให้เสร็จ ระหว่างรอลูกค้า คำขอนี้จะอยู่ในสถานะรอผล',
     ]);
     assert.doesNotMatch(lines.join(' '), /[A-Z]{2,}_|undefined|null|promptpay/, 'no codes on screen');
+  });
+});
+
+describe('refund of a purchase that still holds the shop and whose next round the system cannot set up (2026-10-10)', () => {
+  const ALLOWED = 'การตั้งรอบถัดไปของการซื้อนี้ไม่สำเร็จและระบบแก้เองไม่ได้ คืนเงินเต็มจำนวนเพื่อปิดรายการและปลดล็อกร้าน';
+  const PARTIAL_HOLD = 'คืนเงินบางส่วนไม่ปลดล็อกร้าน ร้านจะซื้อหรือเปลี่ยนแพ็กเกจไม่ได้จนกว่าจะคืนเต็มจำนวน หรือจนครบรอบที่จ่ายไว้';
+  it('any other refund says nothing', () => {
+    for (const none of [null, undefined]) assert.deepEqual(refundBindingLines(none, at({})), []);
+  });
+  it('QR bills or a prepaid card: the full amount releases the shop, a smaller one is said not to', () => {
+    assert.deepEqual(refundBindingLines('RENEWAL', at({ amountSatang: Number.NaN })), [ALLOWED], 'nothing typed yet');
+    assert.deepEqual(refundBindingLines('RENEWAL', at({ amountSatang: 10_000 })), [ALLOWED, PARTIAL_HOLD]);
+    assert.deepEqual(refundBindingLines('RENEWAL', at({ amountSatang: 24_900 })), [ALLOWED]);
+    assert.deepEqual(refundBindingLines('RENEWAL', at({ refundedSatang: 14_900, amountSatang: 10_000 })), [ALLOWED], 'cumulative with earlier refunds');
+  });
+  it('an advance deal is cancelled by any refund seen on it, so the partial line is never shown', () => {
+    assert.deepEqual(refundBindingLines('ADVANCE_DEAL', at({ amountSatang: 10_000 })), [ALLOWED]);
   });
 });
