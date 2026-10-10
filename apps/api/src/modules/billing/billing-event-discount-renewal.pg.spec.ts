@@ -11,6 +11,7 @@ import { StripeRequestError } from './infrastructure/stripe.client';
 import { endPaidPackage } from './application/billing-end-package';
 import { unrepairableBinding } from './application/billing-refund-source';
 import { detectBillingIssue } from './application/billing-issues';
+import { BillingRefundsService } from './application/billing-refunds.service';
 
 const databaseUrl = process.env.BILLING_EVENT_DISCOUNT_RENEWAL_TEST_DATABASE_URL;
 const address = { line1: '99 ถนนทดสอบ', subdistrict: 'คลองเตย', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' };
@@ -27,11 +28,14 @@ async function fixture(client: PrismaClient, events: { name: string; discountSat
   const customerId = `cus_${run}`, state = { policy, revision: { id: 'synthetic-revision' }, settings: { version: 1 }, gates: Object.fromEntries(BILLING_ACTIONS.map(action => [action, true])) };
   const customers = new Map<string, Record<string, unknown>>(), sessions: Record<string, any>[] = [], subscriptions = new Map<string, any>();
   const calls: { method: string; path: string; params?: any; key?: string }[] = [];
-  const stripeState = { paid: {} as Record<string, any>, failNextSubscription: false, subscriptionError: null as Error | null };
+  const stripeState = { paid: {} as Record<string, any>, failNextSubscription: false, subscriptionError: null as Error | null,
+    /** A test's own provider objects (the refund chain): answers first when it returns something. */
+    extra: null as ((method: string, path: string, params?: any, key?: string) => any) | null };
   const stripe = { enabled: true, accountId: stripeAccountId, livemode: false, assertAccount: async () => {},
     request: async (method: string, path: string, params?: any, key?: string): Promise<any> => {
       calls.push({ method, path, params, key });
-      const { paid } = stripeState;
+      const { paid } = stripeState, own = stripeState.extra?.(method, path, params, key);
+      if (own !== undefined) return own;
       if (path.startsWith('/prices/')) return { id: path.slice(8), object: 'price', livemode: false, active: true, type: 'recurring', product: 'prod_Synthetic',
         currency: 'thb', unit_amount: 49900, recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' }, billing_scheme: 'per_unit' };
       if (path.startsWith('/customers/')) {
@@ -466,6 +470,103 @@ test('PROMPTPAY_RENEW paid, renewal refused, refunded in full: the package ends 
     const status = await BillingService.prototype.status.call(f.service, f.context);
     assert.deepEqual([status.purchaseSource, status.renewalMode, status.purchaseBlockCode ?? null], ['PAID_EXPIRED_CURRENT_MODE', 'PROMPTPAY_ONCE', null]);
     assert.equal((await f.quote('PROMPTPAY_RENEW')).totalSatang, 49900, 'the shop buys again');
+  } finally {
+    await f.cleanup(); await client.$disconnect();
+  }
+});
+
+/**
+ * The same way out, end to end through the real refund service (review → preview → submit → approve → run) against a provider
+ * fake that holds the original payment chain, credit notes and refunds; staff identity, password proof and approval rights
+ * are stubbed. Then one reconcile pass. Beside it: while the system is still repairing, the review refuses.
+ */
+test('PROMPTPAY_RENEW paid, renewal refused: the real refund service refunds it in full with end package, and the next pass releases the shop', { skip: !databaseUrl }, async () => {
+  const client = connect(), f = await fixture(client, [{ name: 'งานคืนเงินจริง', discountSatang: 10000 }]);
+  const lifecycle = { execute: async (cmd: { companyId: string; targetStatus: string }, tx: any) => tx.company.update({ where: { id: cmd.companyId }, data: { status: cmd.targetStatus } }) };
+  const capabilities = ['system.billing.financial.read', 'system.billing.refund.manage', 'system.billing.approval.approve'];
+  const admin = { access: async () => undefined, scopedCompany: async (_: unknown, companyId: string, tx: any = client) => ({ company: { name: 'Synthetic renewal shop' },
+    account: await tx.billingAccount.findFirst({ where: { companyId } }), access: { capabilities, platformScope: false } }) };
+  const configuration = { requireProof: async () => undefined, operationActor: async () => ({}), requireApprovalActor: async () => undefined };
+  try {
+    const state = await (f.service as any).settings();
+    Object.assign(state.policy, { refundPolicy: 'MANUAL_REVIEW', refundLimitSatang: 100_000 });
+    const refunds = new BillingRefundsService({ client } as any, f.service, admin as any, configuration as any, lifecycle as any);
+    Object.assign(refunds, { credential: async () => 'synthetic-credential-version' });
+    const staff = { ...f.context, membershipId: `staff-${f.run}` };
+
+    const quoted = await f.quote('PROMPTPAY_RENEW'), opened = await f.checkout(quoted.quoteId, quoted.consentRevision);
+    const paid = await f.pay(opened.attemptId, 39900, 'promptpay'), charge = f.stripeState.paid.intent.latest_charge, line = `il_${f.run}`;
+    Object.assign(f.stripeState.paid.intent, { object: 'payment_intent' }); Object.assign(charge, { object: 'charge' });
+    // The provider's side of a refund: the original invoice with its payment chain, its credit notes and their refunds.
+    const notes: any[] = [], moved: any[] = [], list = (data: any[]) => ({ object: 'list', data, has_more: false });
+    const note = (params: any, id: string) => ({ id, object: 'credit_note', livemode: false, customer: f.customerId, invoice: paid.invoice.id, currency: 'thb', status: 'issued', type: 'post_payment',
+      amount: params.refund_amount, total: params.refund_amount, pre_payment_amount: 0, post_payment_amount: params.refund_amount, total_excluding_tax: params.refund_amount, amount_shipping: 0,
+      discount_amount: 0, discount_amounts: [], total_taxes: [], customer_balance_transaction: null, out_of_band_amount: 0, number: `SDR-CN-${notes.length + 1}`, created: Math.floor(Date.now() / 1000) - 1,
+      memo: params.memo ?? null, metadata: params.metadata, refunds: [] as any[],
+      lines: list(params.lines.map((l: any) => ({ id: `cnli_${f.run}`, object: 'credit_note_line_item', livemode: false, discount_amount: 0, discount_amounts: [], taxes: [], ...l }))) });
+    f.stripeState.extra = (method, path, params) => {
+      if (method === 'GET' && path === `/invoices/${paid.invoice.id}`) return { ...paid.invoice, paid_out_of_band: false, total_taxes: [],
+        post_payment_credit_notes_amount: notes.reduce((sum, n) => sum + n.amount, 0) };
+      if (method === 'GET' && path === '/invoice_payments') return list(f.stripeState.paid.payments.map((payment: any) => ({ id: `inpay_${f.run}`, ...payment })));
+      if (method === 'GET' && path === `/invoices/${paid.invoice.id}/lines`) return list([{ id: line, livemode: false, currency: 'thb', amount: 39900 }]);
+      if (method === 'GET' && path === '/credit_notes/preview') return note(params, 'cn_Preview');
+      if (method === 'GET' && path === '/credit_notes') return list(notes);
+      if (method === 'GET' && path === '/refunds') return list(moved);
+      if (method === 'GET' && path.startsWith('/refunds/')) return moved.find(refund => path === `/refunds/${refund.id}`);
+      if (method === 'POST' && path === '/credit_notes') {
+        const created = note(params, `cn_${f.run}${notes.length + 1}`), refund = { id: `pyr_${f.run}${moved.length + 1}`, object: 'refund', livemode: false, charge: charge.id,
+          payment_intent: charge.payment_intent, currency: 'thb', amount: created.amount, status: 'succeeded', created: created.created };
+        created.refunds = [{ refund: refund.id, amount_refunded: refund.amount, payment_record_refund: null, type: 'refund' }];
+        notes.push(created); moved.push(refund); charge.amount_refunded += refund.amount;
+        return created;
+      }
+      return undefined;
+    };
+    const invoiceRow = () => client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: opened.attemptId } });
+    const review = async () => refunds.review(staff, f.companyId, (await invoiceRow()).id);
+
+    // The system is still repairing (a 5xx, no marker): the refund stays refused.
+    f.stripeState.subscriptionError = new StripeRequestError('UNKNOWN', 'unavailable', 60, undefined, undefined, 503);
+    await assert.rejects(f.reconcileOneTime(paid), /stripe\.unavailable/);
+    const repairing = await review();
+    assert.deepEqual([repairing.canCreate, repairing.blockedReason, repairing.unrepairedBinding ?? null], [false, 'BILLING_REFUND_PENDING', null]);
+    // The next generation is refused by the provider: the shop is held and the system cannot repair it.
+    await client.billingAttempt.update({ where: { id: opened.attemptId }, data: { collectionJson: { qrSubscriptionRequestedAt: new Date(Date.now() - 71 * 60_000).toISOString() } } });
+    f.stripeState.subscriptionError = new StripeRequestError('REJECTED', 'request_rejected', 60, 'resource_missing', 'invalid_request_error', 400);
+    await assert.rejects(f.reconcileOneTime(paid), /stripe\.request_rejected/);
+    f.stripeState.subscriptionError = null;
+    await client.$transaction(tx => detectBillingIssue(tx, { companyId: f.companyId, stripeAccountId: f.account.stripeAccountId, livemode: false, kind: 'RECONCILIATION_FAILED', referenceId: f.account.id }));
+    assert.equal((await f.current()).activeAttemptId, opened.attemptId);
+
+    // Staff: review → preview of the full amount with end package → submit → approve → run.
+    const allowed = await review();
+    assert.deepEqual([allowed.canCreate, allowed.blockedReason, allowed.unrepairedBinding, allowed.paidSatang, allowed.paymentMethod], [true, null, 'RENEWAL', 39900, 'promptpay']);
+    const invoiceId = (await invoiceRow()).id;
+    const preview = await refunds.preview(staff, f.companyId, invoiceId, { amountSatang: 39900, reason: 'renewal could not be set up', memo: 'คืนเงินเต็มจำนวน', notifyCustomer: false,
+      sourceHash: allowed.sourceHash, endPackage: true });
+    assert.deepEqual([preview.state, preview.amountSatang, preview.endPackage], ['PREVIEW', 39900, true]);
+    const submitted = await refunds.command(staff, preview.id, 'submit', preview.version, preview.previewHash, `sdr-refund-submit-${f.run}`);
+    const approved = await refunds.command(staff, preview.id, 'approve', submitted.version, submitted.previewHash);
+    assert.deepEqual([submitted.state, approved.state], ['AWAITING_APPROVAL', 'QUEUED']);
+    const done = await refunds.run(staff, preview.id, approved.version);
+    assert.deepEqual([done.state, done.errorCode, done.refundState, done.packageEnded], ['SUCCEEDED', null, 'succeeded', true]);
+    assert.deepEqual([notes.length, charge.amount_refunded], [1, 39900], 'one credit note, the whole payment');
+
+    // The refund's own rule ended the package; the purchase still holds the slot until the pass settles it.
+    const term = await client.companyPlanTerm.findUniqueOrThrow({ where: { companyId: f.companyId } });
+    assert.ok(term.termDisabledAt && term.termEndsAt <= new Date());
+    assert.equal((await client.company.findUniqueOrThrow({ where: { id: f.companyId } })).status, 'DISABLED');
+    assert.deepEqual([(await invoiceRow()).refundedSatang, (await f.current()).activeAttemptId], [39900, opened.attemptId]);
+
+    // One reconcile pass.
+    await f.reconcileOneTime(paid);
+    const account = await f.current();
+    assert.deepEqual([account.activeAttemptId, account.renewalMode, account.baseSubscriptionId], [null, 'PROMPTPAY_ONCE', null]);
+    assert.equal((await client.billingIssue.findFirstOrThrow({ where: { companyId: f.companyId, kind: 'RECONCILIATION_FAILED', referenceId: f.account.id } })).state, 'RESOLVED');
+    assert.equal(f.calls.filter(call => call.method === 'POST' && call.path === '/subscriptions').length, 2, 'the two creates before the refund, none after');
+    const status = await BillingService.prototype.status.call(f.service, f.context);
+    assert.deepEqual([status.purchaseSource, status.renewalMode, status.purchaseBlockCode ?? null], ['PAID_EXPIRED_CURRENT_MODE', 'PROMPTPAY_ONCE', null]);
+    assert.equal((await f.quote('PROMPTPAY_RENEW')).totalSatang, 49900, 'a new quote for the shop is accepted');
   } finally {
     await f.cleanup(); await client.$disconnect();
   }
