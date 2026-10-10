@@ -12,7 +12,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { Prisma, type BillingAccount, type BillingAttempt, type BillingOperation } from '../../../generated/prisma/client';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
-import { StripeClient, stripeId, verifyStripeSignature, type StripeObject } from '../infrastructure/stripe.client';
+import { StripeClient, StripeRequestError, stripeId, verifyStripeSignature, type StripeObject } from '../infrastructure/stripe.client';
 import { hashBilling } from '../domain/billing-policy';
 import { paidInvoiceEvidence, termProjectionHash, type PaidInvoiceEvidence } from '../domain/paid-invoice';
 import { BillingService, snapshotProductKind, type BillingSnapshot } from './billing.service';
@@ -20,6 +20,7 @@ import { stripeCustomerSyncPayload, stripeCustomerSynced } from './billing-compa
 import { readRecipientCapture, recordRecipientCapture, type RecipientCapture } from './billing-recipient-capture';
 import { restartFits, restartSource } from './billing-restart';
 import { observeBillingCharges, recordBillingFinancials } from './billing-financial';
+import { refundStopsBinding } from './billing-refund-source';
 import { grantPaidPackageReceipts, grantPromotionPackageReceipts } from './billing-receipt-grants';
 import { grantTrialReceiptCarryover } from './billing-trial-carryover';
 import { appendPackageInterval, fullPackagePurchaseImpact, invoiceServiceEnd, promotionBoundaries } from '../domain/billing-package';
@@ -902,11 +903,12 @@ export class BillingReconcilerService {
     bindAt.setUTCDate(bindAt.getUTCDate() + 2);
     if (bindAt > new Date()) return bindAt;
     const subscription = await this.bindAdvanceDeal(account, attempt, snapshot, intent, operation, lease);
+    if (!subscription) return; // The binding waits (quiet minutes of a send generation, or a refund request): nothing was sent this pass.
     if (new Date() >= startsAt) await this.activateAdvanceDeal(account, attempt, snapshot, row.id, operation.id, subscription, lease);
   }
 
   private async bindAdvanceDeal(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot,
-    intent: StripeObject, operation: BillingOperation, lease: string): Promise<StripeObject> {
+    intent: StripeObject, operation: BillingOperation, lease: string): Promise<StripeObject | null> {
     const firstCycleEndsAt = new Date(snapshot.advanceDeal!.firstCycleEndsAt);
     const card = snapshot.quote.purchaseMode === 'CARD_AUTO';
     let paymentMethodId: string | null = null;
@@ -926,19 +928,8 @@ export class BillingReconcilerService {
     if (result.subscriptionId && subscription?.id !== result.subscriptionId)
       throw new Error('billing.advance_deal_subscription_changed');
     if (!subscription) {
-      const journal = (attempt.collectionJson ?? {}) as Record<string, unknown>;
-      const requestedAt = typeof journal.advanceSubscriptionRequestedAt === 'string' ? Date.parse(journal.advanceSubscriptionRequestedAt) : null;
-      if (requestedAt !== null && (!Number.isFinite(requestedAt) || Date.now() - requestedAt > 23 * 3600000))
-        throw new Error('billing.advance_deal_subscription_unknown');
       if (firstCycleEndsAt.getTime() <= Date.now() + 3600000) throw new Error('billing.advance_deal_renewal_boundary');
-      if (requestedAt === null) await this.prisma.client.$transaction(async tx => {
-        await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
-        const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
-        if (current.activeAttemptId !== attempt.id || current.baseSubscriptionId) throw new Error('billing.advance_deal_source_changed');
-        await tx.billingAttempt.update({ where: { id: attempt.id }, data: {
-          collectionJson: { ...journal, advanceSubscriptionRequestedAt: new Date().toISOString() } as Prisma.InputJsonValue } });
-      });
-      subscription = await this.stripe.request('POST', '/subscriptions', {
+      const created = await this.createBindingSubscription(account, attempt, lease, 'advanceSubscription', `mm:${attempt.id}:advance-renewal`, {
         customer: account.customerId, collection_method: card ? 'charge_automatically' : 'send_invoice',
         ...(card ? { default_payment_method: paymentMethodId,
           payment_settings: { payment_method_types: ['card'] } } : {
@@ -948,7 +939,9 @@ export class BillingReconcilerService {
         trial_end: Math.floor(firstCycleEndsAt.getTime() / 1000), billing_mode: { type: 'classic' },
         trial_settings: { end_behavior: { missing_payment_method: card ? 'cancel' : 'create_invoice' } },
         metadata: { billingAttemptId: attempt.id, billingAccountId: account.id, advanceDeal: 'true' },
-      }, `mm:${attempt.id}:advance-renewal`);
+      });
+      if (!created) return null;
+      subscription = created;
     }
     if (subscription.object !== 'subscription' || subscription.livemode !== account.livemode ||
         stripeId(subscription.customer) !== account.customerId || subscription.metadata?.billingAttemptId !== attempt.id ||
@@ -988,6 +981,47 @@ export class BillingReconcilerService {
       await tx.billingAttempt.update({ where: { id: attempt.id }, data: { subscriptionId: subscription.id } });
     });
     return subscription;
+  }
+
+  /**
+   * 2026-10-10, owner's option "ค": the subscription a paid purchase binds is sent until the provider holds it. The caller's
+   * own complete list of this pass found no subscription of this attempt. A send generation is re-sent under its key for one
+   * hour from its first send; ten quiet minutes later nothing of it can still be in flight, and the next generation goes out
+   * under a new key (a key that stored a 5xx replays it for its life). The generation and its first-send time are journalled
+   * before the send, guarded on the journal just read, so at most one generation starts per seventy minutes and two passes
+   * never start two. Nothing is sent while a refund touches the payment, and nothing after the provider refused the request
+   * (a 4xx that is no rate limit and no idempotency conflict): that keeps its review case for staff. Null = nothing sent.
+   * `key` is generation 1 (the key every earlier send used); generation n is `<key>:g<n>`.
+   */
+  private async createBindingSubscription(account: BillingAccount, attempt: BillingAttempt, lease: string,
+    field: 'qrSubscription' | 'advanceSubscription', key: string, params: Record<string, unknown>): Promise<StripeObject | null> {
+    let journal = ((await this.prisma.client.billingAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).collectionJson ?? null) as Record<string, unknown> | null;
+    const at = journal?.[`${field}RequestedAt`], requestedAt = typeof at === 'string' ? Date.parse(at) : null;
+    let generation = (journal?.[`${field}Generation`] ?? 1) as number;
+    if ((at != null && !Number.isSafeInteger(requestedAt)) || !Number.isSafeInteger(generation) || generation < 1) throw new Error('billing.subscription_binding_journal');
+    if (journal?.[`${field}Refused`]) throw new Error('billing.subscription_binding_refused');
+    if (await refundStopsBinding(this.prisma.client, account, attempt.id)) return null;
+    const save = (data: Record<string, unknown>) => this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      const next = { ...journal, ...data };
+      const stored = await tx.billingAttempt.updateMany({ where: { id: attempt.id, collectionJson: journal ? { equals: journal as Prisma.InputJsonValue } : { equals: Prisma.AnyNull } },
+        data: { collectionJson: next as Prisma.InputJsonValue } });
+      if (current.activeAttemptId !== attempt.id || current.baseSubscriptionId || stored.count !== 1) throw new Error('billing.subscription_binding_source_changed');
+      journal = next;
+    });
+    const age = requestedAt === null ? null : Date.now() - requestedAt;
+    if (age !== null && age >= RESEND_WINDOW_MS && age < RESEND_WINDOW_MS + QUIET_MARGIN_MS) return null;
+    if (age === null || age >= RESEND_WINDOW_MS) {
+      if (age !== null) generation += 1;
+      await save({ [`${field}RequestedAt`]: new Date().toISOString(), ...(generation > 1 ? { [`${field}Generation`]: generation } : {}) });
+    }
+    try { return await this.stripe.request('POST', '/subscriptions', params, generation === 1 ? key : `${key}:g${generation}`); }
+    catch (error) {
+      if (error instanceof StripeRequestError && error.outcome === 'REJECTED' && error.status && error.status !== 409 && error.providerType !== 'idempotency_error')
+        await save({ [`${field}Refused`]: { generation, at: new Date().toISOString(), status: error.status, code: error.providerCode ?? null } });
+      throw error;
+    }
   }
 
   private async holdAdvanceBinding(account: BillingAccount, operation: BillingOperation, attempt: BillingAttempt,
@@ -1229,20 +1263,9 @@ export class BillingReconcilerService {
       throw new Error('billing.promptpay_renewal_duplicate');
     let sub = existing[0];
     if (!sub) {
-      const journal = (attempt.collectionJson ?? {}) as Record<string, unknown>;
-      // One journal key for both modes (named when only QR bound here); an attempt is one mode or the other.
-      const requestedAt = typeof journal.qrSubscriptionRequestedAt === 'string' ? Date.parse(journal.qrSubscriptionRequestedAt) : null;
-      if (requestedAt !== null && (!Number.isSafeInteger(requestedAt) || Date.now() - requestedAt > 23 * 3600000))
-        throw new Error('billing.promptpay_renewal_request_unknown');
       if (paidThrough.getTime() <= Date.now() + 3600000) throw new Error('billing.promptpay_renewal_boundary');
-      if (requestedAt === null) await this.prisma.client.$transaction(async tx => {
-        await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
-        const fresh = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
-        if (fresh.activeAttemptId !== attempt.id || fresh.baseSubscriptionId) throw new Error('billing.promptpay_renewal_source_changed');
-        await tx.billingAttempt.update({ where: { id: attempt.id }, data: {
-          collectionJson: { ...journal, qrSubscriptionRequestedAt: new Date().toISOString() } as Prisma.InputJsonValue } });
-      });
-      sub = await this.stripe.request('POST', '/subscriptions', {
+      // One journal name for both modes (named when only QR bound here); an attempt is one mode or the other.
+      const created = await this.createBindingSubscription(account, attempt, lease, 'qrSubscription', `mm:${attempt.id}:${card ? 'card' : 'promptpay'}-renewal`, {
         customer: account.customerId,
         ...(card ? { collection_method: 'charge_automatically', default_payment_method: paymentMethodId, payment_settings: { payment_method_types: ['card'] } }
           : { collection_method: 'send_invoice', days_until_due: 7, payment_settings: { payment_method_types: ['promptpay'] } }),
@@ -1250,7 +1273,9 @@ export class BillingReconcilerService {
         trial_end: Math.floor(paidThrough.getTime() / 1000), billing_mode: { type: 'classic' },
         trial_settings: { end_behavior: { missing_payment_method: card ? 'cancel' : 'create_invoice' } },
         metadata: { billingAttemptId: attempt.id, billingAccountId: account.id },
-      }, `mm:${attempt.id}:${card ? 'card' : 'promptpay'}-renewal`);
+      });
+      if (!created) return;
+      sub = created;
     }
     // A card trial that is not exactly this contract would charge unattended when it ends: stop it first, as bindAdvanceDeal does.
     const stopCard = async () => { if (card && !['canceled', 'incomplete_expired'].includes(sub.status))
