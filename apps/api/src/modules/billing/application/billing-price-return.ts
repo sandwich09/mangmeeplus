@@ -306,7 +306,11 @@ export class BillingPriceReturn {
         await this.prisma.client.$transaction(async tx => { await this.fence(tx, account, row.id, lease);
           await tx.billingOperation.update({ where: { id: row.id }, data: { resultJson: json(journal) } }); });
         await this.stripe.request('POST', `/subscriptions/${proposed.subscriptionId}`, params, `mm:price-return:${row.id}`).catch(error => {
-          if (error instanceof StripeRequestError && error.outcome === 'REJECTED') journal.rejected = error.providerCode ?? error.code;
+          // A refusal of the swap itself, as the refund create judges it: not a 409 (the same key still executing), a 429 or
+          // an idempotency error — those are "not applied" and are tried again a day later. No 404: a subscription or item
+          // that is gone is seen by the next attempt's own read, which then queues nothing.
+          if (error instanceof StripeRequestError && error.outcome === 'REJECTED' && (error.status === 400 || error.status === 402) &&
+            error.providerType !== 'idempotency_error') journal.rejected = error.providerCode ?? error.code;
           throw error;
         });
         ({ sub, schedule } = await subscriptionGraph(this.stripe, account));
