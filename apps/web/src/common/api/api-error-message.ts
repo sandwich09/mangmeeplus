@@ -240,12 +240,14 @@ const CODE_LABELS: Record<string, string> = {
   CONTROL_PROMOTION_CAP_BELOW_USED: 'ลดจำนวนสิทธิ์ต่ำกว่าที่มีผู้จองหรือใช้ไปแล้วไม่ได้',
   CONTROL_PROMOTION_CATALOG_STALE: 'ราคาหรือโควตาของแพ็กเกจเปลี่ยนแล้ว กรุณาตรวจสอบตัวอย่างและเผยแพร่แคมเปญใหม่',
   CONTROL_PROVIDER_DISABLED: 'ยังไม่ได้ตั้งค่าบัญชีผู้ให้บริการ ติดต่อผู้ดูแลการเชื่อมต่อ',
-  // Mirrors CONTROL_REFUND_AGED_UNKNOWN below, same 23h-unconfirmed rule for a recipient-email change.
+  // The 23h-unconfirmed rule of a recipient-email change. Refunds had the same rule until 2026-10-10 (CONTROL_REFUND_AGED_UNKNOWN below, now CONTROL_REFUND_NOT_CREATED).
   CONTROL_RECIPIENT_AGED_UNKNOWN: 'ยังยืนยันผลกับ Stripe ไม่ได้เกิน 23 ชั่วโมง ให้ตรวจที่ Stripe ก่อนทำรายการต่อ',
   CONTROL_REFUNDS_CLOSED: 'ยังไม่เปิดรับคำขอคืนเงิน ติดต่อผู้ดูแลการตั้งค่า',
+  // No longer raised by the API (2026-10-10); kept for requests and audit rows that already carry it.
   CONTROL_REFUND_AGED_UNKNOWN: 'ยังยืนยันรายการเดิมไม่ได้ ให้เจ้าหน้าที่ตรวจ Stripe ก่อนดำเนินการต่อ',
   CONTROL_REFUND_CONFIG_REQUIRED: 'กำหนดวงเงินคืนเงินและขออนุมัตินโยบายก่อนเปิดการคืนเงิน',
   CONTROL_REFUND_LIMIT: 'ยอดนี้เกินวงเงินต่อคำขอ กรุณาติดต่อผู้ดูแลวงเงิน',
+  CONTROL_REFUND_NOT_CREATED: 'ตรวจกับผู้ให้บริการรับชำระเงินแล้ว ไม่พบการคืนเงินของคำขอนี้ ยังไม่มีการคืนเงินเกิดขึ้น สร้างคำขอใหม่ได้',
   CONTROL_REFUND_PROVIDER_REJECTED: 'ผู้ให้บริการรับชำระเงินไม่รับคำขอคืนเงินนี้ ยังไม่มีการคืนเงินเกิดขึ้น ตรวจเหตุผลแล้วสร้างคำขอใหม่ได้',
   CONTROL_REFUND_SOURCE_CHANGED: 'หลักฐานการคืนเงินเปลี่ยนหรือยังไม่ครบ กรุณาตรวจรายการเดิมอีกครั้ง',
   CONTROL_SCAN_BUSY: 'มีงานตรวจที่ยังไม่จบ กรุณาเปิดงานเดิมก่อน',
