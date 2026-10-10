@@ -11,6 +11,8 @@ import type { BillingService } from './billing.service';
 
 const review = () => billingError('CONTROL_COLLECTION_REVIEW', 'ข้อมูลการเก็บเงินเปลี่ยนหรือยังยืนยันไม่ได้ เปิดรายการเดิมเพื่อตรวจสอบ');
 const json = (value: unknown) => value as Prisma.InputJsonValue;
+/** After `expiresAt` nothing is sent; one hour later nothing sent can still be in flight. */
+const SETTLE_MS = 3_600_000;
 export function observedCollectionPause(sub: StripeObject): BillingCollectionPause | null {
   if (!sub.pause_collection) return null;
   return { behavior: ['keep_as_draft','void','mark_uncollectible'].includes(sub.pause_collection.behavior) ? sub.pause_collection.behavior : 'unknown',
@@ -74,14 +76,31 @@ export class BillingAdminCollection {
       return hashBilling(pause)===hashBilling(source.after)||
         (source.action==='PAUSE'&&source.after?.resumesAt&&Date.parse(source.after.resumesAt)<=Date.now()&&!pause);
     };
+    // Over without a change (2026-10-10): nothing is sent, the account is released in this transaction, the review case stays open.
+    const end=async(errorCode:'CONTROL_COLLECTION_NOT_SENT'|'CONTROL_COLLECTION_NOT_APPLIED')=>{
+      await this.prisma.client.$transaction(async tx=>{
+        await fence(tx);
+        await tx.billingAccount.update({where:{id:account.id},data:{activeCollectionOperationId:null,version:{increment:1}}});
+        await tx.billingOperation.update({where:{id:row.id},data:{state:'FAILED',errorCode,resultJson:json(journal),version:{increment:1}}});
+        await tx.auditLog.create({data:{companyId:account.companyId,actorUserId:row.approverUserId,action:'billing.collection_control.ended',targetType:'BillingOperation',targetId:row.id,
+          requestId:row.id,result:'FAILED',riskLevel:'CRITICAL',metadataJson:{errorCode,reason:row.reason,action:source.action,before:json(source.before)}}});
+      });
+      await this.billing.issue(account.companyId,'CUSTOMER_COLLECTION_REVIEW',row.id);
+    };
     try{
       let graph=await subscriptionGraph(this.billing.stripe,account);
       if(!observed(graph.sub)){
+        // No send can leave after expiresAt (`fence(tx,true)`), so an hour later nothing is in flight. Our id travels in the same request as
+        // the pause: a subscription without it never took this command.
+        if(progress.dispatchedAt&&Date.now()-row.expiresAt.getTime()>=SETTLE_MS&&graph.sub.metadata?.mangmeeCollectionControl!==row.id)return await end('CONTROL_COLLECTION_NOT_APPLIED');
         if((progress.dispatchedAt&&Date.now()-Date.parse(progress.dispatchedAt)>=23*3600000)||
           (source.after?.resumesAt&&Date.parse(source.after.resumesAt)<=Date.now()+60000)||
           collectionSourceHash(graph.sub,graph.schedule)!==source.providerHash||(await this.invoices(account)).invoiceHash!==source.invoiceHash)throw review();
-        await this.prisma.client.$transaction(async tx=>{await fence(tx,true);progress.dispatchedAt??=new Date().toISOString();
-          await tx.billingOperation.update({where:{id:row.id},data:{state:'RUNNING',resultJson:json(journal),version:{increment:1}}});});
+        // The marker is kept only when it was stored, so that the send really follows it.
+        const dispatchedAt=progress.dispatchedAt??new Date().toISOString();
+        await this.prisma.client.$transaction(async tx=>{await fence(tx,true);
+          await tx.billingOperation.update({where:{id:row.id},data:{state:'RUNNING',resultJson:json({...journal,collectionControl:{...progress,dispatchedAt}}),version:{increment:1}}});});
+        progress.dispatchedAt=dispatchedAt;
         await this.billing.stripe.request('POST',`/subscriptions/${source.subscriptionId}`,{
           pause_collection:source.after?{behavior:'keep_as_draft',resumes_at:Date.parse(source.after.resumesAt!)/1000}:'',
           metadata:{mangmeeCollectionControl:row.id}},`mm:collection-control:${row.id}`);
@@ -99,6 +118,8 @@ export class BillingAdminCollection {
           data:{state:'RESOLVED',resolvedAt:new Date(),version:{increment:1}}});
       });
     }catch{
+      // Never sent, and past expiresAt no pass can send it: over at once.
+      if(!progress.dispatchedAt&&row.expiresAt<=new Date())return end('CONTROL_COLLECTION_NOT_SENT');
       await this.prisma.client.$transaction(async tx=>{await fence(tx);await tx.billingOperation.update({where:{id:row.id},data:{state:progress.dispatchedAt?'UNKNOWN':'BLOCKED',
         errorCode:'CONTROL_COLLECTION_REVIEW',resultJson:json(journal),version:{increment:1}}});});
       await this.billing.issue(account.companyId,'CUSTOMER_COLLECTION_REVIEW',row.id);

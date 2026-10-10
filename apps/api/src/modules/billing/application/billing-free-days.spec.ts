@@ -39,3 +39,38 @@ test('gift observation preserves cancellation and accepts an exactly ended origi
   f.sub.status='canceled';f.sub.ended_at=ended;f.sub.cancel_at=null;assert.equal(f.observed(),true);
   f.sub.ended_at--;assert.equal(f.observed(),false);
 });
+
+// 2026-10-10: a gift ends only from what the provider read shows, and holds the shop no longer than that.
+async function gift(progress: Record<string, string>, expiredMinutes: number, schedule: Record<string, unknown> | null = null) {
+  const { collectionSourceHash } = await import('./billing-collection'), { termProjectionHash } = await import('../domain/paid-invoice');
+  const before = new Date(Date.now() + 86400000); before.setMilliseconds(0);
+  const sub: any = { id: 'sub', object: 'subscription', customer: 'cus', livemode: false, metadata: { billingAccountId: 'account' }, status: 'active', items: { data: [] } };
+  const account: any = { id: 'account', companyId: 'company', customerId: 'cus', baseSubscriptionId: 'sub', livemode: false, stripeAccountId: 'acct',
+    activeCollectionOperationId: 'op', leaseToken: 'lease', leaseUntil: new Date(Date.now() + 60000), paidThrough: before, pendingPlanChangeId: null,
+    termProjectionHash: termProjectionHash(null), cancelAtPeriodEnd: false };
+  const row: any = { id: 'op', state: 'QUEUED', version: 1, resultJson: { freeDays: progress }, expiresAt: new Date(Date.now() - expiredMinutes * 60000), createdAt: new Date(),
+    proposedJson: { accountId: 'account', dayExtension: { subscriptionId: 'sub', before: before.toISOString(), after: new Date(before.getTime() + 86400000).toISOString(),
+      pendingId: null, termHash: termProjectionHash(null), cancel: false, originalScheduleId: null, providerHash: collectionSourceHash(sub, null), phases: [], future: { policy: { taxRateId: null } } } } };
+  if (schedule) sub.schedule = schedule.id;
+  let writes = 0;
+  const tx: any = { $executeRaw: async () => 0, $queryRaw: async () => [], auditLog: { create: async () => ({}) },
+    billingAccount: { findUniqueOrThrow: async () => account, update: async ({ data }: any) => Object.assign(account, data) },
+    company: { findUniqueOrThrow: async () => ({ status: 'ACTIVE', planTerm: null }) },
+    billingOperation: { update: async ({ data }: any) => Object.assign(row, data, { version: row.version + 1 }) } };
+  const stripe = { assertAccount: async () => {}, list: async () => [sub],
+    request: async (method: string, path: string) => { if (method !== 'GET') writes++; return structuredClone(path.startsWith('/subscription_schedules') ? schedule : sub); } };
+  await new BillingFreeDays({ client: { ...tx, $transaction: async (run: any) => run(tx) } } as any, { stripe, issue: async () => {} } as any).advance(account, row, 'lease', async () => {});
+  return [writes, row.state, row.errorCode, row.resultJson.freeDays?.createAt ?? null, account.activeCollectionOperationId];
+}
+
+test('AUDIT: a gift that could not be sent (approval window over) records no dispatch marker and ends at once', async () => {
+  assert.deepEqual(await gift({}, 1), [0, 'FAILED', 'CONTROL_FREE_DAYS_NOT_SENT', null, null]);
+});
+
+test('AUDIT: a sent gift the provider holds nothing of ends one hour after it could last be sent; a schedule left by its create keeps waiting', async () => {
+  const createAt = new Date(Date.now() - 75 * 60000).toISOString();
+  assert.deepEqual(await gift({ createAt }, 61), [0, 'FAILED', 'CONTROL_FREE_DAYS_NOT_APPLIED', createAt, null]);
+  assert.deepEqual(await gift({ createAt }, 59), [0, 'UNKNOWN', 'CONTROL_FREE_DAYS_REVIEW', createAt, 'op'], 'inside the hour it waits');
+  assert.deepEqual(await gift({ createAt }, 61, { id: 'sched', object: 'subscription_schedule', customer: 'cus', subscription: 'sub', livemode: false, status: 'active', metadata: {}, phases: [] }),
+    [0, 'UNKNOWN', 'CONTROL_FREE_DAYS_REVIEW', createAt, 'op'], 'ending this one would need a release at the provider');
+});
