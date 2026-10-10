@@ -7,6 +7,8 @@ const nativeId=(value:unknown,prefix:string):value is string=>typeof value==='st
 export type SettlementMovement={id:string;sourceId:string|null;type:string;category:string;currency:string;amount:number;fee:number;net:number;
   status:'pending'|'available';created:number;availableOn:number;balanceType:string|null};
 
+/** Stripe books a non-card (PromptPay) payment as `payment` and its refund as `payment_refund`; they are read as the card movements are. */
+const movementType:Record<string,string>={payment:'charge',payment_refund:'refund'};
 /** Stripe balance movements do not have a documented livemode field. The caller verifies the account and source. */
 export function settlementMovement(value:StripeObject):SettlementMovement{
   if(!value||typeof value!=='object'||Array.isArray(value))throw invalid();
@@ -17,7 +19,7 @@ export function settlementMovement(value:StripeObject):SettlementMovement{
     typeof value.type!=='string'||!/^[a-z_]{1,80}$/.test(value.type)||typeof value.reporting_category!=='string'||!/^[a-z_]{1,80}$/.test(value.reporting_category)||
     (value.source!=null&&(!sourceId||!/^[a-z]+_[A-Za-z0-9_]{1,120}$/.test(sourceId)))||
     (value.balance_type!=null&&(typeof value.balance_type!=='string'||!/^[a-z_]{1,80}$/.test(value.balance_type))))throw invalid();
-  return {id:value.id,sourceId,type:value.type,category:value.reporting_category,currency:value.currency,amount:value.amount,fee:value.fee,net:value.net,
+  return {id:value.id,sourceId,type:movementType[value.type]??value.type,category:value.reporting_category,currency:value.currency,amount:value.amount,fee:value.fee,net:value.net,
     status:value.status,created:value.created,availableOn:value.available_on,balanceType:value.balance_type??null};
 }
 export function settlementPage(value:StripeObject,window:{since:number;until:number},cursor:string|null){
