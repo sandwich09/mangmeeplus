@@ -45,7 +45,7 @@ describe('refund note by payment method (UAT 2026-10-10: the provider e-mails th
     const lines = refundPaymentMethodLines('promptpay');
     assert.deepEqual(lines, [
       'รายการนี้จ่ายด้วยพร้อมเพย์ QR ผู้ให้บริการรับชำระเงินจะส่งอีเมลให้ลูกค้ากรอกบัญชีรับเงินคืน เงินจะคืนเมื่อลูกค้ากรอกเสร็จ ไม่ได้คืนทันทีเหมือนบัตร',
-      'ก่อนส่งคำขอ ตรวจว่าอีเมลของร้านถูกต้องและลูกค้าเปิดอ่านได้ ระหว่างรอลูกค้า คำขอนี้จะอยู่ในสถานะรอผล',
+      'แจ้งลูกค้าให้รอรับอีเมลนั้นและกรอกบัญชีให้เสร็จ ระหว่างรอลูกค้า คำขอนี้จะอยู่ในสถานะรอผล',
     ]);
     assert.doesNotMatch(lines.join(' '), /[A-Z]{2,}_|undefined|null|promptpay/, 'no codes on screen');
   });
