@@ -1095,9 +1095,12 @@ for (const width of WIDTHS) {
   // The same code in a state that is not "active, paid, applied, no payment in flight" keeps the alert exactly as before: its sentence, the reference for the team and the check button.
   test(`PROMO-08 the same block code on a shop whose last charge failed keeps the amber alert, with its reference and its button, and no quiet line at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     const w = defaultCustomerWorld(companyId, deferredShopStatus(companyId, { paymentState: 'FAILED', subscriptionState: 'past_due' }));
+    // 2026-10-10: the same shop holds an event discount; on the discount path with an unpaid renewal the page says nothing about it (no purchase is open to it, the alert says why).
+    w.heldDiscount = { ...heldTicketView(), path: 'DISCOUNT', renewalMode: 'CARD_AUTO', renewalState: 'UNPAID' };
     await openOverview(page, w, width);
     const alert = amberAlert(page);
     await expect(alert).toHaveCount(1);
+    await expect(page.getByRole('note').filter({ hasText: 'คุณมีส่วนลดจากงาน' })).toHaveCount(0);
     await expect(alert).toContainText('การซื้อซ้ำหรือเปลี่ยนแพ็กเกจระหว่างรอบยังไม่เปิดให้บริการ');
     await expect(alert).toContainText('เลขอ้างอิงสำหรับแจ้งทีมงาน: ');
     await expect(alert.getByRole('button', { name: 'ตรวจสถานะล่าสุด', exact: true })).toBeVisible();
@@ -1111,7 +1114,7 @@ for (const width of WIDTHS) {
   for (const shop of [{ key: 'a card auto-renew shop', status: deferredShopStatus, view: { renewalMode: 'CARD_AUTO', renewalState: 'RUNNING' }, why: 'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้' },
     { key: 'a QR bill every period shop', status: qrShopStatus, view: { renewalMode: 'PROMPTPAY_RENEW', renewalState: 'RUNNING' }, why: 'ร้านนี้ต่ออายุด้วยบิล QR ทุกงวด ส่วนลดจากงานยังใช้กับบิล QR รอบต่ออายุไม่ได้' },
     { key: 'a shop that switched its renewal off', status: (id: string) => deferredShopStatus(id, { cancelAtPeriodEnd: true, nextChargeAt: null }), view: { renewalMode: 'CARD_AUTO', renewalState: 'STOPPED' },
-      why: 'ร้านนี้ปิดการต่ออายุไว้แล้ว แต่แพ็กเกจรอบปัจจุบันยังไม่หมด ตอนนี้จึงยังใช้ส่วนลดจากงานไม่ได้' },
+      why: 'การต่ออายุของร้านนี้ปิดอยู่ แต่แพ็กเกจรอบปัจจุบันยังไม่หมด ตอนนี้จึงยังใช้ส่วนลดจากงานไม่ได้' },
     { key: 'a shop whose renewal charge failed', status: (id: string) => deferredShopStatus(id, { paymentState: 'FAILED', subscriptionState: 'past_due' }), view: { renewalMode: 'CARD_AUTO', renewalState: 'UNPAID' },
       why: 'ร้านนี้มีค่าต่ออายุที่ยังชำระไม่สำเร็จ ส่วนลดจากงานใช้กับยอดต่ออายุนี้ไม่ได้' }] as const)
     test(`PROMO-08 the held-discount note for ${shop.key} says why in its own words at ${width}px`, async ({ authedPage: page, companyId }, info) => {

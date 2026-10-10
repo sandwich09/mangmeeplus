@@ -62,7 +62,7 @@ describe('LINE: ถามส่วนลด answer', () => {
   it('a paid package still running is told what is known of its renewal: by the way it renews while it runs, as switched off or unpaid, and the one fact that holds for all when nothing is settled', () => {
     const CARD = 'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้ค่ะ';
     const QR = 'ร้านนี้ต่ออายุด้วยบิล QR ทุกงวด ส่วนลดจากงานยังใช้กับบิล QR รอบต่ออายุไม่ได้ค่ะ';
-    const STOPPED = 'ร้านนี้ปิดการต่ออายุไว้แล้ว แต่แพ็กเกจรอบปัจจุบันยังไม่หมด ตอนนี้จึงยังใช้ส่วนลดจากงานไม่ได้ค่ะ';
+    const STOPPED = 'การต่ออายุของร้านนี้ปิดอยู่ แต่แพ็กเกจรอบปัจจุบันยังไม่หมด ตอนนี้จึงยังใช้ส่วนลดจากงานไม่ได้ค่ะ';
     const UNPAID = 'ร้านนี้มีค่าต่ออายุที่ยังชำระไม่สำเร็จ ส่วนลดจากงานใช้กับยอดต่ออายุนี้ไม่ได้ค่ะ';
     const ANY = 'ตอนนี้ร้านนี้ยังใช้ส่วนลดจากงานไม่ได้ค่ะ';
     const answer = (why: string) => ({ canUse: false, text: ['คุณมีส่วนลดจากงานค่ะ', LINE, why].join('\n') });
@@ -82,13 +82,28 @@ describe('LINE: ถามส่วนลด answer', () => {
     for (const text of [STOPPED, UNPAID, ANY]) assert.doesNotMatch(text, /QR|บิล|ตัดเงิน|ตัดบัตร/u);
     assert.doesNotMatch(ANY, /ต่ออายุ/u);
     for (const text of [CARD, QR, STOPPED, UNPAID, ANY]) assert.doesNotMatch(text, /\d|เมื่อไหร่|เร็วๆ นี้|undefined|null/u);
-    // The renewal facts speak only on the credit path: every other answer (can pay, payment record under review, deal, event used, nothing usable) is the same whatever they are.
-    const others: Partial<LineEventDiscountFacts>[] = [{}, { path: null }, { block: 'DEAL_ACTIVE' }, { block: 'EVENT_ALREADY_USED' }, { tickets: [] },
+    // The renewal facts speak on the credit path, and on the discount path only as "unpaid": every other answer (payment record under review, deal, event used, nothing usable) is the same whatever they are.
+    const others: Partial<LineEventDiscountFacts>[] = [{ path: null }, { block: 'DEAL_ACTIVE' }, { block: 'EVENT_ALREADY_USED' }, { tickets: [] },
       { tickets: [ticket({ state: 'USED' })] }, { path: 'CREDIT', tickets: [] }, { path: 'CREDIT', tickets: [ticket({ state: 'EXPIRED' })] }];
     for (const over of others) for (const renewalMode of modes) for (const renewalState of ['RUNNING', 'STOPPED', 'UNPAID', undefined] as const) {
       const withFacts = lineEventDiscountAnswer(facts({ ...over, renewalMode, renewalState }));
       assert.deepEqual(withFacts, lineEventDiscountAnswer(facts(over)), `${JSON.stringify(over)} ${renewalMode} ${renewalState}`);
     }
+    // A shop that can pay for a package is told it can use the discount, whatever the mode and any renewal state but unpaid (a switched-off renewal whose grace ran out may restart).
+    for (const renewalMode of modes) for (const renewalState of ['RUNNING', 'STOPPED', undefined] as const)
+      assert.deepEqual(lineEventDiscountAnswer(facts({ renewalMode, renewalState })), lineEventDiscountAnswer(facts()), `DISCOUNT ${renewalMode} ${renewalState}`);
+    assert.equal(lineEventDiscountAnswer(facts()).canUse, true);
+    // An unpaid renewal opens no purchase on the package page (billing.service.ts status(): no `new_sales`), so on either path it gets the ticket lines, the unpaid sentence and no package button.
+    for (const renewalMode of modes) for (const path of ['DISCOUNT', 'CREDIT'] as const) {
+      const unpaid = facts({ path, renewalMode, renewalState: 'UNPAID' });
+      assert.deepEqual(lineEventDiscountAnswer(unpaid), answer(UNPAID), `UNPAID ${path} ${renewalMode}`);
+      assert.equal((buildEventDiscountCard(unpaid, 'https://app.example.test/l/tok') as any).contents.footer, undefined, `no button, UNPAID ${path} ${renewalMode}`);
+    }
+    assert.deepEqual(lineEventDiscountAnswer(facts({ renewalState: 'UNPAID', tickets: [ticket(), ticket({ eventName: 'งานสอง', serial: 'Y', discountSatang: 12_000 })] })).text.split('\n'),
+      ['คุณมีส่วนลดจากงานค่ะ', LINE, '• ส่วนลดจากงาน งานสอง · ลด 120 บาท · ใช้ได้ถึง 30 ต.ค. 2569', UNPAID]);
+    // A ticket reason still comes first, and an unreadable payment record still says the team must check (its data is what cannot be trusted).
+    assert.match(lineEventDiscountAnswer(facts({ block: 'DEAL_ACTIVE', renewalState: 'UNPAID' })).text, /ร้านนี้มีดีลพิเศษอยู่แล้ว/);
+    assert.match(lineEventDiscountAnswer(facts({ path: null, renewalState: 'UNPAID' })).text, /ต้องให้ทีมงานตรวจก่อน/);
     // Still the same card, with no package button (the shop cannot pay now): only the sentence changed.
     for (const [state, why] of [['STOPPED', STOPPED], ['UNPAID', UNPAID]] as const) {
       const card = buildEventDiscountCard(facts({ path: 'CREDIT', renewalMode: 'PROMPTPAY_RENEW', renewalState: state }), 'https://app.example.test/l/tok') as any, text = ['คุณมีส่วนลดจากงานค่ะ', LINE, why].join('\n');
@@ -116,7 +131,7 @@ describe('LINE: ถามส่วนลด answer', () => {
 
   it('speaks as น้องมั่งมี with no machine tokens in any answer', () => {
     const all = [facts(), facts({ path: 'CREDIT' }), facts({ path: 'CREDIT', renewalMode: 'CARD_AUTO', renewalState: 'RUNNING' }), facts({ path: 'CREDIT', renewalMode: 'PROMPTPAY_RENEW', renewalState: 'RUNNING' }),
-      facts({ path: 'CREDIT', renewalState: 'STOPPED' }), facts({ path: 'CREDIT', renewalState: 'UNPAID' }),
+      facts({ path: 'CREDIT', renewalState: 'STOPPED' }), facts({ path: 'CREDIT', renewalState: 'UNPAID' }), facts({ renewalState: 'UNPAID' }),
       facts({ path: null }), facts({ block: 'EVENT_ALREADY_USED' }), facts({ tickets: [] }),
       facts({ tickets: [ticket({ state: 'REVOKED' })] })].map((item) => lineEventDiscountAnswer(item).text);
     for (const text of [...all, EVENT_DISCOUNT_MEMBER_REPLY]) { assert.doesNotMatch(text, MACHINE); assert.match(text, /ค่ะ$/u); }

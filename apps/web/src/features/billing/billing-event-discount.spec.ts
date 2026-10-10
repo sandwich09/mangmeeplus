@@ -68,7 +68,7 @@ it('the second half says only what is known of the renewal: a running one by the
     ({ path, tickets: [ticket()], ...(renewalMode ? { renewalMode } : {}), ...(renewalState ? { renewalState } : {}) });
   const CARD = 'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้';
   const QR = 'ร้านนี้ต่ออายุด้วยบิล QR ทุกงวด ส่วนลดจากงานยังใช้กับบิล QR รอบต่ออายุไม่ได้';
-  const STOPPED = 'ร้านนี้ปิดการต่ออายุไว้แล้ว แต่แพ็กเกจรอบปัจจุบันยังไม่หมด ตอนนี้จึงยังใช้ส่วนลดจากงานไม่ได้';
+  const STOPPED = 'การต่ออายุของร้านนี้ปิดอยู่ แต่แพ็กเกจรอบปัจจุบันยังไม่หมด ตอนนี้จึงยังใช้ส่วนลดจากงานไม่ได้';
   const UNPAID = 'ร้านนี้มีค่าต่ออายุที่ยังชำระไม่สำเร็จ ส่วนลดจากงานใช้กับยอดต่ออายุนี้ไม่ได้';
   const ANY = 'ตอนนี้ร้านนี้ยังใช้ส่วนลดจากงานไม่ได้';
   const modes = ['CARD_AUTO', 'PROMPTPAY_RENEW', 'NONE', 'CARD_ONCE', 'PROMPTPAY_ONCE', undefined] as const;
@@ -86,7 +86,8 @@ it('the second half says only what is known of the renewal: a running one by the
   for (const text of [STOPPED, UNPAID, ANY]) assert.doesNotMatch(text, /QR|บิล|ตัดเงิน|ตัดบัตร/);
   assert.doesNotMatch(ANY, /ต่ออายุ/);
   for (const text of [CARD, QR, STOPPED, UNPAID, ANY]) assert.doesNotMatch(text, /[A-Z]{3,}_[A-Z]|undefined|null|\d|เมื่อไหร่|เร็วๆ นี้/);
-  // When the note appears is untouched by the renewal facts: no note on the discount path, none without a usable ticket, whatever the mode and state.
+  // When the note appears is untouched by the renewal facts: no note on the discount path, none without a usable ticket, whatever the mode and state. An unpaid renewal on the discount path
+  // (its package has run out) is no exception: the page opens no purchase to that shop (status() builds no `eventDiscount` box and no `new_sales`) and says why in the purchase-block alert; LINE says it too.
   for (const mode of modes) for (const state of ['RUNNING', 'STOPPED', 'UNPAID', undefined] as const) {
     assert.equal(eventDiscountHeldNotice(shop(mode, state, 'DISCOUNT')), null, `DISCOUNT ${mode} ${state}`);
     assert.equal(eventDiscountHeldNotice(shop(mode, state, null)), held, `null path ${mode} ${state}`);

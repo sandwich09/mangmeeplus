@@ -139,11 +139,15 @@ export function eventDiscountPath(source: BillingPurchaseSource, renewalMode?: s
 
 /**
  * Sales-event spec §8.1 (2026-10-10): whether the renewal on file is running, from the account columns status() reads, so "this shop renews by card/QR" is said only of a renewal
- * that is. UNPAID first: a failed charge or an overdue bill is the stronger fact. Absent = nothing settled (no subscription bound yet, collection paused, a state the page has no word for).
+ * that is. UNPAID = the charge failed or the bill is overdue AND status() therefore opens no purchase (no `new_sales` while past_due/unpaid, while a grace runs, or while the
+ * subscription is not yet cancelled); a cancelled subscription whose grace has run out is over and the shop may restart, so that is STOPPED. UNPAID first: the stronger fact.
+ * Absent = nothing settled (no subscription bound yet, collection paused, a state the page has no word for).
  */
-export function eventDiscountRenewalState(account: Pick<BillingAccount, 'baseSubscriptionId' | 'renewalMode' | 'cancelAtPeriodEnd' | 'subscriptionState' | 'graceEndsAt' | 'collectionPauseJson'> | null): BillingEventDiscountView['renewalState'] {
+export function eventDiscountRenewalState(account: Pick<BillingAccount, 'baseSubscriptionId' | 'renewalMode' | 'cancelAtPeriodEnd' | 'subscriptionState' | 'graceEndsAt' | 'collectionPauseJson'> | null,
+  now = new Date()): BillingEventDiscountView['renewalState'] {
   if (!account?.baseSubscriptionId) return undefined;
-  if (['past_due', 'unpaid'].includes(account.subscriptionState) || account.graceEndsAt) return 'UNPAID';
+  const ended = ['canceled', 'incomplete_expired'].includes(account.subscriptionState);
+  if (['past_due', 'unpaid'].includes(account.subscriptionState) || (account.graceEndsAt && (!ended || account.graceEndsAt > now))) return 'UNPAID';
   if (!renewalIsLive(account)) return 'STOPPED';
   return !account.collectionPauseJson && ['active', 'trialing'].includes(account.subscriptionState) ? 'RUNNING' : undefined;
 }
