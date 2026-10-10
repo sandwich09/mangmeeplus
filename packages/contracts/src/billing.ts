@@ -380,13 +380,17 @@ export type BillingEndPackageReview = { canEnd:boolean; blockedReason:string|nul
 export type BillingRefundPromotion = { displayName:string; bonusMonths:number; bonusReceiptUnits:number; benefitEnd:string|null };
 export type BillingRefundReview = { companyId:string; companyName:string; invoiceId:string; invoiceNumber:string|null; mode:BillingMode;
   paidSatang:number; refundedSatang:number; disputed:boolean; refundLimitSatang:number|null; canCreate:boolean; blockedReason:string|null;
-  sourceHash:string; observedAt:string; usage:BillingStatus['usage']; adjustments:BillingAdjustmentItem[]; promotion?:BillingRefundPromotion };
+  sourceHash:string; observedAt:string; usage:BillingStatus['usage']; adjustments:BillingAdjustmentItem[]; promotion?:BillingRefundPromotion;
+  /** How the invoice was paid: the provider refunds a PromptPay payment only after the customer answers its e-mail. */
+  paymentMethod?:'card'|'promptpay' };
 export type BillingRefundOperation = BillingOperationView & { type:'REFUND'; sourceVersion:number; previewHash:string;
   companyName:string; invoiceNumber:string|null; amountSatang:number; taxSatang:number; memo:string; notifyCustomer:boolean;
   paidSatang:number; previousRefundedSatang:number; usage:BillingStatus['usage'];
   allowedActions:('submit'|'approve'|'cancel'|'run')[]; dispatchedAt:string|null; creditNoteId:string|null; creditNoteNumber:string|null;
   refundId:string|null; refundState:BillingAdjustmentItem['status']|null; reviewCaseId:string|null; bankReceiptConfirmed:false;
-  endPackage:boolean; packageEnded:boolean|null; promotion?:BillingRefundPromotion };
+  endPackage:boolean; packageEnded:boolean|null; promotion?:BillingRefundPromotion; paymentMethod?:BillingRefundReview['paymentMethod'];
+  /** The provider's own error code and type of its last rejection while this request still has an error (safe tokens only, never its message), for staff to read. */
+  providerErrorCode?:string|null; providerErrorType?:string|null };
 
 export type BillingOperatorCompany = {
   accountId: string | null; companyId: string; companyName: string; mode: BillingMode | 'DISABLED'; version: number;
