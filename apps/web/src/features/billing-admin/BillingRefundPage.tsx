@@ -106,7 +106,7 @@ export default function BillingRefundPage({companyId,invoiceId,operationId}:{com
         {operation.creditNoteId&&<p>ออกเอกสารปรับยอดแล้ว {operation.creditNoteNumber} เปิดเอกสารได้จากใบแจ้งหนี้เดิม</p>}
         {operation.dispatchedAt&&<p>ส่งคำสั่งครั้งแรก {time(operation.dispatchedAt)} · ตรวจผลล่าสุด {time(operation.observedAt)}</p>}
         <p>ผลจาก Stripe ยังไม่ใช่หลักฐานว่าเงินเข้าบัญชีธนาคารลูกค้าแล้ว</p>
-        <details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิง</summary><p className="break-all">เลขคำขอ {operation.id}</p><p>ตรวจได้ถึง {time(operation.expiresAt)}</p>{operation.refundId&&<p className="break-all">เลขคืนเงิน {operation.refundId}</p>}</details>
+        <details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิง</summary><p className="break-all">เลขคำขอ {operation.id}</p><p>ตรวจได้ถึง {time(operation.expiresAt)}</p>{operation.refundId&&<p className="break-all">เลขคืนเงิน {operation.refundId}</p>}{(operation.providerErrorCode||operation.providerErrorType)&&<p className="break-all">รหัสข้อผิดพลาดจากผู้ให้บริการรับชำระ (สำหรับแจ้งทีมงาน): {[operation.providerErrorCode,operation.providerErrorType].filter(Boolean).join(' · ')}</p>}</details>
         {operation.reviewCaseId&&<Link className={button} href={`/system/billing/issues/${encodeURIComponent(operation.reviewCaseId)}`}>เปิดเคสให้เจ้าหน้าที่ตรวจ</Link>}
       </section>
       {canAct&&<section className="space-y-3 rounded-xl border border-gray-200 p-4 bg-white"><h2 className="font-bold">ยืนยันตัวตนก่อนดำเนินการ</h2><p>ใช้รหัสผ่านปัจจุบัน การยืนยันใช้ได้ 5 นาทีในอุปกรณ์นี้</p>
