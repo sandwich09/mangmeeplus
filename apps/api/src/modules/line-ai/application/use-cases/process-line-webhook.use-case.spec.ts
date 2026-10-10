@@ -8687,16 +8687,28 @@ describe('LINE: ถามส่วนลด (sales-event spec §8.1, Owner UAT 2
     const member = discountLane({ lineEventDiscount: async () => { throw new ForbiddenException('ต้องได้รับสิทธิ์จัดการแพ็กเกจบริษัท'); } });
     await member.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-member', messageText: 'ส่วนลดค่ามั่งมี' });
     assert.equal(member.replies[0], 'ส่วนลดจากงานใช้ตอนซื้อแพ็กเกจของร้าน เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจสอบถามในแชทนี้ได้เลยค่ะ');
-    const paying = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'CREDIT', renewalMode: 'CARD_AUTO' }) });
+    const paying = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'CREDIT', renewalMode: 'CARD_AUTO', renewalState: 'RUNNING' }) });
     await paying.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-paying', messageText: 'ส่วนลด' });
     assert.match(paying.sentMessages[0].contents.body.contents[1].text, /ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ/);
     assert.equal(paying.sentMessages[0].contents.footer, undefined);
     // UAT 2026-10-10: a shop that is sent a QR bill each period is told that, never that its card is charged by itself.
-    const qr = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'CREDIT', renewalMode: 'PROMPTPAY_RENEW' }) });
+    const qr = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'CREDIT', renewalMode: 'PROMPTPAY_RENEW', renewalState: 'RUNNING' }) });
     await qr.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-qr-bill', messageText: 'ส่วนลด' });
     assert.match(qr.sentMessages[0].contents.body.contents[1].text, /ร้านนี้ต่ออายุด้วยบิล QR ทุกงวด ส่วนลดจากงานยังใช้กับบิล QR รอบต่ออายุไม่ได้ค่ะ$/u);
     assert.doesNotMatch(JSON.stringify(qr.sentMessages), /ตัดเงินอัตโนมัติ/u);
     assert.equal(qr.sentMessages[0].contents.footer, undefined);
+    // 2026-10-10: a shop that switched its renewal off is told that, never that it renews by card or QR.
+    const off = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'CREDIT', renewalMode: 'CARD_AUTO', renewalState: 'STOPPED' }) });
+    await off.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-renewal-off', messageText: 'ส่วนลด' });
+    assert.match(off.sentMessages[0].contents.body.contents[1].text, /การต่ออายุของร้านนี้ปิดอยู่ แต่แพ็กเกจรอบปัจจุบันยังไม่หมด ตอนนี้จึงยังใช้ส่วนลดจากงานไม่ได้ค่ะ$/u);
+    assert.doesNotMatch(JSON.stringify(off.sentMessages), /ตัดเงินอัตโนมัติ|บิล QR/u);
+    assert.equal(off.sentMessages[0].contents.footer, undefined);
+    // 2026-10-10: a shop whose renewal charge failed is on the discount path once its package has run out, but the package page opens no purchase for it: no "can use", no package button.
+    const unpaid = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'DISCOUNT', renewalMode: 'CARD_AUTO', renewalState: 'UNPAID' }) });
+    await unpaid.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-unpaid-renewal', messageText: 'ส่วนลด' });
+    assert.match(unpaid.sentMessages[0].contents.body.contents[1].text, /ส่วนลดจากงาน event1 · ลด 100 บาท · ใช้ได้ถึง 30 ต.ค. 2569\nร้านนี้มีค่าต่ออายุที่ยังชำระไม่สำเร็จ ส่วนลดจากงานใช้กับยอดต่ออายุนี้ไม่ได้ค่ะ$/u);
+    assert.doesNotMatch(JSON.stringify(unpaid.sentMessages), /ลดตอนจ่ายค่าแพ็กเกจ/u);
+    assert.equal(unpaid.sentMessages[0].contents.footer, undefined);
   });
 });
 
