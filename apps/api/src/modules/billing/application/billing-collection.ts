@@ -205,15 +205,18 @@ export class BillingCollection {
     return tx.auditLog.create({ data: { companyId: row.companyId!, actorUserId: row.initiatorUserId, action: `billing.collection.${action}`, targetType: 'BillingOperation',
       targetId: row.id, requestId: row.id, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { type: row.type, sourceVersion: row.sourceVersion, previewHash: row.requestHash } } });
   }
-  /** Over without a change (2026-10-10): nothing is sent, the account is released in this transaction, the review case stays open. */
+  /** Over without a change (2026-10-10): nothing is sent, the account is released in this transaction. Not applied keeps its review case;
+   *  never sent leaves nothing to review, so it opens none and closes one an older pass opened. */
   private async end(account: BillingAccount, row: BillingOperation, lease: string, journal: Journal, errorCode: 'BILLING_COLLECTION_NOT_SENT' | 'BILLING_COLLECTION_NOT_APPLIED') {
     await this.prisma.client.$transaction(async tx => {
       await this.fence(tx, account, row, lease);
       await tx.billingAccount.update({ where: { id: account.id }, data: { activeCollectionOperationId: null, version: { increment: 1 } } });
       await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'FAILED', resultJson: journal as Prisma.InputJsonValue, errorCode, version: { increment: 1 } } });
       await this.audit(tx, row, errorCode === 'BILLING_COLLECTION_NOT_SENT' ? 'not_sent' : 'not_applied');
+      if (errorCode === 'BILLING_COLLECTION_NOT_SENT') await tx.billingIssue.updateMany({ where: { stripeAccountId: account.stripeAccountId, livemode: account.livemode, companyId: account.companyId,
+        kind: 'CUSTOMER_COLLECTION_REVIEW', referenceId: row.id }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
     });
-    await this.billing.issue(account.companyId, 'CUSTOMER_COLLECTION_REVIEW', row.id);
+    if (errorCode === 'BILLING_COLLECTION_NOT_APPLIED') await this.billing.issue(account.companyId, 'CUSTOMER_COLLECTION_REVIEW', row.id);
   }
   private observed(p: Proposed, sub: StripeObject, schedule: StripeObject | null, id: string) {
     const cancel = p.action === 'CANCEL_RENEWAL', target = Date.parse(p.paidThrough) / 1000;
