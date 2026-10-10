@@ -343,14 +343,32 @@ test('PROMPTPAY_RENEW paid, the provider refuses the subscription: no blind retr
   try {
     const quoted = await f.quote('PROMPTPAY_RENEW'), opened = await f.checkout(quoted.quoteId, quoted.consentRevision);
     const paid = await f.pay(opened.attemptId, 39900, 'promptpay');
+    const key = `mm:${opened.attemptId}:promptpay-renewal`;
+    const journal = async () => (await client.billingAttempt.findUniqueOrThrow({ where: { id: opened.attemptId } })).collectionJson as Record<string, any>;
+    const sentAgo = async (ms: number) => client.billingAttempt.update({ where: { id: opened.attemptId }, data: {
+      collectionJson: { ...await journal(), qrSubscriptionRequestedAt: new Date(Date.now() - ms).toISOString() } } });
+    // Not a refusal of this subscription: an idempotency conflict, a credentials problem, a rate limit. No marker; the next generation goes out.
+    const retried: [StripeRequestError, RegExp][] = [
+      [new StripeRequestError('REJECTED', 'request_rejected', 60, 'idempotency_key_in_use', 'idempotency_error', 409), /stripe\.request_rejected/],
+      [new StripeRequestError('REJECTED', 'request_rejected', 60, undefined, 'invalid_request_error', 401), /stripe\.request_rejected/],
+      [new StripeRequestError('RETRY', 'rate_limited', 60, 'rate_limit', undefined, 429), /stripe\.rate_limited/]];
+    for (const [index, [error, message]] of retried.entries()) {
+      f.stripeState.subscriptionError = error;
+      if (index) await sentAgo(71 * 60_000);
+      await assert.rejects(f.reconcileOneTime(paid), message);
+      assert.equal((await journal()).qrSubscriptionRefused, undefined, `HTTP ${error.status} is not a refusal`);
+    }
+    assert.deepEqual(posts().map(call => call.key), [key, `${key}:g2`, `${key}:g3`]);
+    // A 400: the provider refused this request.
     f.stripeState.subscriptionError = new StripeRequestError('REJECTED', 'request_rejected', 60, 'resource_missing', 'invalid_request_error', 400);
+    await sentAgo(71 * 60_000);
     await assert.rejects(f.reconcileOneTime(paid), /stripe\.request_rejected/);
-    const attempt = await client.billingAttempt.findUniqueOrThrow({ where: { id: opened.attemptId } }), journal = attempt.collectionJson as Record<string, any>;
-    assert.deepEqual([journal.qrSubscriptionRefused?.generation, journal.qrSubscriptionRefused?.status, journal.qrSubscriptionRefused?.code], [1, 400, 'resource_missing']);
+    const refused = (await journal()).qrSubscriptionRefused;
+    assert.deepEqual([refused?.generation, refused?.status, refused?.code], [4, 400, 'resource_missing']);
     f.stripeState.subscriptionError = null;
-    await client.billingAttempt.update({ where: { id: attempt.id }, data: { collectionJson: { ...journal, qrSubscriptionRequestedAt: new Date(Date.now() - 24 * 3_600_000).toISOString() } } });
+    await sentAgo(24 * 3_600_000);
     await assert.rejects(f.reconcileOneTime(paid), /billing\.subscription_binding_refused/);
-    assert.equal(posts().length, 1, 'a refusal is never sent again by itself, under any key');
+    assert.equal(posts().length, 4, 'a refusal is never sent again by itself, under any key');
     assert.equal((await f.current()).activeAttemptId, opened.attemptId);
   } finally {
     await f.cleanup(); await client.$disconnect();
