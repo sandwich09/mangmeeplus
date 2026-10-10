@@ -228,8 +228,9 @@ export class BillingRepeat {
       }
       try { return await this.stripe.request('POST', path, params, `mm:${attempt.id}:${step}${gen ? `:g${gen}` : ''}`); }
       catch (error) {
-        // P-4: the provider refused the step itself (not a rate limit, not an idempotency conflict). The catch below stores it.
-        if (error instanceof StripeRequestError && error.outcome === 'REJECTED' && error.status && error.status !== 409 &&
+        // P-4: the provider refused the step itself — a 400 or a 402, as the refund create judges it. A 401, 403 or 404 is a key or
+        // account problem, not an answer about this step: no marker, and the next generation goes out. The catch below stores it.
+        if (error instanceof StripeRequestError && error.outcome === 'REJECTED' && (error.status === 400 || error.status === 402) &&
             error.providerType !== 'idempotency_error') journal.commands[step]!.refused = true;
         throw error;
       }
