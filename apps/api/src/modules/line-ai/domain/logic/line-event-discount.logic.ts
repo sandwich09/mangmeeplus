@@ -46,15 +46,19 @@ function ticketLine(ticket: BillingEventDiscountTicket): string {
 const HOW_TO_GET = 'รับส่วนลดได้โดยสแกน QR จากพนักงานขายของมั่งมีในงานอีเวนต์ค่ะ';
 
 /**
- * Why a shop that keeps renewing (the API's CREDIT path) cannot use the discount, said for the way it renews: a card is charged by itself,
- * a QR bill is sent each period for the shop to scan. Same words as the package page (apps/web/src/features/billing/billing-event-discount.ts
- * CREDIT_WHY, which has no "ค่ะ"); a renewal mode with no word of its own gets the one fact that holds for all of them.
+ * Why a shop on the API's CREDIT path cannot use the discount, said only of what is known (sales-event spec §8.1, table of 2026-10-10): a renewal that is running is told by the way it
+ * renews (a card is charged by itself, a QR bill is sent each period for the shop to scan); one switched off or unpaid says so; anything not settled gets the one fact that holds for all.
+ * Same words as the package page (apps/web/src/features/billing/billing-event-discount.ts CREDIT_WHY, which has no "ค่ะ").
  */
 const CREDIT_WHY = {
   CARD_AUTO: 'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้ค่ะ',
   PROMPTPAY_RENEW: 'ร้านนี้ต่ออายุด้วยบิล QR ทุกงวด ส่วนลดจากงานยังใช้กับบิล QR รอบต่ออายุไม่ได้ค่ะ',
+  STOPPED: 'ร้านนี้ปิดการต่ออายุไว้แล้ว แต่แพ็กเกจรอบปัจจุบันยังไม่หมด ตอนนี้จึงยังใช้ส่วนลดจากงานไม่ได้ค่ะ',
+  UNPAID: 'ร้านนี้มีค่าต่ออายุที่ยังชำระไม่สำเร็จ ส่วนลดจากงานใช้กับยอดต่ออายุนี้ไม่ได้ค่ะ',
   OTHER: 'ตอนนี้ร้านนี้ยังใช้ส่วนลดจากงานไม่ได้ค่ะ',
 } as const;
+const creditWhy = ({ renewalState, renewalMode }: BillingEventDiscountView) => CREDIT_WHY[renewalState === 'STOPPED' || renewalState === 'UNPAID' ? renewalState
+  : renewalState === 'RUNNING' && (renewalMode === 'CARD_AUTO' || renewalMode === 'PROMPTPAY_RENEW') ? renewalMode : 'OTHER'];
 
 /** `canUse` = this shop may take the discount at its next package payment, so the card carries the package button. */
 export function lineEventDiscountAnswer(facts: LineEventDiscountFacts): { text: string; canUse: boolean } {
@@ -73,8 +77,8 @@ export function lineEventDiscountAnswer(facts: LineEventDiscountFacts): { text: 
   const spent = [...new Set(tickets.filter(usable).map((ticket) => ticket.eventName))].join(', ');
   const why = facts.block === 'EVENT_ALREADY_USED' ? `ร้านนี้ใช้ส่วนลดจากงาน ${spent} ไปแล้ว (งานเดียวกันใช้ได้ร้านละครั้ง) ค่ะ`
     : facts.block === 'DEAL_ACTIVE' ? 'ร้านนี้มีดีลพิเศษอยู่แล้ว จึงใช้ส่วนลดจากงานกับราคาดีลไม่ได้ค่ะ'
-    // A running renewal: its rounds are never discounted (SD-O13 discounts only the first bill of a new package).
-    : facts.path === 'CREDIT' ? CREDIT_WHY[facts.renewalMode === 'CARD_AUTO' || facts.renewalMode === 'PROMPTPAY_RENEW' ? facts.renewalMode : 'OTHER']
+    // CREDIT = a paid package still running in a renewing mode; renewals are never discounted (SD-O13 discounts only the first bill of a new package). What is said follows what is known of that renewal.
+    : facts.path === 'CREDIT' ? creditWhy(facts)
     : 'ข้อมูลการชำระเงินเดิมของร้านนี้ต้องให้ทีมงานตรวจก่อน จึงยังใช้ส่วนลดจากงานไม่ได้ค่ะ';
   return { text: ['คุณมีส่วนลดจากงานค่ะ', ...lines, why].join('\n'), canUse: false };
 }

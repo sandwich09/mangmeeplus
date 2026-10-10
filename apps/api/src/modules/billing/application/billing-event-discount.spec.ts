@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { billingOffer } from '@watchdog-bms/contracts';
-import { eventDiscountOffer, eventDiscountPath, eventDiscountView, holderEventDiscountTickets } from './billing-event-discount';
+import { eventDiscountOffer, eventDiscountPath, eventDiscountRenewalState, eventDiscountView, holderEventDiscountTickets } from './billing-event-discount';
 import { BillingService } from './billing.service';
 
 const now = new Date('2026-10-01T03:00:00.000Z');
@@ -73,21 +73,45 @@ describe('sales-event holder view', () => {
     const self = (account: any, source: string) => { const asked: any[] = []; return { asked, assertOwner: async (ctx: any) => { asked.push(ctx); }, account: async () => account, purchaseSource: async () => source,
       prisma: { client: { company: { findUnique: async () => ({ planTerm: null }) }, externalIdentity: { findMany: async () => [] } } } }; };
     const paid = 'PAID_CURRENT_MODE';
-    for (const [account, source, path, mode] of [
-      [{ renewalMode: 'CARD_AUTO', baseSubscriptionId: 'sub_1' }, paid, 'CREDIT', 'CARD_AUTO'],
-      [{ renewalMode: 'PROMPTPAY_RENEW', baseSubscriptionId: 'sub_1' }, paid, 'CREDIT', 'PROMPTPAY_RENEW'],
-      // first QR bill paid, subscription not bound yet
-      [{ renewalMode: 'PROMPTPAY_RENEW', baseSubscriptionId: null }, paid, 'CREDIT', 'PROMPTPAY_RENEW'],
+    for (const [account, source, path, mode, state] of [
+      [{ renewalMode: 'CARD_AUTO', baseSubscriptionId: 'sub_1', subscriptionState: 'active' }, paid, 'CREDIT', 'CARD_AUTO', 'RUNNING'],
+      [{ renewalMode: 'PROMPTPAY_RENEW', baseSubscriptionId: 'sub_1', subscriptionState: 'active' }, paid, 'CREDIT', 'PROMPTPAY_RENEW', 'RUNNING'],
+      // first QR bill paid, subscription not bound yet: the way it renews is known, that it runs is not
+      [{ renewalMode: 'PROMPTPAY_RENEW', baseSubscriptionId: null, subscriptionState: 'NONE' }, paid, 'CREDIT', 'PROMPTPAY_RENEW', undefined],
       // a card subscription whose column still says NONE is a card charged by itself, as status() reads it
-      [{ renewalMode: 'NONE', baseSubscriptionId: 'sub_1' }, paid, 'CREDIT', 'CARD_AUTO'],
-      [{ renewalMode: 'NONE', baseSubscriptionId: null }, paid, 'CREDIT', 'NONE'],
-      [{ renewalMode: 'CARD_ONCE', baseSubscriptionId: null }, paid, 'DISCOUNT', 'CARD_ONCE'],
-      [{ renewalMode: 'PROMPTPAY_RENEW', baseSubscriptionId: null }, 'SOURCE_INCONSISTENT', null, 'PROMPTPAY_RENEW'],
-      [null, 'NO_TERM', 'DISCOUNT', undefined],
+      [{ renewalMode: 'NONE', baseSubscriptionId: 'sub_1', subscriptionState: 'active' }, paid, 'CREDIT', 'CARD_AUTO', 'RUNNING'],
+      [{ renewalMode: 'CARD_AUTO', baseSubscriptionId: 'sub_1', subscriptionState: 'active', cancelAtPeriodEnd: true }, paid, 'CREDIT', 'CARD_AUTO', 'STOPPED'],
+      [{ renewalMode: 'PROMPTPAY_RENEW', baseSubscriptionId: 'sub_1', subscriptionState: 'active', graceEndsAt: now }, paid, 'CREDIT', 'PROMPTPAY_RENEW', 'UNPAID'],
+      [{ renewalMode: 'NONE', baseSubscriptionId: null }, paid, 'CREDIT', 'NONE', undefined],
+      [{ renewalMode: 'CARD_ONCE', baseSubscriptionId: null }, paid, 'DISCOUNT', 'CARD_ONCE', undefined],
+      [{ renewalMode: 'PROMPTPAY_RENEW', baseSubscriptionId: null }, 'SOURCE_INCONSISTENT', null, 'PROMPTPAY_RENEW', undefined],
+      [null, 'NO_TERM', 'DISCOUNT', undefined, undefined],
     ] as const) {
       const shop = self(account, source), view = await read.call(shop, context);
-      assert.deepEqual([view.path, view.renewalMode, view.tickets, shop.asked], [path, mode, [], [context]], JSON.stringify([account, source]));
+      assert.deepEqual([view.path, view.renewalMode, view.renewalState, view.tickets, shop.asked], [path, mode, state, [], [context]], JSON.stringify([account, source]));
     }
+  });
+
+  // Sales-event spec §8.1, table of 2026-10-10: the card/QR sentence is said only of a renewal that runs. The columns are the ones status() reads for the same shop.
+  it('says a renewal runs, is switched off or is unpaid only from the account columns the package page reads, and nothing when they do not settle it', () => {
+    const bound = { renewalMode: 'CARD_AUTO', baseSubscriptionId: 'sub_1', subscriptionState: 'active', cancelAtPeriodEnd: false, graceEndsAt: null, collectionPauseJson: null } as const;
+    const state = (over: Record<string, unknown> = {}) => eventDiscountRenewalState({ ...bound, ...over } as any);
+    for (const mode of ['CARD_AUTO', 'PROMPTPAY_RENEW'])
+      for (const subscriptionState of ['active', 'trialing']) assert.equal(state({ renewalMode: mode, subscriptionState }), 'RUNNING', `${mode} ${subscriptionState}`);
+    // switched off: cancel at the period end, or a subscription already cancelled; the package still runs, which is what puts the shop on the credit path
+    assert.equal(state({ cancelAtPeriodEnd: true }), 'STOPPED');
+    for (const subscriptionState of ['canceled', 'incomplete_expired']) assert.equal(state({ subscriptionState }), 'STOPPED', subscriptionState);
+    // the charge failed or the bill is overdue (a QR shop stays `active` while its bill is open, so the grace the reconciler sets is what shows it); the stronger fact wins over a switch-off
+    for (const subscriptionState of ['past_due', 'unpaid']) assert.equal(state({ subscriptionState }), 'UNPAID', subscriptionState);
+    assert.equal(state({ graceEndsAt: now }), 'UNPAID');
+    assert.equal(state({ subscriptionState: 'canceled', graceEndsAt: now }), 'UNPAID');
+    assert.equal(state({ cancelAtPeriodEnd: true, subscriptionState: 'past_due' }), 'UNPAID');
+    // not settled: collection paused, a provider state the page has no word for, no subscription bound yet, no account
+    assert.equal(state({ collectionPauseJson: { behavior: 'keep_as_draft', resumesAt: null } }), undefined);
+    for (const subscriptionState of ['incomplete', 'paused', 'NONE']) assert.equal(state({ subscriptionState }), undefined, subscriptionState);
+    assert.equal(state({ baseSubscriptionId: null }), undefined);
+    assert.equal(state({ baseSubscriptionId: null, cancelAtPeriodEnd: true, subscriptionState: 'past_due' }), undefined, 'a switch-off or a failure needs the subscription it is about');
+    assert.equal(eventDiscountRenewalState(null), undefined);
   });
 
   it('Owner 2026-09-29: the view lists every discount usable here, best first, each with its own cards; a quote can take a chosen one', async () => {

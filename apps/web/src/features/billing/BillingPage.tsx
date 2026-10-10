@@ -117,7 +117,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const [promotionLost, setPromotionLost] = useState<PromotionLostNotice | null>(null);
   // Owner 2026-09-29: which held discount this payment uses; null = the default, the best one for each card.
   const [eventSerial, setEventSerial] = useState<string | null>(null);
-  // Spec §8.1: the holder's tickets when this shop is not starting a package (owner-only read; refused = no line). The line is drawn once the status is here, for the way the shop renews.
+  // Spec §8.1: the holder's tickets when this shop is not starting a package (owner-only read; refused = no line). The same answer says how the shop renews and whether that renewal runs, so the line is drawn from it alone.
   const [heldView, setHeldView] = useState<BillingEventDiscountView | null>(null);
   useEffect(() => {
     let live = true;
@@ -355,7 +355,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const menusMoveLater = quote?.advanceDeal ? date(quote.advanceDeal.startsAt)
     : quote?.purchase?.kind === 'SCHEDULED_CHANGE' ? date(quote.purchase.previousPaidThrough) : null;
   const status = data?.status;
-  const heldDiscount = eventDiscountHeldNotice(heldView, status?.renewalMode);
+  const heldDiscount = eventDiscountHeldNotice(heldView);
   // The status on screen when the cancel call answers, not the one the button was drawn from: a read that landed while the call was out replaced it.
   const latestStatus = useRef(status);
   latestStatus.current = status;
@@ -937,7 +937,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
                the deal itself ignores — must not be read as the term: the offer's interval is. */
             : quote.advanceDeal ? <p>ชำระงวดแรกวันนี้ ใช้แพ็กเกจปัจจุบันต่อถึง {date(quote.advanceDeal.startsAt)} แล้วจึงเริ่มดีลและรับโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</p>
               : promoReview ? <p>{promoReview.summary}</p>
-              : <p>ชำระสำเร็จแล้ว ใช้งานได้ {dealQuote && !autoDeal ? `${dealQuote.months} เดือน` : quote.offer.interval === 'year' ? '12 เดือน' : '1 เดือน'} {!quote.purchase?.trialCarryover && <>พร้อมโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</>}</p>}
+              : <p>เมื่อชำระสำเร็จ ใช้งานได้ {dealQuote && !autoDeal ? `${dealQuote.months} เดือน` : quote.offer.interval === 'year' ? '12 เดือน' : '1 เดือน'} {!quote.purchase?.trialCarryover && <>พร้อมโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</>}</p>}
           {quote.purchase?.kind === 'INITIAL' && quote.trialEndsAt && <p className="text-sm text-gray-600">การทดลองใช้จะสิ้นสุดเมื่อชำระสำเร็จ วันทดลองที่เหลือจะไม่บวกเพิ่มในแพ็กเกจนี้</p>}
         </div>}
         {/* Per-tier menu sets make this list long in both directions, so what is gained is read the

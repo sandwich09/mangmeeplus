@@ -163,7 +163,7 @@ export function promotionReview(quote: Pick<BillingQuote, 'promotion' | 'offer' 
       quote.purchaseMode === 'PROMPTPAY_RENEW' ? ' (ออกบิล QR ให้สแกน)' : quote.purchaseMode === 'CARD_AUTO' ? ' (ตัดบัตรอัตโนมัติ)' : ''}` : null,
     estimate: 'วันที่ทั้งหมดเป็นการประมาณ ระบบจะยืนยันวันจริงเมื่อชำระสำเร็จ',
     /** The sentence that replaces "ใช้งานได้ 1 เดือน" for a promotion, so the page never says two different lengths. */
-    summary: `ชำระสำเร็จแล้ว ใช้งานได้ ${paidMonths + p.bonusMonths} เดือน (ชำระ ${paidMonths} เดือน แถมฟรี ${p.bonusMonths} เดือน)`,
+    summary: `เมื่อชำระสำเร็จ ใช้งานได้ ${paidMonths + p.bonusMonths} เดือน (ชำระ ${paidMonths} เดือน แถมฟรี ${p.bonusMonths} เดือน)`,
     totalReceiptUnits: p.totalReceiptUnits,
     benefitEnd: p.benefitEnd,
   };

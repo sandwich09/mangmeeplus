@@ -1,8 +1,9 @@
 import type { BillingEventDiscountTicket, BillingEventDiscountView, BillingOffer, BillingPolicy, BillingPurchaseMode, BillingPurchaseSource, BillingStatus } from '@watchdog-bms/contracts';
-import { Prisma } from '../../../generated/prisma/client';
+import { Prisma, type BillingAccount } from '../../../generated/prisma/client';
 import { DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 import { salesEventTicketDisplayState } from '../../sales-console/domain/sales-event-claim.logic';
 import { EVENT_DISCOUNT_ONE_TIME_MODES, pickEventDiscount, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
+import { renewalIsLive } from './billing-end-package';
 import { packageMenuPurchaseSource } from './billing-purchase-source';
 
 /**
@@ -134,6 +135,17 @@ export function eventDiscountPath(source: BillingPurchaseSource, renewalMode?: s
   if (packageMenuPurchaseSource(source)) return 'DISCOUNT';
   if (source !== 'PAID_CURRENT_MODE') return null;
   return EVENT_DISCOUNT_ONE_TIME_MODES.includes(renewalMode as BillingPurchaseMode) ? 'DISCOUNT' : 'CREDIT';
+}
+
+/**
+ * Sales-event spec §8.1 (2026-10-10): whether the renewal on file is running, from the account columns status() reads, so "this shop renews by card/QR" is said only of a renewal
+ * that is. UNPAID first: a failed charge or an overdue bill is the stronger fact. Absent = nothing settled (no subscription bound yet, collection paused, a state the page has no word for).
+ */
+export function eventDiscountRenewalState(account: Pick<BillingAccount, 'baseSubscriptionId' | 'renewalMode' | 'cancelAtPeriodEnd' | 'subscriptionState' | 'graceEndsAt' | 'collectionPauseJson'> | null): BillingEventDiscountView['renewalState'] {
+  if (!account?.baseSubscriptionId) return undefined;
+  if (['past_due', 'unpaid'].includes(account.subscriptionState) || account.graceEndsAt) return 'UNPAID';
+  if (!renewalIsLive(account)) return 'STOPPED';
+  return !account.collectionPauseJson && ['active', 'trialing'].includes(account.subscriptionState) ? 'RUNNING' : undefined;
 }
 
 /**
