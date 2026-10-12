@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import type {BillingAccount,BillingInvoice} from '../../../generated/prisma/client';
 import {configurationHash} from '../domain/billing-policy';
-import {assertOriginalInvoiceCharge,refundNoteProjection,refundParams,refundPreview,refundSource,observedRefund,unrepairableBinding,advanceDealAtBoundary} from './billing-refund-source';
+import {assertOriginalInvoiceCharge,refundNoteProjection,refundParams,refundPreview,refundSource,observedRefund} from './billing-refund-source';
 import {StripeRequestError,type StripeClient} from '../infrastructure/stripe.client';
 
 const account={id:'account',customerId:'cus_Test',livemode:false} as BillingAccount;
@@ -119,38 +119,4 @@ test('a PromptPay payment is refundable under its own provider ids (py_ charge, 
     for(const id of ['xx_Test','','py_','pi_Test'])await assert.rejects(refundSource(stripe,acct,{...row,providerChargeId:id} as BillingInvoice),`charge ${id}`);
     await assert.doesNotReject(refundSource(stripe,acct,row));
   }
-});
-
-/** Owner 2026-10-10, option "ค": which paid purchase may be refunded while it still holds the account slot, and what a proposal pins of it. */
-test('unrepairableBinding: only the active attempt\'s own invoice, with a refused renewal or an advance deal at its boundary and nothing in flight',async()=>{
-  const minute=60_000,ago=(m:number)=>new Date(Date.now()-m*minute).toISOString(),at=ago(5);
-  const held={id:'account',activeAttemptId:'attempt',baseSubscriptionId:null},bill={billingAccountId:'account',sourceAttemptId:'attempt'};
-  const deal=(endsInMinutes:number)=>({advanceDeal:{firstCycleEndsAt:new Date(Date.now()+endsInMinutes*minute).toISOString()}});
-  const ask=(attempt:Record<string,unknown>|null,account:Record<string,unknown>=held,invoice:Record<string,unknown>=bill)=>
-    unrepairableBinding({billingAttempt:{findUnique:async()=>attempt&&{id:'attempt',billingAccountId:'account',subscriptionId:null,quoteSnapshot:{},collectionJson:null,...attempt}}} as never,account as never,invoice as never);
-  const refused={qrSubscriptionRequestedAt:ago(1),qrSubscriptionRefused:{generation:2,at,status:400,code:null}};
-  // (a) the refused marker: every pass sends nothing from then on.
-  assert.deepEqual(await ask({collectionJson:refused}),{kind:'RENEWAL',pin:`attempt:refused:2:${at}`});
-  assert.deepEqual(await ask({quoteSnapshot:deal(9000),collectionJson:{advanceSubscriptionRefused:{generation:1,at}}}),{kind:'ADVANCE_DEAL',pin:`attempt:refused:1:${at}`});
-  // Still being repaired, or not this purchase: refused as before.
-  assert.equal(await ask({collectionJson:{qrSubscriptionRequestedAt:ago(600),qrSubscriptionGeneration:9}}),null,'generations go on for ever');
-  assert.equal(await ask({collectionJson:null}),null);
-  assert.equal(await ask({collectionJson:refused},held,{...bill,sourceAttemptId:'earlier'}),null,'another invoice of the shop');
-  assert.equal(await ask({collectionJson:refused},held,{...bill,billingAccountId:'other'}),null);
-  assert.equal(await ask({collectionJson:refused},{...held,activeAttemptId:null}),null,'nothing holds the slot: the ordinary refund');
-  assert.equal(await ask({collectionJson:refused},{...held,baseSubscriptionId:'sub_1'}),null);
-  assert.equal(await ask({collectionJson:refused,subscriptionId:'sub_1'}),null,'a subscription was bound');
-  assert.equal(await ask({collectionJson:refused,quoteSnapshot:{repeat:{}}}),null,'a repeat purchase is not unwound here');
-  assert.equal(await ask({collectionJson:refused,billingAccountId:'other'}),null);
-  assert.equal(await ask(null),null);
-  // (b) the advance deal at the pass's own boundary, once no send can be in flight.
-  assert.deepEqual([advanceDealAtBoundary(deal(61)),advanceDealAtBoundary(deal(59)),advanceDealAtBoundary(deal(-5)),advanceDealAtBoundary({})],[false,true,true,false]);
-  assert.deepEqual(await ask({quoteSnapshot:deal(30)}),{kind:'ADVANCE_DEAL',pin:'attempt:advance_boundary:never_sent'});
-  const sent=ago(71);
-  assert.deepEqual(await ask({quoteSnapshot:deal(30),collectionJson:{advanceSubscriptionRequestedAt:sent}}),{kind:'ADVANCE_DEAL',pin:`attempt:advance_boundary:${sent}`});
-  assert.equal(await ask({quoteSnapshot:deal(30),collectionJson:{advanceSubscriptionRequestedAt:ago(69)}}),null,'a send of the last hour ten may still be in flight');
-  assert.equal(await ask({quoteSnapshot:deal(30),collectionJson:{advanceSubscriptionRequestedAt:'not a date'}}),null);
-  assert.equal(await ask({quoteSnapshot:deal(61)}),null,'before the boundary the system still binds it');
-  assert.equal(await ask({quoteSnapshot:deal(30),subscriptionId:'sub_1'}),null);
-  assert.equal(await ask({quoteSnapshot:{},collectionJson:{qrSubscriptionRequestedAt:ago(600)}}),null,'QR bills at their boundary end by themselves (endUnboundRenewal), not by a refund');
 });

@@ -56,17 +56,6 @@ export function billingPurchaseModeLabel(mode: BillingPurchaseMode): string {
     : mode === 'PROMPTPAY_ONCE' ? 'พร้อมเพย์ QR · จ่ายครั้งเดียว' : 'พร้อมเพย์ QR · สแกนบิลทุกงวด';
 }
 
-/**
- * The renewal panel's one line about the renewal itself (2026-10-10): said only of a renewal the shop has. The panel also opens for a one-time shop with a prepaid package waiting,
- * which has no automatic renewal, so it gets no line (the page already says "จ่ายครั้งเดียว … ไม่มีการตัดเงินงวดถัดไป").
- */
-export function billingRenewalLine(status: Pick<BillingStatus, 'cancelAtPeriodEnd' | 'collectionPause' | 'renewalMode'>): string | null {
-  const qr = status.renewalMode === 'PROMPTPAY_RENEW';
-  if (!qr && status.renewalMode !== 'CARD_AUTO') return null;
-  return status.cancelAtPeriodEnd ? `${qr ? 'ปิดการออกบิล QR ทุกงวดแล้ว' : 'ปิดการต่ออายุอัตโนมัติแล้ว'} ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้`
-    : status.collectionPause ? 'พักการเรียกเก็บเงินชั่วคราว' : qr ? 'ระบบออกบิล QR ทุกงวด ต้องสแกนจ่ายเอง' : 'ต่ออายุอัตโนมัติเปิดอยู่';
-}
-
 export function billingApprovalLabel(mode: BillingApprovalMode): string {
   return mode === 'SINGLE_ADMIN' ? 'ยืนยันโดยผู้ดูแลระบบคนเดียว' : 'อนุมัติโดยผู้ตรวจอีกคน';
 }

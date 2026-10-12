@@ -5,7 +5,7 @@
  *
  * Shape: the collection-op contract exactly — `Proposed` on the row, a journal in `resultJson`,
  * an `observed()` that decides from the provider alone, an `advance()` fenced by the account lease,
- * and a one-hour re-send window on any started provider write (then read only, see `end`). It is a separate file because nothing about
+ * and a 23-hour window on any started provider write. It is a separate file because nothing about
  * a customer's own renewal controls applies here: no OWNER context, no PREVIEW/submit round trip,
  * no email proof, no capacity selection, and no `plan_changes` gate — the platform is undoing a
  * price the platform itself set, not selling anything.
@@ -28,7 +28,7 @@ import { lockPlanTermCompany } from '../../system-partner-management/application
 import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 import { assertPolicyReady, assertStripePrice, billingError, hashBilling, quoteTotals } from '../domain/billing-policy';
 import { dealSnapshot } from '../domain/deal-offer';
-import { stripeId, StripeRequestError, type StripeClient, type StripeObject } from '../infrastructure/stripe.client';
+import { stripeId, type StripeClient, type StripeObject } from '../infrastructure/stripe.client';
 import type { BillingService, BillingSnapshot } from './billing.service';
 import { collectionSourceHash } from './billing-collection';
 import { billingFeaturePlan } from './billing-feature-entitlements';
@@ -47,14 +47,7 @@ export type PriceReturnProposed = {
   snapshot: BillingSnapshot;
   dealPriceId: string; params: Record<string, unknown>;
 };
-type Journal = { startedAt?: string; updateStartedAt?: string; updateHash?: string; observed?: boolean;
-  /** The provider refused the swap itself (its error code): a permanent answer, never retried by the sweep. */
-  rejected?: string };
-
-/** 2026-10-10: the swap is re-sent under its key for one hour; ten quiet minutes later nothing sent can still be in flight. */
-const RESEND_WINDOW_MS = 3600_000, QUIET_MARGIN_MS = 600_000;
-/** A failed return is tried again once a day, and never closer than this to the boundary (the first attempt's own margin). */
-const RETRY_EVERY_MS = 86400_000, BOUNDARY_MARGIN_MS = 2 * 3600_000;
+type Journal = { startedAt?: string; updateStartedAt?: string; updateHash?: string; observed?: boolean };
 
 const review = () => billingError('SPECIAL_PRICE_RETURN_REVIEW', 'ยังปรับราคากลับเป็นราคาปกติไม่ได้ ทีมงานกำลังตรวจสอบ');
 
@@ -96,9 +89,7 @@ export class BillingPriceReturn {
    * a whole cycle old. Returns the operation id, or null when this account is not ready yet — the
    * next 15-minute tick simply tries again.
    */
-  async queue(account: BillingAccount, input: { dealRequestId: string; snapshot: BillingSnapshot;
-    /** A retry: the failed attempt it replaces and its number. The subscription must still be the one that attempt saw. */
-    retry?: { id: string; attempt: number; proposed: PriceReturnProposed } }): Promise<string | null> {
+  async queue(account: BillingAccount, input: { dealRequestId: string; snapshot: BillingSnapshot }): Promise<string | null> {
     if (!account.baseSubscriptionId || !account.paidThrough || account.renewalMode !== 'CARD_AUTO' ||
       account.activeAttemptId || account.activeCollectionOperationId || account.pendingPlanChangeId ||
       account.cancelAtPeriodEnd || account.graceEndsAt || account.subscriptionState !== 'active' ||
@@ -111,13 +102,8 @@ export class BillingPriceReturn {
       sub.pending_update || sub.billing_mode?.type !== 'classic' || !simpleCollection(sub) ||
       sub.collection_method !== 'charge_automatically' || sub.items?.has_more || sub.items?.data?.length !== 1 ||
       item.quantity !== 1 || (item.discounts?.length ?? 0) || item.current_period_end !== target ||
-      !stripeId(item.id) || (!input.retry && stripeId(item.price) === input.snapshot.priceId)) return null;
-    const previous = input.retry?.proposed;
-    // A retry expects the same subscription and item, still on the deal price — or already on the catalog price, which
-    // `advance` then records as done without sending. Anything else is the shop's own change: no attempt, the case stays.
-    if (previous && (sub.id !== previous.subscriptionId || item.id !== previous.subscriptionItemId ||
-      ![previous.dealPriceId, input.snapshot.priceId].includes(stripeId(item.price) ?? ''))) return null;
-    const dealPriceId = previous?.dealPriceId ?? stripeId(item.price);
+      !stripeId(item.id) || stripeId(item.price) === input.snapshot.priceId) return null;
+    const dealPriceId = stripeId(item.price);
     if (!dealPriceId) return null;
     const params = priceReturnParams({ itemId: item.id, catalogPriceId: input.snapshot.priceId,
       taxRateId: input.snapshot.policy.taxRateId });
@@ -125,7 +111,6 @@ export class BillingPriceReturn {
       subscriptionId: sub.id, subscriptionItemId: item.id, paidThrough: account.paidThrough.toISOString(),
       sourceHash: collectionSourceHash(sub, null), sourceTermHash: account.termProjectionHash,
       snapshot: JSON.parse(JSON.stringify(input.snapshot)), dealPriceId, params };
-    if (stripeId(item.price) === input.snapshot.priceId && !priceReturnObserved(proposed, sub)) return null;
     return this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, account.companyId);
       const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
@@ -135,17 +120,16 @@ export class BillingPriceReturn {
         livemode: account.livemode, companyId: account.companyId, type: PRICE_RETURN_TYPE, state: 'QUEUED',
         referenceId: input.dealRequestId, proposedJson: json(proposed), sourceVersion: account.version,
         reason: 'sales_deal_price_return', initiatorUserId: 'system:sales-deal-return',
-        idempotencyKey: `deal-return:${input.dealRequestId}:${proposed.paidThrough}${input.retry ? `:${input.retry.attempt}` : ''}`,
+        idempotencyKey: `deal-return:${input.dealRequestId}:${proposed.paidThrough}`,
         requestHash: hashBilling([account.id, proposed.paidThrough, proposed.sourceHash, params]),
         expiresAt: new Date(account.paidThrough!.getTime()) } });
-      if (input.retry) await tx.billingOperation.update({ where: { id: input.retry.id }, data: { state: 'SUPERSEDED', version: { increment: 1 } } });
       await tx.billingAccount.update({ where: { id: account.id },
         data: { activeCollectionOperationId: row.id, nextReconcileAt: new Date(), version: { increment: 1 } } });
       await tx.auditLog.create({ data: { companyId: account.companyId, actorType: 'SYSTEM',
         actorRefId: 'sales-deal-return', action: 'billing.price_return.queued', targetType: 'BillingOperation',
         targetId: row.id, requestId: row.id, result: 'SUCCESS', riskLevel: 'HIGH',
         metadataJson: { dealRequestId: input.dealRequestId, returnAt: proposed.paidThrough,
-          fromPriceId: dealPriceId, toPriceId: input.snapshot.priceId, ...(input.retry ? { retryOf: input.retry.id } : {}) } } });
+          fromPriceId: dealPriceId, toPriceId: input.snapshot.priceId } } });
       return row.id;
     });
   }
@@ -172,45 +156,13 @@ export class BillingPriceReturn {
       try {
         const account = await this.billing.account(deal.companyId);
         if (!account?.paidThrough || account.paidThrough.getTime() !== deal.returnAt!.getTime()) continue;
-        // Any earlier attempt, failed ones included: a failed return is retried below, under a new key.
         if (await this.prisma.client.billingOperation.findFirst({ where: { type: PRICE_RETURN_TYPE,
-          referenceId: deal.id, state: { not: 'CANCELLED' } }, select: { id: true } })) continue;
+          referenceId: deal.id, state: { notIn: ['CANCELLED', 'FAILED'] } }, select: { id: true } })) continue;
         const snapshot = await this.catalogSnapshot(account, deal);
         if (snapshot && await this.queue(account, { dealRequestId: deal.id, snapshot })) queued += 1;
       } catch { /* retried next tick; SPECIAL_PRICE_ENDING has already told the team and the shop */ }
     }
-    return { queued: queued + await this.retryFailed(now) };
-  }
-
-  /**
-   * 2026-10-10 — a return that ended `SPECIAL_PRICE_RETURN_NOT_APPLIED` left the shop on the deal price with nothing to try
-   * again. Once a day the deal gets a NEW operation (a new row, so a new provider idempotency key — a stored 5xx is
-   * replayed for the old key's life) against the account's current boundary: a renewal already charged at the deal price
-   * stays as it is, the swap only changes the next cycle. The failed row is the queue: it is replaced (`SUPERSEDED`) when
-   * its retry is queued, and looked at again a day later when the account is not ready — the shop's own command or
-   * purchase holds the slot, the subscription is not the one the failed attempt saw, the boundary is under two hours
-   * away. That writes no row, so a return that can never apply does not fail daily; one the provider itself refused
-   * (`SPECIAL_PRICE_RETURN_REJECTED`) is never retried. The review case stays open until an attempt succeeds.
-   */
-  private async retryFailed(now: Date): Promise<number> {
-    const failed = await this.prisma.client.billingOperation.findMany({ where: { stripeAccountId: this.stripe.accountId, livemode: this.stripe.livemode,
-      type: PRICE_RETURN_TYPE, state: 'FAILED', errorCode: 'SPECIAL_PRICE_RETURN_NOT_APPLIED', observedAt: { lte: new Date(now.getTime() - RETRY_EVERY_MS) },
-      OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }] }, orderBy: { observedAt: 'asc' }, take: 50 });
-    let queued = 0;
-    for (const row of failed) {
-      // A provider hiccup is retried next tick; "not ready" waits for tomorrow's look.
-      try {
-        const deal = await this.prisma.client.packageChangeRequest.findFirst({ where: { id: row.referenceId!, kind: DEAL_KIND, status: 'APPLIED', returnAt: { not: null } },
-          select: { id: true, companyId: true, offerSnapshotJson: true, returnAt: true } });
-        const account = deal && await this.billing.account(deal.companyId);
-        const snapshot = account?.paidThrough && account.paidThrough.getTime() > now.getTime() + BOUNDARY_MARGIN_MS ? await this.catalogSnapshot(account, deal!) : null;
-        if (snapshot) await this.billing.assertTaxSettings(snapshot.policy);
-        if (snapshot && await this.queue(account!, { dealRequestId: deal!.id, snapshot, retry: { id: row.id, proposed: row.proposedJson as unknown as PriceReturnProposed,
-          attempt: 1 + await this.prisma.client.billingOperation.count({ where: { type: PRICE_RETURN_TYPE, referenceId: deal!.id } }) } })) queued += 1;
-        else await this.prisma.client.billingOperation.update({ where: { id: row.id }, data: { scheduledFor: new Date(now.getTime() + RETRY_EVERY_MS) } });
-      } catch { /* next tick */ }
-    }
-    return queued;
+    return { queued };
   }
 
   /** Q1 — what the shop goes back to: the catalog offer, its Price, and the tier's default menus. */
@@ -271,21 +223,12 @@ export class BillingPriceReturn {
     const proposed = row.proposedJson as unknown as PriceReturnProposed;
     const journal: Journal = (row.resultJson as Journal | null) ?? {};
     if (proposed.accountId !== account.id || proposed.subscriptionId !== account.baseSubscriptionId) throw review();
-    // Refused before any provider write: no pass will ever send it, so it is over and holds nothing.
-    if (row.state === 'BLOCKED' && !journal.startedAt) return this.end(account, row, journal, lease);
+    if (row.state === 'BLOCKED' && !journal.startedAt) return;
     try {
       let { sub, schedule } = await subscriptionGraph(this.stripe, account);
       if (!priceReturnObserved(proposed, sub)) {
-        const age = journal.startedAt ? Date.now() - Date.parse(journal.startedAt) : 0;
-        if (!Number.isFinite(age)) throw review();
-        if (age >= RESEND_WINDOW_MS) {
-          // Past the window a pass only reads. It ends only when this read still shows the deal price on the same item;
-          // any other shape is not "not applied" and keeps waiting in review.
-          const items = sub.items?.data ?? [];
-          if (age >= RESEND_WINDOW_MS + QUIET_MARGIN_MS && !schedule && items.length === 1 && sub.items.has_more === false &&
-            items[0].id === proposed.subscriptionItemId && stripeId(items[0].price) === proposed.dealPriceId) return await this.end(account, row, journal, lease);
-          throw review();
-        }
+        if (journal.startedAt && (!Number.isFinite(Date.parse(journal.startedAt)) ||
+          Date.now() - Date.parse(journal.startedAt) >= 23 * 3600000)) throw review();
         // Nothing has changed since the proposal was frozen, so the swap is still the right write.
         if (schedule || collectionSourceHash(sub, null) !== proposed.sourceHash) throw review();
         await this.billing.assertTaxSettings(proposed.snapshot.policy);
@@ -305,14 +248,7 @@ export class BillingPriceReturn {
         journal.updateHash = updateHash; journal.updateStartedAt ??= new Date().toISOString();
         await this.prisma.client.$transaction(async tx => { await this.fence(tx, account, row.id, lease);
           await tx.billingOperation.update({ where: { id: row.id }, data: { resultJson: json(journal) } }); });
-        await this.stripe.request('POST', `/subscriptions/${proposed.subscriptionId}`, params, `mm:price-return:${row.id}`).catch(error => {
-          // A refusal of the swap itself, as the refund create judges it: not a 409 (the same key still executing), a 429 or
-          // an idempotency error — those are "not applied" and are tried again a day later. No 404: a subscription or item
-          // that is gone is seen by the next attempt's own read, which then queues nothing.
-          if (error instanceof StripeRequestError && error.outcome === 'REJECTED' && (error.status === 400 || error.status === 402) &&
-            error.providerType !== 'idempotency_error') journal.rejected = error.providerCode ?? error.code;
-          throw error;
-        });
+        await this.stripe.request('POST', `/subscriptions/${proposed.subscriptionId}`, params, `mm:price-return:${row.id}`);
         ({ sub, schedule } = await subscriptionGraph(this.stripe, account));
         if (schedule || !priceReturnObserved(proposed, sub)) throw review();
       }
@@ -333,11 +269,8 @@ export class BillingPriceReturn {
           subscriptionState: sub.status, observedAt, version: { increment: 1 } } });
         await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'SUCCEEDED',
           resultJson: json({ ...journal, observed: true }), observedAt, errorCode: null, version: { increment: 1 } } });
-        // The earlier failed attempts of this deal are settled with it.
-        const attempts = await tx.billingOperation.findMany({ where: { companyId: account.companyId, type: PRICE_RETURN_TYPE,
-          referenceId: proposed.dealRequestId }, select: { id: true } });
         await tx.billingIssue.updateMany({ where: { stripeAccountId: account.stripeAccountId, livemode: account.livemode,
-          companyId: account.companyId, kind: 'SPECIAL_PRICE_RETURN_REVIEW', referenceId: { in: attempts.map(attempt => attempt.id) }, state: { not: 'RESOLVED' } },
+          companyId: account.companyId, kind: 'SPECIAL_PRICE_RETURN_REVIEW', referenceId: row.id },
           data: { state: 'RESOLVED', resolvedAt: observedAt, version: { increment: 1 } } });
         await tx.auditLog.create({ data: { companyId: account.companyId, actorType: 'SYSTEM',
           actorRefId: 'sales-deal-return', action: 'billing.price_return.observed', targetType: 'BillingOperation',
@@ -346,31 +279,12 @@ export class BillingPriceReturn {
             fromPriceId: proposed.dealPriceId, toPriceId: proposed.snapshot.priceId } } });
       });
     } catch {
-      // Nothing was sent and no later pass would send it: over in this same pass. Once sent, it waits for a read.
-      if (!journal.startedAt) await this.end(account, row, journal, lease);
-      else await this.prisma.client.$transaction(async tx => {
+      await this.prisma.client.$transaction(async tx => {
         await this.fence(tx, account, row.id, lease);
-        await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'UNKNOWN',
+        await tx.billingOperation.update({ where: { id: row.id }, data: { state: journal.startedAt ? 'UNKNOWN' : 'BLOCKED',
           resultJson: json(journal), errorCode: 'SPECIAL_PRICE_RETURN_REVIEW', version: { increment: 1 } } });
       });
       await this.billing.issue(account.companyId, 'SPECIAL_PRICE_RETURN_REVIEW', row.id);
     }
-  }
-
-  /** The provider does not hold the swap (never sent, or sent and read as not applied): FAILED, the slot released,
-   *  the review case left open, nothing sent. The subscription keeps the deal price. */
-  private async end(account: BillingAccount, row: BillingOperation, journal: Journal, lease: string): Promise<void> {
-    const proposed = row.proposedJson as unknown as PriceReturnProposed;
-    await this.prisma.client.$transaction(async tx => {
-      await this.fence(tx, account, row.id, lease);
-      const observedAt = new Date();
-      await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'FAILED', resultJson: json(journal),
-        errorCode: journal.rejected ? 'SPECIAL_PRICE_RETURN_REJECTED' : 'SPECIAL_PRICE_RETURN_NOT_APPLIED', observedAt, version: { increment: 1 } } });
-      await tx.billingAccount.update({ where: { id: account.id }, data: { activeCollectionOperationId: null, observedAt, version: { increment: 1 } } });
-      await tx.auditLog.create({ data: { companyId: account.companyId, actorType: 'SYSTEM',
-        actorRefId: 'sales-deal-return', action: 'billing.price_return.ended', targetType: 'BillingOperation',
-        targetId: row.id, requestId: row.id, result: 'SUCCESS', riskLevel: 'CRITICAL',
-        metadataJson: { dealRequestId: proposed.dealRequestId, returnAt: proposed.paidThrough, sent: !!journal.startedAt } } });
-    });
   }
 }

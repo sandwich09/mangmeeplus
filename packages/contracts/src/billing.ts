@@ -382,9 +382,7 @@ export type BillingRefundReview = { companyId:string; companyName:string; invoic
   paidSatang:number; refundedSatang:number; disputed:boolean; refundLimitSatang:number|null; canCreate:boolean; blockedReason:string|null;
   sourceHash:string; observedAt:string; usage:BillingStatus['usage']; adjustments:BillingAdjustmentItem[]; promotion?:BillingRefundPromotion;
   /** How the invoice was paid: the provider refunds a PromptPay payment only after the customer answers its e-mail. */
-  paymentMethod?:'card'|'promptpay';
-  /** This purchase still holds the shop and the system cannot set up its next round: the refund is the way out. RENEWAL (QR bills, prepaid card): only a full refund releases the shop. */
-  unrepairedBinding?:'RENEWAL'|'ADVANCE_DEAL' };
+  paymentMethod?:'card'|'promptpay' };
 export type BillingRefundOperation = BillingOperationView & { type:'REFUND'; sourceVersion:number; previewHash:string;
   companyName:string; invoiceNumber:string|null; amountSatang:number; taxSatang:number; memo:string; notifyCustomer:boolean;
   paidSatang:number; previousRefundedSatang:number; usage:BillingStatus['usage'];
@@ -563,7 +561,7 @@ export type BillingPlanAdjustments = {companyId:string;companyName:string;source
   unchanged:BillingPlanAdjustmentUnchanged|null;items:BillingPlanAdjustmentOperation[];nextCursor:string|null};
 
 export type BillingEmailRecipientOperation = { id: string; state: string; version: number; previewHash: string; expiresAt: string;
-  previousEmail: string | null; newEmail: string; canSubmit: boolean; canCancel: boolean; source?: BillingRecipientSource; errorCode?: string | null };
+  previousEmail: string | null; newEmail: string; canSubmit: boolean; canCancel: boolean; source?: BillingRecipientSource };
 /** `email` is the Stripe Customer's; `stored` is the column this system owns (they differ only after a Dashboard edit). */
 export type BillingEmailRecipient = { email: string | null; hasCustomer: boolean; busy?: boolean; operation: BillingEmailRecipientOperation | null;
   stored?: BillingRecipientInfo };
@@ -594,10 +592,6 @@ export type BillingEventDiscountView = {
   path: 'DISCOUNT' | 'CREDIT' | null;
   /** How this shop renews, read as `BillingStatus.renewalMode` reads it (LINE words why a running renewal cannot use a discount per mode). Absent = no billing account. */
   renewalMode?: BillingPurchaseMode | 'NONE';
-  /** Whether that renewal is running, read from the same account columns as `BillingStatus` (cancelAtPeriodEnd, subscriptionState, graceEndsAt, collectionPause):
-   *  RUNNING = bound and will charge or bill at the next period; STOPPED = switched off or cancelled while the package still runs; UNPAID = its charge failed or its bill is overdue, so the package page opens no purchase (on any `path`).
-   *  Absent = nothing settled to say (no subscription bound yet, collection paused, no account) or an older API: both surfaces then say only the general sentence. */
-  renewalState?: 'RUNNING' | 'STOPPED' | 'UNPAID';
   tickets: BillingEventDiscountTicket[];
 };
 

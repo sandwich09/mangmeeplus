@@ -96,7 +96,7 @@ async function main() {
     const list = (data: ProviderObject[]) => ({ object: 'list', data, has_more: false });
     const response = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
     const repeatResponse = repeatFixture.request(path, init?.method ?? 'GET', form, headers.get('idempotency-key'));
-    if (repeatResponse !== undefined) return repeatResponse instanceof Response ? repeatResponse : response(repeatResponse);
+    if (repeatResponse !== undefined) return response(repeatResponse);
     if (path === '/invoices/create_preview') {
       assert.equal(form.has('customer'), false); assert.equal(form.has('subscription'), false); assert.equal(form.get('customer_details[address][country]'), 'TH');
       const amount = Number(form.get('invoice_items[0][amount]'));

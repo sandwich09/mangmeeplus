@@ -10,6 +10,10 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Official OA move to @695ultfm — prepared 2026-10-12, not deployed
+
+The public Official OA moves from `@107ewccg` to `@695ultfm`. The release tool's identity check and the staff link of the System OA cards are changed on branch `claude/official-oa-move-20261012`; the cutover order, and why the two secrets must not be replaced before that branch is on `main`, are in `docs/agent-memory/line-official-oa-move-2026-10-12.md`. Until the cutover, every section below that names `@107ewccg` describes what serves.
+
 ## Isolated Official OA live service — 2026-10-04
 
 MangmeePlus Official @107ewccg now uses stack/function/role watchdog-bms-line-official-oa-prod

@@ -10,55 +10,16 @@ export const refundReviewRequired=()=>billingError('CONTROL_REFUND_SOURCE_CHANGE
 const integer=(v:unknown)=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0;
 export const nativeId=(v:unknown,prefix:string):v is string=>typeof v==='string'&&new RegExp(`^${prefix}_[A-Za-z0-9_]{1,120}$`).test(v);
 
-/** A retained unknown create blocks another mutation; a verified issued note only needs observation.
- *  A request never sent to the provider holds nothing once it has expired: `current` refuses to dispatch it, so nothing is in flight. */
+/** A retained unknown create blocks another mutation; a verified issued note only needs observation. */
 export async function pendingRefund(tx:Prisma.TransactionClient,account:Pick<BillingAccount,'companyId'|'stripeAccountId'|'livemode'>,except?:string) {
   const rows=await tx.$queryRaw<{id:string}[]>`SELECT id FROM "BillingOperation" WHERE "companyId"=${account.companyId}
     AND "stripeAccountId"=${account.stripeAccountId} AND livemode=${account.livemode} AND type='REFUND'
     AND state IN ('QUEUED','RUNNING','UNKNOWN','BLOCKED') AND id<>${except??''}
-    AND (state IN ('RUNNING','UNKNOWN') OR "resultJson"->>'dispatchedAt' IS NOT NULL OR "expiresAt">${new Date()})
     AND COALESCE("resultJson"->>'mutationResolved','false')<>'true' ORDER BY "createdAt",id LIMIT 1`;
   return rows[0]??null;
 }
 export async function assertNoPendingRefund(tx:Prisma.TransactionClient,account:Pick<BillingAccount,'companyId'|'stripeAccountId'|'livemode'>) {
   if(await pendingRefund(tx,account))throw billingError('BILLING_REFUND_PENDING','มีคำขอคืนเงินเดิมที่ยังต้องตรวจสอบ กรุณาติดต่อทีมงานก่อนทำรายการใหม่');
-}
-
-/** 2026-10-10 (P-5): a refund stops the repair of a paid purchase's subscription binding. True when the invoice of this attempt
- *  shows refunded money, or a refund request exists for it in any state but cancelled or failed (a failed one moved no money, or
- *  the refunded amount above shows it). As in `pendingRefund`, a request never sent holds nothing once it has expired. */
-export async function refundStopsBinding(tx:Prisma.TransactionClient,account:Pick<BillingAccount,'id'|'companyId'|'stripeAccountId'|'livemode'>,attemptId:string) {
-  const invoice=await tx.billingInvoice.findUnique({where:{sourceAttemptId:attemptId},select:{id:true,billingAccountId:true,refundedSatang:true}});
-  if(!invoice||invoice.billingAccountId!==account.id)return false;
-  if(invoice.refundedSatang)return true;
-  const rows=await tx.billingOperation.findMany({where:{companyId:account.companyId,stripeAccountId:account.stripeAccountId,livemode:account.livemode,
-    type:'REFUND',referenceId:invoice.id,state:{notIn:['CANCELLED','FAILED']}},select:{state:true,expiresAt:true,resultJson:true}});
-  return rows.some(row=>!['PREVIEW','AWAITING_APPROVAL','QUEUED','BLOCKED'].includes(row.state)||row.expiresAt>new Date()||!!(row.resultJson as {dispatchedAt?:string}|null)?.dispatchedAt);
-}
-
-/** The pass's own test (`bindAdvanceDeal`), shared: no renewal subscription can be created once the deal's first cycle ends within the hour. */
-export const advanceDealAtBoundary=(snapshot:{advanceDeal?:{firstCycleEndsAt:string}},now=Date.now())=>
-  !!snapshot.advanceDeal&&new Date(snapshot.advanceDeal.firstCycleEndsAt).getTime()<=now+3600000;
-
-/**
- * 2026-10-10, owner's option "ค", second half: the one paid purchase staff may refund although it still holds the account slot. Only the
- * invoice of the account's active attempt, never a repeat purchase, and only when the system can no longer repair that attempt's renewal
- * binding and no send can be in flight: (a) the provider refused the create (the refused marker on the attempt's journal — every pass then
- * sends nothing), or (b) an advance deal at its boundary with no subscription bound and nothing sent in the last hour ten (the pass
- * throws `advance_deal_renewal_boundary` before any send). Local facts only, no provider read. `pin` is what a refund proposal pins:
- * it changes when the marker goes, a subscription binds or the slot moves. Null = refused as before (`BILLING_REFUND_PENDING`).
- * ponytail: seventy minutes is the reconciler's RESEND_WINDOW_MS + QUIET_MARGIN_MS, written out here to avoid an import cycle.
- */
-export async function unrepairableBinding(tx:Prisma.TransactionClient,account:Pick<BillingAccount,'id'|'activeAttemptId'|'baseSubscriptionId'>,
-  invoice:Pick<BillingInvoice,'billingAccountId'|'sourceAttemptId'>):Promise<{kind:'RENEWAL'|'ADVANCE_DEAL';pin:string}|null> {
-  if(!account.activeAttemptId||account.baseSubscriptionId||invoice.billingAccountId!==account.id||invoice.sourceAttemptId!==account.activeAttemptId)return null;
-  const attempt=await tx.billingAttempt.findUnique({where:{id:account.activeAttemptId}}),snapshot=attempt?.quoteSnapshot as unknown as BillingSnapshot|null;
-  if(!attempt||attempt.billingAccountId!==account.id||attempt.subscriptionId||!snapshot||snapshot.repeat)return null;
-  const journal=(attempt.collectionJson??{}) as Record<string,unknown>,field=snapshot.advanceDeal?'advanceSubscription':'qrSubscription',kind=snapshot.advanceDeal?'ADVANCE_DEAL' as const:'RENEWAL' as const;
-  const refused=journal[`${field}Refused`] as {generation?:number;at?:string}|undefined;
-  if(refused)return {kind,pin:`${attempt.id}:refused:${refused.generation}:${refused.at}`};
-  const at=journal[`${field}RequestedAt`],sent=typeof at==='string'?Date.parse(at):NaN;
-  return advanceDealAtBoundary(snapshot)&&(at==null||Date.now()-sent>=4_200_000)?{kind,pin:`${attempt.id}:advance_boundary:${at??'never_sent'}`}:null;
 }
 
 /** Bounded complete pages, including empty-list and cross-page duplicate/cycle validation. */

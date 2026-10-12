@@ -52,7 +52,7 @@ import { assertDealOfferUnchanged, assertDealSnapshot, dealOffer, dealPurchaseMo
 import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 import type { BillingEventDiscountView } from '@watchdog-bms/contracts';
 import { eventDiscountBasis, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
-import { eventDiscountHolderBlock, eventDiscountOffer, eventDiscountPath, eventDiscountRenewalState, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
+import { eventDiscountHolderBlock, eventDiscountOffer, eventDiscountPath, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
 import { paymentCheckoutMode, paymentCheckoutSnapshot, prepaidCardAuto } from '../domain/billing-checkout-mode';
 import type { BillingBenefitChoice, BillingPromotionSnapshot, BillingPromotionUse } from '@watchdog-bms/contracts';
 import { parsePromotionCampaignsLenient, promotionCampaignStatus, promotionSignatures, promotionUnavailable, promotionUnsupportedPurchase } from '../domain/billing-promotion';
@@ -291,7 +291,7 @@ export class BillingService {
     const source = await this.purchaseSource({ planTerm: company?.planTerm ?? null }, account);
     // Read as status() reads it (a subscription under a NONE column is a card charged by itself), so LINE and the package page say the same of how this shop renews.
     const renewalMode = (account?.renewalMode !== 'NONE' ? account?.renewalMode : account?.baseSubscriptionId ? 'CARD_AUTO' : 'NONE') as BillingStatus['renewalMode'];
-    return { path: eventDiscountPath(source, renewalMode), renewalMode, renewalState: eventDiscountRenewalState(account), tickets: await holderEventDiscountTickets(this.prisma.client, context.userId, new Date()) };
+    return { path: eventDiscountPath(source, renewalMode), renewalMode, tickets: await holderEventDiscountTickets(this.prisma.client, context.userId, new Date()) };
   }
 
   /** LINE "ฉันมีส่วนลดไหม" (sales-event spec §8.1): the same owner-only read, plus why this shop may not take the discount

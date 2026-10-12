@@ -12,7 +12,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { Prisma, type BillingAccount, type BillingAttempt, type BillingOperation } from '../../../generated/prisma/client';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
-import { StripeClient, StripeRequestError, stripeId, verifyStripeSignature, type StripeObject } from '../infrastructure/stripe.client';
+import { StripeClient, stripeId, verifyStripeSignature, type StripeObject } from '../infrastructure/stripe.client';
 import { hashBilling } from '../domain/billing-policy';
 import { paidInvoiceEvidence, termProjectionHash, type PaidInvoiceEvidence } from '../domain/paid-invoice';
 import { BillingService, snapshotProductKind, type BillingSnapshot } from './billing.service';
@@ -20,7 +20,6 @@ import { stripeCustomerSyncPayload, stripeCustomerSynced } from './billing-compa
 import { readRecipientCapture, recordRecipientCapture, type RecipientCapture } from './billing-recipient-capture';
 import { restartFits, restartSource } from './billing-restart';
 import { observeBillingCharges, recordBillingFinancials } from './billing-financial';
-import { advanceDealAtBoundary, refundStopsBinding } from './billing-refund-source';
 import { grantPaidPackageReceipts, grantPromotionPackageReceipts } from './billing-receipt-grants';
 import { grantTrialReceiptCarryover } from './billing-trial-carryover';
 import { appendPackageInterval, fullPackagePurchaseImpact, invoiceServiceEnd, promotionBoundaries } from '../domain/billing-package';
@@ -79,9 +78,6 @@ async function releaseUnpaidPromotion(tx: Prisma.TransactionClient, account: Bil
     metadataJson: { attemptId: attempt.id, campaignId: right.campaignId, reason } } });
 }
 
-/** 2026-10-10: a command the shop waits on is re-sent under its key for one hour; ten quiet minutes after a last send nothing of ours can still be in flight. */
-const RESEND_WINDOW_MS = 3600_000, QUIET_MARGIN_MS = 600_000;
-
 @Injectable()
 export class BillingReconcilerService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly stripe: StripeClient,
@@ -93,25 +89,21 @@ export class BillingReconcilerService {
     if (!marker || (marker.confirmed && attempt.status !== 'CREATING') || attempt.checkoutSessionId || !['CREATING', 'UNKNOWN'].includes(attempt.status)) return false;
     const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
     const age = Date.now() - Date.parse(marker.startedAt);
-    if (snapshot.repeat || !snapshot.quote.billingProfile || marker.customerId !== account.customerId || !Number.isFinite(age))
+    if (snapshot.repeat || !snapshot.quote.billingProfile || marker.customerId !== account.customerId || !Number.isFinite(age) || age >= 23 * 3600000)
       throw new Error('billing.profile_sync_review');
     if (age < 60_000) return true;
     const customer = await this.stripe.request('GET', `/customers/${account.customerId}`);
     if (customer.id !== account.customerId || customer.metadata?.billingAccountId !== account.id) throw new Error('billing.customer_binding');
-    // 2026-10-10: the write is re-sent under its key for one hour; after that a pass only reads. No Checkout was ever sent
-    // for this attempt, so once nothing sent can still be in flight it is over even unconfirmed: the next purchase writes the profile again.
-    const resend = !marker.confirmed && age < RESEND_WINDOW_MS;
-    const updated = resend ? await this.stripe.request('POST', `/customers/${account.customerId}`,
-      stripeCustomerSyncPayload(snapshot), `mm:${attempt.id}:billing-profile`) : customer;
-    const synced = updated.id === account.customerId && updated.metadata?.billingAccountId === account.id && stripeCustomerSynced(updated, snapshot);
-    if (!synced && resend) throw new Error('billing.profile_sync_unconfirmed');
-    if (!synced && age < RESEND_WINDOW_MS + QUIET_MARGIN_MS) return true;
+    const updated = marker.confirmed ? customer : await this.stripe.request('POST', `/customers/${account.customerId}`,
+      stripeCustomerSyncPayload(snapshot), `mm:${attempt.id}:billing-profile`);
+    if (updated.id !== account.customerId || updated.metadata?.billingAccountId !== account.id || !stripeCustomerSynced(updated, snapshot))
+      throw new Error('billing.profile_sync_unconfirmed');
     await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
       const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: { in: ['CREATING', 'UNKNOWN'] },
         checkoutSessionId: null, collectionJson: { equals: attempt.collectionJson as Prisma.InputJsonValue } },
         data: { status: 'FAILED', errorCode: 'BILLING_PROFILE_SYNC_RETRY', version: { increment: 1 },
-          collectionJson: { profileSync: { ...marker, confirmed: synced } } } });
+          collectionJson: { profileSync: { ...marker, confirmed: true } } } });
       if (!changed.count) throw new Error('billing.profile_sync_changed');
       await tx.billingAccount.updateMany({ where: { id: account.id, activeAttemptId: attempt.id }, data: { activeAttemptId: null, version: { increment: 1 } } });
       if (snapshot.eventDiscount?.choice === 'USE') await releaseEventDiscount(tx, attempt.id);
@@ -123,37 +115,27 @@ export class BillingReconcilerService {
   }
 
   /**
-   * A purchase attempt with no Checkout at the provider stops holding the shop (promotion spec §6, widened 2026-10-10).
-   * The caller has just read the provider in this pass and found no Checkout session of this attempt (the customer's
-   * complete list, filtered on `metadata.billingAttemptId`), or no Customer to hold one. Never by elapsed time alone.
-   * `CREATING` was never requested: only the pre-dispatch barrier moves it on, guarded on `CREATING` under this same
-   * Company lock, so after this commit the old request can never be sent; a promotion right waits for its own `createBy`,
-   * any other attempt ten minutes after its last write. `REQUESTING` / `UNKNOWN` without a session id: ten minutes after
-   * the last write — the request is sent once and never re-sent, our call is cut off after 15 seconds, and a session
-   * created late could not be paid by anyone because its address was never delivered to the shop; it expires unpaid by
-   * itself. A shorter `quietMs` is the shop's own cancel (60 s, as `settleProfileSync` waits). A repeat purchase holds the
-   * subscription at the provider and is not ended here. False = not this case; the caller fails the pass as before.
+   * Promotion spec §6: a right reserved for a Checkout that was never requested goes back once its `createBy` has passed.
+   * The caller has just read the provider and found no Checkout session of this attempt (or no Customer to hold one). The
+   * journal's proof that no request was sent is the status itself: only the pre-dispatch barrier moves `CREATING` on, and
+   * it does so guarded on `CREATING` under this same Company lock, so after this commit the old request can never be sent.
+   * An attempt that reached REQUESTING or UNKNOWN is never released by elapsed time, and one without a promotion is not
+   * touched at all. False = not this case; the caller fails the pass exactly as before.
    */
-  private async releaseUnstartedCheckout(account: BillingAccount, attempt: BillingAttempt, lease: string, quietMs = QUIET_MARGIN_MS): Promise<boolean> {
-    const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
-    if (attempt.checkoutSessionId || snapshot.repeat || !['CREATING', 'REQUESTING', 'UNKNOWN'].includes(attempt.status)) return false;
-    const right = snapshot.promotion ? await promotionForAttempt(this.prisma.client, attempt.id) : null;
-    if (attempt.status === 'CREATING' && right?.state === 'RESERVED' ? right.createBy > new Date() : Date.now() - attempt.updatedAt.getTime() < quietMs) return false;
+  private async releaseUndispatchedPromotion(account: BillingAccount, attempt: BillingAttempt, lease: string): Promise<boolean> {
+    if (attempt.status !== 'CREATING' || attempt.checkoutSessionId || !(attempt.quoteSnapshot as unknown as BillingSnapshot).promotion) return false;
+    const right = await promotionForAttempt(this.prisma.client, attempt.id);
+    if (right?.state !== 'RESERVED' || right.createBy > new Date()) return false;
     await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
-      const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: attempt.status, checkoutSessionId: null, updatedAt: attempt.updatedAt },
+      const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: 'CREATING', checkoutSessionId: null },
         data: { status: 'EXPIRED', errorCode: 'BILLING_CHECKOUT_NOT_STARTED', version: { increment: 1 } } });
       if (changed.count !== 1) throw new Error('billing.one_time_source_changed');
       await tx.billingAccount.updateMany({ where: { id: account.id, activeAttemptId: attempt.id }, data: { activeAttemptId: null, observedAt: new Date(), version: { increment: 1 } } });
-      if (snapshot.eventDiscount?.choice === 'USE') await releaseEventDiscount(tx, attempt.id);
-      if (snapshot.promotion) await releaseUnpaidPromotion(tx, account, attempt, 'checkout_never_started');
-      await tx.auditLog.create({ data: { companyId: account.companyId, actorUserId: attempt.initiatingUserId, action: 'billing.checkout.not_started',
-        targetType: 'BillingAttempt', targetId: attempt.id, requestId: attempt.id, result: 'SUCCESS', riskLevel: 'HIGH',
-        metadataJson: { previousState: attempt.status, errorCode: attempt.errorCode } } });
-      // The attempt is over: its unknown-outcome case and the passes that could only fail are settled with it.
+      await releaseUnpaidPromotion(tx, account, attempt, 'checkout_never_started');
+      // The passes before `createBy` could only fail; this one settled what they could not.
       await tx.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
-        OR: [{ kind: 'UNKNOWN_ATTEMPT', referenceId: attempt.id }, { kind: 'RECONCILIATION_FAILED', referenceId: account.id }], state: { not: 'RESOLVED' } },
-        data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
+        kind: 'RECONCILIATION_FAILED', referenceId: account.id, state: { not: 'RESOLVED' } }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
     });
     return true;
   }
@@ -260,7 +242,7 @@ export class BillingReconcilerService {
     await this.reconcileAccount(account.id, subscriptionId ?? undefined, financialEvent ? object.id : undefined);
   }
 
-  async reconcileAccount(accountId: string, hintedSubscriptionId?: string, financialChargeId?: string, onlyInvoiceId?: string, unstartedQuietMs?: number): Promise<void> {
+  async reconcileAccount(accountId: string, hintedSubscriptionId?: string, financialChargeId?: string, onlyInvoiceId?: string): Promise<void> {
     const now = new Date(), leaseToken = randomUUID();
     let nextReconcileAt: Date | null = null;
     const acquired = await this.prisma.client.billingAccount.updateMany({ where: { id: accountId, stripeAccountId: this.stripe.accountId, livemode: this.stripe.livemode,
@@ -275,8 +257,8 @@ export class BillingReconcilerService {
         // Durable metadata lookup, never recreating a customer after an ambiguous old request.
         const customers = await this.stripe.list('/customers', { created: { gte: Math.floor(attempt.createdAt.getTime() / 1000) - 300 } });
         const matches = customers.filter((c) => c.metadata?.billingAccountId === account.id);
-        // No Customer at the provider means no Checkout either: an attempt stranded there stops holding the shop.
-        if (!matches.length && await this.releaseUnstartedCheckout(account, attempt, leaseToken, unstartedQuietMs)) return;
+        // No Customer at the provider means no Checkout either: a promotion right stranded before any request goes back.
+        if (!matches.length && await this.releaseUndispatchedPromotion(account, attempt, leaseToken)) return;
         if (matches.length !== 1) throw new Error('billing.customer_unknown');
         await this.prisma.client.billingAccount.updateMany({ where: { id: account.id, leaseToken, leaseUntil: { gt: new Date() }, customerId: null }, data: { customerId: matches[0]!.id } });
         account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
@@ -318,7 +300,7 @@ export class BillingReconcilerService {
       if (!account.baseSubscriptionId && hintedSubscriptionId && activeSnapshot?.subscriptionConversion?.subscriptionId === hintedSubscriptionId) return;
       if (attempt && (activeSnapshot?.advanceDeal || ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(activeSnapshot?.quote.purchaseMode ?? '') ||
           prepaidCardAuto(activeSnapshot))) {
-        nextReconcileAt = await this.reconcileOneTime(account, attempt, leaseToken, undefined, undefined, undefined, unstartedQuietMs) ?? null;
+        nextReconcileAt = await this.reconcileOneTime(account, attempt, leaseToken) ?? null;
         return;
       }
       const restart = attempt ? (attempt.quoteSnapshot as unknown as BillingSnapshot).restart : undefined;
@@ -327,7 +309,6 @@ export class BillingReconcilerService {
       if (attempt) {
         const sessions = attempt.checkoutSessionId ? [await this.stripe.request('GET', `/checkout/sessions/${attempt.checkoutSessionId}`)] :
           (await this.stripe.list('/checkout/sessions', { customer: account.customerId })).filter((s) => s.metadata?.billingAttemptId === attempt!.id);
-        if (!sessions.length && await this.releaseUnstartedCheckout(account, attempt, leaseToken, unstartedQuietMs)) return;
         if (sessions.length !== 1) throw new Error('billing.checkout_unknown');
         const session = sessions[0]!;
         if (session.object !== 'checkout.session' || session.mode !== 'subscription' || session.livemode !== account.livemode ||
@@ -557,7 +538,7 @@ export class BillingReconcilerService {
   }
 
   private async reconcileOneTime(account: BillingAccount, attempt: BillingAttempt, lease: string,
-    recordOnly?: (tx: Prisma.TransactionClient) => Promise<void>, originalSession?: StripeObject, originalInvoice?: StripeObject, unstartedQuietMs?: number) {
+    recordOnly?: (tx: Prisma.TransactionClient) => Promise<void>, originalSession?: StripeObject, originalInvoice?: StripeObject) {
     const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
     const mode = snapshot.quote.purchaseMode;
     if (!(snapshot.advanceDeal ? ['CARD_AUTO', 'PROMPTPAY_RENEW'].includes(mode ?? '') :
@@ -568,7 +549,7 @@ export class BillingReconcilerService {
     const sessions = originalSession ? [originalSession] : attempt.checkoutSessionId
       ? [await this.stripe.request('GET', `/checkout/sessions/${attempt.checkoutSessionId}`)]
       : (await this.stripe.list('/checkout/sessions', { customer: account.customerId })).filter(s => s.metadata?.billingAttemptId === attempt.id);
-    if (!sessions.length && !recordOnly && await this.releaseUnstartedCheckout(account, attempt, lease, unstartedQuietMs)) return;
+    if (!sessions.length && !recordOnly && await this.releaseUndispatchedPromotion(account, attempt, lease)) return;
     if (sessions.length !== 1) throw new Error('billing.checkout_unknown');
     const session = sessions[0]!;
     if (session.object !== 'checkout.session' || session.mode !== 'payment' || session.livemode !== account.livemode ||
@@ -903,12 +884,11 @@ export class BillingReconcilerService {
     bindAt.setUTCDate(bindAt.getUTCDate() + 2);
     if (bindAt > new Date()) return bindAt;
     const subscription = await this.bindAdvanceDeal(account, attempt, snapshot, intent, operation, lease);
-    if (!subscription) return; // The binding waits (quiet minutes of a send generation, or a refund request): nothing was sent this pass.
     if (new Date() >= startsAt) await this.activateAdvanceDeal(account, attempt, snapshot, row.id, operation.id, subscription, lease);
   }
 
   private async bindAdvanceDeal(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot,
-    intent: StripeObject, operation: BillingOperation, lease: string): Promise<StripeObject | null> {
+    intent: StripeObject, operation: BillingOperation, lease: string): Promise<StripeObject> {
     const firstCycleEndsAt = new Date(snapshot.advanceDeal!.firstCycleEndsAt);
     const card = snapshot.quote.purchaseMode === 'CARD_AUTO';
     let paymentMethodId: string | null = null;
@@ -928,8 +908,19 @@ export class BillingReconcilerService {
     if (result.subscriptionId && subscription?.id !== result.subscriptionId)
       throw new Error('billing.advance_deal_subscription_changed');
     if (!subscription) {
-      if (advanceDealAtBoundary(snapshot)) throw new Error('billing.advance_deal_renewal_boundary');
-      const created = await this.createBindingSubscription(account, attempt, lease, 'advanceSubscription', `mm:${attempt.id}:advance-renewal`, {
+      const journal = (attempt.collectionJson ?? {}) as Record<string, unknown>;
+      const requestedAt = typeof journal.advanceSubscriptionRequestedAt === 'string' ? Date.parse(journal.advanceSubscriptionRequestedAt) : null;
+      if (requestedAt !== null && (!Number.isFinite(requestedAt) || Date.now() - requestedAt > 23 * 3600000))
+        throw new Error('billing.advance_deal_subscription_unknown');
+      if (firstCycleEndsAt.getTime() <= Date.now() + 3600000) throw new Error('billing.advance_deal_renewal_boundary');
+      if (requestedAt === null) await this.prisma.client.$transaction(async tx => {
+        await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+        const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+        if (current.activeAttemptId !== attempt.id || current.baseSubscriptionId) throw new Error('billing.advance_deal_source_changed');
+        await tx.billingAttempt.update({ where: { id: attempt.id }, data: {
+          collectionJson: { ...journal, advanceSubscriptionRequestedAt: new Date().toISOString() } as Prisma.InputJsonValue } });
+      });
+      subscription = await this.stripe.request('POST', '/subscriptions', {
         customer: account.customerId, collection_method: card ? 'charge_automatically' : 'send_invoice',
         ...(card ? { default_payment_method: paymentMethodId,
           payment_settings: { payment_method_types: ['card'] } } : {
@@ -939,9 +930,7 @@ export class BillingReconcilerService {
         trial_end: Math.floor(firstCycleEndsAt.getTime() / 1000), billing_mode: { type: 'classic' },
         trial_settings: { end_behavior: { missing_payment_method: card ? 'cancel' : 'create_invoice' } },
         metadata: { billingAttemptId: attempt.id, billingAccountId: account.id, advanceDeal: 'true' },
-      });
-      if (!created) return null;
-      subscription = created;
+      }, `mm:${attempt.id}:advance-renewal`);
     }
     if (subscription.object !== 'subscription' || subscription.livemode !== account.livemode ||
         stripeId(subscription.customer) !== account.customerId || subscription.metadata?.billingAttemptId !== attempt.id ||
@@ -981,47 +970,6 @@ export class BillingReconcilerService {
       await tx.billingAttempt.update({ where: { id: attempt.id }, data: { subscriptionId: subscription.id } });
     });
     return subscription;
-  }
-
-  /**
-   * 2026-10-10, owner's option "ค": the subscription a paid purchase binds is sent until the provider holds it. The caller's
-   * own complete list of this pass found no subscription of this attempt. A send generation is re-sent under its key for one
-   * hour from its first send; ten quiet minutes later nothing of it can still be in flight, and the next generation goes out
-   * under a new key (a key that stored a 5xx replays it for its life). The generation and its first-send time are journalled
-   * before the send, guarded on the journal just read, so at most one generation starts per seventy minutes and two passes
-   * never start two. Nothing is sent while a refund touches the payment, and nothing after the provider refused the request
-   * (a 400 or 402 that is no idempotency error, the refund create's test; a 401, 403, 409 or 429 is retried): that keeps its review case for staff. Null = nothing sent.
-   * `key` is generation 1 (the key every earlier send used); generation n is `<key>:g<n>`.
-   */
-  private async createBindingSubscription(account: BillingAccount, attempt: BillingAttempt, lease: string,
-    field: 'qrSubscription' | 'advanceSubscription', key: string, params: Record<string, unknown>): Promise<StripeObject | null> {
-    let journal = ((await this.prisma.client.billingAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).collectionJson ?? null) as Record<string, unknown> | null;
-    const at = journal?.[`${field}RequestedAt`], requestedAt = typeof at === 'string' ? Date.parse(at) : null;
-    let generation = (journal?.[`${field}Generation`] ?? 1) as number;
-    if ((at != null && !Number.isSafeInteger(requestedAt)) || !Number.isSafeInteger(generation) || generation < 1) throw new Error('billing.subscription_binding_journal');
-    if (journal?.[`${field}Refused`]) throw new Error('billing.subscription_binding_refused');
-    if (await refundStopsBinding(this.prisma.client, account, attempt.id)) return null;
-    const save = (data: Record<string, unknown>) => this.prisma.client.$transaction(async tx => {
-      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
-      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
-      const next = { ...journal, ...data };
-      const stored = await tx.billingAttempt.updateMany({ where: { id: attempt.id, collectionJson: journal ? { equals: journal as Prisma.InputJsonValue } : { equals: Prisma.AnyNull } },
-        data: { collectionJson: next as Prisma.InputJsonValue } });
-      if (current.activeAttemptId !== attempt.id || current.baseSubscriptionId || stored.count !== 1) throw new Error('billing.subscription_binding_source_changed');
-      journal = next;
-    });
-    const age = requestedAt === null ? null : Date.now() - requestedAt;
-    if (age !== null && age >= RESEND_WINDOW_MS && age < RESEND_WINDOW_MS + QUIET_MARGIN_MS) return null;
-    if (age === null || age >= RESEND_WINDOW_MS) {
-      if (age !== null) generation += 1;
-      await save({ [`${field}RequestedAt`]: new Date().toISOString(), ...(generation > 1 ? { [`${field}Generation`]: generation } : {}) });
-    }
-    try { return await this.stripe.request('POST', '/subscriptions', params, generation === 1 ? key : `${key}:g${generation}`); }
-    catch (error) {
-      if (error instanceof StripeRequestError && error.outcome === 'REJECTED' && (error.status === 400 || error.status === 402) && error.providerType !== 'idempotency_error')
-        await save({ [`${field}Refused`]: { generation, at: new Date().toISOString(), status: error.status, code: error.providerCode ?? null } });
-      throw error;
-    }
   }
 
   private async holdAdvanceBinding(account: BillingAccount, operation: BillingOperation, attempt: BillingAttempt,
@@ -1247,16 +1195,11 @@ export class BillingReconcilerService {
     lease: string, paidThrough: Date, intent: StripeObject) {
     const card = snapshot.quote.purchaseMode === 'CARD_AUTO';
     const current = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
-    // 2026-10-10: the provider refused this renewal and staff refunded the purchase in full — the purchase is settled, there is
-    // nothing left to bind. (The refund may have ended the package, so `paidThrough` is no longer the period this pass computed.)
-    const bill = await this.prisma.client.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id } });
-    const settled = !!((await this.prisma.client.billingAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).collectionJson as Record<string, unknown> | null)?.qrSubscriptionRefused &&
-      !!bill && bill.paidSatang > 0 && bill.refundedSatang >= bill.paidSatang;
     if (current.activeAttemptId !== attempt.id || current.renewalMode !== (card ? 'CARD_AUTO' : 'PROMPTPAY_RENEW') ||
-        (!settled && current.paidThrough?.getTime() !== paidThrough.getTime()) || current.baseSubscriptionId)
+        current.paidThrough?.getTime() !== paidThrough.getTime() || current.baseSubscriptionId)
       throw new Error('billing.promptpay_renewal_source_changed');
     const paymentMethodId = card ? stripeId(intent.payment_method) : null;
-    if (card && !settled) {
+    if (card) {
       const method = paymentMethodId ? await this.stripe.request('GET', `/payment_methods/${paymentMethodId}`) : null;
       if (intent.setup_future_usage !== 'off_session' || !method || method.object !== 'payment_method' ||
           method.type !== 'card' || stripeId(method.customer) !== account.customerId) throw new Error('billing.card_renewal_card_not_saved');
@@ -1268,13 +1211,20 @@ export class BillingReconcilerService {
       throw new Error('billing.promptpay_renewal_duplicate');
     let sub = existing[0];
     if (!sub) {
-      if (settled && await this.endUnboundRenewal(account, attempt, lease, null)) return;
-      if (paidThrough.getTime() <= Date.now() + 3600000) {
-        if (!await this.endUnboundRenewal(account, attempt, lease, paidThrough)) throw new Error('billing.promptpay_renewal_boundary');
-        return;
-      }
-      // One journal name for both modes (named when only QR bound here); an attempt is one mode or the other.
-      const created = await this.createBindingSubscription(account, attempt, lease, 'qrSubscription', `mm:${attempt.id}:${card ? 'card' : 'promptpay'}-renewal`, {
+      const journal = (attempt.collectionJson ?? {}) as Record<string, unknown>;
+      // One journal key for both modes (named when only QR bound here); an attempt is one mode or the other.
+      const requestedAt = typeof journal.qrSubscriptionRequestedAt === 'string' ? Date.parse(journal.qrSubscriptionRequestedAt) : null;
+      if (requestedAt !== null && (!Number.isSafeInteger(requestedAt) || Date.now() - requestedAt > 23 * 3600000))
+        throw new Error('billing.promptpay_renewal_request_unknown');
+      if (paidThrough.getTime() <= Date.now() + 3600000) throw new Error('billing.promptpay_renewal_boundary');
+      if (requestedAt === null) await this.prisma.client.$transaction(async tx => {
+        await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+        const fresh = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+        if (fresh.activeAttemptId !== attempt.id || fresh.baseSubscriptionId) throw new Error('billing.promptpay_renewal_source_changed');
+        await tx.billingAttempt.update({ where: { id: attempt.id }, data: {
+          collectionJson: { ...journal, qrSubscriptionRequestedAt: new Date().toISOString() } as Prisma.InputJsonValue } });
+      });
+      sub = await this.stripe.request('POST', '/subscriptions', {
         customer: account.customerId,
         ...(card ? { collection_method: 'charge_automatically', default_payment_method: paymentMethodId, payment_settings: { payment_method_types: ['card'] } }
           : { collection_method: 'send_invoice', days_until_due: 7, payment_settings: { payment_method_types: ['promptpay'] } }),
@@ -1282,9 +1232,7 @@ export class BillingReconcilerService {
         trial_end: Math.floor(paidThrough.getTime() / 1000), billing_mode: { type: 'classic' },
         trial_settings: { end_behavior: { missing_payment_method: card ? 'cancel' : 'create_invoice' } },
         metadata: { billingAttemptId: attempt.id, billingAccountId: account.id },
-      });
-      if (!created) return;
-      sub = created;
+      }, `mm:${attempt.id}:${card ? 'card' : 'promptpay'}-renewal`);
     }
     // A card trial that is not exactly this contract would charge unattended when it ends: stop it first, as bindAdvanceDeal does.
     const stopCard = async () => { if (card && !['canceled', 'incomplete_expired'].includes(sub.status))
@@ -1323,42 +1271,6 @@ export class BillingReconcilerService {
         subscriptionState: sub.status, nextChargeAt: paidThrough, activeAttemptId: null,
         observedAt: new Date(), version: { increment: 1 } } });
     });
-  }
-
-  /**
-   * 2026-10-10: the paid period of a QR-bills or prepaid-card purchase is within an hour of its end (or over) and its renewal
-   * subscription was never made, so none can be made any more. The caller's list of this pass found no subscription of the
-   * attempt. When no send can be in flight — nothing was ever sent, the current generation's first send is one hour ten old,
-   * or the provider refused — the binding is over: the paid period was delivered in full, so the account becomes what it now
-   * is, a paid period with no renewal (the one-time mode of the same payment method), and the slot is released; the shop buys
-   * again like any shop whose package ends. Nothing is sent to the provider and the review case stays. False = keep waiting.
-   * `paidThrough` null = the other ending: the provider refused the renewal and staff refunded the purchase in full (the caller
-   * checked both). The purchase is settled, so the pass's review case is resolved here; the package itself ends only by the
-   * refund's own end-package rule.
-   */
-  private async endUnboundRenewal(account: BillingAccount, attempt: BillingAttempt, lease: string, paidThrough: Date | null): Promise<boolean> {
-    const journal = ((await this.prisma.client.billingAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).collectionJson ?? null) as Record<string, unknown> | null;
-    const at = journal?.qrSubscriptionRequestedAt, requestedAt = typeof at === 'string' ? Date.parse(at) : null;
-    if (at != null && !Number.isSafeInteger(requestedAt)) return false;
-    if (!journal?.qrSubscriptionRefused && requestedAt !== null && Date.now() - requestedAt < RESEND_WINDOW_MS + QUIET_MARGIN_MS) return false;
-    await this.prisma.client.$transaction(async tx => {
-      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
-      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
-      const renewalMode = current.renewalMode === 'PROMPTPAY_RENEW' ? 'PROMPTPAY_ONCE' : current.renewalMode === 'CARD_AUTO' ? 'CARD_ONCE' : null;
-      // Guarded on the journal just read: a send journalled meanwhile keeps the binding alive.
-      const stored = await tx.billingAttempt.updateMany({ where: { id: attempt.id, collectionJson: journal ? { equals: journal as Prisma.InputJsonValue } : { equals: Prisma.AnyNull } },
-        data: { collectionJson: { ...journal, qrSubscriptionEndedAt: new Date().toISOString() } as Prisma.InputJsonValue, version: { increment: 1 } } });
-      if (current.activeAttemptId !== attempt.id || current.baseSubscriptionId || (paidThrough && current.paidThrough?.getTime() !== paidThrough.getTime()) || !renewalMode || stored.count !== 1)
-        throw new Error('billing.promptpay_renewal_source_changed');
-      await tx.billingAccount.update({ where: { id: account.id }, data: { activeAttemptId: null, renewalMode, nextChargeAt: null, observedAt: new Date(), version: { increment: 1 } } });
-      await tx.auditLog.create({ data: { companyId: account.companyId, actorUserId: attempt.initiatingUserId, action: 'billing.renewal_binding.ended',
-        targetType: 'BillingAttempt', targetId: attempt.id, requestId: attempt.id, result: 'SUCCESS', riskLevel: 'HIGH',
-        metadataJson: { reason: paidThrough ? 'renewal_boundary' : 'refunded_in_full', previousRenewalMode: current.renewalMode, renewalMode, paidThrough: current.paidThrough?.toISOString() ?? null,
-          generation: (journal?.qrSubscriptionGeneration ?? (requestedAt === null ? 0 : 1)) as number, refused: !!journal?.qrSubscriptionRefused } } });
-      if (!paidThrough) await tx.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
-        kind: 'RECONCILIATION_FAILED', referenceId: account.id, state: { not: 'RESOLVED' } }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
-    });
-    return true;
   }
 
   private async verifyAndApplyInvoice(account:BillingAccount,contract:BillingAttempt,invoice:StripeObject,subscription:StripeObject,lines:StripeObject[],snapshot:BillingSnapshot,lease:string,recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>,capture:RecipientCapture|null=null) {

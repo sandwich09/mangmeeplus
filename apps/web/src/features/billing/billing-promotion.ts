@@ -163,7 +163,7 @@ export function promotionReview(quote: Pick<BillingQuote, 'promotion' | 'offer' 
       quote.purchaseMode === 'PROMPTPAY_RENEW' ? ' (ออกบิล QR ให้สแกน)' : quote.purchaseMode === 'CARD_AUTO' ? ' (ตัดบัตรอัตโนมัติ)' : ''}` : null,
     estimate: 'วันที่ทั้งหมดเป็นการประมาณ ระบบจะยืนยันวันจริงเมื่อชำระสำเร็จ',
     /** The sentence that replaces "ใช้งานได้ 1 เดือน" for a promotion, so the page never says two different lengths. */
-    summary: `เมื่อชำระสำเร็จ ใช้งานได้ ${paidMonths + p.bonusMonths} เดือน (ชำระ ${paidMonths} เดือน แถมฟรี ${p.bonusMonths} เดือน)`,
+    summary: `ชำระสำเร็จแล้ว ใช้งานได้ ${paidMonths + p.bonusMonths} เดือน (ชำระ ${paidMonths} เดือน แถมฟรี ${p.bonusMonths} เดือน)`,
     totalReceiptUnits: p.totalReceiptUnits,
     benefitEnd: p.benefitEnd,
   };
@@ -216,8 +216,7 @@ export function promotionStatus(use: BillingPromotionUse | null | undefined, run
   const until = use.benefitEnd ? day(use.benefitEnd) : null, pending = use.renewalSetupState === 'PENDING';
   const renewal: string | null = {
     PENDING: `ชำระแล้ว ${until ? `ใช้ได้ถึง ${until} ` : ''}กำลังตั้งค่ารอบถัดไป ไม่ต้องชำระซ้ำ`,
-    // 2026-10-10: the system keeps setting the next round by itself, and staff see the case; the words state only what holds in both.
-    REVIEW: 'ชำระแล้ว การตั้งรอบถัดไปยังไม่เสร็จ ไม่ต้องชำระซ้ำ',
+    REVIEW: 'ชำระแล้ว ทีมงานกำลังตรวจการตั้งรอบถัดไป ไม่ต้องชำระซ้ำ',
     READY: use.expectedNextChargeAt ? `ตั้งต่ออายุแล้ว รอบถัดไปเรียกเก็บวันที่ ${day(use.expectedNextChargeAt)}` : 'ตั้งต่ออายุแล้ว',
     NOT_REQUIRED: null,
     CANCELLED: null,

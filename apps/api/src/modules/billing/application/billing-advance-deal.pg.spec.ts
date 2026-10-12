@@ -11,8 +11,6 @@ import { hashBilling } from '../domain/billing-policy';
 import { invoiceFindingSource } from './billing-invoice-finding';
 import { BillingReconcilerService } from './billing-reconciler.service';
 import { BillingService, type BillingSnapshot } from './billing.service';
-import { StripeRequestError } from '../infrastructure/stripe.client';
-import { unrepairableBinding } from './billing-refund-source';
 
 const databaseUrl = process.env.BILLING_TEST_DATABASE_URL;
 const MS_DAY = 86_400_000;
@@ -23,7 +21,6 @@ function fixtureStripe(run: string, stripeAccountId: string, billingAccountId: s
   const calls: { method: string; path: string; params?: any; key?: string }[] = [];
   const paid: Record<string, any> = {}; // Set by `pay`: the paid one-time Checkout of the advance attempt.
   let sessionPayload: any;
-  const fail: { subscription: Error | null } = { subscription: null }; // Stripe answers the create without creating anything.
   const stripe = {
     enabled: true, accountId: stripeAccountId, livemode: false,
     assertAccount: async () => {},
@@ -45,7 +42,6 @@ function fixtureStripe(run: string, stripeAccountId: string, billingAccountId: s
       }
       if (method === 'GET' && path.startsWith('/payment_methods/')) return { id: path.split('/').at(-1), object: 'payment_method', type: 'card', customer: customerId };
       if (method === 'POST' && path === '/subscriptions') {
-        if (fail.subscription) throw fail.subscription;
         const attemptId = params.metadata.billingAttemptId, id = `sub_${compact}`;
         const subscription = { id, object: 'subscription', livemode: false, customer: customerId, status: 'trialing',
           metadata: params.metadata, billing_mode: { type: 'classic' },
@@ -72,7 +68,7 @@ function fixtureStripe(run: string, stripeAccountId: string, billingAccountId: s
     list: async (path: string) => path === '/subscriptions' ? [...subscriptions.values()] :
       path === '/invoices' ? [] : path === '/invoice_payments' ? paid.payments : path.endsWith('/line_items') ? paid.checkoutLines :
       path.endsWith('/lines') ? paid.invoiceLines : (() => { throw new Error(`unmocked Stripe list ${path}`); })(),
-    captured: () => ({ calls, sessionPayload, subscriptions, paid, fail }),
+    captured: () => ({ calls, sessionPayload, subscriptions, paid }),
   };
   return stripe;
 }
@@ -343,89 +339,6 @@ test('PromptPay advance checkout remains payment-only and activates at the exist
       await clean(client, f.companyId, [f.userId, f.salesUserId], f.account.id);
       await client.$disconnect();
       t.mock.timers.reset();
-    }
-  });
-
-/** Owner 2026-10-10, option "ค": the deal's renewal subscription is sent until the provider holds it (the reconciler's `createBindingSubscription`). */
-test('advance deal paid, subscription never created: same key for an hour, then a new generation under a new key until it binds',
-  { skip: !databaseUrl }, async () => {
-    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
-    const f = await createFixture(client, { currentMode: 'PROMPTPAY_ONCE', paidThrough: new Date(Date.now() + 3 * MS_DAY) });
-    const captured = (f.stripe as any).captured(), posts = () => captured.calls.filter((call: any) => call.method === 'POST' && call.path === '/subscriptions');
-    try {
-      const { attempt } = await quoteAndCheckout(f, 'PROMPTPAY_RENEW'), key = `mm:${attempt.id}:advance-renewal`;
-      const journal = async () => (await client.billingAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).collectionJson as Record<string, any>;
-      const sentAgo = async (ms: number) => client.billingAttempt.update({ where: { id: attempt.id }, data: {
-        collectionJson: { ...await journal(), advanceSubscriptionRequestedAt: new Date(Date.now() - ms).toISOString() } } });
-      captured.fail.subscription = new StripeRequestError('UNKNOWN', 'unavailable', 60, undefined, undefined, 503);
-      await assert.rejects(reconcile(f, attempt, 'PROMPTPAY_RENEW'), /stripe\.unavailable/);
-      await sentAgo(30 * 60_000);
-      await assert.rejects(reconcile(f, attempt, 'PROMPTPAY_RENEW'), /stripe\.unavailable/);
-      assert.deepEqual(posts().map((call: any) => call.key), [key, key]);
-      // A day later the provider still holds nothing: generation 2 under its own key, not "review for ever".
-      await sentAgo(24 * 3_600_000);
-      await assert.rejects(reconcile(f, attempt, 'PROMPTPAY_RENEW'), /stripe\.unavailable/);
-      assert.equal(posts().at(-1).key, `${key}:g2`);
-      assert.equal((await journal()).advanceSubscriptionGeneration, 2);
-      // Ten quiet minutes after a generation's hour: the pass reads and sends nothing.
-      await sentAgo(65 * 60_000);
-      await reconcile(f, attempt, 'PROMPTPAY_RENEW');
-      assert.equal(posts().length, 3);
-      assert.equal((await client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } })).activeAttemptId, attempt.id);
-      captured.fail.subscription = null;
-      await sentAgo(71 * 60_000);
-      await reconcile(f, attempt, 'PROMPTPAY_RENEW');
-      assert.equal(posts().at(-1).key, `${key}:g3`);
-      const operation = await client.billingOperation.findUniqueOrThrow({ where: { stripeAccountId_livemode_idempotencyKey: {
-        stripeAccountId: f.stripeAccountId, livemode: false, idempotencyKey: `advance-deal:${attempt.id}` } } });
-      assert.deepEqual([captured.subscriptions.size, (operation.resultJson as any).subscriptionId, operation.state], [1, `sub_${f.compact}`, 'PAID']);
-      // The provider refuses a later create (the subscription was removed there): journalled, and never sent again by itself.
-      captured.subscriptions.clear();
-      await client.billingOperation.update({ where: { id: operation.id }, data: { resultJson: {} } });
-      captured.fail.subscription = new StripeRequestError('REJECTED', 'request_rejected', 60, 'resource_missing', 'invalid_request_error', 400);
-      await sentAgo(71 * 60_000);
-      await assert.rejects(reconcile(f, attempt, 'PROMPTPAY_RENEW'), /stripe\.request_rejected/);
-      assert.deepEqual([(await journal()).advanceSubscriptionRefused?.generation, (await journal()).advanceSubscriptionRefused?.status], [4, 400]);
-      captured.fail.subscription = null;
-      await sentAgo(24 * 3_600_000);
-      await assert.rejects(reconcile(f, attempt, 'PROMPTPAY_RENEW'), /billing\.subscription_binding_refused/);
-      assert.equal(posts().length, 5);
-    } finally {
-      await clean(client, f.companyId, [f.userId, f.salesUserId], f.account.id);
-      await client.$disconnect();
-    }
-  });
-
-/** Owner 2026-10-10, option "ค", second half: a deal whose renewal the provider refused is refundable although it holds the slot, and the observed refund releases the shop. */
-test('advance deal paid, renewal refused: the refund is allowed, and once observed it cancels the deal and frees the slot',
-  { skip: !databaseUrl }, async () => {
-    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
-    const f = await createFixture(client, { currentMode: 'PROMPTPAY_ONCE', paidThrough: new Date(Date.now() + 3 * MS_DAY) });
-    const captured = (f.stripe as any).captured();
-    try {
-      const { attempt } = await quoteAndCheckout(f, 'PROMPTPAY_RENEW');
-      const current = () => client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } });
-      const invoice = () => client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: attempt.id } });
-      captured.fail.subscription = new StripeRequestError('UNKNOWN', 'unavailable', 60, undefined, undefined, 503);
-      await assert.rejects(reconcile(f, attempt, 'PROMPTPAY_RENEW'), /stripe\.unavailable/);
-      assert.equal(await unrepairableBinding(client as any, await current(), await invoice()), null, 'while the system is still repairing, the refund stays refused');
-      await client.billingAttempt.update({ where: { id: attempt.id }, data: { collectionJson: { advanceSubscriptionRequestedAt: new Date(Date.now() - 71 * 60_000).toISOString() } } });
-      captured.fail.subscription = new StripeRequestError('REJECTED', 'request_rejected', 60, 'resource_missing', 'invalid_request_error', 402);
-      await assert.rejects(reconcile(f, attempt, 'PROMPTPAY_RENEW'), /stripe\.request_rejected/);
-      await assert.rejects(reconcile(f, attempt, 'PROMPTPAY_RENEW'), /billing\.subscription_binding_refused/);
-      assert.equal((await unrepairableBinding(client as any, await current(), await invoice()))?.kind, 'ADVANCE_DEAL');
-      assert.equal((await current()).activeAttemptId, attempt.id);
-      // The refund is observed on the payment: the existing path cancels the deal and releases the shop; the old term is untouched.
-      await reconcile(f, attempt, 'PROMPTPAY_RENEW', f.priceSatang);
-      const account = await current();
-      assert.deepEqual([account.activeAttemptId, account.renewalMode, account.contractAttemptId], [null, 'PROMPTPAY_ONCE', f.oldAttemptId]);
-      assert.equal((await client.packageChangeRequest.findUniqueOrThrow({ where: { id: f.dealRow.id } })).status, 'CANCELLED');
-      assert.equal((await client.billingOperation.findUniqueOrThrow({ where: { stripeAccountId_livemode_idempotencyKey: {
-        stripeAccountId: f.stripeAccountId, livemode: false, idempotencyKey: `advance-deal:${attempt.id}` } } })).state, 'CANCELLED');
-      assert.equal(await unrepairableBinding(client as any, account, await invoice()), null);
-    } finally {
-      await clean(client, f.companyId, [f.userId, f.salesUserId], f.account.id);
-      await client.$disconnect();
     }
   });
 

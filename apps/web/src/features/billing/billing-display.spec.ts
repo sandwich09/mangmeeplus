@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { BillingTimelineEntry } from '@watchdog-bms/contracts';
-import { billingDeliveryLabel, billingIssueLabel, billingLabel, billingPermissionLabel, billingPurchaseModeLabel, billingRenewalLine, billingSupportReference, billingTimelineLabel,billingLeavesPage,billingMonthlyAllowanceText } from './billing-display';
+import { billingDeliveryLabel, billingIssueLabel, billingLabel, billingPermissionLabel, billingPurchaseModeLabel, billingSupportReference, billingTimelineLabel,billingLeavesPage,billingMonthlyAllowanceText } from './billing-display';
 import type {MouseEvent} from 'react';
 
 test('only navigation in this tab abandons pending billing work; same links and modified clicks remain active',()=>{
@@ -33,18 +33,6 @@ test('every purchase mode has Thai wording, with no enum name left on screen', (
     assert.doesNotMatch(billingPurchaseModeLabel(mode), /[A-Z_]{4,}/);
   }
   assert.equal(billingPurchaseModeLabel('PROMPTPAY_ONCE'), 'พร้อมเพย์ QR · จ่ายครั้งเดียว');
-});
-
-// 2026-10-10: the renewal panel also opens for a one-time shop with a prepaid package waiting, and said "ต่ออายุอัตโนมัติเปิดอยู่" to it.
-test('the renewal panel states the renewal only for a shop that has one, in the words of its way of renewing', () => {
-  const line = (renewalMode: Parameters<typeof billingRenewalLine>[0]['renewalMode'], over: { cancelAtPeriodEnd?: boolean; collectionPause?: boolean } = {}) =>
-    billingRenewalLine({ cancelAtPeriodEnd: over.cancelAtPeriodEnd ?? false, collectionPause: over.collectionPause ? { behavior: 'keep_as_draft', resumesAt: null } : null, renewalMode });
-  assert.equal(line('CARD_AUTO'), 'ต่ออายุอัตโนมัติเปิดอยู่');
-  assert.equal(line('PROMPTPAY_RENEW'), 'ระบบออกบิล QR ทุกงวด ต้องสแกนจ่ายเอง');
-  assert.equal(line('CARD_AUTO', { cancelAtPeriodEnd: true }), 'ปิดการต่ออายุอัตโนมัติแล้ว ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้');
-  assert.equal(line('PROMPTPAY_RENEW', { cancelAtPeriodEnd: true }), 'ปิดการออกบิล QR ทุกงวดแล้ว ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้');
-  assert.equal(line('CARD_AUTO', { collectionPause: true }), 'พักการเรียกเก็บเงินชั่วคราว');
-  for (const mode of ['CARD_ONCE', 'PROMPTPAY_ONCE', 'NONE', undefined] as const) assert.equal(line(mode), null, String(mode));
 });
 
 test('provider acceptance, destination delivery and web recording remain different facts', () => {

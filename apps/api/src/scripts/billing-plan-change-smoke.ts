@@ -156,9 +156,8 @@ export async function checkBillingPlanChange(input: {
   await submit(stale);
   const hq=await client.branch.findFirstOrThrow({where:{companyId,type:'HEAD_OFFICE'}});
   await client.branch.update({where:{id:hq.id},data:{name:'สำนักงานใหญ่เปลี่ยนชื่อ'}});
-  // 2026-10-10: nothing was sent and no pass retries it, so it is over at once and holds nothing; the shop need not press "ยกเลิก".
-  await reconcile();const blocked=await get(stale);assert.deepEqual([blocked.state,blocked.errorCode,blocked.allowedActions],['FAILED','BILLING_COLLECTION_NOT_SENT',[]]);
-  assert.equal((await client.billingAccount.findFirstOrThrow({where:{companyId}})).activeCollectionOperationId,null);
+  await reconcile();const blocked=await get(stale);assert.equal(blocked.state,'BLOCKED');
+  assert.equal((await request(`${base}/collection/${stale.id}/withdraw`,'POST',{expectedVersion:blocked.version})).body.state,'CANCELLED');
   cases.push('downgrade-owner-tenant-target-capacity-and-stale-selection-before-provider');
   const firstPreview=(await preview()).body, competing=(await preview()).body;
   assert.equal((await submit(firstPreview)).body.state,'QUEUED');assert.equal((await submit(competing)).status,409);
