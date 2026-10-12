@@ -8,7 +8,7 @@ import type { BillingRefundReview, BillingRefundOperation } from '@watchdog-bms/
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { billingApprovalLabel, billingControl as button } from '@/features/billing/billing-display';
-import { refundBindingLines, refundPaymentMethodLines, refundPromotionLines } from './billing-refund-promotion';
+import { refundPaymentMethodLines, refundPromotionLines } from './billing-refund-promotion';
 const field=billingField;
 const promotionBlock=(lines:string[])=>lines.length>0&&<div className="space-y-1 rounded-xl bg-amber-50 p-3" role="note" aria-label="โปรโมชั่นของใบแจ้งหนี้นี้">{lines.map(line=><p key={line}>{line}</p>)}</div>;
 const methodNote=(lines:string[])=>lines.length>0&&<div className="space-y-1" role="note" aria-label="การคืนเงินของรายการที่จ่ายด้วยพร้อมเพย์">{lines.map(line=><p key={line}>{line}</p>)}</div>;
@@ -85,7 +85,6 @@ export default function BillingRefundPage({companyId,invoiceId,operationId}:{com
           <label className="flex min-h-11 items-center gap-3"><input type="radio" name="after-refund" checked={endPackage} disabled={busy} onChange={()=>setEndPackage(true)}/>ยุติแพ็กเกจทันที</label>
           {endPackage&&<p className="text-gray-600">เมื่อ Stripe คืนเงินสำเร็จ ร้านจะเข้าได้เฉพาะหน้าตั้งค่าและหน้าแพ็กเกจ ข้อมูลยังเก็บไว้ครบ และซื้อแพ็กเกจใหม่ได้ตามปกติ</p>}
         </fieldset>
-        {refundBindingLines(review.unrepairedBinding,{paidSatang:review.paidSatang,refundedSatang:review.refundedSatang,amountSatang:amountValue(amount)}).length>0&&<div className="space-y-1" role="note" aria-label="การซื้อที่ตั้งรอบถัดไปไม่สำเร็จ">{refundBindingLines(review.unrepairedBinding,{paidSatang:review.paidSatang,refundedSatang:review.refundedSatang,amountSatang:amountValue(amount)}).map(line=><p key={line}>{line}</p>)}</div>}
         {methodNote(refundPaymentMethodLines(review.paymentMethod))}
         {promotionBlock(refundPromotionLines(review.promotion,{paidSatang:review.paidSatang,refundedSatang:review.refundedSatang,amountSatang:amountValue(amount),endPackage}))}
         <p>ขั้นต่อไปตรวจยอดและผลกระทบ ยังไม่คืนเงินจนกว่าจะยืนยันคำขอ</p><button className={button} disabled={busy} aria-busy={Boolean(busy)}>ตรวจยอดและผลกระทบ</button>

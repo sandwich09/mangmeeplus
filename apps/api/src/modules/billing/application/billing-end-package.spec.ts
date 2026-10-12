@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { termProjectionHash } from '../domain/paid-invoice';
 import { endPackageBlock, endPaidPackage, refundEndsPackage, stampSpentPromotion } from './billing-end-package';
-import { BillingRefundsService, refundLocalHash } from './billing-refunds.service';
+import { BillingRefundsService } from './billing-refunds.service';
 import { BillingReconcilerService } from './billing-reconciler.service';
 import { StripeRequestError } from '../infrastructure/stripe.client';
 import { configurationHash } from '../domain/billing-policy';
@@ -29,7 +29,7 @@ const matches = (row: Record<string, unknown>, where: Record<string, unknown> = 
 
 /** In-memory Prisma transaction: enough rows for the end-package and applied-invoice paths, every write recorded. */
 function fakeDb(rows: { company?: Record<string, unknown>; account?: Record<string, unknown>; invoice?: Record<string, unknown>;
-  redemption?: Record<string, unknown> | null; lots?: Lot[]; attempt?: Record<string, unknown> | null } = {}) {
+  redemption?: Record<string, unknown> | null; lots?: Lot[] } = {}) {
   const state = { company: { id: 'company', status: 'ACTIVE', planTerm: term(), ...rows.company }, account: account(rows.account), invoice: invoice(rows.invoice),
     redemption: rows.redemption ?? null, lots: rows.lots ?? [] };
   const writes: string[] = [], audits: Record<string, unknown>[] = [], issues: Record<string, unknown>[] = [];
@@ -59,7 +59,6 @@ function fakeDb(rows: { company?: Record<string, unknown>; account?: Record<stri
         for (const lot of hit) Object.assign(lot, args.data);
         return { count: hit.length };
       }
-      if (model === 'billingAttempt' && method.startsWith('find')) return rows.attempt ?? null;
       if (model === 'company' && method.startsWith('find')) return state.company;
       if (model === 'billingAccount' && method === 'findFirst') return null;
       if (model === 'billingAccount' && method.startsWith('find')) return state.account;
@@ -350,59 +349,6 @@ test('standalone end of a fully refunded promotion package ends it through its b
 });
 
 // ---- plan R14: the renewal guard of a promotion refund, and the review for a source nothing could end ----
-/**
- * Owner 2026-10-10, option "ค", second half: the purchase that still holds the shop's slot may be refunded — and its package ended —
- * once the system can no longer set up its renewal (`unrepairableBinding`). Everything else that holds the slot stays refused.
- */
-test('a purchase whose renewal the provider refused can be refunded and ended although it holds the slot; a binding still being repaired cannot', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'], now });
-  const refused = { generation: 2, at: '2026-09-24T01:00:00.000Z', status: 400, code: null };
-  const attempt = (over: Record<string, unknown> = {}) => ({ id: 'attempt', billingAccountId: 'account', subscriptionId: null,
-    quoteSnapshot: { quote: { purchaseMode: 'PROMPTPAY_RENEW' } }, collectionJson: { qrSubscriptionRequestedAt: '2026-09-24T00:59:00.000Z', qrSubscriptionGeneration: 2, qrSubscriptionRefused: refused }, ...over });
-  const held = (over: { attempt?: Record<string, unknown> | null; invoice?: object; account?: object } = {}) => ({ attempt: over.attempt === undefined ? attempt() : over.attempt,
-    account: { renewalMode: 'PROMPTPAY_RENEW', activeAttemptId: 'attempt', customerId: 'cus_1', ...over.account }, invoice: { sourceAttemptId: 'attempt', refundedSatang: 0, version: 1, ...over.invoice } });
-  const repairing = attempt({ collectionJson: { qrSubscriptionRequestedAt: '2026-09-24T02:30:00.000Z' } });
-  const service = (db: ReturnType<typeof fakeDb>) => Object.assign(Object.create(BillingRefundsService.prototype), { prisma: { client: db.tx },
-    billing: { usage: async () => ({}), account: async () => db.state.account }, policy: async () => ({ settings: { version: 1 }, revision: { id: 'rev' } }),
-    source: async () => ({ account: db.state.account, row: db.state.invoice, company: { name: 'ร้านทดสอบ' }, access: { capabilities: ['system.billing.refund.manage'] },
-      state: { gates: { refunds: true }, policy: { refundLimitSatang: 100_000 } }, sourceHash: 'hash',
-      source: { charge: { disputed: false, amount_refunded: 0 }, refunds: [], invoice: { post_payment_credit_notes_amount: 0 }, adjustments: [] } }) });
-  const review = async (rows: Parameters<typeof fakeDb>[0]) => { const r = await service(fakeDb(rows)).review({} as never, 'company', 'invoice'); return [r.canCreate, r.blockedReason, r.unrepairedBinding ?? null]; };
-
-  // The refund review.
-  assert.deepEqual(await review(held()), [true, null, 'RENEWAL'], 'the provider refused the renewal: the refund is the way out');
-  assert.deepEqual(await review(held({ attempt: repairing })), [false, 'BILLING_REFUND_PENDING', null], 'the system is still repairing: a refund could race a send');
-  assert.deepEqual(await review(held({ invoice: { sourceAttemptId: 'earlier' } })), [false, 'BILLING_REFUND_PENDING', null], 'any other invoice of the shop');
-  assert.deepEqual(await review(held({ attempt: attempt({ quoteSnapshot: { repeat: {}, quote: {} } }) })), [false, 'BILLING_REFUND_PENDING', null], 'a repeat purchase: its unwind is not built');
-  assert.deepEqual(await review(held({ account: { activeCollectionOperationId: 'command' } })), [false, 'BILLING_REFUND_PENDING', null], 'a renewal command still holds');
-
-  // Ending the package with that refund: no subscription exists to cancel first, and this purchase is not a pending one to wait for.
-  const block = async (rows: Parameters<typeof fakeDb>[0], p: object = { endPackage: true }) => { const db = fakeDb(rows); return service(db).refundBlock(db.tx, db.state.account, 'invoice', p); };
-  assert.equal(await block(held()), null);
-  assert.equal(await block(held({ attempt: repairing })), 'BILLING_END_PACKAGE_AUTO_RENEW');
-  assert.equal(await block(held({ account: { renewalMode: 'CARD_ONCE' }, attempt: repairing })), 'BILLING_END_PACKAGE_PENDING');
-  assert.equal(await block(held({ account: { pendingPlanChangeId: 'change' } })), 'BILLING_END_PACKAGE_PENDING', 'everything else that holds the shop still does');
-  assert.equal(endPackageBlock({ status: 'ACTIVE', planTerm: term() }, account({ renewalMode: 'PROMPTPAY_RENEW', activeAttemptId: 'attempt' }), invoice(), true, now, true), null);
-  assert.equal(endPackageBlock({ status: 'ACTIVE', planTerm: term() }, account({ renewalMode: 'PROMPTPAY_RENEW', activeAttemptId: 'attempt' }), invoice({ refundedSatang: 100 }), true, now, true), 'BILLING_END_PACKAGE_NOT_REFUNDED');
-  const ended = fakeDb(held({ invoice: { refundedSatang: 49_900 } }));
-  assert.equal(await endPaidPackage(ended.tx, ended.lifecycle as never, ending, now), null, 'the standalone end of the fully refunded purchase');
-
-  // Submit, approve and dispatch re-check the binding the proposal was previewed against.
-  const pinned = `attempt:refused:${refused.generation}:${refused.at}`;
-  const current = async (rows: Parameters<typeof fakeDb>[0], pin: string | null = pinned) => {
-    const db = fakeDb(rows), first = fakeDb(held());
-    const row = { id: 'refund', companyId: 'company', referenceId: 'invoice', expiresAt: new Date(now.getTime() + 600_000),
-      proposedJson: { accountId: 'account', amountSatang: 1000, settingsVersion: 1, policyRevisionId: 'rev', localHash: refundLocalHash(first.state.account as never, first.state.invoice as never, pin) } };
-    return service(db).current(row, db.tx).then(() => 'ok', (e: { getResponse(): { code: string } }) => code(e));
-  };
-  assert.equal(await current(held()), 'ok');
-  assert.equal(await current(held(), null), 'CONTROL_PREVIEW_STALE', 'a proposal that did not pin this binding');
-  assert.equal(await current(held({ attempt: attempt({ collectionJson: { qrSubscriptionRefused: { ...refused, generation: 3, at: '2026-09-24T02:50:00.000Z' } } }) })), 'CONTROL_PREVIEW_STALE', 'another refusal than the one previewed');
-  assert.equal(await current(held({ attempt: repairing })), 'CONTROL_PREVIEW_STALE', 'the marker is gone: the system repairs again');
-  assert.equal(await current(held({ attempt: attempt({ subscriptionId: 'sub_1' }) })), 'CONTROL_PREVIEW_STALE', 'a subscription was bound');
-  assert.equal(await current(held({ account: { activeAttemptId: 'next' } })), 'CONTROL_PREVIEW_STALE', 'the slot moved to another attempt');
-});
-
 const DAY = 86_400_000;
 type Rows = { company?: object; account?: object; invoice?: object; redemption?: object | null; lots?: Lot[] };
 const withRenewal = (over: Rows, stopped: object = {}): Rows => ({ ...over, account: { ...over.account, ...renewing, ...stopped } });
