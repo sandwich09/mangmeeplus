@@ -53,7 +53,7 @@ class Contracts(unittest.TestCase):
                 r.official_configuration(capture,{'LINE_OFFICIAL_REPLY_ENABLED':'true'})
             self.assertEqual(calls,[])
             r.args.environment='production'
-            opener.return_value.open.return_value=Response(b'{"basicId":"@107ewccg"}')
+            opener.return_value.open.return_value=Response(b'{"basicId":"@695ultfm"}')
             values=r.official_configuration(capture,{'LINE_OFFICIAL_REPLY_ENABLED':'true'})
             self.assertEqual(set(values),{'LINE_OFFICIAL_CHANNEL_SECRET','LINE_OFFICIAL_CHANNEL_ACCESS_TOKEN'})
             self.assertEqual([call[3] for call in calls],[
@@ -64,7 +64,7 @@ class Contracts(unittest.TestCase):
             self.assertEqual(request.get_header('Authorization'),'Bearer synthetic-channel-access-token')
             versions=m.read(capture/'secret-versions.json')
             self.assertEqual(len(versions),3);self.assertIn('existing',versions)
-            self.assertEqual(m.read(capture/'official-oa-readiness.json')['basicId'],'@107ewccg')
+            self.assertEqual(m.read(capture/'official-oa-readiness.json')['basicId'],'@695ultfm')
             opener.return_value.open.return_value=Response(b'{"basicId":"@458wpnio"}')
             with self.assertRaisesRegex(ValueError,'different bot'):
                 r.official_configuration(capture,{'LINE_OFFICIAL_REPLY_ENABLED':'true'})
