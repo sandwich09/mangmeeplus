@@ -10,9 +10,17 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Official OA move to @695ultfm — prepared 2026-10-12, not deployed
+## Release 2026-10-12 16:54 — Production and UAT (current for both): the Official OA is `@695ultfm`
 
-The public Official OA moves from `@107ewccg` to `@695ultfm`. The release tool's identity check and the staff link of the System OA cards are changed on branch `claude/official-oa-move-20261012`; the cutover order, and why the two secrets must not be replaced before that branch is on `main`, are in `docs/agent-memory/line-official-oa-move-2026-10-12.md`. Until the cutover, every section below that names `@107ewccg` describes what serves.
+Production and UAT serve `main` source `de8389ce3` since 2026-10-12 16:54 and 16:48 Bangkok: the serving source of 2026-10-10 14:06 plus the Official OA move (#1081; twin #1082 on `develop`). The three billing merges of 2026-10-10 (#1075, #1077, #1079) are reverted on `main` and are NOT deployed; `develop` keeps them. How to put them back: `docs/agent-memory/line-official-oa-move-2026-10-12.md`. GitHub workflow ids are `NOT_DISPATCHED`: local Kamal path. PR CI was down (`startup_failure`, zero jobs); the API test list, the LINE whole-chain acceptance, the API typecheck and the release tool's tests were run locally.
+
+| Env | Operation | Result | Seconds |
+|---|---|---|---|
+| UAT | `20261012T093703Z-ebd816b7` (prepare, images published) | PREPARED_NO_DEPLOYMENT | 376.2 |
+| UAT | `20261012T094319Z-7989f55b` (prepared by `ebd816b7`) | ACCEPTED_LINE_DEFERRED, smoke, no migration | 285.5 |
+| Production | `20261012T094806Z-fe95e8a1` (promotion of UAT `7989f55b`) | ACCEPTED_LINE_DEFERRED at the first try; the two Official OA secrets read and the token checked with LINE before any mutation (`official-oa-readiness.json`: `@695ultfm`); website-ready about 16:52; ten acceptance checks 16:53:07–16:53:45 with the owner signed in himself; observation file in the run directory | 380.9 |
+
+After the release, with the channel token read into memory only: LINE reports the token's bot as `@695ultfm` (premium id `@mangmeeplus`); the new channel's webhook is `https://origin.mangmeeplus.com/v1/line/official/webhook`, active; LINE's own test call answered success, 200. The unsigned probe of the route answers 401. From this moment the old account `@107ewccg` gets no card from the ERP: its webhook calls are signed with the old secret and are refused. The owner replaced the two secret values himself and copied nothing else; the new account's rich menu, two keyword replies, greeting (video and two texts) and response settings were copied from the old account in his Chrome on his word. Sections below that name `@107ewccg` are history.
 
 ## Isolated Official OA live service — 2026-10-04
 
