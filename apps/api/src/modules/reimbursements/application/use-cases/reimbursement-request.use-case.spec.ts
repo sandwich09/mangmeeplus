@@ -16,6 +16,8 @@ import {
 } from './reimbursement-request.use-case';
 import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, ListFinanceQueueUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere, hubSearchWhere } from '../../infrastructure/prisma-reimbursement.repository';
+import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
+import { ReimbursementProjectionReconcilerService } from '../services/reimbursement-projection-reconciler.service';
 import {
   isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket,
   reimbursementPayoutAnswerNotice, reimbursementPayoutCorrectionReasons, reimbursementPayoutRoundApproverNote, reimbursementPayoutRoundDid,
@@ -380,6 +382,7 @@ function fakeRepo(options: RepoOptions = {}) {
     // projection is voided outside the transaction, and only a claim with no live projection may
     // close. Both fakes keep the repository's guards so the spec still proves that order.
     listClaimProjections: async () => projections,
+    findCancellationCertificates: async () => [],
     // Only a record still to be voided can stand in the way, as in the repository.
     findCancellationBlocker: async () => (projections.some((projection) => projection.status !== 'VOIDED') ? options.cancellationBlocker?.() ?? null : null),
     // The fence each void runs first: no void for a cancellation that was withdrawn.
@@ -743,7 +746,272 @@ describe('UpdateReimbursementDraftUseCase (multi-line)', () => {
   });
 });
 
+describe('claim certificate cancellation (A7)', () => {
+  const day = new Date('2026-09-12T00:00:00Z');
+  const requester = (permissions: string[] = []) => ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own', ...permissions] });
+  const permission = (kind: 'SYSTEM' | 'EXTERNAL') => kind === 'SYSTEM' ? 'wht.certificate.correct' : 'wht.external_certificate.link';
+  async function world(kind?: 'SYSTEM' | 'EXTERNAL', number: string | null = 'WT-1') {
+    const state = fakeRepo({ claimProjections: [{ id: 'exp-1', sourceReimbursementLineId: 'rbl-1' }] });
+    await useCases(state).create.execute(ctx(), { reason: 'ข้อมูลผิด', lines: [inputLine()] } as any);
+    Object.assign(state.request, { status: 'READY_FOR_PAYMENT', branchId: 'branch-1', requestNo: 'RB-1' });
+    const expense: any = Object.assign(state.projections[0], { companyId: ctx().companyId, expenseNumber: 'EXP-1', branchId: 'branch-1',
+      sourceReimbursementRequestId: 'rb-1', createdByUserId: 'staff-1', expenseDate: day, createdAt: day, updatedAt: day,
+      currency: 'THB', postingStatus: 'not_required', vatAmount: '0', whtAmount: '3', vendorEntityKindSnapshot: 'JURISTIC',
+      grandTotalAmount: '100', netPayableAmount: '97', paidAmount: '0', outstandingAmount: '97', paymentStatus: 'UNPAID', lines: [] });
+    const handoffs: any[] = [], certificates: any[] = [], periods: any[] = [], events: any[] = [], history: any[] = [], notices: any[] = [], audits: any[] = [];
+    const addCertificate = () => {
+      handoffs.push({ id: 'handoff-1', companyId: ctx().companyId, sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1',
+        status: kind === 'EXTERNAL' ? 'EXTERNAL_LINKED' : 'SYSTEM_ISSUED', certificateId: kind === 'EXTERNAL' ? null : 'cert-1', certificateRound: 0,
+        externalCertificateNumber: number, externalIssuedDate: day, externalEvidenceRef: 'file-1', linkNote: 'บันทึกเดิม', linkedAt: day, linkedByUserId: 'issuer-1' });
+      if (kind !== 'EXTERNAL') certificates.push({ id: 'cert-1', companyId: ctx().companyId, status: 'ISSUED', certificateNumber: number, issuedAt: day, issuedByUserId: 'issuer-1', taxEventIdsJson: [] });
+    };
+    if (kind) addCertificate();
+    const matches = (row: any, where: any): boolean => Object.entries(where ?? {}).every(([key, value]: any) => {
+      if (key === 'OR') return value.some((part: any) => matches(row, part));
+      if (value instanceof Date) return row[key]?.getTime() === value.getTime();
+      if (value && typeof value === 'object') {
+        if ('in' in value) return value.in.includes(row[key]);
+        if ('not' in value) return row[key] != value.not;
+        if ('array_contains' in value) return value.array_contains.every((id: string) => row[key]?.includes(id));
+      }
+      return value == null ? row[key] == null : row[key] === value;
+    });
+    const table = (rows: () => any[]) => ({
+      findFirst: async ({ where }: any) => { const row = rows().find(row => matches(row, where)); return row ? { ...row } : null; },
+      findFirstOrThrow: async ({ where }: any) => { const row = rows().find(row => matches(row, where)); assert.ok(row); return { ...row }; },
+      findUnique: async ({ where }: any) => rows().find(row => matches(row, where.companyId_periodKey ?? where)) ?? null,
+      findMany: async ({ where }: any) => rows().filter(row => matches(row, where)),
+      count: async ({ where }: any) => rows().filter(row => matches(row, where)).length,
+      updateMany: async ({ where, data }: any) => { const found = rows().filter(row => matches(row, where)); for (const row of found) for (const [key, value] of Object.entries(data)) row[key] = (value as any)?.increment ? (row[key] ?? 0) + (value as any).increment : value; return { count: found.length }; },
+      update: async ({ where, data }: any) => { const row = rows().find(row => matches(row, where)); assert.ok(row); Object.assign(row, data); return row; },
+      create: async ({ data }: any) => { rows().push(data); return data; },
+    });
+    const client: any = {
+      reimbursementRequest: table(() => [state.request]), reimbursementPayment: table(() => []), reimbursementApprovalStep: table(() => []),
+      expenseRecord: table(() => [expense]), expensePayment: table(() => []), journalEntry: table(() => []),
+      whtCertificateHandoff: table(() => handoffs), whtCertificate: table(() => certificates), whtCertificateHistory: table(() => history),
+      taxPeriod: table(() => periods), taxEvent: table(() => events), accountingPeriod: table(() => []),
+      expenseSubstituteReceiptEvidence: table(() => []), attachmentLink: table(() => []), reimbursementLine: table(() => []),
+      auditLog: table(() => audits), documentNumber: table(() => []), outboxEvent: fakeTx(state.calls.outbox).outboxEvent,
+      companyMembership: { findFirst: async ({ where }: any) => ({ user: { displayName: where.userId === 'staff-1' ? 'สมชาย' : 'คนดำเนินการต่อ' } }) },
+      companyFeatureEntitlement: { findMany: async () => [] },
+      $executeRaw: async () => 0,
+      $queryRaw: async () => [{ pending: state.request.cancellationPendingAt, attested: state.request.cancellationCertificateAttestedAt }],
+      $transaction: async (work: any) => work(client),
+    };
+    const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    for (const method of ['findCancellationCertificates', 'findCancellationBlocker', 'beginCancellationAtomic', 'completeCancellationAtomic', 'withdrawCancellationAtomic', 'assertCancellationPending', 'listClaimProjections']) {
+      (state.repo as any)[method] = (...args: any[]) => (repo as any)[method](...args);
+    }
+    state.repo.listInternalNotes = async () => [];
+    const expenseRepo = new PrismaExpenseRepository({ client } as any);
+    const voids = new VoidExpenseUseCase(expenseRepo, noopAudit, noopOutbox, {} as any, {} as any, {} as any, { execute: async (notice: any) => { notices.push(notice); } } as any);
+    const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, voids);
+    const finish = () => {
+      state.repo.listPendingProjectionIntents = async () => [];
+      state.repo.listPendingCancellationIntents = async () => [{ request: { ...state.request }, actorUserId: state.request.cancellationPendingByUserId, reason: state.request.cancellationPendingReason }];
+      return new ReimbursementProjectionReconcilerService(state.repo, {} as any, noopAudit, voids, { client } as any, {} as any).execute();
+    };
+    return { state, expense, handoffs, certificates, periods, events, history, notices, client, repo, voids, cancel, finish, addCertificate,
+      detail: (viewer: any) => new GetReimbursementDetailUseCase(state.repo, evidenceService()).execute(viewer, 'rb-1'),
+      withdraw: new WithdrawReimbursementCancellationUseCase(state.repo, noopAudit) };
+  }
+  const detailBlockers = [
+    { code: 'tax_period_locked', periodKey: '2026-09', formType: 'PND53', certificateKind: 'SYSTEM' },
+    { code: 'tax_period_locked', periodKey: '2026-09', formType: 'PND53', certificateKind: 'EXTERNAL' },
+    { code: 'certificate_issued' },
+    { code: 'accounting_period_locked', periodKey: '2026-09' },
+    { code: 'tax_period_locked', periodKey: '2026-09', formType: 'PP30' },
+    { code: 'posting_unresolved' },
+    { code: 'expense_not_voidable' },
+    { code: 'wht_certificate_on_expense', certificateNumber: 'WT-1' },
+  ] as const;
+  for (const blocker of detailBlockers) it(`detail reports the command's ${blocker.code}${'certificateKind' in blocker ? ` ${blocker.certificateKind}` : 'formType' in blocker ? ` ${blocker.formType}` : ''} refusal before intent (A7d)`, async () => {
+    const h = await world('SYSTEM');
+    h.state.repo.findCancellationBlocker = async () => blocker;
+    const detail = await h.detail(requester()) as any;
+    await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด', true), (error: any) => {
+      const response = error.getResponse();
+      assert.ok(response.code);
+      assert.match(response.message, /[ก-๙]/u); assert.match(response.message, /กรุณา|ให้|ก่อน|แจ้ง|ใช้/u);
+      assert.deepEqual(detail.certificateCancelBlocker, { code: response.code, message: response.message }); return true;
+    });
+    assert.equal(detail.certificateCancelAllowed, false);
+    assert.equal(h.state.request.cancellationPendingAt, undefined); assert.equal(h.history.length, 0);
+  });
+  for (const kind of ['SYSTEM', 'EXTERNAL'] as const) {
+    for (const number of ['WT-1', null]) it(`detail reports the command's ${kind} permission sentence (${number ?? 'no number'}) (A7d)`, async () => {
+      const h = await world(kind, number);
+      const detail = await h.detail(requester()) as any;
+      await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด', true), (error: any) => {
+        const response = error.getResponse();
+        assert.equal(response.code, 'reimbursement_cancellation_certificate_permission_missing');
+        assert.deepEqual(detail.certificateCancelBlocker, { code: 'certificate_permission_missing', message: response.message }); return true;
+      });
+      assert.equal(detail.certificateCancelAllowed, false);
+    });
+    it(`detail omits the blocker when this viewer may cancel its ${kind} certificate (A7d)`, async () => {
+      const h = await world(kind);
+      const detail = await h.detail(requester([permission(kind)])) as any;
+      assert.equal(detail.certificateCancelAllowed, true); assert.equal(Object.hasOwn(detail, 'certificateCancelBlocker'), false);
+    });
+  }
+  for (const blocked of [false, true]) it(`detail omits the certificate blocker for a viewer who cannot cancel the claim (structural: ${blocked}) (A7d)`, async () => {
+    const h = await world('SYSTEM');
+    if (blocked) h.state.repo.findCancellationBlocker = async () => ({ code: 'posting_unresolved' });
+    const detail = await h.detail(ctx({ permissions: ['reimbursement.read_own'] })) as any;
+    assert.equal(detail.certificateCancelAllowed, false); assert.equal(Object.hasOwn(detail, 'certificateCancelBlocker'), false);
+  });
+  it('detail omits permission blockers on stored attestation, but still reports structural blockers (A7d)', async () => {
+    const h = await world('SYSTEM'); h.state.request.cancellationCertificateAttestedAt = day;
+    const allowed = await h.detail(requester()) as any;
+    assert.equal(allowed.certificateCancelAllowed, true); assert.equal(Object.hasOwn(allowed, 'certificateCancelBlocker'), false);
+    h.state.repo.findCancellationBlocker = async () => ({ code: 'posting_unresolved' });
+    const blocked = await h.detail(requester()) as any;
+    assert.equal(blocked.certificateCancelAllowed, false);
+    await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด', true), (error: any) => {
+      const response = error.getResponse();
+      assert.deepEqual(blocked.certificateCancelBlocker, { code: response.code, message: response.message }); return true;
+    });
+  });
+  it('detail omits certificate blockers for a claim with no certificates (A7d)', async () => {
+    const h = await world(); h.state.repo.findCancellationBlocker = async () => ({ code: 'posting_unresolved' });
+    const detail = await h.detail(requester()) as any;
+    assert.deepEqual(detail.certificates, []); assert.equal(detail.certificateCancelAllowed, false);
+    assert.equal(Object.hasOwn(detail, 'certificateCancelBlocker'), false);
+  });
+  const periodSentence = (kind: 'SYSTEM' | 'EXTERNAL') => `ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ก.ย. 2569 ยื่นไปแล้ว จึงยกเลิกคำขอเบิกไม่ได้ ${kind === 'SYSTEM'
+    ? 'ถ้าผิดเฉพาะตัวสะกดชื่อหรือที่อยู่บนหนังสือรับรอง ใช้ปุ่ม "แก้ไขหนังสือรับรอง" ได้ ถ้ายอดเงิน อัตรา หรือเลขผู้เสียภาษีผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ'
+    : 'ถ้าข้อมูลผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ'}`;
+  for (const kind of ['SYSTEM', 'EXTERNAL'] as const) {
+    for (const status of ['FILED', 'PAID', 'CLOSED']) it(`refuses ${kind} in ${status} before tax-workspace, permission and attestation checks`, async () => {
+      const h = await world(kind);
+      h.periods.push({ companyId: ctx().companyId, formType: 'PND53', periodKey: '2026-09', status });
+      h.events.push({ id: 'event-1', companyId: ctx().companyId, sourceType: 'expense.record', sourceId: 'exp-1', status: 'ACTIVE' });
+      h.certificates.push({ id: 'tax-cert', companyId: ctx().companyId, status: 'ISSUED', taxEventIdsJson: ['event-1'] });
+      await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด'), (error: any) => {
+        assert.equal(error.getResponse().code, 'reimbursement_cancellation_tax_period_locked'); assert.equal(error.getResponse().message, periodSentence(kind)); return true;
+      });
+      assert.equal(h.state.request.cancellationPendingAt, undefined); assert.equal(h.history.length, 0);
+    });
+    for (const number of ['WT-1', null]) it(`refuses missing ${kind} permission before attestation (${number ?? 'no number'})`, async () => {
+      const h = await world(kind, number);
+      await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด'), (error: any) => {
+        assert.equal(error.getResponse().code, 'reimbursement_cancellation_certificate_permission_missing');
+        assert.equal(error.getResponse().message, `คำขอนี้มีรายจ่ายที่${kind === 'SYSTEM' ? 'ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว' : 'บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว'}${number ? ` (เลขที่ ${number})` : ''} การยกเลิกคำขอจะยกเลิก${kind === 'SYSTEM' ? 'หนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย' : 'การบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง'} ให้ฝ่ายการเงินหรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิกคำขอนี้`);
+        return true;
+      });
+      assert.equal(h.state.request.cancellationPendingAt, undefined);
+    });
+    it(`requires explicit ${kind} attestation before intent`, async () => {
+      for (const taxFilingAttested of [false, undefined]) {
+        const h = await world(kind);
+        await assert.rejects((h.cancel as any).execute(requester([permission(kind)]), 'rb-1', 'ข้อมูลผิด', taxFilingAttested), (error: any) => {
+          assert.equal(error.getResponse().code, 'reimbursement_cancellation_certificate_attestation_required'); assert.equal(error.getResponse().message, 'กรุณาติ๊กยืนยันเรื่องการยื่นภาษีก่อนยกเลิกคำขอเบิก'); return true;
+        });
+        assert.equal(h.state.request.cancellationPendingAt, undefined);
+      }
+    });
+    it(`cancels claim, expense and ${kind} with one history and issuer notice`, async () => {
+      const h = await world(kind);
+      const before = (await h.detail(requester())) as any;
+      assert.deepEqual(before.certificates, [{ expenseNumber: 'EXP-1', kind, number: 'WT-1' }]); assert.equal(before.certificateCancelAllowed, false);
+      assert.equal((await h.detail(requester([permission(kind)])) as any).certificateCancelAllowed, true);
+      // The page saw WT-1; another session replaces the standing certificate before cancellation.
+      if (kind === 'SYSTEM') {
+        h.certificates[0].status = 'VOIDED';
+        h.certificates.push({ ...h.certificates[0], id: 'cert-2', certificateNumber: 'WT-2', status: 'ISSUED' });
+        h.handoffs[0].certificateId = 'cert-2';
+      } else h.handoffs[0].externalCertificateNumber = 'WT-2';
+      const cancelled = await (h.cancel as any).execute(requester([permission(kind)]), 'rb-1', 'ข้อมูลผิด', true);
+      assert.equal(cancelled.status, 'CANCELLED');
+      assert.deepEqual(cancelled.cancelledCertificates, [{ expenseId: 'exp-1', kind, number: 'WT-2' }]);
+      assert.equal(h.history[0].certificateNumber, 'WT-2');
+      assert.ok(h.notices[0].title.includes('WT-2'));
+      assert.equal(h.expense.status, 'VOIDED'); assert.equal(h.handoffs[0].status, 'CANCELLED');
+      if (kind === 'SYSTEM') assert.equal(h.certificates[0].status, 'VOIDED');
+      assert.equal(h.history.length, 1); assert.equal(h.history[0].eventType, kind === 'SYSTEM' ? 'CANCELLED_SOURCE_VOIDED' : 'EXTERNAL_RECORD_REMOVED');
+      assert.equal(h.history[0].reason, 'ข้อมูลผิด'); assert.equal(h.history[0].taxFilingAttested, true);
+      assert.equal(h.notices.length, 1); assert.deepEqual(h.notices[0].recipientUserIds, ['issuer-1']); assert.match(h.notices[0].body, /^สมชาย /u);
+      assert.equal(h.state.request.cancellationCertificateAttestedAt, null);
+    });
+    it(`stores ${kind} authority for a system continuation with no permissions and clears it on completion`, async () => {
+      const h = await world(kind); const execute = h.voids.executeForReimbursement.bind(h.voids);
+      h.voids.executeForReimbursement = async () => { throw new Error('interrupted'); };
+      await assert.rejects((h.cancel as any).execute(requester([permission(kind)]), 'rb-1', 'ข้อมูลผิด', true), /interrupted/);
+      assert.ok(h.state.request.cancellationCertificateAttestedAt instanceof Date);
+      h.voids.executeForReimbursement = execute;
+      assert.deepEqual(await h.finish(), { completed: ['rb-1'], failed: [], blocked: [] });
+      assert.equal(h.state.request.status, 'CANCELLED'); assert.equal(h.state.request.cancellationCertificateAttestedAt, null);
+      assert.equal(h.history.length, 1); assert.equal(h.history[0].actorUserId, 'staff-1'); assert.equal(h.notices.length, 1); assert.match(h.notices[0].body, /^สมชาย /u);
+    });
+  }
+  for (const own of [undefined, 'SYSTEM'] as const) for (const via of ['certificate', 'handoff'] as const) {
+  it(`refuses tax-workspace ${via} before permission or attestation, with own certificate ${own ?? 'absent'}`, async () => {
+    const h = await world(own);
+    h.events.push({ id: 'event-1', companyId: ctx().companyId, sourceType: 'expense.record', sourceId: 'exp-1', status: 'ACTIVE' });
+    if (via === 'certificate') h.certificates.push({ id: 'tax-cert', companyId: ctx().companyId, status: 'ISSUED', taxEventIdsJson: ['event-1'] });
+    else h.handoffs.push({ id: 'tax-handoff', companyId: ctx().companyId, sourcePaymentType: 'other', sourcePaymentId: 'other', status: 'EXTERNAL_LINKED', taxEventIdsJson: ['event-1'] });
+    await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด'), (error: any) => {
+      assert.equal(error.getResponse().code, 'reimbursement_cancellation_certificate_issued');
+      assert.equal(error.getResponse().message, 'คำขอนี้มีรายจ่ายที่มีหนังสือรับรองหัก ณ ที่จ่ายที่ออกจากหน้าภาษี จึงยกเลิกคำขอเบิกจากหน้านี้ไม่ได้ กรุณาแจ้งทีมมั่งมีพลัสเพื่อช่วยตรวจสอบ'); return true;
+    });
+    assert.equal(h.state.request.cancellationPendingAt, undefined);
+  });
+  }
+  it('checks stored certificate authority inside the expense transaction fence', async () => {
+    const h = await world('SYSTEM');
+    h.state.request.cancellationPendingAt = new Date();
+    await assert.rejects(h.repo.assertCancellationPending(h.client, ctx().companyId, 'rb-1', true), /reimbursement_cancellation_intent_changed/);
+    h.state.request.cancellationCertificateAttestedAt = new Date();
+    await h.repo.assertCancellationPending(h.client, ctx().companyId, 'rb-1', true);
+    h.state.request.cancellationPendingAt = null;
+    await assert.rejects(h.repo.assertCancellationPending(h.client, ctx().companyId, 'rb-1', true), /reimbursement_cancellation_intent_changed/);
+  });
+  it('clears stored certificate authority when an unstarted void is withdrawn', async () => {
+    const h = await world('SYSTEM'); h.voids.executeForReimbursement = async () => { throw new Error('interrupted'); };
+    await assert.rejects((h.cancel as any).execute(requester([permission('SYSTEM')]), 'rb-1', 'ข้อมูลผิด', true), /interrupted/);
+    assert.ok(h.state.request.cancellationCertificateAttestedAt);
+    await h.withdraw.execute(requester(), 'rb-1');
+    assert.equal(h.state.request.cancellationCertificateAttestedAt, null); assert.equal(h.state.request.cancellationPendingAt, null);
+    assert.equal(h.expense.status, 'CONFIRMED'); assert.equal(h.history.length, 0);
+  });
+  it('lets another canceller continue on stored authority without certificate permissions and names the starter', async () => {
+    const h = await world('SYSTEM'); const execute = h.voids.executeForReimbursement.bind(h.voids);
+    h.voids.executeForReimbursement = async () => { throw new Error('interrupted'); };
+    await assert.rejects(h.cancel.execute(requester([permission('SYSTEM')]), 'rb-1', 'ข้อมูลผิด', true), /interrupted/);
+    h.voids.executeForReimbursement = execute;
+    const other = ctx({ userId: 'finance-2', permissions: ['reimbursement.read', 'reimbursement.finance_review'] });
+    assert.equal((await h.detail(other) as any).certificateCancelAllowed, true);
+    assert.equal((await h.cancel.execute(other, 'rb-1')).status, 'CANCELLED');
+    assert.equal(h.history[0].actorUserId, 'finance-2'); assert.equal(h.notices.length, 1); assert.match(h.notices[0].body, /^สมชาย /u);
+  });
+  it('leaves a late certificate unfinished and requires a person to authorise it before system continuation', async () => {
+    const h = await world(); const begin = h.state.repo.beginCancellationAtomic;
+    h.state.repo.beginCancellationAtomic = async (input: any) => { const result = await begin(input); h.addCertificate(); return result; };
+    await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด'));
+    assert.ok(h.state.request.cancellationPendingAt); assert.equal(h.state.request.cancellationCertificateAttestedAt, null);
+    assert.equal((await h.detail(requester()) as any).pendingCancellation.blocker.code, 'certificate_attestation_required');
+    assert.deepEqual(await h.finish(), { completed: [], failed: [], blocked: ['rb-1'] });
+    assert.equal(h.history.length, 0);
+    h.state.repo.beginCancellationAtomic = begin;
+    assert.equal((await (h.cancel as any).execute(requester([permission('SYSTEM')]), 'rb-1', undefined, true)).status, 'CANCELLED');
+    assert.equal(h.history.length, 1); assert.equal(h.notices.length, 1);
+  });
+});
+
 describe('CancelReimbursementUseCase', () => {
+  it('recognises expense_changed_retry as a claim cancellation race and keeps its intent pending', async () => {
+    const state = fakeRepo({ claimProjections: [{ id: 'exp-1', sourceReimbursementLineId: 'rbl-1' }] });
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    const voidExpense = { executeForReimbursement: async () => { throw new ConflictException({ code: 'expense_changed_retry', message: 'กรุณาลองใหม่' }); } } as any;
+    const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, voidExpense);
+    await assert.rejects(cancel.execute(ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว'),
+      (error: any) => error instanceof ConflictException && error.message === 'reimbursement_cancellation_in_progress');
+    assert.notEqual(state.request.status, 'CANCELLED');
+    assert.ok(state.request.cancellationPendingAt);
+    assert.deepEqual(state.calls.voided, []);
+  });
   it('passes the observed status and version to the atomic cancellation transition', async () => {
     const state = fakeRepo();
     await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
@@ -1192,7 +1460,8 @@ describe('a cancellation that was started stays visible and can always be finish
     // Before: the intent was committed first, the void then refused, and the claim sat half cancelled with no word of it.
     await assert.rejects(() => claim.cancel.execute(requester(), 'rb-1', 'ซื้อซ้ำกับใบก่อน'), (error: any) => {
       assert.equal(error.getStatus?.(), 409);
-      assert.equal(error.message, `reimbursement_cancellation_accounting_period_locked:${PERIOD}`);
+      assert.equal(error.getResponse().code, `reimbursement_cancellation_accounting_period_locked:${PERIOD}`);
+      assert.match(error.getResponse().message, /ยกเลิกคำขอเบิก/);
       return true;
     });
     assert.equal(claim.state.request.cancellationPendingAt, undefined, 'no intent');
@@ -1218,7 +1487,7 @@ describe('a cancellation that was started stays visible and can always be finish
       [{ code: 'accounting_period_locked', periodKey: PERIOD }, 'ซื้อซ้ำกับใบก่อน', 'สมชาย', true, false]);
     await assert.rejects(() => claim.withdraw.execute(requester(), 'rb-1'), /reimbursement_cancellation_partly_done/);
     // Continuing while it is still closed is refused up front: the second record is not touched again.
-    await assert.rejects(() => claim.cancel.execute(finance(), 'rb-1'), new RegExp(`reimbursement_cancellation_accounting_period_locked:${PERIOD}`));
+    await assert.rejects(() => claim.cancel.execute(finance(), 'rb-1'), (error: any) => error.getResponse().code === `reimbursement_cancellation_accounting_period_locked:${PERIOD}`);
     assert.deepEqual(claim.state.calls.voided, ['exp-1']);
 
     // Reopened: anyone who may cancel continues it, with no reason to give, and it completes under the reason it was started with.
@@ -2013,6 +2282,7 @@ describe('claim detail paymentDesk', () => {
       getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
       listPaymentRecorderNames: (companyId: string, branchId: string, turnUserIds: string[]) => names.listPaymentRecorderNames(companyId, branchId, turnUserIds),
       listClaimPayoutVersions: async () => [],
+      findCancellationCertificates: async () => [], findCancellationBlocker: async () => null,
     } as any;
     const detail = await new GetReimbursementDetailUseCase(repo, detailEvidence).execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
     return detail.paymentDesk ?? null;
@@ -2120,6 +2390,7 @@ describe('claim detail paymentDesk', () => {
       getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
       listPaymentRecorderNames: async (companyId: string, branchId: unknown) => { asked.push([companyId, branchId]); return names; },
       listClaimPayoutVersions: async () => [],
+      findCancellationCertificates: async () => [], findCancellationBlocker: async () => null,
       // Payout Phase 1: a draft's detail also reads the account it would be sent with. This requester has set none.
       findDraftDefaultPayout: async () => undefined, planSubmitPayout: async () => ({ error: 'payout_method_required' }),
     }) as any;

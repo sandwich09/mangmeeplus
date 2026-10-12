@@ -44,6 +44,11 @@ describe('document-sequence.logic', () => {
   });
 
   describe('getDefaultDocumentSequenceConfig', () => {
+    it('numbers a disbursement voucher monthly with one PV number', () => {
+      const config = getDefaultDocumentSequenceConfig('expense.disbursement_voucher');
+      assert.deepEqual(config, { prefixTemplate: 'PV-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' });
+      assert.equal(formatDocumentNumber(config!.prefixTemplate, { year: 2026, month: 10, sequenceNumber: 12, padding: config!.padding }), 'PV-202610-00012');
+    });
     it('returns the system expense default without accepting unknown types', () => {
       assert.deepEqual(getDefaultDocumentSequenceConfig('expense.record'), {
         prefixTemplate: 'EXP-{YYYY}{MM}-{SEQ}',

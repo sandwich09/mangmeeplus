@@ -14,6 +14,7 @@ import { CURRENT_LEGAL_DOCUMENTS, LEGAL_ACCEPTANCE_STATEMENT_VERSION } from '@wa
 import { AcceptLegalDocumentsDto, AuthController, EmployeeLineLinkDto, LineExchangeDto, LineLinkDto, PasswordResetRequestDto } from './auth.controller';
 import { LIFF_PAGE_SCRIPT } from '../../../common/security/liff-page.security';
 import { MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW } from '../../system-partner-management/domain/logic/manual-expense-web-entry.logic';
+import { DISBURSEMENT_VOUCHER_WEB_ENTRY_WITHOUT_ROW } from '../../system-partner-management/domain/logic/disbursement-voucher-web-entry.logic';
 
 const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
 
@@ -300,8 +301,8 @@ describe('AuthController password change session binding', () => {
 // AuthGuard exempts /v1/auth/* from the temporary-password block, so GET /auth/me answers a blocked
 // session too — and is therefore the only place it can learn that every other route is closed to it.
 describe('AuthController me()', () => {
-  /** `webEntryRows`: the stored "แสดงเมนูบันทึกด้วยมือบนเว็บ" rows by company id; a company absent from it has no row. */
-  function makeMeController(mustChangePassword: boolean | null, proofMatches = true, webEntryRows: Record<string, boolean> = {}, companyId = 'company-1') {
+  /** Stored screen-setting values by company; absent company ids have no row. */
+  function makeMeController(mustChangePassword: boolean | null, proofMatches = true, webEntryRows: Record<string, boolean> = {}, companyId = 'company-1', voucherEntryRows: Record<string, boolean | null> = {}) {
     const stub = {} as any;
     const credentialUpdatedAt = new Date('2026-09-23T00:00:00.000Z');
     const prisma = {
@@ -316,7 +317,13 @@ describe('AuthController me()', () => {
         companyWebEntrySetting: { findUnique: async (query: any) => {
           // Exactly one row, by the company the request context resolved to — never a list, never another company.
           assert.deepEqual(query.where, { companyId });
-          return companyId in webEntryRows ? { manualExpenseEntryEnabled: webEntryRows[companyId], version: 1 } : null;
+          const hasManualSetting = companyId in webEntryRows;
+          const hasVoucherSetting = companyId in voucherEntryRows;
+          return hasManualSetting || hasVoucherSetting ? {
+            manualExpenseEntryEnabled: webEntryRows[companyId] ?? false,
+            disbursementVoucherEntryEnabled: hasVoucherSetting ? voucherEntryRows[companyId]! : null,
+            version: 1,
+          } : null;
         } },
       },
     } as any;
@@ -383,6 +390,32 @@ describe('AuthController me()', () => {
     assert.equal(await meIn('company-2'), true);
     // A third company has no row: it reads the default, not a neighbour's value.
     assert.equal(await meIn('company-3'), MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW);
+  });
+
+  it('reports the disbursement-voucher web entry as hidden without a row or when its stored column is null', async () => {
+    const absent = await makeMeController(false).me(context);
+    assert.equal(absent.disbursementVoucherWebEntry, DISBURSEMENT_VOUCHER_WEB_ENTRY_WITHOUT_ROW);
+    const nullValue = await makeMeController(false, true, {}, 'company-1', { 'company-1': null }).me(context);
+    assert.equal(nullValue.disbursementVoucherWebEntry, false);
+  });
+
+  it('reports only the disbursement-voucher setting for the request company', async () => {
+    const rows = { 'company-1': true, 'company-2': false };
+    const meIn = async (companyId: string) => (await makeMeController(false, true, {}, companyId, rows)
+      .me({ context: { ...context.context, companyId } } as any)).disbursementVoucherWebEntry;
+    assert.equal(await meIn('company-1'), true);
+    assert.equal(await meIn('company-2'), false);
+    assert.equal(await meIn('company-3'), false);
+  });
+
+  it('does not let the disbursement-voucher menu setting change the permissions in /auth/me', async () => {
+    const withMenu = await makeMeController(false, true, {}, 'company-1', { 'company-1': true }).me(context);
+    const withoutMenu = await makeMeController(false, true, {}, 'company-1', { 'company-1': false }).me(context);
+    const { disbursementVoucherWebEntry: shown, ...shownRest } = withMenu;
+    const { disbursementVoucherWebEntry: hidden, ...hiddenRest } = withoutMenu;
+    assert.deepEqual([shown, hidden], [true, false]);
+    assert.deepEqual(shownRest, hiddenRest);
+    assert.deepEqual(withMenu.permissions, context.context.permissions);
   });
 
   it('does not let the manual-expense web entry change the permissions it answers with', async () => {

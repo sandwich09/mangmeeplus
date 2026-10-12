@@ -5,6 +5,7 @@ import { expectMainReady } from './harness/e2e-utils';
 const BASELINES = [
   ['dashboard', '/dashboard'],
   ['expenses', '/expenses'],
+  ['wht-certificates', '/expenses/wht-certificates'],
   ['reimbursements', '/reimbursements'],
   ['accounting', '/accounting'],
   ['journal', '/journal'],
@@ -14,7 +15,7 @@ const BASELINES = [
 test.describe('Desktop responsive baseline capture', () => {
   test.skip(process.env['RESPONSIVE_BASELINE'] !== '1', 'Set RESPONSIVE_BASELINE=1 to capture baselines.');
 
-  test('captures the six desktop parity pages', async ({ authedPage, companyId }) => {
+  test('captures the desktop parity pages', async ({ authedPage, companyId }) => {
     for (const [name, route] of BASELINES) {
       await authedPage.goto(`/companies/${companyId}${route}`);
       await expectMainReady(authedPage);

@@ -6,10 +6,10 @@ import {
   changedIdentityFields,
   normalizeTaxId,
   rejectLegalIdentityChange,
-  thaiTaxIdChecksumValid,
   validateLegalAddress,
   type LegalIdentityChangeContext,
 } from './company-legal-identity.logic';
+import { thaiTaxIdChecksumValid } from '@watchdog-bms/contracts';
 
 const TODAY = '2026-08-04';
 

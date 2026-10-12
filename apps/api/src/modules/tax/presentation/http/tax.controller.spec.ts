@@ -135,13 +135,143 @@ describe('GAP-04 taxReviewerRole enforcement', () => {
 
 
 describe('persistent certificate route authority', () => {
-  it('lets readers, issuers and correctors read the handoff and re-download, while issuance remains separately guarded', async () => {
+  it('lets readers, issuers, correctors and external recorders load the card and download, while issuance remains separately guarded', async () => {
     const { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
     const proto = TaxController.prototype;
     assert.equal(typeof proto.downloadSystemWhtCertificate, 'function');
     for (const handler of [proto.listWhtHandoffs, proto.downloadSystemWhtCertificate]) {
-      assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, handler), ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct']);
+      assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, handler), ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link']);
     }
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, proto.issueSystemWhtCertificate), ['wht.certificate.issue']);
+  });
+});
+
+
+describe('certificate card payee address authority', () => {
+  it('lets issuers or external recorders save the address, without giving readers mutation authority', async () => {
+    const { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+    const handler = TaxController.prototype.setWhtHandoffPayeeAddress;
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, handler), ['wht.external_certificate.link', 'wht.certificate.issue']);
+    assert.equal(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler), undefined);
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, TaxController.prototype.linkExternalWhtCertificate), ['wht.external_certificate.link']);
+  });
+});
+
+describe('expense certificate history route', () => {
+  it('accepts all certificate card reader permissions and checks the route company before reading', async () => {
+    const { REQUIRED_ANY_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, TaxController.prototype.getExpenseWhtCertificateHistory), ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link']);
+    const noop = {} as any;
+    const calls: any[] = [];
+    const handoffs = { getExpenseHistory: async (...args: any[]) => { calls.push(args); return []; } } as any;
+    const value = new TaxController(noop, noop, noop, noop, noop, handoffs, noop, noop, noop, noop, noop, noop, noop, noop);
+    await assert.rejects(() => value.getExpenseWhtCertificateHistory(ctx, 'company-2', 'exp-1'), /company/i);
+    assert.equal(calls.length, 0);
+    assert.deepEqual(await value.getExpenseWhtCertificateHistory(ctx, 'company-1', 'exp-1'), []);
+    assert.deepEqual(calls, [[ctx, 'exp-1']]);
+  });
+});
+
+
+describe('C1 handoff list route compatibility', () => {
+  it('keeps both existing array callers and selects the paged read only when pagination is requested', async () => {
+    const calls: any[] = [];
+    const handoffs = { list: async (_ctx: any, filters: any) => { calls.push(['array', filters]); return []; },
+      listPaged: async (_ctx: any, filters: any) => { calls.push(['paged', filters]); return { rows: [], total: 0, page: 1, pageSize: 20, counts: {} }; } };
+    const noop = {} as any;
+    const value = new TaxController(noop, noop, noop, noop, noop, handoffs as any, noop, noop, noop, noop, noop, noop, noop, noop);
+    assert.deepEqual(await value.listWhtHandoffs(ctx, ctx.companyId), []);
+    assert.deepEqual(await value.listWhtHandoffs(ctx, ctx.companyId, undefined, undefined, 'expense-1'), []);
+    const result = await (value.listWhtHandoffs as any)(ctx, ctx.companyId, 'REQUIRED', 'branch-1', undefined, '1', '20', 'ผู้รับ');
+    assert.ok(Array.isArray(result.rows));
+    assert.deepEqual(calls.map(call => call[0]), ['array', 'array', 'paged']);
+    assert.equal(calls[1][1].sourcePaymentId, 'expense-1');
+    assert.deepEqual(calls[2][1], { status: 'REQUIRED', branchId: 'branch-1', sourcePaymentId: undefined, page: 1, pageSize: 20, search: 'ผู้รับ' });
+    await assert.rejects(() => (value.listWhtHandoffs as any)(ctx, 'other-company', undefined, undefined, undefined, '1'), /company/i);
+    assert.equal(calls.length, 3);
+  });
+});
+
+
+describe('C1 by-id controller delegation', () => {
+  it('preserves caller branch and expense scope and missing-id responses at all seven entries', async () => {
+    const { NotFoundException } = await import('@nestjs/common');
+    const entries = [
+      ['getWhtHandoff', 'get', []],
+      ['setWhtHandoffPayeeAddress', 'setPayeeAddress', [{ payeeAddress: 'ที่อยู่' }]],
+      ['linkExternalWhtCertificate', 'linkExternal', [{ commandId: 'cmd', externalCertificateNumber: 'EXT', externalEvidenceRef: 'paper', issuedDate: '2026-07-20' }]],
+      ['issueSystemWhtCertificate', 'execute', []],
+      ['downloadSystemWhtCertificate', 'download', []],
+      ['correctSystemWhtCertificate', 'execute', [{ corrected: {}, reason: 'แก้ที่อยู่' }]],
+      ['issueSystemWhtReplacementCopy', 'execute', []],
+    ] as const;
+    for (const [route, method, body] of entries) {
+      let reject = false;
+      const calls: any[] = [];
+      const delegate = { [method]: async (...args: any[]) => {
+        calls.push(args);
+        if (reject) throw new NotFoundException('WHT handoff not found.');
+        return { id: args[1] };
+      } };
+      const noop = {} as any;
+      const value = new TaxController(noop, noop, noop, noop, noop, delegate as any, delegate as any, delegate as any, delegate as any, noop, noop, noop, noop, noop);
+      for (const actor of [{ ...ctx, scopes: { branchIds: ['branch-1'] } }, { ...ctx, permissions: ['expense.read_own'] }, ctx]) {
+        assert.deepEqual(await (value[route] as any)(actor, ctx.companyId, 'handoff-1', ...body), { id: 'handoff-1' });
+        assert.equal(calls.at(-1)[0], actor); assert.equal(calls.at(-1)[1], 'handoff-1');
+      }
+      const before = calls.length;
+      await assert.rejects(() => (value[route] as any)(ctx, 'other-company', 'handoff-1', ...body), /company/i);
+      assert.equal(calls.length, before);
+      reject = true;
+      await assert.rejects(() => (value[route] as any)(ctx, ctx.companyId, 'missing', ...body), (error: any) => {
+        assert.equal(error.getStatus(), 404);
+        assert.deepEqual(error.getResponse(), { message: 'WHT handoff not found.', error: 'Not Found', statusCode: 404 });
+        return true;
+      });
+    }
+  });
+
+  it('selects the paged response with pageSize alone and retains array responses when only search is supplied', async () => {
+    const calls: any[] = [];
+    const handoffs = { list: async () => { calls.push('array'); return []; }, listPaged: async (_ctx: any, filter: any) => { calls.push(filter); return { rows: [] }; } };
+    const noop = {} as any;
+    const value = new TaxController(noop, noop, noop, noop, noop, handoffs as any, noop, noop, noop, noop, noop, noop, noop, noop);
+    assert.deepEqual(await value.listWhtHandoffs(ctx, ctx.companyId, undefined, undefined, undefined, undefined, undefined, 'payee'), []);
+    await value.listWhtHandoffs(ctx, ctx.companyId, undefined, undefined, undefined, undefined, '100');
+    assert.equal(calls[0], 'array'); assert.ok(Number.isNaN(calls[1].page)); assert.equal(calls[1].pageSize, 100);
+  });
+});
+
+describe('C5 self-issued change route', () => {
+  it('requires only external recording authority and preserves the route company boundary and body', async () => {
+    const { REQUIRED_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+    const handler = (TaxController.prototype as any).changeExternalWhtCertificate;
+    assert.equal(typeof handler, 'function');
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler), ['wht.external_certificate.link']);
+    const noop = {} as any, calls: any[] = [];
+    const body = { commandId: 'change-1', externalCertificateNumber: 'EXT-2', issuedDate: '2026-07-21', externalEvidenceRef: '', note: 'แก้เลขที่' };
+    const value = new TaxController(noop, noop, noop, noop, noop, { changeExternal: async (...args: any[]) => { calls.push(args); return { externalCertificateNumber: 'EXT-2' }; } } as any, noop, noop, noop, noop, noop, noop, noop, noop);
+    await assert.rejects(() => (value as any).changeExternalWhtCertificate(ctx, 'company-2', 'handoff', body), /company/i);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(await (value as any).changeExternalWhtCertificate(ctx, 'company-1', 'handoff', body), { externalCertificateNumber: 'EXT-2' });
+    assert.deepEqual(calls, [[ctx, 'handoff', body]]);
+    assert.equal(Reflect.getMetadata('path', handler), 'wht/payment-handoffs/:handoffId/external-certificate/change');
+  });
+});
+
+
+describe('C15 self-issued removal route', () => {
+  it('requires recording permission, guards route company and forwards the versioned removal body', async () => {
+    const { REQUIRED_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+    const handler = TaxController.prototype.removeExternalWhtCertificate;
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler), ['wht.external_certificate.link']);
+    assert.equal(Reflect.getMetadata('path', handler), 'wht/payment-handoffs/:handoffId/external-certificate/remove');
+    const noop = {} as any, calls: any[] = [];
+    const body = { commandId: 'remove-1', expectedUpdatedAt: '2026-10-12T00:00:00.000Z', reason: 'บันทึกผิด' };
+    const value = new TaxController(noop, noop, noop, noop, noop, { removeExternal: async (...args: any[]) => { calls.push(args); return { status: 'REQUIRED' }; } } as any, noop, noop, noop, noop, noop, noop, noop, noop);
+    await assert.rejects(value.removeExternalWhtCertificate(ctx, 'company-2', 'handoff', body), /company/i);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(await value.removeExternalWhtCertificate(ctx, 'company-1', 'handoff', body), { status: 'REQUIRED' });
+    assert.deepEqual(calls, [[ctx, 'handoff', body]]);
   });
 });

@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { REIMBURSEMENT_DUPLICATE_CLEAR_HELP, REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYOUT_HOLDER_WORDS as HOLDER_WORDS, reimbursementPayoutRoundApproves } from '@watchdog-bms/contracts';
+import { type ReimbursementCancellationCertificate, REIMBURSEMENT_DUPLICATE_CLEAR_HELP, REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYOUT_HOLDER_WORDS as HOLDER_WORDS, reimbursementPayoutRoundApproves } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedSteps, type ThemedStepState } from '@/common/components/steps/ThemedSteps';
@@ -28,6 +28,7 @@ import {
   ClaimDetailSections, ClaimSummaryCard, MissingSavedSignatureModal, PaymentForm, ReasonDialog, RejectDialog,
   StaleApprovalDialog, StatusBadge, VoidPaymentDialog, financeActionLabel, useClaimDocumentPreview,
 } from './ReimbursementDetailSections';
+import { ReimbursementCertificateCancelDialog, reimbursementCertificatesCancelledMessage } from './ReimbursementCertificateCancelDialog';
 import { BackToClaimsLink, ClaimPayoutCard, PayoutAttestationCheck } from './ReimbursementPayout';
 import { PAYOUT_ATTESTATION_REQUIRED, isThirdPartyAcceptanceRefusal, needsThirdPartyAcceptance, payoutApprovalKey, claimNeedsPayoutAttestation, claimPayoutSubmitBlock } from './reimbursement-payout.logic';
 // The payout account correction round (payout spec §14): its forms and card, and the words of its buttons.
@@ -193,14 +194,16 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
    * changed (BUG-7). A failed re-read keeps what the action returned: a frozen assignee may lose
    * read permission the moment they decide. `handled` takes errors that open their own dialog.
    */
-  const act = async (key: string, fn: () => Promise<any>, success: string | ((latest: any) => string), handled?: (e: unknown) => boolean) => {
+  const act = async (key: string, fn: () => Promise<any>, success: string | ((latest: any, answer: any) => string), handled?: (e: unknown) => boolean) => {
     const before = signature(detail);
     setBusyAction(key); setActionError(null);
     let ok = false;
     let dialogOpened = false;
     let latest: any = null;
+    let answer: any;
     try {
       const result = await fn();
+      answer = result;
       if (Array.isArray(result?.lines)) latest = result;
       ok = true;
       // The claim moved on: a form of the correction round left open is for the claim as it was. Without this, a
@@ -213,7 +216,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     }
     try { latest = await getReimbursement(companyId, requestId); } catch { /* keep what is on screen */ }
     const shown = latest ?? detail;
-    if (ok && typeof success === 'function') toast.success(success(shown));
+    if (ok && typeof success === 'function') toast.success(success(shown, answer));
     if (latest) setDetail(latest);
     setBusyAction(null);
     if ((!ok && !dialogOpened) || signature(shown) !== before) setFocusTick((tick) => tick + 1);
@@ -357,8 +360,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     // The reason on record stays; only a stored reason the system cannot cancel with is asked for again.
     'resume-cancel': () => {
       setActionError(null);
-      if (detail.pendingCancellation?.blocker?.code === 'reason_too_short') setReasonAction('resume-cancel');
-      else void act('resume-cancel', () => cancelReimbursement(companyId, requestId), 'ยกเลิกคำขอเรียบร้อยแล้ว');
+      if (['reason_too_short', 'certificate_attestation_required'].includes(detail.pendingCancellation?.blocker?.code) || detail.certificateCancelBlocker) setReasonAction('resume-cancel');
+      else void act('resume-cancel', () => cancelReimbursement(companyId, requestId), (_, answer) => reimbursementCertificatesCancelledMessage(answer?.cancelledCertificates ?? detail.certificates ?? []));
     },
     'withdraw-cancel': () => void (async () => {
       if (!(await confirm({
@@ -450,6 +453,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   // The first action still shown as a button: a viewer who can only send the claim back has no main thing to press here.
   const primaryAction = formOpen || givingAgain ? undefined : cardActions[0] === step?.actions[0] ? cardActions[0] : undefined;
   const reasonDialog = reasonAction ? REASON_DIALOGS[reasonAction] : null;
+  const cancellationCertificates: ReimbursementCancellationCertificate[] = detail.certificates ?? [];
+  const certificateCancellation = (reasonAction === 'cancel' || reasonAction === 'resume-cancel') && cancellationCertificates.length > 0;
 
   return (
     <MangmeePage
@@ -592,7 +597,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
               )}
             </div>
           )}
-          {actionError && !(step.actions.includes('submit') && readiness.blocked && actionError === readiness.message) && <ErrorBanner message={actionError} />}
+          {actionError && !certificateCancellation && !(step.actions.includes('submit') && readiness.blocked && actionError === readiness.message) && <ErrorBanner message={actionError} />}
         </section>
       )}
 
@@ -637,7 +642,17 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           if (ok || !activeJourneyStep(buildJourneySteps(latest, permissions, userId))?.actions.includes('reject')) setRejecting(false);
         }}
       />}
-      {reasonAction && reasonDialog && <ReasonDialog
+      {reasonAction && reasonDialog && (certificateCancellation ? <ReimbursementCertificateCancelDialog
+        title={`${reasonDialog.title} ${detail.requestNo ?? ''}`.trim()}
+        certificates={cancellationCertificates} blocker={detail.certificateCancelBlocker}
+        continuation={Boolean(detail.pendingCancellation)} attestationRequired={detail.pendingCancellation?.blocker?.code === 'certificate_attestation_required'} initialReason={detail.pendingCancellation?.reason}
+        busy={busyAction === reasonAction} error={actionError}
+        onClose={() => setReasonAction(null)}
+        onConfirm={async (reason, taxFilingAttested) => {
+          if ((await act(reasonAction, () => cancelReimbursement(companyId, requestId, reason, taxFilingAttested),
+            (_, answer) => reimbursementCertificatesCancelledMessage(answer?.cancelledCertificates ?? cancellationCertificates))).ok) setReasonAction(null);
+        }}
+      /> : <ReasonDialog
         title={`${reasonDialog.title} ${detail.requestNo ?? ''}`.trim()}
         description={reasonDialog.description}
         confirmLabel={reasonDialog.confirmLabel}
@@ -656,7 +671,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
               : () => financeReviewReimbursement(companyId, requestId, { decision: reasonAction === 'finance-return' ? 'NEEDS_INFO' : 'BLOCKED', note: reason });
           if ((await act(reasonAction, request, reasonDialog.success)).ok) setReasonAction(null);
         }}
-      />}
+      />)}
       {confirmDialog}
       {voidingPayment && <VoidPaymentDialog
         payment={voidingPayment} claim={detail}

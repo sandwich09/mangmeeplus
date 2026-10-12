@@ -30,6 +30,7 @@ function makeService(entitlements: Array<{ featureKey: string; enabled: boolean 
     listPendingProjectionIntents: async () => [{ request, kind: 'MANAGER' as const, actorUserId: 'mgr-1', approvalStepId: 'step-1' }],
     listPendingCancellationIntents: async () => [{ request, actorUserId: 'mgr-1', reason: 'ยกเลิก' }],
     findCancellationBlocker: async () => null,
+    findCancellationCertificates: async () => [],
     findPolicy: async () => { calls.push('findPolicy'); return null; },
     listClaimProjections: async () => { calls.push('listClaimProjections'); return []; },
     completeApprovalProjectionAtomic: async () => { calls.push('completeApprovalProjectionAtomic'); },
@@ -253,6 +254,7 @@ describe('ReimbursementProjectionReconcilerService scheduled pass', () => {
       findPolicy: async () => null,
       findRequestById: async (_companyId: string, id: string) => (options.latest && id in options.latest ? options.latest[id] : all.find((request) => request.id === id) ?? null),
       findCancellationBlocker: async (request: any) => options.blockers?.[request.id] ?? null,
+      findCancellationCertificates: async () => [],
       listClaimProjections: async (_companyId: string, id: string) => [{ id: `exp-${id}`, sourceReimbursementLineId: `line-${id}` }],
       assertCancellationPending: async () => undefined,
       completeApprovalProjectionAtomic: async (input: any) => { calls.push(`ready:${input.requestId}`); },
@@ -364,6 +366,13 @@ describe('ReimbursementProjectionReconcilerService scheduled pass', () => {
   });
 
   describe('one claim, for the person who presses ดำเนินการต่อ', () => {
+    it('recognises the translated expense void race in scheduled claim cancellation', async () => {
+      const error = new ConflictException({ code: 'expense_changed_retry', message: 'กรุณาลองใหม่' });
+      const scheduled = pass({ cancelling: [{ request: claim('a') }], voidFails: { a: error } });
+      assert.deepEqual(await scheduled.service.execute(), { completed: [], failed: [], blocked: [] });
+      assert.deepEqual(scheduled.lines, [{ level: 'log', line: { msg: 'reimbursement.reconcile.busy', companyId: 'co-1', requestId: 'a', kind: 'CANCELLATION', code: 'expense_changed_retry' } }]);
+      assert.deepEqual(scheduled.work(), []);
+    });
     it('carries out the decision the claim holds, and does nothing for a claim that holds none', async () => {
       const waiting = pass({ decided: [claim('a')] });
       assert.equal(await waiting.service.repair('co-1', 'a'), true);

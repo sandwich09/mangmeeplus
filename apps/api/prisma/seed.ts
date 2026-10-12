@@ -2939,8 +2939,8 @@ async function main() {
   for (const tenantCompany of [company, company2]) {
     await prisma.companyWebEntrySetting.upsert({
       where: { companyId: tenantCompany.id },
-      update: { manualExpenseEntryEnabled: true },
-      create: { companyId: tenantCompany.id, manualExpenseEntryEnabled: true },
+      update: { manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: true },
+      create: { companyId: tenantCompany.id, manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: true },
     });
   }
 

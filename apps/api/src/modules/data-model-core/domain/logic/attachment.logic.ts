@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_PDF_PURPOSE, DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, DISBURSEMENT_VOUCHER_ERROR_WORDS } from '@watchdog-bms/contracts';
 import {
   REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
   REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
@@ -81,7 +82,7 @@ type AttachmentLinkReader = {
  */
 export async function findAttachmentLinkConflict(
   db: AttachmentLinkReader,
-  input: { companyId: string; attachmentId: string; targetType: string },
+  input: { companyId: string; attachmentId: string; targetType: string; targetId?: string; purpose?: string },
 ): Promise<string | null> {
   const isSignature = input.targetType === SIGNATURE_ASSET_TARGET_TYPE;
   const clash = await db.attachmentLink.findFirst({
@@ -92,6 +93,18 @@ export async function findAttachmentLinkConflict(
     },
     select: { targetType: true },
   });
+  const documentFile = await isDisbursementVoucherFile(db, input);
+  const documentTarget = input.targetType === DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE;
+  if (documentFile && !documentTarget) return DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_file_link_outside;
+  if (documentTarget) {
+    const other = await db.attachmentLink.findFirst({ where: { companyId: input.companyId, attachmentId: input.attachmentId,
+      NOT: { targetType: input.targetType, targetId: input.targetId, purpose: input.purpose } }, select: { targetType: true } });
+    const file = await db.attachmentObject.findFirst({ where: { id: input.attachmentId, companyId: input.companyId }, select: { metadataJson: true } });
+    const metadata = file?.metadataJson as Record<string, unknown> | null | undefined;
+    if (other || clash || metadata?.['generatedFor'] && metadata['generatedFor'] !== DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG
+      || metadata?.['generatedBy'] === 'disbursement_voucher' && input.purpose !== DISBURSEMENT_VOUCHER_PDF_PURPOSE
+      || await isReimbursementPaymentSlipFile(db, input)) return DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_slip_link_conflict;
+  }
   if (clash) {
     return isSignature
       ? 'This file is already attached to a document, so it cannot also be saved as a personal signature.'
@@ -101,6 +114,19 @@ export async function findAttachmentLinkConflict(
     return 'A reimbursement payment slip cannot be attached to anything else.';
   }
   return null;
+}
+
+/** Exclusive from upload onward, including replaced slips whose link has been removed. */
+export async function isDisbursementVoucherFile(db: AttachmentLinkReader, input: { companyId: string; attachmentId: string }): Promise<boolean> {
+  for (const purpose of [DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_PDF_PURPOSE]) {
+    const link = await db.attachmentLink.findFirst({ where: { companyId: input.companyId, attachmentId: input.attachmentId,
+      targetType: DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, purpose }, select: { targetType: true } });
+    // Believe the row, not only the filter: a link of another kind is never this document's file.
+    if (link?.targetType === DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE) return true;
+  }
+  const file = await db.attachmentObject.findFirst({ where: { id: input.attachmentId, companyId: input.companyId }, select: { metadataJson: true } });
+  const metadata = file?.metadataJson as Record<string, unknown> | null | undefined;
+  return metadata?.['generatedFor'] === DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG || metadata?.['generatedBy'] === 'disbursement_voucher';
 }
 
 /** Whether these bytes are a reimbursement payment slip: linked to a payment, or uploaded to become one. */

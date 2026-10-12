@@ -108,6 +108,9 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
       'workflow.run.read', 'workflow.dead_letter.read', 'workflow.webhook.manage',
     ],
   },
+  { path: '/expenses/disbursement-vouchers/new', anyOf: ['expense.disbursement.prepare'] },
+  { path: '/expenses/disbursement-vouchers/', anyOf: ['expense.disbursement.read'] },
+  { path: '/expenses/disbursement-vouchers', anyOf: ['expense.disbursement.read'] },
   {
     path: '/expenses',
     anyOf: [
@@ -115,6 +118,7 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
       'expense.confirm', 'expense.category.manage', 'expense.signature.self_manage', 'expense.signature.manage', 'expense.evidence.read',
     ],
   },
+  { path: '/expenses/wht-certificates', anyOf: ['wht.certificate.issue'] },
   {
     path: '/reimbursements',
     anyOf: ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.finance_review'],

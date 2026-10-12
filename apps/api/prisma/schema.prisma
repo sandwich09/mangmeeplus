@@ -397,6 +397,8 @@ model Company {
   // Item 09
   expenseRecords                    ExpenseRecord[]
   expensePayments                   ExpensePayment[]
+  disbursementVouchers              DisbursementVoucher[]
+  disbursementVoucherCommands        DisbursementVoucherCommand[]
   expenseLines                      ExpenseLine[]
   expenseCategories                 ExpenseCategory[]
   revenueCategories                 RevenueCategory[]
@@ -451,6 +453,7 @@ model Company {
   taxFilingPackages                 TaxFilingPackage[]
   whtCertificates                   WhtCertificate[]
   whtCertificateHandoffs            WhtCertificateHandoff[]
+  whtCertificateHistories           WhtCertificateHistory[]
   citLedgerSummaries                CitLedgerSummary[]
   taxAdjustments                    TaxAdjustment[]
   taxVerificationChecklists         TaxVerificationChecklist[]
@@ -2324,6 +2327,34 @@ enum ExpenseStatus {
   VOIDED
 }
 
+enum DisbursementVoucherStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  PAID
+  CANCELLED
+}
+
+enum DisbursementVoucherOrigin {
+  PREPARED
+  DIRECT_PAYMENT
+  REISSUED
+}
+
+enum DisbursementVoucherPayeeBasis {
+  SINGLE
+  TAX_ID
+  SAME_NAME
+  PREPARER_CONFIRMED
+}
+
+enum DisbursementVoucherRevisionDecision {
+  APPROVED
+  RETURNED
+  WITHDRAWN
+  CANCELLED
+}
+
 enum ExtractionStatus {
   NOT_REQUESTED
   NOT_CONFIGURED
@@ -2663,6 +2694,8 @@ model ExpenseRecord {
   // Company also cascades into fails a company delete depending on the order Postgres picks.
   captureGroupId                     String?
   captureAllocationId                String?
+  // Plain reservation pointer, like capture lineage above: deliberately no foreign key.
+  reservedByDisbursementVoucherId     String?
   /// Issuer scope this expense is the derived source OF, inside its group.
   captureScopeKey                    String?
   /// Who actually paid. Server-set only (from the group at handoff, or an `expense.review`
@@ -2695,6 +2728,7 @@ model ExpenseRecord {
   duplicateOf                        ExpenseDuplicateCandidate[]        @relation("CandidateExpense")
   substituteReceiptEvidences         ExpenseSubstituteReceiptEvidence[]
   payments                           ExpensePayment[]
+  disbursementVoucherLines           DisbursementVoucherLine[]
 
   @@unique([companyId, expenseNumber])
   @@unique([companyId, draftIdempotencyKey])
@@ -2730,6 +2764,124 @@ model ExpenseRecord {
   @@index([companyId, voidedByUserId])
   @@index([companyId, payerUserId])
   @@index([companyId, substituteReceiptGeneratedByUserId], map: "ExpenseRecord_company_substitute_generator_idx")
+}
+
+model DisbursementVoucher {
+  id                          String @id @default(cuid())
+  companyId                   String
+  branchId                    String
+  documentNumber              String?
+  revision                    Int @default(0)
+  status                      DisbursementVoucherStatus @default(DRAFT)
+  origin                      DisbursementVoucherOrigin
+  replacesVoucherId           String?
+  payeeName                   String
+  payeeTaxId                  String?
+  payeeBranchCode             String?
+  payeeBasis                  DisbursementVoucherPayeeBasis
+  payeeConfirmedByUserId      String?
+  plannedPayDate              DateTime? @db.Date
+  plannedMethod               ExpensePaymentMethod?
+  payeeBankName               String?
+  payeeAccountName            String?
+  payeeAccountLast4           String?
+  payeeAccountCiphertext      String?
+  note                        String?
+  totalAmount                 Decimal @db.Decimal(18, 4)
+  currency                    String @default("THB")
+  preparedByUserId            String
+  requestedApproverUserId     String?
+  lastReminderToUserId        String?
+  lastReminderAt              DateTime?
+  reminderCount               Int @default(0)
+  submittedAt                 DateTime?
+  submittedByUserId           String?
+  approvedAt                  DateTime?
+  approvedByUserId            String?
+  selfApproved                Boolean @default(false)
+  returnedAt                  DateTime?
+  returnedByUserId            String?
+  returnReason                String?
+  cancelledAt                 DateTime?
+  cancelledByUserId           String?
+  cancelReason                String?
+  cancelSourceReason          String?
+  cancelledAfterPaid          Boolean @default(false)
+  paidDate                    DateTime? @db.Date
+  paidRecordedAt              DateTime?
+  paidByUserId                String?
+  paidMethod                  ExpensePaymentMethod?
+  paidFromRef                 String? @db.VarChar(128)
+  paidSnapshotJson            Json?
+  paidSnapshotHash            String?
+  templateVersion             Int @default(1)
+  pdfAttachmentId             String?
+  slipAttachmentId            String?
+  version                     Int @default(0)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+  company                     Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  revisions                   DisbursementVoucherRevision[]
+  lines                       DisbursementVoucherLine[]
+
+  @@unique([companyId, id])
+  @@unique([companyId, documentNumber])
+  @@index([companyId, status, plannedPayDate])
+  @@index([companyId, branchId])
+}
+
+// Completed draft command only. The voucher pointer stays plain so replay survives draft deletion.
+model DisbursementVoucherCommand {
+  id                 String @id @default(cuid())
+  companyId          String
+  commandId          String
+  voucherId          String
+  payloadFingerprint String
+  resultJson         Json
+  createdAt          DateTime @default(now())
+  company            Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, commandId])
+  @@index([companyId, voucherId])
+}
+
+model DisbursementVoucherRevision {
+  id                  String @id @default(cuid())
+  voucherId           String
+  revision            Int
+  snapshotJson        Json
+  snapshotHash        String
+  submittedByUserId   String
+  requestedApproverUserId String?
+  submittedAt         DateTime
+  decision            DisbursementVoucherRevisionDecision?
+  decidedByUserId     String?
+  decidedAt           DateTime?
+  decisionReason      String?
+  postApprovalAction  DisbursementVoucherRevisionDecision?
+  postApprovalByUserId String?
+  postApprovalAt      DateTime?
+  postApprovalReason  String?
+  voucher             DisbursementVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@unique([voucherId, revision])
+}
+
+model DisbursementVoucherLine {
+  id                  String @id @default(cuid())
+  companyId           String
+  voucherId           String
+  expenseId           String
+  position            Int
+  amount              Decimal @db.Decimal(18, 4)
+  sourceHashAtSubmit  String?
+  expensePaymentId   String?
+  // Set only while PAID and not cancelled; the durable expensePaymentId stays forever.
+  coversPaymentId    String? @unique
+  voucher            DisbursementVoucher @relation(fields: [companyId, voucherId], references: [companyId, id], onDelete: Cascade)
+  expense            ExpenseRecord @relation(fields: [companyId, expenseId], references: [companyId, id], onDelete: Restrict)
+
+  @@index([companyId, expenseId])
 }
 
 model ExpensePayment {
@@ -4352,6 +4504,7 @@ model CompanyWebEntrySetting {
   id                         String   @id @default(cuid())
   companyId                  String   @unique
   manualExpenseEntryEnabled  Boolean
+  disbursementVoucherEntryEnabled Boolean?
   version                    Int      @default(0) // monotonic CAS fence; increments only on a real change
   updatedBySystemAdminUserId String?
   createdAt                  DateTime @default(now())
@@ -5741,6 +5894,7 @@ model WhtCertificateHandoff {
   linkCommandId          String?
   linkPayloadFingerprint String?
   certificateId          String?
+  certificateRound       Int     @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5756,6 +5910,31 @@ model WhtCertificateHandoff {
   @@index([companyId, status])
   @@index([companyId, taxPeriodId])
   @@index([companyId, sourceBranchId])
+}
+
+// Append-only certificate events, independent of reusable handoff pointers.
+model WhtCertificateHistory {
+  id                       String   @id @default(cuid())
+  companyId                String
+  expenseId                String?
+  handoffId                String
+  eventType                String
+  certificateId            String?
+  certificateNumber        String?
+  isExternal               Boolean
+  certificateDate          DateTime?
+  relatedCertificateId     String?
+  relatedCertificateNumber String?
+  reason                   String?
+  detailsJson              Json?
+  taxFilingAttested         Boolean  @default(false)
+  actorUserId              String
+  occurredAt               DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, expenseId, occurredAt])
+  @@index([companyId, handoffId])
 }
 
 // CIT ledger-backed supporting summary
@@ -7082,6 +7261,7 @@ model ReimbursementRequest {
   cancellationPendingAt        DateTime?
   cancellationPendingByUserId  String?
   cancellationPendingReason    String?
+  cancellationCertificateAttestedAt DateTime?
   financeReviewStatus          ReimbursementFinanceReviewStatus      @default(NOT_REQUIRED)
   financeReviewedByUserId      String?
   financeReviewedAt            DateTime?

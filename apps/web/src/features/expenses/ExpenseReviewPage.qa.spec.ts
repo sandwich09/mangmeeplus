@@ -180,12 +180,12 @@ test('the handoff is re-read for every confirmed withholding revision and includ
 
 test('the correction form and replacement button render through the shared accounts-payable-mirrored predicates', () => {
   assert.match(source, /\{canCorrectWhtCertificate\(whtHandoff, permissions\) && \(/);
-  assert.match(source, /\{canIssueWhtReplacementCopy\(whtHandoff, permissions\) && \(/);
+  assert.match(source, /\{!correctOpen && canIssueWhtReplacementCopy\(whtHandoff, permissions\) && \(/);
 });
 
 test('correcting calls the correction endpoint and downloads the returned PDF immediately, requiring a reason', () => {
   assert.match(source, /await correctSystemWhtCertificate\(companyId, whtHandoff\.id, \{/);
-  assert.match(source, /disabled=\{correctBusy \|\| !correctForm\.reason\.trim\(\)\}/);
+  assert.match(source, /disabled=\{correctBusy \|\| !correctForm\.reason\.trim\(\) \|\| !correctionHasChanges\}/);
 });
 
 test('issuing a replacement copy calls the replacement-copy endpoint with no form', () => {

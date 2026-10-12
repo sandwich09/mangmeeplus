@@ -24,6 +24,7 @@ const DEFAULT_DOCUMENT_SEQUENCE_CONFIGS: Readonly<Record<string, DefaultDocument
   'expense.claim': { prefixTemplate: 'EXP-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
   'expense.record': { prefixTemplate: 'EXP-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
   'expense.substitute_receipt': { prefixTemplate: 'SRC-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
+  'expense.disbursement_voucher': { prefixTemplate: 'PV-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
   'ledger.journal': { prefixTemplate: 'JRN-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
   'procurement.purchase_request': { prefixTemplate: 'PR-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
   'procurement.purchase_order': { prefixTemplate: 'PO-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },

@@ -1,9 +1,13 @@
 'use client';
+import { ExpenseDisbursementCancellation } from './ExpenseDisbursementCancellation';
+import { whtPayeeAddress } from '@watchdog-bms/contracts';
 
 import { normalizeExpensePaymentAmount, expenseOverpaidAmount, expenseOverpaymentRemedy, expenseReopenedMessage, EXPENSE_CORRECTION_WORDS, EXPENSE_REVIEW_STEP_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
 import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, expenseDateIsReadable, REIMBURSEMENT_DUPLICATE_CONFIRM_WARNING } from '@watchdog-bms/contracts';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ExpenseReviewSubmitActions } from './ExpenseReviewSubmitActions';
+import { sendAndConfirmExpense } from './expense-one-pass-confirm';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -65,6 +69,15 @@ import { ForeignCurrencyNotice } from './ForeignCurrencyNotice';
 import { generateSourceJournal } from '../ledger/ledger.api';
 import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
 import { ExpenseSourceDraftCard } from './ExpenseSourceDraftCard';
+import { ExpenseCertificateReopen, currentExpenseCertificate, expenseCertificateReopenedMessage } from './ExpenseCertificateReopen';
+import { ExpenseCertificateVoidDialog } from './ExpenseCertificateVoidDialog';
+import { ExpenseCertificateCard } from './ExpenseCertificateCard';
+import { WhtIssueButton } from './WhtIssueButton';
+import { ExpenseCertificateCorrectionFields } from './ExpenseCertificateCorrectionFields';
+import { ExpenseCertificateHistory, ExpenseCertificateHistoryDisclosure, ExpenseCertificateHistoryNotice, ExpenseCancellationNotice } from './ExpenseCertificateHistory';
+import { ExpenseCertificateCorrectionNote } from './ExpenseCertificateCorrectionNote';
+import { ExpenseDisbursementOpenLink, ExpenseDisbursementDirectPayment, ExpenseDisbursementPaymentEntry, ExpenseDisbursementPaymentScope, ExpenseDisbursementPrepareEntry, ExpenseDisbursementReservation, ExpenseDisbursementVoidBlocker } from './ExpenseDisbursementVoucher';
+import { expenseCertificateCorrectionValues, expenseCertificateCorrectionChanges, type ExpenseCertificateCorrectionValues } from './expense-certificate-correction.logic';
 import {
   activePrimaryReceiptAttachmentId,
   availableExpenseSessionStorage,
@@ -86,7 +99,7 @@ const isRemovableFilePurpose = (purpose: string): purpose is NonNullable<RemoveE
   purpose === 'expense.receipt.primary' || purpose === 'expense.receipt.supporting'
   || purpose === 'expense.payment.evidence' || purpose === 'expense.review.evidence';
 
-export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }: { companyId: string; expenseId: string; userId: string; permissions: string[]; canSelfApprove: boolean }) {
+export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, disbursementEntryOpen = false }: { companyId: string; expenseId: string; userId: string; permissions: string[]; canSelfApprove: boolean; disbursementEntryOpen?: boolean }) {
   const router = useRouter();
   const caps = expenseCapabilities(permissions);
   const { canReview, canConfirm } = caps;
@@ -283,7 +296,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     setLoading(true); setError(null);
     try { setDetail(await getExpense(companyId, expenseId)); } catch (e) { setError(err(e)); } finally { setLoading(false); }
   }, [companyId, expenseId]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setCorrectionReason(''); void load(); }, [load]);
 
   /** One operation id per (intent, file, revision); a retry of the same thing reuses it verbatim. */
   const fileOperationId = (intent: 'replace' | 'append', file: File, revision: string): string => {
@@ -436,7 +449,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // Read the durable handoff on every confirmed revision, including later visits.
   const [whtHandoff, setWhtHandoff] = useState<WhtCertificateHandoffDto | null>(null);
   useEffect(() => {
-    if (!detail || detail.status !== 'CONFIRMED' || !(Number(detail.whtAmount) > 0) || !permissions.some((permission) => ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct'].includes(permission))) {
+    if (!detail || detail.status !== 'CONFIRMED' || !(Number(detail.whtAmount) > 0) || !permissions.some((permission) => ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link'].includes(permission))) {
       setWhtHandoff(null);
       return;
     }
@@ -458,46 +471,36 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     incomeCategoryCode: '', incomeCategoryName: '', whtRate: '', grossAmount: '', withheldAmount: '',
     paymentDate: '', formType: 'PND53' as 'PND3' | 'PND53',
     payeeName: '', payeeTaxId: '', payeeAddress: '', payeeBranchCode: '', reason: '',
+    opened: null as ExpenseCertificateCorrectionValues | null,
   });
   const openCorrectForm = () => {
-    const prefill = whtHandoff?.prefill;
-    setCorrectForm({
-      incomeCategoryCode: prefill?.incomeCategoryCode ?? '', incomeCategoryName: prefill?.incomeCategoryName ?? '',
-      whtRate: prefill?.whtRate ?? '', grossAmount: prefill?.grossAmount ?? '', withheldAmount: prefill?.withheldAmount ?? '',
-      paymentDate: prefill?.paymentDate ? prefill.paymentDate.slice(0, 10) : '', formType: (prefill?.formType ?? 'PND53') as 'PND3' | 'PND53',
-      payeeName: prefill?.payeeSnapshot?.name ?? '', payeeTaxId: prefill?.payeeSnapshot?.taxId ?? '',
-      payeeAddress: prefill?.payeeSnapshot?.address ?? '', payeeBranchCode: prefill?.payeeSnapshot?.branchCode ?? '',
-      reason: '',
-    });
+    if (!whtHandoff) return;
+    const values = expenseCertificateCorrectionValues(whtHandoff);
+    setCorrectForm({ ...values, reason: '', opened: values });
+    setCorrectError(null);
     setCorrectOpen(true);
   };
 
   const doCorrectWht = async () => {
-    if (!whtHandoff) return;
+    if (!whtHandoff || correctBusy || !correctForm.reason.trim()) return;
+    const corrected = expenseCertificateCorrectionChanges(correctForm, correctForm.opened);
+    if (!Object.keys(corrected).length) { setCorrectError('ยังไม่ได้แก้ไขข้อมูลใด'); return; }
     setCorrectBusy(true); setCorrectError(null);
     try {
       const result = await correctSystemWhtCertificate(companyId, whtHandoff.id, {
-        corrected: {
-          formType: correctForm.formType,
-          incomeCategoryCode: correctForm.incomeCategoryCode || undefined,
-          incomeCategoryName: correctForm.incomeCategoryName || undefined,
-          whtRate: correctForm.whtRate || undefined,
-          grossAmount: correctForm.grossAmount || undefined,
-          withheldAmount: correctForm.withheldAmount || undefined,
-          paymentDate: correctForm.paymentDate ? new Date(correctForm.paymentDate).toISOString() : undefined,
-          payeeSnapshot: {
-            name: correctForm.payeeName || undefined,
-            taxId: correctForm.payeeTaxId || undefined,
-            address: correctForm.payeeAddress || undefined,
-            branchCode: correctForm.payeeBranchCode || undefined,
-          },
-        },
+        corrected,
         reason: correctForm.reason.trim(),
       });
       downloadArtifact(result.pdfArtifact);
-      setWhtHandoff((current) => current ? { ...current, certificateId: result.id } : null);
       setCorrectOpen(false);
-      toast.success('แก้ไขหนังสือรับรองเรียบร้อยแล้ว');
+      toast.success(t('expenses.certificate_card.corrected', locale).replace('{number}', result.certificateNumber));
+      // Re-read the certificate (including its form type) before another correction can open.
+      setWhtHandoff({ ...whtHandoff, status: 'SYSTEM_ISSUED', certificateId: result.id, certificateNumber: result.certificateNumber ?? null, certificateIssuedAt: result.issuedAt ?? null, currentCertificate: null, systemCorrectionOpen: false }); setWhtLoading(true); setWhtIssueError(null);
+      try {
+        const handoffs = await listWhtHandoffs(companyId, { sourcePaymentId: expenseId });
+        setWhtHandoff(handoffs.find(handoff => handoff.id === whtHandoff.id) ?? null);
+      } catch (cause) { setWhtIssueError(err(cause)); }
+      finally { setWhtLoading(false); }
     } catch (e) {
       setCorrectError(err(e));
     } finally { setCorrectBusy(false); }
@@ -509,25 +512,39 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     try {
       const result = await issueSystemWhtReplacementCopy(companyId, whtHandoff.id);
       downloadArtifact(result.pdfArtifact);
-      toast.success('ออกใบแทนเรียบร้อยแล้ว');
+      toast.success(t('expenses.certificates.replacement_toast', locale).replace('{number}', result.certificateNumber));
     } catch (e) {
       setReplaceError(err(e));
     } finally { setReplaceBusy(false); }
   };
 
+  // After confirming, the result and the next presses are at the top of the page.
+  const showConfirmedResult = () => { if (typeof window !== 'undefined') window.scrollTo({ top: 0 }); };
   const doConfirm = async () => {
-    await doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว');
+    if (await doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')) showConfirmedResult();
+  };
+  const confirmInOnePass = async () => {
+    if (!canConfirm || !detail) return;
+    if (await doAction(async () => {
+      const confirmed = await sendAndConfirmExpense(
+        () => canReview ? markExpenseReadyAsReviewer(companyId, expenseId) : markExpenseReady(companyId, expenseId),
+        override => confirmExpense(companyId, expenseId, override),
+        sent => setDetail(current => current ? { ...current, ...sent } : current),
+        vatOverrideRef.current ?? undefined,
+      );
+      setDetail(current => current ? { ...current, ...confirmed } : current);
+    }, 'ยืนยันเอกสารเรียบร้อยแล้ว')) showConfirmedResult();
   };
 
   const doIssueWhtCertificate = async () => {
-    if (!detail || !whtHandoff || !canIssueExpenseWhtCertificate(detail, whtHandoff, permissions)) return;
+    if (!detail || !whtHandoff || !canIssueExpenseWhtCertificate(detail, whtHandoff, permissions) || !!whtHandoff.payerMissing?.length || !whtPayeeAddress(whtHandoff.payeeAddress, whtHandoff.prefill.payeeSnapshot.address)) return;
     setWhtIssuing(true); setWhtIssueError(null);
     try {
       const result = await issueSystemWhtCertificate(companyId, whtHandoff.id);
       downloadArtifact(result.pdfArtifact);
-      setWhtHandoff({ ...whtHandoff, status: 'SYSTEM_ISSUED', certificateId: result.id });
+      setWhtHandoff({ ...whtHandoff, status: 'SYSTEM_ISSUED', certificateId: result.id, certificateNumber: result.certificateNumber ?? null, certificateIssuedAt: result.issuedAt ?? null, currentCertificate: null, systemCorrectionOpen: false });
       await load();
-      toast.success('ออกหนังสือรับรองหัก ณ ที่จ่ายในระบบเรียบร้อยแล้ว');
+      toast.success(result.certificateNumber ? t('expenses.certificates.issued_toast', locale).replace('{number}', result.certificateNumber) : 'ออกหนังสือรับรองหัก ณ ที่จ่ายในระบบเรียบร้อยแล้ว');
     } catch (e) { setWhtIssueError(err(e)); }
     finally { setWhtIssuing(false); }
   };
@@ -855,20 +872,25 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const claimRecord = isClaimExpenseRecord(detail);
   const claimNote = claimExpenseRecordNote(detail);
   const canReject = caps.canReject && !claimRecord;
+  const isCancelled = detail.status === 'VOIDED';
   const isMutable = !claimedSource && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status);
   // Backend: PATCH/mark-ready require expense.review OR (expense.update AND owner) — ownership alone is not enough.
   const isOwnRecord = detail.createdByUserId === userId;
   const canMutateDraft = isMutable && (canReview || (caps.canUpdate && isOwnRecord));
   // Extraction: expense.ocr.request OR expense.review OR (expense.receipt.upload on own record).
-  const canExtract = !claimedSource && (caps.canRequestOcr || (caps.canUploadReceipts && isOwnRecord));
+  const canExtract = !isCancelled && !claimedSource && (caps.canRequestOcr || (caps.canUploadReceipts && isOwnRecord));
   // Fixed correction marker: h-5 plus the stepper's gap-1.5 = 1.625rem.
   const viewerOffsetRem = STEPPER_REM + (isMutable && detail.correctionOpenedAt ? 1.625 : 0);
   const viewerTop = `calc(var(--app-header-h) + ${viewerOffsetRem}rem)`;
   const isConfirmed = detail.status === 'CONFIRMED';
+  const expenseCertificate = currentExpenseCertificate(whtHandoff, detail.correctionCapabilities?.certificateOnExpense, permissions);
+  const correctionCertificate = correctionAction && !correctionAction.paymentId ? expenseCertificate : null;
+  const certificateVoidOpen = showVoid && Boolean(expenseCertificate);
   const correctionAllowed = correctionAction?.paymentId
     ? detail.correctionCapabilities?.payments.find(p => p.id === correctionAction.paymentId)?.canCancel === true
     : detail.correctionCapabilities?.canReopen === true;
-  const paymentForm = expensePaymentFormState(detail.outstandingAmount, paidAmount, paidAt, Boolean(paymentAttemptRef.current));
+  const hasRecordedPayments = detail.payments?.some(p => p.status === 'RECORDED') ?? false;
+  const paymentForm = expensePaymentFormState(detail.outstandingAmount, paidAmount, paidAt, Boolean(paymentAttemptRef.current), undefined, hasRecordedPayments);
   const canCancelFinancialExpense = !claimedSource && !claimRecord && canVoidExpenseFinancialState(detail);
   const canGenerateJournal = isConfirmed && caps.canPostLedger && detail.pendingPostingSourceType !== null;
   const canViewJournal = isConfirmed && caps.canReadLedger && detail.journalEntryId !== null;
@@ -890,6 +912,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const hasPriceMismatch = hasAiGrandTotalMismatch(detail.aiVerifiedFieldsJson, detail.grandTotalAmount);
   const isZeroAmount = Number(detail.grandTotalAmount) === 0;
   const aiMap = detail.aiVerificationSummaryJson as Record<string, unknown> | null;
+  const hasAiOutput = Boolean(detail.extractionId || Object.keys(detail.aiVerifiedFieldsJson ?? {}).length || typeof aiMap?.['status'] === 'string');
   // §17.2 mapping of the durable read job. DONE says nothing here — the filled fields are the
   // result — so only a running read or an ending that did NOT read everything speaks.
   const readNotice = readState && readState.status !== 'DONE' ? captureReadNotice(readState) : null;
@@ -962,17 +985,17 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const money = previewTotals ?? detail;
   const overpaidAmount = expenseOverpaidAmount({ paidAmount: detail.paidAmount, netPayableAmount: money.netPayableAmount });
   const hasPaymentHistory = (detail.payments?.length ?? 0) > 0;
-  const hasRecordedPayments = detail.payments?.some(p => p.status === 'RECORDED') ?? false;
   const canCancelRecordedPayment = detail.correctionCapabilities?.payments.some(p => p.canCancel) ?? false;
   const overpaymentCue = overpaidAmount ? `${EXPENSE_CORRECTION_WORDS.overpaid} ${baht(overpaidAmount)}` : null;
   const overpaymentMessage = overpaymentCue ? `${overpaymentCue} ${expenseOverpaymentRemedy(hasRecordedPayments, canCancelRecordedPayment)}` : null;
-  const canConfirmExpense = !overpaidAmount && !personalSubstitute && canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !sourceDraftIncomplete && !hasDuplicates && !classificationBlocked && !evidenceError && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
+  const confirmationChecksPass = !overpaidAmount && !personalSubstitute && canConfirm && !sourceDraftIncomplete && !hasDuplicates && !classificationBlocked && !evidenceError && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
+  const canConfirmExpense = confirmationChecksPass && detail.status === 'READY_FOR_CONFIRMATION';
   // Owner requirement 2026-08-28: the reason used to live only in the button's `title`, i.e. a hover
   // tooltip — and expenses get reviewed on a phone, where nothing hovers. One helper decides it now,
   // both footers use it, and it is rendered as text under the button instead of hidden behind a cursor.
-  const confirmBlocker = canConfirm && !canConfirmExpense
+  const confirmBlocker = canConfirm && !confirmationChecksPass
     ? expenseConfirmBlocker({
-      status: detail.status, classificationBlocked, hasDuplicates, isConfirmedDuplicate, needsReceiptOrSubstitute,
+      status: isMutable ? 'READY_FOR_CONFIRMATION' : detail.status, classificationBlocked, hasDuplicates, isConfirmedDuplicate, needsReceiptOrSubstitute,
       evidenceError, ocrTotalUnacknowledged, isZeroAmount, classificationBlockMessage,
     })
     : null;
@@ -1014,12 +1037,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const auditWarnCount = auditChecks.filter((check) => check.status === 'warn').length + (overpaymentMessage ? 1 : 0);
   const confirmBlockers = canMutateDraft && (classificationBlocked || (detail.status === 'READY_FOR_CONFIRMATION' && (isZeroAmount || hasDuplicates)));
   const warnNoteClass = 'rounded-xl border border-warning-100 bg-warning-50 px-3 py-2 text-xs font-semibold text-warning-700';
-  const navChips: Array<{ key: DictionaryKey; ref: { current: HTMLDivElement | null } }> = [
+  const navChips: Array<{ key: DictionaryKey; ref?: { current: HTMLDivElement | null }; targetId?: string }> = [
     { key: 'expenses.nav_audit', ref: auditRef },
     { key: 'expenses.nav_money', ref: moneyRef },
     { key: 'expenses.nav_vendor', ref: vendorRef },
     { key: 'expenses.nav_documents', ref: documentsRef },
     { key: 'expenses.nav_payment', ref: paymentRef },
+    ...(hasWht ? [{ key: 'expenses.nav_wht' as const, targetId: `expense-wht-${detail.id}` }] : []),
   ];
   const approverOnlyActions = !claimedSource && !canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && (canConfirm || canReject);
   const canRestartReview = detail.status === 'REJECTED' && (canReview || (caps.canUpdate && isOwnRecord));
@@ -1084,85 +1108,69 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
 
   // Guided review exposes cancellation on every step, then deletion for a cancelled record.
   // Existing permission checks and financial-void actions still apply.
-  const issuedCertificateActions = isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED' && (canCorrectWhtCertificate(whtHandoff, permissions) || canIssueWhtReplacementCopy(whtHandoff, permissions)) && (
-    <MangmeeCard className="p-4 text-sm text-gray-700">
+  const certificateCardVisible = isConfirmed && hasWht && permissions.some(permission => ['wht.certificate.read', 'wht.certificate.issue', 'wht.external_certificate.link', 'wht.certificate.correct'].includes(permission));
+  const certificateIssueButton = canIssueExpenseWhtCertificate(detail, whtHandoff, permissions) && !whtHandoff?.payerMissing?.length && !!whtPayeeAddress(whtHandoff?.payeeAddress, whtHandoff?.prefill.payeeSnapshot.address) && (
+    <WhtIssueButton handoff={whtHandoff} busy={whtIssuing} unpaid={detail.paymentStatus !== 'PAID'} label={t('wht.print_certificate', locale)} onIssue={doIssueWhtCertificate} />
+  );
+  const changeCorrectForm = (changed: Partial<typeof correctForm>) => {
+    setCorrectError(null);
+    setCorrectForm(form => ({ ...form, ...changed }));
+  };
+  const correctionHasChanges = Object.keys(expenseCertificateCorrectionChanges(correctForm, correctForm.opened)).length > 0;
+  const issuedCertificateActions = certificateCardVisible && (
+    <ExpenseCertificateCard key={`${companyId}-${expenseId}`} companyId={companyId} expenseId={expenseId} revision={detail.updatedAt} handoff={whtHandoff} permissions={permissions} issueButton={certificateIssueButton} onDownload={() => void downloadWht()} busy={whtIssuing} error={whtIssueError} primaryHidden={correctOpen && whtHandoff?.status === 'SYSTEM_ISSUED'} onChanged={next => setWhtHandoff(next)} onClearError={() => setWhtIssueError(null)}>
+      {whtHandoff && <>
             {canCorrectWhtCertificate(whtHandoff, permissions) && (
               <div className="mt-3 border-t border-green-200 pt-3">
                 <button type="button" className={ghostClass} aria-expanded={correctOpen} onClick={() => (correctOpen ? setCorrectOpen(false) : openCorrectForm())}>
-                  {correctOpen ? 'ปิดฟอร์มแก้ไข' : 'แก้ไขหนังสือรับรอง'}
+                  {correctOpen ? 'ปิด' : 'แก้ไขหนังสือรับรอง'}
                 </button>
                 {correctOpen && (
                   <form className="mt-2 grid gap-2 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void doCorrectWht(); }}>
-                    <label className="block" htmlFor={`wht-correct-income-code-${detail.id}`}>
-                      <span className="text-xs text-gray-600">รหัสประเภทเงินได้</span>
-                      <input id={`wht-correct-income-code-${detail.id}`} className={inputClass} value={correctForm.incomeCategoryCode} onChange={(e) => setCorrectForm((f) => ({ ...f, incomeCategoryCode: e.target.value }))} disabled={correctBusy} />
-                    </label>
-                    <label className="block" htmlFor={`wht-correct-income-name-${detail.id}`}>
-                      <span className="text-xs text-gray-600">ชื่อประเภทเงินได้</span>
-                      <input id={`wht-correct-income-name-${detail.id}`} className={inputClass} value={correctForm.incomeCategoryName} onChange={(e) => setCorrectForm((f) => ({ ...f, incomeCategoryName: e.target.value }))} disabled={correctBusy} />
-                    </label>
-                    <label className="block" htmlFor={`wht-correct-form-type-${detail.id}`}>
-                      <span className="text-xs text-gray-600">แบบ</span>
-                      <ThemedSelect id={`wht-correct-form-type-${detail.id}`} className={inputClass} value={correctForm.formType} disabled={correctBusy} onChange={(e) => setCorrectForm((f) => ({ ...f, formType: e.target.value as 'PND3' | 'PND53' }))}>
-                        <option value="PND3">ภ.ง.ด.3</option>
-                        <option value="PND53">ภ.ง.ด.53</option>
-                      </ThemedSelect>
-                    </label>
-                    <label className="block" htmlFor={`wht-correct-rate-${detail.id}`}>
-                      <span className="text-xs text-gray-600">อัตราภาษี (%)</span>
-                      <input id={`wht-correct-rate-${detail.id}`} className={inputClass} value={correctForm.whtRate} onChange={(e) => setCorrectForm((f) => ({ ...f, whtRate: e.target.value }))} disabled={correctBusy} />
-                    </label>
-                    <label className="block" htmlFor={`wht-correct-gross-${detail.id}`}>
-                      <span className="text-xs text-gray-600">จำนวนเงินที่จ่าย</span>
-                      <input id={`wht-correct-gross-${detail.id}`} className={inputClass} value={correctForm.grossAmount} onChange={(e) => setCorrectForm((f) => ({ ...f, grossAmount: e.target.value }))} disabled={correctBusy} />
-                    </label>
-                    <label className="block" htmlFor={`wht-correct-withheld-${detail.id}`}>
-                      <span className="text-xs text-gray-600">ภาษีที่หักไว้</span>
-                      <input id={`wht-correct-withheld-${detail.id}`} className={inputClass} value={correctForm.withheldAmount} onChange={(e) => setCorrectForm((f) => ({ ...f, withheldAmount: e.target.value }))} disabled={correctBusy} />
-                    </label>
                     <label className="block" htmlFor={`wht-correct-payment-date-${detail.id}`}>
                       <span className="text-xs text-gray-600">วันที่จ่าย</span>
-                      <ThemedDate id={`wht-correct-payment-date-${detail.id}`} className={inputClass} value={correctForm.paymentDate} onChange={(e) => setCorrectForm((f) => ({ ...f, paymentDate: e.target.value }))} disabled={correctBusy} />
+                      <ThemedDate id={`wht-correct-payment-date-${detail.id}`} className={inputClass} value={correctForm.paymentDate} onChange={(e) => changeCorrectForm({ paymentDate: e.target.value })} disabled={correctBusy} />
                     </label>
                     <label className="block" htmlFor={`wht-correct-payee-name-${detail.id}`}>
                       <span className="text-xs text-gray-600">ชื่อผู้รับเงิน</span>
-                      <input id={`wht-correct-payee-name-${detail.id}`} className={inputClass} value={correctForm.payeeName} onChange={(e) => setCorrectForm((f) => ({ ...f, payeeName: e.target.value }))} disabled={correctBusy} />
-                    </label>
-                    <label className="block" htmlFor={`wht-correct-payee-taxid-${detail.id}`}>
-                      <span className="text-xs text-gray-600">เลขประจำตัวผู้เสียภาษี (ผู้รับ)</span>
-                      <input id={`wht-correct-payee-taxid-${detail.id}`} className={inputClass} value={correctForm.payeeTaxId} onChange={(e) => setCorrectForm((f) => ({ ...f, payeeTaxId: e.target.value }))} disabled={correctBusy} />
+                      <input id={`wht-correct-payee-name-${detail.id}`} className={inputClass} value={correctForm.payeeName} onChange={(e) => changeCorrectForm({ payeeName: e.target.value })} disabled={correctBusy} />
                     </label>
                     <label className="block" htmlFor={`wht-correct-payee-branch-${detail.id}`}>
-                      <span className="text-xs text-gray-600">สาขา</span>
-                      <input id={`wht-correct-payee-branch-${detail.id}`} className={inputClass} value={correctForm.payeeBranchCode} onChange={(e) => setCorrectForm((f) => ({ ...f, payeeBranchCode: e.target.value }))} disabled={correctBusy} />
+                      <span className="text-xs text-gray-600">{t('expenses.certificate_card.payee_branch', locale)}</span>
+                      <input id={`wht-correct-payee-branch-${detail.id}`} className={inputClass} value={correctForm.payeeBranchCode} onChange={(e) => changeCorrectForm({ payeeBranchCode: e.target.value })} disabled={correctBusy} />
                     </label>
                     <label className="block sm:col-span-2" htmlFor={`wht-correct-payee-address-${detail.id}`}>
                       <span className="text-xs text-gray-600">ที่อยู่ผู้รับเงิน</span>
-                      <input id={`wht-correct-payee-address-${detail.id}`} className={inputClass} value={correctForm.payeeAddress} onChange={(e) => setCorrectForm((f) => ({ ...f, payeeAddress: e.target.value }))} disabled={correctBusy} />
+                      <textarea rows={4} id={`wht-correct-payee-address-${detail.id}`} className={inputClass} value={correctForm.payeeAddress} onChange={(e) => changeCorrectForm({ payeeAddress: e.target.value })} disabled={correctBusy} />
                     </label>
                     <label className="block sm:col-span-2" htmlFor={`wht-correct-reason-${detail.id}`}>
                       <span className="text-xs text-gray-600">เหตุผลที่แก้ไข (บังคับ)</span>
-                      <input id={`wht-correct-reason-${detail.id}`} className={inputClass} value={correctForm.reason} onChange={(e) => setCorrectForm((f) => ({ ...f, reason: e.target.value }))} disabled={correctBusy} placeholder="เช่น พิมพ์ยอดผิด แก้ที่อยู่ผู้รับเงิน" />
+                      <input id={`wht-correct-reason-${detail.id}`} className={inputClass} value={correctForm.reason} onChange={(e) => changeCorrectForm({ reason: e.target.value })} disabled={correctBusy} placeholder="เช่น สะกดชื่อผู้รับเงินผิด" />
                     </label>
                     {correctError && <div className="sm:col-span-2"><ErrorBanner message={correctError} /></div>}
-                    <div className="sm:col-span-2">
-                      <button type="submit" className={btnClass} aria-busy={correctBusy} disabled={correctBusy || !correctForm.reason.trim()}>
-                        {correctBusy ? 'กำลังแก้ไข...' : 'ยืนยันแก้ไข'}
+                    <div className="space-y-2 sm:col-span-2">
+                      <p>{t('expenses.certificate_card.correction_reissue_hint', locale)}</p>
+                      <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} aria-busy={correctBusy} disabled={correctBusy || !correctForm.reason.trim() || !correctionHasChanges}>
+                        {t(correctBusy ? 'expenses.certificate_card.correction_reissue_busy' : 'expenses.certificate_card.correction_reissue', locale)}
                       </button>
+                      {!correctBusy && (!correctForm.reason.trim() || !correctionHasChanges) && <p className="text-sm text-gray-600">{t(!correctForm.reason.trim() ? 'expenses.certificate_card.correction_need_reason' : 'expenses.certificate_card.correction_unchanged', locale)}</p>}
                     </div>
+                    <ExpenseCertificateCorrectionFields values={correctForm} />
+                    <ExpenseCertificateCorrectionNote busy={correctBusy || actionLoading} onReopen={detail.correctionCapabilities?.canReopen ? () => { setCorrectOpen(false); setCorrectionError(null); setCorrectionAction({}); } : undefined} />
                   </form>
                 )}
               </div>
             )}
-            {canIssueWhtReplacementCopy(whtHandoff, permissions) && (
+            {!correctOpen && canIssueWhtReplacementCopy(whtHandoff, permissions) && (
               <div className="mt-3 border-t border-green-200 pt-3">
                 {replaceError && <div className="mb-2"><ErrorBanner message={replaceError} /></div>}
                 <button type="button" className={ghostClass} aria-busy={replaceBusy} disabled={replaceBusy} onClick={() => void doReplaceWht()}>
-                  {replaceBusy ? 'กำลังออกใบแทน...' : 'ออกใบแทน'}
+                  {t(replaceBusy ? 'expenses.certificates.replacement_busy' : 'expenses.certificates.replacement', locale)}
                 </button>
               </div>
             )}
-    </MangmeeCard>
+      </>}
+    </ExpenseCertificateCard>
   );
   const modalFooter = hasFooterActions ? (
     <fieldset disabled={aiReading} inert={aiReading} className="flex min-w-0 w-full flex-wrap items-center gap-2 [&_button]:whitespace-nowrap [&_summary]:whitespace-nowrap">
@@ -1229,7 +1237,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
 
                 {detail.status !== 'READY_FOR_CONFIRMATION' && (
                   <>
-                    <button className={btnClass} onClick={() => void markReady()} disabled={actionLoading || classificationBlocked || !detailsStepDone} aria-busy={Boolean(actionLoading)} title={classificationBlocked ? classificationBlockMessage : sourceDraftIncomplete ? t('expenses.source_draft_blocks_progress', locale) : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
+                    <ExpenseReviewSubmitActions canConfirm={canConfirm} busy={actionLoading} disabled={classificationBlocked || !detailsStepDone}
+                      confirmDisabled={!confirmationChecksPass} onConfirm={confirmInOnePass} onSend={() => markReady()}
+                      title={classificationBlocked ? classificationBlockMessage ?? undefined : sourceDraftIncomplete ? t('expenses.source_draft_blocks_progress', locale) : !detailsStepDone ? t('expenses.submit_requires_details', locale) : confirmBlockedText ?? undefined} />
+                    {canConfirm && confirmBlockedNotice}
                     {sourceDraftIncomplete && <p role="status" className="max-w-lg text-sm font-medium text-warning-700">{t('expenses.source_draft_blocks_progress', locale)}</p>}
                   </>
                 )}
@@ -1243,16 +1254,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
               </>
             )}
             {stepIndex < steps.length - 1 && <button className={btnClass} disabled={aiReading || stepSaving || (step === 'data' && validationBlockMessage !== undefined) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-busy={Boolean(stepSaving)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? documentReviewSaveRequired ? `expense-document-review-hint-${detail.id}` : `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
-            {/* Save-review guidance lives beside that form (`expense-document-review-hint-*`, which the
-                button's aria-describedby already names). On a phone that box can be scrolled away while
-                the disabled ถัดไป stays in this sticky bar, so below `lg` the short sentence is repeated
-                here as plain text — not a second live region — so a disabled button always says why. */}
             {aiReading ? (
               <p role="status" className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right">
                 {t('expenses.ai_reading', locale)}
               </p>
             ) : step === 'evidence' && evidenceStepBlocker && (documentReviewSaveRequired ? (
-              <p className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right lg:hidden">
+              <p id={`expense-document-review-hint-${detail.id}`} className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right">
                 {t(evidenceStepBlocker, locale)}
               </p>
             ) : (
@@ -1269,20 +1276,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             {overpaymentActionNotice}
           </>
         )}
-        {isConfirmed && hasWht && whtLoading && <p role="status" className="w-full text-sm text-gray-600">กำลังตรวจเอกสาร 50 ทวิ…</p>}
-        {isConfirmed && hasWht && whtIssueError && <div className="w-full"><ErrorBanner message={whtIssueError} /></div>}
-        {canIssueExpenseWhtCertificate(detail, whtHandoff, permissions) && (
-          <button type="button" className={btnClass} disabled={whtIssuing} aria-busy={whtIssuing} onClick={() => void doIssueWhtCertificate()}>
-            {whtIssuing ? 'กำลังพิมพ์เอกสาร…' : t('wht.print_certificate', locale)}
-          </button>
-        )}
-        {isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED' && (
+        {!certificateCardVisible && isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED' && (
           <div className="flex min-w-0 items-center gap-2 text-xs text-green-900">
             <p className="hidden whitespace-nowrap sm:block">{EXPENSE_CORRECTION_WORDS.certificateIssued}</p>
             <button type="button" className="whitespace-nowrap font-semibold underline underline-offset-2" disabled={whtIssuing} aria-busy={whtIssuing} onClick={() => void downloadWht()}>{EXPENSE_CORRECTION_WORDS.downloadAgain}</button>
-
           </div>
         )}
+
       </div>
     </fieldset>
   ) : null;
@@ -1391,8 +1391,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       </MangmeeCard>
     </div>
   );
-  const calculationPending = currentPreview?.status === 'loading';
-  const calculationError = currentPreview?.status === 'error';
+  const calculationPending = currentPreview?.status === 'loading' && !currentPreview.withholdingIncomplete;
+  const calculationError = currentPreview?.status === 'error' && !currentPreview.withholdingIncomplete;
   const moneyVatMode = currentPreview?.vatMode ?? detail.vatMode;
   const moneyHasVat = vatModeRequiresRate(moneyVatMode) || Number(money.vatAmount) > 0;
   const moneyHasWht = Number(money.whtAmount) > 0;
@@ -1410,14 +1410,16 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     <div ref={moneyRef} className="scroll-mt-24">
       <MangmeeCard className="p-4">
         <h3 className="text-sm font-semibold text-gray-800">{t('expenses.money_section_title', locale)}</h3>
-        {calculationPending || calculationError ? (
+        {(calculationPending || calculationError) && (
           <div role="status" aria-live="polite" className="mt-3 rounded-xl bg-gray-50 p-4 text-sm text-gray-600">
             {calculationPending ? 'กำลังคำนวณยอดล่าสุด…' : <>
-              <p>ยังแสดงยอดล่าสุดไม่ได้: {currentPreview?.message || 'กรุณาตรวจข้อมูลแล้วลองอีกครั้ง'}</p>
+              <p>คำนวณยอดล่าสุดไม่ได้ กรุณาตรวจข้อมูลแล้วลองอีกครั้ง</p>
               <button type="button" className={cx(ghostClass, 'mt-2')} onClick={() => setTotalsRetry((n) => n + 1)}>คำนวณอีกครั้ง</button>
             </>}
           </div>
-        ) : financialTotalUnknown && !previewTotals ? (
+        )}
+        {(calculationPending || calculationError) && <p className="mt-2 text-xs text-gray-500">ยอดที่บันทึกไว้</p>}
+        {financialTotalUnknown && !previewTotals ? (
           <p role="status" className="mt-3 rounded-xl bg-warning-50 px-4 py-3 text-sm font-semibold text-warning-800">
             {t('expenses.source_draft_total_unknown', locale)}
           </p>
@@ -1544,10 +1546,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       )}
     </div>
   );
-  const aiDataBox = aiMap && (
+  const aiDataBox = !isCancelled && hasAiOutput && aiMap && (
     <div className="space-y-2 rounded-xl border border-[#C7D7FE] bg-[#EEF4FF] p-3 text-xs text-[#3538CD]">
       <p className="font-semibold">{t('expenses.ai_data_title', locale)}</p>
-      <p>{t('expenses.status_label', locale)}: {expenseValueLabel(AI_SUMMARY_STATUS_LABELS, typeof aiMap['status'] === 'string' ? aiMap['status'] : null, 'รอตรวจสอบข้อมูล')}</p>
+      {typeof aiMap['status'] === 'string' && <p>{t('expenses.status_label', locale)}: {expenseValueLabel(AI_SUMMARY_STATUS_LABELS, aiMap['status'], 'ข้อมูลจาก AI')}</p>}
       {missingFields.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           <span>{t('expenses.missing_fields', locale)}:</span>
@@ -1559,7 +1561,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // One AI line, not three. The old stack (extraction notice + titled prefill card + step helper)
   // repeated "AI read it, please check" three times above the fold and pushed the form off-screen.
   // What stays is the only part the reviewer acts on: which fields they must fill themselves.
-  const aiPrefillBanner = aiMap && (
+  const aiPrefillBanner = !isCancelled && hasAiOutput && aiMap && (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-[#C7D7FE] bg-[#EEF4FF] px-3 py-2.5 text-xs text-[#3538CD]">
       <p className="font-semibold">
         {t(aiMissingDataFields.length > 0 ? 'expenses.ai_prefill_partial' : 'expenses.ai_prefill_complete', locale)}
@@ -1656,7 +1658,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             </Link>
             {duplicateReasonText(d) && <span className="text-gray-500">{duplicateReasonText(d)}</span>}
           </span>
-          {caps.canResolveDuplicates && <span className="flex gap-3">
+          {!isCancelled && caps.canResolveDuplicates && <span className="flex gap-3">
             <button className="py-1 sm:py-0 font-semibold text-success-700 underline" onClick={() => { setReason(''); setShowReject(false); setShowVoid(false); setDuplicateResolution({ candidateId: d.id, action: 'confirm' }); }} disabled={actionLoading}>{t('expenses.confirm_duplicate', locale)}</button>
             <button className="py-1 sm:py-0 font-semibold text-warning-700 underline" onClick={() => { setReason(''); setShowReject(false); setShowVoid(false); setDuplicateResolution({ candidateId: d.id, action: 'dismiss' }); }} disabled={actionLoading}>{t('expenses.not_duplicate', locale)}</button>
           </span>}
@@ -1672,11 +1674,15 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         const cancelled = payment.status === 'VOIDED';
         return (
           <div key={payment.id} className={cx('grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 rounded-lg border p-3 text-xs', cancelled ? 'border-gray-100 bg-gray-50 text-gray-400' : 'border-gray-200 text-gray-600')}>
-            <span className={cancelled ? 'line-through' : undefined}>{dateShort(payment.paidAt)} · {PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</span>
+            <span className={cancelled ? 'line-through' : undefined}>{dateShort(payment.paidAt)} · <span className="whitespace-nowrap">{PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</span></span>
             <span className={cx('text-right tabular-nums font-semibold', cancelled ? 'line-through' : 'text-gray-800')}>{baht(payment.amount)}</span>
             {cancelled && <div className="col-span-2 space-y-1"><MangmeeBadge tone="slate">ยกเลิกแล้ว</MangmeeBadge>{payment.cancellationReason && <p>{payment.cancellationReason}</p>}</div>}
             {!cancelled && caps.canReadLedger && <span className="col-span-2">{expenseValueLabel(POSTING_STATUS_LABELS, payment.postingStatus, 'รอตรวจสถานะบัญชี')}</span>}
-            {!cancelled && paymentCapability?.canCancel && <button type="button" className={cx(ghostClass, 'col-span-2 justify-self-start whitespace-nowrap')} disabled={actionLoading || Boolean(paymentFailure)} aria-busy={actionLoading} onClick={() => { setCorrectionReason(''); setCorrectionError(null); setCorrectionAction({ paymentId: payment.id }); }}>{EXPENSE_CORRECTION_WORDS.cancelPayment}</button>}
+            {/* The row's two buttons are one size and sit side by side. */}
+            <div className="col-span-2 grid grid-cols-2 gap-2 empty:hidden">
+              {!isCancelled && !cancelled && paymentCapability?.canCancel && <button type="button" className={cx(ghostClass, 'w-full justify-center whitespace-nowrap')} disabled={actionLoading || Boolean(paymentFailure)} aria-busy={actionLoading} onClick={() => { setCorrectionReason(''); setCorrectionError(null); setCorrectionAction({ paymentId: payment.id }); }}>{EXPENSE_CORRECTION_WORDS.cancelPayment}</button>}
+              <ExpenseDisbursementPaymentEntry companyId={companyId} expenseId={expenseId} payment={payment} permissions={permissions} entryOpen={disbursementEntryOpen} />
+            </div>
             {!cancelled && paymentCapability?.cancelBlocker && <p className="col-span-2">{expenseCorrectionBlockerMessage(paymentCapability.cancelBlocker, 'cancelPayment', detail.correctionCapabilities, caps.canReadLedger)}</p>}
           </div>
         );
@@ -1687,13 +1693,15 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     <div ref={paymentRef} className="scroll-mt-24">
       <MangmeeCard className="space-y-3 p-4">
         <h3 className="text-sm font-semibold text-gray-800">{t('expenses.payment_section_title', locale)}</h3>
+        <ExpenseDisbursementReservation companyId={companyId} reservation={detail.correctionCapabilities?.disbursementReservation} />
         {personalSubstitute && <p className="text-sm text-gray-600">{detail.reimbursementProgress?.requestId ? `สถานะใบเบิก: ${expenseReimbursementProgressLabel(detail.reimbursementProgress)} · ดูการจ่ายและประวัติจากใบเบิกคืน` : "พนักงานจ่ายร้านเต็มจำนวนแล้ว ยื่นใบเบิกเพื่อดำเนินการคืนเงิน"}</p>}
         {Boolean(detail.sourceReimbursementRequestId) && (
           <p className="text-sm text-gray-500">
             รายการนี้มาจากการเบิกคืนพนักงาน{detail.vendorDocumentNumber ? ` (ใบเบิก ${detail.vendorDocumentNumber})` : ''} — ระบบบันทึกการชำระให้อัตโนมัติเมื่อมีการบันทึกจ่ายใบเบิก
           </p>
         )}
-        {(detail.correctionCapabilities?.canRecordPayment || Boolean(paymentAttemptRef.current)) && (
+        <ExpenseDisbursementDirectPayment reservation={detail.correctionCapabilities?.disbursementReservation}>
+        {!isCancelled && (detail.correctionCapabilities?.canRecordPayment || Boolean(paymentAttemptRef.current)) && (
           <form onSubmit={(event) => { event.preventDefault(); void submitPayment(); }} className="space-y-3">
             <fieldset disabled={actionLoading} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <label className="space-y-1 text-sm text-gray-700">
@@ -1716,12 +1724,16 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={actionLoading || conflictReload || paymentFailure === 'conflict' || Boolean(paymentForm.disabledReason)} aria-busy={Boolean(actionLoading)}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : paymentFailure === 'conflict' ? 'กรุณาตรวจประวัติการจ่าย' : paymentFailure === 'uncertain' || paymentFailure === 'refresh_failed' ? 'ลองบันทึกรายการเดิมอีกครั้ง' : paymentForm.label}</button>
           </form>
         )}
+        </ExpenseDisbursementDirectPayment>
+        <ExpenseDisbursementPrepareEntry companyId={companyId} detail={detail} permissions={permissions} entryOpen={disbursementEntryOpen} />
+        <ExpenseDisbursementDirectPayment reservation={detail.correctionCapabilities?.disbursementReservation}>
         {isConfirmed && detail.correctionCapabilities?.recordPaymentBlocker && detail.correctionCapabilities.recordPaymentBlocker !== 'no_balance' && (
           <p className="text-sm text-gray-600">{expenseCorrectionBlockerMessage(detail.correctionCapabilities.recordPaymentBlocker, 'recordPayment', detail.correctionCapabilities, caps.canReadLedger)}</p>
         )}
+        </ExpenseDisbursementDirectPayment>
         {paymentNotice && isConfirmed && <p role="status" className="rounded-xl bg-warning-50 p-3 text-sm text-warning-800">{paymentNotice}</p>}
         {overpaymentPaymentNotice}
-        {paymentHistory}
+        <ExpenseDisbursementPaymentScope>{paymentHistory}</ExpenseDisbursementPaymentScope>
         {detail.status === 'VOIDED' && <p className="text-sm text-gray-400">{t('expenses.document_voided', locale)}{detail.voidReason ? ` — ${detail.voidReason}` : ''}</p>}
         {detail.paidAt && <p className="text-xs text-gray-400">{t('expenses.paid_at', locale)} {dateShort(detail.paidAt)}</p>}
         {detail.confirmedAt && <p className="text-xs text-gray-400">{t('expenses.confirmed_at', locale)} {dateShort(detail.confirmedAt)}</p>}
@@ -1798,9 +1810,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   );
 
   return (
-    <>
+    <ExpenseCertificateHistory companyId={companyId} expenseId={expenseId} revision={`${detail.updatedAt}:${whtHandoff?.certificateId ?? ''}`} canRead={permissions.some(permission => ['wht.certificate.read', 'wht.certificate.issue', 'wht.external_certificate.link', 'wht.certificate.correct'].includes(permission))} confirmed={isConfirmed}>
       {confirmDialog}
       <MangmeePage eyebrow={backLink} title={pageTitle} meta={pageMeta}>
+        <ExpenseCertificateHistoryNotice placement="edit" />
         {error && !showReject && !correctionAction && <ErrorBanner message={error} />}
         {/* UXE-21: the record moved under this attempt. Nothing was changed, and the way on is the
             latest data — never a silent retry of a write whose target no longer exists. */}
@@ -1821,15 +1834,24 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           {actionLoading ? t('expenses.action_in_progress', locale) : ''}
         </p>
 
-        {isConfirmed && <div className="space-y-2 rounded-xl border border-gray-200 p-4" data-testid="expense-correction-actions">
-          <p className="text-sm text-gray-600">{expenseConfirmedLockMessage(detail.correctionCapabilities, hasPaymentHistory)}</p>
+        {/* Sentences take a row each; the buttons are one size: full width on a phone, equal and side by side on a wide screen. */}
+        {isConfirmed && <div className="flex flex-wrap gap-2 rounded-xl border border-gray-200 p-4 [&>*]:w-full sm:[&>.mangmee-btn]:w-56" data-testid="expense-correction-actions">
+          {Number(detail.outstandingAmount) > 0 && <>
+            <p className="text-lg font-bold text-gray-900">ต้องจ่าย {baht(detail.outstandingAmount)}</p>
+            {hasWht && <p className="text-sm text-gray-600">หักภาษี ณ ที่จ่ายไว้ {baht(detail.whtAmount)}</p>}
+            <button type="button" className={btnClass} onClick={() => paymentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>ไปที่การชำระเงิน</button>
+          </>}
+          {hasWht && whtHandoff?.status === 'REQUIRED' && <button type="button" className={Number(detail.outstandingAmount) > 0 ? ghostClass : btnClass} onClick={() => document.getElementById(`expense-wht-${detail.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>ไปที่หนังสือรับรอง 50 ทวิ</button>}
+          {Number(detail.outstandingAmount) === 0 && !overpaidAmount && (!hasWht || ['SYSTEM_ISSUED', 'EXTERNAL_LINKED'].includes(whtHandoff?.status ?? '')) && <p className="text-sm font-semibold text-success-700">{hasWht ? 'จ่ายครบและมีหนังสือรับรองแล้ว' : 'จ่ายครบแล้ว'}</p>}
+          {!detail.correctionCapabilities?.canReopen && <p className="text-sm text-gray-600">{expenseConfirmedLockMessage(detail.correctionCapabilities, hasPaymentHistory)}</p>}
           {!detail.correctionCapabilities?.canReopen && <ul className="list-disc space-y-1 pl-5 text-sm text-gray-600">{expenseReopenBlockerMessages(detail.correctionCapabilities, caps.canReadLedger).map(message => <li key={message}>{message}</li>)}</ul>}
-          {detail.correctionCapabilities?.canReopen && <button type="button" className={cx(ghostClass, 'whitespace-nowrap')} disabled={actionLoading} onClick={() => { setCorrectionReason(''); setCorrectionError(null); setCorrectionAction({}); }}>{EXPENSE_CORRECTION_WORDS.reopen}</button>}
+          {!detail.correctionCapabilities?.canReopen && <ExpenseDisbursementOpenLink companyId={companyId} reservation={detail.correctionCapabilities?.disbursementReservation} />}
+          {detail.correctionCapabilities?.canReopen && <button type="button" className={cx(ghostClass, 'whitespace-nowrap')} disabled={actionLoading} onClick={() => { setCorrectionError(null); setCorrectionAction({}); }}>{EXPENSE_CORRECTION_WORDS.reopen}</button>}
         </div>}
+        {isCancelled && <ExpenseCancellationNotice voidedAt={detail.voidedAt} reason={detail.voidReason} />}
         {paymentNotice && !isConfirmed && <div ref={paymentNoticeRef} tabIndex={-1} className="w-full scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={paymentNotice} /></div>}
-        {!sourceOnlyDraft && <><div ref={reviewStartRef} className="scroll-mt-[var(--app-header-h)]" /><div className={cx('sticky z-10 flex flex-wrap gap-x-1.5 border-b border-gray-100 bg-white px-4 py-2.5',
-          // Wrapped chip rows keep 14 px between them so each chip's 44 px hit area stays its own.
-          guided ? 'gap-y-1.5' : 'gap-y-3.5')} style={{ top: 'var(--app-header-h)' }}>
+        {!sourceOnlyDraft && <><div ref={reviewStartRef} className="scroll-mt-[var(--app-header-h)]" /><div className={cx('sticky z-10 flex gap-x-1.5 border-b border-gray-100 bg-white px-4 py-2.5',
+          guided ? 'flex-wrap gap-y-1.5' : 'flex-nowrap overflow-x-auto')} style={{ top: 'var(--app-header-h)' }}>
           {isMutable && detail.correctionOpenedAt && <p role="status" className="h-5 w-full whitespace-nowrap text-xs font-semibold leading-5 text-warning-800">{EXPENSE_CORRECTION_WORDS.correcting}</p>}
           {guided ? (
             <ThemedSteps steps={steps.map((entry, index) => ({
@@ -1846,8 +1868,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 : index < stepIndex ? 'done' : 'upcoming',
             }))} />
           ) : navChips.map((chip) => (
-            <button key={chip.key} type="button" onClick={() => chip.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-              className={cx(tapTargetClass, 'rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:border-brand-200 hover:text-brand-700')}>
+            <button key={chip.key} type="button" onClick={() => (chip.ref?.current ?? (chip.targetId ? document.getElementById(chip.targetId) : null))?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              className={cx(tapTargetClass, 'shrink-0 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:border-brand-200 hover:text-brand-700')}>
               {t(chip.key, locale)}
             </button>
           ))}
@@ -1856,8 +1878,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           <div className="border-b border-gray-100 bg-brand-25 px-4 py-2.5 text-sm text-gray-700">
             <span className="font-bold text-brand-700">ขั้นที่ {stepIndex + 1}:</span>{' '}
             {/* The sentence names the button actually shown on the last step. */}
-            {step === 'review' && detail.status === 'READY_FOR_CONFIRMATION'
-              ? canConfirm ? EXPENSE_REVIEW_STEP_WORDS.thenConfirm : EXPENSE_REVIEW_STEP_WORDS.sentAwaitingConfirm
+            {step === 'review' && canConfirm ? EXPENSE_REVIEW_STEP_WORDS.thenConfirm
+              : step === 'review' && detail.status === 'READY_FOR_CONFIRMATION' ? EXPENSE_REVIEW_STEP_WORDS.sentAwaitingConfirm
               : t(STEP_HELPER_KEYS[step], locale)}
           </div>
         )}
@@ -2002,7 +2024,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                         <div className="space-y-4">
                           {noticesBlock}
                           {aiPrefillBanner}
-                          {!aiMap && step === 'data' && readAgainAllowed && (
+                          {!hasAiOutput && step === 'data' && readAgainAllowed && (
                             <button className={ghostClass} onClick={() => void extractAgain()} disabled={actionLoading || extractionLoading || receiptUploading} aria-busy={Boolean(actionLoading || extractionLoading)} data-loading-indicator>
                               <span className="inline-flex items-center justify-center gap-2">
                                 {extractionLoading && <InlineSpinner />}
@@ -2042,9 +2064,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                       {duplicatesCard}
                     </div>
                     {paymentCard}
-                    {issuedCertificateActions}
                   </>
                 )}
+                <div id={`expense-wht-${detail.id}`} tabIndex={-1} className="scroll-mt-24">{issuedCertificateActions}</div>
                 </fieldset>
                 {aiReading && (
                   <div className="absolute inset-0 z-10 bg-white/80">
@@ -2058,17 +2080,20 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             </div>
           </div>
 
+        {!certificateCardVisible && <ExpenseCertificateHistoryDisclosure />}
         {checkBillSecondaryActions}
 
-        {((!checkBillBlocked && (modalFooter || confirmBlockers)) || showVoid || showDelete || duplicateResolution) && (
+        {((!checkBillBlocked && (modalFooter || confirmBlockers)) || (showVoid && !certificateVoidOpen) || showDelete || duplicateResolution) && (
           <div className="mangmee-safe-bottom sticky bottom-0 z-10 border-t bg-white">
-            {(showVoid || showDelete || duplicateResolution || confirmBlockers) && (
+            {((showVoid && !certificateVoidOpen) || showDelete || duplicateResolution || confirmBlockers) && (
               <div className="space-y-2 px-4 py-3">
               {canMutateDraft && classificationBlocked && <p className={warnNoteClass}>{classificationBlockMessage}</p>}
               {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && isZeroAmount && <p className={warnNoteClass}>{t('expenses.zero_amount_warning', locale)}</p>}
               {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && hasDuplicates && <p className="text-xs font-semibold text-warning-700">{duplicateBlockMessage}</p>}
-              {showVoid && (
-                <>
+              {showVoid && !certificateVoidOpen && (
+                <ExpenseDisbursementVoidBlocker companyId={companyId} reservation={detail.correctionCapabilities?.disbursementReservation} onClose={() => setShowVoid(false)}>
+                  <ExpenseDisbursementCancellation companyId={companyId} expenseId={expenseId} payments={detail.payments}>{(warning, successMessage) => <>
+                  {warning}
                   <div className="text-sm font-medium text-gray-700">{t('expenses.void_reason', locale)}</div>
                   <textarea className={inputClass} rows={2} value={reason} onChange={(e) => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH} />
                   <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
@@ -2081,11 +2106,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                       void doAction(async () => {
                         await voidExpense(companyId, expenseId, reason.trim());
                         setShowVoid(false); setReason('');
-                      }, 'ยกเลิกเอกสารเรียบร้อยแล้ว');
+                      }, successMessage('ยกเลิกเอกสารเรียบร้อยแล้ว'));
                     }} disabled={actionLoading || !reason.trim()} aria-busy={Boolean(actionLoading)}>{t('expenses.confirm', locale)}</button>
                     <button className={ghostClass} onClick={() => { setShowVoid(false); setReason(''); }}>{t('expenses.cancel', locale)}</button>
                   </div>
-                </>
+                  </>}</ExpenseDisbursementCancellation>
+                </ExpenseDisbursementVoidBlocker>
               )}
               {showDelete && (
                 <>
@@ -2126,40 +2152,57 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         )}
       </MangmeePage>
 
+      {certificateVoidOpen && detail.correctionCapabilities?.disbursementReservation && <ExpenseDisbursementVoidBlocker dialog companyId={companyId} reservation={detail.correctionCapabilities.disbursementReservation} onClose={() => setShowVoid(false)}>{null}</ExpenseDisbursementVoidBlocker>}
+      {expenseCertificate && <ExpenseCertificateVoidDialog key={`${companyId}-${expenseId}`} open={certificateVoidOpen && !detail.correctionCapabilities?.disbursementReservation}
+        companyId={companyId} expenseId={expenseId} certificate={expenseCertificate}
+        payments={detail.payments} lockedTaxPeriods={detail.correctionCapabilities?.lockedTaxPeriods}
+        onClose={() => { setShowVoid(false); setReason(''); }} onVoided={load} />}
+      <ExpenseCertificateReopen certificate={correctionCertificate} busy={actionLoading} payments={correctionAction?.paymentId ? [] : detail.payments}>{(taxFilingAttested, certificateNotice, certificateFooter, certificateAttestation) => (
+      <ExpenseDisbursementCancellation companyId={companyId} expenseId={expenseId} payments={correctionAction?.paymentId ? detail.payments : []} paymentId={correctionAction?.paymentId} certificate={detail.correctionCapabilities?.certificateOnExpense}>{(warning, successMessage) => (
       <Modal open={Boolean(correctionAction)} title={correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelPayment : EXPENSE_CORRECTION_WORDS.reopen}
-        size="sm" closeLabel={t('expenses.close', 'th')} onClose={() => { if (!actionLoading) setCorrectionAction(null); }}
-        footer={<>
-          <button ref={correctionCloseRef} type="button" className={cx(ghostClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading} onClick={() => setCorrectionAction(null)}>{/* Beside "ยกเลิกรายการจ่ายนี้" a second "ยกเลิก" reads as the same action. */}{t(correctionAllowed && !correctionAction?.paymentId ? 'expenses.cancel' : 'expenses.close', 'th')}</button>
-          {correctionAllowed && <button type="submit" form="expense-correction-form" className={cx(correctionAction?.paymentId ? dangerClass : btnClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading || conflictReload || correctionReason.trim().length < 3} aria-busy={actionLoading}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelPayment : EXPENSE_CORRECTION_WORDS.reopenSubmit}</button>}
-        </>}>
-        {correctionAllowed ? <form id="expense-correction-form" className="space-y-3" onSubmit={(event) => {
+        size="sm" closeOnBackdrop={!correctionCertificate} closeLabel={t('expenses.close', 'th')} onClose={() => { if (!actionLoading) setCorrectionAction(null); }}
+        footer={certificateFooter(<>
+          <button ref={correctionCloseRef} type="button" className={cx(ghostClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading} onClick={() => setCorrectionAction(null)}>{/* Beside "ยกเลิกรายการจ่ายนี้" a second "ยกเลิก" reads as the same action. */}{correctionCertificate ? t('expenses.close', 'th') : t(correctionAllowed && !correctionAction?.paymentId ? 'expenses.cancel' : 'expenses.close', 'th')}</button>
+          {correctionAllowed && <button type="submit" form="expense-correction-form" className={cx(correctionAction?.paymentId || correctionCertificate ? dangerClass : btnClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading || conflictReload || (correctionCertificate ? !taxFilingAttested : correctionReason.trim().length < 3)} aria-busy={actionLoading}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelPayment : correctionCertificate ? correctionCertificate.kind === 'EXTERNAL' ? 'ยกเลิกการบันทึกและแก้ไขเอกสาร' : 'ยกเลิกหนังสือรับรองและแก้ไขเอกสาร' : EXPENSE_CORRECTION_WORDS.reopenSubmit}</button>}
+        </>)}>
+        {correctionAllowed ? <form id="expense-correction-form" className="space-y-3" noValidate onSubmit={(event) => {
           event.preventDefault();
-          if (!correctionAction || !correctionAllowed || conflictReload || correctionReason.trim().length < 3 || findForbiddenChars(correctionReason).length) return;
+          if (correctionReason.trim().length < 3 || correctionReason.trim().length > REASON_MAX_LENGTH) { setCorrectionError(EXPENSE_CORRECTION_WORDS.reasonRequired); return; }
+          if (!correctionAction || !correctionAllowed || conflictReload || correctionReason.trim().length < 3 || findForbiddenChars(correctionReason).length || (correctionCertificate && !taxFilingAttested)) return;
           const paymentId = correctionAction.paymentId;
           setActionLoading(true); setCorrectionError(null);
           void (async () => {
             try {
+              let cancelledCertificate;
               if (paymentId) await cancelExpensePayment(companyId, expenseId, paymentId, correctionReason.trim());
-              else await reopenExpense(companyId, expenseId, correctionReason.trim());
+              else {
+                const answer = await reopenExpense(companyId, expenseId, correctionReason.trim(), correctionCertificate ? true : undefined);
+                cancelledCertificate = answer?.cancelledCertificate;
+              }
               setDetail(await getExpense(companyId, expenseId));
               setCorrectionAction(null); setCorrectionReason('');
               paymentAttemptRef.current = null; setPaymentFailure(null); setPaymentNotice(null);
               if (!paymentId) setStep('data');
-              toast.success(paymentId ? EXPENSE_CORRECTION_WORDS.paymentCancelled : expenseReopenedMessage(hasPaymentHistory));
-            } catch (cause) { setCorrectionError(await refreshChangedDocument(cause, 'correction') ?? err(cause)); }
+              const cancelled = cancelledCertificate ?? correctionCertificate;
+              toast.success(successMessage(paymentId ? EXPENSE_CORRECTION_WORDS.paymentCancelled : cancelled ? expenseCertificateReopenedMessage(cancelled) : expenseReopenedMessage(hasPaymentHistory)));
+            } catch (cause) { setCorrectionError(correctionCertificate ? err(cause) : await refreshChangedDocument(cause, 'correction') ?? err(cause)); }
             finally { setActionLoading(false); }
           })();
         }}>
+          {certificateNotice}
+          {warning}
           {correctionAction?.paymentId ? (() => {
             const payment = detail.payments?.find(p => p.id === correctionAction.paymentId);
             return payment && <p className="text-sm text-gray-700">{baht(payment.amount)} · {dateShort(payment.paidAt)} · {PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</p>;
-          })() : <p className="text-sm text-gray-700">{EXPENSE_CORRECTION_WORDS.reopenDescription}{hasPaymentHistory ? ` ${EXPENSE_CORRECTION_WORDS.retainedPayments}` : ''}</p>}
+          })() : !correctionCertificate && <p className="text-sm text-gray-700">{EXPENSE_CORRECTION_WORDS.reopenDescription}{hasPaymentHistory ? ` ${EXPENSE_CORRECTION_WORDS.retainedPayments}` : ''}</p>}
           {correctionError && <ErrorBanner message={correctionError} />}
           <label className="block text-sm" htmlFor="expense-correction-reason">{correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelReason : EXPENSE_CORRECTION_WORDS.reason}</label>
-          <textarea ref={correctionReasonRef} autoFocus id="expense-correction-reason" className={inputClass} rows={3} value={correctionReason} required minLength={3} maxLength={REASON_MAX_LENGTH} disabled={actionLoading} onChange={(event) => setCorrectionReason(sanitizeReasonInput(event.target.value))} />
-          {correctionReason.trim().length < 3 && <p className="text-sm text-gray-600">{EXPENSE_CORRECTION_WORDS.reasonRequired}</p>}
+          <textarea ref={correctionReasonRef} autoFocus id="expense-correction-reason" className={inputClass} rows={3} value={correctionReason} required minLength={3} maxLength={REASON_MAX_LENGTH} disabled={actionLoading} onChange={(event) => { setCorrectionReason(sanitizeReasonInput(event.target.value)); setCorrectionError(null); }} />
+          {certificateAttestation}
         </form> : <ErrorBanner message={correctionError ?? EXPENSE_CORRECTION_WORDS.unavailable} />}
       </Modal>
+      )}</ExpenseDisbursementCancellation>
+      )}</ExpenseCertificateReopen>
       <Modal
         open={showReject && !correctionAction}
         title={detail.correctionCapabilities?.canReject === true ? t('expenses.reject_confirm_title', locale) : EXPENSE_CORRECTION_WORDS.reject}
@@ -2240,6 +2283,6 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             </>
           ) : undefined}
         />}
-    </>
+    </ExpenseCertificateHistory>
   );
 }

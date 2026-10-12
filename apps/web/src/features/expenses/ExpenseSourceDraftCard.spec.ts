@@ -42,7 +42,7 @@ test('renders every staged item, inline missing hints, known zero, and the parti
   assert.doesNotMatch(html, /D-PURPOSE|I-item-2-PRICE|item-2 ราคาเท่าไร/);
   assert.match(html, /aria-label="รายการที่ 1 ราคาต่อหน่วย"[^>]*value="0"/);
   assert.match(html, />เพิ่มรายการ<\/button>/);
-  assert.match(html, />เก็บร่างไว้ก่อน<\/button>/);
+  assert.match(html, />บันทึกฉบับร่าง<\/button>/);
   assert.match(html, /ยังไม่ยืนยันรายการ/);
   assert.doesNotMatch(html, /<select/);
   assert.match(html, /role="combobox"[^>]*aria-label="รายการที่ 1 หมวดหมู่ค่าใช้จ่าย"/);
@@ -52,7 +52,7 @@ test('shows the staged facts without an unavailable save action when the API den
   const html = render(false);
   assert.match(html, /ร้านคุณยาย/);
   assert.match(html, /บัญชีนี้ไม่มีสิทธิ์แก้ไขร่างนี้/);
-  assert.doesNotMatch(html, />เก็บร่างไว้ก่อน<\/button>/);
+  assert.doesNotMatch(html, />บันทึกฉบับร่าง<\/button>/);
 });
 
 test('explains the READY review correction instead of claiming the reviewer lacks permission', () => {

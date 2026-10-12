@@ -10,12 +10,14 @@ test('name prop renders an sr-only native file input carrying name and required'
   const html = renderToStaticMarkup(React.createElement(ThemedFile, {
     name: 'attachment',
     required: true,
+    'aria-describedby': 'receipt-hint',
   }));
 
   assert.match(html, /<input[^>]*type="file"/);
   assert.match(html, /<input[^>]*name="attachment"/);
   assert.match(html, /<input[^>]*required/);
   assert.match(html, /<input[^>]*class="sr-only"/);
+  assert.match(html, /<input[^>]*aria-describedby="receipt-hint"/);
   // Empty state: Thai placeholder + pick chip, no clear button.
   assert.match(html, /ยังไม่ได้เลือกไฟล์/);
   assert.match(html, /เลือกไฟล์/);
@@ -47,4 +49,14 @@ test('disabled state hides the clear button and dims the chip', async () => {
   assert.match(html, /<input[^>]*disabled/);
   assert.doesNotMatch(html, /นำไฟล์ออก/);
   assert.match(html, /cursor-not-allowed/);
+});
+
+test('slip copy overrides show visible change and remove while sharing the phone picker', async () => {
+  const { ThemedFile } = await import('./ThemedFile');
+  const html = renderToStaticMarkup(React.createElement(ThemedFile, {
+    file: 'สลิป.jpg', accept: 'image/jpeg,application/pdf',
+    labels: { pick: 'แนบสลิป', change: 'เปลี่ยน', clear: 'เอาออก', loading: 'กำลังอัปโหลดสลิป…' },
+  }));
+  assert.match(html, /สลิป.jpg/); assert.match(html, />เปลี่ยน<\/span>/); assert.match(html, />เอาออก<\/button>/);
+  assert.doesNotMatch(html, /capture=/); assert.match(html, /type="file"/);
 });

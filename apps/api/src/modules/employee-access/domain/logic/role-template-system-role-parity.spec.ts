@@ -79,6 +79,27 @@ describe('role-template ↔ system-role parity (GAP-06)', () => {
     assert.equal(stale.length, 0, `remove resolved entries from KNOWN_PRESET_EXTRAS:\n${stale.join('\n')}`);
   });
 
+  it('keeps disbursement permissions in the matching finance, manager, and accounting presets', () => {
+    const keys = [
+      'expense.disbursement.read', 'expense.disbursement.prepare', 'expense.disbursement.approve',
+      'expense.disbursement.pay', 'expense.disbursement.issue',
+    ];
+    const expectedByRole: Record<string, string[]> = {
+      FINANCE: keys,
+      MANAGER: ['expense.disbursement.read', 'expense.disbursement.approve'],
+      ACCOUNTANT: ['expense.disbursement.read', 'expense.disbursement.issue'],
+    };
+    for (const { templateKey, systemRole } of PARITY_PAIRS) {
+      const roleKeys = new Set(ROLE_GRANTS[systemRole]);
+      const templateKeys = new Set(compiledKeys(templateKey));
+      for (const key of keys) {
+        const expected = expectedByRole[systemRole]!.includes(key);
+        assert.equal(roleKeys.has(key), expected, `${systemRole}: ${key}`);
+        assert.equal(templateKeys.has(key), expected, `${templateKey}: ${key}`);
+      }
+    }
+  });
+
   it('6.3: finance presets can issue and void tax invoices like the FINANCE role', () => {
     for (const key of ['tpl.x.finance', 'tpl.trading.finance', 'tpl.service.finance', 'tpl.ecom.finance']) {
       const held = new Set(compiledKeys(key));

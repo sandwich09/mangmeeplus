@@ -126,7 +126,7 @@ test.describe('CP — counterparty registry permissions', () => {
 
     await gotoCompany(staffPage, companyId, `/expenses/${expense.id}`);
     await expect(staffPage.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toHaveValue(vendor);
-    await staffPage.getByRole('button', { name: 'เก็บร่างไว้ก่อน', exact: true }).click();
+    await staffPage.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
     const scopedLink = staffPage.getByRole('link', { name: 'ดู', exact: true });
     await expect(scopedLink).toHaveAttribute('href', new RegExp(`/counterparties/${counterpartyId}$`));
     await scopedLink.click();

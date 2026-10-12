@@ -154,6 +154,10 @@ export type PartnerCompanyDetailDto = {
   entitlementNormalizationPending: boolean;
   /** Always present, also for a company that has no stored row (it then carries the default and version 0). */
   manualExpenseWebEntry: PartnerManualExpenseWebEntryDto;
+  /** A screen setting; null/absent stored values read as hidden. It shares the manual-entry row version. */
+  disbursementVoucherWebEntry: PartnerDisbursementVoucherWebEntryDto;
+  /** Roles in this shop that currently carry any permission for this document. */
+  disbursementVoucherRoles: PartnerDisbursementVoucherRoleDto[];
   planState?: PlanTermState;
   lockReason?: PlanTermLockReason;
   reportLabels: PartnerReportLabelsDto;
@@ -175,6 +179,31 @@ export type SetPartnerManualExpenseWebEntryDto = {
   enabled: boolean;
   /** `version` from the latest partner detail read. */
   expectedVersion: number;
+};
+
+export type PartnerDisbursementVoucherWebEntryDto = {
+  enabled: boolean;
+  /** Shared company web-entry-setting version, also advanced by the manual-entry switch. */
+  version: number;
+};
+
+export type SetPartnerDisbursementVoucherWebEntryDto = {
+  enabled: boolean;
+  expectedVersion: number;
+};
+
+export type ExpenseDisbursementPermissionKey =
+  | 'expense.disbursement.read'
+  | 'expense.disbursement.prepare'
+  | 'expense.disbursement.approve'
+  | 'expense.disbursement.pay'
+  | 'expense.disbursement.issue';
+
+export type PartnerDisbursementVoucherRoleDto = {
+  name: string;
+  /** True for roles created by the shop or copied from a standard role for editing. */
+  isCompanyManaged: boolean;
+  permissionKeys: ExpenseDisbursementPermissionKey[];
 };
 
 export type PartnerMembershipStatus = 'ACTIVE' | 'INVITED' | 'SUSPENDED' | 'DISABLED';

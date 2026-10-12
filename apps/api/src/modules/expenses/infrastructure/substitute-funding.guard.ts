@@ -29,7 +29,7 @@ export async function lockExpenseFunding(tx: any, companyId: string, expenseId: 
 
 export async function assertFundingMutation(tx: any, companyId: string, expenseId: string, kind: 'payment' | 'confirm' | 'prepare' | 'supersede'): Promise<void> {
   const expense = await tx.expenseRecord.findFirst({ where: { companyId, id: expenseId }, select: { sourceReimbursementRequestId: true, sourceReimbursementLineId: true } });
-  const source = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId, expenseId }, orderBy: { version: 'desc' } });
+  const source = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId, expenseId, status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' } });
   const links = await tx.attachmentLink.findMany({ where: { companyId, targetType: 'expense.record', targetId: expenseId }, select: { attachmentId: true } });
   const claim = await tx.reimbursementLine.findFirst({ where: { companyId,
     // A claim's own payable is expected to share its manual receipt. Exclude only that

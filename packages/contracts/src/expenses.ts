@@ -1,6 +1,8 @@
 import { REIMBURSEMENT_DUPLICATE_BLOCK_LABEL } from './reimbursements.js';
 import { hasCurrentExpenseEvidenceReview } from './expense-evidence.js';
 import { PAYMENT_DATE_IN_FUTURE } from './civil-date.js';
+import { TAX_FORM_SHORT_NAMES, withholdingPeriodLockedMessage } from './tax.js';
+import { THAI_SYSTEM_ROLE_NAMES } from './employee-access.js';
 export * from './expense-evidence.js';
 // Item 09 – Expense and Receipt Upload contracts
 
@@ -620,18 +622,23 @@ export type ExpensePaymentSummary = {
   journalEntryNumber: string | null;
   postingError: string | null;
   cancellationReason?: string | null;
+  disbursementVoucher?: { id: string | null; documentNumber: string } | null;
+  cancelledDisbursementVoucher?: { id: string | null; documentNumber: string } | null;
+  canIssueDisbursementVoucher?: boolean;
   createdByUserId: string;
   createdAt: string;
 };
 
-export type ExpenseCorrectionBlocker = 'not_confirmed' | 'ledger_posted' | 'journal_pending' | 'posting_unresolved'
-  | 'certificate_issued' | 'tax_period_filed' | 'live_claim' | 'permission_denied'
+export type ExpenseCorrectionBlocker = 'disbursement_reserved' | 'not_confirmed' | 'ledger_posted' | 'journal_pending' | 'posting_unresolved'
+  | 'certificate_issued' | 'certificate_permission_missing' | 'tax_period_filed' | 'live_claim' | 'permission_denied'
   | 'payment_voided' | 'no_balance' | 'missing_branch' | 'personal_advance' | 'accounting_period_locked' | 'recorded_payments' | 'legacy_paid_balance';
 
 /** Read by the server from persisted financial/legal state, never inferred by the client. */
 export type ExpenseCorrectionCapabilities = {
+  disbursementReservation: { voucherId: string | null; documentNumber: string | null; preparerName: string | null; viewerMay: 'act' | 'open' | 'none'; viewerCanPay: boolean } | null;
   canReopen: boolean;
   reopenBlockers: ExpenseCorrectionBlocker[];
+  certificateOnExpense?: { kind: 'SYSTEM' | 'EXTERNAL'; number: string | null; date: string | null; canCancel: boolean } | null;
   lockedAccountingPeriodKey?: string | null;
   lockedTaxPeriods?: Array<{ formType: TaxFormType; periodKey: string }>;
   canReject?: boolean;
@@ -641,7 +648,51 @@ export type ExpenseCorrectionCapabilities = {
   payments: Array<{ id: string; canCancel: boolean; cancelBlocker: ExpenseCorrectionBlocker | null }>;
 };
 
+export function expenseDisbursementReservationMessage(operation: 'recordPayment' | 'reopen' | 'void' | 'approveSubstitute', documentNumber: string | null, preparerName: string | null, viewerMay: 'act' | 'open' | 'none' = 'act', viewerCanPay = true): string {
+  const document = documentNumber ? `รายการนี้อยู่ในใบเตรียมจ่ายเลขที่ ${documentNumber}` : 'รายการนี้ถูกจองไว้ในใบเตรียมจ่าย';
+  const prefix = `${document}${preparerName ? ` จัดทำโดย ${preparerName}` : ''}`;
+  if (viewerMay === 'open' && !(operation === 'recordPayment' && viewerCanPay)) return `${prefix} ให้ผู้จัดทำหรือผู้อนุมัติของใบนั้นกด "กลับไปแก้" หรือยกเลิกใบก่อน`;
+  // The name is already in the prefix; say whom to ask and what to ask for.
+  if (viewerMay === 'none') return `${prefix} ให้ติดต่อผู้จัดทำใบนั้นเพื่อนำรายการนี้ออกจากใบหรือยกเลิกใบก่อน`;
+  const remedy = {
+    recordPayment: viewerCanPay ? 'ให้บันทึกจ่ายจากใบนั้น หรือยกเลิกใบนั้นก่อนถ้าจะจ่ายแยก' : 'ให้ผู้มีสิทธิ์บันทึกจ่ายบันทึกจากใบนั้น หรือยกเลิกใบนั้นก่อนถ้าจะจ่ายแยก',
+    reopen: 'ให้กด "กลับไปแก้" ที่ใบนั้นหรือยกเลิกใบนั้นก่อน แล้วจึงแก้ไขเอกสารนี้ได้',
+    void: 'ให้นำรายการนี้ออกจากใบนั้นหรือยกเลิกใบนั้นก่อน แล้วจึงยกเลิกเอกสารนี้ได้',
+    approveSubstitute: 'ให้ยกเลิกใบนั้นก่อน แล้วจึงอนุมัติใบรับรองแทนใบเสร็จได้',
+  }[operation];
+  return `${document}${preparerName ? ` จัดทำโดย ${preparerName}` : ''} ${remedy}`;
+}
+
+export const EXPENSE_VOID_CERTIFICATE_WORDS = {
+  permissionMissing: `เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว การยกเลิกเอกสารจะยกเลิกหนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก`,
+  permissionMissingExternal: 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว การยกเลิกเอกสารจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก',
+  taxWorkspaceCertificate: 'รายจ่ายนี้มีหนังสือรับรองหัก ณ ที่จ่ายที่ออกจากหน้าภาษี จึงยกเลิกเอกสารจากหน้านี้ไม่ได้ กรุณาแจ้งทีมมั่งมีพลัสเพื่อช่วยตรวจสอบ',
+  attestationRequired: 'กรุณาติ๊กยืนยันเรื่องการยื่นภาษีก่อนยกเลิกเอกสาร',
+  periodLocked: (kind: 'SYSTEM' | 'EXTERNAL', periodKey: string, formType: string): string => withholdingPeriodLockedMessage(periodKey, 'ยกเลิกเอกสารนี้', formType, kind),
+  changedRetry: 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้ยกเลิกเอกสาร กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
+  statusChanged: 'เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว จึงยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้ กรุณาเปิดหน้านี้ใหม่',
+  permissionDenied: `คุณไม่มีสิทธิ์ยกเลิกเอกสาร ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ที่มีสิทธิ์เป็นผู้ยกเลิก`,
+  reasonRequired: 'กรุณาระบุเหตุผลที่ยกเลิกเอกสารอย่างน้อย 3 ตัวอักษร',
+  numberUnavailable: `ระบบยังออกเลขสำหรับยกเลิกเอกสารไม่ได้ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}ตรวจการตั้งค่าเลขเอกสารก่อนแล้วลองอีกครั้ง`,
+  postingUnresolved: 'ยังตรวจสอบการลงบัญชีของเอกสารนี้ไม่ได้ จึงยกเลิกเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจสอบการลงบัญชีก่อนแล้วลองอีกครั้ง',
+  accountingPeriodLocked: (periodKey: string): string => `เอกสารอยู่ในเดือน ${expenseCorrectionMonth(periodKey)} ที่ปิดบัญชีแล้ว จึงยกเลิกเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจสอบและเปิดเดือนนั้นก่อน`,
+  taxPeriodLocked: (periodKey: string): string => `ภาษีของเดือน ${expenseCorrectionMonth(periodKey)} ถูกล็อกแล้ว จึงยกเลิกเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจสอบเรื่องการยื่นแบบเพิ่มเติม`,
+} as const;
+
+export function expenseVoidCertificatePermissionMessage(kind: 'SYSTEM' | 'EXTERNAL', number?: string | null): string {
+  const message = kind === 'EXTERNAL' ? EXPENSE_VOID_CERTIFICATE_WORDS.permissionMissingExternal : EXPENSE_VOID_CERTIFICATE_WORDS.permissionMissing;
+  return number ? message.replace('แล้ว การ', `แล้ว (เลขที่ ${number}) การ`) : message;
+}
+
 export const EXPENSE_CORRECTION_WORDS = {
+  statusChanged: 'เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว กรุณาเปิดหน้านี้ใหม่',
+  notFound: 'ไม่พบเอกสารนี้แล้ว กรุณาเปิดหน้ารายจ่ายใหม่',
+  permissionDenied: `คุณไม่มีสิทธิ์แก้ไขเอกสาร ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ที่มีสิทธิ์เป็นผู้แก้ไข`,
+  branchForbidden: 'คุณไม่มีสิทธิ์ทำรายการกับเอกสารของสาขานี้ ให้ผู้ที่มีสิทธิ์ดูแลสาขานี้เป็นผู้ดำเนินการ',
+  webRequired: 'กรุณาเปิดเอกสารในเว็บและเข้าสู่ระบบก่อนแก้ไขเอกสาร',
+  certificateSourceChanged: 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว กรุณาเปิดหน้ารายจ่ายใหม่',
+  certificateAttestationRequired: 'กรุณาติ๊กยืนยันเรื่องการยื่นภาษีก่อนแก้ไขเอกสาร',
+  certificateSpellingCorrection: 'ถ้าต้องแก้เฉพาะตัวสะกดชื่อหรือที่อยู่บนหนังสือรับรอง ใช้ปุ่ม "แก้ไขหนังสือรับรอง" ได้',
   saving: 'กำลังบันทึก…',
   reopen: 'แก้ไขเอกสาร',
   cancelPayment: 'ยกเลิกรายการจ่ายนี้',
@@ -661,6 +712,7 @@ export const EXPENSE_CORRECTION_WORDS = {
   paymentOnReopened: 'เอกสารถูกเปิดแก้ไขแล้ว จึงบันทึกจ่ายไม่ได้ ให้ผู้มีสิทธิ์ตรวจและยืนยันเอกสารก่อน',
   paymentOnUnconfirmed: 'เอกสารยังไม่ได้ยืนยัน จึงบันทึกจ่ายไม่ได้ ให้ผู้มีสิทธิ์ยืนยันเอกสารก่อน',
   paymentAlreadyCancelled: 'รายการจ่ายนี้ถูกยกเลิกแล้ว โหลดข้อมูลล่าสุดแล้ว กรุณาตรวจประวัติการจ่าย',
+  paymentReplayCancelled: 'การจ่ายรายการนี้ถูกยกเลิกไปแล้ว ระบบจึงไม่ได้บันทึกซ้ำ ถ้าต้องการจ่ายอีกครั้ง ให้เปิดหน้านี้ใหม่แล้วบันทึกการจ่ายใหม่',
   overpaid: 'จ่ายเกินยอดสุทธิ',
   // Direction-free: the payment card sits above this sentence on the last step and below it on the first.
   cancelBeforeConfirm: 'ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน',
@@ -703,17 +755,14 @@ export const EXPENSE_WITHHOLDING_WORDS = {
 } as const;
 /** Last review step: the sentence follows the button actually shown (ส่งตรวจสอบ keeps the dictionary's approver sentence). */
 export const EXPENSE_REVIEW_STEP_WORDS = {
-  thenConfirm: 'ดูสรุปทั้งหมดอีกครั้ง แล้วยืนยันเอกสาร',
+  thenConfirm: 'ดูสรุปอีกครั้ง แล้วยืนยัน',
   sentAwaitingConfirm: 'ดูสรุปทั้งหมดอีกครั้ง เอกสารนี้ส่งตรวจสอบแล้ว รอผู้มีสิทธิ์ยืนยัน',
 } as const;
 /** Keep the existing positive-money boundary; only remove insignificant leading zeroes. */
 export function normalizeExpensePaymentAmount(value: string): string { return value.replace(/^0+(?=\d)/, ''); }
 
 const EXPENSE_CORRECTION_ACTIONS = { reopen: 'เปิดแก้ไขเอกสาร', recordPayment: 'บันทึกจ่าย', cancelPayment: 'ยกเลิกรายการจ่าย', reject: EXPENSE_CORRECTION_WORDS.reject } as const;
-const EXPENSE_CORRECTION_FORM_NAMES: Partial<Record<TaxFormType, string>> = {
-  PP30: 'ภ.พ.30', PP36: 'ภ.พ.36', PND3: 'ภ.ง.ด.3', PND53: 'ภ.ง.ด.53', CUSTOMS_SUPPORT: 'เอกสารประกอบภาษีนำเข้า',
-};
-function expenseCorrectionMonth(periodKey?: string): string {
+export function expenseCorrectionMonth(periodKey?: string): string {
   if (!periodKey || !/^\d{4}-\d{2}$/.test(periodKey)) return '';
   return `${periodKey.slice(5)}/${Number(periodKey.slice(0, 4)) + 543}`;
 }
@@ -721,13 +770,21 @@ export function expenseCorrectionBlockerMessage(blocker: ExpenseCorrectionBlocke
   const action = EXPENSE_CORRECTION_ACTIONS[operation];
   if (!showsLedger && ['ledger_posted', 'journal_pending', 'posting_unresolved', 'accounting_period_locked'].includes(blocker)) return `รายการนี้ถูกล็อกไว้ จึง${action}ไม่ได้ ติดต่อผู้ดูแลรายจ่าย`;
   switch (blocker) {
+    case 'disbursement_reserved': return expenseDisbursementReservationMessage(operation === 'recordPayment' ? 'recordPayment' : 'reopen', facts?.disbursementReservation?.documentNumber ?? null, facts?.disbursementReservation?.preparerName ?? null, facts?.disbursementReservation?.viewerMay ?? 'act', facts?.disbursementReservation?.viewerCanPay ?? true);
     case 'not_confirmed': return `สถานะเอกสารนี้${action}ไม่ได้ กรุณากลับไปหน้ารายจ่าย`;
     case 'ledger_posted': return `มีรายการลงบัญชีแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
     case 'posting_unresolved': return `สถานะการลงบัญชียังไม่ชัดเจน จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
     case 'journal_pending': return `มีรายการบัญชีรอผ่านรายการ จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
     case 'certificate_issued': return `ออกเอกสาร 50 ทวิแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'certificate_permission_missing': return facts?.certificateOnExpense?.kind === 'EXTERNAL'
+      ? `เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว${facts?.certificateOnExpense?.number ? ` (เลขที่ ${facts.certificateOnExpense.number})` : ''} การแก้ไขจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้แก้ไข`
+      : `เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว${facts?.certificateOnExpense?.number ? ` (เลขที่ ${facts.certificateOnExpense.number})` : ''} การแก้ไขจะยกเลิกหนังสือรับรองใบเดิมด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ที่มีสิทธิ์นั้นเป็นผู้แก้ไข`;
     case 'accounting_period_locked': return `เดือนบัญชี ${expenseCorrectionMonth(facts?.lockedAccountingPeriodKey ?? undefined)} ไม่เปิดรับรายการ จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
-    case 'tax_period_filed': return `รอบภาษีของเอกสารถูกล็อกแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'tax_period_filed': {
+      const withholding = facts?.lockedTaxPeriods?.find(period => period.formType === 'PND3' || period.formType === 'PND53');
+      if (withholding && operation === 'reopen') return withholdingPeriodLockedMessage(withholding.periodKey, 'แก้ไขเอกสารนี้', withholding.formType, facts?.certificateOnExpense?.kind);
+      return `รอบภาษีของเอกสารถูกล็อกแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี` + (operation === 'reopen' && facts?.certificateOnExpense?.kind === 'SYSTEM' ? ` ${EXPENSE_CORRECTION_WORDS.certificateSpellingCorrection}` : '');
+    }
     case 'live_claim': return `เอกสารอยู่ในคำขอเบิกที่ยังดำเนินการ จึง${action}จากหน้านี้ไม่ได้ ติดต่อผู้ดูแลคำขอเบิก`;
     case 'permission_denied': return `คุณไม่มีสิทธิ์${action} ติดต่อผู้มีสิทธิ์ดำเนินการ`;
     case 'payment_voided': return 'รายการจ่ายนี้ยกเลิกแล้ว กรุณาโหลดหน้าใหม่';
@@ -742,7 +799,8 @@ export function expenseCorrectionBlockerMessage(blocker: ExpenseCorrectionBlocke
 export function expenseReopenBlockerMessages(capabilities?: ExpenseCorrectionCapabilities, showsLedger = true): string[] {
   if (!capabilities || capabilities.canReopen) return [];
   return capabilities.reopenBlockers.flatMap(blocker => blocker === 'tax_period_filed' && capabilities.lockedTaxPeriods?.length
-    ? capabilities.lockedTaxPeriods.map(period => `รอบ ${EXPENSE_CORRECTION_FORM_NAMES[period.formType] ?? 'ภาษี'} เดือน ${expenseCorrectionMonth(period.periodKey)} ถูกล็อกแล้ว จึงเปิดแก้ไขเอกสารไม่ได้ ติดต่อผู้ทำบัญชี`)
+    ? capabilities.lockedTaxPeriods.map(period => period.formType === 'PND3' || period.formType === 'PND53'
+      ? withholdingPeriodLockedMessage(period.periodKey, 'แก้ไขเอกสารนี้', period.formType, capabilities.certificateOnExpense?.kind) : `รอบ ${TAX_FORM_SHORT_NAMES[period.formType] ?? 'ภาษี'} เดือน ${expenseCorrectionMonth(period.periodKey)} ถูกล็อกแล้ว จึงเปิดแก้ไขเอกสารไม่ได้ ติดต่อผู้ทำบัญชี` + (capabilities.certificateOnExpense?.kind === 'SYSTEM' ? ` ${EXPENSE_CORRECTION_WORDS.certificateSpellingCorrection}` : ''))
     : [expenseCorrectionBlockerMessage(blocker, 'reopen', capabilities, showsLedger)]);
 }
 export function expenseConfirmedLockMessage(capabilities?: ExpenseCorrectionCapabilities, hasPayments = false): string {
@@ -763,6 +821,7 @@ export function expenseReimbursementProgressLabel(progress: ExpenseReimbursement
 }
 
 export type ExpenseSummary = {
+  cancelledCertificate?: { kind: 'SYSTEM' | 'EXTERNAL'; number: string | null };
   costSourceExpenseId?: string;
   reimbursementProgress?: ExpenseReimbursementProgress;
   id: string;
@@ -772,6 +831,8 @@ export type ExpenseSummary = {
   status: ExpenseStatus;
   captureSource: ExpenseCaptureSource;
   vendorCounterpartyId: string | null;
+  /** Plain reservation pointer; no foreign key on ExpenseRecord. */
+  reservedByDisbursementVoucherId?: string | null;
   vendorNameSnapshot: string | null;
   /** Vendor address spec §6: the seller address as printed on the document, one free-text block.
    *  On the summary because the list filters and reports on its absence (GAP-11). */
@@ -1815,8 +1876,11 @@ export function isExpenseVoidReason(reason: string | null | undefined): boolean 
  * them before it commits to cancelling, and shows them on a cancellation that has not finished.
  */
 export type ExpenseVoidBlocker =
+  | { code: 'disbursement_reserved'; documentNumber: string | null; preparerName: string | null }
+  | { code: 'wht_certificate_on_expense'; certificateNumber: string | null }
   | { code: 'accounting_period_locked'; periodKey: string }
-  | { code: 'tax_period_locked'; periodKey: string; formType: string }
+  | { code: 'tax_period_locked'; periodKey: string; formType: string; certificateKind?: 'SYSTEM' | 'EXTERNAL' }
+  | { code: 'certificate_issued' }
   /** The posted journal is not in a state a reversal can be written against. */
   | { code: 'posting_unresolved' }
   /** The record is in a status no void takes. */

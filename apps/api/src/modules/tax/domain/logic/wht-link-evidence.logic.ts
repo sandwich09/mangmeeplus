@@ -53,10 +53,10 @@ export type WhtLinkEvidenceResult =
  * quietly storing a shortened certificate number or evidence pointer would corrupt the record of a
  * legal document while reporting success.
  */
-function text(value: unknown, field: string, maxLength: number): { ok: true; value: string } | { ok: false; error: string } {
+function text(value: unknown, field: string, maxLength: number, allowEmpty = false): { ok: true; value: string } | { ok: false; error: string } {
   if (typeof value !== 'string') return { ok: false, error: `${field} must be a string.` };
   const trimmed = value.trim();
-  if (!trimmed) return { ok: false, error: `${field} is required.` };
+  if (!trimmed && !allowEmpty) return { ok: false, error: `${field} is required.` };
   if (trimmed.length > maxLength) return { ok: false, error: `${field} must be at most ${maxLength} characters.` };
   return { ok: true, value: trimmed };
 }
@@ -66,7 +66,7 @@ export function normalizeWhtLinkEvidence(input: WhtLinkEvidenceInput): WhtLinkEv
   if (!commandId.ok) return commandId;
   const externalCertificateNumber = text(input.externalCertificateNumber, 'externalCertificateNumber', WHT_LINK_LIMITS.externalCertificateNumber);
   if (!externalCertificateNumber.ok) return externalCertificateNumber;
-  const externalEvidenceRef = text(input.externalEvidenceRef, 'externalEvidenceRef', WHT_LINK_LIMITS.externalEvidenceRef);
+  const externalEvidenceRef = text(input.externalEvidenceRef, 'externalEvidenceRef', WHT_LINK_LIMITS.externalEvidenceRef, true);
   if (!externalEvidenceRef.ok) return externalEvidenceRef;
 
   if (typeof input.issuedDate !== 'string') return { ok: false, error: 'issuedDate must be a string.' };

@@ -40,6 +40,7 @@ import {
   setEmployeeStatus,
   updateEmployee,
 } from './employee-access.api';
+import { DisbursementVoucherAccessHint } from './DisbursementVoucherAccessHint';
 import { accountAccessNotice, MENU_GROUP_LABEL_TH, projectGrantedMenus } from './access-overview.model';
 import { EMPLOYEE_BRANCH_SCOPE_HELP, assignableRoleOptions, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
 import { localizedErrorMessage, statusOf } from '@/common/i18n/error-message.logic';
@@ -211,7 +212,7 @@ const MVP1_INDIVIDUAL_PERMISSION_MENU_IDS = new Set<MenuDefinition['id']>([
 
 type SaveKey = 'role' | 'branch' | 'status';
 
-export function IndividualPermissionsPrototypePage({ companyId, viewerPermissions = [], viewerUserId, viewerBranchIds }: { companyId: string; viewerPermissions?: string[]; viewerUserId?: string; viewerBranchIds?: string[] }) {
+export function IndividualPermissionsPrototypePage({ companyId, viewerPermissions = [], viewerUserId, viewerBranchIds, disbursementEntryOpen = false }: { disbursementEntryOpen?: boolean; companyId: string; viewerPermissions?: string[]; viewerUserId?: string; viewerBranchIds?: string[] }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const toast = useToast();
@@ -761,6 +762,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                 ) : accessProjection.groups.map(({ group, menus: groupMenus }) => (
                   <div key={group} className="grid gap-1">
                     <h3 className="px-3 text-xs font-extrabold uppercase tracking-wide text-gray-400">{MENU_GROUP_LABEL_TH[group]}</h3>
+                    {group === 'fin' && <DisbursementVoucherAccessHint entryOpen={disbursementEntryOpen} />}
                     {groupMenus.map(({ menu, labels }) => (
                       <div
                         key={menu.id}

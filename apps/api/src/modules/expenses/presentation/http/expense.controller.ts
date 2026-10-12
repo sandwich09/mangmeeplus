@@ -10,6 +10,8 @@ import {
   CreateSignatureAssetDto,
   ReasonOptionalDto,
   ReasonRequiredDto,
+  VoidExpenseDto,
+  ReopenExpenseDto,
   ReceiptUploadCompletionDto,
   RemoveExpenseReceiptDto,
   ReceiptUploadIntentDto,
@@ -575,14 +577,14 @@ export class ExpenseController {
 
   @Post(':expenseId/void')
   @RequirePermissions('expense.void')
-  voidExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ReasonRequiredDto) {
-    return this.void_.execute(ctx, expenseId, body.reason);
+  voidExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: VoidExpenseDto) {
+    return this.void_.execute(ctx, expenseId, body.reason, body.taxFilingAttested);
   }
 
   @Post(':expenseId/reopen')
   @RequirePermissions('expense.confirm')
-  reopenExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ReasonRequiredDto) {
-    return this.reopen.execute(ctx, expenseId, body.reason);
+  reopenExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ReopenExpenseDto) {
+    return this.reopen.execute(ctx, expenseId, body.reason, body.taxFilingAttested);
   }
 
   @Post(':expenseId/payments/:paymentId/cancel')

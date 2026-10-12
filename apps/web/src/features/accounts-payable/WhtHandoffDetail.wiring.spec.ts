@@ -18,7 +18,7 @@ test('WhtHandoffDetail recognizes SYSTEM_ISSUED as its own terminal state, not f
 });
 
 test('the issue button renders through the shared canIssueSystemWhtCertificate predicate, not a duplicated condition', () => {
-  assert.match(page, /\{canIssueSystemWhtCertificate\(handoff, permissions\) && \(/);
+  assert.match(page, /\{canIssueSystemWhtCertificate\(handoff, permissions\) && !handoff\.payerMissing\?\.length && payeeAddress\.text && \(/);
 });
 
 test('issuing calls the system-certificate endpoint and downloads the returned PDF immediately', () => {
@@ -31,7 +31,7 @@ test('issuing calls the system-certificate endpoint and downloads the returned P
 test('the issued banner renders before the external-linked banner, and the issue button sits beside the external-attach form', () => {
   const issuedAt = page.indexOf('{issued ? (');
   const linkedAt = page.indexOf(') : linked ? (');
-  const issueButtonAt = page.indexOf('{canIssueSystemWhtCertificate(handoff, permissions) && (');
+  const issueButtonAt = page.indexOf('{canIssueSystemWhtCertificate(handoff, permissions) && !handoff.payerMissing?.length && payeeAddress.text && (');
   const externalFormAt = page.indexOf('{canLink && (');
   assert.ok(issuedAt >= 0 && linkedAt > issuedAt, 'issued must be checked before linked');
   assert.ok(issueButtonAt >= 0 && externalFormAt > issueButtonAt, 'the issue button must precede the external-attach form in the same branch');
@@ -60,4 +60,16 @@ test('issuing a replacement copy calls the replacement-copy endpoint and downloa
 
 test('the correction form requires a reason before it can be submitted', () => {
   assert.match(page, /disabled=\{correctBusy \|\| !correctForm\.reason\.trim\(\)\}/);
+});
+
+
+test('an issuer without external-link permission can enter the address before the issue button appears', () => {
+  assert.match(page, /whtHandoffPayeeAddress\(handoff, canLink \|\| permissions\.includes\('wht\.certificate\.issue'\)\)/);
+  assert.match(page, /canIssueSystemWhtCertificate\(handoff, permissions\) && !handoff\.payerMissing\?\.length && payeeAddress\.text/);
+  assert.equal((page.match(/wht\.print_certificate/g) ?? []).length, 2);
+});
+test('accounts-payable previews through the shared issue confirmation and keeps the address and payer guards before it', () => {
+  assert.match(page, /<WhtIssueButton handoff=\{handoff\} busy=\{issuing\} label=\{workspaceDictionary.th\['wht.print_certificate'\]\} onIssue=\{doIssue\}/);
+  assert.doesNotMatch(page, /onClick=\{\(\) => void doIssue\(\)\}/);
+  assert.match(page, /canIssueSystemWhtCertificate\(handoff, permissions\) && !handoff\.payerMissing\?\.length && payeeAddress\.text/);
 });

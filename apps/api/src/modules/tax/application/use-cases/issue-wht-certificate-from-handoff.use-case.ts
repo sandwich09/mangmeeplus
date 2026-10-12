@@ -1,5 +1,10 @@
+import { currentWhtPayerDetails } from '../services/wht-payer-identity';
+import { whtPayerIdentity, whtPayerIdentityMissingMessage } from '@watchdog-bms/contracts';
+import { whtHandoffMissing } from '../../domain/logic/wht-handoff-missing.logic';
+import { loadScopedWhtHandoff } from '../services/wht-handoff-read-scope';
+import { throwIfWhtCertificateNumberCollision } from '../services/wht-certificate-number-error';
 import { lockExpenseCorrection } from '../../../expenses/infrastructure/expense-void-blocker';
-import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage } from '@watchdog-bms/contracts';
+import { whtPayeeAddress, WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE, EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage } from '@watchdog-bms/contracts';
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { RequestContext, WhtHandoffPrefillDto } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -13,6 +18,7 @@ import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-ta
 import { TaxArtifactRendererService } from '../services/tax-artifact-renderer.service';
 import type { WhtCertificateSignature } from '../../domain/logic/wht-certificate-pdf.logic';
 import { isLaunchRouteOpen } from './wht-certificate-handoff.use-case';
+import { appendWhtCertificateHistory } from '../services/wht-certificate-history';
 
 const HANDOFF_CHANGED_MESSAGE = 'สถานะของงานนี้เปลี่ยนไปแล้วระหว่างออกเอกสาร';
 
@@ -74,8 +80,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
   }
 
   async execute(ctx: RequestContext, handoffId: string) {
-    const row = await this.table.findUnique({ where: { id: handoffId } });
-    if (!row || row.companyId !== ctx.companyId) throw new NotFoundException('WHT handoff not found.');
+    const row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
     // Mutually exclusive with `linkExternal` (spec §4.1): the operator picks one path. Checked here
     // for a fast, clear answer; the transaction's own conditional `updateMany` below is the actual
     // race fence against a concurrent `linkExternal` or a second identical mint.
@@ -93,12 +98,21 @@ export class IssueWhtCertificateFromHandoffUseCase {
     // to neither ภ.ง.ด.3 nor ภ.ง.ด.53 (e.g. FOREIGN) — a real, if rare, state a REQUIRED handoff can
     // be in. `TaxPeriod`/`WhtCertificate` both require a resolved form, so this must refuse cleanly
     // rather than guess or hit the NOT NULL constraint raw.
-    if (!prefill.formType) {
+    const missing = whtHandoffMissing(prefill);
+    if (missing.includes('FORM_TYPE_UNRESOLVED') || !prefill.formType) {
       throw new ConflictException({ code: 'wht_handoff_form_type_unresolved', message: 'ไม่สามารถระบุแบบ ภ.ง.ด. ได้ กรุณาตรวจสอบประเภทผู้รับเงินก่อนออกเอกสาร' });
     }
-    if (!prefill.incomeCategoryCode || !prefill.incomeCategoryName || !prefill.whtRate) {
+    if (missing.includes('INCOME_CATEGORY_OR_RATE_MISSING') || !prefill.incomeCategoryCode || !prefill.incomeCategoryName || !prefill.whtRate) {
       throw new ConflictException({ code: 'wht_handoff_income_category_missing', message: 'ไม่มีข้อมูลประเภทเงินได้/อัตราหัก ณ ที่จ่ายในรายการนี้' });
     }
+
+    const payer = whtPayerIdentity(prefill.payerSnapshot, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
+    if (payer.missing.length) throw new ConflictException({ code: 'wht_payer_identity_missing', message: whtPayerIdentityMissingMessage(payer.missing), payerMissing: payer.missing });
+
+    const payeeAddress = whtPayeeAddress(row.payeeAddress, prefill.payeeSnapshot.address);
+    if (!payeeAddress) throw new ConflictException({
+      code: 'wht_handoff_payee_address_missing', message: WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE,
+    });
 
     // Finding 8a's concrete answer: find-or-create the period the same way every sync-tax-events
     // loop already does, instead of requiring a prior `POST tax/sync`.
@@ -106,7 +120,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
     const period = await this.taxRepo.upsertPeriod({ companyId: ctx.companyId, taxType: 'WHT', formType: prefill.formType, periodKey });
 
     const signature = await this.resolveSignature(ctx.companyId);
-    const idempotencyKey = `wht_certificate_from_handoff:${row.id}`;
+    const idempotencyKey = `wht_certificate_from_handoff:${row.id}${row.certificateRound > 0 ? `:r${row.certificateRound}` : ''}`;
     let reserved: Awaited<ReturnType<ReserveDocumentNumberUseCase['execute']>>;
     try {
       reserved = await this.reserveNumber.execute({
@@ -114,6 +128,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
         idempotencyKey, reservedByUserId: ctx.userId,
       });
     } catch (error) {
+      throwIfWhtCertificateNumberCollision(error, ctx.companyId);
       // A concurrent identical request won the reservation race (F5-style recovery — H4's
       // `WhtCertificateHandoffUseCase.createOrReplay`). The winner reserves, mints and updates the
       // handoff as one unit below, so reloading the handoff's `certificateId` returns its result.
@@ -124,7 +139,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
     // Contract (`WhtCertificateHandoffDto.payeeAddress`): the operator-typed address wins over the
     // frozen prefill's. Merged into the certificate's own snapshot only — the handoff's
     // `prefillSnapshotJson`/`prefillSnapshotHash` stay untouched.
-    const payee = { ...prefill.payeeSnapshot, address: row.payeeAddress?.trim() || prefill.payeeSnapshot.address };
+    const payee = { ...prefill.payeeSnapshot, address: payeeAddress };
     const issuedAt = new Date();
     const fields = {
       certificateNumber: reserved.documentNumber,
@@ -137,7 +152,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
       paymentDate: prefill.paymentDate,
       issuedAt: issuedAt.toISOString(),
     };
-    const pdf = await this.renderer.renderWhtCertificate(fields, prefill.payerSnapshot, payee, signature);
+    const pdf = await this.renderer.renderWhtCertificate(fields, payer.payer, payee, signature);
 
     const client = this.taxRepo.prisma.client as any;
     const { certificateRow } = await client.$transaction(async (tx: any) => {
@@ -148,9 +163,19 @@ export class IssueWhtCertificateFromHandoffUseCase {
       }
       await tx.$executeRaw`SELECT id FROM "WhtCertificateHandoff" WHERE id = ${row.id} AND "companyId" = ${ctx.companyId} FOR UPDATE`;
       const current = await tx.whtCertificateHandoff.findUnique({ where: { id: row.id } });
-      if (current?.status !== 'REQUIRED' || current.prefillSnapshotHash !== row.prefillSnapshotHash) {
+      if (current?.status !== 'REQUIRED' || current.prefillSnapshotHash !== row.prefillSnapshotHash || (current.certificateRound ?? 0) !== (row.certificateRound ?? 0)) {
         throw new ConflictException({ code: 'wht_handoff_not_issuable', message: HANDOFF_CHANGED_MESSAGE });
       }
+      const cancellations = await tx.whtCertificateHistory.findMany({
+        where: { companyId: ctx.companyId, handoffId: row.id, eventType: 'CANCELLED_SOURCE_REOPENED', certificateId: { not: null } },
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], select: { certificateId: true },
+      });
+      const unreplaced = cancellations.length ? await tx.whtCertificate.findMany({
+        where: { companyId: ctx.companyId, id: { in: cancellations.map((event: any) => event.certificateId) },
+          status: 'VOIDED', voidReason: 'SOURCE_REOPENED', supersededByCertificateId: null },
+        select: { id: true, certificateNumber: true },
+      }) : [];
+      const predecessor = cancellations.map((event: any) => unreplaced.find((cert: any) => cert.id === event.certificateId)).find(Boolean);
       const certificateRow = await tx.whtCertificate.create({
         data: {
           companyId: ctx.companyId,
@@ -159,7 +184,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
           taxPeriodId: period.id,
           periodKey: period.periodKey,
           payeeSnapshotJson: payee as any,
-          payerSnapshotJson: prefill.payerSnapshot as any,
+          payerSnapshotJson: payer.payer as any,
           incomeCategoryCode: prefill.incomeCategoryCode,
           incomeCategoryName: prefill.incomeCategoryName,
           whtRate: prefill.whtRate,
@@ -171,8 +196,16 @@ export class IssueWhtCertificateFromHandoffUseCase {
           taxEventIdsJson: [],
           issuedAt,
           issuedByUserId: ctx.userId,
+          supersedesCertificateId: predecessor?.id ?? null,
         },
       });
+      if (predecessor) {
+        const linked = await tx.whtCertificate.updateMany({
+          where: { companyId: ctx.companyId, id: predecessor.id, status: 'VOIDED', voidReason: 'SOURCE_REOPENED', supersededByCertificateId: null },
+          data: { supersededByCertificateId: certificateRow.id },
+        });
+        if (linked.count !== 1) throw new ConflictException({ code: 'wht_handoff_not_issuable', message: HANDOFF_CHANGED_MESSAGE });
+      }
       await this.documentSequences.commitNumberInTransaction(tx, {
         id: reserved.id, companyId: ctx.companyId, ownerType: 'tax.wht_certificate', ownerId: certificateRow.id,
       });
@@ -183,7 +216,16 @@ export class IssueWhtCertificateFromHandoffUseCase {
         data: { status: 'SYSTEM_ISSUED', certificateId: certificateRow.id },
       });
       if (handoffUpdated.count !== 1) throw new ConflictException({ code: 'wht_handoff_not_issuable', message: HANDOFF_CHANGED_MESSAGE });
+      await appendWhtCertificateHistory(tx, row, {
+        eventType: 'ISSUED', actorUserId: ctx.userId, isExternal: false,
+        certificateId: certificateRow.id, certificateNumber: certificateRow.certificateNumber,
+        certificateDate: certificateRow.issuedAt,
+        ...(predecessor ? { relatedCertificateId: predecessor.id, relatedCertificateNumber: predecessor.certificateNumber } : {}),
+      });
       return { certificateRow, handoffUpdated };
+    }).catch((error: unknown) => {
+      throwIfWhtCertificateNumberCollision(error, ctx.companyId);
+      throw error;
     });
 
     void this.audit.log({
@@ -217,8 +259,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
    * certificate at all (nothing ever populates `pdfAttachmentId` — see `CreateWhtCertificateUseCase`).
    */
   async download(ctx: RequestContext, handoffId: string) {
-    const handoff = await this.table.findUnique({ where: { id: handoffId } });
-    if (!handoff || handoff.companyId !== ctx.companyId) throw new NotFoundException('WHT handoff not found.');
+    const handoff = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
     if (handoff.status !== 'SYSTEM_ISSUED') throw new ConflictException({ code: 'wht_certificate_download_unavailable', message: EXPENSE_CORRECTION_WORDS.certificateUnavailable });
     return this.reloadWinner(handoffId);
   }

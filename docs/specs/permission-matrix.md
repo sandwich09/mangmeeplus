@@ -259,6 +259,11 @@ expense.reject
 expense.void
 expense.delete
 expense.payment.record
+expense.disbursement.read
+expense.disbursement.prepare
+expense.disbursement.approve
+expense.disbursement.pay
+expense.disbursement.issue
 expense.duplicate.resolve
 expense.ocr.request
 expense.ai.verify
@@ -281,6 +286,8 @@ ACCOUNTANT: employee baseline plus expense.read, expense.evidence.read, expense.
 AUDITOR_READONLY: expense.read, expense.evidence.read, expense.export
 SALES, INVENTORY, MARKETING, STAFF: employee baseline
 ```
+
+Disbursement-voucher permissions are a separate opt-in set: OWNER receives all five company permissions; ADMIN and FINANCE receive all five; MANAGER receives `expense.disbursement.read` and `expense.disbursement.approve`; ACCOUNTANT receives `expense.disbursement.read` and `expense.disbursement.issue`; every other system role receives none. Existing company roles are not backfilled.
 
 Owner decision 2026-10-03 (“ตามแนะนำหมด”): `ACCOUNTANT` (ฝ่ายบัญชี) keeps the defaults above: neither `expense.review` nor `expense.confirm` is granted by default. The owner may explicitly grant them; this decision changes no default permissions.
 
@@ -310,6 +317,10 @@ expense.reject
 expense.void
 expense.delete
 expense.payment.record
+expense.disbursement.prepare
+expense.disbursement.approve
+expense.disbursement.pay
+expense.disbursement.issue
 expense.duplicate.resolve
 expense.export
 ```

@@ -1,16 +1,31 @@
-import { lockExpenseCorrection } from '../../../expenses/infrastructure/expense-void-blocker';
+import { expenseSourceDescription } from '../../../expenses/domain/logic/expense-source-description';
+import { currentWhtPayerDetails } from '../services/wht-payer-identity';
+import { whtPayerIdentity } from '@watchdog-bms/contracts';
+import { whtPayeeAddress } from '@watchdog-bms/contracts';
+import { whtHandoffMissing } from '../../domain/logic/wht-handoff-missing.logic';
+import { findReadableHandoffExpense, handoffBranchWhere, handoffReadBoundary, nonExpenseHandoffWhere, loadScopedWhtHandoff } from '../services/wht-handoff-read-scope';
+import type { Prisma, WhtCertificate } from '../../../../generated/prisma/client';
+import { lockExpenseCorrection, readExpensePeriodLocks } from '../../../expenses/infrastructure/expense-void-blocker';
 import { expenseCorrectionBlockerMessage } from '@watchdog-bms/contracts';
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type {
   LinkExternalWhtCertificateDto,
+  ChangeExternalWhtCertificateDto,
+  RemoveExternalWhtCertificateDto,
+  PayeeSnapshot,
   RequestContext,
   SetWhtHandoffPayeeAddressDto,
   VendorCounterpartyAutoSaveResult,
   WhtCertificateHandoffDto,
+  WhtCertificateHandoffPageDto,
+  WhtHandoffStatus,
+  WhtCertificateHistoryDto,
+  WhtCertificateHistoryEventType,
   WhtHandoffPrefillDto,
 } from '@watchdog-bms/contracts';
-import { WHT_HANDOFF_PAYEE_ADDRESS_MAX } from '@watchdog-bms/contracts';
+import { isExpenseVoidReason, WHT_HANDOFF_PAYEE_ADDRESS_MAX, WHT_EXTERNAL_RECORD_WORDS, todayCivilDate, withholdingPeriodLockedMessage } from '@watchdog-bms/contracts';
+import { formPeriodKey } from '../../domain/logic/tax-period.logic';
 import { AuditService } from '../../../audit/application/audit.service';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { FEATURE_TEMPORARILY_UNAVAILABLE } from '../../../employee-access/application/entitlement.helper';
@@ -24,6 +39,8 @@ import {
 } from '../../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
 import { normalizeWhtLinkEvidence } from '../../domain/logic/wht-link-evidence.logic';
 import type { WhtLinkEvidenceInput } from '../../domain/logic/wht-link-evidence.logic';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { appendWhtCertificateHistory } from '../services/wht-certificate-history';
 
 /**
  * Resolves a launch route into a plain boolean. Only the control-plane refusal becomes `false`:
@@ -162,28 +179,192 @@ export class WhtCertificateHandoffUseCase {
     }
   }
 
-  /**
-   * `branchId` is a FILTER, not an authorization boundary — the same shape the other procurement
-   * list endpoints use. No AP surface enforces a branch boundary today, and H4 does not invent one.
-   */
+  /** Existing expense and AP callers retain their array response and 200-row limit. */
   async list(ctx: RequestContext, filters: { status?: string; branchId?: string; sourcePaymentId?: string } = {}): Promise<WhtCertificateHandoffDto[]> {
-    const rows = await this.table.findMany({
-      where: {
-        companyId: ctx.companyId,
-        ...(filters.status ? { status: filters.status as any } : {}),
-        ...(filters.branchId ? { sourceBranchId: filters.branchId } : {}),
-        // WHT certificate system issuance plan §4.2: lets Expenses find the handoff its own confirm
-        // just created (in the same transaction) without a new response field on ConfirmExpenseDto.
-        ...(filters.sourcePaymentId ? { sourcePaymentId: filters.sourcePaymentId } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+    const where = this.listWhere(ctx, filters);
+    const boundary = await handoffReadBoundary(this.taxRepo.prisma.client, ctx, where);
+    const rows = await this.table.findMany({ where: boundary.where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 200 });
+    const [systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen] = await this.routeFlags();
+    const certificates = await this.loadCertificates(ctx.companyId, rows);
+    const readHistory = await this.loadReadHistory(ctx.companyId, rows);
+    const payer = await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId);
+    return rows.map((row: any) => ({ ...toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen, certificates.get(row.certificateId), ctx, payer),
+      payeeAddressClearedByTaxIdChange: !row.payeeAddress?.trim() && readHistory.cleared.has(row.id),
+      ...(readHistory.previous.get(row.sourcePaymentId) && row.status === 'REQUIRED' && !row.certificateId && !row.externalCertificateNumber ? { previousCertificate: readHistory.previous.get(row.sourcePaymentId) } : {}) }));
+  }
+
+  private listWhere(ctx: RequestContext, filters: { status?: string; branchId?: string; sourcePaymentId?: string }): Prisma.WhtCertificateHandoffWhereInput {
+    return {
+      AND: [handoffBranchWhere(ctx)],
+      ...(filters.status ? { status: filters.status as WhtHandoffStatus } : {}),
+      ...(filters.branchId ? { sourceBranchId: filters.branchId } : {}),
+      ...(filters.sourcePaymentId ? { sourcePaymentId: filters.sourcePaymentId } : {}),
+    };
+  }
+
+  private routeFlags() {
+    return Promise.all([this.isSystemIssuanceOpen(), this.isSystemCorrectionOpen(), this.isSystemReplacementOpen()]);
+  }
+
+  async listPaged(ctx: RequestContext, filters: { status?: string; branchId?: string; sourcePaymentId?: string; search?: string; page?: number; pageSize?: number } = {}): Promise<WhtCertificateHandoffPageDto> {
+    const statuses: WhtHandoffStatus[] = ['REQUIRED', 'SYSTEM_ISSUED', 'EXTERNAL_LINKED', 'CANCELLED'];
+    if (filters.status && !statuses.includes(filters.status as WhtHandoffStatus)) {
+      throw new BadRequestException('ไม่พบสถานะที่เลือก กรุณาเลือกตัวกรองรายการอีกครั้ง');
+    }
+    const page = Number.isFinite(filters.page) ? Math.max(1, Math.floor(filters.page!)) : 1;
+    const pageSize = Number.isFinite(filters.pageSize) ? Math.min(100, Math.max(1, Math.floor(filters.pageSize!))) : 20;
+    const search = filters.search?.trim();
+    const [systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen] = await this.routeFlags();
+    // Counts, source states and rows share a snapshot, including while an expense is reopened.
+    return this.taxRepo.prisma.client.$transaction(async (db) => {
+      const payer = await currentWhtPayerDetails(db, ctx.companyId);
+      const boundary = await handoffReadBoundary(db, ctx, this.listWhere(ctx, { ...filters, status: undefined }));
+      // Delivery A clears cancelled pointers; the append-only history retains the paper's identity.
+      const scoped = await db.whtCertificateHandoff.findMany({
+        where: boundary.where, select: { id: true },
+      });
+      const expenseIds = [...boundary.expenses.keys()];
+      const history = scoped.length || expenseIds.length ? await db.whtCertificateHistory.findMany({
+        where: { companyId: ctx.companyId, OR: [{ handoffId: { in: scoped.map(row => row.id) } }, { expenseId: { in: expenseIds } }] },
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+        select: { handoffId: true, expenseId: true, certificateNumber: true, relatedCertificateNumber: true, certificateDate: true, isExternal: true, occurredAt: true, eventType: true, reason: true, detailsJson: true },
+      }) : [];
+      const cancellations = new Map<string, (typeof history)[number]>();
+      for (const event of history) if (CANCELLATION_EVENTS.includes(event.eventType) && !(event.detailsJson as Record<string, unknown> | null)?.removedManually && !cancellations.has(event.handoffId)) cancellations.set(event.handoffId, event);
+      const previous = previousCertificates(history);
+      const cleared = clearedAddressHandoffs(history);
+      const historicalMatches = new Map<string, string[]>();
+      if (search) for (const event of history) {
+        const details = event.detailsJson as { previousRecord?: { number?: string } } | null;
+        const numbers = [event.certificateNumber, event.relatedCertificateNumber, details?.previousRecord?.number]
+          .filter((number): number is string => typeof number === 'string' && number.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+        if (numbers.length) historicalMatches.set(event.handoffId, [...(historicalMatches.get(event.handoffId) ?? []), ...numbers]);
+      }
+      const confirmed = [...boundary.expenses.values()].filter(expense => expense.status === 'CONFIRMED').map(expense => expense.id);
+      const conditions: Prisma.WhtCertificateHandoffWhereInput[] = [boundary.where, {
+        OR: [{ status: { not: 'REQUIRED' } }, nonExpenseHandoffWhere, { sourcePaymentId: { in: confirmed } }],
+      }];
+      if (search) {
+        const certificates = await db.whtCertificate.findMany({
+          where: { companyId: ctx.companyId, OR: [
+            { certificateNumber: { contains: search, mode: 'insensitive' } },
+            { payeeSnapshotJson: { path: ['name'], string_contains: search, mode: 'insensitive' } },
+            { payeeSnapshotJson: { path: ['taxId'], string_contains: search, mode: 'insensitive' } },
+          ] }, select: { id: true },
+        });
+        conditions.push({ OR: [
+          { prefillSnapshotJson: { path: ['payeeSnapshot', 'name'], string_contains: search, mode: 'insensitive' } },
+          { prefillSnapshotJson: { path: ['payeeSnapshot', 'taxId'], string_contains: search, mode: 'insensitive' } },
+          { externalCertificateNumber: { contains: search, mode: 'insensitive' } },
+          { certificateId: { in: certificates.map(certificate => certificate.id) } },
+          { id: { in: [...historicalMatches.keys()] } },
+          { sourcePaymentType: 'expense.record', sourcePaymentId: { in: [...boundary.expenses.values()]
+            .filter(expense => expense.expenseNumber?.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map(expense => expense.id) } },
+        ] });
+      }
+      const where: Prisma.WhtCertificateHandoffWhereInput = { AND: conditions };
+      const values = await Promise.all(statuses.map(status => db.whtCertificateHandoff.count({ where: { AND: [where, { status }] } })));
+      const counts = Object.fromEntries(statuses.map((status, index) => [status, values[index]])) as Record<WhtHandoffStatus, number>;
+      const total = filters.status ? counts[filters.status as WhtHandoffStatus] : values.reduce((sum, value) => sum + value, 0);
+      const rows = await db.whtCertificateHandoff.findMany({
+        where: { AND: [where, ...(filters.status ? [{ status: filters.status as WhtHandoffStatus }] : [])] },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize,
+      });
+      const certificates = await this.loadCertificates(ctx.companyId, rows, db);
+      return { rows: rows.map(row => {
+        const dto = toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen, certificates.get(row.certificateId ?? ''), ctx, payer);
+        const expense = row.sourcePaymentType === 'expense.record' ? boundary.expenses.get(row.sourcePaymentId ?? '') : undefined;
+        const payee = dto.currentCertificate?.payee ?? dto.prefill.payeeSnapshot;
+        const cancellation = row.status === 'CANCELLED' ? cancellations.get(row.id) : undefined;
+        const currentNumber = row.status === 'SYSTEM_ISSUED' ? dto.certificateNumber : row.status === 'EXTERNAL_LINKED' ? dto.externalCertificateNumber : null;
+        return {
+          ...dto,
+          matchedPreviousNumber: historicalMatches.get(row.id)?.find(number => number !== currentNumber) ?? null,
+          expenseDescription: expense ? expenseSourceDescription(expense.lines ?? []) || null : null,
+          payeeAddressClearedByTaxIdChange: !row.payeeAddress?.trim() && cleared.has(row.id),
+          payeeName: payee.name, payeeTaxId: payee.taxId,
+          expenseId: expense?.id ?? null, expenseNumber: expense?.expenseNumber ?? null,
+          documentDate: expense?.expenseDate.toISOString() ?? dto.prefill.paymentDate,
+          withheldAmount: dto.currentCertificate?.withheldAmount ?? dto.prefill.withheldAmount,
+          certificateNumber: dto.certificateNumber ?? dto.externalCertificateNumber ?? cancellation?.certificateNumber ?? null,
+          certificateIssuedAt: dto.certificateIssuedAt ?? dto.externalIssuedDate ?? cancellation?.certificateDate?.toISOString() ?? null,
+          ...(cancellation ? { cancellation: { cancelledAt: cancellation.occurredAt.toISOString(), eventType: cancellation.eventType as WhtCertificateHistoryEventType, reason: cancellation.reason ?? null } } : {}),
+          missing: whtHandoffMissing(dto.prefill),
+          hasPayeeAddress: Boolean(whtPayeeAddress(row.payeeAddress, dto.prefill.payeeSnapshot.address)),
+          ...(row.status === 'REQUIRED' && !row.certificateId && !row.externalCertificateNumber && previous.get(row.sourcePaymentId ?? '')
+            ? { previousCertificate: previous.get(row.sourcePaymentId ?? '') } : {}),
+        };
+      }), total, page, pageSize, counts };
+    }, { isolationLevel: 'RepeatableRead' });
+  }
+
+  private async loadReadHistory(companyId: string, rows: { id: string; status: string; sourcePaymentType?: string | null; sourcePaymentId?: string | null; certificateId?: string | null; externalCertificateNumber?: string | null }[]) {
+    const ids = [...new Set(rows.filter(row => row.status === 'REQUIRED' && !row.certificateId && !row.externalCertificateNumber && row.sourcePaymentType === 'expense.record')
+      .flatMap(row => row.sourcePaymentId ? [row.sourcePaymentId] : []))];
+    const history = rows.length ? await this.taxRepo.prisma.client.whtCertificateHistory.findMany({
+      where: { companyId, OR: [{ expenseId: { in: ids }, eventType: { in: CANCELLATION_EVENTS } },
+        { handoffId: { in: rows.map(row => row.id) }, eventType: 'PAYEE_ADDRESS_CLEARED' }] },
+      orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+      select: { expenseId: true, handoffId: true, eventType: true, certificateNumber: true, isExternal: true, occurredAt: true, detailsJson: true },
+    }) : [];
+    return { previous: previousCertificates(history), cleared: clearedAddressHandoffs(history) };
+  }
+
+  private async loadCertificates(companyId: string, rows: { certificateId?: string | null }[], db: Pick<Prisma.TransactionClient, 'whtCertificate'> = this.taxRepo.prisma.client) {
+    const ids = [...new Set(rows.flatMap((row) => row.certificateId ? [row.certificateId] : []))];
+    const certificates = ids.length ? await db.whtCertificate.findMany({
+      where: { companyId, id: { in: ids } },
+      select: { id: true, certificateNumber: true, issuedAt: true, taxPeriod: { select: { formType: true } },
+        incomeCategoryCode: true, incomeCategoryName: true, whtRate: true, grossAmount: true, withheldAmount: true,
+        paymentDate: true, payeeSnapshotJson: true },
+    }) : [];
+    return new Map(certificates.map((certificate) => [certificate.id, certificate]));
+  }
+
+  async getExpenseHistory(ctx: RequestContext, expenseId: string): Promise<WhtCertificateHistoryDto[]> {
+    if (!(await findReadableHandoffExpense(this.taxRepo.prisma.client, ctx, expenseId))) return [];
+    const handoffs = await this.table.findMany({
+      where: { companyId: ctx.companyId, sourcePaymentType: 'expense.record', sourcePaymentId: expenseId },
+      select: { id: true, sourceBranchId: true, status: true, externalCertificateNumber: true, externalEvidenceRef: true, linkNote: true },
     });
-    // §2.4: computed once per request, not per row.
-    const [systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen] = await Promise.all([
-      this.isSystemIssuanceOpen(), this.isSystemCorrectionOpen(), this.isSystemReplacementOpen(),
-    ]);
-    return rows.map((row: any) => toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen));
+    const handoffIds = handoffs.filter((row: any) => isBranchInScope(ctx.scopes ?? {}, row.sourceBranchId)).map((row: any) => row.id);
+    if (!handoffIds.length) return [];
+    const client = this.taxRepo.prisma.client;
+    const rows = await client.whtCertificateHistory.findMany({
+      where: { companyId: ctx.companyId, expenseId, handoffId: { in: handoffIds } },
+      orderBy: { occurredAt: 'desc' },
+    });
+    const actors = rows.length ? await client.user.findMany({
+      where: { id: { in: [...new Set(rows.map((row) => row.actorUserId))] } },
+      select: { id: true, displayName: true },
+    }) : [];
+    const names = new Map(actors.map((actor) => [actor.id, actor.displayName]));
+    return rows.map((row) => {
+      const removed = row.eventType === 'EXTERNAL_RECORDED' ? rows.filter(event => event.handoffId === row.handoffId && event.occurredAt >= row.occurredAt
+        && ((event.eventType === 'EXTERNAL_RECORD_REMOVED' && event.certificateNumber === row.certificateNumber)
+          || (event.eventType === 'EXTERNAL_RECORD_CHANGED' && (event.detailsJson as Record<string, any> | null)?.previousRecord?.number === row.certificateNumber)))
+        .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime())[0] : undefined;
+      const standing = row.eventType === 'EXTERNAL_RECORDED' && !removed ? handoffs.find((handoff: any) => handoff.id === row.handoffId
+        && handoff.status === 'EXTERNAL_LINKED' && handoff.externalCertificateNumber === row.certificateNumber) : undefined;
+      const changedPrevious = removed?.eventType === 'EXTERNAL_RECORD_CHANGED' ? (removed.detailsJson as Record<string, any>)?.previousRecord : null;
+      const priorDetails = changedPrevious ? { externalEvidenceRef: changedPrevious.externalEvidenceRef, linkNote: changedPrevious.note } : removed?.detailsJson;
+      const details = (row.detailsJson ?? priorDetails ?? standing) as Record<string, unknown> | null;
+      return {
+        eventType: row.eventType as WhtCertificateHistoryEventType,
+        certificateNumber: row.certificateNumber,
+        isExternal: row.isExternal,
+        certificateDate: row.certificateDate?.toISOString() ?? null,
+        reason: row.reason,
+        evidenceRef: typeof details?.externalEvidenceRef === 'string' ? details.externalEvidenceRef : null,
+        note: typeof details?.linkNote === 'string' ? details.linkNote : null,
+        relatedCertificateNumber: row.relatedCertificateNumber,
+        actorDisplayName: names.get(row.actorUserId) ?? null,
+        occurredAt: row.occurredAt.toISOString(),
+        taxFilingAttested: row.taxFilingAttested,
+        ...(details?.removedManually === true ? { removedManually: true } : {}),
+        ...(row.eventType === 'EXTERNAL_RECORD_CHANGED' && details?.previousRecord ? { previousExternalRecord: details.previousRecord as NonNullable<WhtCertificateHistoryDto['previousExternalRecord']> } : {}),
+      };
+    });
   }
 
   /** Company-scoped lookup on the link fence, so a replay never crosses a tenant boundary. */
@@ -201,7 +382,7 @@ export class WhtCertificateHandoffUseCase {
    * identical evidence, would otherwise return A as a happy "replay" while B silently stayed
    * REQUIRED — the operator sees success and the payee never gets a certificate.
    */
-  private replayOrConflict(found: any, handoffId: string, linkFingerprint: string): WhtCertificateHandoffDto {
+  private async replayOrConflict(found: any, handoffId: string, linkFingerprint: string, ctx: RequestContext): Promise<WhtCertificateHandoffDto> {
     if (found.id !== handoffId) {
       throw new ConflictException({
         code: 'wht_handoff_link_command_reused',
@@ -209,7 +390,7 @@ export class WhtCertificateHandoffUseCase {
         handoffId: found.id,
       });
     }
-    if (found.linkPayloadFingerprint === linkFingerprint) return toDto(found);
+    if (found.linkPayloadFingerprint === linkFingerprint) return toDto(found, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
     throw new ConflictException({
       code: 'wht_handoff_link_command_reused',
       message: 'รหัสคำสั่งนี้ถูกใช้กับข้อมูลชุดอื่นแล้ว',
@@ -218,14 +399,14 @@ export class WhtCertificateHandoffUseCase {
   }
 
   async get(ctx: RequestContext, handoffId: string): Promise<WhtCertificateHandoffDto> {
-    const row = await this.table.findUnique({ where: { id: handoffId } });
-    // Tenant check is explicit rather than part of the lookup so a cross-company id is
-    // indistinguishable from a missing one.
-    if (!row || row.companyId !== ctx.companyId) throw new NotFoundException('WHT handoff not found.');
-    const [systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen] = await Promise.all([
-      this.isSystemIssuanceOpen(), this.isSystemCorrectionOpen(), this.isSystemReplacementOpen(),
-    ]);
-    return toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen);
+    const row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
+    const [systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen] = await this.routeFlags();
+    const certificates = await this.loadCertificates(ctx.companyId, [row]);
+    const readHistory = await this.loadReadHistory(ctx.companyId, [row]);
+    const payer = await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId);
+    return { ...toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen, certificates.get(row.certificateId ?? ''), ctx, payer),
+      payeeAddressClearedByTaxIdChange: !row.payeeAddress?.trim() && readHistory.cleared.has(row.id),
+      ...(readHistory.previous.get(row.sourcePaymentId ?? '') ? { previousCertificate: readHistory.previous.get(row.sourcePaymentId ?? '') } : {}) };
   }
 
   /**
@@ -251,12 +432,11 @@ export class WhtCertificateHandoffUseCase {
       throw new BadRequestException({ code: 'counterparty_address_too_long', message: 'ที่อยู่ยาวเกิน 500 ตัวอักษร ตัดให้สั้นลงแล้วบันทึกอีกครั้ง' });
     }
 
-    const row = await this.table.findUnique({ where: { id: handoffId } });
-    if (!row || row.companyId !== ctx.companyId) throw new NotFoundException('WHT handoff not found.');
+    const row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
     // The refusal: once the certificate exists, an address typed here reaches no document. Saying
     // so beats accepting the text and letting the operator believe the paper changed.
     if (row.status !== 'REQUIRED') throw payeeAddressNotEditable(row.status);
-    if ((row.payeeAddress ?? '') === payeeAddress) return toDto(row);
+    if ((row.payeeAddress ?? '') === payeeAddress) return toDto(row, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
 
     // Same conditional-write shape as the link, for the same reason: a colleague who links between
     // the read above and this write must not end up with an address landing on a finished job.
@@ -282,7 +462,7 @@ export class WhtCertificateHandoffUseCase {
       // list does not cover it, so the value never enters metadata — only that it changed.
       metadataJson: { addressChanged: true },
     });
-    return { ...toDto(updated), counterpartyAutoSave: await this.saveAddressToRegistry(ctx, row, payeeAddress) };
+    return { ...toDto(updated, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId)), counterpartyAutoSave: await this.saveAddressToRegistry(ctx, row, payeeAddress) };
   }
 
   /**
@@ -359,6 +539,146 @@ export class WhtCertificateHandoffUseCase {
     }
   }
 
+  /** Changes the standing self-issued record, never the source expense or a system certificate. */
+  async changeExternal(ctx: RequestContext, handoffId: string, dto: ChangeExternalWhtCertificateDto): Promise<WhtCertificateHandoffDto> {
+    const allowed = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
+    if (!ctx.permissions.includes('wht.external_certificate.link')) throw new ForbiddenException({
+      code: 'wht_handoff_external_change_permission_denied', message: WHT_EXTERNAL_RECORD_WORDS.permissionDenied,
+    });
+    const parsed = normalizeWhtLinkEvidence(dto as WhtLinkEvidenceInput);
+    if (!parsed.ok) throw new BadRequestException({ code: 'wht_handoff_external_record_invalid', message: WHT_EXTERNAL_RECORD_WORDS.invalid });
+    const { commandId, externalCertificateNumber, externalEvidenceRef, issuedDate, note } = parsed.value;
+    if (issuedDate.toISOString().slice(0, 10) > todayCivilDate('Asia/Bangkok')) throw new BadRequestException({
+      code: 'wht_handoff_external_issued_date_future', message: WHT_EXTERNAL_RECORD_WORDS.futureDate,
+    });
+    const payloadFingerprint = fingerprint({ handoffId, externalCertificateNumber, externalEvidenceRef, issuedDate: issuedDate.toISOString(), note });
+    const updated = await this.taxRepo.prisma.client.$transaction(async tx => {
+      // The company-wide command lock makes history a durable retry fence, even after later changes.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:${commandId}:wht-external-record-change`}))`;
+      let expense: Awaited<ReturnType<typeof tx.expenseRecord.findFirst>> = null;
+      if (allowed.sourcePaymentType === 'expense.record' && allowed.sourcePaymentId) {
+        await lockExpenseCorrection(tx, ctx.companyId, allowed.sourcePaymentId);
+        expense = await tx.expenseRecord.findFirst({ where: { companyId: ctx.companyId, id: allowed.sourcePaymentId } });
+        if (expense?.status !== 'CONFIRMED') throw new ConflictException({ code: 'expense_wht_source_changed', message: expenseCorrectionBlockerMessage('not_confirmed') });
+      } else {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:${handoffId}:wht-external-record`}))`;
+      }
+      // Read again after the lifecycle lock: the old history values must be the last committed record.
+      const row = await loadScopedWhtHandoff(tx, ctx, handoffId);
+      if (row.status !== 'EXTERNAL_LINKED') throw new ConflictException({ code: 'wht_handoff_not_linkable', message: WHT_EXTERNAL_RECORD_WORDS.notLinkable });
+      const [previousCommand] = await tx.whtCertificateHistory.findMany({
+        where: { companyId: ctx.companyId, eventType: 'EXTERNAL_RECORD_CHANGED', detailsJson: { path: ['commandId'], equals: commandId } }, take: 1,
+      });
+      if (previousCommand) {
+        const details = previousCommand.detailsJson as Record<string, unknown>;
+        if (previousCommand.handoffId !== handoffId || details.payloadFingerprint !== payloadFingerprint) throw new ConflictException({
+          code: 'wht_handoff_link_command_reused', message: WHT_EXTERNAL_RECORD_WORDS.commandReused,
+        });
+        return row;
+      }
+      const formType = (row.prefillSnapshotJson as WhtHandoffPrefillDto).formType;
+      if (expense) {
+        const locks = await readExpensePeriodLocks(tx, expense, [], true);
+        const filed = locks.lockedTaxPeriods.find((period: { formType: string }) => period.formType === 'PND3' || period.formType === 'PND53');
+        if (filed) throw new ConflictException({ code: 'tax_period_filed', message: withholdingPeriodLockedMessage(filed.periodKey, 'แก้ไขเอกสารนี้', filed.formType, 'EXTERNAL') });
+      } else if (formType) {
+        const periodKey = formPeriodKey(formType, new Date((row.prefillSnapshotJson as WhtHandoffPrefillDto).paymentDate));
+        await tx.$executeRaw`SELECT id FROM "TaxPeriod" WHERE "companyId" = ${ctx.companyId} AND "formType"::text = ${formType} AND "periodKey" = ${periodKey} ORDER BY id FOR UPDATE`;
+        const filed = await tx.taxPeriod.findFirst({ where: { companyId: ctx.companyId, formType, periodKey, status: { in: ['FILED', 'PAID', 'CLOSED'] } }, select: { periodKey: true, formType: true } });
+        if (filed) throw new ConflictException({ code: 'tax_period_filed', message: withholdingPeriodLockedMessage(filed.periodKey, 'แก้ไขเอกสารนี้', filed.formType, 'EXTERNAL') });
+      }
+      if (row.externalCertificateNumber === externalCertificateNumber && row.externalIssuedDate?.toISOString() === issuedDate.toISOString()
+        && (row.externalEvidenceRef ?? '') === externalEvidenceRef && (row.linkNote ?? null) === note) throw new ConflictException({
+        code: 'wht_handoff_external_record_no_changes', message: WHT_EXTERNAL_RECORD_WORDS.noChanges,
+      });
+      const previousRecord = { number: row.externalCertificateNumber, issuedDate: row.externalIssuedDate?.toISOString() ?? null, externalEvidenceRef: row.externalEvidenceRef, note: row.linkNote };
+      const result = await tx.whtCertificateHandoff.update({ where: { id: handoffId }, data: {
+        externalCertificateNumber, externalIssuedDate: issuedDate, externalEvidenceRef, linkNote: note,
+      } });
+      await appendWhtCertificateHistory(tx, row, {
+        eventType: 'EXTERNAL_RECORD_CHANGED', actorUserId: ctx.userId, isExternal: true,
+        certificateNumber: externalCertificateNumber, certificateDate: issuedDate,
+        detailsJson: { commandId, payloadFingerprint, externalEvidenceRef, linkNote: note,
+          previousRecord },
+      });
+      await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'tax.wht_certificate.external_record_changed',
+        targetType: 'wht_certificate_handoff', targetId: handoffId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: { commandId, previousNumber: previousRecord.number, externalCertificateNumber },
+      }, tx);
+      return result;
+    }, { isolationLevel: 'ReadCommitted' });
+    return toDto(updated, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
+  }
+
+  async removeExternal(ctx: RequestContext, handoffId: string, dto: RemoveExternalWhtCertificateDto): Promise<WhtCertificateHandoffDto> {
+    const allowed = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
+    if (!ctx.permissions.includes('wht.external_certificate.link')) throw new ForbiddenException({
+      code: 'wht_handoff_external_remove_permission_denied', message: WHT_EXTERNAL_RECORD_WORDS.removePermissionDenied,
+    });
+    if (typeof dto.reason !== 'string' || !isExpenseVoidReason(dto.reason) || dto.reason.trim().length > 500) throw new BadRequestException({
+      code: 'wht_handoff_external_remove_reason_invalid', message: WHT_EXTERNAL_RECORD_WORDS.removeInvalid,
+    });
+    if (typeof dto.commandId !== 'string' || !dto.commandId.trim() || dto.commandId.length > 200
+      || typeof dto.expectedUpdatedAt !== 'string' || !Number.isFinite(Date.parse(dto.expectedUpdatedAt))) throw new BadRequestException({
+      code: 'wht_handoff_external_remove_request_invalid', message: WHT_EXTERNAL_RECORD_WORDS.removeRequestInvalid,
+    });
+    const commandId = dto.commandId.trim(), reason = dto.reason.trim();
+    const payloadFingerprint = fingerprint({ handoffId, reason, expectedUpdatedAt: dto.expectedUpdatedAt });
+    await this.taxRepo.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:${commandId}:wht-external-record-remove`}))`;
+      if (allowed.sourcePaymentType === 'expense.record' && allowed.sourcePaymentId) {
+        await lockExpenseCorrection(tx, ctx.companyId, allowed.sourcePaymentId);
+      } else {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:${handoffId}:wht-external-record`}))`;
+      }
+      const row = { ...await loadScopedWhtHandoff(tx, ctx, handoffId) };
+      const [previousCommand] = await tx.whtCertificateHistory.findMany({
+        where: { companyId: ctx.companyId, eventType: 'EXTERNAL_RECORD_REMOVED', detailsJson: { path: ['commandId'], equals: commandId } }, take: 1,
+      });
+      if (previousCommand) {
+        if (previousCommand.handoffId !== handoffId || (previousCommand.detailsJson as Record<string, unknown>).payloadFingerprint !== payloadFingerprint) throw new ConflictException({
+          code: 'wht_handoff_link_command_reused', message: WHT_EXTERNAL_RECORD_WORDS.commandReused,
+        });
+        return;
+      }
+      if (row.status !== 'EXTERNAL_LINKED' || row.updatedAt.toISOString() !== dto.expectedUpdatedAt) throw new ConflictException({
+        code: 'wht_handoff_not_linkable', message: WHT_EXTERNAL_RECORD_WORDS.notLinkable,
+      });
+      const expense = row.sourcePaymentType === 'expense.record' && row.sourcePaymentId
+        ? await tx.expenseRecord.findFirst({ where: { companyId: ctx.companyId, id: row.sourcePaymentId } }) : null;
+      if (row.sourcePaymentType === 'expense.record' && expense?.status !== 'CONFIRMED') throw new ConflictException({
+        code: 'expense_wht_source_changed', message: expenseCorrectionBlockerMessage('not_confirmed'),
+      });
+      const formType = (row.prefillSnapshotJson as WhtHandoffPrefillDto).formType;
+      if (expense) {
+        const locks = await readExpensePeriodLocks(tx, expense, [], true);
+        const filed = locks.lockedTaxPeriods.find((period: { formType: string }) => period.formType === 'PND3' || period.formType === 'PND53');
+        if (filed) throw new ConflictException({ code: 'tax_period_filed', message: withholdingPeriodLockedMessage(filed.periodKey, 'แก้ไขเอกสารนี้', filed.formType, 'EXTERNAL') });
+      } else if (formType) {
+        const periodKey = formPeriodKey(formType, new Date((row.prefillSnapshotJson as WhtHandoffPrefillDto).paymentDate));
+        await tx.$executeRaw`SELECT id FROM "TaxPeriod" WHERE "companyId" = ${ctx.companyId} AND "formType"::text = ${formType} AND "periodKey" = ${periodKey} ORDER BY id FOR UPDATE`;
+        const filed = await tx.taxPeriod.findFirst({ where: { companyId: ctx.companyId, formType, periodKey, status: { in: ['FILED', 'PAID', 'CLOSED'] } }, select: { periodKey: true, formType: true } });
+        if (filed) throw new ConflictException({ code: 'tax_period_filed', message: withholdingPeriodLockedMessage(filed.periodKey, 'แก้ไขเอกสารนี้', filed.formType, 'EXTERNAL') });
+      }
+      const changed = await tx.whtCertificateHandoff.updateMany({
+        where: { id: handoffId, companyId: ctx.companyId, status: 'EXTERNAL_LINKED', updatedAt: row.updatedAt },
+        data: { status: 'REQUIRED', externalCertificateNumber: null, externalEvidenceRef: null, externalIssuedDate: null,
+          linkNote: null, linkCommandId: null, linkPayloadFingerprint: null, linkedAt: null, linkedByUserId: null },
+      });
+      if (changed.count !== 1) throw new ConflictException({ code: 'wht_handoff_not_linkable', message: WHT_EXTERNAL_RECORD_WORDS.notLinkable });
+      await appendWhtCertificateHistory(tx, row, {
+        eventType: 'EXTERNAL_RECORD_REMOVED', actorUserId: ctx.userId, isExternal: true,
+        certificateNumber: row.externalCertificateNumber, certificateDate: row.externalIssuedDate, reason,
+        detailsJson: { commandId, payloadFingerprint, removedManually: true, externalEvidenceRef: row.externalEvidenceRef, linkNote: row.linkNote },
+      });
+      await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'tax.wht_certificate.external_record_removed',
+        targetType: 'wht_certificate_handoff', targetId: handoffId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: { commandId, certificateNumber: row.externalCertificateNumber, reason },
+      }, tx);
+    }, { isolationLevel: 'ReadCommitted' });
+    return this.get(ctx, handoffId);
+  }
+
   /**
    * Records the externally issued certificate against the handoff. Writes no `WhtCertificate`:
    * the SYSTEM route is closed, so there is no system number to register and no active-certificate
@@ -375,16 +695,15 @@ export class WhtCertificateHandoffUseCase {
     // handoffs, so identity alone must never make one look like a replay of the other.
     const linkFingerprint = fingerprint({ handoffId, externalCertificateNumber, externalEvidenceRef, issuedDate: issuedDate.toISOString(), note });
 
-    const row = await this.table.findUnique({ where: { id: handoffId } });
-    if (!row || row.companyId !== ctx.companyId) throw new NotFoundException('WHT handoff not found.');
+    const row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
 
     // Same-LINK-command replay first, before any state check: a retry after a dropped response must
     // return the stored result rather than collide with itself. Keyed on the link command's own
     // identity — the creation command id cannot tell a retry from a different second link.
     const replayed = await this.findByLinkCommand(ctx.companyId, commandId);
-    if (replayed) return this.replayOrConflict(replayed, handoffId, linkFingerprint);
+    if (replayed) return this.replayOrConflict(replayed, handoffId, linkFingerprint, ctx);
     if (row.status !== 'REQUIRED' && row.status !== 'EXTERNAL_LINKED') {
-      throw new ConflictException({ code: 'wht_handoff_not_linkable', message: 'สถานะของงานนี้ไม่รองรับการแนบเอกสาร', status: row.status });
+      throw new ConflictException({ code: 'wht_handoff_not_linkable', message: WHT_EXTERNAL_RECORD_WORDS.notLinkable, status: row.status });
     }
 
     // The transition itself is a single conditional statement, not read-then-write. Two operators
@@ -406,14 +725,22 @@ export class WhtCertificateHandoffUseCase {
           linkedByUserId: ctx.userId,
         },
       });
-      outcome = row.sourcePaymentType === 'expense.record' && row.sourcePaymentId
-        ? await this.taxRepo.prisma.client.$transaction(async (tx: any) => {
+      outcome = await this.taxRepo.prisma.client.$transaction(async (tx: any) => {
+        if (row.sourcePaymentType === 'expense.record' && row.sourcePaymentId) {
           await lockExpenseCorrection(tx, ctx.companyId, row.sourcePaymentId);
           const expense = await tx.expenseRecord.findFirst({ where: { companyId: ctx.companyId, id: row.sourcePaymentId }, select: { status: true } });
           if (expense?.status !== 'CONFIRMED') throw new ConflictException({ code: 'expense_wht_source_changed', message: expenseCorrectionBlockerMessage('not_confirmed') });
-          return write(tx.whtCertificateHandoff);
-        }, { isolationLevel: 'ReadCommitted' })
-        : await write(this.table);
+        }
+        const result = await write(tx.whtCertificateHandoff);
+        if (result.count === 1) {
+          await appendWhtCertificateHistory(tx, row, {
+            eventType: 'EXTERNAL_RECORDED', actorUserId: ctx.userId, isExternal: true,
+            certificateNumber: externalCertificateNumber, certificateDate: issuedDate,
+            detailsJson: { externalEvidenceRef, linkNote: note },
+          });
+        }
+        return result;
+      }, { isolationLevel: 'ReadCommitted' });
     } catch (error) {
       // A concurrent request took this link command id between our lookup and this write. The
       // lookup above cannot close that window, so the unique index does — and the loser gets the
@@ -421,14 +748,14 @@ export class WhtCertificateHandoffUseCase {
       if ((error as { code?: string })?.code !== 'P2002') throw error;
       const winner = await this.findByLinkCommand(ctx.companyId, commandId);
       if (!winner) throw error;
-      return this.replayOrConflict(winner, handoffId, linkFingerprint);
+      return this.replayOrConflict(winner, handoffId, linkFingerprint, ctx);
     }
     if (outcome.count === 0) {
       const current = await this.table.findUnique({ where: { id: handoffId } });
-      if (current?.linkCommandId === commandId && current?.linkPayloadFingerprint === linkFingerprint) return toDto(current);
+      if (current?.linkCommandId === commandId && current?.linkPayloadFingerprint === linkFingerprint) return toDto(current, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
       throw new ConflictException({
         code: 'wht_handoff_already_linked',
-        message: 'หนังสือรับรองนี้ถูกแนบไว้แล้ว',
+        message: WHT_EXTERNAL_RECORD_WORDS.alreadyLinked,
         status: current?.status ?? null,
         externalCertificateNumber: current?.externalCertificateNumber ?? null,
       });
@@ -451,7 +778,7 @@ export class WhtCertificateHandoffUseCase {
         linkPayloadFingerprint: linkFingerprint,
       },
     });
-    return toDto(updated);
+    return toDto(updated, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
   }
 }
 
@@ -481,7 +808,8 @@ function canonical(value: unknown): string {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
 }
 
-function toDto(row: any, systemIssuanceOpen = false, systemCorrectionOpen = false, systemReplacementOpen = false): WhtCertificateHandoffDto {
+function toDto(row: any, systemIssuanceOpen = false, systemCorrectionOpen = false, systemReplacementOpen = false, certificate?: Pick<WhtCertificate, 'certificateNumber' | 'issuedAt' | 'incomeCategoryCode' | 'incomeCategoryName' | 'whtRate' | 'grossAmount' | 'withheldAmount' | 'paymentDate' | 'payeeSnapshotJson'> & { taxPeriod: { formType: string } }, ctx?: RequestContext, payer = { taxId: null as string | null, address: null as string | null }): WhtCertificateHandoffDto {
+  const payee = certificate?.payeeSnapshotJson as PayeeSnapshot | undefined;
   return {
     id: row.id,
     companyId: row.companyId,
@@ -495,6 +823,7 @@ function toDto(row: any, systemIssuanceOpen = false, systemCorrectionOpen = fals
     taxEventIds: (row.taxEventIdsJson ?? []) as string[],
     prefill: row.prefillSnapshotJson as WhtHandoffPrefillDto,
     payeeAddress: row.payeeAddress ?? null,
+    payeeAddressClearedByTaxIdChange: false,
     payeeAddressAt: row.payeeAddressAt?.toISOString() ?? null,
     payeeAddressByUserId: row.payeeAddressByUserId ?? null,
     externalCertificateNumber: row.externalCertificateNumber ?? null,
@@ -505,10 +834,36 @@ function toDto(row: any, systemIssuanceOpen = false, systemCorrectionOpen = fals
     linkedAt: row.linkedAt?.toISOString() ?? null,
     linkedByUserId: row.linkedByUserId ?? null,
     certificateId: row.certificateId ?? null,
+    certificateNumber: certificate?.certificateNumber ?? null,
+    certificateIssuedAt: certificate?.issuedAt?.toISOString() ?? null,
+    currentCertificate: certificate ? {
+      number: certificate.certificateNumber, issuedAt: certificate.issuedAt?.toISOString() ?? null,
+      formType: certificate.taxPeriod.formType === 'PND3' ? 'PND3' : 'PND53',
+      incomeCategoryCode: certificate.incomeCategoryCode, incomeCategoryName: certificate.incomeCategoryName,
+      whtRate: certificate.whtRate.toString(), grossAmount: certificate.grossAmount.toString(), withheldAmount: certificate.withheldAmount.toString(),
+      paymentDate: certificate.paymentDate.toISOString(),
+      payee: { name: payee?.name ?? '', taxId: payee?.taxId ?? null, address: payee?.address ?? null, branchCode: payee?.branchCode ?? null },
+    } : null,
+    payerMissing: whtPayerIdentity((row.prefillSnapshotJson as WhtHandoffPrefillDto).payerSnapshot, payer).missing,
     systemIssuanceOpen,
     systemCorrectionOpen,
     systemReplacementOpen,
+    canChangeExternalRecord: row.status === 'EXTERNAL_LINKED' && Boolean(ctx?.permissions.includes('wht.external_certificate.link')),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+const CANCELLATION_EVENTS = ['CANCELLED_SOURCE_REOPENED', 'CANCELLED_SOURCE_VOIDED', 'EXTERNAL_RECORD_REMOVED'];
+
+function clearedAddressHandoffs(events: { handoffId: string; eventType: string }[]) {
+  return new Set(events.filter(event => event.eventType === 'PAYEE_ADDRESS_CLEARED').map(event => event.handoffId));
+}
+
+function previousCertificates(events: { eventType: string; expenseId: string | null; certificateNumber: string | null; isExternal: boolean; occurredAt: Date; detailsJson?: unknown }[]) {
+  const previous = new Map<string, NonNullable<WhtCertificateHandoffDto['previousCertificate']>>();
+  for (const event of events) if (CANCELLATION_EVENTS.includes(event.eventType) && !(event.detailsJson as Record<string, unknown> | null)?.removedManually && event.expenseId && !previous.has(event.expenseId)) previous.set(event.expenseId, {
+    number: event.certificateNumber, kind: event.isExternal ? 'EXTERNAL' : 'SYSTEM', cancelledAt: event.occurredAt.toISOString(),
+  });
+  return previous;
 }

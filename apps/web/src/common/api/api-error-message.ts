@@ -1,4 +1,5 @@
-import { REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY, REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_ERROR_WORDS, REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY, REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS } from '@watchdog-bms/contracts';
+import { whtPayerIdentityMissingMessage, WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE, WHT_EXTERNAL_RECORD_WORDS, EXPENSE_VOID_CERTIFICATE_WORDS, REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, WHT_CERTIFICATE_CORRECTION_WORDS, reimbursementCertificateCancellationMessage } from '@watchdog-bms/contracts';
 import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, type ExpenseCorrectionCapabilities, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import { REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, PAYMENT_DATE_IN_FUTURE, REIMBURSEMENT_DUPLICATE_UNRESOLVED, reimbursementDuplicateSubmitNotice, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateBlockNotice, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE, COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS } from '@watchdog-bms/contracts';
@@ -13,6 +14,12 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECU
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  // Document commands have their own collision/payment retry words; expense void keeps its words.
+  ...DISBURSEMENT_VOUCHER_ERROR_WORDS,
+  // The numeric facts arrive in the server message. A code-only reply uses complete guidance.
+  disbursement_amount_invalid: DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_invalid_input,
+  disbursement_source_changed: DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_source_changed.replace('รายการ {number} ', 'รายการในใบนี้'),
+  disbursement_payment_source_changed: DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_payment_source_changed.replace('รายการ {number} ', 'รายการในใบนี้'),
   ...REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS,
   company_team_note_version_conflict: NOTE_WORDS.conflict,
   company_team_note_invalid: NOTE_WORDS.invalid,
@@ -399,6 +406,7 @@ const CODE_LABELS: Record<string, string> = {
   ocr_config_version_conflict: 'การตั้งค่า OCR ถูกแก้ไขโดยผู้ดูแลคนอื่น ระบบยังไม่ได้บันทึก กรุณาโหลดค่าล่าสุดแล้วตรวจสอบอีกครั้ง',
   // The page reloads the partner detail itself on this 409, so the sentence asks for a check, not a reload.
   manual_expense_web_entry_version_conflict: 'ค่านี้ถูกเปลี่ยนไปแล้ว กรุณาตรวจค่าล่าสุดก่อนบันทึกอีกครั้ง',
+  disbursement_voucher_web_entry_version_conflict: 'การตั้งค่านี้เปลี่ยนไปแล้ว กรุณาโหลดหน้านี้ใหม่แล้วลองอีกครั้ง',
   // P10-L §15.1: the monthly AI image-read ceiling. Worded as reads, not receipts, because the
   // admission charges every image the assistant looks at. The receipt itself was saved — only the
   // read was refused — so the copy says what still works before it says what to do about the
@@ -433,6 +441,7 @@ const CODE_LABELS: Record<string, string> = {
   output_tax_code_line_mismatch: 'รหัสภาษีที่หัวเอกสารไม่ตรงกับรายการภาษี กรุณาตรวจรหัสภาษีก่อนบันทึก',
   posting_rule_missing: 'ยังไม่มีกฎลงบัญชีที่ผ่านการตรวจสำหรับเอกสารนี้ จึงยังไม่สร้างรายการบัญชี',
   expense_correction_blocked: EXPENSE_CORRECTION_WORDS.unavailable,
+  expense_disbursement_reserved: 'รายการนี้ถูกจองไว้ในใบเตรียมจ่าย ให้เปิดใบนั้นเพื่อตรวจสอบ หรือสอบถามผู้จัดทำก่อนทำรายการอีกครั้ง',
   expense_rejection_payments_recorded: expenseCorrectionBlockerMessage('recorded_payments'),
   expense_rejection_paid_balance: expenseCorrectionBlockerMessage('legacy_paid_balance'),
   expense_tax_source_changed: EXPENSE_CORRECTION_WORDS.sourceChanged,
@@ -473,7 +482,7 @@ const CODE_LABELS: Record<string, string> = {
   EXPENSE_DRAFT_DELETED: 'รายการที่บันทึกไว้ถูกลบแล้ว กรุณากลับไปหน้ารายการค่าใช้จ่าย',
   EXPENSE_DRAFT_KEY_CONFLICT: 'ข้อมูลที่ส่งบันทึกไม่ตรงกับรายการเดิม กรุณากลับไปหน้ารายการค่าใช้จ่ายเพื่อตรวจสอบก่อนบันทึกใหม่',
   EXPENSE_NUMBER_OWNER_CONFLICT: 'เลขรายจ่ายไม่ตรงกับทะเบียน กรุณาติดต่อผู้ดูแลเพื่อตรวจสอบเลขรายจ่ายนี้',
-  EXPENSE_SOURCE_DRAFT_INCOMPLETE: 'ยังส่งตรวจหรือยืนยันไม่ได้ กรุณาเติมข้อมูลบิลที่ยังขาดแล้วเก็บร่างก่อน',
+  EXPENSE_SOURCE_DRAFT_INCOMPLETE: 'ยังส่งตรวจหรือยืนยันไม่ได้ กรุณาเติมข้อมูลบิลที่ยังขาดแล้วบันทึกฉบับร่างก่อน',
   EXPENSE_DOCUMENT_REVIEW_INCOMPLETE: 'ตรวจประเภทเอกสาร สถานะภาษี และหลักฐานที่เลือก แล้วกดบันทึกการตรวจ',
   EXPENSE_EVIDENCE_REVIEW_REQUIRED: 'บันทึกการตรวจหลักฐานล่าสุดก่อนยืนยัน หากเลือกใช้ใบแทน ต้องทำใบแทนให้สมบูรณ์ก่อน',
   EXPENSE_DOCUMENT_DATE_REVIEW_REQUIRED: 'ตรวจวันที่ในใบเสร็จที่ขั้นตรวจข้อมูล แล้วบันทึกก่อนส่งตรวจหรือยืนยันค่ะ',
@@ -486,6 +495,9 @@ const CODE_LABELS: Record<string, string> = {
   // `tax` module is outside `api-error-coverage.spec.ts`'s launch list, so nothing audits these —
   // they are here because both strings reach the AP screen.
   wht_handoff_address_not_editable: 'รายการนี้ออกหนังสือรับรองไปแล้ว ที่อยู่ที่พิมพ์ที่นี่จึงไม่มีผลกับเอกสารที่ออกไป แก้ที่อยู่ผู้รับเงินได้ที่หน้าคู่ค้า',
+  wht_payer_identity_missing: whtPayerIdentityMissingMessage(['TAX_ID', 'ADDRESS']),
+  wht_correction_field_locked: WHT_CERTIFICATE_CORRECTION_WORDS.fieldLocked,
+  wht_handoff_payee_address_missing: WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE,
   wht_handoff_payee_address_required: 'กรุณาพิมพ์ที่อยู่ผู้รับเงินตามที่จะพิมพ์ลงหนังสือรับรอง',
   counterparty_conflict: 'มีคนแก้ข้อมูลคู่ค้านี้ไปแล้ว โหลดหน้านี้ใหม่แล้วบันทึกอีกครั้ง',
   counterparty_address_too_long: 'ที่อยู่ยาวเกิน 500 ตัวอักษร ตัดให้สั้นลงแล้วบันทึกอีกครั้ง',
@@ -498,7 +510,7 @@ const CODE_LABELS: Record<string, string> = {
   expense_buyer_match_reason_required: 'กรุณาพิมพ์เหตุผลที่ใบนี้ใช้ได้ ไม่เกิน 500 ตัวอักษร แล้วกดบันทึกอีกครั้ง',
   EXPENSE_PURPOSE_TEXT_INVALID: 'กรุณาใช้ช่องว่างหรือจุลภาคแทนเครื่องหมาย · ในช่อง “ซื้อไปใช้ทำอะไร” หรือเว้นช่องนี้ไว้ได้',
   EXPENSE_SOURCE_DRAFT_INVALID: 'ข้อมูลร่างบางช่องไม่ถูกต้อง กรุณาตรวจวันที่ จำนวน ราคา และหมวดค่าใช้จ่ายแล้วลองอีกครั้ง',
-  expense_source_line_identity_changed: 'รายการในบิลถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่ ตรวจสอบ แล้วจึงเก็บร่างอีกครั้ง',
+  expense_source_line_identity_changed: 'รายการในบิลถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่ ตรวจสอบ แล้วจึงบันทึกฉบับร่างอีกครั้ง',
   // Plan 13.11.B: a 400 body reaches the client as `code` only, so the amounts and the line to open
   // are shown on the VAT card itself (`expenseVatReconciliationMessage`). This says where to look.
   EXPENSE_VAT_RECONCILIATION_REQUIRED:
@@ -616,6 +628,28 @@ const CODE_LABELS: Record<string, string> = {
   // Void-path CAS guards
   posting_state_changed: 'สถานะการลงบัญชีเปลี่ยนระหว่างยกเลิกเอกสาร กรุณาลองอีกครั้ง',
   expense_changed: 'เอกสารถูกแก้ไขก่อนยกเลิก กรุณาเปิดใหม่แล้วลองอีกครั้ง',
+  expense_changed_retry: EXPENSE_VOID_CERTIFICATE_WORDS.changedRetry,
+  certificate_issued: EXPENSE_VOID_CERTIFICATE_WORDS.taxWorkspaceCertificate,
+  expense_correction_branch_forbidden: EXPENSE_CORRECTION_WORDS.branchForbidden,
+  expense_correction_not_found: EXPENSE_CORRECTION_WORDS.notFound,
+  expense_correction_permission_missing: EXPENSE_CORRECTION_WORDS.permissionDenied,
+  expense_correction_web_required: EXPENSE_CORRECTION_WORDS.webRequired,
+  expense_void_number_unavailable: EXPENSE_VOID_CERTIFICATE_WORDS.numberUnavailable,
+  expense_void_permission_missing: EXPENSE_VOID_CERTIFICATE_WORDS.permissionDenied,
+  expense_void_reason_required: EXPENSE_VOID_CERTIFICATE_WORDS.reasonRequired,
+  wht_certificate_correction_no_changes: WHT_CERTIFICATE_CORRECTION_WORDS.noChanges,
+  wht_certificate_number_duplicate: WHT_CERTIFICATE_CORRECTION_WORDS.numberDuplicate,
+  wht_certificate_payee_address_required: WHT_CERTIFICATE_CORRECTION_WORDS.payeeAddressRequired,
+  wht_certificate_payee_name_required: WHT_CERTIFICATE_CORRECTION_WORDS.payeeNameRequired,
+  certificate_attestation_required: REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.attestationRequired,
+  reimbursement_cancellation_certificate_attestation_required: REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.attestationRequired,
+  reimbursement_cancellation_certificate_issued: REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.taxWorkspaceCertificate,
+  reimbursement_cancellation_certificate_permission_missing: REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.permissionMissing({ kind: 'SYSTEM', number: null }),
+  reimbursement_cancellation_tax_period_locked: 'ภาษีของรายจ่ายในคำขอนี้ถูกล็อกแล้ว จึงยกเลิกคำขอเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบเรื่องการยื่นแบบเพิ่มเติมก่อน แล้วลองอีกครั้ง',
+  certificate_permission_missing: EXPENSE_VOID_CERTIFICATE_WORDS.permissionMissing,
+  expense_certificate_attestation_required: EXPENSE_VOID_CERTIFICATE_WORDS.attestationRequired,
+  reimbursement_cancellation_wht_certificate_on_expense: reimbursementCertificateCancellationMessage(null),
+  wht_certificate_on_expense: reimbursementCertificateCancellationMessage(null),
   accounting_period_locked: 'งวดบัญชีของเอกสารนี้ปิดแล้ว ต้องเปิดงวดก่อนจึงจะยกเลิกได้',
   tax_period_locked: 'งวดภาษีของเอกสารนี้ถูกล็อกแล้ว ให้ใช้การปรับปรุงหรือยื่นแบบเพิ่มเติมแทน',
 
@@ -1114,8 +1148,15 @@ const CODE_LABELS: Record<string, string> = {
   invalid_tax_code_semantics: 'ความหมายหรือเงื่อนไขของรหัสภาษีขัดกัน กรุณาตรวจประเภทภาษีและอัตรา',
   legacy_transaction_tax_remediation_blocked: 'ยังแก้ข้อมูลภาษีเดิมไม่ได้ เพราะมีรายการที่ต้องตรวจ กรุณาดำเนินการตามรายการตรวจสอบก่อน',
   wht_handoff_link_command_reused: 'คำขอแนบหนังสือรับรองนี้ถูกใช้กับรายการอื่นแล้ว กรุณาโหลดงานใหม่',
-  wht_handoff_not_linkable: 'สถานะของงานนี้ยังแนบหนังสือรับรองไม่ได้ กรุณาตรวจสถานะล่าสุด',
-  wht_handoff_already_linked: 'หนังสือรับรองนี้ถูกแนบไว้แล้ว กรุณาตรวจเอกสารที่เชื่อมอยู่',
+  wht_handoff_external_record_no_changes: WHT_EXTERNAL_RECORD_WORDS.noChanges,
+  wht_handoff_external_record_invalid: WHT_EXTERNAL_RECORD_WORDS.invalid,
+  wht_handoff_external_issued_date_future: WHT_EXTERNAL_RECORD_WORDS.futureDate,
+  wht_handoff_external_remove_permission_denied: WHT_EXTERNAL_RECORD_WORDS.removePermissionDenied,
+  wht_handoff_external_remove_reason_invalid: WHT_EXTERNAL_RECORD_WORDS.removeInvalid,
+  wht_handoff_external_remove_request_invalid: WHT_EXTERNAL_RECORD_WORDS.removeRequestInvalid,
+  wht_handoff_external_change_permission_denied: WHT_EXTERNAL_RECORD_WORDS.permissionDenied,
+  wht_handoff_not_linkable: WHT_EXTERNAL_RECORD_WORDS.notLinkable,
+  wht_handoff_already_linked: WHT_EXTERNAL_RECORD_WORDS.alreadyLinked,
   wht_handoff_not_issuable: workspaceDictionary.th['wht.print_certificate_not_issuable'],
   wht_system_issuance_unavailable: 'ระบบยังไม่เปิดการออกหนังสือรับรองอัตโนมัติ',
   wht_handoff_form_type_unresolved: 'ไม่สามารถระบุแบบ ภ.ง.ด. ได้ กรุณาตรวจสอบประเภทผู้รับเงินก่อนออกเอกสาร',
@@ -1176,6 +1217,8 @@ const UPLOAD_CONTENT_REJECTED =
 
 /** Full English messages the user can actually hit in the expense/substitute journeys. */
 const MESSAGE_LABELS: Record<string, string> = {
+  'Withholding tax requires the payee taxpayer class (บุคคลธรรมดา / นิติบุคคล) before confirmation.': workspaceDictionary.th['expenses.v_payee_kind_required'],
+  'Withholding tax requires the income category (ประเภทเงินได้) before confirmation.': workspaceDictionary.th['expenses.v_wht_category_required'],
   // Default-open feature messages that predate stable codes. Keep these exact and reviewed until
   // their APIs migrate; an unknown server sentence still falls through to the safe status copy.
   'LINE channel configuration is missing.': 'ระบบเข้าสู่ระบบด้วย LINE ยังไม่พร้อม กรุณาติดต่อทีมงานเพื่อตรวจการตั้งค่า',
@@ -1552,6 +1595,14 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
     ? error.details as typeof error
     : undefined;
   const code = apiErrorCode(e);
+  if (code && code !== 'disbursement_amount_invalid' && Object.hasOwn(DISBURSEMENT_VOUCHER_ERROR_WORDS, code)) {
+    const sentence = details?.message ?? error?.message;
+    if (typeof sentence === 'string' && /[ก-๙]/.test(sentence) && !/[{}]/.test(sentence)) return sentence;
+  }
+  if (code === 'disbursement_amount_invalid') {
+    const sentence = details?.message ?? error?.message;
+    if (typeof sentence === 'string' && /^ยอดของรายการ .+ ต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย \d+(?:\.\d+)?$/.test(sentence)) return sentence;
+  }
   if (code === 'duplicate_confirmed') {
     const status = details?.claimStatus ?? error?.claimStatus;
     return reimbursementDuplicateBlockNotice(['EXPENSE_CONFIRMED_DUPLICATE'], false, {
@@ -1581,6 +1632,14 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
       return code === 'BILLING_RATE_LIMIT' ? `ทำรายการถี่เกินไป กรุณารอ ${seconds} วินาที แล้วลองรายการเดิมอีกครั้ง`
         : `${CODE_LABELS[code]} (ลองใหม่ได้ใน ${seconds} วินาที)`;
     }
+  }
+  if (String(code).startsWith('reimbursement_cancellation_') || (/^(expense_|wht_)/.test(String(code)) && translateApiError(String(code))) || ['certificate_permission_missing', 'certificate_issued', 'posting_unresolved', 'posting_state_changed', 'accounting_period_locked', 'tax_period_locked', 'tax_period_filed'].includes(String(code))) {
+    const message = details?.message ?? error?.message;
+    if (typeof message === 'string' && /[ก-๙]/.test(message)) return message;
+  }
+  if (code === 'reimbursement_cancellation_wht_certificate_on_expense') {
+    const number = (details ?? error) as { certificateNumber?: unknown } | undefined;
+    return reimbursementCertificateCancellationMessage(typeof number?.certificateNumber === 'string' ? number.certificateNumber : null);
   }
   if (code === 'expense_correction_blocked' || code === 'expense_payment_correction_blocked') {
     const payload = (details ?? error) as Partial<ExpenseCorrectionCapabilities> & { blockers?: unknown; blocker?: unknown } | undefined;

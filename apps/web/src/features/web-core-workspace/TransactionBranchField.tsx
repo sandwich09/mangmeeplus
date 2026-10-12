@@ -28,10 +28,12 @@ export function useTransactionCreateBranchId(): string {
 }
 
 /** The all-branches read filter must never become a transaction's source branch. */
-export function TransactionBranchField({ value, invalid = false, hint }: { value: string; invalid?: boolean; hint?: string }) {
+export function TransactionBranchField({ value, invalid = false, hint, helpText }: { value: string; invalid?: boolean; hint?: string; helpText?: string | null }) {
   const id = useId();
   const locale = useWorkspaceLocale();
   const filter = useBranchFilter();
+  const help = helpText === undefined ? t('transaction.source_branch_help', locale) : helpText;
+  const describedBy = help || hint ? `${id}-help` : undefined;
   return (
     <div className="mb-4 space-y-2">
       {/* Not a <label htmlFor>: ThemedSelect's trigger is a <summary>, which `for` cannot bind to.
@@ -51,7 +53,7 @@ export function TransactionBranchField({ value, invalid = false, hint }: { value
         <ThemedSelect id={id} required value={value} onChange={(event) => filter?.setBranchId(event.target.value)}
           disabled={!filter?.branches.length || filter.locked}
           aria-label={t('transaction.source_branch', locale)}
-          aria-describedby={`${id}-help`}
+          aria-describedby={describedBy}
           aria-invalid={invalid || undefined}
           className={invalid ? '!border-error-500 ring-1 ring-error-200' : ''}>
           <option value="">{t('transaction.source_branch_required', locale)}</option>
@@ -61,7 +63,7 @@ export function TransactionBranchField({ value, invalid = false, hint }: { value
       {/* `hint` stays inside the described-by paragraph so a form that can be misread — AP's vendor
           bill, where the bill itself prints the SUPPLIER's branch — can say which branch is meant
           without a second element for assistive tech to miss. */}
-      <p id={`${id}-help`} className={invalid ? 'text-sm font-medium text-error-600' : 'text-sm text-gray-600'}>{t('transaction.source_branch_help', locale)}{hint ? ` ${hint}` : ''}</p>
+      {describedBy && <p id={describedBy} className={invalid ? 'text-sm font-medium text-error-600' : 'text-sm text-gray-600'}>{help}{hint ? ` ${hint}` : ''}</p>}
       {filter?.scopeFailed && <button type="button" onClick={filter.reloadScope} className="min-h-11 font-semibold text-brand-700">{t('shell.scope.load_failed', locale)}</button>}
     </div>
   );

@@ -14,6 +14,7 @@ import {
   type LegalIdentityCorrectionReason,
   type UserLegalIdentityChangeKind,
 } from '@watchdog-bms/contracts';
+import { thaiTaxIdChecksumValid } from '@watchdog-bms/contracts';
 
 export type LegalIdentityField = 'taxId' | 'registeredName' | 'addressJson';
 
@@ -54,17 +55,7 @@ export function isThaiTaxId(value: string): boolean {
   return THAI_TAX_ID.test(value);
 }
 
-/**
- * Thai 13-digit mod-11 check digit. A WARNING, never a block (Q1): the algorithm is real but
- * the consequence of a false negative — refusing a company its own number — is worse than
- * storing an unverified one, and the RD lookup is the authoritative check anyway.
- */
-export function thaiTaxIdChecksumValid(value: string): boolean {
-  if (!isThaiTaxId(value)) return false;
-  let sum = 0;
-  for (let i = 0; i < 12; i += 1) sum += Number(value[i]) * (13 - i);
-  return (11 - (sum % 11)) % 10 === Number(value[12]);
-}
+export { thaiTaxIdChecksumValid };
 
 export type AddressValidationResult =
   | { ok: true; value: CompanyLegalAddress }

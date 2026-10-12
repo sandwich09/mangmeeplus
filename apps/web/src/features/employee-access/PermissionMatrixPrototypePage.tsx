@@ -135,7 +135,7 @@ function PermissionCell({ granted, supported }: { granted: boolean; supported: b
   return <span className="inline-flex h-7 w-7 rounded-lg border border-gray-200 bg-white" aria-label="ไม่ได้เปิดสิทธิ์" />;
 }
 
-export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: { companyId: string; viewerPermissions: readonly string[] }) {
+export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, disbursementEntryOpen = false }: { companyId: string; viewerPermissions: readonly string[]; disbursementEntryOpen?: boolean }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   // Owner report 2026-08-28: on the phone this is one column, so pressing "เพิ่ม" swapped in the
@@ -314,7 +314,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
         {mode === 'create' ? (
           <div ref={builderRef} className="min-w-0 scroll-mt-24">
           <RoleBuilder
-            companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
+            companyId={companyId} disbursementEntryOpen={disbursementEntryOpen} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
             onCancel={() => setMode('view')}
             onSubmit={async (body) => {
               const created = await createRole(companyId, body);
@@ -333,7 +333,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
               </div>
             )}
             <RoleBuilder
-              companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
+              companyId={companyId} disbursementEntryOpen={disbursementEntryOpen} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
               initial={selectedRole}
               onCancel={() => setMode('view')}
               onSubmit={async (body) => {

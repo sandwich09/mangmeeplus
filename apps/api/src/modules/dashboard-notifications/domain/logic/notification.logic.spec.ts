@@ -52,8 +52,17 @@ describe('implemented-trigger gate (LINE preference suppression)', () => {
 
   // The list is short on purpose: every key on it overrides a person's saved trigger list. Adding one
   // is a decision, so the whole list is pinned here.
-  it('always delivers exactly the nine claim notices a saved preference list must not drop', () => {
+  it('always delivers exactly the fifteen certificate, claim and disbursement notices a saved preference list must not drop', () => {
     assert.deepEqual(ALWAYS_DELIVERED_TRIGGER_KEYS, [
+      // Expense voucher spec §8.6: the person who issued a 50 ทวิ must hear that it was cancelled, even with
+      // a preference list saved before this notice existed.
+      'expense.wht_certificate_cancelled',
+      // Disbursement voucher spec §8.6: these five deliberately override saved trigger preferences.
+      'expense.disbursement_pending_approval',
+      'expense.disbursement_approved',
+      'expense.disbursement_returned',
+      'expense.disbursement_paid',
+      'expense.disbursement_cancelled',
       'reimbursement.payout_account_set_by_other',
       // Audit B9: a voided payment (to the requester) and a claim waiting past the deadline (to whoever can pay).
       'workflow.reimbursement_payment_voided',

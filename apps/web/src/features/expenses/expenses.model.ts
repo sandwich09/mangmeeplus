@@ -1,4 +1,4 @@
-import { EXPENSE_CORRECTION_WORDS, normalizeExpensePaymentAmount, todayCivilDate } from '@watchdog-bms/contracts';
+import { EXPENSE_CORRECTION_WORDS, normalizeExpensePaymentAmount, thaiTaxIdChecksumValid, todayCivilDate } from '@watchdog-bms/contracts';
 import { INCOME_POSITIVE_MONEY_PATTERN } from '../accounting-documents/income-record.logic';
 import { JPEG_LABEL, PNG_LABEL } from '@watchdog-bms/contracts';
 import { expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
@@ -26,8 +26,8 @@ import type {
   ExpenseSourceDraftInput,
 } from '@watchdog-bms/contracts';
 import {
-  EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
-  SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
+  EXPENSE_STATUS_LABELS as CONTRACT_EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
+  SOURCE_DOCUMENT_TYPE_LABELS as CONTRACT_SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
   isExpenseCancelled, isExpenseDeletableState, isExpensePending, isExpensePendingReview, isNonExpenseClassificationBlocking, isCheckBillClassification,
   effectiveVatRateLabel, vatModeRequiresRate, civilDate, civilDateToUtcDate, civilPeriodKey, isCivilDate,
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS, expenseChargeKindAllowsNegative,
@@ -35,6 +35,7 @@ import {
 } from '@watchdog-bms/contracts';
 export { isExpensePending, isExpensePendingReview, expenseReimbursementProgressLabel, expenseDocumentReviewFieldsComplete, hasCurrentExpenseDocumentReview } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
+import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { ACCOUNTING_UI_HIDDEN } from '@/features/web-core-workspace/web-core-workspace.constants';
 
@@ -84,8 +85,8 @@ export type {
 };
 
 export {
-  EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
-  SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
+  EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
+  TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
   effectiveVatRateLabel, vatModeRequiresRate,
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS, expenseChargeKindAllowsNegative,
 };
@@ -313,6 +314,7 @@ export function substituteReceiptPreparationHref(companyId: string, expenseId: s
 }
 
 export type ExpenseSummary = {
+  cancelledCertificate?: import('@watchdog-bms/contracts').ExpenseSummary['cancelledCertificate'];
   /**
    * Vendor-address spec §7: not a column — the outcome of THIS write's counterparty auto-save, so
    * the review page can show the create/fill toast, the one-line "address differs" notice or the
@@ -532,6 +534,14 @@ export type ExpenseDraftReviewValues = {
     transactionContext?: import('@watchdog-bms/contracts').TransactionTaxContext;
   }>;
 };
+
+/** A re-read updates clean fields; an attachment change must not overwrite unsaved input. */
+export function mergeExpenseUnsavedFields<T extends object>(previous: T, incoming: T, current: T): T {
+  return Object.fromEntries(Object.keys({ ...incoming, ...current }).map(key => {
+    const field = key as keyof T;
+    return [key, JSON.stringify(current[field]) === JSON.stringify(previous[field]) ? incoming[field] : current[field]];
+  })) as T;
+}
 
 export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
   const source = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) ? detail.sourceDraft : null;
@@ -928,10 +938,13 @@ export function expenseVatSourceValidationMessage(source: ExpenseVatSourceInput,
   return null;
 }
 
-// The RD form follows the payee's taxpayer class, so the label carries the form it decides.
+export const EXPENSE_STATUS_LABELS = { ...CONTRACT_EXPENSE_STATUS_LABELS, VOIDED: workspaceDictionary.th['expenses.cancelled_label'] };
+export const SOURCE_DOCUMENT_TYPE_LABELS = { ...CONTRACT_SOURCE_DOCUMENT_TYPE_LABELS, NEEDS_REVIEW: workspaceDictionary.th['expenses.document_type_choose'] };
+
+// Tax form names belong to the field hint.
 export const PAYEE_ENTITY_KIND_LABELS: Record<BuyerEntityKind, string> = {
-  INDIVIDUAL: 'บุคคลธรรมดา (ภ.ง.ด.3)',
-  JURISTIC: 'นิติบุคคล (ภ.ง.ด.53)',
+  INDIVIDUAL: workspaceDictionary.th['expenses.payee_person'],
+  JURISTIC: workspaceDictionary.th['expenses.payee_company'],
 };
 
 export const CAPTURE_SOURCE_LABELS: Record<ExpenseCaptureSource, string> = {
@@ -1001,6 +1014,11 @@ export const TAX_EVIDENCE_REASON_LABELS: Record<TaxEvidenceReasonCode, string> =
   ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE: 'ใบกำกับภาษีอย่างย่อ ใช้เป็นค่าใช้จ่ายได้ แต่ขอคืนภาษีซื้อไม่ได้ — ถ้าต้องการเครดิตภาษีซื้อ ขอใบกำกับภาษีเต็มรูปจากผู้ขาย',
   MANUAL_OVERRIDE: 'ผู้ตรวจแก้ไขผลด้วยตนเอง',
 };
+
+export function expenseTaxEvidenceReasonMessage(code?: TaxEvidenceReasonCode | null): string | null {
+  return code && ['HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE', 'HANDWRITTEN_RECEIPT_REVIEW', 'ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE'].includes(code)
+    ? TAX_EVIDENCE_REASON_LABELS[code] : null;
+}
 
 export const AI_SUMMARY_STATUS_LABELS: Record<string, string> = {
   OCR_EXTRACTED_NEEDS_REVIEW: 'อ่านข้อมูลจากเอกสารแล้ว รอตรวจสอบ',
@@ -1298,7 +1316,9 @@ export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
   const taxIdRaw = (detail.vendorTaxIdSnapshot ?? '').trim();
   const taxIdDigits = taxIdRaw.replace(/\D/g, '');
   if (taxIdDigits.length === 13) {
-    checks.push({ key: 'vendor_tax_id', status: 'pass', label: 'เลขผู้เสียภาษีผู้ขายครบ 13 หลัก' });
+    const valid = thaiTaxIdChecksumValid(taxIdDigits);
+    checks.push({ key: 'vendor_tax_id', status: valid ? 'pass' : 'warn', label: valid
+      ? 'เลขผู้เสียภาษีผู้ขายครบ 13 หลัก' : 'เลขผู้เสียภาษีผู้ขายครบ 13 หลัก แต่ดูไม่ถูกต้อง' });
   } else {
     checks.push({
       key: 'vendor_tax_id',
@@ -1352,7 +1372,7 @@ export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
   }
 
   if (detail.taxEvidenceStatus === 'USABLE_FOR_TAX') {
-    checks.push({ key: 'tax_evidence', status: 'pass', label: 'ใช้เป็นหลักฐานภาษีซื้อได้' });
+    checks.push({ key: 'tax_evidence', status: 'pass', label: TAX_EVIDENCE_STATUS_LABELS.USABLE_FOR_TAX });
   } else if (detail.taxEvidenceStatus === 'SUPPORTING_ONLY') {
     // Spec §19h: an abbreviated invoice is complete, not deficient — say why it cannot be credited
     // and what to do about it, rather than the generic supporting-only line.
@@ -1846,7 +1866,7 @@ export function canIssueWhtReplacementCopy(
 
 export { expenseConfirmedLockMessage } from '@watchdog-bms/contracts';
 
-export function expensePaymentFormState(outstanding: string, amount: string, paidAt: string, retrying = false, today = todayCivilDate('Asia/Bangkok')) {
+export function expensePaymentFormState(outstanding: string, amount: string, paidAt: string, retrying = false, today = todayCivilDate('Asia/Bangkok'), hasRecordedPayments = false) {
   const balance = Number(outstanding);
   const prefill = Number.isFinite(balance) && balance > 0 ? balance.toFixed(2) : '';
   const value = Number(amount);
@@ -1855,7 +1875,7 @@ export function expensePaymentFormState(outstanding: string, amount: string, pai
     : value > Number(prefill) ? 'ยอดจ่ายเกินยอดค้างจ่าย กรุณาตรวจยอดอีกครั้ง'
     : !isCivilDate(paidAt) ? 'กรุณาเลือกวันที่จ่ายเงินจริงให้ถูกต้อง' : null;
   const formatted = `฿${(Number.isFinite(value) ? value : 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  return { prefill, disabledReason, maxPaidAt: today, label: value > 0 && value === Number(prefill) ? `บันทึกจ่ายส่วนที่เหลือ ${formatted}` : `บันทึกจ่าย ${formatted}` };
+  return { prefill, disabledReason, maxPaidAt: today, label: hasRecordedPayments && value > 0 && value === Number(prefill) ? `บันทึกจ่ายส่วนที่เหลือ ${formatted}` : `บันทึกจ่าย ${formatted}` };
 }
 
 export function canIssueExpenseWhtCertificate(expense: Pick<ExpenseDetail, 'status' | 'whtAmount'>,
@@ -1872,4 +1892,14 @@ export function expenseWhtCategoriesForPayee<T extends { formType: string }>(cat
 export function changeExpensePayeeType(values: ExpenseDraftReviewValues, payeeType: BuyerEntityKind | '', categories: Array<{ code: string; formType: string }>): ExpenseDraftReviewValues {
   return { ...values, vendorEntityKindSnapshot: payeeType,
     whtCategoryCode: expenseWhtCategoriesForPayee(categories, payeeType).some((category) => category.code === values.whtCategoryCode) ? values.whtCategoryCode : '' };
+}
+
+export function expenseWhtCategoryOptions<T extends { nameTh: string; defaultRate: string }>(categories: readonly T[]): Array<T & { label: string }> {
+  const common = ['บริการ', 'เช่า', 'ขนส่ง', 'โฆษณา'];
+  const order = (name: string) => {
+    const index = common.findIndex(word => name.includes(word));
+    return index >= 0 ? index : name.includes('อื่น') ? common.length + 1 : common.length;
+  };
+  return [...categories].sort((a, b) => order(a.nameTh) - order(b.nameTh))
+    .map(item => ({ ...item, label: `${item.nameTh} · หัก ${Number(item.defaultRate)}%` }));
 }

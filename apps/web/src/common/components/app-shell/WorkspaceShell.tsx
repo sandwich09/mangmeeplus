@@ -50,6 +50,12 @@ function ShellInner({
     : isExpanded
     ? 'lg:ml-[289px]'
     : 'lg:ml-[86px]';
+  // The same offset as a variable, for bars fixed to the bottom of the window: they start where the content starts.
+  const contentLeftVariable = isMobileOpen
+    ? ''
+    : isExpanded
+    ? 'lg:[--workspace-content-left:289px]'
+    : 'lg:[--workspace-content-left:86px]';
 
   return (
     <div className="mangmee-shell">
@@ -70,7 +76,7 @@ function ShellInner({
         footerExtras={sidebarFooter}
       />
       <Backdrop />
-      <div className={`flex min-h-dvh min-w-0 flex-1 flex-col transition-all duration-300 ease-in-out ${mainContentMargin}`}>
+      <div className={`flex min-h-dvh min-w-0 flex-1 flex-col transition-all duration-300 ease-in-out ${mainContentMargin} ${contentLeftVariable}`}>
         <AppHeader
           companyName={companyName}
           companyArea={companyArea}

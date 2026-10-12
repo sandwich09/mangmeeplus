@@ -1,8 +1,72 @@
 import { validateStatusTransition } from '../domain/logic/expense-status.logic';
 import { formPeriodKey, isPeriodLocked } from '../../tax/domain/logic/tax-period.logic';
 import { ConflictException, UnprocessableEntityException, type HttpException } from '@nestjs/common';
-import { canVoidExpenseFinancialState, type ExpenseVoidBlocker } from '@watchdog-bms/contracts';
+import { withholdingPeriodLockedMessage, canVoidExpenseFinancialState, EXPENSE_VOID_CERTIFICATE_WORDS, type ExpenseVoidBlocker } from '@watchdog-bms/contracts';
 import { civilPeriodKey, coerceCivilDate, type TaxFormType, type ExpenseCorrectionBlocker, type ExpenseCorrectionCapabilities } from '@watchdog-bms/contracts';
+import Decimal from 'decimal.js';
+import type { Prisma } from '../../../generated/prisma/client';
+import type { DisbursementExpenseReason } from '@watchdog-bms/contracts';
+import { expenseDisbursementReservationMessage } from '@watchdog-bms/contracts';
+import { disbursementVoucherReadWhere, type DisbursementReadScope } from './prisma-disbursement-voucher.repository';
+import { disbursementVoucherActions } from '../domain/logic/disbursement-voucher.logic';
+
+/** The pointer is deliberately not a foreign key: fail closed even if its document is missing. */
+export async function readDisbursementReservations(db: any, companyId: string, expenseIds: string[], caller?: DisbursementReadScope & { permissions: string[] }, loadedExpenses?: Array<{ id: string; reservedByDisbursementVoucherId?: string | null }>) {
+  const reservations = new Map<string, { voucherId: string; documentNumber: string | null; preparerName: string | null; canOpen: boolean; viewerMay: 'act' | 'open' | 'none'; viewerCanPay: boolean }>();
+  if (!expenseIds.length) return reservations;
+  const expenses = loadedExpenses ?? await db.expenseRecord.findMany({ where: { companyId, id: { in: expenseIds }, reservedByDisbursementVoucherId: { not: null } }, select: { id: true, reservedByDisbursementVoucherId: true } });
+  const voucherIds = [...new Set<string>(expenses.flatMap((e: any) => e.reservedByDisbursementVoucherId ? [e.reservedByDisbursementVoucherId] : []))];
+  if (!voucherIds.length) return reservations;
+  const vouchers = await db.disbursementVoucher.findMany({ where: { companyId, id: { in: voucherIds } }, select: { id: true, status: true, documentNumber: true, preparedByUserId: true } });
+  const preparers = vouchers.length ? await db.user.findMany({ where: { id: { in: [...new Set(vouchers.map((v: any) => v.preparedByUserId))] }, memberships: { some: { companyId } } }, select: { id: true, displayName: true } }) : [];
+  const readable = caller?.permissions.includes('expense.disbursement.read') ? await db.disbursementVoucher.findMany({ where: { ...disbursementVoucherReadWhere({ ...caller, companyId }), id: { in: voucherIds } }, select: { id: true } }) : [];
+  const names = new Map<string, string>(preparers.map((p: any) => [p.id, p.displayName]));
+  const documents = new Map<string, any>(vouchers.map((v: any) => [v.id, v]));
+  const readableIds = new Set(readable.map((v: any) => v.id));
+  for (const expense of expenses) {
+    if (!expense.reservedByDisbursementVoucherId) continue;
+    const voucher = documents.get(expense.reservedByDisbursementVoucherId);
+    const canOpen = readableIds.has(expense.reservedByDisbursementVoucherId);
+    const actions = voucher && caller ? disbursementVoucherActions(voucher, caller.permissions) : null;
+    reservations.set(expense.id, { voucherId: expense.reservedByDisbursementVoucherId, documentNumber: voucher?.documentNumber ?? null,
+      preparerName: names.get(voucher?.preparedByUserId) ?? null, canOpen, viewerCanPay: canOpen && Boolean(caller?.permissions.includes('expense.disbursement.pay')), viewerMay: canOpen ? actions?.withdraw || actions?.cancel ? 'act' : 'open' : 'none' });
+  }
+  return reservations;
+}
+
+export async function assertExpenseDisbursementReservation(db: any, expense: { id: string; companyId: string; reservedByDisbursementVoucherId?: string | null }, operation: Parameters<typeof expenseDisbursementReservationMessage>[0], payingThroughDisbursementVoucherId?: string, caller?: DisbursementReadScope & { permissions: string[] }) {
+  if (!expense.reservedByDisbursementVoucherId || (operation === 'recordPayment' && expense.reservedByDisbursementVoucherId === payingThroughDisbursementVoucherId)) return;
+  const reservation = (await readDisbursementReservations(db, expense.companyId, [expense.id], caller, [expense])).get(expense.id);
+  throw new ConflictException({ code: 'expense_disbursement_reserved',
+    disbursementReservation: reservation ? { voucherId: reservation.canOpen ? reservation.voucherId : null, documentNumber: reservation.documentNumber, preparerName: reservation.preparerName, viewerMay: reservation.viewerMay, viewerCanPay: reservation.viewerCanPay } : null,
+    message: expenseDisbursementReservationMessage(operation, reservation?.documentNumber ?? null, reservation?.preparerName ?? null, operation === 'approveSubstitute' ? 'act' : reservation?.viewerMay ?? 'none', reservation?.viewerCanPay ?? false) });
+}
+
+/** Used by both source readers and draft validation; permissions live at their entry points. */
+export function disbursementExpenseSelectionReason(expense: { reservedByDisbursementVoucherId?: string | null; recordPaymentBlocker: ExpenseCorrectionBlocker | null; currency: string }): DisbursementExpenseReason | null {
+  if (expense.reservedByDisbursementVoucherId) return 'reserved';
+  if (expense.recordPaymentBlocker === 'live_claim') return 'claim';
+  if (['personal_advance', 'missing_branch', 'not_confirmed', 'no_balance'].includes(expense.recordPaymentBlocker ?? '')) return expense.recordPaymentBlocker as DisbursementExpenseReason;
+  return expense.currency !== 'THB' ? 'foreign_currency' : null;
+}
+
+/** Permission-free facts shared by the payment capability and disbursement source readers. */
+export function recordExpensePaymentBlocker(expense: {
+  sourceReimbursementRequestId?: string | null; status: string; branchId?: string | null; outstandingAmount: unknown;
+}, liveClaim: boolean, fundingSource: string | null | undefined): ExpenseCorrectionBlocker | null {
+  return liveClaim || expense.sourceReimbursementRequestId ? 'live_claim'
+    : fundingSource === 'PERSONAL_ADVANCE' ? 'personal_advance'
+    : expense.status !== 'CONFIRMED' ? 'not_confirmed'
+    : !expense.branchId ? 'missing_branch'
+    : new Decimal(String(expense.outstandingAmount)).lte(0) ? 'no_balance' : null;
+}
+
+/** A live claim can own the expense itself or any of its shared evidence files. */
+export function expensePaymentClaimWhere(companyId: string, expenseIds: string[], attachmentIds: string[]): Prisma.ReimbursementLineWhereInput {
+  return { companyId, request: { status: { notIn: ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'] } }, OR: [
+    { linkedExpenseId: { in: expenseIds } }, { attachmentId: { in: attachmentIds } },
+  ] };
+}
 
 /** Shared with journal creation and certificate issuance, so stale reads cannot cross correction. */
 export async function lockExpenseCorrection(tx: any, companyId: string, expenseId: string): Promise<void> {
@@ -17,8 +81,16 @@ export function expenseWhtHandoffWhere(companyId: string, expenseId: string, eve
   ] };
 }
 
+/** Certificates reached through tax events cannot be cancelled by the expense's own handoff flow. */
+export async function hasExpenseTaxWorkspaceCertificate(db: any, companyId: string, expenseId: string, eventIds: string[], handoffs: any[]): Promise<boolean> {
+  const issued = eventIds.length ? await db.whtCertificate.findFirst({ where: { companyId, status: 'ISSUED',
+    OR: eventIds.map((id) => ({ taxEventIdsJson: { array_contains: [id] } })) }, select: { id: true } }) : null;
+  return Boolean(issued || handoffs.some((h: any) => !(h.sourcePaymentType === 'expense.record' && h.sourcePaymentId === expenseId)
+    && (h.status === 'SYSTEM_ISSUED' || h.status === 'EXTERNAL_LINKED' || h.certificateId || h.externalIssuedDate)));
+}
+
 /** The same facts decide both the detail capabilities and the locked mutation's refusal. */
-export async function readExpenseCorrectionCapabilities(db: any, expense: any, permissions: string[], lockPeriods = false): Promise<ExpenseCorrectionCapabilities> {
+export async function readExpenseCorrectionCapabilities(db: any, expense: any, permissions: string[], lockPeriods = false, caller?: DisbursementReadScope): Promise<ExpenseCorrectionCapabilities> {
   const companyId = expense.companyId;
   const payments = expense.payments ?? await db.expensePayment.findMany({ where: { companyId, expenseId: expense.id } });
   const journals = await db.journalEntry.findMany({ where: { companyId, OR: [
@@ -27,37 +99,44 @@ export async function readExpenseCorrectionCapabilities(db: any, expense: any, p
   ] }, select: { sourceType: true, sourceId: true, status: true } });
   const events = await db.taxEvent.findMany({ where: { companyId, sourceType: 'expense.record', sourceId: expense.id }, select: { id: true, taxPeriodId: true, status: true } });
   const handoffs = await db.whtCertificateHandoff.findMany({ where: expenseWhtHandoffWhere(companyId, expense.id, events.map((event: any) => event.id)) });
-  const issued = events.length ? await db.whtCertificate.findFirst({ where: { companyId, OR: events.map((e: any) => ({ taxEventIdsJson: { array_contains: [e.id] } })) }, select: { id: true } }) : null;
+  const ownHandoff = handoffs.find((h: any) => h.sourcePaymentType === 'expense.record' && h.sourcePaymentId === expense.id && ['SYSTEM_ISSUED', 'EXTERNAL_LINKED'].includes(h.status));
+  const ownCertificate = ownHandoff?.status === 'SYSTEM_ISSUED' && ownHandoff.certificateId
+    ? await db.whtCertificate.findFirst({ where: { companyId, id: ownHandoff.certificateId }, select: { certificateNumber: true, issuedAt: true } }) : null;
+  const certificateOnExpense: ExpenseCorrectionCapabilities['certificateOnExpense'] = ownHandoff ? {
+    kind: ownHandoff.status === 'SYSTEM_ISSUED' ? 'SYSTEM' : 'EXTERNAL',
+    number: ownHandoff.status === 'SYSTEM_ISSUED' ? ownCertificate?.certificateNumber ?? null : ownHandoff.externalCertificateNumber ?? null,
+    date: (ownHandoff.status === 'SYSTEM_ISSUED' ? ownCertificate?.issuedAt : ownHandoff.externalIssuedDate)?.toISOString() ?? null,
+    canCancel: permissions.includes(ownHandoff.status === 'SYSTEM_ISSUED' ? 'wht.certificate.correct' : 'wht.external_certificate.link'),
+  } : null;
+  const taxWorkspaceCertificate = await hasExpenseTaxWorkspaceCertificate(db, companyId, expense.id, events.map((event: any) => event.id), handoffs);
   const periodLocks = await readExpensePeriodLocks(db, expense, events.filter((event: any) => event.status === 'ACTIVE').map((event: any) => event.taxPeriodId), lockPeriods);
   const claim = await findLiveClaimOf(db, companyId, expense);
   const links = await db.attachmentLink.findMany({ where: { companyId, targetType: 'expense.record', targetId: expense.id }, select: { attachmentId: true } });
-  const linkedClaim = await db.reimbursementLine.findFirst({ where: { companyId, request: { status: { notIn: ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'] } }, OR: [
-    { linkedExpenseId: expense.id }, { attachmentId: { in: links.map((link: any) => link.attachmentId) } },
-  ] }, select: { id: true } });
-  const substitute = await db.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId, expenseId: expense.id }, orderBy: { version: 'desc' } });
+  const linkedClaim = await db.reimbursementLine.findFirst({ where: expensePaymentClaimWhere(companyId, [expense.id], links.map((link: any) => link.attachmentId)), select: { id: true } });
+  const substitute = await db.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId, expenseId: expense.id, status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' } });
+  const reservation = expense.reservedByDisbursementVoucherId ? (await readDisbursementReservations(db, companyId, [expense.id], caller ? { ...caller, permissions } : undefined, [expense])).get(expense.id) : null;
+  const disbursementReservation = reservation ? { voucherId: reservation.canOpen ? reservation.voucherId : null, documentNumber: reservation.documentNumber, preparerName: reservation.preparerName, viewerMay: reservation.viewerMay, viewerCanPay: reservation.viewerCanPay } : null;
   const liveClaim = Boolean(claim || linkedClaim);
   const reopenBlockers: ExpenseCorrectionBlocker[] = [];
+  if (expense.reservedByDisbursementVoucherId) reopenBlockers.push('disbursement_reserved');
   if (expense.status !== 'CONFIRMED') reopenBlockers.push('not_confirmed');
   if (journals.some((j: any) => j.status === 'POSTED')) reopenBlockers.push('ledger_posted');
   else if (expense.postingStatus === 'posted' || expense.postingStatus === 'reversed' || expense.journalEntryId
     || payments.some((p: any) => p.postingStatus === 'posted' || p.postingStatus === 'reversed' || p.journalEntryId)) reopenBlockers.push('posting_unresolved');
   if (journals.some((j: any) => j.status !== 'POSTED')) reopenBlockers.push('journal_pending');
-  if (issued || handoffs.some((h: any) => h.status === 'SYSTEM_ISSUED' || h.status === 'EXTERNAL_LINKED' || h.certificateId || h.externalIssuedDate)) reopenBlockers.push('certificate_issued');
+  if (taxWorkspaceCertificate) reopenBlockers.push('certificate_issued');
+  if (certificateOnExpense && !certificateOnExpense.canCancel) reopenBlockers.push('certificate_permission_missing');
   if (periodLocks.lockedAccountingPeriodKey) reopenBlockers.push('accounting_period_locked');
   if (periodLocks.lockedTaxPeriods.length) reopenBlockers.push('tax_period_filed');
   if (liveClaim) reopenBlockers.push('live_claim');
   if (!permissions.includes('expense.confirm')) reopenBlockers.push('permission_denied');
   const paymentPermission = permissions.includes('expense.payment.record');
   const recordPaymentBlocker: ExpenseCorrectionBlocker | null = !paymentPermission ? 'permission_denied'
-    : liveClaim || expense.sourceReimbursementRequestId ? 'live_claim'
-    : substitute?.fundingSource === 'PERSONAL_ADVANCE' ? 'personal_advance'
-    : expense.status !== 'CONFIRMED' ? 'not_confirmed'
-    : !expense.branchId ? 'missing_branch'
-    : Number(expense.outstandingAmount) <= 0 ? 'no_balance' : null;
+    : expense.reservedByDisbursementVoucherId ? 'disbursement_reserved' : recordExpensePaymentBlocker(expense, liveClaim, substitute?.fundingSource);
   const rejectBlocker: ExpenseCorrectionBlocker | null = !permissions.includes('expense.reject') ? 'permission_denied'
     : liveClaim ? 'live_claim' : validateStatusTransition(expense.status, 'REJECTED') ? 'not_confirmed'
     : payments.some((p: any) => p.status === 'RECORDED') ? 'recorded_payments' : Number(expense.paidAmount) > 0 ? 'legacy_paid_balance' : null;
-  return { ...periodLocks, canReject: !rejectBlocker, rejectBlocker, canReopen: reopenBlockers.length === 0, reopenBlockers, canRecordPayment: !recordPaymentBlocker, recordPaymentBlocker,
+  return { ...periodLocks, certificateOnExpense, disbursementReservation, canReject: !rejectBlocker, rejectBlocker, canReopen: reopenBlockers.length === 0, reopenBlockers, canRecordPayment: !recordPaymentBlocker, recordPaymentBlocker,
     payments: payments.map((p: any) => {
       const ownJournals = journals.filter((j: any) => j.sourceType === 'expense.payment' && (j.sourceId === p.id || j.sourceId === expense.id));
       const cancelBlocker: ExpenseCorrectionBlocker | null = p.status === 'VOIDED' ? 'payment_voided'
@@ -144,7 +223,7 @@ export async function findJournalToReverse(db: any, source: { companyId: string;
   if (!original || original.status === 'POSTED') return { reversed: false, original };
   return { reversed: false, original, refusal: {
     blocker: { code: 'posting_unresolved' },
-    error: new UnprocessableEntityException(`Generated journal ${original.entryNumber} is ${original.status}; resolve its posting state before voiding`),
+    error: new UnprocessableEntityException({ code: 'posting_unresolved', message: EXPENSE_VOID_CERTIFICATE_WORDS.postingUnresolved }),
   } };
 }
 
@@ -162,13 +241,13 @@ export async function journalPeriodRefusal(
   if (!period) {
     return { period, refusal: {
       blocker: { code: 'posting_unresolved' },
-      error: new UnprocessableEntityException(`Accounting period for journal ${original.entryNumber} was not found; cannot void`),
+      error: new UnprocessableEntityException({ code: 'posting_unresolved', message: EXPENSE_VOID_CERTIFICATE_WORDS.postingUnresolved }),
     } };
   }
   if (!['OPEN', 'REOPENED'].includes(period.status)) {
     return { period, refusal: {
       blocker: { code: 'accounting_period_locked', periodKey: period.periodKey },
-      error: new ConflictException({ code: 'accounting_period_locked', message: `Accounting period ${period.periodKey} is not open; reopen it before voiding.` }),
+      error: new ConflictException({ code: 'accounting_period_locked', message: EXPENSE_VOID_CERTIFICATE_WORDS.accountingPeriodLocked(period.periodKey) }),
     } };
   }
   if (opts.lockedTaxFormTypes.length) {
@@ -179,25 +258,45 @@ export async function journalPeriodRefusal(
     if (lockedTaxPeriod) {
       return { period, refusal: {
         blocker: { code: 'tax_period_locked', periodKey: period.periodKey, formType: lockedTaxPeriod.formType },
-        error: new ConflictException({ code: 'tax_period_locked', message: `${lockedTaxPeriod.formType}/${period.periodKey} is locked; use an adjustment or amended filing workflow.` }),
+        error: new ConflictException({ code: 'tax_period_locked', message: lockedTaxPeriod.formType === 'PND3' || lockedTaxPeriod.formType === 'PND53'
+          ? withholdingPeriodLockedMessage(period.periodKey, 'ยกเลิกเอกสารนี้', lockedTaxPeriod.formType) : EXPENSE_VOID_CERTIFICATE_WORDS.taxPeriodLocked(period.periodKey) }),
       } };
     }
   }
   return { period };
 }
 
-/**
- * What would stop voiding this claim-born expense for its claim's cancellation, read without
- * changing anything: the conditions the void itself refuses on (`VoidExpenseUseCase`,
- * `voidExpenseTrueReversal`), from the same two readers. Null: nothing known stands in the way.
- *
- * ponytail: the accrual journal only. A claim is cancelled only while it has no recorded payment,
- * so its expense records carry no settlement journal to reverse; read those too if that changes.
- */
+/** The expense's own issued certificate or self-issued record, for cancellation checks and detail. */
+export async function readExpenseCancellationCertificate(db: any, companyId: string, expenseId: string): Promise<{ kind: 'SYSTEM' | 'EXTERNAL'; number: string | null } | null> {
+  const handoff = await db.whtCertificateHandoff.findFirst({ where: {
+    companyId, sourcePaymentType: 'expense.record', sourcePaymentId: expenseId,
+    status: { in: ['SYSTEM_ISSUED', 'EXTERNAL_LINKED'] },
+  } });
+  if (handoff) {
+    const certificate = handoff.status === 'SYSTEM_ISSUED' && handoff.certificateId
+      ? await db.whtCertificate.findFirst({ where: { companyId, id: handoff.certificateId }, select: { certificateNumber: true } }) : null;
+    return { kind: handoff.status === 'EXTERNAL_LINKED' ? 'EXTERNAL' : 'SYSTEM', number: handoff.status === 'EXTERNAL_LINKED'
+      ? handoff.externalCertificateNumber ?? null : certificate?.certificateNumber ?? null };
+  }
+  return null;
+}
+
+/** The same structural refusals as the expense void, read before the claim's intent is written. */
 export async function findClaimExpenseVoidBlocker(db: any, companyId: string, expenseId: string): Promise<ExpenseVoidBlocker | null> {
   const expense = await db.expenseRecord.findFirst({ where: { id: expenseId, companyId }, include: { lines: true } });
   // Gone or already voided: nothing is left to void. Not confirmed yet: it is closed without a journal.
-  if (!expense || expense.status === 'VOIDED' || expense.status === 'READY_FOR_CONFIRMATION') return null;
+  if (!expense || expense.status === 'VOIDED') return null;
+  const certificate = await readExpenseCancellationCertificate(db, companyId, expenseId);
+  const events = await db.taxEvent.findMany({ where: { companyId, sourceType: 'expense.record', sourceId: expenseId }, select: { id: true, taxPeriodId: true, status: true } });
+  if (certificate) {
+    const locks = await readExpensePeriodLocks(db, expense, events.filter((event: any) => event.status === 'ACTIVE').map((event: any) => event.taxPeriodId));
+    const locked = locks.lockedTaxPeriods.find((period: { formType: string }) => period.formType === 'PND3' || period.formType === 'PND53');
+    if (locked) return { code: 'tax_period_locked', ...locked, certificateKind: certificate.kind };
+  }
+  const eventIds = events.map((event: any) => event.id);
+  const handoffs = await db.whtCertificateHandoff.findMany({ where: expenseWhtHandoffWhere(companyId, expenseId, eventIds) });
+  if (await hasExpenseTaxWorkspaceCertificate(db, companyId, expenseId, eventIds, handoffs)) return { code: 'certificate_issued' };
+  if (expense.status === 'READY_FOR_CONFIRMATION') return null;
   if (!canVoidExpenseFinancialState(expense)) return { code: 'expense_not_voidable' };
   const journal = await findJournalToReverse(db, { companyId, sourceType: 'expense.record', sourceId: expenseId });
   if (journal.reversed || !journal.original) return null;

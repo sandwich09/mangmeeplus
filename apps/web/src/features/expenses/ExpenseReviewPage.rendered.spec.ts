@@ -49,7 +49,7 @@ function harness(initial: Record<string, any> = {}, permissions = OWNER) {
   const state: Record<string, any> = { detail: expense(), loading: false, step: 'review', paidAmount: '500', paidAt: '2026-10-04', ...initial };
   const names = [...readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8').matchAll(/const \[(\w+),[^\]]+\] = useState/g)].map(m => m[1]!);
   const nodes: Array<{ tag: string; props: any }> = [];
-  let html = ''; const successes: string[] = [];
+  let html = ''; const successes: string[] = []; const routes: string[] = [];
   function render() {
     let index = 0; nodes.length = 0;
     const realState = runtime.useState, realCreate = runtime.createElement;
@@ -66,7 +66,7 @@ function harness(initial: Record<string, any> = {}, permissions = OWNER) {
     const modal = stub(modals, 'Modal', ({ open, title, children, footer }: any) => open ? h('section', { 'data-dialog': true }, h('h2', null, title), children, footer) : null);
     const confirm = stub(confirmation, 'useConfirm', () => ({ confirm: async () => true, confirmDialog: null }));
     const capture = stub(policy, 'useExpenseCapturePolicy', () => ({ mode: 'SIMPLE', vatStatus: 'NOT_REGISTERED' }));
-    try { html = renderToStaticMarkup(h(AppRouterContext.Provider, { value: { push: noop, replace: noop, back: noop, prefetch: noop } as any },
+    try { html = renderToStaticMarkup(h(AppRouterContext.Provider, { value: { push: noop, replace: (route: string) => routes.push(route), back: noop, prefetch: noop } as any },
       h(ToastContext.Provider, { value: { success: (message: string) => successes.push(message), error: () => { throw Error('refusal must stay by its action'); }, warning: noop } },
         h(ExpenseReviewPage, { companyId: 'co', expenseId: 'e1', userId: 'owner', permissions, canSelfApprove: true })))); }
     finally { runtime.useState = realState; runtime.createElement = realCreate; modal.mock.restore(); capture.mock.restore(); confirm.mock.restore(); }
@@ -79,7 +79,7 @@ function harness(initial: Record<string, any> = {}, permissions = OWNER) {
     await new Promise(resolve => setImmediate(resolve));
     return render();
   }
-  return { state, render, act, successes, nodes };
+  return { state, render, act, successes, nodes, routes };
 }
 function text(value: any): string {
   if (Array.isArray(value)) return value.map(text).join('');
@@ -107,13 +107,19 @@ test('confirming a claim receipt duplicate warns before confirmation about payme
 
 test('A1 owner without ledger sees confirmed lock, reopen, actual certificate blockers and missing capability', () => {
   const html = harness().render();
-  assert.match(html, /เอกสารยืนยันแล้ว จึงล็อกข้อมูลไว้/);
+  assert.match(html, /ต้องจ่าย ฿500.00/);
   assert.match(html, />แก้ไขเอกสาร<\/button>/);
   assert.doesNotMatch(html, /รายการจ่ายเดิมยังอยู่/);
   const blocked = harness({ detail: expense({ correctionCapabilities: { ...allowed, canReopen: false, reopenBlockers: ['certificate_issued'] } }) }).render();
   assert.match(blocked, /<li[^>]*>ออกเอกสาร 50 ทวิแล้ว/);
   assert.doesNotMatch(blocked, />แก้ไขเอกสาร<\/button>/);
   assert.match(harness({ detail: expense({ correctionCapabilities: undefined }) }).render(), /ยังตรวจสิทธิ์แก้ไขไม่ได้ กรุณาโหลดหน้าใหม่/);
+});
+test('R5 the expense check summary warns on a full tax number with a failed check digit', () => {
+  const html = visible(harness({ detail: expense({ vendorTaxIdSnapshot: '1234567890123' }) }).render());
+  assert.match(html, /⚠\s+เลขผู้เสียภาษีผู้ขายครบ 13 หลัก แต่ดูไม่ถูกต้อง/);
+  assert.match(html, /ต้องตรวจ [1-9]\d* รายการ/);
+  assert.doesNotMatch(html, /✓\s+เลขผู้เสียภาษีผู้ขายครบ 13 หลัก/);
 });
 test('A2 recorded payments remain visible at totals in every correction review step with server cancel capability', () => {
   for (const step of ['data', 'evidence', 'review']) {
@@ -142,7 +148,7 @@ test('A3 overpayment is immediate, names excess/remedy and blocks confirmation; 
 test('A4 stale payment refusals refresh balances/status and appear once beside the action', async () => {
   for (const code of ['expense_payment_exceeds_outstanding', 'expense_payment_changed', 'expense_payment_not_confirmed']) {
     const page = harness(); let reads = 0;
-    const fresh = expense(code === 'expense_payment_not_confirmed' ? { status: 'NEEDS_REVIEW', correctionOpenedAt: '2026-10-04T02:00:00Z', correctionCapabilities: { ...allowed, canReopen: false, canRecordPayment: false } } : { paidAmount: '400', outstandingAmount: '100' });
+    const fresh = expense(code === 'expense_payment_not_confirmed' ? { status: 'NEEDS_REVIEW', correctionOpenedAt: '2026-10-04T02:00:00Z', correctionCapabilities: { ...allowed, canReopen: false, canRecordPayment: false } } : { paidAmount: '400', outstandingAmount: '100', payments: [{ ...payment, amount: '400' }] });
     const record = stub(api, 'recordExpensePayment', async () => { throw { code }; });
     const get = stub(api, 'getExpense', async () => { reads++; return fresh; });
     try {
@@ -156,7 +162,7 @@ test('A4 stale payment refusals refresh balances/status and appear once beside t
 });
 test('A5 leading zeros are accepted and the form names the normalized amount', () => {
   const html = harness({ paidAmount: '0500' }).render();
-  assert.match(html, /<button[^>]*type="submit"(?![^>]*disabled="")[^>]*>บันทึกจ่ายส่วนที่เหลือ ฿500.00<\/button>/);
+  assert.match(html, /<button[^>]*type="submit"(?![^>]*disabled="")[^>]*>บันทึกจ่าย ฿500.00<\/button>/);
   assert.doesNotMatch(html, /กรุณากรอกยอดจ่ายมากกว่า 0/);
 });
 test('A6 form allows yesterday/today, refuses tomorrow and uses Bangkok day boundary and maximum', (t) => {
@@ -222,12 +228,12 @@ test('C cancelled history is grey/struck with reason and aligned amount; row own
   assert.match(html, /line-through/); assert.match(html, /ยกเลิกแล้ว/); assert.match(html, /ยอดผิด/);
   assert.match(html, /grid-cols-\[minmax\(0,1fr\)_auto\]/); assert.match(html, /text-right/);
 });
-test('C review footer exposes at most two actions and uses no-wrap labels; certificate download is compact', () => {
+test('C review footer exposes confirm and send-to-another actions and uses no-wrap labels; certificate download is compact', () => {
   const html = harness({ detail: expense({ status: 'NEEDS_REVIEW' }) }).render();
   const bar = html.slice(html.indexOf('mangmee-safe-bottom'));
   assert.match(bar, /เพิ่มเติม/); assert.match(bar, /whitespace-nowrap/);
   const exposed = bar.replace(/<details[\s\S]*?<\/details>/g, '');
-  assert.equal((exposed.match(/<button/g) ?? []).length, 1, 'one primary action, plus the secondary menu');
+  assert.equal((exposed.match(/<button/g) ?? []).length, 2, 'one primary confirm action and a quiet send action, plus the secondary menu');
   const issued = harness({ detail: expense({ whtAmount: '15' }), whtHandoff: { id: 'h1', status: 'SYSTEM_ISSUED' } }).render();
   assert.match(issued, /ดาวน์โหลดเอกสารอีกครั้ง/);
   assert.doesNotMatch(issued.slice(issued.indexOf('mangmee-safe-bottom')), /bg-green-50 p-3/);
@@ -406,8 +412,8 @@ test('recheck 3: editing prices shows an adjacent excess cue and sending for rev
   try {
     const html = page.render();
     assert.match(html, /id="expense-review-overpayment"[^>]*>จ่ายเกินยอดสุทธิ ฿200.00 ส่งตรวจสอบได้ แต่ยืนยันเอกสารไม่ได้จนกว่าจะยกเลิกรายการจ่ายที่เกิน/);
-    assert.equal(page.nodes.find(n => n.tag === 'button' && text(n.props.children) === 'ส่งตรวจสอบ')?.props.disabled, false);
-    await page.act('button', 'ส่งตรวจสอบ'); assert.equal(sent, 1);
+    assert.equal(page.nodes.find(n => n.tag === 'button' && text(n.props.children) === 'ส่งให้คนอื่นตรวจ')?.props.disabled, false);
+    await page.act('button', 'ส่งให้คนอื่นตรวจ'); assert.equal(sent, 1);
   } finally { mark.mock.restore(); }
 });
 
@@ -452,5 +458,145 @@ test('recheck 7: blurring the amount normalizes its displayed leading zeros and 
   page.render(); const html = await page.act('input', 'expense-payment-amount', 'onBlur');
   assert.equal(page.state.paidAmount, '500');
   assert.match(html, /id="expense-payment-amount"[^>]*value="500"/);
-  assert.match(html, /บันทึกจ่ายส่วนที่เหลือ ฿500.00/);
+  assert.match(html, /บันทึกจ่าย ฿500.00/);
+});
+
+function recordingExpense(status = 'NEEDS_REVIEW') {
+  return expense({ status, taxEvidenceStatus: 'SUPPORTING_ONLY', lines: [{ id: 'l1', description: 'สินค้า', quantity: '1', unitPrice: '500', discountAmount: '0', vatRate: '0', whtRate: '0', lineSubtotalAmount: '500', lineTaxAmount: '0', lineTotalAmount: '500' }] });
+}
+test('R2 a confirmer sends and confirms once, stays on the expense and rejects a double press', async () => {
+  const page = harness({ detail: recordingExpense(), step: 'review' });
+  let sends = 0, confirms = 0, release!: () => void;
+  const sent = recordingExpense('READY_FOR_CONFIRMATION'); sent.updatedAt = '2026-10-04T02:00:00Z';
+  const confirmed = recordingExpense('CONFIRMED');
+  const mark = stub(api, 'markExpenseReadyAsReviewer', async () => { sends++; await new Promise<void>(resolve => { release = resolve; }); return sent; });
+  const confirm = stub(api, 'confirmExpense', async () => { confirms++; return confirmed; });
+  const get = stub(api, 'getExpense', async () => confirmed);
+  try {
+    page.render();
+    const primary = page.nodes.find(n => n.tag === 'button' && text(n.props.children) === 'ยืนยันเอกสาร');
+    assert.ok(primary); assert.equal(primary.props.disabled, false);
+    assert.ok(page.nodes.some(n => n.tag === 'button' && text(n.props.children) === 'ส่งให้คนอื่นตรวจ'));
+    primary.props.onClick(); primary.props.onClick(); assert.equal(sends, 1);
+    release(); await new Promise(resolve => setImmediate(resolve)); page.render();
+    assert.equal(confirms, 1); assert.equal(page.state.detail.status, 'CONFIRMED');
+    assert.deepEqual(page.routes, []); assert.deepEqual(page.successes, ['ยืนยันเอกสารเรียบร้อยแล้ว']);
+  } finally { mark.mock.restore(); confirm.mock.restore(); get.mock.restore(); }
+});
+test('R2 a non-confirmer keeps send-only; a confirmer may send to someone else', async () => {
+  for (const permissions of [OWNER.filter(permission => permission !== 'expense.confirm'), OWNER]) {
+    const page = harness({ detail: recordingExpense(), step: 'review' }, permissions);
+    const mark = stub(api, 'markExpenseReadyAsReviewer', async () => recordingExpense('READY_FOR_CONFIRMATION'));
+    const confirm = stub(api, 'confirmExpense', async () => { throw Error('send-only must never confirm'); });
+    try {
+      const html = page.render();
+      const label = permissions.includes('expense.confirm') ? 'ส่งให้คนอื่นตรวจ' : 'ส่งตรวจสอบ';
+      assert.doesNotMatch(html, /ส่งให้ผู้มีสิทธิ์ยืนยันตรวจและยืนยันเอกสาร/);
+      await page.act('button', label);
+      assert.equal(mark.mock.callCount(), 1); assert.equal(confirm.mock.callCount(), 0);
+      assert.deepEqual(page.routes, ['/companies/co/expenses?highlight=e1']);
+    } finally { mark.mock.restore(); confirm.mock.restore(); }
+  }
+});
+test('R2 a refused confirmation keeps the sent expense and retries confirmation without sending again', async () => {
+  const page = harness({ detail: recordingExpense(), step: 'review' });
+  const sent = recordingExpense('READY_FOR_CONFIRMATION');
+  let confirmations = 0;
+  const mark = stub(api, 'markExpenseReadyAsReviewer', async () => sent);
+  const refusal = 'กรุณาตรวจรายการซ้ำก่อนยืนยันเอกสาร';
+  const confirm = stub(api, 'confirmExpense', async () => { confirmations++; if (confirmations === 1) throw { code: 'tax_period_locked', details: { code: 'tax_period_locked', message: refusal } }; return recordingExpense('CONFIRMED'); });
+  const get = stub(api, 'getExpense', async () => recordingExpense('CONFIRMED'));
+  try {
+    page.render(); let html = await page.act('button', 'ยืนยันเอกสาร');
+    assert.equal(page.state.detail.status, 'READY_FOR_CONFIRMATION'); assert.match(html, new RegExp(refusal));
+    assert.deepEqual(page.routes, []); assert.deepEqual(page.successes, []);
+    await page.act('button', 'ยืนยันเอกสาร'); assert.equal(mark.mock.callCount(), 1); assert.equal(confirmations, 2);
+    assert.equal(page.state.detail.status, 'CONFIRMED');
+  } finally { mark.mock.restore(); confirm.mock.restore(); get.mock.restore(); }
+});
+
+test('R2 the save-review instruction appears once beside Next and owns its accessible description', () => {
+  const page = harness({ step: 'evidence', detail: recordingExpense(), evidenceDirty: true });
+  const html = page.render();
+  const words = 'มีการแก้ไขที่ยังไม่ได้บันทึก — กด “บันทึกการตรวจ” ก่อนไปขั้นถัดไป';
+  assert.equal(html.split(words).length - 1, 1);
+  assert.match(html, /id="expense-document-review-hint-e1"/);
+  const next = page.nodes.find(n => n.tag === 'button' && text(n.props.children) === 'ถัดไป');
+  assert.equal(next?.props['aria-describedby'], 'expense-document-review-hint-e1');
+});
+
+test('R3 manual and cancelled expenses without AI output never show an empty AI review block', () => {
+  for (const status of ['CONFIRMED', 'VOIDED']) {
+    const html = harness({ detail: expense({ status, captureSource: 'MANUAL' }) }).render();
+    assert.doesNotMatch(html, /ข้อมูลจาก AI \(ต้องตรวจสอบก่อนยืนยัน\)/);
+  }
+  const html = harness({ detail: expense({ status: 'CONFIRMED', extractionId: 'read-1', aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW' } }) }).render();
+  assert.match(html, /ข้อมูลจาก AI \(ต้องตรวจสอบก่อนยืนยัน\)/);
+});
+
+test('R3 cancelled expense retains reading and file links but hides unavailable writes', () => {
+  const details = expense({ status: 'VOIDED', duplicateStatus: 'POSSIBLE_DUPLICATE', duplicateCandidates: [{ id: 'dup', candidateExpenseId: 'other', candidateExpenseNumber: 'EX-OTHER', score: 90, reasonCodesJson: [], status: 'OPEN' }],
+    payments: [{ ...payment, status: 'VOIDED', cancellationDocumentId: 'cancelled-document' }],
+    cancellationDocumentId: 'cancelled-document' });
+  const html = harness({ detail: details, whtHandoff: { id: 'h1', status: 'SYSTEM_ISSUED' } }, [...OWNER, 'expense.duplicate.resolve', 'expense.delete', 'expense.receipt.upload', 'expense.ocr.request', 'wht.certificate.read', 'wht.certificate.correct']).render();
+  const controls = [...html.matchAll(/<(button|a)\b([^>]*)>([\s\S]*?)<\/\1>/g)].map(match => `${match[1]}: ${match[2]!.match(/aria-label="([^"]*)"/)?.[1] ?? visible(match[3]).trim()}`);
+  console.log('R3_CANCELLED_AFTER_CONTROLS', JSON.stringify(controls));
+  for (const label of ['คัดลอกเลขรายจ่าย', 'เปิดเต็มจอ', 'ดูไฟล์', 'EX-OTHER']) assert.match(visible(html), new RegExp(label));
+  assert.match(html, /href="\/companies\/co\/expenses"/);
+  assert.match(html, /ยกเลิกแล้ว/);
+  assert.doesNotMatch(html, /ตรวจหารายการซ้ำ|ยืนยันว่าเป็นรายการซ้ำ|ไม่ใช่รายการซ้ำ|ให้ AI อ่านอีกครั้ง|ยอมรับยอด|ยกเลิกรายการจ่ายนี้|แก้ไขหนังสือรับรอง|ออกหนังสือรับรอง 50 ทวิ|บันทึกจ่ายส่วนที่เหลือ|บันทึกจ่าย ฿/);
+});
+
+test('R3 payment method never wraps and only an effective payment earns the remainder label', () => {
+  for (const payments of [[], [{ ...payment, status: 'VOIDED' }], [payment]]) {
+    const html = harness({ detail: expense({ payments }), paidAmount: '500' }).render();
+    assert.equal(html.includes('บันทึกจ่ายส่วนที่เหลือ ฿500.00'), payments.some(row => row.status === 'RECORDED'));
+  }
+  const html = harness({ detail: expense({ payments: [{ ...payment, paymentMethod: 'BANK_TRANSFER' }] }) }).render();
+  assert.match(html, /<span class="whitespace-nowrap">โอนเงิน<\/span>/);
+});
+
+test('R4 a totals preview refusal never hides the saved amount and Next can reveal missing fields', () => {
+  const d = recordingExpense(); d.vendorNameSnapshot = '';
+  const page = harness({ detail: d, step: 'data', reviewTotals: { revision: `${d.id}:${d.updatedAt}`, status: 'error', vatMode: 'NO_VAT', message: 'กรุณากรอกชื่อผู้ขาย' } });
+  const html = page.render();
+  assert.match(html, /฿500.00/);
+  assert.equal(page.nodes.find(n => n.tag === 'button' && text(n.props.children) === 'ถัดไป')?.props.disabled, false);
+});
+
+test('R4 confirmed next actions name the outstanding amount, withholding and certificate jump', () => {
+  for (const status of ['REQUIRED', 'SYSTEM_ISSUED', 'EXTERNAL_LINKED']) {
+    const html = harness({ detail: expense({ whtAmount: '15', outstandingAmount: '485' }), whtHandoff: { id: 'h1', status } }).render();
+    const box = html.slice(html.indexOf('data-testid="expense-correction-actions"'), html.indexOf('data-testid="expense-review-form"'));
+    assert.match(box, /ต้องจ่าย ฿485.00/); assert.match(box, /หักภาษี ณ ที่จ่ายไว้ ฿15.00/);
+    assert.match(box, /ไปที่การชำระเงิน/);
+    assert.equal(box.includes('ไปที่หนังสือรับรอง 50 ทวิ'), status === 'REQUIRED');
+    assert.match(box, />50 ทวิ<\/button>/);
+  }
+  const done = harness({ detail: expense({ outstandingAmount: '0', paymentStatus: 'PAID' }) }).render();
+  assert.match(done, /จ่ายครบแล้ว/);
+});
+
+test('R4 cancelled expense leads with its known date and reason, never an actor id', () => {
+  const html = harness({ detail: expense({ status: 'VOIDED', voidedAt: '2026-10-12T03:00:00Z', voidedByUserId: 'private-actor-id', voidReason: 'บันทึกซ้ำ' }) }).render();
+  const banner = html.slice(html.indexOf('data-testid="expense-cancellation-notice"'), html.indexOf('data-testid="expense-review-form"'));
+  assert.match(banner, /รายจ่ายนี้ถูกยกเลิกแล้ว/); assert.match(banner, /12 ต.ค. 2569/); assert.match(banner, /เหตุผล: บันทึกซ้ำ/);
+  assert.doesNotMatch(banner, /private-actor-id/);
+  assert.match(html, />ยกเลิกแล้ว<\/span>/);
+});
+
+test('R4 certificate jumps scroll to the certificate card, outside the sticky footer', () => {
+  // In this build the certificate controls are the card: the jump target wraps it, and the card needs a printable hand-off to offer the issue button.
+  const page = harness({ detail: expense({ whtAmount: '15' }), whtHandoff: { id: 'h1', status: 'REQUIRED', systemIssuanceOpen: true, missing: [], payerMissing: [], payeeAddress: 'ที่อยู่ผู้รับเงิน', prefill: { payeeSnapshot: { name: 'ผู้รับเงิน', address: null } } } }, [...OWNER, 'wht.certificate.issue']);
+  const html = page.render();
+  const anchor = html.indexOf('id="expense-wht-e1"');
+  const card = html.indexOf('id="wht-certificate"', anchor);
+  assert.ok(anchor >= 0); assert.ok(card > anchor);
+  assert.ok(card < html.indexOf('mangmee-safe-bottom'));
+  const previous = globalThis.document; const jumps: unknown[] = [];
+  (globalThis as any).document = { getElementById: (id: string) => { assert.equal(id, 'expense-wht-e1'); return { scrollIntoView: (options: unknown) => jumps.push(options) }; } };
+  try {
+    for (const label of ['ไปที่หนังสือรับรอง 50 ทวิ', '50 ทวิ']) page.nodes.find(node => node.tag === 'button' && text(node.props.children) === label)!.props.onClick();
+    assert.deepEqual(jumps, [{ behavior: 'smooth', block: 'start' }, { behavior: 'smooth', block: 'start' }]);
+  } finally { (globalThis as any).document = previous; }
 });

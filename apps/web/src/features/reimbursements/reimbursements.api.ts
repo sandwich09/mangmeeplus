@@ -4,10 +4,10 @@ import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 import { fetchSignedPreviewBlob, uploadReceiptFile as uploadFileToStorage } from '../expenses/expenses.api';
 import { prepareAttachmentUpload, withGenericUploadError } from '@/common/files/upload-file.logic';
 import {
-  REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES,
   type ReimbursementApproverRoleOption, type ReimbursementInternalNote, type ReimbursementPolicySummary, type ReimbursementSourceOptions,
   type RequestReimbursementPayoutCorrectionInput, type SubmitReimbursementPayoutCorrectionInput,
 } from '@watchdog-bms/contracts';
+import { uploadPaymentSlip } from '@/common/files/slip-upload.api';
 import { HUB_PAGE_SIZE, type HubFilter } from './reimbursements.logic';
 
 function qs(params?: Record<string, unknown>): string {
@@ -172,8 +172,8 @@ export function submitReimbursement(companyId: string, id: string, payoutSubmitT
  * Cancels a claim, or continues a cancellation that was started and has not completed. A continue sends no
  * reason (the one on record stays), except the corrected reason when the stored one is what blocks it.
  */
-export function cancelReimbursement(companyId: string, id: string, reason?: string) {
-  return apiFetch<any>(`${base(companyId)}/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) });
+export function cancelReimbursement(companyId: string, id: string, reason?: string, taxFilingAttested?: true) {
+  return apiFetch<any>(`${base(companyId)}/${id}/cancel`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason, ...(taxFilingAttested === true ? { taxFilingAttested } : {}) }) });
 }
 /** Takes back a cancellation that was started and has not completed; the claim goes on as before. */
 export function withdrawReimbursementCancellation(companyId: string, id: string) {
@@ -250,20 +250,9 @@ export function voidReimbursementPayment(companyId: string, id: string, paymentI
  * recorded by the person who uploaded it. Returns the attachment id to record the payment with.
  */
 export async function uploadReimbursementPaymentSlip(companyId: string, requestId: string, file: File): Promise<string> {
-  return withGenericUploadError(async () => {
-    const prepared = await prepareAttachmentUpload(file);
-    if (prepared.size > REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES) throw Object.assign(new Error('payment_slip_invalid'), { code: 'payment_slip_invalid' });
-    const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(
-      `${base(companyId)}/${requestId}/payments/slip-upload-intent`,
-      { method: 'POST', body: JSON.stringify({ originalFileName: prepared.name, mimeType: prepared.type, byteSize: prepared.size }) },
-    );
-    await uploadFileToStorage(intent.uploadUrl, intent.uploadMethod, prepared, intent.uploadHeaders);
-    await apiFetch(`${base(companyId)}/${requestId}/payments/slip-uploads/${intent.attachmentId}/complete`, {
-      method: 'POST',
-      body: JSON.stringify({ byteSize: prepared.size }),
-    });
-    return intent.attachmentId;
-  });
+  return withGenericUploadError(() => uploadPaymentSlip(`${base(companyId)}/${requestId}/payments`, file, {
+    code: 'payment_slip_invalid', message: 'payment_slip_invalid',
+  }));
 }
 
 /**

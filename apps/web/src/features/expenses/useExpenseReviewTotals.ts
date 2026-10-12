@@ -8,6 +8,7 @@ export type ExpenseReviewTotalsState = {
   revision: string;
   status: 'loading' | 'ready' | 'error';
   vatMode: ExpenseVatMode;
+  withholdingIncomplete?: boolean;
   totals?: ExpenseDraftTotalsPreview;
   message?: string;
 };
@@ -15,7 +16,7 @@ export type ExpenseReviewTotalsState = {
 /** Preview uses ERP's save calculator. Cancelled/older responses cannot replace newer edits. */
 export function useExpenseReviewTotals(companyId: string, detail: ExpenseDetail, values: ExpenseDraftReviewValues,
   enabled: boolean, blockingMessage: string | null, retry: number,
-  onChange?: (state: ExpenseReviewTotalsState | null) => void) {
+  onChange?: (state: ExpenseReviewTotalsState | null) => void, withholdingIncomplete = false) {
   const [state, setState] = useState<ExpenseReviewTotalsState | null>(null);
   const disallowsTaxCode = !allowsDomesticInputTaxCode(detail.sourceDocumentType, detail.taxEvidenceStatus);
   // The two PATCH routes take the contract type, which the global ValidationPipe skips; this POST
@@ -34,7 +35,7 @@ export function useExpenseReviewTotals(companyId: string, detail: ExpenseDetail,
     const controller = new AbortController();
     let active = true;
     const publish = (next: ExpenseReviewTotalsState) => { if (active) { setState(next); onChange?.(next); } };
-    const common = { revision: `${detail.id}:${detail.updatedAt}`, vatMode: values.vatMode };
+    const common = { revision: `${detail.id}:${detail.updatedAt}`, vatMode: values.vatMode, withholdingIncomplete };
     publish({ ...common, status: blockingMessage ? 'error' : 'loading', ...(blockingMessage && { message: blockingMessage }) });
     const timer = blockingMessage ? undefined : window.setTimeout(() => {
       void previewExpenseDraftTotals(companyId, detail.id, JSON.parse(payload), controller.signal)
@@ -42,6 +43,6 @@ export function useExpenseReviewTotals(companyId: string, detail: ExpenseDetail,
         .catch((error) => publish({ ...common, status: 'error', message: err(error) }));
     }, 300);
     return () => { active = false; window.clearTimeout(timer); controller.abort(); };
-  }, [companyId, detail.id, detail.updatedAt, values.vatMode, enabled, blockingMessage, payload, retry, onChange]);
+  }, [companyId, detail.id, detail.updatedAt, values.vatMode, enabled, blockingMessage, payload, retry, onChange, withholdingIncomplete]);
   return state;
 }

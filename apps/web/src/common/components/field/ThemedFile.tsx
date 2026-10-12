@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { cx } from '@/common/components/mangmee';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 
@@ -19,6 +19,8 @@ const LABELS = {
 export type ThemedFileProps = {
   /** Controlled display: a File (shows its name), a name string, or null (empty). */
   file?: File | string | null;
+  inputRef?: RefObject<HTMLInputElement | null>;
+  labels?: Partial<{ pick: string; change: string; clear: string; loading: string }>;
   onChange?: (file: File | null) => void;
   accept?: string;
   /** `capture="environment"` opens the rear camera straight away on a phone. */
@@ -32,14 +34,16 @@ export type ThemedFileProps = {
   required?: boolean;
   id?: string;
   'aria-label'?: string;
+  'aria-describedby'?: string;
   'aria-required'?: boolean;
 };
 
-export function ThemedFile({ file, onChange, accept, capture, disabled: disabledProp = false, loading = false, className, placeholder, name, required, id, 'aria-label': ariaLabel, 'aria-required': ariaRequired }: ThemedFileProps) {
+export function ThemedFile({ file, inputRef: suppliedRef, labels: suppliedLabels, onChange, accept, capture, disabled: disabledProp = false, loading = false, className, placeholder, name, required, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-required': ariaRequired }: ThemedFileProps) {
   const disabled = disabledProp || loading;
   const locale = useWorkspaceLocale();
-  const labels = LABELS[locale] ?? LABELS.th;
-  const inputRef = useRef<HTMLInputElement>(null);
+  const labels = { ...(LABELS[locale] ?? LABELS.th), ...suppliedLabels };
+  const ownRef = useRef<HTMLInputElement>(null);
+  const inputRef = suppliedRef ?? ownRef;
   const [innerName, setInnerName] = useState('');
   const controlled = file !== undefined;
   const shownName = controlled ? (typeof file === 'string' ? file : file?.name ?? '') : innerName;
@@ -90,6 +94,7 @@ export function ThemedFile({ file, onChange, accept, capture, disabled: disabled
         capture={capture}
         disabled={disabled}
         aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
         aria-required={ariaRequired}
         className="sr-only"
         onChange={(event) => pick(event.target.files?.[0] ?? null)}
@@ -105,11 +110,11 @@ export function ThemedFile({ file, onChange, accept, capture, disabled: disabled
           type="button"
           aria-label={labels.clear}
           onClick={clear}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 sm:h-7 sm:w-7"
+          className={cx("flex min-h-11 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-600", suppliedLabels?.clear ? "px-2 text-xs" : "h-11 w-11 sm:h-7 sm:min-h-7 sm:w-7")}
         >
-          <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
+          {suppliedLabels?.clear ?? <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
             <path d="m5.5 5.5 9 9m0-9-9 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
+          </svg>}
         </button>
       )}
       <span className={cx('inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold', disabled ? 'bg-gray-100 text-gray-400' : 'bg-brand-50 text-brand-700')}>

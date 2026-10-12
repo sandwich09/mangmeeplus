@@ -67,6 +67,12 @@ import {
 } from './application/use-cases/expense-evidence.use-case';
 import { CompanySubstituteReceiptController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController } from './presentation/http/expense.controller';
 import { ExpenseCaptureController } from './presentation/http/expense-capture.controller';
+import { DisbursementVoucherController } from './presentation/http/disbursement-voucher.controller';
+import { ReadDisbursementVoucherSourcesUseCase } from './application/use-cases/disbursement-voucher-read.use-case';
+import { DisbursementVoucherFileService } from './application/services/disbursement-voucher-file.service';
+import { DisbursementVoucherNoticeService } from './application/services/disbursement-voucher-notice.service';
+import { DisbursementVoucherUseCase } from './application/use-cases/disbursement-voucher.use-case';
+import { PrismaDisbursementVoucherRepository } from './infrastructure/prisma-disbursement-voucher.repository';
 import { ExpenseCaptureReadInternalController } from './presentation/http/expense-capture-read-internal.controller';
 import { ExpenseCaptureReadClient } from './infrastructure/expense-capture-read.client';
 import { ExpenseCaptureAutoSplitService } from './application/services/expense-capture-auto-split.service';
@@ -125,8 +131,13 @@ import { ProcurementModule } from '../procurement/procurement.module';
   // ExpenseCaptureController FIRST: `ExpenseController` owns `@Get(':expenseId')` on the same
   // path, and Express matches in registration order — a later `capture-groups` literal would be
   // read as an expense id.
-  controllers: [ExpenseCaptureController, ExpenseCaptureReadInternalController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController],
+  controllers: [ExpenseCaptureController, ExpenseCaptureReadInternalController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController, DisbursementVoucherController],
   providers: [
+    ReadDisbursementVoucherSourcesUseCase,
+    DisbursementVoucherUseCase,
+    DisbursementVoucherNoticeService,
+    DisbursementVoucherFileService,
+    PrismaDisbursementVoucherRepository,
     PrismaExpenseRepository,
     PrismaExpenseCaptureRepository,
     ExpenseCaptureAccessService,

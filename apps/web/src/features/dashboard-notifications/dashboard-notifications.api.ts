@@ -85,7 +85,7 @@ export function getUnreadCount(companyId: string): Promise<NotificationUnreadCou
 
 export const NOTIFICATIONS_CHANGED_EVENT = 'watchdog:notifications-changed';
 
-function notifyNotificationsChanged(): void {
+export function notifyNotificationsChanged(): void {
   if (typeof window !== 'undefined') window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
 }
 
