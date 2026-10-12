@@ -149,8 +149,7 @@ export class BillingDocumentAdminService {
       allowedActions: [...(own && manage && fresh && row.state === 'PREVIEW' ? ['submit' as const] : []),
         ...(canApproveBillingChange(access, row.initiatorUserId, context.userId, MANAGE) && fresh && row.state === 'AWAITING_APPROVAL' ? ['approve' as const] : []),
         ...(!j.dispatchedAt && ['PREVIEW', 'AWAITING_APPROVAL', 'QUEUED', 'BLOCKED'].includes(row.state) && (manage || approve) && (!row.leaseUntil || row.leaseUntil <= new Date()) ? ['cancel' as const] : []),
-        // A request that ended without a change is over: nothing will be sent for it again, so staff start a new one.
-        ...((manage || approve) && ['QUEUED', 'RUNNING', 'UNKNOWN', 'BLOCKED', 'FAILED'].includes(row.state) && row.errorCode !== 'CONTROL_RECIPIENT_NOT_CHANGED' && (!row.leaseUntil || row.leaseUntil <= new Date()) ? ['run' as const] : [])],
+        ...((manage || approve) && ['QUEUED', 'RUNNING', 'UNKNOWN', 'BLOCKED', 'FAILED'].includes(row.state) && (!row.leaseUntil || row.leaseUntil <= new Date()) ? ['run' as const] : [])],
       dispatchedAt: j.dispatchedAt ?? null, reviewCaseId: issue?.id ?? null, notifiedAt: j.notifiedAt ?? null };
   }
   async get(context: RequestContext, id: string) { return this.view(context, await this.row(context, id)); }
@@ -280,36 +279,35 @@ export class BillingDocumentAdminService {
       let journal = (claim.resultJson ?? {}) as Journal;
       const email = this.customerBinding(await this.billing.stripe.request('GET', `/customers/${account.customerId}`), account);
       if (journal.dispatchedAt && email === p.target.email) { await this.finishRecipient(account, claim, p, journal, lease); return; }
-      // Not changed: `current` refuses every send once expiresAt has passed, so the last send of this request left at or before expiresAt (plus the
-      // 120 s lease at most). An hour later nothing is in flight and nothing will be sent again, and the read above shows the provider does not hold
-      // the target address. So the request ends without a change, in the catch below. (Same rule as billing-refunds.service.ts's
-      // CONTROL_REFUND_NOT_CREATED; always earlier than the former 23-hour CONTROL_RECIPIENT_AGED_UNKNOWN.)
-      if (journal.dispatchedAt && Date.now() - claim.expiresAt.getTime() >= 3_600_000) throw billingError('CONTROL_RECIPIENT_NOT_CHANGED', 'ตรวจกับผู้ให้บริการรับชำระเงินแล้ว อีเมลผู้รับเอกสารตอนนี้ไม่ใช่อีเมลใหม่ตามคำขอนี้ ถ้ายังต้องการเปลี่ยน ให้สร้างคำขอใหม่');
+      // Aged past 23h since dispatch with still no confirmed readback: needs a human, not another
+      // retry — own code (mirrors billing-refunds.service.ts's CONTROL_REFUND_AGED_UNKNOWN) so the
+      // catch below can BLOCK it instead of leaving it UNKNOWN for the reconciler to keep polling.
+      if (journal.dispatchedAt && Date.now() - Date.parse(journal.dispatchedAt) >= 23 * 3_600_000) throw billingError('CONTROL_RECIPIENT_AGED_UNKNOWN', 'ยังยืนยันผลกับ Stripe ไม่ได้เกิน 23 ชั่วโมง ให้ตรวจที่ Stripe ก่อนทำรายการต่อ');
       if (email !== p.previousEmail) throw stale();
-      // Only a readback equal to the target finishes the request. A dispatched send that never applied is sent again here, same key, while the request is still valid.
-      journal = await this.prisma.client.$transaction(async tx => {
-        const { row } = await this.fence(tx, claim.id, lease);
-        await this.actors(row, tx); await this.current(row, tx);
-        const j = (row.resultJson ?? {}) as Journal, providerKey = `billing-recipient-admin-${row.id}`;
-        const updated: Journal = { ...j, dispatchedAt: j.dispatchedAt ?? new Date().toISOString(), providerKey };
-        const saved = await this.writeLeased(tx, row, lease, { resultJson: json(updated) });
-        await this.audit(tx, saved, j.dispatchedAt ? 'redispatch' : 'dispatch'); return updated;
-      });
-      await this.billing.stripe.request('POST', `/customers/${account.customerId}`, { email: p.target.email }, journal.providerKey);
-      if (this.customerBinding(await this.billing.stripe.request('GET', `/customers/${account.customerId}`), account) !== p.target.email) throw stale();
+      if (!journal.dispatchedAt) {
+        journal = await this.prisma.client.$transaction(async tx => {
+          const { row } = await this.fence(tx, claim.id, lease);
+          await this.actors(row, tx); await this.current(row, tx);
+          const j = (row.resultJson ?? {}) as Journal, providerKey = `billing-recipient-admin-${row.id}`;
+          const updated: Journal = { ...j, dispatchedAt: j.dispatchedAt ?? new Date().toISOString(), providerKey };
+          const saved = await this.writeLeased(tx, row, lease, { resultJson: json(updated) });
+          await this.audit(tx, saved, j.dispatchedAt ? 'redispatch' : 'dispatch'); return updated;
+        });
+        await this.billing.stripe.request('POST', `/customers/${account.customerId}`, { email: p.target.email }, journal.providerKey);
+        if (this.customerBinding(await this.billing.stripe.request('GET', `/customers/${account.customerId}`), account) !== p.target.email) throw stale();
+      }
       await this.finishRecipient(account, claim, p, journal, lease);
     } catch (error) {
       await this.prisma.client.$transaction(async tx => {
         const { row } = await this.fence(tx, claim.id, lease);
         const j = (row.resultJson ?? {}) as Journal;
         const rejected = error instanceof StripeRequestError && error.outcome === 'REJECTED';
-        // Two ways a dispatched request ends with no change: the provider refused the update, or (the check in the try) it never applied one. The second keeps its review case.
-        const notChanged = (error as { getResponse?: () => { code?: string } }).getResponse?.()?.code === 'CONTROL_RECIPIENT_NOT_CHANGED';
+        const aged = (error as { getResponse?: () => { code?: string } }).getResponse?.()?.code === 'CONTROL_RECIPIENT_AGED_UNKNOWN';
         const code = error instanceof ForbiddenException ? 'CONTROL_PERMISSION_CHANGED' : rejected ? 'CONTROL_RECIPIENT_PROVIDER_REJECTED'
-          : notChanged ? 'CONTROL_RECIPIENT_NOT_CHANGED' : j.dispatchedAt ? 'CONTROL_RECIPIENT_REVIEW' : 'CONTROL_PREVIEW_STALE';
-        const saved = await this.writeLeased(tx, row, lease, { state: rejected || notChanged ? 'FAILED' : j.dispatchedAt ? 'UNKNOWN' : 'BLOCKED', errorCode: code,
+          : aged ? 'CONTROL_RECIPIENT_AGED_UNKNOWN' : j.dispatchedAt ? 'CONTROL_RECIPIENT_REVIEW' : 'CONTROL_PREVIEW_STALE';
+        const saved = await this.writeLeased(tx, row, lease, { state: rejected ? 'FAILED' : aged ? 'BLOCKED' : j.dispatchedAt ? 'UNKNOWN' : 'BLOCKED', errorCode: code,
           scheduledFor: new Date(Date.now() + 300_000), leaseToken: null, leaseUntil: null, version: { increment: 1 } });
-        await detectBillingIssue(tx, issueIdentity(p, row.id)); await this.audit(tx, saved, notChanged ? 'not_changed' : 'review');
+        await detectBillingIssue(tx, issueIdentity(p, row.id)); await this.audit(tx, saved, 'review');
         if (rejected) await resolveBillingIssue(tx, issueIdentity(p, row.id), 'PROVIDER_REJECTED_EMAIL_UPDATE');
       });
     } finally {

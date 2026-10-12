@@ -129,8 +129,6 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
     const expiredApproval=await queued(),expiryPosts=requests.length;
     await db.billingOperation.update({where:{id:expiredApproval.id},data:{expiresAt:new Date(Date.now()-1000)}});
     assert.equal((await execute(expiredApproval)).state,'BLOCKED');assert.equal(requests.length,expiryPosts);
-    // Never sent and expired: it holds nothing, so a new request of the same company can start while the old one is still there to cancel.
-    const afterExpiry=await preview();assert.equal(afterExpiry.status,200,JSON.stringify(afterExpiry.body));assert.equal((await command(afterExpiry.body,'cancel')).body.state,'CANCELLED');
     assert.equal((await command(await get(expiredApproval.id),'cancel')).body.state,'CANCELLED');
     cases.push('refund-approved-but-expired-command-cannot-dispatch-and-retains-cancel-review');
     const revoke=await queued(),memberships=await db.membershipRole.findMany({where:{membershipId:input.membershipId}});
@@ -171,14 +169,12 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
     const s=await settings();await proof();const closed=await request(`${base}/settings/emergency-close`,'POST',{gates:{...s.gates,refunds:false},expectedVersion:s.version,reason:'ปิดคำขอใหม่ระหว่างตรวจผลเดิม'},{'idempotency-key':`refund-close-${run}`});assert.equal(closed.status,200,JSON.stringify(closed));
     behavior='ok';assert.equal((await execute(await get(lost.id),approveRequest)).state,'SUCCEEDED');assert.equal(requests.length,lostBefore+1);
     await publish();cases.push('refund-lost-provider-response-recovers-original-note-with-gate-closed-and-no-second-post');
-    // A dispatched create the provider never made ends an hour after the request's expiry, with nothing sent; one that did land is still found first.
-    const unsent=async()=>{const op=await queued();behavior='lose-before';assert.equal((await execute(op)).state,'UNKNOWN');behavior='ok';
-      return db.billingOperation.update({where:{id:op.id},data:{expiresAt:new Date(Date.now()-2*3600000)}});};
-    const aged=await unsent(),agedBefore=requests.length,ended=await execute(await get(aged.id));
-    assert.deepEqual([ended.state,ended.errorCode,ended.allowedActions.includes('run'),requests.length],['FAILED','CONTROL_REFUND_NOT_CREATED',false,agedBefore]);
-    const landed=await unsent(),landedBefore=requests.length,p=landed.proposedJson as any,params=new URLSearchParams(),form=(key:string,value:unknown):void=>{if(value&&typeof value==='object')for(const [k,v] of Object.entries(value))form(key?`${key}[${k}]`:k,v);else params.set(key,String(value));};form('',p.params);issue(params);
-    assert.equal((await execute(await get(landed.id))).state,'SUCCEEDED');assert.equal(requests.length,landedBefore);
-    cases.push('refund-never-created-ends-without-replay-and-positive-original-discovery-completes');
+    const aged=await queued();behavior='lose-before';assert.equal((await execute(aged)).state,'UNKNOWN');const agedRow=await db.billingOperation.findUniqueOrThrow({where:{id:aged.id}});
+    await db.billingOperation.update({where:{id:aged.id},data:{resultJson:{...(agedRow.resultJson as any),dispatchedAt:new Date(Date.now()-24*3600000).toISOString()}}});behavior='ok';
+    const agedBefore=requests.length,unconfirmed=await execute(await get(aged.id));assert.equal(unconfirmed.errorCode,'CONTROL_REFUND_AGED_UNKNOWN');assert.equal(requests.length,agedBefore);
+    const p=agedRow.proposedJson as any,params=new URLSearchParams(),form=(key:string,value:unknown):void=>{if(value&&typeof value==='object')for(const [k,v] of Object.entries(value))form(key?`${key}[${k}]`:k,v);else params.set(key,String(value));};form('',p.params);issue(params);
+    assert.equal((await execute(await get(aged.id))).state,'SUCCEEDED');assert.equal(requests.length,agedBefore);
+    cases.push('refund-aged-unknown-never-blind-replays-and-positive-original-discovery-completes');
     const pending=await queued();behavior='pending';let pendingView=await execute(pending);assert.equal(pendingView.state,'QUEUED');assert.equal(pendingView.refundState,'pending');assert.ok(pendingView.creditNoteId);
     const pendingPosts=requests.length;pendingView=await execute(pendingView);assert.equal(requests.length,pendingPosts);assert.equal(pendingView.refundState,'pending');
     refunds.find(r=>r.id===pendingView.refundId).status='succeeded';assert.equal((await execute(pendingView)).state,'SUCCEEDED');

@@ -60,14 +60,10 @@ export async function assertRecipientProof(tx: Prisma.TransactionClient, proof: 
  */
 export async function pendingAdminRecipientChange(tx: Prisma.TransactionClient,
   account: Pick<BillingAccount, 'companyId' | 'stripeAccountId' | 'livemode'>, excludeId?: string) {
-  // A request never sent to the provider holds nothing once it has expired: it can no longer be submitted, approved or dispatched
-  // (`current()` refuses it), so nothing is in flight. A dispatched one holds until it ends, whatever its age.
-  const rows = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "BillingOperation" WHERE "companyId"=${account.companyId}
-    AND "stripeAccountId"=${account.stripeAccountId} AND livemode=${account.livemode} AND type=${TYPE}
-    AND "proposedJson"->'target'->>'source'='ADMIN' AND id<>${excludeId ?? ''}
-    AND (state IN ('RUNNING','UNKNOWN') OR (state IN ('PREVIEW','AWAITING_APPROVAL','QUEUED','BLOCKED')
-      AND ("resultJson"->>'dispatchedAt' IS NOT NULL OR "expiresAt">${new Date()}))) LIMIT 1`;
-  return rows[0] ?? null;
+  return tx.billingOperation.findFirst({ where: { type: TYPE, companyId: account.companyId, stripeAccountId: account.stripeAccountId,
+    livemode: account.livemode, proposedJson: { path: ['target', 'source'], equals: 'ADMIN' },
+    state: { in: ['PREVIEW', 'AWAITING_APPROVAL', 'QUEUED', 'RUNNING', 'UNKNOWN', 'BLOCKED'] },
+    ...(excludeId ? { id: { not: excludeId } } : {}) } });
 }
 
 export class BillingEmailRecipient {

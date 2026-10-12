@@ -355,13 +355,13 @@ for (const width of WIDTHS) {
     await openChooser(page, w, width);
     await regionNamed(page, 'สิทธิ์ที่ใช้ในการซื้อครั้งนี้').getByRole('radio', { name: 'ซื้อแบบปกติ' }).check();
     await buyStarter(page).click();
-    await expect(reviewOf(page)).toContainText('เมื่อชำระสำเร็จ ใช้งานได้ 1 เดือน พร้อมโควตา 30 ใบ');
+    await expect(reviewOf(page)).toContainText('ชำระสำเร็จแล้ว ใช้งานได้ 1 เดือน พร้อมโควตา 30 ใบ');
     await expect(promoReviewOf(page)).toHaveCount(0);
     await settle(page, info, width, 'promo03-trial-normal-review');
     await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
     await regionNamed(page, 'สิทธิ์ที่ใช้ในการซื้อครั้งนี้').getByRole('radio', { name: /ใช้โปรโมชั่น/ }).check();
     await buyStarter(page).click();
-    await expect(reviewOf(page)).toContainText('เมื่อชำระสำเร็จ ใช้งานได้ 2 เดือน (ชำระ 1 เดือน แถมฟรี 1 เดือน)');
+    await expect(reviewOf(page)).toContainText('ชำระสำเร็จแล้ว ใช้งานได้ 2 เดือน (ชำระ 1 เดือน แถมฟรี 1 เดือน)');
     await expect(reviewOf(page)).not.toContainText('ใช้งานได้ 1 เดือน');
     await settle(page, info, width, 'promo03-trial-promotion-review');
   });
@@ -469,7 +469,7 @@ for (const width of WIDTHS) {
     const review = reviewOf(page), rows = review.locator('dl').filter({ has: page.locator('dt', { hasText: 'ยกยอดจากทดลองใช้' }) });
     await expect(rows.locator('dt')).toHaveText(['โควตาแพ็กเกจ (รวมแถม 30 ใบ)', 'ยกยอดจากทดลองใช้', 'รวมหลังชำระสำเร็จโดยประมาณ']);
     await expect(rows.locator('dd')).toHaveText(['60 ใบ', '12 ใบ', '72 ใบ']);
-    await expect(review).toContainText('เมื่อชำระสำเร็จ ใช้งานได้ 2 เดือน (ชำระ 1 เดือน แถมฟรี 1 เดือน)');
+    await expect(review).toContainText('ชำระสำเร็จแล้ว ใช้งานได้ 2 เดือน (ชำระ 1 เดือน แถมฟรี 1 เดือน)');
     await settle(page, info, width, 'promo03r2-trial-carryover-review');
     // the same shop buying normally: the package row is the plain 30
     await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
@@ -1095,12 +1095,9 @@ for (const width of WIDTHS) {
   // The same code in a state that is not "active, paid, applied, no payment in flight" keeps the alert exactly as before: its sentence, the reference for the team and the check button.
   test(`PROMO-08 the same block code on a shop whose last charge failed keeps the amber alert, with its reference and its button, and no quiet line at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     const w = defaultCustomerWorld(companyId, deferredShopStatus(companyId, { paymentState: 'FAILED', subscriptionState: 'past_due' }));
-    // 2026-10-10: the same shop holds an event discount; on the discount path with an unpaid renewal the page says nothing about it (no purchase is open to it, the alert says why).
-    w.heldDiscount = { ...heldTicketView(), path: 'DISCOUNT', renewalMode: 'CARD_AUTO', renewalState: 'UNPAID' };
     await openOverview(page, w, width);
     const alert = amberAlert(page);
     await expect(alert).toHaveCount(1);
-    await expect(page.getByRole('note').filter({ hasText: 'คุณมีส่วนลดจากงาน' })).toHaveCount(0);
     await expect(alert).toContainText('การซื้อซ้ำหรือเปลี่ยนแพ็กเกจระหว่างรอบยังไม่เปิดให้บริการ');
     await expect(alert).toContainText('เลขอ้างอิงสำหรับแจ้งทีมงาน: ');
     await expect(alert.getByRole('button', { name: 'ตรวจสถานะล่าสุด', exact: true })).toBeVisible();
@@ -1108,26 +1105,20 @@ for (const width of WIDTHS) {
     await settle(page, info, width, 'promo08q-failed-keeps-alert');
   });
 
-  // UAT 2026-10-10: the green note on the package tab gave "ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ …" to a shop that is sent a QR bill each period, and to a shop that had switched its renewal off. The note appears for the same
-  // shops as before; its second half says only what the same answer knows of the renewal (sales-event spec §8.1, table of 2026-10-10). The shop's status page below is simulated to match, but the note reads the view alone.
+  // UAT 2026-10-10: the green note on the package tab gave "ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ …" to a shop that is sent a QR bill each period. The note appears for the same shops as before; its second half follows the way the shop renews.
   const HELD = `คุณมีส่วนลดจากงาน งานสัมมนาร้านค้า ลด 50 บาท ตอนจ่ายค่าแพ็กเกจ (ใช้ได้ถึง ${thaiDay('2026-12-31T16:59:00.000Z')})`;
-  for (const shop of [{ key: 'a card auto-renew shop', status: deferredShopStatus, view: { renewalMode: 'CARD_AUTO', renewalState: 'RUNNING' }, why: 'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้' },
-    { key: 'a QR bill every period shop', status: qrShopStatus, view: { renewalMode: 'PROMPTPAY_RENEW', renewalState: 'RUNNING' }, why: 'ร้านนี้ต่ออายุด้วยบิล QR ทุกงวด ส่วนลดจากงานยังใช้กับบิล QR รอบต่ออายุไม่ได้' },
-    { key: 'a shop that switched its renewal off', status: (id: string) => deferredShopStatus(id, { cancelAtPeriodEnd: true, nextChargeAt: null }), view: { renewalMode: 'CARD_AUTO', renewalState: 'STOPPED' },
-      why: 'การต่ออายุของร้านนี้ปิดอยู่ แต่แพ็กเกจรอบปัจจุบันยังไม่หมด ตอนนี้จึงยังใช้ส่วนลดจากงานไม่ได้' },
-    { key: 'a shop whose renewal charge failed', status: (id: string) => deferredShopStatus(id, { paymentState: 'FAILED', subscriptionState: 'past_due' }), view: { renewalMode: 'CARD_AUTO', renewalState: 'UNPAID' },
-      why: 'ร้านนี้มีค่าต่ออายุที่ยังชำระไม่สำเร็จ ส่วนลดจากงานใช้กับยอดต่ออายุนี้ไม่ได้' }] as const)
+  for (const shop of [{ key: 'a card auto-renew shop', status: deferredShopStatus, why: 'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้' },
+    { key: 'a QR bill every period shop', status: qrShopStatus, why: 'ร้านนี้ต่ออายุด้วยบิล QR ทุกงวด ส่วนลดจากงานยังใช้กับบิล QR รอบต่ออายุไม่ได้' }] as const)
     test(`PROMO-08 the held-discount note for ${shop.key} says why in its own words at ${width}px`, async ({ authedPage: page, companyId }, info) => {
       const w = defaultCustomerWorld(companyId, shop.status(companyId));
-      w.heldDiscount = { ...heldTicketView(), path: 'CREDIT', ...shop.view };
+      w.heldDiscount = { ...heldTicketView(), path: 'CREDIT' };
       await openOverview(page, w, width);
       const note = page.getByRole('note').filter({ hasText: 'คุณมีส่วนลดจากงาน' });
       await expect(note).toHaveCount(1);
       await expect(note).toHaveText(`${HELD} · ${shop.why}`);
-      // each shop is told only its own way: no card word to a QR shop, no bill word to a card shop, neither to a shop whose renewal is off or unpaid
-      const other = shop.why.includes('QR') ? /ตัดเงินอัตโนมัติ/ : shop.view.renewalState === 'RUNNING' ? /QR|บิล/ : /QR|บิล|ตัดเงิน|ตัดบัตร/;
+      const other = shop.why.includes('QR') ? /ตัดเงินอัตโนมัติ/ : /QR|บิล/;
       await expect(note).not.toContainText(other);
-      await settle(page, info, width, `promo08q-held-note-${shop.key.replace(/\W+/g, '-')}`);
+      await settle(page, info, width, `promo08q-held-note-${shop.why.includes('QR') ? 'qr' : 'card'}`);
     });
 }
 

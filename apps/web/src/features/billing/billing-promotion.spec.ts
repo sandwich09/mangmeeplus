@@ -242,7 +242,7 @@ test('the quote review: paid period, free time, end, receipts, next round — fr
     { label: 'ใบเสร็จ', value: '30 + แถม 30 = 60 ใบ' }]);
   assert.equal(review.next, 'รอบถัดไปเรียกเก็บวันที่ 5 ธันวาคม 2569 ราคาปกติ 249 บาท (ตัดบัตรอัตโนมัติ)');
   assert.equal(review.estimate, 'วันที่ทั้งหมดเป็นการประมาณ ระบบจะยืนยันวันจริงเมื่อชำระสำเร็จ');
-  assert.equal(review.summary, 'เมื่อชำระสำเร็จ ใช้งานได้ 2 เดือน (ชำระ 1 เดือน แถมฟรี 1 เดือน)');
+  assert.equal(review.summary, 'ชำระสำเร็จแล้ว ใช้งานได้ 2 เดือน (ชำระ 1 เดือน แถมฟรี 1 เดือน)');
   assert.equal(review.benefitEnd, '2026-12-05T03:00:00.000Z');
   assert.equal(review.totalReceiptUnits, 60);
   // A renewing mode by bill; a one-time mode has no next round to tell.
@@ -252,7 +252,7 @@ test('the quote review: paid period, free time, end, receipts, next round — fr
   // A year, and other figures: the receipts add up from the quote's own numbers.
   const year = promotionReview(quote({ offer: { interval: 'year' }, totalSatang: 249000 }, { bonusReceiptUnits: 45, totalReceiptUnits: 405 }), money)!;
   assert.equal(year.rows[3]!.value, '360 + แถม 45 = 405 ใบ');
-  assert.equal(year.summary, 'เมื่อชำระสำเร็จ ใช้งานได้ 13 เดือน (ชำระ 12 เดือน แถมฟรี 1 เดือน)');
+  assert.equal(year.summary, 'ชำระสำเร็จแล้ว ใช้งานได้ 13 เดือน (ชำระ 12 เดือน แถมฟรี 1 เดือน)');
   assert.match(year.next!, /ราคาปกติ 2490 บาท/);
   // The dates are Thai dates: 01:30 in Bangkok is still the previous day in UTC.
   assert.equal(promotionReview(quote({}, { paidStart: '2026-10-04T18:30:00.000Z' }), money)!.rows[0]!.value, '5 ตุลาคม 2569 – 5 พฤศจิกายน 2569');

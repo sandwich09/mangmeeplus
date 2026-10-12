@@ -475,16 +475,14 @@ async function refundRun(error: Error, at = 'GET /invoices/in_1', journal: Recor
   const own: Record<string, unknown> = {
     billingOperation: { findUniqueOrThrow: async () => op, update: async ({ data }: any) => apply(data), updateMany: async ({ data }: any) => (apply(data), { count: 1 }) },
     billingAccount: { updateMany: async ({ data }: any) => (Object.assign(account, data), { count: 1 }) },
-    billingInvoice: { findFirst: async () => inv, findUnique: async () => inv, update: async () => inv },
+    billingInvoice: { findFirst: async () => inv, findUnique: async () => inv },
   };
   const tx: any = new Proxy({}, { get: (_, key: string) => key === '$transaction' ? (fn: (inner: unknown) => unknown) => fn(tx) : own[key] ?? (db.tx as any)[key] });
   const admin = { scopedCompany: async () => ({ account, company: { name: 'ร้านทดสอบ' }, access: { capabilities: ['system.billing.financial.read', 'system.billing.refund.manage'], platformScope: false } }), access: async () => undefined };
   const service = new BillingRefundsService({ client: tx } as never, { account: async () => account, stripe } as never, admin as never, {} as never, db.lifecycle as never);
-  // The staleness gate is the real one only for a request past its `expiresAt` (its first line refuses it); `again` is one more pass of the worker over the same row.
-  const current = service['current'].bind(service), again = () => service['execute'](op as never);
-  Object.assign(service, { logger: { warn: (line: unknown) => logged.push(line) }, actors: async () => undefined, current: async (row: any, inner: never) => row.expiresAt <= new Date() ? current(row, inner) : account });
-  armed = true; await again();
-  return { op, db, logged, calls, answers, again, view: () => service['view']({ userId: 'admin' } as never, op as never) };
+  Object.assign(service, { logger: { warn: (line: unknown) => logged.push(line) }, actors: async () => undefined, current: async () => account });
+  armed = true; await service['execute'](op as never);
+  return { op, db, logged, calls, view: () => service['view']({ userId: 'admin' } as never, op as never) };
 }
 const providerAnswer = (status: number, code?: string, type = 'invalid_request_error') =>
   new StripeRequestError(status >= 500 ? 'UNKNOWN' : status === 429 ? 'RETRY' : 'REJECTED', status === 429 ? 'rate_limited' : status >= 500 ? 'unavailable' : 'request_rejected', 60, code, type, status);
@@ -559,46 +557,4 @@ test('a 400 or 402 answer to the credit-note create itself ends the refund reque
   assert.deepEqual([before.op.state, before.op.errorCode, before.op.resultJson.mutationResolved, before.calls.includes('POST /credit_notes')], ['BLOCKED', 'CONTROL_REFUND_PROVIDER_UNAVAILABLE', undefined, false]);
   const after = await refundRun(providerAnswer(400), 'GET /invoices/in_1', approved, 2);
   assert.deepEqual([after.op.state, after.op.errorCode, after.op.resultJson.mutationResolved, after.calls.includes('POST /credit_notes')], ['UNKNOWN', 'CONTROL_REFUND_PROVIDER_UNAVAILABLE', undefined, true]);
-});
-
-test('a dispatched refund request the provider never created ends an hour after its expiry; a create that did land is still found', async () => {
-  const audited = (r: Awaited<ReturnType<typeof refundRun>>) => r.db.audits.map(a => String(a.action)).filter(action => action.startsWith('billing.refund.')).map(action => action.slice(15));
-  const posts = (r: Awaited<ReturnType<typeof refundRun>>) => r.calls.filter(call => call === 'POST /credit_notes').length;
-  const lost = async () => { // the create answered 500: nobody knows whether the provider made the note
-    const r = await refundRun(providerAnswer(500), 'POST /credit_notes', { submittedCredentialVersion: 'v1' });
-    assert.deepEqual([r.op.state, r.op.errorCode, posts(r)], ['UNKNOWN', 'CONTROL_REFUND_PROVIDER_UNAVAILABLE', 1]);
-    return r;
-  };
-
-  // Past the ten minutes but not yet an hour past them: nothing is sent again, and the request still waits.
-  const r = await lost();
-  r.op.expiresAt = new Date(Date.now() - 3_540_000); await r.again();
-  assert.deepEqual([r.op.state, r.op.errorCode, r.op.resultJson.mutationResolved, posts(r), (await r.view()).allowedActions], ['UNKNOWN', 'CONTROL_PREVIEW_STALE', undefined, 1, ['run']]);
-
-  // An hour past them, and the provider's complete list of the invoice's credit notes has none of this request: it ends, with nothing sent.
-  r.op.expiresAt = new Date(Date.now() - 3_600_000); await r.again();
-  assert.deepEqual([r.op.state, r.op.errorCode, r.op.leaseToken, r.op.observedAt, posts(r)], ['FAILED', 'CONTROL_REFUND_NOT_CREATED', null, null, 1]);
-  // pendingRefund (billing-refund-source.ts) holds a company on QUEUED/RUNNING/UNKNOWN/BLOCKED rows whose journal is not mutationResolved: this row is neither.
-  assert.deepEqual([r.op.resultJson.mutationResolved, typeof r.op.resultJson.dispatchedAt, r.op.resultJson.creditNoteId, r.op.resultJson.providerError.outcome], [true, 'string', undefined, 'UNKNOWN'], 'the dispatch and the lost answer stay on record');
-  assert.deepEqual(audited(r), ['dispatch', 'review', 'review', 'not_created']);
-  assert.deepEqual(r.db.issues.map(issue => [issue.kind, issue.referenceId, issue.state]), [['CONTROL_OPERATION_REVIEW', 'refund', 'OPEN']]);
-  assert.deepEqual([r.db.lifecycle.calls, r.db.writes.filter(write => !/^(auditLog|billingIssue)\./.test(write))], [[], []], 'the package this refund asked to end is untouched');
-  const view = await r.view();
-  assert.deepEqual([view.state, view.errorCode, view.allowedActions], ['FAILED', 'CONTROL_REFUND_NOT_CREATED', []], 'nothing left to run: staff start a new request');
-
-  // The same hour later, but the create had landed although we saw an error: the note is found first and the request takes the observed path.
-  const landed = await lost(), p = landed.op.proposedJson, created = Math.floor(Date.now() / 1000);
-  const refund = { id: 'pyr_1', object: 'refund', livemode: true, charge: 'ch_1', currency: 'thb', amount: p.amountSatang, created, status: 'pending' };
-  landed.answers['GET /credit_notes'] = () => ({ object: 'list', has_more: false, data: [{ ...landed.answers['GET /credit_notes/preview']!(p.params) as object, id: 'cn_1', number: 'CN-1', created,
-    metadata: p.params.metadata, refunds: [{ refund: 'pyr_1', amount_refunded: p.amountSatang }] }] });
-  landed.answers['GET /refunds'] = () => ({ object: 'list', has_more: false, data: [refund] }); landed.answers['GET /refunds/pyr_1'] = () => refund;
-  landed.op.expiresAt = new Date(Date.now() - 86_400_000); await landed.again();
-  assert.deepEqual([landed.op.state, landed.op.errorCode, landed.op.resultJson.mutationResolved, landed.op.resultJson.creditNoteId, landed.op.resultJson.refundState, posts(landed)], ['QUEUED', null, true, 'cn_1', 'pending', 1]);
-  assert.deepEqual(audited(landed), ['dispatch', 'review', 'observed']);
-
-  // Never dispatched: nothing was ever sent, so an expired request is blocked for a fresh review as before, however old it is.
-  const unsent = await refundRun(providerAnswer(500), 'GET /charges/ch_1', { submittedCredentialVersion: 'v1' });
-  unsent.op.expiresAt = new Date(Date.now() - 86_400_000); await unsent.again();
-  assert.deepEqual([unsent.op.state, unsent.op.errorCode, unsent.op.resultJson.mutationResolved, posts(unsent), audited(unsent)], ['BLOCKED', 'CONTROL_PREVIEW_STALE', undefined, 0, ['review', 'review']]);
-  assert.deepEqual((await unsent.view()).allowedActions, ['cancel', 'run']);
 });

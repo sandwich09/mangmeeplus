@@ -41,10 +41,6 @@ export async function checkBillingPurchaseRecovery(input: {request:Request;prism
   await db.billingOperation.update({where:{id:op.id},data:{proposedJson:{accountId:account.id,target:{source:'ADMIN'}}}});
   await probe('admin-recipient-pending-also-fences-purchase',async()=>{await blocked('BILLING_EMAIL_UPDATE_PENDING');assert.equal((await quote()).body.code,'BILLING_EMAIL_UPDATE_PENDING');});
   await probe('admin-recipient-change-after-quote-refuses-checkout-before-attempt',async()=>{const before=await db.billingAttempt.count({where:{billingAccountId:account.id}});const r=await request(`${base}/checkout`,'POST',{quoteId:preRecipientQuote.body.quoteId,accepted:true,consentRevision:preRecipientQuote.body.consentRevision,channel:'web'},{'idempotency-key':randomUUID()});assert.equal(r.body.code,'BILLING_EMAIL_UPDATE_PENDING',JSON.stringify(r));assert.equal(await db.billingAttempt.count({where:{billingAccountId:account.id}}),before);});
-  // Never sent and expired: it holds no purchase. Once dispatched it holds again, whatever its age.
-  await db.billingOperation.update({where:{id:op.id},data:{state:'QUEUED',expiresAt:new Date(Date.now()-1000)}});
-  await probe('admin-recipient-change-never-sent-and-expired-holds-no-purchase-until-dispatched',async()=>{const free=await quote();assert.equal(free.status,200,JSON.stringify(free.body));
-    await db.billingOperation.update({where:{id:op.id},data:{resultJson:{dispatchedAt:new Date().toISOString()}}});await blocked('BILLING_EMAIL_UPDATE_PENDING');assert.equal((await quote()).body.code,'BILLING_EMAIL_UPDATE_PENDING');});
   await db.billingOperation.update({where:{id:op.id},data:{state:'SUCCEEDED'}});
   const settings=await db.billingSettings.findUniqueOrThrow({where:{id:`${stripeAccountId}:test`}});
   await db.billingSettings.update({where:{id:settings.id},data:{gatesJson:{...settings.gatesJson as object,new_sales:false}}});

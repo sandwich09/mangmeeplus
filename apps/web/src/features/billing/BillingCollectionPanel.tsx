@@ -5,7 +5,7 @@ import type { BillingCollectionOperation, BillingStatus, BillingCapacityOptions 
 import BillingCapacityPicker from './BillingCapacityPicker';
 import { billingApi } from './billing.api';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-import { billingBackControl, billingControl, billingPrimaryControl, billingRenewalLine } from './billing-display';
+import { billingBackControl, billingControl, billingPrimaryControl } from './billing-display';
 const button = billingControl;
 const labels: Record<string, string> = { PREVIEW: 'ตรวจสอบการต่ออายุ', QUEUED: 'รอตรวจยืนยันการต่ออายุ', RUNNING: 'กำลังตรวจยืนยันกับผู้ให้บริการ',
   UNKNOWN: 'ยังยืนยันผลไม่ได้ กรุณาเปิดรายการเดิมเพื่อตรวจสอบ', BLOCKED: 'เงื่อนไขเปลี่ยน ต้องตรวจรายการเดิม', CANCELLED: 'ถอนคำขอที่ยังไม่ดำเนินการแล้ว',
@@ -64,7 +64,6 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
   }
   const actionLabel = (value: BillingCollectionOperation['action']) => ({ ADMIN_PAUSE_COLLECTION:'พักเก็บเงิน', ADMIN_RESUME_COLLECTION:'กลับมาเก็บเงิน', EXTEND_TERM: 'เพิ่มวันใช้งานและเลื่อนวันเก็บเงิน', CANCEL_RENEWAL: 'หยุดต่ออายุ', RESUME_RENEWAL: 'กลับมาต่ออายุ', SCHEDULE_DOWNGRADE: 'เปลี่ยนแพ็กเกจรอบถัดไป', CANCEL_DOWNGRADE: 'ยกเลิกการเปลี่ยนแพ็กเกจ', PREPAID_PLAN_CHANGE: 'ซื้อแพ็กเกจรอบถัดไป' })[value];
   const showReviewHeader = !!operationId && !selection;
-  const renewalLine = refreshingStatus ? 'กำลังตรวจสถานะล่าสุด' : billingRenewalLine(status);
   const panelHeading = <h2 ref={heading} tabIndex={-1} className={showReviewHeader ? 'text-xl font-bold text-gray-900 sm:text-2xl' : 'text-lg font-bold'}>{changingPlan ? 'การเปลี่ยนแพ็กเกจ' : 'การต่ออายุแพ็กเกจ'}</h2>;
   return <div className="space-y-6">
     {showReviewHeader && <div ref={backNavigation} className="scroll-mt-[calc(var(--app-header-h,0px)+1.5rem)] space-y-1">{canEdit ? <button type="button" className={billingBackControl} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void editSelection()}><span className="text-base leading-none" aria-hidden="true">←</span>กลับไปเลือกสาขาและผู้ใช้</button> : onBack ? <button type="button" className={billingBackControl} disabled={busy} aria-busy={Boolean(busy)} onClick={onBack}><span className="text-base leading-none" aria-hidden="true">←</span>กลับไปแพ็กเกจปัจจุบัน</button> : <Link className={billingBackControl} href={`/companies/${encodeURIComponent(companyId)}/billing`}><span className="text-base leading-none" aria-hidden="true">←</span>กลับไปแพ็กเกจปัจจุบัน</Link>}{panelHeading}</div>}
@@ -72,7 +71,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
     {(!showReviewHeader || !changingPlan) && <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="space-y-2">
         {!showReviewHeader && panelHeading}
-        {!changingPlan && renewalLine && <p className="text-sm text-gray-500">{renewalLine}</p>}
+        {!changingPlan && <p className="text-sm text-gray-500">{refreshingStatus ? 'กำลังตรวจสถานะล่าสุด' : status.cancelAtPeriodEnd ? status.renewalMode === 'PROMPTPAY_RENEW' ? 'ปิดการออกบิล QR ทุกงวดแล้ว ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้' : 'ปิดการต่ออายุอัตโนมัติแล้ว ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้' : status.collectionPause ? 'พักการเรียกเก็บเงินชั่วคราว' : status.renewalMode === 'PROMPTPAY_RENEW' ? 'ระบบออกบิล QR ทุกงวด ต้องสแกนจ่ายเอง' : 'ต่ออายุอัตโนมัติเปิดอยู่'}</p>}
       </div>
       {!confirming && !selection && !operationId && !status.collection && status.allowedActions.includes('portal_cancel_subscription') && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act('preview')}>
         {status.cancelAtPeriodEnd ? status.renewalMode === 'PROMPTPAY_RENEW' ? 'เปิดการออกบิล QR ทุกงวด' : 'เปิดต่ออายุอัตโนมัติ' : status.renewalMode === 'PROMPTPAY_RENEW' ? 'หยุดการออกบิล QR ทุกงวด' : 'หยุดต่ออายุอัตโนมัติ'}</button>}

@@ -153,8 +153,8 @@ export class BillingRefundsService {
       amountSatang:p.amountSatang,taxSatang:p.projection.taxSatang,memo:p.memo,notifyCustomer:p.notifyCustomer,paidSatang:p.paidSatang,previousRefundedSatang:p.previousRefundedSatang,usage:p.usage,
       allowedActions:[...(own&&manage&&fresh&&row.state==='PREVIEW'?['submit' as const]:[]),...(canApproveBillingChange(access,row.initiatorUserId,context.userId,'system.billing.refund.manage')&&fresh&&row.state==='AWAITING_APPROVAL'?['approve' as const]:[]),
         ...(!j.dispatchedAt&&['PREVIEW','AWAITING_APPROVAL','QUEUED','BLOCKED'].includes(row.state)&&(manage||approve)&&(!row.leaseUntil||row.leaseUntil<=new Date())?['cancel' as const]:[]),
-        // A rejected create is over: running it again would only send the same request the provider already refused, so staff start a new one. The same goes for a create the provider never made.
-        ...((manage||approve)&&['QUEUED','RUNNING','UNKNOWN','BLOCKED','FAILED'].includes(row.state)&&!['CONTROL_REFUND_PROVIDER_REJECTED','CONTROL_REFUND_NOT_CREATED'].includes(row.errorCode??'')&&(!row.leaseUntil||row.leaseUntil<=new Date())?['run' as const]:[])],
+        // A rejected create is over: running it again would only send the same request the provider already refused, so staff start a new one.
+        ...((manage||approve)&&['QUEUED','RUNNING','UNKNOWN','BLOCKED','FAILED'].includes(row.state)&&row.errorCode!=='CONTROL_REFUND_PROVIDER_REJECTED'&&(!row.leaseUntil||row.leaseUntil<=new Date())?['run' as const]:[])],
       dispatchedAt:j.dispatchedAt??null,creditNoteId:j.creditNoteId??null,creditNoteNumber:j.creditNoteNumber??null,refundId:j.refundId??null,refundState:j.refundState??null,providerErrorCode:providerError?.code??null,providerErrorType:providerError?.type??null,reviewCaseId:issue?.id??null,bankReceiptConfirmed:false,endPackage:p.endPackage===true,packageEnded:j.packageEnded??null,
       ...invoice?{paymentMethod:invoicePaymentMethod(invoice)}:{},...p.promotionRedemptionId?await this.promotion(invoice):{}};
   }
@@ -249,10 +249,7 @@ export class BillingRefundsService {
       let source=await refundSource(this.billing.stripe,account!,invoice),journal=(claim.resultJson??{}) as Journal;
       let observed=journal.dispatchedAt?await observedRefund(this.billing.stripe,account!,invoice,source,claim.id,p.providerSourceHash,p.amountSatang,p.memo,configurationHash(p.projection),journal.creditNoteId):null;
       if(!observed){
-        // Never created: `current` refuses every send once expiresAt has passed, so the last send of this request left at or before expiresAt (plus the 120 s lease at most). An hour later nothing is in flight
-        // and nothing will be sent again, and the read above listed every credit note of the invoice (completeList) with none carrying this operation's id; a create that did land is found by observedRefund
-        // and never comes here. So the request ends without a refund, in the catch below, and stops holding the company's other refunds. (This is always earlier than the former 23-hour ceiling on a resend.)
-        if(journal.dispatchedAt&&Date.now()-claim.expiresAt.getTime()>=3600000)throw billingError('CONTROL_REFUND_NOT_CREATED','ตรวจกับผู้ให้บริการรับชำระเงินแล้ว ไม่พบการคืนเงินของคำขอนี้ คำขอนี้จึงไม่ได้คืนเงิน ถ้ายังต้องการคืน ให้สร้างคำขอใหม่');
+        if(journal.dispatchedAt&&Date.now()-Date.parse(journal.dispatchedAt)>=23*3600000)throw billingError('CONTROL_REFUND_AGED_UNKNOWN','ยังยืนยันรายการเดิมไม่ได้ ให้เจ้าหน้าที่ตรวจ Stripe ก่อนดำเนินการต่อ');
         if(source.sourceHash!==p.providerSourceHash||configurationHash(await refundPreview(this.billing.stripe,account!,invoice,source,p.params))!==configurationHash(p.projection))throw refundReviewRequired();
         journal=await this.prisma.client.$transaction(async tx=>{
           const {row}=await this.fence(tx,claim.id,lease);this.valid(row,row.version,row.requestHash);await this.actors(row,tx);await this.current(row,tx);
@@ -290,10 +287,8 @@ export class BillingRefundsService {
         const {row}=await this.fence(tx,claim.id,lease),j=(row.resultJson??{}) as Journal;
         const code=rejected?'CONTROL_REFUND_PROVIDER_REJECTED':error instanceof ForbiddenException?'CONTROL_PERMISSION_CHANGED':error instanceof StripeRequestError?'CONTROL_REFUND_PROVIDER_UNAVAILABLE':
           (error as {getResponse?:()=>{code?:string}}).getResponse?.()?.code??'CONTROL_REFUND_REVIEW';
-        // Two ways a dispatched request ends with no refund: the provider refused the create, or (the check in the try) it never made one.
-        const notCreated=code==='CONTROL_REFUND_NOT_CREATED',ended=rejected||notCreated;
-        const saved=await this.writeLeased(tx,row,lease,{state:ended?'FAILED':j.dispatchedAt?'UNKNOWN':'BLOCKED',errorCode:code,...providerError||ended?{resultJson:json({...j,...providerError?{providerError}:{},...ended?{mutationResolved:true}:{}})}:{},scheduledFor:new Date(Date.now()+300000),leaseToken:null,leaseUntil:null,version:{increment:1}});
-        await detectBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id});await this.audit(tx,saved,rejected?'rejected':notCreated?'not_created':'review');
+        const saved=await this.writeLeased(tx,row,lease,{state:rejected?'FAILED':j.dispatchedAt?'UNKNOWN':'BLOCKED',errorCode:code,...providerError?{resultJson:json({...j,providerError,...rejected?{mutationResolved:true}:{}})}:{},scheduledFor:new Date(Date.now()+300000),leaseToken:null,leaseUntil:null,version:{increment:1}});
+        await detectBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id});await this.audit(tx,saved,rejected?'rejected':'review');
       });
     }finally{await this.prisma.client.billingAccount.updateMany({where:{id:p.accountId,leaseToken:lease},data:{leaseToken:null,leaseUntil:null,nextReconcileAt:new Date()}});}
   }
