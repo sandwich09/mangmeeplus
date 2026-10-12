@@ -17,6 +17,22 @@ it('syncs the global WHT catalog key to SYSTEM_ADMIN only and preserves that res
   }
 });
 
+it('syncs disbursement keys and system grants without backfilling existing company roles', async () => {
+  const keys = [
+    'expense.disbursement.read', 'expense.disbursement.prepare', 'expense.disbursement.approve',
+    'expense.disbursement.pay', 'expense.disbursement.issue',
+  ];
+  const { prisma, permissions, grants } = fakeDb([
+    { id: 'custom-expense-role', key: 'CUSTOM_EXPENSE', scopeKey: 'co-1', holds: ['expense.confirm', 'expense.payment.record'] },
+  ]);
+  await syncPermissions(prisma, () => undefined);
+  for (const key of keys) assert.ok(permissions.has(key), `${key} was not registered in the permission table`);
+  for (const role of ['OWNER', 'ADMIN', 'FINANCE']) for (const key of keys) assert.ok(grants.get(role)?.has(key), `${role}: ${key}`);
+  for (const role of ['MANAGER']) for (const key of ['expense.disbursement.read', 'expense.disbursement.approve']) assert.ok(grants.get(role)?.has(key), `${role}: ${key}`);
+  for (const role of ['ACCOUNTANT']) for (const key of ['expense.disbursement.read', 'expense.disbursement.issue']) assert.ok(grants.get(role)?.has(key), `${role}: ${key}`);
+  assert.equal(keys.some((key) => grants.get('custom-expense-role')?.has(key)), false);
+});
+
 /** In-memory materialized RolePermission rows, not a database connection. A permission's id is its key. */
 function fakeDb(companyRoles: Array<CompanyRole & { holds: string[] }>, companies = ['co-1']) {
   const permissions = new Map<string, { id: string; key: string }>();
@@ -79,7 +95,7 @@ function fakeDb(companyRoles: Array<CompanyRole & { holds: string[] }>, companie
         .map((row) => ({ targetId: row.targetId }));
     } },
   };
-  return { prisma: prisma as any, roles, grants, audits, roleReads };
+  return { prisma: prisma as any, roles, grants, audits, roleReads, permissions };
 }
 
 it('backfills old custom/read-only roles idempotently and resolves feature-gated own service without new approval/payment authority', async () => {

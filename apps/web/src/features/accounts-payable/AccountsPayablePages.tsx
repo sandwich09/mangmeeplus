@@ -1,5 +1,8 @@
 'use client';
 
+import { WhtIssueButton } from '@/features/expenses/WhtIssueButton';
+
+import { WhtPayerIdentityNotice } from '../expenses/WhtPayerIdentityNotice';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
@@ -1015,7 +1018,7 @@ function WhtHandoffDetail({ companyId, handoff, canLink, permissions, onLinked, 
   // Drift found while reading the real code (spec §4.1 note): this used to check only
   // EXTERNAL_LINKED, so a SYSTEM_ISSUED row still showed the "แนบเอกสารที่ออกภายนอก" form.
   const issued = handoff.status === 'SYSTEM_ISSUED';
-  const payeeAddress = whtHandoffPayeeAddress(handoff, canLink);
+  const payeeAddress = whtHandoffPayeeAddress(handoff, canLink || permissions.includes('wht.certificate.issue'));
 
   const doIssue = async () => {
     setIssuing(true); setIssueError(null);
@@ -1263,7 +1266,7 @@ function WhtHandoffDetail({ companyId, handoff, canLink, permissions, onLinked, 
             <div className="mt-3 border-t border-green-200 pt-3">
               {replaceError && <div className="mb-2"><ErrorBanner message={replaceError} /></div>}
               <button type="button" className={`${ghostClass} min-h-11 min-w-11`} aria-busy={replaceBusy} disabled={replaceBusy} onClick={() => void doReplace()}>
-                {replaceBusy ? 'กำลังออกใบแทน...' : 'ออกใบแทน'}
+                {workspaceDictionary.th[replaceBusy ? 'expenses.certificates.replacement_busy' : 'expenses.certificates.replacement']}
               </button>
             </div>
           )}
@@ -1278,13 +1281,12 @@ function WhtHandoffDetail({ companyId, handoff, canLink, permissions, onLinked, 
               (`handoff.systemIssuanceOpen`) and the permission axis, which already folds in the
               `wht_50bis` entitlement. Placed beside the external-attach form below; the operator
               picks one path. */}
-          {canIssueSystemWhtCertificate(handoff, permissions) && (
+          {handoff.status === 'REQUIRED' && !!handoff.payerMissing?.length && <WhtPayerIdentityNotice companyId={companyId} missing={handoff.payerMissing} permissions={permissions} />}
+          {canIssueSystemWhtCertificate(handoff, permissions) && !handoff.payerMissing?.length && payeeAddress.text && (
             <div>
               <h4 className="mb-2 text-sm font-semibold text-gray-900">{workspaceDictionary.th['wht.print_certificate']}</h4>
               {issueError && <ErrorBanner message={issueError} />}
-              <button type="button" className={btnClass} style={{ minHeight: 44, minWidth: 44 }} aria-busy={issuing} disabled={issuing} onClick={() => void doIssue()}>
-                {issuing ? 'กำลังพิมพ์เอกสาร...' : workspaceDictionary.th['wht.print_certificate']}
-              </button>
+              <WhtIssueButton handoff={handoff} busy={issuing} label={workspaceDictionary.th['wht.print_certificate']} onIssue={doIssue} />
             </div>
           )}
           {canLink && (

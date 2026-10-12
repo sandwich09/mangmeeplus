@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { PDFDocument, PDFName } from 'pdf-lib';
 import type { PayeeSnapshot, PayerSnapshot } from '@watchdog-bms/contracts';
-import { renderWhtCertificatePdf, type WhtCertificateFields } from './wht-certificate-pdf.logic';
+import { renderWhtCertificatePdf, makeMarks, type WhtCertificateFields } from './wht-certificate-pdf.logic';
 
 const payer: PayerSnapshot = {
   companyName: 'บริษัท มั่งมีกิจทดสอบ จำกัด', taxId: '0105569135722', branchCode: null,
@@ -43,4 +43,19 @@ describe('Revenue Department 50 ทวิ PDF', () => {
   it('fails safely if a legacy address is malformed JSON', async () => {
     await assert.rejects(renderWhtCertificatePdf(fields, { ...payer, address: '{"line1":' }, payee), /invalid JSON/);
   });
+});
+
+
+describe('certificate civil issue dates (E3)', () => {
+  for (const [time, instant] of [['06:30', '2026-09-22T23:30:00Z'], ['23:30', '2026-09-23T16:30:00Z']]) {
+    it(`prints issue and replacement dates as the Bangkok day at ${time}, preserving the payment date`, () => {
+      const names = ['book_no', 'run_no', 'id1', 'id1_2', 'name1', 'name2', 'add1', 'add2', 'chk7', 'chk8', 'date14.0', 'pay1.13.0', 'tax1.13.0', 'pay1.14', 'tax1.14', 'total', 'date_pay', 'month_pay', 'year_pay'];
+      const rects = new Map(names.map((name, index) => [name, { x: index * 10, y: 100, width: 100, height: 10 }]));
+      const marks = makeMarks({ ...fields, issuedAt: instant!, paymentDate: '2026-09-22T00:00:00Z' }, payer, payee, rects, { issuedAt: instant! });
+      const printed = (name: string) => marks.find(mark => mark.x === rects.get(name)!.x + 2)?.text;
+      assert.equal(printed('date_pay'), '23'); assert.equal(printed('month_pay'), '09'); assert.equal(printed('year_pay'), '2569');
+      assert.ok(marks.some(mark => mark.text === 'ใบแทน 23/09/2569'));
+      assert.equal(printed('date14.0'), '22/09/2569');
+    });
+  }
 });

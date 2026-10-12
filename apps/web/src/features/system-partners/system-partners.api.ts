@@ -19,6 +19,8 @@ import type {
   PartnerOcrConfigDto,
   PartnerManualExpenseWebEntryDto,
   SetPartnerManualExpenseWebEntryDto,
+  PartnerDisbursementVoucherWebEntryDto,
+  SetPartnerDisbursementVoucherWebEntryDto,
   SetSharedLineCredentialDto,
   SharedLineCredentialMetadataDto,
   PartnerFeatureEntitlementDto,
@@ -247,6 +249,16 @@ export async function setPartnerOcrConfig(
 }
 
 /** "แสดงเมนูบันทึกด้วยมือบนเว็บ": its own command and version, outside the feature command. */
+export async function setPartnerDisbursementVoucherWebEntry(
+  companyId: string,
+  dto: SetPartnerDisbursementVoucherWebEntryDto,
+): Promise<PartnerDisbursementVoucherWebEntryDto> {
+  return apiFetch<PartnerDisbursementVoucherWebEntryDto>(`/v1/system/partners/${encodeURIComponent(companyId)}/disbursement-voucher-web-entry`, {
+    method: 'PUT',
+    body: JSON.stringify(dto),
+  });
+}
+
 export async function setPartnerManualExpenseWebEntry(
   companyId: string,
   dto: SetPartnerManualExpenseWebEntryDto,

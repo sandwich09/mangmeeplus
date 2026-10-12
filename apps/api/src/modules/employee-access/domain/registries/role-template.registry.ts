@@ -12,6 +12,7 @@ const TASKS = 'pack.workflow.tasks';
 const MANAGER_PACKS = [
   'pack.crm.view', 'pack.crm.manage', 'pack.quotation.approve', 'pack.billing.view', 'pack.payment.view', 'pack.inventory.view',
   'pack.expense.review', 'pack.reimbursement.approve', 'pack.procurement.view', 'pack.procurement.approve', 'pack.cash.view',
+  'pack.expense.disbursement.view', 'pack.expense.disbursement.approve',
   'pack.dashboard.manage', 'pack.people.view', 'pack.tax.view', 'pack.ledger.view', TASKS,
 ];
 // Each write pack is paired with its read/.view sibling so a role can open the screens it operates in.
@@ -21,6 +22,8 @@ const FINANCE_PACKS = [
   'pack.billing.view', 'pack.billing.operate', 'pack.billing.issue', 'pack.tax_invoice.issue', 'pack.payment.view', 'pack.payment.record', 'pack.payment.void',
   'pack.bank.view', 'pack.bank.operate', 'pack.procurement.view', 'pack.procurement.ap_manage', 'pack.tax.view', 'pack.tax.prepare',
   'pack.ledger.operate', 'pack.expense.view', 'pack.expense.finance', 'pack.reimbursement.finance',
+  'pack.expense.disbursement.view', 'pack.expense.disbursement.prepare', 'pack.expense.disbursement.approve',
+  'pack.expense.disbursement.pay', 'pack.expense.disbursement.issue',
   // Handoff for a 50 ทวิ the system cannot issue — pairs with the FINANCE role's wht.* grants.
   'pack.wht.certificate.manage', 'pack.wht.pnd53', TASKS,
 ];
@@ -37,7 +40,7 @@ const RAW_TEMPLATES: RawTemplate[] = [
     key: 'tpl.x.accounting', industryTag: 'crosscutting',
     nameTh: 'บัญชี/ผู้ทำบัญชี', nameEn: 'Bookkeeper / Accountant',
     description: 'ทำบัญชีแยกประเภท ภาษี กระทบยอดธนาคาร และตรวจค่าใช้จ่าย',
-    capabilityPackKeys: ['pack.billing.view', 'pack.payment.view', 'pack.ledger.view', 'pack.ledger.manage', 'pack.tax.view', 'pack.tax.manage', 'pack.wht.pnd53', 'pack.bank.reconcile_manage', 'pack.bank.view', 'pack.expense.review', 'pack.reimbursement.review', 'pack.procurement.view', 'pack.audit.read', 'pack.wht.certificate.manage', TASKS],
+    capabilityPackKeys: ['pack.billing.view', 'pack.payment.view', 'pack.ledger.view', 'pack.ledger.manage', 'pack.tax.view', 'pack.tax.manage', 'pack.wht.pnd53', 'pack.bank.reconcile_manage', 'pack.bank.view', 'pack.expense.review', 'pack.expense.disbursement.view', 'pack.expense.disbursement.issue', 'pack.reimbursement.review', 'pack.procurement.view', 'pack.audit.read', 'pack.wht.certificate.manage', TASKS],
   },
   {
     key: 'tpl.x.marketing', industryTag: 'crosscutting',

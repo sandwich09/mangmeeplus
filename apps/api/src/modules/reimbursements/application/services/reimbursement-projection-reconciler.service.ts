@@ -36,7 +36,7 @@ function failureCode(error: unknown): string {
 }
 
 /** What the expense void and the expense confirmation answer when the record changed between their read and their write. */
-const RECORD_CHANGED_MEANWHILE = new Set(['expense_changed', 'posting_state_changed', 'expense_confirmation_source_version_changed']);
+const RECORD_CHANGED_MEANWHILE = new Set(['expense_changed', 'expense_changed_retry', 'posting_state_changed', 'expense_confirmation_source_version_changed']);
 
 /**
  * A failure that means another party was writing the same claim's expense records at the same
@@ -320,6 +320,7 @@ export class ReimbursementProjectionReconcilerService {
     // A void that fails for a reason this does not foresee is tried again on the next pass, and its
     // failure is on the log each time. Add a counter with a backoff if that log ever shows one repeating.
     if (!isExpenseVoidReason(intent.reason) || await this.repo.findCancellationBlocker(intent.request)) return 'blocked';
+    if (!intent.request.cancellationCertificateAttestedAt && (await this.repo.findCancellationCertificates(intent.request)).length) return 'blocked';
     const requestId = `system:reimbursement-cancellation:${intent.request.id}`;
     const ctx = this.systemContext(intent.request, intent.actorUserId, requestId);
     const projections = await this.repo.listClaimProjections(intent.request.companyId, intent.request.id);
@@ -329,8 +330,10 @@ export class ReimbursementProjectionReconcilerService {
         reimbursementLineId: projection.sourceReimbursementLineId,
         branchId: intent.request.branchId,
         systemReconcile: true,
+        cancellationCertificateAttestedAt: intent.request.cancellationCertificateAttestedAt,
+        cancellationPendingByUserId: intent.request.cancellationPendingByUserId,
         // Each void goes ahead only while the claim still holds its cancellation (it may be withdrawn meanwhile).
-        beforeVoid: (tx) => this.repo.assertCancellationPending(tx, intent.request.companyId, intent.request.id),
+        beforeVoid: (tx) => this.repo.assertCancellationPending(tx, intent.request.companyId, intent.request.id, !!intent.request.cancellationCertificateAttestedAt),
       });
     }
     const completedAt = new Date();

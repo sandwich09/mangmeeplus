@@ -57,6 +57,7 @@ import { SetPartnerFeaturesUseCase } from '../../application/use-cases/set-partn
 import { SetPartnerAiModelUseCase } from '../../application/use-cases/set-partner-ai-model.use-case';
 import { SetPartnerOcrConfigUseCase } from '../../application/use-cases/set-partner-ocr-config.use-case';
 import { SetPartnerManualExpenseWebEntryUseCase } from '../../application/use-cases/set-partner-manual-expense-web-entry.use-case';
+import { SetPartnerDisbursementVoucherWebEntryUseCase } from '../../application/use-cases/set-partner-disbursement-voucher-web-entry.use-case';
 import { GetPartnerAiUsageUseCase } from '../../application/use-cases/get-partner-ai-usage.use-case';
 import { ListPartnerMembersUseCase } from '../../application/use-cases/list-partner-members.use-case';
 import { PartnerMemberLineUnlinkUseCase } from '../../application/use-cases/partner-member-line-unlink.use-case';
@@ -200,6 +201,11 @@ export class SetManualExpenseWebEntryBodyDto {
   @IsInt() @Min(0) expectedVersion!: number;
 }
 
+export class SetDisbursementVoucherWebEntryBodyDto {
+  @IsBoolean() enabled!: boolean;
+  @IsInt() @Min(0) expectedVersion!: number;
+}
+
 export class PartnerAiAdjustmentHistoryQueryDto {
   @IsOptional() @IsString() @IsNotEmpty() @MaxLength(100) cursor?: string;
 }
@@ -284,6 +290,7 @@ export class PartnerController {
     private readonly updateIdentity: UpdatePartnerIdentityUseCase,
     private readonly listThaiAddresses: ListThaiAddressesUseCase,
     private readonly setManualExpenseWebEntryUseCase: SetPartnerManualExpenseWebEntryUseCase,
+    private readonly setDisbursementVoucherWebEntryUseCase: SetPartnerDisbursementVoucherWebEntryUseCase,
     private readonly companyTeamNote: CompanyTeamNoteService,
   ) {}
 
@@ -631,6 +638,26 @@ export class PartnerController {
     @Req() req: AuthedRequest,
   ) {
     return this.setManualExpenseWebEntryUseCase.execute({
+      companyId,
+      enabled: dto.enabled,
+      expectedVersion: dto.expectedVersion,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+    });
+  }
+
+  @Put(':partnerCompanyId/disbursement-voucher-web-entry')
+  @RequirePermissions('system.partner_feature.manage')
+  @ApiOperation({ summary: 'Show or hide the web entrances to the disbursement voucher document for one partner company' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 409, description: 'The setting changed after the operator loaded it; reload before saving' })
+  @ApiResponse({ status: 422, description: 'Company is DISABLED/ARCHIVED — metadata is read-only' })
+  setDisbursementVoucherWebEntry(
+    @Param('partnerCompanyId') companyId: string,
+    @Body() dto: SetDisbursementVoucherWebEntryBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.setDisbursementVoucherWebEntryUseCase.execute({
       companyId,
       enabled: dto.enabled,
       expectedVersion: dto.expectedVersion,

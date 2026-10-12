@@ -28,3 +28,27 @@ test('renders pastel tone classes and the toast accessibility contract', async (
     assert.match(html, /<button[^>]*aria-label="ปิดการแจ้งเตือน"/);
   }
 });
+
+
+test('document number tokens stay whole at render time without changing the toast message', async () => {
+  const { Toast } = await import('./Toast');
+  const message = 'ออกหนังสือรับรองเลขที่ WHT-2026-00001 แล้ว ใบเดิม EX-123 เลขอ้างอิง 12345678901234567890';
+  const item = { id: 1, tone: 'success' as const, message };
+  const html = renderToStaticMarkup(React.createElement(Toast, { item, onDismiss() {} }));
+  assert.match(html, /<span class="whitespace-nowrap">WHT-2026-00001<\/span>/);
+  assert.match(html, /<span class="whitespace-nowrap">EX-123<\/span>/);
+  assert.match(html, /<span class="whitespace-nowrap">12345678901234567890<\/span>/);
+  assert.ok(html.replace(/<[^>]*>/g, '').includes(message)); assert.equal(item.message, message);
+});
+
+test('keeps payment document numbers together inside a wrapped message', async () => {
+  const { Toast } = await import('./Toast');
+  const html = renderToStaticMarkup(React.createElement(Toast, {
+    item: { id: 1, tone: 'success', message: 'ยกเลิกรายการจ่ายแล้ว ใบสำคัญจ่ายเลขที่ PV-202610-00029 ถูกยกเลิกด้วย' },
+    onDismiss: () => {},
+  }));
+  assert.match(html, /class="whitespace-nowrap">PV-202610-00029<\/span>/);
+  const other = renderToStaticMarkup(React.createElement(Toast, { item: { id: 2, tone: 'success', message: 'ออกหนังสือรับรองเลขที่ WHT-2026-00043 แล้ว ของรายจ่าย EXP-202610-00064 ยอด 4,850.00' }, onDismiss: () => {} }));
+  assert.match(other, /class="whitespace-nowrap">WHT-2026-00043<\/span>/); assert.match(other, /class="whitespace-nowrap">EXP-202610-00064<\/span>/);
+  assert.doesNotMatch(other, /whitespace-nowrap">4,850/);
+});

@@ -1,6 +1,10 @@
+import { cancelDisbursementVouchersForPayments } from '../domain/logic/disbursement-voucher.logic';
+import { normalizeTaxId } from '../../data-model-core/domain/logic/company-legal-identity.logic';
+import { normalizeVendorName } from '../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
 import { PrismaReimbursementRepository } from '../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import { canTransition } from '../../reimbursements/domain/logic/reimbursement.logic';
-import { normalizeExpensePaymentAmount, EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages } from '@watchdog-bms/contracts';
+import type { DisbursementReadScope } from './prisma-disbursement-voucher.repository';
+import { normalizeExpensePaymentAmount, expenseVoidCertificatePermissionMessage, EXPENSE_VOID_CERTIFICATE_WORDS, EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages } from '@watchdog-bms/contracts';
 import { loadExpenseReimbursementProgress } from './expense-reimbursement-progress';
 import { loadExpenseEvidenceSources } from './expense-evidence-sources';
 import { serializableTransaction } from '../../../common/database/serializable-transaction';
@@ -9,7 +13,7 @@ import { assertSubstituteEditAllowed, reviseSubstituteEvidence, syncSubstituteAf
 import { assertProjectionSource } from '../../reimbursements/infrastructure/reimbursement-source';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
-import { readExpensePeriodLocks, retireExpenseTaxEvents, lockExpenseCorrection, readExpenseCorrectionCapabilities, findJournalToReverse, findLiveClaimOf, journalPeriodRefusal, lockedTaxFormTypesOf, type ExpenseClaimOwner } from './expense-void-blocker';
+import { readDisbursementReservations, assertExpenseDisbursementReservation, expenseWhtHandoffWhere, hasExpenseTaxWorkspaceCertificate, readExpensePeriodLocks, retireExpenseTaxEvents, lockExpenseCorrection, readExpenseCorrectionCapabilities, findJournalToReverse, findLiveClaimOf, journalPeriodRefusal, lockedTaxFormTypesOf, expensePaymentClaimWhere, recordExpensePaymentBlocker, type ExpenseClaimOwner } from './expense-void-blocker';
 import { assertFullSubstitutePayment, assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../domain/logic/substitute-funding.logic';
 import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
 import { confirmBuyerMismatch, readBuyerAsPrinted } from '../domain/logic/buyer-as-printed.logic';
@@ -17,6 +21,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { deriveWhtIncomeBase } from '../../tax/domain/logic/wht-report.logic';
+import { appendWhtCertificateHistory } from '../../tax/application/services/wht-certificate-history';
 import { expenseEvidenceConfirmationError, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { Prisma } from '../../../generated/prisma/client';
@@ -41,7 +46,7 @@ import type {
   ExpenseVatSourceOverrideInput,
   ExpenseLineChargeKind,
 } from '@watchdog-bms/contracts';
-import { canVoidExpenseFinancialState, civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilInstantDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseDocumentDateStatus, expenseLineCharges, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
+import { canVoidExpenseFinancialState, civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilInstantDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseDocumentDateStatus, expenseLineCharges, isCivilDate, todayCivilDate, EXPENSE_PAYMENT_METHODS, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum, validateStatusTransition } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
@@ -75,9 +80,18 @@ export type AiExpenseReadScope = {
   relatedUserId?: string;
 };
 
+/** The list and disbursement readers share the same tenant, branch and actor predicate. */
+export function expenseReadScopeWhere(filter: { companyId: string; branchId?: string; createdByUserId?: string }, scopes?: BranchScopes, relatedUserId?: string): Prisma.ExpenseRecordWhereInput {
+  return { companyId: filter.companyId,
+    ...(!filter.branchId ? branchScopeWhere(scopes ?? {}) : { branchId: filter.branchId }),
+    ...(filter.createdByUserId ? { createdByUserId: filter.createdByUserId } : {}),
+    ...(relatedUserId ? { AND: [expenseRelatedToUserWhere(relatedUserId)] } : {}),
+  };
+}
+
 export type AiExpenseGroupBy = 'category' | 'vendor' | 'day';
 
-type ExpensePaymentResult = { expense: ExpenseRecord; payment: ExpensePaymentRecord; replayed: boolean };
+export type ExpensePaymentResult = { expense: ExpenseRecord; payment: ExpensePaymentRecord; replayed: boolean };
 type SubstituteReceiptPolicyWithApprovalMode = SubstituteReceiptPolicyRecord & { approvalMode: SubstituteReceiptApprovalMode };
 
 const AUTO_STALE_DUPLICATE_REASON = 'system:stale_after_rescan';
@@ -483,6 +497,39 @@ function selectExpenseCategoryScope<T extends {
   ));
 }
 
+export type ExpenseCertificateCancellation = {
+  issuerUserId: string | null;
+  certificateNumber: string | null;
+  isExternal: boolean;
+  certificateRound: number;
+};
+
+export type RecordExpensePaymentAtomicInput = {
+  companyId: string;
+  expenseId: string;
+  actorUserId: string;
+  scopes: BranchScopes;
+  idempotencyKey: string;
+  amount: string;
+  paymentMethod?: string;
+  paidAt?: string;
+  bankAccountRef?: string;
+  /** Internal settlement authority; the direct-payment use-case never forwards this. */
+  payingThroughDisbursementVoucherId?: string;
+  permissions?: string[];
+  viewerReadScope?: DisbursementReadScope;
+};
+
+/** Shared preflight and locked-source rules. The repository's historic claim code stays intact. */
+export function assertExpensePaymentSource(expense: { branchId?: string | null; sourceReimbursementRequestId?: string | null }, paidAt?: string, repositoryClaimCode = false) {
+  if (expense.sourceReimbursementRequestId != null) {
+    if (repositoryClaimCode) throw new BadRequestException({ code: 'claim_expense_settles_via_reimbursement', message: 'A claim-born expense settles through reimbursement payment.' });
+    throw new UnprocessableEntityException({ code: 'expense_settled_via_reimbursement', message: 'Claim-projected expenses are settled by their reimbursement payout, not a manual expense payment.' });
+  }
+  requireExpenseBranchId(expense.branchId);
+  if (paidAt && isCivilDate(paidAt) && paidAt > todayCivilDate('Asia/Bangkok')) throw new BadRequestException({ code: 'expense_payment_future_date', message: EXPENSE_CORRECTION_WORDS.futurePaymentDate });
+}
+
 @Injectable()
 export class PrismaExpenseRepository {
   private readonly reviewRefreshTransactions = new WeakSet<object>();
@@ -495,166 +542,171 @@ export class PrismaExpenseRepository {
     private readonly documentNumbers: PrismaDocumentSequenceRepository = new PrismaDocumentSequenceRepository(prisma),
   ) {}
 
-  async recordPaymentAtomic(input: {
-    companyId: string;
-    expenseId: string;
-    actorUserId: string;
-    scopes: BranchScopes;
-    idempotencyKey: string;
-    amount: string;
-    paymentMethod?: string;
-    paidAt?: string;
-    bankAccountRef?: string;
-  }, withinTx?: (tx: Prisma.TransactionClient, result: ExpensePaymentResult) => Promise<void>): Promise<ExpensePaymentResult> {
-    return (this.prisma.client as any).$transaction(async (tx: any) => {
-      // Key first: conflicting uses on different expenses must serialize too. ReadCommitted
-      // sees the first writer's committed row after waiting; Serializable can keep a stale snapshot.
+  async recordPaymentAtomic(input: RecordExpensePaymentAtomicInput, withinTx?: (tx: Prisma.TransactionClient, result: ExpensePaymentResult) => Promise<void>): Promise<ExpensePaymentResult> {
+    return this.prisma.client.$transaction(async tx => {
+      // Keys share this namespace with disbursement vouchers; all source locks follow it.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.idempotencyKey}:expense-payment-command`}))`;
       await lockExpenseFunding(tx, input.companyId, input.expenseId);
       await assertFundingMutation(tx, input.companyId, input.expenseId, 'payment');
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:expense-record-lifecycle`}))`;
-      const current = await tx.expenseRecord.findFirst({ where: { id: input.expenseId, companyId: input.companyId } });
-      if (!current) throw new NotFoundException(`Expense ${input.expenseId} not found`);
-      if (!isBranchInScope(input.scopes, current.branchId)) {
-        throw new ForbiddenException('Branch is outside your assigned branch scope.');
-      }
-      if (current.sourceReimbursementRequestId != null) {
-        throw new BadRequestException({
-          code: 'claim_expense_settles_via_reimbursement',
-          message: 'A claim-born expense settles through reimbursement payment.',
-        });
-      }
-      if (typeof input.amount !== 'string' || !POSITIVE_ACCOUNTING_MONEY_PATTERN.test(normalizeExpensePaymentAmount(input.amount))) {
-        throw new BadRequestException({
-          code: 'expense_payment_exceeds_outstanding',
-          message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
-        });
-      }
-      const amount = new Decimal(input.amount);
-      if (input.paidAt != null && !isCivilDate(input.paidAt)) {
-        throw new BadRequestException({ code: 'expense_payment_invalid_date', message: 'Payment date must be a real YYYY-MM-DD calendar day.' });
-      }
-      if (input.paymentMethod != null && !EXPENSE_PAYMENT_METHODS.includes(input.paymentMethod as any)) {
-        throw new BadRequestException({ code: 'expense_payment_invalid_method', message: 'Unknown expense payment method.' });
-      }
-      if (input.bankAccountRef != null && (typeof input.bankAccountRef !== 'string' || input.bankAccountRef.length > 128)) {
-        throw new BadRequestException({ code: 'expense_payment_invalid_reference', message: 'Bank reference must be at most 128 characters.' });
-      }
-      const bankAccountRef = input.bankAccountRef?.trim() || null;
-      const payloadFingerprint = canonicalFingerprint({
-        version: 1, expenseId: input.expenseId, branchId: current.branchId ?? null,
-        currency: current.currency, amount: amount.toFixed(4), paymentMethod: input.paymentMethod ?? null,
-        paidAt: input.paidAt ?? null, bankAccountRef,
-      });
-      const previous = await tx.expensePayment.findFirst({
-        where: { companyId: input.companyId, idempotencyKey: input.idempotencyKey },
-      });
-      if (previous) {
-        if (previous.expenseId !== input.expenseId || previous.payloadFingerprint !== payloadFingerprint) {
-          throw new ConflictException({ code: 'expense_payment_idempotency_conflict', message: 'This payment key was already used for a different payment.' });
-        }
-        // Current source is returned even after void. Never restore totals or emit another event.
-        return { expense: mapExpense(current), payment: mapPayment(previous), replayed: true };
-      }
-      if (current.status !== 'CONFIRMED') {
-        throw new BadRequestException({ code: 'expense_payment_not_confirmed', message: EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed });
-      }
-      const paidAt = input.paidAt ? civilDateToUtcDate(coerceCivilDate(input.paidAt)) : new Date();
-      const paidBefore = new Decimal(current.paidAmount.toString());
-      const payable = new Decimal(current.netPayableAmount.toString());
-      const paidAfter = paidBefore.plus(amount);
-      // FIN-01: a pre-§19d row stores a 4dp payable (580.0042) whose printed and displayed
-      // outstanding is the satang rounding (580.00, or 580.01 when it rounds up). Settling that
-      // figure must be accepted and must settle the row, so both the overshoot guard and the
-      // resulting totals use the one satang policy in expense-totals.logic. A real overpayment
-      // (a satang or more past the payable) is still refused.
-      if (!amount.isFinite() || amount.lte(0) || paidAfter.minus(payable).gt(SETTLE_EPSILON)) {
-        throw new BadRequestException({
-          code: 'expense_payment_exceeds_outstanding',
-          message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
-        });
-      }
-      const payableText = payable.toFixed(4);
-      const paidAfterText = paidAfter.toFixed(4);
-      const { outstandingAmount } = calcPaymentAmounts(payableText, paidAfterText);
-      const paymentStatus = derivePaymentStatus(payableText, paidAfterText);
-      const payment = await tx.expensePayment.create({
-        data: {
-          companyId: input.companyId,
-          expenseId: input.expenseId,
-          idempotencyKey: input.idempotencyKey,
-          payloadFingerprint,
-          amount: amount.toFixed(4),
-          currency: current.currency,
-          paymentMethod: input.paymentMethod ?? null,
-          paidAt,
-          bankAccountRef,
-          status: 'RECORDED',
-          postingStatus: 'pending',
-          createdByUserId: input.actorUserId,
-        },
-      });
-      const changed = await tx.expenseRecord.updateMany({
-        where: { id: input.expenseId, companyId: input.companyId, status: 'CONFIRMED', updatedAt: current.updatedAt },
-        data: {
-          paidAmount: paidAfterText,
-          outstandingAmount,
-          paymentStatus,
-          paymentMethod: input.paymentMethod ?? null,
-          paidAt,
-          bankAccountRef,
-          updatedByUserId: input.actorUserId,
-        },
-      });
-      if (changed.count !== 1) {
-        throw new ConflictException({ code: 'expense_payment_changed', message: 'Expense changed while recording payment.' });
-      }
-      const result = {
-        expense: mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { id: input.expenseId, companyId: input.companyId } })),
-        payment: mapPayment(payment),
-        replayed: false,
-      };
-      if (withinTx) await withinTx(tx, result);
-      return result;
+      await lockExpenseCorrection(tx, input.companyId, input.expenseId);
+      return this.recordPaymentInTransaction(tx, input, withinTx);
     }, { isolationLevel: 'ReadCommitted' });
   }
 
-  async expenseCorrectionCapabilities(companyId: string, expenseId: string, permissions: string[]) {
+  /** Caller holds the payment-key, funding and expense lifecycle locks in that order. */
+  async recordPaymentInTransaction(tx: Prisma.TransactionClient, input: RecordExpensePaymentAtomicInput,
+    withinTx?: (tx: Prisma.TransactionClient, result: ExpensePaymentResult) => Promise<void>): Promise<ExpensePaymentResult> {
+    const current = await tx.expenseRecord.findFirst({ where: { id: input.expenseId, companyId: input.companyId } });
+    if (!current) throw new NotFoundException(`Expense ${input.expenseId} not found`);
+    if (!isBranchInScope(input.scopes, current.branchId)) {
+      throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    }
+    await assertExpenseDisbursementReservation(tx, current, 'recordPayment', input.payingThroughDisbursementVoucherId, input.viewerReadScope ? { ...input.viewerReadScope, permissions: input.permissions ?? [] } : undefined);
+    assertExpensePaymentSource(current, input.paidAt, true);
+    if (typeof input.amount !== 'string' || !POSITIVE_ACCOUNTING_MONEY_PATTERN.test(normalizeExpensePaymentAmount(input.amount))) {
+      throw new BadRequestException({
+        code: 'expense_payment_exceeds_outstanding',
+        message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
+      });
+    }
+    const amount = new Decimal(input.amount);
+    if (input.paidAt != null && !isCivilDate(input.paidAt)) {
+      throw new BadRequestException({ code: 'expense_payment_invalid_date', message: 'Payment date must be a real YYYY-MM-DD calendar day.' });
+    }
+    if (input.paymentMethod != null && !EXPENSE_PAYMENT_METHODS.includes(input.paymentMethod as any)) {
+      throw new BadRequestException({ code: 'expense_payment_invalid_method', message: 'Unknown expense payment method.' });
+    }
+    const paymentMethod = input.paymentMethod as ExpensePaymentMethod | undefined;
+    if (input.bankAccountRef != null && (typeof input.bankAccountRef !== 'string' || input.bankAccountRef.length > 128)) {
+      throw new BadRequestException({ code: 'expense_payment_invalid_reference', message: 'Bank reference must be at most 128 characters.' });
+    }
+    const bankAccountRef = input.bankAccountRef?.trim() || null;
+    const payloadFingerprint = canonicalFingerprint({
+      version: 1, expenseId: input.expenseId, branchId: current.branchId ?? null,
+      currency: current.currency, amount: amount.toFixed(4), paymentMethod: input.paymentMethod ?? null,
+      paidAt: input.paidAt ?? null, bankAccountRef,
+    });
+    const previous = await tx.expensePayment.findFirst({
+      where: { companyId: input.companyId, idempotencyKey: input.idempotencyKey },
+    });
+    if (previous) {
+      if (previous.expenseId !== input.expenseId || previous.payloadFingerprint !== payloadFingerprint) {
+        throw new ConflictException({ code: 'expense_payment_idempotency_conflict', message: 'This payment key was already used for a different payment.' });
+      }
+      // Current source is returned even after void. Never restore totals or emit another event.
+      return { expense: mapExpense(current), payment: mapPayment(previous), replayed: true };
+    }
+    if (current.status !== 'CONFIRMED') {
+      throw new BadRequestException({ code: 'expense_payment_not_confirmed', message: EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed });
+    }
+    const paidAt = input.paidAt ? civilDateToUtcDate(coerceCivilDate(input.paidAt)) : new Date();
+    const paidBefore = new Decimal(current.paidAmount.toString());
+    const payable = new Decimal(current.netPayableAmount.toString());
+    const paidAfter = paidBefore.plus(amount);
+    // FIN-01: a pre-§19d row stores a 4dp payable (580.0042) whose printed and displayed
+    // outstanding is the satang rounding (580.00, or 580.01 when it rounds up). Settling that
+    // figure must be accepted and must settle the row, so both the overshoot guard and the
+    // resulting totals use the one satang policy in expense-totals.logic. A real overpayment
+    // (a satang or more past the payable) is still refused.
+    if (!amount.isFinite() || amount.lte(0) || paidAfter.minus(payable).gt(SETTLE_EPSILON)) {
+      throw new BadRequestException({
+        code: 'expense_payment_exceeds_outstanding',
+        message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
+      });
+    }
+    const payableText = payable.toFixed(4);
+    const paidAfterText = paidAfter.toFixed(4);
+    const { outstandingAmount } = calcPaymentAmounts(payableText, paidAfterText);
+    const paymentStatus = derivePaymentStatus(payableText, paidAfterText);
+    const payment = await tx.expensePayment.create({
+      data: {
+        companyId: input.companyId,
+        expenseId: input.expenseId,
+        idempotencyKey: input.idempotencyKey,
+        payloadFingerprint,
+        amount: amount.toFixed(4),
+        currency: current.currency,
+        paymentMethod: paymentMethod ?? null,
+        paidAt,
+        bankAccountRef,
+        status: 'RECORDED',
+        postingStatus: 'pending',
+        createdByUserId: input.actorUserId,
+      },
+    });
+    const changed = await tx.expenseRecord.updateMany({
+      where: { id: input.expenseId, companyId: input.companyId, status: 'CONFIRMED', updatedAt: current.updatedAt },
+      data: {
+        paidAmount: paidAfterText,
+        outstandingAmount,
+        paymentStatus,
+        paymentMethod: paymentMethod ?? null,
+        paidAt,
+        bankAccountRef,
+        updatedByUserId: input.actorUserId,
+      },
+    });
+    if (changed.count !== 1) {
+      throw new ConflictException({ code: 'expense_payment_changed', message: 'Expense changed while recording payment.' });
+    }
+    const result = {
+      expense: mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { id: input.expenseId, companyId: input.companyId } })),
+      payment: mapPayment(payment),
+      replayed: false,
+    };
+    if (withinTx) await withinTx(tx, result);
+    return result;
+  }
+
+  async expenseCorrectionCapabilities(companyId: string, expenseId: string, permissions: string[], caller?: DisbursementReadScope) {
     return (this.prisma.client as any).$transaction(async (tx: any) => {
       const expense = await tx.expenseRecord.findFirst({ where: { companyId, id: expenseId }, include: { payments: true, lines: true } });
       if (!expense) throw new NotFoundException();
-      return readExpenseCorrectionCapabilities(tx, expense, permissions);
+      return readExpenseCorrectionCapabilities(tx, expense, permissions, false, caller);
     }, { isolationLevel: 'RepeatableRead' });
   }
 
   async reopenExpenseAtomic(input: {
     companyId: string; expenseId: string; actorUserId: string; scopes: BranchScopes; reason: string;
-  }, withinTx?: (tx: any) => Promise<void>): Promise<ExpenseRecord> {
+    permissions?: string[]; taxFilingAttested?: boolean; requestId?: string; viewerReadScope?: DisbursementReadScope;
+  }, withinTx?: (tx: any) => Promise<void>): Promise<{ expense: ExpenseRecord; cancelledCertificate: ExpenseCertificateCancellation | null }> {
     return (this.prisma.client as any).$transaction(async (tx: any) => {
       await lockExpenseFunding(tx, input.companyId, input.expenseId);
       await lockExpenseCorrection(tx, input.companyId, input.expenseId);
       // Take turns with filing and handoff mutations, including writers which read before us.
       await tx.$executeRaw`SELECT id FROM "WhtCertificateHandoff" WHERE "companyId" = ${input.companyId} AND (("sourcePaymentType" = 'expense.record' AND "sourcePaymentId" = ${input.expenseId}) OR EXISTS (SELECT 1 FROM "TaxEvent" e WHERE e."companyId" = ${input.companyId} AND e."sourceType" = 'expense.record' AND e."sourceId" = ${input.expenseId} AND "taxEventIdsJson" @> jsonb_build_array(e.id))) FOR UPDATE`;
       const current = await tx.expenseRecord.findFirst({ where: { companyId: input.companyId, id: input.expenseId }, include: { payments: true, lines: true } });
-      if (!current) throw new NotFoundException();
-      if (!isBranchInScope(input.scopes, current.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
-      const capability = await readExpenseCorrectionCapabilities(tx, current, ['expense.confirm'], true);
+      if (!current) throw new NotFoundException({ code: 'expense_correction_not_found', message: EXPENSE_CORRECTION_WORDS.notFound });
+      if (!isBranchInScope(input.scopes, current.branchId)) throw new ForbiddenException({ code: 'expense_correction_branch_forbidden', message: EXPENSE_CORRECTION_WORDS.branchForbidden });
+      const capability = await readExpenseCorrectionCapabilities(tx, current, input.permissions ?? ['expense.confirm'], true, input.viewerReadScope);
       if (!capability.canReopen) throw new ConflictException({ code: 'expense_correction_blocked', blockers: capability.reopenBlockers,
-        lockedAccountingPeriodKey: capability.lockedAccountingPeriodKey, lockedTaxPeriods: capability.lockedTaxPeriods,
-        message: expenseReopenBlockerMessages(capability).join('\n') });
+        lockedAccountingPeriodKey: capability.lockedAccountingPeriodKey, lockedTaxPeriods: capability.lockedTaxPeriods, certificateOnExpense: capability.certificateOnExpense, disbursementReservation: capability.disbursementReservation,
+        message: capability.reopenBlockers.includes('not_confirmed') ? EXPENSE_CORRECTION_WORDS.statusChanged : expenseReopenBlockerMessages(capability).join('\n') });
+      if (capability.certificateOnExpense && input.taxFilingAttested !== true) throw new BadRequestException({
+        code: 'expense_certificate_attestation_required', message: EXPENSE_CORRECTION_WORDS.certificateAttestationRequired,
+      });
       const changed = await tx.expenseRecord.updateMany({ where: { companyId: input.companyId, id: input.expenseId, status: 'CONFIRMED', updatedAt: current.updatedAt },
         data: { status: 'NEEDS_REVIEW', postingStatus: 'not_required', postingError: null,
           confirmedAt: null, confirmedByUserId: null, reviewedAt: null, reviewedByUserId: null, updatedByUserId: input.actorUserId } });
-      if (changed.count !== 1) throw new ConflictException('expense_correction_source_changed');
+      if (changed.count !== 1) throw new ConflictException({ code: 'expense_correction_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+      let cancelledCertificate: ExpenseCertificateCancellation | null = null;
+      if (capability.certificateOnExpense) {
+        const handoff = await tx.whtCertificateHandoff.findFirst({ where: {
+          companyId: input.companyId, sourcePaymentType: 'expense.record', sourcePaymentId: input.expenseId,
+          status: { in: ['SYSTEM_ISSUED', 'EXTERNAL_LINKED'] },
+        } });
+        if (!handoff) throw new ConflictException({ code: 'expense_correction_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+        cancelledCertificate = await this.cancelExpenseCertificateInTx(tx, handoff, input, 'expense_reopen');
+      }
       await retireExpenseTaxEvents(tx, input.companyId, input.expenseId);
       if (withinTx) await withinTx(tx);
-      return mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { companyId: input.companyId, id: input.expenseId } }));
+      return { expense: mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { companyId: input.companyId, id: input.expenseId } })), cancelledCertificate };
     }, { isolationLevel: 'ReadCommitted' });
   }
 
   async cancelPaymentAtomic(input: {
     companyId: string; expenseId: string; paymentId: string; actorUserId: string; scopes: BranchScopes; reason: string;
-  }, withinTx?: (tx: any) => Promise<void>): Promise<ExpenseRecord> {
+  }, withinTx?: (tx: any, cancelledDisbursementVoucherIds: string[]) => Promise<void>): Promise<ExpenseRecord> {
     return (this.prisma.client as any).$transaction(async (tx: any) => {
       await lockExpenseFunding(tx, input.companyId, input.expenseId);
       await lockExpenseCorrection(tx, input.companyId, input.expenseId);
@@ -670,6 +722,7 @@ export class PrismaExpenseRepository {
       const changedPayment = await tx.expensePayment.updateMany({ where: { companyId: input.companyId, expenseId: input.expenseId, id: input.paymentId, status: 'RECORDED' },
         data: { status: 'VOIDED', postingStatus: 'not_required', postingError: null, voidedAt: new Date(), voidedByUserId: input.actorUserId } });
       if (changedPayment.count !== 1) throw new ConflictException('expense_payment_changed');
+      const cancelledDisbursementVoucherIds = await cancelDisbursementVouchersForPayments(tx, input.companyId, [input.paymentId], input.actorUserId, new Date(), current.expenseNumber, false, input.reason);
       // Subtract only this history row: old expenses can include a legacy paid balance with no row.
       const paidAmount = Decimal.max(new Decimal(current.paidAmount.toString()).minus(payment.amount.toString()), 0).toFixed(4);
       const latest = (await tx.expensePayment.findMany({ where: { companyId: input.companyId, expenseId: input.expenseId, status: 'RECORDED' }, orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }] }))[0];
@@ -677,7 +730,7 @@ export class PrismaExpenseRepository {
         data: { paidAmount, ...calcPaymentAmounts(current.netPayableAmount.toString(), paidAmount), paymentStatus: derivePaymentStatus(current.netPayableAmount.toString(), paidAmount),
           paidAt: latest?.paidAt ?? null, paymentMethod: latest?.paymentMethod ?? null, bankAccountRef: latest?.bankAccountRef ?? null, updatedByUserId: input.actorUserId } });
       if (changed.count !== 1) throw new ConflictException('expense_payment_changed');
-      if (withinTx) await withinTx(tx);
+      if (withinTx) await withinTx(tx, cancelledDisbursementVoucherIds);
       return mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { companyId: input.companyId, id: input.expenseId } }));
     }, { isolationLevel: 'ReadCommitted' });
   }
@@ -893,6 +946,27 @@ export class PrismaExpenseRepository {
     return { reopenedAt: audits.find(a => a.action === 'expense.reopen')?.createdAt ?? null, cancellationReasons };
   }
 
+  async paymentDisbursements(expense: ExpenseRecordWithRelations, scope: DisbursementReadScope, permissions: string[]) {
+    const ids = expense.payments.map(p => p.id);
+    const coverage = ids.length ? await this.prisma.client.disbursementVoucherLine.findMany({ where: { companyId: expense.companyId, OR: [
+      { coversPaymentId: { in: ids }, voucher: { is: { status: { not: 'CANCELLED' } } } },
+      { expensePaymentId: { in: ids }, voucher: { is: { status: 'CANCELLED' } } },
+    ] }, orderBy: [{ voucher: { cancelledAt: 'desc' } }, { voucherId: 'desc' }],
+      select: { coversPaymentId: true, expensePaymentId: true, voucher: { select: { id: true, documentNumber: true, branchId: true, status: true,
+        lines: { where: { expense: { is: { NOT: expenseReadScopeWhere(scope, scope.scopes, scope.relatedUserId) } } }, take: 1, select: { id: true } },
+      } } } }) : [];
+    return new Map(expense.payments.map(payment => {
+      const voucher = coverage.find(l => l.coversPaymentId === payment.id && l.voucher.status !== 'CANCELLED')?.voucher;
+      const cancelled = !voucher ? coverage.find(l => l.expensePaymentId === payment.id && l.voucher.status === 'CANCELLED')?.voucher : undefined;
+      const pointer = (document: typeof voucher) => document?.documentNumber ? {
+        id: permissions.includes('expense.disbursement.read') && isBranchInScope(scope.scopes, document.branchId) && document.lines.length === 0 ? document.id : null,
+        documentNumber: document.documentNumber,
+      } : null;
+      return [payment.id, { disbursementVoucher: pointer(voucher), cancelledDisbursementVoucher: pointer(cancelled),
+        canIssueDisbursementVoucher: permissions.includes('expense.disbursement.issue') && expense.companyId === scope.companyId && isBranchInScope(scope.scopes, expense.branchId) && (!scope.createdByUserId || scope.createdByUserId === expense.createdByUserId) && expense.status === 'CONFIRMED' && Boolean(expense.branchId) && !expense.sourceReimbursementRequestId && payment.status === 'RECORDED' && !voucher }];
+    }));
+  }
+
   async findByIdWithRelations(
     companyId: string,
     id: string,
@@ -1037,11 +1111,11 @@ export class PrismaExpenseRepository {
     const skip = (page - 1) * pageSize;
     // 10D branch ABAC: restricted scope sees its branches plus company-central (null) rows.
     // Explicit branchId filter (already scope-asserted by the use-case) is narrower and wins.
-    const scopeWhere = scopes && !rest.branchId ? branchScopeWhere(scopes) : {};
+    const scopeWhere = expenseReadScopeWhere({ companyId, ...rest }, scopes, relatedUserId);
     // GAP-11 `vendorAddressMissing` is one named filter, not two: it is spread after
     // `sourceDocumentType` so it pins TAX_INVOICE itself — only a full tax invoice has to carry a
     // seller address, so combining it with another document type would answer an empty question.
-    const where: any = { companyId, ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.vendorAddressMissing && { vendorAddressSnapshot: null, sourceDocumentType: 'TAX_INVOICE' }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.createdByUserId && { createdByUserId: rest.createdByUserId }), ...(rest.branchId && { branchId: rest.branchId }), ...(rest.fromDate || rest.toDate ? { expenseDate: civilDayRangeToUtc(rest.fromDate, rest.toDate) } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: bangkokCivilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}), ...(relatedUserId ? { AND: [expenseRelatedToUserWhere(relatedUserId)] } : {}) };
+    const where: any = { ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.vendorAddressMissing && { vendorAddressSnapshot: null, sourceDocumentType: 'TAX_INVOICE' }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.fromDate || rest.toDate ? { expenseDate: civilDayRangeToUtc(rest.fromDate, rest.toDate) } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: bangkokCivilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}) };
     const uploadDateLens = (rest.uploadedFromDate || rest.uploadedToDate) && !(rest.fromDate || rest.toDate);
     const orderBy = [uploadDateLens ? { uploadedAt: 'desc' as const } : { expenseDate: 'desc' as const }, { id: 'desc' as const }];
     const [data, total] = await Promise.all([
@@ -1050,6 +1124,38 @@ export class PrismaExpenseRepository {
     ]);
     const progress = await loadExpenseReimbursementProgress(this.prisma.client, companyId, data, scopes);
     return { data: data.map(row => ({ ...mapExpense(row), reimbursementProgress: progress.get(row.id) })), total, page, pageSize };
+  }
+
+  /** No list-page cap: group every readable unpaid expense, loading only the facts these readers need. */
+  async readDisbursementPayableExpenses(filter: { companyId: string; branchId?: string; createdByUserId?: string }, scopes?: BranchScopes, relatedUserId?: string, permissions: string[] = []) {
+    return this.readDisbursementExpenseSources({ ...filter, payableOnly: true }, scopes, relatedUserId, this.prisma.client, permissions);
+  }
+
+  async readDisbursementExpenseSources(filter: { companyId: string; branchId?: string; createdByUserId?: string; expenseIds?: string[]; payableOnly?: boolean }, scopes?: BranchScopes, relatedUserId?: string, db: ExpenseDb = this.prisma.client, permissions: string[] = []) {
+    const expenses = await db.expenseRecord.findMany({
+      where: { ...expenseReadScopeWhere(filter, scopes, relatedUserId), ...(filter.expenseIds ? { id: { in: filter.expenseIds } } : {}), ...(filter.payableOnly ? { status: 'CONFIRMED', outstandingAmount: { gt: 0 } } : {}) },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { id: true, branchId: true, expenseNumber: true, expenseDate: true, createdAt: true, status: true, currency: true,
+        vendorNameSnapshot: true, vendorTaxIdSnapshot: true, vendorBranchCodeSnapshot: true, grandTotalAmount: true, whtAmount: true, netPayableAmount: true,
+        outstandingAmount: true, sourceReimbursementRequestId: true, reservedByDisbursementVoucherId: true,
+        vendorDocumentNumber: true, lines: { orderBy: { lineNumber: 'asc' }, take: 1, select: { description: true } },
+        substituteReceiptEvidences: { orderBy: { version: 'desc' }, take: 1, select: { fundingSource: true } },
+      },
+    });
+    if (!expenses.length) return [];
+    const ids = expenses.map(e => e.id);
+    const links = await db.attachmentLink.findMany({ where: { companyId: filter.companyId, targetType: 'expense.record', targetId: { in: ids } }, select: { targetId: true, attachmentId: true } });
+    const [claims, reservations, branches] = await Promise.all([
+      db.reimbursementLine.findMany({ where: expensePaymentClaimWhere(filter.companyId, ids, links.map(l => l.attachmentId)), select: { linkedExpenseId: true, attachmentId: true } }),
+      readDisbursementReservations(db, filter.companyId, ids, { companyId: filter.companyId, createdByUserId: filter.createdByUserId, scopes: scopes ?? {}, relatedUserId, permissions }, expenses),
+      db.branch.findMany({ where: { companyId: filter.companyId, id: { in: [...new Set(expenses.flatMap(e => e.branchId ? [e.branchId] : []))] } }, select: { id: true, name: true } }),
+    ]);
+    const claimedFiles = new Set(claims.flatMap(c => c.attachmentId ? [c.attachmentId] : []));
+    const claimedExpenses = new Set([...claims.flatMap(c => c.linkedExpenseId ? [c.linkedExpenseId] : []), ...links.filter(l => claimedFiles.has(l.attachmentId)).map(l => l.targetId)]);
+    return expenses.map(expense => ({ ...expense, branchName: branches.find(b => b.id === expense.branchId)?.name ?? null,
+      recordPaymentBlocker: recordExpensePaymentBlocker(expense, claimedExpenses.has(expense.id), expense.substituteReceiptEvidences[0]?.fundingSource),
+      reservation: reservations.has(expense.id) ? { documentNumber: reservations.get(expense.id)!.documentNumber, preparerName: reservations.get(expense.id)!.preparerName } : null,
+    }));
   }
 
   /** The existing web/export report includes every status; one SQL aggregate keeps that population exact. */
@@ -2609,6 +2715,7 @@ export class PrismaExpenseRepository {
         where: { id: input.expenseId, companyId: input.companyId, updatedAt: input.expectedExpenseUpdatedAt },
       });
       if (!expense) throw new Error('Expense details changed after payer certification. Finance must prepare a new version.');
+      if (!evidence.correctionOfEvidenceId && evidence.fundingSource === 'COMPANY') await assertExpenseDisbursementReservation(tx, expense, 'approveSubstitute');
       if (evidence.correctionOfEvidenceId) {
         const original = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { id: evidence.correctionOfEvidenceId, companyId: input.companyId, expenseId: input.expenseId, OR: [{ status: 'ISSUED' }, ...(evidence.correctionReason === EXPENSE_EDIT_RESIGN_REASON ? [{ status: 'SUPERSEDED', supersedeReason: EXPENSE_EDIT_RESIGN_REASON }] : [])] } });
         const company = await tx.company.findFirst({ where: { id: input.companyId }, select: { taxId: true } });
@@ -2823,7 +2930,7 @@ export class PrismaExpenseRepository {
     if (!original) return { reversalEntryId: null, reversed: false };
     if (journal.refusal) throw journal.refusal.error;
     if (!opts.reversalEntryNumber) {
-      throw new ConflictException({ code: 'posting_state_changed', message: 'Posting state changed while voiding. Retry the void.' });
+      throw new ConflictException({ code: 'posting_state_changed', message: EXPENSE_VOID_CERTIFICATE_WORDS.changedRetry });
     }
     const { refusal } = await journalPeriodRefusal(tx, { companyId: opts.companyId, lockedTaxFormTypes: opts.lockedTaxFormTypes }, original);
     if (refusal) throw refusal.error;
@@ -2860,8 +2967,52 @@ export class PrismaExpenseRepository {
     return { reversalEntryId: reversal.id, reversed: true };
   }
 
-  // H-04: expense void is a true reversal — status claim, payable zeroing, and
-  // GL reversal commit or roll back together.
+  private async cancelExpenseCertificateInTx(tx: any, handoff: any, input: {
+    companyId: string; expenseId: string; actorUserId: string; reason: string; requestId?: string;
+  }, source: 'expense_reopen' | 'expense_void'): Promise<ExpenseCertificateCancellation> {
+    const isExternal = handoff.status === 'EXTERNAL_LINKED';
+    const certificate = !isExternal && handoff.certificateId ? await tx.whtCertificate.findFirst({
+      where: { companyId: input.companyId, id: handoff.certificateId },
+    }) : null;
+    if (!isExternal) {
+      if (!certificate) throw new ConflictException({ code: 'expense_correction_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+      const voided = await tx.whtCertificate.updateMany({
+        where: { companyId: input.companyId, id: certificate.id, status: 'ISSUED' },
+        data: { status: 'VOIDED', voidedAt: new Date(), voidedByUserId: input.actorUserId, voidReason: source === 'expense_reopen' ? 'SOURCE_REOPENED' : 'SOURCE_VOIDED' },
+      });
+      if (voided.count !== 1) throw new ConflictException({ code: 'expense_correction_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+    }
+    const certificateNumber = isExternal ? handoff.externalCertificateNumber : certificate.certificateNumber;
+    // Capture these before clearing the pointers; a later round must not change this notice.
+    const cancelledCertificate: ExpenseCertificateCancellation = {
+      issuerUserId: (isExternal ? handoff.linkedByUserId : certificate.issuedByUserId) ?? null,
+      certificateNumber: certificateNumber ?? null, isExternal, certificateRound: handoff.certificateRound + 1,
+    };
+    await appendWhtCertificateHistory(tx, handoff, {
+      eventType: isExternal ? 'EXTERNAL_RECORD_REMOVED' : source === 'expense_reopen' ? 'CANCELLED_SOURCE_REOPENED' : 'CANCELLED_SOURCE_VOIDED',
+      actorUserId: input.actorUserId, isExternal, certificateId: certificate?.id ?? null,
+      certificateNumber, certificateDate: isExternal ? handoff.externalIssuedDate : certificate.issuedAt,
+      reason: input.reason, taxFilingAttested: true,
+      ...(isExternal ? { detailsJson: { externalEvidenceRef: handoff.externalEvidenceRef ?? null, linkNote: handoff.linkNote ?? null,
+        linkedAt: handoff.linkedAt?.toISOString() ?? null, linkedByUserId: handoff.linkedByUserId ?? null } } : {}),
+    });
+    const cancelled = await tx.whtCertificateHandoff.updateMany({
+      where: { id: handoff.id, companyId: input.companyId, status: handoff.status },
+      data: { status: 'CANCELLED', certificateId: null, certificateRound: { increment: 1 },
+        externalCertificateNumber: null, externalEvidenceRef: null, externalIssuedDate: null,
+        linkNote: null, linkCommandId: null, linkPayloadFingerprint: null, linkedAt: null, linkedByUserId: null },
+    });
+    if (cancelled.count !== 1) throw new ConflictException({ code: 'expense_correction_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+    await new PrismaAuditRepository(this.prisma).log({
+      companyId: input.companyId, actorUserId: input.actorUserId, requestId: input.requestId ?? `${source}:${input.expenseId}`,
+      action: 'tax.wht_certificate.cancel', targetType: isExternal ? 'wht_certificate_handoff' : 'wht_certificate',
+      targetId: certificate?.id ?? handoff.id, result: 'SUCCESS', riskLevel: 'HIGH',
+      metadataJson: { source, handoffId: handoff.id, certificateNumber, isExternal, reason: input.reason, taxFilingAttested: true },
+    }, tx);
+    return cancelledCertificate;
+  }
+
+  // H-04: status claim, payable zeroing, certificate cancellation and GL reversal commit together.
   async voidExpenseTrueReversal(
     companyId: string,
     expenseId: string,
@@ -2871,14 +3022,43 @@ export class PrismaExpenseRepository {
     paymentReversals: Array<{ paymentId: string; reversalEntryNumber: string }> | string = [],
     /** Runs first inside the void transaction; a claim cancellation fences its void with it. */
     beforeVoid?: (tx: any) => Promise<void>,
-  ): Promise<{ expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null; paymentReversalEntryIds: Array<{ paymentId: string; reversalEntryId: string }> }> {
+    certificateOptions: { permissions?: string[]; taxFilingAttested?: boolean; requestId?: string; authorisedByClaimCancellation?: boolean; viewerReadScope?: DisbursementReadScope } = {},
+  ): Promise<{ expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null; paymentReversalEntryIds: Array<{ paymentId: string; reversalEntryId: string }>; cancelledCertificate: ExpenseCertificateCancellation | null; cancelledDisbursementVoucherIds: string[] }> {
     return await (this.prisma.client as any).$transaction(async (tx: any) => {
       await beforeVoid?.(tx);
       await lockExpenseFunding(tx, companyId, expenseId);
       await assertFundingMutation(tx, companyId, expenseId, 'prepare');
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:expense-record-lifecycle`}))`;
       const current = await tx.expenseRecord.findFirst({ where: { id: expenseId, companyId } });
-      if (!current || !canVoidExpenseFinancialState(current)) throw new ConflictException({ code: 'expense_changed', message: 'Expense is no longer eligible for cancellation. Reload before continuing.' });
+      if (!current || !canVoidExpenseFinancialState(current)) throw new ConflictException({ code: 'expense_changed', message: EXPENSE_VOID_CERTIFICATE_WORDS.statusChanged });
+      await assertExpenseDisbursementReservation(tx, current, 'void', undefined, certificateOptions.viewerReadScope ? { ...certificateOptions.viewerReadScope, permissions: certificateOptions.permissions ?? [] } : undefined);
+      const events = await tx.taxEvent.findMany({ where: {
+        companyId, sourceType: 'expense.record', sourceId: expenseId,
+      }, select: { id: true, taxPeriodId: true, status: true } });
+      const eventIds = events.map((event: any) => event.id);
+      const handoffs = await tx.whtCertificateHandoff.findMany({ where: expenseWhtHandoffWhere(companyId, expenseId, eventIds) });
+      if (await hasExpenseTaxWorkspaceCertificate(tx, companyId, expenseId, eventIds, handoffs)) throw new ConflictException({
+        code: 'certificate_issued', message: EXPENSE_VOID_CERTIFICATE_WORDS.taxWorkspaceCertificate,
+      });
+      const handoff = handoffs.find((row: any) => row.sourcePaymentType === 'expense.record' && row.sourcePaymentId === expenseId
+        && ['REQUIRED', 'SYSTEM_ISSUED', 'EXTERNAL_LINKED'].includes(row.status));
+      const hasCertificate = handoff && ['SYSTEM_ISSUED', 'EXTERNAL_LINKED'].includes(handoff.status);
+      if (hasCertificate) {
+        const permission = handoff.status === 'SYSTEM_ISSUED' ? 'wht.certificate.correct' : 'wht.external_certificate.link';
+        if (!certificateOptions.authorisedByClaimCancellation && !certificateOptions.permissions?.includes(permission)) throw new ForbiddenException({
+          code: 'certificate_permission_missing', message: expenseVoidCertificatePermissionMessage(
+            handoff.status === 'EXTERNAL_LINKED' ? 'EXTERNAL' : 'SYSTEM', handoff.status === 'EXTERNAL_LINKED'
+              ? handoff.externalCertificateNumber : handoff.certificateId
+                ? (await tx.whtCertificate.findFirst({ where: { companyId, id: handoff.certificateId }, select: { certificateNumber: true } }))?.certificateNumber : null),
+        });
+        if (certificateOptions.taxFilingAttested !== true) throw new BadRequestException({
+          code: 'expense_certificate_attestation_required', message: EXPENSE_VOID_CERTIFICATE_WORDS.attestationRequired,
+        });
+        const locks = await readExpensePeriodLocks(tx, current, events.filter((event: any) => event.status === 'ACTIVE').map((event: any) => event.taxPeriodId), true);
+        const locked = locks.lockedTaxPeriods.find((period: { formType: string }) => period.formType === 'PND3' || period.formType === 'PND53');
+        if (locked) throw new ConflictException({ code: 'tax_period_locked', ...locked,
+          message: EXPENSE_VOID_CERTIFICATE_WORDS.periodLocked(handoff.status === 'EXTERNAL_LINKED' ? 'EXTERNAL' : 'SYSTEM', locked.periodKey, locked.formType) });
+      }
       // Read before the status claim below: a document voided while open for correction has its tax records retired
       // here; a confirmed one keeps the existing path (the tax sync retires or flags them, period locks included).
       const voidedFromConfirmed = current.status === 'CONFIRMED';
@@ -2890,7 +3070,17 @@ export class PrismaExpenseRepository {
           updatedByUserId: actorUserId, paidAmount: '0.00', outstandingAmount: '0.00', paymentStatus: 'VOIDED',
         },
       });
-      if (claimed.count !== 1) throw new ConflictException({ code: 'expense_changed', message: 'Expense changed before void. Reload and retry.' });
+      if (claimed.count !== 1) throw new ConflictException({ code: 'expense_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+      let cancelledCertificate: ExpenseCertificateCancellation | null = null;
+      if (hasCertificate) cancelledCertificate = await this.cancelExpenseCertificateInTx(tx, handoff, {
+        companyId, expenseId, actorUserId, reason, requestId: certificateOptions.requestId,
+      }, 'expense_void');
+      else if (handoff?.status === 'REQUIRED') {
+        const cancelled = await tx.whtCertificateHandoff.updateMany({ where: {
+          companyId, id: handoff.id, status: 'REQUIRED',
+        }, data: { status: 'CANCELLED' } });
+        if (cancelled.count !== 1) throw new ConflictException({ code: 'expense_correction_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+      }
       const expense = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId }, include: { lines: true } });
 
       // Keep the immutable issued artifact for audit, but retire both its evidence state and
@@ -2935,6 +3125,7 @@ export class PrismaExpenseRepository {
         : tx.expensePayment
           ? await tx.expensePayment.findMany({ where: { companyId, expenseId, status: 'RECORDED' }, orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }] })
           : [];
+      const cancelledDisbursementVoucherIds: string[] = [];
       const paymentReversalEntryIds: Array<{ paymentId: string; reversalEntryId: string }> = [];
       for (const payment of payments) {
         const reservedNumber = requestedPaymentReversals.find((candidate) => candidate.paymentId === payment.id)?.reversalEntryNumber;
@@ -2954,6 +3145,7 @@ export class PrismaExpenseRepository {
               postingStatus: paymentReversal.reversed ? 'reversed' : 'not_required', postingError: null,
             },
           });
+          cancelledDisbursementVoucherIds.push(...await cancelDisbursementVouchersForPayments(tx, companyId, [payment.id], actorUserId, voidedAt, current.expenseNumber, true, reason));
         }
       }
       await tx.expenseRecord.update({
@@ -2964,6 +3156,8 @@ export class PrismaExpenseRepository {
       const row = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId } });
       return {
         expense: mapExpense(row),
+        cancelledCertificate,
+        cancelledDisbursementVoucherIds,
         reversalEntryId: reversal.reversalEntryId,
         paymentReversalEntryId: paymentReversalEntryIds[0]?.reversalEntryId ?? null,
         paymentReversalEntryIds,
@@ -3006,7 +3200,7 @@ export class PrismaExpenseRepository {
       // WHT certificate system issuance, Phase 1.2 (S3): a confirmed expense that withheld tax owes
       // the payee a 50 ทวิ, recorded as a durable handoff in the SAME transaction as confirmation.
       if (new Decimal(current.whtAmount ?? '0').gt(0)) {
-        await createWhtHandoffForExpense(tx, { companyId: input.companyId, expense: current });
+        await createWhtHandoffForExpense(tx, { companyId: input.companyId, actorUserId: input.actorUserId, expense: current });
       }
       await tx.outboxEvent.create({
         data: {
@@ -3187,7 +3381,7 @@ export class PrismaExpenseRepository {
       // that recompute, so it still reads from the raw row.
       if (new Decimal(acceptedRecord.whtAmount ?? '0').gt(0)) {
         await createWhtHandoffForExpense(tx, {
-          companyId: input.companyId,
+          companyId: input.companyId, actorUserId: input.actorUserId,
           expense: {
             id: current.id, branchId: current.branchId, whtAmount: acceptedRecord.whtAmount,
             whtCategoryCode: current.whtCategoryCode ?? null, whtRate: current.whtRate,
@@ -3195,6 +3389,7 @@ export class PrismaExpenseRepository {
             vendorTaxIdSnapshot: current.vendorTaxIdSnapshot, vendorAddressSnapshot: current.vendorAddressSnapshot,
             vendorBranchCodeSnapshot: current.vendorBranchCodeSnapshot, vendorEntityKindSnapshot: current.vendorEntityKindSnapshot,
             expenseDate: current.expenseDate, grandTotalAmount: acceptedRecord.grandTotalAmount,
+            whtInputJson: current.whtInputJson, lines: acceptedRecord.lines,
           },
         });
       }
@@ -4407,17 +4602,24 @@ export class PrismaExpenseRepository {
 // this closes the gap H4 deliberately scoped out (wht-durable-prefilled-handoff.md OQ-2) rather than
 // reproducing AP's older closed-route-only condition.
 async function createWhtHandoffForExpense(tx: any, input: {
-  companyId: string;
+  companyId: string; actorUserId: string;
   expense: {
     id: string; branchId: string | null; whtAmount: unknown; whtCategoryCode: string | null; whtRate: unknown;
     vendorCounterpartyId: string | null; vendorNameSnapshot: string | null; vendorTaxIdSnapshot: string | null;
     vendorAddressSnapshot: string | null; vendorBranchCodeSnapshot: string | null;
     vendorEntityKindSnapshot: string | null; expenseDate: Date; grandTotalAmount: unknown;
+    whtInputJson?: { baseAmount?: string } | null; lines?: { taxableAmount: unknown; whtAmount: unknown }[];
   };
 }): Promise<void> {
   const { companyId, expense } = input;
   const withheldAmount = String(expense.whtAmount ?? '0');
   const whtRate = expense.whtRate === null || expense.whtRate === undefined ? null : String(expense.whtRate);
+  const withheldLines = expense.lines?.filter(line => line.taxableAmount != null && new Decimal(String(line.whtAmount ?? '0')).gt(0)) ?? [];
+  const grossAmount = expense.whtInputJson?.baseAmount != null
+    ? new Decimal(expense.whtInputJson.baseAmount).toFixed(4)
+    : withheldLines.length
+      ? withheldLines.reduce((sum, line) => sum.plus(String(line.taxableAmount)), new Decimal(0)).toFixed(4)
+      : deriveWhtIncomeBase(withheldAmount, whtRate) ?? String(expense.grandTotalAmount ?? '0');
   const [company, category, payerBranch] = await Promise.all([
     tx.company.findUnique({ where: { id: companyId }, select: { name: true, registeredName: true, taxId: true, addressJson: true } }),
     expense.whtCategoryCode ? tx.whtIncomeCategory.findUnique({ where: { code: expense.whtCategoryCode }, select: { nameTh: true } }) : Promise.resolve(null),
@@ -4443,15 +4645,25 @@ async function createWhtHandoffForExpense(tx: any, input: {
     incomeCategoryCode: expense.whtCategoryCode ?? null,
     incomeCategoryName: category?.nameTh ?? null,
     whtRate,
-    grossAmount: deriveWhtIncomeBase(withheldAmount, whtRate) ?? String(expense.grandTotalAmount ?? '0'),
+    grossAmount,
     withheldAmount,
     paymentDate: expense.expenseDate.toISOString(),
   };
-  const retired = await tx.whtCertificateHandoff.findFirst({ where: { companyId, creationCommandId: `wht-cert:${companyId}:expense.record:${expense.id}`, status: 'CANCELLED' }, select: { id: true } });
+  const retired = await tx.whtCertificateHandoff.findFirst({ where: { companyId, creationCommandId: `wht-cert:${companyId}:expense.record:${expense.id}`, status: 'CANCELLED' }, select: { id: true, prefillSnapshotJson: true, payeeAddress: true } });
+  const oldPayee = retired?.prefillSnapshotJson?.payeeSnapshot;
+  const oldTaxId = normalizeTaxId(String(oldPayee?.taxId ?? ''));
+  const newTaxId = normalizeTaxId(String(prefill.payeeSnapshot.taxId ?? ''));
+  const oldName = normalizeVendorName(oldPayee?.name);
+  const samePayee = oldTaxId || newTaxId ? oldTaxId === newTaxId : !!oldName && oldName === normalizeVendorName(prefill.payeeSnapshot.name);
+  // An address the person just corrected on the expense itself must win over an older one typed on the card.
+  const oldAddress = String(oldPayee?.address ?? '').trim();
+  const newAddress = String(prefill.payeeSnapshot.address ?? '').trim();
+  const keepTypedAddress = samePayee && (!newAddress || newAddress === oldAddress);
+  const clearedForTaxIdChange = Boolean(retired?.payeeAddress?.trim()) && !keepTypedAddress && oldTaxId !== newTaxId;
   const writeHandoff = retired
-    ? (input: any) => tx.whtCertificateHandoff.update({ where: { id: retired.id }, data: { ...input.data, payeeAddress: null, payeeAddressByUserId: null, payeeAddressAt: null } })
+    ? (input: any) => tx.whtCertificateHandoff.update({ where: { id: retired.id }, data: { ...input.data, ...(keepTypedAddress ? {} : { payeeAddress: null, payeeAddressByUserId: null, payeeAddressAt: null }) } })
     : (input: any) => tx.whtCertificateHandoff.create(input);
-  await writeHandoff({
+  const handoff = await writeHandoff({
     data: {
       companyId,
       status: 'REQUIRED',
@@ -4470,6 +4682,12 @@ async function createWhtHandoffForExpense(tx: any, input: {
       payloadFingerprint: createHash('sha256').update(JSON.stringify(prefill)).digest('hex'),
     },
   });
+  if (clearedForTaxIdChange) {
+    await appendWhtCertificateHistory(tx, handoff, {
+      eventType: 'PAYEE_ADDRESS_CLEARED', actorUserId: input.actorUserId, isExternal: false,
+      detailsJson: { reason: 'PAYEE_TAX_ID_CHANGED' },
+    });
+  }
 }
 
 

@@ -11,7 +11,7 @@ const caps = { canReopen: true, reopenBlockers: [], canRecordPayment: true, reco
 test('payment prefills the outstanding satang and names recording the remainder; invalid fields explain the disabled action', () => {
   const form = (model as any).expensePaymentFormState;
   assert.equal(typeof form, 'function');
-  assert.equal(form('0.0100', '0.01', '2026-10-04').label, 'บันทึกจ่ายส่วนที่เหลือ ฿0.01');
+  assert.equal(form('0.0100', '0.01', '2026-10-04').label, 'บันทึกจ่าย ฿0.01');
   assert.equal(form('0.0100', '0.01', '2026-10-04').prefill, '0.01');
   assert.equal(form('100', '40', '2026-10-04').label, 'บันทึกจ่าย ฿40.00');
   for (const [amount, date] of [['', '2026-10-04'], ['0', '2026-10-04'], ['100.01', '2026-10-04'], ['10', '2026-02-30']]) {
@@ -118,7 +118,7 @@ test('small controls on the expense screens keep 44 px of tappable height on a p
   assert.match(page, /<Link className=\{tapTargetClass\} href=\{`\/companies\/\$\{companyId\}\/expenses`\}/, 'back to the list');
   assert.match(page, /cx\(tapTargetClass, 'mt-1 rounded font-semibold underline/, 'the footer pointer to the field');
   assert.match(page, /navChips\.map[\s\S]{0,260}cx\(tapTargetClass,/, 'section chips on the confirmed view');
-  assert.match(page, /guided \? 'gap-y-1\.5' : 'gap-y-3\.5'/, 'wrapped chip rows do not share a hit area');
+  assert.match(page, /guided \? 'flex-wrap gap-y-1\.5' : 'flex-nowrap overflow-x-auto'/, 'section chips stay on one horizontally scrolling row');
   const pages = readFileSync(new URL('./ExpensesPages.tsx', import.meta.url), 'utf8');
   assert.equal((pages.match(/cx\(tapTargetClass, 'flex h-8 w-8/g) ?? []).length, 2, 'remove-line on products and on charges');
 });

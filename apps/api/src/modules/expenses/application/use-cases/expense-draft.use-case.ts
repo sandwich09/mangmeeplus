@@ -1,8 +1,13 @@
+import { DisbursementVoucherNoticeService } from '../services/disbursement-voucher-notice.service';
+import type { Prisma } from '../../../../generated/prisma/client';
+import { EXPENSE_VOID_CERTIFICATE_WORDS } from '@watchdog-bms/contracts';
 import { maskAccountNumber } from '../../../banking/domain/logic/banking.logic';
 import { isCivilDate, EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
+import { isSerializationFailure } from '../../../../common/database/prisma-error';
 import { expenseDraftNumberingEnabled } from '../../infrastructure/expense-number';
-import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
+import { expenseListReadScope } from '../expense-list-read-scope';
+import { Optional, Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { expenseEvidenceAssessment, expenseEvidenceInputError, expenseEvidenceFingerprint, expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import { createHash, randomUUID } from 'node:crypto';
@@ -10,7 +15,8 @@ import { applyExpenseSourceDraftInput, sourceDraftState, projectExpenseSourceDra
 import { collectLineExpenseDraftQuestions, parseLineExpenseDraftContinuation, nextLineExpenseDraftItemRef } from '../../domain/logic/line-expense-draft-conversation.logic';
 import { withPurposeNote } from '../../domain/logic/line-correction.logic';
 import { PAYMENT_IDEMPOTENCY_KEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
-import { PrismaExpenseRepository, requireExpenseBranchId } from '../../infrastructure/prisma-expense.repository';
+import { PrismaExpenseRepository, assertExpensePaymentSource, requireExpenseBranchId, type ExpensePaymentResult, type ExpenseCertificateCancellation } from '../../infrastructure/prisma-expense.repository';
+import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { claimOwnsExpenseError } from '../../infrastructure/expense-void-blocker';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
@@ -65,8 +71,8 @@ function hasPerm(ctx: RequestContext, perm: string): boolean {
   return ctx.permissions.includes(perm);
 }
 
-function requirePerm(ctx: RequestContext, perm: string, action: string) {
-  if (!hasPerm(ctx, perm)) throw new ForbiddenException(`Missing permission: ${perm} for ${action}`);
+function requirePerm(ctx: RequestContext, perm: string, action: string, refusal?: { code: string; message: string }) {
+  if (!hasPerm(ctx, perm)) throw new ForbiddenException(refusal ?? `Missing permission: ${perm} for ${action}`);
 }
 
 function sameDecimal(left: unknown, right: unknown): boolean {
@@ -78,9 +84,9 @@ function sameDecimalProduct(total: unknown, quantity: unknown, unitPrice: unknow
 }
 
 // 10D branch ABAC: membership branch scope governs reads and writes; null branchId = company-central.
-function assertBranchInScope(ctx: RequestContext, branchId: string | null | undefined) {
+function assertBranchInScope(ctx: RequestContext, branchId: string | null | undefined, refusal?: { code: string; message: string }) {
   if (!isBranchInScope(ctx.scopes ?? {}, branchId)) {
-    throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    throw new ForbiddenException(refusal ?? 'Branch is outside your assigned branch scope.');
   }
 }
 
@@ -225,14 +231,21 @@ export class GetExpenseUseCase {
   }
 
   correctionCapabilities(ctx: RequestContext, expenseId: string) {
-    return this.repo.expenseCorrectionCapabilities(ctx.companyId, expenseId, ctx.permissions);
+    const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review');
+    return this.repo.expenseCorrectionCapabilities(ctx.companyId, expenseId, ctx.permissions, ctx.authProvider === 'line' ? undefined : {
+      companyId: ctx.companyId, scopes: ctx.scopes ?? {},
+      ...(!canRead && hasPerm(ctx, 'expense.read_related') ? { relatedUserId: ctx.userId } : !canRead ? { createdByUserId: ctx.userId } : {}),
+    });
   }
 
   async correctionHistory(ctx: RequestContext, expense: ExpenseRecordWithRelations) {
     const history = await this.repo.findCorrectionHistory(ctx.companyId, expense.id, expense.payments.filter(p => p.status === 'VOIDED').map(p => p.id));
+    const full = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review');
+    const coverage = await this.repo.paymentDisbursements(expense, { companyId: ctx.companyId, scopes: ctx.scopes ?? {},
+      ...(!full && hasPerm(ctx, 'expense.read_related') ? { relatedUserId: ctx.userId } : !full ? { createdByUserId: ctx.userId } : {}) }, ctx.authProvider === 'line' ? [] : ctx.permissions);
     return {
       correctionOpenedAt: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status) ? history.reopenedAt?.toISOString() ?? null : null,
-      payments: expense.payments.map(payment => ({ ...payment, cancellationReason: history.cancellationReasons.get(payment.id) ?? null })),
+      payments: expense.payments.map(payment => ({ ...payment, ...coverage.get(payment.id), cancellationReason: history.cancellationReasons.get(payment.id) ?? null })),
     };
   }
 
@@ -256,20 +269,15 @@ export class ListExpensesUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
 
   async execute(ctx: RequestContext, filter: Omit<ListExpensesFilter, 'companyId'>): Promise<PaginatedExpenses> {
-    const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review');
-    const canReadOwn = hasPerm(ctx, 'expense.read_own');
-    const canReadRelated = hasPerm(ctx, 'expense.read_related');
-    if (!canRead && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read expenses');
-    if (filter.branchId) assertBranchInScope(ctx, filter.branchId);
+    const scope = this.readScope(ctx, filter.branchId);
     const page = Number.isFinite(filter.page) ? Math.max(1, Math.floor(filter.page!)) : 1;
     const pageSize = Number.isFinite(filter.pageSize) ? Math.min(200, Math.max(1, Math.floor(filter.pageSize!))) : 20;
-    const resolved: ListExpensesFilter = { ...filter, companyId: ctx.companyId, page, pageSize };
-    if (!canRead && canReadOwn && !canReadRelated) resolved.createdByUserId = ctx.userId;
-    return this.repo.listExpenses(resolved, ctx.scopes, !canRead && canReadRelated ? ctx.userId : undefined);
+    const resolved: ListExpensesFilter = { ...filter, companyId: ctx.companyId, page, pageSize, ...scope.filter };
+    return this.repo.listExpenses(resolved, ctx.scopes, scope.scope.relatedUserId);
   }
 
   async readReportSummary(ctx: RequestContext, filter: { fromDate?: string; toDate?: string; branchId?: string }) {
-    const scope = this.aiReadScope(ctx, filter.branchId);
+    const scope = this.readScope(ctx, filter.branchId);
     return this.repo.readReportSummary({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope);
   }
 
@@ -279,7 +287,7 @@ export class ListExpensesUseCase {
     limit: number,
     cursor?: { expenseDate: Date; id: string },
   ) {
-    const scope = this.aiReadScope(ctx, filter.branchId);
+    const scope = this.readScope(ctx, filter.branchId);
     const snapshot = await this.repo.readAiExpenseSummary({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope, limit, cursor);
     // Item 1 (spec R-A1 row 18): echo the scope this read already applied, so the caller can state
     // it instead of leaving a correctly-narrowed own/related total looking like the whole company's.
@@ -290,7 +298,7 @@ export class ListExpensesUseCase {
     ctx: RequestContext,
     filter: Omit<import('../../infrastructure/prisma-expense.repository').AiExpenseReadFilter, 'companyId'>,
   ) {
-    const scope = this.aiReadScope(ctx, filter.branchId);
+    const scope = this.readScope(ctx, filter.branchId);
     const snapshot = await this.repo.readAiExpenseBreakdown({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope);
     return { ...snapshot, accessScope: scope.accessScope };
   }
@@ -302,7 +310,7 @@ export class ListExpensesUseCase {
     limit: number,
     offset: number,
   ) {
-    const scope = this.aiReadScope(ctx, filter.branchId);
+    const scope = this.readScope(ctx, filter.branchId);
     return this.repo.readAiExpenseGroups({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope, groupBy, limit, offset);
   }
 
@@ -322,27 +330,21 @@ export class ListExpensesUseCase {
   /** Vendor candidates for `vendorName` resolution, scoped exactly like every other AI read here:
    *  read_own sees only its own createdByUserId, read_related only its actor relation. */
   async readAiVendorCandidates(ctx: RequestContext, branchId?: string): Promise<Array<{ id: string; name: string }>> {
-    const scope = this.aiReadScope(ctx, branchId);
+    const scope = this.readScope(ctx, branchId);
     return this.repo.readAiVendorCandidates({ companyId: ctx.companyId, ...(branchId ? { branchId } : {}), ...scope.filter }, scope.scope);
   }
 
-  private aiReadScope(ctx: RequestContext, branchId?: string) {
-    const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review');
-    const canReadOwn = hasPerm(ctx, 'expense.read_own');
-    const canReadRelated = hasPerm(ctx, 'expense.read_related');
-    if (!canRead && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read expenses');
+  readScope(ctx: RequestContext, branchId?: string) {
+    const accessScope = expenseListReadScope(ctx);
+    if (!accessScope) throw new ForbiddenException('Missing permission to read expenses');
     if (branchId) assertBranchInScope(ctx, branchId);
     return {
-      filter: !canRead && canReadOwn && !canReadRelated ? { createdByUserId: ctx.userId } : {},
+      filter: accessScope === 'own' ? { createdByUserId: ctx.userId } : {},
       scope: {
-        branchIds: ctx.scopes.branchIds,
-        ...(!canRead && canReadRelated ? { relatedUserId: ctx.userId } : {}),
+        branchIds: ctx.scopes?.branchIds,
+        ...(accessScope === 'related' ? { relatedUserId: ctx.userId } : {}),
       },
-      // The SAME three-way classification the filter/scope above already apply, exposed as one
-      // label: 'company' can read every record, 'related' is narrowed to the caller's relation,
-      // 'own' is narrowed to only the caller's own records (mirrors the filter/scope precedence
-      // exactly — `related` wins whenever `canReadRelated` is true, same as `scope.relatedUserId` above).
-      accessScope: (canRead ? 'company' : canReadRelated ? 'related' : 'own') as 'own' | 'related' | 'company',
+      accessScope,
     };
   }
 }
@@ -1548,11 +1550,13 @@ export class VoidExpenseUseCase {
     private readonly reserveNumber: ReserveDocumentNumberUseCase,
     private readonly commitNumber: CommitDocumentNumberUseCase,
     private readonly cancelNumber: CancelDocumentNumberUseCase,
+    private readonly notify?: CreateOrUpdateNotificationEventUseCase,
+    @Optional() private readonly disbursementNotices?: DisbursementVoucherNoticeService,
   ) {}
 
-  async execute(ctx: RequestContext, expenseId: string, reason: string): Promise<ExpenseRecord> {
-    requirePerm(ctx, 'expense.void', 'void expense');
-    return this.voidExpense(ctx, expenseId, reason);
+  async execute(ctx: RequestContext, expenseId: string, reason: string, taxFilingAttested?: boolean): Promise<ExpenseRecord> {
+    requirePerm(ctx, 'expense.void', 'void expense', { code: 'expense_void_permission_missing', message: EXPENSE_VOID_CERTIFICATE_WORDS.permissionDenied });
+    return this.voidExpense(ctx, expenseId, reason, undefined, taxFilingAttested);
   }
 
   async executeForReimbursement(
@@ -1564,6 +1568,8 @@ export class VoidExpenseUseCase {
       reimbursementLineId: string;
       branchId?: string;
       systemReconcile?: boolean;
+      cancellationCertificateAttestedAt?: Date;
+      cancellationPendingByUserId?: string;
       /**
        * Runs first inside the void transaction. The claim's cancellation checks there that it still
        * holds its intent, so a void never lands on a claim whose cancellation was withdrawn meanwhile.
@@ -1571,7 +1577,7 @@ export class VoidExpenseUseCase {
       beforeVoid?: (tx: any) => Promise<void>;
     },
   ): Promise<ExpenseRecord> {
-    return this.voidExpense(ctx, expenseId, reason, authority);
+    return this.voidExpense(ctx, expenseId, reason, authority, !!authority.cancellationCertificateAttestedAt);
   }
 
   private async voidExpense(
@@ -1583,19 +1589,22 @@ export class VoidExpenseUseCase {
       reimbursementLineId: string;
       branchId?: string;
       systemReconcile?: boolean;
+      cancellationCertificateAttestedAt?: Date;
+      cancellationPendingByUserId?: string;
       beforeVoid?: (tx: any) => Promise<void>;
     },
+    taxFilingAttested?: boolean,
   ): Promise<ExpenseRecord> {
-    if (!isExpenseVoidReason(reason)) throw new BadRequestException('Void reason must be at least 3 characters');
+    if (!isExpenseVoidReason(reason)) throw new BadRequestException({ code: 'expense_void_reason_required', message: EXPENSE_VOID_CERTIFICATE_WORDS.reasonRequired });
     const r = await this.repo.findById(ctx.companyId, expenseId);
-    if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
+    if (!r) throw new NotFoundException({ code: 'expense_correction_not_found', message: EXPENSE_CORRECTION_WORDS.notFound });
     if (authority) {
       if (r.sourceReimbursementRequestId !== authority.reimbursementRequestId
         || r.sourceReimbursementLineId !== authority.reimbursementLineId
         || (r.branchId ?? undefined) !== authority.branchId) {
         throw new ForbiddenException('reimbursement_projection_authority_mismatch');
       }
-      if (!authority.systemReconcile) assertBranchInScope(ctx, r.branchId);
+      if (!authority.systemReconcile) assertBranchInScope(ctx, r.branchId, { code: 'expense_correction_branch_forbidden', message: EXPENSE_CORRECTION_WORDS.branchForbidden });
       if (r.status === 'VOIDED') return r;
       if (r.status === 'READY_FOR_CONFIRMATION') {
         const occurredAt = new Date().toISOString();
@@ -1637,14 +1646,14 @@ export class VoidExpenseUseCase {
         return terminalized;
       }
     } else {
-      assertBranchInScope(ctx, r.branchId);
+      assertBranchInScope(ctx, r.branchId, { code: 'expense_correction_branch_forbidden', message: EXPENSE_CORRECTION_WORDS.branchForbidden });
       // A claim's expense record is voided by its claim alone: cancelling the claim voids every record of
       // it, checks what would stop that before it starts, and closes the claim with them. Voided from
       // here, the record would leave a claim that can be neither paid nor carried out.
       const claim = r.sourceReimbursementRequestId ? await this.repo.findLiveClaimOf(ctx.companyId, r) : null;
       if (claim) throw claimOwnsExpenseError(claim);
     }
-    if (!canVoidExpenseFinancialState(r)) throw new BadRequestException(`Can only void confirmed expenses or unconfirmed expenses with recorded financial activity (current: ${r.status})`);
+    if (!canVoidExpenseFinancialState(r)) throw new BadRequestException({ code: 'expense_changed', message: EXPENSE_VOID_CERTIFICATE_WORDS.statusChanged });
 
     // H-04 / GAP-07: reserve a reversal entry number for each posted leg outside
     // the void transaction (sequence rows commit independently) — the accrual
@@ -1659,26 +1668,35 @@ export class VoidExpenseUseCase {
     // Date.now() is deliberate: reserveNumber returns a matching-key row
     // regardless of its status, so a deterministic key would hand a retried void
     // the CANCELLED reservation from the failed attempt.
-    const reserved = accrualJournalId
-      ? await this.reserveNumber.execute({
-          companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey,
-          idempotencyKey: `void-reversal:expense.record:${expenseId}:${Date.now()}`,
-          reservedByUserId: ctx.userId,
-        })
-      : null;
+    let reserved: Awaited<ReturnType<ReserveDocumentNumberUseCase['execute']>> | null = null;
     const paymentReservations: Array<{ paymentId: string; reservation: Awaited<ReturnType<ReserveDocumentNumberUseCase['execute']>> }> = [];
-    for (const payment of paymentJournals) {
-      paymentReservations.push({
-        paymentId: payment.paymentId,
-        reservation: await this.reserveNumber.execute({
-          companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey,
-          idempotencyKey: `void-reversal:expense.payment:${payment.paymentId}:${Date.now()}`,
-          reservedByUserId: ctx.userId,
-        }),
-      });
+    try {
+      reserved = accrualJournalId
+        ? await this.reserveNumber.execute({
+            companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey,
+            idempotencyKey: `void-reversal:expense.record:${expenseId}:${Date.now()}`,
+            reservedByUserId: ctx.userId,
+          })
+        : null;
+      for (const payment of paymentJournals) {
+        paymentReservations.push({
+          paymentId: payment.paymentId,
+          reservation: await this.reserveNumber.execute({
+            companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey,
+            idempotencyKey: `void-reversal:expense.payment:${payment.paymentId}:${Date.now()}`,
+            reservedByUserId: ctx.userId,
+          }),
+        });
+      }
+    } catch (error) {
+      if (error instanceof UnprocessableEntityException && error.message === 'Document sequence is disabled or missing.') {
+        throw new UnprocessableEntityException({ code: 'expense_void_number_unavailable', message: EXPENSE_VOID_CERTIFICATE_WORDS.numberUnavailable });
+      }
+      throw error;
     }
 
-    let result: { expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null; paymentReversalEntryIds: Array<{ paymentId: string; reversalEntryId: string }> };
+    const viewerReadScope = reservationViewerScope(this.repo, ctx);
+    let result: Awaited<ReturnType<PrismaExpenseRepository['voidExpenseTrueReversal']>>;
     try {
       result = await this.repo.voidExpenseTrueReversal(
         ctx.companyId,
@@ -1688,6 +1706,8 @@ export class VoidExpenseUseCase {
         reserved?.documentNumber,
         paymentReservations.map(({ paymentId, reservation }) => ({ paymentId, reversalEntryNumber: reservation.documentNumber })),
         authority?.beforeVoid,
+        { permissions: ctx.permissions, ...(viewerReadScope ? { viewerReadScope } : {}), taxFilingAttested, requestId: ctx.requestId,
+          ...(authority?.cancellationCertificateAttestedAt && { authorisedByClaimCancellation: true }) },
       );
     } catch (err) {
       // The reservations are still RESERVED here (commit happens only after a
@@ -1697,6 +1717,9 @@ export class VoidExpenseUseCase {
       for (const { reservation } of paymentReservations) {
         await this.cancelNumber.execute({ id: reservation.id, companyId: ctx.companyId }, ctx.userId);
       }
+      if (isSerializationFailure(err)) throw new ConflictException({
+        code: 'expense_changed_retry', message: EXPENSE_VOID_CERTIFICATE_WORDS.changedRetry,
+      });
       throw err;
     }
     // Commit each reserved number to its reversal; release any that produced no
@@ -1719,7 +1742,12 @@ export class VoidExpenseUseCase {
 
     await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.void', targetType: 'expense_record', targetId: expenseId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { reason, reversalEntryId: result.reversalEntryId, paymentReversalEntryIds: result.paymentReversalEntryIds, grandTotalAmount: r.grandTotalAmount, ...(authority && { authority: 'REIMBURSEMENT_CANCELLATION', reimbursementRequestId: authority.reimbursementRequestId, reimbursementLineId: authority.reimbursementLineId }) } });
     void this.outbox.append('expense.voided', 'expense_record', expenseId, { companyId: ctx.companyId, aggregateType: 'expense_record', aggregateId: expenseId, requestId: ctx.requestId ?? buildIdempotencyKey(expenseId, 'voided'), occurredAt: new Date().toISOString(), data: { expenseId, voidReason: reason, reversalEntryId: result.reversalEntryId, paymentReversalEntryIds: result.paymentReversalEntryIds } });
-    return result.expense;
+    await notifyExpenseCertificateCancelled(this.notify, this.repo,
+      { ...ctx, userId: authority?.cancellationPendingByUserId ?? ctx.userId }, expenseId, reason, 'void', result.cancelledCertificate);
+    await this.disbursementNotices?.cancelled({ ...ctx, userId: authority?.cancellationPendingByUserId ?? ctx.userId }, result.cancelledDisbursementVoucherIds ?? []);
+    return { ...result.expense, ...(result.cancelledCertificate && { cancelledCertificate: {
+      kind: result.cancelledCertificate.isExternal ? 'EXTERNAL' as const : 'SYSTEM' as const, number: result.cancelledCertificate.certificateNumber,
+    } }) };
   }
 }
 
@@ -1751,6 +1779,26 @@ export class MarkExpenseReadyUseCase {
   }
 }
 
+export async function recordExpensePaymentEffects(audit: AuditService, ctx: RequestContext, expenseId: string, tx: Prisma.TransactionClient, created: ExpensePaymentResult) {
+  const data = { expenseId, paymentId: created.payment.id, paidAmount: created.payment.amount, cumulativePaidAmount: created.expense.paidAmount, paymentStatus: created.expense.paymentStatus };
+  await audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.payment.record', targetType: 'expense_payment', targetId: created.payment.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: data }, tx);
+  await tx.outboxEvent.create({ data: {
+    companyId: ctx.companyId, eventType: 'expense.payment_recorded', aggregateType: 'expense_payment', aggregateId: created.payment.id,
+    eventKey: `expense.payment_recorded:expense_payment:${created.payment.id}`,
+    payloadJson: { companyId: ctx.companyId, aggregateType: 'expense_payment', aggregateId: created.payment.id, requestId: ctx.requestId ?? `expense:paid:${created.payment.id}`, occurredAt: new Date().toISOString(), data },
+    priority: 'NORMAL', status: 'PENDING',
+  } });
+}
+
+/** Reuse the expense list's actual read scope for reservation remedies; missing read authority stays closed. */
+function reservationViewerScope(repo: PrismaExpenseRepository, ctx: RequestContext) {
+  if (ctx.authProvider === 'line') return undefined;
+  try {
+    const read = new ListExpensesUseCase(repo).readScope(ctx);
+    return { companyId: ctx.companyId, scopes: ctx.scopes ?? {}, ...read.filter, relatedUserId: read.scope.relatedUserId };
+  } catch (error) { if (error instanceof ForbiddenException) return undefined; throw error; }
+}
+
 @Injectable()
 export class RecordExpensePaymentUseCase {
   constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
@@ -1764,22 +1812,11 @@ export class RecordExpensePaymentUseCase {
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     assertBranchInScope(ctx, r.branchId);
-    // A claim projection is settled by its reimbursement payout (RBPAY), which mirrors PAID
-    // onto this record in the same transaction. Accepting a manual payment here would pay the
-    // same cash twice and strand an ExpensePayment no posting source ever drains.
-    if (r.sourceReimbursementRequestId) {
-      throw new UnprocessableEntityException({
-        code: 'expense_settled_via_reimbursement',
-        message: 'Claim-projected expenses are settled by their reimbursement payout, not a manual expense payment.',
-      });
-    }
-    requireExpenseBranchId(r.branchId);
+    assertExpensePaymentSource(r);
     if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== 'string' || !PAYMENT_IDEMPOTENCY_KEY_PATTERN.test(input.idempotencyKey))) {
       throw new BadRequestException({ code: 'expense_payment_invalid_key', message: 'Payment key must contain 8–64 letters, numbers, underscores or hyphens.' });
     }
-    if (input.paidAt && isCivilDate(input.paidAt) && input.paidAt > todayCivilDate('Asia/Bangkok')) {
-      throw new BadRequestException({ code: 'expense_payment_future_date', message: EXPENSE_CORRECTION_WORDS.futurePaymentDate });
-    }
+    assertExpensePaymentSource(r, input.paidAt);
     // Separate caller keys from legacy transport IDs; hash the whole ID, never a prefix.
     const idempotencyKey = input.idempotencyKey === undefined
       ? `request:${createHash('sha256').update(ctx.requestId || randomUUID()).digest('hex')}`
@@ -1789,21 +1826,14 @@ export class RecordExpensePaymentUseCase {
       expenseId,
       actorUserId: ctx.userId,
       scopes: ctx.scopes ?? {},
+      permissions: ctx.permissions, viewerReadScope: reservationViewerScope(this.repo, ctx),
       idempotencyKey,
       amount: input.paidAmount,
       paymentMethod: input.paymentMethod,
       paidAt: input.paidAt,
       bankAccountRef: input.bankAccountRef,
-    }, async (tx, created) => {
-      const data = { expenseId, paymentId: created.payment.id, paidAmount: created.payment.amount, cumulativePaidAmount: created.expense.paidAmount, paymentStatus: created.expense.paymentStatus };
-      await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.payment.record', targetType: 'expense_payment', targetId: created.payment.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: data }, tx);
-      await tx.outboxEvent.create({ data: {
-        companyId: ctx.companyId, eventType: 'expense.payment_recorded', aggregateType: 'expense_payment', aggregateId: created.payment.id,
-        eventKey: `expense.payment_recorded:expense_payment:${created.payment.id}`,
-        payloadJson: { companyId: ctx.companyId, aggregateType: 'expense_payment', aggregateId: created.payment.id, requestId: ctx.requestId ?? `expense:paid:${created.payment.id}`, occurredAt: new Date().toISOString(), data },
-        priority: 'NORMAL', status: 'PENDING',
-      } });
-    });
+    }, (tx, created) => recordExpensePaymentEffects(this.audit, ctx, expenseId, tx, created));
+    if (result.replayed && result.payment?.status === 'VOIDED') throw new ConflictException({ code: 'expense_payment_cancelled_replay', message: EXPENSE_CORRECTION_WORDS.paymentReplayCancelled });
     return result.expense;
   }
 }
@@ -1818,24 +1848,56 @@ function correctionReason(reason: string): string {
 
 @Injectable()
 export class ReopenExpenseUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService,
+    private readonly notify?: CreateOrUpdateNotificationEventUseCase) {}
 
-  async execute(ctx: RequestContext, expenseId: string, reason: string): Promise<ExpenseRecord> {
-    requirePerm(ctx, 'expense.confirm', 'reopen expense');
-    if (ctx.authProvider === 'line') throw new ForbiddenException('Expense correction requires authenticated web authority.');
+  async execute(ctx: RequestContext, expenseId: string, reason: string, taxFilingAttested?: boolean): Promise<ExpenseRecord> {
+    requirePerm(ctx, 'expense.confirm', 'reopen expense', { code: 'expense_correction_permission_missing', message: EXPENSE_CORRECTION_WORDS.permissionDenied });
+    if (ctx.authProvider === 'line') throw new ForbiddenException({ code: 'expense_correction_web_required', message: EXPENSE_CORRECTION_WORDS.webRequired });
     const cleanReason = correctionReason(reason);
     const expense = await this.repo.findById(ctx.companyId, expenseId);
-    if (!expense) throw new NotFoundException();
-    assertBranchInScope(ctx, expense.branchId);
-    return this.repo.reopenExpenseAtomic({ companyId: ctx.companyId, expenseId, actorUserId: ctx.userId, scopes: ctx.scopes ?? {}, reason: cleanReason },
+    if (!expense) throw new NotFoundException({ code: 'expense_correction_not_found', message: EXPENSE_CORRECTION_WORDS.notFound });
+    assertBranchInScope(ctx, expense.branchId, { code: 'expense_correction_branch_forbidden', message: EXPENSE_CORRECTION_WORDS.branchForbidden });
+    const result = await this.repo.reopenExpenseAtomic({ companyId: ctx.companyId, expenseId, actorUserId: ctx.userId, scopes: ctx.scopes ?? {}, reason: cleanReason, permissions: ctx.permissions, viewerReadScope: reservationViewerScope(this.repo, ctx), taxFilingAttested, requestId: ctx.requestId },
       (tx) => this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.reopen', targetType: 'expense_record', targetId: expenseId,
         requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { reason: cleanReason } }, tx));
+    await notifyExpenseCertificateCancelled(this.notify, this.repo, ctx, expenseId, cleanReason, 'reopen', result.cancelledCertificate);
+    return { ...result.expense, ...(result.cancelledCertificate && { cancelledCertificate: {
+      kind: result.cancelledCertificate.isExternal ? 'EXTERNAL' as const : 'SYSTEM' as const, number: result.cancelledCertificate.certificateNumber,
+    } }) };
+  }
+}
+
+async function notifyExpenseCertificateCancelled(
+  notify: CreateOrUpdateNotificationEventUseCase | undefined,
+  repo: PrismaExpenseRepository, ctx: RequestContext, expenseId: string, reason: string,
+  action: 'reopen' | 'void', certificate: ExpenseCertificateCancellation | null,
+): Promise<void> {
+  // Nest injects the existing provider; optional construction preserves certificate-free unit callers.
+  if (!certificate?.issuerUserId || certificate.issuerUserId === ctx.userId) return;
+  try {
+    const actorName = await repo.findMemberDisplayName(ctx.companyId, ctx.userId) ?? 'ผู้ทำรายการ';
+    const number = certificate.certificateNumber ? ` เลขที่ ${certificate.certificateNumber}` : '';
+    const title = certificate.isExternal ? 'ยกเลิกการบันทึกแล้ว: หนังสือรับรองที่ออกเอง' : 'ยกเลิกแล้ว: หนังสือรับรอง 50 ทวิ';
+    const cancellation = certificate.isExternal
+      ? 'ระบบจึงยกเลิกการบันทึกนี้ กรุณายกเลิกหนังสือรับรองที่ออกเองด้วย'
+      : action === 'reopen' ? 'ระบบจึงยกเลิกหนังสือรับรองใบเดิม' : 'ระบบจึงยกเลิกหนังสือรับรองด้วย';
+    await notify!.execute({
+      companyId: ctx.companyId, triggerKey: 'expense.wht_certificate_cancelled', sourceModule: 'expenses',
+      sourceType: 'expense_record', sourceId: expenseId, periodKey: String(certificate.certificateRound), severity: 'info',
+      title: `${title}${number}`,
+      body: `${actorName} ${action === 'reopen' ? 'แก้ไขเอกสารรายจ่ายนี้' : 'ยกเลิกเอกสารรายจ่ายนี้'} ${cancellation} เหตุผล: ${reason}${action === 'reopen' ? ' เมื่อเอกสารถูกยืนยันอีกครั้ง ให้ออกหนังสือรับรองใบใหม่' : ''}`,
+      deepLinkHref: `/companies/${ctx.companyId}/expenses/${expenseId}#wht-certificate`, recipientUserIds: [certificate.issuerUserId],
+    });
+  } catch (error) {
+    Logger.warn({ msg: 'expense.wht_certificate_cancelled.notify_failed', companyId: ctx.companyId, expenseId,
+      action, error: error instanceof Error ? error.message : String(error) }, 'ExpenseCertificateCancellation');
   }
 }
 
 @Injectable()
 export class CancelExpensePaymentUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, @Optional() private readonly disbursementNotices?: DisbursementVoucherNoticeService) {}
 
   async execute(ctx: RequestContext, expenseId: string, paymentId: string, reason: string): Promise<ExpenseRecord> {
     requirePerm(ctx, 'expense.payment.record', 'cancel expense payment');
@@ -1844,8 +1906,14 @@ export class CancelExpensePaymentUseCase {
     const expense = await this.repo.findById(ctx.companyId, expenseId);
     if (!expense) throw new NotFoundException();
     assertBranchInScope(ctx, expense.branchId);
-    return this.repo.cancelPaymentAtomic({ companyId: ctx.companyId, expenseId, paymentId, actorUserId: ctx.userId, scopes: ctx.scopes ?? {}, reason: cleanReason },
-      (tx) => this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.payment.cancel', targetType: 'expense_payment', targetId: paymentId,
-        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId, reason: cleanReason } }, tx));
+    let cancelledIds: string[] = [];
+    const result = await this.repo.cancelPaymentAtomic({ companyId: ctx.companyId, expenseId, paymentId, actorUserId: ctx.userId, scopes: ctx.scopes ?? {}, reason: cleanReason },
+      async (tx, ids) => {
+        cancelledIds = ids ?? [];
+        await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.payment.cancel', targetType: 'expense_payment', targetId: paymentId,
+          requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId, reason: cleanReason } }, tx);
+      });
+    await this.disbursementNotices?.cancelled(ctx, cancelledIds);
+    return result;
   }
 }

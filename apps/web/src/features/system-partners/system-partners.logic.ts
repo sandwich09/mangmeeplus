@@ -3,14 +3,18 @@ import {
   DEFAULT_ON_FEATURE_KEYS,
   FEATURE_CATALOG,
   FEATURE_PACKAGE_PRESETS,
+  TIER_FEATURE_PRESETS,
   LEGACY_FEATURE_INHERITANCE,
   MENU_ENTITLEMENT_BINDINGS,
+  THAI_SYSTEM_ROLE_NAMES,
   unmetFeatureDependencies,
   type FeatureDefinition,
-  type FeaturePackagePresetKey,
   type MenuEntitlementBinding,
   type SubFeatureDefinition,
+  type PartnerCompanyDetailDto,
+  type PartnerDisbursementVoucherWebEntryDto,
 } from '@watchdog-bms/contracts';
+import { roleDisplayName } from '@/features/employee-access/role-picker.logic';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import {
   NAV_GROUP_ORDER,
@@ -31,10 +35,24 @@ export type MenuSubmenu = SubFeatureDefinition & {
   enabled: boolean;
 };
 
+export type MenuFeatureControl = Pick<FeatureDefinition, 'key' | 'labelTh' | 'descriptionTh'> & { enabled: boolean };
+const MENU_LESS_RIGHTS = [{ key: 'wht_50bis', afterNavKey: 'pnd53', labelTh: 'ออกหนังสือรับรอง 50 ทวิ ในระบบ',
+  descriptionTh: FEATURE_CATALOG.find(feature => feature.key === 'wht_50bis')!.descriptionTh }];
+export const PARTNER_FEATURE_PRESETS = {
+  starter: { ...FEATURE_PACKAGE_PRESETS.starter, descriptionTh: 'รายจ่าย ใบเสร็จ การเบิกจ่าย และจัดการสมาชิก' },
+  standard: { ...FEATURE_PACKAGE_PRESETS.standard, descriptionTh: 'เพิ่มงานขาย สต๊อก ภาษี และบัญชีแยกประเภท' },
+  full: { ...FEATURE_PACKAGE_PRESETS.full, descriptionTh: 'งานขาย สต๊อก ภาษี บัญชี และจัดซื้อ' },
+  enterprise1999: { labelTh: 'แพ็กเกจ 1999', featureKeys: TIER_FEATURE_PRESETS.ENTERPRISE_1999,
+    descriptionTh: 'ชุดเริ่มต้น พร้อม ภ.ง.ด.53 และการออกหนังสือรับรอง 50 ทวิในระบบ' },
+};
+export type PartnerFeaturePresetKey = keyof typeof PARTNER_FEATURE_PRESETS;
+
 export type MenuCard = MenuEntitlementBinding & {
   route: string;
   enabled: boolean;
   submenus: MenuSubmenu[];
+  parentControl: MenuFeatureControl | null;
+  rights: MenuFeatureControl[];
 };
 
 export type FilteredMenuCard = MenuCard & {
@@ -192,6 +210,11 @@ export function buildMenuCards(
       ...binding,
       route: ROUTE_BY_NAV_KEY.get(binding.navKey) ?? '',
       enabled,
+      parentControl: binding.navKey === 'procurement' ? {
+        ...catalog.find(feature => feature.key === 'procurement')!, enabled: effective.get('procurement') === true,
+      } : null,
+      rights: MENU_LESS_RIGHTS.filter(right => right.afterNavKey === binding.navKey)
+        .map(right => ({ ...right, enabled: effective.get(right.key) === true })),
       submenus: cardSubmenus(binding, catalog).map((submenu) => ({
         ...submenu,
         enabled: effective.get(submenu.key) === true,
@@ -238,12 +261,14 @@ export function toggleMenuGroup(
   bindings: readonly MenuEntitlementBinding[],
   next: boolean,
 ): Entitlement[] {
-  return bindings
+  const grouped = bindings
     .filter((binding) => binding.entitlementKeys.length > 0)
     .reduce<Entitlement[]>(
       (pending, binding) => toggleMenuCard(pending, binding, next),
       [...state],
     );
+  return MENU_LESS_RIGHTS.filter(right => bindings.some(binding => binding.navKey === right.afterNavKey))
+    .reduce((pending, right) => toggleSubmenu(pending, right.key, next), grouped);
 }
 
 export function toggleSubmenu(
@@ -273,9 +298,9 @@ export function toggleSubmenu(
 
 export function applyPreset(
   _state: readonly Entitlement[],
-  presetKey: FeaturePackagePresetKey,
+  presetKey: PartnerFeaturePresetKey,
 ): Entitlement[] {
-  const enabledKeys = new Set(FEATURE_PACKAGE_PRESETS[presetKey].featureKeys);
+  const enabledKeys = new Set(PARTNER_FEATURE_PRESETS[presetKey].featureKeys);
   return ALL_FEATURE_ENTITLEMENT_KEYS.map((featureKey) => ({
     featureKey,
     // Belt-and-braces with FEATURE_PACKAGE_PRESETS (menu-entitlements.ts), which already omits
@@ -284,6 +309,26 @@ export function applyPreset(
     // FEATURE_DEPENDENCIES — the dependency rule itself lives only in packages/contracts.
     enabled: featureKey !== 'expense_auto_post' && enabledKeys.has(featureKey),
   }));
+}
+
+export function presetTurningOffItems(saved: readonly Entitlement[], presetKey: PartnerFeaturePresetKey): EntitlementDiffItem[] {
+  const next = applyPreset(saved, presetKey);
+  const direct = diffEntitlements(saved, next).turningOff;
+  return [...direct, ...cascadeOffItems(next).filter(item => !direct.some(({ featureKey }) => featureKey === item.featureKey))];
+}
+
+export function savedFeaturePresetStatus(saved: readonly Entitlement[]): {
+  activePresetKey: PartnerFeaturePresetKey | null;
+  nearby: { presetKey: PartnerFeaturePresetKey; count: number } | null;
+} {
+  const comparisons = (Object.keys(PARTNER_FEATURE_PRESETS) as PartnerFeaturePresetKey[]).map(presetKey => {
+    const diff = diffEntitlements(saved, applyPreset(saved, presetKey));
+    return { presetKey, count: diff.turningOff.length + diff.turningOn.length };
+  });
+  const active = comparisons.find(row => row.count === 0);
+  if (active) return { activePresetKey: active.presetKey, nearby: null };
+  const nearby = comparisons.filter(row => row.count > 0 && row.count <= 3);
+  return { activePresetKey: null, nearby: nearby.length === 1 ? nearby[0]! : null };
 }
 
 /**
@@ -306,6 +351,8 @@ export function dependencyBlockMessage(
 }
 
 function diffLabel(featureKey: string): string {
+  const right = MENU_LESS_RIGHTS.find(right => right.key === featureKey);
+  if (right) return right.labelTh;
   for (const feature of FEATURE_CATALOG) {
     const submenu = feature.submenus.find((candidate) => candidate.key === featureKey);
     if (submenu) return submenu.labelTh;
@@ -457,6 +504,48 @@ export function manualWebEntryRow(saved: readonly Entitlement[], setting: { enab
   };
 }
 
+const disbursementWords = workspaceDictionary.th;
+export const DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY = {
+  label: disbursementWords['expenses.disbursement_web_entry.label'],
+  shown: disbursementWords['expenses.disbursement_web_entry.shown'],
+  notShown: disbursementWords['expenses.disbursement_web_entry.not_shown'],
+  confirmHide: disbursementWords['expenses.disbursement_web_entry.confirm_hide'],
+  cancelHideLabel: disbursementWords['expenses.disbursement_web_entry.cancel_hide'],
+  confirmHideLabel: disbursementWords['expenses.disbursement_web_entry.hide'],
+  savedShown: disbursementWords['expenses.disbursement_web_entry.saved_shown'],
+  savedHidden: disbursementWords['expenses.disbursement_web_entry.saved_hidden'],
+} as const;
+
+/** Saved expenses, rather than pending package edits, decide what the shop actually sees. */
+export function disbursementVoucherWebEntryRow(saved: readonly Entitlement[], setting: { enabled: boolean }, companyLocked = false) {
+  const parentOpen = entitlementEnabled(saved, 'expenses');
+  return {
+    editable: parentOpen && !companyLocked,
+    shown: parentOpen && !companyLocked && setting.enabled,
+    disabledReason: companyLocked ? disbursementWords['expenses.disbursement_web_entry.company_locked']
+      : parentOpen ? null : disbursementWords['expenses.disbursement_web_entry.parent_off'],
+    confirmLines: (next: boolean) => next ? [] : [DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.confirmHide],
+  };
+}
+
+export type WebEntrySettings = Partial<Pick<PartnerCompanyDetailDto, 'manualExpenseWebEntry' | 'disbursementVoucherWebEntry'>>;
+
+/** Both commands advance the same version without changing the sibling's enabled value. */
+export function updateWebEntrySettings(current: WebEntrySettings, entry: keyof WebEntrySettings, saved: PartnerDisbursementVoucherWebEntryDto): WebEntrySettings {
+  return {
+    manualExpenseWebEntry: current.manualExpenseWebEntry && { ...current.manualExpenseWebEntry, version: saved.version },
+    disbursementVoucherWebEntry: current.disbursementVoucherWebEntry && { ...current.disbursementVoucherWebEntry, version: saved.version },
+    [entry]: saved,
+  };
+}
+
+export function disbursementVoucherRoleNotice(roles: readonly { name: string; isCompanyManaged?: boolean }[]): string {
+  const names = roles.map(role => role.isCompanyManaged ? role.name : roleDisplayName(role.name));
+  return names.length === 0 || names.every(name => name === THAI_SYSTEM_ROLE_NAMES.OWNER)
+    ? disbursementWords['expenses.disbursement_web_entry.owner_only']
+    : disbursementWords['expenses.disbursement_web_entry.roles'].replace('{names}', names.join(', '));
+}
+
 /**
  * F1.5.1 item 1 — the API refuses every entitlement command until the company's rows are
  * normalized. The screen says the same sentence the API answers with, so the operator reads one
@@ -465,15 +554,12 @@ export function manualWebEntryRow(saved: readonly Entitlement[], setting: { enab
 export const NORMALIZATION_PENDING_NOTICE = 'ระบบกำลังเตรียมสิทธิ์ให้ ไม่ต้องดำเนินการ';
 
 /**
- * Use the screen's existing lock state; copy must not promise an unavailable command, nor deny one
- * that works: the manual-expense web menu switch is no entitlement and stays usable while the
- * package switches are locked (`menuSettingEditable`), so the notice names it then.
+ * Name only the web-menu switches still usable while package editing is locked.
  */
-export function featurePackageEditingNotice(controlsLocked: boolean, menuSettingEditable = false): string {
+export function featurePackageEditingNotice(controlsLocked: boolean, menuSettingEditable = false, disbursementSettingEditable = false): string {
   if (!controlsLocked) return 'ตรวจสอบรายการที่เลือกก่อนบันทึก การเปลี่ยนแปลงจะมีผลเมื่อบันทึกสำเร็จ';
-  return menuSettingEditable
-    ? `ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้ ยกเว้นสวิตช์ “${MANUAL_WEB_ENTRY_COPY.label}”`
-    : 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้';
+  const switches = [menuSettingEditable && MANUAL_WEB_ENTRY_COPY.label, disbursementSettingEditable && DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.label].filter(Boolean);
+  return switches.length ? `ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้ ยกเว้นสวิตช์ ${switches.map(label => `“${label}”`).join(' และ ')}` : 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้';
 }
 
 /** A refused save changed NOTHING; a refused disable must say the switch is still on. */
@@ -544,12 +630,15 @@ export function filterMenuCards(
       card.navKey,
       card.route,
       card.parentFeatureKey ?? '',
+      ...(card.parentFeatureKey === 'expenses' ? [DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.label] : []),
       ...card.entitlementKeys,
+      ...card.rights.flatMap(right => [right.key, right.labelTh]),
+      card.parentControl?.labelTh ?? '',
     ], query)) {
       return [{
         ...card,
         visibleSubmenus: card.submenus,
-        autoExpand: false,
+        autoExpand: card.parentFeatureKey === 'expenses' && matches([DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.label], query),
       }];
     }
 

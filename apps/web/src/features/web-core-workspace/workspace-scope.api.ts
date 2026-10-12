@@ -19,9 +19,10 @@ export type MyContext = {
   permissions: string[];
   scopes?: { branchIds?: string[] };
   manualExpenseWebEntry?: boolean;
+  disbursementVoucherWebEntry?: boolean;
 };
 
-type AccessContext = Pick<MyContext, 'roles' | 'roleNames' | 'permissions' | 'scopes' | 'manualExpenseWebEntry'>;
+type AccessContext = Pick<MyContext, 'roles' | 'roleNames' | 'permissions' | 'scopes' | 'manualExpenseWebEntry' | 'disbursementVoucherWebEntry'>;
 
 export function accessContextFingerprint(context: AccessContext): string {
   const sorted = (items: readonly string[] | undefined) => [...new Set(items ?? [])].sort();
@@ -31,10 +32,11 @@ export function accessContextFingerprint(context: AccessContext): string {
     permissions: sorted(context.permissions),
     // undefined means unrestricted branches; preserve it instead of collapsing it to [].
     branchIds: context.scopes?.branchIds === undefined ? null : sorted(context.scopes.branchIds),
-    // The one screen setting the menu depends on that changes no permission. Only this boolean, never
+    // Screen settings the menu depends on that change no permission. Only these booleans, never
     // a feature list: an unrelated entitlement change must not refresh every open tab of the shop.
     // A missing value reads as shown, exactly as `canOpenManualWeb` reads it.
     manualExpenseWebEntry: context.manualExpenseWebEntry !== false,
+    disbursementVoucherWebEntry: context.disbursementVoucherWebEntry === true,
   });
 }
 

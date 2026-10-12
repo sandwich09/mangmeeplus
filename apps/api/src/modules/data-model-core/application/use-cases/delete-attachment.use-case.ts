@@ -3,6 +3,7 @@ import { PrismaAttachmentRepository } from '../../infrastructure/repositories/pr
 import type { AttachmentRecord } from '../../domain/models/attachment.model';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { AuditService } from '../../../audit/application/audit.service';
+import { disbursementVoucherError } from '@watchdog-bms/contracts';
 
 export type DeleteAttachmentCommand = { attachmentId: string };
 
@@ -25,6 +26,11 @@ export class DeleteAttachmentUseCase {
 
     const existing = await this.attachments.findById({ id: cmd.attachmentId, companyId: ctx.companyId });
     if (!existing) throw new NotFoundException('Attachment not found.');
+    if (await this.attachments.isDisbursementVoucherFile({ id: existing.id, companyId: ctx.companyId })) {
+      void this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'attachment.delete', targetType: 'attachment', targetId: existing.id,
+        requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH', metadataJson: { reason: 'disbursement_voucher_file_retained' } });
+      throw new ConflictException(disbursementVoucherError('disbursement_file_retained'));
+    }
 
     const retentionHold = await this.attachments.findSubstituteEvidenceRetentionHold({
       id: cmd.attachmentId,

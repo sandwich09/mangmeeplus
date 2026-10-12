@@ -30,6 +30,16 @@ for (const path of [
   });
 }
 const remainingEnglish = (text: string) => text.replace(/\{\w+\}/g, '').replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, '').match(/[A-Za-z]+/g) ?? [];
+
+test('disbursement-voucher labels use plain Thai and name the owner role with the contracts name', () => {
+  assert.ok(workspaceDictionary.th['expenses.disbursement_web_entry.owner_only'].includes('มีเพียงเจ้าของกิจการที่ใช้เมนูนี้ได้'));
+  const entries = Object.entries(workspaceDictionary.th).filter(([key]) => /disbursement/.test(key));
+  assert.ok(entries.length > 0);
+  for (const [key, text] of entries) {
+    assert.ok(key.startsWith('expenses.') && !key.startsWith('expenses.v_'), key);
+    assert.deepEqual(remainingEnglish(text), [], key);
+  }
+});
 function thaiLiterals(path: string): string[] {
   const ast = ts.createSourceFile(path, source(path), ts.ScriptTarget.Latest, true);
   const values: string[] = [];

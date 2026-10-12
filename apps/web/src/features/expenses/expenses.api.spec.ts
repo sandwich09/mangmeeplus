@@ -21,6 +21,8 @@ import {
   resolveUploadUrl,
   updateExpenseSourceDraft,
   uploadReceiptFile,
+  reopenExpense, voidExpense, getExpenseCertificateHistory, correctSystemWhtCertificate,
+  removeExternalWhtCertificate, changeExternalWhtCertificate, linkExternalWhtCertificate, setWhtHandoffPayeeAddress, listWhtHandoffs, listWhtHandoffsPaged, issueSystemWhtCertificate, issueSystemWhtReplacementCopy, downloadSystemWhtCertificate,
 } from './expenses.api';
 
 const originalFetch = globalThis.fetch;
@@ -28,6 +30,97 @@ const originalDocument = globalThis.document;
 const originalCreateObjectUrl = URL.createObjectURL;
 const originalRevokeObjectUrl = URL.revokeObjectURL;
 const originalSetTimeout = globalThis.setTimeout;
+
+it('paged certificates send page parameters while existing handoff callers retain arrays', async () => {
+  const urls: URL[] = [];
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input), 'http://localhost'); urls.push(url);
+    return new Response(JSON.stringify(url.searchParams.has('page') ? { rows: [], total: 0, page: 2, pageSize: 20, counts: {} } : []), { headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  assert.deepEqual(await listWhtHandoffs('co', { sourcePaymentId: 'expense' }), []);
+  assert.deepEqual(await listWhtHandoffs('co'), []);
+  assert.equal((await listWhtHandoffsPaged('co', { status: 'REQUIRED', page: 2, pageSize: 20, search: 'ชื่อ & เลข', branchId: 'b' })).page, 2);
+  assert.equal(urls[0].searchParams.get('sourcePaymentId'), 'expense'); assert.equal(urls[1].search, '');
+  await listWhtHandoffsPaged('co', { sourcePaymentId: 'expense', page: 1, pageSize: 100 });
+  assert.equal(urls[3].searchParams.get('sourcePaymentId'), 'expense');
+  assert.equal(urls[3].searchParams.has('status'), false);
+  assert.equal(urls[2].pathname, '/api/v1/companies/co/wht/payment-handoffs');
+  assert.deepEqual(Object.fromEntries(urls[2].searchParams), { status: 'REQUIRED', page: '2', pageSize: '20', search: 'ชื่อ & เลข', branchId: 'b' });
+});
+
+it('expense certificate dialogs send their exact existing endpoint bodies and display a refusal without an automatic toast', async () => {
+  const previousWindow = globalThis.window;
+  const requests: { url: string; body: unknown }[] = [], toasts: string[] = [];
+  const stop = subscribeToastBus(event => toasts.push(event.message));
+  (globalThis as any).window = { dispatchEvent: () => {} };
+  const message = 'รายจ่ายเปลี่ยนแล้ว กรุณาเปิดรายจ่ายเพื่อตรวจสอบ';
+  globalThis.fetch = (async (input, init) => {
+    requests.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+    return new Response(JSON.stringify({ code: 'expense_wht_source_changed', message }), { status: 409, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const body = { commandId: 'command', externalCertificateNumber: 'EXT-1', externalEvidenceRef: '', issuedDate: '2026-10-11', note: 'ส่งแล้ว' };
+  try {
+    await assert.rejects(linkExternalWhtCertificate('co', 'handoff', body), error => apiErrorMessage(error) === message);
+    await assert.rejects(changeExternalWhtCertificate('co', 'handoff', body), error => apiErrorMessage(error) === message);
+    await assert.rejects(removeExternalWhtCertificate('co', 'handoff', { commandId: 'remove', reason: 'บันทึกผิด', expectedUpdatedAt: '2026-10-12T00:00:00.000Z' }), error => apiErrorMessage(error) === message);
+    await assert.rejects(setWhtHandoffPayeeAddress('co', 'handoff', { payeeAddress: 'บ้านเลขที่ 1' }), error => apiErrorMessage(error) === message);
+    assert.deepEqual(requests, [
+      { url: '/api/v1/companies/co/wht/payment-handoffs/handoff/external-certificate', body },
+      { url: '/api/v1/companies/co/wht/payment-handoffs/handoff/external-certificate/change', body },
+      { url: '/api/v1/companies/co/wht/payment-handoffs/handoff/external-certificate/remove', body: { commandId: 'remove', reason: 'บันทึกผิด', expectedUpdatedAt: '2026-10-12T00:00:00.000Z' } },
+      { url: '/api/v1/companies/co/wht/payment-handoffs/handoff/payee-address', body: { payeeAddress: 'บ้านเลขที่ 1' } },
+    ]);
+    assert.deepEqual(toasts, []);
+  } finally { stop(); if (previousWindow === undefined) delete (globalThis as any).window; else globalThis.window = previousWindow; }
+});
+
+it('certificate issue is silent by default, callers can override it, and other mutations keep their toast defaults', async () => {
+  const previousWindow = globalThis.window;
+  const toasts: string[] = [];
+  const stop = subscribeToastBus(event => toasts.push(event.message));
+  (globalThis as any).window = { dispatchEvent: () => {} };
+  const message = 'รายจ่ายเปลี่ยนไปแล้ว กรุณาเปิดรายจ่ายและตรวจสอบอีกครั้ง';
+  globalThis.fetch = (async () => new Response(JSON.stringify({ code: 'expense_wht_source_changed', message }), { status: 409, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  try {
+    for (const call of [issueSystemWhtCertificate, issueSystemWhtReplacementCopy, downloadSystemWhtCertificate]) {
+      await assert.rejects(call('co', 'handoff', { suppressErrorToast: true }), error => apiErrorMessage(error) === message);
+    }
+    assert.deepEqual(toasts, []);
+    await assert.rejects(issueSystemWhtCertificate('co', 'handoff'));
+    assert.deepEqual(toasts, []);
+    await assert.rejects(issueSystemWhtCertificate('co', 'handoff', { suppressErrorToast: false }));
+    await assert.rejects(issueSystemWhtReplacementCopy('co', 'handoff'));
+    assert.deepEqual(toasts, [message, message]);
+  } finally {
+    stop(); if (previousWindow === undefined) delete (globalThis as any).window; else globalThis.window = previousWindow;
+  }
+});
+
+it('reopen and void send taxFilingAttested only for the certificate path', async () => {
+  const bodies: unknown[] = [];
+  globalThis.fetch = (async (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return new Response('{}', { headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  for (const action of [reopenExpense, voidExpense]) {
+    await action('co', 'expense', 'แก้ยอด');
+    await action('co', 'expense', 'แก้ยอด', true);
+  }
+  assert.deepEqual(bodies, [
+    { reason: 'แก้ยอด' }, { reason: 'แก้ยอด', taxFilingAttested: true },
+    { reason: 'แก้ยอด' }, { reason: 'แก้ยอด', taxFilingAttested: true },
+  ]);
+});
+
+it('reads certificate history through the expense-scoped tax GET route', async () => {
+  let url = '';
+  globalThis.fetch = (async (input) => {
+    url = String(input);
+    return new Response('[]', { headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  assert.deepEqual(await getExpenseCertificateHistory('co', 'expense'), []);
+  assert.equal(url, '/api/v1/companies/co/wht/expenses/expense/certificate-history');
+});
 afterEach(() => {
   globalThis.fetch = originalFetch;
   URL.createObjectURL = originalCreateObjectUrl;
@@ -387,4 +480,22 @@ describe('expenses.api URL helpers', () => {
       },
     ]);
   });
+});
+
+it('certificate dialog, correction and issue refusals do not emit an automatic error toast', async () => {
+  const events: string[] = [];
+  const unsubscribe = subscribeToastBus(event => events.push(event.message));
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  (globalThis as Record<string, unknown>)['window'] = {};
+  globalThis.fetch = (async () => new Response(JSON.stringify({ code: 'wht_certificate_payee_name_required' }), { status: 422, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  try {
+    for (const action of [reopenExpense, voidExpense]) await assert.rejects(() => action('co', 'expense', 'แก้ข้อมูล', true));
+    await assert.rejects(() => correctSystemWhtCertificate('co', 'handoff', { reason: 'แก้ชื่อ', corrected: { payeeSnapshot: { name: '' } } }));
+    await assert.rejects(() => issueSystemWhtCertificate('co', 'handoff'));
+    assert.deepEqual(events, []);
+  } finally {
+    unsubscribe();
+    if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+    else delete (globalThis as Record<string, unknown>)['window'];
+  }
 });

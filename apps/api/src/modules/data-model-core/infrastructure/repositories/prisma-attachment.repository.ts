@@ -11,7 +11,8 @@ import type {
   LinkAttachmentInput,
   FindAttachmentInput,
 } from '../../domain/models/attachment.model';
-import { findAttachmentLinkConflict, isAllowedAttachmentTarget } from '../../domain/logic/attachment.logic';
+import { findAttachmentLinkConflict, isAllowedAttachmentTarget, isDisbursementVoucherFile } from '../../domain/logic/attachment.logic';
+import { disbursementVoucherError } from '@watchdog-bms/contracts';
 import { lockFundingEvidence, assertFundingMutation } from '../../../expenses/infrastructure/substitute-funding.guard';
 import {
   REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
@@ -41,6 +42,12 @@ export const NOT_REIMBURSEMENT_PAYMENT_SLIP_WHERE = {
 @Injectable()
 export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
   constructor(private readonly prisma: PrismaService) {}
+
+  async isDisbursementVoucherFile(input: FindAttachmentInput, tx?: Prisma.TransactionClient): Promise<boolean> {
+    const db = tx ?? this.prisma.client;
+    if (await db.disbursementVoucher.findFirst({ where: { companyId: input.companyId, OR: [{ pdfAttachmentId: input.id }, { slipAttachmentId: input.id }] }, select: { id: true } })) return true;
+    return isDisbursementVoucherFile(db, { companyId: input.companyId, attachmentId: input.id });
+  }
 
   async isSubstituteRawSignature(input: FindAttachmentInput): Promise<boolean> {
     const row = await (this.prisma.client as any).expenseSubstituteReceiptEvidence.findFirst({
@@ -245,6 +252,7 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
         OR: [{ attachmentId: { in: evidence.attachmentIds } }, { linkedExpenseId: { in: evidence.expenseIds } }] }, select: { id: true } });
       if (claim) throw new ConflictException({ code: 'substitute_source_has_live_claim', message: 'Receipt is retained by a submitted reimbursement.' });
       await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.id}:attachment-retention`}))`;
+      if (await this.isDisbursementVoucherFile(input, db)) throw new ConflictException(disbursementVoucherError('disbursement_file_retained'));
       // Under the lock the slip link is written with, so a link racing this delete is seen here.
       if (await this.isReimbursementPaymentSlip(input, db)) {
         throw new ConflictException({

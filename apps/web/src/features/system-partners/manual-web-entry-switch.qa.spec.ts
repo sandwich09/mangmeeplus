@@ -56,7 +56,7 @@ test('the switch is locked by the company lock and the saved parent features onl
 });
 
 test('the package notice names the menu switch only while that switch can be pressed', () => {
-  assert.match(section, /\{featurePackageEditingNotice\(controlsLocked, Boolean\(webEntry\) && webEntryRow\.editable\)\}/);
+  assert.match(section, /\{featurePackageEditingNotice\(controlsLocked, Boolean\(webEntry\) && webEntryRow\.editable && !webEntrySaving, Boolean\(disbursementEntry\) && disbursementRow\.editable && !webEntrySaving\)\}/);
 });
 
 test('the submenu list can be opened while the entitlement switches are locked, or the row could not be reached', () => {

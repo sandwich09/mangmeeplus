@@ -16,11 +16,11 @@ const input = {
   grossAmount: '1000.0000',
   withheldAmount: '30.0000',
   paymentDate: '2026-07-15',
-  payeeSnapshot: { name: 'ผู้รับเงิน', taxId: '1234567890123' },
+  payeeSnapshot: { name: 'ผู้รับเงิน', taxId: '1234567890123', address: 'ที่อยู่ผู้รับเงิน' },
 } as any;
 
 /** Every write seam of the use case, plus every repository read, counted. */
-function makeSpy(addressJson: unknown = null) {
+function makeSpy(addressJson: unknown = { line1: 'ที่อยู่กิจการ' }) {
   const calls: string[] = [];
   const record = (name: string) => calls.push(name);
   const taxRepo = {
@@ -141,7 +141,7 @@ describe('CreateWhtCertificateUseCase — cap.wht50bis/SYSTEM_INITIAL_ISSUE fenc
     const withAddress = useCase(guard({ state: 'CLOSED' }), makeSpy(address));
     await assert.rejects(() => withAddress.value.execute(ctx, input));
     assert.equal(withAddress.handoffs.created[0].prefill.payerSnapshot.address,
-      '123/4 ถนนสุขุมวิท คลองเตย คลองเตย กรุงเทพมหานคร 10110');
+      '123/4 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110');
 
     const unset = useCase(guard({ state: 'CLOSED' }), makeSpy(null));
     await assert.rejects(() => unset.value.execute(ctx, input));
@@ -223,4 +223,38 @@ describe('tax-workspace issuance from an expense being corrected', () => {
       assert.equal(spy.calls.includes('write:certificate'), false);
     }
   });
+});
+
+
+for (const seam of ['reservation', 'certificate']) it(`A9 reports a tax-workspace ${seam} number collision in Thai`, async () => {
+  const spy = makeSpy();
+  const fail = async () => { throw Object.assign(new Error('duplicate'), { code: 'P2002', meta: { target: [seam === 'reservation' ? 'documentNumber' : 'certificateNumber'] } }); };
+  if (seam === 'reservation') spy.reserveNumber.execute = fail;
+  else spy.taxRepo.prisma.client.whtCertificate.create = fail;
+  await assert.rejects(useCase(guard({ state: 'OPEN' }), spy).value.execute(ctx, input), (error: any) => {
+    assert.equal(error.getResponse().code, 'wht_certificate_number_duplicate');
+    assert.equal(error.getResponse().message, 'ออกหนังสือรับรองไม่สำเร็จเพราะเลขที่เอกสารซ้ำ กรุณาลองอีกครั้ง ถ้ายังไม่สำเร็จ ให้แจ้งทีมมั่งมีพลัสพร้อมเลขที่เอกสารรายจ่ายนี้'); return true;
+  });
+});
+
+
+describe('C7 direct certificate address', () => {
+  it('refuses a blank payee address without reserving, rendering, issuing or auditing', async () => {
+    for (const address of [null, undefined, '', '  ']) {
+      const { value, spy } = useCase(guard({ state: 'OPEN' }));
+      await assert.rejects(value.execute(ctx, { ...input, payeeSnapshot: { ...input.payeeSnapshot, address } }), (error: any) => {
+        assert.equal(error.getStatus(), 409); assert.equal(error.getResponse().code, 'wht_handoff_payee_address_missing');
+        assert.equal(error.getResponse().message, 'ยังไม่มีที่อยู่ผู้รับเงิน กรุณาเพิ่มที่อยู่ผู้รับเงินก่อน แล้วกด “ออกหนังสือรับรอง 50 ทวิ” อีกครั้ง'); return true;
+      });
+      assert.equal(spy.calls.some(call => call.startsWith('write:') || call === 'render:pdf'), false);
+    }
+  });
+});
+
+
+it('C9 direct create refuses missing shop details before a missing payee address or any writes', async () => {
+  const spy = makeSpy(null); spy.taxRepo.prisma.client.company.findUnique = async () => ({ name: 'กิจการ', taxId: null, addressJson: null });
+  const { value } = useCase(guard({ state: 'OPEN' }), spy);
+  await assert.rejects(value.execute(ctx, { ...input, payeeSnapshot: { ...input.payeeSnapshot, address: null } }), (error: any) => error.getStatus() === 409 && error.getResponse().code === 'wht_payer_identity_missing');
+  assert.equal(spy.calls.some(call => call.startsWith('write:') || call === 'render:pdf'), false);
 });

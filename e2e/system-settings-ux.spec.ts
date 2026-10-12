@@ -162,6 +162,12 @@ test('company detail opens one section, preserves drafts and browser navigation 
   await expect(page.getByRole('textbox',{name:'ชื่อร้าน / แบรนด์',exact:true})).toHaveValue('ร่างชื่อแบรนด์');
   await page.goBack();await expect(page.getByRole('textbox',{name:'ข้อความถึงร้าน',exact:true})).toHaveValue('ร่างข้อความ ไม่ส่งจริง');
   await nav.getByRole('link',{name:'แพ็กเกจและฟีเจอร์',exact:true}).click();
+  for(const name of ['เริ่มต้น','มาตรฐาน','ครบวงจร','แพ็กเกจ 1999']) {
+    await expect(page.getByRole('button',{name:new RegExp(`^${name}(?: ✓ ใช้อยู่)?$`)})).toBeVisible();
+  }
+  await expect(page.getByRole('heading',{name:'ชุดเมนูสำเร็จรูป',exact:true})).toBeVisible();
+  await page.getByRole('searchbox',{name:'ค้นหาเมนู',exact:true}).fill('50 ทวิ');
+  await expect(page.getByRole('switch',{name:/^(เปิด|ปิด) ออกหนังสือรับรอง 50 ทวิ ในระบบ$/})).toBeVisible();
   const menus=page.getByRole('combobox',{name:'หมวดเมนู',exact:true});
   await expect(menus).toContainText('เมนูหลัก');
   await page.getByRole('searchbox',{name:'ค้นหาเมนู',exact:true}).fill('เอกสารขาย');

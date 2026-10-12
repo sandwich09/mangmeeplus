@@ -64,6 +64,27 @@ describe('role-template read coverage (GAP-01)', () => {
     for (const k of expected) assert.ok(held.has(k), `tpl.x.accounting should hold ${k}`);
   });
 
+  it('adds only the disbursement packs selected for finance, manager, and accounting templates', () => {
+    const all = [
+      'expense.disbursement.read', 'expense.disbursement.prepare', 'expense.disbursement.approve',
+      'expense.disbursement.pay', 'expense.disbursement.issue',
+    ];
+    const expected: Record<string, string[]> = {
+      'tpl.x.finance': all,
+      'tpl.trading.finance': all,
+      'tpl.service.finance': all,
+      'tpl.ecom.finance': all,
+      'tpl.x.manager': ['expense.disbursement.read', 'expense.disbursement.approve'],
+      'tpl.retail.store_manager': ['expense.disbursement.read', 'expense.disbursement.approve'],
+      'tpl.service.manager': ['expense.disbursement.read', 'expense.disbursement.approve'],
+      'tpl.x.accounting': ['expense.disbursement.read', 'expense.disbursement.issue'],
+    };
+    for (const template of ROLE_TEMPLATES) {
+      const actual = compiledKeys(template.key).filter((key) => key.startsWith('expense.disbursement.')).sort();
+      assert.deepEqual(actual, (expected[template.key] ?? []).slice().sort(), template.key);
+    }
+  });
+
   it('finance/accounting presets hold the read_own keys the screens gate on', () => {
     // Self-service screens still keep the narrower compatibility path even though related actors
     // can now enter the same modules through `.read_related`.

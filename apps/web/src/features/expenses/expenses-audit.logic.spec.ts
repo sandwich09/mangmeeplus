@@ -49,6 +49,12 @@ describe('deriveExpenseAuditChecks', () => {
     assert.equal(check({ vendorTaxIdSnapshot: '0-1055-58096-34-8' }, 'vendor_tax_id')?.status, 'pass');
   });
 
+  it('counts a complete tax id with a wrong check digit as a warning, not a blocker', () => {
+    const c = check({ vendorTaxIdSnapshot: '1234567890123' }, 'vendor_tax_id');
+    assert.equal(c?.status, 'warn');
+    assert.equal(c?.label, 'เลขผู้เสียภาษีผู้ขายครบ 13 หลัก แต่ดูไม่ถูกต้อง');
+  });
+
   it('flags a partial (non-13-digit) tax id as needing review, with a distinct label', () => {
     const c = check({ vendorTaxIdSnapshot: '12345' }, 'vendor_tax_id');
     assert.equal(c?.status, 'warn');

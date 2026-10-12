@@ -21,6 +21,8 @@ export type WebSession = {
    * the entrances.
    */
   manualExpenseWebEntry?: boolean;
+  /** Menu visibility only. A missing value from an older API keeps the new menu hidden. */
+  disbursementVoucherWebEntry?: boolean;
 };
 
 export type SessionState =

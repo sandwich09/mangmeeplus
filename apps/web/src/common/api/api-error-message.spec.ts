@@ -2,6 +2,18 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
 import { apiErrorMessage, translateApiError } from './api-error-message';
+import { WHT_CERTIFICATE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
+
+test('certificate commands keep the server Thai refusal before the code fallback', () => {
+  for (const code of ['expense_changed', 'expense_changed_retry', 'expense_correction_permission_missing', 'expense_void_reason_required', 'expense_correction_blocked', 'expense_payment_correction_blocked', 'expense_wht_source_changed', 'certificate_permission_missing', 'certificate_issued', 'posting_unresolved', 'accounting_period_locked', 'tax_period_locked', 'tax_period_filed', 'expense_certificate_attestation_required', 'reimbursement_cancellation_certificate_permission_missing', 'reimbursement_cancellation_tax_period_locked', 'reimbursement_cancellation_accounting_period_locked', 'wht_certificate_not_correctable', 'wht_certificate_correction_tax_period_locked', 'wht_certificate_issue_in_progress', 'wht_handoff_not_issuable', 'wht_certificate_number_duplicate']) {
+    const message = 'ยังทำรายการนี้ไม่ได้ กรุณาเปิดหน้านี้ใหม่เพื่อตรวจสอบข้อมูลล่าสุด';
+    for (const nested of [false, true]) assert.equal(apiErrorMessage(nested ? { code, details: { code, message } } : { code, message }), message, code);
+    assert.equal(apiErrorMessage({ code, message: 'Internal diagnostic' }), apiErrorMessage({ code }), code);
+  }
+  assert.equal(apiErrorMessage({ code: 'expense_changed' }), 'เอกสารถูกแก้ไขก่อนยกเลิก กรุณาเปิดใหม่แล้วลองอีกครั้ง');
+  assert.equal(translateApiError('wht_certificate_number_duplicate'), WHT_CERTIFICATE_CORRECTION_WORDS.numberDuplicate);
+  assert.doesNotMatch(apiErrorMessage({ code: 'expense_unknown_diagnostic', message: 'เกิดข้อผิดพลาด REQUEST_ID_PRIVATE_123' }), /REQUEST_ID_PRIVATE_123/);
+});
 
 test('confirmed duplicate payment refusals say why and give the state-appropriate way out', () => {
   for (const nested of [false, true]) {
@@ -561,4 +573,70 @@ test('duplicate finance-review guidance names its available decision instead of 
   const message = (reimbursementDuplicateBlockNotice as any)(['ATTACHMENT_CHECKSUM'], true);
   assert.match(message, /ผู้ตรวจการเงินที่มีสิทธิ์ปลดรายการซ้ำอนุมัติจ่าย/);
   assert.doesNotMatch(message, /กดปลดรายการซ้ำ/);
+});
+
+test('disbursement command refusals use the server Thai sentence and keep diagnostic fallbacks safe', () => {
+  const sentence = 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาเปิดใหม่ก่อนทำต่อ';
+  for (const code of ['disbursement_version_conflict', 'disbursement_status_changed', 'disbursement_approver_ineligible']) {
+    assert.equal(apiErrorMessage({ code, details: { message: sentence }, status: 409 }), sentence);
+    assert.doesNotMatch(apiErrorMessage({ code, details: { message: 'Internal diagnostic' } }), /Internal diagnostic/);
+  }
+  assert.doesNotMatch(apiErrorMessage({ code: 'disbursement_source_changed', details: { message: 'รายการ {number} ถูกเปลี่ยนแปลง' } }), /\{number\}/);
+});
+
+test('C5 self-issued record refusals have their Thai fallback and keep the server sentence', () => {
+  for (const [code, message] of [
+    ['wht_handoff_not_linkable', 'บันทึกไม่ได้ เพราะมีผู้ออกหรือบันทึกหนังสือรับรองของรายจ่ายนี้ไปก่อนแล้ว หรือเอกสารถูกแก้ไขหรือยกเลิก กรุณาเปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด'],
+    ['wht_handoff_already_linked', 'รายจ่ายนี้บันทึกหนังสือรับรองที่ออกเองไว้แล้ว ถ้าข้อมูลผิด ให้ใช้ "แก้ไขการบันทึก"'],
+    ['wht_handoff_external_record_no_changes', 'ข้อมูลตรงกับที่บันทึกไว้อยู่แล้ว จึงไม่มีอะไรต้องแก้ไข'],
+    ['wht_handoff_external_record_invalid', 'ข้อมูลที่บันทึกไม่ครบหรือไม่ถูกต้อง กรุณาตรวจเลขที่ วันที่ เลขอ้างอิง และหมายเหตุ แล้วบันทึกอีกครั้ง'],
+    ['wht_handoff_external_issued_date_future', 'วันที่ออกต้องไม่เกินวันนี้ กรุณาเลือกวันที่แล้วบันทึกอีกครั้ง'],
+    ['wht_handoff_external_change_permission_denied', 'คุณไม่มีสิทธิ์แก้ไขการบันทึกหนังสือรับรองนี้ ให้ผู้ที่มีสิทธิ์บันทึกหนังสือรับรองที่ออกเองแก้ไขให้'],
+  ]) {
+    assert.equal(translateApiError(code), message);
+    const server = 'ข้อมูลเปลี่ยนแล้ว กรุณาเปิดหน้านี้ใหม่ก่อนบันทึก';
+    assert.equal(apiErrorMessage({ code, details: { code, message: server } }), server);
+  }
+});
+
+
+test('missing certificate addresses point to the same-screen entry with Thai code fallbacks', () => {
+  for (const [code, message] of [
+    ['wht_handoff_payee_address_missing', 'ยังไม่มีที่อยู่ผู้รับเงิน กรุณาเพิ่มที่อยู่ผู้รับเงินก่อน แล้วกด “ออกหนังสือรับรอง 50 ทวิ” อีกครั้ง'],
+    ['wht_certificate_payee_address_required', 'กรุณาพิมพ์ที่อยู่ผู้รับเงินในแบบฟอร์มนี้ก่อนบันทึก'],
+  ]) {
+    assert.equal(apiErrorMessage({ code }), message); assert.equal(translateApiError(code!), message);
+    assert.equal(apiErrorMessage({ code, message }), message);
+  }
+});
+
+
+test('payer identity refusals keep each server sentence and have a Thai fallback', () => {
+  for (const label of ['เลขผู้เสียภาษีและที่อยู่ของร้าน', 'เลขผู้เสียภาษีของร้าน', 'ที่อยู่ของร้าน']) {
+    const message = `ยังไม่มี${label} กรุณากรอกในหน้าข้อมูลร้านก่อน แล้วกด “ออกหนังสือรับรอง 50 ทวิ” อีกครั้ง`;
+    assert.equal(apiErrorMessage({ code: 'wht_payer_identity_missing', message }), message);
+  }
+  assert.ok(apiErrorMessage({ code: 'wht_payer_identity_missing' }).includes('หน้าข้อมูลร้าน'));
+});
+test('locked certificate corrections have the contract sentence with the expense edit action', async () => {
+  const { WHT_CERTIFICATE_CORRECTION_WORDS } = await import('@watchdog-bms/contracts');
+  assert.equal(apiErrorMessage({ code: 'wht_correction_field_locked' }), WHT_CERTIFICATE_CORRECTION_WORDS.fieldLocked);
+  assert.equal(apiErrorMessage({ code: 'wht_correction_field_locked', message: WHT_CERTIFICATE_CORRECTION_WORDS.fieldLocked }), WHT_CERTIFICATE_CORRECTION_WORDS.fieldLocked);
+});
+
+test('R4 expense confirmation maps payee and income requirements to the web question words', () => {
+  assert.equal(translateApiError('Withholding tax requires the payee taxpayer class (บุคคลธรรมดา / นิติบุคคล) before confirmation.'), 'เลือกก่อนว่าผู้รับเงินเป็นบริษัทหรือบุคคลธรรมดา');
+  assert.equal(translateApiError('Withholding tax requires the income category (ประเภทเงินได้) before confirmation.'), 'เลือก “จ่ายค่าอะไร” ก่อนยืนยันเอกสาร');
+});
+
+test('C15 removal failures have actionable Thai fallbacks and preserve the server sentence', async () => {
+  const { WHT_EXTERNAL_RECORD_WORDS } = await import('@watchdog-bms/contracts');
+  for (const [code, message] of [
+    ['wht_handoff_external_remove_permission_denied', WHT_EXTERNAL_RECORD_WORDS.removePermissionDenied],
+    ['wht_handoff_external_remove_reason_invalid', WHT_EXTERNAL_RECORD_WORDS.removeInvalid],
+    ['wht_handoff_external_remove_request_invalid', WHT_EXTERNAL_RECORD_WORDS.removeRequestInvalid],
+  ]) {
+    assert.equal(translateApiError(code), message);
+    assert.equal(apiErrorMessage({ code, details: { message } }), message);
+  }
 });

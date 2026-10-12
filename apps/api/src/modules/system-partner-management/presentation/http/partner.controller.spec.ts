@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, UnprocessableEntityException, ValidationPipe, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { OwnerNameBodyDto, PartnerAiCreditHoldActionBodyDto, PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto, SetManualExpenseWebEntryBodyDto, SetOcrConfigBodyDto, UpdateProfileBodyDto } from './partner.controller';
+import { OwnerNameBodyDto, PartnerAiCreditHoldActionBodyDto, PartnerController, SetAiModelBodyDto, SetDisbursementVoucherWebEntryBodyDto, SetFeaturesBodyDto, SetManualExpenseWebEntryBodyDto, SetOcrConfigBodyDto, UpdateProfileBodyDto } from './partner.controller';
 import { SystemAiBudgetController } from './system-ai-budget.controller';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
@@ -11,7 +11,9 @@ import { ALL_FEATURE_ENTITLEMENT_KEYS } from '@watchdog-bms/contracts';
 import { NORMALIZER_VERSION } from '../../../employee-access/application/normalize-entitlements';
 import { GetPartnerDetailUseCase } from '../../application/use-cases/get-partner-detail.use-case';
 import { SetPartnerManualExpenseWebEntryUseCase } from '../../application/use-cases/set-partner-manual-expense-web-entry.use-case';
+import { SetPartnerDisbursementVoucherWebEntryUseCase } from '../../application/use-cases/set-partner-disbursement-voucher-web-entry.use-case';
 import { MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, manualExpenseWebEntryState } from '../../domain/logic/manual-expense-web-entry.logic';
+import { DISBURSEMENT_VOUCHER_WEB_ENTRY_WITHOUT_ROW, disbursementVoucherWebEntryState } from '../../domain/logic/disbursement-voucher-web-entry.logic';
 import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 import 'reflect-metadata';
 
@@ -56,6 +58,7 @@ function makeUCs() {
     } as any,
     listThaiAddresses: { execute: async (postalCode: string) => ([{ postalCode, provinceCode: '10', provinceTh: 'กรุงเทพมหานคร', districtCode: '1', districtTh: 'ดุสิต', subdistrictCode: '1', subdistrictTh: 'ดุสิต' }]) } as any,
     setManualExpenseWebEntry: { execute: async (cmd: any) => ({ enabled: cmd.enabled, version: 1 }) } as any,
+    setDisbursementVoucherWebEntry: { execute: async (cmd: any) => ({ enabled: cmd.enabled, version: 1 }) } as any,
   };
 }
 
@@ -70,7 +73,7 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
     uc.getPlanTerm, {execute:async()=>({items:[],nextCursor:null})} as any, uc.setPlanTerm, uc.renewPlanTerm, uc.endWarmup,
     uc.timeline, uc.lineMessage, uc.aiCreditHolds, uc.setOwnerName,
-    uc.updateIdentity, uc.listThaiAddresses, uc.setManualExpenseWebEntry, {} as any,
+    uc.updateIdentity, uc.listThaiAddresses, uc.setManualExpenseWebEntry, uc.setDisbursementVoucherWebEntry, {} as any,
   );
 }
 
@@ -263,6 +266,25 @@ describe('PartnerController', () => {
     }
   });
 
+  it('setDisbursementVoucherWebEntry() passes the absolute value, shared CAS version and admin context', async () => {
+    let called: any;
+    const ctrl = makeCtrl({ setDisbursementVoucherWebEntry: { execute: async (cmd: any) => { called = cmd; return { enabled: cmd.enabled, version: 4 }; } } as any });
+    const result = await ctrl.setDisbursementVoucherWebEntry('co-1', { enabled: true, expectedVersion: 3 }, makeReq());
+    assert.deepEqual(called, { companyId: 'co-1', enabled: true, expectedVersion: 3, requestingAdminUserId: 'admin-1', requestId: 'req-1' });
+    assert.deepEqual(result, { enabled: true, version: 4 });
+  });
+
+  it('the disbursement-voucher web-entry DTO takes exactly the value and shared CAS version', async () => {
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    const run = (body: Record<string, unknown>) => pipe.transform(body, { type: 'body', metatype: SetDisbursementVoucherWebEntryBodyDto }) as Promise<any>;
+    assert.deepEqual({ ...(await run({ enabled: false, expectedVersion: 0 })) }, { enabled: false, expectedVersion: 0 });
+    for (const poison of [{}, { enabled: true }, { expectedVersion: 0 }, { enabled: 'true', expectedVersion: 0 },
+      { enabled: true, expectedVersion: -1 }, { enabled: true, expectedVersion: 1.5 },
+      { enabled: true, expectedVersion: 0, features: [] }, { enabled: true, expectedVersion: 0, reason: 'x' }]) {
+      await assert.rejects(() => run(poison), BadRequestException, JSON.stringify(poison));
+    }
+  });
+
   it('the ai-model body DTO keeps null (clear) and absent (leave alone) distinguishable', async () => {
     // The exact global pipe main.ts registers, against the DTO the ai-model route binds.
     const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
@@ -336,6 +358,7 @@ describe('PartnerController', () => {
       ['setOcrConfiguration', 'system.partner_ai_model.manage'],
       // A screen setting shown under a feature row: the feature-management key, no new permission.
       ['setManualExpenseWebEntry', 'system.partner_feature.manage'],
+      ['setDisbursementVoucherWebEntry', 'system.partner_feature.manage'],
       ['aiAdjustments', 'system.partner_ai_model.manage'],
       // Read-only meter: reuses the partner detail read permission, no new permission (spec §7.7).
       ['aiUsage', 'system.partner_dashboard.read'],
@@ -565,15 +588,16 @@ function detailCompany(marker: { status: string; normalizerVersion: number; coho
     entitlementNormalization: marker,
     signupRequests: [],
     memberships: [],
-    webEntrySetting: null as { manualExpenseEntryEnabled: boolean; version: number } | null,
+    webEntrySetting: null as { manualExpenseEntryEnabled: boolean; disbursementVoucherEntryEnabled: boolean | null; version: number } | null,
   };
 }
 
-function detailUseCase(row: ReturnType<typeof detailCompany>) {
+function detailUseCase(row: ReturnType<typeof detailCompany>, roles: any[] = []) {
   return new GetPartnerDetailUseCase({
     client: {
       company: { findUnique: async () => row },
       companyMembership: { groupBy: async () => [] },
+      role: { findMany: async () => roles },
     },
   } as any,
   // The VAT read is the company's own accessor, stubbed here — this suite is about feature
@@ -634,7 +658,7 @@ describe('manual-expense web entry — what a company without a row reads as', (
 
   it('the partner detail answers the stored value, also while the entitlement rows are not prepared yet', async () => {
     const row = detailCompany({ status: 'STARTED', normalizerVersion: NORMALIZER_VERSION, cohortKind: 'LEGACY' });
-    row.webEntrySetting = { manualExpenseEntryEnabled: true, version: 3 };
+    row.webEntrySetting = { manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: null, version: 3 };
     const result = await detailUseCase(row).execute('co-1');
     assert.deepEqual(result.manualExpenseWebEntry, { enabled: true, version: 3 });
     assert.equal(result.entitlementNormalizationPending, true);
@@ -694,6 +718,84 @@ function webEntryHarness(init: {
     requestingAdminUserId: 'admin-1', requestId: 'req-1',
   });
   return { run, audits, writes, locks, row: () => row };
+}
+
+function disbursementWebEntryHarness(init: {
+  company?: { id: string; status: string } | null;
+  row?: { manualExpenseEntryEnabled: boolean; disbursementVoucherEntryEnabled: boolean | null; version: number } | null;
+} = {}) {
+  const company = init.company === undefined ? { id: 'co-1', status: 'ACTIVE' } : init.company;
+  let row = init.row ?? null;
+  const audits: any[] = [];
+  const writes: any[] = [];
+  const locks: unknown[] = [];
+  let insideTransaction = false;
+  const tx = {
+    $queryRaw: async (...args: unknown[]) => { locks.push(args); return []; },
+    company: { findUnique: async () => company },
+    companyWebEntrySetting: {
+      findUnique: async () => row,
+      upsert: async (args: any) => {
+        assert.ok(insideTransaction);
+        writes.push(args);
+        if (row) {
+          row = {
+            manualExpenseEntryEnabled: args.update.manualExpenseEntryEnabled ?? row.manualExpenseEntryEnabled,
+            disbursementVoucherEntryEnabled: Object.hasOwn(args.update, 'disbursementVoucherEntryEnabled')
+              ? args.update.disbursementVoucherEntryEnabled : row.disbursementVoucherEntryEnabled,
+            version: row.version + args.update.version.increment,
+          };
+        } else row = {
+          manualExpenseEntryEnabled: args.create.manualExpenseEntryEnabled,
+          disbursementVoucherEntryEnabled: args.create.disbursementVoucherEntryEnabled,
+          version: args.create.version,
+        };
+        return row;
+      },
+    },
+    auditLog: { create: async (args: any) => { assert.ok(insideTransaction); audits.push(args.data); } },
+  };
+  const prisma = { client: { $transaction: async (run: (client: typeof tx) => Promise<unknown>) => {
+    insideTransaction = true;
+    try { return await run(tx); } finally { insideTransaction = false; }
+  } } } as any;
+  const run = (enabled: unknown, expectedVersion: unknown) => new SetPartnerDisbursementVoucherWebEntryUseCase(prisma).execute({
+    companyId: 'co-1', enabled: enabled as boolean, expectedVersion: expectedVersion as number,
+    requestingAdminUserId: 'admin-1', requestId: 'req-1',
+  });
+  return { run, audits, writes, locks, row: () => row };
+}
+
+function sharedWebEntryHarness(initial: { manualExpenseEntryEnabled: boolean; disbursementVoucherEntryEnabled: boolean | null; version: number }) {
+  let row = { ...initial };
+  const writes: any[] = [];
+  const audits: any[] = [];
+  const tx = {
+    $queryRaw: async () => [],
+    company: { findUnique: async () => ({ id: 'co-1', status: 'ACTIVE' }) },
+    companyWebEntrySetting: {
+      findUnique: async () => row,
+      upsert: async (args: any) => {
+        writes.push(args);
+        row = {
+          manualExpenseEntryEnabled: args.update.manualExpenseEntryEnabled ?? row.manualExpenseEntryEnabled,
+          disbursementVoucherEntryEnabled: Object.hasOwn(args.update, 'disbursementVoucherEntryEnabled')
+            ? args.update.disbursementVoucherEntryEnabled : row.disbursementVoucherEntryEnabled,
+          version: row.version + args.update.version.increment,
+        };
+        return row;
+      },
+    },
+    auditLog: { create: async (args: any) => { audits.push(args.data); } },
+  };
+  const prisma = { client: { $transaction: async (run: (client: typeof tx) => Promise<unknown>) => run(tx) } } as any;
+  const runManual = (enabled: boolean, expectedVersion: number) => new SetPartnerManualExpenseWebEntryUseCase(prisma).execute({
+    companyId: 'co-1', enabled, expectedVersion, requestingAdminUserId: 'admin-1', requestId: 'req-1',
+  });
+  const runVoucher = (enabled: boolean, expectedVersion: number) => new SetPartnerDisbursementVoucherWebEntryUseCase(prisma).execute({
+    companyId: 'co-1', enabled, expectedVersion, requestingAdminUserId: 'admin-1', requestId: 'req-1',
+  });
+  return { runManual, runVoucher, writes, audits, row: () => row };
 }
 
 describe('SetPartnerManualExpenseWebEntryUseCase', () => {
@@ -775,6 +877,117 @@ describe('SetPartnerManualExpenseWebEntryUseCase', () => {
     for (const [enabled, expectedVersion] of [['true', 0], [1, 0], [undefined, 0], [true, -1], [true, 1.5], [true, '0'], [true, undefined]] as const) {
       const h = webEntryHarness();
       await assert.rejects(() => h.run(enabled, expectedVersion), UnprocessableEntityException, JSON.stringify([enabled, expectedVersion]));
+      assert.deepEqual([h.locks, h.writes, h.audits], [[], [], []]);
+    }
+  });
+});
+
+describe('disbursement-voucher web entry — one shared company setting version', () => {
+  it('has one default: a missing row and a null column both read as hidden', () => {
+    assert.equal(DISBURSEMENT_VOUCHER_WEB_ENTRY_WITHOUT_ROW, false);
+    assert.deepEqual(disbursementVoucherWebEntryState(null), { enabled: false, version: 0 });
+    assert.deepEqual(disbursementVoucherWebEntryState(undefined), { enabled: false, version: 0 });
+    assert.deepEqual(disbursementVoucherWebEntryState({ disbursementVoucherEntryEnabled: null, version: 7 }), { enabled: false, version: 7 });
+    assert.deepEqual(disbursementVoucherWebEntryState({ disbursementVoucherEntryEnabled: true, version: 8 }), { enabled: true, version: 8 });
+  });
+
+  it('the partner detail returns the hidden default and treats a null column as hidden', async () => {
+    const missing = await detailUseCase(detailCompany({ status: 'COMPLETED', normalizerVersion: NORMALIZER_VERSION, cohortKind: 'EXPLICIT' })).execute('co-1');
+    assert.deepEqual(missing.disbursementVoucherWebEntry, { enabled: false, version: 0 });
+    const row = detailCompany({ status: 'COMPLETED', normalizerVersion: NORMALIZER_VERSION, cohortKind: 'EXPLICIT' });
+    row.webEntrySetting = { manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: null, version: 6 };
+    const withNull = await detailUseCase(row).execute('co-1');
+    assert.deepEqual(withNull.disbursementVoucherWebEntry, { enabled: false, version: 6 });
+  });
+
+  it('the partner detail lists only disbursement permissions and marks company-created or edited roles', async () => {
+    const row = detailCompany({ status: 'COMPLETED', normalizerVersion: NORMALIZER_VERSION, cohortKind: 'EXPLICIT' });
+    const roles = [
+      { key: 'FINANCE', name: 'การเงิน', scopeKey: 'system', permissions: [
+        { permission: { key: 'expense.disbursement.read' } }, { permission: { key: 'expense.disbursement.pay' } }, { permission: { key: 'expense.update' } },
+      ] },
+      { key: 'CUSTOM', name: 'ผู้ตรวจใบจ่าย', scopeKey: 'co-1', permissions: [
+        { permission: { key: 'expense.disbursement.approve' } }, { permission: { key: 'expense.disbursement.issue' } },
+      ] },
+      { key: 'MANAGER', name: 'ผู้จัดการที่ร้านแก้ไข', scopeKey: 'co-1', permissions: [] },
+      { key: 'MANAGER', name: 'ผู้จัดการ', scopeKey: 'system', permissions: [{ permission: { key: 'expense.disbursement.approve' } }] },
+      { key: 'EMPTY', name: 'ตำแหน่งที่เอาสิทธิ์ออกแล้ว', scopeKey: 'co-1', permissions: [] },
+    ];
+    const result = await detailUseCase(row, roles).execute('co-1');
+    assert.deepEqual(result.disbursementVoucherRoles, [
+      { name: 'การเงิน', isCompanyManaged: false, permissionKeys: ['expense.disbursement.read', 'expense.disbursement.pay'] },
+      { name: 'ผู้ตรวจใบจ่าย', isCompanyManaged: true, permissionKeys: ['expense.disbursement.approve', 'expense.disbursement.issue'] },
+    ]);
+  });
+
+  it('creating the row writes the manual switch default, enables the requested setting, and audits it', async () => {
+    const h = disbursementWebEntryHarness();
+    assert.deepEqual(await h.run(true, 0), { enabled: true, version: 1 });
+    assert.deepEqual(h.row(), { manualExpenseEntryEnabled: MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, disbursementVoucherEntryEnabled: true, version: 1 });
+    assert.deepEqual(h.writes[0]?.create, {
+      companyId: 'co-1', manualExpenseEntryEnabled: MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW,
+      disbursementVoucherEntryEnabled: true, version: 1, updatedBySystemAdminUserId: 'admin-1',
+    });
+    assert.deepEqual(h.audits, [{
+      companyId: 'co-1', actorUserId: 'admin-1', action: 'system.partner_disbursement_voucher_web_entry.update',
+      targetType: 'company', targetId: 'co-1', requestId: 'req-1', result: 'SUCCESS', riskLevel: 'MEDIUM',
+      metadataJson: { entryPoint: 'SYSTEM_PARTNER_ADMIN', fromEnabled: false, toEnabled: true, fromVersion: 0, toVersion: 1 },
+    }]);
+    assert.equal(h.locks.length, 1);
+  });
+
+  it('a null stored value is false, and saving false is a no-op that leaves it null', async () => {
+    const h = disbursementWebEntryHarness({ row: { manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: null, version: 4 } });
+    assert.deepEqual(await h.run(false, 3), { enabled: false, version: 4 });
+    assert.equal(h.row()?.disbursementVoucherEntryEnabled, null);
+    assert.deepEqual([h.writes, h.audits], [[], []]);
+  });
+
+  it('a stale voucher-setting version gets its own 409 without writing or auditing', async () => {
+    const h = disbursementWebEntryHarness({ row: { manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: false, version: 2 } });
+    await assert.rejects(() => h.run(true, 1), (error: unknown) => {
+      assert.ok(error instanceof ConflictException);
+      assert.equal((error.getResponse() as any).code, 'disbursement_voucher_web_entry_version_conflict');
+      assert.equal((error.getResponse() as any).currentVersion, 2);
+      assert.match((error.getResponse() as any).message, /โหลดข้อมูลล่าสุด/);
+      return true;
+    });
+    assert.deepEqual([h.writes, h.audits], [[], []]);
+  });
+
+  it('serializes both settings on one version: stale manual and voucher saves both conflict', async () => {
+    const manualStale = sharedWebEntryHarness({ manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: false, version: 1 });
+    await manualStale.runVoucher(true, 1);
+    await assert.rejects(() => manualStale.runManual(false, 1), (error: unknown) => {
+      assert.ok(error instanceof ConflictException);
+      assert.equal((error.getResponse() as any).code, 'manual_expense_web_entry_version_conflict');
+      return true;
+    });
+    assert.deepEqual(manualStale.row(), { manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: true, version: 2 });
+    assert.equal(manualStale.writes.length, 1);
+
+    const voucherStale = sharedWebEntryHarness({ manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: false, version: 1 });
+    await voucherStale.runManual(false, 1);
+    await assert.rejects(() => voucherStale.runVoucher(true, 1), (error: unknown) => {
+      assert.ok(error instanceof ConflictException);
+      assert.equal((error.getResponse() as any).code, 'disbursement_voucher_web_entry_version_conflict');
+      return true;
+    });
+    assert.deepEqual(voucherStale.row(), { manualExpenseEntryEnabled: false, disbursementVoucherEntryEnabled: false, version: 2 });
+    assert.equal(voucherStale.writes.length, 1);
+  });
+
+  it('honors the partner lifecycle lock and rejects invalid values before reading', async () => {
+    for (const status of ['DISABLED', 'ARCHIVED']) {
+      const locked = disbursementWebEntryHarness({ company: { id: 'co-1', status } });
+      await assert.rejects(() => locked.run(true, 0), UnprocessableEntityException, status);
+      assert.deepEqual([locked.writes, locked.audits], [[], []], status);
+    }
+    const missing = disbursementWebEntryHarness({ company: null });
+    await assert.rejects(() => missing.run(true, 0), NotFoundException);
+    for (const [enabled, version] of [['true', 0], [true, -1], [true, 1.5]] as const) {
+      const h = disbursementWebEntryHarness();
+      await assert.rejects(() => h.run(enabled, version), UnprocessableEntityException);
       assert.deepEqual([h.locks, h.writes, h.audits], [[], [], []]);
     }
   });

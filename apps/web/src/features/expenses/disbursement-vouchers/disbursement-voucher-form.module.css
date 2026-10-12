@@ -1,0 +1,52 @@
+.page { min-width: 0; padding-bottom: calc(20rem + env(safe-area-inset-bottom)); }
+.form { display: grid; gap: var(--space-4); border: 0; padding: 0; margin: 0; min-width: 0; }
+.stack { display: grid; gap: var(--space-3); min-width: 0; }
+/* Fields that belong together: one column on a phone, side by side on a wide screen. */
+.fieldGrid { display: grid; gap: var(--space-3); min-width: 0; }
+@media (min-width: 768px) {
+  .fieldGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: var(--space-3) var(--space-4); }
+  /* A button on its own line (back, add another payee's expense) keeps a compact width instead of spanning the page. */
+  .form > :global(button.mangmee-btn), .stack > :global(button.mangmee-btn) { justify-self: start; min-width: 9rem; }
+}
+.section { padding: var(--space-4); min-width: 0; overflow-wrap: anywhere; }
+.payeeRow { display: grid; gap: var(--space-2); width: 100%; min-width: 0; min-height: 44px; text-align: left; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-surface); overflow-wrap: anywhere; }
+.payeeRow[aria-pressed="true"] { border-color: var(--color-brand-500); background: var(--color-brand-50); }
+.expenseRow { display: grid; gap: var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); min-width: 0; }
+.tickRow { display: flex; align-items: flex-start; gap: var(--space-3); min-height: 44px; padding-block: var(--space-1); overflow-wrap: anywhere; }
+.tickRow input { width: 1.25rem; height: 1.25rem; margin-top: .125rem; flex-shrink: 0; }
+.tickRow > span { display: grid; gap: var(--space-1); min-width: 0; }
+.unavailable { color: var(--color-text-secondary); background: var(--color-neutral-surface); }
+.hint, .reason { font-size: .875rem; color: var(--color-text-secondary); }
+.warning { padding: var(--space-3); background: var(--color-warning-50); color: var(--color-warning-700); border-radius: var(--radius-md); }
+.error { color: var(--color-error-700); overflow-wrap: anywhere; }
+/* The desktop menu is fixed over the left of the window; the bar starts where the content starts. */
+.bottomBar { position: fixed; inset-inline: var(--workspace-content-left, 0px) 0; bottom: 0; z-index: 40; padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom)); background: var(--color-surface); border-top: 1px solid var(--color-border); max-height: 70dvh; overflow-y: auto; }
+.barInner { display: grid; gap: var(--space-2); min-width: 0; }
+/* Same side padding as the content area, so the bar lines up with the cards above it. */
+@media (min-width: 768px) {
+  .bottomBar { padding-inline: 1.75rem; }
+  /* Wide screens: the selection total at the left, compact buttons in one row at the right, the main button last. */
+  .barInner { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: flex-end; gap: var(--space-3); }
+  .barInner > p { min-width: 0; align-self: center; }
+  .barInner > p:last-of-type { margin-inline-end: auto; }
+  .barInner > button { width: auto; min-width: 11rem; flex: 0 0 auto; }
+}
+.primary { width: 100%; min-height: 44px; }
+.sheetFooter { width: 100%; padding-bottom: env(safe-area-inset-bottom); }
+.sheetFooter button { width: 100%; min-height: 44px; }
+
+.description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.rowIdentity, .rowDescription { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.rowIdentity .description, .rowDescription .description { flex: 1; }
+.rowIdentity, .rowDescription { flex-wrap: wrap; }
+.rowDate, .rowBalance > span:first-child { flex-shrink: 0; white-space: nowrap; }
+.rowDescription:empty { display: none; }
+.rowContext { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .75rem; }
+.amountField { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-2); }
+.amountField > [role="alert"] { grid-column: 1 / -1; }
+
+.rowBalance { display: grid; gap: var(--space-1); }
+.withholdingHint { white-space: normal; overflow-wrap: anywhere; }
+.rowInvoice { max-width: none; overflow: visible; text-overflow: clip; white-space: nowrap; overflow-wrap: anywhere; font-size: .75rem; }
+.rowIdentity strong { flex-shrink: 0; }

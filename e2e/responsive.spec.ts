@@ -17,8 +17,13 @@ const ROUTES = [
   '/inventory/movements',
   '/inventory/reports/stock',
   '/expenses',
+  '/expenses/wht-certificates',
   '/expenses/upload',
   '/expenses/manual',
+  '/expenses/disbursement-vouchers',
+  '/expenses/disbursement-vouchers/new',
+  // Missing-document state; a populated voucher needs controller-seeded data.
+  '/expenses/disbursement-vouchers/00000000-0000-4000-8000-000000000000',
   '/expenses/categories',
   '/expenses/signatures',
   '/settings/substitute-receipt',
@@ -96,8 +101,13 @@ const CARD_VIEW_CASES = [
  */
 const PRIORITY_ROUTES = [
   '/expenses',
+  '/expenses/wht-certificates',
   '/expenses/upload',
   '/expenses/manual',
+  '/expenses/disbursement-vouchers',
+  '/expenses/disbursement-vouchers/new',
+  // Missing-document state; a populated voucher needs controller-seeded data.
+  '/expenses/disbursement-vouchers/00000000-0000-4000-8000-000000000000',
   '/expenses/evidence',
   '/expenses/categories',
   '/expenses/signatures',

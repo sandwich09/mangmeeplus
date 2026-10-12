@@ -3,7 +3,7 @@ import { EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/
 import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
 
 const sources = {
-  expenses: { file: 'expenses-guide.content.ts', hash: '6fad431f54f3eb4e4469f496ff43e4438c45f707ca6fd437eec60d90fd9397d3' },
+  expenses: { file: 'expenses-guide.content.ts', hash: '5cc5799147a17fcd82b24e45951b4b97af3dbb4d5f3d841742f434ae2ebdfe07' },
   reimbursements: { file: 'reimbursement-guide.content.ts', hash: 'b9e70fc60e1a02e4494c6a4739d135adbbb1d01498ec0fdc08e5f9b8f1ce1cda' },
   'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '8abcde427c8df626472db6d8709e144d843b83e8655b1934c343b410765bfc99' },
   reports: { file: 'reports-guide.content.ts', hash: 'a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4' },

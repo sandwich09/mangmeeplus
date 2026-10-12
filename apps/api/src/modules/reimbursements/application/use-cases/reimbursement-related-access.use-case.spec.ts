@@ -85,6 +85,7 @@ describe('claim account number reveal: the requester, that claim approver, the p
       getUserDisplayNames: async () => ({}),
       listSignedClaimFormCopies: async () => [],
       listInternalNotes: async () => [],
+      findCancellationCertificates: async () => [], findCancellationBlocker: async () => null,
       // The claim waits at the payment desk, so its detail also names who can pay it.
       listPaymentRecorderNames: async () => [],
       // Read only for a claim that has a payment: its one slip.
@@ -500,6 +501,7 @@ describe('reimbursement related-view ABAC', () => {
       getUserDisplayNames: async () => ({ 'actor-1': 'Approver' }),
       listSignedClaimFormCopies: async () => [],
       listInternalNotes: async () => [{ id: 'note-1', authorUserId: 'actor-1', body: 'สำหรับทีม', createdAt: now, updatedAt: now }],
+      findCancellationCertificates: async () => [], findCancellationBlocker: async () => null,
       listClaimPayoutVersions: async () => [],
       createInternalNote: async (_companyId: string, _requestId: string, authorUserId: string, body: string) =>
         ({ id: 'note-2', authorUserId, body, createdAt: now, updatedAt: now }),
@@ -686,6 +688,7 @@ describe('who may open a payment slip', () => {
       },
       // What the claim detail reads beside the claim itself.
       getUserDisplayNames: async () => ({}),
+      findCancellationCertificates: async () => [], findCancellationBlocker: async () => null,
       listSignedClaimFormCopies: async () => [],
       listInternalNotes: async () => [],
       listClaimPayoutVersions: async () => [],

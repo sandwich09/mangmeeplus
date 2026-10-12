@@ -25,7 +25,7 @@ import {
 } from './infrastructure/prisma-notification.repository';
 import { PrismaDashboardSnapshotRepository } from './infrastructure/prisma-dashboard.repository';
 import { ALWAYS_DELIVERED_TRIGGER_KEYS, IMPLEMENTED_TRIGGER_KEYS, FUTURE_TRIGGER_KEYS } from './domain/models/notification.model';
-import { completedDocumentNotificationIds } from './infrastructure/document-notification-state';
+import { completedDocumentNotificationIds, DOCUMENT_NOTIFICATION_STATES } from './infrastructure/document-notification-state';
 import { WORKFLOW_TEMPLATE_CATALOG } from '../workflow/domain/workflow-template-catalog';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
 import { ALL_FEATURE_ENTITLEMENT_KEYS, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
@@ -36,6 +36,14 @@ import { PrismaAlertStateRepository, PrismaNotificationRuleRepository } from './
 import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 
 const COMPANY = 'co-1';
+
+it('registers certificate cancellation as an always-delivered expense notice, without a document task (A5)', () => {
+  const key = 'expense.wht_certificate_cancelled';
+  assert.ok(IMPLEMENTED_TRIGGER_KEYS.includes(key));
+  assert.ok(ALWAYS_DELIVERED_TRIGGER_KEYS.includes(key));
+  assert.deepEqual(notificationModel.NOTIFICATION_TRIGGER_FEATURE_KEYS[key], ['expenses']);
+  assert.equal(DOCUMENT_NOTIFICATION_STATES[key], undefined);
+});
 
 const ctx: RequestContext = {
   requestId: 'r1', authSubject: 'u1', userId: 'u1', companyId: COMPANY, membershipId: 'm1',
@@ -408,6 +416,25 @@ function notificationStore(featureKeys: readonly string[] | null) {
     setRows: (rows: typeof entitlementRows) => { entitlementRows = rows; } };
 }
 
+it('creates separate cancellation notices per round and filters an inactive issuer (A5)', async () => {
+  const h = notificationStore(['expenses']);
+  let active = true;
+  h.prisma.client.companyMembership.findMany = async ({ where }: any) => {
+    assert.deepEqual(where, { companyId: COMPANY, userId: { in: ['issuer-1'] }, status: 'ACTIVE' });
+    return active ? [{ userId: 'issuer-1' }] : [];
+  };
+  const input = { ...h.input('expense.wht_certificate_cancelled'), sourceModule: 'expenses', sourceType: 'expense_record',
+    sourceId: 'expense-1', severity: 'info', recipientUserIds: ['issuer-1'] };
+  await h.create.execute({ ...input, periodKey: '1' });
+  await h.create.execute({ ...input, periodKey: '2' });
+  assert.equal(h.events.length, 2); assert.notEqual(h.events[0].dedupKey, h.events[1].dedupKey);
+  assert.deepEqual(h.recipients.map(row => row.userId), ['issuer-1', 'issuer-1']);
+  assert.equal(h.deliveries.length, 4);
+  active = false;
+  await h.create.execute({ ...input, periodKey: '3' });
+  assert.equal(h.recipients.length, 2); assert.equal(h.deliveries.length, 4);
+});
+
 describe('notifications only for owned modules', () => {
   it('classifies every listed, template and literal-emitted trigger using real feature keys', () => {
     const mapping = (notificationModel as any).NOTIFICATION_TRIGGER_FEATURE_KEYS;
@@ -590,3 +617,78 @@ async function deliverOwnedNotice(triggerKey: string, channel: string, featureKe
     return { pushes, last: updates.at(-1) };
   } finally { globalThis.fetch = originalFetch; }
 }
+
+it('registers the five disbursement notices for expenses and LINE, with pending approval and payer approval tasks', () => {
+  for (const suffix of ['pending_approval', 'approved', 'returned', 'paid', 'cancelled']) {
+    const key = `expense.disbursement_${suffix}`;
+    assert.ok(IMPLEMENTED_TRIGGER_KEYS.includes(key));
+    assert.ok(ALWAYS_DELIVERED_TRIGGER_KEYS.includes(key));
+    assert.deepEqual(notificationModel.NOTIFICATION_TRIGGER_FEATURE_KEYS[key], ['expenses']);
+    assert.equal(Boolean(DOCUMENT_NOTIFICATION_STATES[key]), suffix === 'pending_approval' || suffix === 'approved');
+  }
+});
+
+it('creates separate pending task events for a resubmit and each reminder round (voucher spec §8.6)', async () => {
+  const h = notificationStore(['expenses']);
+  const input = { ...h.input('expense.disbursement_pending_approval'), sourceModule: 'expenses', sourceType: 'disbursement_voucher', sourceId: 'dv',
+    deepLinkHref: `/companies/${COMPANY}/expenses/disbursement-vouchers/dv` };
+  for (const periodKey of ['1', '2', '2:1', '2:2']) await h.create.execute({ ...input, periodKey });
+  assert.equal(h.events.length, 4); assert.equal(new Set(h.events.map(e => e.dedupKey)).size, 4);
+  assert.equal(h.recipients.length, 4); assert.equal(h.deliveries.length, 8);
+  assert.ok(h.events.every(e => e.severity === 'ACTION' && e.deepLinkHref === input.deepLinkHref));
+});
+
+it('keeps the disbursement task open only for its pending revision, closing after approve, return, withdraw or cancel', async () => {
+  let status = 'PENDING_APPROVAL', revision = 1, submittedAt = new Date('2026-10-11T01:00:00Z');
+  const db: any = {
+    notificationEvent: { findMany: async () => [{ id: 'pending', triggerKey: 'expense.disbursement_pending_approval', sourceType: 'disbursement_voucher', sourceId: 'dv', sourceRefsJson: { refs: [{ revision: 1 }] }, createdAt: new Date('2026-10-11T00:59:59Z') }] },
+    disbursementVoucher: { findMany: async (q: any) => { assert.equal(q.where.companyId, 'co'); return [{ id: 'dv', status, revision, submittedAt }]; } },
+  };
+  assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'u'), []);
+  for (const next of ['APPROVED', 'DRAFT', 'DRAFT', 'CANCELLED']) {
+    status = next; assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'u'), ['pending']);
+  }
+  status = 'PENDING_APPROVAL'; revision = 2; submittedAt = new Date('2026-10-11T02:00:00Z');
+  assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'u'), ['pending']);
+});
+
+
+it('actionable approval notices for payers and eligible preparers close while information notices stay', async () => {
+  let status = 'APPROVED';
+  const db: any = { notificationEvent: { findMany: async () => [
+    { id: 'payer', triggerKey: 'expense.disbursement_approved', severity: 'ACTION', sourceType: 'disbursement_voucher', sourceId: 'dv', sourceRefsJson: { refs: [{ revision: 1 }] } },
+    { id: 'preparer-payer', triggerKey: 'expense.disbursement_approved', severity: 'ACTION', sourceType: 'disbursement_voucher', sourceId: 'dv', sourceRefsJson: { refs: [{ revision: 1 }] } },
+    { id: 'preparer', triggerKey: 'expense.disbursement_approved', severity: 'INFO', sourceType: 'disbursement_voucher', sourceId: 'dv' },
+  ] }, disbursementVoucher: { findMany: async () => [{ id: 'dv', status, revision: 1 }] } };
+  assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'u'), []);
+  for (const next of ['PAID', 'DRAFT', 'CANCELLED']) { status = next; assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'u'), ['payer', 'preparer-payer']); }
+});
+
+it('excludes closed disbursement and substitute tasks identically from the bell badge and resolves their list rows', async () => {
+  const captured: Record<string, any> = {}, prisma = capturingPrisma(captured);
+  const events = [
+    { id: 'dv-task', triggerKey: 'expense.disbursement_pending_approval', sourceType: 'disbursement_voucher', sourceId: 'dv', severity: 'ACTION', status: 'OPEN', recipients: [] },
+    { id: 'sub-task', triggerKey: 'expense.substitute_receipt_approval_pending', sourceType: 'substitute_receipt_evidence', sourceId: 'sub', severity: 'ACTION', status: 'OPEN', recipients: [] },
+  ];
+  prisma.client.notificationEvent.findMany = async (q: any) => q.select ? events : events;
+  prisma.client.disbursementVoucher = { findMany: async () => [{ id: 'dv', status: 'APPROVED', revision: 1 }] };
+  prisma.client.expenseSubstituteReceiptEvidence = { findMany: async () => [{ id: 'sub', status: 'APPROVED' }] };
+  prisma.client.notificationEvent.groupBy = async (q: any) => { captured.countWhere = q.where; return []; };
+  const count = await new PrismaNotificationRecipientRepository(prisma).countUnread(COMPANY, 'u1');
+  assert.deepEqual(captured.countWhere.id.notIn, ['dv-task', 'sub-task']); assert.equal(count.total, 0);
+  assert.ok((await new PrismaNotificationEventRepository(prisma).list(COMPANY, 'u1', {})).items.every(row => row.status === 'resolved'));
+});
+
+
+it('replays an approved preparer payment task in the same revision without new recipients or LINE text', async () => {
+  const h = notificationStore(['expenses']);
+  h.prisma.client.notificationEvent.update = async ({ data }: any) => Object.assign(h.events[0], data);
+  h.prisma.client.notificationRecipient.findUnique = async () => h.recipients[0] ?? null;
+  h.prisma.client.notificationDelivery.findFirst = async ({ where }: any) => h.deliveries.find((d: any) => d.recipientId === where.recipientId && d.channel === where.channel) ?? null;
+  const input = { ...h.input('expense.disbursement_approved'), sourceModule: 'expenses', sourceType: 'disbursement_voucher', sourceId: 'dv', periodKey: '1', severity: 'action' as const,
+    title: 'อนุมัติแล้ว รอจ่าย: ใบเตรียมจ่ายเลขที่ PV-1', body: 'จ่ายเงินให้ ร้าน ก ยอด 10.10 บาท แล้วบันทึกว่าจ่ายแล้วที่ใบนี้' };
+  await h.create.execute(input); await h.create.execute(input);
+  assert.equal(h.events.length, 1); assert.equal(h.events[0].severity, 'ACTION');
+  assert.equal(h.events[0].title, input.title); assert.equal(h.events[0].body, input.body);
+  assert.equal(h.recipients.length, 1); assert.equal(h.deliveries.length, 2);
+});

@@ -2,6 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
+import { CreateDisbursementVoucherDraftDto, UpdateDisbursementVoucherDraftDto, DisbursementVoucherCommandDto, SubmitDisbursementVoucherDto, EndDisbursementVoucherDto, PayDisbursementVoucherDto, IssueDisbursementVoucherDto, ReissueDisbursementVoucherDto,
+  InitDisbursementVoucherSlipUploadDto, CompleteDisbursementVoucherSlipUploadDto, AttachDisbursementVoucherSlipDto } from './disbursement-voucher.dtos';
 import {
   AmendSubstituteReceiptDto,
   CorrectSubstituteDocumentDto,
@@ -12,6 +14,7 @@ import {
   CreateSignatureAssetDto,
   ReasonOptionalDto,
   ReasonRequiredDto,
+  VoidExpenseDto,
   ReceiptUploadCompletionDto,
   ReceiptUploadIntentDto,
   RecordExpensePaymentDto,
@@ -25,7 +28,56 @@ const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
 const run = (metatype: unknown, value: unknown) =>
   pipe.transform(value, { type: 'body', metatype: metatype as never });
 
+it('validates the three document slip steps and accepts only the slip id on payment', async () => {
+  assert.ok(await run(InitDisbursementVoucherSlipUploadDto, { originalFileName: 'slip.png', mimeType: 'image/png', byteSize: 1 }));
+  assert.ok(await run(CompleteDisbursementVoucherSlipUploadDto, { checksumSha256: 'a'.repeat(64), byteSize: 1 }));
+  assert.ok(await run(AttachDisbursementVoucherSlipDto, { attachmentId: 'slip' }));
+  assert.equal((await run(PayDisbursementVoucherDto, { commandId: 'pay', expectedVersion: 1, slipAttachmentId: 'slip' })).slipAttachmentId, 'slip');
+  for (const slipAttachmentId of ['', null, 1, 'x'.repeat(65)]) await assert.rejects(() => run(PayDisbursementVoucherDto, { commandId: 'pay', expectedVersion: 1, slipAttachmentId }), BadRequestException);
+  for (const [dto, input] of [[InitDisbursementVoucherSlipUploadDto, { originalFileName: 'a.png', mimeType: 'image/png', byteSize: 1, metadataJson: { generatedFor: 'forged' } }],
+    [CompleteDisbursementVoucherSlipUploadDto, { checksumSha256: 'invalid' }], [AttachDisbursementVoucherSlipDto, { attachmentId: 'slip', attachedByUserId: 'forged' }]]) {
+    await assert.rejects(() => run(dto, input), BadRequestException);
+  }
+});
+
 describe('expense body DTOs (audit H-23)', () => {
+  it('accepts only payment facts for a disbursement voucher and never client amounts or payment keys', async () => {
+    const body = { commandId: 'pay', expectedVersion: 1, paidDate: '2026-10-01', paymentMethod: 'CASH', paidFromRef: 'เงินสด' };
+    assert.ok(await run(PayDisbursementVoucherDto, body));
+    for (const patch of [{ amount: '1' }, { lines: [] }, { idempotencyKey: 'forged-key' }, { paidByUserId: 'forged' }, { paymentMethod: 'invalid' }, { paidFromRef: 'x'.repeat(129) }, { paidFromRef: null }]) await assert.rejects(() => run(PayDisbursementVoucherDto, { ...body, ...patch }), BadRequestException);
+  });
+  it('validates lifecycle command tokens and submit-only fields without accepting server state', async () => {
+    const body = { commandId: 'submit', expectedVersion: 0 };
+    assert.deepEqual(JSON.parse(JSON.stringify(await run(SubmitDisbursementVoucherDto, { ...body, approveNow: true, requestedApproverUserId: 'user-1' }))), { ...body, approveNow: true, requestedApproverUserId: 'user-1' });
+    assert.equal((await run(EndDisbursementVoucherDto, { ...body, reason: 'ตรวจใหม่' })).reason, 'ตรวจใหม่');
+    for (const type of [DisbursementVoucherCommandDto, SubmitDisbursementVoucherDto, EndDisbursementVoucherDto]) {
+      for (const patch of [{ commandId: '' }, { expectedVersion: null }, { expectedVersion: -1 }, { expectedVersion: 1.5 }, { expectedVersion: '0' },
+        { status: 'APPROVED' }, { revision: 99 }, { submittedByUserId: 'forged' }, { reservedByDisbursementVoucherId: 'forged' }]) await assert.rejects(() => run(type, { ...body, ...patch }), BadRequestException);
+    }
+    for (const patch of [{ approveNow: 'true' }, { requestedApproverUserId: null }, { requestedApproverUserId: '' }, { reason: 'not allowed' }]) await assert.rejects(() => run(SubmitDisbursementVoucherDto, { ...body, ...patch }), BadRequestException);
+    await assert.rejects(() => run(DisbursementVoucherCommandDto, { ...body, approveNow: true }), BadRequestException);
+    await assert.rejects(() => run(EndDisbursementVoucherDto, { ...body, reason: null }), BadRequestException);
+    assert.equal((await run(EndDisbursementVoucherDto, body)).reason, undefined);
+  });
+  it('accepts only editable disbursement draft fields and requires the update version', async () => {
+    const body = { commandId: 'create-1', lines: [{ expenseId: 'expense-1', amount: '10.50' }],
+      payeeName: 'ร้านทดสอบ', payeeConfirmed: true, plannedPayDate: '2026-10-15', plannedMethod: 'CASH', note: '',
+      payeeBankName: 'ธนาคาร', payeeAccountName: 'ร้านทดสอบ', payeeAccountNumber: '123-456 7890' };
+    assert.deepEqual(JSON.parse(JSON.stringify(await run(CreateDisbursementVoucherDraftDto, body))), body);
+    assert.equal((await run(UpdateDisbursementVoucherDraftDto, { ...body, expectedVersion: 0 })).expectedVersion, 0);
+    for (const patch of [{ companyId: 'other' }, { branchId: 'forged' }, { status: 'PAID' }, { documentNumber: 'forged' },
+      { totalAmount: '999' }, { preparedByUserId: 'forged' }, { payeeTaxId: 'forged' }, { payeeAccountCiphertext: 'forged' },
+      { commandId: '' }, { lines: null }, { lines: [{ ...body.lines[0], position: 99 }] }, { lines: [{ expenseId: null, amount: '10' }] },
+      { payeeConfirmed: 'true' }, { payeeName: null }, { payeeBankName: null }, { payeeAccountName: 123 }, { payeeAccountNumber: 123456 }, { note: 123 }, { plannedMethod: 'CRYPTO' }]) {
+      await assert.rejects(() => run(CreateDisbursementVoucherDraftDto, { ...body, ...patch }), BadRequestException);
+    }
+    for (const expectedVersion of [undefined, null, -1, 0.5, '0']) {
+      await assert.rejects(() => run(UpdateDisbursementVoucherDraftDto, { ...body, expectedVersion }), BadRequestException);
+    }
+    // Contextual line-count and amount errors are answered by the use case with the expense number.
+    assert.equal((await run(CreateDisbursementVoucherDraftDto, { commandId: 'empty', lines: [] })).lines.length, 0);
+    assert.equal((await run(CreateDisbursementVoucherDraftDto, { ...body, lines: [{ expenseId: 'expense-1', amount: '0.001' }] })).lines[0].amount, '0.001');
+  });
   it('validates editable certificate facts and rejects server-owned identities and state', async () => {
     const body = { reasonCode: 'OTHER', missingReceiptReason: 'ไม่มีใบเสร็จ', businessPurpose: 'ใช้งานบริษัท',
       payeeName: 'ผู้รับเงิน', payeeAddress: '', payeeTaxId: '', paymentEvidenceAttachmentIds: [], supportingAttachmentIds: ['attachment-1'],
@@ -81,7 +133,7 @@ describe('expense body DTOs (audit H-23)', () => {
 
   it('accepts the complete review-preview payload, including blank optional purpose, source refs and independent VAT/WHT', async () => {
     const body = { expectedUpdatedAt: '2026-09-09T00:00:00.000Z', vendorNameSnapshot: 'ร้านทดสอบ',
-      vendorTaxIdSnapshot: '', vendorEntityKindSnapshot: 'JURISTIC', vendorDocumentNumber: '', expenseDate: '2026-09-07',
+      vendorTaxIdSnapshot: '1234567890123', vendorEntityKindSnapshot: 'JURISTIC', vendorDocumentNumber: '', expenseDate: '2026-09-07',
       note: '', vatMode: 'VAT_INCLUDED', inputVatClaimStatus: 'NON_CLAIMABLE', removedSourceItemRefs: ['I02'],
       vatSource: { inputType: 'BOTH', vatRatePercent: '7', vatAmount: '157.64' }, whtInput: { inputType: 'RATE', value: '0' },
       lines: [{ id: 'line-1', sourceItemRef: 'I01', lineNumber: 1, description: 'Fuel', chargeKind: null,
@@ -296,4 +348,29 @@ describe('expense body DTOs (audit H-23)', () => {
       });
     }
   });
+});
+
+
+it('reopen accepts only an optional boolean tax-filing attestation beside the reason', async () => {
+  const { ReopenExpenseDto } = await import('./expense.dtos');
+  assert.equal(typeof ReopenExpenseDto, 'function');
+  for (const taxFilingAttested of [undefined, true, false]) {
+    const body = { reason: 'แก้ข้อมูลผิด', ...(taxFilingAttested === undefined ? {} : { taxFilingAttested }) };
+    assert.equal((await run(ReopenExpenseDto, body)).taxFilingAttested, taxFilingAttested);
+  }
+  for (const taxFilingAttested of [null, 'true', 1, {}, []]) await assert.rejects(() => run(ReopenExpenseDto, { reason: 'แก้ข้อมูลผิด', taxFilingAttested }), BadRequestException);
+});
+
+
+it('accepts an optional strict boolean attestation on expense void', async () => {
+  for (const taxFilingAttested of [true, false, undefined]) await run(VoidExpenseDto, { reason: 'บันทึกผิด', ...(taxFilingAttested === undefined ? {} : { taxFilingAttested }) });
+  for (const taxFilingAttested of ['true', 1, null]) await assert.rejects(run(VoidExpenseDto, { reason: 'บันทึกผิด', taxFilingAttested }), BadRequestException);
+});
+
+it('validates issue and reissue intent without accepting amounts, paid facts or a fabricated origin', async () => {
+  const body = { commandId: 'issue-command', expenseId: 'expense-1', paymentId: 'payment-1' };
+  assert.deepEqual(JSON.parse(JSON.stringify(await run(IssueDisbursementVoucherDto, body))), body);
+  assert.deepEqual(JSON.parse(JSON.stringify(await run(ReissueDisbursementVoucherDto, { commandId: 'reissue-command' }))), { commandId: 'reissue-command' });
+  for (const patch of [{ commandId: '' }, { expenseId: '' }, { paymentId: null }, { amount: '1' }, { origin: 'DIRECT_PAYMENT' }, { paidDate: '2026-10-01' }]) await assert.rejects(() => run(IssueDisbursementVoucherDto, { ...body, ...patch }), BadRequestException);
+  for (const patch of [{ commandId: '' }, { commandId: 'x'.repeat(129) }, { expectedVersion: 1 }, { paymentIds: [] }]) await assert.rejects(() => run(ReissueDisbursementVoucherDto, { commandId: 'reissue-command', ...patch }), BadRequestException);
 });

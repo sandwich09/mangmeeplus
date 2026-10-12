@@ -65,19 +65,22 @@ function renderEmail(account: Partial<AccountEmailOtpState> = {}, step = 'email'
  * Renders the page in its post-load state. `useState` is keyed on the initial value: `identity`
  * and `account` both start `null`, `loading` starts `true` — the three the effect would have set.
  */
-function renderLoaded(options: { permissions: string[]; identity?: unknown; account?: unknown; emailLoginEnabled?: boolean }): string {
+function renderLoaded(options: { permissions: string[]; identity?: unknown; account?: unknown; emailLoginEnabled?: boolean; certificateReturnHref?: string; shopSaved?: boolean }): string {
   const identity = options.identity ?? FULL_IDENTITY;
   const account = options.account ?? LINE_ONLY_ACCOUNT;
   const realUseState = reactRuntime.useState;
   let nullsSeen = 0;
   let loginInjected = false;
+  let flagsSeen = 0;
   Reflect.set(reactRuntime, 'useState', (initialState: unknown) => {
     const state = (realUseState as (init: unknown) => [unknown, (value: unknown) => void])(initialState);
+    if (initialState === false && ++flagsSeen === 6) return [options.shopSaved ?? false, state[1]];
     if (initialState === false && !loginInjected) { loginInjected = true; return [options.emailLoginEnabled ?? false, state[1]]; }
     if (initialState === null) {
       nullsSeen += 1;
       if (nullsSeen === 1) return [identity, state[1]];
       if (nullsSeen === 2) return [account, state[1]];
+      if (nullsSeen === 11) return [options.certificateReturnHref ?? null, state[1]];
     }
     if (initialState === true) return [false, state[1]];
     return state;
@@ -461,4 +464,21 @@ describe('the completeness card stays out of the way', () => {
     assert.match(handler, /^\s*dismissChecklistFor\(/m, 'the button must record the dismissal, not merely mention it');
     assert.match(handler, /setDismissed\(true\)/);
   });
+});
+it('a certificate detour has a quiet return above the form and a primary return only after a successful shop save', () => {
+  assert.match(source, /setCertificateReturnHref\(companyProfileReturnPath\(companyId, window.location.search\)\)/);
+  assert.match(source, /certificateReturnHref && <Link href=\{certificateReturnHref\} className=\{`\$\{LINK_BUTTON\}/);
+  assert.match(source, /certificateReturnHref && shopSaved && <Link href=\{certificateReturnHref\} className=\{`\$\{ACTION_BUTTON\} mangmee-btn-primary`\}/);
+  assert.equal(source.split('กลับไปออกหนังสือรับรอง').length - 1, 2);
+  const save = source.slice(source.indexOf('const saveShop = async () => {'), source.indexOf('const savePhoneValue = async'));
+  assert.match(save, /setShopSaved\(false\)/);
+  assert.match(save, /if \(!failed\) setShopSaved\(true\)/);
+  assert.ok(save.indexOf('setShopSaved(true)') > save.indexOf('putVatRegistration('));
+  const href = '/companies/company-1/expenses/expense-1#wht-certificate';
+  for (const saved of [false, true]) {
+    const html = renderLoaded({ permissions: ['company.legal_identity.manage'], certificateReturnHref: href, shopSaved: saved });
+    assert.equal(html.split('กลับไปออกหนังสือรับรอง').length - 1, saved ? 2 : 1);
+    assert.ok(html.indexOf('กลับไปออกหนังสือรับรอง') < html.indexOf('id="business-type"'));
+    assert.equal(/<a[^>]*class="[^"]*mangmee-btn-primary"[^>]*>กลับไปออกหนังสือรับรอง<\/a>/.test(html), saved);
+  }
 });

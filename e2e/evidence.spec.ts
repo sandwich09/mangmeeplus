@@ -16,8 +16,13 @@ import type { Page } from '@playwright/test';
 /** The nine launch features, spec section 7. */
 const PRIORITY_ROUTES = [
   '/expenses',
+  '/expenses/wht-certificates',
   '/expenses/upload',
   '/expenses/manual',
+  '/expenses/disbursement-vouchers',
+  '/expenses/disbursement-vouchers/new',
+  // Missing-document state; a populated voucher needs controller-seeded data.
+  '/expenses/disbursement-vouchers/00000000-0000-4000-8000-000000000000',
   '/expenses/evidence',
   '/expenses/categories',
   '/expenses/signatures',
@@ -43,6 +48,7 @@ const PRIORITY_ROUTES = [
  * most likely way this bundle ends up lying about coverage.
  */
 const CARD_LISTS = [
+  { route: '/expenses/wht-certificates', listTestId: 'wht-certificate-card-list', cardTestId: 'wht-certificate-card' },
   { route: '/reimbursements', listTestId: 'reimbursements-mine-card-list', cardTestId: 'reimbursements-mine-card' },
   { route: '/expenses', listTestId: 'expenses-card-list', cardTestId: 'expenses-card' },
   { route: '/accounting', listTestId: 'accounting-documents-card-list', cardTestId: 'accounting-document-card' },

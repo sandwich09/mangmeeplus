@@ -82,13 +82,13 @@ function errorMessage(error: unknown): string | undefined {
  * The run reads every company's claims and this database is shared with other suites, so the two
  * lists it works from are kept to one company; everything it does with a claim is the real thing.
  */
-function claimSystem(client: PrismaClient, repo: PrismaReimbursementRepository, companyId: string) {
+function claimSystem(client: PrismaClient, repo: PrismaReimbursementRepository, companyId: string, notify?: any) {
   const prisma = { client } as any;
   const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
   const numbers = new PrismaDocumentSequenceRepository(prisma);
   const expenses = new PrismaExpenseRepository(prisma);
   const voidExpense = new VoidExpenseUseCase(expenses, audit, { append: async () => undefined } as any,
-    new ReserveDocumentNumberUseCase(numbers, audit), new CommitDocumentNumberUseCase(numbers, audit), new CancelDocumentNumberUseCase(numbers, audit));
+    new ReserveDocumentNumberUseCase(numbers, audit), new CommitDocumentNumberUseCase(numbers, audit), new CancelDocumentNumberUseCase(numbers, audit), notify);
   const confirm = new ConfirmExpenseUseCase(expenses, audit, { resolveLines: async () => [] } as any, {} as any);
   const orchestrator = new ReimbursementProjectionOrchestratorService(repo, expenses, new MaterializeClaimExpensesService(), confirm, audit);
   const ownCompany = <T extends { request: { companyId: string } }>(rows: T[], limit: number) => rows.filter((row) => row.request.companyId === companyId).slice(0, limit);
@@ -3260,7 +3260,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
   const finance = () => ({ ...requester(), userId: FIN, roles: ['FINANCE'], permissions: ['reimbursement.read', 'reimbursement.finance_review', 'reimbursement.payment.record'] });
   const manager = () => ({ ...requester(), userId: MGR, roles: ['MANAGER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'] });
   /** The scheduled run and the web call over one connection. */
-  const system = (index: number) => claimSystem(clients[index]!, repos[index]!, companyId);
+  const system = (index: number, notify?: any) => claimSystem(clients[index]!, repos[index]!, companyId, notify);
   /** A run takes every claim of the company that waits, other cases' leftovers included; a case reads what it did with its own. */
   const ofThese = (claims: Array<{ requestId: string }>, run: { completed: string[]; failed: Array<{ requestId: string; error: string }>; blocked: string[] }) => {
     const own = (id: string) => claims.some((claim) => claim.requestId === id);
@@ -3268,14 +3268,14 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
   };
 
   /** The use cases over one connection, with the real expense void and audit rows written to the database. */
-  function on(index: number) {
+  function on(index: number, notify?: any) {
     const client = clients[index]!;
     const prisma = { client } as any;
     const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
     const numbers = new PrismaDocumentSequenceRepository(prisma);
     const expenses = new PrismaExpenseRepository(prisma);
     const voidExpense = new VoidExpenseUseCase(expenses, audit, { append: async () => undefined } as any,
-      new ReserveDocumentNumberUseCase(numbers, audit), new CommitDocumentNumberUseCase(numbers, audit), new CancelDocumentNumberUseCase(numbers, audit));
+      new ReserveDocumentNumberUseCase(numbers, audit), new CommitDocumentNumberUseCase(numbers, audit), new CancelDocumentNumberUseCase(numbers, audit), notify);
     return {
       cancel: new CancelReimbursementUseCase(repos[index]!, audit, voidExpense),
       withdraw: new WithdrawReimbursementCancellationUseCase(repos[index]!, audit),
@@ -3351,6 +3351,111 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     startedAt: new Date(), onIntentPersisted: async () => undefined,
   }));
 
+  async function attachClaimCertificate(claim: { expenseIds: string[] }, kind: 'SYSTEM' | 'EXTERNAL') {
+    const db = clients[0]!;
+    const expenseId = claim.expenseIds[0]!;
+    const number = `WT-${S}-${++sequence}`;
+    await db.expenseRecord.update({ where: { id: expenseId }, data: { whtAmount: '3' } });
+    const period = await db.taxPeriod.upsert({ where: { companyId_formType_periodKey: { companyId, formType: 'PND3', periodKey: '2026-09' } },
+      update: {}, create: { companyId, taxType: 'WHT', formType: 'PND3', periodKey: '2026-09', status: 'OPEN' } });
+    const certificate = kind === 'SYSTEM' ? await db.whtCertificate.create({ data: {
+      companyId, certificateNumber: number, status: 'ISSUED', taxPeriodId: period.id, periodKey: period.periodKey,
+      payeeSnapshotJson: { name: 'ผู้รับเงิน', address: 'ที่อยู่ผู้รับเงิน' }, payerSnapshotJson: { companyName: 'กิจการ', taxId: '1234567890123', address: 'ที่อยู่กิจการ' }, incomeCategoryCode: '40_2', incomeCategoryName: 'ค่าบริการ',
+      whtRate: '3', grossAmount: '100', withheldAmount: '3', paymentDate: day, issuedAt: day, issuedByUserId: MGR,
+    } }) : null;
+    const handoff = await db.whtCertificateHandoff.create({ data: {
+      companyId, sourcePaymentType: 'expense.record', sourcePaymentId: expenseId, sourceFeatureKey: 'expense',
+      status: kind === 'SYSTEM' ? 'SYSTEM_ISSUED' : 'EXTERNAL_LINKED', certificateId: certificate?.id,
+      taxPeriodId: period.id, prefillSnapshotJson: {}, prefillSnapshotHash: 'qa', availabilityVectorJson: {},
+      creationCommandId: `${S}-${sequence}`, payloadFingerprint: 'qa',
+      ...(kind === 'EXTERNAL' && { externalCertificateNumber: number, externalIssuedDate: day,
+        externalEvidenceRef: 'เอกสารเดิม', linkNote: 'บันทึกเดิม', linkedAt: day, linkedByUserId: MGR }),
+    } });
+    return { certificate, handoff, number };
+  }
+
+  for (const kind of ['SYSTEM', 'EXTERNAL'] as const) {
+    it(`A7 cancels a claim with ${kind}, one history row and one issuer notice`, async (t) => {
+      if (!reachable) return t.skip('no database reachable');
+      const claim = await payableClaim();
+      const linked = await attachClaimCertificate(claim, kind);
+      const notices: any[] = [];
+      const notify = { execute: async (input: any) => { notices.push(input); } };
+      const actor = { ...requester(), permissions: [...requester().permissions,
+        kind === 'SYSTEM' ? 'wht.certificate.correct' : 'wht.external_certificate.link'] };
+      await on(0, notify).cancel.execute(actor, claim.requestId, 'กรอกข้อมูลผิด', true);
+      assert.equal((await stored(claim)).status, 'CANCELLED');
+      assert.deepEqual((await stored(claim)).expenses, ['VOIDED']);
+      assert.equal((await clients[0]!.whtCertificateHandoff.findUniqueOrThrow({ where: { id: linked.handoff.id } })).status, 'CANCELLED');
+      if (linked.certificate) assert.equal((await clients[0]!.whtCertificate.findUniqueOrThrow({ where: { id: linked.certificate.id } })).status, 'VOIDED');
+      const history = await clients[0]!.whtCertificateHistory.findMany({ where: { companyId, expenseId: claim.expenseIds[0] } });
+      assert.equal(history.length, 1); assert.equal(history[0]!.eventType, kind === 'SYSTEM' ? 'CANCELLED_SOURCE_VOIDED' : 'EXTERNAL_RECORD_REMOVED');
+      assert.equal(history[0]!.reason, 'กรอกข้อมูลผิด'); assert.equal(history[0]!.taxFilingAttested, true); assert.equal(history[0]!.actorUserId, STAFF);
+      assert.equal(notices.length, 1); assert.deepEqual(notices[0].recipientUserIds, [MGR]); assert.match(notices[0].body, /^สมชาย พนักงาน /u);
+      assert.equal((await clients[0]!.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } })).cancellationCertificateAttestedAt, null);
+    });
+
+    it(`A7 stores ${kind} authority across interruption and a system continuation`, async (t) => {
+      if (!reachable) return t.skip('no database reachable');
+      const claim = await payableClaim();
+      await attachClaimCertificate(claim, kind);
+      const caller = on(0);
+      caller.expenseScreen.void.executeForReimbursement = async () => { throw new Error('interrupted after intent'); };
+      const actor = { ...requester(), permissions: [...requester().permissions,
+        kind === 'SYSTEM' ? 'wht.certificate.correct' : 'wht.external_certificate.link'] };
+      await assert.rejects(caller.cancel.execute(actor, claim.requestId, 'กรอกข้อมูลผิด', true), /interrupted after intent/);
+      assert.ok((await clients[1]!.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } })).cancellationCertificateAttestedAt);
+      const notices: any[] = [];
+      const run = await system(1, { execute: async (input: any) => { notices.push(input); } }).reconciler.execute();
+      assert.deepEqual(ofThese([claim], run), { completed: [claim.requestId], failed: [], blocked: [] });
+      const history = await clients[0]!.whtCertificateHistory.findMany({ where: { companyId, expenseId: claim.expenseIds[0] } });
+      assert.equal(history.length, 1); assert.equal(history[0]!.actorUserId, STAFF);
+      assert.equal(notices.length, 1); assert.match(notices[0].body, /^สมชาย พนักงาน /u);
+      assert.equal((await clients[0]!.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } })).cancellationCertificateAttestedAt, null);
+    });
+  }
+
+  it('A7 withdrawal clears certificate authority and a later certificate needs a person to attest', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    await strand(claim, 'กรอกข้อมูลผิด');
+    await attachClaimCertificate(claim, 'SYSTEM');
+    assert.deepEqual(ofThese([claim], await system(1).reconciler.execute()), { completed: [], failed: [], blocked: [claim.requestId] });
+    const detail = await on(0).detail.execute(requester(), claim.requestId);
+    assert.equal(detail.pendingCancellation?.blocker?.code, 'certificate_attestation_required');
+    const caller = on(0);
+    caller.expenseScreen.void.executeForReimbursement = async () => { throw new Error('interrupted after attestation'); };
+    await assert.rejects(caller.cancel.execute({ ...requester(), permissions: [...requester().permissions, 'wht.certificate.correct'] }, claim.requestId, undefined, true), /interrupted after attestation/);
+    assert.ok((await clients[1]!.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } })).cancellationCertificateAttestedAt);
+    await on(1).withdraw.execute(finance(), claim.requestId);
+    const row = await clients[0]!.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } });
+    assert.equal(row.cancellationPendingAt, null); assert.equal(row.cancellationCertificateAttestedAt, null);
+    assert.deepEqual((await stored(claim)).expenses, ['CONFIRMED']);
+  });
+
+  it('A7 a certificate issued after the committed intent refuses the void, then an authorised person finishes', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const repo = Object.create(repos[0]!) as PrismaReimbursementRepository;
+    repo.beginCancellationAtomic = async (input) => {
+      const intent = await repos[0]!.beginCancellationAtomic(input);
+      await attachClaimCertificate(claim, 'SYSTEM');
+      return intent;
+    };
+    const caller = on(0);
+    const cancel = new CancelReimbursementUseCase(repo, { log: async () => undefined } as any, caller.expenseScreen.void);
+    await assert.rejects(cancel.execute(requester(), claim.requestId, 'กรอกข้อมูลผิด'), (error) => errorCode(error) === 'certificate_permission_missing');
+    const pending = await clients[1]!.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } });
+    assert.ok(pending.cancellationPendingAt); assert.equal(pending.cancellationCertificateAttestedAt, null);
+    assert.equal((await caller.detail.execute(requester(), claim.requestId)).pendingCancellation?.blocker?.code, 'certificate_attestation_required');
+    const notices: any[] = [];
+    await on(1, { execute: async (input: any) => { notices.push(input); } }).cancel.execute(
+      { ...finance(), permissions: [...finance().permissions, 'wht.certificate.correct'] }, claim.requestId, undefined, true);
+    assert.equal((await stored(claim)).status, 'CANCELLED'); assert.deepEqual((await stored(claim)).expenses, ['VOIDED']);
+    assert.equal(await clients[0]!.whtCertificateHistory.count({ where: { companyId, expenseId: claim.expenseIds[0] } }), 1);
+    assert.equal(notices.length, 1); assert.match(notices[0].body, /^สมชาย พนักงาน /u);
+  });
+
   it('refuses a short reason and a closed period before any intent is written, then cancels once the period is reopened', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     const claim = await payableClaim();
@@ -3361,7 +3466,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
 
     await closePeriod(claim.periodId);
     await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId, 'ซื้อซ้ำกับใบก่อน'),
-      (error: any) => error.getStatus() === 409 && errorMessage(error) === `reimbursement_cancellation_accounting_period_locked:${claim.periodKey}`);
+      (error: any) => error.getStatus() === 409 && errorCode(error) === `reimbursement_cancellation_accounting_period_locked:${claim.periodKey}`);
     assert.deepEqual(await stored(claim), untouched, 'nothing was written: no intent, no void, no reversal number used');
     assert.equal(await clients[0]!.outboxEvent.count({ where: { companyId, aggregateId: claim.requestId } }), 0);
 
@@ -3403,7 +3508,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const shown = (await on(0).detail.execute(requester(), claim.requestId)).pendingCancellation!;
     assert.deepEqual([shown.blocker, shown.canResume, shown.canWithdraw], [{ code: 'accounting_period_locked', periodKey: claim.periodKey }, true, true]);
     await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId),
-      (error: any) => error.getStatus() === 409 && errorMessage(error) === `reimbursement_cancellation_accounting_period_locked:${claim.periodKey}`);
+      (error: any) => error.getStatus() === 409 && errorCode(error) === `reimbursement_cancellation_accounting_period_locked:${claim.periodKey}`);
     assert.deepEqual([(await stored(claim)).expenses, (await stored(claim)).reversals], [['CONFIRMED', 'CONFIRMED'], 0]);
 
     await closePeriod(claim.periodId, 'OPEN');
@@ -3908,7 +4013,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.equal((await on(0).cancel.execute(finance(), payable.requestId, 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
     assert.deepEqual([(await stored(payable)).expenses, (await stored(payable)).reversals], [['VOIDED'], 1]);
     // Once the claim has ended it holds the record no more: the expense screen answers by its own rules again.
-    await assert.rejects(() => on(0).expenseScreen.void.execute(accountant(), payable.expenseIds[0]!, 'บันทึกผิด'), /Can only void confirmed expenses/);
+    await assert.rejects(() => on(0).expenseScreen.void.execute(accountant(), payable.expenseIds[0]!, 'บันทึกผิด'), /เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว จึงยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้/);
   });
 
   // ---- Audit B4: a decision that is on record and was not carried out ----

@@ -8,6 +8,62 @@ import { WORKSPACE_MODULES, NAV_GROUP_ORDER, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } 
 import type { NavItem } from './web-core-workspace.model';
 import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
 import { t } from '@/common/i18n/workspace-i18n.logic';
+import { canOpenDisbursementVoucherWeb } from '@/features/expenses/disbursement-voucher-entry.logic';
+
+describe('disbursement-voucher web entrances', () => {
+  it('shows the child only with read permission AND the setting, leaving the other children unchanged', () => {
+    for (const read of [false, true]) {
+      for (const flag of [undefined, false, true]) {
+        const permissions = ['expense.read_own', ...(read ? ['expense.disbursement.read'] : [])];
+        const session = { companyId: 'co', permissions, disbursementVoucherWebEntry: flag };
+        const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
+        const children = buildNavItems(modules, 'co', 'th', {}, permissions, [], false,
+          canOpenDisbursementVoucherWeb(session, 'co')).find((item) => item.key === 'expenses')!.subItems!;
+        const voucher = children.find((child) => child.key === 'expenses.disbursement_vouchers');
+        assert.equal(Boolean(voucher), read && flag === true);
+        if (voucher) {
+          assert.equal(voucher.label, 'ใบเตรียมจ่าย/ใบสำคัญจ่าย');
+          assert.equal(voucher.href, '/companies/co/expenses/disbursement-vouchers');
+        }
+        assert.deepEqual(children.filter((child) => child !== voucher).map((child) => child.key),
+          ['expenses.list', 'expenses.substitute_receipt']);
+      }
+    }
+    for (const permissions of [['expense.read_own'], ['expense.read_own', 'expense.disbursement.read']]) {
+      const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
+      const hasChild = (shown?: boolean) => buildNavItems(modules, 'co', 'th', {}, permissions, [], false, shown)
+        .find((item) => item.key === 'expenses')!.subItems!.some((child) => child.key === 'expenses.disbursement_vouchers');
+      assert.equal(hasChild(), false, 'a caller without the setting keeps the new menu hidden');
+      assert.equal(hasChild(true), permissions.includes('expense.disbursement.read'), 'the builder also checks read permission');
+    }
+  });
+
+  it('does not let the new permissions open the expenses group by themselves', () => {
+    const permissions = ['expense.disbursement.read', 'expense.disbursement.prepare',
+      'expense.disbursement.approve', 'expense.disbursement.pay', 'expense.disbursement.issue'];
+    assert.equal(filterModulesByPermissions(WORKSPACE_MODULES, permissions).some((module) => module.key === 'expenses'), false);
+    assert.equal(canSeeRoute('/expenses', permissions), false);
+    assert.equal(buildNavItems(filterModulesByPermissions(WORKSPACE_MODULES, permissions), 'co', 'th', {}, permissions, [], false, true)
+      .some((item) => item.key === 'expenses'), false);
+  });
+
+  it('uses read for the list and document and prepare for new, ahead of the general expense rule', () => {
+    for (const [path, permission] of [
+      ['/expenses/disbursement-vouchers', 'expense.disbursement.read'],
+      ['/expenses/disbursement-vouchers/new', 'expense.disbursement.prepare'],
+      ['/expenses/disbursement-vouchers/doc-1', 'expense.disbursement.read'],
+    ] as const) {
+      assert.deepEqual(findRoutePermissionRule(path)?.anyOf, [permission]);
+      assert.equal(canSeeRoute(path, [permission]), true);
+      assert.equal(canSeeRoute(path, ['expense.read', 'expense.create']), false);
+      for (const other of ['expense.disbursement.read', 'expense.disbursement.prepare']) {
+        assert.equal(canSeeRoute(path, [other]), other === permission);
+      }
+      assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [permission], 'co', `/companies/co${path}`), true);
+      assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['expense.read'], 'co', `/companies/co${path}`), false);
+    }
+  });
+});
 
 it('P24-2b keeps all seven scope-control templates touch-sized with forced-colors-safe focus', () => {
   const source = readFileSync(new URL('./WorkspaceScope.tsx', import.meta.url), 'utf8');

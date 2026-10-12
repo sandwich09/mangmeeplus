@@ -86,3 +86,8 @@ it('W4 every notification title wraps fully while the row keeps its minimum heig
   assert.doesNotMatch(centerSource.match(/<div key=\{item.id\}[^>]+>/)![0], /h-\[|max-h-|overflow-hidden/);
   assert.match(centerSource, /isUnreadNotification\(item\)/);
 });
+
+it('bell titles have two lines so different document numbers remain distinguishable', () => {
+  const title = bellSource.match(/<div className=\{`([^`]+)`\}>\{item.title\}<\/div>/)![1]!;
+  assert.match(title, /line-clamp-2/); assert.doesNotMatch(title, /truncate/);
+});

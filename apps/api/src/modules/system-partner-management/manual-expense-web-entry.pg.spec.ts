@@ -63,6 +63,7 @@ const databaseUrl = process.env.MANUAL_EXPENSE_WEB_ENTRY_TEST_DATABASE_URL;
 const API_SRC = join(__dirname, '..', '..');
 const MIGRATIONS = join(API_SRC, '..', 'prisma', 'migrations');
 const MIGRATION = '20261002230000_company_web_entry_setting';
+const DISBURSEMENT_ENTRY_MIGRATION = '20261011100000_disbursement_voucher_web_entry_setting';
 const PLATFORM = 'platform-company';
 const ADMIN = 'admin-a';
 const OTHER_ADMIN = 'admin-b';
@@ -88,17 +89,19 @@ function sources(dir: string): string[] {
 }
 
 // Needs no database, so it runs wherever this file runs: the structural half of "nothing behind
-// the entrances reads the setting". A guard, use case, repository, LINE tool or billing function
-// that started to read it would have to name the table, the field or the default.
-describe('manual-expense web entry — who reads the setting', () => {
-  it('only the admin command, the partner detail and GET /auth/me touch it', () => {
+// the entrances reads these settings". A guard, use case, repository, LINE tool or billing function
+// that started to read one would have to name the table, field or default.
+describe('company web-entry settings — who reads them', () => {
+  it('only the two admin commands, partner detail and GET /auth/me read the setting values', () => {
     const touching = sources(API_SRC)
-      .filter((path) => /companyWebEntrySetting|manualExpenseWebEntry|MANUAL_EXPENSE_WEB_ENTRY|manualExpenseEntryEnabled/i.test(readFileSync(path, 'utf8')))
+      .filter((path) => /companyWebEntrySetting|manualExpenseWebEntry|MANUAL_EXPENSE_WEB_ENTRY|manualExpenseEntryEnabled|disbursementVoucherEntryEnabled|DISBURSEMENT_VOUCHER_WEB_ENTRY/i.test(readFileSync(path, 'utf8')))
       .map((path) => relative(API_SRC, path)).sort();
     assert.deepEqual(touching, [
       'modules/auth/presentation/auth.controller.ts',
       'modules/system-partner-management/application/use-cases/get-partner-detail.use-case.ts',
+      'modules/system-partner-management/application/use-cases/set-partner-disbursement-voucher-web-entry.use-case.ts',
       'modules/system-partner-management/application/use-cases/set-partner-manual-expense-web-entry.use-case.ts',
+      'modules/system-partner-management/domain/logic/disbursement-voucher-web-entry.logic.ts',
       'modules/system-partner-management/domain/logic/manual-expense-web-entry.logic.ts',
       'modules/system-partner-management/presentation/http/partner.controller.ts',
       // Registers the command as a provider; it reads nothing.
@@ -118,6 +121,13 @@ describe('manual-expense web entry — who reads the setting', () => {
     for (const statement of statements) assert.match(statement, /^(CREATE TABLE|CREATE UNIQUE INDEX "CompanyWebEntrySetting_companyId_key" ON|ALTER TABLE) "CompanyWebEntrySetting"/);
     // A row always states its value: the one default lives in the application, not in the column.
     assert.match(statements[0]!, /"manualExpenseEntryEnabled" BOOLEAN NOT NULL,/);
+  });
+
+  it('adds only a nullable voucher-entry column without a default or a backfill', () => {
+    const sql = readFileSync(join(MIGRATIONS, DISBURSEMENT_ENTRY_MIGRATION, 'migration.sql'), 'utf8')
+      .split('\n').filter((line) => !line.startsWith('--')).join('\n');
+    const statements = sql.split(';').map((statement) => statement.trim()).filter(Boolean);
+    assert.deepEqual(statements, ['ALTER TABLE "CompanyWebEntrySetting" ADD COLUMN "disbursementVoucherEntryEnabled" BOOLEAN']);
   });
 });
 

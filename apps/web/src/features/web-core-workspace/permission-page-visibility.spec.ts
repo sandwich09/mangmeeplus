@@ -20,6 +20,28 @@ if (previousSvgLoader) require.extensions['.svg'] = previousSvgLoader;
 else delete require.extensions['.svg'];
 
 describe('permission page visibility regression', () => {
+  it('opens the expenses certificate child only with issue permission without widening the expenses group', () => {
+    const path = '/companies/company-1/expenses/wht-certificates';
+    const items = (permissions: string[]) => buildNavItems(filterModulesByPermissions(WORKSPACE_MODULES, permissions), 'company-1', 'th', {}, permissions)
+      .find(item => item.key === 'expenses')?.subItems ?? [];
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['expense.read'], 'company-1', path), false);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['wht.certificate.issue'], 'company-1', path), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['wht.certificate.read'], 'company-1', path), false);
+    assert.equal(items(['expense.read']).some(item => item.key === 'expenses.wht_certificates'), false);
+    const child = items(['expense.read', 'wht.certificate.issue']).find(item => item.key === 'expenses.wht_certificates');
+    assert.equal(child?.href, path); assert.equal(child?.label, 'หัก ณ ที่จ่าย (50 ทวิ)');
+    assert.equal(items(['wht.certificate.issue']).length, 0);
+    assert.ok(React.isValidElement(requireRoutePermission({ permissions: ['expense.read'] }, '/expenses/wht-certificates')));
+    assert.equal(requireRoutePermission({ permissions: ['wht.certificate.issue'] }, '/expenses/wht-certificates'), null);
+  });
+  it('places certificates after the expense list and recording actions without changing the manual-entry gate', () => {
+    const permissions = ['expense.read', 'expense.receipt.upload', 'expense.create', 'expense.category.manage', 'wht.certificate.issue'];
+    const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
+    const keys = (manual: boolean) => buildNavItems(modules, 'company-1', 'th', {}, permissions, [], manual)
+      .find(item => item.key === 'expenses')!.subItems!.map(item => item.key);
+    assert.deepEqual(keys(true).slice(0, 5), ['expenses.list', 'expenses.upload', 'expenses.manual', 'expenses.wht_certificates', 'expenses.categories']);
+    assert.deepEqual(keys(false).slice(0, 4), ['expenses.list', 'expenses.upload', 'expenses.wht_certificates', 'expenses.categories']);
+  });
   it('hides the role matrix at every UI gate from a role reader', () => {
     const permissions = ['access.role.read'];
     const navItems = buildNavItems(

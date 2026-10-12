@@ -493,8 +493,61 @@ describe('confirmation after expense correction', () => {
     assert.equal(h.row.status, 'READY_FOR_CONFIRMATION'); assert.equal(h.writes.header, 0); assert.equal(h.writes.outbox, 0);
   });
 
+  it('keeps a typed certificate address on revival only for the same payee by tax digits or normalized name', async () => {
+    for (const [oldTaxId, newTaxId, oldName, newName, keep] of [
+      ['1-1111-11111-11-1', '1111111111111', 'ชื่อเดิม', 'ชื่อที่สะกดใหม่', true],
+      ['1111111111111', '2222222222222', 'ชื่อเดิม', 'ชื่อเดิม', false],
+      [null, null, ' ร้าน แสง-ดี ', 'ร้านแสงดี', true],
+      [null, null, 'ร้านเดิม', 'ร้านใหม่', false],
+      [null, '1111111111111', 'ร้านเดิม', 'ร้านเดิม', false],
+      [null, null, '', '', false],
+    ] as const) {
+      const h = harness();
+      const history: any[] = [];
+      h.client.whtCertificateHistory = { create: async ({ data }: any) => { history.push(data); return data; } };
+      Object.assign(h.row, { whtAmount: 30, whtCategoryCode: 'CAT1', whtRate: 3, vendorEntityKindSnapshot: 'INDIVIDUAL', vendorNameSnapshot: newName, vendorTaxIdSnapshot: newTaxId });
+      const typedAt = new Date('2026-07-15T12:00:00Z');
+      const retired: any = { id: 'handoff-old', status: 'CANCELLED', payeeAddress: 'บ้านเลขที่ 99', payeeAddressByUserId: 'recorder', payeeAddressAt: typedAt,
+        prefillSnapshotJson: { payeeSnapshot: { name: oldName, taxId: oldTaxId, address: null } }, prefillSnapshotHash: 'old' };
+      h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
+      h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
+      h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า' }) };
+      h.client.whtCertificateHandoff = { findFirst: async () => retired, create: async () => { throw Error('duplicate handoff'); },
+        update: async ({ data }: any) => { Object.assign(retired, data); return retired; } };
+      await h.repo.finalizeAndConfirmExpenseCas(await inputFor(h.repo, h.updatedAt), finalize);
+      const taxChanged = oldTaxId !== newTaxId && !keep && Boolean(oldTaxId || newTaxId);
+      assert.equal(history.length, taxChanged ? 1 : 0);
+      if (taxChanged) { assert.equal(history[0].eventType, 'PAYEE_ADDRESS_CLEARED'); assert.equal(history[0].handoffId, retired.id); assert.equal(history[0].actorUserId, 'approver-1'); }
+      assert.equal(retired.status, 'REQUIRED'); assert.equal(retired.payeeAddress, keep ? 'บ้านเลขที่ 99' : null);
+      assert.equal(retired.payeeAddressByUserId, keep ? 'recorder' : null); assert.equal(retired.payeeAddressAt, keep ? typedAt : null);
+      assert.equal(retired.prefillSnapshotJson.payeeSnapshot.address, null, 'the typed address stays outside the frozen prefill');
+      assert.equal(retired.prefillSnapshotJson.payeeSnapshot.name, newName);
+    }
+  });
+
+  it('drops the typed certificate address when the expense now carries a different address of its own', async () => {
+    for (const [oldAddress, newAddress, keep] of [
+      [null, null, true], ['ที่อยู่ตามใบ', 'ที่อยู่ตามใบ', true], ['ที่อยู่ตามใบ', ' ที่อยู่ตามใบ ', true],
+      [null, 'ที่อยู่ที่เพิ่งแก้บนเอกสาร', false], ['ที่อยู่ตามใบ', 'ที่อยู่ที่เพิ่งแก้บนเอกสาร', false],
+    ] as const) {
+      const h = harness();
+      Object.assign(h.row, { whtAmount: 30, whtCategoryCode: 'CAT1', whtRate: 3, vendorEntityKindSnapshot: 'INDIVIDUAL', vendorNameSnapshot: 'ร้านเดิม', vendorTaxIdSnapshot: '1111111111111', vendorAddressSnapshot: newAddress });
+      const retired: any = { id: 'handoff-old', status: 'CANCELLED', payeeAddress: 'บ้านเลขที่ 99', payeeAddressByUserId: 'recorder', payeeAddressAt: new Date('2026-07-15T12:00:00Z'),
+        prefillSnapshotJson: { payeeSnapshot: { name: 'ร้านเดิม', taxId: '1111111111111', address: oldAddress } }, prefillSnapshotHash: 'old' };
+      h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
+      h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
+      h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า' }) };
+      h.client.whtCertificateHandoff = { findFirst: async () => retired, create: async () => { throw Error('duplicate handoff'); },
+        update: async ({ data }: any) => { Object.assign(retired, data); return retired; } };
+      await h.repo.finalizeAndConfirmExpenseCas(await inputFor(h.repo, h.updatedAt), finalize);
+      assert.equal(retired.payeeAddress, keep ? 'บ้านเลขที่ 99' : null, `old ${oldAddress} → new ${newAddress}`);
+    }
+  });
+
   it('rebuilds a retired handoff from corrected facts with the same expense number and no duplicate handoff', async () => {
     const h = harness();
+    const history: any[] = [];
+    h.client.whtCertificateHistory = { create: async ({ data }: any) => { history.push(data); return data; } };
     Object.assign(h.row, { whtAmount: 30, whtCategoryCode: 'CAT1', whtRate: 3, vendorEntityKindSnapshot: 'INDIVIDUAL', expenseNumber: 'EXP-KEEP' });
     const retired: any = { id: 'handoff-old', status: 'CANCELLED', payeeAddress: 'ที่อยู่ของผู้รับเงินเดิม', prefillSnapshotJson: { withheldAmount: 'wrong' } };
     h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
@@ -531,4 +584,52 @@ describe('confirmation keeps its own period gate', () => {
     assert.equal(result.expense.status, 'CONFIRMED');
     assert.equal(h.writes.header, 1);
   });
+});
+
+
+describe('expense certificate income base (E1)', () => {
+  for (const path of ['confirm', 'finalize and confirm']) {
+    for (const source of ['stored base', 'withheld lines', 'legacy fallback']) it(`${path} uses ${source} for the 1500 VAT-inclusive bill certificate`, async () => {
+      const h = harness();
+      Object.assign(h.row, { whtAmount: '42.06', whtRate: '3', whtCategoryCode: 'CAT1', vendorEntityKindSnapshot: 'INDIVIDUAL', grandTotalAmount: '1500.00', taxableAmount: '1401.87', vatAmount: '98.13', netPayableAmount: '1457.94', outstandingAmount: '1457.94' });
+      if (source === 'stored base') h.row.whtInputJson = { inputType: 'RATE', value: '3', baseAmount: '1401.87' };
+      Object.assign(h.row.lines[0], { taxableAmount: '1401.87', vatAmount: '98.13', lineTotalAmount: '1500', whtAmount: source === 'legacy fallback' ? '0' : '42.06' });
+      const papers: any[] = [];
+      h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
+      h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }) };
+      h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ' }) };
+      h.client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { papers.push(data); } };
+      const input = await inputFor(h.repo, h.updatedAt);
+      if (path === 'confirm') await h.repo.confirmExpenseCas(input);
+      else await h.repo.finalizeAndConfirmExpenseCas(input, finalize);
+      assert.equal(Number(papers[0].prefillSnapshotJson.grossAmount), source === 'legacy fallback' ? 1402 : 1401.87);
+      assert.equal(papers[0].prefillSnapshotJson.withheldAmount, '42.06');
+    });
+  }
+  it('uses an explicit document base before the withheld line taxable sum', async () => {
+    const h = harness();
+    Object.assign(h.row, { whtAmount: '30', whtRate: '3', whtCategoryCode: 'CAT1', vendorEntityKindSnapshot: 'INDIVIDUAL', whtInputJson: { inputType: 'RATE', value: '3', baseAmount: '1000' } });
+    Object.assign(h.row.lines[0], { taxableAmount: '1401.87', whtAmount: '30' });
+    let paper: any;
+    h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }) };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ' }) };
+    h.client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { paper = data; } };
+    await h.repo.finalizeAndConfirmExpenseCas(await inputFor(h.repo, h.updatedAt), finalize);
+    assert.equal(Number(paper.prefillSnapshotJson.grossAmount), 1000);
+  });
+  it('excludes lines without withholding from the certificate income base', async () => {
+    const h = harness();
+    Object.assign(h.row, { whtAmount: '42.06', whtRate: '3', whtCategoryCode: 'CAT1', vendorEntityKindSnapshot: 'INDIVIDUAL', grandTotalAmount: '1750', netPayableAmount: '1707.94', outstandingAmount: '1707.94' });
+    Object.assign(h.row.lines[0], { taxableAmount: '1401.87', whtAmount: '42.06' });
+    h.row.lines.push({ ...h.row.lines[0], id: 'line-2', lineNumber: 2, taxableAmount: '250', whtAmount: '0' });
+    let paper: any;
+    h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }) };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ' }) };
+    h.client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { paper = data; } };
+    await h.repo.confirmExpenseCas(await inputFor(h.repo, h.updatedAt));
+    assert.equal(Number(paper.prefillSnapshotJson.grossAmount), 1401.87);
+  });
+
 });

@@ -136,6 +136,23 @@ describe('PrismaAttachmentRepository substitute-evidence retention', () => {
 });
 
 describe('PrismaAttachmentRepository.markDeleted', () => {
+  it('retains either document pointer inside a caller transaction even without a link or tag', async () => {
+    for (const field of ['pdfAttachmentId', 'slipAttachmentId']) {
+      const locks: string[] = [];
+      let queried: any;
+      const tx = { $executeRaw: async (_parts: any, ...values: any[]) => { locks.push(...values.filter(v => typeof v === 'string')); return 1; },
+        attachmentLink: { findMany: async () => [] }, reimbursementLine: { findFirst: async () => null },
+        disbursementVoucher: { findFirst: async ({ where }: any) => { queried = where; return { id: 'dv', [field]: 'att' }; } },
+        attachmentObject: { updateMany: mock.fn(async () => ({ count: 1 })) } };
+      const repo = new PrismaAttachmentRepository({ client: { $transaction: () => { throw new Error('nested transaction'); } } } as any);
+      await assert.rejects(() => repo.markDeleted({ companyId: 'co-1', id: 'att' }, tx as any), (e: any) => e.getResponse().code === 'disbursement_file_retained');
+      assert.equal(queried.companyId, 'co-1');
+      assert.deepEqual(queried.OR, [{ pdfAttachmentId: 'att' }, { slipAttachmentId: 'att' }]);
+      assert.ok(locks.includes('co-1:att:attachment-retention'));
+      assert.equal(tx.attachmentObject.updateMany.mock.callCount(), 0);
+    }
+  });
+
   it('uses the caller transaction for retention checks and soft-delete', async () => {
     const now = new Date('2026-07-29T00:00:00Z');
     const tx = {
@@ -144,7 +161,9 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
       attachmentLink: { findMany: mock.fn(async () => []), findFirst: mock.fn(async () => null) },
       expenseRecord: { findFirst: mock.fn(async () => null) },
       reimbursementLine: { findFirst: mock.fn(async () => null) },
+      disbursementVoucher: { findFirst: mock.fn(async () => null) },
       attachmentObject: {
+        findFirst: mock.fn(async () => null),
         updateMany: mock.fn(async () => ({ count: 1 })),
         findFirstOrThrow: mock.fn(async () => ({
           id: 'att-1',
@@ -171,7 +190,7 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
     assert.equal(tx.expenseSubstituteReceiptEvidence.findFirst.mock.callCount(), 3);
     assert.equal(tx.attachmentLink.findMany.mock.callCount(), 2);
     // The payment-slip hold is checked on the same transaction, after the retention lock is taken.
-    assert.equal(tx.attachmentLink.findFirst.mock.callCount(), 1);
+    assert.equal(tx.attachmentLink.findFirst.mock.callCount(), 3);
     assert.deepEqual((tx.attachmentObject.updateMany.mock.calls as any[])[0]?.arguments[0].where, {
       id: 'att-1',
       companyId: 'co-1',
@@ -216,9 +235,10 @@ describe('PrismaAttachmentRepository reimbursement payment slips', () => {
     const tx = {
       $executeRaw: mock.fn(async () => 1),
       reimbursementLine: { findFirst: mock.fn(async () => null) },
-      attachmentLink: { findFirst: mock.fn(async () => ({ id: 'link-1' })), findMany: mock.fn(async () => []) },
+      disbursementVoucher: { findFirst: mock.fn(async () => null) },
+      attachmentLink: { findFirst: mock.fn(async ({ where }: any) => where.targetType === 'reimbursement_payment' ? { id: 'link-1' } : null), findMany: mock.fn(async () => []) },
       expenseSubstituteReceiptEvidence: { findFirst: mock.fn(async () => null) },
-      attachmentObject: { updateMany: mock.fn(async () => ({ count: 1 })) },
+      attachmentObject: { updateMany: mock.fn(async () => ({ count: 1 })), findFirst: mock.fn(async () => null) },
     };
     const repo = new PrismaAttachmentRepository({ client: {} } as any);
 
@@ -239,7 +259,7 @@ describe('PrismaAttachmentRepository.linkToTarget', () => {
     const accountingDocument = { findFirst: mock.fn(async () => input.target === undefined ? { id: 'invoice-1', branchId: 'branch-1' } : input.target) };
     const attachmentLink = {
       findMany: mock.fn(async () => []),
-      findFirst: mock.fn(async () => input.conflictingLink ?? null),
+      findFirst: mock.fn(async ({ where }: any) => input.conflictingLink && (typeof where.targetType === 'string' ? (input.conflictingLink as any).targetType === where.targetType : (input.conflictingLink as any).targetType !== where.targetType.not) ? input.conflictingLink : null),
       create: mock.fn(async ({ data }: any) => ({ id: 'link-1', ...data, createdAt: new Date('2026-07-28T00:00:00Z') })),
     };
     const tx = { attachmentObject, expenseRecord, accountingDocument, attachmentLink, $executeRaw: async () => 1,

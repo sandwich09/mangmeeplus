@@ -189,14 +189,14 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     assert.equal((await client.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: revision.id } })).status, 'SUPERSEDED');
     const number = await client.documentNumber.findFirstOrThrow({ where: { companyId, documentNumber: evidence.documentNumber } });
     assert.equal(number.ownerId, evidence.id); assert.equal(number.status, 'VOIDED');
-    await assert.rejects(repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'กดซ้ำ'), /no longer eligible/);
+    await assert.rejects(repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'กดซ้ำ'), /เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว จึงยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้/);
     assert.equal(await client.expensePayment.count({ where: { expenseId: expense.id } }), 1);
     assert.notEqual(paid.status, 'CONFIRMED');
   });
 
   it('cannot use the financial cancellation path for an ordinary unpaid unconfirmed expense', async () => {
     const { expense, evidence } = await source();
-    await assert.rejects(repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'ยังไม่ได้จ่าย'), /no longer eligible/);
+    await assert.rejects(repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'ยังไม่ได้จ่าย'), /เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว จึงยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้/);
     assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), expense);
     assert.equal((await repo.findSubstituteEvidence(companyId, expense.id))!.id, evidence.id);
   });
