@@ -842,7 +842,7 @@ class Release:
                 bot = json.loads(response.read(65536))
         except (urllib.error.URLError, TimeoutError, ValueError):
             raise ValueError('Official OA bot preflight unavailable') from None
-        require(isinstance(bot, dict) and bot.get('basicId') == '@107ewccg', 'Official OA token belongs to a different bot')
+        require(isinstance(bot, dict) and bot.get('basicId') == '@695ultfm', 'Official OA token belongs to a different bot')
         write(capture/'secret-versions.json', versions)
         write(capture/'official-oa-readiness.json', {'basicId':bot['basicId'], 'outbound':'native-identity-checked'})
         return values
