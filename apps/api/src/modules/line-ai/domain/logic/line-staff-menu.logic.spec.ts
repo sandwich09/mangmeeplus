@@ -442,7 +442,7 @@ describe('LINE staff menu', () => {
     assert.equal(rendered.includes('tel:'), false, 'no call button');
     assert.deepEqual((card.contents as any).footer.contents.map((button: any) => button.action), [
       { type: 'clipboard', label: 'คัดลอกอีเมล', clipboardText: 'contact@mangmeeplus.com' },
-      { type: 'uri', label: 'ติดต่อทีมงาน', uri: 'https://lin.ee/UU9pbOI' },
+      { type: 'uri', label: 'ติดต่อทีมงาน', uri: 'https://lin.ee/6Sc38L6' },
       { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://official.mangmeeplus.com/' },
     ]);
     assert.equal(staffMenuCommand('ติดต่อเจ้าหน้าที่'), 'staff_contact', 'typed support remains available');
@@ -842,7 +842,7 @@ describe('promotion menu (rich menu v2 ver2)', () => {
       'the package page is the owner\'s to open');
     // Owner 2026-10-05: "คุยกับทีมงาน" opens the staff OA itself, for every reader of the card.
     for (const audience of ['owner', 'employee', 'stranger'] as const) {
-      assert.deepEqual(actions(audience).at(-1), { type: 'uri', label: 'คุยกับทีมงาน', uri: 'https://lin.ee/UU9pbOI' }, audience);
+      assert.deepEqual(actions(audience).at(-1), { type: 'uri', label: 'คุยกับทีมงาน', uri: 'https://lin.ee/6Sc38L6' }, audience);
     }
     assert.match(JSON.stringify(buildPromotionCard('employee')), /เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจ/);
     // Glossary 2026-09-29: no English on a customer card.
