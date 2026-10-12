@@ -3,7 +3,6 @@
 import {
   DEFAULT_CHAT_CREDIT_SATANG,
   FEATURE_CATALOG,
-  FEATURE_PACKAGE_PRESETS,
   MENU_ENTITLEMENT_BINDINGS,
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
   PLAN_TIER_PRESETS,
@@ -17,7 +16,6 @@ import {
   type CompanyPlanTermViewDto,
   type SetCompanyPlanTermBody,
   type RenewCompanyPlanTermBody,
-  type FeaturePackagePresetKey,
   type MenuEntitlementBinding,
   type PartnerFeatureEntitlementDto,
   type PlanTierKey,
@@ -55,6 +53,7 @@ import {
   setPartnerAiModel,
   setPartnerOcrConfig,
   setPartnerManualExpenseWebEntry,
+  setPartnerDisbursementVoucherWebEntry,
   setPartnerVatRegistration,
   getPartnerAiUsage,
   getPartnerMembers,
@@ -157,6 +156,9 @@ import {
 } from './plan-term.logic';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import {
+  PARTNER_FEATURE_PRESETS,
+  type PartnerFeaturePresetKey,
+  type MenuFeatureControl,
   applyPreset,
   buildMenuCards,
   cascadeOffItems,
@@ -170,13 +172,20 @@ import {
   filterMenuCards,
   isAmbiguousCommandFailure,
   isNormalizationPending,
+  presetTurningOffItems,
   previewNavGroups,
+  savedFeaturePresetStatus,
   toggleMenuCard,
   toggleMenuGroup,
   toggleSubmenu,
   manualWebEntryRow,
   MANUAL_WEB_ENTRY_COPY,
   MANUAL_WEB_ENTRY_SUBMENU_KEY,
+  disbursementVoucherWebEntryRow,
+  disbursementVoucherRoleNotice,
+  updateWebEntrySettings,
+  DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY,
+  type WebEntrySettings,
   NORMALIZATION_PENDING_NOTICE,
   type Entitlement,
 } from './system-partners.logic';
@@ -861,19 +870,27 @@ function MembersSection({
 
 function PackageMenuSection({
   companyId,
+  companyName,
   entitlements,
   setVersion,
   manualExpenseWebEntry,
+  disbursementVoucherWebEntry,
+  disbursementVoucherRoles = [],
+  companyStatus,
   fieldsLocked,
   normalizationPending,
   showToast,
   onSaved,
 }: {
   companyId: string;
+  companyName: string;
   entitlements: PartnerFeatureEntitlementDto[];
   setVersion: number;
   /** The stored screen setting and its own version; absent only when an older API answered. */
   manualExpenseWebEntry?: PartnerCompanyDetailDto['manualExpenseWebEntry'];
+  disbursementVoucherWebEntry?: PartnerCompanyDetailDto['disbursementVoucherWebEntry'];
+  disbursementVoucherRoles?: PartnerCompanyDetailDto['disbursementVoucherRoles'];
+  companyStatus: PartnerStatus;
   fieldsLocked: boolean;
   normalizationPending: boolean;
   showToast: (message: string, variant: 'success' | 'error') => void;
@@ -892,7 +909,15 @@ function PackageMenuSection({
   const commandId = useRef<string | null>(null);
   // "แสดงเมนูบันทึกด้วยมือบนเว็บ": a screen setting, not an entitlement. Its value, version and saving
   // state live apart from `pending`, and it is saved by its own command the moment it is pressed.
-  const [webEntry, setWebEntry] = useState(manualExpenseWebEntry);
+  const [webEntries, setWebEntries] = useState<WebEntrySettings>({ manualExpenseWebEntry, disbursementVoucherWebEntry });
+  const webEntry = webEntries.manualExpenseWebEntry;
+  const disbursementEntry = webEntries.disbursementVoucherWebEntry;
+  const setWebEntry = (saved: PartnerCompanyDetailDto['manualExpenseWebEntry']) => {
+    setWebEntries((current) => updateWebEntrySettings(current, 'manualExpenseWebEntry', saved));
+  };
+  const setDisbursementEntry = (saved: PartnerCompanyDetailDto['disbursementVoucherWebEntry']) => {
+    setWebEntries((current) => updateWebEntrySettings(current, 'disbursementVoucherWebEntry', saved));
+  };
   const [webEntrySaving, setWebEntrySaving] = useState(false);
   const { confirm, confirmDialog } = useConfirm();
 
@@ -902,9 +927,14 @@ function PackageMenuSection({
     commandId.current = null;
   }, [entitlements]);
 
-  useEffect(() => { setWebEntry(manualExpenseWebEntry); }, [manualExpenseWebEntry?.enabled, manualExpenseWebEntry?.version]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setWebEntries({ manualExpenseWebEntry, disbursementVoucherWebEntry });
+  }, [manualExpenseWebEntry?.enabled, manualExpenseWebEntry?.version, disbursementVoucherWebEntry?.enabled, disbursementVoucherWebEntry?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cards = buildMenuCards(MENU_ENTITLEMENT_BINDINGS, FEATURE_CATALOG, pending);
+  const savedPresetStatus = savedFeaturePresetStatus(entitlements);
+  const pendingPresetStatus = savedFeaturePresetStatus(pending);
+  const descriptionPresetKey = pendingPresetStatus.activePresetKey ?? savedPresetStatus.activePresetKey;
   const filteredCards = filterMenuCards(cards, search);
   const navGroups = previewNavGroups(cards);
   const diff = diffEntitlements(entitlements, pending);
@@ -954,9 +984,56 @@ function PackageMenuSection({
     updatePending(toggleSubmenu(pending, 'expense_auto_post', next));
   };
 
+  const choosePreset = async (presetKey: PartnerFeaturePresetKey) => {
+    const next = applyPreset(pending, presetKey);
+    const turningOff = presetTurningOffItems(entitlements, presetKey);
+    if (turningOff.length > 0 && !(await confirm({
+      title: 'ใช้ชุดเมนูสำเร็จรูป?',
+      message: <>{`ชุด “${PARTNER_FEATURE_PRESETS[presetKey].labelTh}” จะปิด ${turningOff.length} อย่างที่ร้านนี้ใช้อยู่`}{turningOff.map(item => <span key={item.featureKey} className="block">{item.labelTh}</span>)}</>,
+      confirmLabel: 'ใช้ชุดนี้', cancelLabel: 'ปิด', variant: 'primary',
+    }))) return;
+    updatePending(next);
+  };
+
+  const featureControl = (control: MenuFeatureControl, menuLess = false) => {
+    const next = toggleSubmenu(pending, control.key, !control.enabled);
+    const disableBlock = control.enabled ? disableBlockForChange(entitlements, next, entitlements) : null;
+    return <article key={control.key} className={`mangmee-card flex items-start gap-3 p-4 shadow-none ${menuLess ? 'ml-4 border-l-2 border-gray-200 pl-3' : ''}`}>
+      <div className="min-w-0 flex-1">
+        <p className="font-bold text-gray-900">{control.labelTh}</p>
+        <p className="mt-1 text-xs leading-5 text-gray-500">{menuLess ? 'ร้านจะเห็นเมนู 50 ทวิ และปุ่มออกหนังสือรับรองที่หน้ารายจ่าย' : control.descriptionTh}</p>
+        {disableBlock && <p className="mt-1 text-xs leading-5 text-amber-700">{disableBlock.reason}</p>}
+      </div>
+      <EntitlementSwitch checked={control.enabled} disabled={controlsLocked || Boolean(disableBlock)} disabledReason={disableBlock?.reason}
+        label={`${control.enabled ? 'ปิด' : 'เปิด'} ${control.labelTh}`} onClick={() => updatePending(next)} />
+    </article>;
+  };
+
   // From the SAVED rows on purpose: a parent feature the operator has switched but not saved yet
   // changes nothing for the shop, so it changes nothing here either.
   const webEntryRow = manualWebEntryRow(entitlements, webEntry ?? { enabled: false }, fieldsLocked);
+  const disbursementRow = disbursementVoucherWebEntryRow(entitlements, disbursementEntry ?? { enabled: false }, companyStatus !== 'ACTIVE');
+
+  const toggleDisbursementVoucherWebEntry = async () => {
+    if (!disbursementEntry || webEntrySaving || !disbursementRow.editable) return;
+    const next = !disbursementEntry.enabled;
+    const lines = disbursementRow.confirmLines(next);
+    if (lines.length > 0 && !(await confirm({
+      message: lines[0],
+      confirmLabel: DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.confirmHideLabel,
+      cancelLabel: DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.cancelHideLabel,
+    }))) return;
+    setWebEntrySaving(true);
+    try {
+      const saved = await setPartnerDisbursementVoucherWebEntry(companyId, { enabled: next, expectedVersion: disbursementEntry.version });
+      setDisbursementEntry(saved);
+      showToast(saved.enabled ? DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.savedShown : DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.savedHidden, 'success');
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    } finally {
+      setWebEntrySaving(false);
+    }
+  };
 
   const toggleManualWebEntry = async () => {
     if (!webEntry || webEntrySaving) return;
@@ -1026,7 +1103,7 @@ function PackageMenuSection({
     <>
       <Modal
         open={reviewOpen}
-        title="ตรวจสอบการเปลี่ยนแปลงแพ็กเกจ"
+        title={`ตรวจสอบการเปลี่ยนแปลงแพ็กเกจ · ${companyName}`}
         size="md"
         closeLabel="ยกเลิก"
         onClose={() => {
@@ -1112,11 +1189,12 @@ function PackageMenuSection({
           <div>
             <h2 className="text-lg font-semibold text-gray-900">เมนูและฟีเจอร์ที่เปิดให้ใช้</h2>
             <p className="mt-1 max-w-2xl text-xs leading-5 text-gray-500">
-              เลือกเมนูที่ลูกค้าจะเห็น ส่วนผู้ช่วย AI อยู่ในหัวข้อการทำงานเบื้องหลัง ตรวจรายการก่อนบันทึกทุกครั้ง
+              เลือกเมนูและสิทธิ์ที่ลูกค้าจะใช้ได้ สิทธิ์ที่ไม่มีเมนูอยู่ในหมวดที่เกี่ยวข้อง ส่วนผู้ช่วย AI อยู่ในหัวข้อการทำงานเบื้องหลัง ตรวจรายการก่อนบันทึกทุกครั้ง
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {(Object.keys(FEATURE_PACKAGE_PRESETS) as FeaturePackagePresetKey[]).map((presetKey) => {
+            <h3 className="basis-full text-sm font-bold text-gray-700">ชุดเมนูสำเร็จรูป</h3>
+            {(Object.keys(PARTNER_FEATURE_PRESETS) as PartnerFeaturePresetKey[]).map((presetKey) => {
               const next = applyPreset(pending, presetKey);
               const disableBlock = disableBlockForChange(entitlements, next, entitlements);
               return (
@@ -1126,18 +1204,22 @@ function PackageMenuSection({
                   className="mangmee-btn mangmee-btn-secondary min-h-11 disabled:opacity-50"
                   disabled={controlsLocked || Boolean(disableBlock)}
                   title={disableBlock?.reason}
-                  onClick={() => updatePending(next)}
+                  onClick={() => void choosePreset(presetKey)}
                 >
-                  {FEATURE_PACKAGE_PRESETS[presetKey].labelTh}
+                  {PARTNER_FEATURE_PRESETS[presetKey].labelTh}{savedPresetStatus.activePresetKey === presetKey && ' ✓ ใช้อยู่'}
                 </button>
               );
             })}
+            {savedPresetStatus.activePresetKey === null && <p className="basis-full text-xs leading-5 text-gray-500">
+              ปรับเอง{savedPresetStatus.nearby && <> · ต่างจาก “{PARTNER_FEATURE_PRESETS[savedPresetStatus.nearby.presetKey].labelTh}” {savedPresetStatus.nearby.count} รายการ</>}
+            </p>}
+            {descriptionPresetKey && <p className="basis-full text-xs leading-5 text-gray-500">{PARTNER_FEATURE_PRESETS[descriptionPresetKey].descriptionTh}</p>}
             <span className="mangmee-badge mangmee-badge-brand basis-full sm:basis-auto">
               เปิด {enabledCardCount}/{cards.length} เมนู
             </span>
           </div>
           <p className="mt-2 text-xs leading-5 text-gray-500">
-            {featurePackageEditingNotice(controlsLocked, Boolean(webEntry) && webEntryRow.editable)}
+            {featurePackageEditingNotice(controlsLocked, Boolean(webEntry) && webEntryRow.editable && !webEntrySaving, Boolean(disbursementEntry) && disbursementRow.editable && !webEntrySaving)}
           </p>
         </div>
 
@@ -1175,7 +1257,7 @@ function PackageMenuSection({
               const visibleCards = filteredCards.filter((card) => card.group === navGroup.group);
               if (visibleCards.length === 0) return null;
               const sellableCards = groupCards.filter((card) => card.entitlementKeys.length > 0);
-              const allEnabled = sellableCards.every((card) => card.enabled);
+              const allEnabled = sellableCards.every((card) => card.enabled) && groupCards.flatMap(card => card.rights).every(right => right.enabled);
               const groupNext = toggleMenuGroup(pending, groupCards, !allEnabled);
               const groupDisableBlock = allEnabled
                 ? disableBlockForChange(entitlements, groupNext, entitlements)
@@ -1219,7 +1301,7 @@ function PackageMenuSection({
                       : null;
 
                     return (
-                      <article key={card.navKey} className="mangmee-card overflow-hidden shadow-none">
+                      <div key={card.navKey} className="space-y-3"><article className="mangmee-card overflow-hidden shadow-none">
                         <div className="flex items-start gap-3 p-4">
                           <span className={`mangmee-icon-frame ${toneClass.icon}`}>
                             {WORKSPACE_ICON_NODES[card.iconKey] ?? WORKSPACE_ICON_NODES.GridIcon}
@@ -1267,6 +1349,7 @@ function PackageMenuSection({
                           )}
                         </div>
 
+                        {card.parentControl && featureControl(card.parentControl)}
                         {card.submenus.length > 0 && (
                           <div className="border-t border-gray-100 px-4 py-3">
                             {/* Opening the list is reading, not editing: it stays available while the
@@ -1360,6 +1443,33 @@ function PackageMenuSection({
                                         )}
                                       </div>
                                     )}
+                                    {submenu.key === MANUAL_WEB_ENTRY_SUBMENU_KEY && disbursementEntry && (
+                                      <div className="mt-2 rounded-lg border border-gray-200 bg-white p-3 sm:ml-4">
+                                        <div className="flex items-center gap-3">
+                                          <p className="min-w-0 flex-1 text-sm font-bold text-gray-800">
+                                            {DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.label.split(/(ใบเตรียมจ่าย|\/|ใบสำคัญจ่าย)/).filter(Boolean).map(part => (
+                                              <span key={part}><wbr /><span className="whitespace-nowrap">{part}</span></span>
+                                            ))}
+                                          </p>
+                                          <span className={`shrink-0 text-xs font-bold ${disbursementRow.shown ? 'text-brand-700' : 'text-gray-500'}`}>
+                                            {disbursementRow.shown ? DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.shown : DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.notShown}
+                                          </span>
+                                          <EntitlementSwitch
+                                            checked={disbursementRow.shown}
+                                            disabled={webEntrySaving || !disbursementRow.editable}
+                                            disabledReason={disbursementRow.disabledReason ?? undefined}
+                                            label={DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.label}
+                                            onClick={() => void toggleDisbursementVoucherWebEntry()}
+                                          />
+                                        </div>
+                                        {disbursementRow.disabledReason && (
+                                          <p className="mt-2 text-xs font-medium leading-5 text-amber-700">{disbursementRow.disabledReason}</p>
+                                        )}
+                                        {disbursementRow.shown && (
+                                          <p role="note" className="mt-2 text-xs leading-5 text-gray-500">{disbursementVoucherRoleNotice(disbursementVoucherRoles)}</p>
+                                        )}
+                                      </div>
+                                    )}
                                     </div>
                                   );
                                 })}
@@ -1368,6 +1478,8 @@ function PackageMenuSection({
                           </div>
                         )}
                       </article>
+                      {card.rights.map(right => featureControl(right, true))}
+                      </div>
                     );
                   })}
                 </div>
@@ -3674,7 +3786,7 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
         <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="min-h-11 cursor-pointer py-2 text-sm text-gray-600">ข้อมูลอ้างอิงบริษัท</summary><dl className="grid gap-4 py-3 sm:grid-cols-3"><ReadOnlyField label="รหัสบริษัท" value={detail.id}/><ReadOnlyField label="วันที่เปิดใช้งาน" value={formatDate(detail.activatedAt)}/><ReadOnlyField label="วันที่ปิดใช้งาน" value={formatDate(detail.disabledAt)}/></dl></details>
       </section>}
       {opened('members')&&<section hidden={view!=='members'} aria-label="สมาชิกบริษัท" className="space-y-5"><p className="text-gray-600">ตรวจสมาชิกและการผูก LINE เลือกดำเนินการเฉพาะคนที่ต้องการดูแล</p><MembersSection companyId={companyId} canManageMembers={canManageMembers} showToast={showToast}/></section>}
-      {opened('package')&&<section hidden={view!=='package'} aria-label="แพ็กเกจและฟีเจอร์บริษัท" className="space-y-5"><PlanTermSection key={`term-${companyId}`} companyId={companyId} companyStatus={currentStatus} fieldsLocked={fieldsLocked} showToast={showToast}/><PackageMenuSection companyId={companyId} entitlements={detail.featureEntitlements} setVersion={detail.setVersion} manualExpenseWebEntry={detail.manualExpenseWebEntry} fieldsLocked={fieldsLocked} normalizationPending={isNormalizationPending(detail.entitlementNormalizationPending)} showToast={showToast} onSaved={load}/></section>}
+      {opened('package')&&<section hidden={view!=='package'} aria-label="แพ็กเกจและฟีเจอร์บริษัท" className="space-y-5"><PlanTermSection key={`term-${companyId}`} companyId={companyId} companyStatus={currentStatus} fieldsLocked={fieldsLocked} showToast={showToast}/><PackageMenuSection companyId={companyId} companyName={detail.name} entitlements={detail.featureEntitlements} setVersion={detail.setVersion} manualExpenseWebEntry={detail.manualExpenseWebEntry} disbursementVoucherWebEntry={detail.disbursementVoucherWebEntry} disbursementVoucherRoles={detail.disbursementVoucherRoles} companyStatus={currentStatus} fieldsLocked={fieldsLocked} normalizationPending={isNormalizationPending(detail.entitlementNormalizationPending)} showToast={showToast} onSaved={load}/></section>}
       {opened('ai')&&<section hidden={view!=='ai'} aria-label="เครดิต AI และอ่านรูปของบริษัท" className="space-y-5"><p className="text-gray-600">ดูว่าเงื่อนไขไหนใช้กับร้านนี้ ปรับเครดิตแชต จำนวนอ่านรูป และเพดานความปลอดภัย ระบบให้ตรวจผลกระทบก่อนบันทึก</p>
         <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} onChanged={()=>setAiHistoryRefresh(n=>n+1)} />
         <details className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เปลี่ยนรุ่น AI ของบริษัท</summary>

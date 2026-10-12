@@ -12,6 +12,7 @@ import type {
   VoidDocumentNumberInput,
 } from '../../domain/models/document-sequence.model';
 import {
+  buildPeriodKey,
   formatDocumentNumber,
   getDefaultDocumentSequenceConfig,
   templateNumbersAreBranchDistinct,
@@ -83,6 +84,13 @@ export class PrismaDocumentSequenceRepository implements DocumentSequenceReposit
     tx: Prisma.TransactionClient,
     input: ReserveDocumentNumberInput,
   ): Promise<ReservedDocumentNumberRecord> {
+    const isWht = input.documentType === 'tax.wht_certificate';
+    if (isWht) {
+      const { year, month } = this.documentDateParts(input.periodKey);
+      input = { ...input, periodKey: buildPeriodKey('YEARLY', new Date(Date.UTC(year, month - 1, 1))) };
+      // One tenant/year namespace, including counters imported after the migration.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:wht-number:${input.periodKey}`}))`;
+    }
     // A custom EXP template can omit the month. Serialize its whole tenant namespace so
     // different period rows cannot race for the same rendered number or idempotency key.
     if (input.documentType === 'expense.record') {
@@ -94,7 +102,7 @@ export class PrismaDocumentSequenceRepository implements DocumentSequenceReposit
       include: { sequence: true },
     });
     if (existing) {
-      if ((existing.branchId ?? undefined) !== (input.branchId ?? undefined) || existing.sequence.periodKey !== input.periodKey) {
+      if ((existing.branchId ?? undefined) !== (input.branchId ?? undefined) || (isWht ? existing.sequence.periodKey.slice(0, 4) : existing.sequence.periodKey) !== input.periodKey) {
         throw new ConflictException('Idempotency key already used with different document sequence parameters.');
       }
       return this.toNumRecord(existing);
@@ -111,7 +119,7 @@ export class PrismaDocumentSequenceRepository implements DocumentSequenceReposit
       throw new UnprocessableEntityException('Document sequence is disabled or missing.');
     }
     const template = stored?.prefixTemplate ?? getDefaultDocumentSequenceConfig(input.documentType)?.prefixTemplate;
-    const branchDistinct = Boolean(template && templateNumbersAreBranchDistinct(template));
+    const branchDistinct = !isWht && Boolean(template && templateNumbersAreBranchDistinct(template));
     const branchScopeKey = branchDistinct ? input.branchId ?? 'GLOBAL' : 'GLOBAL';
 
     let sequence = await tx.documentSequence.findFirst({
@@ -177,7 +185,7 @@ export class PrismaDocumentSequenceRepository implements DocumentSequenceReposit
           prefixTemplate: config.prefixTemplate,
           nextNumber: Math.max(1, issuedElsewhereThisPeriod?.nextNumber ?? 1),
           padding: config.padding,
-          resetPolicy: config.resetPolicy,
+          resetPolicy: isWht ? 'YEARLY' : config.resetPolicy,
           status: 'ACTIVE',
           createdByUserId: input.reservedByUserId,
           updatedByUserId: input.reservedByUserId,
@@ -211,6 +219,28 @@ export class PrismaDocumentSequenceRepository implements DocumentSequenceReposit
         ) numbers`;
       const maximum = Number(retained?.maximum ?? 0);
       if (maximum >= 2147483647) throw new UnprocessableEntityException('Expense number sequence is exhausted.');
+      if (maximum >= sequence.nextNumber) {
+        sequence = await tx.documentSequence.update({ where: { id: sequence.id }, data: { nextNumber: maximum + 1 } });
+      }
+    }
+    if (isWht) {
+      const context = { year: date.year, month: date.month, branchCode: branch?.code, documentType: input.documentType, sequenceNumber: 0, padding: sequence.padding };
+      const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const position = sequence.prefixTemplate.indexOf('{SEQ}');
+      const pattern = `^${escape(formatDocumentNumber(sequence.prefixTemplate.slice(0, position), context))}([0-9]+)${escape(formatDocumentNumber(sequence.prefixTemplate.slice(position + 5), context))}$`;
+      const [retained] = await tx.$queryRaw<Array<{ maximum: string | null }>>`
+        SELECT MAX(value)::text AS maximum FROM (
+          SELECT ("nextNumber" - 1)::numeric AS value FROM "DocumentSequence"
+          WHERE "companyId" = ${input.companyId} AND "documentType" = 'tax.wht_certificate'
+            AND ("periodKey" = ${input.periodKey} OR "periodKey" LIKE ${`${input.periodKey}-%`})
+          UNION ALL
+          SELECT substring("documentNumber" FROM ${pattern})::numeric FROM "DocumentNumber"
+          WHERE "companyId" = ${input.companyId} AND "documentType" = 'tax.wht_certificate'
+          UNION ALL
+          SELECT substring("certificateNumber" FROM ${pattern})::numeric FROM "WhtCertificate"
+          WHERE "companyId" = ${input.companyId}
+        ) numbers`;
+      const maximum = Number(retained?.maximum ?? 0);
       if (maximum >= sequence.nextNumber) {
         sequence = await tx.documentSequence.update({ where: { id: sequence.id }, data: { nextNumber: maximum + 1 } });
       }

@@ -11,6 +11,7 @@ import type {
 } from '@watchdog-bms/contracts';
 
 export type ExpenseRecord = {
+  cancelledCertificate?: import('@watchdog-bms/contracts').ExpenseSummary['cancelledCertificate'];
   /**
    * Spec §7/§8: not a column — the outcome of this save's counterparty auto-save, so the review
    * screen can show the toast (case a/b), the one-line notice (case c) or the "ยังไม่ได้บันทึกลง
@@ -28,6 +29,7 @@ export type ExpenseRecord = {
   status: ExpenseStatus;
   captureSource: ExpenseCaptureSource;
   vendorCounterpartyId: string | null;
+  reservedByDisbursementVoucherId?: string | null;
   vendorSnapshotJson: Record<string, unknown> | null;
   vendorNameSnapshot: string | null;
   vendorTaxIdSnapshot: string | null;
@@ -134,6 +136,9 @@ export type ExpensePaymentRecord = {
   voidedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  disbursementVoucher?: { id: string | null; documentNumber: string } | null;
+  cancelledDisbursementVoucher?: { id: string | null; documentNumber: string } | null;
+  canIssueDisbursementVoucher?: boolean;
 };
 
 export type ExpenseRecordWithRelations = ExpenseRecord & {

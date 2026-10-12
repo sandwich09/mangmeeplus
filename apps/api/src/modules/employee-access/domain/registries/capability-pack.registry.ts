@@ -290,6 +290,36 @@ const RAW_PACKS: RawPack[] = [
     description: 'ยืนยัน/ปฏิเสธ/ยกเลิก บันทึกการจ่าย และส่งออกค่าใช้จ่าย',
     permissionKeys: ['expense.confirm', 'expense.reject', 'expense.void', 'expense.delete', 'expense.payment.record', 'expense.export'],
   },
+  {
+    key: 'pack.expense.disbursement.view', module: 'expense', featureEntitlementKey: 'expenses',
+    nameTh: 'ดูใบเตรียมจ่าย/ใบสำคัญจ่าย', nameEn: 'View disbursement vouchers',
+    description: 'เปิดดูใบเตรียมจ่ายและใบสำคัญจ่ายของรายจ่ายที่ตำแหน่งนี้ดูได้อยู่แล้ว',
+    permissionKeys: ['expense.disbursement.read'],
+  },
+  {
+    key: 'pack.expense.disbursement.prepare', module: 'expense', featureEntitlementKey: 'expenses',
+    nameTh: 'จัดทำใบเตรียมจ่าย', nameEn: 'Prepare disbursement vouchers',
+    description: 'รวมรายจ่ายที่จะจ่ายให้ผู้รับเงินรายเดียวเป็นหนึ่งใบ แล้วส่งให้ผู้มีอำนาจอนุมัติ',
+    permissionKeys: ['expense.disbursement.read', 'expense.disbursement.prepare'],
+  },
+  {
+    key: 'pack.expense.disbursement.approve', module: 'expense', featureEntitlementKey: 'expenses',
+    nameTh: 'อนุมัติใบเตรียมจ่าย', nameEn: 'Approve disbursement vouchers',
+    description: 'อนุมัติหรือตีกลับใบเตรียมจ่ายก่อนจ่ายเงิน',
+    permissionKeys: ['expense.disbursement.read', 'expense.disbursement.approve'],
+  },
+  {
+    key: 'pack.expense.disbursement.pay', module: 'expense', featureEntitlementKey: 'expenses',
+    nameTh: 'บันทึกจ่ายตามใบเตรียมจ่าย', nameEn: 'Record disbursement voucher payment',
+    description: 'บันทึกว่าจ่ายเงินแล้วตามใบที่อนุมัติ ใบนั้นจะเป็นใบสำคัญจ่าย',
+    permissionKeys: ['expense.disbursement.read', 'expense.disbursement.pay'],
+  },
+  {
+    key: 'pack.expense.disbursement.issue', module: 'expense', featureEntitlementKey: 'expenses',
+    nameTh: 'ออกใบสำคัญจ่ายจากการจ่ายตรง', nameEn: 'Issue voucher for direct payment',
+    description: 'ออกใบสำคัญจ่ายให้การจ่ายที่บันทึกไว้แล้วในหน้ารายจ่าย',
+    permissionKeys: ['expense.disbursement.read', 'expense.disbursement.issue'],
+  },
 
   // ---- Reimbursement (no dedicated feature entitlement key in 10A) ----
   {

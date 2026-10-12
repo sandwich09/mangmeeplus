@@ -1,6 +1,7 @@
 'use client';
 // 10D: header company switcher + branch filter (same-page scope dimension).
 // Data comes from the cookie-session BFF (authedApiFetch); errors fall back silently to no selector.
+import { requestInAppNavigation } from '@/common/components/unsaved-navigation/request-navigation';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { planTermStateLabel } from '@watchdog-bms/contracts';
@@ -310,12 +311,12 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
                 setOpen(false);
                 // An expired shop routes to its renewal page — its business routes refuse anyway.
                 if (c.expired) {
-                  window.location.assign(`/companies/${c.companyId}/renew`);
+                  requestInAppNavigation(() => window.location.assign(`/companies/${c.companyId}/renew`));
                   return;
                 }
                 if (c.companyId !== companyId) {
                   const destination = /^\/companies\/[^/]+\/billing(?:\/|$)/.test(pathname) && c.canManagePlan ? 'billing' : 'dashboard';
-                  window.location.assign(`/companies/${c.companyId}/${destination}`);
+                  requestInAppNavigation(() => window.location.assign(`/companies/${c.companyId}/${destination}`));
                 }
               }}
             >

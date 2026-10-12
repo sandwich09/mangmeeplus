@@ -67,6 +67,12 @@ function entitledWithChildren(...featureKeys: string[]): Set<string> {
 }
 
 describe('filterPermissionsByEntitlement', () => {
+  it('strips every registered disbursement permission when expenses is off', () => {
+    const permissions = PERMISSIONS.map(({ key }) => key).filter((key) => key.startsWith('expense.disbursement.'));
+    assert.ok(permissions.length > 0, 'disbursement permissions must be registered');
+    assert.deepEqual(filterPermissionsByEntitlement(permissions, new Set()), []);
+  });
+
   it('assigns each permission to at most one submenu entitlement', () => {
     const owners = new Map<string, string>();
     for (const feature of FEATURE_CATALOG) {

@@ -1,9 +1,12 @@
+import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { validateSync } from 'class-validator';
+import { LinkExternalWhtCertificateDto } from '../../presentation/http/tax.dtos';
 import { fingerprint, isLaunchRouteOpen, WhtCertificateHandoffUseCase } from './wht-certificate-handoff.use-case';
 import { normalizeWhtLinkEvidence } from '../../domain/logic/wht-link-evidence.logic';
 
-const ctx = { companyId: 'company-1', userId: 'user-1', requestId: 'request-1' } as any;
+const ctx = { companyId: 'company-1', userId: 'user-1', requestId: 'request-1', permissions: ['expense.read'], scopes: {} } as any;
 
 const prefill = {
   payerSnapshot: { companyName: 'บริษัท', taxId: '9999999999999', branchCode: null, address: null },
@@ -17,6 +20,27 @@ const prefill = {
   paymentDate: '2026-07-15T00:00:00.000Z',
 };
 
+function matches(row: any, where: any): boolean {
+  return Object.entries(where ?? {}).every(([key, value]: [string, any]) => {
+    if (key === 'AND') return (Array.isArray(value) ? value : [value]).every((clause: any) => matches(row, clause));
+    if (key === 'OR') return value.some((clause: any) => matches(row, clause));
+    if (key === 'NOT') return !matches(row, value);
+    const actual = row[key] ?? null;
+    if (value === null || typeof value !== 'object') return actual === value;
+    if (value.some) return Array.isArray(actual) && actual.some((item: any) => matches(item, value.some));
+    if (value.is) return actual !== null && matches(actual, value.is);
+    if (value.path) {
+      const text = value.path.reduce((node: any, part: string) => node?.[part], actual);
+      return value.equals !== undefined ? text === value.equals : String(text ?? '').toLowerCase().includes(value.string_contains.toLowerCase());
+    }
+    if (value.in) return value.in.includes(actual);
+    if (value.not !== undefined) return actual !== value.not;
+    if (value.contains !== undefined) return String(actual ?? '').toLowerCase().includes(value.contains.toLowerCase());
+    if (value.equals !== undefined) return actual === value.equals;
+    throw new Error(`Unsupported fixture predicate: ${JSON.stringify({ key, value })}`);
+  });
+}
+
 /**
  * In-memory stand-in for the table. It enforces the REAL constraints — both uniques and the
  * status-conditional updateMany — because these tests exist to prove concurrency behaviour, and a
@@ -26,6 +50,7 @@ function makeStore(seed: any[] = [], registry: { matched?: any; failSave?: boole
   const rows: any[] = [...seed];
   const audits: any[] = [];
   const saves: any[] = [];
+  const history: any[] = [];
   const uniqueViolation = () => Object.assign(new Error('unique constraint'), { code: 'P2002' });
   const table = {
     findUnique: async ({ where }: any) => {
@@ -37,10 +62,13 @@ function makeStore(seed: any[] = [], registry: { matched?: any; failSave?: boole
       const { companyId, creationCommandId } = where.companyId_creationCommandId;
       return rows.find((r) => r.companyId === companyId && r.creationCommandId === creationCommandId) ?? null;
     },
-    findMany: async ({ where }: any) => rows.filter((r) => r.companyId === where.companyId
-      && (!where.status || r.status === where.status)
-      && (!where.sourceBranchId || r.sourceBranchId === where.sourceBranchId)
-      && (!where.sourcePaymentId || r.sourcePaymentId === where.sourcePaymentId)),
+    findMany: async ({ where, skip = 0, take, select, orderBy }: any) => {
+      let found = rows.filter((row) => matches(row, where));
+      if (orderBy) found.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id));
+      found = found.slice(skip, take === undefined ? undefined : skip + take);
+      return select ? found.map((row) => Object.fromEntries(Object.keys(select).map((key) => [key, row[key]]))) : found;
+    },
+    count: async ({ where }: any) => rows.filter((row) => matches(row, where)).length,
     create: async ({ data }: any) => {
       if (rows.some((r) => r.companyId === data.companyId && r.creationCommandId === data.creationCommandId)) throw uniqueViolation();
       const row = { id: `handoff-${rows.length + 1}`, createdAt: new Date(), updatedAt: new Date(), ...data };
@@ -63,7 +91,26 @@ function makeStore(seed: any[] = [], registry: { matched?: any; failSave?: boole
       return row;
     },
   };
-  const client: any = { whtCertificateHandoff: table, $executeRaw: async () => 0, $transaction: async (work: any) => work(client), expenseRecord: { findFirst: async () => ({ status: 'CONFIRMED' }) } };
+  const client: any = {
+    whtCertificateHistory: {
+      create: async () => { throw new Error('history must use the transaction client'); },
+      findMany: async ({ where }: any) => history.filter(row => matches(row, where)),
+    },
+    whtCertificateHandoff: table,
+    company: { findUnique: async () => null },
+    companyTaxProfile: { findUnique: async () => null },
+    $executeRaw: async () => 0,
+    $transaction: async (work: any) => work({
+      ...client, whtCertificateHistory: { ...client.whtCertificateHistory, create: async ({ data }: any) => { history.push(data); return data; } },
+    }),
+    expenseRecord: {
+      findFirst: async () => ({ status: 'CONFIRMED' }),
+      findMany: async ({ where }: any) => rows.filter(row => row.sourcePaymentType === 'expense.record').map(row => ({
+        id: row.sourcePaymentId, companyId: row.companyId, branchId: row.sourceBranchId ?? null,
+        status: 'CONFIRMED', createdByUserId: ctx.userId, expenseNumber: 'EXP-001', expenseDate: new Date(prefill.paymentDate),
+      })).filter(row => matches(row, where)),
+    },
+  };
   const taxRepo = { prisma: { client } } as any;
   const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
   // §2.4: `.list`/`.get` now read the route gate for `systemIssuanceOpen`. Resolving (never
@@ -78,7 +125,7 @@ function makeStore(seed: any[] = [], registry: { matched?: any; failSave?: boole
       saves.push(input);
     },
   } as any;
-  return { rows, audits, saves, table, client, value: new WhtCertificateHandoffUseCase(taxRepo, audit, gate, counterparties) };
+  return { rows, audits, saves, history, table, client, value: new WhtCertificateHandoffUseCase(taxRepo, audit, gate, counterparties) };
 }
 
 /** A registry row with an address already on it, so cases c and d have something to compare to. */
@@ -153,7 +200,7 @@ describe('WhtCertificateHandoffUseCase — durable prefilled handoff (H4)', () =
   it('replays the same link instead of erroring on a retried command', async () => {
     const store = makeStore();
     const created = await store.value.createOrReplay(baseInput);
-    const dto = { commandId: 'cmd-1', externalCertificateNumber: 'EXT-001', externalEvidenceRef: 'file-1', issuedDate: '2026-07-20' };
+    const dto = { commandId: 'cmd-1', externalCertificateNumber: 'EXT-001', externalEvidenceRef: 'file-1', issuedDate: '2026-07-20', note: 'บันทึกเดิม' };
     await store.value.linkExternal(ctx, created.id, dto);
     const replay = await store.value.linkExternal(ctx, created.id, dto);
     assert.equal(replay.status, 'EXTERNAL_LINKED');
@@ -208,7 +255,7 @@ describe('WhtCertificateHandoffUseCase — durable prefilled handoff (H4)', () =
         }
       },
     } as any;
-    const taxRepo = { prisma: { client: { whtCertificateHandoff: store.table } } } as any;
+    const taxRepo = { prisma: { client: { ...store.client, whtCertificateHandoff: store.table } } } as any;
     const value = new WhtCertificateHandoffUseCase(taxRepo, { log: async () => undefined } as any, gate, { findCounterpartyByVendorKey: async () => null } as any);
     const got = await value.get(ctx, created.id);
     assert.equal(got.systemIssuanceOpen, true);
@@ -242,6 +289,7 @@ describe('WhtCertificateHandoffUseCase — durable prefilled handoff (H4)', () =
     const results = await Promise.allSettled([first, second]);
     const fulfilled = results.filter((r) => r.status === 'fulfilled');
     const rejected = results.filter((r) => r.status === 'rejected');
+    assert.equal(store.history.length, 1, 'only the successful conditional transition appends history');
     assert.equal(fulfilled.length, 1, 'exactly one link may win');
     assert.equal(rejected.length, 1, 'the loser must be told, not silently dropped');
     const err: any = (rejected[0] as PromiseRejectedResult).reason;
@@ -279,14 +327,13 @@ describe('WhtCertificateHandoffUseCase — durable prefilled handoff (H4)', () =
     );
   });
 
-  // ── r11 F2: empty strings must never become the record of a legal document ───────────────────
-  it('refuses blank or whitespace-only evidence at the mutation boundary', async () => {
+  // ── r11 F2: certificate and command identifiers must not be blank ───────────────────
+  it('refuses blank certificate numbers and command ids at the mutation boundary', async () => {
     const store = makeStore();
     const created = await store.value.createOrReplay(baseInput);
     const bad = [
       { commandId: 'c', externalCertificateNumber: '', externalEvidenceRef: 'f', issuedDate: '2026-07-20' },
       { commandId: 'c', externalCertificateNumber: '   ', externalEvidenceRef: 'f', issuedDate: '2026-07-20' },
-      { commandId: 'c', externalCertificateNumber: 'EXT-1', externalEvidenceRef: '', issuedDate: '2026-07-20' },
       { commandId: '', externalCertificateNumber: 'EXT-1', externalEvidenceRef: 'f', issuedDate: '2026-07-20' },
       { commandId: 'c', externalCertificateNumber: 'EXT-1', externalEvidenceRef: 'f', issuedDate: 'not-a-date' },
     ];
@@ -338,7 +385,7 @@ describe('WhtCertificateHandoffUseCase — durable prefilled handoff (H4)', () =
     const store = makeStore();
     const a = await store.value.createOrReplay(baseInput);
     const b = await store.value.createOrReplay({ ...baseInput, creationCommandId: 'second-payment' });
-    const evidence = { commandId: 'cmd-shared', externalCertificateNumber: 'EXT-001', externalEvidenceRef: 'file-1', issuedDate: '2026-07-20' };
+    const evidence = { commandId: 'cmd-shared', externalCertificateNumber: 'EXT-001', externalEvidenceRef: 'file-1', issuedDate: '2026-07-20', note: 'บันทึกเดิม' };
 
     await store.value.linkExternal(ctx, a.id, evidence);
     // Byte-identical evidence, different handoff: this is NOT a replay. Treating it as one would
@@ -379,7 +426,7 @@ describe('WhtCertificateHandoffUseCase — durable prefilled handoff (H4)', () =
   it('still replays a genuine retry against the SAME handoff', async () => {
     const store = makeStore();
     const created = await store.value.createOrReplay(baseInput);
-    const evidence = { commandId: 'cmd-1', externalCertificateNumber: 'EXT-001', externalEvidenceRef: 'file-1', issuedDate: '2026-07-20' };
+    const evidence = { commandId: 'cmd-1', externalCertificateNumber: 'EXT-001', externalEvidenceRef: 'file-1', issuedDate: '2026-07-20', note: 'บันทึกเดิม' };
     const first = await store.value.linkExternal(ctx, created.id, evidence);
     const retry = await store.value.linkExternal(ctx, created.id, evidence);
     assert.equal(retry.id, first.id);
@@ -387,6 +434,22 @@ describe('WhtCertificateHandoffUseCase — durable prefilled handoff (H4)', () =
   });
 
   // ── r12 #3: one strict rule set, shared by the DTO layer and the mutation boundary ────────────
+  it('records a self-issued certificate without an optional evidence reference', async () => {
+    const store = makeStore();
+    const created = await store.value.createOrReplay(baseInput);
+    const result = await store.value.linkExternal(ctx, created.id, {
+      commandId: 'optional-reference', externalCertificateNumber: 'EXT-001', externalEvidenceRef: '', issuedDate: '2026-07-20',
+    });
+    assert.equal(result.status, 'EXTERNAL_LINKED');
+    assert.equal(result.externalEvidenceRef, '');
+    const dto = Object.assign(new LinkExternalWhtCertificateDto(), {
+      commandId: 'optional-reference', externalCertificateNumber: 'EXT-001', externalEvidenceRef: '', issuedDate: '2026-07-20',
+    });
+    assert.deepEqual(validateSync(dto), []);
+    dto.externalEvidenceRef = 'x'.repeat(501);
+    assert.ok(validateSync(dto).some(error => error.property === 'externalEvidenceRef'));
+  });
+
   it('rejects over-long evidence instead of silently truncating it', () => {
     const base = { commandId: 'c', externalCertificateNumber: 'EXT-1', externalEvidenceRef: 'f', issuedDate: '2026-07-20' };
     const long = (n: number) => 'x'.repeat(n);
@@ -579,5 +642,692 @@ describe('expense correction versus external certificate linking', () => {
     h.client.expenseRecord.findFirst = async () => ({ status: 'NEEDS_REVIEW' });
     await assert.rejects(() => h.value.linkExternal(ctx, created.id, { commandId: 'external-link-1', externalCertificateNumber: '50-1', externalEvidenceRef: 'attachment-1', issuedDate: '2026-10-04' }), (e: any) => e.getResponse?.().code === 'expense_wht_source_changed');
     assert.equal(h.rows[0].status, 'REQUIRED'); assert.equal(h.audits.filter((a: any) => a.action === 'tax.wht_certificate.external_link').length, 0);
+  });
+});
+
+
+describe('certificate history and handoff paper details', () => {
+  it('appends EXTERNAL_RECORDED once and does not append on replay or a losing link', async () => {
+    for (const sourcePaymentType of ['expense.record', 'procurement.supplier_payment']) {
+      const h = makeStore();
+      const created = await h.value.createOrReplay({ ...baseInput, sourcePaymentType, sourcePaymentId: 'source-1' });
+      const dto = { commandId: 'link-1', externalCertificateNumber: 'EXT-1', externalEvidenceRef: 'file-1', issuedDate: '2026-07-20', note: 'บันทึกเดิม' };
+      await h.value.linkExternal(ctx, created.id, dto);
+      await h.value.linkExternal(ctx, created.id, dto);
+      await assert.rejects(() => h.value.linkExternal(ctx, created.id, { ...dto, commandId: 'link-2' }));
+      assert.deepEqual(h.history, [{
+        companyId: ctx.companyId, expenseId: sourcePaymentType === 'expense.record' ? 'source-1' : null,
+        handoffId: created.id, eventType: 'EXTERNAL_RECORDED', isExternal: true,
+        certificateNumber: 'EXT-1', certificateDate: new Date('2026-07-20'), actorUserId: ctx.userId,
+        detailsJson: { externalEvidenceRef: 'file-1', linkNote: 'บันทึกเดิม' },
+      }]);
+    }
+  });
+
+  it('loads certificate numbers and issue dates for list and get with one tenant-scoped batch', async () => {
+    const h = makeStore();
+    const a = await h.value.createOrReplay(baseInput);
+    const b = await h.value.createOrReplay({ ...baseInput, creationCommandId: 'second' });
+    const empty = await h.value.createOrReplay({ ...baseInput, creationCommandId: 'empty' });
+    h.rows[0].certificateId = 'cert-1'; h.rows[1].certificateId = 'cert-2';
+    let queries = 0;
+    const papers = [
+      { id: 'cert-1', certificateNumber: 'WT-1', issuedAt: new Date('2026-07-20'), taxPeriod: { formType: 'PND3' }, incomeCategoryCode: 'SERVICE', incomeCategoryName: 'ค่าบริการ', whtRate: '3.0000', grossAmount: '1401.8700', withheldAmount: '42.0600', paymentDate: new Date('2026-07-19'), payeeSnapshotJson: { name: 'ชื่อที่แก้แล้ว', taxId: '1111111111111', address: 'ที่อยู่ที่แก้แล้ว', branchCode: '00000' } },
+      { id: 'cert-2', certificateNumber: 'WT-2', issuedAt: new Date('2026-07-21'), taxPeriod: { formType: 'PND53' }, incomeCategoryCode: 'RENT', incomeCategoryName: 'ค่าเช่า', whtRate: '5', grossAmount: '1000', withheldAmount: '50', paymentDate: new Date('2026-07-20'), payeeSnapshotJson: { name: 'ผู้รับเงิน', taxId: null, address: null, branchCode: null } },
+    ];
+    h.client.whtCertificate = { findMany: async ({ where }: any) => {
+      queries++;
+      assert.equal(where.companyId, ctx.companyId);
+      return papers.filter((p) => where.id.in.includes(p.id));
+    } };
+    const list = await h.value.list(ctx);
+    assert.equal(queries, 1, 'no query per handoff');
+    const current = { number: 'WT-1', issuedAt: '2026-07-20T00:00:00.000Z', formType: 'PND3', incomeCategoryCode: 'SERVICE', incomeCategoryName: 'ค่าบริการ', whtRate: '3.0000', grossAmount: '1401.8700', withheldAmount: '42.0600', paymentDate: '2026-07-19T00:00:00.000Z', payee: papers[0].payeeSnapshotJson };
+    assert.deepEqual(list.find(row => row.id === a.id)?.currentCertificate, current);
+    assert.equal(list.find(row => row.id === empty.id)?.currentCertificate, null);
+    assert.deepEqual((await h.value.get(ctx, a.id)).currentCertificate, current);
+
+    assert.equal(list.find((row) => row.id === a.id)?.certificateNumber, 'WT-1');
+    assert.equal(list.find((row) => row.id === b.id)?.certificateIssuedAt, '2026-07-21T00:00:00.000Z');
+    assert.equal(list.find((row) => row.id === empty.id)?.certificateNumber, null);
+    assert.equal((await h.value.get(ctx, a.id)).certificateNumber, 'WT-1');
+    assert.equal((await h.value.get(ctx, empty.id)).certificateIssuedAt, null);
+  });
+
+  it('returns only expense history for the company and scoped handoffs, newest first, with actor names', async () => {
+    const h = makeStore();
+    const handoffQueries: any[] = [];
+    const historyQueries: any[] = [];
+    h.table.findMany = async ({ where }: any) => {
+      handoffQueries.push(where);
+      return [{ id: 'allowed', sourceBranchId: 'branch-1' }, { id: 'blocked', sourceBranchId: 'branch-2' }];
+    };
+    h.client.whtCertificateHistory.findMany = async (query: any) => {
+      historyQueries.push(query);
+      return [{ eventType: 'CORRECTED', certificateNumber: 'WT-1', isExternal: false,
+        certificateDate: new Date('2026-07-20'), reason: 'แก้ที่อยู่', relatedCertificateNumber: 'WT-2',
+        actorUserId: 'user-1', occurredAt: new Date('2026-07-21'), taxFilingAttested: false }];
+    };
+    h.client.user = { findMany: async ({ where, select }: any) => {
+      assert.deepEqual(where, { id: { in: ['user-1'] } });
+      assert.deepEqual(select, { id: true, displayName: true });
+      return [{ id: 'user-1', displayName: 'สมใจ' }];
+    } };
+    const result = await h.value.getExpenseHistory({ ...ctx, scopes: { branchIds: ['branch-1'] } }, 'exp-1');
+    assert.deepEqual(handoffQueries, [{ companyId: ctx.companyId, sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1' }]);
+    assert.deepEqual(historyQueries[0].where, { companyId: ctx.companyId, expenseId: 'exp-1', handoffId: { in: ['allowed'] } });
+    assert.deepEqual(historyQueries[0].orderBy, { occurredAt: 'desc' });
+    assert.deepEqual(result, [{ eventType: 'CORRECTED', certificateNumber: 'WT-1', isExternal: false,
+      certificateDate: '2026-07-20T00:00:00.000Z', reason: 'แก้ที่อยู่', relatedCertificateNumber: 'WT-2',
+      actorDisplayName: 'สมใจ', occurredAt: '2026-07-21T00:00:00.000Z', taxFilingAttested: false, evidenceRef: null, note: null }]);
+  });
+
+  it('reads the removed external record evidence and note from history', async () => {
+    const h = makeStore();
+    h.table.findMany = async () => [{ id: 'handoff-1', sourceBranchId: null }];
+    h.client.whtCertificateHistory.findMany = async () => [{
+      eventType: 'EXTERNAL_RECORD_REMOVED', isExternal: true, certificateNumber: 'EXT-1', certificateDate: null,
+      reason: 'ข้อมูลผิด', relatedCertificateNumber: null, actorUserId: 'user-1', occurredAt: new Date('2026-07-21'), taxFilingAttested: true,
+      detailsJson: { externalEvidenceRef: 'file-1', linkNote: 'ข้อความบนบันทึกเดิม', linkedAt: '2026-07-20T00:00:00.000Z', linkedByUserId: 'issuer-1' },
+    }];
+    h.client.user = { findMany: async () => [] };
+    const [row] = await h.value.getExpenseHistory(ctx, 'exp-1');
+    assert.equal(row.evidenceRef, 'file-1');
+    assert.equal(row.note, 'ข้อความบนบันทึกเดิม');
+  });
+
+  it('does not read history of another company or an out-of-scope branch', async () => {
+    for (const foreign of [true, false]) {
+      const h = makeStore();
+      await h.value.createOrReplay({ ...baseInput, companyId: foreign ? 'company-2' : ctx.companyId,
+        sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1', sourceBranchId: 'branch-2' });
+      h.client.whtCertificateHistory.findMany = async () => { throw new Error('must not read forbidden history'); };
+      assert.deepEqual(await h.value.getExpenseHistory({ ...ctx, scopes: { branchIds: ['branch-1'] } }, 'exp-1'), []);
+    }
+  });
+});
+
+
+describe('C1 handoff by-id boundary', () => {
+  for (const entry of ['get', 'setPayeeAddress', 'linkExternal'] as const) {
+    it(`${entry} hides branch and unreadable expense ids exactly like a missing handoff`, async () => {
+      const h = makeStore();
+      const created = await h.value.createOrReplay({ ...baseInput, sourceBranchId: 'branch-2', sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' });
+      h.client.expenseRecord.findFirst = async ({ where }: any) => JSON.stringify(where).includes('createdByUserId') || JSON.stringify(where).includes('\"in\":[]') ? null : { id: 'expense-1', status: 'CONFIRMED' };
+      const call = (actor: any, id: string) => entry === 'get' ? h.value.get(actor, id)
+        : entry === 'setPayeeAddress' ? h.value.setPayeeAddress(actor, id, { payeeAddress: TYPED_ADDRESS })
+        : h.value.linkExternal(actor, id, { commandId: 'C1-link', externalCertificateNumber: 'EXT-C1', externalEvidenceRef: 'paper', issuedDate: '2026-07-20' });
+      let missing: any;
+      await assert.rejects(call(ctx, 'missing'), (error: any) => { missing = error.getResponse(); return error.getStatus() === 404; });
+      for (const actor of [{ ...ctx, scopes: { branchIds: ['branch-1'] } }, { ...ctx, permissions: ['expense.read_own'] }, { ...ctx, permissions: [] }]) {
+        await assert.rejects(call(actor, created.id), (error: any) => { assert.equal(error.getStatus?.(), 404); assert.deepEqual(error.getResponse(), missing); return true; });
+      }
+      assert.equal(h.audits.length, 0);
+      assert.ok(await call(ctx, created.id));
+    });
+  }
+});
+
+
+describe('C1 list and paged read', () => {
+  async function fixture() {
+    const h = makeStore();
+    const expenses: any[] = [];
+    for (let i = 0; i < 205; i++) {
+      await h.value.createOrReplay({ ...baseInput, creationCommandId: `row-${i}`, sourcePaymentType: 'expense.record', sourcePaymentId: `exp-${i}`, sourceBranchId: 'branch-1',
+        prefill: { ...prefill, incomeCategoryCode: 'SERVICE', incomeCategoryName: 'ค่าบริการ', whtRate: '3' } });
+      h.rows[i].createdAt = new Date(2026, 0, 1, 0, i);
+      expenses.push({ id: `exp-${i}`, companyId: ctx.companyId, branchId: 'branch-1', createdByUserId: ctx.userId,
+        status: 'CONFIRMED', expenseNumber: `EXP-${i}`, expenseDate: new Date(prefill.paymentDate) });
+    }
+    for (const [id, status, branch, creator, expenseStatus] of [
+      ['other-branch', 'REQUIRED', 'branch-2', ctx.userId, 'CONFIRMED'],
+      ['other-owner', 'REQUIRED', 'branch-1', 'user-2', 'CONFIRMED'],
+      ['old-void', 'REQUIRED', 'branch-1', ctx.userId, 'VOIDED'],
+      ['draft', 'REQUIRED', 'branch-1', ctx.userId, 'NEEDS_REVIEW'],
+      ['cancelled', 'CANCELLED', 'branch-1', ctx.userId, 'VOIDED'],
+      ['system', 'SYSTEM_ISSUED', 'branch-1', ctx.userId, 'CONFIRMED'],
+      ['external', 'EXTERNAL_LINKED', 'branch-1', ctx.userId, 'CONFIRMED'],
+    ]) {
+      await h.value.createOrReplay({ ...baseInput, creationCommandId: id, sourcePaymentType: 'expense.record', sourcePaymentId: id, sourceBranchId: branch });
+      Object.assign(h.rows.at(-1), { status, externalCertificateNumber: status === 'EXTERNAL_LINKED' ? 'EXT-C1' : null,
+        externalIssuedDate: status === 'EXTERNAL_LINKED' ? new Date('2026-07-20') : null });
+      expenses.push({ id, companyId: ctx.companyId, branchId: branch, createdByUserId: creator, status: expenseStatus, expenseNumber: `EXP-${id}`, expenseDate: new Date(prefill.paymentDate) });
+    }
+    h.client.expenseRecord.findMany = async ({ where }: any) => expenses.filter(row => matches(row, where));
+    h.client.whtCertificate = { findMany: async () => [] };
+    return h;
+  }
+  const actor = { ...ctx, permissions: ['expense.read_own'], scopes: { branchIds: ['branch-1'] } };
+
+  it('applies branch and expense scope to both legacy arrays and pages, including an outside branch filter', async () => {
+    const h = await fixture();
+    const list = await h.value.list(actor);
+    assert.ok(Array.isArray(list));
+    assert.ok(list.every(row => row.sourceBranchId === 'branch-1' && row.sourcePaymentId !== 'other-owner'));
+    assert.deepEqual(await h.value.list(actor, { branchId: 'branch-2' }), []);
+    const page = await h.value.listPaged(actor, { branchId: 'branch-2' });
+    assert.deepEqual(page.rows, []); assert.equal(page.total, 0);
+    assert.deepEqual(page.counts, { REQUIRED: 0, SYSTEM_ISSUED: 0, EXTERNAL_LINKED: 0, CANCELLED: 0 });
+    assert.equal((await h.value.list(actor, { sourcePaymentId: 'exp-1' })).length, 1, 'expense array caller');
+  });
+
+  it('pages beyond 200 newest first and keeps tab counts equal to all matching rows while hiding stale REQUIRED sources', async () => {
+    const h = await fixture();
+    const all: any[] = [];
+    for (let page = 1; page <= 3; page++) {
+      const result = await h.value.listPaged(actor, { status: 'REQUIRED', page, pageSize: 100 });
+      assert.equal(result.total, 205); assert.equal(result.counts.REQUIRED, 205);
+      assert.equal(result.page, page); assert.equal(result.pageSize, 100);
+      all.push(...result.rows);
+    }
+    assert.equal(all.length, 205); assert.equal(new Set(all.map(row => row.id)).size, 205);
+    assert.equal(all[0].expenseId, 'exp-204'); assert.equal(all.at(-1).expenseId, 'exp-0');
+    for (const status of ['SYSTEM_ISSUED', 'EXTERNAL_LINKED', 'CANCELLED'] as const) {
+      const result = await h.value.listPaged(actor, { status });
+      assert.equal(result.total, 1); assert.equal(result.counts[status], result.rows.length);
+      assert.equal(result.page, 1); assert.equal(result.pageSize, 20);
+      if (status === 'CANCELLED') assert.equal(result.rows[0].expenseId, 'cancelled');
+      if (status === 'EXTERNAL_LINKED') {
+        assert.equal(result.rows[0].certificateNumber, 'EXT-C1'); assert.equal(result.rows[0].certificateIssuedAt, '2026-07-20T00:00:00.000Z');
+      }
+    }
+    const defaultPage = await h.value.listPaged(actor, { pageSize: 999 });
+    assert.equal(defaultPage.pageSize, 100); assert.equal(defaultPage.total, 208);
+    assert.equal(Object.values(defaultPage.counts).reduce((a: number, b: any) => a + b, 0), defaultPage.total);
+  });
+
+  it('returns display fields and the same missing reasons as issuance, and searches payee, tax id, certificate and expense number', async () => {
+    const h = await fixture();
+    Object.assign(h.rows[0].prefillSnapshotJson, { formType: null, incomeCategoryCode: null, incomeCategoryName: null, whtRate: null });
+    const result = await h.value.listPaged(actor, { search: 'EXP-0' });
+    assert.equal(result.total, 1); assert.equal(result.counts.REQUIRED, 1);
+    const row = result.rows[0];
+    assert.equal(row.payeeName, prefill.payeeSnapshot.name); assert.equal(row.payeeTaxId, prefill.payeeSnapshot.taxId);
+    assert.equal(row.expenseId, 'exp-0'); assert.equal(row.expenseNumber, 'EXP-0');
+    assert.equal(row.documentDate, prefill.paymentDate); assert.equal(row.withheldAmount, prefill.withheldAmount);
+    assert.deepEqual(row.missing, ['FORM_TYPE_UNRESOLVED', 'INCOME_CATEGORY_OR_RATE_MISSING']);
+    assert.equal(row.systemIssuanceOpen, true); assert.equal(row.systemCorrectionOpen, true); assert.equal(row.systemReplacementOpen, true);
+    const complete = await h.value.listPaged(actor, { search: 'EXP-204' });
+    assert.deepEqual(complete.rows[0].missing, []);
+    for (const search of ['ผู้รับเงิน', '1234567890123']) assert.equal((await h.value.listPaged(actor, { search })).total, 208);
+    const external = await h.value.listPaged(actor, { search: 'EXT-C1' });
+    assert.equal(external.total, 1); assert.equal(external.counts.EXTERNAL_LINKED, 1);
+  });
+});
+
+
+describe('C1 expense list rule reuse and edge cases', () => {
+  it('uses related before own, creator-only for own, and both handoff and source expense branch boundaries', async () => {
+    const h = makeStore();
+    const expenses = [
+      { id: 'own', companyId: ctx.companyId, branchId: 'branch-1', createdByUserId: ctx.userId, status: 'CONFIRMED' },
+      { id: 'reviewed', companyId: ctx.companyId, branchId: 'branch-1', createdByUserId: 'other', reviewedByUserId: ctx.userId, status: 'CONFIRMED' },
+      { id: 'unrelated', companyId: ctx.companyId, branchId: 'branch-1', createdByUserId: 'other', status: 'CONFIRMED' },
+      { id: 'payer', companyId: ctx.companyId, branchId: 'branch-1', createdByUserId: 'other', substituteReceiptEvidences: [{ payerUserId: ctx.userId }], status: 'CONFIRMED' },
+      { id: 'outside-source', companyId: ctx.companyId, branchId: 'branch-2', createdByUserId: ctx.userId, status: 'CONFIRMED' },
+    ];
+    for (const expense of expenses) await h.value.createOrReplay({ ...baseInput, creationCommandId: expense.id,
+      sourceBranchId: 'branch-1', sourcePaymentType: 'expense.record', sourcePaymentId: expense.id });
+    h.client.expenseRecord.findFirst = async ({ where }: any) => expenses.find(row => matches(row, where)) ?? null;
+    h.client.expenseRecord.findMany = async ({ where }: any) => expenses.filter(row => matches(row, where))
+      .map(row => ({ ...row, expenseNumber: `EXP-${row.id}`, expenseDate: new Date(prefill.paymentDate) }));
+    const branchCtx = { ...ctx, scopes: { branchIds: ['branch-1'] } };
+    const own = { ...branchCtx, permissions: ['expense.read_own'] };
+    const related = { ...branchCtx, permissions: ['expense.read_related', 'expense.read_own'] };
+    assert.deepEqual((await h.value.list(own)).map(row => row.sourcePaymentId), ['own']);
+    assert.deepEqual(new Set((await h.value.list(related)).map(row => row.sourcePaymentId)), new Set(['own', 'reviewed', 'payer']));
+    assert.equal((await h.value.listPaged(related)).counts.REQUIRED, 3);
+    assert.equal((await h.value.listPaged({ ...branchCtx, permissions: ['expense.review'] })).total, 4);
+    for (const source of ['unrelated', 'outside-source']) {
+      await assert.rejects(h.value.get(related, h.rows.find(row => row.sourcePaymentId === source).id), (error: any) => error.getStatus() === 404 && error.message === 'WHT handoff not found.');
+    }
+    assert.equal((await h.value.get(related, h.rows.find(row => row.sourcePaymentId === 'reviewed').id)).sourcePaymentId, 'reviewed');
+    await assert.rejects(h.value.get(own, h.rows.find(row => row.sourcePaymentId === 'payer').id), /WHT handoff not found/);
+    assert.equal((await h.value.listPaged({ ...branchCtx, permissions: [] })).total, 0);
+  });
+
+  it('keeps AP and company-central rows readable without expense permissions and refuses missing expense sources', async () => {
+    const h = makeStore();
+    const central = await h.value.createOrReplay(baseInput);
+    const ap = await h.value.createOrReplay({ ...baseInput, creationCommandId: 'ap', sourcePaymentType: 'procurement.supplier_payment', sourceBranchId: 'branch-1' });
+    const missing = await h.value.createOrReplay({ ...baseInput, creationCommandId: 'missing-source', sourcePaymentType: 'expense.record', sourcePaymentId: 'deleted' });
+    const broken = await h.value.createOrReplay({ ...baseInput, creationCommandId: 'null-source', sourcePaymentType: 'expense.record', sourcePaymentId: null });
+    h.client.expenseRecord.findFirst = async () => null;
+    h.client.expenseRecord.findMany = async () => [];
+    const actor = { ...ctx, scopes: { branchIds: ['branch-1'] }, permissions: [] };
+    assert.equal((await h.value.get(actor, central.id)).id, central.id);
+    assert.equal((await h.value.get(actor, ap.id)).id, ap.id);
+    for (const id of [missing.id, broken.id]) await assert.rejects(h.value.get(actor, id), /WHT handoff not found/);
+    assert.equal((await h.value.list(actor)).length, 2);
+    assert.equal((await h.value.listPaged(actor)).total, 2);
+    assert.equal((await h.value.listPaged(actor, { page: -1, pageSize: 0 })).pageSize, 1);
+    await assert.rejects(h.value.listPaged(actor, { status: 'INVALID' }), (error: any) => error.getStatus() === 400);
+  });
+
+  it('reports each missing reason separately with its contract Thai wording and uses the issue command checks', async () => {
+    const { WHT_HANDOFF_MISSING_LABELS } = await import('@watchdog-bms/contracts');
+    assert.deepEqual(WHT_HANDOFF_MISSING_LABELS, {
+      FORM_TYPE_UNRESOLVED: 'ยังไม่ทราบว่าผู้รับเงินเป็นบุคคลหรือนิติบุคคล',
+      INCOME_CATEGORY_OR_RATE_MISSING: 'ยังไม่มีประเภทเงินได้หรืออัตราภาษี',
+    });
+    for (const [patch, expected] of [
+      [{ formType: null }, ['FORM_TYPE_UNRESOLVED']],
+      [{ incomeCategoryCode: null }, ['INCOME_CATEGORY_OR_RATE_MISSING']],
+      [{ incomeCategoryName: '' }, ['INCOME_CATEGORY_OR_RATE_MISSING']],
+      [{ whtRate: null }, ['INCOME_CATEGORY_OR_RATE_MISSING']],
+      [{ whtRate: '0' }, []],
+    ] as const) {
+      const h = makeStore();
+      await h.value.createOrReplay({ ...baseInput, prefill: { ...prefill, incomeCategoryCode: 'CAT', incomeCategoryName: 'ค่าบริการ', whtRate: '3', ...patch } });
+      assert.deepEqual((await h.value.listPaged(ctx)).rows[0].missing, expected);
+    }
+  });
+
+  it('searches current SYSTEM certificate number and corrected payee and keeps counts within branch and expense scope', async () => {
+    const h = makeStore();
+    await h.value.createOrReplay({ ...baseInput, sourceBranchId: 'branch-1' });
+    Object.assign(h.rows[0], { status: 'SYSTEM_ISSUED', certificateId: 'cert-1' });
+    const certificate = { id: 'cert-1', companyId: ctx.companyId, certificateNumber: 'WT-CURRENT', issuedAt: new Date('2026-07-20'),
+      taxPeriod: { formType: 'PND53' }, incomeCategoryCode: 'CAT', incomeCategoryName: 'ค่าบริการ', whtRate: '3', grossAmount: '1000', withheldAmount: '30',
+      paymentDate: new Date(prefill.paymentDate), payeeSnapshotJson: { name: 'Corrected Payee', taxId: '9876543210123', address: null, branchCode: null } };
+    h.client.whtCertificate = { findMany: async ({ where }: any) => matches(certificate, where) ? [certificate] : [] };
+    for (const search of ['wt-current', 'corrected payee', '9876543210123']) {
+      const result = await h.value.listPaged(ctx, { search });
+      assert.equal(result.total, 1); assert.equal(result.counts.SYSTEM_ISSUED, 1);
+      assert.equal(result.rows[0].certificateNumber, 'WT-CURRENT'); assert.equal(result.rows[0].payeeName, 'Corrected Payee');
+    }
+    const outside = await h.value.listPaged({ ...ctx, scopes: { branchIds: ['branch-2'] } }, { search: 'WT-CURRENT' });
+    assert.equal(outside.total, 0);
+    assert.equal((await h.value.listPaged(ctx, { search: 'no-match' })).total, 0);
+  });
+
+  it('reads counts and rows in one repeatable-read transaction', async () => {
+    const h = makeStore();
+    await h.value.createOrReplay(baseInput);
+    let transactions = 0;
+    h.client.$transaction = async (work: any, options: any) => {
+      transactions++;
+      assert.deepEqual(options, { isolationLevel: 'RepeatableRead' });
+      return work(h.client);
+    };
+    assert.equal((await h.value.listPaged(ctx)).counts.REQUIRED, 1);
+    assert.equal(transactions, 1);
+  });
+});
+
+
+describe('C1 history and cancelled list source boundary', () => {
+  it('does not expose expense certificate history to an own-only reader of somebody else’s expense', async () => {
+    const h = makeStore();
+    await h.value.createOrReplay({ ...baseInput, sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' });
+    h.client.expenseRecord.findFirst = async ({ where }: any) => matches({ id: 'expense-1', companyId: ctx.companyId, createdByUserId: 'other' }, where) ? { id: 'expense-1' } : null;
+    h.client.whtCertificateHistory.findMany = async () => { throw new Error('must not expose unreadable expense history'); };
+    assert.deepEqual(await h.value.getExpenseHistory({ ...ctx, permissions: ['expense.read_own'] }, 'expense-1'), []);
+  });
+
+  it('carries and searches the last cancelled certificate number and issue date after delivery A clears the pointers', async () => {
+    const h = makeStore();
+    const created = await h.value.createOrReplay({ ...baseInput, sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' });
+    Object.assign(h.rows[0], { status: 'CANCELLED', certificateId: null, externalCertificateNumber: null, externalIssuedDate: null });
+    const events = [
+      { companyId: ctx.companyId, handoffId: created.id, eventType: 'CANCELLED_SOURCE_VOIDED', reason: 'บันทึกผิดรายการ', certificateNumber: 'WT-LAST', certificateDate: new Date('2026-07-20'), occurredAt: new Date('2026-07-21') },
+      { companyId: ctx.companyId, handoffId: created.id, eventType: 'CANCELLED_SOURCE_REOPENED', certificateNumber: 'WT-OLD', certificateDate: new Date('2026-07-10'), occurredAt: new Date('2026-07-11') },
+    ];
+    h.client.whtCertificateHistory.findMany = async ({ where }: any) => events.filter(row => matches(row, where));
+    h.client.whtCertificate = { findMany: async () => [] };
+    const all = await h.value.listPaged(ctx, { status: 'CANCELLED' });
+    assert.equal(all.rows[0].certificateNumber, 'WT-LAST');
+    assert.equal(all.rows[0].certificateIssuedAt, '2026-07-20T00:00:00.000Z');
+    assert.deepEqual(all.rows[0].cancellation, { cancelledAt: '2026-07-21T00:00:00.000Z', eventType: 'CANCELLED_SOURCE_VOIDED', reason: 'บันทึกผิดรายการ' });
+    const found = await h.value.listPaged(ctx, { search: 'wt-last' });
+    assert.equal(found.total, 1); assert.equal(found.counts.CANCELLED, 1);
+  });
+});
+
+describe('A9 external record history', () => {
+  it('returns evidence and note on a standing legacy external record', async () => {
+    const h = makeStore();
+    h.table.findMany = async () => [{ id: 'handoff-1', sourceBranchId: null, status: 'EXTERNAL_LINKED',
+      externalCertificateNumber: 'EXT-1', externalEvidenceRef: 'file-1', linkNote: 'บันทึกเดิม', certificateRound: 0 }];
+    h.client.whtCertificateHistory.findMany = async () => [{ handoffId: 'handoff-1', eventType: 'EXTERNAL_RECORDED', isExternal: true,
+      certificateNumber: 'EXT-1', certificateDate: null, reason: null, relatedCertificateNumber: null,
+      actorUserId: 'user-1', occurredAt: new Date('2026-07-21'), taxFilingAttested: false, detailsJson: null }];
+    h.client.user = { findMany: async () => [] };
+    const [row] = await h.value.getExpenseHistory(ctx, 'exp-1');
+    assert.equal(row.evidenceRef, 'file-1'); assert.equal(row.note, 'บันทึกเดิม');
+  });
+  it('returns the original record details from its removal after the handoff was reused', async () => {
+    const h = makeStore();
+    h.table.findMany = async () => [{ id: 'handoff-1', sourceBranchId: null, status: 'EXTERNAL_LINKED',
+      externalCertificateNumber: 'EXT-2', externalEvidenceRef: 'new-file', linkNote: 'บันทึกใหม่' }];
+    const base = { handoffId: 'handoff-1', isExternal: true, certificateNumber: 'EXT-1', certificateDate: null, reason: null,
+      relatedCertificateNumber: null, actorUserId: 'user-1', taxFilingAttested: false };
+    h.client.whtCertificateHistory.findMany = async () => [
+      { ...base, eventType: 'EXTERNAL_RECORD_REMOVED', occurredAt: new Date('2026-07-22'), detailsJson: { externalEvidenceRef: 'old-file', linkNote: 'บันทึกเดิม' } },
+      { ...base, eventType: 'EXTERNAL_RECORDED', occurredAt: new Date('2026-07-21'), detailsJson: null },
+    ];
+    h.client.user = { findMany: async () => [] };
+    const [, recorded] = await h.value.getExpenseHistory(ctx, 'exp-1');
+    assert.equal(recorded.evidenceRef, 'old-file'); assert.equal(recorded.note, 'บันทึกเดิม');
+  });
+  it('names source document changes consistently in history labels', async () => {
+    const { WHT_CERTIFICATE_HISTORY_EVENT_LABELS } = await import('@watchdog-bms/contracts');
+    assert.equal(WHT_CERTIFICATE_HISTORY_EVENT_LABELS.CANCELLED_SOURCE_VOIDED, 'ยกเลิก เพราะเอกสารถูกยกเลิก');
+    assert.equal(WHT_CERTIFICATE_HISTORY_EVENT_LABELS.CANCELLED_SOURCE_REOPENED, 'ยกเลิก เพราะเอกสารถูกแก้ไข');
+  });
+});
+
+describe('C5 self-issued record changes and list context', () => {
+  const recorder = { ...ctx, permissions: ['expense.read', 'wht.external_certificate.link'] };
+  const original = { commandId: 'record-original', externalCertificateNumber: 'EXT-OLD', externalEvidenceRef: 'old-ref', issuedDate: '2026-07-20', note: 'เดิม' };
+  const changed = { commandId: 'change-one', externalCertificateNumber: 'EXT-NEW', externalEvidenceRef: 'new-ref', issuedDate: '2026-07-21', note: 'ใหม่' };
+  const notLinkable = 'บันทึกไม่ได้ เพราะมีผู้ออกหรือบันทึกหนังสือรับรองของรายจ่ายนี้ไปก่อนแล้ว หรือเอกสารถูกแก้ไขหรือยกเลิก กรุณาเปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด';
+  async function linked() {
+    const h = makeStore();
+    const created = await h.value.createOrReplay({ ...baseInput, sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1', sourceBranchId: 'branch-1' });
+    await h.value.linkExternal(recorder, created.id, original);
+    h.client.expenseRecord.findFirst = async ({ where }: any) => matches({ id: 'expense-1', companyId: ctx.companyId, branchId: 'branch-1', createdByUserId: ctx.userId }, where)
+      ? { id: 'expense-1', companyId: ctx.companyId, status: 'CONFIRMED', expenseDate: new Date(prefill.paymentDate), whtAmount: '30', vendorEntityKindSnapshot: 'JURISTIC_PERSON' } : null;
+    h.client.taxPeriod = { findFirst: async () => null, findMany: async () => [] };
+    h.client.accountingPeriod = { findUnique: async () => null };
+    return { ...h, id: created.id, change: (actor: any = recorder, body: any = changed) => (h.value as any).changeExternal(actor, created.id, body) };
+  }
+  function refuses(code: string, message: string) {
+    return (error: any) => { assert.equal(error.getResponse().code, code); assert.equal(error.getResponse().message, message); return true; };
+  }
+  const removeReason = 'บันทึกผิด ยังไม่ได้ออกให้ผู้รับเงิน';
+  async function removable() {
+    const h = await linked();
+    const body = { commandId: 'remove-one', expectedUpdatedAt: h.rows[0].updatedAt.toISOString(), reason: removeReason };
+    return { ...h, body, remove: (actor: any = recorder, input: any = body) => (h.value as any).removeExternal(actor, h.id, input) };
+  }
+  it('C15 removal returns to waiting, preserves prefill/address and appends the removed evidence with actor, reason and audit', async () => {
+    const h = await removable(); h.rows[0].payeeAddress = 'ที่อยู่ที่กรอกไว้';
+    const snapshot = h.rows[0].prefillSnapshotJson, hash = h.rows[0].prefillSnapshotHash;
+    const result = await h.remove();
+    assert.equal(result.status, 'REQUIRED'); assert.equal(result.systemIssuanceOpen, true);
+    assert.equal(result.canChangeExternalRecord, false);
+    for (const key of ['externalCertificateNumber', 'externalIssuedDate', 'externalEvidenceRef', 'linkNote', 'linkCommandId', 'linkPayloadFingerprint', 'linkedAt', 'linkedByUserId']) assert.equal(h.rows[0][key], null, key);
+    assert.equal(h.rows[0].payeeAddress, 'ที่อยู่ที่กรอกไว้'); assert.equal(h.rows[0].prefillSnapshotJson, snapshot); assert.equal(h.rows[0].prefillSnapshotHash, hash);
+    const event = h.history.find(row => row.eventType === 'EXTERNAL_RECORD_REMOVED');
+    assert.equal(event.certificateNumber, 'EXT-OLD'); assert.equal(event.certificateDate.toISOString(), '2026-07-20T00:00:00.000Z');
+    assert.equal(event.actorUserId, recorder.userId); assert.equal(event.reason, removeReason); assert.equal(event.detailsJson.removedManually, true);
+    assert.equal(event.detailsJson.externalEvidenceRef, 'old-ref'); assert.equal(event.detailsJson.linkNote, 'เดิม');
+    assert.equal(h.audits.filter(row => row.action === 'tax.wht_certificate.external_record_removed').length, 1);
+    h.history.forEach((row, index) => { row.occurredAt = new Date(2026, 6, 20 + index); }); h.client.user = { findMany: async () => [] };
+    assert.equal((await h.value.getExpenseHistory(recorder, h.rows[0].sourcePaymentId)).find(row => row.eventType === 'EXTERNAL_RECORD_REMOVED')?.removedManually, true);
+    assert.equal((await h.value.get(recorder, h.id)).previousCertificate, undefined);
+    assert.equal((await h.value.listPaged(recorder)).rows[0].previousCertificate, undefined);
+  });
+  it('C15 removal retry is durable after re-recording; a reused command or stale version cannot remove newer evidence', async () => {
+    const h = await removable(); await h.remove(); await h.remove();
+    await h.value.linkExternal(recorder, h.id, { ...original, commandId: 'record-again', externalCertificateNumber: 'NEWER' });
+    assert.equal((await h.remove()).externalCertificateNumber, 'NEWER');
+    assert.equal(h.history.filter(row => row.eventType === 'EXTERNAL_RECORD_REMOVED').length, 1);
+    await assert.rejects(h.remove(recorder, { ...h.body, reason: 'different reason' }), refuses('wht_handoff_link_command_reused', 'คำขอนี้ถูกใช้บันทึกข้อมูลอื่นไปแล้ว กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง'));
+    await assert.rejects(h.remove(recorder, { ...h.body, commandId: 'stale-remove', expectedUpdatedAt: '2020-01-01T00:00:00.000Z' }), refuses('wht_handoff_not_linkable', notLinkable));
+    assert.equal(h.rows[0].externalCertificateNumber, 'NEWER');
+  });
+  it('C15 removal refuses non-standing states, stale versions, invalid reasons and missing authority without writes', async () => {
+    for (const status of ['REQUIRED', 'SYSTEM_ISSUED', 'CANCELLED']) {
+      const h = await removable(); h.rows[0].status = status;
+      await assert.rejects(h.remove(), refuses('wht_handoff_not_linkable', notLinkable)); assert.equal(h.history.length, 1);
+    }
+    const h = await removable();
+    for (const over of [{ reason: '' }, { reason: ' ab ' }, { reason: 'x'.repeat(501) }, { reason: null }, { commandId: '' }, { commandId: 'x'.repeat(201) }, { expectedUpdatedAt: 'bad' }]) {
+      await assert.rejects(h.remove(recorder, { ...h.body, ...over }), (error: any) => error.getStatus() === 400);
+    }
+    await assert.rejects(h.remove(ctx), refuses('wht_handoff_external_remove_permission_denied', 'คุณไม่มีสิทธิ์ลบการบันทึกนี้ ให้ผู้ที่บันทึกหนังสือรับรองที่ออกเองได้ลบให้'));
+    assert.equal(h.history.length, 1); assert.equal(h.rows[0].status, 'EXTERNAL_LINKED');
+  });
+  it('C15 removal refuses a source no longer confirmed and hides handoffs outside company, branch or expense scope', async () => {
+    for (const status of ['VOIDED', 'NEEDS_REVIEW']) {
+      const h = await removable(); h.client.expenseRecord.findFirst = async () => ({ status });
+      await assert.rejects(h.remove(), refuses('expense_wht_source_changed', 'สถานะเอกสารนี้เปิดแก้ไขเอกสารไม่ได้ กรุณากลับไปหน้ารายจ่าย')); assert.equal(h.history.length, 1);
+    }
+    const h = await removable(); let missing: any;
+    try { await (h.value as any).removeExternal(recorder, 'missing', h.body); } catch (error) { missing = error; }
+    for (const actor of [{ ...recorder, companyId: 'other' }, { ...recorder, scopes: { branchIds: ['branch-2'] } }, { ...recorder, userId: 'other', permissions: ['expense.read_own', 'wht.external_certificate.link'] }]) {
+      await assert.rejects(h.remove(actor), (error: any) => { assert.equal(error.getStatus(), 404); assert.deepEqual(error.getResponse(), missing.getResponse()); return true; });
+    }
+  });
+  it('C15 removal uses the existing filed-month guard and records no removal in a locked period', async () => {
+    const { withholdingPeriodLockedMessage } = await import('@watchdog-bms/contracts');
+    const h = await removable(); h.client.taxPeriod.findMany = async () => [{ formType: 'PND53', periodKey: '2026-07', status: 'FILED' }];
+    await assert.rejects(h.remove(), refuses('tax_period_filed', withholdingPeriodLockedMessage('2026-07', 'แก้ไขเอกสารนี้', 'PND53', 'EXTERNAL')));
+    assert.equal(h.history.length, 1); assert.equal(h.rows[0].status, 'EXTERNAL_LINKED');
+  });
+  it('C15 a conditional-write conflict writes no history, and valid reasons are trimmed at their bounds', async () => {
+    const h = await removable(); const update = h.table.updateMany;
+    h.table.updateMany = async () => ({ count: 0 });
+    await assert.rejects(h.remove(), refuses('wht_handoff_not_linkable', notLinkable)); assert.equal(h.history.length, 1);
+    h.table.updateMany = update;
+    await h.remove(recorder, { ...h.body, reason: '  ' + 'ก'.repeat(500) + '  ' });
+    assert.equal(h.history.at(-1).reason.length, 500);
+  });
+  it('C5 changes a standing record without expense confirmation rights and keeps old and new history plus one audit', async () => {
+    const h = await linked();
+    const result = await h.change();
+    const { WHT_CERTIFICATE_HISTORY_EVENT_LABELS } = await import('@watchdog-bms/contracts');
+    assert.equal(WHT_CERTIFICATE_HISTORY_EVENT_LABELS.EXTERNAL_RECORD_CHANGED, 'แก้ไขการบันทึกหนังสือรับรองที่ออกเอง');
+    assert.equal(result.externalCertificateNumber, changed.externalCertificateNumber);
+    assert.equal(result.externalIssuedDate, '2026-07-21T00:00:00.000Z');
+    assert.equal(result.externalEvidenceRef, 'new-ref'); assert.equal(result.linkNote, 'ใหม่');
+    assert.equal(result.canChangeExternalRecord, true);
+    const events = h.history.filter(row => row.eventType === 'EXTERNAL_RECORD_CHANGED');
+    assert.equal(events.length, 1); assert.equal(events[0].certificateNumber, 'EXT-NEW');
+    assert.deepEqual(events[0].detailsJson.previousRecord, { number: 'EXT-OLD', issuedDate: '2026-07-20T00:00:00.000Z', externalEvidenceRef: 'old-ref', note: 'เดิม' });
+    assert.equal(h.audits.filter(row => row.action === 'tax.wht_certificate.external_record_changed').length, 1);
+    h.client.user = { findMany: async () => [] };
+    h.history.forEach((row, index) => { row.occurredAt = new Date(2026, 6, 20 + index); });
+    const history = await h.value.getExpenseHistory(recorder, 'expense-1');
+    const event = history.find(row => row.eventType === 'EXTERNAL_RECORD_CHANGED');
+    assert.deepEqual((event as any).previousExternalRecord, events[0].detailsJson.previousRecord);
+    assert.equal(event?.certificateNumber, 'EXT-NEW'); assert.equal(event?.evidenceRef, 'new-ref');
+  });
+  it('C5 same command safely retries even after a later change; reused commands cannot overwrite another payload or handoff', async () => {
+    const h = await linked();
+    await h.change(); await h.change();
+    await h.change(recorder, { ...changed, commandId: 'change-two', externalCertificateNumber: 'EXT-LATEST' });
+    const retry = await h.change(); assert.equal(retry.externalCertificateNumber, 'EXT-LATEST');
+    assert.equal(h.history.filter(row => row.eventType === 'EXTERNAL_RECORD_CHANGED').length, 2);
+    await assert.rejects(h.change(recorder, { ...changed, externalCertificateNumber: 'WRONG' }), refuses('wht_handoff_link_command_reused', 'คำขอนี้ถูกใช้บันทึกข้อมูลอื่นไปแล้ว กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง'));
+    const other = await h.value.createOrReplay({ ...baseInput, creationCommandId: 'other-record' });
+    await h.value.linkExternal(recorder, other.id, { ...original, commandId: 'record-other' });
+    await assert.rejects(() => (h.value as any).changeExternal(recorder, other.id, changed), refuses('wht_handoff_link_command_reused', 'คำขอนี้ถูกใช้บันทึกข้อมูลอื่นไปแล้ว กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง'));
+  });
+  it('C5 every non-standing status refuses with the latest-state sentence and writes nothing', async () => {
+    for (const status of ['REQUIRED', 'SYSTEM_ISSUED', 'CANCELLED']) {
+      const h = await linked(); h.rows[0].status = status;
+      await assert.rejects(h.change(), refuses('wht_handoff_not_linkable', notLinkable));
+      assert.equal(h.history.length, 1);
+    }
+  });
+  it('C5 non-confirmed sources and missing permission refuse with actionable Thai and no change', async () => {
+    for (const status of ['VOIDED', 'NEEDS_REVIEW']) {
+      const h = await linked(); h.client.expenseRecord.findFirst = async () => ({ status });
+      await assert.rejects(h.change(), refuses('expense_wht_source_changed', 'สถานะเอกสารนี้เปิดแก้ไขเอกสารไม่ได้ กรุณากลับไปหน้ารายจ่าย'));
+      assert.equal(h.rows[0].externalCertificateNumber, 'EXT-OLD');
+    }
+    const h = await linked();
+    await assert.rejects(h.change(ctx), refuses('wht_handoff_external_change_permission_denied', 'คุณไม่มีสิทธิ์แก้ไขการบันทึกหนังสือรับรองนี้ ให้ผู้ที่มีสิทธิ์บันทึกหนังสือรับรองที่ออกเองแก้ไขให้'));
+  });
+  it('C5 no-op and invalid or future dates refuse with their sentences while keeping the standing record', async () => {
+    const h = await linked();
+    await assert.rejects(h.change(recorder, { ...original, commandId: 'no-change' }), refuses('wht_handoff_external_record_no_changes', 'ข้อมูลตรงกับที่บันทึกไว้อยู่แล้ว จึงไม่มีอะไรต้องแก้ไข'));
+    const invalidMessage = 'ข้อมูลที่บันทึกไม่ครบหรือไม่ถูกต้อง กรุณาตรวจเลขที่ วันที่ เลขอ้างอิง และหมายเหตุ แล้วบันทึกอีกครั้ง';
+    for (const over of [{ commandId: '' }, { commandId: 'x'.repeat(201) }, { note: {} }, { externalCertificateNumber: ' ' }, { externalCertificateNumber: 'x'.repeat(101) }, { externalEvidenceRef: 'x'.repeat(501) }, { note: 'x'.repeat(1001) }, { issuedDate: '2026-02-31' }, { issuedDate: '2026-07-21T00:00:00Z' }]) {
+      await assert.rejects(h.change(recorder, { ...changed, ...over }), refuses('wht_handoff_external_record_invalid', invalidMessage));
+    }
+    await assert.rejects(h.change(recorder, { ...changed, issuedDate: '2099-01-01' }), refuses('wht_handoff_external_issued_date_future', 'วันที่ออกต้องไม่เกินวันนี้ กรุณาเลือกวันที่แล้วบันทึกอีกครั้ง'));
+    assert.equal(h.rows[0].externalCertificateNumber, 'EXT-OLD'); assert.equal(h.history.length, 1);
+  });
+  it('C5 filed withholding month uses the existing self-issued edit sentence for either form', async () => {
+    const { withholdingPeriodLockedMessage } = await import('@watchdog-bms/contracts');
+    for (const formType of ['PND3', 'PND53']) for (const status of ['FILED', 'PAID', 'CLOSED']) {
+      const h = await linked(); h.rows[0].prefillSnapshotJson = { ...prefill, formType };
+      h.client.taxPeriod.findFirst = async () => ({ formType, periodKey: '2026-07', status });
+      h.client.taxPeriod.findMany = async () => [{ formType, periodKey: '2026-07', status }];
+      await assert.rejects(h.change(), refuses('tax_period_filed', withholdingPeriodLockedMessage('2026-07', 'แก้ไขเอกสารนี้', formType, 'EXTERNAL')));
+      assert.equal(h.rows[0].externalCertificateNumber, 'EXT-OLD');
+    }
+  });
+  it('C5 an unresolved prefill still respects the expense withholding month and its own form', async () => {
+    const h = await linked(); h.rows[0].prefillSnapshotJson = { ...prefill, formType: null };
+    h.client.taxPeriod.findMany = async () => [{ formType: 'PND53', periodKey: '2026-07', status: 'FILED' }];
+    const { withholdingPeriodLockedMessage } = await import('@watchdog-bms/contracts');
+    await assert.rejects(h.change(), refuses('tax_period_filed', withholdingPeriodLockedMessage('2026-07', 'แก้ไขเอกสารนี้', 'PND53', 'EXTERNAL')));
+  });
+  it('C5 legacy original history keeps its reference and note after the standing record changes', async () => {
+    const h = await linked(); h.history[0].detailsJson = null;
+    await h.change();
+    h.history.forEach((row, index) => { row.occurredAt = new Date(2026, 6, 20 + index); });
+    h.client.user = { findMany: async () => [] };
+    const old = (await h.value.getExpenseHistory(recorder, 'expense-1')).find(row => row.eventType === 'EXTERNAL_RECORDED')!;
+    assert.equal(old.certificateNumber, 'EXT-OLD'); assert.equal(old.evidenceRef, 'old-ref'); assert.equal(old.note, 'เดิม');
+  });
+  it('C5 changing another branch or unreadable expense answers exactly like a missing handoff', async () => {
+    const h = await linked();
+    let missing: any;
+    try { await (h.value as any).changeExternal(recorder, 'missing', changed); } catch (error) { missing = error; }
+    assert.equal(missing.getStatus(), 404);
+    for (const actor of [{ ...recorder, scopes: { branchIds: ['branch-2'] } }, { ...recorder, userId: 'other', permissions: ['expense.read_own', 'wht.external_certificate.link'] }]) {
+      await assert.rejects(h.change(actor), (error: any) => { assert.equal(error.getStatus(), missing.getStatus()); assert.deepEqual(error.getResponse(), missing.getResponse()); return true; });
+    }
+  });
+  it('C5 change authority is per viewer and standing status on by-id, array and paged reads', async () => {
+    const h = await linked();
+    for (const status of ['REQUIRED', 'EXTERNAL_LINKED', 'SYSTEM_ISSUED', 'CANCELLED']) {
+      h.rows[0].status = status;
+      for (const actor of [ctx, { ...ctx, permissions: ['expense.read', 'wht.certificate.issue'] }, { ...ctx, permissions: ['expense.read', 'wht.certificate.correct'] }, recorder]) {
+        const expected = status === 'EXTERNAL_LINKED' && actor.permissions.includes('wht.external_certificate.link');
+        assert.equal((await h.value.get(actor, h.id)).canChangeExternalRecord, expected);
+        assert.equal((await h.value.list(actor))[0].canChangeExternalRecord, expected);
+        assert.equal((await h.value.listPaged(actor)).rows[0].canChangeExternalRecord, expected);
+      }
+    }
+  });
+  it('C5 pending list remembers the newest cancelled certificate for several expenses using one history query', async () => {
+    const h = makeStore();
+    for (let index = 0; index < 3; index++) {
+      await h.value.createOrReplay({ ...baseInput, creationCommandId: `pending-${index}`, sourcePaymentType: 'expense.record', sourcePaymentId: `expense-${index}` });
+      h.history.push({ companyId: ctx.companyId, expenseId: `expense-${index}`, handoffId: `old-${index}`, eventType: index === 1 ? 'EXTERNAL_RECORD_REMOVED' : 'CANCELLED_SOURCE_REOPENED', isExternal: index === 1,
+        certificateNumber: `OLD-${index}`, certificateDate: new Date('2026-07-10'), occurredAt: new Date('2026-07-20') });
+      h.history.push({ ...h.history.at(-1), certificateNumber: `NEWEST-${index}`, occurredAt: new Date('2026-07-21') });
+    }
+    let queries = 0;
+    const find = h.client.whtCertificateHistory.findMany;
+    h.client.whtCertificateHistory.findMany = async (args: any) => { queries++; return (await find(args)).sort((a: any, b: any) => b.occurredAt - a.occurredAt); };
+    const page = await h.value.listPaged(ctx, { status: 'REQUIRED' });
+    assert.equal(queries, 1);
+    for (const row of page.rows) {
+      const index = Number(row.sourcePaymentId!.split('-')[1]);
+      assert.deepEqual(row.previousCertificate, { number: `NEWEST-${index}`, kind: index === 1 ? 'EXTERNAL' : 'SYSTEM', cancelledAt: '2026-07-21T00:00:00.000Z' });
+      assert.deepEqual((await h.value.get(ctx, row.id)).previousCertificate, row.previousCertificate);
+    }
+    assert.equal((await h.value.list(ctx)).filter(row => row.previousCertificate).length, 3);
+    h.rows[0].status = 'EXTERNAL_LINKED'; h.rows[0].externalCertificateNumber = 'CURRENT';
+    assert.equal((await h.value.get(ctx, h.rows[0].id)).previousCertificate, undefined);
+  });
+  it('C6 pending reads separate the cancelled certificate from the current certificate', async () => {
+    const h = makeStore();
+    await h.value.createOrReplay({ ...baseInput, sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-pending' });
+    h.history.push({ companyId: ctx.companyId, expenseId: 'expense-pending', handoffId: h.rows[0].id, eventType: 'CANCELLED_SOURCE_REOPENED', isExternal: false,
+      certificateNumber: 'WHT-CANCELLED', certificateDate: new Date('2026-07-10'), occurredAt: new Date('2026-07-20') });
+    const pending = (await h.value.listPaged(ctx, { status: 'REQUIRED' })).rows[0];
+    for (const row of [pending, ...(await h.value.list(ctx)), await h.value.get(ctx, h.rows[0].id)]) {
+      assert.equal(row.certificateId, null);
+      assert.equal(row.certificateNumber, null);
+      assert.equal(row.certificateIssuedAt, null);
+      assert.equal(row.previousCertificate?.number, 'WHT-CANCELLED');
+    }
+  });
+  it('C5 list address flag uses the handoff address first, then the vendor snapshot, and treats whitespace as missing', async () => {
+    const h = makeStore();
+    for (const [index, address, vendor, expected] of [[0, 'saved', null, true], [1, null, 'vendor', true], [2, ' ', ' vendor ', true], [3, null, ' ', false], [4, null, null, false]] as const) {
+      await h.value.createOrReplay({ ...baseInput, creationCommandId: `address-${index}`, prefill: { ...prefill, payeeSnapshot: { ...prefill.payeeSnapshot, address: vendor } } });
+      h.rows[index].payeeAddress = address; h.rows[index].expectedAddress = expected;
+    }
+    for (const row of (await h.value.listPaged(ctx)).rows) assert.equal(row.hasPayeeAddress, h.rows.find(db => db.id === row.id).expectedAddress);
+  });
+  it('C5 recording refusals describe recording instead of uploads without changing their codes', async () => {
+    const h = await linked();
+    await assert.rejects(h.value.linkExternal(recorder, h.id, { ...original, commandId: 'second-record' }), refuses('wht_handoff_already_linked', 'รายจ่ายนี้บันทึกหนังสือรับรองที่ออกเองไว้แล้ว ถ้าข้อมูลผิด ให้ใช้ "แก้ไขการบันทึก"'));
+    h.rows[0].status = 'SYSTEM_ISSUED';
+    await assert.rejects(h.value.linkExternal(recorder, h.id, changed), refuses('wht_handoff_not_linkable', notLinkable));
+  });
+});
+
+
+it('C9 paged, array and single reads compute payerMissing with one company read per request', async () => {
+  const h = makeStore();
+  for (let index = 0; index < 3; index++) await h.value.createOrReplay({ ...baseInput, creationCommandId: `payer-${index}`, prefill: { ...prefill, payerSnapshot: { ...prefill.payerSnapshot, taxId: null, address: null } } });
+  let reads = 0; h.client.company.findUnique = async () => { reads++; return { taxId: '1234567890123', addressJson: { line1: 'ที่อยู่ปัจจุบัน' } }; };
+  for (const action of [() => h.value.listPaged(ctx), () => h.value.list(ctx), () => h.value.get(ctx, h.rows[0].id)]) {
+    const before = reads; const result = await action();
+    const rows = Array.isArray(result) ? result : 'rows' in result ? result.rows : [result];
+    for (const row of rows) assert.deepEqual(row.payerMissing, []); assert.equal(reads - before, 1);
+  }
+  h.client.company.findUnique = async () => null;
+  assert.deepEqual((await h.value.get(ctx, h.rows[0].id)).payerMissing, ['TAX_ID', 'ADDRESS']);
+});
+
+
+describe('C17 historical search, descriptions and cleared addresses', () => {
+  it('finds old numbers in every current tab with matching counts and preserves branch and own-expense scope', async () => {
+    const h = makeStore();
+    const statuses = ['SYSTEM_ISSUED', 'REQUIRED', 'CANCELLED', 'EXTERNAL_LINKED'] as const;
+    for (const [index, status] of statuses.entries()) {
+      await h.value.createOrReplay({ ...baseInput, creationCommandId: `history-${index}`, sourcePaymentType: 'expense.record', sourcePaymentId: `expense-${index}`, sourceBranchId: 'branch-1' });
+      Object.assign(h.rows[index], { status, externalCertificateNumber: status === 'EXTERNAL_LINKED' ? 'EXT-CURRENT' : null });
+      h.history.push({ companyId: ctx.companyId, expenseId: `expense-${index}`, handoffId: h.rows[index].id,
+        eventType: index === 0 ? 'CORRECTED' : index === 1 ? 'EXTERNAL_RECORD_REMOVED' : index === 2 ? 'CANCELLED_SOURCE_VOIDED' : 'EXTERNAL_RECORD_CHANGED',
+        certificateNumber: index === 3 ? 'EXT-CURRENT' : `OLD-${index}`, relatedCertificateNumber: index === 0 ? 'CURRENT' : null,
+        detailsJson: index === 3 ? { previousRecord: { number: 'OLD-3' } } : index === 1 ? { removedManually: true } : null,
+        isExternal: index === 1 || index === 3, occurredAt: new Date('2026-07-20') });
+    }
+    h.client.whtCertificate = { findMany: async () => [] };
+    const actor = { ...ctx, permissions: ['expense.read_own'], scopes: { branchIds: ['branch-1'] } };
+    const result = await h.value.listPaged(actor, { search: 'old-' });
+    assert.equal(result.total, 4); assert.deepEqual(result.counts, { REQUIRED: 1, SYSTEM_ISSUED: 1, EXTERNAL_LINKED: 1, CANCELLED: 1 });
+    for (const status of statuses) {
+      const page = await h.value.listPaged(actor, { status, search: 'old-' });
+      assert.equal(page.total, 1); assert.equal(page.rows[0].matchedPreviousNumber, `OLD-${statuses.indexOf(status)}`);
+    }
+    assert.equal((await h.value.listPaged({ ...actor, scopes: { branchIds: ['other'] } }, { search: 'old-' })).total, 0);
+    assert.equal((await h.value.listPaged({ ...actor, userId: 'other' }, { search: 'old-' })).total, 0);
+    assert.equal((await h.value.listPaged({ ...actor, companyId: 'other' }, { search: 'old-' })).total, 0);
+    assert.equal((await h.value.listPaged(actor, { search: 'EXT-CURRENT' })).rows[0].matchedPreviousNumber, null);
+    assert.ok((await h.value.listPaged(actor)).rows.every(row => row.matchedPreviousNumber === null));
+  });
+
+  it('returns the existing expense-picker description and null for absent or non-expense descriptions in one batch', async () => {
+    const h = makeStore();
+    for (const id of ['with-lines', 'empty', 'ap']) await h.value.createOrReplay({ ...baseInput, creationCommandId: id,
+      sourcePaymentType: id === 'ap' ? 'procurement.supplier_payment' : 'expense.record', sourcePaymentId: id });
+    let reads = 0;
+    h.client.expenseRecord.findMany = async ({ select }: any) => {
+      reads++; assert.deepEqual(select.lines, { orderBy: { lineNumber: 'asc' }, select: { description: true } });
+      return ['with-lines', 'empty'].map(id => ({ id, status: 'CONFIRMED', expenseDate: new Date(prefill.paymentDate),
+        lines: id === 'with-lines' ? [{ description: 'ค่าเดินทาง' }, { description: 'ค่าจอดรถ' }] : [] }));
+    };
+    const page = await h.value.listPaged(ctx);
+    assert.equal(reads, 1);
+    assert.equal(page.rows.find(row => row.sourcePaymentId === 'with-lines')?.expenseDescription, 'ค่าเดินทาง; ค่าจอดรถ');
+    assert.equal(page.rows.find(row => row.sourcePaymentId === 'empty')?.expenseDescription, null);
+    assert.equal(page.rows.find(row => row.sourcePaymentId === 'ap')?.expenseDescription, null);
+  });
+
+  it('reports a typed address cleared by a tax-number change on reads until an address is saved, without making it a previous certificate', async () => {
+    const h = makeStore(); const created = await h.value.createOrReplay({ ...baseInput, sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' });
+    h.history.push({ companyId: ctx.companyId, expenseId: 'expense-1', handoffId: created.id, eventType: 'PAYEE_ADDRESS_CLEARED',
+      certificateNumber: null, isExternal: false, occurredAt: new Date('2026-07-20'), detailsJson: { reason: 'PAYEE_TAX_ID_CHANGED' } });
+    for (const row of [await h.value.get(ctx, created.id), ...(await h.value.list(ctx)), ...(await h.value.listPaged(ctx)).rows]) {
+      assert.equal(row.payeeAddressClearedByTaxIdChange, true); assert.equal(row.previousCertificate, undefined);
+    }
+    const saved = await h.value.setPayeeAddress(ctx, created.id, { payeeAddress: '99 ที่อยู่ใหม่' });
+    assert.equal(saved.payeeAddressClearedByTaxIdChange, false);
+    assert.equal((await h.value.get(ctx, created.id)).payeeAddressClearedByTaxIdChange, false);
   });
 });

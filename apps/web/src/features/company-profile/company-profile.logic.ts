@@ -16,6 +16,14 @@ import {
 
 export type IdentityField = 'taxId' | 'registeredName' | 'addressJson';
 
+export function companyProfileReturnPath(companyId: string, search: string): string | null {
+  const path = new URLSearchParams(search).get('returnTo');
+  const prefix = `/companies/${encodeURIComponent(companyId)}/`;
+  if (!path?.startsWith(prefix)) return null;
+  const url = new URL(path, 'https://profile.invalid');
+  return url.origin === 'https://profile.invalid' && url.pathname.startsWith(prefix) ? `${url.pathname}${url.search}${url.hash}` : null;
+}
+
 /**
  * Which `changeKind` this edit must be sent as.
  *

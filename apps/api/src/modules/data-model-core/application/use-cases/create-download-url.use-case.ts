@@ -5,6 +5,7 @@ import type { RequestContext } from '../../../auth/domain/models/request-context
 import { AuditService } from '../../../audit/application/audit.service';
 import { isBranchInScope } from '../../domain/logic/branch.logic';
 import { REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG } from '../../../reimbursements/domain/reimbursement.constants';
+import { DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, disbursementVoucherError } from '@watchdog-bms/contracts';
 
 /**
  * `disposition: 'inline'` is the preview ask (an <img>/<embed> src, which Chrome's ORB refuses to
@@ -40,6 +41,12 @@ export class CreateDownloadUrlUseCase {
     }
     if (!isBranchInScope(ctx.scopes ?? {}, existing.branchId)) {
       throw new ForbiddenException('Attachment is outside your assigned branch scope.');
+    }
+    if (existing.metadataJson?.['generatedFor'] === DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG || existing.metadataJson?.['generatedBy'] === 'disbursement_voucher'
+      || await this.attachments.isDisbursementVoucherFile({ id: existing.id, companyId: ctx.companyId })) {
+      void this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'attachment.download_url.create', targetType: 'attachment', targetId: existing.id,
+        requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH', metadataJson: { reason: 'disbursement_voucher_file' } });
+      throw new ForbiddenException(disbursementVoucherError('disbursement_file_general_download_denied'));
     }
     if (await this.attachments.isSubstituteRawSignature({ id: existing.id, companyId: ctx.companyId })) {
       throw new ForbiddenException('Raw substitute-receipt signatures are never available through generic attachment downloads.');

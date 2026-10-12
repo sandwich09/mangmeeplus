@@ -159,6 +159,7 @@ export class CancelReimbursementDto {
   // The transport bound only. Whether the reason is long enough is the expense void's own rule
   // (`isExpenseVoidReason`), asked in the use case before anything is written.
   @IsString() @IsOptional() @MaxLength(500) reason?: string;
+  @IsBoolean() @ValidateIf((_body, value) => value !== undefined) declare taxFilingAttested?: boolean;
 }
 
 export class ApproveReimbursementDto implements ApproveReimbursementInput {

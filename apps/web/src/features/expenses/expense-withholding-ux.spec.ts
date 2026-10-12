@@ -86,18 +86,18 @@ test('R3: หัก with a missing payee type, category or value is refused in b
   assert.deepEqual(chosen({ ...empty, vendorEntityKindSnapshot: 'JURISTIC', whtCategoryCode: 'SERVICE' }), ['whtInput.value']);
   assert.deepEqual(chosen({ ...empty, vendorEntityKindSnapshot: 'JURISTIC', whtCategoryCode: 'SERVICE', whtInput: { inputType: 'RATE', value: '0' } }), []);
   assert.deepEqual(validateExpenseReview(changeInput(empty, { inputType: 'RATE', value: '' }), { today: '2026-10-04', withholdingChosen: false }), [], 'ไม่หัก asks for none of it');
-  assert.match(edit, /if \(whtHiddenError\) \{\s*setWhtReveal\(true\);[\s\S]*?return false;/, 'ถัดไป stays on the step instead of saving ไม่หัก');
+  assert.match(edit, /if \(saveIssueCount > 0\) \{[\s\S]*?setValidationRevealed\(true\); setWhtReveal\(true\);[\s\S]*?return false;/, 'ถัดไป stays on the step instead of saving ไม่หัก');
   assert.equal(EXPENSE_WITHHOLDING_WORDS.wayOut(words['expenses.wht_no']!), 'เลือก “ไม่หัก” ถ้ารายการนี้ไม่ต้องหัก ณ ที่จ่าย');
   assert.equal((block.match(/\{whtWayOut\(/g) ?? []).length, 3, 'beside each field that can be the first missing one');
   assert.match(edit, /issue\.field === whtMissing\[0\]/, 'but printed once');
-  assert.match(edit, /whtMissing\.indexOf\(issue\.field\) > 0/, 'only the first missing field is said: picking a category fills the rate');
+  assert.doesNotMatch(edit, /whtMissing\.indexOf\(issue\.field\) > 0/, 'one Next reveals every missing answer');
 });
 
 test('R4 and R5: choosing หัก starts clean, and the footer and totals card only point to a withholding problem', () => {
   assert.match(block, /else setValues\(\(current\) => \(\{ \.\.\.current, whtInput: \{ inputType: 'RATE', value: '' \} \}\)\)/, 'empty, never the "0" that ไม่หัก stored');
   assert.match(block, /setWhtReveal\(!enabled\)/, 'no red until the reviewer leaves a field or presses ถัดไป');
-  assert.match(edit, /firstBlockingIsWht \? null : firstBlockingMessage/);
-  assert.match(edit, /useExpenseReviewTotals\([\s\S]*?blockingPointer, totalsRetry/);
+  assert.match(edit, /onValidationChange\?\.\(validationRevealed \? blockingIssueCount : 0, null\)/);
+  assert.match(edit, /useExpenseReviewTotals\([\s\S]*?previewBlocker, totalsRetry/);
 });
 
 test('choosing no withholding clears category/rate/base/legacy rates and issues while keeping the vendor snapshot', () => {
@@ -171,18 +171,14 @@ test('a saved category outside the current catalog displays a Thai label instead
 test('withholding hints explain optional blanks and the actual base without English tokens', () => {
   assert.doesNotMatch(words['expenses.wht_base_hint']!, /[A-Za-z]/);
   assert.equal((workspaceDictionary.en as Record<string, string>)['expenses.wht_base_hint'], words['expenses.wht_base_hint'], 'employee guidance has one Thai wording source in either workspace locale');
-  // A blank value is refused while หัก is chosen, so the value hints no longer promise "เว้นว่าง … เพื่อไม่หัก".
-  for (const hint of [EXPENSE_WITHHOLDING_WORDS.percentHint, EXPENSE_WITHHOLDING_WORDS.amountHint]) {
-    assert.doesNotMatch(hint, /[A-Za-z]|เว้นว่าง/);
-    assert.match(hint, /ฐานหัก/);
-  }
-  assert.match(block, /EXPENSE_WITHHOLDING_WORDS\.amountHint : EXPENSE_WITHHOLDING_WORDS\.percentHint/);
-  assert.doesNotMatch(block, /wht_percent_hint|wht_amount_hint/);
-  assert.ok(block.indexOf('EXPENSE_WITHHOLDING_WORDS.percentHint') < block.indexOf("t('expenses.wht_base', locale)"), 'the value hint sits under the value, before the base field');
+  assert.equal(words['expenses.wht_rate_hint'], 'เช่น 3 คือหัก 3%');
+  assert.match(block, /t\('expenses.wht_rate_hint', locale\)/);
+  assert.doesNotMatch(block, /EXPENSE_WITHHOLDING_WORDS\.(percentHint|amountHint)/);
+  assert.ok(block.indexOf("t('expenses.wht_rate_hint', locale)") < block.indexOf("t('expenses.wht_base', locale)"), 'the short rate hint stays beside its input');
 });
 
 test('all printed certificate labels and stale-state notice share the 50 ทวิ wording source', () => {
-  assert.equal(words['wht.print_certificate'], 'พิมพ์เอกสาร 50 ทวิ');
+  assert.equal(words['wht.print_certificate'], 'ออกหนังสือรับรอง 50 ทวิ');
   const review = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
   const ap = readFileSync(new URL('../accounts-payable/AccountsPayablePages.tsx', import.meta.url), 'utf8');
   assert.match(review, /t\('wht.print_certificate', locale\)/);
@@ -215,15 +211,27 @@ test('income categories match the payee form and changing type clears an incompa
   assert.equal(change(before, 'JURISTIC', catalog).whtCategoryCode, '');
   assert.equal(change(before, 'INDIVIDUAL', catalog).whtCategoryCode, 'PERSON');
   assert.match(block, /changeExpensePayeeType/);
-  assert.match(block, /applicableWhtCategories.map/);
+  assert.match(block, /expenseWhtCategoryOptions\(applicableWhtCategories\).map/);
   assert.match(block, /applicableWhtCategories.length === 0/);
 });
 
 test('the last step names the button actually shown and carries the amounts it asks the reviewer to check', () => {
   const review = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
-  assert.match(review, /detail\.status === 'READY_FOR_CONFIRMATION'\s*\? canConfirm \? EXPENSE_REVIEW_STEP_WORDS\.thenConfirm : EXPENSE_REVIEW_STEP_WORDS\.sentAwaitingConfirm\s*: t\(STEP_HELPER_KEYS\[step\], locale\)/);
-  assert.equal(EXPENSE_REVIEW_STEP_WORDS.thenConfirm, 'ดูสรุปทั้งหมดอีกครั้ง แล้วยืนยันเอกสาร');
+  // A person who may confirm sees the confirm button from the first pass, so the sentence follows the right, not the status.
+  assert.match(review, /step === 'review' && canConfirm \? EXPENSE_REVIEW_STEP_WORDS\.thenConfirm\s*: step === 'review' && detail\.status === 'READY_FOR_CONFIRMATION' \? EXPENSE_REVIEW_STEP_WORDS\.sentAwaitingConfirm\s*: t\(STEP_HELPER_KEYS\[step\], locale\)/);
+  assert.equal(EXPENSE_REVIEW_STEP_WORDS.thenConfirm, 'ดูสรุปอีกครั้ง แล้วยืนยัน');
   assert.doesNotMatch(EXPENSE_REVIEW_STEP_WORDS.sentAwaitingConfirm, /ส่งให้ผู้อนุมัติ/, 'already sent: it must not ask to send again');
   assert.match(review, /\{step === 'data' && moneyCard\}/);
   assert.match(review, /\{step === 'review' && moneyCard\}/, 'total, VAT, withholding and the amount to pay are on the last screen');
+});
+
+test('incomplete withholding answers show a neutral prompt and keep saved amounts without a retry', () => {
+  assert.match(edit, /whtMissing\.length > 0\s*\? 'เลือกให้ครบเพื่อคำนวณยอดหัก'/);
+  const totals = readFileSync(new URL('./useExpenseReviewTotals.ts', import.meta.url), 'utf8');
+  assert.match(totals, /withholdingIncomplete/);
+  const page = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
+  assert.match(page, /currentPreview\.withholdingIncomplete/);
+  assert.match(page, /currentPreview\?\.status === 'error' && !currentPreview\.withholdingIncomplete/);
+  assert.match(page, /\(calculationPending \|\| calculationError\) && <p className="mt-2 text-xs text-gray-500">ยอดที่บันทึกไว้<\/p>/);
+  assert.match(page, /setTotalsRetry\(\(n\) => n \+ 1\)/, 'complete answers still allow retry after a real calculation failure');
 });

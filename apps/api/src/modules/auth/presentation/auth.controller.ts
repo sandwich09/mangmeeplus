@@ -45,6 +45,7 @@ import { currentLegalRelease } from '../application/legal-acceptance.service';
 // The one place the signup form's length limit is decided; the input must not drift from it.
 import { LINE_SIGNUP_COMPANY_NAME_MAX } from '../../external-signup/domain/line-signup.logic';
 import { manualExpenseWebEntryState } from '../../system-partner-management/domain/logic/manual-expense-web-entry.logic';
+import { disbursementVoucherWebEntryState } from '../../system-partner-management/domain/logic/disbursement-voucher-web-entry.logic';
 import {
   ExchangeLiffSessionUseCase,
   type ExchangeLiffSessionResult,
@@ -1035,7 +1036,7 @@ export class AuthController {
         : Promise.resolve(null),
       this.prisma.client.companyWebEntrySetting.findUnique({
         where: { companyId },
-        select: { manualExpenseEntryEnabled: true, version: true },
+        select: { manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: true, version: true },
       }),
     ]);
     // AuthGuard exempts /v1/auth/* from the temporary-password block, so this route answers for a
@@ -1064,6 +1065,8 @@ export class AuthController {
       // rest of this answer — never through ResolvedAccess or RequestContext, so it cannot reach a
       // guard, a use case or LINE.
       manualExpenseWebEntry: manualExpenseWebEntryState(webEntrySetting).enabled,
+      // This is only a web entrance setting. It does not change the permissions in RequestContext.
+      disbursementVoucherWebEntry: disbursementVoucherWebEntryState(webEntrySetting).enabled,
     };
   }
 

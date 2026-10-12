@@ -31,7 +31,9 @@ import type {
   ExpenseSourceDraftInput,
   ExpenseDraftTotalsPreview,
   WhtCertificateHandoffDto,
+  WhtCertificateHandoffPageDto,
   WhtCertificateDto,
+  WhtCertificateHistoryDto,
 } from '@watchdog-bms/contracts';
 import type { TaxExportArtifact } from '../tax/tax.api';
 import { authedApiFetch as apiFetch, authedFetch } from '@/common/api/authed-fetch';
@@ -77,7 +79,7 @@ async function readErrorMessage(res: Response): Promise<string> {
   return text || `API error ${res.status}`;
 }
 
-async function responseError(res: Response): Promise<Error> {
+export async function responseError(res: Response): Promise<Error> {
   const body = await res.clone().json().catch(() => null) as Record<string, unknown> | null;
   const requestId = res.headers.get('x-request-id');
   const details = requestId && typeof body?.['requestId'] !== 'string'
@@ -315,7 +317,7 @@ async function assertPreviewBlobSignature(blob: Blob, mimeType: string): Promise
   if (!valid) throw new Error('เนื้อหาไฟล์สำหรับดูตัวอย่างไม่ตรงกับชนิดเอกสาร');
 }
 
-async function checkedPreviewBlob(response: Response, expectedMimeType?: string): Promise<Blob> {
+export async function checkedPreviewBlob(response: Response, expectedMimeType?: string): Promise<Blob> {
   if (!response.ok) throw new Error(apiErrorMessage({ status: response.status }));
   // The storage response is authoritative when older DTOs expose only an attachment ID.
   // It must still be one of the renderer's exact allowlisted MIME types.
@@ -372,8 +374,8 @@ export async function rejectExpense(companyId: string, expenseId: string, reason
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/reject`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason }) });
 }
 
-export async function voidExpense(companyId: string, expenseId: string, reason: string): Promise<ExpenseSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/void`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason }) });
+export async function voidExpense(companyId: string, expenseId: string, reason: string, taxFilingAttested?: true): Promise<ExpenseSummary> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/void`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason, ...(taxFilingAttested === true ? { taxFilingAttested } : {}) }) });
 }
 
 export async function recordExpensePayment(
@@ -683,7 +685,7 @@ export function downloadIndexXlsx(result: AccountantPackageResult, fileName: str
   downloadBlob(blob, fileName);
 }
 
-function downloadBlob(blob: Blob, fileName: string): void {
+export function downloadBlob(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -731,28 +733,53 @@ export function listWhtHandoffs(companyId: string, params?: { status?: string; s
   return apiFetch(`/companies/${companyId}/wht/payment-handoffs${qs(params)}`);
 }
 
-export function issueSystemWhtCertificate(companyId: string, handoffId: string): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
-  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`, { method: 'POST' });
+export function listWhtHandoffsPaged(companyId: string, params: { status?: string; sourcePaymentId?: string; search?: string; branchId?: string; page: number; pageSize: number }): Promise<WhtCertificateHandoffPageDto> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs${qs(params)}`, { suppressErrorToast: true });
+}
+
+export function linkExternalWhtCertificate(companyId: string, handoffId: string, body: import('@watchdog-bms/contracts').LinkExternalWhtCertificateDto): Promise<WhtCertificateHandoffDto> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/external-certificate`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify(body) });
+}
+
+export function changeExternalWhtCertificate(companyId: string, handoffId: string, body: import('@watchdog-bms/contracts').ChangeExternalWhtCertificateDto): Promise<WhtCertificateHandoffDto> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/external-certificate/change`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify(body) });
+}
+
+export function removeExternalWhtCertificate(companyId: string, handoffId: string, body: import('@watchdog-bms/contracts').RemoveExternalWhtCertificateDto): Promise<WhtCertificateHandoffDto> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/external-certificate/remove`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify(body) });
+}
+
+export function setWhtHandoffPayeeAddress(companyId: string, handoffId: string, body: import('@watchdog-bms/contracts').SetWhtHandoffPayeeAddressDto): Promise<WhtCertificateHandoffDto> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/payee-address`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify(body) });
+}
+
+// A refusal is shown where the person pressed, once; callers may still pass their own options.
+export function issueSystemWhtCertificate(companyId: string, handoffId: string, options?: { suppressErrorToast?: boolean }): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`, { method: 'POST', suppressErrorToast: true, ...options });
 }
 
 // Correction & replacement plan §5.2 — same endpoints accounts-payable.api.ts calls.
 export function correctSystemWhtCertificate(companyId: string, handoffId: string, body: import('@watchdog-bms/contracts').CorrectWhtCertificateDto): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
-  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate/correction`, { method: 'POST', body: JSON.stringify(body) });
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate/correction`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify(body) });
 }
 
-export function issueSystemWhtReplacementCopy(companyId: string, handoffId: string): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
-  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate/replacement-copy`, { method: 'POST' });
+export function issueSystemWhtReplacementCopy(companyId: string, handoffId: string, options?: { suppressErrorToast?: boolean }): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate/replacement-copy`, { method: 'POST', ...options });
 }
 
 
-export function reopenExpense(companyId: string, expenseId: string, reason: string) {
-  return apiFetch<ExpenseDetail>(`/v1/companies/${companyId}/expenses/${expenseId}/reopen`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason }) });
+export function reopenExpense(companyId: string, expenseId: string, reason: string, taxFilingAttested?: true) {
+  return apiFetch<ExpenseDetail>(`/v1/companies/${companyId}/expenses/${expenseId}/reopen`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason, ...(taxFilingAttested === true ? { taxFilingAttested } : {}) }) });
+}
+
+export function getExpenseCertificateHistory(companyId: string, expenseId: string): Promise<WhtCertificateHistoryDto[]> {
+  return apiFetch(`/companies/${companyId}/wht/expenses/${expenseId}/certificate-history`, { suppressErrorToast: true });
 }
 
 export function cancelExpensePayment(companyId: string, expenseId: string, paymentId: string, reason: string) {
   return apiFetch<ExpenseDetail>(`/v1/companies/${companyId}/expenses/${expenseId}/payments/${paymentId}/cancel`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason }) });
 }
 
-export function downloadSystemWhtCertificate(companyId: string, handoffId: string): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
-  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`);
+export function downloadSystemWhtCertificate(companyId: string, handoffId: string, options?: { suppressErrorToast?: boolean }): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`, options);
 }

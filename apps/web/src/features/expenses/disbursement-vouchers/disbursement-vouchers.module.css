@@ -1,0 +1,100 @@
+.page { min-width: 0; }
+.page h1 { overflow-wrap: anywhere; }
+.section { padding: var(--space-4); min-width: 0; }
+.stack { display: grid; gap: var(--space-4); min-width: 0; }
+/* Wide screens: a button on its own line in a card keeps a compact width instead of spanning the card. */
+@media (min-width: 768px) { .stack > :global(a.mangmee-btn), .stack > :global(button.mangmee-btn) { justify-self: start; min-width: 11rem; } }
+.filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+.filter { display: flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: 44px; min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); padding: var(--space-2); font-weight: 600; }
+.filter[aria-pressed="true"] { border-color: var(--color-brand-400); color: var(--color-brand-700); background: var(--color-brand-50); }
+.filter:focus-visible { outline: 2px solid var(--color-brand-500); outline-offset: 2px; }
+.count { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.list { container-type: inline-size; }
+.cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
+.table { display: none; }
+.table table { width: 100%; table-layout: auto; }
+.table th, .table td { overflow-wrap: anywhere; }
+.table td:nth-child(2) { max-width: 15rem; }
+/* A document number is read as one token: it never breaks at its hyphen. */
+.table td:first-child { white-space: nowrap; }
+.table td:nth-child(5), .table td:nth-child(6) { width: 10rem; }
+.cardHeader { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-2); }
+.payee { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 700; color: var(--color-text-primary); }
+.documentNumber { flex-basis: auto; min-width: min-content; }
+.badge { flex-shrink: 0; white-space: nowrap; }
+.muted { color: var(--color-text-secondary); font-size: .875rem; overflow-wrap: anywhere; }
+.date { color: var(--color-text-secondary); font-size: .875rem; }
+.overdue { color: var(--color-error-700); font-weight: 600; }
+.amountLabel { text-align: right; font-size: .875rem; color: var(--color-text-secondary); }
+.amount { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
+.action { width: 100%; min-height: 44px; text-align: center; }
+.secondary { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.lines { display: grid; gap: var(--space-3); }
+.facts { display: grid; gap: var(--space-3); }
+/* Wide screens: the payment facts sit side by side instead of in one long column. */
+@media (min-width: 768px) { .facts { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); } }
+.facts dt { color: var(--color-text-secondary); font-size: .875rem; }
+.facts dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.pager { margin-top: var(--space-4); }
+.error { color: var(--color-error-700); overflow-wrap: anywhere; }
+.modalBody { position: relative; }
+/* Buttons that sit together are one size (spec D31): stacked they share the full width; side by side they share the width of the longest label. */
+.modalFooter { display: grid; gap: var(--space-2); width: 100%; padding-bottom: env(safe-area-inset-bottom); }
+.modalFooter > button, .modalFooter > a { width: 100%; min-height: 44px; }
+@media (min-width: 640px) { .modalFooter { grid-auto-flow: column; grid-auto-columns: minmax(8rem, 1fr); width: max-content; max-width: 100%; margin-inline-start: auto; } }
+@container (min-width: 44rem) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* Same width as the reimbursements finance queue's six-column table. */
+@container (min-width: 58rem) { .cards { display: none; } .table { display: block; } }
+
+.journeyPage { padding-bottom: calc(11rem + env(safe-area-inset-bottom)); }
+/* The desktop menu is fixed over the left of the window; the bar starts where the content starts. */
+.journeyBar { position: fixed; inset-inline: var(--workspace-content-left, 0px) 0; bottom: 0; z-index: 40; padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom)); background: var(--color-surface); border-top: 1px solid var(--color-border); }
+.journeyBarInner { display: grid; gap: var(--space-2); min-width: 0; }
+/* Same side padding as the content area, so the bar lines up with the cards above it. */
+@media (min-width: 768px) {
+  .journeyBar { padding-inline: 1.75rem; }
+  /* Wide screens: compact buttons in one row at the right, the main button last; a hint or error line stays at the left. */
+  .journeyBarInner { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: flex-end; gap: var(--space-3); }
+  .journeyBarInner > p { min-width: 0; align-self: center; }
+  .journeyBarInner > p:last-of-type { margin-inline-end: auto; }
+  .journeyBarInner > button, .journeyBarInner > a { width: auto; min-width: 11rem; flex: 0 0 auto; }
+  .journeyBarInner > .action { order: 1; }
+}
+/* Only a button that FOLLOWS the primary button is borderless: a hint or error line above the primary must not blank it. */
+@media (max-width: 767px) { .journeyBarInner > button ~ button { background: transparent; border-color: transparent; } }
+.approvers { display: grid; gap: var(--space-2); min-width: 0; }
+.approver { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; overflow-wrap: anywhere; }
+.approver input { flex-shrink: 0; }
+/* A long list of people scrolls inside the dialog, so the buttons stay in view. */
+.approversScroll { max-height: min(18rem, 45dvh); overflow-y: auto; }
+.history { display: grid; gap: var(--space-3); }
+.historyEvent { border-left: 2px solid var(--color-border); padding-left: var(--space-3); overflow-wrap: anywhere; }
+.historyReason { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The sticky shop header is about 7rem tall on a phone: the heading the page scrolls to must clear it. */
+.payCard { min-width: 0; scroll-margin-top: 8rem; overflow-wrap: anywhere; }
+.payFields { display: grid; gap: var(--space-3); min-width: 0; }
+/* Wide screens: the payment fields sit two by two instead of in one long column. */
+@media (min-width: 768px) { fieldset.payFields { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--space-3) var(--space-4); } }
+.payDate { display: grid; gap: .375rem; min-width: 0; }
+
+.slipPickerHidden { display: none; }
+
+/* The header's extra actions sit at the right of the title row on every width. */
+.more { display: flex; justify-content: flex-end; min-width: 0; }
+.more .menuDanger { color: var(--color-error-700); }
+/* Links or buttons that belong together share one row: equal halves on a phone, compact on a wide screen. */
+.actionRow { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: var(--space-2); }
+.actionRow > a, .actionRow > button { width: 100%; min-width: 0; min-height: 44px; justify-content: center; text-align: center; line-height: 1.25; white-space: normal; }
+/* A statement with its actions: the words at the left, the buttons at the right of the same row; on a phone the buttons take the next row. */
+.statementRow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); min-width: 0; }
+.statementRow > p { min-width: 0; overflow-wrap: anywhere; }
+.statementRow > :last-child:not(p) { flex: 1 1 100%; }
+@media (min-width: 768px) {
+  .actionRow { grid-auto-columns: minmax(9rem, 1fr); width: max-content; max-width: 100%; }
+  .actionRow > a, .actionRow > button { white-space: nowrap; }
+  .statementRow > :last-child:not(p) { flex: 0 0 auto; margin-inline-start: auto; }
+}
+/* A document line: what was bought at the left, its amount in this document at the right. */
+.lineHead { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); min-width: 0; }
+.lineAmount { flex-shrink: 0; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.notice { display: grid; gap: var(--space-1); padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-warning-50); color: var(--color-warning-700); overflow-wrap: anywhere; }

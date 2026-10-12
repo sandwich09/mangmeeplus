@@ -4,7 +4,7 @@ import { compileRole, summarizeCapabilities, toEffectivePermissions } from './ca
 import { CAPABILITY_PACKS, CAPABILITY_PACK_BY_KEY } from '../registries/capability-pack.registry';
 import { COMPANY_ROLE_BACKFILLS } from '../registries/company-role-backfill.registry';
 import { ROLE_TEMPLATES } from '../registries/role-template.registry';
-import { COMPANY_PERMISSION_KEYS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS, ROLE_GRANTS } from '../../../auth/permission-registry';
+import { COMPANY_PERMISSION_KEYS, PERMISSIONS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS, ROLE_GRANTS } from '../../../auth/permission-registry';
 import { filterPermissionsByEntitlement } from './feature-gate.logic';
 import { evaluateEntitledFeatureKeys } from '../../application/entitlement.helper';
 import { ListCapabilityPacksUseCase } from '../../application/use-cases/list-capability-packs.use-case';
@@ -41,6 +41,71 @@ describe('capability-pack registry integrity', () => {
         assert.ok(COMPANY_KEYS.has(k), `pack ${pack.key} references unknown key ${k}`);
       }
     }
+  });
+
+  it('puts every disbursement permission only in expenses-gated packs', () => {
+    const permissionKeys = PERMISSIONS.map(({ key }) => key).filter((key) => key.startsWith('expense.disbursement.'));
+    assert.ok(permissionKeys.length > 0, 'disbursement permissions must be registered');
+    for (const key of permissionKeys) {
+      const packs = CAPABILITY_PACKS.filter((pack) => pack.permissionKeys.includes(key));
+      assert.ok(packs.length > 0, `${key} must belong to a capability pack`);
+      assert.ok(packs.every((pack) => pack.module === 'expense' && pack.featureEntitlementKey === 'expenses'),
+        `${key} appears outside an expenses-gated expense pack: ${packs.filter((pack) => pack.module !== 'expense' || pack.featureEntitlementKey !== 'expenses').map((pack) => pack.key).join(', ')}`);
+    }
+    assert.equal(COMPANY_ROLE_BACKFILLS.some(({ key }) => key.startsWith('expense.disbursement.')), false,
+      'disbursement permissions must not backfill company roles');
+  });
+
+  it('registers the five disbursement packs with their exact permissions and Thai copy', () => {
+    const expected = {
+      'pack.expense.disbursement.view': {
+        nameTh: 'ดูใบเตรียมจ่าย/ใบสำคัญจ่าย',
+        description: 'เปิดดูใบเตรียมจ่ายและใบสำคัญจ่ายของรายจ่ายที่ตำแหน่งนี้ดูได้อยู่แล้ว',
+        permissionKeys: ['expense.disbursement.read'],
+      },
+      'pack.expense.disbursement.prepare': {
+        nameTh: 'จัดทำใบเตรียมจ่าย',
+        description: 'รวมรายจ่ายที่จะจ่ายให้ผู้รับเงินรายเดียวเป็นหนึ่งใบ แล้วส่งให้ผู้มีอำนาจอนุมัติ',
+        permissionKeys: ['expense.disbursement.read', 'expense.disbursement.prepare'],
+      },
+      'pack.expense.disbursement.approve': {
+        nameTh: 'อนุมัติใบเตรียมจ่าย',
+        description: 'อนุมัติหรือตีกลับใบเตรียมจ่ายก่อนจ่ายเงิน',
+        permissionKeys: ['expense.disbursement.read', 'expense.disbursement.approve'],
+      },
+      'pack.expense.disbursement.pay': {
+        nameTh: 'บันทึกจ่ายตามใบเตรียมจ่าย',
+        description: 'บันทึกว่าจ่ายเงินแล้วตามใบที่อนุมัติ ใบนั้นจะเป็นใบสำคัญจ่าย',
+        permissionKeys: ['expense.disbursement.read', 'expense.disbursement.pay'],
+      },
+      'pack.expense.disbursement.issue': {
+        nameTh: 'ออกใบสำคัญจ่ายจากการจ่ายตรง',
+        description: 'ออกใบสำคัญจ่ายให้การจ่ายที่บันทึกไว้แล้วในหน้ารายจ่าย',
+        permissionKeys: ['expense.disbursement.read', 'expense.disbursement.issue'],
+      },
+    };
+    const actual = Object.fromEntries(CAPABILITY_PACKS
+      .filter((pack) => pack.key.startsWith('pack.expense.disbursement.'))
+      .map((pack) => [pack.key, { nameTh: pack.nameTh, description: pack.description, permissionKeys: pack.permissionKeys }]));
+    assert.deepEqual(actual, expected);
+    for (const pack of CAPABILITY_PACKS.filter((candidate) => candidate.key.startsWith('pack.expense.disbursement.'))) {
+      assert.equal(pack.module, 'expense', pack.key);
+      assert.equal(pack.featureEntitlementKey, 'expenses', pack.key);
+      assert.notEqual(pack.isCore, true, pack.key);
+    }
+  });
+
+  it('keeps every existing expense pack permission list at its base-commit snapshot', () => {
+    const expected = {
+      'pack.expense.view': ['expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.export'],
+      'pack.expense.self': ['expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.ocr.request', 'expense.signature.self_manage', 'attachment.create'],
+      'pack.expense.review': ['expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.review', 'expense.ai.verify', 'expense.category.manage', 'expense.duplicate.resolve', 'attachment.create', 'accounting.counterparty.read'],
+      'pack.expense.finance': ['expense.confirm', 'expense.reject', 'expense.void', 'expense.delete', 'expense.payment.record', 'expense.export'],
+    };
+    const actual = Object.fromEntries(CAPABILITY_PACKS
+      .filter((pack) => pack.module === 'expense' && !pack.key.startsWith('pack.expense.disbursement.'))
+      .map((pack) => [pack.key, pack.permissionKeys]));
+    assert.deepEqual(actual, expected);
   });
 
   it('every pack granted expense.read is also granted expense.evidence.read', () => {

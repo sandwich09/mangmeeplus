@@ -202,7 +202,7 @@ test.describe('EXP — expenses + receipts', () => {
     await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'ทางใช้หลักฐาน', exact: true }), 'จัดทำใบรับรองแทนใบเสร็จ');
     await authedPage.getByRole('button', { name: 'บันทึกการตรวจ', exact: true }).click();
     await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
-    await expect(authedPage.getByRole('button', { name: /ส่งตรวจสอบ/ })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'ส่งให้คนอื่นตรวจ', exact: true })).toBeVisible();
   });
 
   // EXP-UX-01 / plan 13.11.A: ส่งตรวจสอบ has to END on the list. The old behaviour reloaded the
@@ -217,7 +217,7 @@ test.describe('EXP — expenses + receipts', () => {
     await authedPage.getByRole('button', { name: 'บันทึกการตรวจ', exact: true }).click();
     await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
 
-    const submit = authedPage.getByRole('button', { name: /ส่งตรวจสอบ/ });
+    const submit = authedPage.getByRole('button', { name: 'ส่งให้คนอื่นตรวจ', exact: true });
     await expect(submit).toBeEnabled();
     await submit.click();
 
@@ -1176,7 +1176,7 @@ test('EXP-EVIDENCE @p1 pending evidence saves and reopens without enabling Next 
   const card = page.getByRole('heading', { name: 'ตรวจสอบเอกสารและหลักฐานภาษี', exact: true }).locator('..');
   await expect(next).toBeDisabled();
   await chooseThemedOption(page, page.getByRole('combobox', { name: 'ประเภทเอกสาร', exact: true }), 'สลิปโอนเงิน');
-  await card.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true }).click();
+  await card.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
   await expect.poll(async () => (await json<FullExpenseDetail>(await api.get(path))).sourceDocumentType).toBe('TRANSFER_SLIP');
   await page.reload();
   await next.click();

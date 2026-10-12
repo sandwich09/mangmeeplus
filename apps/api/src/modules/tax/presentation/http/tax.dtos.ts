@@ -13,6 +13,7 @@ import { Type } from 'class-transformer';
 import type {
   CorrectWhtCertificateDto as CorrectWhtCertificateContract,
   LinkExternalWhtCertificateDto as LinkExternalWhtCertificateContract,
+  RemoveExternalWhtCertificateDto as RemoveExternalWhtCertificateContract,
   PayeeSnapshot,
   PayerSnapshot,
   SetWhtHandoffPayeeAddressDto as SetWhtHandoffPayeeAddressContract,
@@ -43,8 +44,8 @@ export class LinkExternalWhtCertificateDto implements LinkExternalWhtCertificate
   /** The RD certificate number as issued externally. */
   @IsString() @IsNotEmpty() @MaxLength(WHT_LINK_LIMITS.externalCertificateNumber) externalCertificateNumber!: string;
 
-  /** Pointer to the stored artifact/evidence for that document. */
-  @IsString() @IsNotEmpty() @MaxLength(WHT_LINK_LIMITS.externalEvidenceRef) externalEvidenceRef!: string;
+  /** Optional reference to where the self-issued document is kept; blank means none. */
+  @IsString() @MaxLength(WHT_LINK_LIMITS.externalEvidenceRef) externalEvidenceRef!: string;
 
   /**
    * Date the external certificate was issued: a calendar day, `YYYY-MM-DD`, no time component.
@@ -55,6 +56,12 @@ export class LinkExternalWhtCertificateDto implements LinkExternalWhtCertificate
   issuedDate!: string;
 
   @IsString() @IsOptional() @MaxLength(WHT_LINK_LIMITS.note) note?: string;
+}
+
+export class RemoveExternalWhtCertificateDto implements RemoveExternalWhtCertificateContract {
+  @IsString() @IsNotEmpty() @MaxLength(200) commandId!: string;
+  @IsString() @IsNotEmpty() @MaxLength(40) expectedUpdatedAt!: string;
+  @IsString() @IsNotEmpty() @MaxLength(500) reason!: string;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { accessContextFingerprint } from './workspace-scope.api';
+import { canOpenDisbursementVoucherWeb } from '@/features/expenses/disbursement-voucher-entry.logic';
 
 describe('accessContextFingerprint', () => {
   it('ignores server ordering while detecting permission, role, and branch-scope changes', () => {
@@ -61,6 +62,23 @@ describe('accessContextFingerprint', () => {
     const unrelated = { ...base, displayName: 'ชื่อใหม่', legalAcceptanceRequired: true, entitledFeatureKeys: ['expenses', 'inventory'] };
     assert.equal(accessContextFingerprint(base), accessContextFingerprint(unrelated));
     assert.deepEqual(Object.keys(JSON.parse(accessContextFingerprint(base))).sort(),
-      ['branchIds', 'manualExpenseWebEntry', 'permissions', 'roleNames', 'roles']);
+      ['branchIds', 'disbursementVoucherWebEntry', 'manualExpenseWebEntry', 'permissions', 'roleNames', 'roles']);
+  });
+
+  it('changes when the disbursement-voucher setting changes without a permission change', () => {
+    const base = { roles: ['OWNER'], permissions: ['expense.disbursement.read'] };
+    assert.notEqual(accessContextFingerprint({ ...base, disbursementVoucherWebEntry: true }),
+      accessContextFingerprint({ ...base, disbursementVoucherWebEntry: false }));
+  });
+
+  it('treats a missing disbursement-voucher setting as hidden in both fingerprint and menu predicate', () => {
+    const base = { companyId: 'co', roles: ['OWNER'], permissions: ['expense.disbursement.read'] };
+    assert.equal(accessContextFingerprint(base), accessContextFingerprint({ ...base, disbursementVoucherWebEntry: false }));
+    assert.notEqual(accessContextFingerprint(base), accessContextFingerprint({ ...base, disbursementVoucherWebEntry: true }));
+    assert.equal(canOpenDisbursementVoucherWeb(base, 'co'), false);
+    assert.equal(canOpenDisbursementVoucherWeb({ ...base, disbursementVoucherWebEntry: true }, 'co'), true);
+    assert.equal(canOpenDisbursementVoucherWeb({ ...base, disbursementVoucherWebEntry: true }, 'other'), false);
+    assert.equal(canOpenDisbursementVoucherWeb({ ...base, permissions: [], disbursementVoucherWebEntry: true }, 'co'), false);
+    assert.equal(canOpenDisbursementVoucherWeb(null, 'co'), false);
   });
 });

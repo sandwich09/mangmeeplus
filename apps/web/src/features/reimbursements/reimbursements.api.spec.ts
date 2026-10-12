@@ -1,8 +1,10 @@
+import { REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS } from '@watchdog-bms/contracts';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   attachReimbursementPaymentSlip,
   cancelReimbursementDraftAction,
+  cancelReimbursement,
   confirmReimbursementDraftAction,
   getReimbursementDraftAction,
   getReimbursementFinanceStep,
@@ -541,4 +543,35 @@ describe('LINE reimbursement draft action API', () => {
       { url: '/api/v1/companies/co-1/reimbursements/draft-actions/action-1/cancel', method: 'POST', body: exact },
     ]);
   });
+});
+
+describe('certificate claim cancellation', () => {
+  it('sends attestation only when given, and suppresses automatic error toasts for dialog refusals', async () => {
+    const bodies: unknown[] = [];
+    const events: ToastEvent[] = [];
+    const unsubscribe = subscribeToastBus(event => events.push(event));
+    (globalThis as Record<string, unknown>)['window'] = {};
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ code: 'reimbursement_cancellation_certificate_attestation_required' }), { status: 422, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      await assert.rejects(() => cancelReimbursement('co', 'claim', 'แก้ข้อมูล', true));
+      await assert.rejects(() => cancelReimbursement('co', 'claim', 'แก้ข้อมูล'));
+      await assert.rejects(() => cancelReimbursement('co', 'claim'));
+      assert.deepEqual(bodies, [{ reason: 'แก้ข้อมูล', taxFilingAttested: true }, { reason: 'แก้ข้อมูล' }, {}]);
+      assert.deepEqual(events, []);
+    } finally { unsubscribe(); }
+  });
+});
+
+it('claim cancellation errors preserve the server kind, certificate number and month exactly', () => {
+  for (const kind of ['SYSTEM', 'EXTERNAL'] as const) {
+    for (const [code, message] of [
+      ['reimbursement_cancellation_certificate_permission_missing', REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.permissionMissing({ kind, number: 'WHT-2' })],
+      ['reimbursement_cancellation_tax_period_locked', REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.periodLocked(kind, '2026-10', 'PND53')],
+      ['reimbursement_cancellation_certificate_attestation_required', REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.attestationRequired],
+      ['reimbursement_cancellation_certificate_issued', REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.taxWorkspaceCertificate],
+    ]) assert.equal(errorText({ code, details: { code, message, requestId: 'hidden' } }), message);
+  }
 });

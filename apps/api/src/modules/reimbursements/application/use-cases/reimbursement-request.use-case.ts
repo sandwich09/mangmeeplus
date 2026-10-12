@@ -1,3 +1,4 @@
+import { withholdingPeriodLockedMessage, REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, reimbursementCertificateCancellationMessage, expenseDisbursementReservationMessage } from '@watchdog-bms/contracts';
 import { reimbursementDuplicateSubmitNotice, REIMBURSEMENT_DUPLICATE_REASON_TEXT } from '@watchdog-bms/contracts';
 import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import type {
@@ -12,7 +13,6 @@ import type {
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
   ReimbursementInternalNote,
-  ReimbursementPendingCancellation,
   ReimbursementPayoutCorrectionActions,
   ReimbursementPayoutCorrectionEvent,
   ReimbursementPolicySnapshotV1,
@@ -365,7 +365,7 @@ export class GetReimbursementDetailUseCase {
     const payoutCorrectionHistory = await payoutCorrectionHistoryOf(req, this.repo);
     return {
       ...detail,
-      ...(pendingCancellation && { pendingCancellation }),
+      ...pendingCancellation,
       ...(awaitingSystem && { awaitingSystem }),
       ...(payoutCorrectionActions && { payoutCorrectionActions }),
       ...(payoutCorrectionHistory && { payoutCorrectionHistory }),
@@ -967,7 +967,24 @@ function cancellationReasonFor(req: ReimbursementRequestRecord, supplied?: strin
 
 /** `code` or `code:periodKey`: the shape the web translates by its prefix, like the payment's closed period. */
 function cancellationBlockedError(blocker: ExpenseVoidBlocker): ConflictException {
-  return new ConflictException(`reimbursement_cancellation_${blocker.code}${'periodKey' in blocker ? `:${blocker.periodKey}` : ''}`);
+  if (blocker.code === 'tax_period_locked' && blocker.certificateKind) return new ConflictException({
+    code: 'reimbursement_cancellation_tax_period_locked',
+    message: REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.periodLocked(blocker.certificateKind, blocker.periodKey, blocker.formType),
+    periodKey: blocker.periodKey,
+  });
+  if (blocker.code === 'certificate_issued') return new ConflictException({
+    code: 'reimbursement_cancellation_certificate_issued',
+    message: REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.taxWorkspaceCertificate,
+  });
+  const message = blocker.code === 'accounting_period_locked' ? REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.accountingPeriodLocked(blocker.periodKey)
+    : blocker.code === 'tax_period_locked' ? (blocker.formType === 'PND3' || blocker.formType === 'PND53'
+      ? withholdingPeriodLockedMessage(blocker.periodKey, 'ยกเลิกคำขอเบิก', blocker.formType) : REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.taxPeriodLocked(blocker.periodKey))
+    : blocker.code === 'posting_unresolved' ? REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.postingUnresolved
+    : blocker.code === 'expense_not_voidable' ? REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.expenseNotVoidable
+    // A claim's own expense cannot be chosen for a payment document; the branch keeps the union complete.
+    : blocker.code === 'disbursement_reserved' ? expenseDisbursementReservationMessage('void', blocker.documentNumber, blocker.preparerName)
+    : reimbursementCertificateCancellationMessage(blocker.certificateNumber);
+  return new ConflictException({ code: `reimbursement_cancellation_${blocker.code}${'periodKey' in blocker ? `:${blocker.periodKey}` : ''}`, message });
 }
 
 /**
@@ -979,17 +996,35 @@ export async function pendingCancellationOf(
   ctx: RequestContext,
   req: ReimbursementRequestRecord,
   repo: PrismaReimbursementRepository,
-): Promise<ReimbursementPendingCancellation | undefined> {
-  if (!req.cancellationPendingAt || req.status === 'CANCELLED' || req.status === 'VOIDED') return undefined;
+): Promise<Pick<ReimbursementRequestDetail, 'pendingCancellation' | 'certificates' | 'certificateCancelAllowed' | 'certificateCancelBlocker'>> {
+  const [certificates, structuralBlocker] = await Promise.all([
+    repo.findCancellationCertificates(req), repo.findCancellationBlocker(req),
+  ]);
+  const mayCancel = mayCancelReimbursement(ctx, req);
+  const missingPermission = !req.cancellationCertificateAttestedAt && certificates.find((certificate) =>
+    !ctx.permissions.includes(certificate.kind === 'SYSTEM' ? 'wht.certificate.correct' : 'wht.external_certificate.link'));
+  let certificateCancelBlocker: ReimbursementRequestDetail['certificateCancelBlocker'];
+  if (certificates.length && mayCancel) {
+    if (structuralBlocker) {
+      const { code, message } = cancellationBlockedError(structuralBlocker).getResponse() as { code: string; message: string };
+      certificateCancelBlocker = { code, message };
+    } else if (missingPermission) {
+      certificateCancelBlocker = { code: 'certificate_permission_missing',
+        message: REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.permissionMissing(missingPermission) };
+    }
+  }
+  const facts = { certificates, certificateCancelAllowed: mayCancel && !structuralBlocker && !missingPermission,
+    ...(certificateCancelBlocker && { certificateCancelBlocker }) };
+  if (!req.cancellationPendingAt || req.status === 'CANCELLED' || req.status === 'VOIDED') return facts;
   const reasonBlocks = !isExpenseVoidReason(req.cancellationPendingReason);
-  const [blocker, projections, names] = await Promise.all([
-    reasonBlocks ? null : repo.findCancellationBlocker(req),
+  const [projections, names] = await Promise.all([
     repo.listClaimProjections(req.companyId, req.id),
     repo.getUserDisplayNames(req.companyId, req.cancellationPendingByUserId ? [req.cancellationPendingByUserId] : []),
   ]);
-  const mayCancel = mayCancelReimbursement(ctx, req);
+  const blocker = structuralBlocker ?? (certificates.length && !req.cancellationCertificateAttestedAt
+    ? { code: 'certificate_attestation_required' as const, message: REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.attestationRequired } : null);
   const startedByName = req.cancellationPendingByUserId ? names[req.cancellationPendingByUserId] : undefined;
-  return {
+  return { ...facts, pendingCancellation: {
     startedAt: req.cancellationPendingAt.toISOString(),
     ...(req.cancellationPendingByUserId && { startedByUserId: req.cancellationPendingByUserId }),
     ...(startedByName && { startedByName }),
@@ -998,7 +1033,7 @@ export async function pendingCancellationOf(
     canResume: mayCancel,
     // Once an expense record is voided the claim cannot go on as before; the cancellation is finished instead.
     canWithdraw: mayCancel && !projections.some((projection) => projection.status === 'VOIDED'),
-  };
+  } };
 }
 
 @Injectable()
@@ -1017,7 +1052,7 @@ export class CancelReimbursementUseCase {
    * intent; what cannot be known then leaves a cancellation the claim detail shows and this same
    * call finishes.
    */
-  async execute(ctx: RequestContext, id: string, reason?: string): Promise<ReimbursementRequestSummary> {
+  async execute(ctx: RequestContext, id: string, reason?: string, taxFilingAttested?: boolean): Promise<ReimbursementRequestSummary> {
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     // The gate of the claim detail, ahead of every answer that depends on where the claim stands (final
@@ -1033,6 +1068,20 @@ export class CancelReimbursementUseCase {
     const blocker = await this.repo.findCancellationBlocker(req);
     if (blocker) throw cancellationBlockedError(blocker);
 
+    const certificates = await this.repo.findCancellationCertificates(req);
+    if (certificates.length && !req.cancellationCertificateAttestedAt) {
+      const missingPermission = certificates.find((certificate) => !ctx.permissions.includes(
+        certificate.kind === 'SYSTEM' ? 'wht.certificate.correct' : 'wht.external_certificate.link'));
+      if (missingPermission) throw new ForbiddenException({
+        code: 'reimbursement_cancellation_certificate_permission_missing',
+        message: REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.permissionMissing(missingPermission),
+      });
+      if (taxFilingAttested !== true) throw new BadRequestException({
+        code: 'reimbursement_cancellation_certificate_attestation_required',
+        message: REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.attestationRequired,
+      });
+    }
+
     const startedAt = new Date();
     const intent = await this.repo.beginCancellationAtomic({
       companyId: ctx.companyId,
@@ -1043,6 +1092,7 @@ export class CancelReimbursementUseCase {
       scopes: ctx.scopes ?? {},
       reason: cancellationReason,
       startedAt,
+      ...(certificates.length && !req.cancellationCertificateAttestedAt && { certificateAttestedAt: startedAt }),
       onIntentPersisted: async (tx) => {
         await this.audit.log({
           companyId: ctx.companyId,
@@ -1095,7 +1145,8 @@ export class CancelReimbursementUseCase {
     }
 
     try {
-      return toRequestSummary(await this.voidAndClose(ctx, intent.request, cancellationReason));
+      const { request, cancelledCertificates } = await this.voidAndClose(ctx, intent.request, cancellationReason);
+      return { ...toRequestSummary(request), ...(cancelledCertificates.length && { cancelledCertificates }) };
     } catch (error) {
       const latest = await this.repo.findRequestById(ctx.companyId, id);
       // Someone else (a second press, another canceller, the scheduled reconciler) finished the same
@@ -1109,21 +1160,25 @@ export class CancelReimbursementUseCase {
   }
 
   /** Voids every expense record of the claim, then closes the claim. Each step is a no-op when already done. */
-  private async voidAndClose(ctx: RequestContext, request: ReimbursementRequestRecord, cancellationReason: string): Promise<ReimbursementRequestRecord> {
+  private async voidAndClose(ctx: RequestContext, request: ReimbursementRequestRecord, cancellationReason: string): Promise<{ request: ReimbursementRequestRecord; cancelledCertificates: NonNullable<ReimbursementRequestSummary['cancelledCertificates']> }> {
     const id = request.id;
     const projections = await this.repo.listClaimProjections(ctx.companyId, id);
+    const cancelledCertificates: NonNullable<ReimbursementRequestSummary['cancelledCertificates']> = [];
     for (const projection of projections) {
-      await this.voidExpense.executeForReimbursement(ctx, projection.id, cancellationReason, {
+      const voided = await this.voidExpense.executeForReimbursement(ctx, projection.id, cancellationReason, {
         reimbursementRequestId: id,
         reimbursementLineId: projection.sourceReimbursementLineId,
         branchId: request.branchId,
+        cancellationCertificateAttestedAt: request.cancellationCertificateAttestedAt,
+        cancellationPendingByUserId: request.cancellationPendingByUserId,
         // Each void goes ahead only while this claim still holds its cancellation (it may be withdrawn meanwhile).
-        beforeVoid: (tx) => this.repo.assertCancellationPending(tx, ctx.companyId, id),
+        beforeVoid: (tx) => this.repo.assertCancellationPending(tx, ctx.companyId, id, !!request.cancellationCertificateAttestedAt),
       });
+      if (voided?.cancelledCertificate) cancelledCertificates.push({ expenseId: projection.id, ...voided.cancelledCertificate });
     }
 
     const completedAt = new Date();
-    return this.repo.completeCancellationAtomic({
+    const completed = await this.repo.completeCancellationAtomic({
       companyId: ctx.companyId,
       requestId: id,
       actorUserId: ctx.userId,
@@ -1164,6 +1219,7 @@ export class CancelReimbursementUseCase {
         });
       },
     });
+    return { request: completed, cancelledCertificates };
   }
 }
 

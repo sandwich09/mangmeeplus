@@ -1,13 +1,17 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   ALL_FEATURE_ENTITLEMENT_KEYS,
   FEATURE_CATALOG,
   FEATURE_PACKAGE_PRESETS,
   MENU_ENTITLEMENT_BINDINGS,
+  THAI_SYSTEM_ROLE_NAMES,
+  TIER_FEATURE_PRESETS,
 } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
+  PARTNER_FEATURE_PRESETS,
   applyPreset,
   buildMenuCards,
   cascadeOffItems,
@@ -28,9 +32,93 @@ import {
   manualWebEntryRow,
   MANUAL_WEB_ENTRY_COPY,
   MANUAL_WEB_ENTRY_SUBMENU_KEY,
+  disbursementVoucherWebEntryRow,
+  disbursementVoucherRoleNotice,
+  updateWebEntrySettings,
+  DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY,
+  savedFeaturePresetStatus,
+  presetTurningOffItems,
   NORMALIZATION_PENDING_NOTICE,
   NOT_DISABLED_NOTICE,
 } from './system-partners.logic';
+
+describe('disbursement-voucher web entry row', () => {
+  it('uses saved expenses and the active company state for its lock and displayed value', () => {
+    const on = [{ featureKey: 'expenses', enabled: true }];
+    const off = [{ featureKey: 'expenses', enabled: false }];
+    assert.equal(disbursementVoucherWebEntryRow(on, { enabled: true }).shown, true);
+    assert.equal(disbursementVoucherWebEntryRow(on, { enabled: false }).shown, false);
+    assert.equal(disbursementVoucherWebEntryRow([], { enabled: false }).editable, true);
+    assert.equal(disbursementVoucherWebEntryRow([...on, { featureKey: 'expenses.manual', enabled: false }], { enabled: true }).editable, true);
+    for (const [saved, locked] of [[off, false], [on, true]] as const) {
+      const row = disbursementVoucherWebEntryRow(saved, { enabled: true }, locked);
+      assert.equal(row.editable, false);
+      assert.equal(row.shown, false);
+      assert.ok(row.disabledReason);
+    }
+    // Pending package changes are deliberately not an input to this row.
+    assert.equal(disbursementVoucherWebEntryRow(off, { enabled: true }).disabledReason,
+      'เปิดฟีเจอร์รายจ่ายและบันทึกก่อน จึงจะตั้งค่านี้ได้');
+  });
+
+  it('asks only before hiding with the exact dialog and button words', () => {
+    const row = disbursementVoucherWebEntryRow([], { enabled: true });
+    assert.deepEqual(row.confirmLines(true), []);
+    assert.deepEqual(row.confirmLines(false), ['ซ่อนเมนูนี้ของร้าน? ใบที่ค้างอยู่ยังเปิดได้จากหน้ารายจ่ายและการแจ้งเตือน และทำต่อจนจบได้']);
+    assert.equal(DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.label, 'แสดงเมนูใบเตรียมจ่าย/ใบสำคัญจ่ายบนเว็บ');
+    assert.equal(DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.cancelHideLabel, 'ไม่ซ่อน');
+    assert.equal(DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.confirmHideLabel, 'ซ่อนเมนู');
+    assert.equal(DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.shown, 'แสดง');
+    assert.equal(DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.notShown, 'ไม่แสดง');
+    assert.doesNotMatch(Object.values(DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY).join(' '), /[A-Za-z]/);
+  });
+
+  it('advances both versions after either save while preserving the other switch and the previous state', () => {
+    const initial = { manualExpenseWebEntry: { enabled: false, version: 0 }, disbursementVoucherWebEntry: { enabled: false, version: 0 } };
+    const voucherSaved = updateWebEntrySettings(initial, 'disbursementVoucherWebEntry', { enabled: true, version: 1 });
+    assert.deepEqual(voucherSaved, { manualExpenseWebEntry: { enabled: false, version: 1 }, disbursementVoucherWebEntry: { enabled: true, version: 1 } });
+    const manualSaved = updateWebEntrySettings(voucherSaved, 'manualExpenseWebEntry', { enabled: true, version: 2 });
+    assert.deepEqual(manualSaved, { manualExpenseWebEntry: { enabled: true, version: 2 }, disbursementVoucherWebEntry: { enabled: true, version: 2 } });
+    assert.deepEqual(initial, { manualExpenseWebEntry: { enabled: false, version: 0 }, disbursementVoucherWebEntry: { enabled: false, version: 0 } });
+    assert.deepEqual(updateWebEntrySettings({ manualExpenseWebEntry: initial.manualExpenseWebEntry }, 'manualExpenseWebEntry', { enabled: true, version: 1 }),
+      { manualExpenseWebEntry: { enabled: true, version: 1 }, disbursementVoucherWebEntry: undefined });
+  });
+
+  it('lists role names and uses the owner-only advice for an empty or owner-only list', () => {
+    const owner = { name: THAI_SYSTEM_ROLE_NAMES.OWNER, isCompanyManaged: false, permissionKeys: ['expense.disbursement.read'] as const };
+    const finance = { name: 'การเงินที่ร้านแก้เอง', isCompanyManaged: true, permissionKeys: ['expense.disbursement.read'] as const };
+    const advice = 'ตอนนี้มีเพียงเจ้าของกิจการที่ใช้เมนูนี้ได้ ร้านต้องติ๊กสิทธิ์ให้ตำแหน่งอื่นเองที่หน้ากำหนดสิทธิ์';
+    assert.equal(disbursementVoucherRoleNotice([]), advice);
+    assert.equal(disbursementVoucherRoleNotice([owner]), advice);
+    assert.equal(disbursementVoucherRoleNotice([owner, finance]), `ตำแหน่งที่ใช้เมนูนี้ได้แล้ว: ${owner.name}, ${finance.name}`);
+    assert.equal(disbursementVoucherRoleNotice([finance]), `ตำแหน่งที่ใช้เมนูนี้ได้แล้ว: ${finance.name}`);
+  });
+
+  it('wires the new handler outside the manual slice, saves locally and preserves displayed values on a 409', () => {
+    const page = readFileSync(new URL('./PartnerDetailPage.tsx', import.meta.url), 'utf8');
+    const section = page.slice(page.indexOf('function PackageMenuSection('), page.indexOf('function EntitlementSwitch('));
+    const manual = section.slice(section.indexOf('const toggleManualWebEntry = async'), section.indexOf('const saveChanges = async'));
+    assert.doesNotMatch(manual, /const toggleDisbursementVoucherWebEntry/);
+    const handler = section.slice(section.indexOf('const toggleDisbursementVoucherWebEntry = async'), section.indexOf('const toggleManualWebEntry = async'));
+    assert.match(handler, /await setPartnerDisbursementVoucherWebEntry\(companyId, \{ enabled: next, expectedVersion: disbursementEntry\.version \}\)/);
+    assert.match(handler, /setDisbursementEntry\(saved\)/);
+    assert.match(handler, /confirmLabel: DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY\.confirmHideLabel/);
+    assert.match(handler, /cancelLabel: DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY\.cancelHideLabel/);
+    assert.doesNotMatch(handler, /onSaved\(|getPartnerDetail\(|setPending\(|setPartnerFeatures\(/);
+    const failure = handler.slice(handler.indexOf('} catch'));
+    assert.match(failure, /showToast\(apiErrorMessage\(err\), 'error'\)/);
+    assert.doesNotMatch(failure, /setWebEntry\(|setDisbursementEntry\(|setWebEntries\(/);
+    assert.match(section, /updateWebEntrySettings\(current, 'manualExpenseWebEntry', saved\)/);
+    assert.match(section, /updateWebEntrySettings\(current, 'disbursementVoucherWebEntry', saved\)/);
+    assert.match(section, /const disbursementRow = disbursementVoucherWebEntryRow\(entitlements, disbursementEntry \?\? \{ enabled: false \}, companyStatus !== 'ACTIVE'\);/);
+    assert.match(section, /disabled=\{webEntrySaving \|\| !disbursementRow\.editable\}/);
+    assert.match(section, /\{submenu\.key === MANUAL_WEB_ENTRY_SUBMENU_KEY && disbursementEntry && \(/);
+    assert.match(section, /\{disbursementRow\.shown && \(/);
+    assert.match(section, /disbursementVoucherRoleNotice\(disbursementVoucherRoles\)/);
+    assert.match(page, /disbursementVoucherWebEntry=\{detail\.disbursementVoucherWebEntry\}/);
+    assert.match(page, /disbursementVoucherRoles=\{detail\.disbursementVoucherRoles\}/);
+  });
+});
 
 const binding = (navKey: string) => {
   const found = MENU_ENTITLEMENT_BINDINGS.find((candidate) => candidate.navKey === navKey);
@@ -689,4 +777,138 @@ describe('manual-expense web entry row', () => {
     // …and none carries an English word or a code token; LINE is the product's own name.
     assert.doesNotMatch(all, /คุณไม่มีสิทธิ์|ระบบถูกปิด|ยังไม่แสดง|ยังไม่เปิดใช้|(?<![A-Za-z])(?!LINE(?![A-Za-z]))[A-Za-z]{2,}/);
   });
+});
+
+it('voucher role guidance translates standard names and keeps shop-named roles', () => {
+  assert.match(disbursementVoucherRoleNotice([{ name: 'Owner', isCompanyManaged: false }]), /ตอนนี้มีเพียงเจ้าของกิจการ/);
+  assert.equal(disbursementVoucherRoleNotice([{ name: 'Owner', isCompanyManaged: false }, { name: 'Admin', isCompanyManaged: false }, { name: 'Accountant', isCompanyManaged: false }]),
+    `ตำแหน่งที่ใช้เมนูนี้ได้แล้ว: ${THAI_SYSTEM_ROLE_NAMES.OWNER}, ${THAI_SYSTEM_ROLE_NAMES.ADMIN}, ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}`);
+  assert.equal(disbursementVoucherRoleNotice([{ name: 'Admin', isCompanyManaged: true }]), 'ตำแหน่งที่ใช้เมนูนี้ได้แล้ว: Admin');
+});
+it('feature search finds the voucher switch by both document names', () => {
+  const cards = buildMenuCards(MENU_ENTITLEMENT_BINDINGS, FEATURE_CATALOG, []);
+  for (const query of ['ใบเตรียมจ่าย', 'ใบสำคัญจ่าย']) {
+    assert.ok(filterMenuCards(cards, query).some(card => card.parentFeatureKey === 'expenses' && card.autoExpand));
+  }
+});
+
+it('the voucher switch title preserves its words and breaks at the slash without changing the manual row', () => {
+  const page = readFileSync(new URL('./PartnerDetailPage.tsx', import.meta.url), 'utf8');
+  const label = DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.label;
+  const parts = label.split(/(ใบเตรียมจ่าย|\/|ใบสำคัญจ่าย)/).filter(Boolean);
+  assert.deepEqual(parts, ['แสดงเมนู', 'ใบเตรียมจ่าย', '/', 'ใบสำคัญจ่าย', 'บนเว็บ']);
+  assert.equal(parts.join(''), label);
+  assert.match(page, /DISBURSEMENT_VOUCHER_WEB_ENTRY_COPY.label.split/);
+  assert.match(page, /<wbr \/><span className="whitespace-nowrap">\{part\}/);
+  assert.match(page, /<p className="min-w-0 flex-1 text-sm font-bold text-gray-800">\{MANUAL_WEB_ENTRY_COPY.label\}<\/p>/);
+});
+
+it('the locked-package notice names exactly the usable web-menu switches', () => {
+  assert.equal(featurePackageEditingNotice(true, false, true), 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้ ยกเว้นสวิตช์ “แสดงเมนูใบเตรียมจ่าย/ใบสำคัญจ่ายบนเว็บ”');
+  assert.equal(featurePackageEditingNotice(true, true, true), 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้ ยกเว้นสวิตช์ “แสดงเมนูบันทึกด้วยมือบนเว็บ” และ “แสดงเมนูใบเตรียมจ่าย/ใบสำคัญจ่ายบนเว็บ”');
+});
+
+describe('all saveable package keys have visible controls', () => {
+  it('walks every entitlement key across menu, child, parent, background and menu-less controls', () => {
+    const cards = buildMenuCards(MENU_ENTITLEMENT_BINDINGS, FEATURE_CATALOG, enabledState());
+    const represented = new Set(cards.flatMap(card => [...card.entitlementKeys, ...card.submenus.map(row => row.key),
+      ...(card.entitlementKeys.length === 0 && card.parentFeatureKey ? [card.parentFeatureKey] : []),
+      ...(card.parentControl ? [card.parentControl.key] : []), ...(card.rights ?? []).map(row => row.key)]));
+    for (const background of ['ai_line_assistant', 'expense_auto_post']) represented.add(background);
+    assert.deepEqual(ALL_FEATURE_ENTITLEMENT_KEYS.filter(key => !represented.has(key)), []);
+  });
+  it('puts the menu-less 50 ทวิ right below ภ.ง.ด.53 without adding a menu or preview item', () => {
+    const cards = buildMenuCards(MENU_ENTITLEMENT_BINDINGS, FEATURE_CATALOG, enabledState('wht_50bis'));
+    const right = cards.find(card => card.navKey === 'pnd53')!.rights[0]!;
+    assert.equal(right.key, 'wht_50bis'); assert.equal(right.labelTh, 'ออกหนังสือรับรอง 50 ทวิ ในระบบ'); assert.equal(right.enabled, false);
+    const next = toggleSubmenu(enabledState('wht_50bis'), right.key, true);
+    assert.equal(entitlementEnabled(next, right.key), true);
+    assert.deepEqual(changedEntitlements(enabledState('wht_50bis'), next), [{ featureKey: 'wht_50bis', enabled: true }]);
+    assert.equal(diffEntitlements(enabledState('wht_50bis'), next).turningOn[0]!.labelTh, right.labelTh);
+    assert.equal(cards.length, MENU_ENTITLEMENT_BINDINGS.filter(binding => binding.navigation !== 'contextual').length);
+    assert.equal(previewNavGroups(cards).flatMap(group => group.items).length, cards.length);
+    assert.ok(filterMenuCards(cards, '50 ทวิ').some(card => card.navKey === 'pnd53'));
+  });
+  it('gives purchasing an explicit parent switch that preserves latent children and restores them', () => {
+    const state = enabledState(), card = buildMenuCards(MENU_ENTITLEMENT_BINDINGS, FEATURE_CATALOG, state).find(card => card.navKey === 'procurement')!;
+    assert.equal(card.parentControl!.key, 'procurement'); assert.equal(card.parentControl!.enabled, true);
+    const off = toggleSubmenu(state, card.parentControl!.key, false);
+    assert.equal(entitlementEnabled(off, 'procurement'), false);
+    assert.equal(off.find(row => row.featureKey === 'procurement.suppliers')!.enabled, true);
+    assert.ok(buildMenuCards(MENU_ENTITLEMENT_BINDINGS, FEATURE_CATALOG, off).filter(card => card.parentFeatureKey === 'procurement').every(card => !card.enabled));
+    const on = toggleSubmenu(off, card.parentControl!.key, true);
+    assert.equal(entitlementEnabled(on, 'procurement.suppliers'), true);
+    assert.equal(buildMenuCards(MENU_ENTITLEMENT_BINDINGS, FEATURE_CATALOG, state).filter(card => card.parentControl?.key === 'procurement').length, 1);
+  });
+});
+it('the fourth preset uses exactly the purchased 1999 contract set with auto-post off', () => {
+  assert.equal(PARTNER_FEATURE_PRESETS.enterprise1999.labelTh, 'แพ็กเกจ 1999');
+  assert.equal(PARTNER_FEATURE_PRESETS.enterprise1999.featureKeys, TIER_FEATURE_PRESETS.ENTERPRISE_1999);
+  const next = applyPreset(enabledState(), 'enterprise1999');
+  assert.deepEqual(next.filter(row => row.enabled).map(row => row.featureKey).sort(), [...TIER_FEATURE_PRESETS.ENTERPRISE_1999].sort());
+  assert.equal(entitlementEnabled(next, 'expense_auto_post'), false);
+});
+
+it('restores 50 ทวิ after starter, shares group toggles, and checks disable readiness before review', () => {
+  const starter = applyPreset(enabledState(), 'starter');
+  const restored = toggleSubmenu(starter, 'wht_50bis', true);
+  assert.deepEqual(changedEntitlements(starter, restored), [{ featureKey: 'wht_50bis', enabled: true }]);
+  assert.equal(dependencyBlockMessage(starter, restored), null);
+  const blocked = disableBlockForChange(restored, toggleSubmenu(restored, 'wht_50bis', false),
+    restored.map(row => ({ ...row, canDisable: row.featureKey !== 'wht_50bis', disableReason: row.featureKey === 'wht_50bis' ? 'ยังปิดไม่ได้ กรุณาโหลดข้อมูลล่าสุด' : undefined })));
+  assert.equal(blocked?.reason, 'ยังปิดไม่ได้ กรุณาโหลดข้อมูลล่าสุด');
+  const finance = MENU_ENTITLEMENT_BINDINGS.filter(binding => binding.group === 'finance');
+  assert.equal(entitlementEnabled(toggleMenuGroup(restored, finance, false), 'wht_50bis'), false);
+  assert.equal(entitlementEnabled(toggleMenuGroup(starter, finance, true), 'wht_50bis'), true);
+});
+
+describe('saved preset display and downgrade confirmation', () => {
+  it('marks the preset matching saved switches and names one nearby preset for a small custom change', () => {
+    for (const key of Object.keys(PARTNER_FEATURE_PRESETS) as Array<keyof typeof PARTNER_FEATURE_PRESETS>) {
+      assert.deepEqual(savedFeaturePresetStatus(applyPreset([], key)), { activePresetKey: key, nearby: null });
+    }
+    const custom = toggleSubmenu(applyPreset([], 'standard'), 'crm.followups', false);
+    assert.deepEqual(savedFeaturePresetStatus(custom), { activePresetKey: null, nearby: { presetKey: 'standard', count: 1 } });
+    const customFarFromPresets = ALL_FEATURE_ENTITLEMENT_KEYS.map(featureKey => ({ featureKey, enabled: false }));
+    assert.deepEqual(savedFeaturePresetStatus(customFarFromPresets), { activePresetKey: null, nearby: null });
+  });
+
+  it('uses the review diff names for downgrades and asks for nothing when a preset only adds rights', () => {
+    const enterprise = applyPreset([], 'enterprise1999');
+    const standard = presetTurningOffItems(enterprise, 'standard');
+    const next = applyPreset(enterprise, 'standard');
+    const direct = diffEntitlements(enterprise, next).turningOff;
+    assert.deepEqual(standard, [...direct, ...cascadeOffItems(next).filter(item => !direct.some(({ featureKey }) => featureKey === item.featureKey))]);
+    assert.ok(standard.some(item => item.featureKey === 'wht_pnd53'));
+    assert.ok(standard.some(item => item.featureKey === 'wht_50bis'));
+    assert.deepEqual(presetTurningOffItems(applyPreset([], 'starter'), 'enterprise1999'), []);
+  });
+
+  it('describes each preset from the features in its contract set', () => {
+    assert.equal(PARTNER_FEATURE_PRESETS.starter.descriptionTh, 'รายจ่าย ใบเสร็จ การเบิกจ่าย และจัดการสมาชิก');
+    assert.equal(PARTNER_FEATURE_PRESETS.standard.descriptionTh, 'เพิ่มงานขาย สต๊อก ภาษี และบัญชีแยกประเภท');
+    assert.equal(PARTNER_FEATURE_PRESETS.full.descriptionTh, 'งานขาย สต๊อก ภาษี บัญชี และจัดซื้อ');
+    assert.equal(PARTNER_FEATURE_PRESETS.enterprise1999.descriptionTh, 'ชุดเริ่มต้น พร้อม ภ.ง.ด.53 และการออกหนังสือรับรอง 50 ทวิในระบบ');
+  });
+});
+it('renders the new controls with pending changes, locks and truthful menu-only counts', () => {
+  const page = readFileSync(new URL('./PartnerDetailPage.tsx', import.meta.url), 'utf8');
+  const control = page.slice(page.indexOf('const featureControl ='), page.indexOf('// From the SAVED rows'));
+  assert.match(control, /toggleSubmenu\(pending, control.key, !control.enabled\)/);
+  assert.match(control, /disableBlockForChange\(entitlements, next, entitlements\)/);
+  assert.match(control, /disabled=\{controlsLocked \|\| Boolean\(disableBlock\)\}/);
+  assert.match(control, /onClick=\{\(\) => updatePending\(next\)\}/);
+  assert.match(control, /ร้านจะเห็นเมนู 50 ทวิ และปุ่มออกหนังสือรับรองที่หน้ารายจ่าย/);
+  assert.match(page, /card.parentControl && featureControl\(card.parentControl\)/);
+  assert.match(page, /card.rights.map\(right => featureControl\(right, true\)\)/);
+  assert.match(page, /Object.keys\(PARTNER_FEATURE_PRESETS\)/);
+  assert.match(page, /เปิด \{enabledCardCount\}\/\{cards.length\} เมนู/);
+  assert.match(page, /ชุดเมนูสำเร็จรูป/);
+  assert.match(page, /savedPresetStatus\.activePresetKey === presetKey && ' ✓ ใช้อยู่'/);
+  assert.match(page, /savedPresetStatus\.activePresetKey === null && <p[^>]*>\s*ปรับเอง/);
+  assert.match(page, /PARTNER_FEATURE_PRESETS\[descriptionPresetKey\]\.descriptionTh/);
+  assert.match(page, /const turningOff = presetTurningOffItems\(entitlements, presetKey\)/);
+  assert.match(page, /confirmLabel: 'ใช้ชุดนี้', cancelLabel: 'ปิด', variant: 'primary'/);
+  assert.match(page, /title=\{`ตรวจสอบการเปลี่ยนแปลงแพ็กเกจ · \$\{companyName\}`\}/);
+  assert.match(page, /เลือกเมนูและสิทธิ์ที่ลูกค้าจะใช้ได้/);
 });

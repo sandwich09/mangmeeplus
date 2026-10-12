@@ -5,6 +5,9 @@
 
 import { coerceCivilDate, isCivilDate, todayCivilDate } from './civil-date.js';
 import type { ExpenseVoidBlocker } from './expenses.js';
+import { withholdingPeriodLockedMessage } from './tax.js';
+import { expenseCorrectionMonth } from './expenses.js';
+import { THAI_SYSTEM_ROLE_NAMES } from './employee-access.js';
 
 /** One incurred-date rule for API writes, stored-draft submit and client validation. */
 export function reimbursementIncurredDateError(value: string | Date, today = todayCivilDate()): string | null {
@@ -746,6 +749,7 @@ export type ReimbursementHubSummary = {
 // ---- Request ----
 
 export type ReimbursementRequestSummary = {
+  cancelledCertificates?: Array<{ expenseId: string; kind: 'SYSTEM' | 'EXTERNAL'; number: string | null }>;
   /** The payment predicate evaluated on this claim's submitted policy and own duplicate facts. */
   hasDuplicateBlocker?: boolean;
   id: string;
@@ -867,7 +871,28 @@ export type LinkReimbursementSignedCopyInput = {
 };
 
 /** What stands in the way of a cancellation that was started: a reason the expense void refuses, or what stops the void itself. */
-export type ReimbursementCancellationBlocker = { code: 'reason_too_short' } | ExpenseVoidBlocker;
+export function reimbursementCertificateCancellationMessage(number: string | null): string {
+  return `รายจ่ายของคำขอนี้ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว${number ? ` (เลขที่ ${number})` : ''} จึงยกเลิกคำขอเบิกตอนนี้ไม่ได้ ระบบยังไม่ได้เปลี่ยนแปลงอะไร กรุณาแจ้งทีมมั่งมีพลัสเพื่อช่วยยกเลิก`;
+}
+
+export type ReimbursementCancellationCertificate = { expenseNumber: string | null; kind: 'SYSTEM' | 'EXTERNAL'; number: string | null };
+
+export const REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS = {
+  attestationRequired: 'กรุณาติ๊กยืนยันเรื่องการยื่นภาษีก่อนยกเลิกคำขอเบิก',
+  accountingPeriodLocked: (periodKey: string): string => `เดือน ${expenseCorrectionMonth(periodKey)} ของรายจ่ายในคำขอนี้ยังไม่เปิดให้ทำรายการ จึงยกเลิกคำขอเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบและเปิดเดือนนั้นก่อน แล้วลองอีกครั้ง`,
+  taxPeriodLocked: (periodKey: string): string => `ภาษีของรายจ่ายในคำขอนี้สำหรับเดือน ${expenseCorrectionMonth(periodKey)} ถูกล็อกแล้ว จึงยกเลิกคำขอเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบเรื่องการยื่นแบบเพิ่มเติมก่อน แล้วลองอีกครั้ง`,
+  postingUnresolved: 'ยังตรวจสอบการลงบัญชีของรายจ่ายในคำขอนี้ไม่ได้ จึงยกเลิกคำขอเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบการลงบัญชีก่อน แล้วลองอีกครั้ง',
+  expenseNotVoidable: 'รายจ่ายในคำขอนี้ยังไม่พร้อมให้ยกเลิก จึงยกเลิกคำขอเบิกไม่ได้ กรุณาเปิดหน้านี้ใหม่ ถ้ายังยกเลิกไม่ได้ ให้แจ้งทีมมั่งมีพลัสเพื่อช่วยตรวจสอบ',
+  taxWorkspaceCertificate: 'คำขอนี้มีรายจ่ายที่มีหนังสือรับรองหัก ณ ที่จ่ายที่ออกจากหน้าภาษี จึงยกเลิกคำขอเบิกจากหน้านี้ไม่ได้ กรุณาแจ้งทีมมั่งมีพลัสเพื่อช่วยตรวจสอบ',
+  permissionMissing: ({ kind, number }: Pick<ReimbursementCancellationCertificate, 'kind' | 'number'>): string =>
+    `คำขอนี้มีรายจ่ายที่${kind === 'SYSTEM' ? 'ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว' : 'บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว'}${number ? ` (เลขที่ ${number})` : ''} การยกเลิกคำขอจะยกเลิก${kind === 'SYSTEM'
+      ? 'หนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย'
+      : 'การบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง'} ให้${THAI_SYSTEM_ROLE_NAMES.FINANCE}หรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิกคำขอนี้`,
+  periodLocked: (kind: 'SYSTEM' | 'EXTERNAL', periodKey: string, formType: string): string => withholdingPeriodLockedMessage(periodKey, 'ยกเลิกคำขอเบิก', formType, kind),
+} as const;
+
+export type ReimbursementCancellationBlocker = { code: 'reason_too_short' }
+  | { code: 'certificate_attestation_required'; message: string } | ExpenseVoidBlocker;
 
 /**
  * A cancellation that was started and has not completed. Cancelling voids the claim's expense
@@ -904,6 +929,10 @@ export type ReimbursementAwaitingSystem = {
 };
 
 export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
+  /** GET detail only, available before a cancellation is started. */
+  certificates?: ReimbursementCancellationCertificate[];
+  certificateCancelAllowed?: boolean;
+  certificateCancelBlocker?: { code: string; message: string };
   createdByName?: string;
   currentApproverUserId?: string;
   currentApprovalStepId?: string;

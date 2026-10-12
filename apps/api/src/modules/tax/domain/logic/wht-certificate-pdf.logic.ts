@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PDFDocument, PDFName } from 'pdf-lib';
 import sharp from 'sharp';
-import { formatCompanyLegalAddress, type CompanyLegalAddress, type PayeeSnapshot, type PayerSnapshot, type WhtFormType } from '@watchdog-bms/contracts';
+import { civilDate, formatCompanyLegalAddressForPrint, type CompanyLegalAddress, type PayeeSnapshot, type PayerSnapshot, type WhtFormType } from '@watchdog-bms/contracts';
 import { money, thaiBahtText } from '../../../expenses/domain/logic/substitute-receipt.logic';
 
 // Revenue Department printable master: https://rd.go.th/fileadmin/tax_pdf/withhold/approve_wh3_081156.pdf
@@ -19,7 +19,7 @@ export type WhtCertificateSignature = {
   signatureImageMimeType?: 'image/png' | 'image/jpeg';
 };
 type Rect = { x: number; y: number; width: number; height: number };
-type Mark = { x: number; y: number; text: string; size: number; maxWidth?: number; anchor?: 'start' | 'end' };
+type Mark = { x: number; y: number; text: string; size: number; maxWidth?: number; anchor?: 'start' | 'middle' | 'end' };
 
 function xml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[char]!);
@@ -30,7 +30,7 @@ function printedAddress(value: string | null): string {
   if (!trimmed.startsWith('{')) return trimmed.replace(/\s+/gu, ' ');
   let parsed: unknown;
   try { parsed = JSON.parse(trimmed); } catch { throw new Error('WHT certificate address contains invalid JSON'); }
-  const formatted = formatCompanyLegalAddress(parsed as CompanyLegalAddress);
+  const formatted = formatCompanyLegalAddressForPrint(parsed as CompanyLegalAddress);
   if (!formatted) throw new Error('WHT certificate address cannot be printed');
   return formatted;
 }
@@ -39,12 +39,12 @@ function buddhistDate(iso: string): string {
   if (Number.isNaN(date.getTime())) throw new Error('WHT certificate date is invalid');
   return `${String(date.getUTCDate()).padStart(2, '0')}/${String(date.getUTCMonth() + 1).padStart(2, '0')}/${date.getUTCFullYear() + 543}`;
 }
-function field(marks: Mark[], rects: Map<string, Rect>, name: string, text: string, size = 8, anchor: 'start' | 'end' = 'start'): void {
+function field(marks: Mark[], rects: Map<string, Rect>, name: string, text: string, size = 8, anchor: 'start' | 'end' = 'start', lift = 0): void {
   const rect = rects.get(name);
   if (!rect) throw new Error(`Revenue Department 50 ทวิ field missing: ${name}`);
   marks.push({
     x: anchor === 'end' ? rect.x + rect.width - 2 : rect.x + 2,
-    y: rect.y + size * 0.35,
+    y: rect.y + size * 0.35 + lift,
     text, size, maxWidth: rect.width - 4, anchor,
   });
 }
@@ -58,7 +58,7 @@ function taxId(marks: Mark[], rects: Map<string, Rect>, name: string, value: str
   for (const [i, digit] of [...value].entries()) marks.push({
     x: rect.x + (slots[i]! + 0.5) * rect.width / 17,
     y: rect.y + 3,
-    text: digit, size: 8,
+    text: digit, size: 8, anchor: 'middle',
   });
 }
 function incomeFields(code: string): { date: string; paid: string; tax: string; description?: string } {
@@ -70,7 +70,7 @@ function incomeFields(code: string): { date: string; paid: string; tax: string; 
   }
   throw new Error(`WHT certificate income category needs statutory row review: ${code}`);
 }
-function makeMarks(fields: WhtCertificateFields, payer: PayerSnapshot, payee: PayeeSnapshot, rects: Map<string, Rect>, replacement?: { issuedAt: string }): Mark[] {
+export function makeMarks(fields: WhtCertificateFields, payer: PayerSnapshot, payee: PayeeSnapshot, rects: Map<string, Rect>, replacement?: { issuedAt: string }): Mark[] {
   const marks: Mark[] = [];
   const number = /^(.*[-/])([^-\/]+)$/.exec(fields.certificateNumber);
   if (number) field(marks, rects, 'book_no', number[1]!.slice(0, -1), 7);
@@ -79,8 +79,9 @@ function makeMarks(fields: WhtCertificateFields, payer: PayerSnapshot, payee: Pa
   taxId(marks, rects, 'id1_2', payee.taxId);
   field(marks, rects, 'name1', payer.companyName, 8);
   field(marks, rects, 'name2', payee.name, 8);
-  field(marks, rects, 'add1', printedAddress(payer.address), 7.6);
-  field(marks, rects, 'add2', printedAddress(payee.address), 7.6);
+  // The address widgets sit lower against their dotted rule than the name widgets do.
+  field(marks, rects, 'add1', printedAddress(payer.address), 7.6, 'start', 3);
+  field(marks, rects, 'add2', printedAddress(payee.address), 7.6, 'start', 3);
   field(marks, rects, fields.formType === 'PND53' ? 'chk7' : 'chk4', '✓', 11);
   field(marks, rects, 'chk8', '✓', 10);
   const income = incomeFields(fields.incomeCategoryCode);
@@ -91,11 +92,11 @@ function makeMarks(fields: WhtCertificateFields, payer: PayerSnapshot, payee: Pa
   field(marks, rects, 'pay1.14', money(fields.grossAmount), 8, 'end');
   field(marks, rects, 'tax1.14', money(fields.withheldAmount), 8, 'end');
   field(marks, rects, 'total', thaiBahtText(fields.withheldAmount), 8);
-  const [day, month, year] = buddhistDate(fields.issuedAt).split('/');
+  const [day, month, year] = buddhistDate(civilDate(new Date(fields.issuedAt))).split('/');
   field(marks, rects, 'date_pay', day!, 8);
   field(marks, rects, 'month_pay', month!, 8);
   field(marks, rects, 'year_pay', year!, 8);
-  if (replacement) marks.push({ x: 408, y: 797, text: `ใบแทน ${buddhistDate(replacement.issuedAt)}`, size: 8, maxWidth: 93 });
+  if (replacement) marks.push({ x: 408, y: 797, text: `ใบแทน ${buddhistDate(civilDate(new Date(replacement.issuedAt)))}`, size: 8, maxWidth: 93 });
   return marks;
 }
 function overlay(width: number, height: number, marks: Mark[], signature?: WhtCertificateSignature, stamp?: 'SUPERSEDED'): Buffer {

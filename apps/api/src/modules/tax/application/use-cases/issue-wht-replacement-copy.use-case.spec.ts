@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { IssueWhtReplacementCopyUseCase } from './issue-wht-replacement-copy.use-case';
 
-const ctx = { companyId: 'company-1', userId: 'user-1', requestId: 'request-1' } as any;
+const ctx = { companyId: 'company-1', userId: 'user-1', requestId: 'request-1', permissions: ['expense.read'], scopes: {} } as any;
 
 function certificate(overrides: Record<string, unknown> = {}) {
   return {
@@ -33,14 +33,24 @@ function guard(row: { state: 'OPEN' | 'CLOSED' } | null) {
 function harness(options: { handoff?: Record<string, unknown>; certificates?: any[] } = {}) {
   const handoff: any = { id: 'handoff-1', companyId: 'company-1', status: 'SYSTEM_ISSUED', certificateId: 'cert-1', ...options.handoff };
   const certificates: any[] = options.certificates ?? [certificate()];
+  const expense = { status: 'CONFIRMED' };
   const audits: any[] = [];
   const renders: any[] = [];
   const client: any = {
+    $executeRaw: async () => 0,
+    expenseRecord: { findFirst: async () => ({ ...expense }) },
     whtCertificateHandoff: {
       findUnique: async ({ where }: any) => (where.id === handoff.id ? { ...handoff } : null),
     },
     whtCertificate: {
       findUnique: async ({ where }: any) => certificates.find((c) => c.id === where.id) ?? null,
+      updateMany: async ({ where, data }: any) => {
+        const row = certificates.find((c) => c.id === where.id && c.status === where.status);
+        if (!row) return { count: 0 };
+        row.replacementCopyCount += data.replacementCopyCount.increment;
+        Object.assign(row, { ...data, replacementCopyCount: row.replacementCopyCount });
+        return { count: 1 };
+      },
       update: async ({ where, data }: any) => {
         const row = certificates.find((c) => c.id === where.id);
         if (data.replacementCopyCount?.increment) row.replacementCopyCount += data.replacementCopyCount.increment;
@@ -50,6 +60,7 @@ function harness(options: { handoff?: Record<string, unknown>; certificates?: an
     },
     companyTaxProfile: { findUnique: async () => null },
   };
+  client.$transaction = async (work: any) => work(client);
   const taxRepo: any = {
     prisma: { client },
     findPeriodById: async () => ({ id: 'period-1', formType: 'PND53' }),
@@ -62,7 +73,7 @@ function harness(options: { handoff?: Record<string, unknown>; certificates?: an
     },
   };
   return {
-    handoff, certificates, audits, renders,
+    handoff, expense, client, certificates, audits, renders,
     execute: (gate: LaunchGateGuardService) =>
       new IssueWhtReplacementCopyUseCase(taxRepo, audit, gate, renderer, {} as any, {} as any),
   };
@@ -118,5 +129,46 @@ describe('IssueWhtReplacementCopyUseCase', () => {
     assert.equal(result.certificateNumber, 'WT2026090002', 'replaces the ACTIVE certificate, never the superseded one');
     assert.equal(active.replacementCopyCount, 1);
     assert.equal(superseded.replacementCopyCount, 0);
+  });
+});
+
+
+describe('issue-wht-replacement-copy source guards (A3)', () => {
+  for (const status of ['NEEDS_REVIEW', 'VOIDED']) it(`refuses an expense source in ${status} without writing`, async () => {
+    const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' } });
+    h.expense.status = status;
+    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (error: any) => error.getResponse?.().code === 'expense_wht_source_changed' && error.getResponse().message === 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว กรุณาเปิดหน้ารายจ่ายใหม่');
+    assert.equal(h.certificates.length, 1); assert.equal(h.certificates[0].replacementCopyCount, 0);
+  });
+  it('preserves the expense revision and last editor when issuing a certificate artifact', async () => {
+    const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' } });
+    h.client.expenseRecord.updateMany = async () => { throw new Error('certificate command must not edit the expense'); };
+    await h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1');
+  });
+  it('refuses a VOIDED certificate without a successor inside the transaction', async () => {
+    const h = harness();
+    const transact = h.client.$transaction;
+    h.client.$transaction = async (work: any) => { h.certificates[0].status = 'VOIDED'; return transact(work); };
+    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (error: any) => error.getResponse?.().message === 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว กรุณาเปิดหน้ารายจ่ายใหม่');
+    assert.equal(h.certificates.length, 1); assert.equal(h.certificates[0].replacementCopyCount, 0);
+  });
+});
+
+
+describe('C1 handoff scope boundary', () => {
+  it('execute hides branch and unreadable expense ids exactly like a missing handoff', async () => {
+    const h = harness({ handoff: { sourceBranchId: 'branch-2', sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' } });
+    h.client.expenseRecord.findFirst = async ({ where }: any) => JSON.stringify(where).includes('createdByUserId') || JSON.stringify(where).includes('\"in\":[]') ? null : { status: 'CONFIRMED' };
+    const useCase = h.execute(guard({ state: 'OPEN' }));
+
+    const call = (actor: any, id: string) => useCase.execute(actor, id);
+    let missing: any;
+    await assert.rejects(call(ctx, 'missing'), (error: any) => { missing = error.getResponse(); return error.getStatus() === 404; });
+    const before = [h.audits.length, h.renders.length, h.certificates.length];
+    for (const actor of [{ ...ctx, scopes: { branchIds: ['branch-1'] } }, { ...ctx, permissions: ['expense.read_own'] }, { ...ctx, permissions: [] }]) {
+      await assert.rejects(call(actor, 'handoff-1'), (error: any) => { assert.equal(error.getStatus?.(), 404); assert.deepEqual(error.getResponse(), missing); return true; });
+    }
+    assert.deepEqual([h.audits.length, h.renders.length, h.certificates.length], before);
+    assert.ok(await call(ctx, 'handoff-1'));
   });
 });

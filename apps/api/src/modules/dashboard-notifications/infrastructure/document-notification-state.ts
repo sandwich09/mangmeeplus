@@ -14,8 +14,11 @@ import type { PrismaService } from '../../../common/database/prisma.service';
  * its status.
  */
 export const DOCUMENT_NOTIFICATION_STATES: Record<string, {
-  sourceType: string; statuses: readonly string[]; confirmedDuplicate?: boolean; payoutCorrection?: readonly ('NONE' | ReimbursementPayoutCorrectionPhase)[];
+  sourceType: string; statuses: readonly string[]; actionOnly?: boolean; confirmedDuplicate?: boolean; payoutCorrection?: readonly ('NONE' | ReimbursementPayoutCorrectionPhase)[];
 }> = {
+  'expense.disbursement_pending_approval': { sourceType: 'disbursement_voucher', statuses: ['PENDING_APPROVAL'] },
+  // Only actionable approval notices follow this state, including a preparer eligible to pay.
+  'expense.disbursement_approved': { sourceType: 'disbursement_voucher', statuses: ['APPROVED'], actionOnly: true },
   'expense.substitute_receipt_signature_pending': { sourceType: 'substitute_receipt_evidence', statuses: ['PREPARED'] },
   'expense.substitute_receipt_approval_pending': { sourceType: 'substitute_receipt_evidence', statuses: ['PAYER_CERTIFIED'] },
   'workflow.reimbursement_pending_approval': { sourceType: 'reimbursement_request', statuses: ['PENDING_APPROVAL'], payoutCorrection: ['NONE'] },
@@ -36,24 +39,33 @@ export const DOCUMENT_NOTIFICATION_STATES: Record<string, {
 export async function completedDocumentNotificationIds(db: PrismaService['client'], companyId: string, userId: string) {
   const events = await db.notificationEvent.findMany({
     where: { companyId, status: 'OPEN', triggerKey: { in: Object.keys(DOCUMENT_NOTIFICATION_STATES) }, recipients: { some: { userId, dismissedAt: null } } },
-    select: { id: true, triggerKey: true, sourceType: true, sourceId: true, createdAt: true },
+    select: { id: true, triggerKey: true, severity: true, sourceType: true, sourceId: true, createdAt: true, sourceRefsJson: true },
   });
   const sourceIds = (type: string) => events.filter(event => event.sourceType === type && event.sourceId).map(event => event.sourceId!);
   const certificates = sourceIds('substitute_receipt_evidence');
   const claims = sourceIds('reimbursement_request');
-  const [certificateRows, claimRows] = await Promise.all([
+  const vouchers = sourceIds('disbursement_voucher');
+  const [certificateRows, claimRows, voucherRows] = await Promise.all([
     certificates.length ? db.expenseSubstituteReceiptEvidence.findMany({ where: { companyId, id: { in: certificates } }, select: { id: true, status: true } }) : [],
     claims.length ? db.reimbursementRequest.findMany({
       where: { companyId, id: { in: claims } },
       select: { id: true, status: true, payoutCorrectionRequestedAt: true, payoutCorrectionSubmittedAt: true, cancellationPendingAt: true, sourceExpenses: { where: { status: { notIn: ['VOIDED', 'REJECTED'] } }, select: { duplicateStatus: true } } },
     }) : [],
+    vouchers.length ? db.disbursementVoucher.findMany({ where: { companyId, id: { in: vouchers } }, select: { id: true, status: true, revision: true } }) : [],
   ]);
   return events.filter(event => {
     const rule = DOCUMENT_NOTIFICATION_STATES[event.triggerKey];
     if (!rule || event.sourceType !== rule.sourceType) return false;
+    if (rule.actionOnly && event.severity !== 'ACTION') return false;
     if (rule.sourceType === 'substitute_receipt_evidence') {
       const row = certificateRows.find(row => row.id === event.sourceId);
       return !row || !rule.statuses.includes(row.status);
+    }
+    if (rule.sourceType === 'disbursement_voucher') {
+      const row = voucherRows.find(row => row.id === event.sourceId);
+      // A resubmit starts a new task; the previous revision never becomes actionable again.
+      const revision = (event.sourceRefsJson as { refs?: { revision?: number }[] } | null)?.refs?.[0]?.revision;
+      return !row || !rule.statuses.includes(row.status) || typeof revision === 'number' && revision !== row.revision;
     }
     const claim = claimRows.find(row => row.id === event.sourceId);
     if (!claim || !rule.statuses.includes(claim.status)) return true;

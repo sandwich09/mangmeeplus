@@ -1,11 +1,19 @@
-import { describe, it, beforeEach } from 'node:test';
+import { after, before, describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
+import { EXPENSE_VOID_CERTIFICATE_WORDS } from '@watchdog-bms/contracts';
 import {
   PrismaExpenseRepository,
   SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON,
 } from './prisma-expense.repository';
 import { findClaimExpenseVoidBlocker } from './expense-void-blocker';
+import { assertFundingMutation, lockExpenseFunding } from './substitute-funding.guard';
+import { lockExpenseCorrection, readDisbursementReservations } from './expense-void-blocker';
+import { randomUUID } from 'node:crypto';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '../../../generated/prisma/client';
+import { pgSpecUnreachableReason } from '../../../common/database/pg-spec-guard';
+import { VoidExpenseUseCase } from '../application/use-cases/expense-draft.use-case';
 
 // H-04 (expenses) closure evidence: void must be a true reversal — the status
 // claim, payable zeroing, and reversing journal are one transaction, repeated
@@ -16,10 +24,12 @@ type Row = Record<string, any>;
 
 function matches(row: Row, where: Row): boolean {
   return Object.entries(where).every(([key, cond]) => {
+    if (key === 'OR') return cond.some((part: Row) => matches(row, part));
     if (cond instanceof Date && row[key] instanceof Date) return row[key].getTime() === cond.getTime();
     if (cond && typeof cond === 'object' && !Array.isArray(cond) && !(cond instanceof Date)) {
       if ('not' in cond) return row[key] !== cond.not;
       if ('in' in cond) return (cond.in as any[]).includes(row[key]);
+      if ('array_contains' in cond) return cond.array_contains.every((value: any) => row[key]?.includes(value));
       return true;
     }
     return row[key] === cond;
@@ -30,13 +40,16 @@ function matches(row: Row, where: Row): boolean {
 // shapes the void transaction uses. $transaction runs the callback against the
 // same store; rollback semantics are covered by the live-DB verification run.
 function fakeClient(seed: {
+  handoffs?: Row[]; certificates?: Row[]; taxEvents?: Row[];
   expenses?: Row[]; expenseLines?: Row[];
   expensePayments?: Row[];
   journalEntries?: Row[]; journalLines?: Row[]; periods?: Row[]; taxPeriods?: Row[];
   substituteEvidence?: Row[];
   documentNumbers?: Row[];
+  vouchers?: Row[]; voucherLines?: Row[]; users?: Row[];
 }) {
   const s = {
+    taxEvents: seed.taxEvents ?? [], handoffs: seed.handoffs ?? [], certificates: seed.certificates ?? [], history: [] as Row[], audits: [] as Row[],
     expenses: seed.expenses ?? [], expenseLines: seed.expenseLines ?? [],
     expensePayments: seed.expensePayments ?? [],
     journalEntries: seed.journalEntries ?? [], journalLines: seed.journalLines ?? [],
@@ -46,6 +59,7 @@ function fakeClient(seed: {
   };
   let idSeq = 0;
   const table = (rows: Row[]) => ({
+    findUnique: async ({ where }: any) => rows.find((r) => matches(r, where.companyId_periodKey ?? where)) ?? null,
     findFirst: async ({ where }: any) => rows.find((r) => matches(r, where)) ?? null,
     findFirstOrThrow: async ({ where }: any) => {
       const row = rows.find((r) => matches(r, where));
@@ -61,7 +75,7 @@ function fakeClient(seed: {
     },
     updateMany: async ({ where, data }: any) => {
       const hits = rows.filter((r) => matches(r, where));
-      hits.forEach((r) => Object.assign(r, data));
+      hits.forEach((r) => { for (const [key, value] of Object.entries(data)) r[key] = value && typeof value === 'object' && 'increment' in value ? Number(r[key] ?? 0) + Number(value.increment) : value; });
       return { count: hits.length };
     },
   });
@@ -95,7 +109,14 @@ function fakeClient(seed: {
   };
   return {
     state: s,
+    whtCertificateHandoff: table(s.handoffs), whtCertificate: table(s.certificates),
+    whtCertificateHistory: { create: async ({ data }: any) => { assert.ok(s.handoffs[0].certificateId || s.handoffs[0].externalCertificateNumber, 'history precedes clearing'); s.history.push(data); return data; } },
+    auditLog: { create: async ({ data }: any) => { s.audits.push(data); return data; } },
+    taxEvent: table(s.taxEvents),
     expenseRecord,
+    disbursementVoucher: table(seed.vouchers ?? []),
+    disbursementVoucherLine: table(seed.voucherLines ?? []),
+    user: table(seed.users ?? []),
     expensePayment: table(s.expensePayments),
     accountingPeriod: table(s.periods),
     taxPeriod: table(s.taxPeriods),
@@ -120,7 +141,7 @@ const NOW = new Date('2026-07-18T00:00:00Z');
 function confirmedExpenseSeed() {
   return {
     expenses: [{
-      id: 'exp_1', companyId: CO, branchId: null, status: 'CONFIRMED', expenseNumber: 'EXP-1',
+      id: 'exp_1', companyId: CO, branchId: null, status: 'CONFIRMED', expenseDate: NOW, expenseNumber: 'EXP-1',
       currency: 'THB', vatMode: 'EXCLUDE_VAT', inputVatClaimStatus: 'CLAIMABLE',
       subtotalAmount: '100.00', discountAmount: '0.00', taxableAmount: '100.00', vatAmount: '7.00',
       whtAmount: '0.00', grandTotalAmount: '107.00', netPayableAmount: '107.00',
@@ -425,7 +446,15 @@ describe('what a claim is told would stop the void is what the void refuses', ()
     it(`${name}: reported, and the void refuses`, async () => {
       assert.deepEqual(await findClaimExpenseVoidBlocker(world(arrange).client, CO, 'exp_1'), expected);
       const { client, repo } = world(arrange);
-      await assert.rejects(() => repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'เหตุผล', 'JV-REV-1'));
+      await assert.rejects(() => repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'เหตุผล', 'JV-REV-1'), (error: any) => {
+        assert.equal(error.getResponse().code, expected.code === 'expense_not_voidable' ? 'expense_changed' : expected.code);
+        const message = error.getResponse().message;
+        assert.equal(message, expected.code === 'posting_unresolved' ? EXPENSE_VOID_CERTIFICATE_WORDS.postingUnresolved
+          : expected.code === 'accounting_period_locked' ? EXPENSE_VOID_CERTIFICATE_WORDS.accountingPeriodLocked('2026-07')
+          : expected.code === 'tax_period_locked' ? EXPENSE_VOID_CERTIFICATE_WORDS.taxPeriodLocked('2026-07')
+          : EXPENSE_VOID_CERTIFICATE_WORDS.statusChanged);
+        assert.match(message, /[ก-๙]/); return true;
+      });
       assert.equal(client.state.journalEntries.some((entry: any) => entry.entryType === 'REVERSAL'), false);
     });
   }
@@ -538,4 +567,361 @@ describe('updateExpense optimistic concurrency', () => {
     assert.equal(client.state.expenses[0].note, 'current');
     assert.equal(callbackCalled, false);
   });
+});
+
+
+describe('expense void certificate cascade (A3)', () => {
+  function setup(kind?: 'SYSTEM' | 'EXTERNAL' | 'REQUIRED') {
+    const seed = confirmedExpenseSeed();
+    seed.expenses[0].whtAmount = '3.00';
+    const handoff = { payeeAddress: 'บ้านเลขที่ 99', id: 'handoff-1', companyId: CO, sourcePaymentType: 'expense.record', sourcePaymentId: 'exp_1',
+      status: kind === 'SYSTEM' ? 'SYSTEM_ISSUED' : kind === 'EXTERNAL' ? 'EXTERNAL_LINKED' : 'REQUIRED', certificateRound: 0,
+      certificateId: kind === 'SYSTEM' ? 'cert-1' : null, externalCertificateNumber: kind === 'EXTERNAL' ? 'PAPER-1' : null,
+      externalIssuedDate: NOW, externalEvidenceRef: 'evidence', linkNote: 'note', linkCommandId: 'link-1',
+      linkPayloadFingerprint: 'fingerprint', linkedAt: NOW, linkedByUserId: 'u1' };
+    const client = makeClient({ ...seed, handoffs: kind ? [handoff] : [],
+      certificates: kind === 'SYSTEM' ? [{ id: 'cert-1', companyId: CO, status: 'ISSUED', certificateNumber: 'WHT-1', issuedAt: NOW, issuedByUserId: 'issuer-1' }] : [] });
+    const repo = new PrismaExpenseRepository({ client } as any);
+    const options = { permissions: ['expense.void', 'wht.certificate.correct', 'wht.external_certificate.link'], taxFilingAttested: true, requestId: 'request-1' };
+    const run = (patch = {}) => repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'บันทึกผิดรายการ', 'JV-REV-1', [], undefined, { ...options, ...patch });
+    return { client, handoff, run };
+  }
+  for (const kind of ['SYSTEM', 'EXTERNAL'] as const) {
+    it(`refuses ${kind} without certificate permission before changing anything`, async () => {
+      const h = setup(kind);
+      await assert.rejects(h.run({ permissions: ['expense.void'] }), (error: any) => error instanceof ForbiddenException && (error.getResponse() as any).code === 'certificate_permission_missing');
+      assert.equal(h.client.state.expenses[0].status, 'CONFIRMED'); assert.equal(h.client.state.history.length, 0);
+    });
+    it(`requires attestation for ${kind}`, async () => {
+      const h = setup(kind);
+      await assert.rejects(h.run({ taxFilingAttested: false }), (error: any) => error instanceof BadRequestException && (error.getResponse() as any).code === 'expense_certificate_attestation_required');
+      assert.equal(h.client.state.expenses[0].status, 'CONFIRMED');
+    });
+    it(`cancels ${kind} once with history before clearing all pointers`, async () => {
+      const h = setup(kind); const result = await h.run();
+      assert.deepEqual((result as any).cancelledCertificate, { issuerUserId: kind === 'SYSTEM' ? 'issuer-1' : 'u1', certificateNumber: kind === 'SYSTEM' ? 'WHT-1' : 'PAPER-1', isExternal: kind === 'EXTERNAL', certificateRound: 1 });
+      assert.equal(h.handoff.status, 'CANCELLED'); assert.equal(h.handoff.certificateRound, 1); assert.equal(h.handoff.payeeAddress, 'บ้านเลขที่ 99');
+      for (const key of ['certificateId', 'externalCertificateNumber', 'externalIssuedDate', 'externalEvidenceRef', 'linkNote', 'linkCommandId', 'linkPayloadFingerprint', 'linkedAt', 'linkedByUserId']) assert.equal((h.handoff as any)[key], null, key);
+      assert.deepEqual(h.client.state.history[0], { companyId: CO, expenseId: 'exp_1', handoffId: 'handoff-1',
+        eventType: kind === 'SYSTEM' ? 'CANCELLED_SOURCE_VOIDED' : 'EXTERNAL_RECORD_REMOVED', isExternal: kind === 'EXTERNAL',
+        certificateId: kind === 'SYSTEM' ? 'cert-1' : null, certificateNumber: kind === 'SYSTEM' ? 'WHT-1' : 'PAPER-1',
+        certificateDate: NOW, actorUserId: 'u2', reason: 'บันทึกผิดรายการ', taxFilingAttested: true,
+        ...(kind === 'EXTERNAL' ? { detailsJson: { externalEvidenceRef: 'evidence', linkNote: 'note', linkedAt: NOW.toISOString(), linkedByUserId: 'u1' } } : {}) });
+      if (kind === 'SYSTEM') { assert.equal(h.client.state.certificates[0].status, 'VOIDED'); assert.equal(h.client.state.certificates[0].voidReason, 'SOURCE_VOIDED'); }
+      assert.equal(h.client.state.audits[0].metadataJson.source, 'expense_void');
+      await assert.rejects(h.run()); assert.equal(h.client.state.history.length, 1);
+    });
+  }
+  for (const kind of ['SYSTEM', 'EXTERNAL'] as const) {
+    it(`gives the ${kind} permission sentence`, async () => {
+      const h = setup(kind);
+      await assert.rejects(h.run({ permissions: ['expense.void'] }), (error: any) => {
+        assert.equal(error.getResponse().message, kind === 'SYSTEM'
+          ? 'เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว (เลขที่ WHT-1) การยกเลิกเอกสารจะยกเลิกหนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย ให้เจ้าของกิจการหรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก'
+          : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว (เลขที่ PAPER-1) การยกเลิกเอกสารจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก');
+        return true;
+      });
+    });
+    for (const status of ['FILED', 'PAID', 'CLOSED']) it(`refuses ${kind} in a ${status} withholding period with its month and guidance`, async () => {
+      const h = setup(kind); h.client.state.taxPeriods.push({ companyId: CO, formType: 'PND53', periodKey: '2026-07', status });
+      await assert.rejects(h.run(), (error: any) => {
+        assert.equal(error.getResponse().code, 'tax_period_locked');
+        assert.equal(error.getResponse().message, kind === 'SYSTEM'
+          ? 'ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ก.ค. 2569 ยื่นไปแล้ว จึงยกเลิกเอกสารนี้ไม่ได้ ถ้าผิดเฉพาะตัวสะกดชื่อหรือที่อยู่บนหนังสือรับรอง ใช้ปุ่ม "แก้ไขหนังสือรับรอง" ได้ ถ้ายอดเงิน อัตรา หรือเลขผู้เสียภาษีผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ'
+          : 'ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ก.ค. 2569 ยื่นไปแล้ว จึงยกเลิกเอกสารนี้ไม่ได้ ถ้าข้อมูลผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ');
+        return true;
+      });
+      assert.equal(h.client.state.expenses[0].status, 'CONFIRMED');
+    });
+  }
+  it('checks the active event withholding period even when its month differs from the source date', async () => {
+    const h = setup('EXTERNAL');
+    h.client.state.taxEvents.push({ companyId: CO, sourceType: 'expense.record', sourceId: 'exp_1', status: 'ACTIVE', taxPeriodId: 'old-period' });
+    h.client.state.taxPeriods.push({ id: 'old-period', companyId: CO, formType: 'PND3', periodKey: '2026-06', status: 'FILED' });
+    await assert.rejects(h.run(), (error: any) => error.getResponse().code === 'tax_period_locked' && error.getResponse().message === 'ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.3) ของเดือน มิ.ย. 2569 ยื่นไปแล้ว จึงยกเลิกเอกสารนี้ไม่ได้ ถ้าข้อมูลผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ');
+    assert.equal(h.client.state.expenses[0].status, 'CONFIRMED');
+  });
+  it('cancels a REQUIRED handoff without history or attestation and leaves confirmed tax events alone', async () => {
+    const h = setup('REQUIRED');
+    h.client.taxEvent.updateMany = async () => { throw new Error('confirmed tax events must stay on the tax-sync path'); };
+    await h.run({ permissions: [], taxFilingAttested: false });
+    assert.equal(h.handoff.status, 'CANCELLED'); assert.equal(h.handoff.certificateRound, 0); assert.equal(h.client.state.history.length, 0);
+  });
+  it('keeps certificate-free void unchanged even with a filed withholding period', async () => {
+    const h = setup(); h.client.state.taxPeriods.push({ companyId: CO, formType: 'PND53', periodKey: '2026-07', status: 'FILED' });
+    await h.run({ permissions: [], taxFilingAttested: false }); assert.equal(h.client.state.expenses[0].status, 'VOIDED');
+  });
+  for (const match of ['issued certificate', 'SYSTEM_ISSUED', 'EXTERNAL_LINKED', 'certificate pointer', 'external date']) it(`refuses a tax-event-only ${match} before mutation`, async () => {
+    const h = setup();
+    h.client.state.taxEvents.push({ id: 'event-1', companyId: CO, sourceType: 'expense.record', sourceId: 'exp_1', status: 'ACTIVE' });
+    if (match === 'issued certificate') h.client.state.certificates.push({ id: 'tax-cert', companyId: CO, status: 'ISSUED', taxEventIdsJson: ['event-1'] });
+    else h.client.state.handoffs.push({ id: 'tax-handoff', companyId: CO, sourcePaymentType: 'tax.workspace', sourcePaymentId: 'other', taxEventIdsJson: ['event-1'],
+      status: ['SYSTEM_ISSUED', 'EXTERNAL_LINKED'].includes(match) ? match : 'REQUIRED',
+      certificateId: match === 'certificate pointer' ? 'tax-cert' : null, externalIssuedDate: match === 'external date' ? NOW : null });
+    await assert.rejects(h.run(), (error: any) => {
+      assert.equal(error.getResponse().code, 'certificate_issued');
+      assert.equal(error.getResponse().message, 'รายจ่ายนี้มีหนังสือรับรองหัก ณ ที่จ่ายที่ออกจากหน้าภาษี จึงยกเลิกเอกสารจากหน้านี้ไม่ได้ กรุณาแจ้งทีมมั่งมีพลัสเพื่อช่วยตรวจสอบ');
+      return true;
+    });
+    assert.equal(h.client.state.expenses[0].status, 'CONFIRMED');
+    assert.equal(h.client.state.history.length, 0);
+    assert.equal(h.client.state.journalEntries.length, 1);
+  });
+  it('ignores a voided tax-event certificate and an unrelated issued certificate', async () => {
+    const h = setup();
+    h.client.state.taxEvents.push({ id: 'event-1', companyId: CO, sourceType: 'expense.record', sourceId: 'exp_1', status: 'ACTIVE' });
+    h.client.state.certificates.push({ id: 'old', companyId: CO, status: 'VOIDED', taxEventIdsJson: ['event-1'] },
+      { id: 'unrelated', companyId: CO, status: 'ISSUED', taxEventIdsJson: ['other-event'] });
+    await h.run();
+    assert.equal(h.client.state.expenses[0].status, 'VOIDED');
+  });
+  it('allows claim cancellation preflight with an own certificate in an open period', async () => {
+    const h = setup('SYSTEM');
+    assert.equal(await findClaimExpenseVoidBlocker(h.client, CO, 'exp_1'), null);
+  });
+  for (const kind of ['SYSTEM', 'EXTERNAL'] as const) it(`uses stored claim authorisation to cancel ${kind} without user certificate permissions`, async () => {
+    const h = setup(kind);
+    await h.run({ permissions: [], authorisedByClaimCancellation: true });
+    assert.equal(h.handoff.status, 'CANCELLED');
+    assert.equal(h.client.state.history.length, 1);
+    assert.equal(h.client.state.history[0].taxFilingAttested, true);
+  });
+  it('checks claim certificate period locks before tax-workspace blockers and ignores cancelled certificates', async () => {
+    const h = setup('EXTERNAL');
+    h.client.state.taxEvents.push({ id: 'event-1', companyId: CO, sourceType: 'expense.record', sourceId: 'exp_1', status: 'ACTIVE', taxPeriodId: 'locked' });
+    h.client.state.certificates.push({ id: 'tax-cert', companyId: CO, status: 'ISSUED', taxEventIdsJson: ['event-1'] });
+    h.client.state.taxPeriods.push({ id: 'locked', companyId: CO, formType: 'PND53', periodKey: '2026-06', status: 'FILED' });
+    assert.deepEqual(await findClaimExpenseVoidBlocker(h.client, CO, 'exp_1'), { code: 'tax_period_locked', formType: 'PND53', periodKey: '2026-06', certificateKind: 'EXTERNAL' });
+    h.client.state.taxPeriods[0].status = 'OPEN';
+    assert.deepEqual(await findClaimExpenseVoidBlocker(h.client, CO, 'exp_1'), { code: 'certificate_issued' });
+    h.client.state.certificates[0].status = 'VOIDED';
+    assert.equal(await findClaimExpenseVoidBlocker(h.client, CO, 'exp_1'), null);
+  });
+});
+
+
+describe('disbursement reservation expense boundaries (B5b)', () => {
+  function setup(name: string | null = 'สมใจ') {
+    const seed = confirmedExpenseSeed();
+    Object.assign(seed.expenses[0]!, { branchId: 'branch-1', postingStatus: 'not_required', journalEntryId: null, reservedByDisbursementVoucherId: 'voucher-1' });
+    seed.journalEntries = [];
+    const client = makeClient({ ...seed, vouchers: [{ id: 'voucher-1', companyId: CO, documentNumber: 'DV-1', preparedByUserId: 'preparer-1' }], users: name ? [{ id: 'preparer-1', displayName: name }] : [] });
+    return { client, repo: new PrismaExpenseRepository({ client } as any) };
+  }
+  for (const name of ['สมใจ', null]) {
+    const prefix = `รายการนี้อยู่ในใบเตรียมจ่ายเลขที่ DV-1${name ? ` จัดทำโดย ${name}` : ''} `;
+    for (const operation of ['payment', 'reopen', 'void'] as const) it(`refuses reserved ${operation} with ${name ? 'a preparer' : 'no preparer'} before writes`, async () => {
+      const { client, repo } = setup(name);
+      const run = operation === 'payment' ? () => repo.recordPaymentAtomic({ companyId: CO, expenseId: 'exp_1', actorUserId: 'u1', scopes: {}, idempotencyKey: 'pay-1', amount: '10' })
+        : operation === 'reopen' ? () => repo.reopenExpenseAtomic({ companyId: CO, expenseId: 'exp_1', actorUserId: 'u1', scopes: {}, reason: 'ข้อมูลผิด' })
+        : () => repo.voidExpenseTrueReversal(CO, 'exp_1', 'u1', 'ข้อมูลผิด');
+      const remedy = 'ให้ติดต่อผู้จัดทำใบนั้นเพื่อนำรายการนี้ออกจากใบหรือยกเลิกใบก่อน';
+      await assert.rejects(run, (error: any) => { assert.equal(error.getResponse().message, prefix + remedy); return true; });
+      assert.equal(client.state.expenses[0].status, 'CONFIRMED');
+      assert.equal(client.state.expensePayments.length, 0);
+    });
+  }
+  it('chooses reservation remedies from the viewer complete document scope and lifecycle rights', async () => {
+    for (const viewerMay of ['act', 'open', 'none'] as const) {
+      for (const operation of ['payment', 'reopen', 'void'] as const) {
+        const { client, repo } = setup(); await client.disbursementVoucher.update({ where: { id: 'voucher-1' }, data: { status: 'PENDING_APPROVAL' } });
+        const permissions = ['expense.read', 'expense.confirm', 'expense.payment.record', ...(viewerMay !== 'none' ? ['expense.disbursement.read'] : []), ...(viewerMay === 'act' ? ['expense.disbursement.prepare'] : [])];
+        const original = client.disbursementVoucher.findMany;
+        client.disbursementVoucher.findMany = async (args: any) => args.where.lines ? viewerMay === 'none' ? [] : [{ id: 'voucher-1' }] : original(args);
+        const caller = { companyId: CO, scopes: {} };
+        const cap = await repo.expenseCorrectionCapabilities(CO, 'exp_1', permissions, caller);
+        assert.equal(cap.disbursementReservation?.viewerMay, viewerMay);
+        const run = operation === 'payment' ? () => repo.recordPaymentAtomic({ companyId: CO, expenseId: 'exp_1', actorUserId: 'u1', scopes: {}, permissions, viewerReadScope: caller, idempotencyKey: 'pay', amount: '10' } as any)
+          : operation === 'reopen' ? () => repo.reopenExpenseAtomic({ companyId: CO, expenseId: 'exp_1', actorUserId: 'u1', scopes: {}, permissions, viewerReadScope: caller, reason: 'ข้อมูลผิด' })
+          : () => repo.voidExpenseTrueReversal(CO, 'exp_1', 'u1', 'ข้อมูลผิด', undefined, [], undefined, { permissions, viewerReadScope: caller } as any);
+        await assert.rejects(run, (e: any) => {
+          const message = e.getResponse().message;
+          if (viewerMay === 'open') assert.match(message, /ให้ผู้จัดทำหรือผู้อนุมัติของใบนั้นกด "กลับไปแก้" หรือยกเลิกใบก่อน/);
+          if (viewerMay === 'none') { assert.match(message, /ให้ติดต่อผู้จัดทำใบนั้นเพื่อนำรายการนี้ออกจากใบหรือยกเลิกใบก่อน/); assert.doesNotMatch(message, /กลับไปแก้/); }
+          if (viewerMay === 'act') assert.doesNotMatch(message, /ให้ติดต่อ|ให้ผู้จัดทำหรือผู้อนุมัติ/);
+          return true;
+        });
+      }
+    }
+  });
+
+  it('offers payment from a reserved document only to a viewer holding its pay right', async () => {
+    for (const mayPay of [false, true]) {
+      const { client, repo } = setup(); await client.disbursementVoucher.update({ where: { id: 'voucher-1' }, data: { status: 'APPROVED' } });
+      const permissions = ['expense.read', 'expense.payment.record', 'expense.disbursement.read', 'expense.disbursement.prepare', ...(mayPay ? ['expense.disbursement.pay'] : [])];
+      const caller = { companyId: CO, scopes: {} };
+      const cap = await repo.expenseCorrectionCapabilities(CO, 'exp_1', permissions, caller);
+      assert.equal(cap.disbursementReservation?.viewerCanPay, mayPay);
+      await assert.rejects(() => repo.recordPaymentAtomic({ companyId: CO, expenseId: 'exp_1', actorUserId: 'u1', scopes: {}, permissions, viewerReadScope: caller, idempotencyKey: 'pay', amount: '10' }), (e: any) => {
+        assert.match(e.getResponse().message, mayPay ? /ให้บันทึกจ่ายจากใบนั้น หรือยกเลิกใบนั้นก่อนถ้าจะจ่ายแยก/ : /ให้ผู้มีสิทธิ์บันทึกจ่ายบันทึกจากใบนั้น หรือยกเลิกใบนั้นก่อนถ้าจะจ่ายแยก/); return true;
+      });
+    }
+  });
+
+  it('capabilities reveal the voucher link only with read permission and its complete read scope', async () => {
+    const { client, repo } = setup();
+    let readWhere: any;
+    const original = client.disbursementVoucher.findMany;
+    client.disbursementVoucher.findMany = async (args: any) => {
+      if (args.where.lines) { readWhere = args.where; return args.where.branchId?.in?.includes('branch-1') ? [{ id: 'voucher-1' }] : []; }
+      return original(args);
+    };
+    const permissions = ['expense.confirm', 'expense.payment.record'];
+    for (const [allowed, scope] of [[false, { permissions, scopes: {} }], [true, { permissions: [...permissions, 'expense.disbursement.read'], scopes: { branchIds: ['branch-1'] }, createdByUserId: 'u1' }], [false, { permissions: [...permissions, 'expense.disbursement.read'], scopes: { branchIds: ['other'] } }]] as const) {
+      const cap = await (repo.expenseCorrectionCapabilities as any)(CO, 'exp_1', scope.permissions, scope);
+      assert.deepEqual(cap.disbursementReservation, { voucherId: allowed ? 'voucher-1' : null, documentNumber: 'DV-1', preparerName: 'สมใจ', viewerMay: allowed ? 'open' : 'none', viewerCanPay: false });
+      assert.equal(cap.recordPaymentBlocker, 'disbursement_reserved');
+      assert.deepEqual(cap.reopenBlockers, ['disbursement_reserved']);
+      assert.equal(cap.canRecordPayment, false); assert.equal(cap.canReopen, false);
+      if (allowed) assert.equal(readWhere.lines.every.expense.is.createdByUserId, 'u1');
+    }
+  });
+  it('only the matching document may use the internal payment escape', async () => {
+    const { client, repo } = setup();
+    client.expensePayment.create = async ({ data }: any) => {
+      const row = { ...data, id: 'payment-1', createdAt: NOW, updatedAt: NOW };
+      client.state.expensePayments.push(row); return row;
+    };
+    const input = { companyId: CO, expenseId: 'exp_1', actorUserId: 'u1', scopes: {}, idempotencyKey: 'pay-1', amount: '10' };
+    await assert.rejects(repo.recordPaymentAtomic({ ...input, payingThroughDisbursementVoucherId: 'another-voucher' }), /ใบเตรียมจ่ายเลขที่ DV-1/);
+    const result = await repo.recordPaymentAtomic({ ...input, payingThroughDisbursementVoucherId: 'voucher-1' });
+    assert.equal(result.payment.amount, '10.0000'); assert.equal(client.state.expensePayments.length, 1);
+  });
+  it('the batch reader excludes unreserved rows and retains a dangling pointer as a blocker', async () => {
+    const { client } = setup();
+    client.state.expenses.push({ id: 'unreserved', companyId: CO, reservedByDisbursementVoucherId: null },
+      { id: 'missing', companyId: CO, reservedByDisbursementVoucherId: 'missing-voucher' },
+      { id: 'foreign', companyId: 'other-company', reservedByDisbursementVoucherId: 'voucher-1' });
+    const findUsers = client.user.findMany;
+    client.user.findMany = (args: any) => { assert.deepEqual(args.where.memberships, { some: { companyId: CO } }); return findUsers(args); };
+    const reservations = await readDisbursementReservations(client, CO, ['exp_1', 'unreserved', 'missing', 'foreign']);
+    assert.deepEqual([...reservations.keys()], ['exp_1', 'missing']);
+    assert.deepEqual(reservations.get('missing'), { voucherId: 'missing-voucher', documentNumber: null, preparerName: null, canOpen: false, viewerMay: 'none', viewerCanPay: false });
+  });
+  it('E4 ignores a cancelled personal receipt for confirmation, payment and detail capabilities', async () => {
+    const { client, repo } = setup();
+    client.state.expenses[0].reservedByDisbursementVoucherId = null;
+    const evidence = { companyId: CO, expenseId: 'exp_1', status: 'PREPARED', fundingSource: 'PERSONAL_ADVANCE', version: 1 };
+    client.state.substituteEvidence.push(evidence);
+    for (const kind of ['confirm', 'payment'] as const) await assert.rejects(assertFundingMutation(client, CO, 'exp_1', kind), /พนักงานจ่ายร้านแล้ว/);
+    assert.equal((await repo.expenseCorrectionCapabilities(CO, 'exp_1', ['expense.payment.record'])).recordPaymentBlocker, 'personal_advance');
+    evidence.status = 'SUPERSEDED';
+    for (const kind of ['confirm', 'payment'] as const) await assertFundingMutation(client, CO, 'exp_1', kind);
+    const cap = await repo.expenseCorrectionCapabilities(CO, 'exp_1', ['expense.confirm', 'expense.payment.record']);
+    assert.equal(cap.recordPaymentBlocker, null); assert.equal(cap.canReopen, true);
+    assert.equal((cap as any).disbursementReservation, null);
+  });
+});
+
+
+describe('disbursement expense reservation boundaries (real PostgreSQL, B5b)', () => {
+  const companyId = `disbursement-boundary-${randomUUID()}`;
+  const userId = `${companyId}-user`;
+  let branchId: string; let clients: PrismaClient[] = []; let ready = false; let created = false; let unreachable: string | null = null;
+  before(async () => {
+    const url = process.env.DATABASE_URL;
+    if (!url) { assert.notEqual(process.env.EXPENSE_PAYMENT_REQUIRE_POSTGRES, 'true', 'PostgreSQL is required'); return; }
+    clients = [0, 1].map(() => new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) }));
+    unreachable = await pgSpecUnreachableReason(() => clients[0]!.$queryRaw`SELECT "reservedByDisbursementVoucherId" FROM "ExpenseRecord" LIMIT 0`, 'EXPENSE_PAYMENT_REQUIRE_POSTGRES');
+    if (unreachable) return;
+    await clients[0]!.company.create({ data: { id: companyId, name: 'Disbursement reservation tests' } }); created = true;
+    await clients[0]!.user.create({ data: { id: userId, displayName: 'สมใจ' } });
+    await clients[0]!.companyMembership.create({ data: { companyId, userId } });
+    branchId = (await clients[0]!.branch.create({ data: { companyId, code: 'HO', name: 'สำนักงานใหญ่' } })).id;
+    ready = true;
+  });
+  after(async () => {
+    try {
+      if (created) {
+        await clients[0]!.disbursementVoucher.deleteMany({ where: { companyId } });
+        await clients[0]!.expensePayment.deleteMany({ where: { companyId } });
+        await clients[0]!.expenseRecord.deleteMany({ where: { companyId } });
+        await clients[0]!.company.delete({ where: { id: companyId } });
+        await clients[0]!.user.deleteMany({ where: { id: userId } });
+      }
+    } finally { await Promise.all(clients.map(client => client.$disconnect())); }
+  });
+  async function source() {
+    const client = clients[0]!;
+    const expense = await client.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId, expenseDate: NOW,
+      status: 'CONFIRMED', postingStatus: 'not_required', subtotalAmount: '100', taxableAmount: '100', grandTotalAmount: '100', netPayableAmount: '100', outstandingAmount: '100' } });
+    const voucher = await client.disbursementVoucher.create({ data: { companyId, branchId, origin: 'PREPARED', status: 'APPROVED',
+      documentNumber: `DV-${randomUUID()}`, payeeName: 'ผู้ขาย', payeeBasis: 'SINGLE', totalAmount: '100', preparedByUserId: userId,
+      lines: { create: { expenseId: expense.id, position: 1, amount: '100' } } } });
+    return { expense, voucher };
+  }
+  for (const operation of ['payment', 'reopen', 'void'] as const) it(`refuses a reserved ${operation} using the committed column`, async (t) => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const { expense, voucher } = await source(); const client = clients[0]!;
+    await client.$executeRaw`UPDATE "ExpenseRecord" SET "reservedByDisbursementVoucherId" = ${voucher.id} WHERE id = ${expense.id}`;
+    const repo = new PrismaExpenseRepository({ client } as any);
+    const input = { companyId, expenseId: expense.id, actorUserId: userId, scopes: {}, idempotencyKey: randomUUID(), amount: '10' };
+    const run = operation === 'payment' ? () => repo.recordPaymentAtomic(input) : operation === 'reopen'
+      ? () => repo.reopenExpenseAtomic({ ...input, reason: 'ข้อมูลผิด' }) : () => repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'ข้อมูลผิด');
+    // These callers pass no rights on the document, so the sentence names no button of it.
+    const remedy = 'ให้ติดต่อผู้จัดทำใบนั้นเพื่อนำรายการนี้ออกจากใบหรือยกเลิกใบก่อน';
+    await assert.rejects(run, (error: any) => { assert.equal(error.getResponse().message, `รายการนี้อยู่ในใบเตรียมจ่ายเลขที่ ${voucher.documentNumber} จัดทำโดย สมใจ ${remedy}`); return true; });
+    assert.equal(await client.expensePayment.count({ where: { expenseId: expense.id } }), 0);
+    assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } })).status, 'CONFIRMED');
+    assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } })).updatedAt.getTime(), expense.updatedAt.getTime());
+  });
+  it('a reservation committed after the void snapshot rolls back once and reaches the user as expense_changed_retry', { timeout: 20_000 }, async (t) => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const { expense, voucher } = await source(); const client = clients[0]!;
+    let snapshotRead!: () => void; const snapshot = new Promise<void>(resolve => { snapshotRead = resolve; });
+    let locked!: () => void; const lockReady = new Promise<void>(resolve => { locked = resolve; });
+    let attempts = 0; let rawError: any;
+    const reserve = clients[1]!.$transaction(async (tx) => {
+      await lockExpenseFunding(tx, companyId, expense.id); await lockExpenseCorrection(tx, companyId, expense.id);
+      locked(); await snapshot;
+      await tx.$executeRaw`UPDATE "ExpenseRecord" SET "reservedByDisbursementVoucherId" = ${voucher.id} WHERE id = ${expense.id}`;
+    }, { timeout: 15_000 });
+    await lockReady;
+    const racingClient = new Proxy(client, { get(target, field) {
+      if (field === '$transaction') return (work: any, options: any) => target.$transaction(async (tx) => {
+        attempts++;
+        return work(new Proxy(tx, { get(transaction, key) {
+          if (key === 'attachmentLink') return new Proxy(transaction.attachmentLink, { get(model, method) {
+            if (method === 'findMany') return async (args: any) => {
+              const rows = await model.findMany(args); snapshotRead(); await reserve; return rows;
+            };
+            return Reflect.get(model, method);
+          } });
+          if (key === 'expenseRecord') return new Proxy(transaction.expenseRecord, { get(model, method) {
+            if (method === 'updateMany') return async (args: any) => {
+              try { return await model.updateMany(args); } catch (error) { rawError = error; throw error; }
+            };
+            return Reflect.get(model, method);
+          } });
+          return Reflect.get(transaction, key);
+        } }));
+      }, { ...options, timeout: 15_000 });
+      return Reflect.get(target, field);
+    } });
+    const useCase = new VoidExpenseUseCase(new PrismaExpenseRepository({ client: racingClient } as any),
+      { log: async () => undefined } as any, { append: async () => undefined } as any, {} as any, {} as any, {} as any);
+    try {
+      await assert.rejects(useCase.execute({ companyId, userId, scopes: {}, permissions: ['expense.void'] } as any, expense.id, 'ข้อมูลผิด'), (error: any) => {
+        assert.equal(error.getResponse().code, 'expense_changed_retry');
+        assert.equal(error.getResponse().message, 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้ยกเลิกเอกสาร กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง'); return true;
+      });
+      assert.equal(rawError?.code, 'P2034'); assert.equal(attempts, 1);
+      const current = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
+      assert.equal(current.status, 'CONFIRMED'); assert.equal(current.reservedByDisbursementVoucherId, voucher.id);
+      assert.equal(current.updatedAt.getTime(), expense.updatedAt.getTime());
+      assert.equal(await client.journalEntry.count({ where: { companyId } }), 0);
+    } finally { snapshotRead(); await reserve; }
+  });
+});
+
+it('voids a covered payment and cancels its paid document without taking the document lifecycle lock', async () => {
+  const seed = confirmedExpenseSeed();
+  const voucher = { id: 'dv_1', companyId: CO, status: 'PAID', version: 2, documentNumber: 'PV-1', paidSnapshotJson: { frozen: true } };
+  const line = { companyId: CO, voucherId: voucher.id, expensePaymentId: 'pay_1', coversPaymentId: 'pay_1' };
+  const client = makeClient({ ...seed, expensePayments: [{ id: 'pay_1', companyId: CO, expenseId: 'exp_1', status: 'RECORDED', amount: '50' }], vouchers: [voucher], voucherLines: [line] });
+  const locks: string[] = []; client.$executeRaw = async (_parts: any, value: string) => { if (value) locks.push(value); return 0; };
+  await new PrismaExpenseRepository({ client } as any).voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'รายการผิด', 'JV-VOID');
+  assert.equal(voucher.status, 'CANCELLED'); assert.equal((voucher as any).cancelledAfterPaid, true); assert.equal((voucher as any).cancelReason, 'เอกสาร EXP-1 ถูกยกเลิก'); assert.equal((voucher as any).cancelSourceReason, 'รายการผิด');
+  assert.equal(line.coversPaymentId, null); assert.equal(line.expensePaymentId, 'pay_1'); assert.deepEqual(voucher.paidSnapshotJson, { frozen: true });
+  assert.ok(locks.every(key => !key.includes('disbursement-voucher-lifecycle')));
 });

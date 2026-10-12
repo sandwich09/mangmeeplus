@@ -52,6 +52,11 @@ describe('validateExpenseReview', () => {
     assert.equal(validate(values).some((issue) => issue.field === 'vendorTaxIdSnapshot'), false);
   });
 
+  it('does not block a complete number with a failed check digit', () => {
+    const values = validValues(); values.vendorTaxIdSnapshot = '1234567890123';
+    assert.deepEqual(validate(values), []);
+  });
+
   // Vendor address spec §8 (D5): one field, two different answers, and only one of them may stop a
   // save. AC04 turns on this split — a full tax invoice with no address stays confirmable.
   it('refuses an over-long seller address but only nudges a tax invoice that has none', () => {

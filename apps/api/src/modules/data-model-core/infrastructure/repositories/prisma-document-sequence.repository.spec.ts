@@ -261,3 +261,39 @@ describe('PrismaDocumentSequenceRepository', () => {
     await assert.rejects(() => repo.voidNumber({ id: 'num-1', companyId: 'co-1' }), ConflictException);
   });
 });
+
+
+describe('A9 WHT yearly allocation', () => {
+  for (const periodKey of ['2026-09', '2026-10', '2026']) {
+    it(`normalizes ${periodKey} to the printed year before selecting the WHT counter`, async () => {
+      const wht = { ...sequenceRow, documentType: 'tax.wht_certificate', periodKey: '2026', prefixTemplate: 'WHT-{YYYY}-{SEQ}', resetPolicy: 'YEARLY' };
+      const { repo, tx } = makeRepo({ documentSequence: {
+        findFirst: mock.fn(async () => wht), upsert: mock.fn(),
+        update: mock.fn(async () => ({ ...wht, nextNumber: 8 })),
+      } });
+      const result = await repo.reserveNumber({ companyId: 'co-1', documentType: 'tax.wht_certificate', periodKey,
+        idempotencyKey: periodKey, reservedByUserId: 'user-1' });
+      const query = tx.documentSequence.findFirst.mock.calls.find((call: any) => call.arguments[0].where.periodKey);
+      assert.equal((query as any).arguments[0].where.periodKey, '2026');
+      assert.equal(result.documentNumber, 'WHT-2026-00007');
+    });
+  }
+  it('replays a retained monthly reservation in its yearly namespace', async () => {
+    const { repo } = makeRepo({ documentNumber: {
+      findFirst: mock.fn(async () => ({ ...numberRow, sequence: { ...sequenceRow, periodKey: '2026-09' } })),
+    } });
+    assert.equal((await repo.reserveNumber({ companyId: 'co-1', documentType: 'tax.wht_certificate', periodKey: '2026',
+      idempotencyKey: 'old-request', reservedByUserId: 'user-1' })).id, 'num-1');
+  });
+  it('continues beyond retained monthly counters and numbers of every state', async () => {
+    let counter = { ...sequenceRow, documentType: 'tax.wht_certificate', periodKey: '2026', prefixTemplate: 'WHT-{YYYY}-{SEQ}', nextNumber: 1 };
+    const { repo } = makeRepo({ $queryRaw: async () => [{ maximum: '9' }], documentSequence: {
+      findFirst: mock.fn(async () => counter), upsert: mock.fn(), update: mock.fn(async ({ data }: any) => {
+        counter = { ...counter, nextNumber: typeof data.nextNumber === 'number' ? data.nextNumber : counter.nextNumber + data.nextNumber.increment };
+        return counter;
+      }),
+    } });
+    assert.equal((await repo.reserveNumber({ companyId: 'co-1', documentType: 'tax.wht_certificate', periodKey: '2026-10',
+      idempotencyKey: 'new-request', reservedByUserId: 'user-1' })).documentNumber, 'WHT-2026-00010');
+  });
+});
