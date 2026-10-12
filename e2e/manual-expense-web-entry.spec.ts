@@ -103,7 +103,7 @@ test.describe('manual-expense web entry — the setting a system admin switches 
 
       await shop.goto(`/companies/${SHOP}/expenses`);
       await expect(shop.getByRole('link', { name: 'อัปโหลดใบเสร็จ', exact: true }).first()).toBeVisible();
-      await expect(shop.getByRole('link', { name: 'บันทึกเอง', exact: true })).toHaveCount(0);
+      await expect(shop.getByRole('link', { name: 'บันทึกด้วยมือ', exact: true })).toHaveCount(0);
       await expect(manualLinks(shop)).toHaveCount(0);
       // The rest of the expenses menu is still there: only this one entrance is absent.
       const menuWithout = await sidebarExpenseLinks(shop);

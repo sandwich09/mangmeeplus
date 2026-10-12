@@ -165,6 +165,14 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   // Separate key from the payer stage on purpose — a shared key put both stages on one dedup/alert
   // state and the payer notification's cooldown suppressed this one. See SIGNATURE_STAGES.
   'expense.substitute_receipt_approval_pending',
+  'expense.wht_certificate_cancelled',
+  // Disbursement voucher spec §8.6: direct notices, including mandatory LINE delivery.
+  'expense.disbursement_pending_approval',
+  'expense.disbursement_approved',
+  'expense.disbursement_returned',
+  'expense.disbursement_paid',
+  'expense.disbursement_cancelled',
+
   // The four `expense.signature_*` keys are gone with the approval lifecycle they announced: a
   // personal signature (owner decision 2026-08-20) is usable the moment it is saved, so there is
   // nobody to tell and nothing to wait for.
@@ -194,6 +202,14 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
  * turned the LINE channel off altogether is still respected.
  */
 export const ALWAYS_DELIVERED_TRIGGER_KEYS: string[] = [
+  'expense.wht_certificate_cancelled',
+  // Disbursement voucher spec §8.6: direct notices, including mandatory LINE delivery.
+  'expense.disbursement_pending_approval',
+  'expense.disbursement_approved',
+  'expense.disbursement_returned',
+  'expense.disbursement_paid',
+  'expense.disbursement_cancelled',
+
   // Where a member's reimbursements are paid: telling them is the owner's condition for letting
   // anyone else set the account.
   'reimbursement.payout_account_set_by_other',
@@ -256,6 +272,13 @@ export const NOTIFICATION_TRIGGER_FEATURE_KEYS: Readonly<Record<string, readonly
   'reimbursement.payout_account_set_by_other': ['reimbursement'],
   'expense.substitute_receipt_signature_pending': ['expenses'],
   'expense.substitute_receipt_approval_pending': ['expenses'],
+  'expense.wht_certificate_cancelled': ['expenses'],
+  'expense.disbursement_pending_approval': ['expenses'],
+  'expense.disbursement_approved': ['expenses'],
+  'expense.disbursement_returned': ['expenses'],
+  'expense.disbursement_paid': ['expenses'],
+  'expense.disbursement_cancelled': ['expenses'],
+
   report_ready: ['reports'],
   plan_term_expiring: [],
   plan_term_expired: [],

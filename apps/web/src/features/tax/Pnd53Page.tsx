@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { taxPeriodStatusLabel, taxReviewIssueLabel } from './tax.logic';
 import { formatThaiMonth } from '@/common/i18n/thai-date';
 import { useCallback, useEffect, useState } from 'react';
@@ -69,6 +70,9 @@ export function Pnd53Page({ companyId, permissions }: { companyId: string; permi
   return <MangmeePage eyebrow="การเงินและบัญชี" title="ภ.ง.ด.53"
     description="จัดทำและส่งออกแบบหัก ณ ที่จ่ายสำหรับผู้รับเงินนิติบุคคล">
     <MangmeeCard className="space-y-4 p-5">
+      {permissions.includes('wht.certificate.issue') && <Link className="block text-sm text-brand-700 underline underline-offset-2" href={`/companies/${companyId}/expenses/wht-certificates`}>
+        หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ของรายการเหล่านี้
+      </Link>}
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       {message && <p role="status" className="text-sm text-green-700">{message}</p>}
       <div className="flex flex-wrap gap-2">

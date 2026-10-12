@@ -16,6 +16,7 @@ const readyRoutes = [
   '/workflow',
   '/ai-suggestions',
   '/expenses',
+  '/expenses/wht-certificates',
   '/journal',
   '/accounts-payable',
   '/reimbursements',

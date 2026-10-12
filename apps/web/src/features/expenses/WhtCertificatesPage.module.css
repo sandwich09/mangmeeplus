@@ -1,0 +1,35 @@
+.section { container-type: inline-size; min-width: 0; }
+.filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: calc(var(--spacing) * 2); margin-bottom: calc(var(--spacing) * 4); }
+.filter { min-height: 44px; border: 1px solid var(--color-gray-200); border-radius: var(--radius-lg); padding: calc(var(--spacing) * 2); font-weight: 600; }
+.filter[aria-pressed='true'] { background: var(--color-brand-50); color: var(--color-brand-700); border-color: var(--color-brand-600); }
+.search { width: 100%; min-width: 0; min-height: 44px; font-size: 16px; }
+.hint { margin: calc(var(--spacing) * 1) 0 calc(var(--spacing) * 4); font-size: 12px; color: var(--color-gray-500); }
+.warning { margin-bottom: calc(var(--spacing) * 2); font-size: 14px; color: var(--color-gray-600); }
+.warning .link { padding-block: calc(var(--spacing) * 3); }
+.cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: calc(var(--spacing) * 3); }
+.card { min-width: 0; padding: calc(var(--spacing) * 4); overflow-wrap: anywhere; }
+.heading { display: flex; align-items: center; gap: calc(var(--spacing) * 2); min-width: 0; }
+.name { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-weight: 600; }
+.badge { flex-shrink: 0; white-space: nowrap; }
+.description { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.facts { display: grid; gap: calc(var(--spacing) * 2); margin: calc(var(--spacing) * 3) 0; font-size: 14px; }
+.reasons { display: grid; gap: calc(var(--spacing) * 1); margin-bottom: calc(var(--spacing) * 3); font-size: 14px; }
+.link { display: inline-block; max-width: 100%; color: var(--color-brand-700); text-decoration: underline; overflow-wrap: anywhere; }
+.unit { display: inline-block; max-width: 100%; }
+.primary { width: 100%; min-height: 44px; text-align: center; }
+/* In the table the action column is wide enough for its longest label on one line. */
+.table .primary, .table .secondary { white-space: nowrap; }
+/* A rarer action under the main one: full width, without a frame of its own. */
+.secondary { width: 100%; min-height: 44px; margin-top: calc(var(--spacing) * 1); border-color: transparent; background: transparent; box-shadow: none; }
+.error { margin: calc(var(--spacing) * 2) 0; color: var(--color-red-700); white-space: pre-line; overflow-wrap: anywhere; }
+.table { display: none; width: 100%; table-layout: fixed; }
+.table th, .table td { padding: calc(var(--spacing) * 3); vertical-align: top; overflow-wrap: anywhere; }
+.table td { font-size: 14px; }
+.table th:nth-child(1) { width: 25%; }
+.table th:nth-child(2), .table th:nth-child(3) { width: 13%; }
+.table th:nth-child(4) { width: 22%; }
+.table th:last-child { width: 27%; }
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: calc(var(--spacing) * 3); padding-top: calc(var(--spacing) * 4); font-size: 14px; }
+.pagerControls { display: flex; align-items: center; gap: calc(var(--spacing) * 2); }
+.pager button { min-height: 44px; }
+@container (min-width: 56rem) { .cards { display: none; } .table { display: table; } }

@@ -230,6 +230,7 @@ export type ReimbursementRequestRecord = {
   cancellationPendingAt?: Date;
   cancellationPendingByUserId?: string;
   cancellationPendingReason?: string;
+  cancellationCertificateAttestedAt?: Date;
   financeReviewStatus: ReimbursementFinanceReviewStatus;
   financeReviewedByUserId?: string;
   financeReviewedAt?: Date;

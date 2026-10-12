@@ -573,6 +573,21 @@ describe('errorMessage', () => {
 });
 
 describe('errorText', () => {
+  it('keeps the server Thai sentence for every cancellation refusal instead of older local wording', () => {
+    const message = 'ภาษีหัก ณ ที่จ่ายของเดือน ก.ย. 2569 ยื่นไปแล้ว จึงยกเลิกคำขอเบิกไม่ได้ ให้ผู้ทำบัญชีของร้านดำเนินการ';
+    for (const code of ['reimbursement_cancellation_accounting_period_locked', 'reimbursement_cancellation_accounting_period_locked:2026-09', 'reimbursement_cancellation_tax_period_locked', 'reimbursement_cancellation_tax_period_locked:2026-09', 'reimbursement_cancellation_posting_unresolved', 'reimbursement_cancellation_expense_not_voidable', 'certificate_permission_missing', 'certificate_issued', 'expense_changed', 'tax_period_locked']) {
+      assert.equal(errorText(Object.assign(new Error('API error 409'), { code, details: { code, message } })), message, code);
+      assert.doesNotMatch(errorText({ code, message }), /09\/2569/);
+    }
+  });
+  it('the pending cancellation step uses the current server refusal when available', () => {
+    const message = 'ภาษีหัก ณ ที่จ่ายของเดือน ก.ย. 2569 ยื่นไปแล้ว จึงยกเลิกคำขอเบิกไม่ได้ ให้ผู้ทำบัญชีของร้านดำเนินการ';
+    const steps = buildJourneySteps({ id: 'claim', status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', lines: [],
+      pendingCancellation: { canResume: true, reason: 'แก้ข้อมูล', blocker: { code: 'tax_period_locked', periodKey: '2026-09' } },
+      certificateCancelBlocker: { code: 'reimbursement_cancellation_tax_period_locked', message } }, [], 'staff');
+    const note = activeJourneyStep(steps)?.note;
+    assert.ok(note?.includes(message)); assert.doesNotMatch(note!, /09\/2569|งวดภาษี|ปรับปรุงรายการแทน/);
+  });
   it('answers from the object code when the message is the synthetic API error text', () => {
     const denied = Object.assign(new Error('API error 403'), { status: 403, code: 'feature_not_enabled' });
     assert.equal(errorText(denied), 'ยังไม่ได้เปิดฟีเจอร์นี้');

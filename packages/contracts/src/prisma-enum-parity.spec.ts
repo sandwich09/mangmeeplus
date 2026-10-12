@@ -24,6 +24,7 @@ import * as companyTaxIdentity from './company-tax-identity.js';
 import * as crmAi from './crm-ai.js';
 import * as dataRights from './data-rights.js';
 import * as expenses from './expenses.js';
+import * as disbursementVouchers from './disbursement-vouchers.js';
 // The barrel also declares a few inline enums (document sequences); import it as a
 // namespace so the discovery sweep below can resolve what it finds in index.ts.
 import * as index from './index.js';
@@ -31,6 +32,58 @@ import * as lineAi from './line-ai.js';
 import * as lineDocumentQa from './line-document-qa.js';
 import * as procurement from './procurement.js';
 import * as transactionTax from './transaction-tax.js';
+
+describe('disbursement voucher one-source words', () => {
+  it('keeps SAME_NAME warning and payee basis notes in contracts', () => {
+    assert.deepEqual(disbursementVouchers.DISBURSEMENT_VOUCHER_PAYEE_BASES, ['SINGLE', 'TAX_ID', 'SAME_NAME', 'PREPARER_CONFIRMED']);
+    assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_PAYEE_BASIS_WORDS.sameNameWarning,
+      'รายการเหล่านี้ไม่มีเลขผู้เสียภาษี ระบบรวมให้เพราะชื่อร้านตรงกัน โปรดตรวจว่าเป็นร้านเดียวกัน');
+    assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_PAYEE_BASIS_WORDS.sameNameNote, 'รวมจากชื่อร้านที่ตรงกัน (ไม่มีเลขผู้เสียภาษี)');
+    assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_PAYEE_BASIS_WORDS.preparerConfirmedNote, 'รวมด้วยการยืนยันของผู้จัดทำ {name}');
+    assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_PAYEE_BASIS_WORDS.preparerConfirmedNote.replace('{name}', 'สมใจ'), 'รวมด้วยการยืนยันของผู้จัดทำ สมใจ');
+    assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_payee_confirmation_required,
+      'รายการที่เลือกมีชื่อหรือเลขผู้เสียภาษีของผู้ขายไม่ตรงกัน ถ้าเป็นผู้รับเงินรายเดียวกัน ให้ติ๊กยืนยันก่อน');
+  });
+  it('covers every draft refusal with Thai words and fills contextual amount details', () => {
+    assert.equal(disbursementVouchers.disbursementVoucherError('disbursement_payment_source_changed', { number: 'EXP-1', mayWithdraw: 'true' }).message,
+      'รายการ EXP-1 ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ กด "กลับไปแก้" เพื่อตรวจรายการใหม่ หรือยกเลิกใบนี้');
+    assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_payment_source_changed,
+      'รายการในใบนี้ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ ให้ผู้จัดทำหรือผู้อนุมัติของใบนี้กด "กลับไปแก้" เพื่อตรวจรายการใหม่ แล้วส่งอนุมัติอีกครั้ง');
+    assert.equal(disbursementVouchers.disbursementVoucherError('disbursement_payment_source_changed', { number: 'EXP-1', mayWithdraw: 'false' }).message,
+      'รายการ EXP-1 ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ ให้ผู้จัดทำหรือผู้อนุมัติของใบนี้กด "กลับไปแก้" เพื่อตรวจรายการใหม่ แล้วส่งอนุมัติอีกครั้ง');
+    for (const [code, message] of Object.entries(disbursementVouchers.DISBURSEMENT_VOUCHER_ERROR_WORDS)) {
+      assert.ok(/[ก-๙]/.test(message), code);
+      const result = disbursementVouchers.disbursementVoucherError(code as disbursementVouchers.DisbursementVoucherErrorCode, { number: 'EXP-1', outstanding: '104.0000' });
+      assert.equal(result.code, code); assert.equal(/\{\w+\}/.test(result.message), false);
+    }
+    assert.equal(disbursementVouchers.disbursementVoucherError('disbursement_amount_invalid', { number: 'EXP-1', outstanding: '104.0000' }).message,
+      'ยอดของรายการ EXP-1 ต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย 104.0000');
+  });
+  it('keeps document names, header description, origin and all five status words/tones together', () => {
+    assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_WORDS.title, 'ใบเตรียมจ่าย/ใบสำคัญจ่าย');
+    assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_WORDS.beforePaid, 'ใบเตรียมจ่าย');
+    assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_WORDS.oncePaid, 'ใบสำคัญจ่าย');
+    assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_WORDS.description, 'ใบเดียว เลขเดียว: ก่อนจ่ายคือรายการที่จะจ่ายให้ผู้รับเงินรายหนึ่งและรออนุมัติ จ่ายแล้วคือใบสรุปว่าจ่ายเงินครั้งนี้เพื่อชำระอะไร');
+    assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_WORDS.directPayment, 'บันทึกจ่ายโดยตรง');
+    assert.deepEqual(disbursementVouchers.DISBURSEMENT_VOUCHER_STATUS_LABELS, {
+      DRAFT: 'ฉบับร่าง', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'อนุมัติแล้ว รอจ่าย', PAID: 'จ่ายแล้ว', CANCELLED: 'ยกเลิก',
+    });
+    assert.deepEqual(disbursementVouchers.DISBURSEMENT_VOUCHER_STATUS_TONES, {
+      DRAFT: 'grey', PENDING_APPROVAL: 'yellow', APPROVED: 'blue', PAID: 'green', CANCELLED: 'soft_red',
+    });
+  });
+
+  it('gives every unselectable reason its exact Thai wording, with separate numbered and unnumbered reservations', () => {
+    const message = disbursementVouchers.disbursementExpenseReasonMessage;
+    assert.equal(message('reserved', 'PV-1'), 'อยู่ในใบเตรียมจ่ายเลขที่ PV-1 แล้ว');
+    assert.equal(message('reserved', null), 'อยู่ในใบเตรียมจ่ายอีกใบที่รออนุมัติ');
+    assert.equal(message('claim'), 'รายการนี้อยู่ในคำขอเบิก ให้จ่ายผ่านคำขอเบิก');
+    assert.equal(message('personal_advance'), 'พนักงานจ่ายร้านไปแล้ว ให้คืนเงินพนักงานผ่านคำขอเบิก');
+    assert.equal(message('missing_branch'), 'รายการนี้ยังไม่มีสาขา เปิดรายจ่ายเพื่อระบุสาขาก่อน');
+    assert.equal(message('foreign_currency'), 'รายการนี้ไม่ใช่เงินบาท ยังรวมในใบเตรียมจ่ายไม่ได้');
+    for (const value of Object.values(disbursementVouchers.DISBURSEMENT_VOUCHER_WORDS)) assert.equal(/[a-z]/i.test(value), false);
+  });
+});
 
 describe('check-bill payment proof contract', () => {
   it('requires separate proof for every check-bill payment and ignores resolution as proof', () => {
@@ -144,6 +197,7 @@ const SOURCES = {
   'crm-ai.ts': crmAi,
   'data-rights.ts': dataRights,
   'expenses.ts': expenses,
+  'disbursement-vouchers.ts': disbursementVouchers,
   'index.ts': index,
   'line-ai.ts': lineAi,
   'line-document-qa.ts': lineDocumentQa,
@@ -161,6 +215,10 @@ type Registration = {
 // Authoritative list of pairs. Cross-named pairs are NOT discoverable by the
 // sweep below — adding one here is the only thing that covers it.
 const REGISTRY: Registration[] = [
+  { source: 'disbursement-vouchers.ts', arrayName: 'DISBURSEMENT_VOUCHER_STATUSES', prismaEnum: 'DisbursementVoucherStatus' },
+  { source: 'disbursement-vouchers.ts', arrayName: 'DISBURSEMENT_VOUCHER_ORIGINS', prismaEnum: 'DisbursementVoucherOrigin' },
+  { source: 'disbursement-vouchers.ts', arrayName: 'DISBURSEMENT_VOUCHER_PAYEE_BASES', prismaEnum: 'DisbursementVoucherPayeeBasis' },
+  { source: 'disbursement-vouchers.ts', arrayName: 'DISBURSEMENT_VOUCHER_REVISION_DECISIONS', prismaEnum: 'DisbursementVoucherRevisionDecision' },
   { source: 'index.ts', arrayName: 'DOCUMENT_RESET_POLICIES', prismaEnum: 'DocumentResetPolicy' },
   { source: 'procurement.ts', arrayName: 'SUPPLIER_STATUSES', prismaEnum: 'SupplierStatus' },
   { source: 'procurement.ts', arrayName: 'SUPPLIER_TYPES', prismaEnum: 'SupplierType' },

@@ -114,6 +114,40 @@ export function formatCompanyLegalAddress(addr: CompanyLegalAddress | null | und
   return parts.length ? parts.join(' ') : null;
 }
 
+const BANGKOK_PROVINCE = /^(กรุงเทพมหานคร|กรุงเทพฯ?|กทม\.?)$/u;
+
+/**
+ * The address as a printed tax document words it (owner 2026-10-12): the sub-district and
+ * district carry their words — "แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110" in Bangkok,
+ * "ตำบลสุเทพ อำเภอเมืองเชียงใหม่ จังหวัดเชียงใหม่ 50200" elsewhere — because a bare
+ * "คลองเตย คลองเตย" does not say which part is which. A part that already carries its own word
+ * is left alone. `formatCompanyLegalAddress` stays the bare form: comparisons against addresses
+ * printed by other parties use it and must not change.
+ */
+export function formatCompanyLegalAddressForPrint(addr: CompanyLegalAddress | null | undefined): string | null {
+  if (!formatCompanyLegalAddress(addr)) return null;
+  const row = addr as Record<string, unknown>;
+  const part = (key: keyof CompanyLegalAddress) => (typeof row[key] === 'string' ? (row[key] as string).trim() : '');
+  const worded = (value: string, word: string, already: RegExp) => (!value || already.test(value) ? value : `${word}${value}`);
+  const province = part('province');
+  const bangkok = BANGKOK_PROVINCE.test(province);
+  return [
+    part('line1'), part('line2'),
+    worded(part('subdistrict'), bangkok ? 'แขวง' : 'ตำบล', /^(แขวง|ตำบล|ต\.)/u),
+    worded(part('district'), bangkok ? 'เขต' : 'อำเภอ', /^(เขต|อำเภอ|อ\.)/u),
+    bangkok ? province : worded(province, 'จังหวัด', /^(จังหวัด|จ\.)/u),
+    part('postalCode'),
+  ].filter(Boolean).join(' ');
+}
+
+/** Thai 13-digit tax number check digit. A failed check is a warning only; callers decide how to present it. */
+export function thaiTaxIdChecksumValid(value: string): boolean {
+  if (!/^\d{13}$/.test(value)) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i += 1) sum += Number(value[i]) * (13 - i);
+  return (11 - (sum % 11)) % 10 === Number(value[12]);
+}
+
 /**
  * Carried by `GET …/identity` for every holder of `company.setup.read` (§4.4). It holds no
  * identity value, only the control state the wizard needs: the CAS token it must echo back and

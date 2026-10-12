@@ -36,6 +36,7 @@ import {
   sectionIdFromHash,
   usernameFieldRequired,
   NO_CHANGES_MESSAGE,
+  companyProfileReturnPath,
   PHONE_ERROR_MESSAGE,
   PHONE_HINT,
 } from './company-profile.logic';
@@ -108,6 +109,9 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   useEffect(() => { setBillingReturnHref(billingProfileReturnHref(companyId, window.location.search)); }, [companyId]);
   const [checkoutAddress, setCheckoutAddress] = useState<CompanyLegalAddress | null>(null);
   const [checkoutFilled, setCheckoutFilled] = useState(false);
+  const [certificateReturnHref, setCertificateReturnHref] = useState<string | null>(null);
+  const [shopSaved, setShopSaved] = useState(false);
+  useEffect(() => { setCertificateReturnHref(companyProfileReturnPath(companyId, window.location.search)); }, [companyId]);
 
   // L1: the dashboard card caches its answer for 10 minutes, so without this the item the owner
   // just completed keeps reading as missing on the next dashboard visit.
@@ -222,6 +226,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
       return;
     }
     setShopSaving(true);
+    setShopSaved(false);
     let failed = false;
     try {
       if (plan.identityPatch) {
@@ -257,6 +262,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
       }
       invalidateChecklist();
       if (!failed) toast.success('บันทึกข้อมูลร้านแล้วค่ะ');
+      if (!failed) setShopSaved(true);
       await load();
       if (!failed && billingReturnHref) window.location.assign(billingReturnHref);
     } finally {
@@ -367,6 +373,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             title="ข้อมูลร้าน"
             hint="ใช้ออกใบแจ้งหนี้ ใบเสร็จ และเอกสารทางการ ไม่ต้องกรอกก่อนซื้อแพ็กเกจ (กรอกที่หน้าชำระเงินได้) ถ้ากรอกที่อยู่ให้กรอกครบทุกช่องค่ะ"
           />
+          {certificateReturnHref && <Link href={certificateReturnHref} className={`${LINK_BUTTON} mb-4 inline-block`}>กลับไปออกหนังสือรับรอง</Link>}
           {!canEditShop && (
             <div className="mb-4">
               <Banner tone="note">
@@ -490,6 +497,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                 {shopSaving ? 'กำลังบันทึก...' : billingReturnHref ? 'บันทึกและกลับไปซื้อแพ็กเกจ' : 'บันทึกข้อมูลร้าน'}
               </button>
               {billingReturnHref && <Link href={billingReturnHref} className={LINK_BUTTON}>กลับไปซื้อแพ็กเกจ</Link>}
+              {certificateReturnHref && shopSaved && <Link href={certificateReturnHref} className={`${ACTION_BUTTON} mangmee-btn-primary`}>กลับไปออกหนังสือรับรอง</Link>}
             </div>
           )}
         </MangmeeCard>

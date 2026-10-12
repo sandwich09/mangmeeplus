@@ -14,6 +14,7 @@ import { SetPartnerFeaturesUseCase } from './application/use-cases/set-partner-f
 import { SetPartnerAiModelUseCase } from './application/use-cases/set-partner-ai-model.use-case';
 import { SetPartnerOcrConfigUseCase } from './application/use-cases/set-partner-ocr-config.use-case';
 import { SetPartnerManualExpenseWebEntryUseCase } from './application/use-cases/set-partner-manual-expense-web-entry.use-case';
+import { SetPartnerDisbursementVoucherWebEntryUseCase } from './application/use-cases/set-partner-disbursement-voucher-web-entry.use-case';
 import { GetPartnerAiUsageUseCase } from './application/use-cases/get-partner-ai-usage.use-case';
 import { GetPlatformAiBudgetUseCase } from './application/use-cases/get-platform-ai-budget.use-case';
 import { SetPlatformAiBudgetUseCase } from './application/use-cases/set-platform-ai-budget.use-case';
@@ -73,6 +74,7 @@ import { SystemPackageChangeController } from './presentation/http/system-packag
     SetPartnerAiModelUseCase,
     SetPartnerOcrConfigUseCase,
     SetPartnerManualExpenseWebEntryUseCase,
+    SetPartnerDisbursementVoucherWebEntryUseCase,
     GetPartnerAiUsageUseCase,
     GetPlatformAiBudgetUseCase,
     SetPlatformAiBudgetUseCase,

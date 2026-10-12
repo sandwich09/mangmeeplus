@@ -276,7 +276,7 @@ function RuleDetailModal({ companyId, ruleId, onClose, onChanged }: { companyId:
     if (action.error) { setError(`คำสั่ง: ${action.error}`); setBusy(false); return; }
     try {
       await updateWorkflowRule(companyId, ruleId, { conditionJson: condition.value, actionJson: action.value });
-      toast.success('บันทึกแบบร่างเรียบร้อยแล้ว');
+      toast.success('บันทึกฉบับร่างเรียบร้อยแล้ว');
       await load(); await onChanged();
     } catch (e) { setError(err(e)); } finally { setBusy(false); }
   };
@@ -326,7 +326,7 @@ function RuleDetailModal({ companyId, ruleId, onClose, onChanged }: { companyId:
           <textarea className={`${inputClass} font-mono`} rows={8} value={actionJson} onChange={(e) => setActionJson(e.target.value)} />
         </div>
         <div className="flex justify-end gap-2">
-          <button className={ghostClass} onClick={save} disabled={busy} aria-busy={Boolean(busy)}>บันทึกแบบร่าง</button>
+          <button className={ghostClass} onClick={save} disabled={busy} aria-busy={Boolean(busy)}>บันทึกฉบับร่าง</button>
         </div>
         <hr />
         <div>

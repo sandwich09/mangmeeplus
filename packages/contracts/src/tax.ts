@@ -1,4 +1,50 @@
+import { formatCompanyLegalAddress, type CompanyLegalAddress } from './company-tax-identity.js';
+import { executiveMonthLabel } from './executive-report-words.js';
 import type { AccountingOutputTaxCode } from './accounting-documents.js';
+
+export const WHT_CERTIFICATE_CORRECTION_WORDS = {
+  fieldLocked: 'ยอดเงิน อัตราภาษี แบบที่ยื่น ประเภทเงินได้ และเลขผู้เสียภาษีของผู้รับเงิน แก้ในหน้านี้ไม่ได้ เพราะต้องตรงกับรายจ่ายและแบบที่ยื่นภาษี ให้กด “แก้ไขเอกสาร” ที่รายจ่าย ระบบจะยกเลิกใบนี้และออกใบใหม่ได้หลังยืนยันอีกครั้ง',
+  numberDuplicate: 'ออกหนังสือรับรองไม่สำเร็จเพราะเลขที่เอกสารซ้ำ กรุณาลองอีกครั้ง ถ้ายังไม่สำเร็จ ให้แจ้งทีมมั่งมีพลัสพร้อมเลขที่เอกสารรายจ่ายนี้',
+  noChanges: 'ข้อมูลตรงกับหนังสือรับรองใบปัจจุบันอยู่แล้ว จึงไม่มีอะไรต้องแก้ไข ถ้าเพิ่งกดแก้ไขไป การแก้ไขครั้งนั้นสำเร็จแล้ว กรุณาเปิดหน้านี้ใหม่',
+  payeeAddressRequired: 'กรุณาพิมพ์ที่อยู่ผู้รับเงินในแบบฟอร์มนี้ก่อนบันทึก',
+  payeeNameRequired: 'ชื่อผู้รับเงินบนหนังสือรับรองว่างไม่ได้ กรุณาใส่ชื่อผู้รับเงิน',
+} as const;
+
+export const WHT_PRINT_CERTIFICATE_LABEL = 'ออกหนังสือรับรอง 50 ทวิ';
+export const WHT_PRINT_CERTIFICATE_BUSY_LABEL = 'กำลังออกหนังสือรับรอง…';
+export const WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE = `ยังไม่มีที่อยู่ผู้รับเงิน กรุณาเพิ่มที่อยู่ผู้รับเงินก่อน แล้วกด “${WHT_PRINT_CERTIFICATE_LABEL}” อีกครั้ง`;
+
+/** The address printed on a certificate: a typed override, then the frozen payee snapshot. */
+export function whtPayeeAddress(typedAddress: string | null | undefined, snapshotAddress: string | null | undefined): string | null {
+  return typedAddress?.trim() || snapshotAddress?.trim() || null;
+}
+
+export type WhtPayerMissing = 'TAX_ID' | 'ADDRESS';
+
+function printablePayerAddress(value: string | null | undefined): boolean {
+  if (!value?.trim()) return false;
+  if (!value.trim().startsWith('{')) return true;
+  try { return Boolean(formatCompanyLegalAddress(JSON.parse(value) as CompanyLegalAddress)); } catch { return false; }
+}
+
+/** Preserve frozen facts; only a value that cannot be printed (blank, or a tax number that is not 13 digits) may use the shop's current identity. */
+export function whtPayerIdentity(frozen: PayerSnapshot, current: { taxId: string | null; address: string | null }): { payer: PayerSnapshot; missing: WhtPayerMissing[] } {
+  const payer = { ...frozen, taxId: /^\d{13}$/.test(frozen?.taxId?.trim() ?? '') ? frozen.taxId : current.taxId,
+    address: printablePayerAddress(frozen?.address) ? frozen.address : current.address };
+  return { payer, missing: [
+    ...(!/^\d{13}$/.test(payer.taxId?.trim() ?? '') ? ['TAX_ID' as const] : []),
+    ...(!printablePayerAddress(payer.address) ? ['ADDRESS' as const] : []),
+  ] };
+}
+
+export function whtPayerMissingLabel(missing: readonly WhtPayerMissing[]): string {
+  return missing.includes('TAX_ID') && missing.includes('ADDRESS') ? 'เลขผู้เสียภาษีและที่อยู่ของร้าน'
+    : missing.includes('TAX_ID') ? 'เลขผู้เสียภาษีของร้าน' : 'ที่อยู่ของร้าน';
+}
+
+export function whtPayerIdentityMissingMessage(missing: readonly WhtPayerMissing[]): string {
+  return `ยังไม่มี${whtPayerMissingLabel(missing)} กรุณากรอกในหน้าข้อมูลร้านก่อน แล้วกด “${WHT_PRINT_CERTIFICATE_LABEL}” อีกครั้ง`;
+}
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
@@ -11,6 +57,17 @@ export type CustomsFormType = 'CUSTOMS_SUPPORT';
 export type TaxFormType = VatFormType | WhtFormType | CitFormType | CustomsFormType;
 
 export type TaxPeriodType = 'MONTHLY' | 'ANNUAL' | 'HALF_YEAR';
+
+export const TAX_FORM_SHORT_NAMES: Partial<Record<string, string>> = {
+  PP30: 'ภ.พ.30', PP36: 'ภ.พ.36', PND3: 'ภ.ง.ด.3', PND53: 'ภ.ง.ด.53', CUSTOMS_SUPPORT: 'เอกสารประกอบภาษีนำเข้า',
+};
+
+/** Filed withholding periods cannot be reopened in the tax workspace. */
+export function withholdingPeriodLockedMessage(periodKey: string, action: 'แก้ไขเอกสารนี้' | 'ยกเลิกเอกสารนี้' | 'ยกเลิกคำขอเบิก', formType: string, kind?: 'SYSTEM' | 'EXTERNAL'): string {
+  return `ภาษีหัก ณ ที่จ่าย (${TAX_FORM_SHORT_NAMES[formType] ?? 'ภาษี'}) ของเดือน ${executiveMonthLabel(periodKey)} ยื่นไปแล้ว จึง${action}ไม่ได้ ${kind === 'SYSTEM'
+    ? 'ถ้าผิดเฉพาะตัวสะกดชื่อหรือที่อยู่บนหนังสือรับรอง ใช้ปุ่ม "แก้ไขหนังสือรับรอง" ได้ ถ้ายอดเงิน อัตรา หรือเลขผู้เสียภาษีผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ'
+    : 'ถ้าข้อมูลผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ'}`;
+}
 
 export type TaxRuleStatus = 'DRAFT' | 'ACTIVE' | 'RETIRED';
 
@@ -328,9 +385,8 @@ export type CreateWhtCertificateDto = {
 
 // ─── 50 ทวิ Correction & Replacement ──────────────────────────────────────────
 //
-// Correction & replacement plan §2.2: fields a "แก้ไขหนังสือรับรอง" submission may override. Every
-// field optional — a value the caller omits keeps the current certificate's own value (the use case
-// merges before validating, never derives from SupplierPayment/ExpenseRecord).
+// Payee name/address/branch and payment date may change. Locked fields remain accepted for
+// older whole-form callers only when equal to the current certificate. Payer handling is unchanged.
 
 export type WhtCertificateCorrectionInput = {
   formType?: WhtFormType;
@@ -359,6 +415,43 @@ export type CorrectWhtCertificateDto = {
 /** tax-thailand-2026-spec.md:1332 — exactly these four values. */
 export type WhtHandoffStatus = 'REQUIRED' | 'EXTERNAL_LINKED' | 'SYSTEM_ISSUED' | 'CANCELLED';
 
+export type WhtCertificateHistoryEventType =
+  | 'ISSUED'
+  | 'CORRECTED'
+  | 'CANCELLED_SOURCE_REOPENED'
+  | 'CANCELLED_SOURCE_VOIDED'
+  | 'EXTERNAL_RECORDED'
+  | 'EXTERNAL_RECORD_REMOVED'
+  | 'EXTERNAL_RECORD_CHANGED'
+  | 'PAYEE_ADDRESS_CLEARED';
+
+export const WHT_CERTIFICATE_HISTORY_EVENT_LABELS: Record<WhtCertificateHistoryEventType, string> = {
+  ISSUED: 'ออกหนังสือรับรอง',
+  CORRECTED: 'แก้ไขหนังสือรับรอง ออกใบใหม่แทนใบนี้',
+  CANCELLED_SOURCE_REOPENED: 'ยกเลิก เพราะเอกสารถูกแก้ไข',
+  CANCELLED_SOURCE_VOIDED: 'ยกเลิก เพราะเอกสารถูกยกเลิก',
+  EXTERNAL_RECORDED: 'บันทึกว่าออกหนังสือรับรองเองแล้ว',
+  EXTERNAL_RECORD_REMOVED: 'ยกเลิกการบันทึกหนังสือรับรองที่ออกเอง',
+  EXTERNAL_RECORD_CHANGED: 'แก้ไขการบันทึกหนังสือรับรองที่ออกเอง',
+  PAYEE_ADDRESS_CLEARED: 'ล้างที่อยู่ผู้รับเงิน เพราะเลขผู้เสียภาษีเปลี่ยน',
+};
+
+export type WhtCertificateHistoryDto = {
+  eventType: WhtCertificateHistoryEventType;
+  certificateNumber: string | null;
+  isExternal: boolean;
+  certificateDate: string | null;
+  reason: string | null;
+  evidenceRef: string | null;
+  note: string | null;
+  relatedCertificateNumber: string | null;
+  actorDisplayName: string | null;
+  occurredAt: string;
+  taxFilingAttested: boolean;
+  removedManually?: boolean;
+  previousExternalRecord?: { number: string | null; issuedDate: string | null; externalEvidenceRef: string | null; note: string | null };
+};
+
 /**
  * The statutory field set the handoff must carry so nothing is re-keyed
  * (tax-thailand-2026-spec.md:1389). Fields the system cannot truly derive stay null —
@@ -385,7 +478,7 @@ export type WhtCertificateHandoffDto = {
   payeeId: string | null;
   /** The PAYEE's tax branch code (certificate prefill). */
   branchCode: string | null;
-  /** The internal branch that made the payment. Attribution/filtering only, not authorization. */
+  /** The internal branch that made the payment; governed by the caller's branch scope. */
   sourceBranchId: string | null;
   sourceFeatureKey: string;
   taxPeriodId: string | null;
@@ -399,6 +492,8 @@ export type WhtCertificateHandoffDto = {
    */
   payeeAddress: string | null;
   payeeAddressAt: string | null;
+  /** A typed address was cleared when the expense was confirmed for a different tax number. */
+  payeeAddressClearedByTaxIdChange: boolean;
   payeeAddressByUserId: string | null;
   externalCertificateNumber: string | null;
   externalEvidenceRef: string | null;
@@ -408,6 +503,14 @@ export type WhtCertificateHandoffDto = {
   linkedByUserId: string | null;
   /** Set once SYSTEM-issued (status SYSTEM_ISSUED) — the WhtCertificate row this handoff minted. */
   certificateId: string | null;
+  certificateNumber: string | null;
+  certificateIssuedAt: string | null;
+  currentCertificate: {
+    number: string; issuedAt: string | null; formType: WhtFormType;
+    incomeCategoryCode: string; incomeCategoryName: string;
+    whtRate: string; grossAmount: string; withheldAmount: string; paymentDate: string;
+    payee: PayeeSnapshot;
+  } | null;
   /**
    * WHT certificate system issuance plan §2.4: whether `cap.wht50bis/SYSTEM_INITIAL_ISSUE` is OPEN,
    * computed once per request so the AP/Expenses "ออกเอกสารในระบบ" button can decide to show/hide
@@ -421,6 +524,9 @@ export type WhtCertificateHandoffDto = {
    */
   systemCorrectionOpen: boolean;
   systemReplacementOpen: boolean;
+  payerMissing: WhtPayerMissing[];
+  canChangeExternalRecord: boolean;
+  previousCertificate?: { number: string | null; kind: 'SYSTEM' | 'EXTERNAL'; cancelledAt: string };
   createdAt: string;
   updatedAt: string;
   /**
@@ -429,6 +535,37 @@ export type WhtCertificateHandoffDto = {
    * line or the "ยังไม่ได้บันทึกลงทะเบียนคู่ค้า" bar.
    */
   counterpartyAutoSave?: import('./accounting-documents.js').VendorCounterpartyAutoSaveResult;
+};
+
+/** Expense list §10.2: the two statutory gaps checked by system issuance. */
+export type WhtHandoffMissingReason = 'FORM_TYPE_UNRESOLVED' | 'INCOME_CATEGORY_OR_RATE_MISSING';
+export const WHT_HANDOFF_MISSING_LABELS: Record<WhtHandoffMissingReason, string> = {
+  FORM_TYPE_UNRESOLVED: 'ยังไม่ทราบว่าผู้รับเงินเป็นบุคคลหรือนิติบุคคล',
+  INCOME_CATEGORY_OR_RATE_MISSING: 'ยังไม่มีประเภทเงินได้หรืออัตราภาษี',
+};
+
+export type WhtCertificateHandoffListRowDto = WhtCertificateHandoffDto & {
+  matchedPreviousNumber: string | null;
+  expenseDescription: string | null;
+  payeeName: string;
+  payeeTaxId: string | null;
+  expenseId: string | null;
+  expenseNumber: string | null;
+  documentDate: string;
+  withheldAmount: string;
+  missing: WhtHandoffMissingReason[];
+  hasPayeeAddress: boolean;
+  cancellation?: { cancelledAt: string; eventType: WhtCertificateHistoryEventType; reason: string | null };
+};
+
+/** GET wht/payment-handoffs with page or pageSize; without either it remains an array. */
+export type WhtCertificateHandoffPageDto = {
+  rows: WhtCertificateHandoffListRowDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  /** Same branch, expense and search filters, independent of the selected status tab. */
+  counts: Record<WhtHandoffStatus, number>;
 };
 
 /** §10: the operator supplies the missing payee address on a handoff still awaiting its document. */
@@ -444,6 +581,26 @@ export type LinkExternalWhtCertificateDto = {
   issuedDate: string;
   note?: string;
 };
+
+/** Same fields and validation as recording; all standing values are replaced. */
+export type ChangeExternalWhtCertificateDto = LinkExternalWhtCertificateDto;
+
+export type RemoveExternalWhtCertificateDto = { commandId: string; expectedUpdatedAt: string; reason: string };
+
+export const WHT_EXTERNAL_RECORD_WORDS = {
+  removePermissionDenied: 'คุณไม่มีสิทธิ์ลบการบันทึกนี้ ให้ผู้ที่บันทึกหนังสือรับรองที่ออกเองได้ลบให้',
+  removeInvalid: 'กรุณากรอกเหตุผล 3–500 ตัวอักษร แล้วลองลบการบันทึกอีกครั้ง',
+  removeRequestInvalid: 'ข้อมูลรายการเปลี่ยนแล้ว กรุณาเปิดหน้านี้ใหม่แล้วลองลบการบันทึกอีกครั้ง',
+  removedManually: 'ลบการบันทึกว่าออกเอง',
+
+  notLinkable: 'บันทึกไม่ได้ เพราะมีผู้ออกหรือบันทึกหนังสือรับรองของรายจ่ายนี้ไปก่อนแล้ว หรือเอกสารถูกแก้ไขหรือยกเลิก กรุณาเปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด',
+  alreadyLinked: 'รายจ่ายนี้บันทึกหนังสือรับรองที่ออกเองไว้แล้ว ถ้าข้อมูลผิด ให้ใช้ "แก้ไขการบันทึก"',
+  noChanges: 'ข้อมูลตรงกับที่บันทึกไว้อยู่แล้ว จึงไม่มีอะไรต้องแก้ไข',
+  invalid: 'ข้อมูลที่บันทึกไม่ครบหรือไม่ถูกต้อง กรุณาตรวจเลขที่ วันที่ เลขอ้างอิง และหมายเหตุ แล้วบันทึกอีกครั้ง',
+  futureDate: 'วันที่ออกต้องไม่เกินวันนี้ กรุณาเลือกวันที่แล้วบันทึกอีกครั้ง',
+  permissionDenied: 'คุณไม่มีสิทธิ์แก้ไขการบันทึกหนังสือรับรองนี้ ให้ผู้ที่มีสิทธิ์บันทึกหนังสือรับรองที่ออกเองแก้ไขให้',
+  commandReused: 'คำขอนี้ถูกใช้บันทึกข้อมูลอื่นไปแล้ว กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
+} as const;
 
 /**
  * WHT certificate system issuance plan §3.3 (Decision B): OWNER-only

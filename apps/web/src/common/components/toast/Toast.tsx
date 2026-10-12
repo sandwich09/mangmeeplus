@@ -31,7 +31,8 @@ export function Toast({ item, onDismiss }: { item: ToastItem; onDismiss: () => v
     >
       <span aria-hidden="true" className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[13px] ${TONE_CHIP[item.tone]}`}>{TONE_ICON[item.tone]}</span>
       <span className="min-w-0 break-words pt-0.5 leading-5">
-        {item.message}
+        {item.message.split(/([A-Za-z0-9-]+)/).map((part, index) => index % 2
+          ? <span key={index} className="whitespace-nowrap">{part}</span> : part)}
         {item.action && (
           <>
             {' · '}

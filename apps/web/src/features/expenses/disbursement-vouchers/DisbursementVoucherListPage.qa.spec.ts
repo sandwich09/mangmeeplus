@@ -1,0 +1,76 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
+
+const page = readFileSync(new URL('./DisbursementVoucherListPage.tsx', import.meta.url), 'utf8');
+const card = page.slice(page.indexOf('export function DisbursementVoucherCard('), page.indexOf('export function DisbursementVoucherListPage('));
+const styles = readFileSync(new URL('./disbursement-vouchers.module.css', import.meta.url), 'utf8');
+const route = readFileSync(new URL('../../../../app/(workspace)/companies/[companyId]/expenses/disbursement-vouchers/page.tsx', import.meta.url), 'utf8');
+
+test('create uses prepare and the hidden-menu card prevents the list API call', () => {
+  assert.match(page, /const canPrepare = canPrepareDisbursementVoucher\(permissions\)/);
+  assert.match(page, /actions=\{canPrepare && \(!result \|\| result.data.length > 0\) \? create : undefined\}/);
+  assert.match(page, /if \(!canRead \|\| !entryOpen\) return;[\s\S]*?listDisbursementVouchers\(/);
+  assert.match(page, /if \(!entryOpen\) return \([\s\S]*?<EmptyState title=\{t\('expenses\.disbursement\.hidden'/);
+  assert.match(route, /entryOpen=\{canOpenDisbursementVoucherWeb\(session, companyId\)\}/);
+  assert.doesNotMatch(route, /redirect\(|getDisbursementVoucher|listDisbursementVouchers/);
+});
+
+test('three empty cases and the hidden-menu card keep the fixed sentences in the title', () => {
+  for (const [key, copy] of [
+    ['empty_prepare', 'ยังไม่มีใบเตรียมจ่าย'], ['empty_start', 'เริ่มจากเลือกผู้รับเงิน แล้วเลือกรายจ่ายที่จะจ่าย'],
+    ['empty_read', 'ยังไม่มีใบที่คุณดูได้'], ['empty_filter', 'ไม่มีใบในสถานะนี้'],
+    ['hidden', 'หน้านี้ยังไม่ได้เปิดใช้สำหรับร้านของคุณ'], ['hidden_help', 'ติดต่อทีมมั่งมีพลัสหากต้องการใช้'],
+  ] as const) assert.equal(workspaceDictionary.th[`expenses.disbursement.${key}`], copy);
+  assert.match(page, /<EmptyState title=\{allCount > 0 \|\| filter !== 'all'[\s\S]*?empty_filter[\s\S]*?canPrepare \?[\s\S]*?empty_prepare[\s\S]*?empty_read/);
+  assert.match(page, /action=\{allCount === 0 && filter === 'all' && canPrepare \? create : undefined\}/);
+});
+
+test('every mobile card has exactly one full-width primary link and no mutation control', () => {
+  assert.equal([...card.matchAll(/<Link\s/g)].length, 1);
+  assert.doesNotMatch(card, /<button|onClick=|deleteDisbursement|submitDisbursement/);
+  assert.match(card, /disbursementVoucherPrimaryLabel\(row\)/);
+  assert.match(card, /className=\{cx\(btnClass, styles\.action\)\}/);
+  assert.match(card, /DisbursementVoucherStatusBadge status=\{row\.status\}/);
+  assert.match(card, /DISBURSEMENT_VOUCHER_WORDS\.directPayment/);
+  assert.match(page, /data-testid="disbursement-voucher-card-list"/);
+  assert.match(styles, /\.badge[^}]*white-space: nowrap/);
+  assert.match(styles, /\.action[^}]*width: 100%;[^}]*min-height: 44px/);
+});
+
+test('six counted filters are touch-sized, live in the URL and page with the shared pager', () => {
+  assert.match(page, /DISBURSEMENT_VOUCHER_FILTERS\.map/);
+  assert.match(page, /aria-pressed=\{filter === value\}/);
+  assert.match(page, /counts\[value\]/);
+  assert.match(styles, /\.filters[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /\.filter[^}]*min-height: 44px/);
+  assert.match(styles, /@container \(min-width: 58rem\)/);
+  assert.match(page, /params\.set\('status', nextFilter\)/);
+  assert.match(page, /router\.push\(/);
+  assert.match(page, /<Pagination[\s\S]*?navigate\(filter, next\)/);
+});
+
+test('search is debounced into q, resets paging, and offers another matching status tab', () => {
+  assert.match(page, /placeholder="ค้นชื่อผู้รับเงินหรือเลขที่ใบ"/);
+  assert.match(page, /setTimeout\(\(\) => \{[\s\S]*?params\.set\('q', value\)[\s\S]*?params\.delete\('page'\)[\s\S]*?router\.replace/);
+  assert.match(page, /listDisbursementVouchers\(companyId, \{ status: filter === 'all' \? undefined : filter, q: q \|\| undefined/);
+  assert.match(page, /result && result\.data\.length === 0 && q/);
+  assert.match(page, /ไม่พบในแท็บนี้ · พบ \{counts\?\.\[otherFilter\]\} ใบใน/);
+  assert.match(page, /onClick=\{\(\) => navigate\(otherFilter\)\}/);
+  assert.match(page, /ไม่พบใบตามคำค้นนี้/);
+  assert.equal(workspaceDictionary.th['expenses.disbursement.search_view'], 'ดู');
+});
+
+test('list reads have loading, retry and forbidden states without diagnostic identifiers', () => {
+  for (const component of ['LoadingState', 'ErrorState', 'ForbiddenState']) assert.match(page, new RegExp(`<${component}`));
+  assert.match(page, /onRetry=\{\(\) => setRetry/);
+  assert.doesNotMatch(page + styles, /requestId=|h[-]screen|100v[h]/);
+});
+
+
+test('card and table show the in-effect amount including zero, with the same cancellation note as the document page', () => {
+  assert.equal((page.match(/baht\(row.amountInEffect \?\? row.totalAmount\)/g) || []).length, 2);
+  assert.equal((page.match(/row.amountInEffect != null/g) || []).length, 2);
+  assert.equal((page.match(/expenses.disbursement.cancelled_amount_note/g) || []).length, 2);
+});

@@ -122,7 +122,7 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
                       <span className="text-[11px] text-gray-400">{formatRelativeTime(item.createdAt)}</span>
                       {unread && <span aria-hidden className="ml-auto h-2 w-2 shrink-0 rounded-full bg-brand-500" />}
                     </div>
-                    <div className={`mt-1 truncate text-sm ${unread ? 'font-bold text-gray-900' : 'font-medium text-gray-600'}`}>{item.title}</div>
+                    <div className={`mt-1 line-clamp-2 text-sm ${unread ? 'font-bold text-gray-900' : 'font-medium text-gray-600'}`}>{item.title}</div>
                     {sentence && <div className="mt-0.5 line-clamp-2 text-xs text-gray-500">{sentence}</div>}
                   </>
                 );

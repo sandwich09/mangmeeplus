@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { DisbursementVoucherAccessHint } from './DisbursementVoucherAccessHint';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -860,13 +861,14 @@ function RolesView({ companyId }: { companyId: string }) {
 }
 
 // Guided role builder: job template → plain-language work options → live preview.
-export function RoleBuilder({ companyId, packModules, allPacks, templates, roleOptionsAvailable, permissionCatalog = [], initial, onCancel, onSubmit }: {
+export function RoleBuilder({ companyId, packModules, allPacks, templates, roleOptionsAvailable, permissionCatalog = [], initial, onCancel, onSubmit, disbursementEntryOpen = false }: {
   companyId: string;
   packModules: Array<{ module: string; packs: CapabilityPackView[] }>;
   allPacks: CapabilityPackView[];
   templates: RoleTemplate[];
   roleOptionsAvailable: boolean;
   permissionCatalog?: PermissionCatalogItem[];
+  disbursementEntryOpen?: boolean;
   initial?: any;
   onCancel: () => void;
   onSubmit: (body: any) => Promise<void>;
@@ -1002,11 +1004,12 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
                   return (
                     <div key={module}>
                       <div className="mb-1 text-[11px] font-semibold uppercase text-gray-400">{MODULE_LABEL[module] ?? 'งานอื่น ๆ'}</div>
+                      {module === 'expense' && <DisbursementVoucherAccessHint entryOpen={disbursementEntryOpen} />}
                       <div className="space-y-1.5">
                         {shown.map((p) => {
                           const checked = selectedPacks.includes(p.key);
                           return (
-                            <label key={p.key} className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${checked ? 'border-brand-200 bg-brand-50' : 'border-gray-200 bg-white hover:border-brand-300'}`}>
+                            <label key={p.key} className={`flex min-h-11 min-w-0 items-start gap-2 rounded-lg border px-3 py-2 text-xs [overflow-wrap:anywhere] ${checked ? 'border-brand-200 bg-brand-50' : 'border-gray-200 bg-white hover:border-brand-300'}`}>
                               <input type="checkbox" className="mt-0.5" checked={checked} onChange={() => togglePack(p.key)} />
                               <span className="min-w-0 flex-1">
                                 <span className="flex flex-wrap items-center gap-1.5">

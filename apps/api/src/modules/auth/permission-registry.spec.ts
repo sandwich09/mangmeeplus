@@ -23,6 +23,38 @@ function companyRoleKeys(): string[] {
 }
 
 describe('permission-registry', () => {
+  it('registers disbursement permissions with the requested risk and exact system-role grants', () => {
+    const permissions = [
+      'expense.disbursement.read',
+      'expense.disbursement.prepare',
+      'expense.disbursement.approve',
+      'expense.disbursement.pay',
+      'expense.disbursement.issue',
+    ];
+    const riskByPermission = new Map([
+      ['expense.disbursement.read', 'LOW'],
+      ['expense.disbursement.prepare', 'MEDIUM'],
+      ['expense.disbursement.approve', 'HIGH'],
+      ['expense.disbursement.pay', 'HIGH'],
+      ['expense.disbursement.issue', 'MEDIUM'],
+    ]);
+    const expectedByRole: Record<string, string[]> = {
+      OWNER: permissions,
+      ADMIN: permissions,
+      FINANCE: permissions,
+      MANAGER: ['expense.disbursement.read', 'expense.disbursement.approve'],
+      ACCOUNTANT: ['expense.disbursement.read', 'expense.disbursement.issue'],
+    };
+
+    for (const [key, riskLevel] of riskByPermission) {
+      assert.equal(PERMISSIONS.find((permission) => permission.key === key)?.riskLevel, riskLevel, key);
+      assert.ok(COMPANY_PERMISSION_KEYS.includes(key), `${key} must be a company permission`);
+    }
+    for (const [role, grants] of Object.entries(ROLE_GRANTS)) {
+      assert.deepEqual(grants.filter((key) => permissions.includes(key)).sort(), (expectedByRole[role] ?? []).sort(), role);
+    }
+  });
+
   it('registers HIGH global WHT catalog management for SYSTEM_ADMIN alone', () => {
     const key = 'system.wht_income_category.manage';
     assert.equal(PERMISSIONS.find(p => p.key === key)?.riskLevel, 'HIGH');

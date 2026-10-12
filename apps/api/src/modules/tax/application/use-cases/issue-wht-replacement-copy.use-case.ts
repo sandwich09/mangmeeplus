@@ -1,3 +1,6 @@
+import { loadScopedWhtHandoff } from '../services/wht-handoff-read-scope';
+import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
+import { lockExpenseCorrection } from '../../../expenses/infrastructure/expense-void-blocker';
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { PayeeSnapshot, PayerSnapshot, RequestContext, WhtFormType } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -12,8 +15,7 @@ import { isSystemReplacementCopyOpen } from './wht-certificate-handoff.use-case'
 /**
  * Issues an identical, same-numbered "ใบแทน" (replacement copy) of a SYSTEM-issued 50 ทวิ — the
  * AP/Expenses "ออกใบแทน" button (correction & replacement plan §3.1). Unlike correction, nothing
- * about the certificate's content or number changes: no number reservation, no TaxPeriod lookup, no
- * `$transaction` (a single `update` is the only write).
+ * about the certificate's content or number changes. Its transaction checks the source before recording the copy.
  */
 @Injectable()
 export class IssueWhtReplacementCopyUseCase {
@@ -25,10 +27,6 @@ export class IssueWhtReplacementCopyUseCase {
     private readonly attachments: PrismaAttachmentRepository,
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
   ) {}
-
-  private get table() {
-    return (this.taxRepo.prisma.client as any).whtCertificateHandoff;
-  }
 
   private async isReplacementOpen(): Promise<boolean> {
     return isSystemReplacementCopyOpen(this.launchGate);
@@ -67,8 +65,7 @@ export class IssueWhtReplacementCopyUseCase {
   }
 
   async execute(ctx: RequestContext, handoffId: string) {
-    const row = await this.table.findUnique({ where: { id: handoffId } });
-    if (!row || row.companyId !== ctx.companyId) throw new NotFoundException('WHT handoff not found.');
+    const row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
     // Same rejection reason/code as correction (plan §3.1 step 1): v1 only touches SYSTEM-issued
     // certificates, never EXTERNAL_LINKED.
     if (row.status !== 'SYSTEM_ISSUED' || !row.certificateId) {
@@ -105,12 +102,20 @@ export class IssueWhtReplacementCopyUseCase {
       { issuedAt: nowIso },
     );
 
-    // Plain `update`, not conditional: no unique constraint two concurrent replacement requests
-    // could race on — both incrementing the counter is the correct outcome (two copies really were
-    // issued), so there is nothing here that needs a transaction (plan §3.1 step 6).
-    const updated = await this.taxRepo.prisma.client.whtCertificate.update({
-      where: { id: current.id },
-      data: { replacementCopyCount: { increment: 1 }, lastReplacementCopyAt: new Date(), lastReplacementCopyByUserId: ctx.userId },
+    const updated = await (this.taxRepo.prisma.client as any).$transaction(async (tx: any) => {
+      if (row.sourcePaymentType === 'expense.record' && row.sourcePaymentId) {
+        await lockExpenseCorrection(tx, ctx.companyId, row.sourcePaymentId);
+        const source = await tx.expenseRecord.findFirst({ where: { companyId: ctx.companyId, id: row.sourcePaymentId }, select: { status: true } });
+        if (source?.status !== 'CONFIRMED') throw new ConflictException({ code: 'expense_wht_source_changed', message: EXPENSE_CORRECTION_WORDS.certificateSourceChanged });
+      }
+      const active = await tx.whtCertificate.findUnique({ where: { id: current.id } });
+      if (active?.status !== 'ISSUED') throw new ConflictException({ code: 'expense_wht_source_changed', message: EXPENSE_CORRECTION_WORDS.certificateSourceChanged });
+      const changed = await tx.whtCertificate.updateMany({
+        where: { companyId: ctx.companyId, id: current.id, status: 'ISSUED' },
+        data: { replacementCopyCount: { increment: 1 }, lastReplacementCopyAt: new Date(), lastReplacementCopyByUserId: ctx.userId },
+      });
+      if (changed.count !== 1) throw new ConflictException({ code: 'expense_wht_source_changed', message: EXPENSE_CORRECTION_WORDS.certificateSourceChanged });
+      return tx.whtCertificate.findUnique({ where: { id: current.id } });
     });
 
     await this.audit.log({

@@ -20,6 +20,7 @@ function makeUseCase(retentionHold: 'SUBSTITUTE_ARTIFACT' | 'SUBSTITUTE_SOURCE' 
     findById: mock.fn(async () => attachment),
     findSubstituteEvidenceRetentionHold: mock.fn(async () => retentionHold),
     isReimbursementPaymentSlip: mock.fn(async () => paymentSlip),
+    isDisbursementVoucherFile: mock.fn(async () => false),
     markDeleted: mock.fn(async () => ({ ...attachment, status: 'DELETED' })),
   };
   const audit = { log: mock.fn(async () => {}) };
@@ -27,6 +28,12 @@ function makeUseCase(retentionHold: 'SUBSTITUTE_ARTIFACT' | 'SUBSTITUTE_SOURCE' 
 }
 
 describe('DeleteAttachmentUseCase substitute-evidence retention', () => {
+  it('refuses both document file kinds on the general delete route', async () => {
+    const { useCase, attachments } = makeUseCase(null);
+    attachments.isDisbursementVoucherFile = mock.fn(async () => true);
+    await assert.rejects(() => useCase.execute(ctx, { attachmentId: 'att-1' }), (e: any) => e.getResponse().code === 'disbursement_file_retained');
+    assert.equal(attachments.markDeleted.mock.calls.length, 0);
+  });
   it('rejects deletion of an issued artifact and records the denied mutation', async () => {
     const { useCase, attachments, audit } = makeUseCase('SUBSTITUTE_ARTIFACT');
 

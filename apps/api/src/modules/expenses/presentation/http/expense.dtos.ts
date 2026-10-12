@@ -121,6 +121,14 @@ export class ReasonRequiredDto {
   @IsString() @IsNotEmpty() @MaxLength(500) reason!: string;
 }
 
+export class VoidExpenseDto extends ReasonRequiredDto {
+  @ValidateIf((_o, v) => v !== undefined) @IsBoolean() taxFilingAttested?: boolean;
+}
+
+export class ReopenExpenseDto extends ReasonRequiredDto {
+  @ValidateIf((_o, v) => v !== undefined) @IsBoolean() taxFilingAttested?: boolean;
+}
+
 /** Mutable certificate facts only; identities, numbering and signing state stay server-owned. */
 export class AmendSubstituteReceiptDto implements AmendSubstituteReceiptInput {
   @ValidateIf((_o, v) => v !== undefined) @IsBoolean() keepDocumentNumberConfirmed?: boolean;

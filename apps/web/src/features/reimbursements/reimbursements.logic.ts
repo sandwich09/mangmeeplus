@@ -1,7 +1,7 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, reimbursementDuplicateWait, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateReasonText, reimbursementDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
+  REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, reimbursementDuplicateWait, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateReasonText, reimbursementDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
   reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE,
   reimbursementPaymentReferenceRequired as paymentReferenceRequired, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, REIMBURSEMENT_PAYMENT_STEP_NOTE,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
@@ -79,9 +79,10 @@ function cancellationRefusalText(code: string): string | null {
  * when, why it has not completed, and what this viewer can do. The claim is with the system meanwhile
  * (the same words as its "อยู่ที่" line and the LINE backlog), and the API takes no other decision on it.
  */
-export function pendingCancellationNote(pending: any): string {
+export function pendingCancellationNote(pending: any, refusal?: string): string {
   const started = [pending?.startedByName, 'เริ่มยกเลิกคำขอนี้', pending?.startedAt && `เมื่อ ${formatThaiDateTime(pending.startedAt)}`].filter(Boolean).join(' ');
-  const blocker = cancellationBlockerText(pending?.blocker);
+  const attestationRequired = pending?.blocker?.code === 'certificate_attestation_required';
+  const blocker = refusal ?? (attestationRequired ? pending.blocker.message ?? REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.attestationRequired : cancellationBlockerText(pending?.blocker));
   const reasonBlocks = pending?.blocker?.code === 'reason_too_short';
   // A closed period or an unposted journal can be put right; a filed tax period or an unvoidable record cannot.
   const fixable = ['accounting_period_locked', 'posting_unresolved'].includes(pending?.blocker?.code);
@@ -93,7 +94,7 @@ export function pendingCancellationNote(pending: any): string {
     : pending?.canResume === true ? 'ระบบยกเลิกรายการค่าใช้จ่ายไปบางส่วนแล้ว จึงถอนการยกเลิกไม่ได้' : null;
   return [
     `กำลังยกเลิกคำขอ ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`,
-    `${started} แต่ยังยกเลิกไม่เสร็จ${blocker ? ` เพราะ${blocker}` : ''}`,
+    `${started} แต่ยังยกเลิกไม่เสร็จ${blocker ? attestationRequired ? ` · ${blocker}` : ` เพราะ${blocker}` : ''}`,
     next, takeBack,
     'ระหว่างนี้ยังอนุมัติ ปฏิเสธ แก้ไข หรือบันทึกจ่ายใบนี้ไม่ได้',
   ].filter(Boolean).join(' · ');
@@ -132,8 +133,11 @@ export function awaitingSystemNote(detail: any, approvedBy?: string): string {
  * then fall back to the message-string translation above.
  */
 export function errorText(e: unknown): string {
-  const code = (e as { code?: unknown } | null)?.code;
+  const code = apiErrorCode(e);
   const viaCode = typeof code === 'string' ? ERROR_CODE_LABELS[code] ?? translateApiError(code) : null;
+  const source = e as { message?: unknown; details?: { message?: unknown } } | null | undefined;
+  const message = source?.details?.message ?? source?.message;
+  if (typeof code === 'string' && (!code.includes(':') || (typeof message === 'string' && /[ก-๙]/.test(message))) && (/^(reimbursement_cancellation_|expense_)/.test(code) || ['certificate_permission_missing', 'certificate_issued', 'posting_unresolved', 'posting_state_changed', 'accounting_period_locked', 'tax_period_locked', 'tax_period_filed'].includes(code))) return apiErrorMessage(e);
   if (code === 'duplicate_unresolved' || code === 'duplicate_confirmed') return apiErrorMessage(e);
   if (viaCode) return viaCode;
   return errorMessage(e instanceof Error ? e.message : 'เกิดข้อผิดพลาด', e);
@@ -1234,7 +1238,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       if (detail.pendingCancellation.canResume === true) actions.push('resume-cancel');
       if (detail.pendingCancellation.canWithdraw === true) actions.push('withdraw-cancel');
       if (detail?.requestNo && status !== 'DRAFT') actions.push('print');
-      return { note: pendingCancellationNote(detail.pendingCancellation), actions };
+      return { note: pendingCancellationNote(detail.pendingCancellation, detail.certificateCancelBlocker?.message), actions };
     }
     if (ended) {
       note = status === 'CANCELLED' ? `ยกเลิกคำขอแล้ว${detail?.rejectionReason ? `: ${detail.rejectionReason}` : ''}` : 'เพิกถอนรายการแล้ว';

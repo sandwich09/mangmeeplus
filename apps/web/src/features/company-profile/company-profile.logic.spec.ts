@@ -699,3 +699,13 @@ describe('the attention indicator and the dashboard card share one read', () => 
     assert.match(sidebar, /ตั้งค่ายังไม่ครบ/);
   });
 });
+it('certificate return paths stay inside the same shop and retain the card anchor', async () => {
+  const { companyProfileReturnPath } = await import('./company-profile.logic');
+  const valid = '/companies/co/expenses/expense-1#wht-certificate';
+  const search = (value: string) => `?${new URLSearchParams({ returnTo: value })}`;
+  assert.equal(companyProfileReturnPath('co', search(valid)), valid);
+  for (const path of ['/companies/other/expenses/expense-1', '//example.test/companies/co/', 'https://example.test/companies/co/', '/companies/co/../../other', '/companies/co/%2e%2e/other', '/companies/co/..\\other', 'billing', '']) {
+    assert.equal(companyProfileReturnPath('co', search(path)), null, path);
+  }
+  assert.equal(companyProfileReturnPath('co', ''), null);
+});

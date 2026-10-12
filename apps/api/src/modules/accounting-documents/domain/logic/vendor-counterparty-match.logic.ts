@@ -30,7 +30,7 @@ const THAI_ADDRESS_ABBREVIATIONS: Array<[RegExp, string]> = [
 // ASCII digits, but keeps the helper module-private, and this file may not touch the expenses
 // module to export it. Mirrored here rather than reinvented, so a tax id normalizes identically
 // on both sides of the vendor-matching boundary.
-function toAsciiDigits(value: string | null | undefined): string {
+export function toAsciiDigits(value: string | null | undefined): string {
   return String(value ?? '')
     .normalize('NFKC')
     .replace(/[๐-๙]/g, (digit) => String(THAI_DIGITS.indexOf(digit)))

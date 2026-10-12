@@ -3,7 +3,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { CorrectWhtCertificateDto, ExportPnd53Dto, LinkExternalWhtCertificateDto, MarkPnd53FiledDto, ResolvePnd53IssueDto, SetWhtHandoffPayeeAddressDto, UpdateCompanyTaxSignatureDto } from './tax.dtos';
+import { CorrectWhtCertificateDto, ExportPnd53Dto, LinkExternalWhtCertificateDto, RemoveExternalWhtCertificateDto, MarkPnd53FiledDto, ResolvePnd53IssueDto, SetWhtHandoffPayeeAddressDto, UpdateCompanyTaxSignatureDto } from './tax.dtos';
 import { SyncTaxEventsUseCase } from '../../application/use-cases/sync-tax-events.use-case';
 import { GenerateVatReportUseCase } from '../../application/use-cases/generate-vat-report.use-case';
 import { GenerateWhtReportUseCase } from '../../application/use-cases/generate-wht-report.use-case';
@@ -314,7 +314,7 @@ export class TaxController {
   // source payment, outside the Tax workspace (tax-thailand-2026-spec.md:1391).
 
   @Get('wht/payment-handoffs')
-  @RequireAnyPermission('wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct')
+  @RequireAnyPermission('wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link')
   @ApiOperation({ summary: 'List 50 Tawi certificates awaiting external issuance' })
   async listWhtHandoffs(
     @ReqCtx() ctx: RequestContext,
@@ -322,10 +322,16 @@ export class TaxController {
     @Query('status') status?: string,
     @Query('branchId') branchId?: string,
     @Query('sourcePaymentId') sourcePaymentId?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('search') search?: string,
   ) {
     // The auth guard lets an `x-company-id` header set the context company; without this the route
     // param would be decorative and a caller could read another company's URL with their own scope.
     assertRouteCompany(ctx, companyId);
+    if (page !== undefined || pageSize !== undefined) {
+      return this.whtHandoffs.listPaged(ctx, { status, branchId, sourcePaymentId, page: Number(page), pageSize: Number(pageSize), search });
+    }
     return this.whtHandoffs.list(ctx, { status, branchId, sourcePaymentId });
   }
 
@@ -337,11 +343,18 @@ export class TaxController {
     return this.whtHandoffs.get(ctx, handoffId);
   }
 
+  @Get('wht/expenses/:expenseId/certificate-history')
+  @RequireAnyPermission('wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link')
+  @ApiOperation({ summary: 'Read certificate history for one expense, newest first' })
+  async getExpenseWhtCertificateHistory(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('expenseId') expenseId: string) {
+    assertRouteCompany(ctx, companyId);
+    return this.whtHandoffs.getExpenseHistory(ctx, expenseId);
+  }
+
   @Post('wht/payment-handoffs/:handoffId/payee-address')
   @HttpCode(200)
-  // Same key as the link, not `wht.certificate.read`: this writes the address that will be printed
-  // on the certificate, so whoever may record the document may supply it (§12.1 adds no new key).
-  @RequirePermissions('wht.external_certificate.link')
+  // Issuers and external recorders may prepare the address; read permission alone cannot write it.
+  @RequireAnyPermission('wht.external_certificate.link', 'wht.certificate.issue')
   @ApiOperation({ summary: 'Supply the payee address a frozen 50 Tawi prefill never had' })
   async setWhtHandoffPayeeAddress(
     @ReqCtx() ctx: RequestContext,
@@ -367,6 +380,32 @@ export class TaxController {
     return this.whtHandoffs.linkExternal(ctx, handoffId, body);
   }
 
+  @Post('wht/payment-handoffs/:handoffId/external-certificate/change')
+  @HttpCode(200)
+  @RequirePermissions('wht.external_certificate.link')
+  @ApiOperation({ summary: 'Change the standing self-issued certificate record' })
+  async changeExternalWhtCertificate(
+    @ReqCtx() ctx: RequestContext,
+    @Param('companyId') companyId: string,
+    @Param('handoffId') handoffId: string,
+    @Body() body: LinkExternalWhtCertificateDto,
+  ) {
+    assertRouteCompany(ctx, companyId);
+    return this.whtHandoffs.changeExternal(ctx, handoffId, body);
+  }
+
+  @Post('wht/payment-handoffs/:handoffId/external-certificate/remove')
+  @HttpCode(200)
+  @RequirePermissions('wht.external_certificate.link')
+  @ApiOperation({ summary: 'Remove a mistaken self-issued certificate record' })
+  async removeExternalWhtCertificate(
+    @ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string,
+    @Param('handoffId') handoffId: string, @Body() body: RemoveExternalWhtCertificateDto,
+  ) {
+    assertRouteCompany(ctx, companyId);
+    return this.whtHandoffs.removeExternal(ctx, handoffId, body);
+  }
+
   // A new route, sibling to the two above, rather than an overload of `POST tax/wht-certificates`
   // below: that endpoint's body shape (`CreateWhtCertificateDto`) requires a pre-existing
   // `taxPeriodId`/`taxEventIds`, a completely different input from this one (just a `handoffId`).
@@ -374,7 +413,7 @@ export class TaxController {
   // unlike its `wht/payment-handoffs/*` siblings above, which are deliberately NOT gated — but the
   // URL family stays the same because both AP and Expenses already read/write handoffs here.
   @Get('wht/payment-handoffs/:handoffId/system-certificate')
-  @RequireAnyPermission('wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct')
+  @RequireAnyPermission('wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link')
   async downloadSystemWhtCertificate(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('handoffId') handoffId: string) {
     assertRouteCompany(ctx, companyId);
     return this.issueFromHandoff.download(ctx, handoffId);

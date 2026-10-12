@@ -28,6 +28,7 @@ const makeRepo = (record: AttachmentRecord | null = makeAttachment()) => ({
   findById: mock.fn(async () => record),
   isSubstituteRawSignature: mock.fn(async () => false),
   isReimbursementPaymentSlip: mock.fn(async () => false),
+  isDisbursementVoucherFile: mock.fn(async () => false),
   findSignatureAssetOwner: mock.fn(async (): Promise<{ ownerUserId: string | null } | null> => null),
   createPending: mock.fn(async () => { throw new Error('not used'); }),
   markActive: mock.fn(async () => { throw new Error('not used'); }),
@@ -47,6 +48,16 @@ const makeStorage = () => ({
 const makeAudit = () => ({ log: mock.fn(async () => {}) });
 
 describe('CreateDownloadUrlUseCase', () => {
+  it('refuses both document file kinds on the general route, including an unlinked slip upload', async () => {
+    for (const metadataJson of [{ generatedFor: 'disbursement_voucher_slip' }, { generatedBy: 'disbursement_voucher' }, undefined]) {
+      const repo = makeRepo({ ...makeAttachment(), metadataJson });
+      repo.isDisbursementVoucherFile = mock.fn(async () => metadataJson === undefined);
+      const storage = makeStorage();
+      await assert.rejects(() => new CreateDownloadUrlUseCase(repo as any, storage as any, makeAudit() as any).execute(makeCtx(['attachment.read']), { attachmentId: 'att-1' }),
+        (e: any) => e.getResponse().code === 'disbursement_file_general_download_denied');
+      assert.equal(storage.createDownloadUrl.mock.calls.length, 0);
+    }
+  });
   it('throws ForbiddenException when ctx lacks attachment.read', async () => {
     const storage = makeStorage();
     const uc = new CreateDownloadUrlUseCase(makeRepo() as any, storage as any, makeAudit() as any);

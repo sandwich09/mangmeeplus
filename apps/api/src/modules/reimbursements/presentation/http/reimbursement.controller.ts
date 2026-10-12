@@ -275,7 +275,7 @@ export class ReimbursementController {
   @HttpCode(200)
   @ApiOperation({ summary: 'Cancel reimbursement request, or continue a cancellation that was started and has not completed' })
   cancelRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: CancelReimbursementDto) {
-    return this.cancel.execute(ctx, requestId, body?.reason);
+    return this.cancel.execute(ctx, requestId, body?.reason, body?.taxFilingAttested);
   }
 
   @Post(':requestId/cancel/withdraw')

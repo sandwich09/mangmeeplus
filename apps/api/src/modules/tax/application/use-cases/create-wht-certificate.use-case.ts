@@ -1,12 +1,14 @@
+import { whtPayerIdentity, whtPayerIdentityMissingMessage } from '@watchdog-bms/contracts';
+import { throwIfWhtCertificateNumberCollision } from '../services/wht-certificate-number-error';
 import { lockExpenseCorrection } from '../../../expenses/infrastructure/expense-void-blocker';
-import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
+import { whtPayeeAddress, WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE, EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../../audit/application/audit.service';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
-import { formatCompanyLegalAddress, type CompanyLegalAddress, type CreateWhtCertificateDto, type RequestContext } from '@watchdog-bms/contracts';
+import { formatCompanyLegalAddressForPrint, type CompanyLegalAddress, type CreateWhtCertificateDto, type RequestContext } from '@watchdog-bms/contracts';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { validateCertificateTotals } from '../../domain/logic/wht-report.logic';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
@@ -96,8 +98,8 @@ export class CreateWhtCertificateUseCase {
       branchCode: null,
       // BUG-1: this used to be `JSON.stringify(company.addressJson)`, so the payer address on a
       // 50 ทวิ prefill read `{"line1":"…"}`. The formatter prints one line and answers null for a
-      // row whose JSON is not the §4.1 shape — an address nobody can print must not block issuing.
-      address: formatCompanyLegalAddress(company?.addressJson as CompanyLegalAddress | null),
+      // row whose JSON is not the §4.1 shape — an address nobody can print is refused before a new certificate is issued.
+      address: formatCompanyLegalAddressForPrint(company?.addressJson as CompanyLegalAddress | null),
     };
     const expenseIds = [...new Set(events.filter((event) => event.sourceType === 'expense.record').map((event) => event.sourceId))].sort();
     const withCurrentExpenseSources = async (write: (db: any) => Promise<any>) => expenseIds.length ? await this.taxRepo.prisma.client.$transaction(async (tx: any) => {
@@ -146,12 +148,22 @@ export class CreateWhtCertificateUseCase {
       });
     }
 
+    const payer = whtPayerIdentity(payerSnapshot, payerSnapshot);
+    if (payer.missing.length) throw new ConflictException({ code: 'wht_payer_identity_missing', message: whtPayerIdentityMissingMessage(payer.missing), payerMissing: payer.missing });
+
+    if (!whtPayeeAddress(undefined, input.payeeSnapshot.address)) throw new ConflictException({
+      code: 'wht_handoff_payee_address_missing', message: WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE,
+    });
+
     const reserved = await this.reserveNumber.execute({
       companyId: ctx.companyId,
       documentType: 'tax.wht_certificate',
       periodKey: period.periodKey,
       idempotencyKey: `tax.wht_certificate:${period.id}:${[...input.taxEventIds].sort().join(',')}`,
       reservedByUserId: ctx.userId,
+    }).catch((error: unknown) => {
+      throwIfWhtCertificateNumberCollision(error, ctx.companyId);
+      throw error;
     });
     // §2.5/§3.4: the real 50 ทวิ template, not the filing-package `buildMinimalPdf` — the same gate
     // covers this Tax-workspace path and the AP/Expenses handoff path, so both must render the same
@@ -188,7 +200,10 @@ export class CreateWhtCertificateUseCase {
         issuedByUserId: ctx.userId,
       },
     });
-    const row = await withCurrentExpenseSources(writeCertificate);
+    const row = await withCurrentExpenseSources(writeCertificate).catch((error: unknown) => {
+      throwIfWhtCertificateNumberCollision(error, ctx.companyId);
+      throw error;
+    });
     await this.commitNumber.execute({ id: reserved.id, companyId: ctx.companyId, ownerType: 'tax.wht_certificate', ownerId: row.id });
     await this.audit.log({
       companyId: ctx.companyId,

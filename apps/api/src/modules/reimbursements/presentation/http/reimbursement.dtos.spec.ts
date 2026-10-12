@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
+import { ReimbursementController } from './reimbursement.controller';
 import {
   ApproveReimbursementDto, AttachPaymentSlipDto, CancelReimbursementDto, CompletePaymentSlipUploadDto, CreateReimbursementRequestDto, InitPaymentSlipUploadDto,
   LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
@@ -48,6 +49,19 @@ describe('ReimbursementInternalNoteDto', () => {
 
 // Audit B3: the cancel body reached the use case unvalidated (`@Body() body: { reason?: string }`).
 describe('CancelReimbursementDto', () => {
+  it('passes claim cancellation tax attestation beside the reason', async () => {
+    let seen: unknown[] = [];
+    const controller = Object.assign(Object.create(ReimbursementController.prototype), { cancel: { execute: async (...args: unknown[]) => { seen = args; } } }) as ReimbursementController;
+    const ctx = { companyId: 'c1', userId: 'u1' } as any;
+    const body = await pipe.transform({ reason: 'ข้อมูลผิด', taxFilingAttested: true }, { type: 'body', metatype: CancelReimbursementDto });
+    await controller.cancelRequest(ctx, 'claim-1', body);
+    assert.deepEqual(seen, [ctx, 'claim-1', 'ข้อมูลผิด', true]);
+  });
+  it('accepts an optional boolean tax attestation and rejects coercion, null and forged authorisation', async () => {
+    for (const taxFilingAttested of [true, false]) assert.equal((await pipe.transform({ reason: 'ข้อมูลผิด', taxFilingAttested }, { type: 'body', metatype: CancelReimbursementDto })).taxFilingAttested, taxFilingAttested);
+    for (const taxFilingAttested of ['true', 1, null]) await rejects(CancelReimbursementDto, { taxFilingAttested });
+    await rejects(CancelReimbursementDto, { authorisedByClaimCancellation: true });
+  });
   it('takes a reason or none, and refuses a forged field, a non-string and an oversized reason', async () => {
     assert.equal((await pipe.transform({ reason: 'ซื้อซ้ำ' }, { type: 'body', metatype: CancelReimbursementDto })).reason, 'ซื้อซ้ำ');
     await pipe.transform({}, { type: 'body', metatype: CancelReimbursementDto });

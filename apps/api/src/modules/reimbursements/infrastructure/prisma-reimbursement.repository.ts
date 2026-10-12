@@ -1,3 +1,4 @@
+import { expenseSourceDescription } from '../../expenses/domain/logic/expense-source-description';
 import { serializableTransaction } from '../../../common/database/serializable-transaction';
 import { isSerializationFailure } from '../../../common/database/prisma-error';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
@@ -83,7 +84,7 @@ import {
   duplicateBlocksPayment, claimDuplicateBlocksPayment, claimPaymentDuplicateBlock, claimDuplicateReasons, confirmedDuplicateRefusal,
 } from '../domain/logic/reimbursement.logic';
 import { CLAIM_PAYOUT_WORKLIST_LIMIT, exclusiveEndOfDay, isExpenseVoidReason } from '@watchdog-bms/contracts';
-import { findClaimExpenseVoidBlocker, type ExpenseVoidBlocker } from '../../expenses/infrastructure/expense-void-blocker';
+import { findClaimExpenseVoidBlocker, readExpenseCancellationCertificate, type ExpenseVoidBlocker } from '../../expenses/infrastructure/expense-void-blocker';
 import {
   PAYOUT_PEOPLE_MANAGER_ROLE_KEYS,
   type FrozenPayoutPlan, type SealedPayoutDestination, type SubmitPayoutColumns, type SubmitPayoutPlan,
@@ -582,7 +583,7 @@ export class PrismaReimbursementRepository {
       } catch (error: any) { const response = error.getResponse?.(); reason = typeof response === 'object' ? response.code : 'reimbursement_source_unavailable'; }
       return { expenseId: row.id, label: [snapshot?.certificate?.documentNumber ?? row.vendorDocumentNumber ?? row.expenseNumber, row.vendorNameSnapshot].filter(Boolean).join(' · ') || row.lines.map((line: any) => line.description).join('; ').slice(0, 100) || 'ค่าใช้จ่าย',
         eligible: !reason, reason, updatedAt: row.updatedAt.toISOString(), incurredDate: row.expenseDate?.toISOString().slice(0, 10) ?? '',
-        description: row.lines.map((line: any) => line.description).join('; ').slice(0, 500), purpose: snapshot?.certificate?.businessPurpose ?? '', categoryKey: row.expenseCategory?.id ?? 'other', categoryLabel: row.expenseCategory?.name,
+        description: expenseSourceDescription(row.lines), purpose: snapshot?.certificate?.businessPurpose ?? '', categoryKey: row.expenseCategory?.id ?? 'other', categoryLabel: row.expenseCategory?.name,
         amount: dec(row.netPayableAmount), currency: row.currency, snapshot,
       };
     }));
@@ -1174,6 +1175,7 @@ export class PrismaReimbursementRepository {
     scopes: { branchIds?: string[] };
     reason: string;
     startedAt: Date;
+    certificateAttestedAt?: Date;
     onIntentPersisted: (tx: any) => Promise<void>;
     /** Runs in the same transaction when a stored reason the void refuses is replaced by `reason`. */
     onReasonCorrected?: (tx: any, previousReason: string | undefined) => Promise<void>;
@@ -1193,16 +1195,20 @@ export class PrismaReimbursementRepository {
         // the person who started it (the caller has checked that right). Its reason stays the one on
         // record: expense records may already be voided under it. Only a stored reason the void
         // refuses is replaced, because nothing can have been voided with that one.
-        if (request.cancellationPendingReason === data.reason) return { request, resumed: true };
-        if (isExpenseVoidReason(request.cancellationPendingReason)) {
+        const reasonChanged = request.cancellationPendingReason !== data.reason;
+        const attestCertificate = !request.cancellationCertificateAttestedAt && data.certificateAttestedAt;
+        if (!reasonChanged && !attestCertificate) return { request, resumed: true };
+        if (reasonChanged && isExpenseVoidReason(request.cancellationPendingReason)) {
           throw new ConflictException('reimbursement_cancellation_already_pending');
         }
         const corrected = await tx.reimbursementRequest.updateMany({
           where: { id: data.requestId, companyId: data.companyId, updatedAt: row.updatedAt, cancellationPendingAt: row.cancellationPendingAt },
-          data: { cancellationPendingReason: data.reason, updatedByUserId: data.actorUserId, updatedAt: this.nextVersion(row.updatedAt) },
+          data: { cancellationPendingReason: data.reason,
+            ...(attestCertificate && { cancellationCertificateAttestedAt: attestCertificate }),
+            updatedByUserId: data.actorUserId, updatedAt: this.nextVersion(row.updatedAt) },
         });
         if (corrected.count !== 1) throw new ConflictException('reimbursement_cancellation_state_changed');
-        await data.onReasonCorrected?.(tx, request.cancellationPendingReason);
+        if (reasonChanged) await data.onReasonCorrected?.(tx, request.cancellationPendingReason);
         const updated = await tx.reimbursementRequest.findFirstOrThrow({
           where: { id: data.requestId, companyId: data.companyId },
           include: { lines: { orderBy: { lineNo: 'asc' } } },
@@ -1230,6 +1236,7 @@ export class PrismaReimbursementRepository {
           cancellationPendingAt: data.startedAt,
           cancellationPendingByUserId: data.actorUserId,
           cancellationPendingReason: data.reason,
+          cancellationCertificateAttestedAt: data.certificateAttestedAt ?? null,
           updatedByUserId: data.actorUserId,
           updatedAt: this.nextVersion(data.expectedUpdatedAt),
         },
@@ -1300,6 +1307,7 @@ export class PrismaReimbursementRepository {
         data: {
           status: 'CANCELLED',
           cancelledAt: data.completedAt,
+          cancellationCertificateAttestedAt: null,
           rejectionReason: request.cancellationPendingReason,
           currentApproverUserId: null,
           currentApprovalStepId: null,
@@ -1338,6 +1346,18 @@ export class PrismaReimbursementRepository {
     return null;
   }
 
+  async findCancellationCertificates(request: Pick<ReimbursementRequestRecord, 'id' | 'companyId'>): Promise<Array<{
+    expenseNumber: string | null; kind: 'SYSTEM' | 'EXTERNAL'; number: string | null;
+  }>> {
+    const certificates = [];
+    for (const projection of await this.listClaimProjections(request.companyId, request.id)) {
+      if (projection.status === 'VOIDED') continue;
+      const certificate = await readExpenseCancellationCertificate(this.prisma.client, request.companyId, projection.id);
+      if (certificate) certificates.push({ expenseNumber: projection.expenseNumber ?? null, ...certificate });
+    }
+    return certificates;
+  }
+
   /**
    * The fence of a cancellation's expense voids, run first inside each void transaction: the void
    * goes ahead only while the claim still holds its cancellation intent.
@@ -1348,12 +1368,12 @@ export class PrismaReimbursementRepository {
    * PostgreSQL refuses to lock a row changed since that snapshot, and a read-committed void reads
    * the row as it is now. A shared lock, so two voids of one cancellation do not refuse each other.
    */
-  async assertCancellationPending(tx: any, companyId: string, requestId: string): Promise<void> {
+  async assertCancellationPending(tx: any, companyId: string, requestId: string, requireCertificateAttestation = false): Promise<void> {
     await this.lockRequest(tx, companyId, requestId);
-    const rows: Array<{ pending: Date | null }> = await tx.$queryRaw`
-      SELECT "cancellationPendingAt" AS pending FROM "ReimbursementRequest"
+    const rows: Array<{ pending: Date | null; attested: Date | null }> = await tx.$queryRaw`
+      SELECT "cancellationPendingAt" AS pending, "cancellationCertificateAttestedAt" AS attested FROM "ReimbursementRequest"
       WHERE "id" = ${requestId} AND "companyId" = ${companyId} FOR SHARE`;
-    if (!rows[0]?.pending) throw new ConflictException('reimbursement_cancellation_intent_changed');
+    if (!rows[0]?.pending || (requireCertificateAttestation && !rows[0].attested)) throw new ConflictException('reimbursement_cancellation_intent_changed');
   }
 
   /**
@@ -1385,6 +1405,7 @@ export class PrismaReimbursementRepository {
           cancellationPendingAt: null,
           cancellationPendingByUserId: null,
           cancellationPendingReason: null,
+          cancellationCertificateAttestedAt: null,
           updatedByUserId: data.actorUserId,
           updatedAt: this.nextVersion(row.updatedAt),
         },
@@ -2342,12 +2363,13 @@ export class PrismaReimbursementRepository {
   async listClaimProjections(
     companyId: string,
     requestId: string,
-  ): Promise<Array<{ id: string; sourceReimbursementLineId: string; status: string; duplicateStatus: string; postingStatus: string; branchId?: string }>> {
+  ): Promise<Array<{ id: string; expenseNumber?: string; sourceReimbursementLineId: string; status: string; duplicateStatus: string; postingStatus: string; branchId?: string }>> {
     const rows = await (this.prisma.client as any).expenseRecord.findMany({
       where: { companyId, sourceReimbursementRequestId: requestId, sourceReimbursementLineId: { not: null } },
     });
     return rows.map((row: any) => ({
       id: row.id,
+      expenseNumber: opt(row.expenseNumber),
       sourceReimbursementLineId: row.sourceReimbursementLineId,
       status: row.status,
       duplicateStatus: row.duplicateStatus,
@@ -4770,6 +4792,7 @@ export class PrismaReimbursementRepository {
       cancellationPendingAt: opt(row.cancellationPendingAt),
       cancellationPendingByUserId: opt(row.cancellationPendingByUserId),
       cancellationPendingReason: opt(row.cancellationPendingReason),
+      cancellationCertificateAttestedAt: opt(row.cancellationCertificateAttestedAt),
       financeReviewStatus: row.financeReviewStatus,
       financeReviewedByUserId: opt(row.financeReviewedByUserId),
       financeReviewedAt: opt(row.financeReviewedAt),

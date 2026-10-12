@@ -10,6 +10,8 @@ import {
   isReportIndustryGroup,
   reportIndustryGroupOf,
   type LineContextHealth,
+  type ExpenseDisbursementPermissionKey,
+  type PartnerDisbursementVoucherRoleDto,
   type PartnerCompanyDetailDto,
   type SignupDiscoverySource,
   type SalesReferralSource,
@@ -18,8 +20,14 @@ import { isCurrentEntitlementNormalization } from '../../../employee-access/appl
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
 import { reportClassificationOf } from '../../domain/logic/report-labels.logic';
 import { manualExpenseWebEntryState } from '../../domain/logic/manual-expense-web-entry.logic';
+import { disbursementVoucherWebEntryState } from '../../domain/logic/disbursement-voucher-web-entry.logic';
+import { companyRoleReadWhere } from '../../../employee-access/application/company-role-read-where';
 
 const PLATFORM_DISABLE_REASON = 'ฟีเจอร์พื้นฐานของระบบปิดไม่ได้';
+const DISBURSEMENT_VOUCHER_PERMISSION_KEYS = [
+  'expense.disbursement.read', 'expense.disbursement.prepare', 'expense.disbursement.approve',
+  'expense.disbursement.pay', 'expense.disbursement.issue',
+] as const satisfies readonly ExpenseDisbursementPermissionKey[];
 
 @Injectable()
 export class GetPartnerDetailUseCase {
@@ -76,7 +84,7 @@ export class GetPartnerDetailUseCase {
           orderBy: { featureKey: 'asc' },
         },
         aiConfiguration: { select: { modelId: true, updatedAt: true } },
-        webEntrySetting: { select: { manualExpenseEntryEnabled: true, version: true } },
+        webEntrySetting: { select: { manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: true, version: true } },
         entitlementSet: { select: { setVersion: true } },
         entitlementNormalization: {
           select: { status: true, normalizerVersion: true, cohortKind: true },
@@ -99,6 +107,29 @@ export class GetPartnerDetailUseCase {
     });
 
     if (!c) throw new NotFoundException(`Partner company "${companyId}" not found.`);
+
+    const roleRows = await this.prisma.client.role.findMany({
+      where: companyRoleReadWhere(companyId),
+      select: {
+        key: true,
+        name: true,
+        scopeKey: true,
+        permissions: {
+          where: { permission: { key: { in: [...DISBURSEMENT_VOUCHER_PERMISSION_KEYS] } } },
+          select: { permission: { select: { key: true } } },
+        },
+      },
+    });
+    const overriddenRoleKeys = new Set(roleRows.filter((role) => role.scopeKey === companyId).map((role) => role.key));
+    const disbursementVoucherRoles: PartnerDisbursementVoucherRoleDto[] = roleRows
+      .filter((role) => !(role.scopeKey === 'system' && overriddenRoleKeys.has(role.key)))
+      .map((role) => ({
+        name: role.name,
+        isCompanyManaged: role.scopeKey === companyId,
+        permissionKeys: role.permissions.map(({ permission }) => permission.key as ExpenseDisbursementPermissionKey)
+          .filter((key) => DISBURSEMENT_VOUCHER_PERMISSION_KEYS.includes(key)),
+      }))
+      .filter((role) => role.permissionKeys.length > 0);
 
     const now = new Date();
     const signup = c.signupRequests[0];
@@ -222,6 +253,8 @@ export class GetPartnerDetailUseCase {
       entitlementNormalizationPending: !isCurrentEntitlementNormalization(c.entitlementNormalization),
       // A screen setting with its own version, readable whatever state the entitlement rows are in.
       manualExpenseWebEntry: manualExpenseWebEntryState(c.webEntrySetting),
+      disbursementVoucherWebEntry: disbursementVoucherWebEntryState(c.webEntrySetting),
+      disbursementVoucherRoles,
       planState: planTermState(c.planTerm, now, c.status),
       ...(c.planTerm && c.planTerm.termEndsAt.getTime() <= now.getTime() ? { lockReason: planTermLockReason(c.planTerm) } : {}),
       reportLabels,
