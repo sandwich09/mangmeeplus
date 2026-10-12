@@ -5,7 +5,7 @@
  *
  * Shape: the collection-op contract exactly — `Proposed` on the row, a journal in `resultJson`,
  * an `observed()` that decides from the provider alone, an `advance()` fenced by the account lease,
- * and a one-hour re-send window on any started provider write (then read only, see `end`). It is a separate file because nothing about
+ * and a 23-hour window on any started provider write. It is a separate file because nothing about
  * a customer's own renewal controls applies here: no OWNER context, no PREVIEW/submit round trip,
  * no email proof, no capacity selection, and no `plan_changes` gate — the platform is undoing a
  * price the platform itself set, not selling anything.
@@ -48,9 +48,6 @@ export type PriceReturnProposed = {
   dealPriceId: string; params: Record<string, unknown>;
 };
 type Journal = { startedAt?: string; updateStartedAt?: string; updateHash?: string; observed?: boolean };
-
-/** 2026-10-10: the swap is re-sent under its key for one hour; ten quiet minutes later nothing sent can still be in flight. */
-const RESEND_WINDOW_MS = 3600_000, QUIET_MARGIN_MS = 600_000;
 
 const review = () => billingError('SPECIAL_PRICE_RETURN_REVIEW', 'ยังปรับราคากลับเป็นราคาปกติไม่ได้ ทีมงานกำลังตรวจสอบ');
 
@@ -226,21 +223,12 @@ export class BillingPriceReturn {
     const proposed = row.proposedJson as unknown as PriceReturnProposed;
     const journal: Journal = (row.resultJson as Journal | null) ?? {};
     if (proposed.accountId !== account.id || proposed.subscriptionId !== account.baseSubscriptionId) throw review();
-    // Refused before any provider write: no pass will ever send it, so it is over and holds nothing.
-    if (row.state === 'BLOCKED' && !journal.startedAt) return this.end(account, row, journal, lease);
+    if (row.state === 'BLOCKED' && !journal.startedAt) return;
     try {
       let { sub, schedule } = await subscriptionGraph(this.stripe, account);
       if (!priceReturnObserved(proposed, sub)) {
-        const age = journal.startedAt ? Date.now() - Date.parse(journal.startedAt) : 0;
-        if (!Number.isFinite(age)) throw review();
-        if (age >= RESEND_WINDOW_MS) {
-          // Past the window a pass only reads. It ends only when this read still shows the deal price on the same item;
-          // any other shape is not "not applied" and keeps waiting in review.
-          const items = sub.items?.data ?? [];
-          if (age >= RESEND_WINDOW_MS + QUIET_MARGIN_MS && !schedule && items.length === 1 && sub.items.has_more === false &&
-            items[0].id === proposed.subscriptionItemId && stripeId(items[0].price) === proposed.dealPriceId) return await this.end(account, row, journal, lease);
-          throw review();
-        }
+        if (journal.startedAt && (!Number.isFinite(Date.parse(journal.startedAt)) ||
+          Date.now() - Date.parse(journal.startedAt) >= 23 * 3600000)) throw review();
         // Nothing has changed since the proposal was frozen, so the swap is still the right write.
         if (schedule || collectionSourceHash(sub, null) !== proposed.sourceHash) throw review();
         await this.billing.assertTaxSettings(proposed.snapshot.policy);
@@ -291,31 +279,12 @@ export class BillingPriceReturn {
             fromPriceId: proposed.dealPriceId, toPriceId: proposed.snapshot.priceId } } });
       });
     } catch {
-      // Nothing was sent and no later pass would send it: over in this same pass. Once sent, it waits for a read.
-      if (!journal.startedAt) await this.end(account, row, journal, lease);
-      else await this.prisma.client.$transaction(async tx => {
+      await this.prisma.client.$transaction(async tx => {
         await this.fence(tx, account, row.id, lease);
-        await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'UNKNOWN',
+        await tx.billingOperation.update({ where: { id: row.id }, data: { state: journal.startedAt ? 'UNKNOWN' : 'BLOCKED',
           resultJson: json(journal), errorCode: 'SPECIAL_PRICE_RETURN_REVIEW', version: { increment: 1 } } });
       });
       await this.billing.issue(account.companyId, 'SPECIAL_PRICE_RETURN_REVIEW', row.id);
     }
-  }
-
-  /** The provider does not hold the swap (never sent, or sent and read as not applied): FAILED, the slot released,
-   *  the review case left open, nothing sent. The subscription keeps the deal price. */
-  private async end(account: BillingAccount, row: BillingOperation, journal: Journal, lease: string): Promise<void> {
-    const proposed = row.proposedJson as unknown as PriceReturnProposed;
-    await this.prisma.client.$transaction(async tx => {
-      await this.fence(tx, account, row.id, lease);
-      const observedAt = new Date();
-      await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'FAILED', resultJson: json(journal),
-        errorCode: 'SPECIAL_PRICE_RETURN_NOT_APPLIED', observedAt, version: { increment: 1 } } });
-      await tx.billingAccount.update({ where: { id: account.id }, data: { activeCollectionOperationId: null, observedAt, version: { increment: 1 } } });
-      await tx.auditLog.create({ data: { companyId: account.companyId, actorType: 'SYSTEM',
-        actorRefId: 'sales-deal-return', action: 'billing.price_return.ended', targetType: 'BillingOperation',
-        targetId: row.id, requestId: row.id, result: 'SUCCESS', riskLevel: 'CRITICAL',
-        metadataJson: { dealRequestId: proposed.dealRequestId, returnAt: proposed.paidThrough, sent: !!journal.startedAt } } });
-    });
   }
 }

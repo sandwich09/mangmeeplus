@@ -9,10 +9,7 @@ import { billingBackControl, billingControl, billingPrimaryControl, billingRenew
 const button = billingControl;
 const labels: Record<string, string> = { PREVIEW: 'ตรวจสอบการต่ออายุ', QUEUED: 'รอตรวจยืนยันการต่ออายุ', RUNNING: 'กำลังตรวจยืนยันกับผู้ให้บริการ',
   UNKNOWN: 'ยังยืนยันผลไม่ได้ กรุณาเปิดรายการเดิมเพื่อตรวจสอบ', BLOCKED: 'เงื่อนไขเปลี่ยน ต้องตรวจรายการเดิม', CANCELLED: 'ถอนคำขอที่ยังไม่ดำเนินการแล้ว',
-  APPLIED: 'เริ่มใช้แพ็กเกจใหม่แล้ว',
-  // An ended command (2026-10-10): the sentence states only what is known, and nothing is offered for it.
-  FAILED: 'ตรวจกับผู้ให้บริการรับชำระเงินแล้ว คำสั่งนี้ยังไม่มีผล รายการนี้จบแล้ว ถ้ายังต้องการ ให้ทำรายการใหม่',
-  NOT_SENT: 'คำสั่งนี้ยังไม่ได้ส่งถึงผู้ให้บริการรับชำระเงิน รายการนี้จบแล้ว ถ้ายังต้องการ ให้ทำรายการใหม่' };
+  APPLIED: 'เริ่มใช้แพ็กเกจใหม่แล้ว' };
 export default function BillingCollectionPanel({ companyId, status, operationId, onChange, onBack, onEdit, apiOverride }: { companyId: string; status: BillingStatus; operationId?: string; onChange: () => void; onBack?: () => void; onEdit?: () => void; apiOverride?: ReturnType<typeof billingApi> }) {
   const api = useMemo(() => apiOverride ?? billingApi(companyId), [companyId, apiOverride]), [operation, setOperation] = useState<BillingCollectionOperation | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [reload, setReload] = useState(0), [ended, setEnded] = useState(false);
@@ -50,10 +47,10 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
     finally { setBusy(false); }
   }
   if (!operation && !id && !status.collectionPause && !status.pendingPlanChange && !status.planCapacityRepair && !status.allowedActions.includes('portal_cancel_subscription')) return null;
-  const confirming = !!operation && !['SUCCEEDED', 'APPLIED', 'CANCELLED', 'FAILED'].includes(operation.state);
+  const confirming = !!operation && !['SUCCEEDED', 'APPLIED', 'CANCELLED'].includes(operation.state);
   const prepaidChange = operation?.action === 'PREPAID_PLAN_CHANGE';
   const changingPlan = operation?.action === 'SCHEDULE_DOWNGRADE' || prepaidChange;
-  const completed = !!operation && ['SUCCEEDED', 'APPLIED', 'CANCELLED', 'FAILED'].includes(operation.state);
+  const completed = !!operation && ['SUCCEEDED', 'APPLIED', 'CANCELLED'].includes(operation.state);
   const canEdit = onEdit && changingPlan && operation?.state === 'PREVIEW' && operation.allowedActions.includes('withdraw');
   async function editSelection() {
     if (busy || !canEdit || !operation) return;
@@ -111,7 +108,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
         await api.repairPlanCapacity(selection.repair.operationId, selection.repair.version, capacity, selection.key); setNotice('บันทึกแล้ว กำลังตรวจเปิดสิทธิ์จากรายการชำระเดิม');
         setSelection(null); onChange(); }} />}
     {operation && !selection && <article className="space-y-3 rounded-xl bg-gray-50 p-4">
-      <h3 role="status" className="font-semibold">{operation.state === 'SUCCEEDED' ? operation.action === 'CANCEL_RENEWAL' ? 'ยืนยันหยุดการต่ออายุแล้ว' : operation.action === 'RESUME_RENEWAL' ? 'ยืนยันกลับมาต่ออายุแล้ว' : `ยืนยัน${actionLabel(operation.action)}แล้ว` : operation.state === 'PREVIEW' ? `ยืนยัน${actionLabel(operation.action)}` : labels[operation.state === 'FAILED' && operation.errorCode?.endsWith('_NOT_SENT') ? 'NOT_SENT' : operation.state] ?? operation.state}</h3>
+      <h3 role="status" className="font-semibold">{operation.state === 'SUCCEEDED' ? operation.action === 'CANCEL_RENEWAL' ? 'ยืนยันหยุดการต่ออายุแล้ว' : operation.action === 'RESUME_RENEWAL' ? 'ยืนยันกลับมาต่ออายุแล้ว' : `ยืนยัน${actionLabel(operation.action)}แล้ว` : operation.state === 'PREVIEW' ? `ยืนยัน${actionLabel(operation.action)}` : labels[operation.state] ?? operation.state}</h3>
       {!completed && <>
       {changingPlan && <p className="rounded-xl bg-brand-50 p-4 font-semibold text-brand-800">{prepaidChange ? 'ชำระแพ็กเกจรอบถัดไปแล้ว' : 'วันนี้ยังไม่เรียกเก็บเงิน'} ใช้แพ็กเกจเดิมได้จนถึงวันที่ {new Date(operation.effectiveAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}</p>}
       {!changingPlan && <p>{operation.action==='ADMIN_PAUSE_COLLECTION'?'กำหนดกลับมาเก็บเงิน':operation.action==='ADMIN_RESUME_COLLECTION'?'วันที่ขอกลับมาเก็บเงิน':operation.action==='EXTEND_TERM'?'วันที่ขอขยายการใช้งานถึง':'สิทธิ์ที่ซื้อไว้ถึง'} {new Date(operation.effectiveAt).toLocaleString('th-TH')}</p>}

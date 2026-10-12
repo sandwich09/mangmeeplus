@@ -21,8 +21,6 @@ export type FreeDaySource = {
 type Journal = { freeDays?: { scheduleId?: string; createdHash?: string; createAt?: string; updateAt?: string; updateHash?: string } };
 const review = () => billingError('CONTROL_FREE_DAYS_REVIEW', 'ยังปรับวันไม่ได้ ตรวจรายการต่ออายุเดิมแล้วลองรายการนี้อีกครั้ง');
 const json = (value: unknown) => value as Prisma.InputJsonValue;
-/** After `expiresAt` nothing is sent; one hour later nothing sent can still be in flight. */
-const SETTLE_MS = 3_600_000;
 
 /** A gift changes the collection boundary; it is never a paid receipt grant. */
 export class BillingFreeDays {
@@ -119,27 +117,6 @@ export class BillingFreeDays {
       if (checkAuthority) { if (row.expiresAt <= new Date()) throw review(); await authorize(tx, row); await assertNoPendingRefund(tx, account); }
       await tx.billingOperation.update({ where: { id: row.id }, data: { resultJson: json(journal), state: 'RUNNING', version: { increment: 1 } } });
     });
-    // A send marker is kept only when it was stored with the authority check, so that the send really follows it.
-    const mark = async (key: 'createAt' | 'updateAt') => {
-      const had = progress[key]; progress[key] ??= new Date().toISOString();
-      try { await save(true); } catch (error) { if (!had) delete progress[key]; throw error; }
-    };
-    // Over without a change (2026-10-10): nothing is sent, the account is released in this transaction. Not applied keeps its review case;
-    // never sent leaves nothing to review, so it opens none and closes one an older pass opened.
-    const end = async (errorCode: 'CONTROL_FREE_DAYS_NOT_SENT' | 'CONTROL_FREE_DAYS_NOT_APPLIED') => {
-      await this.prisma.client.$transaction(async tx => {
-        await lockPlanTermCompany(tx, account.companyId);
-        const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
-        if (current.activeCollectionOperationId !== row.id || current.leaseToken !== lease || !current.leaseUntil || current.leaseUntil <= new Date()) throw review();
-        await tx.billingAccount.update({ where: { id: account.id }, data: { activeCollectionOperationId: null, version: { increment: 1 } } });
-        await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'FAILED', errorCode, resultJson: json(journal), version: { increment: 1 } } });
-        await tx.auditLog.create({ data: { companyId: account.companyId, actorUserId: row.approverUserId, action: 'billing.free_days.ended', targetType: 'BillingOperation',
-          targetId: row.id, requestId: row.id, result: 'FAILED', riskLevel: 'CRITICAL', metadataJson: { errorCode, reason: row.reason, days: source.days, before: source.before } } });
-        if (errorCode === 'CONTROL_FREE_DAYS_NOT_SENT') await tx.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
-          kind: 'CUSTOMER_COLLECTION_REVIEW', referenceId: row.id }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
-      });
-      if (errorCode === 'CONTROL_FREE_DAYS_NOT_APPLIED') await this.billing.issue(account.companyId, 'CUSTOMER_COLLECTION_REVIEW', row.id);
-    };
     try {
       let graph = await subscriptionGraph(stripe, account);
       const retainedScheduleId = source.originalScheduleId ?? progress.scheduleId;
@@ -150,12 +127,8 @@ export class BillingFreeDays {
         graph = { ...graph, schedule: retained };
       }
       if (!this.observed(account, source, graph.sub, graph.schedule, row.id)) {
-        // No send can leave after expiresAt (`save(true)`), so an hour later nothing is in flight. A schedule without our id and an unchanged
-        // source = the provider holds nothing of this command. A schedule left by our create changes the source: that case keeps waiting.
-        if ((progress.createAt || progress.updateAt) && Date.now() - row.expiresAt.getTime() >= SETTLE_MS &&
-          graph.schedule?.metadata?.mangmeeFreeDaysOperation !== row.id && collectionSourceHash(graph.sub, graph.schedule) === source.providerHash)
-          return await end('CONTROL_FREE_DAYS_NOT_APPLIED');
         if (progress.createAt && !progress.scheduleId) {
+          if (Date.now() - Date.parse(progress.createAt) >= 23 * 3600000) throw review();
           await save(true);
           const created = await stripe.request('POST', '/subscription_schedules', { from_subscription: source.subscriptionId }, `mm:free-days:${row.id}:create`);
           if (created.object !== 'subscription_schedule' || stripeId(created.subscription) !== source.subscriptionId || stripeId(created.customer) !== account.customerId || created.livemode !== account.livemode) throw review();
@@ -165,7 +138,7 @@ export class BillingFreeDays {
         if (collectionSourceHash(graph.sub, !source.originalScheduleId && progress.scheduleId ? null : graph.schedule) !== source.providerHash ||
           (progress.scheduleId && graph.schedule?.id !== progress.scheduleId) || (progress.createdHash && collectionSourceHash({ id: source.subscriptionId }, graph.schedule) !== progress.createdHash)) throw review();
         if (!graph.schedule) {
-          await mark('createAt');
+          progress.createAt ??= new Date().toISOString(); await save(true);
           const created = await stripe.request('POST', '/subscription_schedules', { from_subscription: source.subscriptionId }, `mm:free-days:${row.id}:create`);
           if (created.object !== 'subscription_schedule' || stripeId(created.subscription) !== source.subscriptionId || stripeId(created.customer) !== account.customerId || created.livemode !== account.livemode) throw review();
           progress.scheduleId = created.id; progress.createdHash = collectionSourceHash({ id: source.subscriptionId }, created); await save();
@@ -175,8 +148,8 @@ export class BillingFreeDays {
         const params = { phases: source.phases, end_behavior: source.cancel ? 'cancel' : 'release', proration_behavior: 'none',
           metadata: { billingAccountId: account.id, mangmeeFreeDaysOperation: row.id } };
         const commandHash = hashBilling([scheduleId, params]);
-        if (progress.updateHash && progress.updateHash !== commandHash) throw review();
-        progress.updateHash = commandHash; await mark('updateAt');
+        if ((progress.updateHash && progress.updateHash !== commandHash) || (progress.updateAt && Date.now() - Date.parse(progress.updateAt) >= 23 * 3600000)) throw review();
+        progress.updateHash = commandHash; progress.updateAt ??= new Date().toISOString(); await save(true);
         await stripe.request('POST', `/subscription_schedules/${scheduleId}`, params, `mm:free-days:${row.id}:update`);
         graph = await subscriptionGraph(stripe, account);
         if (!this.observed(account, source, graph.sub, graph.schedule, row.id)) throw review();
@@ -221,8 +194,6 @@ export class BillingFreeDays {
           kind: 'CUSTOMER_COLLECTION_REVIEW', referenceId: row.id }, data: { state: 'RESOLVED', resolvedAt: now, version: { increment: 1 } } });
       });
     } catch {
-      // Never sent, and past expiresAt no pass can send it: over at once.
-      if (!progress.createAt && !progress.updateAt && row.expiresAt <= new Date()) return end('CONTROL_FREE_DAYS_NOT_SENT');
       await this.prisma.client.$transaction(async tx => {
         await fence(tx);
         await tx.billingOperation.update({ where: { id: row.id }, data: { state: progress.createAt || progress.updateAt ? 'UNKNOWN' : 'BLOCKED',
