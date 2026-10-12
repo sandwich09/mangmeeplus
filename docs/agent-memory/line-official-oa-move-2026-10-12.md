@@ -1,6 +1,6 @@
 # Agent Memory: LINE Official OA move to @695ultfm
 
-Status: IN RELEASE. `develop` carries this change on top of the billing rounds; `main` carries it WITHOUT them (see "Billing rounds held back on main").
+Status: LIVE on Production since 2026-10-12 16:54 Bangkok (operation `20261012T094806Z-fe95e8a1`, source `de8389ce3`); LINE's webhook test on the new channel answered 200. Owed: the owner's phone check of the two cards and of one "ติดต่อทีมงาน" button; the billing rounds back on `main` when he allows (see below).
 Owner: thawatchai (owner request 2026-10-12: "กำลังย้าย line official ไปที่ใหม่ (@695ultfm)"; then "ไปช่องทางปกติ ไม่ hotfix แล้ว").
 Scope: the public Official OA moves from `@107ewccg` to `@695ultfm`. Two things follow it: the link behind the three "talk to the team" buttons of the System OA cards, and the account the Production release tool accepts for the Official OA reply route. The two cards (contact, social), the webhook controller and `infra/kamal/config.json` do not change: none of them names the account.
 
