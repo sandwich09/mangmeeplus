@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Patch, Param, Body, Query } from '@nestjs/common';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { ListBranchesUseCase } from '../../application/use-cases/list-branches.use-case';
@@ -17,7 +17,7 @@ export class BranchController {
   ) {}
 
   @Get()
-  @RequirePermissions('company.branch.read')
+  @RequireAnyPermission('company.branch.read', 'company.branch.manage')
   async list(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Query() query: any) {
     assertRouteCompany(ctx, companyId);
     return this.listBranches.execute(ctx, {
