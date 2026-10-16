@@ -48,12 +48,14 @@ export const ALLOWED_TOOLS = new Set([
   'company.list_branches',
   'company.get_employee_summary',
   'company.get_employee_detail',
+  'company.get_roles', 'company.action.preview',
   'dashboard.get_business_health_summary',
   'notifications.list_open_alerts',
   'notifications.get_daily_summary',
   'tax.get_upcoming_tax_obligations',
   'tax.get_vat_summary',
   'tax.get_wht_summary',
+  'voucher.list_recent', 'voucher.get_detail', 'wht.get_month_summary', 'wht.calculate_withholding',
   'tax.get_cit_calendar',
   'tax.list_missing_tax_documents',
   'tax.get_tax_code_profile',
@@ -73,9 +75,16 @@ export const ALLOWED_TOOLS = new Set([
   // S-4 draft edit (spec §5.4). They belong to the accounting specialist because they act on the
   // expense record it already reads; the router catalog is what decides whether they are offered.
   ...LINE_DRAFT_UPDATE_TOOLS,
+  'expense.action.preview',
+  'counterparty.search', 'counterparty.get_detail', 'counterparty.action.preview',
 ]);
 
 const TOOL_FACT_LABELS: Record<string, string> = {
+  'company.get_roles': 'หน้าที่และสิทธิ์พนักงาน', 'company.action.preview': 'คำขอจัดการพนักงานและสาขา',
+  'voucher.list_recent': 'ใบเตรียมจ่าย/ใบสำคัญจ่ายล่าสุด',
+  'voucher.get_detail': 'รายละเอียดใบเตรียมจ่าย/ใบสำคัญจ่าย',
+  'wht.get_month_summary': 'สรุปภาษีหัก ณ ที่จ่ายรายเดือน',
+  'wht.calculate_withholding': 'คำนวณภาษีหัก ณ ที่จ่าย',
   'accounting.get_document_detail': 'ข้อมูลเอกสารบัญชี',
   'accounting.get_receivable_summary': 'สรุปลูกหนี้คงค้าง',
   'expense.get_detail': 'ข้อมูลค่าใช้จ่าย',

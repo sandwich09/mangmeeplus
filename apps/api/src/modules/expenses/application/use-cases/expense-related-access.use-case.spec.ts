@@ -234,6 +234,7 @@ describe('disbursement voucher drafts and visibility', () => {
       if (key === 'NOT') return !matches(value, expected);
       if (key === 'attachment') return matches(state.attachments.find((a: any) => a.id === value.attachmentId), expected);
       if (key === 'lines') return state.lines.filter((l: any) => l.voucherId === value.id).every((l: any) => matches(state.expenses.find((e: any) => e.id === l.expenseId), expected.every.expense.is));
+      if (expected instanceof Date) return value[key] instanceof Date && value[key].getTime() === expected.getTime();
       if (expected && typeof expected === 'object') {
         if ('in' in expected) return expected.in.includes(value[key]);
         if ('contains' in expected) return String(value[key] ?? '').toLocaleLowerCase('th').includes(expected.contains.toLocaleLowerCase('th'));
@@ -1637,6 +1638,72 @@ describe('disbursement voucher drafts and visibility', () => {
     assert.equal((await h.useCase.supportingFiles(context(), draft.id)).length, 0);
     assert.equal(h.state.attachments[0].status, 'ACTIVE', 'removal unlinks without destroying bytes');
     assert.ok(h.state.audits.some((a: any) => a.action === 'expense.disbursement.supporting.remove'));
+
+  });
+  it('Round 5 LINE previews reuse voucher source/permission/status guards without reservations, audits or document writes', async () => {
+    const all = ['expense.read', 'expense.disbursement.read', 'expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.disbursement.pay'];
+    for (const action of ['create', 'submit', 'approve', 'return', 'pay', 'cancel'] as const) {
+      const h = harness(), line = context({ authProvider: 'line', permissions: all, ...(action === 'return' ? { userId: 'someone' } : {}) });
+      const draft = await h.useCase.create(context(), body());
+      if (!['create','submit'].includes(action)) await h.useCase.submit(context({ permissions: all }), draft.id, command(0));
+      if (action === 'pay') await h.useCase.approve(context({ permissions: all }), draft.id, command(1));
+      const counts = () => [h.state.audits.length, h.state.commands.length, h.state.numbers.length, h.state.payments.length, h.state.expenses[0].reservedByDisbursementVoucherId];
+      const before = counts();
+      const input = { id: draft.id, draft: body(), reason: 'ข้อมูลไม่ตรง', payment: { commandId: 'preview', expectedVersion: h.state.vouchers[0].version, paidDate: '2026-10-15', paymentMethod: 'CASH' as const } };
+      await h.useCase.previewLineAction(line, action, input); assert.deepEqual(counts(), before, action);
+      await assert.rejects(() => h.useCase.previewLineAction({ ...line, permissions: ['expense.read', 'expense.disbursement.read'] }, action, input), ForbiddenException);
+      if (action === 'create') { h.state.expenses[0].status = 'DRAFT'; await assert.rejects(() => h.useCase.previewLineAction(line, action, input)); }
+      else { h.state.vouchers[0].status = 'PAID'; await assert.rejects(() => h.useCase.previewLineAction(line, action, input)); }
+      assert.deepEqual(counts(), before, action);
+    }
+  });
+  it('LINE voucher previews keep the sold ownership and inactive-preparer recovery rules without writes', async () => {
+    const h = harness();
+    const draft = await h.useCase.create(context(), body());
+    await h.useCase.submit(context(), draft.id, command(0));
+    const line = context({ authProvider: 'line', permissions: ['expense.read', 'expense.disbursement.prepare', 'expense.disbursement.approve'] });
+    const input = { id: draft.id, reason: 'ข้อมูลไม่ตรง' };
+    const before = h.state.commands.length;
+    await assert.rejects(() => h.useCase.previewLineAction(line, 'return', input), ForbiddenException);
+    await assert.rejects(() => h.useCase.previewLineAction({ ...line, userId: 'someone' }, 'cancel', input), ForbiddenException);
+    await h.useCase.previewLineAction({ ...line, userId: 'someone' }, 'return', input);
+    h.state.members = [];
+    await assert.rejects(() => h.useCase.previewLineAction({ ...line, userId: 'someone' }, 'return', input), ForbiddenException);
+    await h.useCase.previewLineAction({ ...line, userId: 'someone', roles: ['OWNER'] }, 'cancel', input);
+    assert.equal(h.state.commands.length, before);
+    assert.equal(h.state.vouchers[0].status, 'PENDING_APPROVAL');
+  });
+  it('Round 5 LINE create preserves the user ctx and fences source revision under the existing source lock; ordinary HTTP LINE remains denied', async () => {
+    const h = harness(), line = context({ authProvider: 'line' });
+    await assert.rejects(() => h.useCase.create(line, body()), (error: any) => error.getResponse().code === 'disbursement_line_session_denied');
+    const revisions = [{ id: 'a', revision: h.state.expenses[0].updatedAt.toISOString() }];
+    h.state.expenses[0].updatedAt = new Date('2026-10-02');
+    await assert.rejects(() => h.useCase.create(line, body(), true, revisions), (error: any) => error.getResponse().code === 'disbursement_source_changed');
+    assert.equal(h.state.vouchers.length, 0); assert.equal(h.state.audits.length, 0);
+    revisions[0].revision = h.state.expenses[0].updatedAt.toISOString();
+    const created = await h.useCase.create(line, body(), true, revisions); assert.equal(created.status, 'DRAFT');
+    assert.equal(h.state.audits[0].actorUserId, line.userId);
+    await assert.rejects(() => h.useCase.get(line, created.id));
+    assert.equal((await h.useCase.get(line, created.id, true)).header.id, created.id);
+    await assert.rejects(() => h.useCase.previewLineAction({ ...line, scopes: { branchIds: ['branch-other'] } }, 'submit', { id: created.id }));
+  });
+  it('Round 5 LINE slip uses upload, completion/scanning, and exclusive attach before pay; foreign/stale/inactive evidence refuses', async () => {
+    for (const mismatch of ['valid', 'chat', 'revision', 'owner', 'inactive', 'branch']) {
+      const h = harness(), v = await approvedDraft(h), line = payer({ authProvider: 'line' });
+      const capture = source('line-slip', { captureSource: 'LINE_UPLOAD', status: 'DRAFT', sourceDocumentType: 'TRANSFER_SLIP', primaryAttachmentId: 'chat-slip', sourceChannelMetadataJson: { chatKeyHash: 'private-chat' } });
+      h.state.expenses.push(capture);
+      slipUpload(h, '', 'chat-slip', { metadataJson: {}, ...(mismatch === 'inactive' ? { status: 'PENDING_UPLOAD' } : {}) });
+      if (mismatch === 'chat') capture.sourceChannelMetadataJson.chatKeyHash = 'foreign';
+      if (mismatch === 'owner') capture.createdByUserId = 'someone';
+      if (mismatch === 'branch') capture.branchId = 'branch-other';
+      const evidence = { id: capture.id, attachmentId: 'chat-slip', chat: 'private-chat', revision: mismatch === 'revision' ? new Date('2026-10-02').toISOString() : capture.updatedAt.toISOString() };
+      const calls: string[] = [];
+      (h.useCase as any).storage = { getObject: async () => { calls.push('read'); return { bytes: Buffer.from('image') }; }, putObject: async () => { calls.push('upload'); return { byteSize: 5, checksumSha256: 'checked' }; } };
+      (h.useCase as any).createUpload = { execute: async (context: any, input: any) => { calls.push('intent'); assert.equal(context.userId, line.userId); assert.deepEqual(input.metadataJson, { generatedFor: 'disbursement_voucher_slip', voucherId: v.id }); slipUpload(h, v.id, 'voucher-copy', { status: 'PENDING_UPLOAD' }); return { attachmentId: 'voucher-copy' }; } };
+      (h.useCase as any).completeUpload = { execute: async (context: any, input: any) => { calls.push('complete'); assert.equal(context.userId, line.userId); assert.equal(input.checksumSha256, 'checked'); h.state.attachments.find((file: any) => file.id === 'voucher-copy').status = 'ACTIVE'; } };
+      if (mismatch !== 'valid') { await assert.rejects(() => h.useCase.attachLineSlip(line, v.id, evidence, v.version)); assert.equal(h.state.vouchers[0].slipAttachmentId ?? null, null); assert.deepEqual(calls, []); }
+      else { const attached = await h.useCase.attachLineSlip(line, v.id, evidence, v.version); assert.equal(attached.slip?.attachmentId, 'voucher-copy'); assert.deepEqual(calls, ['read','intent','upload','complete']); assert.equal((await h.useCase.pay(line, v.id, { ...command(attached.header.version), slipAttachmentId: 'voucher-copy' }, true)).status, 'PAID'); }
+    }
   });
 
   it('allows slip uploads only for visible approved or paid documents with the pay right, never LINE', async () => {

@@ -31,7 +31,7 @@ import { toSubstituteEvidenceSummary } from '../../infrastructure/prisma-expense
 
 const WEB_BASE = 'https://app.example.com';
 
-function ctx(permissions = ['expense.review', 'expense.confirm']): RequestContext {
+export function ctx(permissions = ['expense.review', 'expense.confirm']): RequestContext {
   return {
     requestId: 'req-1', authSubject: 'user-1', userId: 'user-1', companyId: 'company-1',
     membershipId: 'mem-1', roles: ['OWNER'], permissions,
@@ -44,7 +44,7 @@ function ctx(permissions = ['expense.review', 'expense.confirm']): RequestContex
  *  personas now get the identical script — the F8 dead end had no one left to strand. */
 const SIGNER = ['expense.review', 'expense.confirm', 'expense.signature.manage'];
 
-function expense(overrides: Record<string, unknown> = {}) {
+export function expense(overrides: Record<string, unknown> = {}) {
   return {
     id: 'expense-1', companyId: 'company-1', branchId: 'branch-1', expenseNumber: 'EXP-001',
     status: 'NEEDS_REVIEW', sourceDocumentType: 'EXPENSE_NOTE_TEXT', currency: 'THB', grandTotalAmount: '200.0000',
@@ -67,7 +67,7 @@ async function onePagePdf(pages = 1): Promise<Buffer> {
   return Buffer.from(await pdf.save());
 }
 
-function harness(overrides: {
+export function harness(overrides: {
   expense?: any; policy?: any; approvers?: any[]; candidates?: any[]; categories?: Array<{ id: string; name: string }>;
   /** Bytes the stored scan attachment resolves to, for the R11 composability gate. */
   scanObject?: { bytes: Buffer; mimeType: string } | null;
@@ -232,7 +232,7 @@ function harness(overrides: {
 }
 
 /** Drives a fresh workflow to the R13 question: every blocker answered in one message. */
-async function readyHarness(overrides: Parameters<typeof harness>[0] = {}) {
+export async function readyHarness(overrides: Parameters<typeof harness>[0] = {}) {
   const h = harness({
     expense: expense({
       vendorNameSnapshot: 'วินมอเตอร์ไซค์', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'),
@@ -327,9 +327,9 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.equal(codes.some((code) => code.includes('policy') || code.includes('designated')), false,
       'no policy row is the ready OWNER_SELF default, not feature-disabled');
     assert.deepEqual(result.policy, { configured: false, ready: true, approvalMode: 'OWNER_SELF' });
-    assert.match(result.replyText, /OWNER_SELF · ใช้ค่าเริ่มต้นของระบบ · พร้อม/);
+    assert.match(result.replyText, /เจ้าของอนุมัติเองได้ · ใช้ค่าเริ่มต้นของระบบ · พร้อม/);
     assert.match(result.replyText, /สิ่งที่ยังต้องทำทั้งหมด/);
-    assert.match(result.replyText, /ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร/);
+    assert.match(result.replyText, /ลงนามและอนุมัติทำในเว็บค่ะ เตรียมใบรับรองเสร็จแล้วน้องจะส่งลิงก์ให้/);
     assert.equal(h.saves.length, 1);
   });
 
@@ -392,7 +392,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.equal(declared.replyText.includes('true'), false, 'the echo shows readable Thai, not a raw boolean');
   });
 
-  it('accepts the bare “ไม่มี” people actually answer, but only while the evidence question is pending', async () => {
+  it('accepts the bare “ไม่มี” people actually answer, while the combined evidence question is pending', async () => {
     const h = harness({
       expense: expense({
         vendorNameSnapshot: 'ร้านน้ำแข็ง', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'),
@@ -411,7 +411,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.equal(answered.status, 'READY_FOR_WEB', 'the question does not loop on its own natural answer');
     assert.ok(answered.acceptedFields.includes('evidenceNone'));
 
-    // Same words with a different question pending must not silently declare "no evidence".
+    // The combined ask includes evidence even when another missing field is listed first.
     const other = harness();
     await other.useCase.execute(ctx(), {
       messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash',
@@ -420,7 +420,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     const stray = await other.useCase.execute(ctx(), {
       messageText: 'ไม่มีค่ะ', chatKeyHash: 'chat-hash', recentCandidates: [],
     });
-    assert.equal(stray.acceptedFields.includes('evidenceNone'), false);
+    assert.equal(stray.acceptedFields.includes('evidenceNone'), true);
   });
 
   it('reads a label mid-line and never invents one out of ordinary prose', async () => {
@@ -919,7 +919,7 @@ describe('R13 — the assistant asks before producing the document', () => {
     assert.match(asked.replyText, /1\) ออกเอกสาร \(ยังไม่มีลายเซ็นที่บันทึกไว้ ระบบจะขอรูปลายเซ็นก่อน 1 ครั้ง/);
     assert.match(asked.replyText, /2\) ขอฟอร์มไปเซ็นเอง/);
     assert.match(asked.replyText, /3\) แก้ข้อมูลก่อน/);
-    assert.match(asked.replyText, /ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร/, 'nothing is produced unasked');
+    assert.match(asked.replyText, /ลงนามและอนุมัติทำในเว็บค่ะ เตรียมใบรับรองเสร็จแล้วน้องจะส่งลิงก์ให้/, 'nothing is produced unasked');
     assert.equal(
       getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
       'ISSUE_CONFIRM',
@@ -1917,10 +1917,10 @@ describe('B1 — the expense category is a collectable field, asked in Thai', ()
     assert.ok(category, 'the machine code is unchanged — the web resolves its own Thai from it');
     assert.equal(category.collectableInLine, true, 'and it is now answerable in chat');
     assert.equal(/[A-Za-z]{4,}/u.test(category.message), false, `still English: ${category.message}`);
-    assert.match(result.replyText, /ทำต่อ: ค่าใช้จ่ายนี้อยู่หมวดไหนคะ/);
+    assert.match(result.replyText, /ค่าใช้จ่ายนี้อยู่หมวดไหนคะ/);
     assert.match(result.replyText, /1\) ค่าเดินทาง/);
     assert.match(result.replyText, /2\) ค่าอาหาร/);
-    assert.equal(result.pendingQuestion?.startsWith('ค่าใช้จ่ายนี้อยู่หมวดไหนคะ'), true);
+    assert.match(result.pendingQuestion ?? '', /ตอบข้อมูลที่ยังขาดรวม.*\n• ค่าใช้จ่ายนี้อยู่หมวดไหนคะ/);
   });
 
   for (const [label, answer] of [['a typed name', 'ค่าอาหาร'], ['a numbered choice', '2'], ['a labelled name', 'หมวด: ค่าอาหาร']] as const) {
@@ -2419,6 +2419,75 @@ describe('full funding declarations', () => {
       assert.equal(h.prepares.length, 0);
     });
   }
+});
+
+describe('Fix-up 8A — legal facts boundaries', () => {
+  const variants = [
+    'ผู้จ่าย บริษัท ผู้รับเงิน คุณเอ อินฟลู เหตุผล ผู้รับเงินไม่ออกใบเสร็จ วัตถุประสงค์ ค่าโปรโมทร้าน จ่ายโอน วันที่ 10 ต.ค. 2569',
+    'ผู้จ่าย: บริษัท ผู้รับเงิน: คุณเอ อินฟลู เหตุผล: ผู้รับเงินไม่ออกใบเสร็จ วัตถุประสงค์: ค่าโปรโมทร้าน วิธีจ่าย: โอน วันที่จ่าย: 10 ต.ค. 2569',
+    'ผู้จ่าย บริษัท\nผู้รับเงิน คุณเอ อินฟลู\nเหตุผล ผู้รับเงินไม่ออกใบเสร็จ\nวัตถุประสงค์ ค่าโปรโมทร้าน\nจ่ายโอน\nวันที่ 10 ต.ค. 2569',
+    'ผู้จ่าย: บริษัท ผู้รับเงิน คุณเอ อินฟลู\nเหตุผล: ผู้รับเงินไม่ออกใบเสร็จ วัตถุประสงค์ ค่าโปรโมทร้าน โอน 10 ต.ค. 2569',
+  ];
+  for (const [index, messageText] of variants.entries()) {
+    it(`parses live facts variant ${index + 1}, echoes the legal text, and asks only for the human certifier`, async () => {
+      const h = harness({ expense: expense({ attachments: [{ id: 'slip', purpose: 'expense.payment.evidence', status: 'ACTIVE', mimeType: 'image/jpeg' }] }) });
+      await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'รายการนี้' }] });
+      const result = await h.useCase.execute(ctx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [] });
+      const facts = h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues;
+      assert.deepEqual(facts, { fundingSource: 'COMPANY', paidInFullAcknowledged: true, reasonCode: 'PAYEE_CANNOT_ISSUE',
+        payeeName: 'คุณเอ อินฟลู', missingReceiptReason: 'ผู้รับเงินไม่ออกใบเสร็จ', businessPurpose: 'ค่าโปรโมทร้าน',
+        paymentMethod: 'BANK_TRANSFER', paymentDate: '2026-10-10' });
+      assert.deepEqual(result.blockers.map(item => item.code), ['payer_required']);
+      assert.match(result.pendingQuestion!, /เลือกผู้รับรองการจ่ายจากปุ่ม/);
+      for (const fact of ['คุณเอ อินฟลู', 'ผู้รับเงินไม่ออกใบเสร็จ', 'ค่าโปรโมทร้าน', 'โอนเงิน', '10 ต.ค. 2569', 'บริษัทจ่ายเต็มจำนวน']) assert.ok(result.replyText.includes(fact), fact);
+      assert.equal(h.prepares.length, 0, 'facts never prepare or sign');
+    });
+  }
+
+  it('ends free text at unlabelled date, amount, funding and payment tokens', async () => {
+    for (const tail of ['10 ต.ค. 2569 จ่ายโอน', '500 บาท เงินสด', 'บริษัทจ่ายเต็มจำนวน', 'โอน วันที่ 10 ต.ค. 2569']) {
+      const h = await readyHarness();
+      await h.useCase.execute(ctx(), { messageText: `วัตถุประสงค์ ค่าโปรโมทร้าน ${tail}`, chatKeyHash: 'chat-hash', recentCandidates: [] });
+      assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.businessPurpose, 'ค่าโปรโมทร้าน', tail);
+    }
+  });
+
+  it('reopens only an empty or conflicting legal field instead of signing the old value', async () => {
+    for (const messageText of ['วัตถุประสงค์ จ่ายโอน วันที่ 10 ต.ค. 2569', 'วัตถุประสงค์ ค่าโปรโมทร้าน วัตถุประสงค์ ซื้อของ']) {
+      const h = await readyHarness();
+      const result = await h.useCase.execute(ctx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [] });
+      assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.businessPurpose, '');
+      assert.deepEqual(result.blockers.filter(item => item.collectableInLine).map(item => item.code), ['business_purpose_required']);
+      assert.match(result.pendingQuestion!, /ธุรกิจเรื่องอะไร/);
+      assert.equal(h.prepares.length, 0);
+    }
+  });
+
+  it('keeps ambiguous corrections missing across resume, even when old expense facts exist', async () => {
+    for (const [messageText, code] of [
+      ['ผู้รับเงิน คุณเอ ผู้รับเงิน คุณบี', 'payee_required'],
+      ['เหตุผล ร้านไม่ออกใบเสร็จ เหตุผล ใบเสร็จหาย', 'missing_receipt_reason_required'],
+      ['วิธีจ่าย เงินสด โอน', 'payment_method_required'],
+      ['วันที่จ่าย 10 ต.ค. 2569 หรือ 11 ต.ค. 2569', 'payment_date_required'],
+    ]) {
+      const h = await readyHarness();
+      for (const text of [messageText, 'ทำใบรับรองต่อ']) {
+        const result = await h.useCase.execute(ctx(), { messageText: text, chatKeyHash: 'chat-hash', recentCandidates: [] });
+        assert.deepEqual(result.blockers.filter(item => item.collectableInLine).map(item => item.code), [code], text);
+        assert.equal(h.prepares.length, 0);
+      }
+    }
+  });
+
+  it('requires a fresh facts review before preparing an old continuation with swallowed payment text', async () => {
+    const h = await readyHarness();
+    h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.businessPurpose = 'ค่าโปรโมทร้าน จ่ายโอน วันที่ 10 ต.ค. 2569 500 บาท';
+    const result = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.equal(h.prepares.length, 0, 'the old decision cannot sign newly split legal text');
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.businessPurpose, 'ค่าโปรโมทร้าน');
+    assert.match(result.replyText, /• วัตถุประสงค์ทางธุรกิจ: ค่าโปรโมทร้าน$/mu);
+    assert.doesNotMatch(result.replyText, /ค่าโปรโมทร้าน จ่ายโอน/);
+  });
 });
 
 describe('substitute reply source facts', () => {

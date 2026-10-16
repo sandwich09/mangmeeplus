@@ -1,6 +1,6 @@
 // LINE AI contracts – shared by API (webhook ingress) and AI Gateway (turn orchestration).
 
-import type { SourceRef } from './ai-tools.js';
+import type { LineChatActionId, SourceRef } from './ai-tools.js';
 import type { AiModelLineage, AiModelPolicy, AiUsageEntry } from './ai-lineage.js';
 import {
   parseLineAiValueCandidates as parseNormalizedLineAiValueCandidates,
@@ -33,13 +33,13 @@ export type LineAiAgentDefinition = {
 };
 
 export const LINE_AI_AGENT_REGISTRY: LineAiAgentDefinition[] = [
-  { agent: 'general', label: 'General Assistant', status: 'enabled', toolNames: ['company.get_current_context', 'company.list_branches', 'company.get_employee_summary', 'company.get_employee_detail', 'dashboard.get_business_health_summary', 'notifications.list_open_alerts', 'inventory.get_product_detail', 'accounting.get_document_detail', 'accounting.get_receivable_summary', 'expense.get_detail', 'reimbursement.get_summary', 'reimbursement.get_detail', 'procurement.get_summary', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail', 'ledger.get_period_status', 'ledger.get_report_summary'] },
+  { agent: 'general', label: 'General Assistant', status: 'enabled', toolNames: ['company.get_current_context', 'company.list_branches', 'company.get_employee_summary', 'company.get_employee_detail', 'company.get_roles', 'company.action.preview', 'dashboard.get_business_health_summary', 'notifications.list_open_alerts', 'inventory.get_product_detail', 'accounting.get_document_detail', 'accounting.get_receivable_summary', 'expense.get_detail', 'reimbursement.get_summary', 'reimbursement.get_detail', 'procurement.get_summary', 'counterparty.search', 'counterparty.get_detail', 'counterparty.action.preview', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail', 'ledger.get_period_status', 'ledger.get_report_summary'] },
   { agent: 'inventory', label: 'Inventory Agent', status: 'enabled', toolNames: ['inventory.search_products', 'inventory.get_product_detail', 'inventory.get_stock_balance', 'inventory.list_low_stock', 'inventory.summarize_stock_movements'] },
   { agent: 'notifications', label: 'Notifications Agent', status: 'enabled', toolNames: ['notifications.list_open_alerts', 'notifications.get_daily_summary'] },
-  { agent: 'cfo', label: 'AI CFO', status: 'limited', toolNames: ['ledger.get_financial_summary', 'ledger.get_period_status', 'ledger.get_report_summary', 'dashboard.get_business_health_summary', 'accounting.get_document_detail', 'accounting.get_receivable_summary', 'expense.get_detail', 'expense.get_daily_closing', 'reimbursement.get_summary', 'reimbursement.get_detail', 'procurement.get_summary', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail'] },
+  { agent: 'cfo', label: 'AI CFO', status: 'limited', toolNames: ['ledger.get_financial_summary', 'ledger.get_period_status', 'ledger.get_report_summary', 'dashboard.get_business_health_summary', 'accounting.get_document_detail', 'accounting.get_receivable_summary', 'expense.get_detail', 'expense.get_daily_closing', 'reimbursement.get_summary', 'reimbursement.get_detail', 'procurement.get_summary', 'counterparty.search', 'counterparty.get_detail', 'counterparty.action.preview', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail'] },
   { agent: 'sales', label: 'Sales Agent', status: 'limited', toolNames: ['sales.get_sales_summary', 'crm.get_customer_summary', 'crm.search_customers', 'crm.get_customer_360', 'crm.get_report_summary', 'crm.get_pipeline_summary', 'crm.list_open_followups', 'crm.get_booking_summary', 'crm.list_bookings', 'crm.get_inbox_summary', 'crm.list_conversations', 'crm.get_conversation_summary', 'crm.suggest_sales_followups'] },
   { agent: 'crm', label: 'CRM Agent', status: 'limited', toolNames: ['crm.get_customer_summary', 'crm.search_customers', 'crm.get_customer_360', 'crm.get_report_summary', 'crm.get_pipeline_summary', 'crm.list_open_followups', 'crm.get_booking_summary', 'crm.list_bookings', 'crm.get_inbox_summary', 'crm.list_conversations', 'crm.get_conversation_summary', 'crm.suggest_sales_followups'] },
-  { agent: 'accounting', label: 'Accounting Agent', status: 'limited', toolNames: ['accounting.capture_receipt_evidence', 'accounting.get_document_detail', 'accounting.get_receivable_summary', 'expense.list_recent', 'expense.get_detail', 'expense.get_daily_closing', 'reimbursement.get_summary', 'reimbursement.get_detail', 'procurement.get_summary', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail', 'ledger.get_period_status', 'ledger.get_report_summary'] },
+  { agent: 'accounting', label: 'Accounting Agent', status: 'limited', toolNames: ['accounting.capture_receipt_evidence', 'accounting.get_document_detail', 'accounting.get_receivable_summary', 'expense.list_recent', 'expense.get_detail', 'expense.get_daily_closing', 'reimbursement.get_summary', 'reimbursement.get_detail', 'procurement.get_summary', 'counterparty.search', 'counterparty.get_detail', 'counterparty.action.preview', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail', 'ledger.get_period_status', 'ledger.get_report_summary'] },
   {
     agent: 'tax',
     label: 'Tax Agent',
@@ -113,7 +113,7 @@ export type LineAiSemanticSubrequestV2 = {
   taskRef?: { taskId: string; taskRevision: number; subrequestIndex: number };
   kind: 'read' | 'general' | 'write' | 'help' | 'public' | 'file';
   /** Typed proposal only; each API domain still validates evidence, state and mutation authority. */
-  writeIntent?: 'EXPENSE_DOCUMENT_CAPTURE' | 'EXPENSE_DRAFT_CONTINUATION' | 'EXPENSE_CAPTURE_CORRECTION' | 'SUBSTITUTE_RECEIPT_CONTINUATION' | 'REIMBURSEMENT_REQUEST_START';
+  writeIntent?: 'EXPENSE_PAYMENT_EVIDENCE_LINK' | 'EXPENSE_DOCUMENT_CAPTURE' | 'EXPENSE_DRAFT_CONTINUATION' | 'EXPENSE_CAPTURE_CORRECTION' | 'SUBSTITUTE_RECEIPT_CONTINUATION' | 'REIMBURSEMENT_REQUEST_START';
   goal: string;
   requiredEvidence: string[];
   requestedFilters: Record<string, string | number | boolean | null>;
@@ -305,6 +305,11 @@ export type LineAiConversationContext = {
    *  newest first, within `windowMinutes`. `undefined` in a group/room chat (R-M7) or when the access
    *  scope changed since — never a business-data source, understanding-only (R-M6). */
   recentReads?: LineAiReadMemory[];
+  /** References from the exact bot message quoted in this private chat; tools recheck current access. */
+  quotedRecords?: Array<{ tool: string; id: string }>;
+  /** Server-derived references from this same company/user/chat; the API still checks access. */
+  recentCapturedExpenses?: Array<{ id: string }>;
+  activeExpenseDrafts?: Array<{ expenseId: string }>;
 };
 
 /** Internal request from API to AI Gateway for one LINE turn. */
@@ -334,12 +339,16 @@ export type LineAiTurnRequest = {
   approvedKnowledge?: boolean;
   /** Exact card ids selected from the server-offered allowlist, at most five. */
   selectedKnowledgeCardIds?: string[];
+  /** Server-catalog action selected by semantic intake; navigation only, never mutation authority. */
+  howToActionId?: LineChatActionId;
   /** API-issued bounded conversational state. References only; never authority or financial facts. */
   taskProjection?: LineAiTaskProjectionV2;
   /** Explicit owner-approved style only. Current message instructions take precedence. */
   responsePreferences?: LineAiResponsePreferences;
   /** Complete, bounded semantic request inventory emitted by intake and preserved by the API. */
   semanticSubrequests?: LineAiSemanticSubrequestV2[];
+  /** Intake advice only; draft tools must prove these values against inputEvidence/candidates. */
+  reimbursementHints?: LineIntakeReimbursementHints;
   /** Read-only API context for one explicitly selected historical clause. */
   retainedTaskSource?: LineAiRetainedTaskSourceV2;
   attachments?: LineAiAttachment[];
@@ -528,7 +537,7 @@ export function parseLineAiSemanticSubrequests(value: unknown, messageText: stri
       || !Array.isArray(raw['dependsOn']) || raw['dependsOn'].length > i
       || raw['dependsOn'].some((dep) => !Number.isSafeInteger(dep) || Number(dep) < 0 || Number(dep) >= i)
       || new Set(raw['dependsOn']).size !== raw['dependsOn'].length) return undefined;
-    if (raw['writeIntent'] !== undefined && (raw['kind'] !== 'write' || !['EXPENSE_DOCUMENT_CAPTURE', 'EXPENSE_DRAFT_CONTINUATION', 'EXPENSE_CAPTURE_CORRECTION', 'SUBSTITUTE_RECEIPT_CONTINUATION', 'REIMBURSEMENT_REQUEST_START'].includes(String(raw['writeIntent'])))) return undefined;
+    if (raw['writeIntent'] !== undefined && (raw['kind'] !== 'write' || !['EXPENSE_PAYMENT_EVIDENCE_LINK', 'EXPENSE_DOCUMENT_CAPTURE', 'EXPENSE_DRAFT_CONTINUATION', 'EXPENSE_CAPTURE_CORRECTION', 'SUBSTITUTE_RECEIPT_CONTINUATION', 'REIMBURSEMENT_REQUEST_START'].includes(String(raw['writeIntent'])))) return undefined;
     let taskRef: LineAiSemanticSubrequestV2['taskRef'];
     if (raw['taskRef'] !== undefined) {
       const ref = raw['taskRef'];
@@ -575,7 +584,7 @@ function parseRetainedSemanticSubrequest(value: unknown, messageText: string, ev
     || value['dependsOn'].some((dep) => !Number.isSafeInteger(dep) || Number(dep) < 0 || Number(dep) >= Number(value['index']))
     || new Set(value['dependsOn']).size !== value['dependsOn'].length) return undefined;
   const parsed = parseLineAiSemanticSubrequests([{ ...value, index: 0, dependsOn: [] }], messageText, evidence)?.[0];
-  if (!parsed || parsed.kind !== 'write' || !parsed.writeIntent || !parsed.evidenceRefs?.length) return undefined;
+  if (!parsed || parsed.kind !== 'write' || !parsed.evidenceRefs?.length) return undefined;
   return { ...parsed, index: Number(value['index']), dependsOn: [...value['dependsOn']] as number[] };
 }
 
@@ -1026,6 +1035,7 @@ export function isReceiptOcrRetryableFailure(response: { status?: string; errorC
 // tools, create records, or approve/apply signatures.
 
 export type LineIntakeRouteIntent =
+  | 'EXPENSE_PAYMENT_EVIDENCE_LINK'
   | 'EXPENSE_DOCUMENT_CAPTURE'
   /** Answers an already-persisted LINE expense draft; never creates a second record. */
   | 'EXPENSE_DRAFT_CONTINUATION'
@@ -1051,6 +1061,7 @@ export type LineIntakeRouteIntent =
 /** Runtime mirror of {@link LineIntakeRouteIntent} (parity-tested) so bounded parsers can validate an
  *  untrusted intake-intent string by explicit membership instead of a blind cast. */
 export const LINE_INTAKE_ROUTE_INTENTS = [
+  'EXPENSE_PAYMENT_EVIDENCE_LINK',
   'EXPENSE_DOCUMENT_CAPTURE',
   'EXPENSE_DRAFT_CONTINUATION',
   'EXPENSE_CAPTURE_CORRECTION',
@@ -1207,6 +1218,7 @@ export type LineIntakeCaptureHints = {
 /** Bounded database-backed context for semantic routing only. The API reloads and authorizes it. */
 export type LineExpenseDraftRouteContext = {
   expenseId: string;
+  revision?: string;
   label: string;
   status: 'OPEN' | 'PAUSED' | 'PAUSED_INTERRUPTED' | 'INPUT_ENDED_COMPLETE' | 'INPUT_ENDED_INCOMPLETE';
   questions: Array<{ id: string; prompt: string; itemRef?: string }>;
@@ -1861,6 +1873,7 @@ export type LineIntakeRoutePlan = {
   advisorContext?: LineIntakeAdvisorContext;
   /** Exact approved-help ids selected from the server-offered allowlist, at most five. */
   selectedKnowledgeCardIds?: string[];
+  howToActionId?: LineChatActionId;
   /** Present only under the trusted `responsePreference` capability, when the user explicitly asked to remember,
    *  see or forget how answers are given to them. Model advice: the API re-parses it with
    *  `parseLineAiResponsePreferenceCommand` and runs it through the owner-bound preference commands. */
@@ -1875,6 +1888,8 @@ export type LineAiWebLink = {
 };
 
 export type LineAiAnswerCard = {
+  /** Fixed registry entry; the API rechecks current action access before offering its command. */
+  chatActionId?: LineChatActionId;
   title?: string;
   text: string;
   sourceLabels?: string[];

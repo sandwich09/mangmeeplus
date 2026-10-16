@@ -158,8 +158,8 @@ describe('item 3: whatever still cannot be bound stays honest, never a permissio
     assert.equal(coverage?.status, 'unsupported');
     assert.notEqual(coverage?.status, 'needs_user');
     assert.equal(coverage?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
-    assert.ok(!result.replyText.includes('สิทธิ์'), result.replyText);
-    assert.ok(result.replyText.includes('ดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
+    assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ/u);
+    assert.doesNotMatch(result.replyText, /ดึงข้อมูลส่วนนี้ไม่ได้/u);
   });
 });
 

@@ -250,7 +250,7 @@ export function formatCaptureAutoHandoffReply(input: CaptureAutoHandoffReplyInpu
     ...(vendor ? [`ร้าน: ${vendor}`] : []),
     `ยอดในใบเสร็จ: ${amountLabel ?? 'ยังอ่านยอดไม่ได้'}`,
     ...(input.documentTypeLabel ? [`ประเภทเอกสาร: ${input.documentTypeLabel}`] : []),
-    ...(dateLabel ? [`วันที่: ${dateLabel}`] : []),
+    `วันที่: ${dateLabel ?? 'ยังไม่มีวันที่ กรุณาระบุวันที่เอกสารค่ะ'}`,
     note,
     '',
     `✅ ตรวจสอบและยืนยันในเว็บแอป:\n${input.link}`,
@@ -265,13 +265,13 @@ export function formatCaptureAutoHandoffReply(input: CaptureAutoHandoffReplyInpu
     subject: input.documentTypeLabel === SOURCE_DOCUMENT_TYPE_LABELS.RECEIPT ? 'ข้อมูลใบเสร็จ' : 'ข้อมูลเอกสาร',
     rows: [
       ...row('ผู้ขาย / ร้านค้า', vendor),
-      ...row('วันที่เอกสาร', dateLabel),
+      ...row('วันที่เอกสาร', dateLabel ?? 'ยังไม่มีวันที่'),
       ...row('เลขเอกสาร', scrubRecordIdentifier(input.documentNumber ?? null, 40)),
       ...row('ประเภทเอกสาร', input.documentTypeLabel),
       ...row('หมวดค่าใช้จ่าย', input.categoryName?.trim()),
       ...row('ยอดรวม', amountLabel, { total: true }),
       ...row('ภาษีมูลค่าเพิ่ม', vat),
       { label: 'สถานะเอกสาร', value: EXPENSE_STATUS_LABELS[input.status as 'DRAFT' | 'NEEDS_REVIEW'], pill: 'pending' },
-    ], notes: [note],
+    ], notes: [note, ...(!dateLabel ? ['กรุณาระบุวันที่เอกสารค่ะ'] : [])],
   } };
 }

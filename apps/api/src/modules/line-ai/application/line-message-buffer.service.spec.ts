@@ -1621,3 +1621,26 @@ describe('LineMessageBufferService – an orphan replay may pass the AI credit c
     }
   });
 });
+
+it('Round 2 A: preserves a signed expense-action postback through accepted payload and fast dispatch', async () => {
+  const h = makeHarness({ debounceMs: 0 });
+  const envelope = textEnv('expense-action-confirm', 'ตรวจผลรายการค่าใช้จ่าย');
+  const control = { action: 'expense_action_confirm' as const, token: '550e8400-e29b-41d4-a716-446655440000.' + 'a'.repeat(43) };
+  if (envelope.item.kind !== 'text') assert.fail('text fixture');
+  envelope.item.expenseActionControl = control;
+  await h.service.enqueue(envelope);
+  assert.deepEqual((h.rows.get('expense-action-confirm')?.payloadJson as any)?.item?.expenseActionControl, control);
+  await sleep(20);
+  assert.deepEqual(h.executed[0]?.expenseActionControl, control);
+});
+
+it('Round 4 preserves a signed package control through durable buffering and dispatch', async () => {
+  const h = makeHarness({ debounceMs: 0 }), envelope = textEnv('package-confirm', 'ตรวจลิงก์จ่ายแพ็กเกจ');
+  const control = { action: 'package_purchase_confirm' as const, token: '550e8400-e29b-41d4-a716-446655440000.' + 'a'.repeat(43) };
+  if (envelope.item.kind !== 'text') assert.fail('text fixture');
+  envelope.item.packagePurchaseControl = control;
+  await h.service.enqueue(envelope);
+  assert.deepEqual((h.rows.get('package-confirm')?.payloadJson as any)?.item?.packagePurchaseControl, control);
+  await sleep(20);
+  assert.deepEqual(h.executed[0]?.packagePurchaseControl, control);
+});

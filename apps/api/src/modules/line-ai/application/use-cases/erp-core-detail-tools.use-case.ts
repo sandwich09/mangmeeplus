@@ -183,6 +183,7 @@ export class ExpenseGetDetailTool implements ErpReadToolPort<{ expenseId?: strin
         data: {
           id: expense.id, expenseNumber: expense.expenseNumber, status: expense.status,
           captureSource: expense.captureSource, branchId: expense.branchId,
+          vendorCounterpartyId: expense.vendorCounterpartyId ?? null,
           vendorName: expense.vendorNameSnapshot, vendorDocumentNumber: expense.vendorDocumentNumber,
           // What the record and payment cards print beside the amounts (design lock contexts 5 and 7): the
           // category's name, why a closed record was closed, and the recorded payments as a card can state

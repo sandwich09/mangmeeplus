@@ -121,7 +121,7 @@ describe('§17.5 answer table', () => {
       attempt({ ref: 'a', fileNameSanitized: 'jul.pdf' }),
       attempt({ ref: 'b', fileNameSanitized: 'aug.pdf', outcome: 'STORED_READING' }),
     ]);
-    assert.match(list, /^หมายถึงไฟล์ไหนคะ\n1\) ไฟล์ jul\.pdf · .+ · ยังไม่ได้เก็บไฟล์\n2\) ไฟล์ aug\.pdf · .+ · กำลังอ่านเอกสาร$/);
+    assert.match(list, /^หมายถึงไฟล์ไหนคะ\n• ไฟล์ jul\.pdf · .+ · ยังไม่ได้เก็บไฟล์\n• ไฟล์ aug\.pdf · .+ · กำลังอ่านเอกสาร$/);
   });
 
   it('not-found, lookup-failure and delivery-failure are three different answers', () => {

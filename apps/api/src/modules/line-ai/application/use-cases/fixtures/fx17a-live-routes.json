@@ -1,0 +1,756 @@
+{
+  "J7": [
+    {
+      "turn": 0,
+      "text": "สร้างใบเบิกยังไง",
+      "acceptedAtMs": 1792128483596,
+      "route": {
+        "status": "ROUTED",
+        "intent": "BUSINESS_READ_QUESTION",
+        "language": "th",
+        "confidence": 0.93,
+        "semanticOutcome": "AMBIGUOUS",
+        "fundingSource": "UNKNOWN",
+        "semanticSubrequests": [
+          {
+            "index": 0,
+            "kind": "help",
+            "goal": "วิธีสร้างใบเบิกค่าใช้จ่ายในระบบ",
+            "requiredEvidence": [],
+            "requestedFilters": {},
+            "toolHint": "reimbursement.get_summary",
+            "dependsOn": [],
+            "evidenceRefs": [
+              {
+                "partId": "part-0",
+                "startUtf16": 0,
+                "endUtf16": 16,
+                "rawSha256": "954c01c2de0e7448638ea41298000aac9e3acb1d074b081e751cfaf74a3cb356"
+              }
+            ]
+          }
+        ],
+        "selectedKnowledgeCardIds": [
+          "reimbursement.meaning",
+          "reimbursement.roles"
+        ],
+        "usage": [
+          {
+            "tag": "line.intake-route",
+            "modelId": "global.anthropic.claude-sonnet-4-6",
+            "ok": true,
+            "inputTokens": 2581,
+            "outputTokens": 145,
+            "cacheReadInputTokens": 16125,
+            "cacheWriteInputTokens": 5597,
+            "durationMs": 5636,
+            "usageBasis": "PROVIDER_REPORTED",
+            "invocationKey": "company-a#ecdb0e79bea01a027d0b7d719b9242adfaf696d29c02991ea7f39e5b7b849716#provider-v2#0"
+          }
+        ]
+      },
+      "tools": []
+    },
+    {
+      "turn": 1,
+      "text": "เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย",
+      "acceptedAtMs": 1792128493690,
+      "route": {
+        "status": "ROUTED",
+        "intent": "REIMBURSEMENT_REQUEST_START",
+        "language": "th",
+        "confidence": 0.92,
+        "semanticOutcome": "AMBIGUOUS",
+        "fundingSource": "UNKNOWN",
+        "reimbursementHints": {
+          "description": "ค่าน้ำมัน",
+          "amount": "350",
+          "confidence": 0.88,
+          "missingFields": [
+            "fundingSource",
+            "purpose",
+            "incurredDate"
+          ]
+        },
+        "semanticSubrequests": [
+          {
+            "index": 0,
+            "kind": "write",
+            "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+            "requiredEvidence": [],
+            "requestedFilters": {},
+            "writeIntent": "REIMBURSEMENT_REQUEST_START",
+            "dependsOn": [],
+            "evidenceRefs": [
+              {
+                "partId": "part-0",
+                "startUtf16": 0,
+                "endUtf16": 39,
+                "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+              }
+            ]
+          }
+        ],
+        "usage": [
+          {
+            "tag": "line.intake-route",
+            "modelId": "global.anthropic.claude-sonnet-4-6",
+            "ok": true,
+            "inputTokens": 3079,
+            "outputTokens": 186,
+            "cacheReadInputTokens": 21722,
+            "cacheWriteInputTokens": 0,
+            "durationMs": 5868,
+            "usageBasis": "PROVIDER_REPORTED",
+            "invocationKey": "company-a#a0ddbcab5ce762ed31b392e548dfaa5180594d28df0a26cb335fa25e2e54390d#provider-v2#0"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "name": "reimbursement.draft.get_options",
+          "input": {
+            "operation": "CREATE",
+            "subrequestIndex": 0
+          }
+        },
+        {
+          "name": "reimbursement.draft.preview_create",
+          "input": {
+            "action": {
+              "taskId": "7356189a-15a1-5cb4-8eb4-ef37d923a0b7",
+              "actionId": "350762be-683f-5697-8cf5-2db7abcba44b",
+              "operation": "CREATE"
+            },
+            "suggestedCategoryChoiceId": "f16dc6ea96c6d9aae4a12228e08d0a0587a8796fd6add1952c92a0f7618ed00f",
+            "proposal": {
+              "schemaVersion": 1,
+              "taskId": "7356189a-15a1-5cb4-8eb4-ef37d923a0b7",
+              "taskRevision": 0,
+              "operation": "CREATE",
+              "lineChanges": [
+                {
+                  "operation": "ADD",
+                  "values": {
+                    "description": {
+                      "value": "ค่าน้ำมัน",
+                      "proof": {
+                        "kind": "USER_TEXT",
+                        "refs": [
+                          {
+                            "partId": "part-0",
+                            "startUtf16": 4,
+                            "endUtf16": 13,
+                            "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+                          }
+                        ]
+                      }
+                    },
+                    "amount": {
+                      "value": "350",
+                      "proof": {
+                        "kind": "USER_TEXT",
+                        "candidateId": "1b41c5fa419783dd6c9d5b6f9a8cad2cba1a3c352436041aa54a47ccf1c77c9e",
+                        "refs": [
+                          {
+                            "partId": "part-0",
+                            "startUtf16": 14,
+                            "endUtf16": 17,
+                            "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+                          }
+                        ]
+                      }
+                    },
+                    "incurredDate": {
+                      "value": "2026-10-15",
+                      "proof": {
+                        "kind": "USER_TEXT",
+                        "candidateId": "a31089d69a308edfc15242887928b74e5a3d1d17763ca7b4d2d63c56f2b9aef3",
+                        "refs": [
+                          {
+                            "partId": "part-0",
+                            "startUtf16": 22,
+                            "endUtf16": 30,
+                            "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ],
+              "fields": {}
+            }
+          }
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "text": "ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้",
+      "acceptedAtMs": 1792128517887,
+      "route": {
+        "status": "ROUTED",
+        "intent": "REIMBURSEMENT_REQUEST_START",
+        "language": "th",
+        "confidence": 0.88,
+        "semanticOutcome": "REIMBURSEMENT_CLAIM",
+        "fundingSource": "EMPLOYEE_PAID",
+        "reimbursementHints": {
+          "description": "ค่าน้ำมัน",
+          "confidence": 0.82,
+          "missingFields": [
+            "amount",
+            "incurredDate",
+            "purpose",
+            "reason"
+          ]
+        },
+        "semanticSubrequests": [
+          {
+            "index": 0,
+            "kind": "write",
+            "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน โดยไม่มีใบเสร็จ",
+            "requiredEvidence": [],
+            "requestedFilters": {},
+            "taskRef": {
+              "taskId": "152199f813a7ca10e397dfb5086e66d1aaa684ef6017625afa9089ed2159bb78",
+              "taskRevision": 1,
+              "subrequestIndex": 0
+            },
+            "dependsOn": [],
+            "evidenceRefs": [
+              {
+                "partId": "part-0",
+                "startUtf16": 0,
+                "endUtf16": 32,
+                "rawSha256": "ab7d2c9695dd6617df905115d2c371227780db5bce109fe6333a5a2bd5ead8b0"
+              }
+            ]
+          }
+        ],
+        "usage": [
+          {
+            "tag": "line.intake-route",
+            "modelId": "global.anthropic.claude-sonnet-4-6",
+            "ok": true,
+            "inputTokens": 3224,
+            "outputTokens": 251,
+            "cacheReadInputTokens": 21722,
+            "cacheWriteInputTokens": 0,
+            "durationMs": 6227,
+            "usageBasis": "PROVIDER_REPORTED",
+            "invocationKey": "company-a#8506ee60ba1d9cc18228a93bcd00cf46f327b7429e098dbc7ba2036efadc3c79#provider-v2#0"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "name": "reimbursement.draft.get_options",
+          "input": {
+            "operation": "CREATE",
+            "subrequestIndex": 0,
+            "actionId": "350762be-683f-5697-8cf5-2db7abcba44b"
+          }
+        }
+      ]
+    }
+  ],
+  "C02": [
+    {
+      "turn": 0,
+      "text": "เบิกเงินที่สำรองจ่ายไปทำยังไง",
+      "acceptedAtMs": 1792128624064,
+      "route": {
+        "status": "ROUTED",
+        "intent": "BUSINESS_READ_QUESTION",
+        "language": "th",
+        "confidence": 0.92,
+        "semanticOutcome": "REIMBURSEMENT_CLAIM",
+        "fundingSource": "EMPLOYEE_PAID",
+        "semanticSubrequests": [
+          {
+            "index": 0,
+            "kind": "help",
+            "goal": "วิธีเบิกเงินที่สำรองจ่ายไปในระบบ",
+            "requiredEvidence": [],
+            "requestedFilters": {},
+            "toolHint": "reimbursement.get_summary",
+            "dependsOn": [],
+            "evidenceRefs": [
+              {
+                "partId": "part-0",
+                "startUtf16": 0,
+                "endUtf16": 29,
+                "rawSha256": "b6fb39c5e30738ccbe5bf59cd88d448b2bc5a7b7451e8dfae6416064bf3fe277"
+              }
+            ]
+          }
+        ],
+        "selectedKnowledgeCardIds": [
+          "reimbursement.meaning",
+          "reimbursement.roles"
+        ],
+        "usage": [
+          {
+            "tag": "line.intake-route",
+            "modelId": "global.anthropic.claude-sonnet-4-6",
+            "ok": true,
+            "inputTokens": 2611,
+            "outputTokens": 152,
+            "cacheReadInputTokens": 21722,
+            "cacheWriteInputTokens": 0,
+            "durationMs": 6359,
+            "usageBasis": "PROVIDER_REPORTED",
+            "invocationKey": "company-a#620f2c0c86d5ee2692238f5516ad316941fdb5db0dfee4bb54174fe4446b4340#provider-v2#0"
+          }
+        ]
+      },
+      "tools": []
+    },
+    {
+      "turn": 1,
+      "text": "ทำให้หน่อย เบิกค่าแท็กซี่ไปส่งเอกสารให้ลูกค้า 280 บาท เมื่อวาน",
+      "acceptedAtMs": 1792128634918,
+      "route": {
+        "status": "ROUTED",
+        "intent": "REIMBURSEMENT_REQUEST_START",
+        "language": "th",
+        "confidence": 0.93,
+        "semanticOutcome": "REIMBURSEMENT_CLAIM",
+        "fundingSource": "EMPLOYEE_PAID",
+        "reimbursementHints": {
+          "description": "ค่าแท็กซี่ไปส่งเอกสารให้ลูกค้า",
+          "businessPurpose": "ส่งเอกสารให้ลูกค้า",
+          "amount": "280",
+          "confidence": 0.93,
+          "missingFields": [
+            "incurredDate"
+          ]
+        },
+        "semanticSubrequests": [
+          {
+            "index": 0,
+            "kind": "write",
+            "goal": "สร้างใบเบิกค่าแท็กซี่ไปส่งเอกสารให้ลูกค้า 280 บาท เมื่อวาน",
+            "requiredEvidence": [],
+            "requestedFilters": {},
+            "writeIntent": "REIMBURSEMENT_REQUEST_START",
+            "dependsOn": [],
+            "evidenceRefs": [
+              {
+                "partId": "part-0",
+                "startUtf16": 0,
+                "endUtf16": 62,
+                "rawSha256": "32f3689fb0b9b9c310cd5670dc1d23f0300f8603401e02ae9bac5b4bcc612cd7"
+              }
+            ]
+          }
+        ],
+        "usage": [
+          {
+            "tag": "line.intake-route",
+            "modelId": "global.anthropic.claude-sonnet-4-6",
+            "ok": true,
+            "inputTokens": 3114,
+            "outputTokens": 252,
+            "cacheReadInputTokens": 21722,
+            "cacheWriteInputTokens": 0,
+            "durationMs": 6297,
+            "usageBasis": "PROVIDER_REPORTED",
+            "invocationKey": "company-a#fa1684ca60080c747ee0976e732456db3dfbd2366388b42515f2c8d730230a00#provider-v2#0"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "name": "reimbursement.draft.get_options",
+          "input": {
+            "operation": "CREATE",
+            "subrequestIndex": 0
+          }
+        },
+        {
+          "name": "reimbursement.draft.preview_create",
+          "input": {
+            "action": {
+              "taskId": "47a3798a-124d-5e8c-b092-aae8d99c3096",
+              "actionId": "f12aa480-8c34-5e2d-a289-ab7c15bc1125",
+              "operation": "CREATE"
+            },
+            "suggestedCategoryChoiceId": "118f8949dca6fcb125d27b5ea157865d06f323cac4c589f84340a03fedc92971",
+            "proposal": {
+              "schemaVersion": 1,
+              "taskId": "47a3798a-124d-5e8c-b092-aae8d99c3096",
+              "taskRevision": 0,
+              "operation": "CREATE",
+              "branchChoiceId": "db85bf514405faa7cd3481dcd000bf130fa2e444df6a74c427e9d1942061fdab",
+              "requesterChoiceId": "b3eaca496a9b70bf6dd80ef59493def72971bfbaded7552ac95be385a7830363",
+              "lineChanges": [
+                {
+                  "operation": "ADD",
+                  "values": {
+                    "description": {
+                      "value": "ค่าแท็กซี่ไปส่งเอกสารให้ลูกค้า",
+                      "proof": {
+                        "kind": "USER_TEXT",
+                        "refs": [
+                          {
+                            "partId": "part-0",
+                            "startUtf16": 15,
+                            "endUtf16": 45,
+                            "rawSha256": "32f3689fb0b9b9c310cd5670dc1d23f0300f8603401e02ae9bac5b4bcc612cd7"
+                          }
+                        ]
+                      }
+                    },
+                    "amount": {
+                      "value": "280",
+                      "proof": {
+                        "kind": "USER_TEXT",
+                        "candidateId": "df078421ba28d0fd3489006e94f8ee10b9d0c7a804ff9476b469d4576cc3897d",
+                        "refs": [
+                          {
+                            "partId": "part-0",
+                            "startUtf16": 46,
+                            "endUtf16": 49,
+                            "rawSha256": "32f3689fb0b9b9c310cd5670dc1d23f0300f8603401e02ae9bac5b4bcc612cd7"
+                          }
+                        ]
+                      }
+                    },
+                    "incurredDate": {
+                      "value": "2026-10-15",
+                      "proof": {
+                        "kind": "USER_TEXT",
+                        "candidateId": "fbfe0f64d0d1a50540ac9757ebc780aee924f6b0a87a0112037a708897521e35",
+                        "refs": [
+                          {
+                            "partId": "part-0",
+                            "startUtf16": 54,
+                            "endUtf16": 62,
+                            "rawSha256": "32f3689fb0b9b9c310cd5670dc1d23f0300f8603401e02ae9bac5b4bcc612cd7"
+                          }
+                        ]
+                      }
+                    },
+                    "proposedValue": {
+                      "value": "280",
+                      "proof": {
+                        "kind": "USER_TEXT",
+                        "refs": [
+                          "part-0"
+                        ],
+                        "candidateId": "df078421ba28d0fd3489006e94f8ee10b9d0c7a804ff9476b469d4576cc3897d"
+                      }
+                    }
+                  }
+                }
+              ],
+              "fields": {}
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "C03": [
+    {
+      "turn": 0,
+      "text": "อนุมัติใบเบิกของพนักงานทำยังไง",
+      "acceptedAtMs": 1792128668295,
+      "route": {
+        "status": "ROUTED",
+        "intent": "BUSINESS_READ_QUESTION",
+        "language": "th",
+        "confidence": 0.92,
+        "semanticOutcome": "AMBIGUOUS",
+        "fundingSource": "UNKNOWN",
+        "semanticSubrequests": [
+          {
+            "index": 0,
+            "kind": "help",
+            "goal": "วิธีอนุมัติใบเบิกของพนักงาน",
+            "requiredEvidence": [],
+            "requestedFilters": {},
+            "dependsOn": [],
+            "evidenceRefs": [
+              {
+                "partId": "part-0",
+                "startUtf16": 0,
+                "endUtf16": 30,
+                "rawSha256": "55c6de213911790c523f1498f9b66f876eb1022cceaefb19156f8d95d526fb7d"
+              }
+            ]
+          }
+        ],
+        "selectedKnowledgeCardIds": [
+          "reimbursement.meaning",
+          "reimbursement.roles"
+        ],
+        "usage": [
+          {
+            "tag": "line.intake-route",
+            "modelId": "global.anthropic.claude-sonnet-4-6",
+            "ok": true,
+            "inputTokens": 2785,
+            "outputTokens": 165,
+            "cacheReadInputTokens": 23000,
+            "cacheWriteInputTokens": 0,
+            "durationMs": 5160,
+            "usageBasis": "PROVIDER_REPORTED",
+            "invocationKey": "company-a#bc3d276cb9d0df7a2a05ccdd6a6c00e91a172f7a03a4fd4245b068de955837c4#provider-v2#0"
+          }
+        ]
+      },
+      "tools": []
+    },
+    {
+      "turn": 1,
+      "text": "ทำให้หน่อย อนุมัติใบเบิกที่รออนุมัติอยู่ใบแรก",
+      "acceptedAtMs": 1792128677866,
+      "route": {
+        "status": "ROUTED",
+        "intent": "MUTATION_REQUEST_REFUSAL",
+        "language": "th",
+        "confidence": 0.95,
+        "semanticOutcome": "REIMBURSEMENT_CLAIM",
+        "fundingSource": "UNKNOWN",
+        "semanticSubrequests": [
+          {
+            "index": 0,
+            "kind": "write",
+            "goal": "อนุมัติใบเบิกที่รออนุมัติอยู่ใบแรก",
+            "requiredEvidence": [],
+            "requestedFilters": {},
+            "dependsOn": [],
+            "evidenceRefs": [
+              {
+                "partId": "part-0",
+                "startUtf16": 0,
+                "endUtf16": 45,
+                "rawSha256": "88167549eca0de305e32858e2fb560ce595015e1c9bd46c76f9ab71387e860f4"
+              }
+            ]
+          }
+        ],
+        "usage": [
+          {
+            "tag": "line.intake-route",
+            "modelId": "global.anthropic.claude-sonnet-4-6",
+            "ok": true,
+            "inputTokens": 2931,
+            "outputTokens": 117,
+            "cacheReadInputTokens": 23000,
+            "cacheWriteInputTokens": 0,
+            "durationMs": 4084,
+            "usageBasis": "PROVIDER_REPORTED",
+            "invocationKey": "company-a#f65450af573c2f226bc5ca8a7c946b2141f4a97a214166b3749061bd2fd05d2c#provider-v2#0"
+          }
+        ]
+      },
+      "tools": []
+    },
+    {
+      "turn": 2,
+      "text": "ใบเบิกอีกใบที่รออนุมัติ ปฏิเสธไป เหตุผล ไม่มีใบเสร็จแนบ",
+      "acceptedAtMs": 1792128686341,
+      "route": {
+        "status": "ROUTED",
+        "intent": "MUTATION_REQUEST_REFUSAL",
+        "language": "th",
+        "confidence": 0.93,
+        "semanticOutcome": "REIMBURSEMENT_CLAIM",
+        "fundingSource": "UNKNOWN",
+        "semanticSubrequests": [
+          {
+            "index": 0,
+            "kind": "write",
+            "goal": "ปฏิเสธใบเบิกที่รออนุมัติอีกใบ เหตุผล ไม่มีใบเสร็จแนบ",
+            "requiredEvidence": [],
+            "requestedFilters": {},
+            "dependsOn": [],
+            "evidenceRefs": [
+              {
+                "partId": "part-0",
+                "startUtf16": 0,
+                "endUtf16": 55,
+                "rawSha256": "26a7667bfc8e16922dca2c227ad90a16dc0a4dfda4a27969f78eb2c47505981f"
+              }
+            ]
+          }
+        ],
+        "usage": [
+          {
+            "tag": "line.intake-route",
+            "modelId": "global.anthropic.claude-sonnet-4-6",
+            "ok": true,
+            "inputTokens": 3201,
+            "outputTokens": 138,
+            "cacheReadInputTokens": 23000,
+            "cacheWriteInputTokens": 0,
+            "durationMs": 4068,
+            "usageBasis": "PROVIDER_REPORTED",
+            "invocationKey": "company-a#e26dd0dca63243937d5e3801a21b7a7231ff79e837a0012e5229917b41193cb6#provider-v2#0"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "name": "reimbursement.list_pending_approvals",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "text": "ใบเบิกที่อนุมัติแล้ว จ่ายเงินคืนให้พนักงานเลย โอนไปแล้ววันนี้",
+      "acceptedAtMs": 1792128703959,
+      "route": {
+        "status": "ROUTED",
+        "intent": "MUTATION_REQUEST_REFUSAL",
+        "language": "th",
+        "confidence": 0.95,
+        "semanticOutcome": "REIMBURSEMENT_CLAIM",
+        "fundingSource": "EMPLOYEE_PAID",
+        "semanticSubrequests": [
+          {
+            "index": 0,
+            "kind": "write",
+            "goal": "บันทึกการจ่ายเงินคืนพนักงานสำหรับใบเบิกที่อนุมัติแล้ว",
+            "requiredEvidence": [],
+            "requestedFilters": {},
+            "dependsOn": [],
+            "evidenceRefs": [
+              {
+                "partId": "part-0",
+                "startUtf16": 0,
+                "endUtf16": 61,
+                "rawSha256": "b5ee137c82ebe23f4c2f6d336639b66f4cebdf1a0889355c5333b9935dd4b5ce"
+              }
+            ]
+          }
+        ],
+        "usage": [
+          {
+            "tag": "line.intake-route",
+            "modelId": "global.anthropic.claude-sonnet-4-6",
+            "ok": true,
+            "inputTokens": 3777,
+            "outputTokens": 135,
+            "cacheReadInputTokens": 23000,
+            "cacheWriteInputTokens": 0,
+            "durationMs": 4086,
+            "usageBasis": "PROVIDER_REPORTED",
+            "invocationKey": "company-a#88155382c305f95f1f5147e4ce8648da387a2db61051d93edc658e10915eb37c#provider-v2#0"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "name": "reimbursement.get_approval_backlog",
+          "input": {}
+        }
+      ]
+    }
+  ],
+  "C12": [
+    {
+      "turn": 0,
+      "text": "ตั้งค่าว่าใครเป็นคนอนุมัติใบเบิกทำยังไง",
+      "acceptedAtMs": 1792129085064,
+      "route": {
+        "status": "ROUTED",
+        "intent": "BUSINESS_READ_QUESTION",
+        "language": "th",
+        "confidence": 0.88,
+        "semanticOutcome": "AMBIGUOUS",
+        "fundingSource": "UNKNOWN",
+        "semanticSubrequests": [
+          {
+            "index": 0,
+            "kind": "help",
+            "goal": "ตั้งค่าผู้อนุมัติใบเบิกทำยังไง",
+            "requiredEvidence": [],
+            "requestedFilters": {},
+            "toolHint": "company.get_roles",
+            "dependsOn": [],
+            "evidenceRefs": [
+              {
+                "partId": "part-0",
+                "startUtf16": 0,
+                "endUtf16": 39,
+                "rawSha256": "538de3d3f2a72a60b1e5fa34d5cdb5f5334334c40715b1a601f9557829da4fe3"
+              }
+            ]
+          }
+        ],
+        "selectedKnowledgeCardIds": [
+          "reimbursement.meaning",
+          "reimbursement.roles"
+        ],
+        "usage": [
+          {
+            "tag": "line.intake-route",
+            "modelId": "global.anthropic.claude-sonnet-4-6",
+            "ok": true,
+            "inputTokens": 3363,
+            "outputTokens": 175,
+            "cacheReadInputTokens": 23000,
+            "cacheWriteInputTokens": 0,
+            "durationMs": 5175,
+            "usageBasis": "PROVIDER_REPORTED",
+            "invocationKey": "company-a#cc3c80abff5ab331a39fe88155c7242c389fbaddbe48e80f9e3e6fc8ac12c320#provider-v2#0"
+          }
+        ]
+      },
+      "tools": []
+    },
+    {
+      "turn": 1,
+      "text": "ทำให้หน่อย ให้ผู้จัดการอนุมัติใบเบิกได้ด้วย ไม่ต้องรอฉันคนเดียว",
+      "acceptedAtMs": 1792129094712,
+      "route": {
+        "status": "ROUTED",
+        "intent": "MUTATION_REQUEST_REFUSAL",
+        "language": "th",
+        "confidence": 0.82,
+        "semanticOutcome": "AMBIGUOUS",
+        "fundingSource": "UNKNOWN",
+        "semanticSubrequests": [
+          {
+            "index": 0,
+            "kind": "write",
+            "goal": "ตั้งค่าให้ผู้จัดการอนุมัติใบเบิกได้ด้วย ไม่ต้องรอผู้ใช้คนเดียว",
+            "requiredEvidence": [],
+            "requestedFilters": {},
+            "dependsOn": [],
+            "evidenceRefs": [
+              {
+                "partId": "part-0",
+                "startUtf16": 0,
+                "endUtf16": 63,
+                "rawSha256": "cc3fd76d2ae7bd5eb167cb41469fcb9529007833f6e9beed932c04cbeade4be7"
+              }
+            ]
+          }
+        ],
+        "usage": [
+          {
+            "tag": "line.intake-route",
+            "modelId": "global.anthropic.claude-sonnet-4-6",
+            "ok": true,
+            "inputTokens": 3523,
+            "outputTokens": 141,
+            "cacheReadInputTokens": 23000,
+            "cacheWriteInputTokens": 0,
+            "durationMs": 4430,
+            "usageBasis": "PROVIDER_REPORTED",
+            "invocationKey": "company-a#264bf68fd83660f6733160eb3aab5f7f8f9c1581a006db9fd0de52f216764cf9#provider-v2#0"
+          }
+        ]
+      },
+      "tools": []
+    }
+  ]
+}

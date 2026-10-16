@@ -18,6 +18,24 @@ import {
 
 const TODAY = '2026-07-07';
 
+describe('bank-slip date headers (OCR-A benchmark)', () => {
+  for (const [text, span, isoDate] of [
+    ['16 ก.ย. 69 14:10 น.', '16 ก.ย. 69', '2026-09-16'],
+    ['13 ต.ค. 69 - 18:45', '13 ต.ค. 69', '2026-10-13'],
+    ['15 ส.ค. 69 - 17:59', '15 ส.ค. 69', '2026-08-15'],
+    ['28 Sep 2026 19:26', '28 Sep 2026', '2026-09-28'],
+    ['28 Sep 26 19:26', '28 Sep 26', '2026-09-28'],
+    ['Total 60 Aug 23 26', 'Aug 23 26', '2026-08-23'],
+  ]) {
+    it(`preserves the printed date before the time: ${text}`, () => {
+      const candidates = extractValueCandidates(text!, '2026-10-15', { documentContext: 'receipt' }).dates;
+      assert.deepEqual([...new Set(candidates.map((candidate) => candidate.isoDate))], [isoDate]);
+      assert.ok(candidates.every((candidate) => candidate.span.trim() === span));
+      assert.ok(candidates.every((candidate) => !isAmbiguousDateCandidate(candidate)));
+    });
+  }
+});
+
 describe('mapThaiDigits', () => {
   it('maps ๐-๙ one-to-one preserving indices', () => {
     assert.equal(mapThaiDigits('บิล ๖๐.๕๐'), 'บิล 60.50');
@@ -83,6 +101,17 @@ describe('extractValueCandidates – amounts (golden set)', () => {
 });
 
 describe('extractValueCandidates – dates (golden set)', () => {
+  it('grounds spoken months only between a day and year without duplicating full names (A1)', () => {
+    for (const text of ['วันที่ 10 ตุลา 2569', '10 ตุลา 69', '10 ตุลาคม 2569', '10 ตุลาคม 69']) {
+      const { dates, amounts } = extractValueCandidates(text, '2026-10-15');
+      assert.deepEqual(dates.map(date => date.isoDate), ['2026-10-10'], text);
+      assert.equal(isAmbiguousDateCandidate(dates[0]!), false, text);
+      assert.deepEqual(amounts, [], 'date digits never become money');
+    }
+    for (const text of ['ให้มีนา 500 บาท', 'มีนา 2569', '10 มีนารัตน์ 2569', '10 ตุลาการ 2569', '10 ตุลา', '10 ตุลา 25690']) {
+      assert.deepEqual(extractValueCandidates(text, '2026-10-15').dates, [], text);
+    }
+  });
   it('9/12/2537 → 1994-12-09 with พ.ศ. read + order assumption', () => {
     const { dates } = extractValueCandidates('บันทึกบิล 9/12/2537', TODAY);
     assert.equal(dates.length, 1);

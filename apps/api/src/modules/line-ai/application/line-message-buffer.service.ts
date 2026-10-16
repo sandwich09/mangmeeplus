@@ -61,7 +61,12 @@ export type LineBufferIncomingItem =
       replyToken: string;
       text: string;
       /** Exact preview id from a validated confirm/cancel postback; synthetic command text stays unchanged. */
+      packagePurchaseControl?: import('./line-package-purchase.service').PackagePurchaseControl;
+      quotedMessageId?: string;
+      counterpartyControl?: import('./line-counterparty.service').CounterpartyControl;
+      expenseActionControl?: import('./line-expense-action.service').ExpenseActionControl;
       draftUpdatePreviewId?: string;
+      reimbursementChoiceControl?: import('./line-reimbursement-draft.service').LineReimbursementChoiceControl;
       reimbursementDraftControl?: import('./line-reimbursement-draft.service').LineReimbursementDraftControl;
   answerDeliveryControl?: import('../domain/logic/line-delivery-plan.logic').LineAnswerDeliveryControl;
       /** API-owned replay snapshot; never populated from LINE webhook JSON. */
@@ -459,7 +464,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
 
     const incoming = envelope.item;
     const lineCommand = incoming.kind === 'text'
-      && (incoming.inputEvidence || incoming.reimbursementDraftControl || incoming.answerDeliveryControl || parseLineCompanyCommand(incoming.text) || staffMenuCommand(incoming.text));
+      && (incoming.inputEvidence || incoming.counterpartyControl || incoming.quotedMessageId || incoming.packagePurchaseControl || incoming.expenseActionControl || incoming.reimbursementDraftControl || incoming.reimbursementChoiceControl || incoming.answerDeliveryControl || parseLineCompanyCommand(incoming.text) || staffMenuCommand(incoming.text));
     const kind = lineCommand ? 'command' : incoming.kind;
     const item = {
       ...incoming,
@@ -1038,8 +1043,13 @@ export class LineMessageBufferService implements OnModuleDestroy {
       const payload = { chatId: state.chatId, lineUserId: state.lineUserId, messagingChannelId: state.messagingChannelId, channelKind: state.channelKind,
         item: { kind: 'text', webhookEventId: last.webhookEventId, replyToken: last.replyToken,
           text: joinGroupText(textItems), timestamp: last.timestamp, lineMessageId: last.lineMessageId,
+          ...(last.quotedMessageId ? { quotedMessageId: last.quotedMessageId } : {}),
+          ...(last.counterpartyControl ? { counterpartyControl: last.counterpartyControl } : {}),
+          ...(last.packagePurchaseControl ? { packagePurchaseControl: last.packagePurchaseControl } : {}),
+          ...(last.expenseActionControl ? { expenseActionControl: last.expenseActionControl } : {}),
           ...(last.draftUpdatePreviewId ? { draftUpdatePreviewId: last.draftUpdatePreviewId } : {}),
           ...(last.answerDeliveryControl ? { answerDeliveryControl: last.answerDeliveryControl } : {}),
+          ...(last.reimbursementChoiceControl ? { reimbursementChoiceControl: last.reimbursementChoiceControl } : {}),
           ...(last.reimbursementDraftControl ? { reimbursementDraftControl: last.reimbursementDraftControl } : {}),
           inputEvidence: evidence.inputEvidence } };
       await this.prisma.client.$transaction(async tx => {
@@ -1060,9 +1070,14 @@ export class LineMessageBufferService implements OnModuleDestroy {
       messageText: joinGroupText(textItems),
       messagingChannelId: state.messagingChannelId, channelKind: state.channelKind,
       lineMessageId: last.lineMessageId,
+          ...(last.quotedMessageId ? { quotedMessageId: last.quotedMessageId } : {}),
+          ...(last.counterpartyControl ? { counterpartyControl: last.counterpartyControl } : {}),
       pushTargetId: state.chatId,
-      ...(last.draftUpdatePreviewId ? { draftUpdatePreviewId: last.draftUpdatePreviewId } : {}),
+      ...(last.packagePurchaseControl ? { packagePurchaseControl: last.packagePurchaseControl } : {}),
+      ...(last.expenseActionControl ? { expenseActionControl: last.expenseActionControl } : {}),
+          ...(last.draftUpdatePreviewId ? { draftUpdatePreviewId: last.draftUpdatePreviewId } : {}),
       ...(last.answerDeliveryControl ? { answerDeliveryControl: last.answerDeliveryControl } : {}),
+          ...(last.reimbursementChoiceControl ? { reimbursementChoiceControl: last.reimbursementChoiceControl } : {}),
           ...(last.reimbursementDraftControl ? { reimbursementDraftControl: last.reimbursementDraftControl } : {}),
       // A turn that carries a replayed, already-accepted message is still owed its answer.
       ...(textItems.some((item) => item.admitOverCap) ? { admitOverCap: true as const } : {}),

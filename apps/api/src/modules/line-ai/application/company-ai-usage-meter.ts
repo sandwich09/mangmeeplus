@@ -684,13 +684,16 @@ export async function recordCompanyAiUsage(
       // console says UNKNOWN instead of inferring a bucket from a tag or a peer row.
       requestKind: meta.requestKind ?? null,
       budgetBucket: meta.budgetBucket ?? null,
-      usageBasis: normalizeUsageBasis((entry as { usageBasis?: unknown }).usageBasis),
+      usageBasis: entry.ok === false ? 'COMPANY_ABSORBED' : normalizeUsageBasis((entry as { usageBasis?: unknown }).usageBasis),
       eventKind: 'MODEL_CALL',
-      pricingSnapshot: buildPricingSnapshot(entry, fx.rate, costSatang),
+      pricingSnapshot: { ...buildPricingSnapshot(entry, fx.rate, costSatang),
+        ...(entry.ok === false ? { providerUsageBasis: normalizeUsageBasis(entry.usageBasis),
+          ...(typeof entry.errorCode === 'string' ? { errorCode: entry.errorCode.slice(0, 64) } : {}) } : {}) },
     };
   });
 
-  const delta = rows.reduce(
+  const chargeable = rows.filter((row) => row.ok !== false);
+  const delta = chargeable.reduce(
     (acc, row) => ({
       costSatang: acc.costSatang + row.costSatang,
       inputTokens: acc.inputTokens + row.inputTokens,
@@ -703,6 +706,7 @@ export async function recordCompanyAiUsage(
 
   const post = await prisma.client.$transaction(async (tx: any) => {
     await tx.aiUsageEvent.createMany({ data: rows });
+    if (chargeable.length === 0) return undefined;
     // Row order is FIXED across every writer of these two aggregates (this function,
     // `settleAiBudgetStep` and `recordCompanyAiCostAdjustment`): the MONTH row first, then the
     // bucket rows in CHAT-before-OCR order. This function holds no `ai-budget:` lock, so for one
@@ -711,10 +715,10 @@ export async function recordCompanyAiUsage(
     // LOST (a warn, not a retry), which is exactly the "usage หาย" failure of spec §12.6.
     const aggregate = await tx.companyAiMonthlyUsage.upsert({
       where: { companyId_monthKey: { companyId: meta.companyId, monthKey } },
-      create: { companyId: meta.companyId, monthKey, callCount: rows.length, ...delta },
+      create: { companyId: meta.companyId, monthKey, callCount: chargeable.length, ...delta },
       update: {
         costSatang: { increment: delta.costSatang },
-        callCount: { increment: rows.length },
+        callCount: { increment: chargeable.length },
         inputTokens: { increment: delta.inputTokens },
         outputTokens: { increment: delta.outputTokens },
         cacheReadInputTokens: { increment: delta.cacheReadInputTokens },
@@ -726,11 +730,12 @@ export async function recordCompanyAiUsage(
     // activation and the admin console then read one aggregate instead of re-deriving bucket spend.
     // An unknown bucket belongs to neither — it still counts against the total and is never guessed.
     if (meta.budgetBucket) {
-      await upsertBucketUsage(tx, meta.companyId, monthKey, meta.budgetBucket, delta.costSatang, rows.length);
+      await upsertBucketUsage(tx, meta.companyId, monthKey, meta.budgetBucket, delta.costSatang, chargeable.length);
     }
     return aggregate;
   });
 
+  if (!post) return undefined;
   const spend = { pre: post.costSatang - delta.costSatang, post: post.costSatang };
 
   // 80% crossing, exactly once per company-month: the unique aggregate row serializes
@@ -837,6 +842,11 @@ function applyCompanyAiCostAdjustment(
     });
     if (!original || original.eventKind !== 'MODEL_CALL') return 'unknown-event';
     const { eventKind: _eventKind, ...carried } = original;
+    if (original.usageBasis === 'COMPANY_ABSORBED') {
+      await tx.aiUsageEvent.create({ data: { ...carried, ...delta, eventKind: 'COST_ADJUSTMENT',
+        adjustsEventId: adjustment.eventId, correctionKey: adjustment.correctionKey } });
+      return 'applied';
+    }
     // Guard inside the WHERE: a negative delta may only apply while every total stays >= 0.
     const moved = await tx.companyAiMonthlyUsage.updateMany({
       where: {

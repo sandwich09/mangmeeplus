@@ -195,6 +195,8 @@ export type ExpenseCaptureGroupDetailDto = ExpenseCaptureGroupDto & {
 export type ExpenseCaptureChunkKind = 'pdf' | 'image' | 'tiles';
 
 export type ExpenseCaptureReadChunk = {
+  /** Original media kind, retained when a PDF page is rasterised. */
+  sourceMimeType?: string;
   id: string;
   kind: ExpenseCaptureChunkKind;
   mimeType: string;
@@ -299,7 +301,7 @@ export type ExpenseCaptureDocumentObservation = {
   pageIndexes: number[];
   kind: BusinessDocumentKind;
   family: BusinessDocumentFamily;
-  issuer: { name?: string; taxId?: string; branchCode?: string; storefront?: string; platform?: string };
+  issuer: { name?: string; taxId?: string; branchCode?: string; address?: string; storefront?: string; platform?: string };
   buyer?: { name?: string; taxId?: string };
   documentNumber?: string;
   documentDate?: string;
@@ -421,7 +423,7 @@ export type ExpenseCaptureDocumentReconciliation = {
   status: 'reconciled' | 'mismatch' | 'insufficient';
   /** The printed `document_total`, when the read found one. */
   documentTotal?: string;
-  /** `Σ sale − Σ void − Σ applied_discount + Σ charge`, absent when nothing could be summed. */
+  /** `Σ sale − Σ void − Σ applied_discount + Σ charge + printed additional VAT`, absent when nothing could be summed. */
   computedTotal?: string;
   difference?: string;
   /** A printed `page n of m` says the file is missing pages the reader never saw (§16.8). */

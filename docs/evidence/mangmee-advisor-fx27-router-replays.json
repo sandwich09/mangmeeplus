@@ -1,0 +1,412 @@
+{
+  "E02": {
+    "source": "ondev-fx26/E02",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvb4nhgv-8-e21269f2",
+          "replyToken": "rt-d15e9e37-6cb8-47d5-92c1-65cbbefdc4e1",
+          "message": {
+            "type": "text",
+            "id": "m17921648046559",
+            "text": "ช่วยแก้ยอดรายการร้านทดสอบฟู้ดส์เมื่อกี้เป็น 600 บาทหน่อย",
+            "quoteToken": "6f91c09d36be9b93"
+          },
+          "timestamp": 1792164804655,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_CAPTURE_CORRECTION",
+      "language": "th",
+      "confidence": 0.91,
+      "correctionHints": {
+        "amount": {
+          "to": "600"
+        },
+        "vendorName": {
+          "to": "ร้านทดสอบฟู้ดส์"
+        },
+        "confidence": 0.88,
+        "missingFields": [
+          "targetExpenseId"
+        ]
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "แก้ไขยอดรายการร้านทดสอบฟู้ดส์ที่เพิ่งบันทึกเป็น 600 บาท",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 56,
+              "rawSha256": "e01e02a94b2ae9e96970ff32fa2ff563d4bbd94b498a917cad7872a21467a168"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4115,
+          "outputTokens": 196,
+          "cacheReadInputTokens": 23232,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 5012,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#a1806d1f374ddbc43c446f7907c1d026ba0b3b8c1b6b2eb1818fe2c0924e83a7#provider-v2#0"
+        }
+      ]
+    }
+  },
+  "C05_failing": {
+    "source": "ondev-fx26/C05",
+    "body": {
+      "destination": "channel-b",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvb4ekl0-1-8cef3ddc",
+          "replyToken": "rt-9572c693-6435-42d9-b85d-d467d4191cd7",
+          "message": {
+            "type": "text",
+            "id": "m17921643887882",
+            "text": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+            "quoteToken": "b3a0bf2d5f17a289"
+          },
+          "timestamp": 1792164388788,
+          "source": {
+            "type": "user",
+            "userId": "U934d37230d738f94d66cc71c8988e972"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.82,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าใช้จ่ายจ้างทำป้ายหน้าร้าน 10,000 บาท พร้อมข้อมูล WHT 3% และข้อมูลผู้รับเงิน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "บันทึก/อัปเดตข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด เลขผู้เสียภาษีและที่อยู่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 99,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "write",
+          "goal": "ออกใบรับรองหัก ณ ที่จ่าย 50 ทวิ สำหรับการจ้าง บริษัท ป้ายสวย จำกัด",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 62,
+              "endUtf16": 98,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4665,
+          "outputTokens": 480,
+          "cacheReadInputTokens": 23577,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 12659,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-b#6c05295040afbd4767a3257fc5ea75033f6997ff8a6b39c0acb8c0b0fb0d74f9#provider-v2#0"
+        }
+      ]
+    }
+  },
+  "C05_passing": {
+    "source": "ondev/C05",
+    "body": {
+      "destination": "channel-b",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvb2dck7-1-9854d7eb",
+          "replyToken": "rt-23a37cba-45f6-45e0-b917-a9ee34c2d99d",
+          "message": {
+            "type": "text",
+            "id": "m17921609725032",
+            "text": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+            "quoteToken": "30ebea4b10cb308e"
+          },
+          "timestamp": 1792160972503,
+          "source": {
+            "type": "user",
+            "userId": "U934d37230d738f94d66cc71c8988e972"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.82,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "sourceDocumentLanguage": "th",
+        "vendorName": "บริษัท ป้ายสวย จำกัด",
+        "description": "ทำป้ายหน้าร้าน",
+        "expenseDate": "2026-10-16",
+        "amount": "10000",
+        "expenseCategoryId": "category-b-other",
+        "items": [
+          {
+            "sourceText": "ทำป้ายหน้าร้าน 10,000 บาท",
+            "description": "ทำป้ายหน้าร้าน",
+            "quantity": "1",
+            "unitPrice": "10000",
+            "totalAmount": "10000",
+            "taxTreatment": "WHT 3% (ค่าจ้างทำของ)",
+            "accountingClass": "OPEX",
+            "itemBehavior": "SERVICE",
+            "confidence": 0.8,
+            "missingFields": []
+          }
+        ],
+        "vatMode": "NEEDS_REVIEW",
+        "confidence": 0.75,
+        "missingFields": [
+          "vatMode",
+          "documentNumber"
+        ]
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าใช้จ่ายจ้างทำป้ายหน้าร้าน พร้อมข้อมูลผู้ขายและ WHT 3%",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "บันทึกหรืออัปเดตข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด พร้อมเลขผู้เสียภาษีและที่อยู่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4665,
+          "outputTokens": 495,
+          "cacheReadInputTokens": 23577,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 11031,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-b#de2f5bc13b859763dc17a0d52e3afd2c835918e81d8eee0e4afa330029d257cf#provider-v2#0"
+        }
+      ]
+    }
+  },
+  "C05_earlier": {
+    "source": "after-fx24/C05",
+    "body": {
+      "destination": "channel-b",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvb13c83-1-e1ccc977",
+          "replyToken": "rt-83db52b5-af16-4021-9027-fef28cc49c2c",
+          "message": {
+            "type": "text",
+            "id": "m17921588258912",
+            "text": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+            "quoteToken": "1a700569777ddbc1"
+          },
+          "timestamp": 1792158825891,
+          "source": {
+            "type": "user",
+            "userId": "U934d37230d738f94d66cc71c8988e972"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.82,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "sourceDocumentLanguage": "th",
+        "vendorName": "บริษัท ป้ายสวย จำกัด",
+        "description": "ทำป้ายหน้าร้าน",
+        "amount": "10000",
+        "expenseCategoryId": "category-b-service",
+        "confidence": 0.78,
+        "missingFields": [
+          "expenseDate",
+          "documentNumber"
+        ]
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าจ้างทำป้ายหน้าร้าน บริษัท ป้ายสวย จำกัด 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนวันนี้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "บันทึก/อัปเดตข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด เลขผู้เสียภาษี ที่อยู่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 99,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "read",
+          "goal": "คำนวณหัก ณ ที่จ่าย 3% จากยอด 10,000 บาท สำหรับบริษัท ป้ายสวย จำกัด",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "toolHint": "wht.calculate_withholding",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 62,
+              "endUtf16": 78,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4701,
+          "outputTokens": 567,
+          "cacheReadInputTokens": 23577,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 12319,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-b#8a17b221749c9696ae5fb68808a07297b36afb543d26ba6bd3e7f32068a993d0#provider-v2#0"
+        }
+      ]
+    }
+  }
+}

@@ -82,10 +82,8 @@ export class IssueWhtCertificateFromHandoffUseCase {
     };
   }
 
-  async execute(ctx: RequestContext, handoffId: string, paymentId?: string) {
-    let row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
-    row = await paymentHandoff(this.taxRepo.prisma.client, ctx.companyId, row, paymentId);
-    handoffId = row.id;
+  async previewLineAction(ctx: RequestContext, handoffId: string, address?: string, paymentId?: string) {
+    const row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
     // Mutually exclusive with `linkExternal` (spec §4.1): the operator picks one path. Checked here
     // for a fast, clear answer; the transaction's own conditional `updateMany` below is the actual
     // race fence against a concurrent `linkExternal` or a second identical mint.
@@ -116,10 +114,21 @@ export class IssueWhtCertificateFromHandoffUseCase {
     const payer = whtPayerIdentity(prefill.payerSnapshot, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
     if (payer.missing.length) throw new ConflictException({ code: 'wht_payer_identity_missing', message: whtPayerIdentityMissingMessage(payer.missing), payerMissing: payer.missing });
 
-    const payeeAddress = whtPayeeAddress(row.payeeAddress, prefill.payeeSnapshot.address);
+    const payeeAddress = whtPayeeAddress(address ?? row.payeeAddress, prefill.payeeSnapshot.address);
     if (!payeeAddress) throw new ConflictException({
       code: 'wht_handoff_payee_address_missing', message: WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE,
     });
+
+    return { row, prefill: { ...prefill, formType: prefill.formType, incomeCategoryCode: prefill.incomeCategoryCode, incomeCategoryName: prefill.incomeCategoryName, whtRate: prefill.whtRate }, payer, payeeAddress };
+  }
+
+  async execute(ctx: RequestContext, handoffId: string, paymentId?: string, expectedUpdatedAt?: string) {
+    const initial = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
+    if (expectedUpdatedAt && initial.updatedAt.toISOString() !== expectedUpdatedAt) throw new ConflictException({ code: 'wht_handoff_changed', message: HANDOFF_CHANGED_MESSAGE });
+    const selected = await paymentHandoff(this.taxRepo.prisma.client, ctx.companyId, initial, paymentId);
+    handoffId = selected.id;
+    const { row, prefill, payer, payeeAddress } = await this.previewLineAction(ctx, handoffId, undefined, paymentId);
+    if (expectedUpdatedAt && row.updatedAt.toISOString() !== expectedUpdatedAt) throw new ConflictException({ code: 'wht_handoff_changed', message: HANDOFF_CHANGED_MESSAGE });
 
     // Finding 8a's concrete answer: find-or-create the period the same way every sync-tax-events
     // loop already does, instead of requiring a prior `POST tax/sync`.
@@ -173,7 +182,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
       if (JSON.stringify(currentPayment) !== JSON.stringify(prefill)) throw new ConflictException({ code: 'expense_wht_source_changed', message: expenseCorrectionBlockerMessage('not_confirmed') });
       await tx.$executeRaw`SELECT id FROM "WhtCertificateHandoff" WHERE id = ${row.id} AND "companyId" = ${ctx.companyId} FOR UPDATE`;
       const current = await tx.whtCertificateHandoff.findUnique({ where: { id: row.id } });
-      if (current?.status !== 'REQUIRED' || current.prefillSnapshotHash !== row.prefillSnapshotHash || (current.certificateRound ?? 0) !== (row.certificateRound ?? 0)) {
+      if (expectedUpdatedAt && current?.updatedAt.toISOString() !== expectedUpdatedAt || current?.status !== 'REQUIRED' || current.prefillSnapshotHash !== row.prefillSnapshotHash || (current.certificateRound ?? 0) !== (row.certificateRound ?? 0)) {
         throw new ConflictException({ code: 'wht_handoff_not_issuable', message: HANDOFF_CHANGED_MESSAGE });
       }
       const cancellations = await tx.whtCertificateHistory.findMany({

@@ -124,9 +124,9 @@ const SUBSTITUTE_NOUN_TH = ['ใบรับรอง', 'ใบแทนใบ�
 // "ลงชื่อ" also means signing in (ลงชื่อเข้าใช้), so it counts only beside the document's own name.
 const SIGN_VERB_TH = ['เซ็น', 'ลงนาม', 'ลงลายมือชื่อ'];
 
-// Spec §11: gateway never sends/approves/pays on the user's behalf. The final mutation always
-// happens on the web app, never over LINE — regardless of whether this actor may do it at all.
-const LINE_ACTION_RULES: readonly LineActionRule[] = [
+// Owner 2026-10-16: supported actions prepare signed cards; existing use-cases authorize the final button.
+// Substitute receipt signatures and approvals still require the complete web document.
+export const LINE_ACTION_RULES: readonly LineActionRule[] = [
   { noun: REIMBURSEMENT_NOUN_TH, verb: ['อนุมัติ'], permission: 'reimbursement.approve', actionLabelTh: 'อนุมัติใบเบิก', page: 'reimbursements' },
   { noun: REIMBURSEMENT_NOUN_TH, verb: ['ปฏิเสธ', 'ไม่อนุมัติ'], permission: 'reimbursement.reject', actionLabelTh: 'ปฏิเสธใบเบิก', page: 'reimbursements' },
   { noun: REIMBURSEMENT_NOUN_TH, verb: ['จ่าย', 'โอนเงิน', 'ชำระเงิน'], permission: 'reimbursement.payment.record', actionLabelTh: 'จ่ายใบเบิก', page: 'reimbursements' },
@@ -176,9 +176,13 @@ function withoutStatePhrases(text: string): string {
   return STATE_PHRASES_TH.reduce((withoutPhrase, phrase) => withoutPhrase.split(phrase).join(''), text);
 }
 
-function lineActionRuleFor(text: string): LineActionRule | undefined {
-  if (includesAny(text, STATUS_QUESTION_MARKERS_TH)) return undefined;
-  const requested = includesAny(text, REQUEST_MARKERS_TH);
+export function isApprovalSettingsRequest(text: string): boolean {
+  return /ใบเบิก|เบิกจ่าย|คำขอเบิก/u.test(text) && /ตั้งค่า|ตั้ง.*ให้|ผู้อนุมัติ|ใครอนุมัติ|ให้ผู้จัดการอนุมัติ.*ได้/u.test(text);
+}
+
+export function lineActionRuleFor(text: string): LineActionRule | undefined {
+  if (isApprovalSettingsRequest(text) || includesAny(text, STATUS_QUESTION_MARKERS_TH)) return undefined;
+  const requested = includesAny(text, REQUEST_MARKERS_TH) || /^(?:อนุมัติ|ปฏิเสธ|ไม่อนุมัติ|ยืนยัน|ยกเลิก)/u.test(text.trim());
   const verbCheckText = withoutStatePhrases(text);
   return LINE_ACTION_RULES.find((rule) => (requested || rule.imperative && rule.verb.some((verb) => text.trim().startsWith(verb)))
     && (rule.noun.length ? includesAny(text, rule.noun) : !includesAny(text, OTHER_DOCUMENT_NOUN_TH))
@@ -194,13 +198,20 @@ export function lineActionBoundaryReplyText(text: string, permissions: readonly 
   const pageLabelTh = { reimbursements: 'ใบเบิก', expenses: 'รายจ่าย', 'substitute-receipts': 'ใบรับรองแทนใบเสร็จ' }[rule.page];
   const substitute = rule.page === 'substitute-receipts';
   if (permissions.includes(rule.permission)) {
+    if (!substitute) return undefined;
     return language === 'en'
       ? `This action can't be completed on LINE. Please go to the ${substitute ? 'substitute receipts' : rule.page} page on the web to do it.`
       : `การ${rule.actionLabelTh}ทำผ่าน LINE ไม่ได้ค่ะ ${substitute ? 'ต้องเปิดอ่านเอกสารฉบับเต็มบนเว็บก่อนเซ็น ' : ''}ไปที่หน้า${pageLabelTh}บนเว็บได้เลยค่ะ`;
   }
   return language === 'en'
-    ? 'Your role does not have permission to do this yet.'
-    : `บทบาทของคุณยังไม่มีสิทธิ์${rule.actionLabelTh}ค่ะ`;
+    ? 'Your role does not have permission to do this; ask the company owner or an authorized person.'
+    : `บทบาทของคุณยังไม่มีสิทธิ์${rule.actionLabelTh}ค่ะ ให้เจ้าของกิจการหรือผู้มีสิทธิ์${rule.actionLabelTh}ช่วยได้ค่ะ`;
+}
+
+export function toolPermissionReplyText(language: ScopePolicyLanguage): string {
+  return language === 'en'
+    ? '🔒 You do not have permission to view this information; ask the company owner or an authorized person.'
+    : '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ ให้เจ้าของกิจการหรือผู้มีสิทธิ์ดูข้อมูลช่วยตรวจสอบได้ค่ะ';
 }
 
 // ---- Item 3: a read-only role asking to record, upload, or capture -----------------------------
@@ -229,10 +240,10 @@ export function readOnlyCaptureReplyText(text: string, permissions: readonly str
 // ---- Combined entry point ----------------------------------------------------------------------
 
 export type ScopePolicyOverride = {
-  reasonCode: 'LINE_ACTION_NOT_SUPPORTED' | 'READONLY_ROLE_CANNOT_CREATE' | 'PACKAGE_FEATURE_NOT_ENABLED';
+  reasonCode: 'APPROVAL_SETTINGS_WEB' | 'LINE_ACTION_NOT_SUPPORTED' | 'READONLY_ROLE_CANNOT_CREATE' | 'PACKAGE_FEATURE_NOT_ENABLED';
   text: string;
   /** The web page the reply sends a permitted user to, for the caller to link. */
-  webPage?: 'substitute-receipts';
+  webPage?: 'substitute-receipts' | 'approval-settings';
 };
 
 /**
@@ -254,6 +265,17 @@ export type ScopePolicyOverride = {
 const PACKAGE_TOOL_HINTS: ReadonlySet<string> = new Set(['billing.get_package_catalog', 'billing.get_package_usage']);
 const PACKAGE_WORD = /แพ็?[กค]เกจ|มั่งมี/u;
 
+/** Definitions use the existing general-knowledge composer, never a shop document read. */
+export function documentExplanationTopic(text: string): { featureKey: string; label: string } | undefined {
+  const question = /^(.*?)\s*(?:คืออะไร|หมายถึงอะไร)(?:\s*(?:นะ)?(?:คะ|ค่ะ|ครับ))?[?？]*$|^ทำไมต้อง(?:ทำ|ออก|ยื่น)\s*(.*?)(?:\s*(?:นะ)?(?:คะ|ค่ะ|ครับ))?[?？]*$/iu.exec(text.trim());
+  const subject = (question?.[1] ?? question?.[2])?.trim();
+  if (!subject) return undefined;
+  if (/^(?:50\s*ทวิ|50\s*bis)$/iu.test(subject)) return { featureKey: 'wht_50bis', label: '50 ทวิ' };
+  if (/^(?:ภ\.?\s*ง\.?\s*ด\.?\s*53|pnd\s*53)$/iu.test(subject)) return { featureKey: 'wht_pnd53', label: 'ภงด.53' };
+  if (subject === 'ใบสำคัญจ่าย') return { featureKey: 'expenses', label: 'ใบสำคัญจ่าย' };
+  return undefined;
+}
+
 export function scopePolicyOverride(
   text: string,
   kind: LineAiSemanticSubrequestV2['kind'],
@@ -262,6 +284,11 @@ export function scopePolicyOverride(
   language: ScopePolicyLanguage,
   toolHint?: string,
 ): ScopePolicyOverride | undefined {
+  if (isApprovalSettingsRequest(text)) return { reasonCode: 'APPROVAL_SETTINGS_WEB',
+    text: permissions.includes('reimbursement.policy.manage')
+      ? language === 'en' ? 'Open approval settings to choose who can approve claims.' : 'เลือกผู้อนุมัติใบเบิกได้ที่ตั้งค่าการอนุมัติค่ะ'
+      : language === 'en' ? 'Ask your company administrator to change claim approval settings.' : 'ให้ผู้ดูแลที่มีสิทธิ์ตั้งค่าการเบิกกำหนดผู้อนุมัติค่ะ',
+    ...(permissions.includes('reimbursement.policy.manage') ? { webPage: 'approval-settings' as const } : {}) };
   const lineAction = lineActionBoundaryReplyText(text, permissions, language);
   if (lineAction) {
     const rule = lineActionRuleFor(text);
@@ -270,8 +297,17 @@ export function scopePolicyOverride(
   }
   const readOnly = readOnlyCaptureReplyText(text, permissions, language);
   if (readOnly) return { reasonCode: 'READONLY_ROLE_CANNOT_CREATE', text: readOnly };
+  if (kind === 'general' || kind !== 'write' && documentExplanationTopic(text)) return undefined;
+  const whtKeys = /50\s*ทวิ|50\s*bis/iu.test(text) ? ['wht_50bis']
+    : /ภ\.?\s*ง\.?\s*ด\.?\s*53|pnd\s*53/iu.test(text) ? ['wht_pnd53']
+      : /หัก\s*ณ\s*ที่จ่าย|withholding|\bwht\b/iu.test(text) || toolHint?.startsWith('wht.') ? ['wht_50bis', 'wht_pnd53'] : undefined;
+  if (whtKeys && !whtKeys.some(key => moduleFeatureEnabled(key, entitledFeatureKeys))) return {
+    reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED', text: language === 'en'
+      ? 'Your current package does not include this. Withholding certificates and PND53 are included in the Business package.'
+      : 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องนี้ค่ะ 50 ทวิและ ภงด.53 อยู่ในแพ็กธุรกิจค่ะ',
+  };
   const packageQuestion = toolHint !== undefined && PACKAGE_TOOL_HINTS.has(toolHint) && PACKAGE_WORD.test(text);
-  if (kind !== 'help' && kind !== 'general' && !packageQuestion) {
+  if (kind !== 'help' && !packageQuestion && !whtKeys) {
     const topic = unsoldModuleTopicFor(text);
     if (topic && !moduleFeatureEnabled(topic.featureKey, entitledFeatureKeys)) {
       return { reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED', text: unsoldModuleReplyText(topic, language) };

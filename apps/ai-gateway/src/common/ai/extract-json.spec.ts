@@ -3,6 +3,22 @@ import assert from 'node:assert/strict';
 import { extractJson } from './extract-json';
 
 describe('extractJson', () => {
+  it('rejoins receipt fields after the benchmark early root brace without changing values', () => {
+    const raw = '{"classification":{"contentKind":"DOCUMENT","documentFamily":"EXPENSE_EVIDENCE","documentKind":"ABBREVIATED_TAX_INVOICE","businessDirection":"PURCHASE_EXPENSE","transactionState":"PAID","confidence":0.97,"requiresClarification":false}},"fields":{"documentNumber":"RC2610-72800","grandTotalAmount":"1,328.00","lines":[{"description":"กาแฟเย็น","quantity":"1","amount":"219.00","evidenceSignal":"กาแฟเย็น"}]}}';
+    const parsed = JSON.parse(extractJson(raw));
+    assert.equal(parsed.classification.documentKind, 'ABBREVIATED_TAX_INVOICE');
+    assert.equal(parsed.fields.documentNumber, 'RC2610-72800');
+    assert.equal(parsed.fields.grandTotalAmount, '1,328.00');
+    assert.equal(parsed.fields.lines[0].amount, '219.00');
+    assert.equal(extractJson(JSON.stringify(parsed)), JSON.stringify(parsed));
+    assert.deepEqual(JSON.parse(extractJson('```json\n' + raw + '\n```')), parsed);
+  });
+
+  it('does not manufacture missing braces or fields in a truncated receipt', () => {
+    assert.throws(() => JSON.parse(extractJson('{"classification":{"contentKind":"DOCUMENT"},"fields":{"grandTotalAmount":"1,328.00"')));
+    assert.throws(() => JSON.parse(extractJson('{"classification":{"contentKind":"DOCUMENT"}},"fields":{"grandTotalAmount":"1,328.00"')));
+  });
+
   it('returns the object from a ```json fence', () => {
     assert.equal(extractJson('```json\n{"a":1}\n```'), '{"a":1}');
   });

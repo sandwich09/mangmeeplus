@@ -1,4 +1,5 @@
-import { buildInitialLineExpenseDraftContinuation } from '../../domain/logic/line-expense-draft-conversation.logic';
+import { LineExpenseDraftConversationUseCase } from './line-expense-draft-conversation.use-case';
+import { applyLineExpenseDraftAnswer, materializedLineExpenseDraftItems, buildInitialLineExpenseDraftContinuation, isLineExpenseDraftStartEligible } from '../../domain/logic/line-expense-draft-conversation.logic';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CaptureLineExpenseNoteUseCase, CreateExpenseCategoryUseCase, UpdateExpenseCategoryUseCase, ListAllExpenseCategoriesUseCase, LineTextExpenseCaptureIncompleteError, lineDraftIdempotencyKey } from './expense-document.use-case';
@@ -21,6 +22,46 @@ function ctx(permissions: string[], authProvider: 'watchdog' | 'line' = 'watchdo
 }
 
 describe('CaptureLineExpenseNoteUseCase', () => {
+  it('Fix-up 24 D4: exact C05 source reaches real draft creation with 300 baht WHT and rejects conflicting rates before creation', async () => {
+    const { CreateExpenseDraftUseCase } = await import('./expense-draft.use-case');
+    const { readFileSync } = await import('node:fs');
+    const live = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx24-router-replays.json'), 'utf8'));
+    const text = live.C05.turns[1].body.events[0].message.text;
+    let creates = 0, current: any; const lines: any[] = [];
+    const { repo } = makeRepo({ resolveCreateBranchId: async () => 'branch-1',
+      createExpense: async (input: any, within: any) => { creates++; current = { ...input, id: 'fx24-real-expense', updatedAt: new Date() }; await within({}, current); return current; },
+      upsertLines: async (_company: string, _id: string, rows: any[]) => { lines.push(...rows); },
+      updateExpense: async (input: any) => { current = { ...current, ...input }; return current; } });
+    const create = new CreateExpenseDraftUseCase(repo, audit, { resolveLines: async (_ctx: any, _header: any, rows: any[]) => rows } as any, { assertLaunchRouteOpen: async () => undefined } as any);
+    const capture = new CaptureLineExpenseNoteUseCase(repo, create, audit, outbox);
+    const cmd: any = { messageText: text, captureHints: { amount: '10000', description: 'ทำป้ายหน้าร้าน', vendorName: 'บริษัท ป้ายสวย จำกัด', confidence: 1 },
+      semanticBusinessExpenseConfirmed: true, lineMessageId: 'fx24-real-wht', lineEventId: 'fx24-real-wht',
+      counterparty: { id: 'saved-counterparty', name: 'บริษัท ป้ายสวย จำกัด', taxId: '0105561234560', address: '12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900', entityKind: 'JURISTIC' } };
+    const result = await capture.execute(ctx(['expense.create'], 'line'), cmd);
+    assert.equal(creates, 1); assert.equal(Number(result.expense.grandTotalAmount), 10000); assert.equal(Number(result.expense.whtAmount), 300);
+    assert.equal(Number(result.expense.netPayableAmount), 9700); assert.equal(Number(lines[0].whtRate), 0.03);
+    assert.equal(result.expense.vendorCounterpartyId, 'saved-counterparty'); assert.equal(result.expense.vendorEntityKindSnapshot, 'JURISTIC');
+    await assert.rejects(() => capture.execute(ctx(['expense.create'], 'line'), { ...cmd, messageText: text + ' WHT 5%' }), /อัตราหัก ณ ที่จ่ายเดียว/);
+    assert.equal(creates, 1);
+  });
+
+  it('F1: accepts ordered grounded tokens, rejects invented/reversed tokens and keeps money/date grounding', () => {
+    const hints = { confidence: 0.9, amount: '500' };
+    assert.equal(isLineExpenseDraftStartEligible('อินฟลู 500 บาท', hints, true), true);
+    assert.equal(isLineExpenseDraftStartEligible('อินฟลู 500 บาท', hints, false), false);
+    assert.equal(isLineExpenseDraftStartEligible('อินฟลู 600 บาท', hints, true), false);
+    assert.equal(isLineExpenseDraftStartEligible('รับเงินจากลูกค้า 500 บาท', hints, true), false);
+    for (const [description, expected] of [['ค่าใช้จ่าย อินฟลู', 'ค่าใช้จ่าย อินฟลู'], ['อินฟลู ค่าใช้จ่าย', undefined], ['ค่าใช้จ่าย ไม่มีในข้อความ', undefined]] as const) {
+      const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'wf', companyId: 'c', userId: 'u', expenseId: 'e',
+        chatKeyHash: 'chat', targetRevision: 'rev', provisionalExpenseDate: '2026-10-15', categories: [],
+        messageText: 'สร้างค่าใช้จ่ายให้ อินฟลู 500 บาท วันที่ 10 ตุลา 2569',
+        hints: { confidence: 0.9, description, amount: '600', expenseDate: '2026-10-11' } });
+      assert.equal(state.items[0]?.description, expected);
+      assert.equal(state.items[0]?.totalAmount, undefined);
+      assert.equal(state.header.expenseDate, '2026-10-10', 'date falls back only to the extracted source date');
+    }
+  });
+
   function makeRepo(overrides: Record<string, unknown> = {}) {
     const updates: any[] = [];
     const deleted: any[] = [];
@@ -42,6 +83,57 @@ describe('CaptureLineExpenseNoteUseCase', () => {
       updatedAt: new Date('2026-08-18T00:00:00.000Z'),
     }),
   } as any;
+
+  it('F1: captures the exact real-model turn-0 route as one dated, total-only draft', async () => {
+    // Verbatim router result from trace-t2.jsonl turn 0, kept here so tests never depend on live evidence files.
+    const route = {"status":"ROUTED","intent":"EXPENSE_DOCUMENT_CAPTURE","language":"th","confidence":0.93,"captureHints":{"sourceDocumentType":"EXPENSE_NOTE_TEXT","sourceDocumentLanguage":"th","vendorName":"อินฟลู","description":"ค่าใช้จ่าย อินฟลู","expenseDate":"2026-10-10","amount":"500","vatMode":"NEEDS_REVIEW","confidence":0.88,"missingFields":["businessPurpose","vatMode"]},"semanticOutcome":"BUSINESS_EXPENSE","fundingSource":"COMPANY_PAID","semanticSubrequests":[{"index":0,"kind":"write","goal":"บันทึกค่าใช้จ่าย อินฟลู 500 บาท วันที่ 10 ตุลาคม 2569","requiredEvidence":[],"requestedFilters":{},"writeIntent":"EXPENSE_DOCUMENT_CAPTURE","dependsOn":[],"evidenceRefs":[{"partId":"part-0","startUtf16":0,"endUtf16":53,"rawSha256":"3d9cf8292aa61a3ac0a030c4c68390a2d4e07fb47cff82ea82f631ef9f9b07e9"}]}],"usage":[{"tag":"line.intake-route","modelId":"global.anthropic.claude-sonnet-4-6","ok":true,"inputTokens":3329,"outputTokens":247,"cacheReadInputTokens":19943,"cacheWriteInputTokens":0,"durationMs":5990,"usageBasis":"PROVIDER_REPORTED","invocationKey":"company-a#81d312a41abb205a470b48b0319c497fa261a8567edc8ab4864a64040c4a9594#provider-v2#0"}]};
+    const creates: any[] = [];
+    const { repo, updates } = makeRepo({ updateExpense: async (input: any) => {
+      updates.push(input); return { ...input, grandTotalAmount: '500.0000' };
+    } });
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, { execute: async (_ctx: any, input: any) => {
+      creates.push(input); return { id: 'exp-real', grandTotalAmount: '500.0000', updatedAt: new Date('2026-10-15T00:00:00Z') };
+    } } as any, audit, outbox);
+    const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      messageText: 'สร้างค่าใช้จ่ายให้ อินฟลู 500 บาท วันที่ 10 ตุลา 2569',
+      captureHints: route.captureHints as any,
+      semanticBusinessExpenseConfirmed: route.semanticOutcome === 'BUSINESS_EXPENSE' && route.fundingSource === 'COMPANY_PAID',
+      draftConversationEnabled: true, lineMessageId: 'real-model-turn-0', lineEventId: 'real-model-turn-0',
+    });
+    assert.equal(creates.length, 1);
+    assert.equal(creates[0].expenseDate, '2026-10-10');
+    assert.deepEqual(creates[0].lines.map(({ description, quantity, unitPrice }: any) => ({ description, quantity, unitPrice })),
+      [{ description: 'ค่าใช้จ่าย อินฟลู', quantity: '1', unitPrice: '500' }]);
+    assert.equal(result.insertedAmount, '500.0000');
+    assert.equal(updates[0].status, 'DRAFT');
+    const state = updates[0].sourceChannelMetadataJson.lineExpenseDraftContinuation;
+    assert.equal(state.items.length, 1); assert.equal(state.items[0].totalAmount, '500');
+    assert.ok(!state.unresolvedQuestions.some((q: any) => q.field === 'quantity'));
+    assert.doesNotMatch(result.replyTexts.join(' '), /จำนวนเท่าไร|จำนวนและหน่วย/u);
+  });
+
+  it('G1: exact second live capture defaults the payee item and immediately saves 500', async () => {
+    // Verbatim trace-t2-run2.jsonl turn 0 (no runtime dependency on live artifacts).
+    const route = {"status":"ROUTED","intent":"EXPENSE_DOCUMENT_CAPTURE","language":"th","confidence":0.93,"captureHints":{"sourceDocumentType":"EXPENSE_NOTE_TEXT","sourceDocumentLanguage":"th","vendorName":"อินฟลู","description":"ค่าใช้จ่ายอินฟลู","expenseDate":"2026-10-10","amount":"500","vatMode":"NEEDS_REVIEW","confidence":0.88,"missingFields":["businessPurpose","vatMode"]},"semanticOutcome":"BUSINESS_EXPENSE","fundingSource":"COMPANY_PAID","semanticSubrequests":[{"index":0,"kind":"write","goal":"สร้างค่าใช้จ่าย อินฟลู 500 บาท วันที่ 10 ตุลาคม 2569","requiredEvidence":[],"requestedFilters":{},"writeIntent":"EXPENSE_DOCUMENT_CAPTURE","dependsOn":[],"evidenceRefs":[{"partId":"part-0","startUtf16":0,"endUtf16":53,"rawSha256":"3d9cf8292aa61a3ac0a030c4c68390a2d4e07fb47cff82ea82f631ef9f9b07e9"}]}],"usage":[{"tag":"line.intake-route","modelId":"global.anthropic.claude-sonnet-4-6","ok":true,"inputTokens":3329,"outputTokens":246,"cacheReadInputTokens":20595,"cacheWriteInputTokens":0,"durationMs":6001,"usageBasis":"PROVIDER_REPORTED","invocationKey":"company-a#9d833e7bf07032e9eb9ac4347330c3fb846140ccf91de41d4402ddcfd576c9f1#provider-v2#0"}]};
+    const creates: any[] = [];
+    const { repo, updates } = makeRepo({ updateExpense: async (input: any) => { updates.push(input); return { ...input, grandTotalAmount: '500' }; } });
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, { execute: async (_ctx: any, input: any) => {
+      creates.push(input); return { id: 'exp-live-2', grandTotalAmount: '500', updatedAt: new Date('2026-10-15T00:00:00Z') };
+    } } as any, audit, outbox);
+    const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      messageText: 'สร้างค่าใช้จ่ายให้ อินฟลู 500 บาท วันที่ 10 ตุลา 2569', captureHints: route.captureHints as any,
+      semanticBusinessExpenseConfirmed: true, draftConversationEnabled: true, lineMessageId: 'live-2', lineEventId: 'live-2',
+    });
+    assert.equal(creates.length, 1);
+    assert.equal(creates[0].expenseDate, '2026-10-10');
+    assert.deepEqual(creates[0].lines.map(({ description, quantity, unitPrice }: any) => ({ description, quantity, unitPrice })),
+      [{ description: 'ค่าใช้จ่าย อินฟลู', quantity: '1', unitPrice: '500' }]);
+    assert.equal(result.insertedAmount, '500');
+    const state = updates[0].sourceChannelMetadataJson.lineExpenseDraftContinuation;
+    assert.deepEqual(state.unresolvedQuestions.map((q: any) => q.id), ['I01-CATEGORY']);
+    assert.match(result.replyTexts.join(' '), /รายการ: ค่าใช้จ่าย อินฟลู 1 งาน 500 บาท/u);
+    assert.doesNotMatch(result.replyTexts.join(' '), /ชื่อสินค้า\/บริการ/u);
+  });
 
   it('hands the draft create a key its own validator accepts, for LINE ids and 64-hex task ids alike (NAT12 2026-09-29)', async () => {
     const keys: string[] = [];
@@ -115,9 +207,9 @@ describe('CaptureLineExpenseNoteUseCase', () => {
       lineMessageId: 'msg-1',
       lineEventId: 'evt-1',
     });
-    assert.equal(result.insertedAmount, null, 'amount stays staged until quantity is known');
+    assert.equal(result.insertedAmount, '65.0000', 'a grounded total-only note uses quantity one (A2)');
     assert.equal(result.categoryId, null, 'no category is invented when the router names none');
-    assert.match(result.replyTexts.join('\n'), /จำนวนและหน่วย/u);
+    assert.doesNotMatch(result.replyTexts.join('\n'), /จำนวนและหน่วย/u);
     assert.match(result.replyTexts.join('\n'), /หมวดค่าใช้จ่าย/u);
     const update = updates.at(-1);
     assert.equal(update.sourceDocumentType, 'EXPENSE_NOTE_TEXT');
@@ -1334,4 +1426,47 @@ describe('receipt absence in the evidence read model', () => {
       assert.equal(result.rows[0].sourceDocumentTypeLabel, receiptProblem === 'NONE' ? undefined : 'ไม่มีใบเสร็จ');
     }
   });
+
+});
+it('G1: payee-only totals use a known category or neutral expense description and repair older empty items', () => {
+  const serviceCategories = [{ id: 'service', companyId: 'c1', name: 'ค่าบริการ', status: 'ACTIVE' }] as any;
+  for (const category of [undefined, 'service']) {
+    const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'g1', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',
+      targetRevision: '2026-10-15T00:00:00.000Z', provisionalExpenseDate: '2026-10-15', categories: serviceCategories, applyCategoryHints: true,
+      messageText: 'สร้างค่าใช้จ่ายให้ อินฟลู 500 บาท วันที่ 10 ตุลา 2569',
+      hints: { confidence: 1, vendorName: 'อินฟลู', amount: '500', description: 'ค่าใช้จ่ายอินฟลู', ...(category ? { expenseCategoryId: category } : {}) } });
+    assert.equal(state.items[0]!.description, `${category ? 'ค่าบริการ' : 'ค่าใช้จ่าย'} อินฟลู`);
+    assert.equal(materializedLineExpenseDraftItems(state)[0]!.unitPrice, '500');
+    assert.ok(!state.unresolvedQuestions.some(question => question.field === 'description'));
+    delete state.items[0]!.description;
+    const continued = applyLineExpenseDraftAnswer({ state, messageText: 'เป็นค่าบริการ', categories: serviceCategories,
+      hints: { items: [{ itemRef: 'I01', sourceText: 'เป็นค่าบริการ', expenseCategoryId: 'service' }] } });
+    assert.equal(continued.state.items[0]!.description, 'ค่าบริการ อินฟลู');
+    assert.ok(continued.acceptedFields.includes('I01-DESC'));
+    assert.equal(materializedLineExpenseDraftItems(continued.state)[0]!.unitPrice, '500');
+  }
+});
+
+it('G3: exact second live router history hints do not answer the current message or write/re-show the draft', async () => {
+  // Verbatim trace-t2-run2.jsonl turn 3, including its invented historic sourceText.
+  const route = {"status":"ROUTED","intent":"EXPENSE_DRAFT_CONTINUATION","language":"th","confidence":0.82,"captureHints":{"sourceDocumentType":"EXPENSE_NOTE_TEXT","description":"ค่าบริการ อินฟลู","expenseCategoryId":"category-a-service","targetExpenseId":"cmv9idt23002bu9k1dw3isbqi","items":[{"itemRef":"I01","sourceText":"เป็นค่าบริการ","description":"ค่าบริการ อินฟลู","accountingClass":"OPEX","itemBehavior":"SERVICE","confidence":0.82,"missingFields":[]}],"confidence":0.82,"missingFields":[]},"semanticOutcome":"BUSINESS_EXPENSE","fundingSource":"COMPANY_PAID","semanticSubrequests":[{"index":0,"kind":"write","goal":"ระบุประเภทรายการ I01 ว่าเป็นค่าบริการ สำหรับอินฟลู","requiredEvidence":[],"requestedFilters":{},"writeIntent":"EXPENSE_DOCUMENT_CAPTURE","dependsOn":[],"evidenceRefs":[{"partId":"part-0","startUtf16":0,"endUtf16":14,"rawSha256":"5dfb046d01e1b12740c2de6c00fbc6aa89acfb8ea0222c2e017414cd3d24c749"}]}],"usage":[{"tag":"line.intake-route","modelId":"global.anthropic.claude-sonnet-4-6","ok":true,"inputTokens":3874,"outputTokens":349,"cacheReadInputTokens":20595,"cacheWriteInputTokens":0,"durationMs":8920,"usageBasis":"PROVIDER_REPORTED","invocationKey":"company-a#47c551cfc06f5ef191f7fc685b27d55ba8042ede828e9d906e14bc0eed46fd42#provider-v2#0"}]};
+  const context = ctx(['expense.receipt.line_upload'], 'line');
+  const id = route.captureHints.targetExpenseId;
+  const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'g3-live', companyId: context.companyId, userId: context.userId,
+    expenseId: id, chatKeyHash: 'chat', targetRevision: '2026-10-15T00:00:00.000Z', provisionalExpenseDate: '2026-10-15', categories: [],
+    messageText: 'สร้างค่าใช้จ่ายให้ อินฟลู 500 บาท วันที่ 10 ตุลา 2569', hints: { confidence: 1, vendorName: 'อินฟลู', amount: '500' } });
+  const expense = { id, companyId: context.companyId, createdByUserId: context.userId, captureSource: 'LINE_UPLOAD', status: 'DRAFT',
+    updatedAt: new Date(state.targetRevision), sourceChannelMetadataJson: { lineExpenseDraftContinuation: state }, lines: [] };
+  const repo = { listLineExpenseDraftContinuationRows: async () => [expense],
+    findByIdWithRelations: async (_company: string, requested: string) => requested === id ? expense : null, listCategories: async () => [] };
+  const updates: unknown[] = [];
+  const useCase = new LineExpenseDraftConversationUseCase(repo as any, { execute: async (...args: unknown[]) => { updates.push(args); } } as any);
+  const before = structuredClone(expense.sourceChannelMetadataJson);
+  for (const messageText of ['อ่าว ทำไมเงียบ', 'ทำไมไม่แก้รายการ']) {
+    const result = await useCase.execute(context, { chatKeyHash: 'chat', messageText, captureHints: route.captureHints as any });
+    assert.equal(result.handled, false);
+    assert.deepEqual(result.acceptedFields, []); assert.deepEqual(result.replyTexts, []);
+  }
+  assert.deepEqual(expense.sourceChannelMetadataJson, before);
+  assert.equal(updates.length, 0);
 });

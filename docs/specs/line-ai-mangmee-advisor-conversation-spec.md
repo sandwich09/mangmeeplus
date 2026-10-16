@@ -880,3 +880,13 @@ direct-answer cohort -> `knowledge` UAT/canary -> `company` UAT/canary -> wider 
   https://acpro-std.tfac.or.th/standard/118/
 - กรมพัฒนาธุรกิจการค้า กฎหมายการเก็บรักษาบัญชีและเอกสาร:
   https://www.dbd.go.th/storage/law/9718f7ee-dd9f-463e-aa79-c7157355cec5.pdf
+
+
+## Fix-up 6: finish the prepared expense (2026-10-16)
+
+- A signed CONFIRM card previews the existing ready/review/confirm validators without writes. A press executes MARK_READY when needed, the acknowledged evidence review when needed, then CONFIRM, passing each committed revision to the next use-case. Refusal stops the chain; permissions, tenant, branch, source state and CAS remain authoritative. A successful repair immediately prepares the next confirm card; an unpaid confirmation offers a signed button that only opens a payment preview.
+- Evidence selection matches the web ExpensesPages document selector and expense-evidence contracts: attach a receipt (or wait for it), alternative attached evidence with a user reason, or the existing substitute receipt continuation. No-file/no-reason confirmation is unsupported. A requested photo attaches to the selected draft through the web receipt completion use-case, then prepares confirmation; no second expense is created. Alternative evidence is reviewed only on the signed confirmation press.
+- A bound chat's file purpose question offers message quick replies for expense evidence and file questions, preserving the typed-answer routes.
+- Current window plan 3 survives checkpoint reload; legacy window plans remain refused. A PARTIAL retry reads only incomplete pages and re-extracts windows whose text or prior-document context changed; a completed two-page read can reach DONE without reusing stale partial observations.
+- Live G3 reported approximately 2,200 output tokens on page 0, repeatedly partial. The current call cap is 8,192 tokens and stored page text cap is 20,000 characters, so 2,200 is not a configured output ceiling. The prompt incorrectly said a page without transcribed totals is incomplete, although totals may only be printed on page 2. Clarify that only visible unread content is partial, permit complete intermediate pages with no totals, and explicitly transcribe dense A4 pages in full within the existing budget. Offline regression uses the recorded 2,200-token scale; live provider accuracy remains to be checked.
+- Payment dates use the existing Thai card formatter; the applied confirmation omits the pre-confirm instruction.

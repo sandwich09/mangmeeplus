@@ -157,6 +157,7 @@ export function createAiBudgetSeam(
           modelId: input.entry.modelId,
           tag: input.entry.tag,
           ok: input.entry.ok,
+          ...(input.entry.errorCode ? { errorCode: input.entry.errorCode } : {}),
           inputTokens: input.entry.inputTokens,
           outputTokens: input.entry.outputTokens,
           cacheReadInputTokens: input.entry.cacheReadInputTokens,

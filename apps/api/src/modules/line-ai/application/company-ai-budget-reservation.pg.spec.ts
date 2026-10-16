@@ -17,7 +17,7 @@ import { pgSpecUnreachableReason } from '../../../common/database/pg-spec-guard'
 import type { AppConfigService } from '../../../common/config/app-config.service';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import { aiBudgetPolicyRevision } from './company-ai-budget-policy';
-import { recordCompanyAiUsage, recordCompanyAiCostAdjustment } from './company-ai-usage-meter';
+import { assertCompanyAiBudget, recordCompanyAiUsage, recordCompanyAiCostAdjustment } from './company-ai-usage-meter';
 import {
   AI_BUDGET_DISPATCHED_SWEEP_MS,
   AI_BUDGET_RESERVED_SWEEP_MS,
@@ -129,6 +129,36 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
     } finally {
       await client.$disconnect();
     }
+  });
+
+  it('SHARED calls sharing requestId/route/tag are all retained while timeouts remain company-only', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const companyId = await company('shared-nocharge', { mode: 'SHARED', chat: null, ocr: null, total: 8000 });
+    const cfg = { ...config, aiThbPerUsd: 33 } as AppConfigService;
+    const meta = { companyId, sourceRoute: 'line-turn', monthKey: MONTH, budgetBucket: 'CHAT' as const,
+      requestKind: 'TEXT' as const, requestId: 'one-job' };
+    const success = { tag: 'line.loop', modelId: HAIKU, ok: true, inputTokens: 1000, outputTokens: 100,
+      cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 1, usageBasis: 'PROVIDER_REPORTED' as const };
+    await recordCompanyAiUsage(prisma, cfg, meta, [success]);
+    await recordCompanyAiUsage(prisma, cfg, meta, [success]);
+    const calls = await client.aiUsageEvent.findMany({ where: { companyId } });
+    assert.equal(calls.length, 2);
+    assert.ok(calls.every(row => row.invocationKey === null));
+    const monthBefore = await client.companyAiMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey: MONTH } } });
+    const bucketBefore = await client.companyAiMonthlyBucketUsage.findMany({ where: { companyId } });
+    await recordCompanyAiUsage(prisma, cfg, meta,
+      [{ ...success, ok: false, inputTokens: 1200, outputTokens: 17, usageBasis: 'CONSERVATIVE_ESTIMATE' }]);
+    const absorbed = await client.aiUsageEvent.findFirstOrThrow({ where: { companyId, ok: false } });
+    assert.equal(absorbed.usageBasis, 'COMPANY_ABSORBED');
+    assert.equal(absorbed.inputTokens, 1200);
+    assert.ok(absorbed.costSatang > 0 && absorbed.costSatang < 100);
+    assert.deepEqual(await client.companyAiMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey: MONTH } } }), monthBefore);
+    assert.deepEqual(await client.companyAiMonthlyBucketUsage.findMany({ where: { companyId } }), bucketBefore);
+    assert.equal((await assertCompanyAiBudget(prisma, cfg, companyId, MONTH, {
+      stepKind: 'line-turn', attemptKey: 'next', sourceRoute: 'line-turn', modelId: HAIKU, budgetBucket: 'CHAT' })).allowed, true);
+    await recordCompanyAiUsage(prisma, cfg, meta, [success]);
+    assert.equal(await client.aiUsageEvent.count({ where: { companyId, ok: true } }), 3, 'each provider call is retained');
+    assert.equal((await client.companyAiMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey: MONTH } } })).costSatang, monthBefore.costSatang / 2 * 3);
   });
 
   it('E-04: 20 concurrent reserves across both buckets never exceed the TOTAL or either cap', async (t) => {

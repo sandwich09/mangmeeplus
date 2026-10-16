@@ -72,9 +72,9 @@ const RUNTIME_FLAG_NAMES = [
 const W00_FAMILIES = [
   { id: 'dashboard_company', featureKeys: ['dashboard_notifications'], match: (name: string) => /^(company|dashboard|notifications)\./u.test(name) },
   { id: 'sales', featureKeys: ['sales_documents'], match: (name: string) => name.startsWith('sales.') },
-  { id: 'expenses', featureKeys: ['expenses'], match: (name: string) => name.startsWith('expense.') },
+  { id: 'expenses', featureKeys: ['expenses'], match: (name: string) => (name.startsWith('expense.') || name.startsWith('voucher.')) },
   { id: 'accounting_ledger', featureKeys: ['double_entry_ledger'], match: (name: string) => name.startsWith('accounting.') || name.startsWith('ledger.') || name.startsWith('reports.') },
-  { id: 'tax', featureKeys: ['thai_tax'], match: (name: string) => name.startsWith('tax.') },
+  { id: 'tax', featureKeys: ['thai_tax', 'wht_50bis', 'wht_pnd53'], match: (name: string) => name.startsWith('tax.') || name.startsWith('wht.') },
   { id: 'workflow', featureKeys: ['workflow_automation'], match: (name: string) => name.startsWith('workflow.') },
   { id: 'inventory', featureKeys: ['inventory', 'product_catalog'], match: (name: string) => name.startsWith('inventory.') },
   { id: 'procurement_ap', featureKeys: ['procurement'], match: (name: string) => name.startsWith('procurement.') },
@@ -232,6 +232,10 @@ const SOURCE_REFERENCES = [
   { path: BUDGET_CONTROLLER_PATH, symbol: 'InternalAiBudgetController' },
   { path: LEDGER_CONTROLLER_PATH, symbol: 'LineAiLedgerInternalController' },
   { path: REIMBURSEMENT_PATH, symbol: 'LineReimbursementDraftControl/LineReimbursementDraftService' },
+  { path: 'apps/api/src/modules/line-ai/application/line-expense-action.service.ts', symbol: 'signed expense, reimbursement, voucher and certificate action lifecycle' },
+  { path: 'apps/api/src/modules/line-ai/application/line-counterparty.service.ts', symbol: 'web-authorized counterparty tools and signed human confirmation' },
+  { path: 'apps/api/src/modules/line-ai/application/line-quoted-message.service.ts', symbol: 'retained provider message IDs and owner-bound record grounding' },
+  { path: 'apps/api/src/modules/line-ai/application/line-voucher-action.service.ts', symbol: 'voucher and certificate web use-case adapter, entitlement and source boundaries' },
   { path: PREFERENCES_PATH, symbol: 'LinePreferenceCommand' },
   { path: CORE_SPEC_PATH, symbol: '§2 executable manifest and effective capabilities; sold-family checklist' },
   { path: IMPLEMENTATION_INDEX_PATH, symbol: 'W00 inputs, acceptance, deferred voice and implementation checkpoint' },
@@ -416,13 +420,15 @@ function defaultFlagValues(): Record<string, unknown> {
 }
 
 function operationRelease(meta: (typeof LINE_TOOL_REGISTRY)[number]): string {
-  if (meta.name === 'public.lookup' || meta.name.startsWith('reimbursement.draft.')) return 'R2';
+  if (meta.name === 'company.action.preview') return 'R7';
+  if (meta.name === 'counterparty.action.preview' || meta.name === 'expense.action.preview' || meta.name === 'public.lookup' || meta.name.startsWith('reimbursement.draft.')) return 'R2';
   return 'R1';
 }
 
 function operationFlagNames(name: string, category: string): string[] {
   if (name === 'public.lookup') return ['LINE_AI_PUBLIC_LOOKUP_ENABLED', 'LINE_AI_RELIABILITY_V2_MODE', 'LINE_AI_RELIABILITY_V2_COMPANY_IDS'];
   if (name.startsWith('reimbursement.draft.')) return ['LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED'];
+  if (name === 'expense.action.preview' || name === 'counterparty.action.preview' || name === 'company.action.preview') return [];
   if (category === 'draft_update') return ['LINE_AI_DRAFT_EDIT_ENABLED'];
   return [];
 }

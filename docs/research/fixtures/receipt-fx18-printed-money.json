@@ -1,0 +1,298 @@
+[
+  {
+    "id": "A1",
+    "fields": {
+      "lines": [
+        {
+          "amount": "52.00",
+          "quantity": "4",
+          "unitPrice": "13.00",
+          "confidence": 0.97,
+          "description": "นมจืด UHT 225 มล.",
+          "evidenceSignal": "4 x นมจืด UHT 225 มล. @13.00"
+        },
+        {
+          "amount": "35.00",
+          "quantity": "1",
+          "unitPrice": "35.00",
+          "confidence": 0.97,
+          "description": "แซนด์วิชทูน่า",
+          "evidenceSignal": "1 x แซนด์วิชทูน่า @35.00"
+        },
+        {
+          "amount": "45.00",
+          "quantity": "1",
+          "unitPrice": "45.00",
+          "confidence": 0.97,
+          "description": "ถุงขยะดำ",
+          "evidenceSignal": "1 x ถุงขยะดำ @45.00"
+        },
+        {
+          "amount": "24.00",
+          "quantity": "2",
+          "unitPrice": "12.00",
+          "confidence": 0.97,
+          "description": "ไข่ต้ม",
+          "evidenceSignal": "2 x ไข่ต้ม @12.00"
+        }
+      ],
+      "vatMode": "VAT_INCLUDED",
+      "vatRate": "0.07",
+      "currency": "THB",
+      "vatAmount": "10.21",
+      "confidence": 0.97,
+      "vendorName": "บริษัท สะดวกมาร์ท จำกัด (มหาชน)",
+      "expenseDate": "2026-10-13",
+      "vendorTaxId": "0107537044553",
+      "missingFields": [],
+      "taxableAmount": "145.79",
+      "documentNumber": "0125-03-88214",
+      "grandTotalAmount": "156.00",
+      "vendorBranchCode": "00125",
+      "vendorEntityKind": "JURISTIC",
+      "categorySuggestion": {
+        "confidence": 0.62,
+        "evidenceSignals": [
+          "นมจืด UHT 225 มล.",
+          "แซนด์วิชทูน่า",
+          "ถุงขยะดำ",
+          "ไข่ต้ม"
+        ],
+        "expenseCategoryId": "category-a-other"
+      },
+      "expenseDateAssumptions": [
+        "era_resolved_ce"
+      ],
+      "vendorIdentityEvidence": "บริษัท สะดวกมาร์ท จำกัด (มหาชน)"
+    },
+    "printedText": "บริษัท สะดวกมาร์ท จำกัด (มหาชน)\nเลขประจำตัวผู้เสียภาษี 0107537044553 สาขาที่ 00125\nPOS#R0125-03 RD#E0511200017\nใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ\nเลขที่ 0125-03-88214 13/10/2026 07:55\n4 x นมจืด UHT 225 มล. @13.00 52.00\n1 x แซนด์วิชทูน่า @35.00 35.00\n1 x ถุงขยะดำ @45.00 45.00\n2 x ไข่ต้ม @12.00 24.00\nยอดรวม (8 รายการ) 156.00\nมูลค่าสินค้าก่อนภาษี 145.79\nภาษีมูลค่าเพิ่ม 7% (รวมในราคาแล้ว) 10.21\nรวมทั้งสิ้น (รวม VAT แล้ว) 156.00\nรับเงิน เงินสด 200.00\nเงินทอน 44.00"
+  },
+  {
+    "id": "D2",
+    "fields": {
+      "lines": [
+        {
+          "amount": "270.00",
+          "quantity": "6",
+          "unitPrice": "45.00",
+          "confidence": 0.97,
+          "description": "ครัวซองต์เนยสด",
+          "evidenceSignal": "ครัวซองต์เนยสด"
+        },
+        {
+          "amount": "390.00",
+          "quantity": "1",
+          "unitPrice": "390.00",
+          "confidence": 0.97,
+          "description": "เค้กช็อกโกแลต 1 ปอนด์",
+          "evidenceSignal": "เค้กช็อกโกแลต 1 ปอนด์"
+        },
+        {
+          "amount": "318.00",
+          "quantity": "2",
+          "unitPrice": "159.00",
+          "confidence": 0.97,
+          "description": "คุกกี้เนย กล่อง",
+          "evidenceSignal": "คุกกี้เนย กล่อง"
+        }
+      ],
+      "vatMode": "VAT_INCLUDED",
+      "vatRate": "0.07",
+      "currency": "THB",
+      "vatAmount": "60.78",
+      "confidence": 0.93,
+      "vendorName": "บริษัท เบเกอร์รี่ดีดี จำกัด",
+      "description": "เบเกอรี่ (ครัวซองต์เนยสด, เค้กช็อกโกแลต, คุกกี้เนย)",
+      "expenseDate": "2026-10-07",
+      "vendorTaxId": "0105565123452",
+      "missingFields": [],
+      "taxableAmount": "868.32",
+      "discountAmount": "48.90",
+      "documentNumber": "DD-00451-69",
+      "subtotalAmount": "978.00",
+      "grandTotalAmount": "929.00",
+      "vendorBranchCode": "00000",
+      "vendorEntityKind": "JURISTIC",
+      "additionalCharges": [
+        {
+          "kind": "ROUNDING",
+          "amount": "-0.10",
+          "vatRate": "0",
+          "confidence": 0.97,
+          "description": "ปัดเศษ",
+          "evidenceSignal": "ปัดเศษ -0.10"
+        }
+      ],
+      "categorySuggestion": {
+        "confidence": 0.72,
+        "evidenceSignals": [
+          "ครัวซองต์เนยสด",
+          "เค้กช็อกโกแลต 1 ปอนด์",
+          "คุกกี้เนย กล่อง"
+        ],
+        "expenseCategoryId": "category-a-other"
+      },
+      "expenseDateAssumptions": [
+        "order_assumed_day_month",
+        "era_read_be"
+      ],
+      "vendorIdentityEvidence": "บริษัท เบเกอร์รี่ดีดี จำกัด"
+    },
+    "printedText": "บริษัท เบเกอรี่ดีดี จำกัด\nเลขประจำตัวผู้เสียภาษี 0105565123452 (สำนักงานใหญ่)\nใบกำกับภาษีอย่างย่อ\nเลขที่ DD-00451-69 07/10/2569 10:26\n6 x ครัวซองต์เนยสด @45.00 270.00\n1 x เค้กช็อกโกแลต 1 ปอนด์ @390.00 390.00\n2 x คุกกี้เนย กล่อง @159.00 318.00\nยอดรวม (9 รายการ) 978.00\nส่วนลดสมาชิก 5% -48.90\nมูลค่าสินค้าก่อนภาษี 868.32\nภาษีมูลค่าเพิ่ม 7% (รวมในราคาแล้ว) 60.78\nปัดเศษ -0.10\nรวมทั้งสิ้น (รวม VAT แล้ว) 929.00\nชำระโดย บัตรเดบิต 929.00\nราคารวมภาษีมูลค่าเพิ่มแล้ว"
+  },
+  {
+    "id": "D3",
+    "fields": {
+      "lines": [
+        {
+          "amount": "1,450.00",
+          "quantity": "10",
+          "unitPrice": "145.00",
+          "confidence": 0.97,
+          "description": "ปูนซีเมนต์ 50 กก.",
+          "evidenceSignal": "10 x ปูนซีเมนต์ 50 กก. @145.00"
+        },
+        {
+          "amount": "1,300.00",
+          "quantity": "2",
+          "unitPrice": "650.00",
+          "confidence": 0.97,
+          "description": "ทรายหยาบ (คิว)",
+          "evidenceSignal": "2 x ทรายหยาบ (คิว) @650.00"
+        },
+        {
+          "amount": "145.50",
+          "quantity": "3",
+          "unitPrice": "48.50",
+          "confidence": 0.97,
+          "description": "ตะปู 2 นิ้ว (กก.)",
+          "evidenceSignal": "3 x ตะปู 2 นิ้ว (กก.) @48.50"
+        },
+        {
+          "amount": "144.00",
+          "quantity": "12",
+          "unitPrice": "12.00",
+          "confidence": 0.97,
+          "description": "ถุงมือผ้า",
+          "evidenceSignal": "12 x ถุงมือผ้า @12.00"
+        }
+      ],
+      "vatMode": "VAT_EXCLUDED",
+      "vatRate": "0.07",
+      "currency": "THB",
+      "vatAmount": "202.27",
+      "confidence": 0.95,
+      "vendorName": "ห้างหุ้นส่วนจำกัด ช่างเหล็กวัสดุ",
+      "description": "วัสดุก่อสร้างและอุปกรณ์",
+      "expenseDate": "2026-10-02",
+      "vendorTaxId": "0123556033444",
+      "missingFields": [
+        "discountAmount",
+        "additionalCharges"
+      ],
+      "taxableAmount": "2,889.50",
+      "vendorAddress": "15/2 หมู่ 4 ต.บางกระสอ อ.เมือง จ.นนทบุรี 11000",
+      "documentNumber": "CL-6910-0098",
+      "subtotalAmount": "3,039.50",
+      "grandTotalAmount": "3,091.00",
+      "vendorBranchCode": "00000",
+      "vendorEntityKind": "JURISTIC",
+      "categorySuggestion": {
+        "confidence": 0.6,
+        "evidenceSignals": [
+          "ปูนซีเมนต์ 50 กก.",
+          "ทรายหยาบ (คิว)",
+          "ตะปู 2 นิ้ว (กก.)",
+          "ถุงมือผ้า"
+        ],
+        "expenseCategoryId": "category-a-other"
+      },
+      "expenseDateAssumptions": [
+        "order_assumed_day_month",
+        "era_resolved_ce"
+      ],
+      "vendorIdentityEvidence": "ห้างหุ้นส่วนจำกัด ช่างเหล็กวัสดุ"
+    },
+    "printedText": "ห้างหุ้นส่วนจำกัด ช่างเหล็กวัสดุ\n15/2 หมู่ 4 ต.บางกระสอ อ.เมือง จ.นนทบุรี 11000\nเลขประจำตัวผู้เสียภาษี 0123556033444 (สำนักงานใหญ่)\nบิลเงินสด/ใบกำกับภาษีอย่างย่อ\nเลขที่ CL-6910-0098 02/10/2026 15:48\n10 x ปูนซีเมนต์ 50 กก. @145.00 1,450.00\nส่วนลด ราคาส่ง -50.00\n2 x ทรายหยาบ (คิว) @650.00 1,300.00\n3 x ตะปู 2 นิ้ว (กก.) @48.50 145.50\n12 x ถุงมือผ้า @12.00 144.00\nยอดรวม (27 รายการ) 3,039.50\nรวมส่วนลดรายการ -50.00\nส่วนลดท้ายบิล -100.00\nมูลค่าก่อนภาษี 2,889.50\nภาษีมูลค่าเพิ่ม 7% 202.27\nปัดเศษ -0.77\nรวมทั้งสิ้น 3,091.00\nชำระโดย เงินโอน 3,091.00"
+  },
+  {
+    "id": "R4",
+    "fields": {
+      "lines": [
+        {
+          "amount": "718.00",
+          "quantity": "2",
+          "unitPrice": "359.00",
+          "confidence": 0.97,
+          "description": "ชุดสุกี้รวมมิตร",
+          "evidenceSignal": "ชุดสุกี้รวมมิตร"
+        },
+        {
+          "amount": "238.00",
+          "quantity": "2",
+          "unitPrice": "119.00",
+          "confidence": 0.97,
+          "description": "หมูสไลซ์",
+          "evidenceSignal": "หมูสไลซ์"
+        },
+        {
+          "amount": "89.00",
+          "quantity": "1",
+          "unitPrice": "89.00",
+          "confidence": 0.97,
+          "description": "เกี๋ยวกุ้ง",
+          "evidenceSignal": "เกี๋ยวกุ้ง"
+        },
+        {
+          "amount": "110.00",
+          "quantity": "2",
+          "unitPrice": "55.00",
+          "confidence": 0.97,
+          "description": "ชาเขียวเย็น",
+          "evidenceSignal": "ชาเขียวเย็น"
+        }
+      ],
+      "vatMode": "VAT_EXCLUDED",
+      "vatRate": "0.07",
+      "currency": "THB",
+      "vatAmount": "88.94",
+      "vendorName": "บริษัท สุกี้นานา จำกัด",
+      "description": "สุกี้นานา สาขา 00017 โต๊ะ 21",
+      "expenseDate": "2026-10-14",
+      "vendorTaxId": "0105563098761",
+      "missingFields": [
+        "additionalCharges"
+      ],
+      "taxableAmount": "1,270.50",
+      "documentNumber": "SN17-2610-1188",
+      "subtotalAmount": "1,155.00",
+      "grandTotalAmount": "1,359.00",
+      "vendorBranchCode": "00017",
+      "vendorEntityKind": "JURISTIC",
+      "additionalCharges": [
+        {
+          "kind": "SERVICE_CHARGE",
+          "amount": "115.50",
+          "vatRate": "0.07",
+          "confidence": 0.97,
+          "description": "ค่าบริการ (Service Charge) 10%",
+          "evidenceSignal": "ค่าบริการ (Service Charge) 10%"
+        }
+      ],
+      "categorySuggestion": {
+        "confidence": 0.72,
+        "evidenceSignals": [
+          "ชุดสุกี้รวมมิตร",
+          "ค่าบริการ (Service Charge) 10%",
+          "สุกี้นานา"
+        ],
+        "expenseCategoryId": "category-a-other"
+      },
+      "expenseDateAssumptions": [
+        "era_resolved_ce"
+      ],
+      "vendorIdentityEvidence": "บริษัท สุกี้นานา จำกัด"
+    },
+    "printedText": "บริษัท สุกี้นานา จำกัด\nเลขประจำตัวผู้เสียภาษี 0105563098761 สาขาที่ 00017\nใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ\nเลขที่ SN17-2610-1188 14/10/2026 18:31\nโต๊ะ 21 พนักงาน: 01\n2 x ชุดสุกี้รวมมิตร @359.00 718.00\n2 x หมูสไลซ์ @119.00 238.00\n1 x เกี๊ยวกุ้ง @89.00 89.00\n2 x ชาเขียวเย็น @55.00 110.00\nยอดรวม (7 รายการ) 1,155.00\nค่าบริการ (Service Charge) 10% 115.50\nมูลค่าก่อนภาษี 1,270.50\nภาษีมูลค่าเพิ่ม 7% 88.94\nปัดเศษ -0.44\nรวมทั้งสิ้น 1,359.00\nชำระโดย QR พร้อมเพย์ 1,359.00"
+  }
+]

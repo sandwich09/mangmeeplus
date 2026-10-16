@@ -421,6 +421,8 @@ function detailRequest(messageText: string): LineAiTurnRequest {
   return {
     requestId: 'request-detail', webhookEventId: 'event-detail', messageText,
     messagePreviewHash: 'e'.repeat(16),
+    conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: [{ tool: 'expense.list_recent', answerShape: 'list',
+      asOf: DETAIL_SOURCE_REF.asOf, shownItems: [{ ordinal: 3, id: 'expense-detail-one', label: 'ไม่ระบุร้าน' }] }] },
     semanticSubrequests: [{
       index: 0, kind: 'read', goal: 'รายละเอียดรายการที่ 3', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
       requestedFilters: { expenseId: 'expense-detail-one' },

@@ -424,7 +424,7 @@ export class SetPartnerAiModelUseCase {
    *  neither bucket — it still counts against the total, and is never guessed into one. */
   private async bucketSpend(tx: Prisma.TransactionClient, companyId: string, monthKey: string): Promise<{ CHAT: number; OCR: number }> {
     const rows = await tx.aiUsageEvent.groupBy({
-      by: ['budgetBucket'], where: { companyId, monthKey }, _sum: { costSatang: true },
+      by: ['budgetBucket'], where: { companyId, monthKey, OR: [{ usageBasis: null }, { usageBasis: { not: 'COMPANY_ABSORBED' } }] }, _sum: { costSatang: true },
     });
     const of = (bucket: string) => rows.find((r) => r.budgetBucket === bucket)?._sum.costSatang ?? 0;
     return { CHAT: of('CHAT'), OCR: of('OCR') };

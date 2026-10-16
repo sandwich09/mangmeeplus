@@ -19,6 +19,32 @@ import {
 } from './expense-capture-read-runner.service';
 import { ExpenseCaptureAutoSplitService } from './expense-capture-auto-split.service';
 import { planWindows, priorDocuments } from '../../domain/logic/expense-capture-assembly.logic';
+import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
+import { ReceiptOcrApplyService } from './receipt-ocr-apply.service';
+import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
+
+it('Z3: a published PARTIAL cannot swallow attempts_exhausted for the same LINE PDF job', async () => {
+  const h = await build({ readResults: [{ status: 'ok', truncated: true, text: 'ITEM 60.00' }] });
+  const events = new Map<string, any>();
+  (h.runner as any).outbox = new OutboxAppendService({ append: async (event: any) => {
+    if (!events.has(event.eventKey)) events.set(event.eventKey, event);
+  } } as any, { error: () => assert.fail('outbox append must persist') } as any);
+  try {
+    await h.runner.runClaimed(h.job);
+    assert.equal(terminal(h).status, 'PARTIAL');
+    h.job.status = 'READING'; h.job.leaseOwner = 'owner-1'; h.job.attempts = 6;
+    await h.runner.runClaimed(h.job);
+    assert.equal(terminal(h).status, 'FAILED');
+    assert.equal(terminal(h).lastErrorCode, 'attempts_exhausted');
+    assert.equal(events.size, 2, 'the real outbox dedupe must retain the final failure');
+    assert.deepEqual([...events.values()].map(event => event.payloadJson.status), ['PARTIAL', 'FAILED']);
+    assert.deepEqual([...events.values()].map(event => event.payloadJson.requestId), ['job-1:1', 'job-1:6']);
+    assert.ok([...events.values()].every(event => event.payloadJson.expenseId === h.job.expenseId && event.companyId === h.job.companyId));
+    h.job.status = 'READING'; h.job.leaseOwner = 'owner-1';
+    await h.runner.runClaimed(h.job);
+    assert.equal(events.size, 2, 'replaying the same claimed attempt remains idempotent');
+  } finally { h.restore(); }
+});
 
 const classification: BusinessDocumentClassification = {
   contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
@@ -94,6 +120,7 @@ async function build(options: {
   derivativeMaxBytes?: number;
   corruptBytes?: boolean;
   jobOver?: Record<string, unknown>;
+  applyService?: ReceiptOcrApplyService;
 } = {}) {
   const bytes = options.corruptBytes
     ? Buffer.from('%PDF-1.7\nthis file cannot be opened')
@@ -223,6 +250,7 @@ async function build(options: {
   const applyService = {
     apply: async (...args: any[]) => {
       applyCalls.push(args);
+      if (options.applyService) return options.applyService.apply(args[0], args[1], args[2], args[3]);
       return { candidatesCreated: 0, committedUpdatedAt: new Date(), ...options.applyResult };
     },
   };
@@ -288,6 +316,41 @@ async function build(options: {
 
 const terminal = (harness: Harness) => harness.writes.filter((write) => write.accepted && 'status' in write.data).at(-1)?.data as any;
 
+for (const counts of [[33, 7], [33, 37, 0]]) {
+  it(`D2: applies all ${counts.reduce((sum, count) => sum + count, 0)} rows after assembling the provisional first window and headerless continuation`, async () => {
+    const rowCount = counts.reduce((sum, count) => sum + count, 0);
+    const grand = (rowCount * 107).toFixed(2), vat = (rowCount * 7).toFixed(2);
+    const windows = counts.map((count, page) => observations({
+      documents: [{ ref: `d${page + 1}`, pageIndexes: [page], kind: page ? 'SUPPLIER_INVOICE_OR_BILL' : 'TAX_INVOICE', family: 'EXPENSE_EVIDENCE',
+        issuer: page ? {} : { name: 'First printed issuer' }, ...(page ? { continuationOfRef: 'd1' } : { documentNumber: 'INV-1' }),
+        classification: { ...classification, documentKind: page ? 'SUPPLIER_INVOICE_OR_BILL' : 'TAX_INVOICE', transactionState: 'DUE',
+          amountSignals: [], settlementSignals: [], requiresClarification: page === 0, missingRequiredSignals: page === 0 ? ['HUMAN_REVIEW_REQUIRED'] : [] } }],
+      items: Array.from({ length: count }, (_, row) => ({ id: `${page}:${row}`, documentRef: `d${page + 1}`, description: `item ${page}:${row}`,
+        quantity: '1', unitPrice: '100.00', amount: '100.00', event: 'sale', evidenceSpan: 'item 100.00' })),
+      components: page === counts.length - 1 ? [{ id: 'vat', documentRef: `d${page + 1}`, label: 'VAT', role: 'tax_additional', scope: 'document', appliedStatus: 'applied', amount: vat, evidenceSpan: `VAT ${vat}` }] : [],
+      totals: page === counts.length - 1 ? [{ documentRef: `d${page + 1}`, kind: 'document_total', amount: grand, evidenceSpan: `TOTAL ${grand}` },
+        { documentRef: `d${page + 1}`, kind: 'tax', amount: vat, evidenceSpan: `VAT ${vat}` }] : [],
+      completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [page], notes: [] },
+    }));
+    const h = await build({ pages: counts.length, extractResults: windows.map(observations => ({ status: 'ok', observations })) });
+    try {
+      await h.runner.runClaimed(h.job);
+      assert.equal(terminal(h).status, 'DONE');
+      assert.equal(h.outbox[0]![3].applied, true);
+      assert.equal(h.applyCalls.length, 1);
+      const fields = h.applyCalls[0]![2];
+      assert.equal(fields.lines.length, rowCount);
+      assert.equal(fields.grandTotalAmount, grand); assert.equal(fields.vatAmount, vat);
+      assert.equal(fields.vendorName, 'First printed issuer');
+      assert.equal(h.applyCalls[0]![3].sourceDocumentType, 'TAX_INVOICE');
+      assert.equal(h.applyCalls[0]![3].sourceAttachmentId, 'att-1');
+      assert.equal(h.applyCalls[0]![3].expectedUpdatedAt.toISOString(), h.job.expectedSourceUpdatedAt.toISOString());
+      assert.equal(h.createdExpenses.length, 0, 'a continuation never becomes a split draft');
+      assert.equal(windows[0]!.documents[0]!.classification.requiresClarification, true, 'raw checkpoint is not mutated');
+    } finally { h.restore(); }
+  });
+}
+
 describe('capture read runner — the happy path', () => {
   let harness: Harness;
   beforeEach(() => { harness?.restore(); });
@@ -297,8 +360,8 @@ describe('capture read runner — the happy path', () => {
     try {
       await harness.runner.runClaimed(harness.job as any);
       assert.equal(terminal(harness).status, 'DONE');
-      assert.equal(harness.readCalls.length, 1, 'two pages fit one chunk');
-      assert.equal(harness.extractCalls.length, 1);
+      assert.equal(harness.readCalls.length, 2, 'one page per call');
+      assert.equal(harness.extractCalls.length, 2);
       assert.equal(harness.observationsStored.length, 1);
       assert.equal(harness.observationsStored[0]!.source, 'AI');
       assert.equal(harness.applyCalls.length, 1, 'one document, one issuer: the draft is filled');
@@ -318,7 +381,7 @@ describe('capture read runner — the happy path', () => {
     harness = await build({ pages: 7 });
     try {
       await harness.runner.runClaimed(harness.job as any);
-      assert.equal(harness.readCalls.length, 3, 'seven pages, three chunks');
+      assert.equal(harness.readCalls.length, 7, 'seven pages, seven chunks');
       assert.equal(harness.admissions.length, 1, 'one file is one read, whatever it costs us');
       assert.equal(harness.admissions[0]!.sourceRoute, 'receipt-capture-web');
       assert.equal(harness.admissions[0]!.requestId, 'ocr-1', 'the job owns the fence, so a retry cannot re-count');
@@ -335,7 +398,7 @@ describe('capture read runner — the happy path', () => {
       assert.equal(first.manifestJson.pageCount, 4);
       assert.equal(first.manifestJson.pages.length, 4);
       assert.ok(first.manifestJson.pages.every((page: any) => page.state === 'pending'));
-      assert.equal(first.manifestJson.chunks.length, 2);
+      assert.equal(first.manifestJson.chunks.length, 4);
     } finally { harness.restore(); }
   });
 });
@@ -377,18 +440,20 @@ describe('capture read runner — fences and resume', () => {
     });
     try {
       await harness.runner.runClaimed(harness.job as any);
-      assert.equal(harness.readCalls.length, 2, 'chunk 1 was already paid for');
-      assert.deepEqual(harness.readCalls.map((call) => call.chunk.id), ['c2', 'c3']);
+      assert.equal(harness.readCalls.length, 4, 'the first three pages were already paid for');
+      assert.deepEqual(harness.readCalls.map((call) => call.chunk.id), ['c4', 'c5', 'c6', 'c7']);
+      const manifest = (harness.writes[0]!.data as any).manifestJson;
+      assert.ok(manifest.pages.slice(0, 3).every((page: any) => page.state === 'read'), 'restored page coverage survives the new manifest');
     } finally { harness.restore(); }
   });
 
-  it('re-splits a truncated page once and keeps the pages that completed', async () => {
+  it('keeps a truncated page partial and continues with the remaining single pages', async () => {
     harness = await build({ pages: 3, readResults: [{ status: 'ok', truncated: true }, { status: 'ok' }] });
     try {
       await harness.runner.runClaimed(harness.job as any);
-      assert.equal(harness.readCalls.length, 2, 'the truncated page alone, not the whole chunk again');
-      assert.deepEqual(harness.readCalls[1]!.chunk.pageIndexes, [2]);
-      assert.equal(harness.readCalls[1]!.chunk.id, 'c1p2');
+      assert.equal(harness.readCalls.length, 3, 'each page is already isolated');
+      assert.deepEqual(harness.readCalls[1]!.chunk.pageIndexes, [1]);
+      assert.equal(harness.readCalls[1]!.chunk.id, 'c2');
     } finally { harness.restore(); }
   });
 
@@ -444,14 +509,16 @@ describe('capture read runner — fences and resume', () => {
     } finally { harness.restore(); }
   });
 
-  it('retries a provider error once, then marks the chunk failed and keeps going', async () => {
+  it('retries a timed-out page once with a distinct request, then keeps going', async () => {
     harness = await build({
-      pages: 6,
-      readResults: [{ status: 'failed' }, { status: 'failed' }, { status: 'ok' }],
+      pages: 2,
+      readResults: [{ status: 'failed', errorCode: 'PROVIDER_TIMEOUT' }, { status: 'failed', errorCode: 'PROVIDER_TIMEOUT' }, { status: 'ok' }],
     });
     try {
       await harness.runner.runClaimed(harness.job as any);
       assert.equal(harness.readCalls.length, 3, 'two attempts on chunk 1, then chunk 2');
+      assert.notEqual(harness.readCalls[0]!.requestId, harness.readCalls[1]!.requestId);
+      assert.equal(harness.admissions.length, 1, 'the timeout retry is not another customer read');
       const state = terminal(harness);
       assert.equal(state.status, 'PARTIAL', 'a file with a failed chunk is partial, never done');
       assert.equal(harness.extractCalls.length, 1, 'the pages that WERE read are still extracted');
@@ -472,6 +539,50 @@ describe('capture read runner — fences and resume', () => {
 describe('capture read runner — boundaries', () => {
   let harness: Harness;
 
+  it('OCR-C reads a LINE PDF one page at a time, applies through the photo seam and emits its result notification', async () => {
+    harness = await build({ pages: 2, expense: { id: 'exp-1', companyId: 'co-1', status: 'DRAFT', primaryAttachmentId: 'att-1',
+      branchId: 'br-1', createdByUserId: 'user-1', captureSource: 'LINE_UPLOAD', updatedAt: new Date('2026-09-15') } });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(harness.readCalls.length, 2);
+      for (const call of harness.readCalls) {
+        assert.equal(call.chunk.pageIndexes.length, 1);
+        assert.equal((await PDFDocument.load(Buffer.from(call.chunk.contentBase64, 'base64'))).getPageCount(), 1);
+      }
+      assert.equal(harness.extractCalls.length, 2); assert.equal(harness.applyCalls.length, 1);
+      assert.equal(harness.applyCalls[0]![1], 'exp-1');
+      assert.equal(harness.outbox[0]![0], 'expense.capture_read.finished');
+      assert.equal(harness.outbox[0]![3].ownerType, 'EXPENSE');
+      assert.equal(harness.outbox[0]![3].applied, true);
+    } finally { harness.restore(); }
+  });
+
+  it('OCR-C retries a timed-out extraction once with a distinct attempt and one document admission', async () => {
+    for (const second of ['ok', 'failed'] as const) {
+      harness = await build({ extractResults: [{ status: 'failed', errorCode: 'PROVIDER_TIMEOUT' },
+        { status: second, errorCode: 'PROVIDER_TIMEOUT' }] });
+      try {
+        await harness.runner.runClaimed(harness.job as any);
+        assert.equal(harness.extractCalls.length, 2);
+        assert.notEqual(harness.extractCalls[0]!.requestId, harness.extractCalls[1]!.requestId);
+        assert.equal(harness.admissions.length + harness.released.length, 1);
+        assert.equal(harness.job.providerCallCount, 3, 'one page read and two extraction attempts');
+        assert.equal(terminal(harness).status, second === 'ok' ? 'DONE' : 'PARTIAL');
+      } finally { harness.restore(); }
+    }
+  });
+
+  it('OCR-C never retries a non-timeout extract failure or exceeds the file call ceiling', async () => {
+    harness = await build({ extractResults: [{ status: 'failed', errorCode: 'PROVIDER_ERROR' }] });
+    try { await harness.runner.runClaimed(harness.job as any); assert.equal(harness.extractCalls.length, 1); }
+    finally { harness.restore(); }
+    harness = await build({ jobOver: { providerCallCount: EXPENSE_CAPTURE_MAX_PROVIDER_CALLS - 2 },
+      extractResults: [{ status: 'failed', errorCode: 'PROVIDER_TIMEOUT' }] });
+    try { await harness.runner.runClaimed(harness.job as any); assert.equal(harness.extractCalls.length, 1);
+      assert.equal(harness.job.providerCallCount, EXPENSE_CAPTURE_MAX_PROVIDER_CALLS); }
+    finally { harness.restore(); }
+  });
+
   it('pauses with page_limit after reading the pages inside the declared scope', async () => {
     harness = await build({ pages: 5, maxPages: 3 });
     try {
@@ -479,7 +590,7 @@ describe('capture read runner — boundaries', () => {
       const state = terminal(harness);
       assert.equal(state.status, 'PAUSED');
       assert.equal(state.pausedReason, 'page_limit');
-      assert.equal(harness.readCalls.length, 1, 'three pages were read, the other two were not cut silently');
+      assert.equal(harness.readCalls.length, 3, 'three pages were read, the other two were not cut silently');
       assert.equal(harness.observationsStored.length, 1, 'what was read is still stored');
       assert.equal(harness.outbox[0]![3].pausedReason, 'page_limit');
     } finally { harness.restore(); }
@@ -494,7 +605,7 @@ describe('capture read runner — boundaries', () => {
       assert.equal(state.pausedReason, 'ai_credit');
       assert.equal(harness.readCalls.length, 2, 'a refusal is never retried — it would refuse again');
       const checkpointed = harness.writes.filter((write) => write.accepted && (write.data as any).checkpointJson).at(-1)!.data as any;
-      assert.equal(Object.keys(checkpointed.checkpointJson.pages).length, 3, 'the first chunk survives the pause');
+      assert.equal(Object.keys(checkpointed.checkpointJson.pages).length, 1, 'the first chunk survives the pause');
     } finally { harness.restore(); }
   });
 
@@ -648,7 +759,7 @@ describe('capture read runner — what it refuses to apply', () => {
     const shops = twoShops();
     shops.documents[0]!.categorySuggestion = suggestion('cat-freight', 'ร้าน ก');
     shops.documents[1]!.categorySuggestion = suggestion('cat-meals', 'ขนม 40.00');
-    harness = await build({ pages: 2, extractResults: [{ status: 'ok', observations: shops }] });
+    harness = await build({ pages: 2, extractResults: [{ status: 'ok', observations: shops }, { status: 'ok', observations: { ...shops, documents: [], items: [], components: [], totals: [], payments: [], refunds: [] } }] });
     try {
       await harness.runner.runClaimed(harness.job as any);
       assert.deepEqual(harness.extractCalls[0]!.activeCategories, [
@@ -750,16 +861,15 @@ describe('capture read windows', () => {
       '1': { text: 'b'.repeat(6_000) },
       '2': { text: 'c'.repeat(100) },
     });
-    assert.equal(windows.length, 2);
-    assert.deepEqual(windows[0]!.pageIndexes, [0]);
-    assert.deepEqual(windows[1]!.pageIndexes, [1, 2]);
-    assert.deepEqual(windows.map((window) => window.id), ['w1', 'w2']);
+    assert.equal(windows.length, 3);
+    assert.deepEqual(windows.map(window => window.pageIndexes), [[0], [1], [2]]);
+    assert.deepEqual(windows.map(window => window.id), ['w1', 'w2', 'w3']);
   });
 
   it('skips blank pages and orders by page index, never by insertion', () => {
     const windows = planWindows({ '5': { text: 'later' }, '1': { text: '' }, '0': { text: 'first' } });
-    assert.equal(windows.length, 1);
-    assert.deepEqual(windows[0]!.pageIndexes, [0, 5]);
+    assert.equal(windows.length, 2);
+    assert.deepEqual(windows.map(window => window.pageIndexes), [[0], [5]]);
   });
 
   it('tells a later window which documents are still open', () => {
@@ -770,4 +880,154 @@ describe('capture read windows', () => {
     const open = priorDocuments({ w1: observations({ totals: [] }) });
     assert.equal(open[0]!.openTotals, true);
   });
+});
+
+it('Y3: PARTIAL → retry → DONE preserves window plan 3, re-reads only the incomplete page and replaces its observations', async () => {
+  const h = await build({ pages: 2, readResults: [
+    { status: 'ok', truncated: true, text: 'PARTIAL first page 60.00' },
+    { status: 'ok', text: 'PAGE 2 TOTAL 100.00' },
+    { status: 'ok', text: 'COMPLETE first page 60.00 40.00' },
+  ] });
+  try {
+    await h.runner.runClaimed(h.job);
+    assert.equal(terminal(h).status, 'PARTIAL');
+    assert.equal(h.job.checkpointJson.windowPlanVersion, 3);
+    assert.equal(h.readCalls.length, 2); assert.equal(h.extractCalls.length, 2);
+    h.job.status = 'READING'; h.job.leaseOwner = 'owner-1'; h.job.attempts++;
+    await h.runner.runClaimed(h.job);
+    assert.equal(terminal(h).status, 'DONE', h.job.lastErrorCode);
+    assert.equal(h.readCalls.length, 3); assert.deepEqual(h.readCalls[2].chunk.pageIndexes, [0]);
+    assert.equal(h.extractCalls.length, 4, 'the changed page and its dependent prior-document context are re-extracted');
+    assert.equal(h.extractCalls[2].window.pages[0].text, 'COMPLETE first page 60.00 40.00');
+    assert.deepEqual(h.extractCalls[3].window.pageIndexes, [1]);
+    assert.equal(h.job.checkpointJson.windowPlanVersion, 3);
+    assert.equal(h.admissions.length, 1, 'the retry retains one document admission');
+    assert.deepEqual(h.outbox.map(row => row[3].status), ['PARTIAL', 'DONE']);
+  } finally { h.restore(); }
+});
+
+it('Y3: a resumed complete version-3 window is reused; a version-2 window still fails closed', async () => {
+  for (const version of [3, 2]) {
+    const h = await build({ jobOver: { checkpointJson: { version: 1, windowPlanVersion: version,
+      pages: { '0': { text: 'PAGE 1 TOTAL 100.00' } }, chunks: { c1: 'done' }, windows: { w1: observations() } } } });
+    try {
+      await h.runner.runClaimed(h.job);
+      assert.equal(h.readCalls.length, 0); assert.equal(h.extractCalls.length, 0);
+      assert.equal(terminal(h).status, version === 3 ? 'DONE' : 'FAILED');
+      assert.equal(h.applyCalls.length, version === 3 ? 1 : 0);
+      if (version === 2) assert.equal(h.job.lastErrorCode, 'CAPTURE_WINDOW_EVIDENCE_VERSION_CHANGED');
+    } finally { h.restore(); }
+  }
+});
+
+for (const counts of [[33, 7], [33, 37, 0]]) {
+  it(`Fix-up 10 P1: ${counts.reduce((sum, count) => sum + count, 0)} PDF rows apply after real delivery bookkeeping, refuse genuine edits, including checkpoint resume`, async () => {
+    // g1's two/three-page regression: later model windows call their physical page "0".
+    // The supplied g1 files retain final empty expenses, not raw checkpoint JSON; reconstruct the
+    // reported checkpoint shape here rather than depending on uncommitted .live-r8 artifacts.
+    const rows = counts.reduce((sum, count) => sum + count, 0), grand = (rows * 107).toFixed(2), vat = (rows * 7).toFixed(2);
+    const windows = counts.map((count, page) => observations({
+      documents: [{ ref: `d${page + 1}`, pageIndexes: [0], kind: page ? 'SUPPLIER_INVOICE_OR_BILL' : 'TAX_INVOICE', family: 'EXPENSE_EVIDENCE',
+        issuer: page ? {} : { name: 'First printed issuer' }, ...(page ? { continuationOfRef: 'd1' } : { documentNumber: 'INV-1' }),
+        classification: { ...classification, documentKind: page ? 'SUPPLIER_INVOICE_OR_BILL' : 'TAX_INVOICE', transactionState: 'DUE',
+          amountSignals: [], settlementSignals: [], requiresClarification: page === 0, missingRequiredSignals: page === 0 ? ['HUMAN_REVIEW_REQUIRED'] : [] } }],
+      items: Array.from({ length: count }, (_, row) => ({ id: `${page}:${row}`, documentRef: `d${page + 1}`, description: `item ${page}:${row}`,
+        quantity: '1', unitPrice: '100.00', amount: '100.00', event: 'sale', evidenceSpan: 'item 100.00' })),
+      components: page === counts.length - 1 ? [{ id: 'vat', documentRef: `d${page + 1}`, label: 'VAT', role: 'tax_additional', scope: 'document', appliedStatus: 'applied', amount: vat, evidenceSpan: `VAT ${vat}` }] : [],
+      totals: page === counts.length - 1 ? [{ documentRef: `d${page + 1}`, kind: 'document_total', amount: grand, evidenceSpan: `TOTAL ${grand}` },
+        { documentRef: `d${page + 1}`, kind: 'tax', amount: vat, evidenceSpan: `VAT ${vat}` }] : [],
+      completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [0], notes: [] },
+    }));
+    const original = JSON.stringify(windows);
+    let checkpoint: any;
+    for (const [resume, userEdit] of [[false, false], [true, false], [false, true], [true, true]]) {
+      const record: any = { id: 'exp-1', companyId: 'co-1', status: 'DRAFT', captureSource: 'LINE_UPLOAD', primaryAttachmentId: 'att-1',
+        updatedAt: new Date('2026-09-15T00:00:00.000Z'), expenseDate: new Date('2026-09-10'), vendorNameSnapshot: null,
+        grandTotalAmount: '0', vatAmount: '0', netPayableAmount: '0', whtAmount: '0', discountAmount: '0', vatMode: 'NO_VAT', lines: [], attachments: [],
+        sourceChannelMetadataJson: { chatKeyHash: 'chat' }, substituteReceiptEvidences: [] };
+      const tx = { $executeRaw: async () => 0, companyVatRegistrationFact: { findMany: async () => [] }, expenseRecord: {
+        findFirst: async () => record, findFirstOrThrow: async () => record,
+        updateMany: async ({ where, data }: any) => {
+          assert.equal(where.companyId, 'co-1');
+          if (where.updatedAt.getTime() !== record.updatedAt.getTime()) return { count: 0 };
+          Object.assign(record, data); return { count: 1 };
+        },
+        update: async ({ where, data }: any) => { assert.equal(where.companyId, 'co-1'); assert.equal(where.updatedAt.getTime(), record.updatedAt.getTime()); Object.assign(record, data); },
+      }, expenseCategory: { findFirst: async () => null }, expenseLine: {
+        deleteMany: async () => { record.lines = []; }, create: async ({ data }: any) => { record.lines.push(data); },
+      } };
+      const repo = { findByIdWithRelations: async () => record, findNearDuplicates: async () => [],
+        runDuplicateCheck: async (_input: any, detect: any, db: any) => { assert.equal(db, tx); await detect(db); return { openCandidates: 0, duplicateStatus: 'NO_MATCH' }; } };
+      const applyService = new ReceiptOcrApplyService({ client: { $transaction: async (work: any) => work(tx) } } as any, repo as any);
+      const h = await build({ pages: counts.length, applyService, extractResults: windows.map(observations => ({ status: 'ok', observations })),
+        ...(resume ? { jobOver: { checkpointJson: checkpoint } } : {}) });
+      try {
+        const originalRevision = record.updatedAt.toISOString();
+        const deliveries = new PrismaExpenseRepository({ client: { $transaction: async (work: any) => work(tx) } } as any);
+        await deliveries.recordDeliveredLineReceiptContinuation({ companyId: 'co-1', expenseId: record.id, userId: 'user',
+          chatKeyHash: 'chat', deliveredOutcomeId: 'outcome', scopes: {} });
+        assert.equal(record.updatedAt.toISOString(), originalRevision, 'enqueue → delivered continuation preserves the queued content fence');
+        if (userEdit) { record.updatedAt = new Date(record.updatedAt.getTime() + 1); record.vendorNameSnapshot = 'User correction'; }
+        await h.runner.runClaimed(h.job);
+        assert.equal(terminal(h).status, 'DONE'); assert.equal(h.outbox[0]![3].applied, !userEdit);
+        if (userEdit) {
+          assert.equal(record.lines.length, 0); assert.equal(record.vendorNameSnapshot, 'User correction');
+          assert.equal(Number(record.grandTotalAmount), 0); continue;
+        }
+        assert.equal(record.lines.length, rows); assert.equal(Number(record.grandTotalAmount), Number(grand));
+        assert.equal(record.vendorNameSnapshot, 'First printed issuer'); assert.equal(record.sourceDocumentType, 'TAX_INVOICE');
+        const assembled = h.observationsStored[0].payloadJson;
+        assert.deepEqual(assembled.completeness.pagesCovered, counts.map((_count, page) => page));
+        assert.deepEqual(assembled.documents[0].pageIndexes, counts.map((_count, page) => page));
+        assert.equal(assembled.documents[0].classification.requiresClarification, false);
+        assert.ok(!assembled.documents[0].classification.missingRequiredSignals.includes('HUMAN_REVIEW_REQUIRED'));
+        if (resume) { assert.equal(h.readCalls.length, 0); assert.equal(h.extractCalls.length, 0); }
+        else checkpoint = structuredClone(h.job.checkpointJson);
+        assert.equal(JSON.stringify(windows), original, 'provider checkpoints remain immutable');
+      } finally { h.restore(); }
+    }
+  });
+}
+
+it('R10 Q3: a failed third extraction remains PARTIAL and resumes only its missing window', async () => {
+  const h = await build({ pages: 3, extractResults: [{ status: 'ok' }, { status: 'ok' }, { status: 'failed', errorCode: 'PROVIDER_ERROR' }, { status: 'ok' }] });
+  try {
+    await h.runner.runClaimed(h.job); assert.equal(terminal(h).status, 'PARTIAL');
+    assert.deepEqual(Object.keys(h.job.checkpointJson.windows), ['w1', 'w2']);
+    h.job.status = 'READING'; h.job.leaseOwner = 'owner-1'; h.job.attempts += 1;
+    await h.runner.runClaimed(h.job);
+    assert.equal(h.readCalls.length, 3); assert.equal(h.extractCalls.length, 4);
+    assert.deepEqual(h.extractCalls[3].window.pageIndexes, [2]);
+    assert.deepEqual(Object.keys(h.job.checkpointJson.windows), ['w1', 'w2', 'w3']);
+    assert.ok(h.job.manifestJson.windows.every((window: any) => window.state === 'done'));
+    assert.equal(terminal(h).status, 'DONE');
+  } finally { h.restore(); }
+});
+
+it('R10 Q3: a signature-only page stores its third window and completes the two-page financial document', async () => {
+  const h = await build({ pages: 3, extractResults: [{ status: 'ok' }, { status: 'ok' }, { status: 'ok', observations: observations({
+    documents: [], items: [], components: [], totals: [], completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [2], notes: [] },
+  }) }] });
+  try {
+    await h.runner.runClaimed(h.job);
+    assert.deepEqual(Object.keys(h.job.checkpointJson.windows), ['w1', 'w2', 'w3']);
+    assert.deepEqual(h.job.checkpointJson.windows.w3.documents, []); assert.equal(terminal(h).status, 'DONE');
+    assert.equal(h.applyCalls.length, 1);
+  } finally { h.restore(); }
+});
+
+for (const split of [false, true]) it(`U1 capture ${split ? 'auto-split' : 'merged/single'} forwards the slip classification to the shared apply guard`, async () => {
+  const document = split ? twoShops() : observations();
+  document.documents[0] = { ...document.documents[0]!, kind: 'TRANSFER_SLIP', family: 'PAYMENT_EVIDENCE',
+    issuer: { name: 'TEST FOODS CO' }, classification: { ...document.documents[0]!.classification!,
+      documentKind: 'TRANSFER_SLIP', documentFamily: 'PAYMENT_EVIDENCE', businessDirection: 'UNKNOWN' } };
+  const h = await build({ extractResults: [{ status: 'ok', observations: document }] });
+  try {
+    await h.runner.runClaimed(h.job);
+    assert.equal(h.applyCalls.length, split ? 2 : 1);
+    assert.equal(h.applyCalls[0]![2].vendorName, 'TEST FOODS CO');
+    assert.equal(h.applyCalls[0]![3].ocrDocumentType, 'TRANSFER_SLIP');
+    if (!split) assert.equal(h.applyCalls[0]![3].sourceDocumentType, 'TRANSFER_SLIP');
+    else assert.equal(h.applyCalls[1]![3].ocrDocumentType, 'RECEIPT');
+  } finally { h.restore(); }
 });

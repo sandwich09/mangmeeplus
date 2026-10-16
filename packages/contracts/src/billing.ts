@@ -308,7 +308,7 @@ export type BillingCollectionOperation = { id: string; companyId: string; action
   /** Phase 7: the menus the target package opens and closes, shown before the customer confirms. */
   featureImpact?: BillingFeatureImpact };
 export type BillingCheckoutBody = { quoteId: string; consentRevision: string; accepted: true; channel: 'web' | 'line' };
-export type BillingCheckoutResult = { attemptId: string; state: string; checkoutUrl: string | null };
+export type BillingCheckoutResult = { attemptId: string; state: string; checkoutUrl: string | null; /** Stripe session expiry, when supplied by the provider. */ expiresAt?: string };
 export type BillingAttemptView = {
   attemptId: string; state: string; errorCode: string | null; observedAt: string;
   paymentState: 'PENDING' | 'PAID' | 'FAILED'; applyState: BillingStatus['applyState']; invoiceReference: string | null;

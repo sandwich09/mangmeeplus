@@ -3,13 +3,13 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "036295b59c0953e13b38f012d76e3832c61ec80e",
-  "checkoutBranch": "claude/ux-owner-r-20261013",
+  "sourceRevision": "68699e0ed2d9db591772f8e095917862d24b0336",
+  "checkoutBranch": "claude/advisor-fx28-20261016",
   "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
-      "sha256": "4abee393a7a4bf482f7088e56cb11405d589712488afef193670cc6b10fec9f7"
+      "sha256": "c3a04ae6b3464b353955978bd2b6464485444909fd219cb7dc8dcafe2697d4f7"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/presentation/http/line-reliability-capabilities.controller.ts",
@@ -17,11 +17,15 @@
     },
     {
       "path": "apps/api/src/modules/auth/presentation/line-webhook.controller.ts",
-      "sha256": "45328822a89040e3764f2387ab21b0e073e82e4c5e2f9808edb98172f1e5d7a2"
+      "sha256": "ab504761d2d165b508cf758dd8987230cd841b22eb607a3ba4a11773a6362549"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-conversation-context.service.ts",
       "sha256": "16c5f981dfcdf020bfcd21fad09817961b4ac586e924ecece455fc3242c5a910"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/line-counterparty.service.ts",
+      "sha256": "a7ea4891a72520be3fb5c1660e2b9d55e323b960a5d21bea371767f85a32632e"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-document-qa.service.ts",
@@ -32,12 +36,32 @@
       "sha256": "bfaa14bcfeb2007275de5e07a29ec32b35724e7aa03c98e6c910d520a2cd35e0"
     },
     {
+      "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
+      "sha256": "d4ffd3209ef8cb7cec7041c75ddc4de708660b3d3f4a541f9c30d5e7f7836a81"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/line-quoted-message.service.ts",
+      "sha256": "7552d03a46cc657501c0c0fc3821d75fd5693f202267cef93f4957029f1708c2"
+    },
+    {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
-      "sha256": "36f6af74c0f45f64db3bbbb0380cab579d25ec7c84d24e824a5a96b0b418fe33"
+      "sha256": "4ca4dd0269834028662be26bbcaeca37dd0a59074488801c79ff5497815dfd60"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-reimbursement-draft.service.ts",
-      "sha256": "8ff8f1e52b785fbdc184e819694b331961633803b3b44df5b9236c6af4296205"
+      "sha256": "6753f156a8ef0737bd077013e00c69a1a43cea1533f364a8bcd025ec3995ddf5"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/line-team-action.service.ts",
+      "sha256": "eadbe388af4a3ec64238a13ccf5074ad3d5cbe6dd550a59b7516bc7357914833"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/line-voucher-action.service.ts",
+      "sha256": "73b9f35e4ac56fbc85c5e7eddcd0ba8cee0f15a793e725eae300b0c519d6dfb3"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
+      "sha256": "983082abbbaf66d01a660fc0745836cc435955ec4f1ae0e36da965e4b2739004"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-banking-tools.use-case.ts",
@@ -49,7 +73,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
-      "sha256": "c33a35b968468f0faa1fe183b8629df38ed5f3019c03dbb0b7050da033bd7487"
+      "sha256": "8e939ba19e5c2570a9b3e582f4c662b22ac1ed9f6518f393297eed610b07624f"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-crm-operational-tools.use-case.ts",
@@ -65,7 +89,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-draft-update-tools.use-case.ts",
-      "sha256": "0ec1d94df4f73d1b62e40da92ce5bd2647e207ffb5796527a7817eae9196d4a4"
+      "sha256": "0d32f9c65c7e8a0f16d46ef2d60443ce26878988b70a5322a662301faee96acb"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-expense-daily-closing.use-case.ts",
@@ -96,6 +120,10 @@
       "sha256": "12089445f244ec867b54b7759c86897980b56807ca00d29b16e8e29aac3adc03"
     },
     {
+      "path": "apps/api/src/modules/line-ai/application/use-cases/erp-team-tools.use-case.ts",
+      "sha256": "9ab7663972e0850139456b2095e72e7b207393361462e0c079ec8a810e25c054"
+    },
+    {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts",
       "sha256": "d920e4259d7ebdbca8624b3b2c54acedf4fc00ce88e43a04dfd28febff9a7149"
     },
@@ -109,7 +137,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "ae032d77427080845637494bea881d4a27be0c06d11f24ec6cd7f44c26ec7cbd"
+      "sha256": "7d8e01a620499629796b1698f8175885221b631a34c136b340854d2ad0458e91"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -125,19 +153,19 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/line-ai-capability-manifest.ts",
-      "sha256": "cc293fe5f6d1f8c262f1912f7f6e4f6335d0e685e80329c60969de7ea18f14a5"
+      "sha256": "4d367e89b09cd304dd7897600ec5b21d5c876c4eff64c3bdd075b078c6292df0"
     },
     {
       "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
-      "sha256": "4f2c22a6147f9253a7491cb38a6f3e8b2586cc4855a571df26e5e20480284888"
+      "sha256": "d307e686c8aaa33bf779c16dd1a3e7897558a6e43858438bbe2bb519cf0a5229"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-ai-budget.controller.ts",
-      "sha256": "61eec64fe69c332a3ba1532b5f4d624c4ae5f18466670e3134135557241744ab"
+      "sha256": "7a2c560ffafc390b39dcd985ad5206c4b55fd9a2150a334027de7e753d42ff76"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
-      "sha256": "d9d1c1fa511713cc1a3098204c81c4887339b5e1aefcee9df979351d5760d9b6"
+      "sha256": "0b7cb6c34dcdc86e569fea1888561618c6fa4079486a7f41c346a7bdd49a0f1c"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/line-ai-ledger-internal.controller.ts",
@@ -177,11 +205,11 @@
     },
     {
       "path": "packages/config/src/index.ts",
-      "sha256": "939f87b6fb6ac2460eff23c236f611c1a4b4aad7a910c33f038f481c6528853e"
+      "sha256": "a62e637c5c964b113406e2bf75591e949b802b950b01b1788f8a916228b60723"
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "4a0d46de4ddf1cea4e6b5e5d0c3ed15ea773473d86f3b0f74daa032b4492ead7"
+      "sha256": "58746d736acbe464af0bec12fd1d7da115b929f0ac04e3c0ed85bbcbc61d49fb"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -189,7 +217,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "b278ed878bfe9dcb0444bda903395302dda109e61a25c7c0108279e8726685ab"
+      "sha256": "2d567c60081c96545282ce2411a39662a3201bd70b07cb090d27cdcc339355f2"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -371,10 +399,15 @@
       "bank.get_reconciliation_status",
       "billing.get_package_catalog",
       "billing.get_package_usage",
+      "company.action.preview",
       "company.get_current_context",
       "company.get_employee_detail",
       "company.get_employee_summary",
+      "company.get_roles",
       "company.list_branches",
+      "counterparty.action.preview",
+      "counterparty.get_detail",
+      "counterparty.search",
       "crm.get_booking_summary",
       "crm.get_conversation_summary",
       "crm.get_customer_360",
@@ -387,6 +420,7 @@
       "crm.list_open_followups",
       "crm.search_customers",
       "dashboard.get_business_health_summary",
+      "expense.action.preview",
       "expense.draft.add_charge",
       "expense.draft.remove_line",
       "expense.draft.set_header",
@@ -430,6 +464,10 @@
       "tax.get_vat_summary",
       "tax.get_wht_summary",
       "tax.list_missing_tax_documents",
+      "voucher.get_detail",
+      "voucher.list_recent",
+      "wht.calculate_withholding",
+      "wht.get_month_summary",
       "workflow.explain_run",
       "workflow.list_assigned_tasks",
       "workflow.list_recent_failures",
@@ -1755,6 +1793,421 @@
       ]
     },
     {
+      "operation": "counterparty.search",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [],
+        "optional": [
+          "search"
+        ],
+        "allowed": [
+          "search"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [
+          "accounting.counterparty.read"
+        ],
+        "anyOfPermissions": [],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [
+          "expenses",
+          "sales_documents"
+        ],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "cfo",
+        "general"
+      ],
+      "questionKinds": [
+        "list",
+        "search"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "accounting-documents",
+        "businessSubjects": [
+          "accounting_document",
+          "expense",
+          "supplier"
+        ],
+        "adapterClass": "CounterpartySearchTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R1",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": true,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"counterparty.search\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → CounterpartySearchTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/CounterpartySearchTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/line-counterparty.service.ts",
+          "symbol": "CounterpartySearchTool"
+        }
+      ]
+    },
+    {
+      "operation": "counterparty.get_detail",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [
+          "counterpartyId"
+        ],
+        "optional": [],
+        "allowed": [
+          "counterpartyId"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [],
+        "anyOfPermissions": [
+          "accounting.counterparty.manage",
+          "accounting.counterparty.read",
+          "accounting.document.read_related",
+          "expense.create",
+          "expense.read_related",
+          "expense.receipt.line_upload",
+          "expense.receipt.upload",
+          "expense.review",
+          "expense.update"
+        ],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [
+          "expenses",
+          "sales_documents"
+        ],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "cfo",
+        "general"
+      ],
+      "questionKinds": [
+        "detail"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "accounting-documents",
+        "businessSubjects": [
+          "accounting_document",
+          "expense",
+          "supplier"
+        ],
+        "adapterClass": "CounterpartyGetDetailTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R1",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": true,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"counterparty.get_detail\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → CounterpartyGetDetailTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/CounterpartyGetDetailTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/line-counterparty.service.ts",
+          "symbol": "CounterpartyGetDetailTool"
+        }
+      ]
+    },
+    {
+      "operation": "counterparty.action.preview",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [
+          "action"
+        ],
+        "optional": [
+          "addressText",
+          "branchCode",
+          "counterpartyId",
+          "displayName",
+          "entityKind",
+          "legalName",
+          "taxId"
+        ],
+        "allowed": [
+          "action",
+          "addressText",
+          "branchCode",
+          "counterpartyId",
+          "displayName",
+          "entityKind",
+          "legalName",
+          "taxId"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [],
+        "anyOfPermissions": [
+          "accounting.counterparty.manage",
+          "accounting.counterparty.read",
+          "accounting.document.read_related",
+          "expense.create",
+          "expense.read_related",
+          "expense.receipt.line_upload",
+          "expense.receipt.upload",
+          "expense.review",
+          "expense.update"
+        ],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [
+          "expenses",
+          "sales_documents"
+        ],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "cfo",
+        "general"
+      ],
+      "questionKinds": [
+        "detail"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "accounting-documents",
+        "businessSubjects": [
+          "accounting_document",
+          "expense",
+          "supplier"
+        ],
+        "adapterClass": "CounterpartyActionPreviewTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R2",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": false,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"counterparty.action.preview\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → CounterpartyActionPreviewTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/CounterpartyActionPreviewTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/line-counterparty.service.ts",
+          "symbol": "CounterpartyActionPreviewTool"
+        }
+      ]
+    },
+    {
+      "operation": "expense.action.preview",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [
+          "action"
+        ],
+        "optional": [
+          "expenseId",
+          "expenseIds",
+          "paidAmount",
+          "paidAt",
+          "paymentMethod",
+          "reason",
+          "reimbursementId",
+          "voucherId"
+        ],
+        "allowed": [
+          "action",
+          "expenseId",
+          "expenseIds",
+          "paidAmount",
+          "paidAt",
+          "paymentMethod",
+          "reason",
+          "reimbursementId",
+          "voucherId"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [],
+        "anyOfPermissions": [
+          "expense.confirm",
+          "expense.delete",
+          "expense.disbursement.approve",
+          "expense.disbursement.pay",
+          "expense.disbursement.prepare",
+          "expense.payment.record",
+          "expense.review",
+          "expense.update",
+          "expense.void",
+          "reimbursement.approve",
+          "reimbursement.cancel_own",
+          "reimbursement.finance_review",
+          "reimbursement.payment.record",
+          "reimbursement.read",
+          "reimbursement.read_own",
+          "reimbursement.read_related",
+          "reimbursement.reject",
+          "reimbursement.submit",
+          "wht.certificate.issue"
+        ],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [
+          "expenses"
+        ],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "cfo",
+        "general",
+        "tax"
+      ],
+      "questionKinds": [
+        "detail"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "expenses",
+        "businessSubjects": [
+          "expense",
+          "reimbursement",
+          "tax"
+        ],
+        "adapterClass": "ExpenseActionPreviewTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R2",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": false,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"expense.action.preview\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → ExpenseActionPreviewTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/ExpenseActionPreviewTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
+          "symbol": "ExpenseActionPreviewTool"
+        }
+      ]
+    },
+    {
       "operation": "expense.draft.set_header",
       "execution": "read_tool",
       "implementation": "wired",
@@ -1763,6 +2216,7 @@
       "supportedFields": {
         "required": [],
         "optional": [
+          "categoryName",
           "documentNumber",
           "expenseDate",
           "noteAppend",
@@ -1770,6 +2224,7 @@
           "vendorName"
         ],
         "allowed": [
+          "categoryName",
           "documentNumber",
           "expenseDate",
           "noteAppend",
@@ -1860,6 +2315,7 @@
         ],
         "optional": [
           "amount",
+          "categoryName",
           "chargeKind",
           "description",
           "recordType",
@@ -1867,6 +2323,7 @@
         ],
         "allowed": [
           "amount",
+          "categoryName",
           "chargeKind",
           "description",
           "lineNumber",
@@ -4679,6 +5136,210 @@
       ]
     },
     {
+      "operation": "company.get_roles",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [],
+        "optional": [
+          "employeeName",
+          "permissionKey",
+          "roleName"
+        ],
+        "allowed": [
+          "employeeName",
+          "permissionKey",
+          "roleName"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [],
+        "anyOfPermissions": [
+          "access.employee.create",
+          "access.employee.update",
+          "access.role.manage",
+          "access.role.read"
+        ],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "general"
+      ],
+      "questionKinds": [
+        "detail",
+        "explain",
+        "list",
+        "search"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "employee-access",
+        "businessSubjects": [
+          "company",
+          "employee"
+        ],
+        "adapterClass": "CompanyGetRolesTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R1",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": true,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"company.get_roles\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → CompanyGetRolesTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/CompanyGetRolesTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/use-cases/erp-team-tools.use-case.ts",
+          "symbol": "CompanyGetRolesTool"
+        }
+      ]
+    },
+    {
+      "operation": "company.action.preview",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [
+          "action"
+        ],
+        "optional": [
+          "address",
+          "branchName",
+          "code",
+          "dateOfBirth",
+          "displayName",
+          "email",
+          "employeeName",
+          "identityNumber",
+          "identityType",
+          "name",
+          "phoneNumber",
+          "roleName",
+          "type",
+          "username"
+        ],
+        "allowed": [
+          "action",
+          "address",
+          "branchName",
+          "code",
+          "dateOfBirth",
+          "displayName",
+          "email",
+          "employeeName",
+          "identityNumber",
+          "identityType",
+          "name",
+          "phoneNumber",
+          "roleName",
+          "type",
+          "username"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [],
+        "anyOfPermissions": [
+          "access.employee.create",
+          "access.employee.disable",
+          "access.employee.update",
+          "company.branch.manage"
+        ],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "general"
+      ],
+      "questionKinds": [
+        "detail"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "employee-access",
+        "businessSubjects": [
+          "company",
+          "employee"
+        ],
+        "adapterClass": "CompanyActionPreviewTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R7",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": false,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"company.action.preview\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → CompanyActionPreviewTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/CompanyActionPreviewTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/line-team-action.service.ts",
+          "symbol": "CompanyActionPreviewTool"
+        }
+      ]
+    },
+    {
       "operation": "expense.get_breakdown",
       "execution": "read_tool",
       "implementation": "wired",
@@ -5304,10 +5965,13 @@
           "action",
           "proposal"
         ],
-        "optional": [],
+        "optional": [
+          "suggestedCategoryChoiceId"
+        ],
         "allowed": [
           "action",
-          "proposal"
+          "proposal",
+          "suggestedCategoryChoiceId"
         ]
       },
       "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
@@ -5389,10 +6053,13 @@
           "action",
           "proposal"
         ],
-        "optional": [],
+        "optional": [
+          "suggestedCategoryChoiceId"
+        ],
         "allowed": [
           "action",
-          "proposal"
+          "proposal",
+          "suggestedCategoryChoiceId"
         ]
       },
       "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
@@ -5960,6 +6627,358 @@
         {
           "path": "apps/api/src/modules/line-ai/application/use-cases/erp-report-tools.use-case.ts",
           "symbol": "ReportsMonthlySummaryTool"
+        }
+      ]
+    },
+    {
+      "operation": "voucher.list_recent",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [],
+        "optional": [
+          "branchId",
+          "q"
+        ],
+        "allowed": [
+          "branchId",
+          "q"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [
+          "expense.disbursement.read"
+        ],
+        "anyOfPermissions": [],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [
+          "expenses"
+        ],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "general"
+      ],
+      "questionKinds": [
+        "list",
+        "summary"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "expenses",
+        "businessSubjects": [
+          "expense",
+          "payment"
+        ],
+        "adapterClass": "VoucherListRecentTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R1",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": true,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"voucher.list_recent\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → VoucherListRecentTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/VoucherListRecentTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
+          "symbol": "VoucherListRecentTool"
+        }
+      ]
+    },
+    {
+      "operation": "voucher.get_detail",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [
+          "voucherId"
+        ],
+        "optional": [],
+        "allowed": [
+          "voucherId"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [
+          "expense.disbursement.read"
+        ],
+        "anyOfPermissions": [],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [
+          "expenses"
+        ],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "general"
+      ],
+      "questionKinds": [
+        "detail"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "expenses",
+        "businessSubjects": [
+          "expense",
+          "payment"
+        ],
+        "adapterClass": "VoucherGetDetailTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R1",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": true,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"voucher.get_detail\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → VoucherGetDetailTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/VoucherGetDetailTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
+          "symbol": "VoucherGetDetailTool"
+        }
+      ]
+    },
+    {
+      "operation": "wht.get_month_summary",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [],
+        "optional": [
+          "branchId",
+          "periodKey"
+        ],
+        "allowed": [
+          "branchId",
+          "periodKey"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [],
+        "anyOfPermissions": [
+          "wht.certificate.read",
+          "wht.pnd53.read"
+        ],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [
+          "wht_50bis",
+          "wht_pnd53"
+        ],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "general",
+        "tax"
+      ],
+      "questionKinds": [
+        "breakdown",
+        "list",
+        "summary"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "tax",
+        "businessSubjects": [
+          "payment",
+          "tax"
+        ],
+        "adapterClass": "WhtGetMonthSummaryTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R1",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": true,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"wht.get_month_summary\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → WhtGetMonthSummaryTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/WhtGetMonthSummaryTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
+          "symbol": "WhtGetMonthSummaryTool"
+        }
+      ]
+    },
+    {
+      "operation": "wht.calculate_withholding",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [],
+        "optional": [
+          "baseAmount",
+          "incomeCategoryCode"
+        ],
+        "allowed": [
+          "baseAmount",
+          "incomeCategoryCode"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [],
+        "anyOfPermissions": [
+          "expense.create",
+          "procurement.supplier_payment.read"
+        ],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [
+          "wht_50bis",
+          "wht_pnd53"
+        ],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "general",
+        "tax"
+      ],
+      "questionKinds": [
+        "explain",
+        "summary"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "tax",
+        "businessSubjects": [
+          "payment",
+          "tax"
+        ],
+        "adapterClass": "WhtCalculateWithholdingTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R1",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": true,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"wht.calculate_withholding\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → WhtCalculateWithholdingTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/WhtCalculateWithholdingTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
+          "symbol": "WhtCalculateWithholdingTool"
         }
       ]
     },
@@ -7603,6 +8622,9 @@
         "accounting.get_receivable_summary",
         "accounting.get_summary",
         "accounting.list_recent_documents",
+        "counterparty.action.preview",
+        "counterparty.get_detail",
+        "counterparty.search",
         "sales.get_sales_summary"
       ],
       "apiIntakes": [],
@@ -7667,6 +8689,10 @@
       ],
       "registryOperations": [
         "accounting.capture_receipt_evidence",
+        "counterparty.action.preview",
+        "counterparty.get_detail",
+        "counterparty.search",
+        "expense.action.preview",
         "expense.draft.add_charge",
         "expense.draft.remove_line",
         "expense.draft.set_header",
@@ -7678,7 +8704,9 @@
         "expense.get_detail",
         "expense.list_recent",
         "expense.list_substitute_receipts_to_sign",
-        "line.explain_file_attempt"
+        "line.explain_file_attempt",
+        "voucher.get_detail",
+        "voucher.list_recent"
       ],
       "apiIntakes": [
         "line.receipt_capture"
@@ -7850,10 +8878,15 @@
         "wht.pnd53.prepare",
         "wht.pnd53.read"
       ],
-      "lineCapabilityGroups": [],
-      "registryOperations": [],
+      "lineCapabilityGroups": [
+        "tax_documents"
+      ],
+      "registryOperations": [
+        "wht.calculate_withholding",
+        "wht.get_month_summary"
+      ],
       "apiIntakes": [],
-      "assistantCoverage": "web_only_no_line_ai_operation_declared",
+      "assistantCoverage": "partial_or_scoped",
       "sourceReferences": [
         {
           "path": "packages/contracts/src/feature-entitlements.ts",
@@ -7874,10 +8907,15 @@
       ],
       "menuBindingIds": [],
       "menuGatePermissions": [],
-      "lineCapabilityGroups": [],
-      "registryOperations": [],
+      "lineCapabilityGroups": [
+        "tax_documents"
+      ],
+      "registryOperations": [
+        "wht.calculate_withholding",
+        "wht.get_month_summary"
+      ],
       "apiIntakes": [],
-      "assistantCoverage": "web_only_no_line_ai_operation_declared",
+      "assistantCoverage": "partial_or_scoped",
       "sourceReferences": [
         {
           "path": "packages/contracts/src/feature-entitlements.ts",
@@ -8267,9 +9305,11 @@
         "dashboard_notifications"
       ],
       "registryOperations": [
+        "company.action.preview",
         "company.get_current_context",
         "company.get_employee_detail",
         "company.get_employee_summary",
+        "company.get_roles",
         "company.list_branches",
         "dashboard.get_business_health_summary",
         "notifications.get_daily_summary",
@@ -8303,6 +9343,7 @@
         "expenses"
       ],
       "registryOperations": [
+        "expense.action.preview",
         "expense.draft.add_charge",
         "expense.draft.remove_line",
         "expense.draft.set_header",
@@ -8313,7 +9354,9 @@
         "expense.get_daily_closing",
         "expense.get_detail",
         "expense.list_recent",
-        "expense.list_substitute_receipts_to_sign"
+        "expense.list_substitute_receipts_to_sign",
+        "voucher.get_detail",
+        "voucher.list_recent"
       ],
       "apiIntakes": [
         "line.receipt_capture"
@@ -8347,10 +9390,14 @@
     {
       "family": "tax",
       "featureKeys": [
-        "thai_tax"
+        "thai_tax",
+        "wht_50bis",
+        "wht_pnd53"
       ],
       "featureCatalogRefs": [
-        "thai_tax"
+        "thai_tax",
+        "wht_pnd53",
+        "wht_50bis"
       ],
       "registryOperations": [
         "tax.get_cit_calendar",
@@ -8360,7 +9407,9 @@
         "tax.get_upcoming_tax_obligations",
         "tax.get_vat_summary",
         "tax.get_wht_summary",
-        "tax.list_missing_tax_documents"
+        "tax.list_missing_tax_documents",
+        "wht.calculate_withholding",
+        "wht.get_month_summary"
       ],
       "apiIntakes": [],
       "status": "assistant_wired_or_intake",
@@ -8861,6 +9910,46 @@
       {
         "parameter": "reimbursementDraftPreviewUpdate",
         "provider": "ReimbursementDraftPreviewUpdateTool"
+      },
+      {
+        "parameter": "expenseActionPreview",
+        "provider": "ExpenseActionPreviewTool"
+      },
+      {
+        "parameter": "voucherList",
+        "provider": "VoucherListRecentTool"
+      },
+      {
+        "parameter": "voucherDetail",
+        "provider": "VoucherGetDetailTool"
+      },
+      {
+        "parameter": "whtMonth",
+        "provider": "WhtGetMonthSummaryTool"
+      },
+      {
+        "parameter": "whtCalculation",
+        "provider": "WhtCalculateWithholdingTool"
+      },
+      {
+        "parameter": "counterpartySearch",
+        "provider": "CounterpartySearchTool"
+      },
+      {
+        "parameter": "counterpartyDetail",
+        "provider": "CounterpartyGetDetailTool"
+      },
+      {
+        "parameter": "counterpartyPreview",
+        "provider": "CounterpartyActionPreviewTool"
+      },
+      {
+        "parameter": "companyActionPreview",
+        "provider": "CompanyActionPreviewTool"
+      },
+      {
+        "parameter": "companyRoles",
+        "provider": "CompanyGetRolesTool"
       }
     ],
     "internalToolsControllerInModule": true,
@@ -8874,10 +9963,15 @@
       "BankGetReconciliationStatusTool",
       "BillingGetPackageCatalogTool",
       "BillingGetPackageUsageTool",
+      "CompanyActionPreviewTool",
       "CompanyEmployeeDetailTool",
       "CompanyEmployeeSummaryTool",
       "CompanyGetCurrentContextTool",
+      "CompanyGetRolesTool",
       "CompanyListBranchesTool",
+      "CounterpartyActionPreviewTool",
+      "CounterpartyGetDetailTool",
+      "CounterpartySearchTool",
       "CrmGetBookingSummaryTool",
       "CrmGetConversationSummaryTool",
       "CrmGetCustomer360Tool",
@@ -8890,6 +9984,7 @@
       "CrmListOpenFollowupsTool",
       "CrmSearchCustomersTool",
       "DashboardGetHealthSummaryTool",
+      "ExpenseActionPreviewTool",
       "ExpenseDraftAddChargeTool",
       "ExpenseDraftRemoveLineTool",
       "ExpenseDraftSetHeaderTool",
@@ -8934,6 +10029,10 @@
       "TaxGetVatSummaryTool",
       "TaxGetWhtSummaryTool",
       "TaxListMissingDocumentsTool",
+      "VoucherGetDetailTool",
+      "VoucherListRecentTool",
+      "WhtCalculateWithholdingTool",
+      "WhtGetMonthSummaryTool",
       "WorkflowExplainRunTool",
       "WorkflowListAssignedTasksTool",
       "WorkflowListRecentFailuresTool",
@@ -8948,10 +10047,15 @@
       "bank.get_reconciliation_status",
       "billing.get_package_catalog",
       "billing.get_package_usage",
+      "company.action.preview",
       "company.get_current_context",
       "company.get_employee_detail",
       "company.get_employee_summary",
+      "company.get_roles",
       "company.list_branches",
+      "counterparty.action.preview",
+      "counterparty.get_detail",
+      "counterparty.search",
       "crm.get_booking_summary",
       "crm.get_conversation_summary",
       "crm.get_customer_360",
@@ -8964,6 +10068,7 @@
       "crm.list_open_followups",
       "crm.search_customers",
       "dashboard.get_business_health_summary",
+      "expense.action.preview",
       "expense.draft.add_charge",
       "expense.draft.remove_line",
       "expense.draft.set_header",
@@ -9008,6 +10113,10 @@
       "tax.get_vat_summary",
       "tax.get_wht_summary",
       "tax.list_missing_tax_documents",
+      "voucher.get_detail",
+      "voucher.list_recent",
+      "wht.calculate_withholding",
+      "wht.get_month_summary",
       "workflow.explain_run",
       "workflow.list_assigned_tasks",
       "workflow.list_recent_failures",
@@ -9016,6 +10125,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-14T04:09:52.558Z",
-  "manifestDigest": "4332a2284f065e57702171edf1cfeb9b2c0affaf156f1eef07ce049e48435d1e"
+  "generatedAt": "2026-10-16T16:31:42.677Z",
+  "manifestDigest": "7f10dccb9007d6f559c2e2de4ccc1c44aed518aaf2eb71c421c9d231243a8566"
 }

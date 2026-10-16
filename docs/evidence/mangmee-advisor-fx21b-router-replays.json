@@ -1,0 +1,276 @@
+[
+  {
+    "source": "after-fx20/E01",
+    "turn": 0,
+    "messageText": "ช่วยแก้ไขข้อมูลให้หน่อย",
+    "route": {
+      "status": "ROUTED",
+      "intent": "CLARIFY",
+      "language": "th",
+      "confidence": 0.45,
+      "clarifyQuestion": "ต้องการแก้ไขข้อมูลประเภทไหนคะ เช่น แก้ไขข้อมูลค่าใช้จ่ายที่บันทึกไว้, แก้ไขข้อมูลสาขา, หรืออื่นๆ?",
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "general",
+          "goal": "ชี้แจงว่าต้องการแก้ไขข้อมูลประเภทใด",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 23,
+              "rawSha256": "9fd84e7ea191e357cdd05d45117c61de7943e3ad15e23058cfe91dcfc1bbf6e7"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "source": "after-fx20/E02",
+    "turn": 1,
+    "messageText": "บันทึกค่าน้ำมัน 900 บาท ปั๊มสยาม วันนี้ จ่ายเงินสดแล้ว ยืนยันเลย",
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.82,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "sourceDocumentLanguage": "th",
+        "vendorName": "ปั๊มสยาม",
+        "description": "ค่าน้ำมัน",
+        "expenseDate": "2026-10-16",
+        "amount": "900",
+        "expenseCategoryId": "category-a-fuel",
+        "vatMode": "NEEDS_REVIEW",
+        "confidence": 0.85,
+        "missingFields": []
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าน้ำมัน 900 บาท ปั๊มสยาม วันนี้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 64,
+              "rawSha256": "143e7efd4325388df266f8ae144d9d6405ce8a71fbbd49a8dcc0de1cd4af6a9d"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "ยืนยันรายการค่าน้ำมันที่บันทึก",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 55,
+              "endUtf16": 64,
+              "rawSha256": "143e7efd4325388df266f8ae144d9d6405ce8a71fbbd49a8dcc0de1cd4af6a9d"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "source": "after-fx20/E04",
+    "turn": 0,
+    "messageText": "ช่วยแก้ไขข้อมูลให้หน่อย",
+    "route": {
+      "status": "ROUTED",
+      "intent": "CLARIFY",
+      "language": "th",
+      "confidence": 0.45,
+      "clarifyQuestion": "ช่วยแก้ไขข้อมูลอะไรคะ เช่น แก้ไขค่าใช้จ่ายที่บันทึกไป แก้ไขข้อมูลสาขา หรือแก้ไขข้อมูลคู่ค้า/ผู้ขาย?",
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "general",
+          "goal": "ชี้แจงว่าต้องการแก้ไขข้อมูลประเภทใด",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 23,
+              "rawSha256": "9fd84e7ea191e357cdd05d45117c61de7943e3ad15e23058cfe91dcfc1bbf6e7"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "source": "after-fx20/E04",
+    "turn": 1,
+    "messageText": "ช่วยแก้ยอดค่าใช้จ่ายรายการล่าสุดของร้านเป็น 10 บาท",
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_CAPTURE_CORRECTION",
+      "language": "th",
+      "confidence": 0.72,
+      "correctionHints": {
+        "amount": {
+          "to": "10"
+        },
+        "confidence": 0.72,
+        "missingFields": [
+          "targetExpenseId"
+        ]
+      },
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "แก้ยอดค่าใช้จ่ายรายการล่าสุดของร้านเป็น 10 บาท",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 50,
+              "rawSha256": "f87d58c108a398142b080ba117c8033baa9f0f28a7ae4fe46bf1e07f67931e8b"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "source": "after-fx20-b/C04",
+    "turn": 1,
+    "messageText": "ทำให้หน่อย ทำใบสำคัญจ่ายจากค่าใช้จ่ายที่ยืนยันแล้วรายการล่าสุด",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.88,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบสำคัญจ่ายจากค่าใช้จ่ายที่ยืนยันแล้วรายการล่าสุด",
+          "requiredEvidence": [],
+          "requestedFilters": {
+            "action": "VOUCHER_CREATE",
+            "documentStatus": "CONFIRMED"
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 62,
+              "rawSha256": "7968fb92aae88c886ab40999d7141569f7963489ee866d694be0848efbfd3193"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "source": "after-fx20-b/C05",
+    "turn": 1,
+    "messageText": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.82,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "sourceDocumentLanguage": "th",
+        "vendorName": "บริษัท ป้ายสวย จำกัด",
+        "description": "ทำป้ายหน้าร้าน",
+        "expenseDate": "2026-10-16",
+        "amount": "10000",
+        "expenseCategoryId": "category-b-other",
+        "items": [
+          {
+            "sourceText": "ทำป้ายหน้าร้าน 10,000 บาท",
+            "description": "ทำป้ายหน้าร้าน",
+            "quantity": "1",
+            "unit": "งาน",
+            "unitPrice": "10000",
+            "totalAmount": "10000",
+            "expenseCategoryId": "category-b-other",
+            "taxTreatment": "WHT 3% applicable (ค่าจ้างทำของ)",
+            "accountingClass": "OPEX",
+            "itemBehavior": "SERVICE",
+            "confidence": 0.8,
+            "missingFields": []
+          }
+        ],
+        "vatMode": "NEEDS_REVIEW",
+        "confidence": 0.82,
+        "missingFields": []
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าใช้จ่ายจ้างทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% พร้อมข้อมูลผู้รับเงิน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "บันทึก/อัปเดตข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด พร้อมเลขผู้เสียภาษีและที่อยู่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        }
+      ]
+    }
+  }
+]

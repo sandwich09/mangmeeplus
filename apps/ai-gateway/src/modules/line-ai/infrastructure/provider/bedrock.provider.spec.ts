@@ -1,9 +1,16 @@
-import { describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { BedrockProvider, CACHE_MIN_CHARS, TIMEOUT_INPUT_TOKEN_CEILING } from './bedrock.provider';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import sharp from 'sharp';
+import { conservativeTimeoutUsage } from './provider-usage-estimate';
+import { BedrockProvider, CACHE_MIN_CHARS } from './bedrock.provider';
 import { drainUsage, runWithUsageContext } from '../../../../common/usage/usage-context';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { createProvider } from './provider.factory';
+import { AnthropicApiProvider, anthropicModelId } from './anthropic-api.provider';
 import {
   AI_BUDGET_STEP_ATTEMPTS, AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, parseAiBudgetEnvelope,
 } from '@watchdog-bms/contracts';
@@ -501,7 +508,7 @@ describe('BedrockProvider prompt caching', () => {
     assert.equal(capture.lines[0]!['inputTokens'], undefined);
   });
 
-  it('meters an aborted timeout at the conservative ceiling instead of zero', async () => {
+  it('estimates an aborted timeout from the rendered request instead of the model context', async () => {
     const provider = makeProvider(1);
     (provider as any).client = {
       send: (_command: unknown, options: { abortSignal: AbortSignal }) => new Promise((_resolve, reject) => {
@@ -524,7 +531,7 @@ describe('BedrockProvider prompt caching', () => {
 
     assert.equal(entries.length, 1);
     assert.equal(entries[0]!.ok, false);
-    assert.equal(entries[0]!.inputTokens, TIMEOUT_INPUT_TOKEN_CEILING);
+    assert.ok(entries[0]!.inputTokens > 0 && entries[0]!.inputTokens < 100, 'estimate follows the short rendered request');
     assert.equal(entries[0]!.outputTokens, 17);
     assert.equal(capture.lines[0]!['errorCode'], 'PROVIDER_TIMEOUT');
     assert.equal(capture.lines[0]!['usageEstimated'], true);
@@ -786,11 +793,11 @@ describe('BedrockProvider conservative timeout under a budget envelope (E1c)', (
     });
   }
 
-  it('estimates at the envelope declared input bound, never the 200k model-context ceiling', async () => {
+  it('uses the rendered request estimate inside the envelope bound', async () => {
     const entry = await timeoutEntry({ status: 'active', envelope, sourceRoute: 'receipt-ocr', calls: 1 });
 
-    assert.equal(entry.inputTokens, AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxInputTokens);
-    assert.ok(entry.inputTokens < TIMEOUT_INPUT_TOKEN_CEILING, 'a SPLIT timeout must settle inside its hold');
+    assert.ok(entry.inputTokens > 0 && entry.inputTokens < 100);
+    assert.ok(entry.inputTokens <= envelope.bounds.maxInputTokens, 'a SPLIT timeout must settle inside its hold');
     assert.equal(entry.outputTokens, 4096);
     // Still an estimate, never zero and never "measured" (spec §11.2).
     assert.equal(entry.usageBasis, 'CONSERVATIVE_ESTIMATE');
@@ -817,10 +824,10 @@ describe('BedrockProvider conservative timeout under a budget envelope (E1c)', (
     assert.equal(entry.outputTokens, Math.min(2048, AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxOutputTokens));
   });
 
-  it('keeps the legacy ceiling for a request with no envelope — every company today', async () => {
+  it('uses the same realistic estimate for a SHARED request without an envelope', async () => {
     const entry = await timeoutEntry();
 
-    assert.equal(entry.inputTokens, TIMEOUT_INPUT_TOKEN_CEILING);
+    assert.ok(entry.inputTokens > 0 && entry.inputTokens < 100);
     assert.equal(entry.outputTokens, 4096);
   });
 
@@ -878,4 +885,401 @@ describe('BedrockProvider conservative timeout under a budget envelope (E1c)', (
     }
   });
 
+});
+
+// Local Messages API transport shares the Bedrock contract and this already-registered test file.
+describe('AnthropicApiProvider (local eval)', () => {
+  const modelId = 'global.anthropic.claude-sonnet-4-6';
+  const key = 'test-key-never-log';
+  const originalFetch = globalThis.fetch;
+  let capture: ReturnType<typeof captureUsageLines>;
+  const tools = [{ name: 'expense_summary', description: 'Read expenses', inputSchema: {
+    type: 'object', properties: { month: { type: 'string' } }, required: ['month'], additionalProperties: false,
+  } }];
+  const call = { toolUseId: 'toolu_1', name: 'expense_summary', input: { month: '2026-10' } };
+  const apiCall = { type: 'tool_use', id: call.toolUseId, name: call.name, input: call.input };
+  const textInput = { messages: [{ role: 'user' as const, text: 'summary' }] };
+
+  function provider(timeoutMs = 10000, sleep = async (_ms: number) => {}) {
+    return new AnthropicApiProvider({ apiKey: key, modelId, timeoutMs, sleep });
+  }
+  function response(body: Record<string, unknown> = {}, status = 200) {
+    return new Response(JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'answer' }],
+      usage: { input_tokens: 11, output_tokens: 7, cache_read_input_tokens: 20, cache_creation_input_tokens: 30 }, ...body }), { status });
+  }
+  function stub(...responses: Response[]) {
+    const requests: Array<{ url: string; init: RequestInit; body: any }> = [];
+    globalThis.fetch = async (url, init) => {
+      requests.push({ url: String(url), init: init!, body: JSON.parse(String(init?.body)) });
+      const next = responses.shift();
+      assert.ok(next, 'unexpected extra fetch');
+      return next;
+    };
+    return requests;
+  }
+  beforeEach(() => {
+    // Never fall through to network, including on an unexpectedly missing stub.
+    globalThis.fetch = async () => { throw new Error('fetch must be stubbed'); };
+    capture = captureUsageLines();
+  });
+  afterEach(() => { globalThis.fetch = originalFetch; capture.restore(); });
+
+  it('maps every geographic profile and strips only the leading vendor and trailing version', () => {
+    for (const prefix of ['global.', 'apac.', 'us.', 'eu.', 'jp.', 'au.', '']) {
+      assert.equal(anthropicModelId(`${prefix}anthropic.claude-sonnet-4-6`), 'claude-sonnet-4-6');
+      assert.equal(anthropicModelId(`${prefix}anthropic.claude-haiku-4-5-20251001-v1:0`), 'claude-haiku-4-5-20251001');
+    }
+    assert.equal(anthropicModelId('claude-haiku-v12:34'), 'claude-haiku');
+    assert.equal(anthropicModelId('claude-sonnet-4-6'), 'claude-sonnet-4-6');
+    assert.equal(anthropicModelId('other.global.anthropic.model-v1:0-suffix'), 'other.global.anthropic.model-v1:0-suffix');
+  });
+
+  it('posts text, base64 images and PDF on the last user message with identical cache boundaries', async () => {
+    const requests = stub(response());
+    const image = { mimeType: 'image/png' as const, contentBase64: Buffer.from('png').toString('base64') };
+    const pdf = { mimeType: 'application/pdf' as const, contentBase64: Buffer.from('%PDF').toString('base64') };
+    assert.equal((await provider().generateText({ systemPrompt: LONG_PROMPT, cacheableContext: LONG_CONTEXT,
+      messages: [{ role: 'user', text: 'first' }, { role: 'assistant', text: 'earlier' }, { role: 'user', text: 'read' }, { role: 'assistant', text: 'later' }],
+      images: [image, { ...image, mimeType: 'image/jpeg' }], documents: [pdf], maxTokens: 99,
+    })).ok, true);
+    const req = requests[0]!;
+    assert.equal(req.url, 'https://api.anthropic.com/v1/messages');
+    assert.equal(req.init.method, 'POST');
+    assert.deepEqual(req.init.headers, { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' });
+    assert.equal(req.body.model, 'claude-sonnet-4-6');
+    assert.equal(req.body.max_tokens, 99);
+    assert.deepEqual(req.body.system, [{ type: 'text', text: LONG_PROMPT, cache_control: { type: 'ephemeral' } }]);
+    assert.deepEqual(req.body.messages, [
+      { role: 'user', content: [{ type: 'text', text: LONG_CONTEXT, cache_control: { type: 'ephemeral' } }, { type: 'text', text: 'first' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'earlier' }] },
+      { role: 'user', content: [{ type: 'text', text: 'read' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: image.contentBase64 } },
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image.contentBase64 } },
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdf.contentBase64 } }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'later' }] },
+    ]);
+    assert.ok(!JSON.stringify(capture.lines).includes(key));
+    assert.ok(!JSON.stringify(capture.lines).includes(LONG_CONTEXT));
+  });
+
+  it('renders short context/system without caching and defaults text output to 2048', async () => {
+    const requests = stub(response());
+    await provider().generateText({ ...textInput, systemPrompt: SHORT_PROMPT, cacheableContext: SHORT_CONTEXT });
+    assert.deepEqual(requests[0]!.body.system, [{ type: 'text', text: SHORT_PROMPT }]);
+    assert.deepEqual(requests[0]!.body.messages[0].content, [{ type: 'text', text: SHORT_CONTEXT }, { type: 'text', text: 'summary' }]);
+    assert.equal(requests[0]!.body.max_tokens, 2048);
+  });
+
+  it('preserves cacheable context on the first message when no user turn exists', async () => {
+    const requests = stub(response(), response());
+    await provider().generateText({ messages: [{ role: 'assistant', text: 'earlier' }], cacheableContext: LONG_CONTEXT });
+    await provider().generateWithTools({ messages: [{ role: 'tool_results', results: [{ toolUseId: 'old', content: 'data' }] }], tools, cacheableContext: LONG_CONTEXT });
+    for (const req of requests) assert.deepEqual(req.body.messages[0].content[0], { type: 'text', text: LONG_CONTEXT, cache_control: { type: 'ephemeral' } });
+    assert.equal(requests[1]!.body.messages[0].content[1].type, 'tool_result');
+  });
+
+  it('round trips native tool calls, assistant text, and normal/error tool results', async () => {
+    const secondCall = { ...call, toolUseId: 'toolu_2' };
+    const secondApiCall = { ...apiCall, id: secondCall.toolUseId };
+    const requests = stub(response({ stop_reason: 'tool_use', content: [{ type: 'text', text: 'checking' }, apiCall, secondApiCall] }), response());
+    const p = provider();
+    const first = await p.generateWithTools({ ...textInput, tools, systemPrompt: LONG_PROMPT, cacheableContext: LONG_CONTEXT });
+    assert.equal(first.ok, true);
+    if (!first.ok) return;
+    assert.equal(first.stopReason, 'tool_use');
+    assert.deepEqual(first.toolCalls, [call, secondCall]);
+    assert.deepEqual(requests[0]!.body.tools, [{ name: tools[0]!.name, description: tools[0]!.description, input_schema: tools[0]!.inputSchema }]);
+    assert.equal(requests[0]!.body.max_tokens, 1024);
+    assert.deepEqual(requests[0]!.body.system[0].cache_control, { type: 'ephemeral' });
+    assert.deepEqual(requests[0]!.body.messages[0].content[0].cache_control, { type: 'ephemeral' });
+    const second = await p.generateWithTools({ tools, messages: [...textInput.messages,
+      { role: 'assistant', text: first.text, toolCalls: first.toolCalls },
+      { role: 'tool_results', results: [{ toolUseId: call.toolUseId, content: 'failed', isError: true }, { toolUseId: 'toolu_2', content: 'ok' }] },
+    ] });
+    assert.equal(second.ok, true);
+    if (second.ok) { assert.equal(second.stopReason, 'end_turn'); assert.deepEqual(second.toolCalls, []); }
+    assert.deepEqual(requests[1]!.body.messages.slice(1), [
+      { role: 'assistant', content: [{ type: 'text', text: 'checking' }, apiCall, secondApiCall] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.toolUseId, content: 'failed', is_error: true }, { type: 'tool_result', tool_use_id: 'toolu_2', content: 'ok' }] },
+    ]);
+  });
+
+  it('rejects the entire tool batch for unknown tools, invalid arguments, missing ids or missing calls', async () => {
+    for (const bad of [{ ...apiCall, name: 'unknown' }, { ...apiCall, input: { month: 10 } }, { ...apiCall, id: '' }, { ...apiCall, input: undefined }, null]) {
+      stub(response({ stop_reason: 'tool_use', content: bad ? [apiCall, bad] : [] }));
+      const result = await provider().generateWithTools({ ...textInput, tools });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.code, 'PROVIDER_TOOL_ARGUMENT_INVALID');
+    }
+  });
+
+  it('returns max_tokens for text and drops partial tool calls at the output limit', async () => {
+    stub(response({ stop_reason: 'max_tokens' }), response({ stop_reason: 'max_tokens', content: [apiCall] }));
+    const text = await provider().generateText(textInput);
+    const tool = await provider().generateWithTools({ ...textInput, tools });
+    for (const result of [text, tool]) {
+      assert.equal(result.ok, true);
+      if (result.ok) { assert.equal(result.completion, 'output_limit'); assert.equal(result.stopReason, 'max_tokens'); }
+    }
+    if (tool.ok) assert.deepEqual(tool.toolCalls, []);
+  });
+
+  it('appends exactly one Bedrock-shaped usage entry with all four token counters and the original model ID', async () => {
+    stub(response());
+    const entries = await runWithUsageContext({ companyId: 'local-co' }, async () => {
+      await provider().generateText({ ...textInput, usageTag: 'eval.test' });
+      return drainUsage();
+    });
+    assert.equal(entries.length, 1);
+    assert.deepEqual(entries[0], { tag: 'eval.test', modelId, ok: true, inputTokens: 11, outputTokens: 7,
+      cacheReadInputTokens: 20, cacheWriteInputTokens: 30, durationMs: entries[0]!.durationMs, usageBasis: 'PROVIDER_REPORTED' });
+    assert.equal(capture.lines.length, 1);
+    assert.equal(capture.lines[0]!['companyId'], 'local-co');
+  });
+
+  it('retries HTTP 429 then succeeds, with one usage entry and a bounded backoff', async () => {
+    const requests = stub(response({}, 429), response());
+    const waits: number[] = [];
+    const entries = await runWithUsageContext({ companyId: 'local-co' }, async () => {
+      assert.equal((await provider(10000, async (ms) => { waits.push(ms); }).generateText(textInput)).ok, true);
+      return drainUsage();
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(waits.length, 1);
+    assert.ok(waits[0]! >= 400 && waits[0]! <= 1200);
+    assert.equal(entries.length, 1);
+    assert.equal(capture.lines[0]!['throttleRetryCount'], 1);
+  });
+
+  it('caps both HTTP 429 and 529 retries at the same bound as Bedrock', async () => {
+    for (const status of [429, 529]) {
+      const requests = stub(response({}, status), response({}, status), response({}, status));
+      const result = await provider().generateText(textInput);
+      assert.equal(requests.length, 3);
+      assert.equal(result.ok, false);
+      if (!result.ok) { assert.equal(result.error.code, 'PROVIDER_THROTTLED'); assert.equal(result.error.retryable, true); }
+    }
+  });
+
+  it('does not retry beyond either the caller deadline or its configured timeout', async () => {
+    for (const withDeadline of [true, false]) {
+      const requests = stub(response({}, 429));
+      let sleeps = 0;
+      const result = await provider(withDeadline ? 10000 : 100, async () => { sleeps += 1; }).generateText({ ...textInput, ...(withDeadline ? { deadlineAt: Date.now() + 100 } : {}) });
+      assert.equal(result.ok, false);
+      assert.equal(requests.length, 1);
+      assert.equal(sleeps, 0);
+    }
+  });
+
+  it('refuses pre-aborted or expired work before fetch and emits no usage', async () => {
+    let calls = 0;
+    globalThis.fetch = async () => { calls += 1; return response(); };
+    for (const cancellation of [{ signal: AbortSignal.abort() }, { deadlineAt: Date.now() - 1 }]) {
+      for (const result of [await provider().generateText({ ...textInput, ...cancellation }), await provider().generateWithTools({ ...textInput, tools, ...cancellation })]) {
+        assert.equal(result.ok, false);
+        if (!result.ok) { assert.equal(result.error.code, 'PROVIDER_TIMEOUT'); assert.equal(result.error.retryable, false); }
+      }
+    }
+    assert.equal(calls, 0);
+    assert.equal(capture.lines.length, 0);
+  });
+
+  it('aborts an in-flight fetch and estimates only the rendered request', async () => {
+    let aborted = false;
+    globalThis.fetch = async (_url, init) => new Promise((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => { aborted = true; reject(new DOMException('aborted', 'AbortError')); });
+    });
+    const entries = await runWithUsageContext({ companyId: 'local-co' }, async () => {
+      const result = await provider(1).generateText({ ...textInput, maxTokens: 17 });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.code, 'PROVIDER_TIMEOUT');
+      return drainUsage();
+    });
+    assert.equal(aborted, true);
+    assert.equal(entries.length, 1);
+    assert.ok(entries[0]!.inputTokens > 0 && entries[0]!.inputTokens < 100, 'estimate follows the short rendered request');
+    assert.equal(entries[0]!.outputTokens, 17);
+    assert.equal(entries[0]!.usageBasis, 'CONSERVATIVE_ESTIMATE');
+    assert.equal(capture.lines[0]!['usageEstimated'], true);
+  });
+
+  it('propagates caller cancellation and caps the internal estimate at the envelope bounds', async () => {
+    const envelope = parseAiBudgetEnvelope({ attemptKey: 'line-image:local', stepKind: 'receipt-ocr',
+      invocationKey: aiBudgetInvocationKey('co-1', 'line-image:local', 'receipt-ocr', 0), bucket: 'OCR', monthKey: '2026-10', modelId,
+      bounds: { ...AI_BUDGET_STEP_BOUNDS['receipt-ocr'] }, maxCalls: AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxCalls,
+    }, 'co-1')!;
+    assert.ok(envelope);
+    const controller = new AbortController();
+    globalThis.fetch = async (_url, init) => new Promise((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      controller.abort();
+    });
+    const entry = await runWithUsageContext({ companyId: 'co-1', budget: { status: 'active', envelope, sourceRoute: 'receipt-ocr', calls: 1 } }, async () => {
+      const result = await provider().generateWithTools({ ...textInput, tools, maxTokens: 999999, signal: controller.signal });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.code, 'PROVIDER_TIMEOUT');
+      return drainUsage()[0]!;
+    });
+    assert.ok(entry.inputTokens > 0 && entry.inputTokens < 100);
+    assert.equal(entry.outputTokens, envelope.bounds.maxOutputTokens);
+    assert.equal(entry.usageBasis, 'CONSERVATIVE_ESTIMATE');
+  });
+
+  it('does not dispatch again when cancelled during throttle backoff', async () => {
+    const requests = stub(response({}, 429));
+    const controller = new AbortController();
+    const result = await provider(10000, async () => { controller.abort(); }).generateText({ ...textInput, signal: controller.signal });
+    assert.equal(requests.length, 1);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.code, 'PROVIDER_TIMEOUT');
+  });
+
+  it('maps refusal to PROVIDER_BLOCKED on both paths and retains reported usage', async () => {
+    stub(response({ stop_reason: 'refusal' }), response({ stop_reason: 'refusal', content: undefined }));
+    const entries = await runWithUsageContext({ companyId: 'local-co' }, async () => {
+      for (const result of [await provider().generateText(textInput), await provider().generateWithTools({ ...textInput, tools })]) {
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.equal(result.error.code, 'PROVIDER_BLOCKED');
+      }
+      return drainUsage();
+    });
+    assert.equal(entries.length, 2);
+    assert.equal(entries[0]!.ok, false);
+    assert.equal(entries[0]!.inputTokens, 11);
+  });
+
+  it('maps unknown stops, empty/malformed content, and invalid JSON to PROVIDER_OUTPUT_INCOMPLETE', async () => {
+    for (const body of [{ stop_reason: 'pause_turn' }, { stop_reason: 'tool_use' }, { content: [] }, { content: null }, { content: [null] }]) {
+      stub(response(body));
+      const result = await provider().generateText(textInput);
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.code, 'PROVIDER_OUTPUT_INCOMPLETE');
+    }
+    stub(new Response('not-json'));
+    const result = await provider().generateText(textInput);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.code, 'PROVIDER_OUTPUT_INCOMPLETE');
+  });
+
+  it('maps other non-2xx responses to PROVIDER_UNKNOWN without exposing the response body or key', async () => {
+    stub(response({ error: { message: `sensitive-body ${key}` } }, 401));
+    const result = await provider().generateText(textInput);
+    assert.equal(result.ok, false);
+    if (!result.ok) { assert.equal(result.error.code, 'PROVIDER_UNKNOWN'); assert.equal(result.error.retryable, false); }
+    assert.ok(!JSON.stringify([result, capture.lines]).includes(key));
+    assert.ok(!JSON.stringify([result, capture.lines]).includes('sensitive-body'));
+    assert.equal(capture.lines[0]!['inputTokens'], undefined);
+  });
+
+  it('factory selects Anthropic only for local Bedrock workloads with a key, after approval, with budget guards', async () => {
+    const config = { appEnv: 'local', modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', bedrockModelId: modelId,
+      aiToolTimeoutMs: 1000, erpCoreInternalUrl: 'http://api.test/v1', aiGatewayInternalSecret: 's',
+      approvedAiProviders: ['bedrock'], approvedAiModelIds: [modelId], approvedAiRegions: ['ap-southeast-1'],
+    } as any;
+    assert.ok(createProvider(config) instanceof BedrockProvider);
+    assert.ok(createProvider({ ...config, anthropicApiKey: key }) instanceof AnthropicApiProvider);
+    assert.ok(!(createProvider({ ...config, anthropicApiKey: key, modelProvider: 'disabled' }) instanceof AnthropicApiProvider));
+    assert.throws(() => createProvider({ ...config, appEnv: 'production', anthropicApiKey: key }), /local only/);
+    assert.throws(() => createProvider({ ...config, appEnv: undefined, anthropicApiKey: key }), /local only/);
+    assert.throws(() => createProvider({ ...config, anthropicApiKey: key, approvedAiModelIds: [] }), /AI_MODEL_NOT_APPROVED/);
+    assert.throws(() => createProvider({ ...config, anthropicApiKey: key, approvedAiProviders: [] }), /AI_PROVIDER_NOT_APPROVED/);
+    assert.throws(() => createProvider({ ...config, anthropicApiKey: key, approvedAiRegions: [] }), /AI_REGION_NOT_APPROVED/);
+    const envelope = parseAiBudgetEnvelope({ attemptKey: 'line-image:factory', stepKind: 'receipt-ocr',
+      invocationKey: aiBudgetInvocationKey('co-1', 'line-image:factory', 'receipt-ocr', 0), bucket: 'OCR', monthKey: '2026-10', modelId,
+      bounds: { ...AI_BUDGET_STEP_BOUNDS['receipt-ocr'] }, maxCalls: AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxCalls,
+    }, 'co-1')!;
+    const requests = stub();
+    const result = await runWithUsageContext({ companyId: 'co-1', budget: { status: 'active', envelope, sourceRoute: 'receipt-ocr', calls: 0 } }, () => {
+      const selected = createProvider({ ...config, anthropicApiKey: key });
+      assert.equal((selected as any).cfg.maxAttempts, AI_BUDGET_STEP_ATTEMPTS);
+      return selected.generateText({ ...textInput, maxTokens: 999999, usageTag: 'ocr.receipt.extract' });
+    });
+    assert.equal(requests.length, 0);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.budgetCode, 'AI_BUDGET_UNAVAILABLE');
+  });
+
+  it('launcher selects key files or AWS, trims keys, refuses missing credentials, and never prints keys (spawn stubbed)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'anthropic-eval-launch-'));
+    const launcher = resolve(__dirname, '../../../../../../../scripts/line-ai-expense-advisor/launch-gateway.mjs');
+    const secretsPath = join(dir, 'secrets.json');
+    const keyPath = join(dir, 'key');
+    // An isolated process imports the real launcher with spawn replaced before ESM imports bind.
+    // It cannot launch a gateway, contact AWS, or read the owner's default key file.
+    const runner = `
+      import assert from 'node:assert/strict';
+      import { createRequire, syncBuiltinESMExports } from 'node:module';
+      import { pathToFileURL } from 'node:url';
+      const require = createRequire(import.meta.url);
+      const [launcher, expectedKey, homeDir] = process.argv.slice(1);
+      require('node:os').homedir = () => homeDir;
+      require('node:child_process').spawn = (_command, _args, options) => {
+        assert.equal(options.env.ANTHROPIC_API_KEY, expectedKey || undefined);
+        assert.equal(options.env.APP_ENV, 'local');
+        assert.equal(options.env.MODEL_PROVIDER, 'bedrock');
+        return { on: (_event, callback) => callback(0) };
+      };
+      syncBuiltinESMExports();
+      await import(pathToFileURL(launcher).href);
+    `;
+    try {
+      writeFileSync(secretsPath, JSON.stringify({ databaseUrl: 'postgresql://local:local@127.0.0.1:1/test', gatewaySecret: 'test', delegationSigningKey: 'test' }));
+      mkdirSync(join(dir, '.config/mangmee'), { recursive: true });
+      writeFileSync(join(dir, '.config/mangmee/anthropic-api-key'), ` ${key}\n`);
+      for (const testCase of [
+        { profile: '', file: keyPath, contents: ` ${key}\n`, expected: key },
+        { profile: 'test-profile', file: keyPath, contents: key, expected: key },
+        { profile: '', file: undefined, expected: key },
+        { profile: 'test-profile', file: join(dir, 'absent'), expected: '' },
+        { profile: 'test-profile', file: dir, expected: '' },
+        { profile: '', file: keyPath, contents: ' \n', expected: '', refused: true },
+        { profile: '', file: join(dir, 'absent'), expected: '', refused: true },
+        { profile: '', file: dir, expected: '', refused: true, unreadable: true },
+      ]) {
+        if (testCase.contents !== undefined) writeFileSync(keyPath, testCase.contents);
+        const child = spawnSync(process.execPath, ['--input-type=module', '--eval', runner, launcher, testCase.expected, dir], {
+          encoding: 'utf8', env: { ...process.env, AWS_PROFILE: testCase.profile, ANTHROPIC_API_KEY: 'ambient-key-must-be-ignored',
+            MANGMEE_EVAL_ANTHROPIC_KEY_FILE: testCase.file, MANGMEE_EVAL_SECRETS_PATH: secretsPath },
+        });
+        assert.equal(child.status, testCase.refused ? 1 : 0, child.stderr);
+        assert.ok(!`${child.stdout}${child.stderr}`.includes(key));
+        assert.ok(!`${child.stdout}${child.stderr}`.includes('ambient-key-must-be-ignored'));
+        const line = JSON.parse((testCase.refused ? child.stderr : child.stdout).trim());
+        assert.equal(line.event, testCase.refused ? 'gateway_launch_refused' : 'gateway_launch');
+        if (testCase.refused) assert.equal(line.reason, testCase.unreadable ? 'ANTHROPIC_KEY_FILE_UNREADABLE' : 'AWS_PROFILE_OR_ANTHROPIC_KEY_FILE_REQUIRED');
+        else assert.equal(line.transport, testCase.expected ? 'anthropic-api' : 'bedrock');
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+
+describe('internal timeout cost estimates (owner no-charge rule)', () => {
+  it('counts rendered UTF-8 system, context, messages and tool schemas without changing input', async () => {
+    const input = { systemPrompt: 'อ่านเอกสารค่ะ', cacheableContext: 'บริบท',
+      messages: [{ role: 'user' as const, text: 'ช่วยตรวจยอด' }],
+      tools: [{ name: 'read', description: 'ข้อมูล', inputSchema: { type: 'object' } }], maxTokens: 73 };
+    const before = JSON.stringify(input);
+    const expected = Math.ceil(Buffer.byteLength(JSON.stringify({ systemPrompt: input.systemPrompt,
+      cacheableContext: input.cacheableContext, messages: input.messages, tools: input.tools }), 'utf8') / 3.14);
+    const result = await conservativeTimeoutUsage(input);
+    assert.equal(result.inputTokens, expected);
+    assert.equal(result.outputTokens, 73);
+    assert.equal(JSON.stringify(input), before);
+    assert.deepEqual(await conservativeTimeoutUsage(input, { maxInputTokens: 5, maxOutputTokens: 7 }),
+      { inputTokens: 5, outputTokens: 7, totalTokens: 12, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 });
+  });
+
+  it('counts the actual image dimensions after resize and PDF page evidence, excluding base64 text', async () => {
+    const image = await sharp({ create: { width: 1500, height: 2000, channels: 3, background: 'white' } })
+      .resize(750, 1000).png().toBuffer();
+    const input = { messages: [{ role: 'user' as const, text: 'read' }], maxTokens: 17 };
+    const text = await conservativeTimeoutUsage(input);
+    const media = await conservativeTimeoutUsage({ ...input,
+      images: [{ mimeType: 'image/png', contentBase64: image.toString('base64') }],
+      documents: [{ mimeType: 'application/pdf', contentBase64: Buffer.from('%PDF-1.4 /Type /Pages /Count 2 /Type /Page /Type /Page').toString('base64') }] });
+    assert.equal(media.inputTokens, text.inputTokens! + 1000 + 2 * 3000);
+    assert.equal(media.outputTokens, 17);
+  });
 });

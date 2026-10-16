@@ -71,6 +71,7 @@ export class CaptureLineExpenseNoteUseCase {
     ctx: RequestContext,
     cmd: {
       messageText: string;
+      counterparty?: { id: string; name: string; taxId: string | null; address: string | null; entityKind: import('@watchdog-bms/contracts').BuyerEntityKind | null };
       captureHints?: LineIntakeCaptureHints;
       /** Exact original clarification requests resolved by this turn; never general chat history. */
       groundingTexts?: string[];
@@ -147,7 +148,7 @@ export class CaptureLineExpenseNoteUseCase {
       // Wrong direction, not a missing field: the generic clarification is the honest answer here.
       throw new LineTextExpenseCaptureIncompleteError();
     }
-    const conversationEligible = draftConversationEnabled && isLineExpenseDraftStartEligible(cmd.messageText, cmd.captureHints);
+    const conversationEligible = draftConversationEnabled && isLineExpenseDraftStartEligible(cmd.messageText, cmd.captureHints, cmd.semanticBusinessExpenseConfirmed);
     // A conflict is zero-write on BOTH lanes (§8.3 rule 3): the draft conversation would otherwise open a
     // draft on one of two competing amounts, which is exactly the silent pick the user must resolve. Only
     // the semantic lane ever reports one, so without `semanticBusinessExpenseConfirmed` this condition is
@@ -207,8 +208,15 @@ export class CaptureLineExpenseNoteUseCase {
       ? (itemCategoryIds.size === 1 ? initialState.items[0]?.expenseCategoryId : undefined)
       : validated.expenseCategoryId;
 
+    const rates = [...cmd.messageText.matchAll(/(?:หัก\s*ณ\s*ที่จ่าย|WHT)\s*(\d+(?:\.\d+)?)\s*%/giu)];
+    const rateValues = [...new Set(rates.map(rate => rate[1]!))];
+    if (rateValues.length > 1) throw new BadRequestException('กรุณาระบุอัตราหัก ณ ที่จ่ายเดียวสำหรับรายการนี้ค่ะ');
+    const whtInput = rateValues.length === 1 && !/(?:ไม่|งด|ยกเว้น)\s*(?:หัก\s*ณ\s*ที่จ่าย|WHT)/iu.test(cmd.messageText)
+      ? { inputType: 'RATE' as const, value: rateValues[0]! } : undefined;
     const expense = await this.createDraft.execute(ctx, {
       captureSource: 'LINE_UPLOAD',
+      ...(whtInput ? { whtInput } : {}),
+      ...(cmd.counterparty ? { vendorCounterpartyId: cmd.counterparty.id } : {}),
       idempotencyKey: lineDraftIdempotencyKey(cmd.lineEventId ?? cmd.lineMessageId),
       // The LINE branch default the dispatcher resolved (Owner 2026-08-27). Absent — no caller, or
       // a company where the rule found nothing to pick — leaves the create resolver's own rule in
@@ -269,6 +277,8 @@ export class CaptureLineExpenseNoteUseCase {
         taxEvidenceStatus: taxEvidence.taxEvidenceStatus,
         taxEvidenceReasonCode: taxEvidence.taxEvidenceReasonCode,
         ...(validated.vendorName ? { vendorNameSnapshot: validated.vendorName } : {}),
+        ...(cmd.counterparty ? { vendorNameSnapshot: cmd.counterparty.name, ...(cmd.counterparty.taxId ? { vendorTaxIdSnapshot: cmd.counterparty.taxId } : {}),
+          vendorAddressSnapshot: cmd.counterparty.address, ...(cmd.counterparty.entityKind ? { vendorEntityKindSnapshot: cmd.counterparty.entityKind } : {}) } : {}),
         aiVerificationStatus: 'NEEDS_REVIEW',
         aiVerificationSummaryJson: state ? {
           status: 'TEXT_NOTE_SEMANTIC_CAPTURE',

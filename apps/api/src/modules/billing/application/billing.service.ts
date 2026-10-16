@@ -922,7 +922,8 @@ export class BillingService {
           stripeId(session.customer) !== customerId || session.metadata?.billingAttemptId !== attempt.id || session.metadata?.billingAccountId !== account.id || !safeStripeUrl(session.url, 'checkout')) throw new StripeRequestError('UNKNOWN', 'invalid_checkout');
       await this.prisma.client.billingAttempt.updateMany({ where: { id: attempt.id, status: 'REQUESTING' }, data: { status: 'OPEN', checkoutSessionId: session.id, version: { increment: 1 } } });
       const current = await this.prisma.client.billingAttempt.findUniqueOrThrow({ where: { id: attempt.id } });
-      return { attemptId: attempt.id, state: current.status, checkoutUrl: current.status === 'OPEN' ? safeStripeUrl(session.url, 'checkout') : null };
+      return { attemptId: attempt.id, state: current.status, checkoutUrl: current.status === 'OPEN' ? safeStripeUrl(session.url, 'checkout') : null,
+        ...(Number.isSafeInteger(session.expires_at) && session.expires_at > 0 && session.expires_at <= 8_640_000_000_000 ? { expiresAt: new Date(session.expires_at * 1000).toISOString() } : {}) };
     } catch (error) {
       const code = error instanceof StripeRequestError ? error.code : 'command_unconfirmed';
       // Only release a reservation when we know no financial request succeeded. A network timeout
@@ -1255,7 +1256,8 @@ export class BillingService {
     await this.assertOwner(context);
     const company = await this.prisma.client.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
     if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) return result;
-    return { ...result, checkoutUrl: session.status === 'open' ? safeStripeUrl(session.url, 'checkout') : null };
+    return { ...result, checkoutUrl: session.status === 'open' ? safeStripeUrl(session.url, 'checkout') : null,
+      ...(Number.isSafeInteger(session.expires_at) && session.expires_at > 0 && session.expires_at <= 8_640_000_000_000 ? { expiresAt: new Date(session.expires_at * 1000).toISOString() } : {}) };
   }
 
   async refresh(context: RequestContext) {

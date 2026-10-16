@@ -1,0 +1,23 @@
+# Agent Memory: mangmee-advisor-fixup-8b
+
+Status: implemented; final verification recorded below; uncommitted, no deployment
+Owner: Codex, fix-up 8B
+Scope: shared LINE delivery plan, assembled capture classification/apply, intake schema and open-question recovery. Excludes lane 8A continuation parsing/payment wording.
+Decisions:
+- Ponytail full; existing guards/use cases; no package.json, dependencies, flags, final-mutation policy, cloud, commit or deployment changes. Lane 8A files and payment wording are untouched.
+- D1: the terminal signed control carries its own canonical item span. Independent answers precede it; its exact text/actions remain frozen fallback bytes. Legacy stored plans with separate controls still validate.
+- D2: classification is assembled with the first header kind/issuer and all printed total/payment evidence. Only complete reconciled coverage resolves missing-total review; actual contradictions, review on the totals window, unreadable/truncated rows and gaps remain blocking. A total alone never establishes payment. Mapping now matches the apply service's existing 200-row bound instead of dropping every block above 40 rows.
+- D3: optional null document classification and exact redundant clause indices are normalized; repair/main prompts clarify clause versus outer-route fields. Schema-failed text answers to a sole substitute/draft/correction question use live evidence and the original guarded handler. No failed model facts are copied, and stale questions cannot dispatch.
+Open questions:
+- The supplied gateway-b.log records route_document_invalid then clause_keys_invalid (outputChars 496), but no raw rejected JSON; all trace files contain parsed gateway results only. Exact offending keys cannot be attributed from this evidence. The null/index fixtures exercise compatibility, not an asserted verbatim model response. Asked for a local path; none supplied during this turn.
+- gateway-g.log proves 33+7 and 33+37+0 rows; trace-g.jsonl is empty and out-g.json contains no checkpoints. Window fixtures reconstruct the owner-recorded classification shapes with synthetic printed amounts; the real original window totals cannot be replayed verbatim.
+Artifacts: docs/specs/mangmee-advisor-fixup-8b-spec.md; last-message.md; .live-r7/ read-only evidence, never commit.
+Verification:
+- `pnpm --filter @watchdog-bms/contracts build`: exit 0; /private/tmp/fx8b-contracts-build.log.
+- API and gateway package `typecheck` scripts: exit 0; /private/tmp/fx8b-{api,gateway}-typecheck-final.log.
+- Full unchanged scripts.test file lists executed using `pnpm --filter <pkg> exec node --import tsx --test` (gateway concurrency 4): contracts 419 passed, 0 failed; gateway 1,670 passed, 0 failed, 46 cancelled because sandbox blocks socket listeners. Logs: /private/tmp/fx8b-full-contracts.log and /private/tmp/fx8b-full-gateway-final.log. Lists: /private/tmp/fx8b-{contracts,gateway}-test-files.json.
+- Actual original-base run: pristine git archive of starting HEAD 4401a09cb41c51e7be23c61868847932acd3aff7 at /private/tmp/fx8b-base-4401a09. Full gateway list: 1,669 passed, 0 failed, identical 46 cancelled tests and 3 cancelled suites (all 49 names byte-identical), same listen EPERM. Log: /private/tmp/fx8b-base-full-gateway.log; comparison names: /private/tmp/fx8b-{full-gateway,base-full-gateway}-cancelled.txt.
+- All 157 registered API specs directly/transitively importing changed implementations: 5,646 passed, 2 failed, 233 skipped by existing guards. Both failures are socket tests in line-reply.adapter.spec.ts, listen EPERM on 127.0.0.1. Executed that exact spec on the original base: 15 passed, the identical 2 failed tests, same errors. Logs: /private/tmp/fx8b-affected-api-final.log and /private/tmp/fx8b-base-line-reply.log. Exact failure comparison: /private/tmp/fx8b-api-base-failure-comparison.txt. Command uses node --import tsx --test --test-concurrency=4; full file list: /private/tmp/fx8b-api-test-files.json.
+- Focused seven API specs: 886 passed, 0 failed; /private/tmp/fx8b-focused-api-final.log. D1 has one registered case per six card kinds; D2 covers 40/70-row runner apply plus real 70-row ReceiptOcrApplyService persistence and refusal cases; D3 covers exact live Thai reply, guarded bound dispatch, stale question refusal, ambiguity and budget refusal. Registered gateway router regression is included in the full gateway count.
+- `git diff --check`: passed; no package.json or line-substitute-receipt-continuation changes. No live UAT/network/docker available.
+Next: review the diff; supply original raw router/window JSON if exact emitted-key and original-total attribution is required. No remaining local implementation work is identified.

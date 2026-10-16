@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
-  AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS,
+  aiGatewayClientTimeoutMs,
   EXPENSE_CAPTURE_CONTRACT_VERSION,
   type AiBudgetScope,
   type AiModelLineage,
@@ -21,8 +21,8 @@ import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, r
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
 import { safeLineErrorDetails } from '../../line-ai/infrastructure/line-reply.adapter';
 
-/** One capture call is ONE provider call, so the single-receipt chain's ceiling covers it. */
-const CAPTURE_TIMEOUT_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS;
+/** Outlast one 90s read, or the extraction route's two-call repair chain, within the job lease. */
+const CAPTURE_TIMEOUT_MS = aiGatewayClientTimeoutMs(2);
 
 /** The usage-meter route both capture stages bill under; `OCR_SOURCE_ROUTES` buckets it as OCR. */
 export const CAPTURE_USAGE_SOURCE_ROUTE = 'receipt-capture';
@@ -72,7 +72,7 @@ export class ExpenseCaptureReadClient {
       companyId: input.companyId,
       requestId: input.requestId,
       stepKind: 'receipt-capture-read',
-      attemptKey: `capture:${input.jobId}:${input.chunk.id}`,
+      attemptKey: `capture:${input.requestId}`,
       content: input.chunk.kind === 'pdf' ? 'document' : 'image',
       path: '/internal/ai/capture-read',
       body: (modelPolicy, hold): ExpenseCaptureReadRequest => ({
@@ -104,7 +104,7 @@ export class ExpenseCaptureReadClient {
       companyId: input.companyId,
       requestId: input.requestId,
       stepKind: 'receipt-capture-extract',
-      attemptKey: `capture:${input.jobId}:${input.windowId}`,
+      attemptKey: `capture:${input.requestId}`,
       content: 'text',
       path: '/internal/ai/capture-extract',
       body: (modelPolicy, hold): ExpenseCaptureExtractRequest => ({

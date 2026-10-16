@@ -1,4 +1,5 @@
 import { finishDocumentWaitingNotifications } from '../../infrastructure/document-notification-state';
+import { reimbursementApprovalButtons } from '../../../line-ai/domain/logic/line-reimbursement-approval-control.logic';
 import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { lineMessagePreview } from '../../../line-ai/domain/logic/line-message-preview.logic';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
@@ -547,6 +548,7 @@ export class ProcessQueuedDeliveryUseCase {
         body: event.body,
         severity: event.severity.toLowerCase(),
         deepLinkHref: notificationSourceHref(event),
+        ...(event.triggerKey === 'workflow.reimbursement_pending_approval' && event.sourceType === 'reimbursement_request' && event.sourceId && this.config.aiGatewayInternalSecret ? { approvalButtons: reimbursementApprovalButtons(this.config.aiGatewayInternalSecret, companyId, current.recipient.userId, event.sourceId) } : {}),
       }), deliveryId);
       const now = new Date();
       const attemptCountAfter = expectedAttemptCount + 1;
@@ -565,6 +567,7 @@ export class ProcessQueuedDeliveryUseCase {
           sentAt: result.status === 'sent' ? now : null,
           nextAttemptAt: outcome.nextAttemptAt ?? null,
           providerMessageId: result.providerMessageId ?? null,
+          ...(event.triggerKey === 'workflow.reimbursement_pending_approval' ? { metadataJson: { ...(current.metadataJson as Record<string, unknown> ?? {}), reimbursementApprovalChatKeyHash: createHash('sha256').update(lineUserId, 'utf8').digest('hex').slice(0, 16) } } : {}),
           errorCode: result.errorCode ?? null,
           errorMessage: result.errorMessage ?? null,
         },
@@ -650,6 +653,7 @@ export class ProcessQueuedDeliveryUseCase {
         body: event.body,
         severity: event.severity.toLowerCase(),
         deepLinkHref: notificationSourceHref(event),
+        ...(event.triggerKey === 'workflow.reimbursement_pending_approval' && event.sourceType === 'reimbursement_request' && event.sourceId && this.config.aiGatewayInternalSecret ? { approvalButtons: reimbursementApprovalButtons(this.config.aiGatewayInternalSecret, companyId, current.recipient.userId, event.sourceId) } : {}),
       }), deliveryId);
       const now = new Date();
       const attemptCountAfter = expectedAttemptCount + 1;
@@ -668,6 +672,7 @@ export class ProcessQueuedDeliveryUseCase {
           sentAt: result.status === 'sent' ? now : null,
           nextAttemptAt: outcome.nextAttemptAt ?? null,
           providerMessageId: result.providerMessageId ?? null,
+          ...(event.triggerKey === 'workflow.reimbursement_pending_approval' ? { metadataJson: { ...(current.metadataJson as Record<string, unknown> ?? {}), reimbursementApprovalChatKeyHash: createHash('sha256').update(lineUserId, 'utf8').digest('hex').slice(0, 16) } } : {}),
           errorCode: result.errorCode ?? null,
           errorMessage: result.errorMessage ?? null,
         },
@@ -761,6 +766,7 @@ async function crmNotificationCustomerId(tx: any, companyId: string, event: any)
 }
 
 export function buildLineMessage(params: {
+  approvalButtons?: Record<string, unknown>[];
   companyId: string;
   triggerKey?: string;
   title: string;
@@ -803,7 +809,7 @@ export function buildLineMessage(params: {
           ...(body ? [{ type: 'text', text: body, color: '#475467', size: 'sm', wrap: true }] : []),
         ],
       },
-      ...(canOpen ? {
+      ...(params.approvalButtons?.length ? { footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: params.approvalButtons } } : canOpen ? {
         footer: {
           type: 'box', layout: 'vertical', paddingAll: '12px',
           contents: [{

@@ -64,6 +64,12 @@ export function assertPeriodUnlocked(status: TaxPeriodStatus, formType: string, 
  */
 export type DueDateRule = { type: 'day_of_next_month'; day: number };
 
+/** Shared with the PND53 paper artifact: configured extensions win. */
+export function pnd53PaperDueDay(periodKey: string, configured?: Date | null): string {
+  const [year, month] = periodKey.split('-').map(Number);
+  return configured?.toISOString().slice(0, 10) ?? new Date(Date.UTC(year!, month!, 7)).toISOString().slice(0, 10);
+}
+
 export function evaluateDueDate(periodKey: string, rule: DueDateRule): Date | null {
   if (rule.type === 'day_of_next_month') {
     const [yearStr, monthStr] = periodKey.split('-');

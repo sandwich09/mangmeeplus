@@ -12,6 +12,7 @@ export type ErpToolContext = {
   membershipId?: string;
   roles?: string[];
   permissions: string[];
+  entitlementDeniedPermissions?: Record<string, string>;
   branchIds?: string[];
   locationIds?: string[];
   locale: string;

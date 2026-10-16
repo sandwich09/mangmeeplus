@@ -1,6 +1,7 @@
 import type { ExpenseDb } from '../../infrastructure/prisma-expense.repository';
 import { PrismaDisbursementVoucherRepository } from '../../infrastructure/prisma-disbursement-voucher.repository';
 import { EXPENSE_REVIEW_REQUEST_WORDS } from '@watchdog-bms/contracts';
+import { LinkAttachmentUseCase } from '../../../data-model-core/application/use-cases/link-attachment.use-case';
 import { DisbursementVoucherNoticeService } from '../services/disbursement-voucher-notice.service';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { EXPENSE_VOID_CERTIFICATE_WORDS } from '@watchdog-bms/contracts';
@@ -12,13 +13,13 @@ import { expenseDraftNumberingEnabled } from '../../infrastructure/expense-numbe
 import { expenseListReadScope } from '../expense-list-read-scope';
 import { Optional, Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { expenseEvidenceAssessment, expenseEvidenceInputError, expenseEvidenceFingerprint, expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
+import { expenseEvidenceAssessment, expenseEvidenceInputError, expenseEvidenceFingerprint, expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview, type ExpenseEvidenceAssessment } from '@watchdog-bms/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { applyExpenseSourceDraftInput, sourceDraftState, projectExpenseSourceDraft, sourceDraftFinancialLines, sourceDraftSummary, bindSourceDraftLines, assertExpenseSourceDraftComplete, EXPENSE_SOURCE_DRAFT_KEY, SOURCE_DRAFT_MUTABLE_STATUSES } from '../../domain/logic/expense-source-draft.logic';
 import { collectLineExpenseDraftQuestions, parseLineExpenseDraftContinuation, nextLineExpenseDraftItemRef } from '../../domain/logic/line-expense-draft-conversation.logic';
 import { withPurposeNote } from '../../domain/logic/line-correction.logic';
 import { PAYMENT_IDEMPOTENCY_KEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
-import { PrismaExpenseRepository, assertExpensePaymentSource, requireExpenseBranchId, type ExpensePaymentResult, type ExpenseCertificateCancellation } from '../../infrastructure/prisma-expense.repository';
+import { PrismaExpenseRepository, assertExpensePaymentSource, validateExpensePaymentInput, assertExpensePaymentOutstanding, requireExpenseBranchId, type ExpensePaymentResult, type ExpenseCertificateCancellation } from '../../infrastructure/prisma-expense.repository';
 import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { claimOwnsExpenseError } from '../../infrastructure/expense-void-blocker';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -815,7 +816,7 @@ export class UpdateExpenseDraftUseCase {
     const classification = r.aiVerificationSummaryJson?.['classification'];
     const detectedDocumentKind = classification && typeof classification === 'object'
       && typeof (classification as Record<string, unknown>)['documentKind'] === 'string'
-      ? (classification as Record<string, unknown>)['documentKind']
+      ? (classification as Record<string, unknown>)['documentKind'] as string
       : null;
     if (classificationOverride && !detectedDocumentKind) {
       throw new BadRequestException('Re-run document classification before overriding this expense.');
@@ -949,13 +950,17 @@ export class UpdateExpenseDraftUseCase {
      * connection would survive that rollback and leave a shop nobody saved. That lane only patches
      * line amounts, never vendor identity, so nothing is lost by sitting it out.
      */
-    const receiptUploaderUserId = !options.db && this.ensureVendorCounterparty && r.primaryAttachmentId
+    const vendorRegistry = [r.sourceDocumentType, nextSourceDocumentType, detectedDocumentKind].includes('TRANSFER_SLIP')
+      ? undefined : this.ensureVendorCounterparty;
+    const receiptUploaderUserId = !options.db && vendorRegistry && r.primaryAttachmentId
       ? await this.repo.findPrimaryReceiptUploader(ctx.companyId, expenseId, r.primaryAttachmentId)
       : null;
-    const autoSave = options.db || !this.ensureVendorCounterparty
+    const autoSave = options.db || !vendorRegistry
       ? undefined
-      : await this.ensureVendorCounterparty.execute(ctx, {
+      : await vendorRegistry.execute(ctx, {
         expenseId,
+        sourceDocumentType: nextSourceDocumentType,
+        ocrDocumentType: detectedDocumentKind,
         captureSource: r.captureSource,
         sourceReimbursementRequestId: r.sourceReimbursementRequestId,
         vendorCounterpartyId: input.vendorCounterpartyId !== undefined ? input.vendorCounterpartyId : r.vendorCounterpartyId,
@@ -1277,6 +1282,19 @@ export class ConfirmExpenseUseCase {
     );
   }
 
+  /** Only the signed LINE postback calls this entry; ordinary LINE execute remains refused. */
+  async executeLineConfirmed(ctx: RequestContext, expenseId: string, expectedUpdatedAt: Date): Promise<ExpenseRecord> {
+    return this.confirmMutation(ctx, expenseId, undefined, undefined, undefined, { expectedUpdatedAt });
+  }
+
+  /** Same validators as execution, stopping before numbering, tax writes, audit and outbox. */
+  async previewLineAction(ctx: RequestContext, expenseId: string, evidenceReview?: ExpenseEvidenceAssessment, markReady = false, previewSource?: ExpenseRecordWithRelations): Promise<ExpenseRecord> {
+    const ready = markReady ? await new MarkExpenseReadyUseCase(this.repo).previewLineAction(ctx, expenseId, previewSource) : undefined;
+    return this.confirmMutation(ctx, expenseId, undefined, undefined, undefined, { previewOnly: true, evidenceReview,
+      previewSource,
+      ...(ready?.target === 'READY_FOR_CONFIRMATION' ? { readyRevision: ready.record.updatedAt } : {}) });
+  }
+
   private async confirmMutation(
     ctx: RequestContext,
     expenseId: string,
@@ -1290,13 +1308,26 @@ export class ConfirmExpenseUseCase {
     },
     vatSourceOverride?: ExpenseVatSourceOverrideInput,
     db?: ExpenseDb,
+    lineConfirmation?: { previewOnly?: boolean; expectedUpdatedAt?: Date; evidenceReview?: ExpenseEvidenceAssessment; readyRevision?: Date; previewSource?: ExpenseRecordWithRelations },
   ): Promise<ExpenseRecord> {
     if (!authority) {
       requirePerm(ctx, 'expense.confirm', 'confirm expense');
-      if (ctx.authProvider === 'line') throw new ForbiddenException('Expense confirmation is available on the authenticated web only.');
+      if (ctx.authProvider === 'line' && !lineConfirmation) throw new ForbiddenException('Expense confirmation is available on the authenticated web only.');
     }
-    const r = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, db);
-    if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
+    const source = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, db);
+    if (!source) throw new NotFoundException(`Expense ${expenseId} not found`);
+    let r = source;
+    // Internal composition only: a rolled-back UpdateExpenseDraftUseCase result, never HTTP input.
+    if (lineConfirmation?.previewOnly && lineConfirmation.previewSource) {
+      const projected = lineConfirmation.previewSource;
+      if (projected.id !== source.id || projected.companyId !== source.companyId || projected.updatedAt.getTime() !== source.updatedAt.getTime()) throw new ConflictException('expense_confirmation_source_version_changed');
+      r = projected;
+    }
+    if (lineConfirmation?.previewOnly && lineConfirmation.readyRevision) {
+      if (r.updatedAt.getTime() !== lineConfirmation.readyRevision.getTime()) throw new ConflictException('expense_confirmation_source_version_changed');
+      r = { ...r, status: 'READY_FOR_CONFIRMATION' };
+    }
+    if (lineConfirmation?.expectedUpdatedAt && r.updatedAt.getTime() !== lineConfirmation.expectedUpdatedAt.getTime()) throw new ConflictException('expense_confirmation_source_version_changed');
     if (authority) {
       if (r.sourceReimbursementRequestId !== authority.reimbursementRequestId
         || r.sourceReimbursementLineId !== authority.reimbursementLineId
@@ -1364,6 +1395,16 @@ export class ConfirmExpenseUseCase {
     // An expense that entered the substitute-receipt flow still needs its own artifact.
     const evidenceCoveredByClaimForm = Boolean(authority)
       && !r.substituteReceiptGeneratedAt && r.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
+    if (lineConfirmation?.previewOnly && lineConfirmation.evidenceReview) {
+      requirePerm(ctx, 'expense.review', 'review expense evidence');
+      const assessment = lineConfirmation.evidenceReview;
+      const error = expenseEvidenceInputError(assessment, r, true);
+      if (error) throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: error });
+      // Read-only simulation: the button still saves through UpdateExpenseDraftUseCase before confirming.
+      r = { ...r, aiVerificationSummaryJson: { ...r.aiVerificationSummaryJson, documentEvidenceDraft: assessment,
+        documentReview: { version: 2, reviewedAt: new Date().toISOString(), reviewedByUserId: ctx.userId,
+          assessment, fingerprint: expenseEvidenceFingerprint(r, assessment) } } };
+    }
     const evidenceError = expenseEvidenceConfirmationError(r, evidenceCoveredByClaimForm);
     if (evidenceError) throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: evidenceError });
     const reviewedEvidence = hasCurrentExpenseEvidenceReview(r);
@@ -1413,6 +1454,7 @@ export class ConfirmExpenseUseCase {
       throw new BadRequestException(`The VAT mode says VAT applies but line ${unknownRateLineNumber} has no VAT rate. Enter the printed rate or VAT amount before confirmation.`);
     }
 
+    if (lineConfirmation?.previewOnly) return r;
     const postingStatus = derivePostingStatus('CONFIRMED', r.duplicateStatus);
     // §6: the frozen snapshot now carries the branch and the printed address too, so a confirmed
     // expense still says which shop and which address it was, whatever the registry does later.
@@ -1588,9 +1630,9 @@ export class VoidExpenseUseCase {
     @Optional() private readonly disbursementNotices?: DisbursementVoucherNoticeService,
   ) {}
 
-  async execute(ctx: RequestContext, expenseId: string, reason: string, taxFilingAttested?: boolean): Promise<ExpenseRecord> {
+  async execute(ctx: RequestContext, expenseId: string, reason: string, taxFilingAttested?: boolean, expectedUpdatedAt?: Date): Promise<ExpenseRecord> {
     requirePerm(ctx, 'expense.void', 'void expense', { code: 'expense_void_permission_missing', message: EXPENSE_VOID_CERTIFICATE_WORDS.permissionDenied });
-    return this.voidExpense(ctx, expenseId, reason, undefined, taxFilingAttested);
+    return this.voidExpense(ctx, expenseId, reason, undefined, taxFilingAttested, { expectedUpdatedAt });
   }
 
   async executeForReimbursement(
@@ -1614,6 +1656,11 @@ export class VoidExpenseUseCase {
     return this.voidExpense(ctx, expenseId, reason, authority, !!authority.cancellationCertificateAttestedAt);
   }
 
+  async previewLineAction(ctx: RequestContext, expenseId: string, reason: string): Promise<ExpenseRecord> {
+    requirePerm(ctx, 'expense.void', 'void expense');
+    return this.voidExpense(ctx, expenseId, reason, undefined, undefined, { previewOnly: true });
+  }
+
   private async voidExpense(
     ctx: RequestContext,
     expenseId: string,
@@ -1628,6 +1675,7 @@ export class VoidExpenseUseCase {
       beforeVoid?: (tx: any) => Promise<void>;
     },
     taxFilingAttested?: boolean,
+    lineAction?: { previewOnly?: boolean; expectedUpdatedAt?: Date },
   ): Promise<ExpenseRecord> {
     if (!isExpenseVoidReason(reason)) throw new BadRequestException({ code: 'expense_void_reason_required', message: EXPENSE_VOID_CERTIFICATE_WORDS.reasonRequired });
     const r = await this.repo.findById(ctx.companyId, expenseId);
@@ -1687,7 +1735,16 @@ export class VoidExpenseUseCase {
       const claim = r.sourceReimbursementRequestId ? await this.repo.findLiveClaimOf(ctx.companyId, r) : null;
       if (claim) throw claimOwnsExpenseError(claim);
     }
+    if (lineAction?.expectedUpdatedAt && r.updatedAt.getTime() !== lineAction.expectedUpdatedAt.getTime()) throw new ConflictException('expense_source_version_changed');
     if (!canVoidExpenseFinancialState(r)) throw new BadRequestException({ code: 'expense_changed', message: EXPENSE_VOID_CERTIFICATE_WORDS.statusChanged });
+    if (lineAction?.previewOnly) {
+      const capabilities = await this.repo.expenseCorrectionCapabilities(ctx.companyId, expenseId, ctx.permissions);
+      if (capabilities.disbursementReservation) throw new BadRequestException({ code: 'expense_disbursement_reserved', message: 'Expense is reserved.' });
+      const blocker = await this.repo.lineVoidBlocker(ctx.companyId, expenseId);
+      if (blocker) throw new BadRequestException({ code: blocker.code, message: 'Expense cannot be voided yet.' });
+      if (capabilities.certificateOnExpense) throw new BadRequestException({ code: 'expense_certificate_attestation_required', message: EXPENSE_VOID_CERTIFICATE_WORDS.attestationRequired });
+      return r;
+    }
 
     // H-04 / GAP-07: reserve a reversal entry number for each posted leg outside
     // the void transaction (sequence rows commit independently) — the accrual
@@ -1740,7 +1797,7 @@ export class VoidExpenseUseCase {
         reserved?.documentNumber,
         paymentReservations.map(({ paymentId, reservation }) => ({ paymentId, reversalEntryNumber: reservation.documentNumber })),
         authority?.beforeVoid,
-        { permissions: ctx.permissions, ...(viewerReadScope ? { viewerReadScope } : {}), taxFilingAttested, requestId: ctx.requestId,
+        { permissions: ctx.permissions, ...(viewerReadScope ? { viewerReadScope } : {}), taxFilingAttested, requestId: ctx.requestId, ...(lineAction?.expectedUpdatedAt && { expectedUpdatedAt: lineAction.expectedUpdatedAt, scopes: ctx.scopes }),
           ...(authority?.cancellationCertificateAttestedAt && { authorisedByClaimCancellation: true }) },
       );
     } catch (err) {
@@ -1798,30 +1855,10 @@ export class MarkExpenseReadyUseCase {
     return (await this.people.membersWithPermission(ctx.companyId, r.branchId, 'expense.confirm')).filter(person => person.userId !== ctx.userId);
   }
 
-  async execute(ctx: RequestContext, expenseId: string, requestedReviewerUserId?: string): Promise<ExpenseRecord> {
-    const r = await this.repo.findById(ctx.companyId, expenseId);
-    if (!r) throw new NotFoundException();
-    assertBranchInScope(ctx, r.branchId);
-    const canReview = hasPerm(ctx, 'expense.review');
-    const canUpdateOwn = hasPerm(ctx, 'expense.update') && r.createdByUserId === ctx.userId;
-    if (!canReview && !canUpdateOwn) throw new ForbiddenException('Missing permission');
-    if (requestedReviewerUserId) {
-      if (!(await this.reviewers(ctx, expenseId)).some(person => person.userId === requestedReviewerUserId)) throw new BadRequestException({ code: 'expense_reviewer_ineligible', message: 'คนนี้ยืนยันรายจ่ายของสาขานี้ไม่ได้ เลือกคนอื่น' });
-      if (r.status === 'READY_FOR_CONFIRMATION' && r.requestedReviewerUserId === requestedReviewerUserId && r.submittedByUserId === ctx.userId) return r;
-    }
-    if (hasBlockingNonExpenseClassification(r.aiVerificationSummaryJson)) {
-      throw new BadRequestException(NON_EXPENSE_CLASSIFICATION_REVIEW_REQUIRED);
-    }
-    // Same endpoint serves the web "เริ่มตรวจใหม่" action on a rejected record: reopening puts it back
-    // in NEEDS_REVIEW to be corrected and re-submitted, never straight into the confirmable state.
-    const target = !requestedReviewerUserId && r.status === 'REJECTED' ? 'NEEDS_REVIEW' : 'READY_FOR_CONFIRMATION';
-    if (target === 'READY_FOR_CONFIRMATION') {
-      const source = r.captureSource === 'LINE_UPLOAD' && !r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]
-        ? await this.repo.findByIdWithRelations(ctx.companyId, expenseId) : undefined;
-      assertExpenseSourceDraftComplete(r.sourceChannelMetadataJson, source ?? undefined);
-    }
-    const err = validateStatusTransition(r.status, target);
-    if (err) throw new BadRequestException(err);
+  async execute(ctx: RequestContext, expenseId: string, requestedReviewerUserId?: string, expectedUpdatedAt?: Date): Promise<ExpenseRecord> {
+    const { record: r, target } = await this.previewLineAction(ctx, expenseId, undefined, requestedReviewerUserId);
+    if (expectedUpdatedAt && r.updatedAt.getTime() !== expectedUpdatedAt.getTime()) throw new ConflictException('expense_source_version_changed');
+    if (requestedReviewerUserId && r.status === 'READY_FOR_CONFIRMATION' && r.requestedReviewerUserId === requestedReviewerUserId && r.submittedByUserId === ctx.userId) return r;
     const submittedAt = new Date();
     const names = requestedReviewerUserId && this.people ? await this.people.memberNames(ctx.companyId, [ctx.userId]) : null;
     return this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId, status: target, expectedUpdatedAt: r.updatedAt,
@@ -1831,6 +1868,37 @@ export class MarkExpenseReadyUseCase {
           body: EXPENSE_REVIEW_REQUEST_WORDS.body.replace('{sender}', names?.get(ctx.userId) ?? 'ผู้ส่ง').replace('{number}', r.expenseNumber ?? 'ที่ยังไม่มีเลขที่'),
           deepLinkHref: `/companies/${ctx.companyId}/expenses/${expenseId}`, recipientUserIds: [requestedReviewerUserId], webOnlyRecipientUserIds: [requestedReviewerUserId], periodKey: submittedAt.toISOString(), sourceRefs: [{ submittedAt: submittedAt.toISOString() }], supersedeEarlier: true }, tx);
       } : undefined);
+  }
+
+  async previewLineAction(ctx: RequestContext, expenseId: string, previewSource?: ExpenseRecordWithRelations, requestedReviewerUserId?: string) {
+    let r = await this.repo.findById(ctx.companyId, expenseId);
+    if (!r) throw new NotFoundException();
+    if (previewSource) {
+      if (previewSource.id !== r.id || previewSource.companyId !== r.companyId || previewSource.updatedAt.getTime() !== r.updatedAt.getTime()) throw new ConflictException('expense_source_version_changed');
+      r = previewSource;
+    }
+    assertBranchInScope(ctx, r.branchId);
+    const canReview = hasPerm(ctx, 'expense.review');
+    const canUpdateOwn = hasPerm(ctx, 'expense.update') && r.createdByUserId === ctx.userId;
+    if (!canReview && !canUpdateOwn) throw new ForbiddenException('Missing permission');
+    if (requestedReviewerUserId) {
+      if (!(await this.reviewers(ctx, expenseId)).some(person => person.userId === requestedReviewerUserId)) throw new BadRequestException({ code: 'expense_reviewer_ineligible', message: 'คนนี้ยืนยันรายจ่ายของสาขานี้ไม่ได้ เลือกคนอื่น' });
+      if (r.status === 'READY_FOR_CONFIRMATION' && r.requestedReviewerUserId === requestedReviewerUserId && r.submittedByUserId === ctx.userId) return { record: r, target: 'READY_FOR_CONFIRMATION' as const };
+    }
+    if (hasBlockingNonExpenseClassification(r.aiVerificationSummaryJson)) {
+      throw new BadRequestException(NON_EXPENSE_CLASSIFICATION_REVIEW_REQUIRED);
+    }
+    // Same endpoint serves the web "เริ่มตรวจใหม่" action on a rejected record: reopening puts it back
+    // in NEEDS_REVIEW to be corrected and re-submitted, never straight into the confirmable state.
+    const target: 'NEEDS_REVIEW' | 'READY_FOR_CONFIRMATION' = !requestedReviewerUserId && r.status === 'REJECTED' ? 'NEEDS_REVIEW' : 'READY_FOR_CONFIRMATION';
+    if (target === 'READY_FOR_CONFIRMATION') {
+      const source = r.captureSource === 'LINE_UPLOAD' && !r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]
+        ? await this.repo.findByIdWithRelations(ctx.companyId, expenseId) : undefined;
+      assertExpenseSourceDraftComplete(r.sourceChannelMetadataJson, source ?? undefined);
+    }
+    const err = validateStatusTransition(r.status, target);
+    if (err) throw new BadRequestException(err);
+    return { record: r, target };
   }
 }
 
@@ -1856,7 +1924,7 @@ function reservationViewerScope(repo: PrismaExpenseRepository, ctx: RequestConte
 
 @Injectable()
 export class RecordExpensePaymentUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, @Optional() private readonly linkAttachment?: LinkAttachmentUseCase) {}
 
   async confirmDate(ctx: RequestContext, expenseId: string, paymentId: string, paidAt: string) {
     requirePerm(ctx, 'expense.payment.record', 'confirm expense payment date');
@@ -1875,6 +1943,7 @@ export class RecordExpensePaymentUseCase {
     ctx: RequestContext,
     expenseId: string,
     input: RecordExpensePaymentInput,
+    line?: { expectedUpdatedAt?: Date; evidenceAttachmentId?: string; beforeEvidence?: (tx: Prisma.TransactionClient) => Promise<void> },
   ): Promise<ExpenseRecord> {
     requirePerm(ctx, 'expense.payment.record', 'record expense payment');
     const r = await this.repo.findById(ctx.companyId, expenseId);
@@ -1897,14 +1966,34 @@ export class RecordExpensePaymentUseCase {
       permissions: ctx.permissions, viewerReadScope: reservationViewerScope(this.repo, ctx),
       idempotencyKey,
       amount: input.paidAmount,
+      expectedUpdatedAt: line?.expectedUpdatedAt,
       paymentMethod: input.paymentMethod,
       paidAt: input.paidAt,
       bankAccountRef: input.bankAccountRef,
       slipAttachmentId: input.slipAttachmentId,
-    }, (tx, created) => recordExpensePaymentEffects(this.audit, ctx, expenseId, tx, created));
+    }, async (tx, created) => {
+      if (line?.evidenceAttachmentId) {
+        await line.beforeEvidence?.(tx);
+        if (!this.linkAttachment) throw new ConflictException('Payment evidence linking unavailable.');
+        const existing = await tx.attachmentLink.findFirst({ where: { companyId: ctx.companyId, attachmentId: line.evidenceAttachmentId, targetType: 'expense.record', targetId: expenseId, purpose: 'expense.payment.evidence' } });
+        if (!existing) await this.linkAttachment.execute(ctx, { attachmentId: line.evidenceAttachmentId, targetType: 'expense.record', targetId: expenseId, purpose: 'expense.payment.evidence' }, tx);
+      }
+      await recordExpensePaymentEffects(this.audit, ctx, expenseId, tx, created);
+    });
     if (result.replayed && result.payment?.status === 'VOIDED') throw new ConflictException({ code: 'expense_payment_cancelled_replay', message: EXPENSE_CORRECTION_WORDS.paymentReplayCancelled });
     return result.expense;
   }
+  async previewLineAction(ctx: RequestContext, expenseId: string, input: RecordExpensePaymentInput): Promise<ExpenseRecord> {
+    requirePerm(ctx, 'expense.payment.record', 'record expense payment');
+    const r = await this.repo.findById(ctx.companyId, expenseId);
+    if (!r) throw new NotFoundException();
+    assertBranchInScope(ctx, r.branchId);
+    assertExpensePaymentSource(r, input.paidAt);
+    const { amount } = validateExpensePaymentInput({ amount: input.paidAmount, paidAt: input.paidAt, paymentMethod: input.paymentMethod, bankAccountRef: input.bankAccountRef });
+    assertExpensePaymentOutstanding(r, amount);
+    return r;
+  }
+
 }
 
 

@@ -135,6 +135,31 @@ describe('AI credit funding of LINE v2 CHAT holds on PostgreSQL', { skip: !url }
     applyAiCreditGrant(tx, { companyId, billingAccountId: null, sourceKind, sourceKey: `${companyId}:${sourceKind}:${units}`, sourceHash: 'h',
       units, at: new Date(now.getTime() - daysAgo * DAY), operationId: 'op' }));
 
+  it('known v2 timeout releases funded credit and preserves only company cost', async () => {
+    const { companyId } = await fixture('nocharge-timeout');
+    const before = await balance(companyId);
+    const held = await reserve(companyId, 'timeout');
+    assert.ok(held.ok); if (!held.ok) return;
+    await client.aiBudgetReservation.update({ where: { id: held.reservation.id }, data: { status: 'DISPATCHED' } });
+    const input = { invocationKey: held.reservation.invocationKey, meta: { sourceRoute: 'line-ai-v2' },
+      entry: { modelId: model, tag: 'line.loop', ok: false, inputTokens: 1200, outputTokens: 100,
+        cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 1, usageBasis: 'CONSERVATIVE_ESTIMATE' as const } };
+    assert.equal(await settleAiBudgetStep(prisma, input), 'settled');
+    assert.equal((await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: held.reservation.id } })).status, 'CANCELLED');
+    assert.equal((await entries(companyId)).filter(entry => entry.kind === 'CONSUME').length, 0);
+    const after = await balance(companyId);
+    assert.equal(after.totalRemainingUnits, before.totalRemainingUnits);
+    assert.equal(after.packageRemainingUnits, before.packageRemainingUnits);
+    assert.equal(after.lots.reduce((sum, lot) => sum + lot.reservedUnits + lot.consumedUnits, 0), 0);
+    assert.equal(await client.companyAiMonthlyUsage.count({ where: { companyId } }), 0);
+    assert.equal(await client.companyAiMonthlyBucketUsage.count({ where: { companyId } }), 0);
+    const event = await client.aiUsageEvent.findUniqueOrThrow({ where: { invocationKey: input.invocationKey } });
+    assert.equal(event.usageBasis, 'COMPANY_ABSORBED'); assert.ok(event.costSatang > 0);
+    assert.equal(await settleAiBudgetStep(prisma, input), 'duplicate');
+    assert.equal((await chargeAiBudgetHoldAtBound(prisma, DECISION(companyId, held.reservation.id),
+      { ip: null, userAgent: null } as never)).ok, false, 'operator cannot charge a known timeout after release');
+  });
+
   it('funds a cut-over call from the cycle, then team-given, then purchased credit — past the old calendar CHAT cap (A05, C01)', async () => {
     const { companyId } = await fixture('order', { allowance: 50 });
     const gift = await addLot(companyId, 'ADD_ON_ADMIN', 1000);

@@ -63,7 +63,7 @@ function mapping(
     completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [0], notes: [] },
     ...over,
   };
-  const assembled = assembleCaptureObservations([{ id: 'w1', observations }], { pageCount: 1 });
+  const assembled = assembleCaptureObservations([{ id: 'w1', pageIndexes: [0], observations }], { pageCount: 1 });
   return { assembled, mapped: captureFieldsFromObservations(assembled) };
 }
 
@@ -237,15 +237,43 @@ describe('capture draft fields — the document category', () => {
     });
     const later = { ...pick, expenseCategoryId: 'cat-other' };
     const kept = assembleCaptureObservations([
-      { id: 'w1', observations: page('a', { categorySuggestion: pick }) },
-      { id: 'w2', observations: page('b', { continuationOfRef: 'a', categorySuggestion: later }) },
+      { id: 'w1', pageIndexes: [0], observations: page('a', { categorySuggestion: pick }) },
+      { id: 'w2', pageIndexes: [1], observations: page('b', { continuationOfRef: 'a', categorySuggestion: later }) },
     ], { pageCount: 2 });
     assert.equal(kept.documents.length, 1);
     assert.deepEqual(kept.documents[0]!.categorySuggestion, pick);
     const filled = assembleCaptureObservations([
-      { id: 'w1', observations: page('a', {}) },
-      { id: 'w2', observations: page('b', { continuationOfRef: 'a', categorySuggestion: later }) },
+      { id: 'w1', pageIndexes: [0], observations: page('a', {}) },
+      { id: 'w2', pageIndexes: [1], observations: page('b', { continuationOfRef: 'a', categorySuggestion: later }) },
     ], { pageCount: 2 });
     assert.deepEqual(filled.documents[0]!.categorySuggestion, later);
+  });
+});
+
+it('R10 Q2: a two-page invoice uses its header date; no printed date leaves the capture field missing', () => {
+  for (const date of ['2026-09-26', undefined]) {
+    const header = mapping({ documentDate: date }, {}).assembled;
+    const first: ExpenseCaptureObservations = { documents: header.documents, items: [], components: [], totals: [], payments: [], refunds: [],
+      completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [0], notes: [] } };
+    const footer = structuredClone(first); footer.documents[0]!.documentDate = undefined; footer.documents[0]!.pageIndexes = [1];
+    footer.documents[0]!.continuationOfRef = 'd1'; footer.totals = [total('document_total', '599586')];
+    const assembled = assembleCaptureObservations([{ id: 'w1', pageIndexes: [0], observations: first }, { id: 'w2', pageIndexes: [1], observations: footer }], { pageCount: 2 });
+    const result = captureFieldsFromObservations(assembled)!;
+    assert.equal(result.fields.expenseDate, date); assert.equal(result.fields.missingFields?.includes('expenseDate'), !date);
+  }
+});
+
+describe('Fix-up 16 capture branch and signed rounding', () => {
+  // Actual F2 assembled document JSON, including the printed branch designation.
+  const F2 = {"ref":"d1","kind":"TAX_INVOICE","buyer":{"name":"บริษัท ร้านตัวอย่าง เอ จำกัด (สำนักงานใหญ่)","taxId":"0105569001238"},"family":"EXPENSE_EVIDENCE","issuer":{"name":"บริษัท ฟู้ดแพคเกจจิ้ง จำกัด","taxId":"0105540445561","address":"9 ซอยเพชรเกษม 81 แขวงหนองค้างพลู เขตหนองแขม กรุงเทพฯ 10160","branchCode":"สำนักงานใหญ่","storefront":"บริษัท ฟู้ดแพคเกจจิ้ง จำกัด"},"currency":"THB","pageIndexes":[0,1],"printedPage":{"of":2,"number":1},"documentDate":"2026-10-03","printedPages":[1,2],"classification":{"confidence":0.9,"contentKind":"DOCUMENT","documentKind":"TAX_INVOICE","amountSignals":["6,303.68","6,660.40","6,876.90","14,193.20","17,864.07","จำนวนเงินรวมทั้งสิ้น 181,116.77","รวมเป็นเงิน 169,268.01","ภาษีมูลค่าเพิ่ม 7% 11,848.76"],"evidenceRoles":["EXPENSE_SUPPORT","TAX_EVIDENCE_CANDIDATE"],"documentFamily":"EXPENSE_EVIDENCE","evidenceSignals":["ใบแจ้งหนี้ / ใบกำกับภาษี","ต้นฉบับ (Original)","เลขที่ INV-6910-0301","เลขประจำตัวผู้เสียภาษีอากร 0105540445561","จำนวนเงินรวมทั้งสิ้น 181,116.77","ภาษีมูลค่าเพิ่ม 7% 11,848.76"],"transactionState":"DUE","businessDirection":"PURCHASE_EXPENSE","settlementSignals":["ครบกำหนด 02/11/2569","ชำระโดย: โอนเงินเข้าบัญชี ธนาคารตัวอย่าง xxx-x-x1001-x"],"contradictionSignals":[],"requiresClarification":false,"missingRequiredSignals":[]},"documentNumber":"INV-6910-0301","categorySuggestion":{"confidence":0.6,"evidenceSignals":["กล่องลูกฟูก 3 ชั้น เบอร์ C","เทปกาว OPP ใส 2 นิ้ว","บับเบิ้ลกันกระแทก 65 ซม.","สติกเกอร์ฉลากความร้อน","กระดาษคราฟท์"],"expenseCategoryId":"category-a-office"}};
+  for (const [printed, expected] of [['สำนักงานใหญ่', '00000'], ['Head office', '00000'], ['สาขาที่ 3', '00003'], ['Branch 17', '00017'], ['', undefined], ['unknown', undefined]]) {
+    it(`O5: maps printed branch ${printed} to ${expected}`, () => {
+      const { mapped } = mapping({ ...F2, issuer: { ...F2.issuer, branchCode: printed } } as any, {});
+      assert.equal(mapped?.fields.vendorBranchCode, expected);
+    });
+  }
+  it('O1: carries a signed printed rounding component with zero VAT', () => {
+    const { mapped } = mapping({}, { components: [component({ id: 'rounding', role: 'charge', label: 'สตางค์ปัดเศษ', amount: '-0.44', evidenceSpan: 'สตางค์ปัดเศษ -0.44' })] });
+    assert.deepEqual(mapped?.fields.additionalCharges, [{ kind: 'ROUNDING', description: 'สตางค์ปัดเศษ', amount: '-0.44', vatRate: '0', evidenceSignal: 'สตางค์ปัดเศษ -0.44' }]);
   });
 });

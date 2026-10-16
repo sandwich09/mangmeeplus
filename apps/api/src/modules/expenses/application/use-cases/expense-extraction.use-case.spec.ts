@@ -272,7 +272,7 @@ describe('RequestReceiptExtractionUseCase', () => {
     ]);
     // The apply carries the version read BEFORE the model call, so a correction that lands
     // during the round trip makes the result stale instead of overwriting the user's edit.
-    assert.deepEqual(applyCalls[0], [requestContext, 'expense-1', fields, {}]);
+    assert.deepEqual(applyCalls[0], [requestContext, 'expense-1', fields, { ocrDocumentType: 'RECEIPT' }]);
     assert.deepEqual(updates[0].aiVerificationSummaryJson, {
       status: 'OCR_EXTRACTED_NEEDS_REVIEW',
       extractionRequestId: 'request-1', extractionAttachmentId: 'attachment-1',
@@ -1018,4 +1018,23 @@ describe('RequestReceiptExtractionUseCase – company AI money refusals (spec §
     assert.deepEqual(await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' });
     assert.deepEqual(updates, []);
   });
+});
+
+it('R10 Q5c: web extraction also tells the shared apply that a new source is payment evidence', async () => {
+  const h = makeUseCase({ expense: { ...baseExpense, sourceDocumentType: 'NEEDS_REVIEW' },
+    gatewayResult: { status: 'ok', classification: classification('TRANSFER_SLIP', { documentFamily: 'PAYMENT_EVIDENCE', businessDirection: 'UNKNOWN' }),
+      fields: { vendorName: 'TEST FOODS CO', grandTotalAmount: '321.00' } } });
+  await h.useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+  assert.equal(h.applyCalls.length, 1); assert.equal(h.applyCalls[0][3].sourceDocumentType, 'TRANSFER_SLIP');
+});
+
+
+it('R11 T2: re-extracting a slip on an existing receipt passes OCR classification without replacing reviewer type', async () => {
+  const h = makeUseCase({ expense: { ...baseExpense, sourceDocumentType: 'RECEIPT' },
+    gatewayResult: { status: 'ok', classification: classification('TRANSFER_SLIP', { documentFamily: 'PAYMENT_EVIDENCE', businessDirection: 'UNKNOWN' }),
+      fields: { vendorName: 'TEST FOODS CO', grandTotalAmount: '321.00' } } });
+  await h.useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+  assert.equal(h.applyCalls.length, 1);
+  assert.equal(h.applyCalls[0][3].ocrDocumentType, 'TRANSFER_SLIP');
+  assert.equal(h.applyCalls[0][3].sourceDocumentType, undefined);
 });

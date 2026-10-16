@@ -244,3 +244,17 @@ Schema phases additionally: fresh `prisma migrate dev` + seed on a scratch datab
 ## Task Memory
 
 `docs/agent-memory/line-substitute-receipt-assisted-issuance.md` — update per phase with verification evidence and any deviation from this plan.
+
+## Fix-up 11 owner decision (2026-10-16; supersedes 7B signing)
+
+1. Restore develop's Preview/Certify/Approve web guards and boundary comments; preserve LINE Prepare and existing identity/financial guards.
+2. Keep 7B's ask-once facts, payer selection, no-more-evidence handling and targeted slip attachment. Replace sign/approve/issue cards with one facts card and a primary URI to the existing web signing/approval page. Stale postbacks navigate to that page or the authenticated hub, without mutations.
+3. Remove 7B's signature-upload-to-sign-card hook; retain the pre-7B personal signature asset and paper-scan paths. Preserve web notifications and LINE expense confirm → บันทึกจ่าย.
+4. Replace registered signing specs with web-only guard and handoff regressions; run contracts build, API/gateway typecheck, full gateway/contracts package test lists, every registered API spec importing changed modules, delivery-plan tables and real-module DI. No package.json, flags, commits or deployment changes.
+
+## Fix-up 9 regression repair (2026-10-16)
+
+1. Reproduce control delivery with completion menus, repair the shared fallback and verify every production card builder through the real validator.
+2. Replace the attached substitute's stale question with current source evidence; show self/member selection on its facts card and keep paid wording on the open certificate journey.
+3. Pass known physical window pages into PDF assembly; verify 40/70 rows through real OCR apply, fresh and resumed.
+4. Build contracts, typecheck API/Gateway, run full contracts/Gateway lists, all registered API specs transitively importing changed modules, and the real Nest DI spec. Reproduce sandbox failures on original HEAD `ae2bf1ce4` before classifying them as environmental.

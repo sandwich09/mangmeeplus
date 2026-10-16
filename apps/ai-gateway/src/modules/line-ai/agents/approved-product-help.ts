@@ -1,8 +1,11 @@
 /** Curated product guidance reviewed against these exact source/body hashes. */
-import { EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, LINE_RECEIPT_CAPTURE_FEATURE_KEY, hasToolFeature, lineChatAction, canUseLineChatAction, type LineAiAnswerPresentation } from '@watchdog-bms/contracts';
 import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
 
 const sources = {
+  'tax': { file: 'tax-guide.content.ts', hash: '4aef264e52fed9bd845e83909d9883b3f020f975e390644e680f9f875dc36e06' },
+  'disbursement-vouchers': { file: 'disbursement-voucher-guide.content.ts', hash: 'def3bfcd017f1fb2558621a1f015434659455fde63bfd95bca42c46c35e91b8a' },
+
   expenses: { file: 'expenses-guide.content.ts', hash: 'c1a24890df297c863e56dddf0d59b0cac2f177183f27ef6c0d11d96a940fc14e' },
   reimbursements: { file: 'reimbursement-guide.content.ts', hash: 'b3cae0e6877401a50fb03e5a977e42d893563abafa9a2f0bdacd33a45d4185cf' },
   'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '4562fee709affca22cb072ad21c57c46985797a1db05b026bf9dfc411ae1d096' },
@@ -15,10 +18,10 @@ function card(
 ): ProductKnowledgeCard {
   const value: ProductKnowledgeCard = {
     id, version: guide === 'reimbursements' ? 4 : guide === 'expenses' ? 3 : guide === 'substitute-receipts' ? 2 : 1, title, questions, summary: title, body,
-    sourceURL: `/companies/{companyId}/user-guide/${guide}#${anchor}`,
+    sourceURL: `/companies/{companyId}/user-guide/${guide === 'disbursement-vouchers' ? 'expenses' : guide}#${anchor}`,
     sourceFile: `apps/web/src/features/user-guide/${sources[guide].file}`, sourceHash: sources[guide].hash,
     contentHash: '', permissionAnyOf, requiredPermissions: [],
-    featureKeys: guide === 'expenses' || guide === 'substitute-receipts' ? ['expenses'] : guide === 'reports' ? ['reports'] : [],
+    featureKeys: guide === 'expenses' || guide === 'substitute-receipts' || guide === 'disbursement-vouchers' ? ['expenses'] : guide === 'reports' ? ['reports'] : [],
     requiredCapabilities, audience: 'member', risk: 'R1',
   };
   value.contentHash = knowledgeCardHash(value);
@@ -63,3 +66,47 @@ export const PRODUCT_HELP_PACK: ProductKnowledgePack = {
   ],
 };
 PRODUCT_HELP_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_PACK);
+
+/** New subjects are awaiting owner review; the original 12-card AI-only approval does not cover them. */
+export const PRODUCT_HELP_DRAFT_PACK: ProductKnowledgePack = {
+  ...PRODUCT_HELP_PACK, version: 5, status: 'DRAFT', reviewers: [], contentHash: '',
+  cards: [...PRODUCT_HELP_PACK.cards,
+    card('voucher.meaning', 'disbursement-vouchers', 'disbursement-vouchers', 'ใบสำคัญจ่ายคืออะไร ทำไมต้องทำ',
+      ['ใบสำคัญจ่ายคืออะไร', 'ทำไมต้องทำใบสำคัญจ่าย'],
+      'ใบเตรียมจ่ายใช้รวบรวมรายจ่ายให้ผู้รับเงินรายเดียวเพื่อตรวจและอนุมัติก่อนจ่าย เมื่อจ่ายเงินจริงและบันทึกว่าจ่ายแล้วจึงเป็นใบสำคัญจ่ายค่ะ ฉบับร่างยังไม่ได้จ่ายเงิน และสถานะรอจ่ายหมายถึงอนุมัติแล้วแต่ยังไม่ได้บันทึกว่าจ่ายเงินจริง', ['expense.disbursement.read']),
+    ...[
+      card('wht.certificate-meaning', 'tax', 'wht', '50 ทวิคืออะไร', ['50 ทวิ คืออะไร', 'ทำไมต้องออก 50 ทวิ'],
+        'หนังสือที่ผู้จ่ายเงินออกให้ผู้รับเงิน บอกยอดที่จ่ายและภาษีที่หักไว้ค่ะ ออกแล้วยังไม่ใช่การนำส่งภาษี', ['wht.certificate.read']),
+      card('wht.pnd53-due', 'tax', 'wht', 'ภงด.53 ต้องยื่นเมื่อไหร่', ['ภงด.53 ต้องยื่นเมื่อไหร่', 'ภงด 53 นำส่งวันไหน'],
+        'ดูวันครบกำหนดที่งวด ภงด.53 ในระบบค่ะ ถ้ายังไม่ได้ตั้งไว้ ระบบใช้วันที่ 7 ของเดือนถัดไปสำหรับแบบกระดาษ', ['wht.pnd53.read']),
+      card('wht.calculation', 'tax', 'wht', 'หัก ณ ที่จ่ายคิดอย่างไร', ['หัก ณ ที่จ่ายคิดยังไง', 'ต้องหักเท่าไหร่'],
+        'ยอดก่อน VAT คูณอัตราของประเภทเงินได้ที่เลือกค่ะ ต้องเลือกประเภทเงินได้ก่อน ระบบไม่เดาอัตราให้', ['expense.create', 'procurement.supplier_payment.read']),
+    ].map(value => {
+      value.featureKeys = [value.id === 'wht.pnd53-due' ? 'wht_pnd53' : 'wht_50bis'];
+      value.contentHash = knowledgeCardHash(value);
+      return value;
+    }),
+  ],
+};
+PRODUCT_HELP_DRAFT_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_DRAFT_PACK);
+
+/** The semantic selector names a registry entry; neither its prose nor a guide can grant action access. */
+export function productHelpAction(input: { actionId?: unknown; selectedKnowledgeCardIds?: readonly string[];
+  permissions: readonly string[]; featureKeys: readonly string[] | null; availableToolNames?: readonly string[]; companyId?: string }) {
+  const mapped = LINE_CHAT_ACTIONS.filter(action => action.helpTopics.some(topic => input.selectedKnowledgeCardIds?.includes(topic)));
+  const action = lineChatAction(input.actionId) ?? (mapped.length === 1 ? mapped[0] : undefined);
+  if (!action) return null;
+  const allowed = canUseLineChatAction(action.id, input.permissions, input.featureKeys === null ? null : new Set(input.featureKeys))
+    && (!action.tool || !input.availableToolNames || input.availableToolNames.includes(action.tool));
+  const tool = LINE_TOOL_REGISTRY.find(tool => tool.name === action.tool);
+  const entitled = input.featureKeys === null ? null : new Set(input.featureKeys);
+  const featureMissing = action.id === 'expense_capture' && entitled !== null && !entitled.has(LINE_RECEIPT_CAPTURE_FEATURE_KEY)
+    || tool && !hasToolFeature(tool, entitled)
+    || entitled !== null && (action.id === 'wht_certificate' && !entitled.has('wht_50bis') || action.id === 'pnd53' && !entitled.has('wht_pnd53'));
+  const replyText = allowed ? action.sentence : featureMissing
+    ? 'ให้ผู้มีสิทธิ์จัดการแพ็กเกจตรวจเมนูที่ร้านเปิดใช้สำหรับงานนี้ค่ะ'
+    : `ให้${action.responsible}ดำเนินการ หรือให้ผู้ดูแลตรวจสิทธิ์ของคุณค่ะ`;
+  const presentation: LineAiAnswerPresentation = { kind: 'answer_cards', cards: [{ text: replyText,
+    ...(allowed ? 'webPath' in action ? { webLink: { label: 'บัญชีรับเงินคืนของฉัน', path: action.webPath.replace('{companyId}', input.companyId ?? '') } } : { chatActionId: action.id } : {}) }] };
+  return { replyText, presentation, allowed };
+}

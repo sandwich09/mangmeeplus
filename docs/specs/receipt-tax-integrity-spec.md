@@ -95,6 +95,20 @@ This release fixes the reported receipt ingestion/review failures and directly a
 
 No live ledger/payment/tax submission is implied by a local harness. Live UAT acceptance must exercise upload/review/save/reload/Next and DB readback with authorized test drafts; preserve customer originals and do not emit customer messages. Record real screenshots where available.
 
+## OCR-A correction — owner direction 2026-10-15
+
+The receipt/slip benchmark exposed avoidable row loss and repeated image reads. These corrections apply to the existing extraction and evidence gates:
+
+- Preserve quantity and amount when an optional unit price was derived or malformed; remove only that unsupported unit price. Match row quotes across table pipes and collapsed whitespace, retain an exact source span, and keep valid sibling rows when one fails. Mark partial detail with `missingFields: ["lines", ...]`, including when the missing-field list reaches its bound. Partial detail remains source evidence; API apply uses the financial summary until complete detail reconciles, and one-pass intake still requires every row.
+- Admit up to 200 item rows in gateway parsing and API apply. This is an admission bound, not a guarantee that every 200-row response fits the unchanged 8,192-token extraction budget. Truncation still fails explicitly; never silently accept a truncated response.
+- Spend an image reread only on an admitted, complete item block with a usable total, no clarification, and an unexplained arithmetic gap. A dropped row, missing total/VAT, uncertain VAT mode, or a gap explained by switching VAT mode does not warrant another image pass. The replacement still needs complete reconciled rows, the same exact total and compatible document number.
+- An exact printed due-date field on a settled combined tax invoice/receipt is not a contradiction. Unknown contradictions, unpaid documents, missing totals and multi-document gates retain review behavior.
+- Parse Thai named-month slip dates before an adjacent time, including `16 ก.ย. 69 14:10 น.` and `13 ต.ค. 69 - 18:45`, without consuming their year/time as a month-first date.
+- Explicit affirmative `VAT INCLUDED` / `รวมภาษีมูลค่าเพิ่มแล้ว` governs the item-price VAT mode. Normalize printed `168.-` to `168.00` and compact slip references by removing spaces and zero-width characters, retaining source membership. Extraction instructions keep purchased delivery/installation rows as items; only a restaurant-style percentage surcharge is `SERVICE_CHARGE`.
+- Recover the specific early root brace before receipt `fields` locally with the existing tolerant JSON extractor. Incomplete financial siblings still enter the bounded structural repair path. Do not report missing seller tax ID for receipts, handwritten cash bills or transfer slips; full tax-invoice requirements remain intact.
+
+Offline evidence, registered regression specs and remaining model-only uncertainties are recorded in [OCR-A task memory](../agent-memory/ocr-round-a-20261015.md). PDF pages, image transforms and timeouts belong to OCR-B and are outside this correction.
+
 ## 7. Release and compatibility
 
 No new feature flag or email-provider activation. Existing receipt features must remain enabled on UAT. Source JSON extension is additive; use existing nullable snapshots/columns, with no speculative schema migration. If implementation discovers a required schema change, amend this spec/plan and rehearse it through canonical readiness before rollout.

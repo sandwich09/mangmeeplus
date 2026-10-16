@@ -1,0 +1,804 @@
+{
+  "E03": {
+    "message": "เบิกค่าแท็กซี่ 350 บาท เมื่อวาน ไปส่งของให้ลูกค้า",
+    "postback": "action=reimbursement_choice&actionId=1d69cbdb-fe7f-5ca0-9065-0a346dc33a85&revision=e454f8b5616d2c9823b3e7833fde2eaf340751ed35edefc7a9105ca2b75258f7&choice=no-receipt",
+    "categoryPostback": "action=reimbursement_choice&actionId=1d69cbdb-fe7f-5ca0-9065-0a346dc33a85&revision=d07075218cb0a24c2dcd28caf692f3b6a94baf5b20082fe842e9e1fa03ba45a6&choice=3eb976c35804c4f56f13d0e763ea430f54d594efd9d37cb121ddcd81e199fb3b",
+    "tools": [
+      {
+        "name": "reimbursement.draft.get_options",
+        "input": {
+          "operation": "CREATE",
+          "subrequestIndex": 0
+        }
+      },
+      {
+        "name": "reimbursement.draft.preview_create",
+        "input": {
+          "action": {
+            "taskId": "f3eadedf-2d0e-57da-aae6-082049fcf1c3",
+            "actionId": "1d69cbdb-fe7f-5ca0-9065-0a346dc33a85",
+            "operation": "CREATE"
+          },
+          "proposal": {
+            "fields": {
+              "reason": {
+                "value": "ไปส่งของให้ลูกค้า",
+                "proof": {
+                  "kind": "USER_TEXT",
+                  "refs": [
+                    {
+                      "partId": "part-0",
+                      "startUtf16": 32,
+                      "endUtf16": 49,
+                      "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+                    }
+                  ]
+                }
+              }
+            },
+            "lineChanges": [
+              {
+                "operation": "ADD",
+                "values": {
+                  "description": {
+                    "value": "ค่าแท็กซี่\nไปส่งของให้ลูกค้า",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 4,
+                          "endUtf16": 14,
+                          "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+                        },
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 32,
+                          "endUtf16": 49,
+                          "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+                        }
+                      ]
+                    }
+                  },
+                  "amount": {
+                    "value": "350",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "candidateId": "1b5b44a9233a0546c2b28347188a99431f630e0b6f473cc2cb808027719fc9a9",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 15,
+                          "endUtf16": 18,
+                          "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+                        }
+                      ]
+                    }
+                  },
+                  "incurredDate": {
+                    "value": "2026-10-15",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "candidateId": "305adbdeab453eabad35269e6e17d1bcd652b8f702ed527dc5c4974e997b2c2c",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 23,
+                          "endUtf16": 31,
+                          "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
+            "schemaVersion": 1,
+            "taskId": "f3eadedf-2d0e-57da-aae6-082049fcf1c3",
+            "taskRevision": 0,
+            "operation": "CREATE"
+          },
+          "suggestedCategoryChoiceId": "3eb976c35804c4f56f13d0e763ea430f54d594efd9d37cb121ddcd81e199fb3b"
+        }
+      }
+    ],
+    "route": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "reimbursementHints": {
+        "description": "ค่าแท็กซี่",
+        "businessPurpose": "ไปส่งของให้ลูกค้า",
+        "amount": "350",
+        "confidence": 0.88,
+        "missingFields": [
+          "fundingSource",
+          "incurredDate"
+        ]
+      },
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบเบิกค่าแท็กซี่ 350 บาท เมื่อวาน ไปส่งของให้ลูกค้า",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 49,
+              "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3159,
+          "outputTokens": 210,
+          "cacheReadInputTokens": 21954,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 6681,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#3e4cf444e5681eaa2467039b1e1bec1c23bfb2b19d4fd789006b974acf2f77f6#provider-v2#0"
+        }
+      ]
+    },
+    "tapRoute": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.88,
+      "semanticOutcome": "REIMBURSEMENT_CLAIM",
+      "fundingSource": "EMPLOYEE_PAID",
+      "reimbursementHints": {
+        "description": "ค่าแท็กซี่ ไม่มีใบเสร็จ",
+        "businessPurpose": "ไปส่งของให้ลูกค้า",
+        "confidence": 0.82,
+        "missingFields": [
+          "amount",
+          "incurredDate"
+        ]
+      },
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบเบิกค่าแท็กซี่รายการใหม่ ไม่มีใบเสร็จ ไปส่งของให้ลูกค้า",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "taskRef": {
+            "taskId": "5dc6e1f7d9704581497cb78ff55197b91316c0eea574a63cee7681d3faa983a3",
+            "taskRevision": 1,
+            "subrequestIndex": 0
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 32,
+              "rawSha256": "ab7d2c9695dd6617df905115d2c371227780db5bce109fe6333a5a2bd5ead8b0"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3381,
+          "outputTokens": 296,
+          "cacheReadInputTokens": 21954,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 6018,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#43c49a3707e0c097a0c9853e0e67ebd39ac5fab54749fb3b18d90600cab9cf66#provider-v2#0"
+        }
+      ]
+    },
+    "accepted": {
+      "schemaVersion": 1,
+      "options": {
+        "schemaVersion": 1,
+        "taskRevision": 0,
+        "expiresAt": "2026-10-16T10:19:22.284Z",
+        "revision": "5eafb18c7c4846774c20fad6a954e60d72f73306e144cc9d59ec2bf09b25838b",
+        "selected": {
+          "branchChoiceId": "7a2f53ab0552baf8643f33603be1d65e7d20df4a70fc7dbe65f34f4e1799142d",
+          "requesterChoiceId": "8418d26484897984e18fe8b0ef54d847e66576e6f504bf4cbeaf31e3390b4b5e"
+        },
+        "choices": [
+          {
+            "choiceId": "7a2f53ab0552baf8643f33603be1d65e7d20df4a70fc7dbe65f34f4e1799142d",
+            "kind": "BRANCH",
+            "label": "สำนักงานใหญ่ (BR1)",
+            "revision": "2026-10-16T10:09:02.119Z",
+            "raw": {
+              "id": "branch-a-1"
+            }
+          },
+          {
+            "choiceId": "8418d26484897984e18fe8b0ef54d847e66576e6f504bf4cbeaf31e3390b4b5e",
+            "kind": "REQUESTER",
+            "label": "พนักงาน (A)",
+            "revision": "9fe87e46c54a1221f1e1a1875a9555cafa825b6511c6ae9ec264956da8158cc1",
+            "raw": {
+              "id": "user-a-staff",
+              "branchId": "branch-a-1"
+            }
+          },
+          {
+            "choiceId": "9f196ca5e66bb34e63f45d6afa87cbd5027ac51407684bf91f71efddb86c74b0",
+            "kind": "CATEGORY",
+            "label": "ค่าน้ำมัน",
+            "revision": "04fde5d262c8748a00a45139b4dcb0d1a98d13457b1ea7691dbf1ce76bb66e4e",
+            "raw": {
+              "key": "category-a-fuel",
+              "label": "ค่าน้ำมัน"
+            }
+          },
+          {
+            "choiceId": "1e1faf5a91c7da9b8cdb2415ffe8f13ad26d8bb30618e0612b92c136c24e937c",
+            "kind": "CATEGORY",
+            "label": "ค่าบริการ",
+            "revision": "439dcccf8a2b2b7efe3ee5fecf7b486a7d00b7dc8b0148c3ff767a66799d92f3",
+            "raw": {
+              "key": "category-a-service",
+              "label": "ค่าบริการ"
+            }
+          },
+          {
+            "choiceId": "97b3c98740fde3b2c81ec1a102884d320086ba5d5ee43b514f379063fd147b9f",
+            "kind": "CATEGORY",
+            "label": "ค่าออฟฟิศ",
+            "revision": "b81ce85082870d5b022d865ac3cd2b1db0874e3223dda9ef53a1b8b8321924cc",
+            "raw": {
+              "key": "category-a-office",
+              "label": "ค่าออฟฟิศ"
+            }
+          },
+          {
+            "choiceId": "3eb976c35804c4f56f13d0e763ea430f54d594efd9d37cb121ddcd81e199fb3b",
+            "kind": "CATEGORY",
+            "label": "ค่าเดินทาง",
+            "revision": "c620319519d561448adff5cbe418b56c726d4a304f58f536f49deb2faf7c1513",
+            "raw": {
+              "key": "category-a-travel",
+              "label": "ค่าเดินทาง"
+            }
+          },
+          {
+            "choiceId": "0ab61f80ad284773e0dd55e3cabf8f442ae26fc3e894f35d272d009c7f765a38",
+            "kind": "CATEGORY",
+            "label": "ค่าใช้จ่ายอื่นๆ",
+            "revision": "62253ca5eed2b043592b4a6f97304a5d0cfffeb92d0ea317d01eca9b784b3130",
+            "raw": {
+              "key": "category-a-other",
+              "label": "ค่าใช้จ่ายอื่นๆ"
+            }
+          }
+        ],
+        "pages": {
+          "branch": {
+            "returned": 1,
+            "hasMore": false
+          },
+          "requester": {
+            "returned": 1,
+            "hasMore": false
+          },
+          "category": {
+            "returned": 5,
+            "hasMore": false
+          },
+          "source": {
+            "returned": 0,
+            "hasMore": false
+          },
+          "attachment": {
+            "returned": 0,
+            "hasMore": false
+          }
+        },
+        "actionId": "1d69cbdb-fe7f-5ca0-9065-0a346dc33a85",
+        "taskId": "f3eadedf-2d0e-57da-aae6-082049fcf1c3",
+        "operation": "CREATE",
+        "issuedAt": "2026-10-16T10:09:22.284Z"
+      },
+      "proposal": {
+        "fields": {
+          "reason": {
+            "value": "ไปส่งของให้ลูกค้า",
+            "proof": {
+              "kind": "USER_TEXT",
+              "refs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 32,
+                  "endUtf16": 49,
+                  "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+                }
+              ]
+            }
+          }
+        },
+        "lineChanges": [
+          {
+            "operation": "ADD",
+            "values": {
+              "description": {
+                "value": "ค่าแท็กซี่\nไปส่งของให้ลูกค้า",
+                "proof": {
+                  "kind": "USER_TEXT",
+                  "refs": [
+                    {
+                      "partId": "part-0",
+                      "startUtf16": 4,
+                      "endUtf16": 14,
+                      "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+                    },
+                    {
+                      "partId": "part-0",
+                      "startUtf16": 32,
+                      "endUtf16": 49,
+                      "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+                    }
+                  ]
+                }
+              },
+              "amount": {
+                "value": "350",
+                "proof": {
+                  "kind": "USER_TEXT",
+                  "candidateId": "1b5b44a9233a0546c2b28347188a99431f630e0b6f473cc2cb808027719fc9a9",
+                  "refs": [
+                    {
+                      "partId": "part-0",
+                      "startUtf16": 15,
+                      "endUtf16": 18,
+                      "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+                    }
+                  ]
+                }
+              },
+              "incurredDate": {
+                "value": "2026-10-15",
+                "proof": {
+                  "kind": "USER_TEXT",
+                  "candidateId": "305adbdeab453eabad35269e6e17d1bcd652b8f702ed527dc5c4974e997b2c2c",
+                  "refs": [
+                    {
+                      "partId": "part-0",
+                      "startUtf16": 23,
+                      "endUtf16": 31,
+                      "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "schemaVersion": 1,
+        "taskId": "f3eadedf-2d0e-57da-aae6-082049fcf1c3",
+        "taskRevision": 0,
+        "operation": "CREATE"
+      },
+      "suggestedCategoryChoiceId": "3eb976c35804c4f56f13d0e763ea430f54d594efd9d37cb121ddcd81e199fb3b"
+    },
+    "editMessage": "ช่วยแก้ยอดใบเบิกค่าแท็กซี่เป็น 380 บาท",
+    "editRoute": {
+      "status": "ROUTED",
+      "intent": "MUTATION_REQUEST_REFUSAL",
+      "language": "th",
+      "confidence": 0.82,
+      "semanticOutcome": "REIMBURSEMENT_CLAIM",
+      "fundingSource": "EMPLOYEE_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "แก้ยอดใบเบิกค่าแท็กซี่เป็น 380 บาท",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 38,
+              "rawSha256": "5bbaed878b2966bfcfcce5e2e737097b68cd6120d4e1ee37e7cad84202d3c07d"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3693,
+          "outputTokens": 122,
+          "cacheReadInputTokens": 21954,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 6437,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#a57052b51c54675dcc124cfb17de7d915c7a8588a3fd98e91237f93e6a584cab#provider-v2#0"
+        }
+      ]
+    },
+    "editOptions": {
+      "operation": "UPDATE",
+      "subrequestIndex": 0,
+      "targetRef": "1d69cbdb-fe7f-5ca0-9065-0a346dc33a85"
+    },
+    "savePostback": "action=reimbursement_draft_confirm&actionId=1d69cbdb-fe7f-5ca0-9065-0a346dc33a85&previewRevision=1&confirmationDigest=2f5adbae3fb72bad9dd2bcb54dd997d6e622f42a1090b025d963dc3ccc623846"
+  },
+  "J7": {
+    "message": "เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย",
+    "postback": "action=reimbursement_choice&actionId=eb3ee3ce-f207-5a31-8809-0e1677508368&revision=5d3410a88aa35598fde2247ed6062d61e411cd207e48bc16d54b36c76b04a76b&choice=no-receipt",
+    "categoryPostback": "action=reimbursement_choice&actionId=eb3ee3ce-f207-5a31-8809-0e1677508368&revision=42cd812e527102df8c8d1754fa728db4249363f1675087158bc406d3850a94fc&choice=ef1e09ce6e37aa6887100a580c00e93279765dc83dc55acc7cbf8ce54d2ccfb2",
+    "tools": [
+      {
+        "name": "reimbursement.draft.get_options",
+        "input": {
+          "operation": "CREATE",
+          "subrequestIndex": 0
+        }
+      },
+      {
+        "name": "reimbursement.draft.preview_create",
+        "input": {
+          "action": {
+            "taskId": "222afd8d-b2d1-50bd-8ade-bd7e7f184268",
+            "actionId": "eb3ee3ce-f207-5a31-8809-0e1677508368",
+            "operation": "CREATE"
+          },
+          "suggestedCategoryChoiceId": "ef1e09ce6e37aa6887100a580c00e93279765dc83dc55acc7cbf8ce54d2ccfb2",
+          "proposal": {
+            "operation": "CREATE",
+            "fields": {},
+            "lineChanges": [
+              {
+                "operation": "ADD",
+                "values": {
+                  "description": {
+                    "value": "ค่าน้ำมัน",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 4,
+                          "endUtf16": 13,
+                          "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+                        }
+                      ]
+                    }
+                  },
+                  "amount": {
+                    "value": "350",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "candidateId": "1b41c5fa419783dd6c9d5b6f9a8cad2cba1a3c352436041aa54a47ccf1c77c9e",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 14,
+                          "endUtf16": 17,
+                          "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+                        }
+                      ]
+                    }
+                  },
+                  "incurredDate": {
+                    "value": "2026-10-15",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "candidateId": "a31089d69a308edfc15242887928b74e5a3d1d17763ca7b4d2d63c56f2b9aef3",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 22,
+                          "endUtf16": 30,
+                          "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
+            "schemaVersion": 1,
+            "taskId": "222afd8d-b2d1-50bd-8ade-bd7e7f184268",
+            "taskRevision": 0
+          }
+        }
+      }
+    ],
+    "route": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.91,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "reimbursementHints": {
+        "description": "ค่าน้ำมัน",
+        "amount": "350",
+        "confidence": 0.88,
+        "missingFields": [
+          "fundingSource",
+          "purpose",
+          "incurredDate"
+        ]
+      },
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "REIMBURSEMENT_REQUEST_START",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 39,
+              "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3184,
+          "outputTokens": 186,
+          "cacheReadInputTokens": 21954,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 5147,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#7c441a9c0a356cf22d1bceeef9916dc4251276e80e25a236a2cebb28c305c49b#provider-v2#0"
+        }
+      ]
+    },
+    "tapRoute": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.88,
+      "semanticOutcome": "REIMBURSEMENT_CLAIM",
+      "fundingSource": "EMPLOYEE_PAID",
+      "reimbursementHints": {
+        "description": "ค่าน้ำมัน",
+        "confidence": 0.82,
+        "missingFields": [
+          "reason",
+          "amount",
+          "incurredDate"
+        ]
+      },
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน ไม่มีใบเสร็จ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "taskRef": {
+            "taskId": "4f9c2138bf12221a4d86ffcc89a8b5899a5335b64fb207ff3b2adc728dbb1678",
+            "taskRevision": 1,
+            "subrequestIndex": 0
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 32,
+              "rawSha256": "ab7d2c9695dd6617df905115d2c371227780db5bce109fe6333a5a2bd5ead8b0"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3333,
+          "outputTokens": 261,
+          "cacheReadInputTokens": 21954,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 6656,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#5578aef85d4919a66c30e83b2017abdf7c3c74df56a77cf27134aecef669664a#provider-v2#0"
+        }
+      ]
+    },
+    "accepted": {
+      "schemaVersion": 1,
+      "options": {
+        "schemaVersion": 1,
+        "taskRevision": 0,
+        "expiresAt": "2026-10-16T10:03:03.459Z",
+        "revision": "406490c7cb7e7902c986046e15b820d3e6503b3637fd5c4e6828f297ed7d5871",
+        "selected": {
+          "branchChoiceId": "ddfd639ef6317a4c6322ec8ec3ab6d981ee9fdc082f34c31d14de5e39889eb4d",
+          "requesterChoiceId": "e5eb9002f3c905ae58399c169d0a29998c65a395732a18fa9301b6d55b5c3ff4"
+        },
+        "choices": [
+          {
+            "choiceId": "ddfd639ef6317a4c6322ec8ec3ab6d981ee9fdc082f34c31d14de5e39889eb4d",
+            "kind": "BRANCH",
+            "label": "สำนักงานใหญ่ (BR1)",
+            "revision": "2026-10-16T09:52:43.061Z",
+            "raw": {
+              "id": "branch-a-1"
+            }
+          },
+          {
+            "choiceId": "e5eb9002f3c905ae58399c169d0a29998c65a395732a18fa9301b6d55b5c3ff4",
+            "kind": "REQUESTER",
+            "label": "พนักงาน (A)",
+            "revision": "9fe87e46c54a1221f1e1a1875a9555cafa825b6511c6ae9ec264956da8158cc1",
+            "raw": {
+              "id": "user-a-staff",
+              "branchId": "branch-a-1"
+            }
+          },
+          {
+            "choiceId": "ef1e09ce6e37aa6887100a580c00e93279765dc83dc55acc7cbf8ce54d2ccfb2",
+            "kind": "CATEGORY",
+            "label": "ค่าน้ำมัน",
+            "revision": "04fde5d262c8748a00a45139b4dcb0d1a98d13457b1ea7691dbf1ce76bb66e4e",
+            "raw": {
+              "key": "category-a-fuel",
+              "label": "ค่าน้ำมัน"
+            }
+          },
+          {
+            "choiceId": "7d94ae2d5362af59d9099ac3c7842d03da44166a63282e84eae40c1eaa42f461",
+            "kind": "CATEGORY",
+            "label": "ค่าบริการ",
+            "revision": "439dcccf8a2b2b7efe3ee5fecf7b486a7d00b7dc8b0148c3ff767a66799d92f3",
+            "raw": {
+              "key": "category-a-service",
+              "label": "ค่าบริการ"
+            }
+          },
+          {
+            "choiceId": "cab04a9383bac4fda5b9a7381476f0312b48c8f829f476ada994c8d4d406b22c",
+            "kind": "CATEGORY",
+            "label": "ค่าออฟฟิศ",
+            "revision": "b81ce85082870d5b022d865ac3cd2b1db0874e3223dda9ef53a1b8b8321924cc",
+            "raw": {
+              "key": "category-a-office",
+              "label": "ค่าออฟฟิศ"
+            }
+          },
+          {
+            "choiceId": "4a7a6ed21d93a5b4fdda8262d18eded0faec4e68342192f190e8d6efe2c180e7",
+            "kind": "CATEGORY",
+            "label": "ค่าเดินทาง",
+            "revision": "c620319519d561448adff5cbe418b56c726d4a304f58f536f49deb2faf7c1513",
+            "raw": {
+              "key": "category-a-travel",
+              "label": "ค่าเดินทาง"
+            }
+          },
+          {
+            "choiceId": "9c363d25a8b7bee368a9654433098088e94e4184da15e167aef617c3d75029f8",
+            "kind": "CATEGORY",
+            "label": "ค่าใช้จ่ายอื่นๆ",
+            "revision": "62253ca5eed2b043592b4a6f97304a5d0cfffeb92d0ea317d01eca9b784b3130",
+            "raw": {
+              "key": "category-a-other",
+              "label": "ค่าใช้จ่ายอื่นๆ"
+            }
+          }
+        ],
+        "pages": {
+          "branch": {
+            "returned": 1,
+            "hasMore": false
+          },
+          "requester": {
+            "returned": 1,
+            "hasMore": false
+          },
+          "category": {
+            "returned": 5,
+            "hasMore": false
+          },
+          "source": {
+            "returned": 0,
+            "hasMore": false
+          },
+          "attachment": {
+            "returned": 0,
+            "hasMore": false
+          }
+        },
+        "actionId": "eb3ee3ce-f207-5a31-8809-0e1677508368",
+        "taskId": "222afd8d-b2d1-50bd-8ade-bd7e7f184268",
+        "operation": "CREATE",
+        "issuedAt": "2026-10-16T09:53:03.459Z"
+      },
+      "proposal": {
+        "operation": "CREATE",
+        "fields": {},
+        "lineChanges": [
+          {
+            "operation": "ADD",
+            "values": {
+              "description": {
+                "value": "ค่าน้ำมัน",
+                "proof": {
+                  "kind": "USER_TEXT",
+                  "refs": [
+                    {
+                      "partId": "part-0",
+                      "startUtf16": 4,
+                      "endUtf16": 13,
+                      "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+                    }
+                  ]
+                }
+              },
+              "amount": {
+                "value": "350",
+                "proof": {
+                  "kind": "USER_TEXT",
+                  "candidateId": "1b41c5fa419783dd6c9d5b6f9a8cad2cba1a3c352436041aa54a47ccf1c77c9e",
+                  "refs": [
+                    {
+                      "partId": "part-0",
+                      "startUtf16": 14,
+                      "endUtf16": 17,
+                      "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+                    }
+                  ]
+                }
+              },
+              "incurredDate": {
+                "value": "2026-10-15",
+                "proof": {
+                  "kind": "USER_TEXT",
+                  "candidateId": "a31089d69a308edfc15242887928b74e5a3d1d17763ca7b4d2d63c56f2b9aef3",
+                  "refs": [
+                    {
+                      "partId": "part-0",
+                      "startUtf16": 22,
+                      "endUtf16": 30,
+                      "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "schemaVersion": 1,
+        "taskId": "222afd8d-b2d1-50bd-8ade-bd7e7f184268",
+        "taskRevision": 0
+      },
+      "suggestedCategoryChoiceId": "ef1e09ce6e37aa6887100a580c00e93279765dc83dc55acc7cbf8ce54d2ccfb2"
+    }
+  }
+}

@@ -57,6 +57,8 @@ import { LineAiInternalController } from '../apps/ai-gateway/src/modules/line-ai
 import { OrchestratorAgent } from '../apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent';
 import { intakeRouterSystemPrompt } from '../apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent';
 import { BedrockProvider } from '../apps/ai-gateway/src/modules/line-ai/infrastructure/provider/bedrock.provider';
+import { AnthropicApiProvider } from '../apps/ai-gateway/src/modules/line-ai/infrastructure/provider/anthropic-api.provider';
+import { createProvider } from '../apps/ai-gateway/src/modules/line-ai/infrastructure/provider/provider.factory';
 import { drainUsage, runWithUsageContext } from '../apps/ai-gateway/src/common/usage/usage-context';
 import { computeCostSatang } from '../apps/api/src/modules/line-ai/application/ai-model-pricing';
 import { advisorDirectAnswerText } from '../apps/api/src/modules/line-ai/domain/logic/line-advisor-direct-answer.logic';
@@ -156,6 +158,8 @@ const INTERNAL_SECRET = 'intake-cost-benchmark-secret';
 /** Duck-typed AiGatewayConfigService: exactly the getters the controller, provider factory,
  *  orchestrator, composer and critic read (same trick as `orchestrator-smoke.ts`). */
 const config = {
+  appEnv: process.env['APP_ENV'],
+  anthropicApiKey: process.env['ANTHROPIC_API_KEY'],
   modelProvider: ENV.modelProvider,
   bedrockRegion: ENV.bedrockRegion,
   bedrockModelId: ENV.bedrockModelId,
@@ -209,11 +213,12 @@ function fieldSizes(json: string | undefined): Record<string, number> | undefine
 }
 
 function installMeasurementShim(): void {
+  const Provider = process.env['ANTHROPIC_API_KEY'] ? AnthropicApiProvider : BedrockProvider;
   for (const method of ['generateText', 'generateWithTools'] as const) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const original = BedrockProvider.prototype[method] as (input: any) => Promise<unknown>;
+    const original = Provider.prototype[method] as (input: any) => Promise<unknown>;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (BedrockProvider.prototype as any)[method] = async function measured(input: any) {
+    (Provider.prototype as any)[method] = async function measured(input: any) {
       const tag: string = input?.usageTag ?? 'untagged';
       const userText: string = (input?.messages ?? []).map((m: { text?: string }) => m.text ?? '').join('');
       const shape: CallShape = {
@@ -1008,7 +1013,7 @@ function ledgerTotalSatang(): number {
 
 async function smoke(): Promise<void> {
   if (!ENV.bedrockRegion || !ENV.bedrockModelId) throw new Error('smoke needs BEDROCK_REGION and BEDROCK_MODEL_ID');
-  const provider = new BedrockProvider({ region: ENV.bedrockRegion, modelId: ENV.bedrockModelId, timeoutMs: 20_000 });
+  const provider = createProvider(config, { timeoutMs: 20_000 });
   const usage = await runWithUsageContext({ companyId: 'benchmark-smoke' }, async () => {
     const result = await provider.generateText({
       messages: [{ role: 'user', text: 'ตอบด้วยคำเดียวในภาษาไทย: ยืนยัน' }],

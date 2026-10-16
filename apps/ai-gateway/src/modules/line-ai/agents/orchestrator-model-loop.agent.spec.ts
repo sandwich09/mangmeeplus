@@ -334,9 +334,9 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
     installFetch(INVENTORY_PLAN, [{ askUser: 'ต้องการดูสต็อกของสินค้าตัวไหนครับ' }]);
     const orchestrator = new OrchestratorAgent(trackingErpTools(calledTools), makeConfig());
     const result = await orchestrator.run(makeReq('ขอดูข้อมูลหน่อย'));
-    assert.equal(result.replyText, 'ต้องการดูสต็อกของสินค้าตัวไหนครับ');
+    assert.equal(result.replyText, 'ต้องการดูสต็อกของสินค้าตัวไหนค่ะ');
     assert.equal(calledTools.length, 0, 'no tool ran and the deterministic fallback did not fire');
-    assert.deepEqual(result.coverage, [{ request: 'ขอดูข้อมูลหน่อย', subject: 'inventory', verdict: 'needs_user', question: 'ต้องการดูสต็อกของสินค้าตัวไหนครับ' }]);
+    assert.deepEqual(result.coverage, [{ request: 'ขอดูข้อมูลหน่อย', subject: 'inventory', verdict: 'needs_user', question: 'ต้องการดูสต็อกของสินค้าตัวไหนค่ะ' }]);
   });
 
   it('ignores an oversized or JSON-shaped askUser and keeps the normal flow', async () => {

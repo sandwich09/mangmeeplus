@@ -1,0 +1,9 @@
+# LINE receipt and payment evidence (owner decision 2026-10-15)
+
+One payment may have a receipt and a transfer slip. Keep one active expense: attach the slip bytes with `expense.payment.evidence`; never record payment or confirm an expense from this operation.
+
+Auto-link only an own LINE receipt draft in the same company/chat and current branch scope, with no payment evidence, exactly equal decimal total/currency, captures at most two hours apart, and matching document days when both are known. Exactly one nearby eligible receipt must exist. Multiple candidates or different amounts/days require the question `สลิปนี้เป็นหลักฐานการจ่ายของรายการไหนคะ`, labelled receipt buttons (vendor, amount, date), and `เป็นรายการใหม่`. Show four receipts per page, with previous/next controls, to keep every displayed record inside the existing source-proof bound. Explicit selection may associate a different amount; it never changes either amount. No candidate leaves the slip separate.
+
+Both source records must retain existing expense permission, tenant, branch, editable-state, funding and attachment-conflict guards. The slip must be an own, unreviewed LINE-only transfer-slip draft, with no payments, posting, claim or other dependent business data. Link and draft retirement commit together with audit. Retirement uses the existing VOIDED state with a specific reason and records the original draft status and link operation in source metadata; undo removes only that operation's evidence link and restores the original draft without OCR or another upload. Replays must not duplicate links or undo a newer operation.
+
+Text that says the recent slip/receipt belongs to the recent expense requests this same operation, never a new text capture. Recent capture/draft ids from server-provided chat context may ground `expense.get_detail`; the API still checks read permission and scope. No feature switch, dependency, schema change, final payment or posting is introduced.

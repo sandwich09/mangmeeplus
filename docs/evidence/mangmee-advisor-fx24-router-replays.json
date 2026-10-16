@@ -1,0 +1,1359 @@
+{
+  "J7": {
+    "source": "after-fx23/J7",
+    "turns": [
+      {
+        "turn": 0,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvayh31l-0-0fd2f83a",
+              "replyToken": "rt-d16bab6a-1dff-4113-bb2d-30d30f5a3c8c",
+              "message": {
+                "type": "text",
+                "id": "m17921544283291",
+                "text": "สร้างใบเบิกยังไง",
+                "quoteToken": "fcf9997e8269e8df"
+              },
+              "timestamp": 1792154428329,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "th",
+          "confidence": 0.97,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "help",
+              "goal": "วิธีสร้างใบเบิกค่าใช้จ่าย",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 16,
+                  "rawSha256": "954c01c2de0e7448638ea41298000aac9e3acb1d074b081e751cfaf74a3cb356"
+                }
+              ]
+            }
+          ],
+          "selectedKnowledgeCardIds": [
+            "reimbursement.meaning",
+            "reimbursement.roles"
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 2686,
+              "outputTokens": 136,
+              "cacheReadInputTokens": 16304,
+              "cacheWriteInputTokens": 5650,
+              "durationMs": 5354,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#f6f27ba2ce7ec1051d40c07ab6aff08d4f3e4c04b96ef89d8706fdefe2fc0d0a#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 1,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvayhamx-1-b84b17c0",
+              "replyToken": "rt-7055b7b2-7d68-4de5-bd13-41eae9850bde",
+              "message": {
+                "type": "text",
+                "id": "m17921544381692",
+                "text": "เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย",
+                "quoteToken": "3c890d03936fb834"
+              },
+              "timestamp": 1792154438169,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "th",
+          "confidence": 0.92,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "reimbursementHints": {
+            "description": "ค่าน้ำมัน",
+            "amount": "350",
+            "confidence": 0.88,
+            "missingFields": [
+              "fundingSource",
+              "purpose",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "REIMBURSEMENT_REQUEST_START",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 39,
+                  "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 3184,
+              "outputTokens": 186,
+              "cacheReadInputTokens": 21954,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 5331,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#cf3a358b5c99a57d2c0fccb7423a356dde3c5e32f2e9932962ee9d2ad055f460#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 2,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "postback",
+              "webhookEventId": "harness-mvayhvws-2-e679ba84",
+              "replyToken": "rt-9fb01fd3-9428-48a6-b93b-5d7941e9a0d6",
+              "postback": {
+                "data": "action=reimbursement_choice&actionId=9491baf0-cdb7-5e5a-8974-53904914f48e&revision=7bee351a144a95db12ec421bf844516feb82686c98456399d00ecd77117bc764&choice=no-receipt"
+              },
+              "timestamp": 1792154465740,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "th",
+          "confidence": 0.88,
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "reimbursementHints": {
+            "description": "ค่าน้ำมัน",
+            "confidence": 0.85,
+            "missingFields": [
+              "reason",
+              "amount",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน ไม่มีใบเสร็จ",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "taskRef": {
+                "taskId": "d81593abba1c6b3c9aacbc79e86ea60c28435be96d7153d9ffd2d446472bebaa",
+                "taskRevision": 1,
+                "subrequestIndex": 0
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 32,
+                  "rawSha256": "ab7d2c9695dd6617df905115d2c371227780db5bce109fe6333a5a2bd5ead8b0"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 3343,
+              "outputTokens": 260,
+              "cacheReadInputTokens": 21954,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 6645,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#916cbe33986b8f181a3cd024e2027caa711fb165ff465c7fd1c97deb2767f164#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 3,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "postback",
+              "webhookEventId": "harness-mvayi3o9-3-cf768a92",
+              "replyToken": "rt-6b35cb3d-1765-4e60-9bfe-53b15b6dabd6",
+              "postback": {
+                "data": "action=reimbursement_choice&actionId=9491baf0-cdb7-5e5a-8974-53904914f48e&revision=8cc3d06d9381de9d0900a5c6cb3ea02e3aca335b19dce548dd3ef34276274670&choice=caa147c0111246630c43aa4a158b25d9ed8497c76b366f2d6fd1fa1124670c7a"
+              },
+              "timestamp": 1792154475801,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_DRAFT_CONTINUATION",
+          "language": "th",
+          "confidence": 0.82,
+          "captureHints": {
+            "expenseCategoryId": "category-a-fuel",
+            "confidence": 0.9,
+            "missingFields": []
+          },
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "เลือกหมวดค่าน้ำมันสำหรับใบเบิกที่กำลังสร้าง",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "taskRef": {
+                "taskId": "d81593abba1c6b3c9aacbc79e86ea60c28435be96d7153d9ffd2d446472bebaa",
+                "taskRevision": 1,
+                "subrequestIndex": 0
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 34,
+                  "rawSha256": "b761cb149a3a3db3f7dbae4944b301a1bf21ec120e6855d53fb3cd8a085191a0"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 3347,
+              "outputTokens": 272,
+              "cacheReadInputTokens": 21954,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 5916,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#dff71654cc6fb5a748c888f12418942798c5394c7c0237c2f19a3e8103b84062#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 4,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvayiasy-4-599f4259",
+              "replyToken": "rt-162b5af3-cffe-45de-adb2-9a801dcbfbd2",
+              "message": {
+                "type": "text",
+                "id": "m17921544850425",
+                "text": "ขับรถไปส่งของให้ลูกค้า",
+                "quoteToken": "3cb7a2d87d82cbcc"
+              },
+              "timestamp": 1792154485042,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_DRAFT_CONTINUATION",
+          "language": "th",
+          "confidence": 0.82,
+          "captureHints": {
+            "businessPurpose": "ขับรถไปส่งของให้ลูกค้า",
+            "confidence": 0.82,
+            "missingFields": []
+          },
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "บันทึกวัตถุประสงค์การเดินทาง: ขับรถไปส่งของให้ลูกค้า",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "taskRef": {
+                "taskId": "d81593abba1c6b3c9aacbc79e86ea60c28435be96d7153d9ffd2d446472bebaa",
+                "taskRevision": 1,
+                "subrequestIndex": 0
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 22,
+                  "rawSha256": "9b0a64d4f655aeb02940c4698375876cb4b3d37fa073cc5a5742057bd369736c"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 3315,
+              "outputTokens": 281,
+              "cacheReadInputTokens": 21954,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 5756,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#03591f359d80a19dfd938c6f9e4033e3f0763d40fc030ec219b3a5adf348c42f#provider-v2#0"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "E03": {
+    "source": "after-fx23/E03",
+    "turns": [
+      {
+        "turn": 0,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvaz3s6o-0-db383527",
+              "replyToken": "rt-b277b095-7f0b-4038-9aee-7592eb059933",
+              "message": {
+                "type": "text",
+                "id": "m17921554873441",
+                "text": "แก้ใบเบิกทำยังไง",
+                "quoteToken": "81f059ee85612221"
+              },
+              "timestamp": 1792155487344,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "th",
+          "confidence": 0.92,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "help",
+              "goal": "วิธีแก้ไขใบเบิกค่าใช้จ่าย",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 16,
+                  "rawSha256": "8b3c3436f5f9e497a5fc49e8b6f7de7be2845ce05f96b365cf6f5314bd24c37b"
+                }
+              ]
+            }
+          ],
+          "selectedKnowledgeCardIds": [
+            "reimbursement.meaning"
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 2711,
+              "outputTokens": 131,
+              "cacheReadInputTokens": 21954,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 5425,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#0b6878fa193f03e64275335061b67dd2bc469520875079ed61bdfad06c3e0352#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 1,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvaz3zra-1-64764136",
+              "replyToken": "rt-cae3e6aa-acf1-4746-afa7-31272a544709",
+              "message": {
+                "type": "text",
+                "id": "m17921554971582",
+                "text": "เบิกค่าแท็กซี่ 350 บาท เมื่อวาน ไปส่งของให้ลูกค้า",
+                "quoteToken": "d84b0e0ee9cc7b8d"
+              },
+              "timestamp": 1792155497158,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "th",
+          "confidence": 0.92,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "reimbursementHints": {
+            "description": "ค่าแท็กซี่",
+            "businessPurpose": "ไปส่งของให้ลูกค้า",
+            "amount": "350",
+            "confidence": 0.88,
+            "missingFields": [
+              "fundingSource",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "สร้างใบเบิกค่าแท็กซี่ 350 บาท เมื่อวาน ไปส่งของให้ลูกค้า",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 49,
+                  "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 3159,
+              "outputTokens": 210,
+              "cacheReadInputTokens": 21954,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 6430,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#0a2a6417f3e16f9885858c6a65c5847dd92a3882a1d18e6cd959778ef9401d0a#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 2,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "postback",
+              "webhookEventId": "harness-mvaz4lcx-2-2261129f",
+              "replyToken": "rt-e8ffff41-0ed1-4d2c-b570-f1e12b0ff745",
+              "postback": {
+                "data": "action=reimbursement_choice&actionId=3533a623-e4db-5445-a65b-c840b6291b70&revision=8bfba136f9e03eaa5d7ea073f924e598b428595befc7ca4cb50f4a7dd09215f3&choice=no-receipt"
+              },
+              "timestamp": 1792155525153,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "th",
+          "confidence": 0.88,
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "reimbursementHints": {
+            "description": "ค่าแท็กซี่ ไปส่งของให้ลูกค้า",
+            "businessPurpose": "ไปส่งของให้ลูกค้า",
+            "confidence": 0.82,
+            "missingFields": [
+              "amount",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "สร้างใบเบิกรายการใหม่ ไม่มีใบเสร็จ ค่าแท็กซี่เมื่อวาน",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "taskRef": {
+                "taskId": "4609fb5972ea5173e189cc2ab0a846ab5071971d6c11e1763a5e619cf230d9bb",
+                "taskRevision": 1,
+                "subrequestIndex": 0
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 32,
+                  "rawSha256": "ab7d2c9695dd6617df905115d2c371227780db5bce109fe6333a5a2bd5ead8b0"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 3379,
+              "outputTokens": 289,
+              "cacheReadInputTokens": 21954,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 6938,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#587ebc5f7bc5d8baad233aa54a257e02aeb77fa3e5404dca9de1fbcd1bd38c93#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 3,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "postback",
+              "webhookEventId": "harness-mvaz4t97-3-62ba84a7",
+              "replyToken": "rt-913b026a-87b8-40d2-9243-72de05394164",
+              "postback": {
+                "data": "action=reimbursement_choice&actionId=3533a623-e4db-5445-a65b-c840b6291b70&revision=0a0dcdfd6ea1b7b0ac401454a099c300f3c8b76991c10c389d25132fff533538&choice=3e38b35626005bde1e99b68f8997f651d74c5910b06168b0c37cb9dcad9fee28"
+              },
+              "timestamp": 1792155535387,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_DRAFT_CONTINUATION",
+          "language": "th",
+          "confidence": 0.88,
+          "captureHints": {
+            "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+            "description": "เลือกหมวดค่าใช้จ่ายสำหรับใบเบิกนี้",
+            "confidence": 0.85,
+            "missingFields": []
+          },
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "เลือกหมวดค่าใช้จ่ายสำหรับใบเบิกค่าแท็กซี่ 350 บาท เมื่อวาน",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "taskRef": {
+                "taskId": "4609fb5972ea5173e189cc2ab0a846ab5071971d6c11e1763a5e619cf230d9bb",
+                "taskRevision": 1,
+                "subrequestIndex": 0
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 34,
+                  "rawSha256": "b761cb149a3a3db3f7dbae4944b301a1bf21ec120e6855d53fb3cd8a085191a0"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 3383,
+              "outputTokens": 320,
+              "cacheReadInputTokens": 21954,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 6215,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#7bffe1c3d15795d84fbbd80ef2c343740ea36736f951894e8b6e81a4ee89ef27#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 4,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "postback",
+              "webhookEventId": "harness-mvaz50nj-4-e6efff0c",
+              "replyToken": "rt-0d5742f8-c66e-4c6e-95da-a813f6f527c8",
+              "postback": {
+                "data": "action=reimbursement_draft_confirm&actionId=3533a623-e4db-5445-a65b-c840b6291b70&previewRevision=1&confirmationDigest=08100cdf7a21b858daabca4e8480fa903acd342465c2e3c4bb58edb5e0d84a5b"
+              },
+              "timestamp": 1792155544975,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": null
+      },
+      {
+        "turn": 5,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "postback",
+              "webhookEventId": "harness-mvaz533o-5-52cfd77f",
+              "replyToken": "rt-d7d3666f-47e5-416a-bffb-c0cc8d1e1c5b",
+              "postback": {
+                "data": "action=expense_action_submit&token=3533a623-e4db-5445-a65b-c840b6291b70.pI5WuKEV41JHU-5kcs5Z8HUKPpr7Q_lkldzqBxufH6c"
+              },
+              "timestamp": 1792155548148,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": null
+      },
+      {
+        "turn": 6,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvaz55jj-6-4974be0b",
+              "replyToken": "rt-2ee0d265-8ecc-499a-b0a9-0585f4608f85",
+              "message": {
+                "type": "text",
+                "id": "m17921555513117",
+                "text": "ช่วยแก้ยอดใบเบิกค่าแท็กซี่เป็น 380 บาท",
+                "quoteToken": "d28f12c51c921466"
+              },
+              "timestamp": 1792155551311,
+              "source": {
+                "type": "user",
+                "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "MUTATION_REQUEST_REFUSAL",
+          "language": "th",
+          "confidence": 0.82,
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "แก้ยอดใบเบิกค่าแท็กซี่เป็น 380 บาท",
+              "requiredEvidence": [],
+              "requestedFilters": {
+                "reimbursementId": "3533a623-e4db-5445-a65b-c840b6291b70",
+                "amount": "380"
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 38,
+                  "rawSha256": "5bbaed878b2966bfcfcce5e2e737097b68cd6120d4e1ee37e7cad84202d3c07d"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 3616,
+              "outputTokens": 156,
+              "cacheReadInputTokens": 21954,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 4868,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#d9ea1091f30613a4cd59d785c2f4e6502feb1764ee9dd7fa0482c8e58df4d326#provider-v2#0"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "C04": {
+    "source": "after-fx23/C04",
+    "turns": [
+      {
+        "turn": 0,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvaymyfe-0-36f9fcc8",
+              "replyToken": "rt-8ec5820e-a6a4-4918-8555-f0105a2931e5",
+              "message": {
+                "type": "text",
+                "id": "m17921547022821",
+                "text": "ทำใบสำคัญจ่ายทำยังไง",
+                "quoteToken": "62c9e21f045edec2"
+              },
+              "timestamp": 1792154702282,
+              "source": {
+                "type": "user",
+                "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "th",
+          "confidence": 0.95,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "help",
+              "goal": "วิธีทำใบสำคัญจ่ายในระบบ",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 20,
+                  "rawSha256": "c85a1ec264bf72aaddd1f06c3e9386e1661fda79720e80ce1bb7bb36f301d849"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 3427,
+              "outputTokens": 133,
+              "cacheReadInputTokens": 23232,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 4395,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#754e3c215c0f483d8c0586894a827e770095481d710d916ff966d75af5777f63#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 1,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvayn835-1-a3ca2e6b",
+              "replyToken": "rt-98b1d1a2-4221-49b0-b62a-0289c8028fe2",
+              "message": {
+                "type": "text",
+                "id": "m17921547148012",
+                "text": "ทำให้หน่อย ทำใบสำคัญจ่ายจากค่าใช้จ่ายที่ยืนยันแล้วรายการล่าสุด",
+                "quoteToken": "6a489f20f2990edd"
+              },
+              "timestamp": 1792154714801,
+              "source": {
+                "type": "user",
+                "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "th",
+          "confidence": 0.88,
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "สร้างใบสำคัญจ่ายจากค่าใช้จ่ายที่ยืนยันแล้วรายการล่าสุด",
+              "requiredEvidence": [],
+              "requestedFilters": {
+                "action": "VOUCHER_CREATE",
+                "documentStatus": "CONFIRMED"
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 62,
+                  "rawSha256": "7968fb92aae88c886ab40999d7141569f7963489ee866d694be0848efbfd3193"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 3600,
+              "outputTokens": 157,
+              "cacheReadInputTokens": 23232,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 5089,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#41d51af547b4f6f19e6b8eabc094c5b2778a6638800b139d4a6882f144110d07#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 2,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvaynpzf-2-33c73432",
+              "replyToken": "rt-465d888b-8cab-4033-a6ec-f7f8a6705222",
+              "message": {
+                "type": "text",
+                "id": "m17921547379953",
+                "text": "Grab"
+              },
+              "timestamp": 1792154737995,
+              "source": {
+                "type": "user",
+                "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": null
+      },
+      {
+        "turn": 3,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "postback",
+              "webhookEventId": "harness-mvayu5lf-3-14fe1885",
+              "replyToken": "rt-d4780608-0fcd-43c9-857b-607b42fcbff5",
+              "postback": {
+                "data": "action=expense_action_confirm&token=b1b00c90-a8e7-4551-9354-19896cb36d4a.GH_yKBFgDvcpJZlRVjoHJMFclzoJbEmeqQdK-1rcQVg"
+              },
+              "timestamp": 1792155038163,
+              "source": {
+                "type": "user",
+                "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": null
+      },
+      {
+        "turn": 4,
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvayu83e-4-0c1bc06c",
+              "replyToken": "rt-bece3add-5049-430b-bf0c-98a03016e8aa",
+              "message": {
+                "type": "text",
+                "id": "m17921550414025",
+                "text": "อนุมัติใบสำคัญจ่ายนี้ แล้วบันทึกว่าจ่ายแล้ววันนี้ โอนเงิน",
+                "quoteToken": "bef9ec176b181279"
+              },
+              "timestamp": 1792155041402,
+              "source": {
+                "type": "user",
+                "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "MUTATION_REQUEST_REFUSAL",
+          "language": "th",
+          "confidence": 0.95,
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "อนุมัติใบสำคัญจ่ายและบันทึกว่าจ่ายแล้ววันนี้ โอนเงิน",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 57,
+                  "rawSha256": "c1eb111340ca24aea2f6dd67c1dc7d4d1ff0068768d7860b63e1aff24a37b551"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 4314,
+              "outputTokens": 135,
+              "cacheReadInputTokens": 0,
+              "cacheWriteInputTokens": 23232,
+              "durationMs": 6168,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-a#419ebadf32ca0b1b37993c2714b4c43c9ab8ddface2338531df3f67028d5d8b7#provider-v2#0"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "C05": {
+    "source": "after-fx23/C05",
+    "turns": [
+      {
+        "turn": 0,
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvayurv5-0-1f185518",
+              "replyToken": "rt-c597a448-746f-45f7-a331-67e1f4c182a1",
+              "message": {
+                "type": "text",
+                "id": "m17921550670251",
+                "text": "ออกหนังสือรับรองหัก ณ ที่จ่าย 50 ทวิ ทำยังไง",
+                "quoteToken": "1c9ced3721a89bdc"
+              },
+              "timestamp": 1792155067025,
+              "source": {
+                "type": "user",
+                "userId": "U934d37230d738f94d66cc71c8988e972"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "th",
+          "confidence": 0.95,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "help",
+              "goal": "วิธีออกหนังสือรับรองหัก ณ ที่จ่าย 50 ทวิ",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 44,
+                  "rawSha256": "d38b51c0ec6c3df99174d66321b1f9aebaa3d7a14647d2f03ee163d1869c7fa4"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 3648,
+              "outputTokens": 136,
+              "cacheReadInputTokens": 16304,
+              "cacheWriteInputTokens": 7273,
+              "durationMs": 5794,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-b#ca0714507eea297e1f49de518975504f88c8b3b02a42bcfe2a254dae6362169a#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 1,
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvayv3i9-1-70e7681d",
+              "replyToken": "rt-18053841-2578-4dad-8e81-47f4e86eb37a",
+              "message": {
+                "type": "text",
+                "id": "m17921550821132",
+                "text": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+                "quoteToken": "3b1dc3f13646f301"
+              },
+              "timestamp": 1792155082113,
+              "source": {
+                "type": "user",
+                "userId": "U934d37230d738f94d66cc71c8988e972"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "th",
+          "confidence": 0.82,
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "บันทึกค่าจ้างทำป้ายหน้าร้าน บริษัท ป้ายสวย จำกัด 10,000 บาท หัก ณ ที่จ่าย 3% โอนแล้ววันนี้",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 186,
+                  "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+                }
+              ]
+            },
+            {
+              "index": 1,
+              "kind": "write",
+              "goal": "บันทึก/อัปเดตข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด เลขผู้เสียภาษีและที่อยู่",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 186,
+                  "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "kind": "write",
+              "goal": "คำนวณและเตรียมออก 50 ทวิ หัก ณ ที่จ่าย 3% สำหรับบริษัท ป้ายสวย จำกัด",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 186,
+                  "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 4701,
+              "outputTokens": 368,
+              "cacheReadInputTokens": 23577,
+              "cacheWriteInputTokens": 0,
+              "durationMs": 8849,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-b#44a0b7612d62238d5fd93db839a39bc8e0bde0124642780aa58788de75f3bd36#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 2,
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvayvdow-2-3af2004c",
+              "replyToken": "rt-84957b9d-7832-4057-a3e3-58c7c4d4c464",
+              "message": {
+                "type": "text",
+                "id": "m17921550953123",
+                "text": "ทำข้อ 2 ก่อน"
+              },
+              "timestamp": 1792155095312,
+              "source": {
+                "type": "user",
+                "userId": "U934d37230d738f94d66cc71c8988e972"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "th",
+          "confidence": 0.93,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "บันทึก/อัปเดตข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด เลขผู้เสียภาษีและที่อยู่",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "taskRef": {
+                "taskId": "99ea69876ae4204f75d61d18b6874866978acfb4d524c2de657d73cbbcac1a83",
+                "taskRevision": 2,
+                "subrequestIndex": 1
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 12,
+                  "rawSha256": "38099fedab9e94fd3931e5b72708ed2fa5fbfb7ae100714a22eaf1c7f4447edb"
+                }
+              ]
+            }
+          ],
+          "usage": [
+            {
+              "tag": "line.intake-route",
+              "modelId": "global.anthropic.claude-sonnet-4-6",
+              "ok": true,
+              "inputTokens": 5181,
+              "outputTokens": 217,
+              "cacheReadInputTokens": 0,
+              "cacheWriteInputTokens": 23764,
+              "durationMs": 4914,
+              "usageBasis": "PROVIDER_REPORTED",
+              "invocationKey": "company-b#7dbd7ab43e52fdd0b35beddc8a5d3d7455361d8ac1b3ee9d65276d7221552593#provider-v2#0"
+            }
+          ]
+        }
+      },
+      {
+        "turn": 3,
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "postback",
+              "webhookEventId": "harness-mvayvqok-3-decb70e7",
+              "replyToken": "rt-111533fb-7629-442f-a4b9-98eb47756c0b",
+              "postback": {
+                "data": "action=counterparty_confirm&token=7dde920d-31cc-4ac5-b1c0-736c2c9703dd.-uk55GHD3HA6h4-KeOCZYcCJi9gO3zAx3WqCWc0SmUs"
+              },
+              "timestamp": 1792155112148,
+              "source": {
+                "type": "user",
+                "userId": "U934d37230d738f94d66cc71c8988e972"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": null
+      }
+    ]
+  }
+}

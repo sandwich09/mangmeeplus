@@ -936,3 +936,40 @@ describe('ExpenseGetDailyClosingTool', () => {
     assert.equal(calls.findMany[0].take, 10);
   });
 });
+
+import { CompanyGetRolesTool } from './erp-team-tools.use-case';
+
+describe('Round 7 B company.get_roles', () => {
+  function harness() {
+    const calls: any[] = [];
+    let entitlements: any[] = [];
+    const role = { id: 'role-manager', key: 'MANAGER', isSystem: true, name: 'Manager', status: 'ACTIVE', permissionKeys: ['reimbursement.approve', 'reimbursement.reject', 'expense.read'], assignableByCurrentUser: true };
+    const prisma: any = { client: { companyFeatureEntitlement: { findMany: async () => entitlements }, companyMembership: { findMany: async (args: any) => { calls.push(args); return args.where.roles.some.roleId.in.length ? [{ status: 'ACTIVE', user: { displayName: 'สมใจ' }, employeeAccessProfile: null, roles: [{ roleId: role.id }] }] : []; } } } };
+    const tool = new CompanyGetRolesTool(prisma, { execute: async () => [role] } as any);
+    const ctx = { ...baseCtx, permissions: ['access.role.read', 'access.employee.read'], roles: ['OWNER'] };
+    return { calls, role, tool, ctx, setEntitlements: (rows: any[]) => { entitlements = rows; } };
+  }
+  it('fails closed before reading roles/people without permission; holders require employee.read', async () => {
+    const h = harness();
+    assert.equal((await h.tool.execute({ ...h.ctx, permissions: [] })).status, 'forbidden');
+    assert.equal((await h.tool.execute({ ...h.ctx, permissions: ['access.role.read'] }, { permissionKey: 'reimbursement.approve' })).status, 'forbidden');
+    assert.equal(h.calls.length, 0);
+  });
+  it('answers who can approve using company-bound active memberships and registry descriptions', async () => {
+    const h = harness(), result = await h.tool.execute(h.ctx, { permissionKey: 'reimbursement.approve' });
+    assert.equal(result.status, 'ok'); assert.equal((result.data as any).employees[0].name, 'สมใจ');
+    assert.equal(h.calls[0].where.companyId, h.ctx.companyId); assert.equal(h.calls[0].where.status, 'ACTIVE');
+    assert.match(JSON.stringify(result.data), /Approve reimbursement requests/u); assert.match(JSON.stringify(result.data), /ผู้จัดการ/u);
+    assert.doesNotMatch(JSON.stringify(result.data), /role-manager|reimbursement.approve|identity|phoneNumber/u);
+  });
+  it('named-person lookup is branch-filtered and reports exact held roles', async () => {
+    const h = harness(), result = await h.tool.execute({ ...h.ctx, branchIds: ['only-branch'] }, { employeeName: 'สมใจ' });
+    assert.equal((result.data as any).employees.length, 1); assert.equal(h.calls[0].where.branchScopeMode.not, 'ALL_BRANCHES');
+    assert.match(JSON.stringify(h.calls[0].where), /only-branch/u); assert.match(JSON.stringify(h.calls[0].where), /สมใจ/u);
+  });
+  it('filters disabled-feature permissions and retains in-flight reimbursement rights as the web does', async () => {
+    const h = harness(); h.role.permissionKeys.push('inventory.product.manage'); h.setEntitlements([{ featureKey: 'reimbursement', enabled: false }, { featureKey: 'expenses', enabled: false }, { featureKey: 'inventory', enabled: false }, { featureKey: 'product_catalog', enabled: false }]);
+    const result = await h.tool.execute(h.ctx, { permissionKey: 'reimbursement.approve' });
+    assert.equal((result.data as any).employees.length, 1); assert.match(JSON.stringify(result.data), /Approve reimbursement requests/u); assert.doesNotMatch(JSON.stringify(result.data), /Manage products/u);
+  });
+});

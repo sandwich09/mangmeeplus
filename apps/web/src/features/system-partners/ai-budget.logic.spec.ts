@@ -681,3 +681,10 @@ describe('admin tab rework: chat credit, receipt images and the safety ceiling',
     assert.deepEqual(receiptImageTiles(images({ basis: 'NONE', package: null, totalRemaining: null }), date), []);
   });
 });
+
+
+it('labels company-absorbed model cost separately from shop credit', () => {
+  assert.match(AI_USAGE_BASIS_LABELS['COMPANY_ABSORBED']!, /บริษัทแบก/);
+  assert.equal(aiUsageBasisNote([{ usageBasis: 'COMPANY_ABSORBED', costSatang: 123, calls: 2 }]),
+    'บริษัทแบก ฿1.23 จาก 2 ครั้ง ไม่หักเครดิตร้านค่ะ');
+});

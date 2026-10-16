@@ -16,6 +16,7 @@ import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTION
 import type { LineAiAnswerCardLayout, LineAiAnswerCardRow, LineAiPeriodCandidate, LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, expensePeriodComparisonCard, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
+import { toolPermissionReplyText } from '../domain/logic/line-ai-scope-policy.logic';
 
 export type PreparedFormatResult =
   /** `layout` is the same answer as the locked System OA card shows it (design lock spec): built from the
@@ -1702,11 +1703,11 @@ export function backlogCardLayout(results: ReadonlyArray<{ toolName: string; dat
  */
 export function preparedTerminalReply(output: SpecialistOutput, ctx: PreparedFormatContext): string {
   const english = isEnglish(ctx);
-  if (output.status === 'PERMISSION_DENIED') {
+  if (output.status === 'PERMISSION_DENIED' || output.toolCalls.some(call => call.errorCode === 'TOOL_INPUT_NOT_AUTHORIZED')) {
     if (output.toolCalls.some((call) => call.errorCode === REIMBURSEMENT_APPROVAL_NOT_PERMITTED)) {
       return reimbursementApprovalNotPermittedReplyText(english);
     }
-    return english ? '🔒 You do not have permission to view this information.' : '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ';
+    return toolPermissionReplyText(english ? 'en' : 'th');
   }
   // C4 (batch 5c, T-008-b/T-019-a/T-064-a): expense.list_recent/get_breakdown's own not-found/
   // ambiguous/out-of-scope branch/category/vendor result is a real, grounded answer from the tool's

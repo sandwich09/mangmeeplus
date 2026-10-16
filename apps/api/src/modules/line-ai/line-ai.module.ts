@@ -1,3 +1,13 @@
+import { LineSubstituteReceiptActionService } from './application/line-substitute-receipt-action.service';
+import { LineQuotedMessageService } from './application/line-quoted-message.service';
+import { CounterpartySearchTool, CounterpartyGetDetailTool, CounterpartyActionPreviewTool, LineCounterpartyService } from './application/line-counterparty.service';
+import { EmployeeAccessModule } from '../employee-access/employee-access.module';
+import { LineTeamActionService, CompanyActionPreviewTool } from './application/line-team-action.service';
+import { CompanyGetRolesTool } from './application/use-cases/erp-team-tools.use-case';
+import { LineVoucherActionService } from './application/line-voucher-action.service';
+import { VoucherListRecentTool, VoucherGetDetailTool, WhtGetMonthSummaryTool, WhtCalculateWithholdingTool } from './application/use-cases/erp-advisor-document-tools.use-case';
+import { LinePackagePurchaseService } from './application/line-package-purchase.service';
+import { LineExpenseActionService, ExpenseActionPreviewTool } from './application/line-expense-action.service';
 import { LineReimbursementDraftAdapterService } from './application/line-reimbursement-draft-adapter.service';
 import { ReimbursementDraftGetOptionsTool, ReimbursementDraftPreviewCreateTool, ReimbursementDraftPreviewUpdateTool } from './infrastructure/reimbursement-draft-tools';
 import { LineDocumentQaService } from './application/line-document-qa.service';
@@ -152,6 +162,10 @@ import { LineWebhookController } from '../auth/presentation/line-webhook.control
 import { LineOfficialWebhookController } from '../auth/presentation/line-official-webhook.controller';
 
 const erpTools = [
+  CounterpartySearchTool, CounterpartyGetDetailTool, CounterpartyActionPreviewTool,
+  CompanyActionPreviewTool, CompanyGetRolesTool,
+  VoucherListRecentTool, VoucherGetDetailTool, WhtGetMonthSummaryTool, WhtCalculateWithholdingTool,
+  ExpenseActionPreviewTool,
   LineExplainFileAttemptTool,
   ReimbursementDraftGetOptionsTool, ReimbursementDraftPreviewCreateTool, ReimbursementDraftPreviewUpdateTool,
   PublicLookupAdmissionTool,
@@ -248,10 +262,12 @@ const erpTools = [
     ExternalSignupModule,
     // LINE "ฉันมีส่วนลดไหม": the owner-only ส่วนลดจากงาน read the package page uses (sales-event spec §8.1).
     BillingModule,
+    EmployeeAccessModule,
   ],
   controllers: [LineDocumentQaInternalController, InternalToolsController, InternalAiBudgetController, LineAiLedgerInternalController, LineCaptureResultsInternalController, LineWebhookController, LineOfficialWebhookController],
   providers: [
     LineReplyAdapter,
+    LineQuotedMessageService,
     ActorDelegationService,
     AiGatewayClient,
     ProcessLineWebhookUseCase,
@@ -269,6 +285,12 @@ const erpTools = [
     LineConversationContextService,
     LineDocumentQaService,
     LineDocumentQaWorker,
+    LinePackagePurchaseService,
+    LineTeamActionService,
+    LineExpenseActionService,
+    LineSubstituteReceiptActionService,
+    LineCounterpartyService,
+    LineVoucherActionService,
     LineReimbursementDraftAdapterService,
     LineReimbursementDraftService,
     LineAiBudgetAuthorityService,

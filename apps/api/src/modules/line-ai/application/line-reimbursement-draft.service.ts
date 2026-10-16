@@ -22,6 +22,18 @@ export type LineReimbursementDraftControl = {
   confirmationDigest: string;
 };
 
+export type LineReimbursementChoiceControl = { action: 'reimbursement_choice'; actionId: string; revision: string; choice: string };
+
+export function parseLineReimbursementChoiceControl(raw: unknown): LineReimbursementChoiceControl | null {
+  if (typeof raw !== 'string' || raw.length > 350) return null;
+  const params = new URLSearchParams(raw), keys = [...params.keys()];
+  const actionId = params.get('actionId'), revision = params.get('revision'), choice = params.get('choice');
+  if (keys.length !== 4 || new Set(keys).size !== 4 || keys.some(key => !['action', 'actionId', 'revision', 'choice'].includes(key))
+    || params.get('action') !== 'reimbursement_choice' || !actionId || !UUID.test(actionId) || !revision || !HASH.test(revision)
+    || !choice || !['no-receipt', 'photo'].includes(choice) && !HASH.test(choice)) return null;
+  return { action: 'reimbursement_choice', actionId, revision, choice };
+}
+
 export type ResolvedLineReimbursementDraftProposal = {
   key: LineReimbursementActionKey;
   sourceProof: unknown;

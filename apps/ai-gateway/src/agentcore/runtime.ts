@@ -12,6 +12,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
 import {
+  lineChatAction,
   LINE_AI_ACTOR_DELEGATIONS_PER_TOOL,
   LINE_AI_CONTEXT_WINDOW_MINUTES,
   LINE_AI_CONTEXT_MAX_TURNS,
@@ -89,6 +90,7 @@ export type RuntimePayload = {
   budgetGrantV2?: LineAiTurnRequest['budgetGrantV2'];
   approvedKnowledge?: LineAiTurnRequest['approvedKnowledge'];
   selectedKnowledgeCardIds?: LineAiTurnRequest['selectedKnowledgeCardIds'];
+  howToActionId?: LineAiTurnRequest['howToActionId'];
   taskProjection?: LineAiTurnRequest['taskProjection'];
   responsePreferences?: LineAiTurnRequest['responsePreferences'];
   semanticSubrequests?: LineAiTurnRequest['semanticSubrequests'];
@@ -433,6 +435,7 @@ export function validatePayload(body: unknown): RuntimePayload | null {
       attachments,
       conversationContext: parseConversationContext(p['conversationContext']),
       ...v2,
+      ...(lineChatAction(p['howToActionId']) ? { howToActionId: lineChatAction(p['howToActionId'])!.id } : {}),
       ...(p['approvedKnowledge'] === true ? { approvedKnowledge: true } : {}),
       ...(boundedKnowledgeCardIds(p['selectedKnowledgeCardIds']) ? { selectedKnowledgeCardIds: boundedKnowledgeCardIds(p['selectedKnowledgeCardIds']) } : {}),
       valueCandidates: versionedCandidates ? valueCandidates : valueCandidates
@@ -471,7 +474,8 @@ export function validatePayload(body: unknown): RuntimePayload | null {
     attachments,
     conversationContext: parseConversationContext(p['conversationContext']),
     ...v2,
-    ...(p['approvedKnowledge'] === true ? { approvedKnowledge: true } : {}),
+    ...(lineChatAction(p['howToActionId']) ? { howToActionId: lineChatAction(p['howToActionId'])!.id } : {}),
+      ...(p['approvedKnowledge'] === true ? { approvedKnowledge: true } : {}),
     ...(boundedKnowledgeCardIds(p['selectedKnowledgeCardIds']) ? { selectedKnowledgeCardIds: boundedKnowledgeCardIds(p['selectedKnowledgeCardIds']) } : {}),
     valueCandidates: versionedCandidates ? valueCandidates : valueCandidates
       ?? (p['valueCandidates'] ? extractValueCandidates(messageText, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })) : undefined),
@@ -496,6 +500,7 @@ export function payloadToTurnRequest(p: RuntimePayload): LineAiTurnRequest {
     ...(p.inputEvidence ? { inputEvidence: p.inputEvidence } : {}),
     ...(p.contractCapabilities ? { contractCapabilities: p.contractCapabilities } : {}),
     ...(p.budgetGrantV2 ? { budgetGrantV2: p.budgetGrantV2 } : {}),
+    ...(p.howToActionId ? { howToActionId: p.howToActionId } : {}),
     ...(p.approvedKnowledge ? { approvedKnowledge: true } : {}),
     ...(p.selectedKnowledgeCardIds ? { selectedKnowledgeCardIds: p.selectedKnowledgeCardIds } : {}),
     ...(p.taskProjection ? { taskProjection: p.taskProjection } : {}),

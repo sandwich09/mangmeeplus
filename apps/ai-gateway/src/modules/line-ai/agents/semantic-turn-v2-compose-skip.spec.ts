@@ -201,10 +201,11 @@ describe('cards-cmp: one deterministic answer for every comparable period', () =
     // +189751.77 /25147.80=754.5%, ratio=8.5; -116899.57 /214899.57=-54.4%.
     const { result, calls } = await runSeries([row(9, '98000', 12), row(7, '25147.80', 7), row(8, '214899.57', 25)], [], { extra: true });
     assert.equal(result.replyText.match(/เปรียบเทียบค่าใช้จ่าย/gu)?.length, 1);
-    assert.match(result.replyText, /^1\. เปรียบเทียบค่าใช้จ่าย/u);
+    // Owner 2026-10-16: independent answers have no numbered text lists.
+    assert.match(result.replyText, /^เปรียบเทียบค่าใช้จ่าย/u);
     assert.equal(result.replyText.match(/^• /gmu)?.length, 3);
-    assert.match(result.replyText, /2\. กำไรคือรายได้/u);
-    assert.doesNotMatch(result.replyText, /3\. |4\. |อยู่ในสรุปด้านบน/u);
+    assert.match(result.replyText, /\n\nกำไรคือรายได้/u);
+    assert.doesNotMatch(result.replyText, /^\d+\. |อยู่ในสรุปด้านบน/mu);
     const compose = calls.find(call => call.usageTag === 'line.compose')!;
     const input = JSON.parse(compose.messages[0]!.text!) as { derivedFacts: { index: number; facts: string }[] };
     for (const index of [0, 1, 2]) assert.match(input.derivedFacts.find(fact => fact.index === index)!.facts, /754\.5% หรือราว 8\.5 เท่าของ ก\.ค\./u);

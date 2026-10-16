@@ -13,12 +13,14 @@ export type AiModelPolicy = {
 
 /** One model call as the gateway measured it, reported additively on every internal AI response
  *  so the API can meter per-company spend (metering spec §7.1). Failed calls keep provider usage
- *  when available; an aborted Bedrock timeout uses conservative ceiling counts instead of zero.
+ *  when available; a timeout uses a rendered-request estimate for company accounting only.
  *  `tag` is the call site's usageTag, 'untagged' when it passed none. */
 export type AiUsageEntry = {
   tag: string;
   modelId: string;
   ok: boolean;
+  /** Failed calls are company-absorbed, never customer spend. */
+  errorCode?: string;
   inputTokens: number;
   outputTokens: number;
   cacheReadInputTokens: number;
@@ -27,7 +29,7 @@ export type AiUsageEntry = {
   /**
    * How the counters above were obtained (remediation spec §11.2, F-11). Absent from an older
    * gateway and from any provider that cannot tell — the API then stores NULL and the console
-   * reports UNKNOWN. A conservative timeout ceiling must never be displayed as measured tokens.
+   * reports UNKNOWN. A timeout estimate must never be displayed as measured tokens.
    */
   usageBasis?: AiUsageBasis;
   /**
@@ -50,6 +52,7 @@ export type AiUsageEntry = {
  * declared upper bound (hold-reconciliation spec §4.2), with zero tokens and no provider call. The
  * gateway can never report it — `normalizeUsageBasis` (the untrusted-wire guard in
  * `company-ai-usage-meter.ts`) still accepts the two provider values only — so a buggy or hostile
- * gateway cannot label a real model call as an operator decision.
+ * gateway cannot label a real model call as an operator decision. COMPANY_ABSORBED is also API-only,
+ * assigned from ok=false; its cost belongs to the company and never to customer aggregates.
  */
-export type AiUsageBasis = 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE' | 'OPERATOR_CHARGED_AT_BOUND';
+export type AiUsageBasis = 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE' | 'OPERATOR_CHARGED_AT_BOUND' | 'COMPANY_ABSORBED';

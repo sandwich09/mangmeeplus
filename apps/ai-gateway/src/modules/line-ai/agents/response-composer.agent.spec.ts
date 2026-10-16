@@ -26,8 +26,7 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
   it('describes capabilities without claiming that every feature is available', () => {
     const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH', { permissions: ['accounting.document.read', 'expense.read'] });
     assert.match(reply, /ยอดขาย/);
-    assert.match(reply, /ขึ้นกับสิทธิ์และฟีเจอร์/);
-    assert.match(reply, /ต้องทำบนเว็บ/);
+    assert.match(reply, /อนุมัติใบเบิกหรือบันทึกจ่าย น้องจะเตรียมการ์ดให้กดยืนยันเองค่ะ/);
   });
 
   // UAT 2026-08-18: the answer listed every module the product has, so a company that never
@@ -765,6 +764,50 @@ describe('ResponseComposerAgent – capability help', () => {
   const ask = (permissions: string[], entitledFeatureKeys?: string[], text = 'ทำอะไรได้บ้าง') =>
     agent.composeCapabilityHelp(text, 'th', 'th-TH', { permissions, ...(entitledFeatureKeys && { entitledFeatureKeys }) });
 
+  it('mirrors reachable counterparties, team, sold tax documents, and package purchases in both languages', () => {
+    const cases: Array<[string[], string[], RegExp, RegExp]> = [
+      [['accounting.counterparty.read'], ['expenses'], /• คู่ค้าและผู้รับเงิน/, /• counterparties and payees/],
+      [['access.employee.read'], [], /• ทีมงาน/, /• team members/],
+      [['wht.certificate.read'], ['wht_50bis'], /• ใบสำคัญจ่ายและ 50 ทวิ/, /• payment vouchers and withholding certificates/],
+      [['ai.tool.invoke', 'company.plan.manage'], ['expenses'], /ซื้อแพ็กเกจ/, /package purchases/],
+    ];
+    for (const [permissions, features, thaiLabel, englishLabel] of cases) {
+      const thai = ask(permissions, features);
+      const english = ask(permissions, features, 'what can you do');
+      assert.match(thai, thaiLabel);
+      assert.match(english, englishLabel);
+      assert.equal(thai.split('\n').length, english.split('\n').length);
+      assert.match(thai, /เตรียมการ์ดให้กดยืนยันเองค่ะ$/);
+      assert.match(english, /prepare a card for you to confirm\.$/);
+      assert.doesNotMatch(thai, /ยอดขาย|ต้องทำบนเว็บ/);
+      assert.doesNotMatch(english, /sales and sales documents|stay in the web app/);
+      const hidden = ask([], features);
+      assert.doesNotMatch(hidden, thaiLabel);
+      assert.doesNotMatch(hidden, /^•/mu);
+    }
+  });
+
+  it('lists team/branch management and teaches confirmation only when its preview is reachable', () => {
+    for (const permission of ['access.employee.create', 'access.employee.update', 'access.employee.disable', 'company.branch.manage']) {
+      assert.match(ask([permission], []), /• จัดการทีมงานหรือสาขาตามสิทธิ์ผ่านการ์ดยืนยัน/u);
+      assert.match(ask([permission], [], 'what can you do'), /manage team members or branches within your permissions/u);
+      assert.match(ask([permission], [], 'สอนใช้งานหน่อย'), /อยากจัดการทีมงานหรือสาขาตามสิทธิ์/u);
+    }
+    for (const permissions of [[], ['access.employee.read'], ['company.branch.read'], ['access.role.read']]) {
+      assert.doesNotMatch(ask(permissions, []), /จัดการทีมงานหรือสาขา/u);
+      assert.doesNotMatch(ask(permissions, [], 'how do I start'), /manage team members or branches/u);
+    }
+  });
+
+  it('X4: shows team once in help and teaching when both read and management are allowed', () => {
+    for (const [help, teaching, word] of [['ทำอะไรได้บ้าง', 'สอนใช้งานหน่อย', 'ทีมงาน'], ['what can you do', 'how do I start', 'team members']]) {
+      const permissions = ['access.employee.read', 'access.employee.update'];
+      assert.equal(ask(permissions, [], help).split('\n').filter(line => line.startsWith('•') && line.includes(word!)).length, 1);
+      assert.equal(ask(permissions, [], teaching).split('\n').filter(line => /^\d+\)/u.test(line) && line.includes(word!)).length, 1);
+      assert.ok(ask(['access.employee.read'], [], help).includes(word!));
+    }
+  });
+
   it('names only the enabled capabilities on an expenses-only company (AC-1)', () => {
     const reply = ask(STAFF, EXPENSES_ONLY);
     assert.match(reply, /ค่าใช้จ่ายและใบเสร็จ/);
@@ -865,8 +908,9 @@ describe('ResponseComposerAgent – capability help', () => {
       '2) น้องมั่งมีอ่านให้แล้วทำร่างค่าใช้จ่าย คุณแค่ตรวจยอดกับวันที่แล้วกดยืนยัน',
       '3) อยากดูสรุปค่าใช้จ่าย พิมพ์ว่า “ค่าใช้จ่ายเดือนนี้เท่าไหร่”',
       '4) อยากรู้ว่ามีงานค้างไหม พิมพ์ว่า “มีงานค้างอะไรบ้าง”',
+      '5) อยากดูข้อมูลคู่ค้า พิมพ์ว่า “ดูข้อมูลคู่ค้าให้หน่อย”',
       'อยากเห็นเมนูทั้งหมด กดปุ่ม “เมนูหลัก” ด้านล่างได้เลยค่ะ',
-      'ความสามารถที่ใช้ได้ขึ้นกับสิทธิ์และฟีเจอร์ของบริษัท ส่วนการอนุมัติ จ่ายเงิน และลงบัญชีขั้นสุดท้ายต้องทำบนเว็บค่ะ',
+      'อนุมัติใบเบิกหรือบันทึกจ่าย น้องจะเตรียมการ์ดให้กดยืนยันเองค่ะ',
     ]);
     for (const hidden of ['ยอดขาย', 'ภาษี', 'สต็อก', 'นัดหมาย', 'ลูกค้า', 'จัดซื้อ', 'รายการรออนุมัติ']) {
       assert.doesNotMatch(reply, new RegExp(hidden), `must not teach ${hidden}`);
@@ -879,7 +923,7 @@ describe('ResponseComposerAgent – capability help', () => {
     assert.match(noUpload, /^1\) อยากดูสรุปค่าใช้จ่าย/mu, 'numbering restarts from the first rendered step');
     const approver = teach(['expense.read', 'reimbursement.approve'], EXPENSES_ONLY);
     assert.equal(approver.split('\n').filter((line) => line.includes('รายการรออนุมัติ')).length, 1);
-    assert.match(approver, /กดอนุมัติจริงทำในเว็บค่ะ/);
+    assert.match(approver, /เตรียมการ์ดให้กดยืนยันค่ะ/);
     assert.doesNotMatch(teach(STAFF, EXPENSES_ONLY), /รายการรออนุมัติ/);
     // Registry-derived, so a crm-on / sales-off company teaches customers and never sales (AC-6 shape).
     const crmOnly = teach(['crm.report.read', 'crm.customer.read'], ['crm', 'crm.inbox', 'dashboard_notifications']);
@@ -1047,4 +1091,13 @@ it('disabled dashboard guidance names หน้าแรก while English capabi
   assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'th'), /หน้าแรกและแจ้งเตือน/);
   assert.doesNotMatch(featureDisabledReply(['dashboard.get_business_health_summary'], 'th'), /แดชบอร์ด/);
   assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'en'), /dashboard and notifications/);
+
+});
+it('F3/F5: casual free compose cannot claim a write or leak Markdown', async () => {
+  for (const text of ['บันทึกค่าใช้จ่ายแล้วค่ะ', '## สวัสดี\n**ยินดีค่ะ**']) {
+    const result = await new ResponseComposerAgent().composeCasual('สวัสดี', {
+      generateText: async () => ({ ok: true, text }),
+    } as IModelProvider);
+    assert.doesNotMatch(result, /บันทึกค่าใช้จ่ายแล้ว|[*#]/u);
+  }
 });

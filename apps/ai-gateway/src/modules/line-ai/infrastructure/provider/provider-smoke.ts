@@ -15,7 +15,8 @@
  * Prompt text is redacted unless AI_PROMPT_LOGGING_ENABLED=true.
  */
 
-import { BedrockProvider } from './bedrock.provider';
+import { createProvider } from './provider.factory';
+import type { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
 import { OpenAiProvider } from './openai.provider';
 import { DisabledProvider } from './disabled.provider';
 import type { IModelProvider } from './provider.port';
@@ -37,7 +38,10 @@ function buildProvider(): IModelProvider {
       console.error('Bedrock smoke requires BEDROCK_REGION and BEDROCK_MODEL_ID');
       process.exit(2);
     }
-    return new BedrockProvider({ region, modelId, timeoutMs });
+    return createProvider({
+      appEnv: process.env['APP_ENV'], anthropicApiKey: process.env['ANTHROPIC_API_KEY'],
+      modelProvider: provider, bedrockRegion: region, bedrockModelId: modelId, aiToolTimeoutMs: timeoutMs,
+    } as AiGatewayConfigService);
   }
   if (provider === 'openai') {
     if (!openAiKey) {

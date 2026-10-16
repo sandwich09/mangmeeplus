@@ -138,7 +138,7 @@ describe('unmetFeatureDependencies — both directions', () => {
 const ALL_FEATURES_ON = new Set<string>([
   'sales_documents', 'expenses', 'expenses.list', 'expenses.upload', 'double_entry_ledger',
   'bank_reconciliation', 'reports', 'thai_tax', 'inventory', 'product_catalog', 'crm', 'crm.inbox',
-  'crm.bookings', 'procurement', 'dashboard_notifications',
+  'crm.bookings', 'procurement', 'dashboard_notifications', 'wht_50bis', 'wht_pnd53',
 ]);
 const EXPENSES_ONLY = new Set<string>(['expenses', 'expenses.list', 'expenses.upload', 'dashboard_notifications']);
 // An owner-shaped grant: whatever the registry asks for, this caller has. Isolates the feature axis.
@@ -147,15 +147,41 @@ const ALL_PERMISSIONS = [...new Set(LINE_TOOL_REGISTRY.flatMap(
 ))];
 
 describe('LINE capability groups', () => {
+  it('keeps shared counterparty gates out of sales, including callers without entitlement rows', () => {
+    for (const entitled of [null, EXPENSES_ONLY, new Set(['sales_documents'])]) {
+      assert.deepEqual(usableCapabilityGroupIds(['accounting.counterparty.read'], entitled), ['counterparties']);
+    }
+    assert.deepEqual(usableCapabilityGroupIds(['accounting.counterparty.read'], new Set()), []);
+    assert.deepEqual(usableCapabilityGroupIds(['expense.read', 'expense.receipt.line_upload'], EXPENSES_ONLY), ['expenses', 'counterparties']);
+  });
+
+  it('advertises team/branch management only through the reachable confirmation preview', () => {
+    for (const permission of ['access.employee.create', 'access.employee.update', 'access.employee.disable', 'company.branch.manage']) {
+      assert.deepEqual(usableCapabilityGroupIds([permission], new Set()), ['company_management']);
+    }
+    for (const permissions of [[], ['access.employee.read'], ['company.branch.read'], ['access.role.read']]) {
+      assert.equal(usableCapabilityGroupIds(permissions, new Set()).includes('company_management'), false);
+    }
+  });
+
+  it('scopes team and sold tax documents to their real tools and features', () => {
+    assert.deepEqual(usableCapabilityGroupIds(['access.employee.read'], new Set()), ['team']);
+    assert.deepEqual(usableCapabilityGroupIds(['wht.certificate.read'], new Set(['wht_50bis'])), ['tax_documents']);
+    assert.deepEqual(usableCapabilityGroupIds(['wht.pnd53.read'], new Set(['wht_pnd53'])), ['tax_documents']);
+    assert.deepEqual(usableCapabilityGroupIds(['wht.certificate.read'], EXPENSES_ONLY), []);
+    assert.deepEqual(usableCapabilityGroupIds(['expense.disbursement.read'], new Set(['expenses', 'wht_50bis'])), ['tax_documents']);
+    assert.deepEqual(usableCapabilityGroupIds([], new Set(['expenses', 'wht_50bis'])), []);
+  });
+
   it('advertises every group when features and permissions are complete (AC-4)', () => {
     assert.deepEqual(
       usableCapabilityGroupIds(ALL_PERMISSIONS, ALL_FEATURES_ON),
-      ['sales', 'expenses', 'finance', 'tax', 'inventory', 'customers', 'bookings', 'procurement', 'alerts'],
+      ['sales', 'expenses', 'finance', 'tax', 'inventory', 'customers', 'bookings', 'procurement', 'alerts', 'counterparties', 'company_management', 'team', 'tax_documents'],
     );
   });
 
   it('hides every switched-off capability on an expenses-only company (AC-1)', () => {
-    assert.deepEqual(usableCapabilityGroupIds(ALL_PERMISSIONS, EXPENSES_ONLY), ['expenses', 'alerts']);
+    assert.deepEqual(usableCapabilityGroupIds(ALL_PERMISSIONS, EXPENSES_ONLY), ['expenses', 'alerts', 'counterparties', 'company_management', 'team']);
   });
 
   it('treats a legacy company (entitled === null) as fully entitled (AC-5)', () => {
@@ -212,7 +238,7 @@ describe('LINE capability groups', () => {
     // refusal, so the tool alone must not light the line.
     assert.deepEqual(usableCapabilityGroupIds(['ai.tool.invoke'], null), []);
     assert.deepEqual(usableCapabilityGroupIds(['ai.tool.invoke', 'company.plan.manage'], EXPENSES_ONLY), ['package']);
-    assert.deepEqual(usableCapabilityGroupIds([...ALL_PERMISSIONS, 'company.plan.manage'], EXPENSES_ONLY), ['expenses', 'alerts', 'package']);
+    assert.deepEqual(usableCapabilityGroupIds([...ALL_PERMISSIONS, 'company.plan.manage'], EXPENSES_ONLY), ['expenses', 'alerts', 'counterparties', 'company_management', 'team', 'package']);
   });
 });
 
@@ -228,10 +254,58 @@ describe('LINE receipt-capture claim', () => {
   it('disappears when the expenses.upload submenu is off, with expenses still on (AC-2)', () => {
     const uploadOff = new Set(['expenses', 'expenses.list', 'dashboard_notifications']);
     assert.equal(canAdvertiseReceiptCapture(['expense.receipt.line_upload'], uploadOff), false);
-    assert.deepEqual(usableCapabilityGroupIds(ALL_PERMISSIONS, uploadOff), ['expenses', 'alerts']);
+    assert.deepEqual(usableCapabilityGroupIds(ALL_PERMISSIONS, uploadOff), ['expenses', 'alerts', 'counterparties', 'company_management', 'team']);
   });
 
   it('stays fail-open for a legacy company', () => {
     assert.equal(canAdvertiseReceiptCapture(['expense.receipt.line_upload'], null), true);
   });
+});
+
+import { LINE_CHAT_ACTIONS, canUseLineChatAction, lineChatAction } from './ai-tools.js';
+import { createLineAiInputEvidence } from './line-ai-input-evidence.js';
+import { extractValueCandidatesV2 } from './line-ai-value-normalizer.js';
+import { verifyLineAiRetainedTaskSource } from './line-ai.js';
+describe('Fix-up 15: action entry × capability group × current access', () => {
+  for (const action of LINE_CHAT_ACTIONS) it(`${action.group}/${action.id} requires its real operation permission and feature`, () => {
+    const features = new Set([...LINE_CAPABILITY_GROUPS.flatMap(group => [...group.featureKeys]), 'expenses.upload']);
+    const permissions = ['ai.tool.invoke', action.permission];
+    assert.ok(LINE_CAPABILITY_GROUPS.some(group => group.id === action.group));
+    assert.equal(canUseLineChatAction(action.id, permissions, features), true);
+    assert.equal(canUseLineChatAction(action.id, ['ai.tool.invoke'], features), false);
+    assert.equal(canUseLineChatAction(action.id, permissions, null), true);
+    if (!['reimbursement_claim', 'payout_account', 'team_member', 'branch', 'branch_edit', 'package_purchase', 'approvals', 'team'].includes(action.id))
+      assert.equal(canUseLineChatAction(action.id, permissions, new Set()), false);
+    assert.equal(lineChatAction(action.id)?.command, action.command);
+  });
+  it('covers every advertised capability group', () => {
+    for (const group of LINE_CAPABILITY_GROUPS) assert.ok(LINE_CHAT_ACTIONS.some(action => action.group === group.id), group.id);
+    assert.equal(canUseLineChatAction('expense_search', ['expense.read'], new Set(['expenses'])), true);
+  });
+  it('rejects unregistered actions', () => assert.equal(canUseLineChatAction('approve_everything', ['*'], null), false));
+});
+
+it('Fix-up 17B: narrow WHT features govern the exact action independently of general tax', () => {
+  for (const [id, permission, feature, other] of [
+    ['wht_certificate', 'wht.certificate.issue', 'wht_50bis', 'wht_pnd53'],
+    ['pnd53', 'wht.pnd53.read', 'wht_pnd53', 'wht_50bis'],
+  ]) {
+    const permissions = ['ai.tool.invoke', permission!];
+    assert.equal(canUseLineChatAction(id, permissions, new Set(['expenses', feature!])), true);
+    assert.equal(canUseLineChatAction(id, permissions, new Set(['expenses', other!, 'thai_tax'])), false);
+  }
+});
+
+it('Fix-up 17B: a tax form number does not consume เดือนนี้, and untyped previews retain exact source facts', async () => {
+  for (const text of ['ทำให้หน่อย สรุป ภ.ง.ด.53 เดือนนี้', 'ภงด53 เดือนนี้', 'PND53 เดือนนี้']) {
+    const built = (await createLineAiInputEvidence({ turnKey: 'fx17b-month', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!;
+    const candidates = (await extractValueCandidatesV2(built.inputEvidence, '2026-10-16'))!;
+    assert.deepEqual(candidates.periods.map(period => period.monthKey), ['2026-10']);
+    const retained = await verifyLineAiRetainedTaskSource({ taskRef: { taskId: 'task', taskRevision: 2, subrequestIndex: 1 }, inputEvidence: built.inputEvidence,
+      semanticSubrequest: { index: 1, kind: 'write', goal: 'เตรียม 50 ทวิ', requiredEvidence: [], requestedFilters: {}, dependsOn: [],
+        evidenceRefs: [{ partId: 'part-0', rawSha256: built.inputEvidence.parts[0]!.rawSha256, startUtf16: 0, endUtf16: text.length }] } });
+    assert.ok(retained); assert.equal(retained.semanticSubrequest.writeIntent, undefined);
+    const changed = structuredClone(retained); changed.inputEvidence.parts[0]!.rawText += 'แก้ยอด';
+    assert.equal(await verifyLineAiRetainedTaskSource(changed), undefined);
+  }
 });

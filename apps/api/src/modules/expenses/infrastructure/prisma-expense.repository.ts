@@ -20,7 +20,7 @@ import { WHT_INCOME_CATEGORY_TWINS } from '../domain/logic/wht-income-category-t
 import { assertProjectionSource } from '../../reimbursements/infrastructure/reimbursement-source';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
-import { readDisbursementReservations, assertExpenseDisbursementReservation, expenseWhtHandoffWhere, hasExpenseTaxWorkspaceCertificate, readExpensePeriodLocks, retireExpenseTaxEvents, lockExpenseCorrection, readExpenseCorrectionCapabilities, findJournalToReverse, findLiveClaimOf, journalPeriodRefusal, lockedTaxFormTypesOf, expensePaymentClaimWhere, recordExpensePaymentBlocker, type ExpenseClaimOwner } from './expense-void-blocker';
+import { findClaimExpenseVoidBlocker, readDisbursementReservations, assertExpenseDisbursementReservation, expenseWhtHandoffWhere, hasExpenseTaxWorkspaceCertificate, readExpensePeriodLocks, retireExpenseTaxEvents, lockExpenseCorrection, readExpenseCorrectionCapabilities, findJournalToReverse, findLiveClaimOf, journalPeriodRefusal, lockedTaxFormTypesOf, expensePaymentClaimWhere, recordExpensePaymentBlocker, type ExpenseClaimOwner } from './expense-void-blocker';
 import { assertFullSubstitutePayment, assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../domain/logic/substitute-funding.logic';
 import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
 import { confirmBuyerMismatch, readBuyerAsPrinted } from '../domain/logic/buyer-as-printed.logic';
@@ -520,6 +520,7 @@ export type RecordExpensePaymentAtomicInput = {
   scopes: BranchScopes;
   idempotencyKey: string;
   amount: string;
+  expectedUpdatedAt?: Date;
   paymentMethod?: string;
   paidAt?: string;
   /** Internal writers must distinguish a generated date from a supplied date. */
@@ -553,6 +554,41 @@ function documentDateWhere(fromDate?: string, toDate?: string): Record<string, u
     { AND: [readable], expenseDate: civilDayRangeToUtc(fromDate, toDate) },
     { AND: [unreadable], uploadedAt: bangkokCivilDayRangeToUtc(fromDate, toDate) },
   ] };
+}
+
+export function validateExpensePaymentInput(input: { amount: string; paidAt?: string; paymentMethod?: string; bankAccountRef?: string }) {
+    if (typeof input.amount !== 'string' || !POSITIVE_ACCOUNTING_MONEY_PATTERN.test(normalizeExpensePaymentAmount(input.amount))) {
+      throw new BadRequestException({
+        code: 'expense_payment_exceeds_outstanding',
+        message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
+      });
+    }
+    const amount = new Decimal(input.amount);
+    if (input.paidAt != null && !isCivilDate(input.paidAt)) {
+      throw new BadRequestException({ code: 'expense_payment_invalid_date', message: 'Payment date must be a real YYYY-MM-DD calendar day.' });
+    }
+    if (input.paymentMethod != null && !EXPENSE_PAYMENT_METHODS.includes(input.paymentMethod as any)) {
+      throw new BadRequestException({ code: 'expense_payment_invalid_method', message: 'Unknown expense payment method.' });
+    }
+    const paymentMethod = input.paymentMethod as ExpensePaymentMethod | undefined;
+    if (input.bankAccountRef != null && (typeof input.bankAccountRef !== 'string' || input.bankAccountRef.length > 128)) {
+      throw new BadRequestException({ code: 'expense_payment_invalid_reference', message: 'Bank reference must be at most 128 characters.' });
+    }
+    const bankAccountRef = input.bankAccountRef?.trim() || null;
+    return { amount, paymentMethod, bankAccountRef };
+}
+
+export function assertExpensePaymentOutstanding(current: { status: string; paidAmount: { toString(): string }; netPayableAmount: { toString(): string } }, amount: Decimal) {
+    if (current.status !== 'CONFIRMED') {
+      throw new BadRequestException({ code: 'expense_payment_not_confirmed', message: EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed });
+    }
+    const paidAfter = new Decimal(current.paidAmount.toString()).plus(amount), payable = new Decimal(current.netPayableAmount.toString());
+    if (!amount.isFinite() || amount.lte(0) || paidAfter.minus(payable).gt(SETTLE_EPSILON)) {
+      throw new BadRequestException({
+        code: 'expense_payment_exceeds_outstanding',
+        message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
+      });
+    }
 }
 
 @Injectable()
@@ -637,24 +673,7 @@ export class PrismaExpenseRepository {
     }
     await assertExpenseDisbursementReservation(tx, current, 'recordPayment', input.payingThroughDisbursementVoucherId, input.viewerReadScope ? { ...input.viewerReadScope, permissions: input.permissions ?? [] } : undefined);
     assertExpensePaymentSource(current, input.paidAt, true);
-    if (typeof input.amount !== 'string' || !POSITIVE_ACCOUNTING_MONEY_PATTERN.test(normalizeExpensePaymentAmount(input.amount))) {
-      throw new BadRequestException({
-        code: 'expense_payment_exceeds_outstanding',
-        message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
-      });
-    }
-    const amount = new Decimal(input.amount);
-    if (input.paidAt != null && !isCivilDate(input.paidAt)) {
-      throw new BadRequestException({ code: 'expense_payment_invalid_date', message: 'Payment date must be a real YYYY-MM-DD calendar day.' });
-    }
-    if (input.paymentMethod != null && !EXPENSE_PAYMENT_METHODS.includes(input.paymentMethod as any)) {
-      throw new BadRequestException({ code: 'expense_payment_invalid_method', message: 'Unknown expense payment method.' });
-    }
-    const paymentMethod = input.paymentMethod as ExpensePaymentMethod | undefined;
-    if (input.bankAccountRef != null && (typeof input.bankAccountRef !== 'string' || input.bankAccountRef.length > 128)) {
-      throw new BadRequestException({ code: 'expense_payment_invalid_reference', message: 'Bank reference must be at most 128 characters.' });
-    }
-    const bankAccountRef = input.bankAccountRef?.trim() || null;
+    const { amount, paymentMethod, bankAccountRef } = validateExpensePaymentInput(input);
     const payloadFingerprint = canonicalFingerprint({
       version: 1, expenseId: input.expenseId, branchId: current.branchId ?? null,
       currency: current.currency, amount: amount.toFixed(4), paymentMethod: input.paymentMethod ?? null,
@@ -671,9 +690,8 @@ export class PrismaExpenseRepository {
       // Current source is returned even after void. Never restore totals or emit another event.
       return { expense: mapExpense(current), payment: mapPayment(previous), replayed: true };
     }
-    if (current.status !== 'CONFIRMED') {
-      throw new BadRequestException({ code: 'expense_payment_not_confirmed', message: EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed });
-    }
+    if (input.expectedUpdatedAt && current.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) throw new ConflictException('expense_source_version_changed');
+    assertExpensePaymentOutstanding(current, amount);
     const paymentCompany = input.paidAt ? await tx.company?.findUnique?.({ where: { id: input.companyId }, select: { timezone: true } }) : null;
     const paidAt = input.paidAt ? civilInstantDayRangeToUtc(input.paidAt, undefined, paymentCompany?.timezone ?? 'Asia/Bangkok').gte! : new Date();
     const paidBefore = new Decimal(current.paidAmount.toString());
@@ -684,12 +702,6 @@ export class PrismaExpenseRepository {
     // figure must be accepted and must settle the row, so both the overshoot guard and the
     // resulting totals use the one satang policy in expense-totals.logic. A real overpayment
     // (a satang or more past the payable) is still refused.
-    if (!amount.isFinite() || amount.lte(0) || paidAfter.minus(payable).gt(SETTLE_EPSILON)) {
-      throw new BadRequestException({
-        code: 'expense_payment_exceeds_outstanding',
-        message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
-      });
-    }
     const payableText = payable.toFixed(4);
     const paidAfterText = paidAfter.toFixed(4);
     const { outstandingAmount } = calcPaymentAmounts(payableText, paidAfterText);
@@ -750,6 +762,10 @@ export class PrismaExpenseRepository {
     };
     if (withinTx) await withinTx(tx, result);
     return result;
+  }
+
+  async lineVoidBlocker(companyId: string, expenseId: string) {
+    return findClaimExpenseVoidBlocker(this.prisma.client, companyId, expenseId);
   }
 
   async expenseCorrectionCapabilities(companyId: string, expenseId: string, permissions: string[], caller?: DisbursementReadScope) {
@@ -3324,7 +3340,7 @@ export class PrismaExpenseRepository {
     paymentReversals: Array<{ paymentId: string; reversalEntryNumber: string }> | string = [],
     /** Runs first inside the void transaction; a claim cancellation fences its void with it. */
     beforeVoid?: (tx: any) => Promise<void>,
-    certificateOptions: { permissions?: string[]; taxFilingAttested?: boolean; requestId?: string; authorisedByClaimCancellation?: boolean; viewerReadScope?: DisbursementReadScope } = {},
+    certificateOptions: { permissions?: string[]; taxFilingAttested?: boolean; requestId?: string; authorisedByClaimCancellation?: boolean; viewerReadScope?: DisbursementReadScope; expectedUpdatedAt?: Date; scopes?: BranchScopes } = {},
   ): Promise<{ expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null; paymentReversalEntryIds: Array<{ paymentId: string; reversalEntryId: string }>; cancelledCertificate: ExpenseCertificateCancellation | null; cancelledDisbursementVoucherIds: string[] }> {
     return await (this.prisma.client as any).$transaction(async (tx: any) => {
       await beforeVoid?.(tx);
@@ -3333,6 +3349,7 @@ export class PrismaExpenseRepository {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:expense-record-lifecycle`}))`;
       const current = await tx.expenseRecord.findFirst({ where: { id: expenseId, companyId } });
       if (!current || !canVoidExpenseFinancialState(current)) throw new ConflictException({ code: 'expense_changed', message: EXPENSE_VOID_CERTIFICATE_WORDS.statusChanged });
+      if (certificateOptions.expectedUpdatedAt && (current.updatedAt.getTime() !== certificateOptions.expectedUpdatedAt.getTime() || !isBranchInScope(certificateOptions.scopes ?? {}, current.branchId))) throw new ConflictException('expense_source_version_changed');
       await assertExpenseDisbursementReservation(tx, current, 'void', undefined, certificateOptions.viewerReadScope ? { ...certificateOptions.viewerReadScope, permissions: certificateOptions.permissions ?? [] } : undefined);
       const events = await tx.taxEvent.findMany({ where: {
         companyId, sourceType: 'expense.record', sourceId: expenseId,
@@ -4341,33 +4358,11 @@ export class PrismaExpenseRepository {
           verificationSummaryPresent: Boolean(current.aiVerificationSummaryJson),
         },
       };
-      const substitute = metadata['lineSubstituteReceiptContinuation'];
-      if (substitute && typeof substitute === 'object'
-        && ['OPEN', 'PAUSED'].includes(String((substitute as any).status))
-        && (substitute as any).expenseId === input.expenseId
-        && (substitute as any).userId === input.userId) {
-        metadata['lineSubstituteReceiptContinuation'] = {
-          ...(substitute as Record<string, unknown>),
-          targetRevision: now.toISOString(),
-        };
-      }
-      const expenseDraft = metadata['lineExpenseDraftContinuation'];
-      if (expenseDraft && typeof expenseDraft === 'object'
-        && ['OPEN', 'PAUSED', 'PAUSED_INTERRUPTED', 'INPUT_ENDED_COMPLETE', 'INPUT_ENDED_INCOMPLETE'].includes(String((expenseDraft as any).status))
-        && (expenseDraft as any).expenseId === input.expenseId
-        && (expenseDraft as any).userId === input.userId
-        && (expenseDraft as any).chatKeyHash === input.chatKeyHash
-        // Only advance a continuation that represented the row before this delivery write. A
-        // mismatch means a real intervening edit and must remain stale rather than being rebased.
-        && (expenseDraft as any).targetRevision === current.updatedAt.toISOString()) {
-        metadata['lineExpenseDraftContinuation'] = {
-          ...(expenseDraft as Record<string, unknown>),
-          targetRevision: now.toISOString(),
-        };
-      }
       const changed = await tx.expenseRecord.updateMany({
         where: { id: input.expenseId, companyId: input.companyId, updatedAt: current.updatedAt },
-        data: { sourceChannelMetadataJson: metadata, updatedAt: now },
+        // Delivery bookkeeping changes no content. Preserve the revision queued OCR and signed
+        // actions watch; the CAS still refuses a genuine edit concurrent with this write.
+        data: { sourceChannelMetadataJson: metadata, updatedAt: current.updatedAt },
       });
       if (changed.count !== 1) throw new ConflictException({
         code: 'LINE_RECEIPT_CONTINUATION_STALE', message: 'Expense changed while recording the delivered receipt outcome.',

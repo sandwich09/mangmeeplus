@@ -73,3 +73,79 @@ describe('three-lane parity: a read that stops for credit (plan W02)', () => {
     for (const word of retired) assert.ok(!sentence.includes(word));
   });
 });
+
+
+it('LINE PDF persistence invokes the shared upload guards before queuing the web capture reader', async () => {
+  const { ProcessLineWebhookUseCase } = await import('../line-ai/application/use-cases/process-line-webhook.use-case');
+  const flow = Object.create(ProcessLineWebhookUseCase.prototype) as any;
+  const calls: string[] = [];
+  const ctx = { companyId: 'company', userId: 'user', requestId: 'request', permissions: ['expense.receipt.line_upload'] };
+  const original = Buffer.from('%PDF fixture original');
+  flow.initReceiptUpload = { execute: async (context: unknown, input: any) => {
+    assert.equal(context, ctx); assert.equal(input.mimeType, 'application/pdf'); calls.push('init');
+    return { expenseId: 'expense', attachmentId: 'attachment', uploadRequired: true };
+  } };
+  flow.uploadLineMedia = async (_intent: unknown, media: any) => { assert.equal(media.bytes, original); calls.push('store-original'); };
+  flow.completeReceiptUpload = { execute: async (context: unknown) => { assert.equal(context, ctx); calls.push('complete'); return { updatedAt: new Date(0) }; } };
+  flow.captureLine = { queueExpenseRead: async (input: any) => {
+    assert.equal(input.companyId, ctx.companyId); assert.equal(input.expenseId, 'expense');
+    assert.equal(input.attachmentId, 'attachment'); assert.equal(input.expectedSourceUpdatedAt.getTime(), 0);
+    calls.push('shared-capture-job'); return 'job';
+  } };
+  flow.captureOwnerMetadata = () => ({}); flow.expenseCaptureLink = () => '/expense';
+  const result = await flow.persistLineFileExpense(ctx, {}, { caption: '', media: { bytes: original, mimeType: 'application/pdf', fileName: 'bill.pdf', byteSize: original.length } });
+  assert.equal(result.readJobId, 'job');
+  assert.deepEqual(calls, ['init', 'store-original', 'complete', 'shared-capture-job']);
+});
+
+it('OCR-C LINE file and pending-PDF receipt paths queue one ordinary capture job without receipt-ocr', async () => {
+  const { ProcessLineWebhookUseCase } = await import('../line-ai/application/use-cases/process-line-webhook.use-case');
+  const { ExpenseCaptureLineUseCase } = await import('./application/use-cases/expense-capture-line.use-case');
+  const { hashMessagePreview } = await import('../line-ai/domain/logic/line-ai-classifier.logic');
+  for (const pending of [false, true]) {
+    const jobs: any[] = [], calls: string[] = [], replies: string[] = [];
+    const flow = Object.create(ProcessLineWebhookUseCase.prototype) as any;
+    const event = { webhookEventId: 'evt', lineMessageId: 'msg', lineUserId: 'Uuser', messageType: 'file' };
+    const ctx = { requestId: 'req', companyId: 'company', userId: 'user', membershipId: 'member', scopes: {} };
+    const access = { membershipId: 'member', permissions: ['expense.receipt.line_upload'], roles: [], scopes: {} };
+    const saved = { id: 'expense', companyId: 'company', createdByUserId: 'user', captureSource: 'LINE_UPLOAD',
+      primaryAttachmentId: 'attachment', updatedAt: new Date(0), sourceChannelMetadataJson: { chatKeyHash: hashMessagePreview('Uuser') } };
+    let exists = false;
+    flow.expenseRepo = { findByLineMessageId: async () => exists ? saved : null,
+      resolveCreateBranchId: async () => 'branch',
+      createExpense: async () => { exists = true; calls.push('draft'); return saved; },
+      findByIdWithRelations: async (_company: string, _id: string, _db: unknown, scopes: unknown) => { assert.equal(scopes, access.scopes); return saved; } };
+    flow.completeReceiptDraft = async () => { calls.push('guarded-link'); return false; };
+    flow.audit = { log: async () => undefined };
+    flow.initReceiptUpload = { execute: async () => { calls.push('init'); return { expenseId: 'expense', attachmentId: 'attachment' }; } };
+    flow.uploadLineMedia = async () => { calls.push('original'); };
+    flow.completeReceiptUpload = { execute: async () => { calls.push('complete'); return saved; } };
+    flow.captureLine = Object.create(ExpenseCaptureLineUseCase.prototype);
+    flow.captureLine.capture = { client: {}, findLiveJobForAttachment: async () => jobs[0] ?? null,
+      createReadJob: async (_db: unknown, input: any) => { calls.push('capture-job'); const job = { id: 'job', ...input }; jobs.push(job); return job; } };
+    flow.captureLine.runner = { kick: () => undefined };
+    flow.resolveLineCaptureBranchId = async () => 'branch'; flow.captureOwnerMetadata = () => ({});
+    flow.expenseCaptureLink = () => '/expense'; flow.recordIntakeAttempt = async () => undefined;
+    flow.deliverCompletedReply = async (_event: unknown, text: string) => { replies.push(text); };
+    flow.persistIntakeTurn = async () => undefined; flow.updateEventLog = async () => undefined;
+    flow.recordDeliveredReceiptContinuation = async () => undefined;
+    flow.prisma = { client: { attachmentObject: { findFirst: async ({ where }: any) => {
+      assert.deepEqual(where, { id: 'attachment', companyId: 'company', uploadedByUserId: 'user', status: 'ACTIVE' });
+      return { checksumSha256: 'bytes' };
+    } }, lineIntakePendingMedia: { updateMany: async () => undefined } } };
+    flow.aiGateway = { requestReceiptOcr: async () => assert.fail('whole PDFs must not reach receipt-ocr') };
+    if (pending) {
+      const media = { id: 'pending', attachmentId: 'attachment', lineMessageId: 'msg', mimeType: 'application/pdf' };
+      for (let retry = 0; retry < 2; retry++) await flow.resolvePendingMediaAsReceipt(event, 'req', 'user', 'company', access, media, 'บันทึกใบนี้');
+      assert.deepEqual(calls, ['draft', 'guarded-link', 'capture-job', 'guarded-link']);
+    } else {
+      await flow.captureLineFile({ event, ctx, access, companyId: 'company', userId: 'user', caption: '',
+        media: { bytes: Buffer.from('%PDF original'), mimeType: 'application/pdf', byteSize: 13, fileName: 'invoice.pdf', checksumSha256: 'bytes' } });
+      assert.deepEqual(calls, ['init', 'original', 'complete', 'capture-job']);
+    }
+    assert.equal(jobs.length, 1); assert.equal(jobs[0].ownerType, 'EXPENSE');
+    assert.equal(jobs[0].companyId, 'company'); assert.equal(jobs[0].attachmentId, 'attachment');
+    assert.equal(jobs[0].expectedSourceUpdatedAt.getTime(), 0);
+    assert.ok(replies.every(text => /กำลังอ่านเอกสาร/.test(text)));
+  }
+});

@@ -4555,7 +4555,8 @@ model AiUsageEvent {
   // REPLAY into a LOST usage write rather than a deduplicated one.
   requestKind           String? // 'TEXT' | 'IMAGE' | 'OTHER'; null = legacy/unknown
   budgetBucket          String? // 'CHAT' | 'OCR'; null = legacy/unknown
-  // 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE' | 'OPERATOR_CHARGED_AT_BOUND'; null = legacy/unknown.
+  // 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE' | 'OPERATOR_CHARGED_AT_BOUND' | 'COMPANY_ABSORBED'.
+  // COMPANY_ABSORBED preserves internal cost, excluded from customer month/bucket aggregates.
   // The third is written ONLY by the operator hold-reconciliation path (hold spec §4.2); the
   // gateway's wire guard still accepts the two provider values only.
   usageBasis            String?

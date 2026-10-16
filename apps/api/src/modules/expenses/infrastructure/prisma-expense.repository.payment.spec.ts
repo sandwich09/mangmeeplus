@@ -3148,4 +3148,10 @@ it('W4 confirms only an unknown active payment in its tenant and branch, without
   await repo.confirmPaymentDateAtomic(input, async () => { audited++; });
   assert.equal(original.paidAt.toISOString(), '2026-09-04T17:00:00.000Z'); assert.equal(original.createdAt, before.createdAt); assert.equal(original.createdByUserId, 'original'); assert.equal(audited, 1);
   await assert.rejects(repo.confirmPaymentDateAtomic(input, async () => {}), (e: any) => e.getResponse().code === 'expense_payment_date_already_confirmed');
+
+});
+it('Round 3 payment card revision is rechecked under the existing payment/source locks', async () => {
+  const h = harness();
+  await assert.rejects(() => h.repo.recordPaymentAtomic(paymentInput('10.00', { expectedUpdatedAt: new Date(0) })), /version_changed/);
+  assert.equal(h.state.payments.length, 0);
 });

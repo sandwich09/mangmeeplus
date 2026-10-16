@@ -1,8 +1,24 @@
-import { Injectable, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, Injectable, UnprocessableEntityException } from '@nestjs/common';
 import type { ReimbursementRequestRecord, MaterializeClaimExpenseItem } from '../../domain/models/reimbursement.model';
 import { normalizeReimbursementAmount } from '../../domain/logic/reimbursement.logic';
 import type { ExpenseLineChargeKind } from '@watchdog-bms/contracts';
 import { calcDocumentTotals, expenseTotalsIdentityError } from '../../../expenses/domain/logic/expense-totals.logic';
+import { validateConfirm } from '../../../expenses/domain/logic/expense-status.logic';
+
+/** Read-only preflight of the exact projection facts passed to expense confirmation. */
+export function assertClaimProjectionConfirmable(request: ReimbursementRequestRecord, allowMissingReceiptWithReason: boolean): void {
+  for (const item of new MaterializeClaimExpensesService().buildItems(request)) {
+    const error = validateConfirm({ status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'NOT_CHECKED',
+      primaryAttachmentId: item.attachmentId ?? null, missingReceiptReason: item.missingReceiptReason ?? null,
+      vendorNameSnapshot: item.vendorNameSnapshot, vendorDocumentNumber: item.vendorDocumentNumber,
+      expenseDate: item.expenseDate.toISOString(), grandTotalAmount: item.grandTotalAmount,
+      whtAmount: item.whtAmount, vendorEntityKindSnapshot: null, whtCategoryCode: null,
+      vatMode: item.vatMode, inputVatClaimStatus: item.inputVatClaimStatus,
+      hasMissingReceiptPermission: allowMissingReceiptWithReason,
+      hasLinkedClaimEvidence: Boolean(item.sourceChannelMetadataJson.reimbursementSource) });
+    if (error) throw new BadRequestException(error);
+  }
+}
 
 /**
  * Pure mapping for the caller-owned projection transaction. Every claim line

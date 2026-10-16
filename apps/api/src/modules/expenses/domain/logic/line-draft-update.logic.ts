@@ -35,14 +35,15 @@ import {
   type LineDraftUpdateTool,
 } from '@watchdog-bms/contracts';
 import { amountAppearsInEvidence, dateAppearsInEvidence, textAppearsInEvidence, type CorrectionEvidence } from './line-correction.logic';
+import { lineExpenseItemDescription } from './line-expense-draft-conversation.logic';
 
 /** The line payload `UpdateExpenseDraftInput` carries. Named so the projection below cannot drift
  *  from the contract the web form posts. */
 export type DraftLineInput = CreateExpenseDraftInput['lines'][number];
 
 export type LineDraftPatch =
-  | { tool: 'expense.draft.set_header'; expenseDate?: string; vendorName?: string; documentNumber?: string; noteAppend?: string }
-  | { tool: 'expense.draft.set_line'; lineNumber: number; description?: string; amount?: string; vatTreatment?: ExpenseLineVatTreatment | null; chargeKind?: ExpenseLineChargeKind | null }
+  | { tool: 'expense.draft.set_header'; expenseDate?: string; vendorName?: string; documentNumber?: string; noteAppend?: string; categoryName?: string; expenseCategoryId?: string }
+  | { tool: 'expense.draft.set_line'; lineNumber: number; description?: string; amount?: string; vatTreatment?: ExpenseLineVatTreatment | null; chargeKind?: ExpenseLineChargeKind | null; categoryName?: string; expenseCategoryId?: string }
   | { tool: 'expense.draft.add_charge'; kind: ExpenseLineChargeKind; amount?: string; percentOfSubtotal?: string }
   | { tool: 'expense.draft.remove_line'; lineNumber: number }
   | { tool: 'expense.draft.set_vat_mode'; vatMode: ExpenseVatMode; rate?: string };
@@ -93,7 +94,7 @@ function isoDate(value: unknown): string | undefined {
  */
 export function parseLineDraftPatch(tool: LineDraftUpdateTool, input: Record<string, unknown>): LineDraftPatchParse {
   // Reject the whole proposal before reading any field; never convert a long value into a different edit.
-  for (const [field, max] of Object.entries({ vendorName: 200, documentNumber: 60, description: 200, noteAppend: DRAFT_NOTE_APPEND_MAX })) {
+  for (const [field, max] of Object.entries({ vendorName: 200, documentNumber: 60, description: 200, noteAppend: DRAFT_NOTE_APPEND_MAX, categoryName: 200 })) {
     const value = input[field];
     if (typeof value === 'string' && value.trim().length > max) return { ok: false, reason: `field_too_long:${field}:${max}` };
   }
@@ -114,7 +115,12 @@ export function parseLineDraftPatch(tool: LineDraftUpdateTool, input: Record<str
       if (rawNoteAppend.length > DRAFT_NOTE_APPEND_MAX) return { ok: false, reason: 'note_append_too_long' };
       const noteAppend = str(rawNoteAppend, DRAFT_NOTE_APPEND_MAX);
       if (noteAppend) patch.noteAppend = noteAppend;
-      const touched = Boolean(patch.expenseDate || patch.vendorName || patch.documentNumber || patch.noteAppend);
+      if (input['categoryName'] !== undefined) {
+        const name = str(input['categoryName']), id = str(input['expenseCategoryId']);
+        if (!name || !id) return { ok: false, reason: 'invalid_category' };
+        patch.categoryName = name; patch.expenseCategoryId = id;
+      }
+      const touched = Boolean(patch.expenseDate || patch.vendorName || patch.documentNumber || patch.noteAppend || patch.categoryName);
       return touched ? { ok: true, patch } : { ok: false, reason: 'no_header_field' };
     }
     case 'expense.draft.set_line': {
@@ -123,6 +129,11 @@ export function parseLineDraftPatch(tool: LineDraftUpdateTool, input: Record<str
       const patch: Extract<LineDraftPatch, { tool: 'expense.draft.set_line' }> = { tool, lineNumber: number };
       const description = str(input['description'], 200);
       if (description) patch.description = description;
+      if (input['categoryName'] !== undefined) {
+        const name = str(input['categoryName']), id = str(input['expenseCategoryId']);
+        if (!name || !id) return { ok: false, reason: 'invalid_category' };
+        patch.categoryName = name; patch.expenseCategoryId = id;
+      }
       if (input['amount'] !== undefined) {
         const value = amount(input['amount']);
         if (!value) return { ok: false, reason: 'invalid_amount' };
@@ -143,7 +154,7 @@ export function parseLineDraftPatch(tool: LineDraftUpdateTool, input: Record<str
         patch.chargeKind = null;
       }
       const touched = patch.description !== undefined || patch.amount !== undefined
-        || patch.vatTreatment !== undefined || patch.chargeKind !== undefined;
+        || patch.vatTreatment !== undefined || patch.chargeKind !== undefined || patch.categoryName !== undefined;
       return touched ? { ok: true, patch } : { ok: false, reason: 'no_line_field' };
     }
     case 'expense.draft.add_charge': {
@@ -209,11 +220,13 @@ export function groundingFailure(
       if (patch.vendorName && !textAppearsInEvidence(evidence, patch.vendorName)) return 'vendorName';
       if (patch.documentNumber && !textAppearsInEvidence(evidence, patch.documentNumber)) return 'documentNumber';
       if (patch.noteAppend && !textAppearsInEvidence(evidence, patch.noteAppend)) return 'noteAppend';
+      if (patch.categoryName && !textAppearsInEvidence(evidence, patch.categoryName)) return 'categoryName';
       return null;
     }
     case 'expense.draft.set_line': {
       if (patch.amount !== undefined && !groundedAmount(patch.amount)) return 'amount';
       if (patch.description && !textAppearsInEvidence(evidence, patch.description)) return 'description';
+      if (patch.categoryName && !textAppearsInEvidence(evidence, patch.categoryName)) return 'categoryName';
       return null;
     }
     case 'expense.draft.add_charge': {
@@ -324,6 +337,11 @@ export function projectLineDraftPatch(
     if (patch.vendorName) diff.push({ field: 'vendorName', label: 'ผู้ขาย/ผู้รับเงิน', kind: 'text', before: text(record.vendorNameSnapshot), after: text(patch.vendorName) });
     if (patch.documentNumber) diff.push({ field: 'documentNumber', label: 'เลขที่เอกสาร', kind: 'identifier', before: identifier(record.vendorDocumentNumber), after: identifier(patch.documentNumber) });
     if (patch.noteAppend) diff.push({ field: 'note', label: 'เพิ่มหมายเหตุ', kind: 'text', before: null, after: text(patch.noteAppend) });
+    if (patch.expenseCategoryId && patch.categoryName) for (const line of current) {
+      if (line.chargeKind || line.expenseCategoryId) continue;
+      line.expenseCategoryId = patch.expenseCategoryId;
+      diff.push({ field: `line.${line.lineNumber}.category`, label: `บรรทัด ${line.lineNumber} หมวดค่าใช้จ่าย`, kind: 'text', before: null, after: text(patch.categoryName) });
+    }
     // Header-only: the stored lines ride along untouched so the use case's whole-set replacement is
     // a no-op on them rather than a deletion.
     return { lines: renumber(current), diff, warnings };
@@ -373,9 +391,14 @@ export function projectLineDraftPatch(
     const next = current.map((line) => {
       if (line.lineNumber !== patch.lineNumber) return line;
       const updated: DraftLineInput = { ...line };
+      if (patch.expenseCategoryId && patch.categoryName) {
+        updated.expenseCategoryId = patch.expenseCategoryId;
+        diff.push({ field: `line.${patch.lineNumber}.category`, label: `บรรทัด ${patch.lineNumber} หมวดค่าใช้จ่าย`, kind: 'text', before: null, after: text(patch.categoryName) });
+      }
       if (patch.description !== undefined) {
-        diff.push({ field: `line.${patch.lineNumber}.description`, label: `บรรทัด ${patch.lineNumber} รายละเอียด`, kind: 'text', before: text(target.description), after: text(patch.description) });
-        updated.description = patch.description;
+        const description = lineExpenseItemDescription(patch.description, `ค่าใช้จ่าย ${record.vendorNameSnapshot ?? ''}`, 200)!;
+        diff.push({ field: `line.${patch.lineNumber}.description`, label: `บรรทัด ${patch.lineNumber} รายละเอียด`, kind: 'text', before: text(target.description), after: text(description) });
+        updated.description = description;
       }
       if (patch.amount !== undefined) {
         diff.push({ field: `line.${patch.lineNumber}.amount`, label: `บรรทัด ${patch.lineNumber} จำนวนเงิน`, kind: 'money', before: money(target.lineSubtotalAmount), after: money(patch.amount) });

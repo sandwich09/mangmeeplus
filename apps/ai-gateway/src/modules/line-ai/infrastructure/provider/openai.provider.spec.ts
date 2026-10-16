@@ -337,3 +337,48 @@ describe('OpenAiProvider usage collection', () => {
     assert.equal(capture.lines.length, 0);
   });
 });
+
+
+describe('OpenAI no-result accounting', () => {
+  it('records a realistic timeout estimate for both text and tool calls on SHARED', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, init) => new Promise((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    });
+    const capture = captureUsageLines();
+    try {
+      for (const tools of [false, true]) {
+        const entries = await runWithUsageContext({ companyId: 'shared' }, async () => {
+          const input = { messages: [{ role: 'user' as const, text: 'คำถาม' }], maxTokens: 17 };
+          const result = tools ? await makeProvider(1).generateWithTools({ ...input, tools: [] }) : await makeProvider(1).generateText(input);
+          assert.equal(result.ok, false);
+          if (!result.ok) assert.equal(result.error.code, 'PROVIDER_TIMEOUT');
+          return drainUsage();
+        });
+        assert.equal(entries.length, 1);
+        assert.equal(entries[0]!.ok, false);
+        assert.equal(entries[0]!.errorCode, 'PROVIDER_TIMEOUT');
+        assert.equal(entries[0]!.usageBasis, 'CONSERVATIVE_ESTIMATE');
+        assert.ok(entries[0]!.inputTokens > 0 && entries[0]!.inputTokens < 100);
+        assert.equal(entries[0]!.outputTokens, 17);
+      }
+    } finally { globalThis.fetch = originalFetch; capture.restore(); }
+  });
+
+  it('preserves an output-limit result for repair while marking its usage unusable', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => jsonResponse({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' },
+      output_text: 'partial', usage: USAGE_BODY.usage });
+    const capture = captureUsageLines();
+    try {
+      await runWithUsageContext({}, async () => {
+        const result = await makeProvider().generateText({ messages: [{ role: 'user', text: 'q' }] });
+        assert.deepEqual(result, { ok: true, text: 'partial', completion: 'output_limit', providerStopReason: 'max_output_tokens', stopReason: 'max_tokens' });
+        const [entry] = drainUsage();
+        assert.equal(entry!.ok, false);
+        assert.equal(entry!.errorCode, 'PROVIDER_OUTPUT_INCOMPLETE');
+        assert.equal(entry!.usageBasis, 'PROVIDER_REPORTED');
+      });
+    } finally { globalThis.fetch = originalFetch; capture.restore(); }
+  });
+});

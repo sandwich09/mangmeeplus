@@ -2,6 +2,7 @@ import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Prisma } from '../../../../generated/prisma/client';
 import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
+// Owner signed-card/delivery state uses real class field initializers, including on public turns.
 import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.service';
 import { deliveryHash, parseLineDeliveryPlan, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
 import { withLineExternalBrowserText } from '@watchdog-bms/contracts';
@@ -18,7 +19,7 @@ it('answers an admitted private general/help turn without private ERP prefetch o
   const conversationContext = { windowMinutes: 15, maxTurns: 15,
     recentTurns: [{ at: new Date().toISOString(), userMessagePreview: 'กำไรคืออะไร', assistantReplyPreview: 'กำไรคือรายได้หักค่าใช้จ่าย' }] };
   const route = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', semanticSubrequests: [{ index: 0, kind: 'general', goal: 'sky', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
-  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const flow: any = new (ProcessLineWebhookUseCase as any)();
   Object.assign(flow, {
     boundConversations: new WeakMap([[event, { owner, id: 'conversation', epoch: 3 }]]), budgetGrantsV2: new WeakMap([[event, grant]]),
     deliveryAccess: new WeakMap([[event, { fingerprint: 'fp' }]]), semanticDelivery: new WeakMap(), deliverySources: new WeakMap(),
@@ -55,7 +56,7 @@ for (const scenario of [
   const owner = { companyId: 'company', userId: 'user', membershipId: 'member', chatKeyHash: 'chat' };
   const grant = { turnKey: 'turn' }, rows: any[] = [], statuses: string[] = [], acks: string[] = [];
   const route = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', semanticSubrequests: [{ index: 0, kind: 'general', goal: 'discount', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
-  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const flow: any = new (ProcessLineWebhookUseCase as any)();
   Object.assign(flow, {
     boundConversations: new WeakMap([[event, { owner, id: 'conversation', epoch: 3 }]]), budgetGrantsV2: new WeakMap([[event, grant]]),
     deliveryAccess: new WeakMap([[event, { fingerprint: 'fp', membershipId: 'member' }]]), semanticDelivery: new WeakMap(), deliverySources: new WeakMap(),
@@ -96,7 +97,7 @@ for (const scenario of [
   ] };
   const stored: any = { status: 'received', processedAt: null, payloadJson: { messageText: event.messageText } };
   const forbidden = () => { throw new Error('Failed general turn must not mutate business/task state, acknowledge success or prefetch ERP'); };
-  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const flow: any = new (ProcessLineWebhookUseCase as any)();
   Object.assign(flow, {
     boundConversations: new WeakMap([[event, { owner, id: 'conversation', epoch: 3 }]]), budgetGrantsV2: new WeakMap([[event, grant]]),
     deliveryAccess: new WeakMap([[event, { fingerprint: 'fp' }]]), semanticDelivery: new WeakMap(), deliverySources: new WeakMap(),
@@ -148,7 +149,7 @@ for (const scenario of [
   const owner = { companyId: 'company', userId: 'user', membershipId: 'member', chatKeyHash: 'chat' };
   const grant = { turnKey: 'turn' }, cards: any[] = [], replies: string[] = [], statuses: string[] = [];
   const route = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', semanticSubrequests: [{ index: 0, kind: 'general', goal: 'explain', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
-  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const flow: any = new (ProcessLineWebhookUseCase as any)();
   Object.assign(flow, {
     boundConversations: new WeakMap([[event, { owner, id: 'conversation', epoch: 3 }]]), budgetGrantsV2: new WeakMap([[event, grant]]),
     deliveryAccess: new WeakMap([[event, { fingerprint: 'fp' }]]), semanticDelivery: new WeakMap(), deliverySources: new WeakMap(),
@@ -194,7 +195,7 @@ for (const scenario of [
   const createdAt = new Date(), calls: string[] = [], wire: string[] = [];
   const originalCoverage = structuredClone(scenario.coverage);
   let saved: DeliveryPlanV2 | undefined;
-  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const flow: any = new (ProcessLineWebhookUseCase as any)();
   const qa = { version: 1, readerVersion: 'line-document-qa/1', answer: 'อ่านหน้าแรกได้', answerPageRefs: [{ attachmentId: 'attachment', page: 1 }],
     pages: [{ attachmentId: 'attachment', page: 1, visibleText: 'ข้อความต้นทาง', facts: [], evidence: [] }],
     coverage: { requested: [{ attachmentId: 'attachment', page: 1 }, { attachmentId: 'attachment', page: 2 }],
@@ -251,7 +252,7 @@ it('freezes the trusted expense card and safe link through the actual webhook v2
   assert.equal(rendered.type, 'flex');
   const message = inheritCompleteLineBusinessAnswerPresentation(rendered, { ...rendered,
     quickReply: { items: [{ type: 'action' as const, action: { type: 'message' as const, label: 'ถามข้อมูล', text: 'ถามข้อมูล' } }] } });
-  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const flow: any = new (ProcessLineWebhookUseCase as any)();
   Object.assign(flow, {
     config: { aiDataRetentionDays: 30 }, semanticDelivery: new WeakMap(), documentQaDelivery: new WeakMap(), deliveryReimbursements: new WeakMap(), deliveryDraftPreviews: new WeakMap(),
     // buildTurnAuthorizationJson (called from sendMessagesV2) reads these WeakMaps on `this` directly.
@@ -286,7 +287,7 @@ it('freezes the trusted expense card and safe link through the actual webhook v2
 // the plan that should have announced it failed validation (PLAN_INVALID_LIFETIME) in 13 ms. The draft
 // existed; the customer never heard about it.
 function mediaResultFlow(createdAt: Date, capture: { saved?: DeliveryPlanV2 }) {
-  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const flow: any = new (ProcessLineWebhookUseCase as any)();
   Object.assign(flow, {
     config: { aiDataRetentionDays: 30 }, semanticDelivery: new WeakMap(), documentQaDelivery: new WeakMap(), deliveryReimbursements: new WeakMap(), deliveryDraftPreviews: new WeakMap(),
     deliveryAccess: new WeakMap(), deliverySources: new WeakMap(), publicPolicyTopics: new WeakMap(),
@@ -318,7 +319,7 @@ it('an expired reply token is followed at once by a push of the same frozen batc
   await mediaResultFlow(new Date(Date.now() - 62_000), capture).sendMessagesV2(SECOND_PHOTO, [{ type: 'text', text: '🧾 บันทึกร่างค่าใช้จ่ายแล้ว' }]);
   const plan = capture.saved!, row = { id: plan.planId, status: 'READY', planJson: plan, planHash: deliveryHash(plan), outcomeId: 'outcome-2' };
   const sent: Array<{ transport: string; messages: unknown }> = [];
-  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const flow: any = new (ProcessLineWebhookUseCase as any)();
   Object.assign(flow, {
     prisma: { client: { lineDeliveryPlan: { findUnique: async () => row }, lineTurnOutcome: { updateMany: async () => ({ count: 1 }) } } },
     verifyWebhookPlan: async () => true,

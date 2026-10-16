@@ -1,6 +1,7 @@
 import { asLedgerSource } from '../../../ledger/application/use-cases/journal.use-case';
 import { inflateRawSync } from 'node:zlib';
 import { describe, it } from 'node:test';
+import { decideLinePaymentEvidencePairing, isRecentPaymentEvidenceLinkText, LINE_PAYMENT_EVIDENCE_WINDOW_MS, type LinePaymentEvidenceCandidate } from './line-payment-evidence.logic';
 import assert from 'node:assert/strict';
 import { deriveInputVatPreset, deriveTaxEvidence, validateCaptureHints, isExpenseExtractionEligible, toSourceDocumentType, assessLineTextExpenseCapture } from './expense-document.logic';
 import { buildAccountantIndexRow, buildAccountantIndexCsv, buildAccountantIndexXlsx, buildManifestEntry, accountingPeriod } from './expense-export.logic';
@@ -484,4 +485,32 @@ it('ledger input VAT still needs both CLAIMABLE and usable evidence', () => {
       assert.equal(result.taxTotal, expected); assert.equal(result.lines[0].vatAmount, expected);
     }
   }
+});
+
+describe('LINE receipt/payment evidence pairing', () => {
+  const slip: LinePaymentEvidenceCandidate = { id: 'slip', companyId: 'co', chatKeyHash: 'chat', createdAt: new Date('2026-10-13T12:00:00Z'),
+    amount: '500.80', currency: 'THB', documentDay: '2026-10-13', vendorName: 'TANG FU JAS', status: 'DRAFT', hasPaymentEvidence: false };
+  const receipt = { ...slip, id: 'receipt', vendorName: 'ร้านอาหาร', amount: '500.8000', createdAt: new Date('2026-10-13T11:00:00Z') };
+  it('auto-links exactly one receipt with equal decimal money and the same document day', () => {
+    assert.equal(decideLinePaymentEvidencePairing(slip, [receipt]).kind, 'AUTO');
+    assert.equal(decideLinePaymentEvidencePairing({ ...slip, documentDay: null }, [receipt]).kind, 'AUTO');
+  });
+  it('asks for two candidates, differing money, or differing document days', () => {
+    assert.equal(decideLinePaymentEvidencePairing(slip, [receipt, { ...receipt, id: 'second' }]).kind, 'ASK');
+    assert.equal(decideLinePaymentEvidencePairing(slip, [{ ...receipt, amount: '500.81' }]).kind, 'ASK');
+    // Owner 2026-10-15: other nearby receipts with different amounts do not block the one exact match.
+    assert.equal(decideLinePaymentEvidencePairing(slip, [receipt, { ...receipt, id: 'other', amount: '120.00' }]).kind, 'AUTO');
+    assert.equal(decideLinePaymentEvidencePairing(slip, [{ ...receipt, documentDay: '2026-10-12' }]).kind, 'ASK');
+  });
+  it('uses capture times symmetrically and excludes out-of-window, other chat/company, evidence, currency and final statuses', () => {
+    assert.equal(decideLinePaymentEvidencePairing(slip, [{ ...receipt, createdAt: new Date(slip.createdAt.getTime() + LINE_PAYMENT_EVIDENCE_WINDOW_MS) }]).kind, 'AUTO');
+    for (const patch of [ { createdAt: new Date(slip.createdAt.getTime() - LINE_PAYMENT_EVIDENCE_WINDOW_MS - 1) },
+      { companyId: 'other' }, { chatKeyHash: 'other' }, { hasPaymentEvidence: true }, { currency: 'USD' }, { status: 'CONFIRMED' } ]) {
+      assert.equal(decideLinePaymentEvidencePairing(slip, [{ ...receipt, ...patch }]).kind, 'NONE');
+    }
+  });
+  it('associates both real transcript statements without swallowing a new spend, negation, or a question', () => {
+    for (const text of ['สลิปโอนเงินเป็นหลักฐานของค่าใช้จ่ายเมื่อกี้', 'ใบเสร็จเมื่อกี้กับสลิปเมื่อกี้นะ เป็นข้อมูลและหลักฐานเดียวกัน แสดงรายการนั้นให้ดูหน่อย']) assert.equal(isRecentPaymentEvidenceLinkText(text), true);
+    for (const text of ['ค่ากาแฟ 65 บาท', 'สลิปนี้ไม่ใช่หลักฐานของค่าใช้จ่ายเมื่อกี้', 'สลิปเป็นหลักฐานของรายการเมื่อกี้ได้ไหม']) assert.equal(isRecentPaymentEvidenceLinkText(text), false);
+  });
 });

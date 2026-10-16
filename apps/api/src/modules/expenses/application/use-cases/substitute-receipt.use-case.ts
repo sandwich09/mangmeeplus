@@ -1299,7 +1299,7 @@ export class CertifySubstituteReceiptUseCase {
         targetType: 'expense_substitute_receipt', targetId: evidenceId, requestId: ctx.requestId,
         result: 'SUCCESS' as const, riskLevel: 'HIGH' as const,
         metadataJson: {
-          expenseId, version: evidence.version, snapshotChecksumSha256,
+          expenseId, version: evidence.version, snapshotChecksumSha256, source: ctx.authProvider === 'line' ? 'LINE' : 'WEB',
           signatureSource: signature?.source ?? 'wet_signed_scan',
           signatureMode: evidence.signatureMode,
         },
@@ -1462,7 +1462,7 @@ export class ApproveSubstituteReceiptUseCase {
         targetType: 'expense_substitute_receipt', targetId: evidenceId, requestId: ctx.requestId,
         result: 'SUCCESS', riskLevel: 'CRITICAL',
         metadataJson: {
-          expenseId, version: evidence.version, checksumSha256, selfApproved,
+          expenseId, version: evidence.version, checksumSha256, selfApproved, source: ctx.authProvider === 'line' ? 'LINE' : 'WEB',
           signatureSource: approverSignature?.source ?? 'wet_signed_scan',
           signatureMode: evidence.signatureMode,
         },
