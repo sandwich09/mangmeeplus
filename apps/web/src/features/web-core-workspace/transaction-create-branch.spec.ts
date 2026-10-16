@@ -30,4 +30,15 @@ describe('which branch a new record is created under', () => {
   it('has no answer when the company has no branches at all', () => {
     assert.equal(transactionCreateBranchId([], 'anything'), '');
   });
+
+  // 2026-10-13: with the top bar on "all branches" the field asked again on every visit. The person's own last
+  // choice on this device is offered first; it never outranks a branch chosen now, and it is dropped once the
+  // person can no longer use that branch.
+  it('offers the branch this person chose last when the filter says all branches', () => {
+    assert.equal(transactionCreateBranchId([HO, BR2], '', 'branch-2'), 'branch-2');
+    assert.equal(transactionCreateBranchId([HO, BR2], undefined, 'branch-2'), 'branch-2');
+    assert.equal(transactionCreateBranchId([HO, BR2], 'branch-ho', 'branch-2'), 'branch-ho', 'the branch chosen now wins');
+    assert.equal(transactionCreateBranchId([HO, BR2], '', 'branch-closed'), '', 'a branch no longer usable is not offered');
+    assert.equal(transactionCreateBranchId([HO, BR2], '', ''), '');
+  });
 });

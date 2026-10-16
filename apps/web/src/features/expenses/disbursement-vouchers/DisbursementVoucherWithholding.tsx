@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { ghostClass } from '../ExpensesUi';
 import { disbursementWithholdingGroups } from './disbursement-voucher-payment.logic';
@@ -22,11 +23,12 @@ export function DisbursementVoucherWithholding({ companyId, detail, line, canIss
         {!pending && numbers.length > 0 && <> {t('expenses.disbursement.certificate_numbers', 'th')} {numbers.map((number, index) => <span key={number}>{index > 0 && ', '}<span className="whitespace-nowrap">{number}</span></span>)}</>}
       </p>;
     })}
-    <div className={styles.actionRow}>
+    {/* The shared group: one size side by side, or stacked at one width when the names do not fit (a name never wraps inside a narrow button). */}
+    <ActionGroup>
       {actions}
       {groups.flatMap(({ state, lines }) => lines.map(line => <Link key={`${state}:${line.expenseId}`} href={`/companies/${companyId}/expenses/${encodeURIComponent(line.expenseId)}?section=wht-certificate#wht-certificate`} className={`${ghostClass} whitespace-nowrap`}>
         {t(state === 'PENDING' ? canIssue ? 'expenses.disbursement.go_issue_wht' : 'expenses.disbursement.open_item' : 'expenses.disbursement.view_wht', 'th')}
       </Link>))}
-    </div>
+    </ActionGroup>
   </div>;
 }

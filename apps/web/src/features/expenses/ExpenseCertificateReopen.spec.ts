@@ -50,7 +50,9 @@ test('attestation remains in the child, requires a reason and tick, and resets w
 test('page keeps the original modal and gates certificate submissions without changing state/ref slots', () => {
   const page = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
   assert.match(page, /closeOnBackdrop=\{!correctionCertificate\}/);
-  assert.match(page, /correctionCertificate \? !taxFilingAttested : correctionReason\.trim\(\)\.length < 3/);
+  // A certificate still gates the submit on the tax-filing answer; a missing reason is said on press (the form's own check), not by a grey button.
+  assert.match(page, /disabled=\{actionLoading \|\| conflictReload \|\| Boolean\(correctionCertificate && !taxFilingAttested\)\}/);
+  assert.match(page, /if \(correctionReason\.trim\(\)\.length < 3 \|\| correctionReason\.trim\(\)\.length > REASON_MAX_LENGTH\) \{ setCorrectionError\(EXPENSE_CORRECTION_WORDS\.reasonRequired\); focusExpenseField\(correctionReasonRef.current\); return; \}/);
   assert.match(page, /reopenExpense\(companyId, expenseId, correctionReason.trim\(\), correctionCertificate \? true : undefined\)/);
   assert.match(page, /certificateNotice[\s\S]*htmlFor="expense-correction-reason"/);
   assert.match(page, /correctionCertificate \? err\(cause\)/);

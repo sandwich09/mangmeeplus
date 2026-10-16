@@ -36,6 +36,7 @@ export interface NotificationRuleRepositoryPort {
 // ---- Notification Events ----
 
 export type ListEventsFilter = {
+  waiting?: boolean;
   status?: string;
   severity?: string;
   triggerKey?: string;

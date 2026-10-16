@@ -41,7 +41,7 @@ export function ThaiAddressFields({ companyId, addressMasterPath, value, onChang
           if (cancelled) return;
           setRows(nextRows);
           if (!nextRows.length) {
-            setMessage('ไม่พบข้อมูลที่อยู่ กรุณากรอกเอง');
+            setMessage('ไม่พบที่อยู่ของรหัสไปรษณีย์นี้ กรอกเองได้');
             return;
           }
           const next = autofillThaiAddress(valueRef.current, nextRows);
@@ -52,7 +52,7 @@ export function ThaiAddressFields({ companyId, addressMasterPath, value, onChang
         .catch(() => {
           if (!cancelled) {
             setRows([]);
-            setMessage('ค้นหาที่อยู่ไม่สำเร็จ กรุณากรอกเอง');
+            setMessage('ค้นหาที่อยู่ไม่สำเร็จ กรอกเองได้');
           }
         })
         .finally(() => { if (!cancelled) setLoading(false); });

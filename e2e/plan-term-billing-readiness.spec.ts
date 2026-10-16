@@ -243,9 +243,12 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     await authedPage.goto(`/companies/${rig.companyId}/settings/branches`);
     await expect(authedPage.getByRole('heading', { name: 'สาขา', exact: true })).toBeVisible();
     await authedPage.getByRole('button', { name: '+ เพิ่มสาขา', exact: true }).click();
-    await authedPage.getByLabel('รหัสสาขา (ตัวอักษรอังกฤษหรือตัวเลข)').fill('AFTERPAY');
-    await authedPage.getByLabel('ชื่อสาขา', { exact: true }).fill('Created after simulated payment');
-    await authedPage.getByRole('button', { name: 'บันทึกสาขาใหม่', exact: true }).click();
+    // The fields carry a hint in their name since 2026-10-13, so they are found by id (as settings.spec.ts does);
+    // the dialog's acting button is named after the dialog.
+    const branchDialog = authedPage.getByRole('dialog', { name: 'เพิ่มสาขา', exact: true });
+    await branchDialog.locator('#branch-code').fill('AFTERPAY');
+    await branchDialog.locator('#branch-name').fill('Created after simulated payment');
+    await branchDialog.getByRole('button', { name: 'เพิ่มสาขา', exact: true }).click();
     // The list is a table here and a card list below md (630b6cae0): one name per layout.
     await expect(authedPage.getByRole('cell', { name: 'Created after simulated payment', exact: true })).toBeVisible();
     expect(await rig.db.branch.count({ where: { companyId: rig.companyId, code: 'AFTERPAY' } })).toBe(1);
@@ -348,7 +351,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       await page.goto(`/companies/${rig.companyId}/renew`);
       // Staff share the lock title, get a body naming who can buy, and no purchase CTA (card or banner).
       await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
-      await expect(page.getByText('แพ็กเกจของร้านหมดอายุแล้ว ให้เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อใช้งานต่อ ข้อมูลทั้งหมดยังอยู่ครบ', { exact: true })).toBeVisible();
+      await expect(page.getByText('ให้เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อใช้งานต่อ ข้อมูลทั้งหมดยังอยู่ครบ', { exact: true })).toBeVisible();
       await expect(page.getByRole('link', { name: 'เลือกแพ็กเกจ', exact: true })).toHaveCount(0);
     } finally { await ctx.close(); }
     await rig.db.companyMembership.updateMany({ where: { userId: staff.id }, data: { status: 'DISABLED' } });
@@ -366,19 +369,19 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     });
   }
 
-  for (const [status, title] of [[401, 'กรุณาเข้าสู่ระบบอีกครั้ง'], [403, 'ไม่มีสิทธิ์ดูสถานะบริษัทนี้'], [500, 'โหลดสถานะไม่สำเร็จ']] as const) {
+  for (const [status, title] of [[401, 'ต้องเข้าสู่ระบบอีกครั้ง'], [403, 'ไม่มีสิทธิ์ดูสถานะร้านนี้'], [500, 'โหลดสถานะไม่สำเร็จ']] as const) {
     test(`BR10/RG05 notice ${status} is an explicit error, never employee/no-term`, async ({ rig, authedPage }) => {
       await rig.expire();
       await authedPage.route('**/api/v1/plan-term/notice', route => route.fulfill({ status, contentType: 'application/json', body: '{}' }));
       await authedPage.goto(`/companies/${rig.companyId}/renew`);
       await expect(authedPage.getByRole('heading', { name: title, exact: true })).toBeVisible();
       // Never a real state instead: the lock view (owner and staff share its title) or no-term.
-      for (const state of ['แพ็กเกจหมดอายุแล้ว', 'บริษัทนี้ยังใช้งานได้ตามสิทธิ์']) {
+      for (const state of ['แพ็กเกจหมดอายุแล้ว', 'ร้านนี้ใช้งานได้ตามปกติ']) {
         await expect(authedPage.getByRole('heading', { name: state, exact: true })).toHaveCount(0);
       }
       await authedPage.unroute('**/api/v1/plan-term/notice');
       if (status !== 401) {
-        await authedPage.getByRole('button', { name: 'ลองใหม่', exact: true }).click();
+        await authedPage.getByRole('button', { name: 'ลองอีกครั้ง', exact: true }).click();
         await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
       } else await expect(authedPage.getByRole('link', { name: 'เข้าสู่ระบบ', exact: true })).toBeVisible();
     });
@@ -391,7 +394,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     await authedPage.goto(`/companies/${rig.companyId}/renew`);
     await expect(authedPage.getByRole('heading', { name: 'โหลดสถานะไม่สำเร็จ', exact: true })).toBeVisible();
     await authedPage.unroute('**/api/v1/plan-term/notice');
-    const retry = authedPage.getByRole('button', { name: 'ลองใหม่', exact: true });
+    const retry = authedPage.getByRole('button', { name: 'ลองอีกครั้ง', exact: true });
     await retry.focus();
     await authedPage.keyboard.press('Enter');
     await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
@@ -403,7 +406,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     await rig.db.companyPlanTerm.delete({ where: { companyId: rig.companyId } });
     expect(await (await rig.notice()).json()).toBeNull();
     await authedPage.goto(`/companies/${rig.companyId}/renew`);
-    await expect(authedPage.getByRole('heading', { name: 'บริษัทนี้ยังใช้งานได้ตามสิทธิ์', exact: true })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: 'ร้านนี้ใช้งานได้ตามปกติ', exact: true })).toBeVisible();
     expect((await rig.business()).status()).toBe(200);
   });
 
@@ -450,7 +453,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       await expect(authedPage).toHaveURL(new RegExp(`/companies/${rig.otherCompanyId}/dashboard`));
       release();
       await Promise.all(completions);
-      await expect(authedPage.getByRole('button', { name: 'สลับบริษัท', exact: true })).toContainText(other.name);
+      await expect(authedPage.getByRole('button', { name: 'เปลี่ยนร้าน', exact: true })).toContainText(other.name);
       await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toHaveCount(0);
       await authedPage.unroute('**/api/v1/plan-term/notice');
       await authedPage.goBack();
@@ -540,9 +543,9 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       await ensureBrowserLegalAcceptance(context, rig.companyId);
       const page = await context.newPage();
       await page.goto(`/companies/${rig.companyId}/billing`);
-      await expect(page.getByRole('heading', { name: 'แพ็กเกจและการชำระเงิน' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'แพ็กเกจและการจ่ายเงิน' })).toBeVisible();
       await page.goto(`/companies/${rig.companyId}/settings/profile`);
-      await expect(page.getByRole('heading', { name: 'ข้อมูลร้านและบัญชีของฉัน' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true })).toBeVisible();
       const businessType = page.getByRole('combobox', { name: 'ประเภทธุรกิจ' });
       await expect(businessType).toBeEnabled();
       await businessType.click();
@@ -555,7 +558,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       const save = page.getByRole('button', { name: 'บันทึกข้อมูลร้าน', exact: true });
       await expect(save).toBeEnabled();
       await save.click();
-      await expect(page.getByText('บันทึกข้อมูลร้านแล้วค่ะ')).toBeVisible();
+      await expect(page.getByText('บันทึกข้อมูลร้านแล้ว')).toBeVisible();
       await expect.poll(async () => (await rig.db.company.findUniqueOrThrow({ where: { id: rig.companyId } })).businessTypeCode).toBe('01112');
       await expect.poll(async () => (await (await page.request.get(`${urls.api}/companies/${rig.companyId}/vat-registration`, {
         headers: apiHeaders(manager.token, rig.companyId),
@@ -572,7 +575,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
 
     const profilePath = `/companies/${rig.companyId}/settings/profile`;
     await authedPage.goto(profilePath);
-    await expect(authedPage.getByRole('heading', { name: 'ข้อมูลร้านและบัญชีของฉัน', exact: true })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true })).toBeVisible();
     const navigations: string[] = [];
     authedPage.on('load', () => navigations.push(authedPage.url()));
 
@@ -621,21 +624,29 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     for (const response of await Promise.all([identityWrite, businessWrite, vatWrite])) {
       expect(response.status(), `${response.request().method()} ${response.url()}: ${await response.text()}`).toBe(200);
     }
-    await expect(authedPage.getByText('บันทึกข้อมูลร้านแล้วค่ะ')).toBeVisible();
+    await expect(authedPage.getByText('บันทึกข้อมูลร้านแล้ว')).toBeVisible();
     await expect(authedPage).toHaveURL(new RegExp(`${profilePath}$`));
     expect(navigations).toEqual([]);
 
-    await authedPage.getByRole('button', { name: 'บัญชีของฉัน', exact: true }).click();
-    await authedPage.locator('details').filter({ hasText: 'เบอร์มือถือ' }).first().locator('summary').click();
-    const phoneInput = authedPage.locator('input[id="เบอร์มือถือ"]');
-    await phoneInput.fill('0812345678');
-    await expect(phoneInput).toHaveValue('0812345678');
-    const contactWrite = authedPage.waitForResponse(response => response.request().method() === 'PATCH'
-      && response.url().endsWith('/auth/me/contact'));
-    await authedPage.getByRole('button', { name: 'บันทึกเบอร์มือถือ', exact: true }).click();
-    expect((await contactWrite).status()).toBe(200);
-    await expect(authedPage.getByText('บันทึกเบอร์มือถือแล้วค่ะ')).toBeVisible();
-    expect(navigations).toEqual([]);
+    await test.step('บัญชีของฉัน opens and saves in a no-package shop', async () => {
+      const nameRead = authedPage.waitForResponse(response => response.request().method() === 'GET' && response.url().includes('/auth/account/display-name?'));
+      await authedPage.getByRole('link', { name: 'บัญชีของฉัน', exact: true }).click();
+      const nameResponse = await nameRead;
+      expect(nameResponse.status(), await nameResponse.text()).toBe(200);
+      expect(nameResponse.request().headers()['x-company-id']).toBe(rig.companyId);
+      await expect(authedPage.getByLabel('ชื่อที่แสดง', { exact: true })).toBeEditable();
+      await expect(authedPage).toHaveURL(new RegExp(`/companies/${rig.companyId}/account$`));
+      await authedPage.locator('details').filter({ hasText: 'เบอร์มือถือ' }).first().locator('summary').click();
+      const phoneInput = authedPage.locator('input[id="เบอร์มือถือ"]');
+      await phoneInput.fill('0812345678');
+      await expect(phoneInput).toHaveValue('0812345678');
+      const contactWrite = authedPage.waitForResponse(response => response.request().method() === 'PATCH'
+        && response.url().endsWith('/auth/me/contact'));
+      await authedPage.getByRole('button', { name: 'บันทึกเบอร์มือถือ', exact: true }).click();
+      expect((await contactWrite).status()).toBe(200);
+      await expect(authedPage.getByText('บันทึกเบอร์มือถือแล้ว')).toBeVisible();
+      expect(navigations).toEqual([]);
+    });
     expect((await request.get(`${urls.api}/companies/${rig.companyId}/branches`, {
       headers: apiHeaders(await getDevToken(request), rig.companyId),
     })).status()).toBe(403);
@@ -668,8 +679,8 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       const page = await context.newPage();
       await page.goto(`/account/email?company=${rig.companyId}`);
       await expect(page.getByRole('heading', { name: 'จัดการอีเมลบัญชี', exact: true })).toBeVisible();
-      await expect(page.getByRole('textbox', { name: 'อีเมลที่ต้องการยืนยัน', exact: true })).toBeVisible();
-      await page.getByRole('link', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
+      await expect(page.getByRole('textbox', { name: 'อีเมล', exact: true })).toBeVisible();
+      await page.getByRole('link', { name: 'กลับไปหน้าแพ็กเกจ', exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`/companies/${rig.companyId}/billing$`));
       await expect(page.getByRole('heading', { name: /ยังไม่มีแพ็กเกจ/ })).toBeVisible();
       await expectNoClientError(page);

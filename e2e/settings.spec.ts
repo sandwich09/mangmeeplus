@@ -27,7 +27,9 @@ test.describe('SET — settings', () => {
   test('SET-01 @smoke settings hub renders sections', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/settings');
     await expect(authedPage.getByRole('heading', { name: 'ตั้งค่า', exact: true })).toBeVisible();
-    await expect(authedPage.getByRole('heading', { name: 'การตั้งค่าขั้นสูง' })).toBeVisible();
+    // The 50 ทวิ signature is an ordinary card since 2026-10-13: a sold shop no longer has a "การตั้งค่าขั้นสูง" block
+    // (it held this one row), and a shop with the accounting rows still has one.
+    await expect(authedPage.locator('main').getByRole('link', { name: /ลายเซ็นบน 50 ทวิ/ })).toBeVisible();
     await expect(authedPage.getByText(/พนักงาน|สิทธิ์|สาขา|แจ้งเตือน|Employees|Permissions|Branches/i).first()).toBeVisible();
   });
 
@@ -86,38 +88,63 @@ test.describe('SET — settings', () => {
     await authedPage.getByLabel(/^เบอร์โทรศัพท์/).fill(`08${suffix.slice(-8)}`);
     await authedPage.getByRole('button', { name: /^ถัดไป/ }).click();
 
-    await authedPage.getByRole('button', { name: /ฝ่ายบัญชี|Accountant/ }).click();
-    await authedPage.getByRole('button', { name: /ฝ่ายการเงิน|Finance/ }).click();
-    await expect(authedPage.getByRole('button', { name: /ฝ่ายบัญชี|Accountant/ })).toHaveAttribute('aria-pressed', 'false');
+    await authedPage.getByRole('radio', { name: /ฝ่ายบัญชี|Accountant/ }).check();
+    await authedPage.getByRole('radio', { name: /ฝ่ายการเงิน|Finance/ }).check();
+    await expect(authedPage.getByRole('radio', { name: /ฝ่ายบัญชี|Accountant/ })).not.toBeChecked();
     await authedPage.getByLabel(/^ตำแหน่งงาน/).fill('เจ้าหน้าที่บัญชีและการเงิน');
     // The seeded company has several branches: สาขาหลัก follows the header's branch, and under "ทุกสาขา" it is the person's choice.
     await chooseThemedOption(authedPage, authedPage.locator('#employee-default-branch'), (await firstActiveBranch(api, companyId)).name);
-    await authedPage.getByRole('button', { name: /^ถัดไป/ }).click();
-    await expect(authedPage.getByText(username).first()).toBeVisible();
-    await expect(authedPage.getByAltText('LINE link QR')).toHaveCount(0);
-    await authedPage.getByRole('button', { name: 'เสร็จสิ้น' }).click();
+    // One press saves the person and switches them on (the page's two calls, one after the other).
+    await authedPage.getByRole('button', { name: 'บันทึกและเปิดใช้งาน' }).click();
     await expect(authedPage.getByText('เปิดใช้งานพนักงานแล้ว')).toBeVisible();
-    await expect(authedPage.getByAltText('LINE link QR')).toBeVisible();
-    await expect(authedPage.getByRole('link', { name: /liff\.line\.me|\/auth\/line\/link-page\// })).toBeVisible();
-    await authedPage.getByRole('button', { name: 'ไปหน้าภาพรวมสิทธิ์' }).click();
+    await expect(authedPage.getByText(username).first()).toBeVisible();
+    await expect(authedPage.getByAltText(/^QR เชื่อม LINE/)).toBeVisible();
+    // The address is no longer printed; the copy button carries it.
+    await expect(authedPage.getByRole('button', { name: 'คัดลอกลิงก์' })).toHaveAttribute('data-link', /liff\.line\.me|\/auth\/line\/link-page\//);
+    await authedPage.getByRole('button', { name: 'ไปรายชื่อพนักงาน' }).click();
     await expect(authedPage).toHaveURL(new RegExp(`/companies/${companyId}/settings/access-overview$`));
 
     const employees = await json<Employee[]>(await api.get(`companies/${companyId}/settings/employees`));
     const created = employees.find((item) => item.displayName.includes(firstName) && item.displayName.includes(lastName));
     expect(created).toBeTruthy();
     expect(created!.roles.map((role) => role.key)).toEqual(['FINANCE']);
+    await gotoCompany(authedPage, companyId, `/settings/access-overview?person=${created!.id}`);
+    await expect(authedPage.getByRole('button', { name: 'ปิดการใช้งานบัญชี', exact: true })).toHaveCount(0);
+    await expect(authedPage.getByText('ยังไม่ได้เชื่อม LINE', { exact: true }).first()).toBeVisible();
+    const issueLink = authedPage.getByRole('button', { name: 'ออกลิงก์เชื่อม LINE', exact: true });
+    await issueLink.click();
+    const link = authedPage.getByLabel('ลิงก์เชื่อม LINE', { exact: true });
+    await expect(link).toHaveValue(/liff\.line\.me|\/auth\/line\/link-page\//);
+    const firstLink = await link.inputValue();
+    await expect(authedPage.getByText(/ใช้ได้ 15 นาที · หมดอายุ/)).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'คัดลอกลิงก์', exact: true })).toBeVisible();
+    await issueLink.click();
+    await expect(link).not.toHaveValue(firstLink);
+    const toggle = authedPage.getByRole('switch', { name: 'ใช้งาน / ปิดใช้งาน' });
+    await toggle.click();
+    const off = authedPage.getByRole('dialog');
+    await expect(off.getByText('เข้าสู่ระบบของร้านนี้ไม่ได้และคืนที่นั่งให้ร้าน', { exact: true })).toBeVisible();
+    await off.getByRole('button', { name: 'ไม่ปิด', exact: true }).click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await toggle.click();
+    await off.getByRole('button', { name: 'ปิดใช้งาน', exact: true }).click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect((await json<{ status: string }>(await api.get(`companies/${companyId}/settings/employees/${created!.id}`))).status).toBe('DISABLED');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+
   });
 
   test('SET-04 @p1 roles page renders system roles and grants', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/settings/roles');
-    await expect(authedPage.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: /บทบาทและสิทธิ์|Permissions/i })).toBeVisible();
     await expect(authedPage.getByText(/บทบาทและสิทธิ์|OWNER|ADMIN|Role/i).first()).toBeVisible();
   });
 
   test('SET-04A @p1 creates and edits one role with capabilities from multiple features', async ({ authedPage, api, companyId }) => {
     const roleName = unique('E2E composed role');
     await gotoCompany(authedPage, companyId, '/settings/permissions');
-    await authedPage.getByRole('button', { name: 'เพิ่ม', exact: true }).click();
+    await authedPage.getByRole('button', { name: 'เพิ่มบทบาท', exact: true }).click();
     await expect(authedPage.getByText(/สิทธิ์ขั้นสูง|สิทธิ์รายคีย์|Feature ".*" is not enabled|company\.setup\.manage/)).toHaveCount(0);
     await expect(authedPage.locator('form input[type="checkbox"]:disabled')).toHaveCount(0);
     await authedPage.locator('form input[required]').fill(roleName);
@@ -132,7 +159,7 @@ test.describe('SET — settings', () => {
 
     await authedPage.getByRole('button', { name: new RegExp(roleName) }).click();
     await authedPage.getByRole('button', { name: 'แก้ไข', exact: true }).click();
-    await authedPage.getByRole('checkbox', { name: /ตรวจสอบการเบิก/ }).check();
+    await authedPage.getByRole('checkbox', { name: /ตรวจใบเบิก/ }).check();
     await authedPage.getByRole('button', { name: 'บันทึก', exact: true }).click();
     await expect(authedPage.getByText('บันทึกบทบาทเรียบร้อยแล้ว')).toBeVisible();
 
@@ -149,7 +176,7 @@ test.describe('SET — settings', () => {
 
   test('SET-05 @p1 permissions matrix renders', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/settings/permissions');
-    await expect(authedPage.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: /บทบาทและสิทธิ์|Permissions/i })).toBeVisible();
     await expect(authedPage.getByText(/ตารางสิทธิ์|เมนู|action|matrix|permission/i).first()).toBeVisible();
   });
 
@@ -219,7 +246,7 @@ test.describe('SET — settings', () => {
     await gotoCompany(authedPage, companyId, '/settings/access-overview');
     const summary = authedPage.getByTestId('access-permission-summary');
     await expect(summary.getByTestId('access-permission-error')).toContainText('โหลดข้อมูลสิทธิ์ไม่สำเร็จ');
-    await expect(summary.getByRole('button', { name: 'ลองโหลดใหม่' })).toBeVisible();
+    await expect(summary.getByRole('button', { name: 'ลองอีกครั้ง' })).toBeVisible();
     await expect(summary.getByText(/ใช้งานได้ \d+ เมนู/)).toHaveCount(0);
     await expect(summary.getByTestId('access-permission-row')).toHaveCount(0);
   });
@@ -296,7 +323,9 @@ test.describe('SET — settings', () => {
     await authedPage.getByRole('option', { name: 'พนักงาน', exact: true }).click();
     await authedPage.getByRole('button', { name: 'เปลี่ยนบทบาทพนักงาน', exact: true }).click();
     await authedPage.getByRole('option', { name: /ฝ่ายบัญชี|Accountant/ }).click();
-    await expect(authedPage.getByText('บันทึกบทบาทพนักงานแล้ว')).toBeVisible();
+    // A role change takes effect at once, so it is asked once.
+    await authedPage.getByRole('button', { name: 'เปลี่ยนบทบาท', exact: true }).click();
+    await expect(authedPage.getByText(/เปลี่ยนบทบาทของ .+ เป็น ฝ่ายบัญชี แล้ว/)).toBeVisible();
 
     const employees = await json<Employee[]>(await api.get(`companies/${companyId}/settings/employees`));
     const updated = employees.find((employee) => employee.id === created.employeeId)!;
@@ -318,7 +347,8 @@ test.describe('SET — settings', () => {
     await authedPage.getByRole('button', { name: 'เปลี่ยนบทบาทพนักงาน', exact: true }).click();
     const [denied] = await Promise.all([
       authedPage.waitForResponse((response) => response.url().endsWith(`/employees/${created.employeeId}`) && response.request().method() === 'PATCH'),
-      authedPage.getByRole('option', { name: 'พนักงาน', exact: true }).click(),
+      authedPage.getByRole('option', { name: 'พนักงาน', exact: true }).click()
+        .then(() => authedPage.getByRole('button', { name: 'เปลี่ยนบทบาท', exact: true }).click()),
     ]);
     expect(denied.status()).toBe(403);
     await expect(header.getByLabel('บทบาทปัจจุบัน')).toContainText('ฝ่ายบัญชี');
@@ -393,24 +423,25 @@ test.describe('SET — settings', () => {
       await gotoCompany(page, companyId, '/expenses/manual');
       await expect(page.getByRole('heading', { name: 'บันทึกค่าใช้จ่ายด้วยมือ' })).toBeVisible();
       // Several branches and the "ทุกสาขา" filter: the form stays disabled until the record's branch is chosen.
-      await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }), branchOptionName(await firstActiveBranch(api, companyId)));
+      await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขา', exact: true }), branchOptionName(await firstActiveBranch(api, companyId)));
       await page.getByLabel('รายละเอียดค่าใช้จ่าย').fill(unique('E2E union expense'));
       await page.getByLabel('ราคาต่อหน่วย').fill('123.45');
-      await page.getByRole('button', { name: 'บันทึกฉบับร่าง' }).click();
+      await page.getByRole('button', { name: 'บันทึกร่าง' }).click();
       await expect(page).toHaveURL(new RegExp(`/companies/${companyId}/expenses/[^/?]+$`));
       // A saved draft is titled by its own number and vendor now; with no vendor yet the title says so.
       await expect(page.getByRole('heading', { name: /รอระบุผู้ขาย/ })).toBeVisible();
 
       await gotoCompany(page, companyId, '/expenses/substitute-receipts');
-      // exact: the empty list has its own heading, "ยังไม่มีใบรับรองแทนใบเสร็จรับเงินในบริษัทนี้".
-      await expect(page.getByRole('heading', { name: 'ใบรับรองแทนใบเสร็จรับเงิน', exact: true })).toBeVisible();
-      await expect(page.getByRole('link', { name: '+ สร้างใบรับรองฉบับใหม่' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'ใบรับรองแทนใบเสร็จ', exact: true })).toBeVisible();
+      await expect(page.getByRole('link', { name: 'สร้างใบรับรอง' }).first()).toBeVisible();
 
       await gotoCompany(page, companyId, '/reimbursements');
-      await expect(page.getByRole('button', { name: 'รายการที่เกี่ยวข้อง' })).toBeVisible();
-      // The third tab is named by the company's policy: the seeded company has no finance-review step, so it is the pay queue (REIMB-13).
-      await expect(page.getByRole('button', { name: 'คิวรอจ่าย' })).toBeVisible();
-      await expect(page.getByRole('button', { name: 'คิวอนุมัติ' })).toHaveCount(0);
+      // Read inside the tab bar: the status filter of the first list has chips named รอจ่าย and รออนุมัติ/ตรวจสอบ too.
+      const claimTabs = page.getByRole('navigation', { name: 'งานเบิกจ่าย' });
+      await expect(claimTabs.getByRole('button', { name: /^ใบเบิกทั้งหมด\s*\d+$/ })).toBeVisible();
+      // The third tab is named by the company's policy: the seeded company has no finance-review step, so it is the pay list (REIMB-13).
+      await expect(claimTabs.getByRole('button', { name: /^รอจ่าย\s*\d+$/ })).toBeVisible();
+      await expect(claimTabs.getByRole('button', { name: /^รออนุมัติ\s*\d+$/ })).toHaveCount(0);
       await expect(page.getByRole('button', { name: 'ตั้งค่านโยบาย' })).toHaveCount(0);
     } finally {
       await context.close();
@@ -461,6 +492,8 @@ test.describe('SET — settings', () => {
       });
 
       await gotoCompany(page, companyId, '/settings/access-overview');
+      // Below 1024 px the list is the page and a person is their own view: open the person first.
+      if (width < 1024) await page.getByRole('button', { name: /Branch view fixture/ }).click();
       const card = page.locator('section').filter({ has: page.getByRole('heading', { name: 'สาขาที่เข้าถึงได้', exact: true }) });
       await expect(card.getByTestId('employee-branch-count')).toHaveText('ทุกสาขา');
       await expect(card.getByRole('button', { name: 'เลือกสาขา', exact: true })).toHaveCount(0);
@@ -492,7 +525,7 @@ test.describe('SET — settings', () => {
   test('SET-09 @p1 roles screen is manage-only: no access.role.manage, no page', async ({ pageAs, companyId }) => {
     const owner = await pageAs('OWNER');
     await gotoCompany(owner, companyId, '/settings/permissions');
-    await expect(owner.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toBeVisible();
+    await expect(owner.getByRole('heading', { name: /บทบาทและสิทธิ์|Permissions/i })).toBeVisible();
     await expect(owner.getByRole('button', { name: 'เพิ่ม' })).toBeEnabled();
 
     // COMPANY_VIEW holds access.role.read but not access.role.manage. The old read-only
@@ -501,7 +534,7 @@ test.describe('SET — settings', () => {
     await gotoCompany(viewer, companyId, '/settings/permissions');
     await expect(viewer).toHaveURL(new RegExp(`/companies/${companyId}/settings/permissions$`));
     await expect(viewer.getByText('ไม่มีสิทธิ์เข้าถึง', { exact: true })).toBeVisible();
-    await expect(viewer.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toHaveCount(0);
+    await expect(viewer.getByRole('heading', { name: /บทบาทและสิทธิ์|Permissions/i })).toHaveCount(0);
     await expect(viewer.getByText(/อ่านอย่างเดียว/)).toHaveCount(0);
   });
 
@@ -513,7 +546,7 @@ test.describe('SET — settings', () => {
     await gotoCompany(staff, companyId, '/settings/profile');
     await expect(staff).toHaveURL(new RegExp(`/companies/${companyId}/settings/profile$`));
     await expect(staff.getByText('ไม่มีสิทธิ์เข้าถึง', { exact: true })).toBeVisible();
-    await expect(staff.getByRole('link', { name: 'กลับไปหน้าที่ใช้ได้' })).toBeVisible();
+    await expect(staff.locator('main').getByRole('link', { name: /^กลับไป/ })).toBeVisible();
     await expect(staff.locator('header')).toBeVisible();
   });
 });
@@ -528,13 +561,15 @@ for (const width of [1280, 390]) {
       await route.fulfill({ status: 409, json: { code: 'branch_last_active_required', message: 'ต้องมีสาขาที่ใช้งานอย่างน้อยหนึ่งสาขา' } });
     });
     await gotoCompany(page, companyId, '/settings/branches');
-    await expect(page.getByRole('heading', { name: 'รายชื่อสาขา', exact: true })).toBeVisible();
+    // The list has no heading of its own since 2026-10-13: the page title says what it is.
+    await expect(page.getByRole('heading', { name: 'สาขา', exact: true })).toBeVisible();
     const edit = page.getByRole('button', { name: /^แก้ไขสาขา / }).first();
     await expect(edit).toBeVisible();
     await page.screenshot({ path: info.outputPath(`branches-${width}.png`), fullPage: true });
     await edit.click();
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('เก็บถาวร', { exact: true })).toHaveCount(0);
     await dialog.getByLabel('ชื่อสาขา', { exact: true }).fill('ร่างแก้สาขา ไม่บันทึกจริง');
     await dialog.getByRole('button', { name: 'บันทึก', exact: true }).click();
     await expect(dialog.getByRole('alert')).toBeVisible();
@@ -542,10 +577,14 @@ for (const width of [1280, 390]) {
     expect(attempts).toBe(1);
     await dialog.getByRole('button', { name: 'สร้างสาขาใหม่ก่อน' }).click();
     await expect(page.getByRole('dialog', { name: 'เพิ่มสาขา', exact: true })).toBeVisible();
-    await dialog.getByLabel('รหัสสาขา (ตัวอักษรอังกฤษหรือตัวเลข)', { exact: true }).fill('TESTUX');
-    await dialog.getByLabel('ชื่อสาขา', { exact: true }).fill('สาขาทดสอบ ไม่บันทึกจริง');
-    await dialog.getByLabel('รหัสสาขาภาษี (5 หลัก ไม่บังคับ)', { exact: false }).fill('123');
-    await expect(dialog.getByRole('button', { name: 'บันทึกสาขาใหม่' })).toBeDisabled();
+    // The fields carry a hint in their name now, so they are found by id; the save button is always enabled and a
+    // wrong tax code is answered under its field without a request (thai-ux-standard §2.9).
+    await dialog.locator('#branch-code').fill('TESTUX');
+    await dialog.locator('#branch-name').fill('สาขาทดสอบ ไม่บันทึกจริง');
+    await dialog.locator('#branch-tax-code').fill('123');
+    await dialog.getByRole('button', { name: 'เพิ่มสาขา', exact: true }).click();
+    await expect(dialog.getByText('รหัสสาขาภาษีต้องเป็นตัวเลข 5 หลัก', { exact: false })).toBeVisible();
+    await expect(dialog).toBeVisible();
     await page.screenshot({ path: info.outputPath(`branch-editor-${width}.png`), fullPage: true });
     await dialog.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
     await expect(dialog).toBeHidden();

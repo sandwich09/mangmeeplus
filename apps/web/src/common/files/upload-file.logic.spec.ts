@@ -84,3 +84,17 @@ describe('web upload file policy', () => {
     );
   });
 });
+
+it('keeps the specific receipt replacement refusal through both upload wrappers', async () => {
+  const message = 'รายจ่ายนี้บันทึกจ่ายแล้ว เปลี่ยนใบเสร็จหลักไม่ได้ ให้แนบเป็นหลักฐานเพิ่ม';
+  for (const source of [
+    Object.assign(new Error(message), { code: 'expense_receipt_replace_locked' }),
+    Object.assign(new Error('Conflict'), { code: 'expense_receipt_replace_locked', details: { message } }),
+  ]) {
+    await assert.rejects(withGenericUploadError(() => withGenericUploadError(async () => { throw source; })),
+      (error: any) => error.code === 'expense_receipt_replace_locked' && error.message === message && error.details === undefined);
+  }
+  await assert.rejects(withGenericUploadError(async () => {
+    throw Object.assign(new Error('internal storage path'), { code: 'expense_receipt_replace_locked' });
+  }), { message: 'รายการนี้อยู่ในสถานะที่เปลี่ยนหรือแนบไฟล์ตรงนี้ไม่ได้ เปิดรายการเพื่อดูขั้นตอนที่ทำได้' });
+});

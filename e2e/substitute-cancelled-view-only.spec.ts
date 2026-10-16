@@ -61,17 +61,17 @@ for (const signatureMode of ['DIGITAL', 'PAPER']) {
         await page.setViewportSize({ width, height: 900 });
         // Explicit view also disables edits for the seeded OWNER. Cancelled is locked without the hint.
         await page.goto(`${url}${cancelled ? '' : '?mode=view'}`);
-        await journey.getByRole('button', { name: /ข้อมูลและหลักฐาน/ }).click();
+        await journey.getByRole('button', { name: /รายละเอียด/ }).click();
         await expect(page.getByRole('button', { name: 'แก้ไขข้อมูลใบแทน', exact: true })).toHaveCount(0);
         const inputs = page.locator('input:visible, textarea:visible');
         await expect(inputs.first()).toBeVisible();
         for (const input of await inputs.all()) await expect(input).toBeDisabled();
         for (const input of await page.getByRole('combobox').all()) await expect(input).toBeDisabled();
-        await expect(page.getByRole('textbox', { name: /วัตถุประสงค์/ })).toHaveValue(evidence.businessPurpose);
+        await expect(page.getByRole('textbox', { name: /ซื้อไปใช้ทำอะไร/ })).toHaveValue(evidence.businessPurpose);
         await expect(page.getByText('supporting.png', { exact: true })).toBeVisible();
         await expect(page.getByText('payment.png', { exact: true })).toBeVisible();
         await expect(page.getByText('unselected.png', { exact: true })).toHaveCount(0);
-        await expect(page.getByText('ไม่พบข้อมูลไฟล์แนบ กรุณาโหลดหน้าใหม่', { exact: true })).toBeVisible();
+        await expect(page.getByText('ไม่พบข้อมูลไฟล์แนบ โหลดหน้านี้อีกครั้ง', { exact: true })).toBeVisible();
         for (const id of ['supporting', 'payment']) {
           await page.getByRole('button', { name: `เปิดดูเอกสาร ${id}.png`, exact: true }).click();
           const dialog = page.getByRole('dialog');
@@ -81,7 +81,7 @@ for (const signatureMode of ['DIGITAL', 'PAPER']) {
           await expect(dialog).toBeHidden();
         }
         await page.screenshot({ path: test.info().outputPath(`disabled-${signatureMode}-${cancelled}-${width}.png`), fullPage: true });
-        await page.getByRole('navigation', { name: 'การนำทางข้อมูลใบแทน' }).getByRole('button', { name: 'ย้อนกลับ', exact: true }).click();
+        await page.getByRole('navigation', { name: 'การนำทางข้อมูลใบรับรอง' }).getByRole('button', { name: 'กลับ', exact: true }).click();
         for (const input of await page.locator('input:visible, textarea:visible').all()) await expect(input).toBeDisabled();
         await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
         await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
@@ -150,9 +150,10 @@ test('cancelled certificate can return to reviewed receipt evidence and confirm 
   await expect(confirm).toBeDisabled();
   await expect(page.getByText(/ยืนยันไม่ได้:.*เลือกหลักฐาน.*ฉบับใหม่/)).toBeVisible();
   await expect(page.getByText(/ต้องให้ผู้จ่ายลงนาม/)).toHaveCount(0);
-  await page.getByRole('button', { name: 'ย้อนกลับ', exact: true }).click();
-  await page.getByRole('combobox', { name: 'ปัญหาของเอกสาร', exact: true }).click();
-  await page.getByRole('option', { name: 'มีเอกสารใช้ประกอบรายการ', exact: true }).click();
+  // The way back is the finished step itself (also กลับ, first in เพิ่มเติม).
+  await page.getByRole('button', { name: /ภาษีและเอกสาร/ }).click();
+  await page.getByRole('combobox', { name: 'มีใบเสร็จของรายการนี้ไหม', exact: true }).click();
+  await page.getByRole('option', { name: 'มี', exact: true }).click();
   await page.getByRole('button', { name: 'บันทึกการตรวจ', exact: true }).click();
   await next.click();
   await expect(confirm).toBeEnabled();

@@ -14,7 +14,6 @@ const input = (lines: CreateExpenseDraftInput['lines']): CreateExpenseDraftInput
   captureSource: 'WEB_MANUAL',
   expenseDate: '2026-08-08',
   vatMode: 'NO_VAT',
-  inputVatClaimStatus: 'NON_CLAIMABLE',
   lines,
 });
 
@@ -514,4 +513,39 @@ it('saving a reopened expense keeps recorded payments and derives the remaining 
   }
 });
 
+});
+
+describe('manual draft seller name', () => {
+  it('accepts and trims a supplied seller without creating a counterparty', async () => {
+    const { useCase, created } = setup();
+    await useCase.execute(ctx, { ...input([]), vendorNameSnapshot: '  ร้านกาแฟ  ' } as any);
+    assert.equal(created[0].vendorNameSnapshot, 'ร้านกาแฟ');
+    assert.equal(created[0].vendorCounterpartyId, undefined);
+  });
+  it('refuses an overlong seller with a sentence before creating a draft', async () => {
+    const { useCase, created } = setup();
+    await assert.rejects(() => useCase.execute(ctx, { ...input([]), vendorNameSnapshot: 'ก'.repeat(201) } as any), /ชื่อผู้ขายยาวเกิน 200 ตัวอักษร ตัดให้สั้นลงแล้วบันทึกอีกครั้ง/);
+    assert.equal(created.length, 0);
+  });
+  it('keeps an absent seller optional', async () => {
+    const { useCase, created } = setup(); await useCase.execute(ctx, input([]));
+    assert.equal(created[0].vendorNameSnapshot, undefined);
+  });
+});
+
+
+for (const inputVatClaimStatus of ['NON_CLAIMABLE', 'NEEDS_REVIEW', 'CLAIMABLE'] as const) it(`does not accept a human ${inputVatClaimStatus} on creation`, async () => {
+  const { useCase, created } = setup();
+  await assert.rejects(() => useCase.execute(ctx, { ...input([]), inputVatClaimStatus }), (error: any) => error.getResponse().code === 'expense_input_vat_decision_required');
+  assert.equal(created.length, 0);
+});
+
+it('preserves each income type and rate through the draft persistence boundary', async () => {
+  const { useCase, created, upserted } = setup();
+  await useCase.execute(ctx, input([
+    { lineNumber: 1, description: 'ค่าเช่า', quantity: '1', unitPrice: '100', whtRate: '0.05', whtCategoryCode: 'WHT_RENT' },
+    { lineNumber: 2, description: 'ค่าบริการ', quantity: '1', unitPrice: '200', whtRate: '0.02', whtCategoryCode: 'WHT_SERVICE' },
+  ]));
+  assert.deepEqual(upserted.map(l => [l.whtCategoryCode, l.whtRate, l.whtAmount]), [['WHT_RENT', '0.05', '5.0000'], ['WHT_SERVICE', '0.02', '4.0000']]);
+  assert.equal(created[0].netPayableAmount, '291.0000');
 });

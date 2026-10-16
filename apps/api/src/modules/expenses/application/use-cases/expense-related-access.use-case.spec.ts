@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { DISBURSEMENT_VOUCHER_NOTICE_WORDS } from '@watchdog-bms/contracts';
-import { BadRequestException, ForbiddenException, RequestMethod } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException, RequestMethod } from '@nestjs/common';
 import { PATH_METADATA, METHOD_METADATA } from '@nestjs/common/constants';
-import { GetExpenseUseCase, ListExpensesUseCase } from './expense-draft.use-case';
+import { GetExpenseUseCase, ListExpensesUseCase, MarkExpenseReadyUseCase } from './expense-draft.use-case';
 import { ListCompanySubstituteReceiptsUseCase } from './substitute-receipt.use-case';
 import { expenseRelatedToUserWhere, PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { ListExpenseCategoriesUseCase } from './expense-upload.use-case';
@@ -99,7 +100,7 @@ describe('expense related-view ABAC', () => {
     assert.equal((result as any).accessScope, 'own');
   });
 
-  it('scopes the substitute-receipt hub to all persisted relations, not only the payer', async () => {
+  it('scopes the substitute-receipt preparation hub to the reader’s own recorded expenses', async () => {
     let capturedScope: any;
     const repo = {
       listCompanySubstituteReceipts: async (_companyId: string, _filter: unknown, scope: unknown) => {
@@ -109,7 +110,8 @@ describe('expense related-view ABAC', () => {
     } as any;
     await new ListCompanySubstituteReceiptsUseCase(repo).execute(ctx, { page: 1, pageSize: 20 });
     assert.deepEqual(capturedScope, {
-      branchIds: ['branch-1'], onlyPayerUserId: null, relatedUserId: 'actor-1',
+      branchIds: ['branch-1'], onlyPayerUserId: null, createdByUserId: 'actor-1',
+      userId: 'actor-1', canApprove: false, canSelfApprove: false,
     });
   });
 
@@ -136,7 +138,7 @@ describe('expense related-view ABAC', () => {
     const prisma = {
       client: {
         expenseSubstituteReceiptEvidence: delegate,
-        $transaction: async (queries: Promise<unknown>[]) => Promise.all(queries),
+        $transaction: async (run: any) => run({ expenseSubstituteReceiptEvidence: delegate, $queryRaw: async () => [] }),
       },
     } as any;
     await new PrismaExpenseRepository(prisma).listCompanySubstituteReceipts(
@@ -246,7 +248,18 @@ describe('disbursement voucher drafts and visibility', () => {
     const withRelations = (v: any) => v ? { ...v, lines: state.lines.filter((l: any) => l.voucherId === v.id).sort((a: any, b: any) => a.position - b.position)
       .map((l: any) => ({ ...l, expense: state.expenses.find((e: any) => e.id === l.expenseId) })), revisions: state.revisions.filter((r: any) => r.voucherId === v.id), _count: { lines: state.lines.filter((l: any) => l.voucherId === v.id).length } } : null;
     const client: any = {
-      $queryRaw: async () => [{ locked: true }],
+      companySignatureAsset: { findMany: async ({ where }: any) => (state.signatures ?? []).filter((a: any) => matches(a, where)) },
+      $queryRaw: async (query: any) => {
+        if (!query.sql?.includes('COALESCE("paidDate", "plannedPayDate", "createdAt"::date)')) return [{ locked: true }];
+        assert.match(query.sql, /ORDER BY COALESCE\("paidDate", "plannedPayDate", "createdAt"::date\) (ASC|DESC), "createdAt" \1, "id" \1/);
+        const [companyId, ids, take, skip] = query.values;
+        assert.equal(companyId, 'company-1'); assert.ok(Array.isArray(ids));
+        const sign = query.sql.includes(' ASC') ? 1 : -1;
+        const date = (v: any) => (v.paidDate ?? v.plannedPayDate ?? v.createdAt).toISOString().slice(0, 10);
+        return state.vouchers.filter((v: any) => v.companyId === companyId && ids.includes(v.id))
+          .sort((a: any, b: any) => sign * (date(a).localeCompare(date(b)) || a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id)))
+          .slice(skip, skip + take).map((v: any) => ({ id: v.id }));
+      },
       $executeRaw: async (parts: TemplateStringsArray, ...values: any[]) => {
         const sql = parts.join('?'); state.locks.push({ sql, values });
         if (!sql.includes('UPDATE "ExpenseRecord"')) return 0;
@@ -276,10 +289,10 @@ describe('disbursement voucher drafts and visibility', () => {
       },
       outboxEvent: { create: async ({ data }: any) => { state.events.push(data); return data; } },
       company: { findFirst: async ({ where }: any) => where.id === 'company-1' ? { id: where.id, name: 'กิจการทดสอบ', registeredName: 'กิจการทดสอบ', taxId: '0123456789012', addressJson: {} } : null },
-      attachmentObject: { findFirst: async ({ where }: any) => state.attachments.find((a: any) => matches(a, where)) ?? null },
+      attachmentObject: { findFirst: async ({ where }: any) => state.attachments.find((a: any) => matches(a, where)) ?? null, findMany: async ({ where }: any) => state.attachments.filter((a: any) => matches(a, where)) },
       attachmentLink: {
         findFirst: async ({ where, include }: any) => { const l = state.attachmentLinks.find((l: any) => matches(l, where)); return l ? { ...l, ...(include?.attachment ? { attachment: state.attachments.find((a: any) => a.id === l.attachmentId) } : {}) } : null; },
-        findMany: async ({ where }: any) => state.attachmentLinks.filter((l: any) => matches(l, where)),
+        findMany: async ({ where, include }: any) => state.attachmentLinks.filter((l: any) => matches(l, where)).map((l: any) => ({ ...l, ...(include?.attachment ? { attachment: state.attachments.find((a: any) => a.id === l.attachmentId) } : {}) })),
         deleteMany: async ({ where }: any) => { const before = state.attachmentLinks.length; state.attachmentLinks = state.attachmentLinks.filter((l: any) => !matches(l, where)); return { count: before - state.attachmentLinks.length }; },
         create: async ({ data }: any) => { const l = { id: `link-${state.attachmentLinks.length}`, createdAt: new Date(), ...data }; state.attachmentLinks.push(l); return l; },
       }, reimbursementLine: { findMany: async () => [], findFirst: async () => null },
@@ -290,7 +303,7 @@ describe('disbursement voucher drafts and visibility', () => {
       branch: { findFirst: async ({ where }: any) => where.companyId === 'company-1' ? { id: where.id, name: 'สำนักงานใหญ่', code: 'HO', taxBranchCode: '00000', addressJson: {} } : null,
         findMany: async ({ where }: any) => [{ id: 'branch-1' }, { id: 'branch-2' }].filter(b => !where?.id?.in || where.id.in.includes(b.id)) },
       user: {
-        findMany: async ({ where }: any) => state.members.map((m: any) => ({ id: m.userId, displayName: m.user.displayName })).filter((u: any) => (!where?.id?.in || where.id.in.includes(u.id)) && state.members.some((m: any) => m.userId === u.id && m.companyId === where.memberships.some.companyId && m.status === 'ACTIVE')),
+        findMany: async ({ where }: any) => state.members.map((m: any) => ({ id: m.userId, displayName: m.user.displayName })).filter((u: any) => (!where?.id?.in || where.id.in.includes(u.id)) && state.members.some((m: any) => m.userId === u.id && m.companyId === where.memberships.some.companyId && (!where.memberships.some.status || m.status !== where.memberships.some.status.not))),
         findFirst: async ({ where }: any) => {
           assert.equal(where.memberships.some.companyId, 'company-1');
           return where.id === 'actor-1' ? { displayName: 'สมใจ' } : null;
@@ -302,10 +315,10 @@ describe('disbursement voucher drafts and visibility', () => {
         findMany: async ({ where, skip = 0, take }: any) => state.vouchers.filter((v: any) => matches(v, where))
           .sort((a: any, b: any) => (a.plannedPayDate?.getTime() ?? Infinity) - (b.plannedPayDate?.getTime() ?? Infinity))
           .slice(skip, take ? skip + take : undefined).map(withRelations),
-        groupBy: async ({ where }: any) => Object.entries(state.vouchers.filter((v: any) => matches(v, where)).reduce((totals: any, v: any) => ({ ...totals, [v.status]: (totals[v.status] ?? 0) + 1 }), {}))
-          .map(([status, count]) => ({ status, _count: { _all: count } })),
+        groupBy: async ({ where, _sum }: any) => Object.entries(state.vouchers.filter((v: any) => matches(v, where)).reduce((totals: any, v: any) => ({ ...totals, [v.status]: (totals[v.status] ?? 0) + 1 }), {}))
+          .map(([status, count]) => ({ status, _count: { _all: count }, ...(_sum ? { _sum: { totalAmount: state.vouchers.filter((v: any) => matches(v, where) && v.status === status).reduce((sum: number, v: any) => sum + Number(v.totalAmount), 0) } } : {}) })),
         create: async ({ data }: any) => { const v = { id: `dv-${state.vouchers.length + 1}`, documentNumber: null, revision: 0, status: 'DRAFT', version: 0, currency: 'THB', paidDate: null, createdAt: new Date(), updatedAt: new Date(), ...data }; state.vouchers.push(v); return withRelations(v); },
-        updateMany: async ({ where, data }: any) => { const found = state.vouchers.filter((v: any) => matches(v, where)); found.forEach((v: any) => Object.entries(data).forEach(([k, value]: any) => { v[k] = value?.increment ? v[k] + value.increment : value; })); return { count: found.length }; },
+        updateMany: async ({ where, data }: any) => { const found = state.vouchers.filter((v: any) => matches(v, where)); found.forEach((v: any) => Object.entries(data).forEach(([k, value]: any) => { v[k] = value?.increment ? v[k] + value.increment : value?.constructor?.name === 'DbNull' ? null : value; })); return { count: found.length }; },
         deleteMany: async ({ where }: any) => { const found = state.vouchers.filter((v: any) => matches(v, where)); state.vouchers = state.vouchers.filter((v: any) => !found.includes(v)); state.lines = state.lines.filter((l: any) => !found.some((v: any) => v.id === l.voucherId)); return { count: found.length }; },
       },
       disbursementVoucherLine: {
@@ -330,11 +343,22 @@ describe('disbursement voucher drafts and visibility', () => {
     const numbers = { reserveNumberInTransaction: async (_tx: any, input: any) => { const n = { id: `number-${state.numbers.length}`, documentNumber: `PV-202610-${String(state.numbers.length + 1).padStart(5, '0')}`, status: 'RESERVED', ...input }; state.numbers.push(n); return n; }, commitNumberInTransaction: async () => undefined } as any;
     const repo = new PrismaDisbursementVoucherRepository(prisma, numbers);
     const audit = { log: async (entry: any) => { state.audits.push(entry); }, logOrThrow: async (entry: any) => { state.audits.push(entry); } } as any;
-    const notifier = { execute: async (input: any) => { assert.equal(state.inTransaction, false); state.noticeInputs.push(input); } };
+    const notifier = { finishDocumentWaiting: async () => { assert.equal(state.inTransaction, false); }, execute: async (input: any) => { assert.equal(state.inTransaction, false); state.noticeInputs.push(input); } };
     const notices = new DisbursementVoucherNoticeService(repo, notifier as any);
     return { state, client, repo, audit, notices, notifier, useCase: new (DisbursementVoucherUseCase as any)(repo, expenseRepo, new ListExpensesUseCase(expenseRepo), audit, { credentialEncryptionKey: Buffer.alloc(32, 7) }, undefined, undefined, undefined, undefined, notices) as DisbursementVoucherUseCase };
   }
   const refusal = (code: string, message: string) => (error: any) => error.getResponse?.().code === code && error.getResponse().message === message;
+
+  it('expense reviewer candidates use effective confirm rights and branch scope and exclude the sender', async () => {
+    const h = harness();
+    for (const member of h.state.members) if (member.roles[0].role.permissions.length) member.roles[0].role.permissions = [{ permission: { key: 'expense.confirm' } }];
+    const disabled = structuredClone(h.state.members[1]); disabled.userId = 'disabled'; disabled.status = 'DISABLED'; h.state.members.push(disabled);
+    const request = new MarkExpenseReadyUseCase({ findById: async () => source('a') } as any, h.repo);
+    const candidates = await request.reviewers(context({ permissions: ['expense.review'] }), 'a');
+    assert.deepEqual(candidates.map(person => person.userId), ['someone']);
+    await assert.rejects(() => request.execute(context({ permissions: ['expense.review'] }), 'a', 'other-branch'), /คนนี้ยืนยันรายจ่ายของสาขานี้ไม่ได้ เลือกคนอื่น/);
+    await assert.rejects(() => request.execute(context({ permissions: ['expense.review'] }), 'a', 'no-right'), /คนนี้ยืนยันรายจ่ายของสาขานี้ไม่ได้ เลือกคนอื่น/);
+  });
 
   it('reads each line withholding certificate state in one company-scoped query without a certificate permission', async () => {
     const ids = ['none', 'pending', 'system', 'external', 'cancelled', 'missing', 'voided'];
@@ -432,7 +456,12 @@ describe('disbursement voucher drafts and visibility', () => {
     for (const action of ['return', 'withdraw', 'cancel', 'pay'] as const) {
       for (const actor of ['actor-1', 'someone']) {
         const h = harness(), draft = await h.useCase.create(context(), body());
-        await h.useCase.submit(context(), draft.id, command(0));
+        await h.useCase.submit(context({ userId: action === 'withdraw' || action === 'cancel' ? actor : 'actor-1' }), draft.id, command(0));
+        if (action === 'return' && actor === 'actor-1') {
+          await assert.rejects(() => h.useCase.return(approvalContext(actor), draft.id, { ...command(1), reason: 'ตรวจใหม่' }), ForbiddenException);
+          assert.equal(h.state.noticeInputs.length, 0);
+          continue;
+        }
         let version = 1;
         if (action === 'pay') { await h.useCase.approve(approvalContext(), draft.id, command(1)); version++; h.state.noticeInputs = []; }
         const input = { ...command(version), ...(action !== 'pay' ? { reason: 'ตรวจใหม่' } : {}) };
@@ -441,9 +470,9 @@ describe('disbursement voucher drafts and visibility', () => {
         assert.equal(h.state.noticeInputs.length, actor === 'actor-1' ? 0 : 1, action);
         if (actor !== 'actor-1') {
           const notice = h.state.noticeInputs[0];
-          assert.deepEqual(notice.recipientUserIds, ['actor-1']); assert.equal(notice.severity, 'info');
+          assert.deepEqual(notice.recipientUserIds, ['actor-1']); assert.equal(notice.severity, action === 'return' || action === 'withdraw' ? 'action' : 'info');
           assert.equal(notice.periodKey, action === 'pay' || action === 'cancel' ? draft.id : '1');
-          if (action === 'return') assert.equal(notice.body, 'สมชาย ตีกลับให้แก้ไข เหตุผล: ตรวจใหม่ แก้แล้วส่งใหม่ได้ด้วยเลขที่เดิม');
+          if (action === 'return') assert.equal(notice.body, 'สมชาย ส่งกลับให้แก้ เหตุผล: ตรวจใหม่ แก้แล้วส่งใหม่ได้ด้วยเลขที่เดิม');
           if (action === 'withdraw') assert.equal(notice.body, 'สมชาย นำใบกลับไปแก้ เหตุผล: ตรวจใหม่ แก้แล้วส่งใหม่ได้ด้วยเลขที่เดิม');
           if (action === 'cancel') assert.equal(notice.body, 'สมชาย ยกเลิกใบนี้ เหตุผล: ตรวจใหม่ รายจ่ายในใบกลับไปเป็นยังไม่จ่าย');
           if (action === 'pay') assert.match(notice.body, /^สมชาย บันทึกว่าจ่ายให้ ร้าน ก ยอด 10.10 บาท เมื่อ .+ ใบนี้เป็นใบสำคัญจ่ายแล้ว$/);
@@ -457,11 +486,11 @@ describe('disbursement voucher drafts and visibility', () => {
   it('does not notify an inactive preparer on return, withdraw, cancellation or payment', async () => {
     for (const action of ['return', 'withdraw', 'cancel', 'pay'] as const) {
       const h = harness(), draft = await h.useCase.create(context(), body());
-      await h.useCase.submit(context(), draft.id, command(0));
+      await h.useCase.submit(context({ userId: action !== 'pay' ? 'someone' : 'actor-1' }), draft.id, command(0));
       let version = 1;
       if (action === 'pay') { await h.useCase.approve(approvalContext(), draft.id, command(1)); version++; h.state.noticeInputs = []; }
       h.state.members.find((m: any) => m.userId === 'actor-1').status = 'DISABLED';
-      await h.useCase[action](action === 'pay' ? payer({ userId: 'someone' }) : approvalContext(), draft.id,
+      await h.useCase[action](action === 'pay' ? payer({ userId: 'someone' }) : approvalContext(action === 'return' ? 'another-approver' : 'someone'), draft.id,
         { ...command(version), ...(action !== 'pay' ? { reason: 'ตรวจใหม่' } : {}) });
       assert.equal(h.state.noticeInputs.length, 0, action);
     }
@@ -582,11 +611,11 @@ describe('disbursement voucher drafts and visibility', () => {
 
   it('describes earlier partial payments truthfully on a pre-payment cancel and omits an absent withdrawal reason', async () => {
     const h = harness([source('a', { outstandingAmount: '94.0000', paidAmount: '10.0000' })]), draft = await h.useCase.create(context(), body());
-    await h.useCase.submit(context(), draft.id, command(0));
+    await h.useCase.submit(context({ userId: 'someone' }), draft.id, command(0));
     await h.useCase.cancel(approvalContext(), draft.id, { ...command(1), reason: 'ไม่ใช้ใบนี้' });
     assert.equal(h.state.noticeInputs[0].body, 'สมชาย ยกเลิกใบนี้ เหตุผล: ไม่ใช้ใบนี้ การจ่ายที่บันทึกไว้ก่อนหน้านี้ยังอยู่');
     const other = harness(), second = await other.useCase.create(context(), body());
-    await other.useCase.submit(context(), second.id, command(0));
+    await other.useCase.submit(context({ userId: 'someone' }), second.id, command(0));
     await other.useCase.withdraw(approvalContext(), second.id, command(1));
     assert.equal(other.state.noticeInputs[0].body, 'สมชาย นำใบกลับไปแก้ แก้แล้วส่งใหม่ได้ด้วยเลขที่เดิม');
   });
@@ -597,7 +626,7 @@ describe('disbursement voucher drafts and visibility', () => {
     for (const error of [{ code: 'P2034' }, { code: 'P2028' }, { code: '55P03' }]) {
       const transaction = h.client.$transaction;
       h.client.$transaction = async () => { throw error; };
-      await assert.rejects(() => h.useCase.remind(context(), draft.id, { ...command(1), approverUserId: 'someone' }), refusal('disbursement_changed_retry', 'มีการทำรายการกับใบนี้หรือรายจ่ายในใบพร้อมกัน ระบบยังไม่ได้บันทึกสิ่งที่คุณเพิ่งทำ กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง'));
+      await assert.rejects(() => h.useCase.remind(context(), draft.id, { ...command(1), approverUserId: 'someone' }), refusal('disbursement_changed_retry', 'มีการทำรายการกับใบนี้หรือรายจ่ายในใบพร้อมกัน ระบบยังไม่ได้บันทึกสิ่งที่คุณเพิ่งทำ เปิดหน้านี้ใหม่แล้วลองอีกครั้ง'));
       h.client.$transaction = transaction;
       assert.equal(h.state.noticeInputs.length, 0); assert.equal(h.state.vouchers[0].version, 1);
     }
@@ -611,9 +640,9 @@ describe('disbursement voucher drafts and visibility', () => {
     assert.equal(Reflect.getMetadata(PATH_METADATA, DisbursementVoucherController.prototype.remind), ':id/remind');
     assert.equal(Reflect.getMetadata(METHOD_METADATA, DisbursementVoucherController.prototype.remind), RequestMethod.POST);
     await assert.rejects(() => remind(approvalContext(), input), refusal('disbursement_permission_denied', 'คุณยังไม่มีสิทธิ์ทำรายการนี้ ให้ผู้ดูแลร้านเพิ่มสิทธิ์ก่อนแล้วลองอีกครั้ง'));
-    await assert.rejects(() => remind(context(), input), refusal('disbursement_status_changed', 'สถานะของใบนี้เปลี่ยนไปแล้ว กรุณาเปิดใหม่เพื่อดูสถานะล่าสุด'));
+    await assert.rejects(() => remind(context(), input), refusal('disbursement_status_changed', 'สถานะของใบนี้เปลี่ยนไปแล้ว เปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด'));
     await h.useCase.submit(context(), draft.id, command(0));
-    for (const approverUserId of ['other-branch', 'no-right', 'missing']) await assert.rejects(() => remind(context(), { ...command(1), approverUserId }), refusal('disbursement_approver_ineligible', 'ผู้อนุมัติที่เลือกไม่มีสิทธิ์อนุมัติใบของสาขานี้แล้ว กรุณาเลือกใหม่'));
+    for (const approverUserId of ['other-branch', 'no-right', 'missing']) await assert.rejects(() => remind(context(), { ...command(1), approverUserId }), refusal('disbursement_approver_ineligible', 'ผู้อนุมัติที่เลือกไม่มีสิทธิ์อนุมัติใบของสาขานี้แล้ว เลือกใหม่'));
     await assert.rejects(() => remind(context({ authProvider: 'line' }), { ...command(1), approverUserId: 'someone' }), (e: any) => e.getResponse().code === 'disbursement_line_session_denied');
     await assert.rejects(() => remind(context({ scopes: { branchIds: ['branch-2'] } }), { ...command(1), approverUserId: 'someone' }), (e: any) => e.getResponse().code === 'disbursement_not_found');
     h.state.expenses[0].createdByUserId = 'someone';
@@ -621,18 +650,56 @@ describe('disbursement voucher drafts and visibility', () => {
     await assert.rejects(() => remind(context({ companyId: 'elsewhere' }), { ...command(1), approverUserId: 'someone' }), (e: any) => e.getResponse().code === 'disbursement_not_found');
   });
 
+  it('prefills only a visible same-payee account, ranks paid before newer drafts and never returns secrets', async () => {
+    const h = harness();
+    const key = (await new ReadDisbursementVoucherSourcesUseCase(new PrismaExpenseRepository({ client: h.client } as any), new ListExpensesUseCase(new PrismaExpenseRepository({ client: h.client } as any))).payees(context(), {})).data[0]!.payeeKey;
+    assert.equal(await (h.useCase as any).payeeAccount(context(), key), null);
+    const first = await h.useCase.create(context(), body({ payeeBankName: 'ธนาคาร', payeeAccountName: 'ร้าน ก', payeeAccountNumber: '1234567890' }));
+    h.state.vouchers[0].status = 'PAID';
+    await h.useCase.create(context(), body({ commandId: 'newer', payeeBankName: 'ใหม่', payeeAccountNumber: '5555555555' }));
+    assert.deepEqual(await (h.useCase as any).payeeAccount(context(), key), { bankName: 'ธนาคาร', accountName: 'ร้าน ก', last4: '7890', sourceVoucherId: first.id });
+    assert.equal(await (h.useCase as any).payeeAccount(context({ scopes: { branchIds: ['branch-2'] } }), key), null);
+    assert.equal(await (h.useCase as any).payeeAccount(context({ companyId: 'other' }), key), null);
+    assert.equal(await (h.useCase as any).payeeAccount(context(), 'other-payee'), null);
+    h.state.vouchers[1].status = 'PAID'; h.state.vouchers[1].createdAt = new Date(Date.now() + 1000);
+    assert.equal((await (h.useCase as any).payeeAccount(context(), key)).sourceVoucherId, h.state.vouchers[1].id);
+    h.state.vouchers[0].status = 'DRAFT'; h.state.vouchers[1].status = 'APPROVED';
+    assert.equal((await (h.useCase as any).payeeAccount(context(), key)).sourceVoucherId, h.state.vouchers[1].id);
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, DisbursementVoucherController.prototype.payeeAccount), ['expense.disbursement.prepare']);
+    await assert.rejects(() => (h.useCase as any).payeeAccount(context({ permissions: ['expense.read'] }), key), (e: any) => e.getStatus() === 403);
+  });
+
+  it('copies account ciphertext on create and update, checks source company and payee, and typed number wins', async () => {
+    const h = harness();
+    const first = await h.useCase.create(context(), body({ payeeBankName: 'ธนาคาร', payeeAccountName: 'ร้าน ก', payeeAccountNumber: '1234567890' }));
+    const copied = await h.useCase.create(context(), body({ commandId: 'copy', payeeAccountFromVoucherId: first.id }));
+    assert.equal(h.state.vouchers[1].payeeAccountCiphertext, h.state.vouchers[0].payeeAccountCiphertext);
+    assert.equal(copied.payeeAccountLast4, '7890');
+    await h.useCase.update(context(), copied.id, { ...body({ commandId: 'copy-update', payeeAccountFromVoucherId: first.id }), expectedVersion: 0 });
+    h.state.expenses[1].vendorTaxIdSnapshot = '9999999999999';
+    await assert.rejects(() => h.useCase.create(context(), body({ commandId: 'wrong-payee', lines: [{ expenseId: 'b', amount: '10' }], payeeAccountFromVoucherId: first.id })), (e: any) => e.getStatus() === 409);
+    const combined = await h.useCase.create(context(), body({ commandId: 'confirmed-other-lines', lines: [{ expenseId: 'a', amount: '10' }, { expenseId: 'b', amount: '10' }], payeeConfirmed: true, payeeAccountFromVoucherId: first.id }));
+    assert.equal(combined.payeeAccountLast4, '7890');
+    h.state.expenses.push(source('branch-two', { branchId: 'branch-2' }));
+    await assert.rejects(() => h.useCase.create(context({ scopes: { branchIds: ['branch-2'] } }), body({ commandId: 'wrong-branch', lines: [{ expenseId: 'branch-two', amount: '10' }], payeeAccountFromVoucherId: first.id })), (e: any) => e.getStatus() === 403);
+    h.state.vouchers[0].companyId = 'other';
+    await assert.rejects(() => h.useCase.create(context(), body({ commandId: 'wrong-company', payeeAccountFromVoucherId: first.id })), (e: any) => e.getStatus() === 403);
+    const typed = await h.useCase.create(context(), body({ commandId: 'typed', payeeAccountFromVoucherId: first.id, payeeBankName: 'ใหม่', payeeAccountNumber: '9999999999' }));
+    assert.equal(typed.payeeAccountLast4, '9999');
+  });
+
   it('seals optional payee accounts, validates number and bank, preserves omitted values and clears an empty number', async () => {
     const h = harness();
     for (const number of ['12345', '123456789012345678901', '12345x']) {
-      await assert.rejects(() => h.useCase.create(context(), body({ payeeAccountNumber: number, payeeBankName: 'ธนาคาร' } as any)), refusal('disbursement_account_number_invalid', 'เลขบัญชีผู้รับเงินต้องเป็นตัวเลข 6 ถึง 20 หลัก'));
+      await assert.rejects(() => h.useCase.create(context(), body({ payeeAccountNumber: number, payeeBankName: 'ธนาคาร' } as any)), refusal('disbursement_account_number_invalid', 'เลขบัญชีผู้รับเงินต้องเป็นตัวเลข 6 ถึง 20 หลัก แก้เลขบัญชีแล้วลองอีกครั้ง'));
     }
-    await assert.rejects(() => h.useCase.create(context(), body({ payeeAccountNumber: '1234567890' } as any)), refusal('disbursement_account_bank_required', 'กรุณาระบุธนาคารของบัญชีผู้รับเงิน'));
+    await assert.rejects(() => h.useCase.create(context(), body({ payeeAccountNumber: '1234567890' } as any)), refusal('disbursement_account_bank_required', 'ยังไม่ได้ระบุธนาคารของบัญชีผู้รับเงิน เลือกธนาคารก่อนบันทึก'));
     const draft = await h.useCase.create(context(), body({ payeeBankName: 'ธนาคาร', payeeAccountName: 'ร้าน ก', payeeAccountNumber: '123-456 7890' } as any));
     assert.equal((draft as any).payeeAccountLast4, '7890');
     assert.notEqual(h.state.vouchers[0].payeeAccountCiphertext, '1234567890');
     const saved = await h.useCase.update(context(), draft.id, { ...body({ commandId: 'preserve' }), expectedVersion: 0 });
     assert.equal((saved as any).payeeAccountLast4, '7890');
-    await assert.rejects(() => h.useCase.update(context(), draft.id, { ...body({ commandId: 'empty-bank', payeeBankName: '' }), expectedVersion: 1 }), refusal('disbursement_account_bank_required', 'กรุณาระบุธนาคารของบัญชีผู้รับเงิน'));
+    await assert.rejects(() => h.useCase.update(context(), draft.id, { ...body({ commandId: 'empty-bank', payeeBankName: '' }), expectedVersion: 1 }), refusal('disbursement_account_bank_required', 'ยังไม่ได้ระบุธนาคารของบัญชีผู้รับเงิน เลือกธนาคารก่อนบันทึก'));
     const cleared = await h.useCase.update(context(), draft.id, { ...body({ commandId: 'clear', payeeAccountNumber: '' } as any), expectedVersion: 1 });
     for (const key of ['payeeBankName', 'payeeAccountName', 'payeeAccountLast4', 'payeeAccountCiphertext']) assert.equal(h.state.vouchers[0][key], null);
     assert.equal((cleared as any).payeeAccountLast4, null);
@@ -646,18 +713,18 @@ describe('disbursement voucher drafts and visibility', () => {
     assert.ok(!JSON.stringify(h.state.commands).includes('9988776655'));
   });
 
-  it('reveals only to approvers or payers after a successful audit and keeps the number out of public JSON', async () => {
+  it('reveals to draft editors, approvers or payers after audit and keeps the number out of public JSON', async () => {
     const h = harness();
     const draft = await h.useCase.create(context(), body({ payeeBankName: 'ธนาคาร', payeeAccountNumber: '9988776655' } as any));
     const reveal = (ctx: any) => (h.useCase as any).revealAccount(ctx, draft.id);
-    await assert.rejects(() => reveal(context()), refusal('disbursement_permission_denied', 'คุณยังไม่มีสิทธิ์ทำรายการนี้ ให้ผู้ดูแลร้านเพิ่มสิทธิ์ก่อนแล้วลองอีกครั้ง'));
+    assert.deepEqual(await reveal(context()), { accountNumber: '9988776655' });
     assert.deepEqual(await reveal(approvalContext()), { accountNumber: '9988776655' });
     assert.equal(h.state.audits.at(-1).action, 'expense.disbursement.payee_account.reveal');
     assert.deepEqual(await reveal(payer()), { accountNumber: '9988776655' });
     await assert.rejects(() => reveal({ ...approvalContext(), authProvider: 'line' }), (e: any) => e.getResponse().code === 'disbursement_line_session_denied');
     await assert.rejects(() => reveal({ ...approvalContext(), companyId: 'other-company' }), refusal('disbursement_not_found', 'ไม่พบใบเตรียมจ่ายที่เปิดดูได้ ให้กลับไปหน้ารายการแล้วเลือกใบใหม่'));
     const empty = await h.useCase.create(context(), body({ commandId: 'no-account' }));
-    await assert.rejects(() => (h.useCase as any).revealAccount(approvalContext(), empty.id), refusal('disbursement_account_missing', 'ใบนี้ไม่ได้ระบุบัญชีผู้รับเงิน'));
+    await assert.rejects(() => (h.useCase as any).revealAccount(approvalContext(), empty.id), refusal('disbursement_account_missing', 'ใบนี้ไม่ได้ระบุบัญชีผู้รับเงิน เปิดใบนี้เพื่อตรวจวิธีจ่าย'));
     const submitted = await h.useCase.submit(context(), draft.id, command(0));
     const publicJson = JSON.stringify([await h.useCase.list(context(), {}), await h.useCase.get(context(), draft.id), h.state.revisions, h.state.audits, h.state.commands]);
     assert.ok(!publicJson.includes('9988776655') && !publicJson.includes(h.state.vouchers[0].payeeAccountCiphertext));
@@ -665,6 +732,71 @@ describe('disbursement voucher drafts and visibility', () => {
     h.audit.logOrThrow = async () => { throw new Error('audit failed'); };
     await assert.rejects(() => reveal(approvalContext()), /audit failed/);
     assert.equal(submitted.status, 'PENDING_APPROVAL');
+  });
+
+  it('draft account reveal reuses edit rights; later states require approve/pay unless revealing a readable prefill source', async () => {
+    const h = harness();
+    const draft = await h.useCase.create(context(), body({ payeeBankName: 'ธนาคาร', payeeAccountNumber: '9988776655' }));
+    const reveal = (ctx = context(), purpose?: 'prefill') => h.useCase.revealAccount(ctx, draft.id, purpose);
+    for (const status of ['PENDING_APPROVAL', 'APPROVED', 'PAID', 'CANCELLED']) {
+      h.state.vouchers[0].status = status;
+      await assert.rejects(() => reveal(), (e: any) => e.getStatus() === 403);
+      assert.deepEqual(await reveal(approvalContext()), { accountNumber: '9988776655' });
+      assert.deepEqual(await reveal(payer()), { accountNumber: '9988776655' });
+      assert.deepEqual(await reveal(context(), 'prefill'), { accountNumber: '9988776655' });
+      assert.equal(h.state.audits.at(-1).targetId, draft.id);
+      assert.equal(h.state.audits.at(-1).metadataJson.purpose, 'prefill');
+    }
+    for (const purpose of [undefined, 'prefill'] as const) {
+      h.state.vouchers[0].status = 'DRAFT';
+      for (const ctx of [context({ companyId: 'elsewhere' }), context({ scopes: { branchIds: ['branch-2'] } })]) {
+        await assert.rejects(() => reveal(ctx, purpose), (e: any) => e.getStatus() === 404);
+      }
+      await assert.rejects(() => reveal(context({ permissions: ['expense.read', 'expense.disbursement.read'] }), purpose), (e: any) => e.getStatus() === 403);
+      h.state.vouchers[0].payeeAccountCiphertext = 'invalid-cipher-must-not-be-opened';
+      h.audit.logOrThrow = async () => { throw new Error('audit failed before decrypt'); };
+      await assert.rejects(() => reveal(context(), purpose), /audit failed before decrypt/);
+    }
+  });
+
+  it('freezes the accounting print facts without full account numbers on submission and payment', async () => {
+    const h = harness([source('a', { vendorDocumentNumber: 'INV-W7', vendorAddressSnapshot: '88 ถนนผู้ขาย', vendorBranchCodeSnapshot: '00001' })]);
+    const companyFind = h.client.company.findFirst;
+    h.client.company.findFirst = async (query: any) => ({ ...await companyFind(query), phone: '02-123-4567' });
+    const draft = await h.useCase.create(context(), body({ payeeBankName: 'ธนาคาร', payeeAccountNumber: '9988776655', plannedPayDate: '2026-10-20' }));
+    await h.useCase.submit(context(), draft.id, command(0));
+    const prepared = h.state.revisions[0].snapshotJson;
+    assert.equal(prepared.company.phone, '02-123-4567');
+    assert.equal(prepared.documentDate, h.state.vouchers[0].createdAt.toISOString());
+    assert.equal(prepared.lines[0].vendorDocumentNumber, 'INV-W7'); assert.equal(prepared.lines[0].vendorAddress, '88 ถนนผู้ขาย');
+    assert.equal(prepared.lines[0].vendorBranchCode, '00001');
+    await h.useCase.approve(approvalContext(), draft.id, command(1)); await h.useCase.pay(payer(), draft.id, command(2));
+    const paid = h.state.vouchers[0].paidSnapshotJson;
+    assert.equal(paid.lines[0].vendorDocumentNumber, 'INV-W7'); assert.equal(paid.lines[0].vendorAddress, '88 ถนนผู้ขาย');
+    assert.equal(paid.company.phone, '02-123-4567'); assert.equal(paid.plannedPayDate, '2026-10-20');
+    assert.ok(!JSON.stringify([prepared, paid]).includes('9988776655'));
+  });
+  it('audits full accounts on fresh PDF downloads only for reveal-authorized readers and never rewrites stored paid bytes', async () => {
+    const h = harness(), draft = await h.useCase.create(context(), body({ payeeBankName: 'ธนาคาร', payeeAccountNumber: '9988776655' }));
+    await h.useCase.submit(context(), draft.id, command(0));
+    const frozen = JSON.stringify(h.state.revisions);
+    const reveals = () => h.state.audits.filter((a: any) => a.action === 'expense.disbursement.payee_account.reveal');
+    await h.useCase.documentPdf(context(), draft.id); assert.equal(reveals().length, 0);
+    for (const reader of [approvalContext(), payer()]) await h.useCase.documentPdf(reader, draft.id);
+    assert.equal(reveals().length, 2); assert.equal(reveals()[0].targetId, draft.id);
+    assert.equal(reveals()[0].riskLevel, 'HIGH'); assert.equal(reveals()[0].actorUserId, approvalContext().userId);
+    for (const reader of [context({ companyId: 'elsewhere' }), context({ scopes: { branchIds: ['branch-2'] } })]) {
+      await assert.rejects(() => h.useCase.documentPdf(reader, draft.id), (e: any) => e.getStatus?.() === 404);
+    }
+    assert.equal(reveals().length, 2); assert.equal(JSON.stringify(h.state.revisions), frozen);
+    Object.assign(h.state.vouchers[0], { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: 'ยอดผิด' });
+    await h.useCase.documentPdf(approvalContext(), draft.id); assert.equal(reveals().length, 3);
+    h.audit.logOrThrow = async () => { throw new Error('audit failed'); };
+    await assert.rejects(() => h.useCase.documentPdf(approvalContext(), draft.id), /audit failed/);
+    Object.assign(h.state.vouchers[0], { status: 'PAID', pdfAttachmentId: 'stored' });
+    (h.useCase as any).files = { withSignatures: async (_company: string, snapshot: any) => snapshot, ensure: async () => ({ data: Buffer.from('%PDF stored masked'), fileName: 'PV.pdf' }) };
+    assert.equal((await h.useCase.documentPdf(approvalContext(), draft.id)).data.toString(), '%PDF stored masked');
+    assert.ok(!JSON.stringify([h.state.audits, h.state.revisions]).includes('9988776655'));
   });
 
   it('prints submitted revisions only and hides PDFs outside the document read scope', async () => {
@@ -690,7 +822,7 @@ describe('disbursement voucher drafts and visibility', () => {
       Object.assign(voucher, { status: 'CANCELLED', cancelledAfterPaid: paid, cancelledAt: new Date(), cancelReason: 'ยอดผิด', pdfAttachmentId: paid ? 'original' : null });
       if (paid) h.state.payments[0].status = 'VOIDED';
       const snapshot = structuredClone(paid ? voucher.paidSnapshotJson : h.state.revisions[0].snapshotJson);
-      (h.useCase as any).files = { ensure: async () => assert.fail('a cancelled download must render a marked copy') };
+      (h.useCase as any).files = { withSignatures: async (_company: string, snapshot: any) => snapshot, ensure: async () => assert.fail('a cancelled download must render a marked copy') };
       const pdf = await h.useCase.documentPdf(context(), v.id);
       assert.equal(pdf.data.subarray(0, 4).toString(), '%PDF');
       assert.equal(voucher.pdfAttachmentId, paid ? 'original' : null);
@@ -738,7 +870,7 @@ describe('disbursement voucher drafts and visibility', () => {
     const h = harness(), draft = await h.useCase.create(context(), body());
     await h.useCase.submit(context({ permissions: ['expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.read'] }), draft.id, { ...command(0), approveNow: true });
     let fail = true, calls = 0;
-    (h.useCase as any).files = { ensure: async (_company: string, id: string) => {
+    (h.useCase as any).files = { withSignatures: async (_company: string, snapshot: any) => snapshot, ensure: async (_company: string, id: string) => {
       calls++; const v = h.state.vouchers.find((v: any) => v.id === id);
       assert.ok(v.status === 'PAID' || v.status === 'CANCELLED' && v.cancelledAfterPaid); assert.equal(h.state.commands.at(-1).voucherId, id);
       if (fail) throw new Error('storage failed');
@@ -746,7 +878,7 @@ describe('disbursement voucher drafts and visibility', () => {
     } };
     const paid = await h.useCase.pay(payer(), draft.id, command(1));
     assert.equal(paid.status, 'PAID'); assert.equal(paid.documentFileReady, false);
-    await assert.rejects(() => (h.useCase as any).documentPdf(context(), draft.id), refusal('disbursement_file_unavailable', 'ยังจัดทำไฟล์ใบสำคัญจ่ายไม่สำเร็จ การจ่ายและเลขใบยังอยู่ กรุณาลองดาวน์โหลดอีกครั้ง'));
+    await assert.rejects(() => (h.useCase as any).documentPdf(context(), draft.id), refusal('disbursement_file_unavailable', 'ยังจัดทำไฟล์ใบสำคัญจ่ายไม่สำเร็จ การจ่ายและเลขใบยังอยู่ ลองดาวน์โหลดอีกครั้ง'));
     const frozen = JSON.stringify(h.state.vouchers[0].paidSnapshotJson);
     fail = false; h.state.expenses[0].vendorNameSnapshot = 'ชื่อใหม่';
     const pdf = await (h.useCase as any).documentPdf(context(), draft.id);
@@ -847,14 +979,14 @@ describe('disbursement voucher drafts and visibility', () => {
     await assert.rejects(() => h.useCase.create(full, body({ lines: [] })), refusal('disbursement_lines_required', 'ยังไม่ได้เลือกรายจ่าย ให้เลือกอย่างน้อย 1 รายการก่อนบันทึก'));
     await assert.rejects(() => h.useCase.create(full, body({ lines: Array.from({ length: 21 }, () => ({ expenseId: 'a', amount: '1' })) })), refusal('disbursement_too_many_lines', 'ใบเตรียมจ่ายหนึ่งใบรวมได้ไม่เกิน 20 รายการ แบ่งรายการที่เหลือไปทำอีกใบ'));
     await assert.rejects(() => h.useCase.create(full, body({ lines: [{ expenseId: 'a', amount: '1' }, { expenseId: 'a', amount: '1' }] })), refusal('disbursement_duplicate_expense', 'เลือกรายจ่ายรายการเดิมซ้ำในใบเดียวกันไม่ได้ ให้เอารายการที่ซ้ำออกก่อน'));
-    await assert.rejects(() => h.useCase.create(full, body({ lines: [{ expenseId: 'a', amount: '1' }, { expenseId: 'b', amount: '1' }] })), refusal('disbursement_branch_mismatch', 'รายการที่เลือกอยู่คนละสาขา หนึ่งใบรวมได้เฉพาะรายการของสาขาเดียว'));
+    await assert.rejects(() => h.useCase.create(full, body({ lines: [{ expenseId: 'a', amount: '1' }, { expenseId: 'b', amount: '1' }] })), refusal('disbursement_branch_mismatch', 'รายการที่เลือกอยู่คนละสาขา หนึ่งใบรวมได้เฉพาะรายการของสาขาเดียว ให้เลือกรายการจากสาขาเดียวกัน'));
     assert.equal(h.state.vouchers.length, 0);
   });
 
   it('refuses zero, negative, excessive, fractional, malformed and overflow amounts with the expense and outstanding', async () => {
     for (const amount of ['0', '-1', '104.01', '1.001', 'NaN', '1e2', '100000000000000', 10]) {
       const h = harness();
-      await assert.rejects(() => h.useCase.create(context(), body({ lines: [{ expenseId: 'a', amount }] })), refusal('disbursement_amount_invalid', 'ยอดของรายการ EXP-a ต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย 104.0000'));
+      await assert.rejects(() => h.useCase.create(context(), body({ lines: [{ expenseId: 'a', amount }] })), refusal('disbursement_amount_invalid', 'ยอดของรายการ EXP-a ต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย 104.0000 แก้ยอดแล้วบันทึกอีกครั้ง'));
       assert.equal(h.state.vouchers.length, 0);
     }
   });
@@ -862,8 +994,8 @@ describe('disbursement voucher drafts and visibility', () => {
   it('refuses each shared selection blocker, naming the expense and retaining the B3 sentence', async () => {
     const cases: any[] = [
       [{ reservedByDisbursementVoucherId: 'another' }, 'reserved', 'อยู่ในใบเตรียมจ่ายอีกใบที่รออนุมัติ'],
-      [{ sourceReimbursementRequestId: 'claim' }, 'claim', 'รายการนี้อยู่ในคำขอเบิก ให้จ่ายผ่านคำขอเบิก'],
-      [{ substituteReceiptEvidences: [{ fundingSource: 'PERSONAL_ADVANCE' }] }, 'personal_advance', 'พนักงานจ่ายร้านไปแล้ว ให้คืนเงินพนักงานผ่านคำขอเบิก'],
+      [{ sourceReimbursementRequestId: 'claim' }, 'claim', 'รายการนี้อยู่ในใบเบิก ให้จ่ายผ่านใบเบิก'],
+      [{ substituteReceiptEvidences: [{ fundingSource: 'PERSONAL_ADVANCE' }] }, 'personal_advance', 'พนักงานจ่ายร้านไปแล้ว ให้คืนเงินพนักงานผ่านใบเบิก'],
       [{ branchId: null }, 'missing_branch', 'รายการนี้ยังไม่มีสาขา เปิดรายจ่ายเพื่อระบุสาขาก่อน'],
       [{ currency: 'USD' }, 'foreign_currency', 'รายการนี้ไม่ใช่เงินบาท ยังรวมในใบเตรียมจ่ายไม่ได้'],
       [{ status: 'DRAFT' }, 'not_confirmed', 'รายการนี้ยังไม่ยืนยัน เปิดรายจ่ายและยืนยันก่อน'],
@@ -891,7 +1023,7 @@ describe('disbursement voucher drafts and visibility', () => {
     const update = body({ commandId: 'edit', expectedVersion: 0, note: 'แก้แล้ว' });
     const changed = await h.useCase.update(context(), first.id, update); assert.equal(changed.version, 1);
     assert.deepEqual(await h.useCase.update(context(), first.id, update), changed);
-    await assert.rejects(() => h.useCase.update(context(), first.id, { ...update, commandId: 'stale' }), refusal('disbursement_version_conflict', 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาเปิดใหม่ก่อนบันทึก'));
+    await assert.rejects(() => h.useCase.update(context(), first.id, { ...update, commandId: 'stale' }), refusal('disbursement_version_conflict', 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว เปิดหน้านี้ใหม่ก่อนบันทึก'));
   });
 
   it('rechecks original source visibility before replaying or reporting a command conflict', async () => {
@@ -914,7 +1046,35 @@ describe('disbursement voucher drafts and visibility', () => {
     }
     const controller = new DisbursementVoucherController({} as any, { list: async (actual: any, query: any) => { assert.equal(actual, ctx); return query; } } as any);
     assert.deepEqual(await controller.list(ctx, { status: 'DRAFT', branchId: 'branch-1', page: '2', pageSize: '5' }),
-      { status: 'DRAFT', branchId: 'branch-1', page: 2, pageSize: 5 });
+      { status: 'DRAFT', branchId: 'branch-1', page: 2, pageSize: 5, order: 'newest' });
+  });
+
+  it('refuses deletion of a draft with a prior revision even without a number', async () => {
+    const h = harness(); const draft = await h.useCase.create(context(), body());
+    h.state.vouchers[0].revision = 1;
+    assert.equal((await h.useCase.get(context(), draft.id)).actions.delete, false);
+    await assert.rejects(() => h.useCase.delete(context(), draft.id), (e: any) => e.getResponse?.().code === 'disbursement_status_changed');
+    assert.equal(h.state.vouchers.length, 1);
+  });
+
+  it('deletes a never-sent draft and releases only its own expenses atomically', async () => {
+    const h = harness([source('a'), source('b')]); const draft = await h.useCase.create(context(), body());
+    h.state.expenses[0].reservedByDisbursementVoucherId = draft.id;
+    h.state.expenses[1].reservedByDisbursementVoucherId = 'another';
+    await h.useCase.delete(context(), draft.id);
+    assert.equal(h.state.vouchers.length, 0);
+    assert.equal(h.state.expenses[0].reservedByDisbursementVoucherId, null);
+    assert.equal(h.state.expenses[1].reservedByDisbursementVoucherId, 'another');
+  });
+
+  it('rolls draft deletion and expense release back when its audit fails', async () => {
+    const h = harness(); const draft = await h.useCase.create(context(), body());
+    h.state.expenses[0].reservedByDisbursementVoucherId = draft.id;
+    h.audit.log = async () => { throw new Error('audit failed'); };
+    await assert.rejects(() => h.useCase.delete(context(), draft.id), /audit failed/);
+    assert.equal(h.state.vouchers.length, 1);
+    assert.equal(h.state.lines.length, 1);
+    assert.equal(h.state.expenses[0].reservedByDisbursementVoucherId, draft.id);
   });
 
   it('lets another preparer in scope edit/delete, preserves the author, and refuses numbered or non-draft deletion', async () => {
@@ -931,6 +1091,25 @@ describe('disbursement voucher drafts and visibility', () => {
     assert.equal((await h.useCase.create(context(), body())).id, draft.id); assert.equal(h.state.vouchers.length, 0, 'a deleted draft command must not create a replacement');
   });
 
+  it('returns vendor invoice numbers only through the scoped voucher detail read', async () => {
+    const h = harness([source('a', { vendorDocumentNumber: 'INV-W7' }), source('b', { vendorDocumentNumber: null })]);
+    const draft = await h.useCase.create(context(), body({ lines: [{ expenseId: 'a', amount: '1' }, { expenseId: 'b', amount: '1' }] }));
+    let selected = false;
+    const findFirst = h.client.disbursementVoucher.findFirst;
+    h.client.disbursementVoucher.findFirst = async (query: any) => {
+      selected = query.include?.lines?.include?.expense?.select?.vendorDocumentNumber === true;
+      return findFirst(query);
+    };
+    const detail = await h.useCase.get(context(), draft.id);
+    assert.deepEqual(detail.lines.map((line: any) => line.vendorInvoiceNumber), ['INV-W7', null]);
+    assert.equal(selected, true, 'the database projection includes the vendor document number');
+    await assert.rejects(() => h.useCase.get(context({ companyId: 'other-company' }), draft.id), (e: any) => e.getStatus?.() === 404);
+    h.state.expenses[1].branchId = 'branch-2';
+    await assert.rejects(() => h.useCase.get(context(), draft.id), (e: any) => e.getStatus?.() === 404);
+    h.state.expenses[1].branchId = 'branch-1'; h.state.expenses[1].createdByUserId = 'someone';
+    await assert.rejects(() => h.useCase.get(context({ permissions: ['expense.disbursement.read', 'expense.read_own'] }), draft.id), (e: any) => e.getStatus?.() === 404);
+  });
+
   it('freezes picker descriptions at submit, carries them through payment and leaves old snapshot lines null', async () => {
     const h = harness([source('a', { lines: [{ description: '  ค่าพิมพ์นามบัตร  ' }] })]);
     const draft = await h.useCase.create(context(), body());
@@ -945,13 +1124,38 @@ describe('disbursement voucher drafts and visibility', () => {
     delete h.state.vouchers[0].paidSnapshotJson.lines[0].description;
     assert.equal((await h.useCase.get(payer(), draft.id)).lines[0].description, null);
   });
+  it('VOUCH-LIST2 orders all statuses by paid, planned or created day with stable ties and server paging in both directions', async () => {
+    const h = harness();
+    const dates = [
+      { status: 'PAID', paidDate: new Date('2026-10-12'), plannedPayDate: new Date('2026-12-01') },
+      { status: 'APPROVED', plannedPayDate: new Date('2026-10-14') },
+      { status: 'DRAFT', plannedPayDate: null },
+      { status: 'PENDING_APPROVAL', plannedPayDate: new Date('2026-10-14') },
+      { status: 'CANCELLED', plannedPayDate: new Date('2026-10-14') },
+    ];
+    for (let i = 0; i < dates.length; i++) {
+      await h.useCase.create(context(), body({ commandId: `sort-${i}` }));
+      Object.assign(h.state.vouchers[i], { createdAt: new Date(i === 4 ? '2026-10-11T02:00:00Z' : '2026-10-11T01:00:00Z'), ...dates[i] });
+    }
+    const expected = [4, 3, 1, 0, 2].map(i => h.state.vouchers[i].id);
+    for (const order of [undefined, 'newest', 'oldest'] as const) {
+      const pages = await Promise.all([1, 2, 3].map(page => h.useCase.list(context(), { page, pageSize: 2, order })));
+      assert.deepEqual(pages.flatMap(page => page.data.map(v => v.id)), order === 'oldest' ? [...expected].reverse() : expected);
+      assert.deepEqual(pages[0].counts, pages[2].counts); assert.deepEqual(pages[0].sums, pages[2].sums); assert.equal(pages[0].total, 5);
+    }
+    await assert.rejects(h.useCase.list(context(), { order: 'DESC' } as any), BadRequestException);
+    assert.deepEqual((await h.useCase.list(context(), { status: 'DRAFT', order: 'oldest' })).data.map(v => v.id), [expected[4]]);
+  });
+
   it('returns effective cancelled payment amounts with one scoped aggregate for the visible list page', async () => {
     const h = harness([source('a', { outstandingAmount: '2910', netPayableAmount: '2910' }), source('b', { outstandingAmount: '19400', netPayableAmount: '19400' })]);
     const docs: { id: string }[] = [];
     for (const commandId of ['cancelled', 'same', 'zero', 'paid']) docs.push(await h.useCase.create(context(), body({ commandId, lines: [{ expenseId: 'a', amount: '2910' }, { expenseId: 'b', amount: '19400' }] })));
     h.state.vouchers.forEach((v: any, i: number) => Object.assign(v, { status: i === 3 ? 'PAID' : 'CANCELLED', cancelledAfterPaid: i !== 3 }));
     let queries = 0;
-    h.client.$queryRaw = async (parts: TemplateStringsArray, ...values: any[]) => {
+    const queryRaw = h.client.$queryRaw;
+    h.client.$queryRaw = async (parts: any, ...values: any[]) => {
+      if (parts.sql) return queryRaw(parts, ...values);
       queries++; const sql = parts.join('?');
       assert.match(sql, /SUM\(l\."amount"\)/); assert.match(sql, /p\."status" = 'RECORDED'/);
       assert.match(sql, /p\."companyId" = l\."companyId"/); assert.match(sql, /p\."expenseId" = l\."expenseId"/);
@@ -959,9 +1163,9 @@ describe('disbursement voucher drafts and visibility', () => {
       return values[1].values.map((voucherId: string) => ({ voucherId, amount: voucherId === docs[0].id ? '19400.0000' : voucherId === docs[1].id ? '22310.0000' : '0.0000' }));
     };
     const first = await h.useCase.list(context(), { pageSize: 2 });
-    assert.deepEqual(first.data.map((r: any) => r.amountInEffect), ['19400.0000', null]); assert.equal(queries, 1);
+    assert.deepEqual(first.data.map((r: any) => r.amountInEffect), [null, '0.0000']); assert.equal(queries, 1);
     const second = await h.useCase.list(context(), { pageSize: 2, page: 2 });
-    assert.deepEqual(second.data.map((r: any) => r.amountInEffect), ['0.0000', null]); assert.equal(queries, 2);
+    assert.deepEqual(second.data.map((r: any) => r.amountInEffect), [null, '19400.0000']); assert.equal(queries, 2);
     assert.equal(first.total, 4); assert.deepEqual(first.counts, second.counts);
     assert.equal((await h.useCase.list(context({ companyId: 'other' }), {})).total, 0); assert.equal(queries, 2);
   });
@@ -979,6 +1183,30 @@ describe('disbursement voucher drafts and visibility', () => {
     assert.equal((await h.useCase.get(context(), draft.id)).lines[0].description, 'แก้แล้วรอส่งใหม่');
     await h.useCase.submit(context(), draft.id, command(2));
     assert.equal((await h.useCase.get(context(), draft.id)).lines[0].description, h.state.revisions[1].snapshotJson.lines[0].description);
+  });
+
+  it('VOUCH-LIST returns scoped status sums, header creation date and authoritative delete capability', async () => {
+    const h = harness([source('a'), source('b', { branchId: 'branch-2' })]);
+    const full = context({ scopes: {} });
+    for (const [commandId, status, documentNumber, revision, amount] of [
+      ['plain', 'DRAFT', null, 0, '10.10'], ['numbered', 'DRAFT', 'PV-1', 0, '20.20'],
+      ['revised', 'DRAFT', null, 1, '30.30'], ['pending', 'PENDING_APPROVAL', 'PV-2', 1, '40.40'],
+      ['approved', 'APPROVED', 'PV-3', 1, '50.50'],
+    ] as const) {
+      const draft = await h.useCase.create(full, body({ commandId, payeeName: 'ร้านหาเจอ', lines: [{ expenseId: 'a', amount }] }));
+      Object.assign(h.state.vouchers.find((v: any) => v.id === draft.id), { status, documentNumber, revision, createdAt: new Date('2026-10-15T01:00:00Z') });
+    }
+    await h.useCase.create(full, body({ commandId: 'elsewhere', payeeName: 'ร้านหาเจอ', lines: [{ expenseId: 'b', amount: '90.00' }] }));
+    await h.useCase.create(full, body({ commandId: 'other-payee', payeeName: 'ร้านอื่น', lines: [{ expenseId: 'a', amount: '80.00' }] }));
+    const page = await h.useCase.list(context(), { q: 'หาเจอ', pageSize: 2 });
+    assert.deepEqual(page.sums, { DRAFT: '60.60', PENDING_APPROVAL: '40.40', APPROVED: '50.50', PAID: '0.00', CANCELLED: '0.00' });
+    const all = await h.useCase.list(context(), { q: 'หาเจอ' });
+    assert.deepEqual(all.data.map(row => [row.id, row.canDelete]).sort(), [['dv-1', true], ['dv-2', false], ['dv-3', false], ['dv-4', false], ['dv-5', false]]);
+    assert.ok(all.data.every(row => row.createdAt === '2026-10-15T01:00:00.000Z'));
+    const readOnly = await h.useCase.list(context({ permissions: ['expense.disbursement.read', 'expense.read'] }), { q: 'หาเจอ' });
+    assert.ok(readOnly.data.every(row => row.canDelete === false));
+    assert.deepEqual((await h.useCase.list(context(), { q: 'หาเจอ', status: 'APPROVED' })).sums, page.sums);
+    assert.deepEqual((await h.useCase.list(context({ companyId: 'other' }), {})).sums, { DRAFT: '0.00', PENDING_APPROVAL: '0.00', APPROVED: '0.00', PAID: '0.00', CANCELLED: '0.00' });
   });
 
   it('searches every list page by trimmed Thai payee or case-insensitive number and shares q with status counts', async () => {
@@ -1007,7 +1235,7 @@ describe('disbursement voucher drafts and visibility', () => {
     const own = await h.useCase.create(full, body({ plannedPayDate: '2026-11-02' }));
     const mixed = await h.useCase.create(full, body({ commandId: 'mixed', lines: [{ expenseId: 'a', amount: '1' }, { expenseId: 'b', amount: '1' }], plannedPayDate: '2026-11-01' }));
     const branch = await h.useCase.create(full, body({ commandId: 'branch', lines: [{ expenseId: 'c', amount: '1' }] }));
-    const all = await h.useCase.list(full, {}); assert.deepEqual(all.data.map((v: any) => v.id), [mixed.id, own.id, branch.id]); assert.equal(all.counts.DRAFT, 3); assert.equal(all.total, 3);
+    const all = await h.useCase.list(full, {}); assert.deepEqual(all.data.map((v: any) => v.id), [own.id, mixed.id, branch.id]); assert.equal(all.counts.DRAFT, 3); assert.equal(all.total, 3);
     const scoped = await h.useCase.list(context(), {}); assert.equal(scoped.total, 2); assert.equal(scoped.counts.DRAFT, 2);
     const ownContext = context({ permissions: ['expense.disbursement.read', 'expense.read_own'] });
     const ownList = await h.useCase.list(ownContext, {}); assert.deepEqual(ownList.data.map((v: any) => v.id), [own.id]); assert.equal(ownList.counts.DRAFT, 1);
@@ -1065,6 +1293,104 @@ describe('disbursement voucher drafts and visibility', () => {
   const approvalContext = (userId = 'someone') => context({ userId, permissions: ['expense.disbursement.approve', 'expense.disbursement.read', 'expense.read'] });
   const command = (expectedVersion: number, patch: any = {}) => ({ commandId: `command-${expectedVersion}`, expectedVersion, ...patch });
 
+  it('keeps both inactive authors named and refuses return while leaving approval available', async () => {
+    const h = harness(), draft = await h.useCase.create(context(), body());
+    await h.useCase.submit(context({ userId: 'someone' }), draft.id, command(0));
+    h.state.members.find((m: any) => m.userId === 'actor-1').status = 'DISABLED';
+    h.state.members.find((m: any) => m.userId === 'someone').status = 'SUSPENDED';
+    for (const roles of [['MANAGER'], ['OWNER']]) {
+      const caller = approvalContext('another-owner'); caller.roles = roles;
+      const detail = await h.useCase.get(caller, draft.id);
+      assert.equal(detail.preparerName, 'สมใจ');
+      assert.equal(detail.submittedByName, 'สมชาย');
+      assert.equal(detail.preparerActive, false);
+      assert.equal(detail.senderActive, false);
+      assert.equal(detail.actions.return, false);
+      assert.equal(detail.actions.approve, true);
+      await assert.rejects(() => h.useCase.return(caller, draft.id, { ...command(1), reason: 'ตรวจใหม่' }),
+        refusal('disbursement_permission_denied', 'ให้เจ้าของกิจการกลับไปแก้หรือยกเลิกใบนี้'));
+    }
+  });
+
+  it('allows only an owner to recover a document when both preparer and sender are inactive', async () => {
+    for (const state of ['PENDING_APPROVAL', 'APPROVED', 'RETURNED']) for (const authorActive of [true, false]) for (const role of ['OWNER', 'MANAGER']) for (const action of ['withdraw', 'cancel'] as const) {
+      const h = harness(), draft = await h.useCase.create(context(), body());
+      await h.useCase.submit(context(), draft.id, command(0));
+      let version = 1;
+      if (state === 'APPROVED') { await h.useCase.approve(approvalContext(), draft.id, command(1)); version++; }
+      if (state === 'RETURNED') { await h.useCase.return(approvalContext(), draft.id, { ...command(1), reason: 'ตรวจใหม่' }); version++; }
+      if (!authorActive) h.state.members.find((m: any) => m.userId === 'actor-1').status = 'DISABLED';
+      const caller = context({ userId: 'someone', roles: [role], permissions: ['expense.read', 'expense.disbursement.read', 'expense.disbursement.prepare', 'expense.disbursement.approve'] });
+      const allowed = role === 'OWNER' && !authorActive && (action === 'cancel' || state !== 'RETURNED');
+      const detail = await h.useCase.get(caller, draft.id);
+      assert.equal(detail.actions[action], allowed, `${state}/${authorActive}/${role}/${action}`);
+      if (authorActive && state === 'PENDING_APPROVAL') { assert.equal(detail.actions.approve, true); assert.equal(detail.actions.return, true); }
+      const input = { ...command(version), ...(action === 'cancel' ? { reason: 'ผู้เตรียมไม่ได้ใช้งานแล้ว' } : {}) };
+      if (allowed) assert.equal((await h.useCase[action](caller, draft.id, input)).status, action === 'cancel' ? 'CANCELLED' : 'DRAFT');
+      else await assert.rejects(() => h.useCase[action](caller, draft.id, input), (error: any) => {
+        if (!authorActive) {
+          assert.doesNotMatch(error.getResponse().message, /ให้คนนั้น/);
+          if (role === 'MANAGER') assert.match(error.getResponse().message, /เจ้าของกิจการ/);
+        }
+        return error.getStatus() === 403 || error.getResponse().code === 'disbursement_status_changed';
+      });
+    }
+  });
+
+  it('keeps owner recovery unavailable while a different sender remains active and uses shop membership status', async () => {
+    const h = harness(), draft = await h.useCase.create(context(), body());
+    await h.useCase.submit(context({ userId: 'someone' }), draft.id, command(0));
+    h.state.members.find((m: any) => m.userId === 'actor-1').status = 'SUSPENDED';
+    const caller = context({ userId: 'another-owner', roles: ['OWNER'] });
+    assert.equal((await h.useCase.get(caller, draft.id)).actions.cancel, false);
+    await assert.rejects(() => h.useCase.cancel(caller, draft.id, { ...command(1), reason: 'ไม่ใช้ใบนี้' }), ForbiddenException);
+    h.state.members.find((m: any) => m.userId === 'someone').status = 'SUSPENDED';
+    assert.equal((await h.useCase.get(caller, draft.id)).actions.cancel, true);
+    await h.useCase.cancel(caller, draft.id, { ...command(1), reason: 'ไม่ใช้ใบนี้' });
+  });
+
+  it('matches read actions and commands for approver, preparer and both on pending and approved documents', async () => {
+    for (const status of ['PENDING_APPROVAL', 'APPROVED']) for (const person of ['approver', 'preparer', 'both']) for (const action of ['return', 'withdraw', 'cancel'] as const) {
+      const h = harness(), draft = await h.useCase.create(context(), body());
+      await h.useCase.submit(context(), draft.id, command(0));
+      if (status === 'APPROVED') await h.useCase.approve(approvalContext(), draft.id, command(1));
+      const caller = context({ userId: person === 'approver' ? 'someone' : 'actor-1', permissions: [
+        'expense.read', 'expense.disbursement.read', ...(person !== 'approver' ? ['expense.disbursement.prepare'] : []),
+        ...(person !== 'preparer' ? ['expense.disbursement.approve'] : []),
+      ] });
+      const allowed = action === 'return' ? person === 'approver' && status === 'PENDING_APPROVAL' : person !== 'approver';
+      const detail = await h.useCase.get(caller, draft.id);
+      assert.equal(detail.actions[action], allowed, `${status}/${person}/${action}`);
+      const input = command(status === 'APPROVED' ? 2 : 1, action === 'withdraw' ? {} : { reason: 'ตรวจใหม่' });
+      if (allowed) {
+        const result = await h.useCase[action](caller, draft.id, input);
+        assert.equal(result.status, action === 'cancel' ? 'CANCELLED' : 'DRAFT');
+        if (action === 'return') assert.match(h.state.noticeInputs.at(-1).body, /เหตุผล: ตรวจใหม่/);
+        if (action === 'withdraw') assert.equal(h.state.revisions[0][status === 'APPROVED' ? 'postApprovalReason' : 'decisionReason'], null);
+      } else {
+        await assert.rejects(() => h.useCase[action](caller, draft.id, input), (error: any) => {
+          if (person === 'approver' && action === 'return') return error.getResponse().code === 'disbursement_status_changed';
+          assert.equal(error.getStatus(), 403);
+          assert.equal(error.getResponse().code, 'disbursement_permission_denied');
+          assert.match(error.getResponse().message, action === 'return' ? /กลับไปแก้/ : /ผู้เตรียมหรือผู้ส่ง/);
+          return true;
+        });
+        assert.equal(h.state.vouchers[0].status, status);
+      }
+    }
+  });
+
+  it('lets the sender withdraw and cancel another preparer’s document with either existing right', async () => {
+    for (const status of ['PENDING_APPROVAL', 'APPROVED']) for (const action of ['withdraw', 'cancel'] as const) for (const right of ['prepare', 'approve']) {
+      const h = harness(), draft = await h.useCase.create(context(), body());
+      await h.useCase.submit(context({ userId: 'someone' }), draft.id, command(0));
+      if (status === 'APPROVED') await h.useCase.approve(approvalContext(), draft.id, command(1));
+      const sender = context({ userId: 'someone', permissions: [`expense.disbursement.${right}`, 'expense.read', 'expense.disbursement.read'] });
+      assert.equal((await h.useCase.get(sender, draft.id)).actions[action], true);
+      await h.useCase[action](sender, draft.id, command(status === 'APPROVED' ? 2 : 1, action === 'cancel' ? { reason: 'ไม่ใช้ใบนี้' } : {}));
+    }
+  });
+
   it('submits under ordered locks, reserves without changing expense versions and freezes the complete revision before numbering', async () => {
     const h = harness(); const draft = await h.useCase.create(context(), body({ lines: [{ expenseId: 'b', amount: '1' }, { expenseId: 'a', amount: '2' }] }));
     h.state.locks = [];
@@ -1111,18 +1437,34 @@ describe('disbursement voucher drafts and visibility', () => {
       const h = harness(); const draft = await h.useCase.create(context(), body()); await h.useCase.submit(context(), draft.id, command(0));
       Object.assign(h.state.expenses[0], patch);
       await assert.rejects(() => h.useCase.approve(approvalContext(), draft.id, command(1)), refusal('disbursement_source_changed',
-        'รายการ EXP-a ถูกเปลี่ยนแปลงหลังส่งอนุมัติ ใบนี้จึงอนุมัติไม่ได้ กด "กลับไปแก้" เพื่อตรวจรายการใหม่ หรือยกเลิกใบนี้'));
+        'รายการ EXP-a ถูกเปลี่ยนแปลงหลังส่งอนุมัติ ใบนี้จึงอนุมัติไม่ได้ กด "ส่งกลับให้แก้" พร้อมเหตุผลให้ผู้เตรียมตรวจรายการใหม่'));
       assert.equal(h.state.vouchers[0].status, 'PENDING_APPROVAL'); assert.equal(h.state.revisions[0].decision, null);
     }
   });
 
+  it('snapshots only the presser signature at submit and approve, and clears it on return', async () => {
+    const h = harness(), draft = await h.useCase.create(context(), body());
+    (h.useCase as any).ownSignature = async (_tx: any, ctx: any) => ({ attachmentId: ctx.userId, checksumSha256: 'checksum', userId: ctx.userId });
+    await h.useCase.submit(context(), draft.id, command(0));
+    assert.equal(h.state.vouchers[0].preparerSignatureJson.userId, 'actor-1');
+    await h.useCase.return(approvalContext(), draft.id, command(1, { reason: 'ตรวจใหม่' }));
+    assert.equal(h.state.vouchers[0].preparerSignatureJson, null);
+    h.state.vouchers[0].preparedByUserId = 'someone';
+    const both = context({ permissions: ['expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.read'] });
+    await h.useCase.submit(both, draft.id, command(2, { approveNow: true }));
+    assert.equal(h.state.vouchers[0].preparerSignatureJson, null);
+    assert.equal(h.state.vouchers[0].approverSignatureJson.userId, 'actor-1');
+    assert.equal(h.state.audits.at(-1).metadataJson.signatureChecksums.approver, 'checksum');
+    await h.useCase.withdraw(both, draft.id, command(3));
+    assert.equal(h.state.vouchers[0].approverSignatureJson, null);
+  });
   it('return and resubmit retain the number, advance revisions, and preserve approval when later withdrawn or cancelled', async () => {
     const h = harness(); const draft = await h.useCase.create(context(), body()); const pending = await h.useCase.submit(context(), draft.id, command(0));
     const returned = await h.useCase.return(approvalContext(), draft.id, command(1, { reason: '  ตรวจใหม่  ' }));
     assert.equal(returned.status, 'DRAFT'); assert.equal(returned.documentNumber, pending.documentNumber); assert.equal(returned.returnReason, 'ตรวจใหม่');
     assert.equal(h.state.revisions[0].decision, 'RETURNED'); assert.ok(h.state.expenses.every((e: any) => e.reservedByDisbursementVoucherId === null));
     await assert.rejects(() => h.useCase.delete(context(), draft.id), refusal('disbursement_numbered_delete', 'ใบที่มีเลขแล้วลบไม่ได้ ให้ใช้ยกเลิกแทน'));
-    const next = await h.useCase.submit(context(), draft.id, command(2)); assert.equal(next.revision, 2); assert.equal(next.documentNumber, pending.documentNumber); assert.equal(h.state.numbers.length, 1);
+    const next = await h.useCase.submit(context({ userId: 'someone' }), draft.id, command(2)); assert.equal(next.revision, 2); assert.equal(next.documentNumber, pending.documentNumber); assert.equal(h.state.numbers.length, 1);
     await h.useCase.approve(approvalContext(), draft.id, command(3));
     const approval = { by: h.state.revisions[1].decidedByUserId, at: h.state.revisions[1].decidedAt };
     await h.useCase.withdraw(context({ userId: 'someone' }), draft.id, command(4, { reason: 'เปลี่ยนยอด' }));
@@ -1134,14 +1476,14 @@ describe('disbursement voucher drafts and visibility', () => {
     h.state.members = []; const anonymous = await h.useCase.get(context(), draft.id); assert.equal(anonymous.preparerName, null); assert.equal(anonymous.revisions[1].decidedByName, null);
   });
 
-  it('prepare or approve holders may withdraw/cancel another author and pending/approved histories end correctly', async () => {
+  it('prepare or approve holders cannot withdraw/cancel another author and leave histories unchanged', async () => {
     for (const status of ['PENDING_APPROVAL', 'APPROVED']) for (const action of ['withdraw', 'cancel'] as const) for (const right of ['prepare', 'approve']) {
       const h = harness(); const draft = await h.useCase.create(context(), body()); await h.useCase.submit(context(), draft.id, command(0));
       let version = 1; if (status === 'APPROVED') { await h.useCase.approve(approvalContext(), draft.id, command(1)); version = 2; }
       const other = context({ userId: 'someone', permissions: [`expense.disbursement.${right}`, 'expense.read'] });
-      const result = await h.useCase[action](other, draft.id, command(version, { reason: 'ไม่ใช้ใบนี้' }));
-      assert.equal(result.status, action === 'cancel' ? 'CANCELLED' : 'DRAFT'); assert.equal(h.state.expenses[0].reservedByDisbursementVoucherId, null);
-      assert.equal(h.state.revisions[0][status === 'APPROVED' ? 'postApprovalAction' : 'decision'], action === 'cancel' ? 'CANCELLED' : 'WITHDRAWN');
+      await assert.rejects(() => h.useCase[action](other, draft.id, command(version, { reason: 'ไม่ใช้ใบนี้' })), ForbiddenException);
+      assert.equal(h.state.vouchers[0].status, status); assert.equal(h.state.expenses[0].reservedByDisbursementVoucherId, draft.id);
+      assert.equal(h.state.revisions[0][status === 'APPROVED' ? 'postApprovalAction' : 'decision'], null);
     }
   });
 
@@ -1149,13 +1491,13 @@ describe('disbursement voucher drafts and visibility', () => {
     const h = harness(); const draft = await h.useCase.create(context(), body());
     assert.deepEqual(await h.useCase.approvers(context(), 'branch-1'), [{ userId: 'actor-1', displayName: 'สมใจ' }, { userId: 'someone', displayName: 'สมชาย' }]);
     for (const requestedApproverUserId of ['other-branch', 'no-right', 'removed']) await assert.rejects(() => h.useCase.submit(context(), draft.id, command(0, { requestedApproverUserId })),
-      refusal('disbursement_approver_ineligible', 'ผู้อนุมัติที่เลือกไม่มีสิทธิ์อนุมัติใบของสาขานี้แล้ว กรุณาเลือกใหม่'));
-    await assert.rejects(() => h.useCase.approve(approvalContext(), draft.id, command(0)), refusal('disbursement_status_changed', 'สถานะของใบนี้เปลี่ยนไปแล้ว กรุณาเปิดใหม่เพื่อดูสถานะล่าสุด'));
-    await assert.rejects(() => h.useCase.cancel(context(), draft.id, command(0, { reason: 'ไม่ใช้ใบนี้' })), refusal('disbursement_status_changed', 'สถานะของใบนี้เปลี่ยนไปแล้ว กรุณาเปิดใหม่เพื่อดูสถานะล่าสุด'));
+      refusal('disbursement_approver_ineligible', 'ผู้อนุมัติที่เลือกไม่มีสิทธิ์อนุมัติใบของสาขานี้แล้ว เลือกใหม่'));
+    await assert.rejects(() => h.useCase.approve(approvalContext(), draft.id, command(0)), refusal('disbursement_status_changed', 'สถานะของใบนี้เปลี่ยนไปแล้ว เปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด'));
+    await assert.rejects(() => h.useCase.cancel(context(), draft.id, command(0, { reason: 'ไม่ใช้ใบนี้' })), refusal('disbursement_status_changed', 'สถานะของใบนี้เปลี่ยนไปแล้ว เปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด'));
     for (const reason of [undefined, '', '  กข  ']) for (const action of ['return', 'cancel'] as const) await assert.rejects(() => h.useCase[action](approvalContext(), draft.id, command(0, { reason })),
-      refusal(`disbursement_${action}_reason_required`, action === 'return' ? 'กรุณาระบุเหตุผลที่ตีกลับ อย่างน้อย 3 ตัวอักษร' : 'กรุณาระบุเหตุผลที่ยกเลิก อย่างน้อย 3 ตัวอักษร'));
+      refusal(`disbursement_${action}_reason_required`, action === 'return' ? 'เหตุผลที่ส่งกลับให้แก้สั้นเกินไป กรอกอย่างน้อย 3 ตัวอักษร' : 'เหตุผลที่ยกเลิกสั้นเกินไป กรอกอย่างน้อย 3 ตัวอักษร'));
     await h.useCase.submit(context(), draft.id, command(0));
-    await assert.rejects(() => h.useCase.approve(approvalContext(), draft.id, command(0, { commandId: 'stale' })), refusal('disbursement_version_conflict', 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาเปิดใหม่ก่อนบันทึก'));
+    await assert.rejects(() => h.useCase.approve(approvalContext(), draft.id, command(0, { commandId: 'stale' })), refusal('disbursement_version_conflict', 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว เปิดหน้านี้ใหม่ก่อนบันทึก'));
     await assert.rejects(() => h.useCase.approve(context(), draft.id, command(1)), refusal('disbursement_permission_denied', 'คุณยังไม่มีสิทธิ์ทำรายการนี้ ให้ผู้ดูแลร้านเพิ่มสิทธิ์ก่อนแล้วลองอีกครั้ง'));
   });
 
@@ -1163,7 +1505,7 @@ describe('disbursement voucher drafts and visibility', () => {
     const h = harness(); const first = await h.useCase.create(context(), body());
     const second = await h.useCase.create(context(), body({ commandId: 'second', lines: [{ expenseId: 'a', amount: '1' }, { expenseId: 'b', amount: '1' }] }));
     h.state.expenses[0].outstandingAmount = '10.09';
-    await assert.rejects(() => h.useCase.submit(context(), first.id, command(0)), refusal('disbursement_amount_invalid', 'ยอดของรายการ EXP-a ต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย 10.0900'));
+    await assert.rejects(() => h.useCase.submit(context(), first.id, command(0)), refusal('disbursement_amount_invalid', 'ยอดของรายการ EXP-a ต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย 10.0900 แก้ยอดแล้วบันทึกอีกครั้ง'));
     assert.equal(h.state.numbers.length, 0); h.state.expenses[0].outstandingAmount = '104';
     await h.useCase.submit(context(), first.id, command(0));
     await assert.rejects(() => h.useCase.submit(context(), second.id, command(0, { commandId: 'second-submit' })), refusal('disbursement_expense_reserved', 'รายการ EXP-a: อยู่ในใบเตรียมจ่ายเลขที่ PV-202610-00001 แล้ว'));
@@ -1191,7 +1533,7 @@ describe('disbursement voucher drafts and visibility', () => {
   it('maps serialization and lock timeouts to delivery ก retry words and rolls submission back on audit failure', async () => {
     for (const error of [{ code: 'P2034' }, { code: 'P2028' }, { code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '55P03' } } } }]) {
       const h = harness(); const draft = await h.useCase.create(context(), body()); h.client.$executeRaw = async () => { throw error; };
-      await assert.rejects(() => h.useCase.submit(context(), draft.id, command(0)), (e: any) => e.getResponse?.().code === 'disbursement_changed_retry' && e.getResponse().message.includes('กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง'));
+      await assert.rejects(() => h.useCase.submit(context(), draft.id, command(0)), (e: any) => e.getResponse?.().code === 'disbursement_changed_retry' && e.getResponse().message.includes('เปิดหน้านี้ใหม่แล้วลองอีกครั้ง'));
     }
     const h = harness(); const draft = await h.useCase.create(context(), body());
     h.useCase = new DisbursementVoucherUseCase(h.repo, new PrismaExpenseRepository({ client: h.client } as any), new ListExpensesUseCase({} as any), { log: async () => { throw new Error('audit failed'); } } as any);
@@ -1212,17 +1554,102 @@ describe('disbursement voucher drafts and visibility', () => {
     return h.useCase.submit(context({ permissions: ['expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.read'] }), draft.id, command(0, { approveNow: true }));
   };
 
+  it('signs each act from only its owner library, keeps prior snapshots after replacement and signs nothing without an asset', async () => {
+    const h = harness();
+    const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64');
+    const hash = createHash('sha256').update(bytes).digest('hex');
+    h.state.signatures = [{ companyId: 'company-1', submittedByUserId: 'actor-1', status: 'ACTIVE', originalAttachmentId: 'own' },
+      { companyId: 'company-1', submittedByUserId: 'someone', status: 'ACTIVE', originalAttachmentId: 'other' }];
+    h.state.attachments = ['own', 'other', 'replacement'].map(id => ({ id, companyId: 'company-1', status: 'ACTIVE', mimeType: 'image/png', byteSize: bytes.length, checksumSha256: hash, bucket: 'private', objectKey: id }));
+    const reads: string[] = [];
+    (h.useCase as any).storage = { getObject: async ({ objectKey }: any) => { reads.push(objectKey); return { bytes }; } };
+    const draft = await h.useCase.create(context(), body());
+    await assert.rejects(() => h.useCase.submit(context(), draft.id, command(0, { signatureAttachmentId: 'other' })), (e: any) => e.getResponse().code === 'disbursement_invalid_input');
+    await h.useCase.submit(context(), draft.id, command(0));
+    assert.equal(h.state.vouchers[0].preparerSignatureJson.attachmentId, 'own');
+    assert.equal(h.state.revisions[0].snapshotJson.actors.preparer.signature.attachmentId, 'own');
+    await h.useCase.approve(approvalContext(), draft.id, command(1));
+    assert.equal(h.state.vouchers[0].approverSignatureJson.attachmentId, 'other');
+    h.state.signatures[0].originalAttachmentId = 'replacement';
+    await h.useCase.pay(payer(), draft.id, command(2, { paidDate: '2026-10-01', paymentMethod: 'CASH' }));
+    const paid = h.state.vouchers[0];
+    assert.equal(paid.payerSignatureJson.attachmentId, 'replacement');
+    assert.equal(paid.paidSnapshotJson.actors.preparer.signature.attachmentId, 'own');
+    assert.equal(paid.paidSnapshotJson.actors.approver.signature.attachmentId, 'other');
+    assert.equal(paid.paidSnapshotJson.actors.payer.signature.attachmentId, 'replacement');
+    assert.deepEqual(reads, ['own', 'other', 'replacement']);
+    assert.equal(h.state.audits.find((a: any) => a.action === 'expense.disbursement.pay').metadataJson.signatureChecksumSha256, hash);
+    const noSignature = harness();
+    noSignature.state.signatures = [h.state.signatures[1]]; noSignature.state.attachments = h.state.attachments;
+    const approved = await approvedDraft(noSignature);
+    assert.equal((await noSignature.useCase.get(context(), approved.id)).hasOwnSignature, false);
+    assert.equal((await noSignature.useCase.get(context({ userId: 'someone' }), approved.id)).hasOwnSignature, true);
+    await noSignature.useCase.pay(payer(), approved.id, command(1, { paidDate: '2026-10-01', paymentMethod: 'CASH' }));
+    for (const role of ['preparer', 'approver', 'payer']) assert.equal(noSignature.state.vouchers[0].paidSnapshotJson.actors[role].signature, null);
+  });
+
+  it('supporting files reject unrelated uploads and direct file access outside the voucher scope', async () => {
+    const h = harness(), draft = await h.useCase.create(context(), body());
+    const file = { id: 'support', companyId: 'company-1', branchId: 'branch-1', status: 'ACTIVE', uploadedByUserId: 'actor-1', originalFileName: 'bank.png', mimeType: 'image/png', byteSize: 100, uploadedAt: new Date(), metadataJson: { generatedFor: 'disbursement_voucher_supporting', voucherId: draft.id } };
+    for (const patch of [{ companyId: 'other' }, { branchId: 'branch-2' }, { status: 'PENDING_UPLOAD' }, { uploadedByUserId: 'someone' }, { mimeType: 'image/svg+xml' }, { metadataJson: { generatedFor: 'disbursement_voucher_supporting', voucherId: 'other' } }]) {
+      h.state.attachments = [{ ...file, ...patch }];
+      await assert.rejects(() => h.useCase.changeSupportingFile(context(), draft.id, file.id, false), (e: any) => e.getResponse().code === 'disbursement_supporting_not_owned');
+      assert.equal(h.state.attachmentLinks.length, 0);
+    }
+    h.state.attachments = [file];
+    for (const remove of [true, false]) await assert.rejects(() => h.useCase.changeSupportingFile(payer(), draft.id, file.id, remove), ForbiddenException);
+    await h.useCase.changeSupportingFile(context(), draft.id, file.id, false);
+    let reads = 0;
+    (h.useCase as any).storage = { getObject: async () => { reads++; return { bytes: Buffer.from('bank') }; } };
+    for (const reader of [context({ companyId: 'other' }), context({ scopes: { branchIds: ['branch-2'] } }), context({ permissions: ['expense.read'] })]) {
+      await assert.rejects(() => h.useCase.supportingFileBytes(reader, draft.id, file.id), NotFoundException);
+    }
+    await assert.rejects(() => h.useCase.supportingFileBytes(context(), draft.id, 'other-file'), NotFoundException);
+    assert.equal(reads, 0);
+    assert.equal((await h.useCase.supportingFileBytes(context(), draft.id, file.id)).data.toString(), 'bank');
+  });
+
+  it('supporting files require prepare and a visible draft, freeze on submit and reopen on return', async () => {
+    const h = harness(), draft = await h.useCase.create(context(), body());
+    const upload = { originalFileName: 'bank.png', mimeType: 'image/png', byteSize: 100 };
+    (h.useCase as any).createUpload = { execute: async (_: any, input: any) => input };
+    const intent = await h.useCase.startSupportingUpload(context(), draft.id, upload);
+    assert.equal((intent as any).metadataJson.generatedFor, 'disbursement_voucher_supporting');
+    for (const reader of [payer(), context({ permissions: ['expense.read'] })]) await assert.rejects(() => h.useCase.startSupportingUpload(reader, draft.id, upload), ForbiddenException);
+    for (const reader of [context({ companyId: 'other' }), context({ scopes: { branchIds: ['branch-2'] } })]) await assert.rejects(() => h.useCase.supportingFiles(reader, draft.id), NotFoundException);
+    for (const bad of [{ mimeType: 'image/svg+xml' }, { byteSize: 0 }, { byteSize: 10485761 }]) await assert.rejects(() => h.useCase.startSupportingUpload(context(), draft.id, { ...upload, ...bad }));
+    h.state.attachments.push({ id: 'support', companyId: 'company-1', branchId: 'branch-1', status: 'PENDING_UPLOAD', uploadedByUserId: 'actor-1', originalFileName: 'bank.png', mimeType: 'image/png', byteSize: 100, uploadedAt: new Date(), metadataJson: { generatedFor: 'disbursement_voucher_supporting', voucherId: draft.id } });
+    (h.useCase as any).completeUpload = { execute: async () => { throw new Error('scan rejected'); } };
+    await assert.rejects(() => h.useCase.completeSupportingUpload(context(), draft.id, 'support', {}), /scan rejected/);
+    assert.equal(h.state.attachmentLinks.length, 0);
+    (h.useCase as any).completeUpload = { execute: async () => { h.state.attachments[0].status = 'ACTIVE'; } };
+    await h.useCase.completeSupportingUpload(context(), draft.id, 'support', {});
+    await h.useCase.changeSupportingFile(context(), draft.id, 'support', false);
+    const files = await h.useCase.supportingFiles(context(), draft.id);
+    assert.equal(files[0].name, 'bank.png'); assert.equal(files[0].uploadedByUserId, 'actor-1');
+    assert.equal((await h.useCase.get(context(), draft.id)).supportingFiles?.length, 1);
+    (h.useCase as any).storage = { createDownloadUrl: async () => ({ url: '/signed', expiresAt: new Date() }) };
+    assert.equal((await h.useCase.openSupportingFile(context(), draft.id, 'support')).downloadUrl, '/signed');
+    await h.useCase.submit(context(), draft.id, command(0));
+    for (const remove of [true, false]) await assert.rejects(() => h.useCase.changeSupportingFile(context(), draft.id, 'support', remove), (e: any) => e.getResponse().code === 'disbursement_supporting_frozen');
+    await h.useCase.return(approvalContext(), draft.id, command(1, { reason: 'เพิ่มไฟล์' }));
+    await h.useCase.changeSupportingFile(context(), draft.id, 'support', true);
+    assert.equal((await h.useCase.supportingFiles(context(), draft.id)).length, 0);
+    assert.equal(h.state.attachments[0].status, 'ACTIVE', 'removal unlinks without destroying bytes');
+    assert.ok(h.state.audits.some((a: any) => a.action === 'expense.disbursement.supporting.remove'));
+  });
+
   it('allows slip uploads only for visible approved or paid documents with the pay right, never LINE', async () => {
     const h = harness(), draft = await h.useCase.create(context(), body());
     const upload = { originalFileName: 'slip.png', mimeType: 'image/png', byteSize: 100 };
     (h.useCase as any).createUpload = { execute: async (ctx: any, input: any) => ({ ctx, input }) };
-    await assert.rejects(() => (h.useCase as any).startSlipUpload(payer(), draft.id, upload), refusal('disbursement_slip_status', 'สถานะของใบนี้ยังแนบสลิปไม่ได้ แนบได้เมื่ออนุมัติแล้ว รอจ่าย หรือจ่ายแล้ว กรุณาเปิดใบตรวจสถานะอีกครั้ง'));
+    await assert.rejects(() => (h.useCase as any).startSlipUpload(payer(), draft.id, upload), refusal('disbursement_slip_status', 'สถานะของใบนี้ยังแนบหลักฐานการจ่ายไม่ได้ แนบได้เมื่ออนุมัติแล้ว รอจ่าย หรือจ่ายแล้ว เปิดใบตรวจสถานะอีกครั้ง'));
     h.state.vouchers[0].status = 'APPROVED';
     for (const denied of [context(), payer({ authProvider: 'line' })]) await assert.rejects(() => (h.useCase as any).startSlipUpload(denied, draft.id, upload), ForbiddenException);
     for (const denied of [payer({ companyId: 'other' }), payer({ scopes: { branchIds: ['branch-2'] } }), payer({ userId: 'someone', permissions: ['expense.disbursement.pay', 'expense.read_own'] })]) {
       await assert.rejects(() => (h.useCase as any).startSlipUpload(denied, draft.id, upload), refusal('disbursement_not_found', 'ไม่พบใบเตรียมจ่ายที่เปิดดูได้ ให้กลับไปหน้ารายการแล้วเลือกใบใหม่'));
     }
-    for (const patch of [{ mimeType: 'image/svg+xml' }, { byteSize: 10 * 1024 * 1024 + 1 }, { byteSize: 0 }, { byteSize: 1.5 }]) await assert.rejects(() => (h.useCase as any).startSlipUpload(payer(), draft.id, { ...upload, ...patch }), refusal('disbursement_slip_invalid', 'สลิปต้องเป็นรูปภาพหรือไฟล์ PDF ขนาดไม่เกิน 10 เมกะไบต์ กรุณาเลือกไฟล์ใหม่'));
+    for (const patch of [{ mimeType: 'image/svg+xml' }, { byteSize: 10 * 1024 * 1024 + 1 }, { byteSize: 0 }, { byteSize: 1.5 }]) await assert.rejects(() => (h.useCase as any).startSlipUpload(payer(), draft.id, { ...upload, ...patch }), refusal('disbursement_slip_invalid', 'หลักฐานการจ่ายต้องเป็นรูปภาพหรือไฟล์ PDF ขนาดไม่เกิน 10 เมกะไบต์ เลือกไฟล์ใหม่'));
     for (const status of ['APPROVED', 'PAID']) {
       h.state.vouchers[0].status = status;
       const result = await (h.useCase as any).startSlipUpload(payer({ permissions: ['expense.disbursement.pay', 'expense.read'] }), draft.id, upload);
@@ -1235,7 +1662,7 @@ describe('disbursement voucher drafts and visibility', () => {
 
   it('refuses another document’s slip at payment before creating any payment', async () => {
     const h = harness(), approved = await approvedDraft(h);
-    await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(1, { slipAttachmentId: 'someone-elses-file' })), refusal('disbursement_slip_not_owned', 'สลิปนี้ไม่ได้อัปโหลดสำหรับใบนี้ หรือยังอัปโหลดไม่เสร็จ กรุณาอัปโหลดสลิปของใบนี้ใหม่'));
+    await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(1, { slipAttachmentId: 'someone-elses-file' })), refusal('disbursement_slip_not_owned', 'หลักฐานการจ่ายนี้ไม่ได้อัปโหลดสำหรับใบนี้ หรือยังอัปโหลดไม่เสร็จ อัปโหลดหลักฐานการจ่ายของใบนี้ใหม่'));
     assert.equal(h.state.payments.length, 0);
     assert.equal(h.state.vouchers[0].status, 'APPROVED');
   });
@@ -1245,7 +1672,7 @@ describe('disbursement voucher drafts and visibility', () => {
     h.state.vouchers[0].slipAttachmentId = 'forged';
     slipUpload(h, 'other-document', 'forged');
     h.state.attachmentLinks.push({ companyId: 'company-1', attachmentId: 'forged', targetType: 'disbursement_voucher', targetId: v.id, purpose: 'expense.disbursement_voucher.slip' });
-    await assert.rejects(() => h.useCase.pay(payer(), v.id, command(1, { slipAttachmentId: 'forged' })), refusal('disbursement_slip_not_owned', 'สลิปนี้ไม่ได้อัปโหลดสำหรับใบนี้ หรือยังอัปโหลดไม่เสร็จ กรุณาอัปโหลดสลิปของใบนี้ใหม่'));
+    await assert.rejects(() => h.useCase.pay(payer(), v.id, command(1, { slipAttachmentId: 'forged' })), refusal('disbursement_slip_not_owned', 'หลักฐานการจ่ายนี้ไม่ได้อัปโหลดสำหรับใบนี้ หรือยังอัปโหลดไม่เสร็จ อัปโหลดหลักฐานการจ่ายของใบนี้ใหม่'));
     assert.equal(h.state.payments.length, 0);
   });
 
@@ -1294,6 +1721,13 @@ describe('disbursement voucher drafts and visibility', () => {
     (h.useCase as any).storage = { createDownloadUrl: async (input: any) => { download = input; return { url: 'signed-url', expiresAt: new Date() }; } };
     assert.equal((await h.useCase.slip(context(), v.id)).downloadUrl, 'signed-url');
     assert.equal(download.objectVersionId, 'version-1');
+    (h.useCase as any).storage.getObject = async (input: any) => { download = input; return { bytes: Buffer.from('original-slip') }; };
+    const bundled = await h.useCase.slipBytes(context(), v.id);
+    assert.equal(bundled.data.toString(), 'original-slip');
+    assert.equal(bundled.mimeType, 'image/png');
+    assert.equal(download.objectVersionId, 'version-1');
+    await assert.rejects(() => h.useCase.slipBytes(context({ permissions: ['expense.read'] }), v.id), refusal('disbursement_not_found', 'ไม่พบใบเตรียมจ่ายที่เปิดดูได้ ให้กลับไปหน้ารายการแล้วเลือกใบใหม่'));
+
     await assert.rejects(() => h.useCase.pay(payer(), v.id, command(3, { slipAttachmentId: 'slip-1' })), (e: any) => e.getResponse().code === 'disbursement_slip_not_owned');
     assert.equal((await h.useCase.pay(payer(), v.id, command(3, { slipAttachmentId: 'slip-2' }))).status, 'PAID');
     assert.equal((await h.useCase.get(payer(), v.id)).canAttachSlip, true);
@@ -1314,7 +1748,7 @@ describe('disbursement voucher drafts and visibility', () => {
     }
     slipUpload(h, v.id, 'in-use');
     h.state.attachmentLinks.push({ companyId: 'company-1', attachmentId: 'in-use', targetType: 'expense.record', targetId: 'a', purpose: 'expense.receipt.primary' });
-    await assert.rejects(() => h.useCase.attachSlip(payer(), v.id, 'in-use'), refusal('disbursement_slip_link_conflict', 'ไฟล์นี้ใช้กับเอกสารอื่นอยู่แล้ว จึงใช้เป็นสลิปของใบนี้ไม่ได้ กรุณาอัปโหลดสลิปใหม่'));
+    await assert.rejects(() => h.useCase.attachSlip(payer(), v.id, 'in-use'), refusal('disbursement_slip_link_conflict', 'ไฟล์นี้ใช้กับเอกสารอื่นอยู่แล้ว จึงใช้เป็นหลักฐานการจ่ายของใบนี้ไม่ได้ อัปโหลดหลักฐานการจ่ายใหม่'));
     assert.equal(h.state.vouchers[0].slipAttachmentId, undefined);
     assert.equal(h.state.vouchers[0].version, 1);
   });
@@ -1323,8 +1757,8 @@ describe('disbursement voucher drafts and visibility', () => {
     const h = harness([source('a'), source('b', { createdByUserId: 'someone' })]);
     const v = await approvedDraft(h, { lines: [{ expenseId: 'a', amount: '1' }, { expenseId: 'b', amount: '1' }] });
     const own = context({ permissions: ['expense.disbursement.read', 'expense.read_own'] });
-    for (const method of ['slip', 'documentPdf']) await assert.rejects(() => (h.useCase as any)[method](own, v.id), refusal('disbursement_not_found', 'ไม่พบใบเตรียมจ่ายที่เปิดดูได้ ให้กลับไปหน้ารายการแล้วเลือกใบใหม่'));
-    await assert.rejects(() => (h.useCase as any).slip(context(), v.id), refusal('disbursement_slip_missing', 'ใบนี้ยังไม่มีสลิป'));
+    for (const method of ['slip', 'slipBytes', 'documentPdf']) await assert.rejects(() => (h.useCase as any)[method](own, v.id), refusal('disbursement_not_found', 'ไม่พบใบเตรียมจ่ายที่เปิดดูได้ ให้กลับไปหน้ารายการแล้วเลือกใบใหม่'));
+    await assert.rejects(() => (h.useCase as any).slip(context(), v.id), refusal('disbursement_slip_missing', 'ใบนี้ยังไม่มีหลักฐานการจ่าย เปิดใบนี้เพื่อตรวจไฟล์ที่แนบ'));
   });
 
   it('pays exact approved amounts with the pay right alone, one transaction, all locks before writes and direct payment effects', async () => {
@@ -1337,7 +1771,7 @@ describe('disbursement voucher drafts and visibility', () => {
     assert.equal(h.state.payments.length, 2); assert.equal(h.state.events.length, 2);
     for (const e of h.state.expenses) { const amount = e.id === 'a' ? '10.1000' : '0.2000'; assert.equal(e.paidAmount, amount); assert.equal(e.reservedByDisbursementVoucherId, null); }
     assert.deepEqual(h.state.lines.map((l: any) => [l.expensePaymentId, l.coversPaymentId]), [['pay-0', 'pay-0'], ['pay-1', 'pay-1']]);
-    for (const p of h.state.payments) { assert.equal(p.bankAccountRef, 'เงินสดหน้าร้าน'); assert.equal(p.paidAt.toISOString(), '2026-10-01T00:00:00.000Z'); assert.match(p.idempotencyKey, /^dv:/); }
+    for (const p of h.state.payments) { assert.equal(p.paidAtConfirmed, true); assert.equal(p.bankAccountRef, 'เงินสดหน้าร้าน'); assert.equal(p.paidAt.toISOString(), '2026-09-30T17:00:00.000Z'); assert.match(p.idempotencyKey, /^dv:/); }
     for (const event of h.state.events) { assert.equal(event.eventType, 'expense.payment_recorded'); assert.equal(event.eventKey, `expense.payment_recorded:expense_payment:${event.aggregateId}`); assert.equal(event.payloadJson.data.paymentId, event.aggregateId); }
     assert.equal(h.state.audits.filter((a: any) => a.action === 'expense.payment.record').length, 2);
     const keys = h.state.locks.filter((l: any) => l.values[0]?.endsWith('expense-payment-command')).map((l: any) => l.values[0]);
@@ -1355,7 +1789,7 @@ describe('disbursement voucher drafts and visibility', () => {
     assert.equal(JSON.stringify(snapshot).includes('Ciphertext'), false);
     const detail = await h.useCase.get(payer(), paid.id); assert.equal(detail.paidByName, 'สมใจ'); assert.ok(detail.lines.every((l: any) => l.paymentInEffect));
     h.state.payments[0].status = 'VOIDED'; assert.equal((await h.useCase.get(payer(), paid.id)).lines[0].paymentInEffect, false);
-    h.state.members[0].status = 'DISABLED'; assert.equal((await h.useCase.get(payer({ userId: 'someone' }), paid.id)).paidByName, null);
+    h.state.members[0].status = 'DISABLED'; assert.equal((await h.useCase.get(payer({ userId: 'someone' }), paid.id)).paidByName, 'สมใจ');
     assert.equal(snapshot.actors.payer.name, 'สมใจ', 'the paid snapshot retains the name frozen at recording');
   });
 
@@ -1365,6 +1799,7 @@ describe('disbursement voucher drafts and visibility', () => {
     await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(1, { paidDate: '2026-10-06' })), refusal('expense_payment_future_date', 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้'));
     assert.equal(h.state.payments.length, 0);
     const paid = await h.useCase.pay(payer(), approved.id, command(1)); assert.equal(paid.paidDate, '2026-10-05'); assert.equal(paid.paidMethod, 'CASH');
+    assert.ok(h.state.payments.every((p: any) => p.paidAtConfirmed === false));
     t.mock.timers.setTime(new Date('2026-10-05T17:30:00Z').getTime());
     assert.equal((await h.useCase.pay(payer(), approved.id, command(1))).paidDate, '2026-10-05', 'omitted-date replay stays the original payment across Bangkok midnight');
     const other = harness(); const v = await approvedDraft(other);
@@ -1372,7 +1807,7 @@ describe('disbursement voucher drafts and visibility', () => {
     const override = await other.useCase.pay(payer(), v.id, command(1, { paymentMethod: 'BANK_TRANSFER' }));
     assert.equal(override.paidMethod, 'BANK_TRANSFER'); assert.equal(override.paidDate, '2026-10-06');
     const noMethod = harness(); const without = await approvedDraft(noMethod, { plannedMethod: undefined });
-    await assert.rejects(() => noMethod.useCase.pay(payer(), without.id, command(1)), refusal('disbursement_payment_method_required', 'กรุณาเลือกวิธีจ่ายก่อนบันทึก'));
+    await assert.rejects(() => noMethod.useCase.pay(payer(), without.id, command(1)), refusal('disbursement_payment_method_required', 'เลือกวิธีจ่ายก่อนบันทึก'));
     assert.equal(noMethod.state.payments.length, 0);
   });
 
@@ -1380,7 +1815,7 @@ describe('disbursement voucher drafts and visibility', () => {
     for (const patch of [{ outstandingAmount: '0.10' }, { status: 'READY_FOR_CONFIRMATION' }, { vendorNameSnapshot: 'เปลี่ยนร้าน' }, { vendorTaxIdSnapshot: '1111111111111' }, { netPayableAmount: '105' }, { currency: 'USD' }, { reservedByDisbursementVoucherId: null }, { sourceReimbursementRequestId: 'claim' }]) {
       const h = harness(); const approved = await approvedDraft(h, { lines: [{ expenseId: 'a', amount: '1' }, { expenseId: 'b', amount: '1' }] });
       Object.assign(h.state.expenses[1], patch);
-      await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(1)), refusal('disbursement_payment_source_changed', 'รายการ EXP-b ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ ให้ผู้จัดทำหรือผู้อนุมัติของใบนี้กด "กลับไปแก้" เพื่อตรวจรายการใหม่ แล้วส่งอนุมัติอีกครั้ง'));
+      await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(1)), refusal('disbursement_payment_source_changed', 'รายการ EXP-b ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ ให้ผู้เตรียมหรือผู้ส่งใบนี้กด "กลับไปแก้" เพื่อตรวจรายการใหม่ แล้วส่งอนุมัติอีกครั้ง'));
       assert.equal(h.state.payments.length, 0); assert.equal(h.state.events.length, 0); assert.equal(h.state.vouchers[0].status, 'APPROVED');
     }
   });
@@ -1390,9 +1825,9 @@ describe('disbursement voucher drafts and visibility', () => {
     for (const denied of [context({ permissions: ['expense.payment.record', 'expense.read'] }), payer({ permissions: ['expense.read'] })]) await assert.rejects(() => h.useCase.pay(denied, approved.id, command(1)), refusal('disbursement_permission_denied', 'คุณยังไม่มีสิทธิ์ทำรายการนี้ ให้ผู้ดูแลร้านเพิ่มสิทธิ์ก่อนแล้วลองอีกครั้ง'));
     await assert.rejects(() => h.useCase.pay(payer({ authProvider: 'line' }), approved.id, command(1)), refusal('disbursement_line_session_denied', 'การเตรียมจ่ายใช้บัญชีที่เข้าผ่านไลน์ไม่ได้ ให้เข้าสู่ระบบด้วยบัญชีบนเว็บแล้วลองอีกครั้ง'));
     for (const denied of [payer({ companyId: 'another' }), payer({ scopes: { branchIds: ['branch-2'] } }), payer({ userId: 'someone', permissions: ['expense.disbursement.pay', 'expense.read_own'] })]) await assert.rejects(() => h.useCase.pay(denied, approved.id, command(1)), refusal('disbursement_not_found', 'ไม่พบใบเตรียมจ่ายที่เปิดดูได้ ให้กลับไปหน้ารายการแล้วเลือกใบใหม่'));
-    await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(0, { commandId: 'stale-pay' })), refusal('disbursement_version_conflict', 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาเปิดใหม่ก่อนบันทึก'));
+    await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(0, { commandId: 'stale-pay' })), refusal('disbursement_version_conflict', 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว เปิดหน้านี้ใหม่ก่อนบันทึก'));
     for (const patch of [{ amount: '1' }, { paymentMethod: 'bad' }, { paidDate: '2026-02-30' }, { paidFromRef: 'x'.repeat(129) }, { paidFromRef: null }]) await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(1, patch)), refusal('disbursement_invalid_input', 'ข้อมูลใบเตรียมจ่ายไม่ถูกต้อง ให้ตรวจรายการ วันที่และวิธีจ่าย แล้วลองบันทึกใหม่'));
-    h.state.vouchers[0].status = 'DRAFT'; await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(1)), refusal('disbursement_status_changed', 'สถานะของใบนี้เปลี่ยนไปแล้ว กรุณาเปิดใหม่เพื่อดูสถานะล่าสุด'));
+    h.state.vouchers[0].status = 'DRAFT'; await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(1)), refusal('disbursement_status_changed', 'สถานะของใบนี้เปลี่ยนไปแล้ว เปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด'));
     assert.equal(h.state.payments.length, 0);
   });
 
@@ -1404,7 +1839,7 @@ describe('disbursement voucher drafts and visibility', () => {
     await assert.rejects(() => h.useCase.pay(payer(), approved.id, { ...pay, paidFromRef: 'อีกบัญชี' }), refusal('disbursement_command_conflict', 'ข้อมูลไม่ตรงกับคำสั่งที่บันทึกไว้ ให้เปิดใบตรวจข้อมูล แล้วใช้คำสั่งใหม่ถ้าต้องการแก้ไข'));
     for (const status of ['RECORDED', 'VOIDED']) {
       const conflict = harness(); const v = await approvedDraft(conflict); conflict.state.payments.push({ companyId: 'company-1', idempotencyKey: `dv:${v.id}:${conflict.state.lines[0].id}`, status });
-      await assert.rejects(() => conflict.useCase.pay(payer(), v.id, command(1)), refusal('disbursement_payment_key_conflict', 'พบรายการจ่ายของใบนี้อยู่แล้ว แต่ใบยังไม่แสดงว่าจ่ายแล้ว กรุณาเปิดใบนี้ใหม่และตรวจประวัติการจ่ายก่อนลองอีกครั้ง'));
+      await assert.rejects(() => conflict.useCase.pay(payer(), v.id, command(1)), refusal('disbursement_payment_key_conflict', 'พบรายการจ่ายของใบนี้อยู่แล้ว แต่ใบยังไม่แสดงว่าจ่ายแล้ว เปิดใบนี้ใหม่และตรวจประวัติการจ่ายก่อนลองอีกครั้ง'));
       assert.equal(conflict.state.payments.length, 1); assert.equal(conflict.state.vouchers[0].status, 'APPROVED');
     }
   });
@@ -1425,7 +1860,7 @@ describe('disbursement voucher drafts and visibility', () => {
       if (failure === 'timeout') h.client.expensePayment.create = async () => { throw Object.assign(new Error('timeout'), { code: 'P2028' }); };
       if (failure === 'serialization') h.client.expensePayment.create = async () => { throw Object.assign(new Error('serialization'), { code: 'P2034' }); };
       if (failure === 'lock-timeout') h.client.expensePayment.create = async () => { throw Object.assign(new Error('lock-timeout'), { code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '55P03' } } } }); };
-      await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(1)), ['timeout', 'serialization', 'lock-timeout'].includes(failure) ? refusal('disbursement_payment_retry', 'บันทึกไม่สำเร็จ ยังไม่มีการบันทึกจ่ายรายการใด กรุณาลองอีกครั้ง') : /unavailable/);
+      await assert.rejects(() => h.useCase.pay(payer(), approved.id, command(1)), ['timeout', 'serialization', 'lock-timeout'].includes(failure) ? refusal('disbursement_payment_retry', 'บันทึกไม่สำเร็จ ยังไม่มีการบันทึกจ่ายรายการใด ลองอีกครั้ง') : /unavailable/);
       assert.equal(h.state.payments.length, 0); assert.equal(h.state.events.length, 0); assert.ok(h.state.expenses.every((e: any) => e.paidAmount === '0.0000' && e.reservedByDisbursementVoucherId === approved.id));
       assert.equal(h.state.vouchers[0].status, 'APPROVED'); assert.ok(h.state.lines.every((l: any) => !l.expensePaymentId));
     }
@@ -1454,9 +1889,9 @@ describe('disbursement voucher drafts and visibility', () => {
 
   it('refuses issuance for cancelled, missing, unconfirmed, claim and unreadable sources with actionable sentences', async () => {
     for (const [change, code, sentence] of [
-      ['voided', 'disbursement_issue_payment_cancelled', 'การจ่ายรายการนี้ถูกยกเลิกแล้ว จึงออกใบสำคัญจ่ายไม่ได้'],
-      ['cancelled', 'disbursement_issue_payment_cancelled', 'การจ่ายรายการนี้ถูกยกเลิกแล้ว จึงออกใบสำคัญจ่ายไม่ได้'],
-      ['claim', 'disbursement_issue_claim', 'รายการนี้จ่ายผ่านคำขอเบิก จึงออกใบสำคัญจ่ายจากหน้านี้ไม่ได้ ดูหลักฐานการจ่ายได้ที่คำขอเบิก'],
+      ['voided', 'disbursement_issue_payment_cancelled', 'การจ่ายรายการนี้ถูกยกเลิกแล้ว จึงออกใบสำคัญจ่ายไม่ได้ เปิดรายจ่ายแล้วเลือกการจ่ายที่ยังมีผล'],
+      ['cancelled', 'disbursement_issue_payment_cancelled', 'การจ่ายรายการนี้ถูกยกเลิกแล้ว จึงออกใบสำคัญจ่ายไม่ได้ เปิดรายจ่ายแล้วเลือกการจ่ายที่ยังมีผล'],
+      ['claim', 'disbursement_issue_claim', 'รายการนี้จ่ายผ่านใบเบิก จึงออกใบสำคัญจ่ายจากหน้านี้ไม่ได้ ดูหลักฐานการจ่ายได้ที่ใบเบิก'],
       ['status', 'disbursement_expense_not_confirmed', 'รายการนี้ยังไม่ยืนยัน เปิดรายจ่ายและยืนยันก่อน'],
       ['branch', 'disbursement_expense_missing_branch', 'รายการนี้ยังไม่มีสาขา เปิดรายจ่ายเพื่อระบุสาขาก่อน'],
       ['missing', 'disbursement_issue_payment_not_found', 'ไม่พบการจ่ายที่เลือก ให้เปิดรายจ่ายใหม่และเลือกการจ่ายที่ยังมีผล'],
@@ -1508,13 +1943,13 @@ describe('disbursement voucher drafts and visibility', () => {
     await assert.rejects(() => useCase.fromPayment(issuer(), { commandId: 'issue-fail', expenseId: 'a', paymentId: result.payment.id }), /issue audit unavailable/);
     assert.equal(h.state.vouchers.length, 0); assert.equal(h.state.lines.length, 0); assert.equal(h.state.numbers.length, 0); assert.equal(h.state.commands.length, 0);
     h.client.$executeRaw = async () => { throw Object.assign(new Error('lock timeout'), { code: 'P2010', meta: { code: '55P03' } }); };
-    await assert.rejects(() => h.useCase.fromPayment(issuer(), { commandId: 'issue-lock', expenseId: 'a', paymentId: result.payment.id }), refusal('disbursement_changed_retry', 'มีการทำรายการกับใบนี้หรือรายจ่ายในใบพร้อมกัน ระบบยังไม่ได้บันทึกสิ่งที่คุณเพิ่งทำ กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง'));
+    await assert.rejects(() => h.useCase.fromPayment(issuer(), { commandId: 'issue-lock', expenseId: 'a', paymentId: result.payment.id }), refusal('disbursement_changed_retry', 'มีการทำรายการกับใบนี้หรือรายจ่ายในใบพร้อมกัน ระบบยังไม่ได้บันทึกสิ่งที่คุณเพิ่งทำ เปิดหน้านี้ใหม่แล้วลองอีกครั้ง'));
   });
 
   it('refuses a busy cross-command id without waiting while holding expense locks', async () => {
     const h = harness(), result = await direct(h);
     h.client.$queryRaw = async () => [{ locked: false }];
-    await assert.rejects(() => h.useCase.fromPayment(issuer(), { commandId: 'busy-command', expenseId: 'a', paymentId: result.payment.id }), refusal('disbursement_changed_retry', 'มีการทำรายการกับใบนี้หรือรายจ่ายในใบพร้อมกัน ระบบยังไม่ได้บันทึกสิ่งที่คุณเพิ่งทำ กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง'));
+    await assert.rejects(() => h.useCase.fromPayment(issuer(), { commandId: 'busy-command', expenseId: 'a', paymentId: result.payment.id }), refusal('disbursement_changed_retry', 'มีการทำรายการกับใบนี้หรือรายจ่ายในใบพร้อมกัน ระบบยังไม่ได้บันทึกสิ่งที่คุณเพิ่งทำ เปิดหน้านี้ใหม่แล้วลองอีกครั้ง'));
     assert.equal(h.state.vouchers.length, 0); assert.equal(h.state.numbers.length, 0);
   });
 
@@ -1575,6 +2010,15 @@ describe('disbursement voucher drafts and visibility', () => {
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, DisbursementVoucherController.prototype.reissue), ['expense.disbursement.issue']);
   });
 
+  it('gives an eligible recovery owner their own way out when approved sources changed', async () => {
+    const h = harness(), approved = await approvedDraft(h);
+    h.state.members.find((m: any) => m.userId === 'actor-1').status = 'DISABLED';
+    h.state.expenses[0].vendorNameSnapshot = 'ร้านใหม่';
+    const owner = payer({ userId: 'someone', roles: ['OWNER'], permissions: [...payer().permissions, 'expense.disbursement.prepare'] });
+    await assert.rejects(() => h.useCase.pay(owner, approved.id, command(1)), refusal('disbursement_payment_source_changed', 'รายการ EXP-a ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ กด "กลับไปแก้" เพื่อตรวจรายการใหม่ หรือยกเลิกใบนี้'));
+    assert.equal((await h.useCase.get(owner, approved.id)).actions.withdraw, true);
+  });
+
   it('registers approvers before the id reader and declares the five lifecycle permissions including either-right commands', () => {
     const names = Object.getOwnPropertyNames(DisbursementVoucherController.prototype);
     assert.ok(names.indexOf('approvers') < names.indexOf('get'));
@@ -1601,6 +2045,69 @@ describe('disbursement voucher source readers', () => {
     const repo = { readDisbursementPayableExpenses: async (...args: any[]) => { capture?.(args); return rows; } } as any;
     return new ReadDisbursementVoucherSourcesUseCase(repo, new ListExpensesUseCase(repo));
   };
+
+  it('a payee with nothing payable is not offered (owner 2026-10-15)', async () => {
+    const result = await reader([
+      row('reserved', { vendorNameSnapshot: 'ร้าน จ', outstandingAmount: '9999', reservedByDisbursementVoucherId: 'old', recordPaymentBlocker: 'disbursement_reserved' }),
+      row('available', { vendorNameSnapshot: 'ร้าน ก', outstandingAmount: '10' }),
+    ]).payees(prepareCtx, { pageSize: 1 });
+    assert.equal(result.total, 1); assert.equal(result.data[0].displayName, 'ร้าน ก');
+    assert.equal(result.data[0].allReserved, false);
+    const none = await reader([row('reserved', { reservedByDisbursementVoucherId: 'old' })]).payees(prepareCtx, {});
+    assert.equal(none.total, 0); assert.deepEqual(none.data, []);
+  });
+
+  it('pages tied payees into disjoint stable ten-row pages of payable payees only', async () => {
+    const rows = Array.from({ length: 20 }, (_, index) => row(`page-${index}`, {
+      vendorNameSnapshot: `ร้าน ${index}`, outstandingAmount: '100.0000',
+      ...(index >= 15 ? { reservedByDisbursementVoucherId: 'other' } : {}),
+    }));
+    const first = await reader(rows).payees(prepareCtx, { page: 1, pageSize: 10 });
+    const second = await reader([...rows].reverse()).payees(prepareCtx, { page: 2, pageSize: 10 });
+    assert.equal(first.total, 15); assert.equal(second.total, 15);
+    assert.equal(first.data.length, 10); assert.equal(second.data.length, 5);
+    const combined = [...first.data, ...second.data];
+    assert.equal(new Set(combined.map(payee => payee.payeeKey)).size, 15);
+    assert.ok(combined.every(payee => !payee.allReserved));
+    assert.ok(combined.every(payee => payee.expenseCount === 1 && payee.totalOutstanding === '100.0000'));
+    assert.deepEqual((await reader([...rows].reverse()).payees(prepareCtx, { page: 1, pageSize: 10 })).data, first.data);
+    assert.deepEqual((await reader(rows).payees(prepareCtx, { page: 2, pageSize: 10 })).data, second.data);
+  });
+  it('gives whitespace-only and absent payee names a readable fallback while retaining the tax ID', async () => {
+    for (const vendorNameSnapshot of [null, '', ' \t\n ']) {
+      const result = await reader([row('unnamed', { vendorNameSnapshot, vendorTaxIdSnapshot: '0123456789012' })]).payees(prepareCtx, {});
+      assert.equal(result.data[0].displayName, 'ไม่มีชื่อผู้รับเงิน');
+      assert.equal(result.data[0].taxId, '0123456789012');
+    }
+  });
+
+  it('searches every typed payee-name word and puts a full prefix first before paging', async () => {
+    const useCase = reader([
+      row('unrelated', { vendorNameSnapshot: 'ร้านอื่น', vendorTaxIdSnapshot: '1234567890123', outstandingAmount: '900' }),
+      row('contains', { vendorNameSnapshot: 'สาขา T3B ร้านวัสดุทวีทรัพย์', outstandingAmount: '500' }),
+      row('prefix', { vendorNameSnapshot: 'T3B ร้านวัสดุทวีทรัพย์', outstandingAmount: '10' }),
+      row('only-one-word', { vendorNameSnapshot: 'T3B ร้านอาหาร', outstandingAmount: '800' }),
+    ]);
+    const result = await useCase.payees(prepareCtx, { search: '  t3b ร้านวัสดุ  ', pageSize: 1 });
+    assert.equal(result.total, 2);
+    assert.equal(result.data[0].displayName, 'T3B ร้านวัสดุทวีทรัพย์');
+    assert.equal((await useCase.payees(prepareCtx, { search: 't3b ร้านวัสดุ', page: 2, pageSize: 1 })).data[0].displayName, 'สาขา T3B ร้านวัสดุทวีทรัพย์');
+    assert.equal((await useCase.payees(prepareCtx, { search: 'วัสดุ\tT3b' })).total, 2);
+    assert.equal((await useCase.payees(prepareCtx, { search: 'ร้านวัสดุ ไม่มี' })).total, 0);
+    assert.equal((await useCase.payees(prepareCtx, { search: '   ' })).total, 4);
+  });
+
+  it('filters the displayed newest payee name without dropping grouped expenses or changing eligibility', async () => {
+    const useCase = reader([
+      row('older', { vendorNameSnapshot: 'T3B ร้านวัสดุเก่า', vendorTaxIdSnapshot: '1234567890123' }),
+      row('newer', { vendorNameSnapshot: 'ชื่อใหม่', vendorTaxIdSnapshot: '1234567890123', createdAt: new Date('2026-10-02') }),
+    ]);
+    assert.equal((await useCase.payees(prepareCtx, { search: 'T3B ร้านวัสดุ' })).total, 0);
+    const found = await useCase.payees(prepareCtx, { search: 'ชื่อใหม่' });
+    assert.equal(found.data[0].expenseCount, 2);
+    assert.equal(found.data[0].selectableExpenseCount, 2);
+    assert.equal(found.data[0].totalOutstanding, '208.0000');
+  });
 
   it('groups dashed and Thai tax digits across names and branches, with exact outstanding totals and newest name', async () => {
     const rows = [row('a', { vendorTaxIdSnapshot: '0-1234-56789-01-2', outstandingAmount: '0.1000' }),
@@ -1650,7 +2157,7 @@ describe('disbursement voucher source readers', () => {
       row('c', { vendorNameSnapshot: null, outstandingAmount: '50' }), row('d', { vendorNameSnapshot: '', outstandingAmount: '40' })];
     const result = await reader(rows).payees(prepareCtx, { page: 2, pageSize: 1 });
     assert.equal(result.total, 3);
-    assert.equal(result.data[0].displayName, 'ไม่ระบุชื่อผู้ขาย');
+    assert.equal(result.data[0].displayName, 'ไม่มีชื่อผู้รับเงิน');
     assert.equal(result.data[0].totalOutstanding, '40.0000');
     assert.equal((await reader(rows).payees(prepareCtx, { search: 'ร้าน ก' })).data[0].expenseCount, 2);
     assert.equal((await reader(rows).payees(prepareCtx, {})).data.length, 3);
@@ -1676,7 +2183,7 @@ describe('disbursement voucher source readers', () => {
     const useCase = reader(rows), result = await useCase.payableExpenses(prepareCtx, {});
     assert.equal(result[0].description, 'ซื้อของใช้'); assert.equal(result[0].vendorInvoiceNumber, 'INV-1'); assert.equal(result[0].branchName, 'ตลาด');
     assert.equal(result[1].description!.length, 80);
-    const group = (await useCase.payees(prepareCtx, {})).data[0]; assert.equal(group.expenseCount, 4); assert.equal(group.selectableExpenseCount, 0);
+    assert.deepEqual((await useCase.payees(prepareCtx, {})).data, []); // all reserved: the payee is not offered
   });
 
   it('reports every selection refusal and reservation number/preparer without requiring payment authority', async () => {
@@ -1756,7 +2263,7 @@ describe('disbursement voucher source readers', () => {
     const useCase = new ReadDisbursementVoucherSourcesUseCase(repo, new ListExpensesUseCase(repo));
     const own = { ...ctx, permissions: ['expense.disbursement.prepare', 'expense.read_own'] };
     assert.deepEqual((await useCase.payableExpenses(own, {})).map(e => e.expenseId), ['own', 'central']);
-    assert.equal((await useCase.payees(own, {})).data[0].expenseCount, 2);
+    assert.equal((await useCase.payees(own, {})).data[0].expenseCount, 1); // the central row has no branch: not payable by a voucher, not counted
     assert.deepEqual((await useCase.payableExpenses(prepareCtx, {})).map(e => e.expenseId), ['own', 'someone', 'central']);
     assert.equal((await useCase.payees(prepareCtx, { branchId: 'branch-1' })).data[0].expenseCount, 2);
     const payee = (await useCase.payees(prepareCtx, {})).data[0];
@@ -1821,7 +2328,7 @@ describe('disbursement voucher source readers', () => {
     assert.equal(result[0].branchName, 'ตลาด');
     assert.deepEqual(query.select.substituteReceiptEvidences, { orderBy: { version: 'desc' }, take: 1, select: { fundingSource: true } });
     assert.deepEqual(result.slice(0, 5).map(e => e.recordPaymentBlocker), ['live_claim', 'live_claim', 'personal_advance', null, 'live_claim']);
-    assert.deepEqual(result[3].reservation, { documentNumber: 'PV-1', preparerName: 'สมใจ' });
+    assert.deepEqual(result[3].reservation, { voucherId: null, documentNumber: 'PV-1', preparerName: 'สมใจ' });
   });
 });
 
@@ -1833,8 +2340,53 @@ it('disbursement notice titles start with the event and keep the document number
     reminderTitle: 'เตือนอีกครั้ง: ใบเตรียมจ่ายเลขที่ {number} รออนุมัติ',
     payerTitle: 'รอคุณบันทึกจ่าย: ใบเตรียมจ่ายเลขที่ {number}',
     approvedTitle: 'อนุมัติแล้ว รอจ่าย: ใบเตรียมจ่ายเลขที่ {number}',
-    returnedTitle: 'ตีกลับ: ใบเตรียมจ่ายเลขที่ {number}',
+    returnedTitle: 'ส่งกลับให้แก้: ใบเตรียมจ่ายเลขที่ {number}',
     paidTitle: 'จ่ายแล้ว: ใบสำคัญจ่ายเลขที่ {number}',
     cancelledTitle: 'ยกเลิก: ใบเลขที่ {number}',
+  });
+});
+
+describe('expense draft document read model', () => {
+  it('extends the reservation source with a draft and only exposes its link to a permitted viewer', async () => {
+    const { readDisbursementReservations } = await import('../../infrastructure/expense-void-blocker');
+    const calls: any[] = [];
+    const db: any = { user: { findMany: async () => [{ id: 'preparer', displayName: 'ผู้จัดทำ' }] },
+      disbursementVoucher: { findMany: async (query: any) => { calls.push(query); return query.select.lines ? [{ id: 'draft', companyId: 'co', branchId: 'b1', status: 'DRAFT', documentNumber: null, preparedByUserId: 'preparer', lines: [{ expenseId: 'expense' }] }] : [{ id: 'draft' }]; } } };
+    const loaded = [{ id: 'expense', reservedByDisbursementVoucherId: null }];
+    const readable = await readDisbursementReservations(db, 'co', ['expense'], { companyId: 'co', scopes: { branchIds: ['b1'] }, permissions: ['expense.disbursement.read'] }, loaded, true);
+    assert.equal(readable.get('expense')?.status, 'DRAFT'); assert.equal(readable.get('expense')?.preparerName, 'ผู้จัดทำ'); assert.equal(readable.get('expense')?.canOpen, true);
+    assert.ok(calls[0].where.OR.some((part: any) => part.status === 'DRAFT' && part.lines.some.expenseId.in.includes('expense')));
+    const hidden = await readDisbursementReservations(db, 'co', ['expense'], { companyId: 'co', scopes: {}, permissions: [] }, loaded, true);
+    assert.equal(hidden.get('expense')?.canOpen, false);
+  });
+});
+
+
+describe('voucher list query DTO', () => {
+  it('defaults newest, accepts oldest and refuses other directions at the HTTP boundary', async () => {
+    const { ValidationPipe } = await import('@nestjs/common');
+    const { GLOBAL_VALIDATION_PIPE_OPTIONS } = await import('../../../../common/pipes/validation-pipe.options');
+    const { DisbursementVoucherListQueryDto } = await import('../../presentation/http/disbursement-voucher.dtos');
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    const metadata = { type: 'query' as const, metatype: DisbursementVoucherListQueryDto };
+    assert.equal((await pipe.transform({}, metadata)).order, 'newest');
+    assert.equal((await pipe.transform({ order: 'oldest', page: '2', pageSize: '10', q: 'ร้าน' }, metadata)).order, 'oldest');
+    for (const order of ['ASC', '', ['newest', 'oldest'], null]) await assert.rejects(pipe.transform({ order }, metadata), BadRequestException);
+  });
+});
+
+
+describe('voucher account reveal HTTP boundary', () => {
+  it('allows prepare through the route guard and validates an explicit prefill purpose', async () => {
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, DisbursementVoucherController.prototype.revealAccount),
+      ['expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.disbursement.pay']);
+    const { ValidationPipe } = await import('@nestjs/common');
+    const { GLOBAL_VALIDATION_PIPE_OPTIONS } = await import('../../../../common/pipes/validation-pipe.options');
+    const { RevealDisbursementVoucherAccountQueryDto } = await import('../../presentation/http/disbursement-voucher.dtos');
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    const metadata = { type: 'query' as const, metatype: RevealDisbursementVoucherAccountQueryDto };
+    assert.equal((await pipe.transform({}, metadata)).purpose, undefined);
+    assert.equal((await pipe.transform({ purpose: 'prefill' }, metadata)).purpose, 'prefill');
+    for (const purpose of ['edit', '', ['prefill'], null]) await assert.rejects(pipe.transform({ purpose }, metadata), BadRequestException);
   });
 });

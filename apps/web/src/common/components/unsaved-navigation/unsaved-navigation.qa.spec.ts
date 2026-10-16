@@ -3,11 +3,14 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 const source = readFileSync(new URL('./use-unsaved-navigation.tsx', import.meta.url), 'utf8');
-const css = readFileSync(new URL('./unsaved-navigation.module.css', import.meta.url), 'utf8');
+const modal = readFileSync(new URL('../modal/Modal.tsx', import.meta.url), 'utf8');
 test('leave dialog uses the fixed copy, refuses backdrop dismissal and has safe-area footer padding', () => {
-  for (const [key, sentence] of [['title', 'ยังไม่ได้บันทึกใบนี้'], ['description', 'ถ้าออกตอนนี้ รายการที่เลือกไว้จะหาย'], ['stay', 'อยู่ต่อ'], ['discard', 'ไม่บันทึกและออก'], ['save_leave', 'บันทึกฉบับร่างและออก']] as const) assert.equal(workspaceDictionary.th[`common.unsaved.${key}`], sentence);
+  for (const [key, sentence] of [['title', 'ยังไม่ได้บันทึกใบนี้'], ['description', 'ถ้าออกตอนนี้ รายการที่เลือกไว้จะหาย'], ['stay', 'อยู่ต่อ'], ['discard', 'ไม่บันทึกและออก'], ['save_leave', 'บันทึกร่างและออก']] as const) assert.equal(workspaceDictionary.th[`common.unsaved.${key}`], sentence);
   assert.match(source, /closeOnBackdrop=\{false\}/);
-  assert.match(css, /padding-bottom: env\(safe-area-inset-bottom\)/);
+  // Since 2026-10-13 the dialog hands the Modal plain buttons (back-out first, the saving one last) and the
+  // Modal's grouped footer lays them out and carries the safe-area padding.
+  assert.match(source, /footer=\{<>\s*<button type="button" className=\{secondaryButtonClass\}[^\n]*common\.unsaved\.stay[\s\S]*common\.unsaved\.discard[\s\S]*className=\{primaryButtonClass\}[^\n]*common\.unsaved\.save_leave[^\n]*\n\s*<\/>\}/);
+  assert.match(modal, /footerGrouped \? ' pb-\[calc\(0\.75rem\+env\(safe-area-inset-bottom\)\)\]'/);
 });
 test('Stay drops the pending navigation, Discard leaves, and Save leaves only after successful valid save', () => {
   assert.match(source, /const stay = \(\) => \{ if \(!options\.saving\) \{ pending\.current = null; setOpen\(false\)/);

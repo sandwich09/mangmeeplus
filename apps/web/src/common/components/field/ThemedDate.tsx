@@ -106,6 +106,11 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current]);
 
+  const closeCalendar = useCallback(() => {
+    setOpen(false);
+    rootRef.current?.querySelector<HTMLButtonElement>('[role="combobox"]')?.focus({ preventScroll: true });
+  }, []);
+
   // The calendar is portaled out of `rootRef`, so it has to be named as "inside".
   useCloseOnOutsideClick(rootRef, useCallback(() => setOpen(false), []), panelRef);
 
@@ -121,7 +126,7 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
     if (next && outOfRange(next, min, max, mode === 'month' ? 7 : 10, selectable)) return;
     setInner(next);
     onChange?.({ target: { value: next } });
-    setOpen(false);
+    closeCalendar();
   }
 
   function pickDay(day: number) {
@@ -150,7 +155,7 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
   const todayValue = mode === 'month' ? `${today.year}-${pad(today.month + 1)}` : `${today.year}-${pad(today.month + 1)}-${pad(today.day)}`;
 
   return (
-    <div ref={rootRef} className={cx('relative min-w-0', className?.includes('w-auto') ? 'inline-block' : '')}>
+    <div ref={rootRef} onKeyDown={(event) => { if (open && event.key === 'Escape') { event.stopPropagation(); closeCalendar(); } }} className={cx('relative min-w-0', className?.includes('w-auto') ? 'inline-block' : '')}>
       {name && (
         // sr-only (not hidden) so FormData picks the value up by name AND native
         // `required` validation still fires; the browser focuses it on invalid
@@ -203,6 +208,8 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
           header and footer stay put and only the grid scrolls. */}
       <PopoverPanel
         open={open}
+        onClose={() => setOpen(false)}
+        onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); closeCalendar(); } }}
         anchorRef={rootRef}
         panelRef={panelRef}
         height={mode === 'month' ? 300 : 400}

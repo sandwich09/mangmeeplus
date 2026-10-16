@@ -84,14 +84,14 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
       {
         key: 'expenses.upload',
         labelTh: 'อัปโหลดใบเสร็จ',
-        descriptionTh: 'ส่งใบเสร็จให้ AI อ่านและสร้างรายการฉบับร่าง',
+        descriptionTh: 'ส่งใบเสร็จให้ AI อ่านและสร้างรายการร่าง',
         route: '/expenses/upload',
         permissionKeys: ['expense.receipt.upload', 'expense.receipt.line_upload', 'expense.ocr.request'],
       },
       {
         key: 'expenses.manual',
         labelTh: 'บันทึกด้วยมือ',
-        descriptionTh: 'กรอกรายละเอียดค่าใช้จ่ายและบันทึกเป็นฉบับร่าง',
+        descriptionTh: 'กรอกรายละเอียดค่าใช้จ่ายและบันทึกเป็นร่าง',
         route: '/expenses/manual',
         permissionKeys: ['expense.create', 'expense.update'],
       },
@@ -165,8 +165,8 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
   },
   {
     key: 'wht_pnd53',
-    labelTh: 'ออก ภ.ง.ด.53 ในระบบ',
-    descriptionTh: 'จัดทำและส่งออกแบบ ภ.ง.ด.53 พร้อมใบแนบสำหรับพิมพ์ยื่น',
+    labelTh: 'ออก ภ.ง.ด.3 และ ภ.ง.ด.53 ในระบบ',
+    descriptionTh: 'จัดทำและดาวน์โหลดแบบ ภ.ง.ด.3 และ ภ.ง.ด.53 พร้อมใบแนบสำหรับพิมพ์ยื่น',
     group: 'finance',
     sellable: true,
     submenus: [],
@@ -572,7 +572,7 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
   },
   {
     key: 'company_settings',
-    labelTh: 'ตั้งค่าบริษัท',
+    labelTh: 'ตั้งค่าร้าน',
     descriptionTh: 'จัดการสาขาและความปลอดภัยบัญชีของบริษัท',
     group: 'operate',
     sellable: false,

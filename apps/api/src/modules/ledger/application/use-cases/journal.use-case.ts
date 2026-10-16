@@ -93,10 +93,12 @@ function postingBindingMessage(code: string): string {
   return 'บริษัทที่ใช้ผังบัญชีมาตรฐานต้องกำหนดและอนุมัติกฎการลงบัญชีก่อนบันทึกอัตโนมัติ';
 }
 
-function normalizeExpenseVatForLedger(source: LedgerSourcePostingInput, evidence: any): LedgerSourcePostingInput {
+function normalizeExpenseVatForLedger(source: LedgerSourcePostingInput, evidence: any): LedgerSourcePostingInput & { inputVatClaimStatus?: string; taxEvidenceStatus?: string } {
   const claimable = evidence.inputVatClaimStatus === 'CLAIMABLE' && evidence.taxEvidenceStatus === 'USABLE_FOR_TAX';
   return {
     ...source,
+    inputVatClaimStatus: evidence.inputVatClaimStatus,
+    taxEvidenceStatus: evidence.taxEvidenceStatus,
     taxTotal: claimable ? source.taxTotal : '0',
     lines: source.lines.map((line) => ({ ...line, vatAmount: claimable ? line.vatAmount : '0' })),
   };
@@ -364,6 +366,158 @@ export class ReverseJournalUseCase {
  */
 export type PostingSourceRef = Pick<LedgerSourcePostingInput, 'sourceType' | 'sourceId'> & Partial<LedgerSourcePostingInput>;
 
+/**
+ * Reviewed account bindings for this company's expense categories. Only the categories the source
+ * actually references are loaded, so an unrelated unmapped category never blocks a posting.
+ */
+async function loadExpenseAccountBindings(
+  db: Prisma.TransactionClient,
+  companyId: string,
+  source: LedgerSourcePostingInput,
+): Promise<ExpenseAccountBindings> {
+  const categoryIds = [...new Set(source.lines.map((line) => line.expenseCategoryId).filter(Boolean))] as string[];
+  const rows = categoryIds.length
+    ? await db.expenseCategory.findMany({
+      where: { id: { in: categoryIds }, companyId, ledgerAccountCode: { not: null } },
+      select: { id: true, ledgerAccountCode: true },
+    })
+    : [];
+  return {
+    ...REVIEWED_PAYABLE_CODES,
+    expenseByCategoryId: new Map(rows.map((row) => [row.id, row.ledgerAccountCode!])),
+  };
+}
+
+
+function validatePostingCurrency(source: LedgerSourcePostingInput, company: { baseCurrency: string }) {
+  const baseCurrency = company.baseCurrency.toUpperCase();
+  const taxSnapshots = source.lines.flatMap((line) => line.taxComponents?.map((component) => component.snapshot) ?? (line.taxSnapshot ? [line.taxSnapshot] : []));
+  if (taxSnapshots.some((snapshot) => snapshot.taxCurrency.toUpperCase() !== baseCurrency)) {
+    throw new BadRequestException({ code: 'tax_functional_currency_mismatch', message: 'Tax snapshot currency must match the company functional currency' });
+  }
+  const commercialSource = ['accounting.document', 'expense.record', 'procurement.vendor_bill', 'procurement.vendor_bill.commercial'].includes(source.sourceType)
+    && source.sourceEventType !== 'procurement.vendor_bill.pp36_payment';
+  if (commercialSource && source.currency.toUpperCase() !== baseCurrency && taxSnapshots.length === 0) {
+    throw new BadRequestException({ code: 'functional_currency_fx_required', message: 'Foreign-currency commercial posting requires a verified immutable FX snapshot' });
+  }
+
+}
+
+/** The same builder serves automatic posting and a VAT decision's draft refresh. */
+export async function buildJournalLines(ctx: RequestContext, source: LedgerSourcePostingInput, company: any,
+  repo: PrismaLedgerRepository, db: Prisma.TransactionClient,
+  onFailure: (code: string) => Promise<void> = async () => {}, audit?: Pick<AuditService, 'log'>,
+): Promise<{ resolvedLines: LedgerJournalLineInput[]; bal: ReturnType<typeof validateJournalBalance> }> {
+  validatePostingCurrency(source, company);
+
+  // Try rule then default
+  const reviewedRulesRequired = requiresReviewedPostingRules(company);
+  const rule = await repo.findActivePostingRule(
+    ctx.companyId,
+    source.sourceType,
+    source.sourceEventType,
+    reviewedRulesRequired,
+  );
+  // Audit CR-2: a governed company has no PostingRule and must not fall back to
+  // DEFAULT_ACCOUNT_CODES — those predate TH_SME_COA_V1 and would book every expense to เงินเดือน.
+  // Expense accrual instead resolves the reviewed per-category bindings; every other event type
+  // still has no reviewed mapping and keeps failing closed with the actionable code.
+  let boundLines: LedgerJournalLineInput[] | null = null;
+  if (!rule && reviewedRulesRequired) {
+    const bindable = (BOUND_EXPENSE_ACCRUAL_EVENTS as readonly string[]).includes(source.sourceEventType);
+    const bound = bindable
+      ? buildBoundExpenseAccrualLines(source, await loadExpenseAccountBindings(db, ctx.companyId, source))
+      : { error: 'posting_rule_missing' as const };
+    if ('error' in bound) {
+      await onFailure(bound.error);
+      await audit?.log({
+        companyId: ctx.companyId,
+        // The auto-post worker runs this under `systemWorkerContext`; its id is no User row.
+        ...auditActorOf(ctx.userId, ctx.authSubject),
+        action: 'ledger.journal.generate',
+        targetType: 'journal_entry',
+        targetId: source.sourceId,
+        requestId: ctx.requestId,
+        result: 'FAILED',
+        riskLevel: 'HIGH',
+        metadataJson: {
+          sourceType: source.sourceType,
+          sourceId: source.sourceId,
+          error: bound.error,
+          chartTemplateKey: company.chartOfAccountsTemplateKey,
+        },
+      });
+      throw new BadRequestException({
+        code: bound.error,
+        sourceType: source.sourceType,
+        eventType: source.sourceEventType,
+        message: postingBindingMessage(bound.error),
+      });
+    }
+    boundLines = bound.lines;
+  }
+  let baseLines = boundLines ?? (rule ? null : buildDefaultPostingLines({ ...source, taxTotal: '0' }));
+  if (rule) {
+    const { resolvePostingLinesFromRule } = await import('../../domain/logic/posting-engine.logic.js');
+    baseLines = resolvePostingLinesFromRule(source, rule.mappingJson);
+  }
+  const transactionTax = buildTransactionTaxPostingLines(source, baseLines);
+  if (transactionTax.error) {
+    await onFailure(transactionTax.error);
+    throw new BadRequestException({ code: transactionTax.error, message: 'Transaction-tax snapshot or account determination is incomplete' });
+  }
+  const legacyCode = (source as LedgerSourcePostingInput & { legacyOutputTaxCode?: string }).legacyOutputTaxCode;
+  const legacySnapshots = source.lines.map((line) => line.taxSnapshot).filter(Boolean);
+  const reviewedLegacyOutput = source.sourceType === 'accounting.document' && legacySnapshots.length > 0
+    && legacySnapshots.every((snapshot) => ['O7', 'OX'].includes(snapshot!.externalTaxCode ?? '')
+      && snapshot!.taxDirection === 'OUTPUT' && snapshot!.evidenceStatus === 'VERIFIED');
+  if (!transactionTax.handled && (legacyCode === 'O0' || legacySnapshots.some((snapshot) => snapshot?.externalTaxCode === 'O0'))) {
+    await onFailure('legacy_o0_tax_review_required');
+    throw new BadRequestException({ code: 'legacy_o0_tax_review_required', message: 'O0 requires an explicit zero-rated context and reviewed Tax Code definition' });
+  }
+  if (!transactionTax.handled && new Decimal(source.taxTotal ?? 0).abs().gt('0.0001') && !reviewedLegacyOutput) {
+    await onFailure('legacy_tax_snapshot_review_required');
+    throw new BadRequestException({ code: 'legacy_tax_snapshot_review_required', message: 'Legacy VAT requires reviewed Item 11B Tax Code snapshots before posting' });
+  }
+  let lines = transactionTax.handled ? transactionTax.lines ?? null
+    : reviewedLegacyOutput ? buildDefaultPostingLines(source)
+      : baseLines;
+  if (!lines) {
+    await onFailure('posting_rule_missing');
+    await audit?.log({ companyId: ctx.companyId, ...auditActorOf(ctx.userId, ctx.authSubject), action: 'ledger.journal.generate', targetType: 'journal_entry', targetId: source.sourceId, requestId: ctx.requestId, result: 'FAILED', riskLevel: 'HIGH', metadataJson: { sourceType: source.sourceType, sourceId: source.sourceId, error: 'posting_rule_missing' } });
+    throw new BadRequestException({ code: 'posting_rule_missing', sourceType: source.sourceType, eventType: source.sourceEventType, message: 'ไม่พบกฎการลงบัญชีสำหรับเอกสารนี้ กรุณาติดต่อผู้ดูแลระบบเพื่อกำหนดกฎการลงบัญชี' });
+  }
+
+  // Resolve account ids from codes
+  const resolvedLines = await Promise.all(
+    lines.map(async (l) => {
+      if (l.accountId?.includes('-')) {
+        const acc = await repo.findAccountByCode(ctx.companyId, l.accountId);
+        if (!acc) {
+          await onFailure(`account_not_found:${l.accountId}`);
+          throw new BadRequestException({ code: 'posting_rule_missing', message: `ไม่พบรหัสบัญชี ${l.accountId} - กรุณาตั้งค่าผังบัญชี` });
+        }
+        return { ...l, accountId: acc.id };
+      }
+      const account = await repo.findAccountById(l.accountId);
+      if (!account || account.status !== 'ACTIVE' || !account.isPosting
+        || (account.companyId !== ctx.companyId && !(account.companyId === null && account.isSystem))) {
+        await onFailure(`account_not_available:${l.accountId}`);
+        throw new BadRequestException({ code: 'posting_rule_missing', message: `บัญชี ${l.accountId} ไม่พร้อมใช้งานหรืออยู่นอกบริษัท` });
+      }
+      return l;
+    })
+  );
+
+  const bal = validateJournalBalance(resolvedLines);
+  if (!bal.isBalanced) {
+    await onFailure('posting_unbalanced');
+    throw new BadRequestException({ code: 'posting_unbalanced', errors: bal.errors });
+  }
+
+  return { resolvedLines, bal };
+}
+
 @Injectable()
 export class GenerateJournalFromSourceUseCase {
   constructor(
@@ -401,7 +555,7 @@ export class GenerateJournalFromSourceUseCase {
     }
   }
 
-  private async canonicalSource(ctx: RequestContext, raw: PostingSourceRef): Promise<LedgerSourcePostingInput & { expenseConfirmedAt?: Date | null; expenseStatus?: string }> {
+  private async canonicalSource(ctx: RequestContext, raw: PostingSourceRef): Promise<LedgerSourcePostingInput & { expenseConfirmedAt?: Date | null; expenseStatus?: string; inputVatClaimStatus?: string; taxEvidenceStatus?: string }> {
     if (raw.sourceType === 'accounting.document' || raw.sourceType === 'accounting_document') {
       const document = await this.accountingRepo.findDocumentById(ctx.companyId, raw.sourceId);
       if (!document) throw new NotFoundException('Accounting source document not found');
@@ -501,27 +655,6 @@ export class GenerateJournalFromSourceUseCase {
     throw new BadRequestException({ code: 'unsupported_posting_source', message: 'Journal generation accepts only a recognized server-owned source. Use the manual-journal flow for manual entries.' });
   }
 
-  /**
-   * Reviewed account bindings for this company's expense categories. Only the categories the source
-   * actually references are loaded, so an unrelated unmapped category never blocks a posting.
-   */
-  private async loadExpenseAccountBindings(
-    companyId: string,
-    source: LedgerSourcePostingInput,
-  ): Promise<ExpenseAccountBindings> {
-    const categoryIds = [...new Set(source.lines.map((line) => line.expenseCategoryId).filter(Boolean))] as string[];
-    const rows = categoryIds.length
-      ? await this.prisma.client.expenseCategory.findMany({
-        where: { id: { in: categoryIds }, companyId, ledgerAccountCode: { not: null } },
-        select: { id: true, ledgerAccountCode: true },
-      })
-      : [];
-    return {
-      ...REVIEWED_PAYABLE_CODES,
-      expenseByCategoryId: new Map(rows.map((row) => [row.id, row.ledgerAccountCode!])),
-    };
-  }
-
   async execute(ctx: RequestContext, rawSource: PostingSourceRef): Promise<JournalEntrySummary> {
     requirePerm(ctx, 'journal.entry.post');
     const source = await this.canonicalSource(ctx, rawSource);
@@ -538,17 +671,7 @@ export class GenerateJournalFromSourceUseCase {
       },
     });
     if (!company) throw new NotFoundException('Company not found');
-    const baseCurrency = company.baseCurrency.toUpperCase();
-    const taxSnapshots = source.lines.flatMap((line) => line.taxComponents?.map((component) => component.snapshot) ?? (line.taxSnapshot ? [line.taxSnapshot] : []));
-    if (taxSnapshots.some((snapshot) => snapshot.taxCurrency.toUpperCase() !== baseCurrency)) {
-      throw new BadRequestException({ code: 'tax_functional_currency_mismatch', message: 'Tax snapshot currency must match the company functional currency' });
-    }
-    const commercialSource = ['accounting.document', 'expense.record', 'procurement.vendor_bill', 'procurement.vendor_bill.commercial'].includes(source.sourceType)
-      && source.sourceEventType !== 'procurement.vendor_bill.pp36_payment';
-    if (commercialSource && source.currency.toUpperCase() !== baseCurrency && taxSnapshots.length === 0) {
-      throw new BadRequestException({ code: 'functional_currency_fx_required', message: 'Foreign-currency commercial posting requires a verified immutable FX snapshot' });
-    }
-
+    validatePostingCurrency(source, company);
     // Idempotency: return existing generated journal
     const existing = await this.repo.findGeneratedJournal(ctx.companyId, source.sourceType, source.sourceId);
     if (existing) {
@@ -567,114 +690,12 @@ export class GenerateJournalFromSourceUseCase {
     if (period.status === 'CLOSED') throw new BadRequestException({ code: 'period_closed', periodKey, message: 'งวดบัญชีถูกปิดแล้ว ไม่สามารถบันทึกรายการได้' });
     await this.markSource(ctx, source, 'pending');
 
-    // Try rule then default
-    const reviewedRulesRequired = requiresReviewedPostingRules(company);
-    const rule = await this.repo.findActivePostingRule(
-      ctx.companyId,
-      source.sourceType,
-      source.sourceEventType,
-      reviewedRulesRequired,
-    );
-    // Audit CR-2: a governed company has no PostingRule and must not fall back to
-    // DEFAULT_ACCOUNT_CODES — those predate TH_SME_COA_V1 and would book every expense to เงินเดือน.
-    // Expense accrual instead resolves the reviewed per-category bindings; every other event type
-    // still has no reviewed mapping and keeps failing closed with the actionable code.
-    let boundLines: LedgerJournalLineInput[] | null = null;
-    if (!rule && reviewedRulesRequired) {
-      const bindable = (BOUND_EXPENSE_ACCRUAL_EVENTS as readonly string[]).includes(source.sourceEventType);
-      const bound = bindable
-        ? buildBoundExpenseAccrualLines(source, await this.loadExpenseAccountBindings(ctx.companyId, source))
-        : { error: 'posting_rule_missing' as const };
-      if ('error' in bound) {
-        await this.markSource(ctx, source, 'posting_error', undefined, bound.error);
-        await this.audit.log({
-          companyId: ctx.companyId,
-          // The auto-post worker runs this under `systemWorkerContext`; its id is no User row.
-          ...auditActorOf(ctx.userId, ctx.authSubject),
-          action: 'ledger.journal.generate',
-          targetType: 'journal_entry',
-          targetId: source.sourceId,
-          requestId: ctx.requestId,
-          result: 'FAILED',
-          riskLevel: 'HIGH',
-          metadataJson: {
-            sourceType: source.sourceType,
-            sourceId: source.sourceId,
-            error: bound.error,
-            chartTemplateKey: company.chartOfAccountsTemplateKey,
-          },
-        });
-        throw new BadRequestException({
-          code: bound.error,
-          sourceType: source.sourceType,
-          eventType: source.sourceEventType,
-          message: postingBindingMessage(bound.error),
-        });
-      }
-      boundLines = bound.lines;
-    }
-    let baseLines = boundLines ?? (rule ? null : buildDefaultPostingLines({ ...source, taxTotal: '0' }));
-    if (rule) {
-      const { resolvePostingLinesFromRule } = await import('../../domain/logic/posting-engine.logic.js');
-      baseLines = resolvePostingLinesFromRule(source, rule.mappingJson);
-    }
-    const transactionTax = buildTransactionTaxPostingLines(source, baseLines);
-    if (transactionTax.error) {
-      await this.markSource(ctx, source, 'posting_error', undefined, transactionTax.error);
-      throw new BadRequestException({ code: transactionTax.error, message: 'Transaction-tax snapshot or account determination is incomplete' });
-    }
-    const legacyCode = (source as LedgerSourcePostingInput & { legacyOutputTaxCode?: string }).legacyOutputTaxCode;
-    const legacySnapshots = source.lines.map((line) => line.taxSnapshot).filter(Boolean);
-    const reviewedLegacyOutput = source.sourceType === 'accounting.document' && legacySnapshots.length > 0
-      && legacySnapshots.every((snapshot) => ['O7', 'OX'].includes(snapshot!.externalTaxCode ?? '')
-        && snapshot!.taxDirection === 'OUTPUT' && snapshot!.evidenceStatus === 'VERIFIED');
-    if (!transactionTax.handled && (legacyCode === 'O0' || legacySnapshots.some((snapshot) => snapshot?.externalTaxCode === 'O0'))) {
-      await this.markSource(ctx, source, 'posting_error', undefined, 'legacy_o0_tax_review_required');
-      throw new BadRequestException({ code: 'legacy_o0_tax_review_required', message: 'O0 requires an explicit zero-rated context and reviewed Tax Code definition' });
-    }
-    if (!transactionTax.handled && new Decimal(source.taxTotal ?? 0).abs().gt('0.0001') && !reviewedLegacyOutput) {
-      await this.markSource(ctx, source, 'posting_error', undefined, 'legacy_tax_snapshot_review_required');
-      throw new BadRequestException({ code: 'legacy_tax_snapshot_review_required', message: 'Legacy VAT requires reviewed Item 11B Tax Code snapshots before posting' });
-    }
-    let lines = transactionTax.handled ? transactionTax.lines ?? null
-      : reviewedLegacyOutput ? buildDefaultPostingLines(source)
-        : baseLines;
-    if (!lines) {
-      await this.markSource(ctx, source, 'posting_error', undefined, 'posting_rule_missing');
-      await this.audit.log({ companyId: ctx.companyId, ...auditActorOf(ctx.userId, ctx.authSubject), action: 'ledger.journal.generate', targetType: 'journal_entry', targetId: source.sourceId, requestId: ctx.requestId, result: 'FAILED', riskLevel: 'HIGH', metadataJson: { sourceType: source.sourceType, sourceId: source.sourceId, error: 'posting_rule_missing' } });
-      throw new BadRequestException({ code: 'posting_rule_missing', sourceType: source.sourceType, eventType: source.sourceEventType, message: 'ไม่พบกฎการลงบัญชีสำหรับเอกสารนี้ กรุณาติดต่อผู้ดูแลระบบเพื่อกำหนดกฎการลงบัญชี' });
-    }
-
-    // Resolve account ids from codes
-    const resolvedLines = await Promise.all(
-      lines.map(async (l) => {
-        if (l.accountId?.includes('-')) {
-          const acc = await this.repo.findAccountByCode(ctx.companyId, l.accountId);
-          if (!acc) {
-            await this.markSource(ctx, source, 'posting_error', undefined, `account_not_found:${l.accountId}`);
-            throw new BadRequestException({ code: 'posting_rule_missing', message: `ไม่พบรหัสบัญชี ${l.accountId} - กรุณาตั้งค่าผังบัญชี` });
-          }
-          return { ...l, accountId: acc.id };
-        }
-        const account = await this.repo.findAccountById(l.accountId);
-        if (!account || account.status !== 'ACTIVE' || !account.isPosting
-          || (account.companyId !== ctx.companyId && !(account.companyId === null && account.isSystem))) {
-          await this.markSource(ctx, source, 'posting_error', undefined, `account_not_available:${l.accountId}`);
-          throw new BadRequestException({ code: 'posting_rule_missing', message: `บัญชี ${l.accountId} ไม่พร้อมใช้งานหรืออยู่นอกบริษัท` });
-        }
-        return l;
-      })
-    );
-
-    const bal = validateJournalBalance(resolvedLines);
-    if (!bal.isBalanced) {
-      await this.markSource(ctx, source, 'posting_error', undefined, 'posting_unbalanced');
-      throw new BadRequestException({ code: 'posting_unbalanced', errors: bal.errors });
-    }
+    const { resolvedLines, bal } = await buildJournalLines(ctx, source, company, this.repo, this.prisma.client,
+      (error) => this.markSource(ctx, source, 'posting_error', undefined, error), this.audit);
 
     const number = { companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey, idempotencyKey: `gen:${source.sourceType}:${source.sourceId}`, reservedByUserId: ctx.userId };
     const writePosted = async (entryNumber: string, db?: Prisma.TransactionClient) => {
-      const created = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber, entryType: 'GENERATED', sourceType: source.sourceType, sourceId: source.sourceId, entryDate: civilDateToUtcDate(coerceCivilDate(source.sourceDate)), memo: source.documentNumber ?? source.sourceId, createdByUserId: ctx.userId, lines: resolvedLines, expectedExpenseConfirmedAt: source.expenseConfirmedAt, expectedExpenseStatus: source.expenseStatus }, db);
+      const created = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber, entryType: 'GENERATED', sourceType: source.sourceType, sourceId: source.sourceId, entryDate: civilDateToUtcDate(coerceCivilDate(source.sourceDate)), memo: source.documentNumber ?? source.sourceId, createdByUserId: ctx.userId, lines: resolvedLines, expectedExpenseConfirmedAt: source.expenseConfirmedAt, expectedExpenseStatus: source.expenseStatus, expectedInputVatClaimStatus: source.inputVatClaimStatus, expectedTaxEvidenceStatus: source.taxEvidenceStatus }, db);
       await this.repo.postJournalEntry(created.id, ctx.userId, db);
       return created;
     };
@@ -711,4 +732,15 @@ export class GenerateJournalFromSourceUseCase {
     void this.outbox.append('journal.generated', 'journal_entry', entry.id, { companyId: ctx.companyId, aggregateType: 'journal_entry', aggregateId: entry.id, occurredAt: new Date().toISOString(), data: { sourceType: source.sourceType, sourceId: source.sourceId, entryNumber: entry.entryNumber, periodKey } });
     return toSummary(entry);
   }
+}
+
+/** Caller owns the expense correction lock and transaction; a failed rebuild rolls the decision back. */
+export async function rebuildExpenseDraftJournal(db: Prisma.TransactionClient, ctx: RequestContext, expense: any, draft: { id: string; periodId: string }) {
+  const repo = new PrismaLedgerRepository({ client: db } as PrismaService);
+  const period = await repo.findPeriodById(ctx.companyId, draft.periodId);
+  if (!period || period.status === 'CLOSED') throw new BadRequestException({ code: 'period_closed', message: 'งวดบัญชีถูกปิดแล้ว' });
+  const company = await db.company.findUniqueOrThrow({ where: { id: ctx.companyId } });
+  const source = asLedgerSource({ ...expense, sourceType: 'expense.record', sourceId: expense.id });
+  const { resolvedLines } = await buildJournalLines(ctx, source, company, repo, db);
+  await repo.replaceExpenseDraftJournalLines(ctx.companyId, draft.id, resolvedLines, db);
 }

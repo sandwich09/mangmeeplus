@@ -1,3 +1,4 @@
+import { waitingNoticeKey, WAITING_NOTICE_TRIGGERS, documentStateWords, finishedNoticeTitle } from './waiting-notification';
 import { completedDocumentNotificationIds, localizeReimbursementDecision } from './document-notification-state';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -129,13 +130,15 @@ export class PrismaNotificationEventRepository implements NotificationEventRepos
   async list(companyId: string, userId: string, filter: ListEventsFilter) {
     const completed = await completedDocumentNotificationIds(this.prisma.client, companyId, userId);
     const pageSize = filter.pageSize ?? 25;
-    const recipientWhere: any = { userId, dismissedAt: null };
+    const recipientWhere: any = { userId, dismissedAt: null, supersededAt: null };
+    if (filter.waiting || filter.read === false || filter.status === 'open') recipientWhere.finishedAt = null;
     if (filter.read === false) recipientWhere.readAt = null;
     if (filter.read === true) recipientWhere.readAt = { not: null };
     const where: any = { companyId, recipients: { some: recipientWhere } };
-    if (filter.status === 'resolved') where.OR = [{ status: 'RESOLVED' }, { id: { in: completed } }];
+    if (filter.status === 'resolved') where.OR = [{ status: 'RESOLVED' }, { id: { in: completed } }, { recipients: { some: { userId, finishedAt: { not: null } } } }];
     else if (filter.status) where.status = filter.status.toUpperCase();
-    if (filter.read === false || filter.status === 'open') where.AND = [{ status: { not: 'RESOLVED' } }, { id: { notIn: completed } }];
+    if (filter.read === false || filter.status === 'open' || filter.waiting) where.AND = [{ status: { not: 'RESOLVED' } }, { id: { notIn: completed } }];
+    if (filter.waiting) where.AND = [...(where.AND ?? []), { severity: { in: ['ACTION', 'CRITICAL'] }, triggerKey: { in: WAITING_NOTICE_TRIGGERS } }];
     if (filter.severity) where.severity = filter.severity.toUpperCase();
     if (filter.triggerKey) where.triggerKey = filter.triggerKey;
     where.AND = [...(where.AND ?? []), await entitledNotificationFilter(this.prisma, companyId)];
@@ -146,7 +149,13 @@ export class PrismaNotificationEventRepository implements NotificationEventRepos
     });
     const hasMore = rows.length > pageSize;
     const items = hasMore ? rows.slice(0, pageSize) : rows;
-    return { items: items.map(row => toEvent(completed.includes(row.id) ? { ...row, status: 'RESOLVED' } : row)), nextCursor: hasMore ? items[items.length - 1]?.id : undefined };
+    const finished = items.filter(row => completed.includes(row.id) || row.status === 'RESOLVED' || row.recipients?.[0]?.finishedAt);
+    const words = await documentStateWords(this.prisma.client, companyId, finished);
+    return { items: items.map(row => {
+      if (!finished.includes(row)) return toEvent(row);
+      const state = words.get(`${row.sourceType}:${row.sourceId}`);
+      return toEvent({ ...row, status: 'RESOLVED', title: state ? finishedNoticeTitle(row.title, state) : row.title });
+    }), nextCursor: hasMore ? items[items.length - 1]?.id : undefined };
   }
   async create(data: Omit<NotificationEvent, 'id' | 'createdAt' | 'updatedAt'>) {
     const r = await this.prisma.client.notificationEvent.create({
@@ -233,7 +242,7 @@ export class PrismaNotificationRecipientRepository implements NotificationRecipi
     const completed = await completedDocumentNotificationIds(this.prisma.client, companyId, userId);
     const groups = await this.prisma.client.notificationEvent.groupBy({
       by: ['severity'],
-      where: { companyId, ...await entitledNotificationFilter(this.prisma, companyId), status: { not: 'RESOLVED' }, id: { notIn: completed }, recipients: { some: { userId, readAt: null, dismissedAt: null } } },
+      where: { companyId, ...await entitledNotificationFilter(this.prisma, companyId), status: { not: 'RESOLVED' }, id: { notIn: completed }, recipients: { some: { userId, readAt: null, dismissedAt: null, supersededAt: null, finishedAt: null } } },
       _count: { _all: true },
     });
     const count = (severity: string) => groups.find((group) => group.severity === severity)?._count._all ?? 0;
@@ -244,6 +253,20 @@ export class PrismaNotificationRecipientRepository implements NotificationRecipi
         insight: count('INSIGHT'), info: count('INFO'),
       },
     };
+  }
+  /** Atomically replace only the web row; previous recipient/delivery records stay intact. */
+  async trackWaiting(recipient: NotificationRecipient, event: NotificationEvent) {
+    const key = waitingNoticeKey(event);
+    if (!key) return;
+    const work = async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${recipient.companyId}:${recipient.userId}:${key}`}, 0))`;
+      const current = await tx.notificationRecipient.findFirst({ where: { id: recipient.id, companyId: recipient.companyId, userId: recipient.userId } });
+      if (!current || current.readAt || current.dismissedAt || current.finishedAt || current.supersededAt) return;
+      await tx.notificationRecipient.updateMany({ where: { companyId: recipient.companyId, userId: recipient.userId, waitingKey: key, id: { not: recipient.id }, readAt: null, dismissedAt: null, supersededAt: null, finishedAt: null }, data: { supersededAt: new Date() } });
+      await tx.notificationRecipient.update({ where: { id: recipient.id }, data: { waitingKey: key } });
+    };
+    const db = this.prisma.client;
+    if (typeof db.$transaction === 'function') await db.$transaction(work); else await work(db);
   }
   async create(data: Omit<NotificationRecipient, 'id' | 'createdAt'>) { const r = await this.prisma.client.notificationRecipient.create({ data }); return toRecipient(r); }
   async update(companyId: string, id: string, data: Partial<NotificationRecipient>) { const r = await this.prisma.client.notificationRecipient.update({ where: { id }, data }); return toRecipient(r); }

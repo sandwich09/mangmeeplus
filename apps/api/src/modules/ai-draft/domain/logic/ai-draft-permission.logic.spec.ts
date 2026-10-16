@@ -1,3 +1,5 @@
+import { hasAiSuggestionSourceAccess } from '@watchdog-bms/contracts';
+import { AI_SUGGESTION_TEMPLATES, canAccessTemplateSources } from '../ai-draft-template-catalog';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -77,5 +79,18 @@ describe('template management', () => {
   it('requires ai.template.manage', () => {
     assert.equal(canManageTemplates(['ai.template.manage']), true);
     assert.equal(canManageTemplates(['ai.template.read']), false);
+  });
+});
+
+describe('shop web AI source access', () => {
+  it('uses the same source rights as every askable template', () => {
+    assert.equal(hasAiSuggestionSourceAccess(['ai.suggestion.read', 'ai.suggestion.request']), false);
+    for (const template of AI_SUGGESTION_TEMPLATES) {
+      const source = template.requiredPermissions.filter(permission => !permission.startsWith('ai.'));
+      assert.ok(source.length);
+      assert.equal(canAccessTemplateSources(template.key, source), true);
+      assert.equal(hasAiSuggestionSourceAccess(source), true);
+      assert.equal(canAccessTemplateSources(template.key, []), false);
+    }
   });
 });

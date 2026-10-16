@@ -360,13 +360,19 @@ export function isExactLegacyV1FallbackSnapshot(
 
 // ---- Self-approval guard ----
 
-/** Owner 2026-10-04: the claims switch applies to every role. Frozen assignments are checked by callers. */
+/** The shop owner may decide their own claim regardless of its routed approver or switch. */
+export function isOwnerSelfApproval(requesterUserId: string, approverUserId: string, roles: readonly string[]): boolean {
+  return requesterUserId === approverUserId && roles.includes('OWNER');
+}
+
+/** Frozen assignments are checked by callers; the shop owner is exempt from the switch. */
 export function isSelfApproval(
   requesterUserId: string,
   approverUserId: string,
   allowSelfApproval: boolean,
+  roles: readonly string[] = [],
 ): boolean {
-  return !allowSelfApproval && requesterUserId === approverUserId;
+  return !allowSelfApproval && requesterUserId === approverUserId && !isOwnerSelfApproval(requesterUserId, approverUserId, roles);
 }
 
 /**
@@ -585,7 +591,7 @@ const ALLOWED_TRANSITIONS: Record<ReimbursementRequestStatus, ReimbursementReque
   // PENDING_APPROVAL: sent back to have its payout account corrected.
   READY_FOR_PAYMENT: ['PAID', 'PARTIALLY_PAID', 'FINANCE_REVIEW', 'CANCELLED', 'VOIDED', 'PENDING_APPROVAL'],
   PARTIALLY_PAID: ['PAID', 'VOIDED'],
-  REJECTED: ['DRAFT'],
+  REJECTED: ['DRAFT', 'CANCELLED'],
   CANCELLED: [],
   PAID: ['VOIDED'],
   VOIDED: [],
@@ -729,11 +735,11 @@ export function computeReceiptRequirement(params: {
 }): { status: ReimbursementReceiptRequirementStatus; error?: string } {
   const evidence = params.lines.length > 0 && params.lines.every(isLineEvidenced);
   if (evidence) return { status: 'ATTACHED' };
-  if (!params.requireReceipt) return { status: 'WAIVED_BY_POLICY' };
-  if (params.allowMissingReceiptWithReason && params.missingReceiptReason && params.missingReceiptReason.trim() !== '') {
-    return { status: 'MISSING_WITH_REASON' };
+  if (params.allowMissingReceiptWithReason) {
+    return params.missingReceiptReason?.trim()
+      ? { status: 'MISSING_WITH_REASON' } : { status: 'REQUIRED', error: 'missing_receipt_reason_required' };
   }
-  return { status: 'REQUIRED', error: 'missing_receipt' };
+  return params.requireReceipt ? { status: 'REQUIRED', error: 'missing_receipt' } : { status: 'WAIVED_BY_POLICY' };
 }
 
 // ---- Rejection ----

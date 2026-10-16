@@ -87,6 +87,8 @@ export class PasswordLoginUseCase {
     });
 
     if (!membership) {
+      const disabledMembership = await this.prisma.client.companyMembership.findFirst({ where: { userId: user.id, status: { in: ['DISABLED', 'SUSPENDED'] }, company: { status: 'ACTIVE' } }, select: { id: true } });
+      if (disabledMembership) throw new ForbiddenException({ code: 'company_membership_disabled', message: 'Shop membership is disabled.' });
       throw new ForbiddenException({
         code: 'company_access_unavailable',
         message: 'This account has no active company access. Contact your administrator.',

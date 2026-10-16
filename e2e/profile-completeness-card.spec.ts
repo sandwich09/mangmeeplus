@@ -19,26 +19,26 @@ for (const width of [390, 1280]) {
     }, companyId);
     await page.reload();
 
-    const card = page.getByRole('region', { name: 'ข้อมูลร้านยังไม่ครบ · เพิ่มภายหลังได้', exact: true });
+    // Since 2026-10-13 the reminder is one row (no arrow to open): what is missing, `ไว้ก่อน` and the one link that fixes it.
+    const card = page.getByRole('region', { name: 'ข้อมูลที่ยังไม่ครบ', exact: true });
     const later = card.getByRole('button', { name: 'ไว้ก่อน', exact: true });
-    const complete = card.getByRole('link', { name: 'กรอกข้อมูลให้ครบ', exact: true });
+    const complete = card.getByRole('link', { name: 'กรอกข้อมูลร้าน', exact: true });
     await expect(card).toBeVisible();
-    await expect(later).not.toBeVisible();
-    await card.locator('summary').click();
     await expect(later).toBeVisible();
     await expect(complete).toBeVisible();
 
     const [laterBox, completeBox] = await Promise.all([later.boundingBox(), complete.boundingBox()]);
     expect(laterBox).not.toBeNull();
     expect(completeBox).not.toBeNull();
-    expect(laterBox!.height).toBeGreaterThanOrEqual(44);
-    expect(completeBox!.height).toBeGreaterThanOrEqual(44);
+    // The shared button: 44 px on a phone, 40 px from 640 px (thai-ux-standard §2.5).
+    expect(laterBox!.height).toBeGreaterThanOrEqual(width === 390 ? 44 : 40);
+    expect(completeBox!.height).toBeGreaterThanOrEqual(width === 390 ? 44 : 40);
     expect(Math.abs(laterBox!.y - completeBox!.y)).toBeLessThanOrEqual(1);
     const completeStyle = await complete.evaluate((element) => {
       const style = window.getComputedStyle(element);
       return { fontSize: Number.parseFloat(style.fontSize), fontWeight: Number(style.fontWeight) };
     });
-    expect(completeStyle.fontSize).toBeGreaterThanOrEqual(16);
+    expect(completeStyle.fontSize).toBeGreaterThanOrEqual(14);
     expect(completeStyle.fontWeight).toBeGreaterThanOrEqual(700);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`profile-completeness-${width}.png`), fullPage: true });
@@ -58,7 +58,6 @@ for (const width of [390, 1280]) {
     })).toBeVisible();
 
     await gotoCompany(page, companyId, '/dashboard');
-    await card.locator('summary').click();
     await card.getByRole('button', { name: 'ไว้ก่อน', exact: true }).click();
     await expect(card).toHaveCount(0);
     const dismissedAt = Date.now();
@@ -106,6 +105,7 @@ for (const width of [390, 1280]) test(`a LINE owner sets a backup password witho
   });
 
   await gotoCompany(page, companyId, '/settings/profile#account');
+  await expect(page).toHaveURL(new RegExp(`/companies/${companyId}/account$`));
   await expect(page.getByRole('heading', { name: 'บัญชีของฉัน', exact: true })).toBeVisible();
   const emailPanel = page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true });
   const backupHint = emailPanel.getByText('หากต้องการใช้รหัสผ่านเข้าสู่ระบบ จัดการรหัสผ่านสำรองได้ในหน้าบัญชีของฉัน', { exact: true });
@@ -113,7 +113,7 @@ for (const width of [390, 1280]) test(`a LINE owner sets a backup password witho
   await expect(emailPanel.getByText('ยังไม่ยืนยัน', { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'ชื่อผู้ใช้', exact: true })).toHaveCount(0);
   // The label ends in the aria-hidden required mark (14df7093c): match the field's accessible name.
-  const draftEmail = emailPanel.getByRole('textbox', { name: 'อีเมลที่ต้องการยืนยัน', exact: true });
+  const draftEmail = emailPanel.getByRole('textbox', { name: 'อีเมล', exact: true });
   await draftEmail.fill('draft@example.com');
   await page.locator('summary').filter({ hasText: 'รหัสผ่านสำรอง' }).click();
   await expect(page.getByText(/^หลังตั้งรหัสผ่านแล้ว ใช้อีเมล owner@example\.com คู่กับรหัสผ่านเข้าเว็บได้$/)).toBeVisible();
@@ -145,22 +145,34 @@ for (const width of [1280, 390]) {
       await route.fulfill({ json: { email: 'owner@example.com', emailVerified: true, emailRevision: 1, emailRequirement: 'READY', hasPassword: true, emailLoginEnabled: false, lineLinked: false, serverNow: new Date().toISOString(), challenge: null } });
     });
     await gotoCompany(page, companyId, '/settings/profile#account');
+  await expect(page).toHaveURL(new RegExp(`/companies/${companyId}/account$`));
     await expect(page.getByRole('heading', { name: 'บัญชีของฉัน', exact: true })).toBeVisible();
     await expect(page.getByLabel('ชื่อจดทะเบียน', { exact: false })).toBeHidden();
     await expect(page.locator('input[type=password]:visible')).toHaveCount(0);
     await page.getByRole('button', { name: 'เปลี่ยนอีเมล', exact: true }).click();
     // The label text ends in the required mark (aria-hidden " *", 14df7093c): match the field's accessible name.
-    await page.getByRole('textbox', { name: 'อีเมลที่ต้องการยืนยัน', exact: true }).fill('draft@example.com');
+    await page.getByRole('textbox', { name: 'อีเมล', exact: true }).fill('draft@example.com');
     await expect(page.getByRole('heading', { name: 'เข้าสู่ระบบด้วยรหัสทางอีเมล' })).toBeHidden();
-    const sections = page.getByRole('navigation', { name: 'หมวดการตั้งค่า' });
-    await sections.getByRole('button', { name: 'ข้อมูลร้าน', exact: true }).click();
-    await page.getByLabel('ชื่อจดทะเบียน', { exact: false }).fill('ร่างข้อมูลร้าน ไม่บันทึก');
-    await sections.getByRole('button', { name: 'บัญชีของฉัน', exact: true }).click();
-    await expect(page.getByLabel('อีเมลที่ต้องการยืนยัน')).toHaveValue('draft@example.com');
+    await expect(page.getByRole('navigation', { name: 'หมวดการตั้งค่า' })).toHaveCount(0);
+    await page.getByText('ประวัติการแก้ชื่อ', { exact: true }).click();
+    const saveName = page.getByRole('button', { name: 'บันทึกชื่อ', exact: true });
+    await expect(saveName).toBeVisible();
+    await expect(saveName).toHaveClass(/mangmee-btn-quiet/);
+    const name = page.getByRole('textbox', { name: 'ชื่อที่แสดง', exact: true });
+    const savedName = await name.inputValue();
+    await name.fill('ชื่อที่แก้เพื่อทดสอบ');
+    await expect(saveName).toHaveClass(/mangmee-btn-primary/);
+    await name.fill(savedName);
+    await expect(saveName).toHaveClass(/mangmee-btn-quiet/);
+    const grid = name.locator('xpath=ancestor::div[contains(@class, "sm:grid-cols-2")]');
+    const gridBox = await grid.boundingBox();
+    const fieldBox = await name.boundingBox();
+    expect(fieldBox!.width / gridBox!.width).toBeLessThan(width >= 640 ? 0.51 : 1.01);
+    await expect(page.getByRole('textbox', { name: 'อีเมล', exact: true })).toHaveValue('draft@example.com');
     await page.getByRole('button', { name: 'ปิดการแก้ไข' }).click();
     await page.getByRole('button', { name: 'เปลี่ยนวิธีเข้าสู่ระบบ' }).click();
     await expect(page.getByLabel('รหัสผ่านปัจจุบัน', { exact: true })).toBeVisible();
-    await expect(page.getByLabel('อีเมลที่ต้องการยืนยัน')).toBeHidden();
+    await expect(page.getByRole('textbox', { name: 'อีเมล', exact: true })).toBeHidden();
     await expect(page.getByRole('button', { name: 'ยืนยันเปิดการเข้าด้วยอีเมล' })).toBeVisible();
     await page.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
     await expect(page.locator('input[type=password]:visible')).toHaveCount(0);
@@ -176,7 +188,9 @@ for (const width of [1280, 390]) {
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
     await page.screenshot({ path: info.outputPath(`profile-focus-${width}.png`), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await sections.getByRole('button', { name: 'ข้อมูลร้าน', exact: true }).click();
+    await gotoCompany(page, companyId, '/settings/profile');
+    await expect(page.getByRole('link', { name: 'บัญชีของฉัน', exact: true })).toHaveAttribute('href', `/companies/${companyId}/account`);
+    await page.getByLabel('ชื่อจดทะเบียน', { exact: false }).fill('ร่างข้อมูลร้าน ไม่บันทึก');
     await expect(page.getByLabel('ชื่อจดทะเบียน', { exact: false })).toHaveValue('ร่างข้อมูลร้าน ไม่บันทึก');
     const taxId = page.getByLabel('เลขผู้เสียภาษี', { exact: false });
     await taxId.fill('ภกแ 1234567890123456789');

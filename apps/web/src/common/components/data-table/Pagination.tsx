@@ -18,7 +18,8 @@ const labels = {
 
 export function Pagination({ page, totalPages, onPageChange, disabled, locale = 'th', prominent = false }: PaginationProps) {
   const l = labels[locale];
-  const look = prominent ? { variant: 'secondary', size: 'md', className: 'min-h-11 min-w-28 !text-base' } as const : { variant: 'ghost', size: 'sm' } as const;
+  // The two ends are one width (thai-ux-standard §2.3): "← ก่อนหน้า" is the longer name, so both take 8rem.
+  const look = prominent ? { variant: 'secondary', size: 'md', className: 'min-h-11 min-w-0 whitespace-nowrap px-3 sm:min-w-32 !text-base' } as const : { variant: 'quiet', size: 'sm', className: 'min-w-24' } as const;
   return (
     <div className={prominent ? 'flex items-center justify-between gap-3 py-1' : 'flex flex-wrap items-center justify-between gap-4 py-3 sm:flex-nowrap'}>
       <Button
@@ -29,7 +30,7 @@ export function Pagination({ page, totalPages, onPageChange, disabled, locale = 
         {prominent && <span aria-hidden="true">←</span>}
         {l.prev}
       </Button>
-      <span className={prominent ? 'text-center text-base font-semibold tabular-nums text-gray-900' : 'text-sm text-gray-600'}>{l.page_of(page, totalPages)}</span>
+      <span className={prominent ? 'whitespace-nowrap text-center text-base font-semibold tabular-nums text-gray-900' : 'text-sm text-gray-600'}>{l.page_of(page, totalPages)}</span>
       <Button
         {...look}
         disabled={disabled || page >= totalPages}

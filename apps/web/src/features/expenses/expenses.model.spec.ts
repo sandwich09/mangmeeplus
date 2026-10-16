@@ -1,3 +1,4 @@
+import * as expenseModel from './expenses.model';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { isBlockingExpenseVatReconciliation, type ExpenseVatCaptureSnapshotV1 } from '@watchdog-bms/contracts';
@@ -181,7 +182,7 @@ describe('expenses.model', () => {
     assert.equal(isWetSignedScanAttachment('att-other', { wetSignedScanAttachmentId: 'att-scan' }), false);
     assert.equal(isWetSignedScanAttachment('att-scan', { wetSignedScanAttachmentId: null }), false);
     assert.equal(isWetSignedScanAttachment('att-scan', null), false);
-    assert.equal(expenseValueLabel(SUBSTITUTE_RECEIPT_STATUS_LABELS, 'PAYER_CERTIFIED'), 'ผู้จ่ายลงนามแล้ว รออนุมัติ');
+    assert.equal(expenseValueLabel(SUBSTITUTE_RECEIPT_STATUS_LABELS, 'PAYER_CERTIFIED'), 'รออนุมัติ');
     assert.equal(expenseValueLabel({}, 'NEW_INTERNAL_CODE', 'ข้อมูลที่ต้องตรวจเพิ่ม'), 'ข้อมูลที่ต้องตรวจเพิ่ม');
   });
 
@@ -1051,7 +1052,7 @@ describe('summarizeExpenseKpis', () => {
 
 describe('expenseDeleteErrorMessage', () => {
   const blockers = [
-    ['PAYMENT', 'ข้อมูลการชำระเงิน', 'recorded payment'],
+    ['PAYMENT', 'ข้อมูลการจ่ายเงิน', 'recorded payment'],
     ['TAX_EVENT', 'เหตุการณ์ภาษี', 'tax event'],
     ['TAX_REVIEW_ISSUE', 'ประเด็นตรวจสอบภาษี', 'tax review issue'],
     ['TAX_RECONCILIATION_LINE', 'รายการกระทบยอดภาษี', 'tax reconciliation line'],
@@ -1090,13 +1091,13 @@ describe('expenseDeleteErrorMessage', () => {
       'This expense cannot be deleted because it has linked data. Review the related records.',
     );
     assert.equal(expenseDeleteErrorMessage(new Error('Retention locked.'), 'th'), 'Retention locked.');
-    assert.equal(expenseDeleteErrorMessage(null, 'th'), 'เกิดข้อผิดพลาด');
+    assert.equal(expenseDeleteErrorMessage(null, 'th'), 'ทำรายการไม่สำเร็จ ลองอีกครั้ง');
     assert.equal(expenseDeleteErrorMessage(null, 'en'), 'An error occurred.');
   });
 
   it('asks the user to reload after a concurrent delete conflict', () => {
     const error = { details: { code: 'EXPENSE_CHANGED_DURING_DELETE' } };
-    assert.equal(expenseDeleteErrorMessage(error, 'th'), 'รายการถูกแก้ไขระหว่างการลบ กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง');
+    assert.equal(expenseDeleteErrorMessage(error, 'th'), 'รายการถูกแก้ไขระหว่างการลบ เปิดหน้านี้ใหม่แล้วลองอีกครั้ง');
     assert.equal(expenseDeleteErrorMessage(error, 'en'), 'The expense changed during deletion. Reload and try again.');
   });
 });
@@ -1161,12 +1162,12 @@ describe('postingErrorText', () => {
   it('translates the ledger code the API stores', () => {
     assert.equal(
       postingErrorText('posting_rule_missing'),
-      'ยังไม่ได้กำหนดกฎการลงบัญชีสำหรับเอกสารประเภทนี้ กรุณาตั้งค่ากฎการลงบัญชีก่อน',
+      'ยังไม่ได้กำหนดกฎการลงบัญชีสำหรับเอกสารประเภทนี้ ตั้งค่ากฎการลงบัญชีก่อน',
     );
   });
 
   it('keeps the account id that codes carry after the colon', () => {
-    assert.equal(postingErrorText('account_not_found:5100'), 'ไม่พบรหัสบัญชีที่กฎการลงบัญชีอ้างถึง กรุณาตรวจผังบัญชี (5100)');
+    assert.equal(postingErrorText('account_not_found:5100'), 'ไม่พบรหัสบัญชีที่กฎการลงบัญชีอ้างถึง ตรวจผังบัญชี (5100)');
   });
 
   it('passes through the Thai sentence the auto-post worker writes', () => {
@@ -1256,4 +1257,69 @@ describe('canCorrectWhtCertificate / canIssueWhtReplacementCopy (Expenses)', () 
       assert.equal(canIssueWhtReplacementCopy({ ...issued, status }, ['wht.certificate.correct']), false, status);
     }
   });
+});
+
+
+describe('receipt document evidence answer', () => {
+  for (const type of Object.keys(expenseModel.SOURCE_DOCUMENT_TYPE_LABELS)) {
+    it(`${type} preserves the saved evidence answer without a browser preset`, () => {
+      const checks = expenseModel.deriveExpenseAuditChecks({ sourceDocumentType: type, taxEvidenceStatus: 'NOT_TAX_EVIDENCE',
+        lines: [], vatMode: 'NO_VAT', vatAmount: '0', taxableAmount: '0', duplicateStatus: 'NO_MATCH', aiVerificationSummaryJson: null } as any);
+      assert.equal(checks.find(check => check.key === 'tax_evidence')?.label, 'หลักฐานรายจ่าย: ใช้ไม่ได้');
+    });
+  }
+});
+
+describe('receipt uploader missing fields', () => {
+  const detail = { status: 'NEEDS_REVIEW', createdByUserId: 'sender', vendorNameSnapshot: null, expenseDate: '2026-10-13', aiVerificationSummaryJson: { missingFields: ['vendorName', 'expenseDate', 'amount'] }, lines: [], vatMode: 'NO_VAT' } as any;
+  it('only lets an originating sender with draft-update rights fill missing source fields', () => {
+    assert.deepEqual(expenseModel.receiptDraftMissingFields(detail, 'sender', { canUpdate: true }), { vendor: true, date: true, amount: true });
+    for (const [userId, canUpdate, status] of [['other', true, 'NEEDS_REVIEW'], ['sender', false, 'NEEDS_REVIEW'], ['sender', true, 'CONFIRMED']]) {
+      assert.equal(expenseModel.receiptDraftMissingFields({ ...detail, status } as any, userId as string, { canUpdate: canUpdate as boolean }), null);
+    }
+    assert.equal(expenseModel.receiptDraftMissingFields({ ...detail, vendorNameSnapshot: 'ร้าน', lines: [{ unitPrice: '20' }], aiVerificationSummaryJson: null }, 'sender', { canUpdate: true }), null);
+  });
+  it('patches only the missing source fields and uses the existing line calculation contract', () => {
+    assert.deepEqual(expenseModel.receiptDraftFillPayload(detail, { vendor: true, date: true, amount: true }, { vendor: 'ร้าน', date: '2026-10-12', amount: '120.50' }), {
+      vendorNameSnapshot: 'ร้าน', expenseDate: '2026-10-12',
+      lines: [{ lineNumber: 1, description: 'ค่าใช้จ่ายตามใบเสร็จ', chargeKind: null, quantity: '1', unitPrice: '120.50', discountAmount: '0' }],
+    });
+    assert.deepEqual(expenseModel.receiptDraftFillPayload(detail, { vendor: true, date: false, amount: false }, { vendor: 'ร้าน', date: 'wrong', amount: '999' }), { vendorNameSnapshot: 'ร้าน' });
+  });
+});
+
+
+describe('no receipt presentation', () => {
+  for (const receiptProblem of ['NOT_AVAILABLE', 'LOST'] as const) it(`shows ${receiptProblem} without an invented tax choice or document number demand`, () => {
+    const source: any = { sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY', taxEvidenceReasonCode: 'MANUAL_OVERRIDE', lines: [],
+      aiVerificationSummaryJson: { documentReview: { assessment: { route: 'SUBSTITUTE_RECEIPT', receiptProblem, reason: 'ไม่มีใบเสร็จ', attachmentIds: [] } } } };
+    const checks = expenseModel.deriveExpenseAuditChecks(source);
+    assert.equal(expenseModel.expenseSourceDocumentLabel(source), 'ไม่มีใบเสร็จ');
+    assert.equal(checks.find(row => row.key === 'receipt')?.label, receiptProblem === 'LOST' ? 'ใบเสร็จหาย' : 'ไม่มีใบเสร็จ');
+    assert.equal(checks.find(row => row.key === 'receipt')?.detail, 'ยังไม่ได้ทำใบรับรองแทนใบเสร็จ');
+    assert.ok(!checks.some(row => ['tax_evidence', 'document_number'].includes(row.key)));
+    assert.notEqual(expenseModel.expenseSourceDocumentLabel({ ...source, aiVerificationSummaryJson: null }), 'ไม่มีใบเสร็จ');
+  });
+});
+
+describe('LIST-1 expense list status', () => {
+  it('shows one work status for every expense/payment state', () => {
+    for (const status of ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'CONFIRMED', 'REJECTED', 'VOIDED'] as const) {
+      for (const paymentStatus of ['UNPAID', 'PARTIALLY_PAID', 'PAID', 'VOIDED'] as const) {
+        const expected = status === 'VOIDED' ? 'ยกเลิก' : status === 'REJECTED' ? 'ปฏิเสธ' : status !== 'CONFIRMED' ? 'รอตรวจ'
+          : paymentStatus === 'PAID' ? 'จ่ายแล้ว' : paymentStatus === 'PARTIALLY_PAID' ? 'จ่ายบางส่วน' : 'รอจ่าย';
+        assert.equal(expenseModel.expenseListStatus({ status, paymentStatus }).label, expected);
+      }
+    }
+  });
+  it('opens a legacy day link in that month and ignores an invalid day', () => {
+    assert.equal(expenseModel.expenseListMonth('2026-09-30', '2026-10'), '2026-09');
+    assert.equal(expenseModel.expenseListMonth('2024-02-29', '2026-10'), '2024-02');
+    for (const day of [null, '', '2026-02-30', 'bad']) assert.equal(expenseModel.expenseListMonth(day, '2026-10'), '2026-10');
+  });
+});
+
+it('LIST-1 keeps the overpayment warning and claim progress instead of inventing another action', () => {
+  assert.equal(expenseModel.expenseListStatus({ status: 'CONFIRMED', paymentStatus: 'PAID', paidAmount: '700', netPayableAmount: '500' }).label, 'จ่ายเกินยอดสุทธิ');
+  assert.equal(expenseModel.expenseListStatus({ status: 'DRAFT', paymentStatus: 'UNPAID', reimbursementProgress: { status: 'PAID' } }).label, 'จ่ายคืนแล้ว');
 });

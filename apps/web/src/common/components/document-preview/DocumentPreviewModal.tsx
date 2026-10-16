@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Modal } from '@/common/components/modal';
+import { primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
 
 export type DocumentPreviewSource = {
   name: string;
@@ -23,6 +24,13 @@ export type DocumentPreviewModalProps = {
   onRetry?: () => void | Promise<void>;
   onViewed?: () => void;
   footer?: ReactNode;
+  /**
+   * Which footer button is the main one of this dialog (one primary per view, thai-ux-standard §2.1).
+   * `print` (default): the preview's own พิมพ์ is the filled button and comes last.
+   * `host`: the button the host passed in `footer` is the main one; พิมพ์ becomes a plain button and
+   * the host's buttons come last.
+   */
+  mainAction?: 'print' | 'host';
   printSurface?: boolean;
   hideOpenNewTab?: boolean;
   zoomOutLabel?: string;
@@ -61,6 +69,7 @@ function DocumentPreviewModalContent({
   onRetry,
   onViewed,
   footer,
+  mainAction = 'print',
   printSurface = false,
   hideOpenNewTab = false,
   zoomOutLabel = 'Zoom out',
@@ -119,23 +128,23 @@ function DocumentPreviewModalContent({
   // image mode, while opening it as a document can execute active content in the blob's origin.
   const mayOpenNewTab = !hideOpenNewTab && kind !== 'unsupported' && source.mimeType.split(';', 1)[0]?.trim().toLowerCase() !== 'image/svg+xml';
   const mayPrintPages = printSurface && kind === 'image' && !!imagePageUrls?.length;
-  const modalFooter = footer || mayOpenNewTab || mayPrintPages ? (
-    <>
-      {footer}
-      {mayPrintPages && <button type="button" disabled={status !== 'ready'} onClick={() => window.print()}
-        className="inline-flex min-h-11 items-center justify-center rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">พิมพ์</button>}
-      {mayOpenNewTab && source.url && (
-        <a
-          href={source.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-brand-700 transition hover:border-brand-300 hover:bg-brand-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
-        >
-          {openNewTabLabel}
-        </a>
-      )}
-    </>
-  ) : undefined;
+  const hostIsMain = mainAction === 'host' && Boolean(footer);
+  const openNewTab = mayOpenNewTab && source.url && (
+    <a
+      href={source.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={secondaryButtonClass}
+    >
+      {openNewTabLabel}
+    </a>
+  );
+  const print = mayPrintPages && <button type="button" disabled={status !== 'ready'} onClick={() => window.print()}
+    className={hostIsMain ? secondaryButtonClass : primaryButtonClass}>พิมพ์</button>;
+  // Shared buttons in the shared order, the main one last: the preview's print by default, or the host's own button when it says so.
+  const modalFooter = footer || mayOpenNewTab || mayPrintPages
+    ? hostIsMain ? <>{openNewTab}{print}{footer}</> : <>{footer}{openNewTab}{print}</>
+    : undefined;
 
   return (
     <Modal
@@ -158,7 +167,7 @@ function DocumentPreviewModalContent({
               title={zoomOutLabel}
               disabled={zoom <= MIN_ZOOM}
               onClick={() => setZoom((current) => Math.max(MIN_ZOOM, current - ZOOM_STEP))}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-lg font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-gray-200 bg-white text-lg font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:w-10"
             >
               −
             </button>
@@ -167,7 +176,7 @@ function DocumentPreviewModalContent({
               aria-label={resetZoomLabel}
               title={resetZoomLabel}
               onClick={() => setZoom(100)}
-              className="inline-flex h-10 min-w-16 items-center justify-center rounded-lg border border-gray-200 bg-white px-2 text-xs font-semibold tabular-nums text-gray-700 hover:bg-gray-50"
+              className="inline-flex h-11 min-w-16 items-center justify-center rounded-lg border border-gray-200 bg-white px-2 text-xs font-semibold tabular-nums text-gray-700 hover:bg-gray-50 sm:h-10"
             >
               {zoom}%
             </button>
@@ -177,7 +186,7 @@ function DocumentPreviewModalContent({
               title={zoomInLabel}
               disabled={zoom >= MAX_ZOOM}
               onClick={() => setZoom((current) => Math.min(MAX_ZOOM, current + ZOOM_STEP))}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-lg font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-gray-200 bg-white text-lg font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:w-10"
             >
               +
             </button>
@@ -202,7 +211,7 @@ function DocumentPreviewModalContent({
                   type="button"
                   disabled={retrying || kind === 'unsupported' || !source.url} aria-busy={Boolean(retrying)}
                   onClick={() => void retry()}
-                  className="mt-4 inline-flex min-h-11 items-center justify-center rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className={`mt-4 ${secondaryButtonClass}`}
                 >
                   {retrying ? loadingLabel : retryLabel}
                 </button>

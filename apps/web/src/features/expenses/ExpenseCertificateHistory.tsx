@@ -50,11 +50,15 @@ export function ExpenseCertificateHistoryDisclosure({ label, plain = false }: { 
     const day = formatThaiDate(row.occurredAt);
     groups.set(day, [...(groups.get(day) ?? []), row]);
   }
-  const disclosure = <details>
-      <summary className="min-h-11 cursor-pointer text-sm font-semibold leading-6 text-gray-800">{label ?? `ประวัติหนังสือรับรองหัก ณ ที่จ่าย (${history.rows.length} รายการ)`}</summary>
-      <div className="space-y-4 pt-3">{[...groups].map(([day, rows]) => <section key={day} className="space-y-2">
+  // The same closed line with a chevron as the other histories of the sold screens (no browser triangle); the name says what is inside.
+  const disclosure = <details className="group">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-gray-800 [&::-webkit-details-marker]:hidden">
+        <span>{label ?? `ประวัติหนังสือรับรอง 50 ทวิ (${history.rows.length} รายการ)`}</span>
+        <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-5 w-5 shrink-0 text-gray-500 transition-transform group-open:rotate-180"><path d="M5 7.5l5 5 5-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </summary>
+      <div className="space-y-4 pt-1">{[...groups].map(([day, rows]) => <section key={day} className="space-y-2">
         <h3 className="text-sm font-semibold text-gray-800">{day}</h3>
-        <ul className="space-y-2 text-sm leading-6 text-gray-700">{rows.map((row, index) => {
+        <ul className="space-y-3 text-sm leading-6 text-gray-700">{rows.map((row, index) => {
           const previous = row.previousExternalRecord;
           const referenceChanged = !previous || (previous.externalEvidenceRef ?? '') !== (row.evidenceRef ?? '');
           const noteChanged = !previous || (previous.note ?? '') !== (row.note ?? '');
@@ -64,15 +68,17 @@ export function ExpenseCertificateHistoryDisclosure({ label, plain = false }: { 
             previous.externalEvidenceRef && referenceChanged && `${t('expenses.certificate_card.history_reference', 'th')} ${previous.externalEvidenceRef}`,
             previous.note && noteChanged && `${t('expenses.certificate_card.history_note', 'th')} ${previous.note}`,
           ].filter(Boolean) : [];
-          return <li key={`${row.occurredAt}-${index}`} className="break-words">
+          return <li key={`${row.occurredAt}-${index}`} className="break-words border-l-2 border-gray-200 pl-3">
+          {/* Who and when on the first line, what happened on the second, the typed reason on its own line. */}
+          <p className="text-gray-500"><span className="mangmee-unit">{formatThaiTime(row.occurredAt)}</span>{row.actorDisplayName && <> · {row.actorDisplayName}</>}</p>
           {/* A certificate number stays on one line: the browser otherwise breaks it after a hyphen ("WHT-" / "2026-00003"). */}
-          {[
-            formatThaiTime(row.occurredAt), row.actorDisplayName ?? '—', row.removedManually ? WHT_EXTERNAL_RECORD_WORDS.removedManually : WHT_CERTIFICATE_HISTORY_EVENT_LABELS[row.eventType],
+          <p>{[
+            row.removedManually ? WHT_EXTERNAL_RECORD_WORDS.removedManually : WHT_CERTIFICATE_HISTORY_EVENT_LABELS[row.eventType],
             row.eventType === 'EXTERNAL_RECORD_REMOVED' && !row.removedManually && t('expenses.certificate_card.removed_with_expense', 'th'),
             row.certificateNumber && <span className="inline-block max-w-full">เลขที่ <span className={row.certificateNumber.length > 30 ? undefined : 'whitespace-nowrap'}>{row.certificateNumber}</span></span>,
             row.eventType === 'CORRECTED' && row.relatedCertificateNumber && <span className="inline-block max-w-full">ใบใหม่เลขที่ <span className={row.relatedCertificateNumber.length > 30 ? undefined : 'whitespace-nowrap'}>{row.relatedCertificateNumber}</span></span>,
-            row.reason && `เหตุผล: ${row.reason}`,
-          ].filter(Boolean).map((part, position) => <Fragment key={position}>{position > 0 && ' · '}{part}</Fragment>)}
+          ].filter(Boolean).map((part, position) => <Fragment key={position}>{position > 0 && ' ' /* a space, not a dot: a dot would hang at the end of a line when the number wraps as one unit */}{part}</Fragment>)}</p>
+          {row.reason && <p className="whitespace-pre-wrap break-words">เหตุผล: {row.reason}</p>}
           {oldValues.length > 0 && <p className="whitespace-pre-wrap break-words">
             {t('expenses.certificate_card.history_old', 'th')}{' '}
             {oldValues.map((part, position) => <Fragment key={position}>{position > 0 && ' · '}{part}</Fragment>)}

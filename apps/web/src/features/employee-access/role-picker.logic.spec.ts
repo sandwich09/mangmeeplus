@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { workspaceDictionary } from '../../common/i18n/workspace-dictionary';
 import type { RoleSummary } from '@watchdog-bms/contracts';
-import { assignableRoleOptions, hasStandardRoleName, isAssignableRoleCatalog, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleDisplayName, roleKeyDisplayName, roleTemplateChoices } from './role-picker.logic';
+import { assignableRoleOptions, hasStandardRoleName, isAssignableRoleCatalog, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleCanDoPacks, roleDisplayName, roleKeyDisplayName, roleTemplateChoices } from './role-picker.logic';
 
 function role(id: string, assignableByCurrentUser?: boolean): RoleSummary {
   return { id, key: id.toUpperCase(), name: id, isSystem: true, status: 'ACTIVE', permissionKeys: [], assignableByCurrentUser };
@@ -157,6 +157,36 @@ describe('roleTemplateChoices', () => {
     const builder = readFileSync(new URL('./EmployeeAccessPages.tsx', import.meta.url), 'utf8');
     assert.match(builder, /templates\.filter\(\(tpl\) => roleTemplateChoices\(tpl, allPacks, availablePackKeys\)\)/);
     assert.match(builder, /setSelectedPacks\(roleTemplateChoices\(tpl, allPacks, availablePackKeys\) \?\? \[\]\)/);
+  });
+});
+
+// Owner report 2026-10-13: the role page of ฝ่ายบัญชี listed stock, sales bills, bank reconciliation, ledger
+// and tax filing in a shop whose package has none of them. A shop reads only what its package has.
+describe('roleCanDoPacks', () => {
+  const packs = [
+    { key: 'pack.core.basics', isCore: true, locked: false, permissionKeys: ['dashboard.read'] },
+    { key: 'pack.expense.view', isCore: false, locked: false, permissionKeys: ['expense.read'] },
+    { key: 'pack.expense.review', isCore: false, locked: false, permissionKeys: ['expense.read', 'expense.review'] },
+    { key: 'pack.inventory.view', isCore: false, locked: true, permissionKeys: ['inventory.read'] },
+    { key: 'pack.empty', isCore: false, locked: false, permissionKeys: [] },
+  ];
+  const keys = (list: Array<{ key: string }>) => list.map((pack) => pack.key);
+
+  it('lists the choices a role holds in full, and leaves out what the shop\u2019s package does not have', () => {
+    assert.deepEqual(keys(roleCanDoPacks(['dashboard.read', 'expense.read', 'inventory.read'], packs)), ['pack.expense.view']);
+    assert.deepEqual(keys(roleCanDoPacks(['expense.read', 'expense.review', 'inventory.read'], packs)), ['pack.expense.view', 'pack.expense.review']);
+    assert.deepEqual(roleCanDoPacks([], packs), []);
+  });
+
+  it('is the rule of the role page and of a person\u2019s rights card, and the builder offers no locked choice either', () => {
+    const rolePage = readFileSync(new URL('./PermissionMatrixPrototypePage.tsx', import.meta.url), 'utf8');
+    const people = readFileSync(new URL('./IndividualPermissionsPrototypePage.tsx', import.meta.url), 'utf8');
+    const builder = readFileSync(new URL('./EmployeeAccessPages.tsx', import.meta.url), 'utf8');
+    assert.match(rolePage, /roleCanDoPacks\(selectedRole\.permissionKeys, allPacks\)/);
+    assert.match(people, /roleCanDoPacks\(selectedRoles\.flatMap\(\(role\) => role\.permissionKeys\), packs\)/);
+    assert.match(builder, /allPacks\.filter\(\(p\) => !p\.isCore && !p\.locked && p\.grantableByCurrentUser\)/);
+    // What the builder hides stays in the role: the rights outside its boxes are sent back as they were.
+    assert.match(builder, /capabilityPackKeys: selectedPacks, permissionKeys: preservedKeys/);
   });
 });
 

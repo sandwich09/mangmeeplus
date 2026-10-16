@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
-import { LegalReadingProgress, LegalToc } from './LegalDocNav';
+import { LegalBackLink, LegalReadingProgress, LegalToc } from './LegalDocNav';
 import {
   LEGAL_EFFECTIVE_DATE,
   LEGAL_LAST_UPDATED,
@@ -37,14 +37,17 @@ export function LegalPageShell({
     <div className="doc">
       <header className="doc-mast">
         <div className="doc-mast-inner">
-          <Link href="/login" className="doc-wordmark">
-            <span className="doc-wordmark-glyph" aria-hidden>
-              <MangmeeLogo size={19} />
-            </span>
-            <span className="doc-wordmark-text">
-              มั่ง<span style={{ color: 'var(--doc-gold)' }}>มี</span>
-            </span>
-          </Link>
+          <span className="doc-mast-lead">
+            <LegalBackLink />
+            <Link href="/login" className="doc-wordmark">
+              <span className="doc-wordmark-glyph" aria-hidden>
+                <MangmeeLogo size={19} />
+              </span>
+              <span className="doc-wordmark-text">
+                มั่ง<span style={{ color: 'var(--doc-gold)' }}>มี</span>
+              </span>
+            </Link>
+          </span>
           <nav aria-label="เอกสารทางกฎหมาย" className="doc-switch">
             {LEGAL_NAV_ITEMS.map((item) => (
               <Link

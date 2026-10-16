@@ -1,6 +1,11 @@
 'use client';
+import { focusExpenseField } from './expense-focus.logic';
+import { canEditSubstituteReceipt } from './substitute-receipt-wizard.model';
 
-import { expenseOverpaidAmount, thaiTaxIdChecksumValid } from '@watchdog-bms/contracts';
+import { showInputVatQuestion, showListedInputVatRight } from './expense-input-vat-right.logic';
+
+import { ExpenseInputVatRight } from './ExpenseInputVatRight';
+import { whtFilingRouteHint, isExpenseCancelled, thaiTaxIdChecksumValid, expenseDateIsReadable, civilDate } from '@watchdog-bms/contracts';
 import { mergeExpenseUnsavedFields, expenseTaxEvidenceReasonMessage } from './expenses.model';
 
 import { THAI_SYSTEM_ROLE_NAMES, ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
@@ -11,11 +16,13 @@ import { Fragment, useState, useEffect, useCallback, useMemo, useRef, type Chang
 import Link from 'next/link';
 import type { CreateExpenseDraftInput } from '@watchdog-bms/contracts';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { readExpenseListState, expenseListUrl, expenseDetailUrl, scrollExpenseListRow } from './expense-list-navigation.logic';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { InfoTip } from '@/common/components/field/InfoTip';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
-import { CoverLoader, LoadingState } from '@/common/components/state';
+import { CoverLoader, EmptyState, LoadingState } from '@/common/components/state';
+import { Pagination } from '@/common/components/data-table/Pagination';
 import {
   getExpenseCaptureCapability,
   listExpenses, getExpense, initReceiptUpload, completeReceiptUpload,
@@ -27,15 +34,15 @@ import {
 } from './expenses.api';
 import type { WhtIncomeCategoryOption } from './expenses.api';
 import {
-  EXPENSE_VAT_MODE_LABELS, CAPTURE_SOURCE_LABELS,
+  EXPENSE_VAT_MODE_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, buildExpenseDraftReviewPayload,
   expenseSubstituteReceiptAction, deriveExpenseClassificationReviewState, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning,
   allowsDomesticInputTaxCode, clearExpenseTaxSelections, expenseDocumentReviewFieldsComplete, hasCurrentExpenseDocumentReview,
   TAX_EVIDENCE_REASON_LABELS, AI_SUMMARY_STATUS_LABELS, AI_MISSING_FIELD_LABELS,
-  ATTACHMENT_PURPOSE_LABELS, MIME_TYPE_LABELS, SUBSTITUTE_RECEIPT_STATUS_LABELS, expenseValueLabel,
+  ATTACHMENT_PURPOSE_LABELS, MIME_TYPE_LABELS, expenseSubstituteReceiptStatus, expenseValueLabel,
   deriveExpenseAuditChecks, deriveExpenseReviewSteps, initialExpenseReviewStep, expenseNeedsReceiptOrSubstitute, expenseCapabilities,
   calculateManualExpenseTotals, buildManualExpenseLines, canAccessExpenseTab, canDeleteExpense, expenseDeleteErrorMessage,
-  expenseDeleteTargetLabel, firstFilled, isExpensePendingReview, expenseReimbursementProgressLabel, summarizeExpenseKpis,
+  expenseListStatus, expenseListMonth, expenseDeleteTargetLabel, firstFilled, isExpensePendingReview, expenseReimbursementProgressLabel, summarizeExpenseKpis,
   isBlockedCheckBillClassification, lateDocumentDays, EXPENSE_DATE_STATUS_LABELS, expenseClassificationConfirmBlocker,
   POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent, expenseDocumentWhtRate,
   vatRatePreset, vatRatePresetValue, vatTreatmentForPreset, expensePercentToRate, expenseRateToPercent,
@@ -53,16 +60,24 @@ import { AI_BUDGET_REFUSAL_CODES, EXPENSE_WITHHOLDING_WORDS, isCalculatedExpense
 import { counterpartyAutoSaveNotice, counterpartyHref } from '../counterparties/counterparties.logic';
 import { COUNTERPARTY_READ_PERMISSION, type CounterpartyAutoSaveNotice } from '../counterparties/counterparties.model';
 import { CategoryManagePanel, SignaturePanel, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
+import { ExpensePayeeField } from './ExpensePayeeField';
+import { EvidenceBundleDownload } from './EvidenceBundleDownload';
+import { ReceiptUploadResult } from './ReceiptUploadResult';
 import { ManualExpenseEntryNotEnabled } from './ManualExpenseEntryNotEnabled';
 import { manualEntryView, nextManualEntryAdmission } from './manual-expense-entry.logic';
-import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
+import { useBranchFilter, useBranchScopeLabel } from '../web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { SupportedLocale, DictionaryKey } from '@/common/i18n/workspace-dictionary';
-import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
+import { MangmeeBadge, MangmeeCard, MangmeePage, MetricGrid, cx } from '@/common/components/mangmee';
 import { Modal, useConfirm } from '@/common/components/modal';
+import { Notice } from '@/common/components/notice';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { FormActionBar } from '@/common/components/actions/FormActionBar';
+import { quietButtonClass } from '@/common/components/button/button-classes';
+import { UNSAVED_NAVIGATION_EVENT } from '@/common/components/unsaved-navigation/request-navigation';
 import { TextareaField } from '@/common/components/field';
 import { buyerMatchBannerState, type RestorableClaimStatus } from './expense-buyer-match.logic';
 import { findForbiddenChars, normalizeDecimalInput, REASON_MAX_LENGTH, sanitizeReasonInput, stripDisallowed } from '@/common/forms/sanitize';
@@ -73,7 +88,7 @@ import {
 import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSelector';
 import { taxDefinitionRateForSource } from '@/features/tax/transaction-tax.model';
 import {
-  captureFileRejection, captureMegabytes, entryForFile, runSingleFileUploads,
+  appendReceiptFiles, captureFileRejection, captureMegabytes, entryForFile, runSingleFileUploads,
   type CaptureUploadEntry, type CaptureUploadState,
 } from './expense-capture-upload.logic';
 import { captureReadJobNotice } from './expense-capture-status.logic';
@@ -89,9 +104,9 @@ import {
   writeExpenseExtractionAttempt,
 } from './expense-upload.logic';
 import {
-  err, baht, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
-  ICON, KPI, StatCard, StatusBadge, TAX_TONE, ErrorBanner, InfoBanner, StateBanner, HowItWorks,
-  tapTargetClass, WholeWords,
+  err, baht, baht0, amountText, dateShort, inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
+  ICON, StatusBadge, TAX_TONE, ErrorBanner, InfoBanner, StateBanner,
+  tapTargetClass, WholeWords, EXPORT_FOR_ACCOUNTANT,
 } from './ExpensesUi';
 import { generateSourceJournal } from '../ledger/ledger.api';
 import { expenseReviewMessage, validateExpenseReview, type ExpenseFieldIssue } from './expense-review-validation';
@@ -106,10 +121,8 @@ import { apiErrorCode } from '@/common/api/api-error-message';
 // The upload copy promises "about 10–20 seconds"; past that the honest message is the queue one.
 const QUEUE_BUSY_AFTER_MS = 8_000;
 
-// ── period control (day / month) ─────────────────────────────────────────────
-type Gran = 'day' | 'month';
-function periodRange(gran: Gran, month: string, day: string): { fromDate: string; toDate: string } {
-  if (gran === 'day') return { fromDate: day, toDate: day };
+// ── month period control ─────────────────────────────────────────────
+function periodRange(month: string): { fromDate: string; toDate: string } {
   const [y, m] = month.split('-').map((n) => parseInt(n, 10));
   const last = new Date(y!, m!, 0).getDate();
   return { fromDate: `${month}-01`, toDate: `${month}-${String(last).padStart(2, '0')}` };
@@ -120,7 +133,9 @@ function LateDocumentBadge({ expense, locale }: { expense: ExpenseSummary; local
   // placeholder the comparison measures nothing — it can only ever say "not late", which is a
   // reassurance about a date nobody read. Say what is actually wrong instead.
   const status = expense.dateStatus ?? 'verified';
-  if (status === 'unverified' || status === 'implausible') {
+  // No date read: the row already says ยังไม่ระบุ, and the owner wants no second label for it (2026-10-15).
+  if (status === 'unverified') return null;
+  if (status === 'implausible') {
     return <MangmeeBadge tone="amber">{EXPENSE_DATE_STATUS_LABELS[status]}</MangmeeBadge>;
   }
   const days = lateDocumentDays(expense);
@@ -146,6 +161,24 @@ export function InlineSpinner() {
 
 function messageWithParams(message: string, params?: Record<string, string>): string {
   return Object.entries(params ?? {}).reduce((text, [key, value]) => text.replace(`{${key}}`, value), message);
+}
+
+/** Field labels and hints of this workspace's forms: 14 px, the size the standard asks for text a person must read. */
+const FIELD_LABEL = 'mb-1 block text-sm font-medium text-gray-700';
+const FIELD_HINT = 'mt-1 text-sm text-gray-500';
+/** The answers of the "is there a receipt" questions, in the words the form and the read-only view share. */
+const RECEIPT_PROBLEM_LABELS: Record<string, string> = { NOT_AVAILABLE: 'ไม่มีใบเสร็จ', LOST: 'ใบเสร็จหาย', MATERIAL_INCOMPLETE: 'มี แต่ข้อมูลสำคัญไม่ครบ' };
+const EVIDENCE_ROUTE_LABELS: Record<string, string> = { SOURCE_DOCUMENT: 'ใบเสร็จที่แนบไว้', ALTERNATIVE_EVIDENCE: 'หลักฐานอื่นที่มี เช่น สลิป', SUBSTITUTE_RECEIPT: 'ทำใบรับรองแทนใบเสร็จ' };
+
+/** A saved value read as a fact: its name, then the value (side by side from 640 px). Nothing is drawn for an empty value. */
+function Fact({ label, children }: { label: ReactNode; children?: ReactNode }) {
+  if (children == null || children === false || children === '') return null;
+  return (
+    <div className="flex flex-col gap-0.5 py-1.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
+      <dt className="shrink-0 text-sm text-gray-500">{label}</dt>
+      <dd className="min-w-0 text-sm font-medium text-gray-900 sm:text-right">{children}</dd>
+    </div>
+  );
 }
 
 function fieldIssue(issues: ExpenseFieldIssue[], field: string): ExpenseFieldIssue | undefined {
@@ -297,15 +330,21 @@ const CAPTURE_STATE_LABELS: Record<CaptureUploadState, DictionaryKey> = {
 };
 
 // ── Upload Panel (info strip + dropzone + LINE gradient card) ─────────────────
-function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuccess, onNoDocument }: { companyId: string; branchId?: string; canManagePlan: boolean; onSuccess: (expenseId: string, notice: ExtractionNotice) => void; onBatchSuccess?: (created: Array<{ expenseId: string; notice: ExtractionNotice }>) => void; onNoDocument?: () => void }) {
+export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, onSuccess, onBatchSuccess }: { companyId: string; branchId?: string; canManagePlan: boolean; userId: string; caps: ExpenseCapabilities; onSuccess: (expenseId: string, notice: ExtractionNotice) => void; onBatchSuccess?: (created: Array<{ expenseId: string; notice: ExtractionNotice }>) => void }) {
   const locale = useWorkspaceLocale();
+  const { confirm, confirmDialog } = useConfirm();
   const fileRef = useRef<HTMLInputElement>(null);
+  const fileFieldRef = useRef<HTMLDivElement>(null);
+  const [validationAttempt, setValidationAttempt] = useState(0);
+  const submitAttempted = validationAttempt > 0;
   // One file is one expense (A01), and so is each of several: picking three receipts runs today's
   // single-file path three times (appendix §25, owner decision 2026-09-19).
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [fileName, setFileName] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [note, setNote] = useState('');
+  const originals = useRef<File[]>([]);
+  const notices = useRef(new Map<string, ExtractionNotice>());
+  const leaveAllowed = useRef(false);
   const [loading, setLoading] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [extracting, setExtracting] = useState(false);
@@ -317,6 +356,10 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
   const [quotaLatch, setQuotaLatch] = useState<ReceiptQuotaLatch | null>(null);
   /** The draft the refused read left behind, so the shop can still go and type it in. */
   const [blockedExpenseId, setBlockedExpenseId] = useState<string | null>(null);
+  const [sentExpenseIds, setSentExpenseIds] = useState<string[]>([]);
+  const uploadPending = useRef(false);
+  const sendAfterPreparation = useRef(false);
+  const senderOnly = !caps.canReview && !caps.canConfirm;
   const quotaBlocked = isReceiptQuotaBlocked(quotaLatch, todayCivilDate());
   // P4: past the advertised 10–20s read time, a spinner reads as "the system is down" when in fact
   // the queue is just long. Say which one it is.
@@ -358,14 +401,16 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
     return null;
   };
 
-  const selectFiles = async (picked: File[]) => {
-    setSelectedFiles([]); setFileName(''); setFileNotice(null); setError(null);
-    setCaptureFiles([]);
-    if (picked.length === 0) return;
+  const selectFiles = async (picked: File[], fromCamera = false) => {
+    if (loading || preparing || uploadPending.current) return;
+    setFileNotice(null); setError(null); setValidationAttempt(0);
+    const combined = appendReceiptFiles(originals.current, picked);
+    const added = combined.filter(file => !originals.current.includes(file));
+    if (!added.length) return;
     setPreparing(true);
     try {
       const prepared: File[] = [];
-      for (const file of picked) {
+      for (const file of added) {
         const rejection = rejectFile(file);
         if (rejection) { setError(rejection); return; }
         const ready = await prepareReceiptFile(file);
@@ -375,17 +420,26 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
           setFileNotice(`${t('expenses.upload_resized', locale)} ${(ready.file.size / 1024 / 1024).toFixed(2)} เมกะไบต์`);
         }
       }
-      setSelectedFiles(prepared);
-      setFileName(prepared.length === 1 ? prepared[0]!.name : `${prepared.length} ไฟล์`);
+      originals.current = combined;
+      const files = [...selectedFiles, ...prepared];
+      setSelectedFiles(files);
+      if (captureFiles.length) setCaptureFiles([...captureFiles, ...prepared.map(entryForFile)]);
+      setPreparing(false);
+      const sendNow = sendAfterPreparation.current || fromCamera && branchId && selectedFiles.length === 0;
+      sendAfterPreparation.current = false;
+      if (sendNow) await handleUpload(files);
     } catch (cause) {
       setError(cause instanceof HeicDecodeError ? t('expenses.upload_heic_unsupported', locale) : uploadErrorMessage(cause));
     } finally {
+      sendAfterPreparation.current = false;
       setPreparing(false);
     }
   };
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    void selectFiles([...(event.target.files ?? [])]);
+    const files = [...(event.target.files ?? [])];
+    event.target.value = '';
+    void selectFiles(files);
   };
 
   const handleDrag = (event: DragEvent<HTMLLabelElement>) => {
@@ -442,7 +496,7 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
     } catch (e) {
       // The receipt IS saved; only the AI read was refused. Staying on the upload tab is the
       // point: `onSuccess` routes to the review screen, which would unmount this panel and take
-      // the banner and the disabled button with it — the shop would land on an empty draft with
+      // the banner and its way out with it — the shop would land on an empty draft with
       // no idea why nothing was read, and could walk straight back and upload again.
       if (apiErrorCode(e) === RECEIPT_QUOTA_ERROR_CODE) {
         writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
@@ -465,68 +519,125 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
    * draft, and the landing is the one a single receipt has today — the detail page for one file,
    * the list with the newest highlighted for several.
    */
-  const handleBatchUpload = async () => {
+  const handleBatchUpload = async (files = selectedFiles, retryIndex?: number) => {
+    if (uploadPending.current || quotaBlocked) return;
+    uploadPending.current = true;
     setLoading(true); setError(null);
-    const entries = captureFiles.length > 0 ? captureFiles : selectedFiles.map(entryForFile);
+    const entries = captureFiles.length > 0 ? captureFiles : files.map(entryForFile);
     setCaptureFiles(entries);
     try {
       const run = await runSingleFileUploads<ExtractionNotice | null>({
-        entries: entries.map((entry, index) => ({ entry, file: selectedFiles[index] ?? null })),
-        onChange: setCaptureFiles,
-        upload: async (file) => {
-          try {
-            const done = await uploadOneFile(file);
-            return { expenseId: done.expenseId, result: done.notice };
-          } catch (cause) { setError(err(cause)); throw cause; }
+        entries: entries.map((entry, index) => ({ entry, file: files[index] ?? null })),
+        retryIndex, onChange: setCaptureFiles, describeFailure: cause => err(cause, locale),
+        upload: async file => {
+          const done = await uploadOneFile(file);
+          if (done.notice) notices.current.set(done.expenseId, done.notice);
+          return { expenseId: done.expenseId, result: done.notice };
         },
       });
-      const created = run.created.filter((row): row is { expenseId: string; result: ExtractionNotice } => Boolean(row.result));
-      // Nothing to land on, or the read ceiling latched: the banner and the rows stay on screen.
-      if (created.length !== run.created.length || created.length === 0) return;
-      onBatchSuccess?.(created.map((row) => ({ expenseId: row.expenseId, notice: row.result })));
+      // Stay beside failures; sent rows remain stored and never enter a retry again.
+      if (run.entries.some(row => !row.expenseId || !notices.current.has(row.expenseId))) return;
+      const created = run.entries.map(row => ({ expenseId: row.expenseId!, notice: notices.current.get(row.expenseId!)! }));
+      leaveAllowed.current = true;
+      if (senderOnly) setSentExpenseIds(created.map(row => row.expenseId));
+      else if (created.length === 1) onSuccess(created[0]!.expenseId, created[0]!.notice);
+      else onBatchSuccess?.(created);
     } catch (e) { setError(err(e)); }
-    finally { setLoading(false); }
+    finally { uploadPending.current = false; setLoading(false); }
   };
 
-  const handleUpload = async () => {
-    if (!branchId) { setError(t('transaction.source_branch_required', locale)); return; }
+  const handleUpload = async (files = selectedFiles) => {
+    if (uploadPending.current) return;
+    if (preparing) { sendAfterPreparation.current = true; return; }
+    if (quotaBlocked) { focusExpenseField(document.querySelector('[data-upload-quota]')); return; }
+    if (!branchId || files.length === 0) {
+      setValidationAttempt(attempt => attempt + 1);
+      return;
+    }
     const forbidden = findForbiddenChars(note);
     if (forbidden.length > 0) { setError(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' '))); return; }
-    if (selectedFiles.length > 1 || captureFiles.length > 1) { await handleBatchUpload(); return; }
-    const file = selectedFiles[0] ?? null;
-    if (!file) { setError(t('expenses.upload_select_file_error', locale)); return; }
-    setLoading(true); setError(null);
-    try {
-      const done = await uploadOneFile(file);
-      if (done.notice) onSuccess(done.expenseId, done.notice);
-    } catch (e) { setError(err(e)); }
-    finally { setLoading(false); }
+    await handleBatchUpload(files);
   };
+
+  // Run after the inline error is in the DOM, including repeated presses on the same missing field.
+  useEffect(() => {
+    if (!validationAttempt) return;
+    if (!selectedFiles.length) {
+      const picker = fileFieldRef.current;
+      const control = picker?.querySelector<HTMLElement>(window.matchMedia('(min-width: 640px)').matches ? '[data-upload-dropzone]' : '[capture]');
+      focusExpenseField(picker, control);
+    } else if (!branchId) {
+      const field = document.querySelector<HTMLElement>('[data-transaction-branch-select]');
+      focusExpenseField(field?.parentElement ?? field, field?.querySelector<HTMLElement>('[role="combobox"], select, input'));
+    }
+  }, [validationAttempt]);
+
+  const hasUnsent = !sentExpenseIds.length && selectedFiles.some((_, index) => !captureFiles[index]?.expenseId);
+  const askToLeave = async () => !hasUnsent || leaveAllowed.current || await confirm({
+    title: 'ยังไม่ได้บันทึกสิ่งที่แก้', message: 'ออกจากหน้านี้ สิ่งที่แก้ไว้จะหายไป',
+    confirmLabel: 'ออกโดยไม่บันทึก', cancelLabel: 'อยู่ต่อ', variant: 'danger',
+  });
+  useEffect(() => {
+    if (!hasUnsent) return;
+    const unload = (event: BeforeUnloadEvent) => { if (!leaveAllowed.current) { event.preventDefault(); event.returnValue = ''; } };
+    const click = (event: MouseEvent) => {
+      if (leaveAllowed.current || event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href]') : null;
+      if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download') || anchor.href === window.location.href) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      void askToLeave().then(leave => { if (leave) { leaveAllowed.current = true; anchor.click(); } });
+    };
+    const original = window.history.state;
+    if (original?.receiptUpload !== window.location.href) window.history.pushState({ ...original, receiptUpload: window.location.href }, '', window.location.href);
+    let restoring = false;
+    const back = (event: PopStateEvent) => {
+      if (leaveAllowed.current) return;
+      event.stopImmediatePropagation();
+      if (restoring) { restoring = false; return; }
+      restoring = true; window.history.forward();
+      void askToLeave().then(leave => { if (leave) { leaveAllowed.current = true; window.history.go(-2); } });
+    };
+    const directNavigation = (event: Event) => {
+      if (leaveAllowed.current) return;
+      event.preventDefault();
+      void askToLeave().then(leave => { if (leave) { leaveAllowed.current = true; (event as CustomEvent<() => void>).detail(); } });
+    };
+    window.addEventListener(UNSAVED_NAVIGATION_EVENT, directNavigation);
+    window.addEventListener('beforeunload', unload); window.addEventListener('popstate', back, true);
+    document.addEventListener('click', click, true);
+    return () => { window.removeEventListener(UNSAVED_NAVIGATION_EVENT, directNavigation); window.removeEventListener('beforeunload', unload); window.removeEventListener('popstate', back, true); document.removeEventListener('click', click, true); };
+  }, [hasUnsent, confirm]);
 
   /** Rows come from the machine once sending started; before that, from what the user just picked. */
   const captureRows: CaptureUploadEntry[] = captureFiles.length > 0
     ? captureFiles
-    : selectedFiles.length > 1
-      ? selectedFiles.map(entryForFile)
-      : [];
-  const flow = [t('expenses.flow_upload', locale), t('expenses.flow_ai_read', locale), t('expenses.flow_confirm', locale)];
+    : selectedFiles.map(entryForFile);
   const uploadPhase = preparing
     ? t('expenses.upload_phase_preparing', locale)
     : extracting
       ? t(queueBusy ? 'expenses.upload_phase_queued' : 'expenses.upload_phase_extracting', locale)
       : loading ? t('expenses.upload_phase_uploading', locale) : null;
+  const hasFiles = selectedFiles.length > 0 || captureRows.length > 0;
+  const fileMissing = submitAttempted && !hasFiles && !preparing;
+  /** Only unsent files can be removed; stored rows stay in the retry ledger. */
+  const removeSelected = (index: number) => {
+    const rest = selectedFiles.filter((_, at) => at !== index);
+    setSelectedFiles(rest); setFileNotice(null);
+    originals.current = originals.current.filter((_, at) => at !== index);
+    if (captureFiles.length) setCaptureFiles(rows => rows.filter((_, at) => at !== index));
+  };
+  // A small image need not say 0.0 เมกะไบต์.
+  const sizeText = (bytes: number) => bytes >= 104_858 ? captureMegabytes(bytes) : '';
+
+  if (sentExpenseIds.length) return <ReceiptUploadResult companyId={companyId} expenseIds={sentExpenseIds} userId={userId} caps={caps} onSendAnother={() => {
+    setSentExpenseIds([]); setSelectedFiles([]); setCaptureFiles([]); setFileNotice(null); setError(null); setNote(''); setValidationAttempt(0); originals.current = []; notices.current.clear(); leaveAllowed.current = false;
+  }} />;
 
   return (
-    <div className="space-y-4">
-      <HowItWorks
-        title={t('expenses.upload_what_title', locale)}
-        description={t('expenses.upload_what_desc', locale)}
-        steps={flow}
-      />
-
-      <MangmeeCard className="p-6">
+    <div className="space-y-4 [overflow-anchor:none]">
+      <MangmeeCard className="p-4 sm:p-6">
         {quotaBlocked && (
-          <div role="alert" className="mb-4 rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm text-error-700">
+          <div data-upload-quota role="alert" className="mb-4 rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm text-error-700">
             <p className="font-medium">⚠ {quotaLatch!.message}</p>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-semibold">
               {/* G18: the package page is where the quota is bought; staff without the permission
@@ -542,29 +653,27 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
             </div>
           </div>
         )}
-        {error && <div className="mb-4"><ErrorBanner message={error} focus /></div>}
-        {/* Phones get the camera, not a dropzone. A phone has no drag, no file manager and no
-            click, so the desktop copy below ("ลากไฟล์มาวาง หรือคลิกเพื่อเลือก") is an instruction the
-            user cannot follow on the device they are holding — while photographing the receipt
-            is the entire job. Desktop keeps its dropzone verbatim. */}
-        <div className="flex flex-col gap-3 sm:hidden">
-          <label className={cx(btnClass, 'h-12 w-full cursor-pointer text-base')}>
-            <span className="inline-flex items-center justify-center gap-2">📷 {t('expenses.upload_capture_cta', locale)}</span>
-            {/* `capture` restricts the picker to the camera, so the button below keeps PDF and HEIC reachable. */}
-            <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={handleFileChange} />
-          </label>
-          <label className="flex h-12 w-full cursor-pointer items-center justify-center rounded-lg border border-gray-300 bg-white text-base font-medium text-gray-700">
-            {t('expenses.upload_pick_cta', locale)}
-            {/* `multiple` only here and on the dropzone: the camera above still takes one photo. */}
-            <input type="file" accept={RECEIPT_UPLOAD_ACCEPT} multiple className="sr-only" onChange={handleFileChange} />
-          </label>
-          <p className="text-sm leading-6 text-gray-500">{t('expenses.upload_capture_hint', locale)}</p>
-          {preparing ? <p className="text-sm font-semibold text-brand-700">{t('expenses.upload_preparing', locale)}</p> : fileName && <p className="truncate rounded-lg bg-brand-25 px-3.5 py-2 text-sm font-semibold text-brand-700">✓ {fileName}</p>}
+        {error && <div className="mb-4"><ErrorBanner message={error} /></div>}
+        <div ref={fileFieldRef} data-receipt-upload-picker>
+        <div className="space-y-3 sm:hidden">
+          <ActionGroup className={hasFiles ? "!grid !grid-flow-col !auto-cols-fr" : "!grid !grid-cols-1"}>
+            <label className={cx(ghostClass, 'w-full cursor-pointer')}>
+              {hasFiles ? 'ถ่ายเพิ่ม' : t('expenses.upload_capture_cta', locale)}
+              <input type="file" accept="image/*" capture="environment" className="sr-only" aria-invalid={fileMissing || undefined} aria-describedby={fileMissing ? 'receipt-upload-file-error' : undefined} disabled={loading || preparing} onChange={event => { const files = [...(event.target.files ?? [])]; event.target.value = ''; void selectFiles(files, true); }} />
+            </label>
+            <label className={cx(ghostClass, 'w-full cursor-pointer')}>
+              {hasFiles ? 'เลือกเพิ่ม' : t('expenses.upload_pick_cta', locale)}
+              <input type="file" accept={RECEIPT_UPLOAD_ACCEPT} multiple className="sr-only" aria-invalid={fileMissing || undefined} aria-describedby={fileMissing ? 'receipt-upload-file-error' : undefined} disabled={loading || preparing} onChange={handleFileChange} />
+            </label>
+          </ActionGroup>
+          {!hasFiles && !preparing && <p className={FIELD_HINT}>{t('expenses.upload_capture_hint', locale)}</p>}
+          {preparing && <p className="text-sm font-semibold text-brand-700">{t('expenses.upload_preparing', locale)}</p>}
         </div>
 
-        <label
+        <label data-upload-dropzone tabIndex={0} role="button" aria-label={t('expenses.upload_dropzone_title', locale)}
+          onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); fileRef.current?.click(); } }}
           className={cx(
-            'hidden cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-11 text-center transition sm:flex',
+            'hidden cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-9 text-center transition sm:flex',
             dragActive ? 'border-brand-500 bg-brand-50 shadow-[0_0_0_4px_rgba(52,211,153,0.14)]' : 'border-brand-300 bg-brand-25 hover:bg-brand-50',
           )}
           onDragEnter={handleDrag}
@@ -572,67 +681,74 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
           onDragLeave={handleDrag}
           onDrop={handleDrop}
         >
-          <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-3xl shadow-sm">📤</span>
+          <span aria-hidden="true" className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-brand-700 shadow-sm">{ICON.upload}</span>
           <div className="text-lg font-bold text-gray-800">{t('expenses.upload_dropzone_title', locale)}</div>
-          <div className="text-sm text-gray-500"><WholeWords text={t('expenses.upload_dropzone_hint', locale)} /></div>
-          {preparing ? <div className="text-sm font-semibold text-brand-700">{t('expenses.upload_preparing', locale)}</div> : fileName && <div className="mt-1 inline-flex items-center gap-2 rounded-lg bg-white px-3.5 py-2 text-sm font-semibold text-brand-700">✓ {fileName}</div>}
-          <input ref={fileRef} type="file" accept={RECEIPT_UPLOAD_ACCEPT} multiple className="hidden" onChange={handleFileChange} />
+          <div className="text-sm text-gray-500"><WholeWords text="PDF หรือรูปภาพ" /></div>
+          {preparing && <div className="text-sm font-semibold text-brand-700">{t('expenses.upload_preparing', locale)}</div>}
+          <input ref={fileRef} type="file" accept={RECEIPT_UPLOAD_ACCEPT} multiple disabled={loading || preparing} className="hidden" aria-invalid={fileMissing || undefined} aria-describedby={fileMissing ? 'receipt-upload-file-error' : undefined} onChange={handleFileChange} />
         </label>
+        {fileMissing && <p id="receipt-upload-file-error" role="alert" className="mt-1 text-sm text-error-700">เลือกรูปใบเสร็จก่อน</p>}
+        </div>
+        <p className={FIELD_HINT}>{t('expenses.capture.multi_hint', locale)}</p>
         {fileNotice && <div className="mt-3"><InfoBanner message={fileNotice} /></div>}
         {captureRows.length > 0 && (
           <div className="mt-4 space-y-2" data-capture-file-list>
             <p className="text-sm font-semibold text-gray-800">{t('expenses.capture.files_title', locale)}</p>
-            <p className="text-xs leading-5 text-gray-500">{t('expenses.capture.multi_hint', locale)}</p>
             <ul className="space-y-2">
               {captureRows.map((row, index) => (
-                <li key={`${row.name}:${index}`} className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-gray-800">{row.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {captureMegabytes(row.size)} · {t(CAPTURE_STATE_LABELS[row.state], locale)}
+                <li key={`${row.name}:${index}`} className="flex items-center gap-3 border-b border-gray-100 py-2">
+                  <ReceiptUploadThumbnail file={selectedFiles[index]} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-gray-800 [overflow-wrap:anywhere]">{row.name}</p>
+                    <p className="min-h-5 text-sm text-gray-500">
+                      {sizeText(row.size)}{sizeText(row.size) && row.state !== 'PENDING' ? ' · ' : ''}{row.state !== 'PENDING' && (row.state === 'UPLOADING' && extracting ? uploadPhase : t(CAPTURE_STATE_LABELS[row.state], locale))}
+                      {row.error && <span className="block text-error-700">{row.error}</span>}
                     </p>
+                    {row.state === 'FAILED' && (
+                      <button type="button" className={cx(ghostClass, 'mt-2')} disabled={loading} aria-busy={loading} onClick={() => void handleBatchUpload(selectedFiles, index)}>
+                        {t('expenses.capture.retry_file', locale)}
+                      </button>
+                    )}
                   </div>
-                  {row.state === 'FAILED' && (
-                    <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={loading} aria-busy={Boolean(loading)} onClick={() => void handleBatchUpload()}>
-                      {t('expenses.capture.retry_file', locale)}
-                    </button>
+                  {!row.expenseId && (
+                    <button type="button" aria-label={`เอาออก ${row.name}`} disabled={loading} aria-busy={loading} className={cx(quietButtonClass, '!min-h-11 !min-w-11 !p-2')} onClick={() => removeSelected(index)}><span aria-hidden="true">×</span></button>
                   )}
+
                 </li>
               ))}
             </ul>
           </div>
         )}
         <div className="mt-4">
-          <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="receipt-upload-note">{t('expenses.upload_note', locale)}</label>
+          <TransactionBranchField fill value={branchId ?? ''} invalid={!branchId && submitAttempted} helpText={!branchId && submitAttempted ? 'เลือกสาขาก่อนส่ง' : null} />
+        </div>
+        <div className="mt-4">
+          <label className={FIELD_LABEL} htmlFor="receipt-upload-note">{t('expenses.upload_note', locale)}</label>
           <input id="receipt-upload-note" className={inputClass} placeholder={t('expenses.upload_note_placeholder', locale)} value={note} onChange={(e) => setNote(stripDisallowed(e.target.value))} />
         </div>
-        <div className="mt-5 flex items-center gap-3 rounded-xl bg-gray-50 px-4 py-3.5">
-          <span className="flex h-10 w-10 items-center justify-center rounded-[10px]" style={{ background: '#F4EBFF', color: '#7A5AF8' }}>{ICON.sparkle}</span>
-          <p className="text-sm leading-relaxed text-gray-600">{t('expenses.upload_ai_strip_before', locale)}<b className="text-gray-800">{t('expenses.upload_ai_strip_bold', locale)}</b>{t('expenses.upload_ai_strip_after', locale)}</p>
-        </div>
-        <button className={cx(btnClass, 'mt-5 h-12 w-full text-base')} onClick={handleUpload} disabled={loading || preparing || quotaBlocked} aria-busy={Boolean(loading)} data-loading-indicator>
-          <span className="inline-flex items-center justify-center gap-2">
-            {(preparing || loading || extracting) && <InlineSpinner />}
-            {extracting
-              ? t('expenses.ai_reading', locale)
-              : preparing
-                ? t('expenses.upload_preparing', locale)
-                : loading
-                  ? t('expenses.uploading', locale)
-                  : t(captureRows.length > 0 ? 'expenses.capture.upload_cta' : 'expenses.upload_cta', locale)}
-          </span>
-        </button>
-        {uploadPhase && <p role="status" aria-live="polite" className="mt-2 text-center text-sm font-semibold text-brand-700">{uploadPhase}</p>}
-        {onNoDocument && (
-          <button type="button" className="mt-3 min-h-11 w-full text-center text-sm font-semibold text-brand-600 sm:min-h-0 hover:underline" onClick={onNoDocument}>
-            {t('expenses.upload_no_document_link', locale)}
-          </button>
-        )}
       </MangmeeCard>
+      <FormActionBar><ActionGroup>
+        <button type="button" className={btnClass} onClick={() => void handleUpload()} disabled={loading} aria-busy={loading} data-loading-indicator>
+          {extracting ? t('expenses.ai_reading', locale) : loading ? t('expenses.uploading', locale) : `${t('expenses.upload_cta', locale)}${captureRows.length ? ` ${captureRows.length} ใบ` : ''}`}
+        </button>
+      </ActionGroup></FormActionBar>
+      {uploadPhase && <p role="status" aria-live="polite" className="text-sm font-semibold text-brand-700 sm:text-right">{uploadPhase}</p>}
+      {confirmDialog}
     </div>
   );
 }
-
+function ReceiptUploadThumbnail({ file }: { file?: File }) {
+  const [url, setUrl] = useState<string>();
+  useEffect(() => {
+    if (!file?.type.startsWith('image/')) return;
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+  return <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-50 text-gray-500" aria-hidden="true">
+    {url ? <img src={url} alt="" className="h-full w-full object-cover" /> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="h-6 w-6"><path d="M6 2h8l4 4v16H6zM14 2v5h4M9 12h6M9 16h6" /></svg>}
+  </span>;
+}
 // ── Document type / tax evidence review + substitute + signature fill ─────────
 function CheckBillGuidanceCard({ companyId, expenseId, canReview, canStartSubstitute, onReviewDocument, receiptUploading, onAttachPrimaryReceipt }: {
   companyId: string;
@@ -868,14 +984,25 @@ export function BuyerMatchBanner({ companyId, detail, editable, claimed, permiss
   );
 }
 
-export function DocumentReviewSection({ companyId, detail, isMutable, canReview, onSaved, onAttachPrimaryReceipt, receiptUploading = false, onDirtyChange, showSubstituteAction = true }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; onSaved: () => Promise<void>; onAttachPrimaryReceipt?: (file: File) => Promise<void>; receiptUploading?: boolean; onDirtyChange?: (dirty: boolean) => void; showSubstituteAction?: boolean }) {
+export function DocumentReviewSection({ companyId, detail, isMutable, canReview, onSaved, onAttachPrimaryReceipt, receiptUploading = false, onDirtyChange, showSubstituteAction = true, substituteReceiptFlow = false, saveRef, fixAction, canAnswerVatStatus = false, canEditShopIdentity = false, canReadTaxPeriods = false, documentDetails }: {
+  documentDetails?: ReactNode;
+  companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; onSaved: () => Promise<void>; onAttachPrimaryReceipt?: (file: File) => Promise<void>; receiptUploading?: boolean; onDirtyChange?: (dirty: boolean) => void; showSubstituteAction?: boolean;
+  fixAction?: (key: string) => ReactNode;
+  canAnswerVatStatus?: boolean; canEditShopIdentity?: boolean; canReadTaxPeriods?: boolean;
+  /** Only for the certificate wizard that embeds this card: the receipt questions start open on "no receipt, make a certificate" while nothing is saved, the certificate is not offered as a document type, and a lone line category is shown as the category. Screen only; nothing is saved until the save button. */
+  substituteReceiptFlow?: boolean;
+  saveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
+}) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
+  const vatSaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const [vatDirty, setVatDirty] = useState(false);
   const [docType, setDocType] = useState(detail.sourceDocumentType);
   const [taxStatus, setTaxStatus] = useState(detail.taxEvidenceStatus);
   const [categoryId, setCategoryId] = useState<string>(detail.expenseCategoryId ?? '');
   const [categories, setCategories] = useState<ExpenseCategorySummary[]>([]);
   const [classificationOverrideReason, setClassificationOverrideReason] = useState('');
+  const [validationShown, setValidationShown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -895,20 +1022,22 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       if (result === false) return;
       if (refresh) {
         try { await onSaved(); } catch {
-          setError('บันทึกแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณาโหลดหน้าอีกครั้ง');
+          setError('บันทึกแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ เปิดหน้านี้ใหม่');
           return;
         }
       }
       if (inline) setInfo(doneText); else toast.success(doneText);
     } catch (e) { setError(err(e, locale)); } finally { setBusy(false); }
   };
+  // A saved answer always wins. With none saved, the screen starts from the document type; in the
+  // certificate wizard it starts from what that wizard is for: no receipt, a certificate instead.
   const defaultAssessment = (source: ExpenseDetail): ExpenseEvidenceAssessment => expenseEvidenceAssessment(source) ?? {
-    route: EXPENSE_RECEIPT_SOURCE_TYPES.some(type => type === source.sourceDocumentType) || source.sourceDocumentType === 'NEEDS_REVIEW' ? 'SOURCE_DOCUMENT' : 'ALTERNATIVE_EVIDENCE',
-    receiptProblem: EXPENSE_RECEIPT_SOURCE_TYPES.some(type => type === source.sourceDocumentType) || source.sourceDocumentType === 'NEEDS_REVIEW' ? 'NONE' : 'NOT_AVAILABLE',
+    route: substituteReceiptFlow ? 'SUBSTITUTE_RECEIPT' : EXPENSE_RECEIPT_SOURCE_TYPES.some(type => type === source.sourceDocumentType) || source.sourceDocumentType === 'NEEDS_REVIEW' ? 'SOURCE_DOCUMENT' : 'ALTERNATIVE_EVIDENCE',
+    receiptProblem: substituteReceiptFlow ? 'NOT_AVAILABLE' : EXPENSE_RECEIPT_SOURCE_TYPES.some(type => type === source.sourceDocumentType) || source.sourceDocumentType === 'NEEDS_REVIEW' ? 'NONE' : 'NOT_AVAILABLE',
     attachmentIds: source.attachments.filter(file => isExpenseEvidenceFile(file) && file.id === source.primaryAttachmentId).map(file => file.id), reason: '',
   };
   const [assessment, setAssessment] = useState<ExpenseEvidenceAssessment>(() => defaultAssessment(detail));
-  const [showEvidenceOptions, setShowEvidenceOptions] = useState(() => defaultAssessment(detail).receiptProblem !== 'NONE');
+  const [showEvidenceOptions, setShowEvidenceOptions] = useState(() => substituteReceiptFlow || defaultAssessment(detail).receiptProblem !== 'NONE');
   const persistedAssessment = JSON.stringify(defaultAssessment(detail));
   const documentSnapshot = useRef({ id: detail.id, docType: detail.sourceDocumentType, taxStatus: detail.taxEvidenceStatus, categoryId: detail.expenseCategoryId ?? '', assessment: defaultAssessment(detail) });
   useEffect(() => {
@@ -930,17 +1059,23 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty, isMutable, canReview]);
   const reviewSaved = hasCurrentExpenseDocumentReview(detail);
-  const assessmentError = expenseEvidenceInputError(assessment, { ...detail, sourceDocumentType: docType, taxEvidenceStatus: taxStatus,
+  const noDocument = !substituteReceiptFlow && (assessment.receiptProblem === 'NOT_AVAILABLE' || assessment.receiptProblem === 'LOST');
+  const reviewDocType = noDocument ? 'EXPENSE_NOTE_TEXT' : docType;
+  const reviewTaxStatus = noDocument ? 'SUPPORTING_ONLY' : taxStatus;
+  const assessmentError = expenseEvidenceInputError(assessment, { ...detail, sourceDocumentType: reviewDocType, taxEvidenceStatus: reviewTaxStatus,
     inputVatClaimStatus: assessment.route !== 'SOURCE_DOCUMENT' ? 'NON_CLAIMABLE' : detail.inputVatClaimStatus }, true);
-  const reviewComplete = expenseDocumentReviewFieldsComplete({ sourceDocumentType: docType, taxEvidenceStatus: taxStatus }) && !assessmentError;
+  const reviewComplete = expenseDocumentReviewFieldsComplete({ sourceDocumentType: reviewDocType, taxEvidenceStatus: reviewTaxStatus }) && !assessmentError;
   const taxEvidenceReason = expenseTaxEvidenceReasonMessage(detail.taxEvidenceReasonCode);
   const receiptActionRequired = Boolean(assessmentError && assessment.route === 'SOURCE_DOCUMENT' && !assessment.attachmentIds.length);
+  const [evidenceFocus, setEvidenceFocus] = useState<{ id: string } | null>(null);
+  useEffect(() => {
+    if (!evidenceFocus) return;
+    const target = document.getElementById(evidenceFocus.id);
+    if (target) { focusExpenseField(target); setEvidenceFocus(null); }
+  }, [evidenceFocus, showEvidenceOptions, validationShown]);
   const openEvidenceOptions = () => {
     setShowEvidenceOptions(true);
-    window.requestAnimationFrame(() => {
-      const section = document.getElementById(`expense-evidence-options-${detail.id}`);
-      section?.scrollIntoView({ block: 'center' }); section?.focus({ preventScroll: true });
-    });
+    setEvidenceFocus({ id: `expense-receipt-question-${detail.id}` });
   };
   const canStartSubstitute = isMutable && canReview && reviewSaved && assessment.route === 'SUBSTITUTE_RECEIPT' && !dirty && !busy && !receiptUploading;
   const documentFieldsRef = useRef<HTMLDivElement>(null);
@@ -948,25 +1083,21 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     const fields = documentFieldsRef.current;
     const section = fields?.closest('details');
     if (section) section.open = true;
-    fields?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    fields?.querySelector<HTMLElement>('[role="combobox"]')?.focus({ preventScroll: true });
+    focusExpenseField(fields?.querySelector<HTMLElement>('[role="combobox"]') ?? fields);
   };
   const aiCategorySuggestion = expenseAiCategorySuggestion(detail.aiVerificationSummaryJson);
-  // Live dirtiness for the parent's ถัดไป gate — only while the บันทึกการตรวจ button exists
-  // (a read-only viewer has nothing to save and must never be blocked). State, not a ref: the
-  // parent has to re-render to disable ถัดไป, which a ref cannot make it do (Owner report
-  // 2026-08-29 — the button stayed live and the click was refused in silence).
+  // The parent retains unsaved state when leaving for the separate certificate journey.
   useEffect(() => {
-    onDirtyChange?.(isMutable && canReview && (dirty || busy));
-  }, [onDirtyChange, isMutable, canReview, dirty, busy]);
+    onDirtyChange?.(isMutable && canReview && (dirty || vatDirty || busy));
+  }, [onDirtyChange, isMutable, canReview, dirty, vatDirty, busy]);
   const classificationReviewState = deriveExpenseClassificationReviewState(detail.aiVerificationSummaryJson, canReview);
   const classificationBlocked = classificationReviewState.blocked;
   const checkBillBlocked = isBlockedCheckBillClassification(detail.aiVerificationSummaryJson);
   const classificationConfirmBlocker = expenseClassificationConfirmBlocker({ sourceDocumentType: docType, reason: classificationOverrideReason });
   const canResolveClassification = classificationReviewState.showFinanceOverride && classificationConfirmBlocker === null;
   const saveDocumentReview = (next?: { docType: ExpenseDetail['sourceDocumentType']; taxStatus: ExpenseDetail['taxEvidenceStatus'] }, acknowledge = true) => {
-    const nextDocType = next?.docType ?? docType;
-    const nextTaxStatus = next?.taxStatus ?? taxStatus;
+    const nextDocType = next?.docType ?? reviewDocType;
+    const nextTaxStatus = next?.taxStatus ?? reviewTaxStatus;
     const disallowsTaxCode = expenseDocumentReviewFieldsComplete({ sourceDocumentType: nextDocType, taxEvidenceStatus: nextTaxStatus })
       && (assessment.route !== 'SOURCE_DOCUMENT' || !allowsDomesticInputTaxCode(nextDocType, nextTaxStatus));
     const currentReview = reviewValues(detail);
@@ -983,12 +1114,17 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       taxEvidenceStatus: nextTaxStatus,
       ...(acknowledge && { documentReviewAcknowledged: true as const }),
       evidenceAssessment: assessment,
-      ...(disallowsTaxCode && { inputVatClaimStatus: 'NON_CLAIMABLE' as const }),
       expenseCategoryId: categoryId || null,
     }).then(result => {
       documentSnapshot.current = { id: detail.id, docType: nextDocType, taxStatus: nextTaxStatus, categoryId, assessment };
       return result;
     });
+  };
+  const saveDocumentAndRight = async () => {
+    await saveDocumentReview();
+    const saved = await vatSaveRef.current?.() ?? true;
+    await onSaved();
+    return saved;
   };
   const overrideClassification = () => {
     assertAllowed(classificationOverrideReason);
@@ -1004,10 +1140,58 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   const paperAwaiting = evidence?.status === 'PREPARED' && evidence.signatureMode === 'PAPER' && !evidence.payerUserId;
   const certifierName = evidence?.paperSubmission?.payer.name || evidence?.payerName;
   const DocumentReviewContainer = checkBillBlocked ? 'details' : 'div';
+  const editable = isMutable && canReview;
+  const evidenceFiles = detail.attachments.filter(file => isExpenseEvidenceFile(file));
+  // The evidence hint describes the documents available, without deciding the input VAT right.
+  const showTaxEvidenceHint = docType !== 'NEEDS_REVIEW' && docType !== 'TAX_INVOICE' && docType !== 'ABBREVIATED_TAX_INVOICE';
+  const fieldsChosen = expenseDocumentReviewFieldsComplete({ sourceDocumentType: reviewDocType, taxEvidenceStatus: reviewTaxStatus });
+  const otherEvidenceMissing = assessment.receiptProblem !== 'NONE' && assessment.route === 'ALTERNATIVE_EVIDENCE'
+    && (!assessment.attachmentIds.length || !assessment.reason.trim());
+  // What still blocks the save, said before the button it blocks and in the words of this card's own labels.
+  const reviewBlocker = !fieldsChosen ? t('expenses.doc_review_choose_required', locale)
+    : receiptActionRequired ? 'ยังไม่มีใบเสร็จ แนบไฟล์ หรือบอกว่าไม่มีใบเสร็จ'
+      : otherEvidenceMissing ? 'แนบหลักฐานที่มี แล้วบอกเหตุผล'
+        : assessmentError;
+  useEffect(() => {
+    if (!saveRef) return;
+    saveRef.current = editable && detail.substituteReceiptEvidence?.status !== 'ISSUED' ? async () => {
+      setValidationShown(true);
+      if (!reviewComplete) {
+        setShowEvidenceOptions(true);
+        setEvidenceFocus({ id: docType === 'NEEDS_REVIEW' && !noDocument ? `expense-doc-type-${detail.id}`
+          : taxStatus === 'NEEDS_REVIEW' && !noDocument ? `expense-tax-evidence-${detail.id}`
+            : !assessment.attachmentIds.length ? `expense-evidence-files-${detail.id}` : `expense-evidence-reason-${detail.id}` });
+        return false;
+      }
+      setBusy(true); setError(null);
+      try {
+        return await saveDocumentAndRight();
+      } catch (cause) {
+        setError(err(cause, locale));
+        return false;
+      } finally { setBusy(false); }
+    } : null;
+    return () => { saveRef.current = null; };
+  });
+  const attachFileButton = (label: string) => onAttachPrimaryReceipt && (
+    <label className={cx(ghostClass, 'relative cursor-pointer')}>
+      {receiptUploading ? t('expenses.uploading', locale) : label}
+      <input type="file" aria-label={label} className="absolute inset-0 h-full w-full cursor-pointer opacity-0" accept={RECEIPT_UPLOAD_ACCEPT} disabled={receiptUploading} onChange={event => {
+        const file = event.target.files?.[0]; event.target.value = ''; if (file) void onAttachPrimaryReceipt(file);
+      }} />
+    </label>
+  );
+  const categoryName = categories.find((category) => category.id === categoryId)?.name;
+  // An expense with no category of its own and one category across all its lines
+  // shows that one in the category box. It is shown, never written: the box's value stays empty.
+  const lineCategoryIds = !detail.expenseCategoryId && !categoryId && detail.lines.every(line => line.expenseCategoryId)
+    ? [...new Set(detail.lines.map(line => line.expenseCategoryId).filter(Boolean))] : [];
+  const lineCategoryName = lineCategoryIds.length === 1 ? categories.find((category) => category.id === lineCategoryIds[0])?.name : undefined;
 
   return (
     <MangmeeCard className="space-y-3 p-4 text-sm">
-      <h3 className="font-semibold text-gray-800">{t('expenses.doc_review_title', locale)}</h3>
+      <h3 className="font-semibold text-gray-800">{documentDetails ? 'รายละเอียดเอกสาร' : t('expenses.doc_review_title', locale)}</h3>
+      {documentDetails}
       {error && <ErrorBanner message={error} />}
       {info && <InfoBanner message={info} />}
       {checkBillBlocked
@@ -1018,19 +1202,40 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           <details className="rounded-xl border border-gray-200 bg-white p-3">
             <summary className="cursor-pointer font-semibold text-gray-700">{t('expenses.check_bill_finance_review', locale)}</summary>
             <div className="mt-3">
-              <div className="mb-1 text-xs font-medium text-gray-600">{t('expenses.non_expense_override_reason', locale)}</div>
+              <div className={FIELD_LABEL}>{t('expenses.non_expense_override_reason', locale)}</div>
               <textarea className={inputClass} rows={2} maxLength={500} value={classificationOverrideReason} onChange={(e) => setClassificationOverrideReason(stripDisallowed(e.target.value))} placeholder={t('expenses.non_expense_override_reason_placeholder', locale)} />
-              <button className={cx(btnClass, 'mt-2')} disabled={busy || !canResolveClassification} aria-busy={Boolean(busy)} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>
-              {classificationConfirmBlocker && <p className="mt-1 text-xs font-medium text-warning-700">{t(classificationConfirmBlocker, locale)}</p>}
+              <button className={cx(btnClass, 'mt-2')} disabled={busy || !canResolveClassification} aria-busy={Boolean(busy)} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>
+              {classificationConfirmBlocker && <p className="mt-1 text-sm font-medium text-warning-700">{t(classificationConfirmBlocker, locale)}</p>}
             </div>
           </details>
         ) : (
           <div>
-            <div className="mb-1 text-xs font-medium text-gray-600">{t('expenses.non_expense_override_reason', locale)}</div>
+            <div className={FIELD_LABEL}>{t('expenses.non_expense_override_reason', locale)}</div>
             <textarea className={inputClass} rows={2} maxLength={500} value={classificationOverrideReason} onChange={(e) => setClassificationOverrideReason(stripDisallowed(e.target.value))} placeholder={t('expenses.non_expense_override_reason_placeholder', locale)} />
           </div>
         )
       )}
+      {!editable ? (
+        // A person who cannot change these answers reads them as facts: no boxes that look open, no
+        // hints for typing, nothing drawn for an answer that was never given.
+        <div className="space-y-2" data-document-review-facts>
+          {isMutable && !noDocument && <p className="text-sm text-gray-600">ผู้ตรวจจะเลือกประเภทเอกสารให้ กด “ถัดไป” ได้เลย</p>}
+          <dl className="divide-y divide-gray-100">
+            {!noDocument && <Fact label={t('expenses.doc_type', locale)}>{docType === 'NEEDS_REVIEW' ? (isMutable ? null : 'ยังไม่ได้เลือก') : expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, docType)}</Fact>}
+            <Fact label="หลักฐานรายจ่าย">{!documentDetails && reviewTaxStatus === 'NEEDS_REVIEW' ? null : expenseValueLabel(TAX_EVIDENCE_STATUS_LABELS, reviewTaxStatus)}</Fact>
+          </dl>
+          {showInputVatQuestion(detail) && <ExpenseInputVatRight companyId={companyId} detail={detail} showLabel={false} canReview={!isMutable && canReview} onSaved={onSaved} fixAction={fixAction} canAnswerVatStatus={canAnswerVatStatus} canEditShopIdentity={canEditShopIdentity} canReadTaxPeriods={canReadTaxPeriods}
+            renderReadOnly={content => <dl><Fact label="สิทธิภาษีซื้อ">{content}</Fact></dl>} />}
+          <dl className="divide-y divide-gray-100">
+            <Fact label={t('expenses.category', locale)}>{categoryName ?? lineCategoryName}</Fact>
+            <Fact label="ใบเสร็จ">{assessment.receiptProblem === 'NONE' ? null : RECEIPT_PROBLEM_LABELS[assessment.receiptProblem]}</Fact>
+            <Fact label="ใช้แทนใบเสร็จ">{assessment.receiptProblem === 'NONE' ? null : EVIDENCE_ROUTE_LABELS[assessment.route]}</Fact>
+            <Fact label="เหตุผล">{assessment.receiptProblem === 'NONE' ? null : assessment.reason.trim()}</Fact>
+            {!documentDetails && <Fact label="ไฟล์ที่ใช้ประกอบรายการ">{evidenceFiles.filter(file => assessment.attachmentIds.includes(file.id)).map(file => file.originalFileName).join(', ')}</Fact>}
+
+          </dl>
+        </div>
+      ) : (
       <DocumentReviewContainer className={checkBillBlocked ? 'rounded-xl border border-gray-200 bg-white p-3' : undefined}>
         {checkBillBlocked && (
           <summary className="min-h-11 cursor-pointer py-2 font-semibold text-gray-700">
@@ -1038,39 +1243,42 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           </summary>
         )}
         <div className={checkBillBlocked ? 'mt-3 space-y-3 border-t border-gray-100 pt-3' : 'space-y-3'}>
-        <div ref={documentFieldsRef} className="grid scroll-mt-24 grid-cols-1 gap-3">
-        <div>
-          <div className="mb-1 flex min-h-6 items-center gap-1.5 text-xs font-medium text-gray-600">
+        <div ref={documentFieldsRef} className="grid scroll-mt-24 grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] items-start gap-3">
+        {!noDocument && <div>
+          <div className="mb-1 flex min-h-6 items-start gap-1.5 whitespace-nowrap text-sm font-medium text-gray-700">
             {t('expenses.doc_type', locale)}
-            <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_doc_type', locale)} />
           </div>
-          <ThemedSelect aria-label={t('expenses.doc_type', locale)} wrapLabel className={inputClass} value={docType} onChange={(e) => setDocType(e.target.value as ExpenseDetail['sourceDocumentType'])} disabled={busy || !isMutable || !canReview}>
-            {Object.entries(SOURCE_DOCUMENT_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          <ThemedSelect aria-label={t('expenses.doc_type', locale)} wrapLabel id={`expense-doc-type-${detail.id}`} placeholder={t('expenses.document_type_choose', locale)} className={inputClass} value={docType} aria-invalid={validationShown && docType === 'NEEDS_REVIEW' || undefined} onChange={(e) => { const type = e.target.value as ExpenseDetail['sourceDocumentType']; setDocType(type); }} disabled={busy}>
+            {/* In the certificate wizard the certificate itself is not a type to pick: before one exists it only blocks the wizard. A record already saved with it still shows it. */}
+            {Object.entries(SOURCE_DOCUMENT_TYPE_LABELS).filter(([k]) => k !== 'NEEDS_REVIEW' && (!substituteReceiptFlow || k !== 'SUBSTITUTE_RECEIPT' || docType === k)).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </ThemedSelect>
-        </div>
-        <div>
-          <div className="mb-1 flex min-h-6 items-center gap-1.5 text-xs font-medium text-gray-600">
-            {t('expenses.tax_evidence_status', locale)}
-            <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_tax_status', locale)} />
-          </div>
-          <ThemedSelect aria-label={t('expenses.tax_evidence_status', locale)} wrapLabel className={inputClass} value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as ExpenseDetail['taxEvidenceStatus'])} disabled={busy || !isMutable || !canReview} aria-describedby={`expense-tax-evidence-hint-${detail.id}`}>
+          {docType === 'TAX_INVOICE' && (docType !== detail.sourceDocumentType || detail.inputVatClaimStatus === 'NEEDS_REVIEW') && Number(detail.vatAmount) > 0 && detail.inputVatRight?.vatStatus !== 'NOT_REGISTERED' && <p className="mt-1 text-sm text-gray-600">มีใบกำกับภาษีเต็มรูป — รอตรวจสอบสิทธิภาษีซื้อ</p>}
+          {validationShown && docType === 'NEEDS_REVIEW' && <p role="alert" className="mt-1 text-sm text-error-700">เลือกประเภทเอกสาร</p>}
+        </div>}
+        {!noDocument && <div>
+          <div className={cx(FIELD_LABEL, 'min-h-6 whitespace-nowrap')}>{t('expenses.tax_evidence_status', locale)}</div>
+          <ThemedSelect aria-label={t('expenses.tax_evidence_status', locale)} wrapLabel id={`expense-tax-evidence-${detail.id}`} className={inputClass} value={taxStatus} aria-invalid={validationShown && taxStatus === 'NEEDS_REVIEW' || undefined} onChange={(e) => setTaxStatus(e.target.value as ExpenseDetail['taxEvidenceStatus'])} disabled={busy} aria-describedby={showTaxEvidenceHint ? `expense-tax-evidence-hint-${detail.id}` : undefined}>
             {Object.entries(TAX_EVIDENCE_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </ThemedSelect>
-          <p id={`expense-tax-evidence-hint-${detail.id}`} className="mt-1 text-xs text-gray-500 [text-wrap:pretty]">{t('expenses.tax_evidence_status_hint', locale)}</p>
-          {taxEvidenceReason && <p className="mt-1 text-xs text-gray-400">{t('expenses.reason_label', locale)}: {taxEvidenceReason}</p>}
-        </div>
+          {validationShown && taxStatus === 'NEEDS_REVIEW' && <p role="alert" className="mt-1 text-sm text-error-700">{t('expenses.tax_evidence_status', locale)}: เลือกคำตอบ</p>}
+          {showTaxEvidenceHint && <p id={`expense-tax-evidence-hint-${detail.id}`} className="mt-1 text-sm text-gray-500 [text-wrap:pretty]">{t('expenses.tax_evidence_status_hint', locale)}</p>}
+          {taxEvidenceReason && <p className="mt-1 text-sm text-gray-500">{t('expenses.reason_label', locale)}: {taxEvidenceReason}</p>}
+        </div>}
+        <div className="col-span-full">{docType !== detail.sourceDocumentType && !noDocument && Number(detail.vatAmount) > 0 && detail.inputVatRight?.vatStatus !== 'NOT_REGISTERED'
+          ? <p className="text-sm text-gray-600">กด “ถัดไป” เพื่อบันทึกประเภทเอกสาร แล้วดูสิทธิภาษีซื้อที่ระบบตอบ</p>
+          : <ExpenseInputVatRight companyId={companyId} detail={detail} canReview={canReview} saveRef={vatSaveRef} fixAction={key => key === 'receipt' ? attachFileButton('แนบเอกสาร') : fixAction?.(key)} canAnswerVatStatus={canAnswerVatStatus} canEditShopIdentity={canEditShopIdentity} canReadTaxPeriods={canReadTaxPeriods} onDirtyChange={setVatDirty} />}</div>
         <div>
-          <div className="mb-1 flex min-h-6 items-center text-xs font-medium text-gray-600">
+          <div className={cx(FIELD_LABEL, 'min-h-6 whitespace-nowrap')}>
             <AiFieldLabel label={t('expenses.category', locale)} field="category" summary={detail.aiVerificationSummaryJson} />
           </div>
-          <ThemedSelect aria-label={t('expenses.category', locale)} className={inputClass} value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={busy || !isMutable || !canReview}>
-            <option value="">{t('expenses.category_unspecified', locale)}</option>
+          <ThemedSelect aria-label={t('expenses.category', locale)} className={inputClass} value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={busy}>
+            <option value="">{lineCategoryName ? `${lineCategoryName} (ตามรายการ)` : t('expenses.category_unspecified', locale)}</option>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </ThemedSelect>
           {/* Spec S1-R4: an auto-filled category arrives pre-selected in the box above; a suggestion
               the server refused to write is offered here instead, and only a tap applies it. Only
               `categoryId` moves, so nothing else the reviewer typed is touched. */}
-          {aiCategorySuggestion && aiCategorySuggestion.expenseCategoryId !== categoryId && isMutable && canReview && (
+          {aiCategorySuggestion && aiCategorySuggestion.expenseCategoryId !== categoryId && (
             <button
               type="button"
               className={cx(ghostClass, 'mt-1.5 w-full justify-start text-left')}
@@ -1084,64 +1292,73 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
         </div>
       </div>
       <div className="space-y-3">
-        {!receiptActionRequired && <button type="button" className={ghostClass} onClick={() => setShowEvidenceOptions(value => !value)}>{showEvidenceOptions ? 'ซ่อนตัวเลือกหลักฐาน' : 'เอกสารมีปัญหา / เลือกหลักฐาน'}</button>}
+        {/* One door to "there is no receipt, or it has a problem". It stays in one place whatever the state. */}
+        <button type="button" className={ghostClass} aria-expanded={showEvidenceOptions} onClick={() => (showEvidenceOptions ? setShowEvidenceOptions(false) : openEvidenceOptions())}>{showEvidenceOptions ? 'ซ่อนคำถามเรื่องใบเสร็จ' : 'ไม่มีใบเสร็จ หรือใบเสร็จมีปัญหา'}</button>
         {showEvidenceOptions && <div id={`expense-evidence-options-${detail.id}`} tabIndex={-1} className="scroll-mt-24 space-y-3 rounded-xl border border-gray-200 p-3">
-          <label className="block">เอกสารนี้มีปัญหาอะไร?
-            <ThemedSelect className={inputClass} aria-label="ปัญหาของเอกสาร" disabled={busy || !isMutable || !canReview} value={assessment.receiptProblem} onChange={event => {
+          <label className="block"><span className={FIELD_LABEL}>มีใบเสร็จของรายการนี้ไหม</span>
+            <ThemedSelect id={`expense-receipt-question-${detail.id}`} className={inputClass} aria-label="มีใบเสร็จของรายการนี้ไหม" disabled={busy} value={assessment.receiptProblem} onChange={event => {
               const receiptProblem = event.target.value as ExpenseEvidenceAssessment['receiptProblem'];
               setAssessment(value => ({ ...value, receiptProblem, route: receiptProblem === 'NONE' ? 'SOURCE_DOCUMENT' : 'ALTERNATIVE_EVIDENCE' }));
-              if (receiptProblem !== 'NONE') setTaxStatus('SUPPORTING_ONLY');
+              if (!substituteReceiptFlow && (receiptProblem === 'NOT_AVAILABLE' || receiptProblem === 'LOST')) {
+                setDocType('EXPENSE_NOTE_TEXT'); setTaxStatus('SUPPORTING_ONLY');
+              } else if (!substituteReceiptFlow && receiptProblem === 'NONE' && noDocument) {
+                setDocType('NEEDS_REVIEW'); setTaxStatus('NEEDS_REVIEW');
+              } else if (receiptProblem !== 'NONE') setTaxStatus('SUPPORTING_ONLY');
             }}>
-              <option value="NONE">มีเอกสารใช้ประกอบรายการ</option><option value="NOT_AVAILABLE">ไม่มีใบเสร็จ</option>
-              <option value="LOST">ใบเสร็จสูญหาย</option><option value="MATERIAL_INCOMPLETE">ข้อมูลสำคัญไม่ครบ</option>
+              <option value="NONE">มี</option><option value="NOT_AVAILABLE">{RECEIPT_PROBLEM_LABELS.NOT_AVAILABLE}</option>
+              <option value="LOST">{RECEIPT_PROBLEM_LABELS.LOST}</option><option value="MATERIAL_INCOMPLETE">{RECEIPT_PROBLEM_LABELS.MATERIAL_INCOMPLETE}</option>
             </ThemedSelect>
           </label>
-          {assessment.receiptProblem === 'LOST' && <p className="text-gray-600">ขอสำเนาหรือเอกสารแทนจากผู้ขายได้ ระหว่างรอบันทึกฉบับร่างไว้ก่อนได้</p>}
-          {assessment.receiptProblem === 'MATERIAL_INCOMPLETE' && <p className="text-gray-600">ถ้าเพียงรูปไม่ชัด ให้เปลี่ยนไฟล์หรืออ่านเอกสารอีกครั้งก่อน</p>}
-          {assessment.receiptProblem !== 'NONE' && <label className="block">ต้องการใช้หลักฐานแบบใด
-            <ThemedSelect className={inputClass} aria-label="ทางใช้หลักฐาน" disabled={busy || !isMutable || !canReview} value={assessment.route} onChange={event => setAssessment(value => ({ ...value, route: event.target.value as ExpenseEvidenceAssessment['route'] }))}>
-              <option value="ALTERNATIVE_EVIDENCE">ใช้หลักฐานอื่นที่มี</option><option value="SUBSTITUTE_RECEIPT">จัดทำใบรับรองแทนใบเสร็จ</option>
+          {assessment.receiptProblem === 'LOST' && <p className="text-sm text-gray-600">ขอสำเนาหรือเอกสารแทนจากผู้ขายได้ ระหว่างรอบันทึกร่างไว้ก่อนได้</p>}
+          {assessment.receiptProblem === 'MATERIAL_INCOMPLETE' && <p className="text-sm text-gray-600">ถ้าเพียงรูปไม่ชัด ให้เปลี่ยนไฟล์หรืออ่านเอกสารอีกครั้งก่อน</p>}
+          {assessment.receiptProblem !== 'NONE' && <label className="block"><span className={FIELD_LABEL}>จะใช้อะไรแทน</span>
+            <ThemedSelect className={inputClass} aria-label="จะใช้อะไรแทน" disabled={busy} value={assessment.route} onChange={event => setAssessment(value => ({ ...value, route: event.target.value as ExpenseEvidenceAssessment['route'] }))}>
+              <option value="ALTERNATIVE_EVIDENCE">{EVIDENCE_ROUTE_LABELS.ALTERNATIVE_EVIDENCE}</option><option value="SUBSTITUTE_RECEIPT">{EVIDENCE_ROUTE_LABELS.SUBSTITUTE_RECEIPT}</option>
             </ThemedSelect>
           </label>}
-          {assessment.attachmentIds.some(id => !detail.attachments.some(file => file.id === id && isExpenseEvidenceFile(file))) && <div className="rounded-xl bg-warning-50 p-3 text-warning-700">
-            <p>ไฟล์ที่เคยเลือกบางไฟล์ใช้ไม่ได้แล้ว กรุณาเลือกหลักฐานใหม่</p>
-            <button type="button" className={ghostClass} disabled={busy || !isMutable || !canReview} aria-busy={Boolean(busy)} onClick={() => setAssessment(value => ({ ...value, attachmentIds: value.attachmentIds.filter(id => detail.attachments.some(file => file.id === id && isExpenseEvidenceFile(file))) }))}>เอาไฟล์ที่ใช้ไม่ได้ออก</button>
-          </div>}
-          <fieldset disabled={busy || !isMutable || !canReview} className="space-y-1"><legend>เลือกไฟล์ที่ใช้ประกอบรายการ</legend>
-            {detail.attachments.filter(file => isExpenseEvidenceFile(file)).map(file => <label key={file.id} className="flex min-h-11 items-center gap-2 break-all">
+          {assessment.attachmentIds.some(id => !detail.attachments.some(file => file.id === id && isExpenseEvidenceFile(file))) && (
+            <Notice tone="warning" action={<button type="button" className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => setAssessment(value => ({ ...value, attachmentIds: value.attachmentIds.filter(id => detail.attachments.some(file => file.id === id && isExpenseEvidenceFile(file))) }))}>เอาไฟล์ที่ใช้ไม่ได้ออก</button>}>
+              ไฟล์ที่เคยเลือกบางไฟล์ใช้ไม่ได้แล้ว เลือกไฟล์ใหม่
+            </Notice>
+          )}
+          <fieldset id={`expense-evidence-files-${detail.id}`} aria-invalid={validationShown && !assessment.attachmentIds.length && assessment.route !== 'SUBSTITUTE_RECEIPT' || undefined} aria-describedby={`expense-evidence-files-error-${detail.id}`} disabled={busy} className="space-y-1"><legend className={FIELD_LABEL}>ไฟล์ที่ใช้ประกอบรายการ</legend>
+            {evidenceFiles.map(file => <label key={file.id} className="flex min-h-11 items-center gap-2 [overflow-wrap:anywhere]">
               <input type="checkbox" checked={assessment.attachmentIds.includes(file.id)} onChange={event => setAssessment(value => ({ ...value, attachmentIds: event.target.checked ? [...value.attachmentIds, file.id] : value.attachmentIds.filter(id => id !== file.id) }))} />{file.originalFileName}
             </label>)}
-            {!detail.attachments.some(file => isExpenseEvidenceFile(file)) && <p className="text-gray-600">{detail.attachments.length ? "เอกสารที่ระบบออกและประวัติหลักฐานดูได้จากรายการเอกสารแนบ" : isMutable ? "ยังไม่มีไฟล์แนบ บันทึกฉบับร่างแล้วเพิ่มหลักฐานภายหลังได้" : "ไม่มีไฟล์หลักฐานแนบกับรายการนี้"}</p>}
+            {/* A statement keeps its button on the same row: with no file to tick, the way to add one is here.
+                While the receipt statement below already carries the attach button, it is not drawn twice. */}
+            {evidenceFiles.length === 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-gray-600">{detail.attachments.length ? 'เอกสารที่ระบบออกดูได้จากรายการเอกสารแนบ' : 'ยังไม่มีไฟล์'}</p>
+                {attachFileButton('แนบไฟล์')}
+              </div>
+            )}
+          {validationShown && !assessment.attachmentIds.length && assessment.route !== 'SUBSTITUTE_RECEIPT' && <p id={`expense-evidence-files-error-${detail.id}`} role="alert" className="text-sm text-error-700">เลือกไฟล์ที่ใช้ประกอบรายการ</p>}
           </fieldset>
-          {assessment.receiptProblem !== 'NONE' && <label className="block">เหตุผลที่ใช้หลักฐานนี้
-            <textarea aria-label="เหตุผลที่ใช้หลักฐานนี้" className={inputClass} rows={2} maxLength={assessment.route === 'SUBSTITUTE_RECEIPT' ? 500 : 2000} disabled={busy || !isMutable || !canReview} value={assessment.reason} onChange={event => setAssessment(value => ({ ...value, reason: event.target.value }))} />
+          {assessment.receiptProblem !== 'NONE' && <label className="block"><span className={FIELD_LABEL}>เหตุผลที่ใช้หลักฐานนี้</span>
+            <textarea id={`expense-evidence-reason-${detail.id}`} aria-invalid={validationShown && assessment.route === 'ALTERNATIVE_EVIDENCE' && !assessment.reason.trim() || undefined} aria-label="เหตุผลที่ใช้หลักฐานนี้" className={inputClass} rows={2} maxLength={assessment.route === 'SUBSTITUTE_RECEIPT' ? 500 : 2000} disabled={busy} value={assessment.reason} onChange={event => setAssessment(value => ({ ...value, reason: event.target.value }))} />
+            {validationShown && assessment.route === 'ALTERNATIVE_EVIDENCE' && !assessment.reason.trim() && <p role="alert" className="mt-1 text-sm text-error-700">บอกเหตุผลที่ใช้หลักฐานนี้</p>}
           </label>}
         </div>}
       </div>
-      {isMutable && canReview && (
-        <div className="flex flex-wrap items-center gap-2">
-          <button className={btnClass} disabled={busy || !reviewComplete || (!dirty && reviewSaved)} aria-busy={Boolean(busy)} onClick={() => run(() => saveDocumentReview(), 'บันทึกการตรวจเอกสารเรียบร้อยแล้ว')}>{t(busy ? 'expenses.saving' : !dirty && reviewSaved ? 'expenses.doc_review_saved' : 'expenses.doc_review_save', locale)}</button>
-          <div>
-            <button type="button" className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => run(() => saveDocumentReview(undefined, false), t('expenses.review_draft_saved', locale))}>{t('expenses.review_save_draft', locale)}</button>
-            <p className="mt-1 text-xs text-gray-500">ยังไม่นับว่าตรวจแล้ว</p>
-          </div>
-          {(!reviewComplete || busy) && <div role="status" className="w-full rounded-xl border border-warning-100 bg-warning-50 p-3 text-sm font-medium text-warning-700">
-            <p>{busy ? t('expenses.saving', locale) : receiptActionRequired ? 'ยังไม่มีหลักฐาน กรุณาแนบหรือเลือกหลักฐาน' : assessmentError ?? t('expenses.doc_review_choose_required', locale)}</p>
-            {!busy && receiptActionRequired && <div className="mt-2 flex flex-wrap gap-2">
-              {onAttachPrimaryReceipt && <label className={cx(ghostClass, 'relative inline-flex cursor-pointer')}>
-                แนบไฟล์ใบเสร็จ
-                <input type="file" aria-label="แนบไฟล์ใบเสร็จ" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" accept={RECEIPT_UPLOAD_ACCEPT} disabled={receiptUploading} onChange={event => {
-                  const file = event.target.files?.[0]; event.target.value = ''; if (file) void onAttachPrimaryReceipt(file);
-                }} />
-              </label>}
-              <button type="button" className={ghostClass} disabled={receiptUploading} aria-busy={receiptUploading} onClick={openEvidenceOptions}>เอกสารมีปัญหา / เลือกหลักฐาน</button>
-            </div>}
-          </div>}
-          {classificationReviewState.showFinanceOverride && !checkBillBlocked && <button className={btnClass} disabled={busy || !canResolveClassification} aria-busy={Boolean(busy)} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>}
-          {/* `w-full` puts the reason on its own line of the wrapping row, under the buttons —
-              a disabled button on a phone has no tooltip to fall back on. */}
+        <div className="space-y-3">
+          {/* The reason comes before the button it blocks, with the one thing to press on the same row. */}
+          {!saveRef && !reviewComplete && !busy && reviewBlocker && (
+            <Notice tone="warning" action={(receiptActionRequired && attachFileButton('แนบไฟล์ใบเสร็จ')) || undefined}>{reviewBlocker}</Notice>
+          )}
+          {!saveRef && (!dirty && !vatDirty && reviewSaved && !busy
+            // Saved and unchanged: a sentence, not a button that looks dead.
+            ? <p role="status" className="text-sm font-semibold text-brand-700">✓ {t('expenses.doc_review_saved', locale)}</p>
+            : (
+              <ActionGroup>
+                {/* Keeping unfinished answers is the quiet way out; it is offered only while there is something unsaved. */}
+                {dirty && <button type="button" className={quietButtonClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => run(() => saveDocumentReview(undefined, false), t('expenses.review_draft_saved', locale))}>{t('expenses.review_save_draft', locale)}</button>}
+                <button type="button" className={btnClass} disabled={busy || !reviewComplete} aria-busy={Boolean(busy)} onClick={() => run(saveDocumentAndRight, t('expenses.doc_review_saved', locale), false)}>{t(busy ? 'expenses.saving' : 'expenses.doc_review_save', locale)}</button>
+              </ActionGroup>
+            ))}
+          {classificationReviewState.showFinanceOverride && !checkBillBlocked && <button className={btnClass} disabled={busy || !canResolveClassification} aria-busy={Boolean(busy)} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>}
           {classificationReviewState.showFinanceOverride && !checkBillBlocked && classificationConfirmBlocker && (
-            <p className="w-full text-xs font-medium text-warning-700">{t(classificationConfirmBlocker, locale)}</p>
+            <p className="text-sm font-medium text-warning-700">{t(classificationConfirmBlocker, locale)}</p>
           )}
           {showSubstituteAction && canStartSubstitute && !classificationBlocked && (!evidence || evidence.status === 'SUPERSEDED') && (
             <>
@@ -1151,34 +1368,85 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
               {isCheckBillClassification(detail.aiVerificationSummaryJson) && <p className="text-sm text-gray-600">{t('expenses.check_bill_new_draft_note', locale)}</p>}
             </>
           )}
-
         </div>
-      )}
         </div>
       </DocumentReviewContainer>
+      )}
       {evidence && (
         <div className="space-y-3 rounded-xl border border-warning-100 bg-warning-50 p-4 text-sm" aria-label="ใบรับรองแทนใบเสร็จของรายการนี้">
-          <p className="font-semibold text-gray-800">ใบรับรองแทนใบเสร็จรับเงิน {evidence.documentNumber}</p>
+          <p className="font-semibold text-gray-800">ใบรับรองแทนใบเสร็จ <span className="mangmee-unit">{evidence.documentNumber}</span></p>
           <p className="font-semibold text-warning-700">{paperAwaiting
-            ? evidence.paperSubmission ? 'รอตรวจรับฉบับลงนาม' : 'รออัปโหลดฉบับลงนามบนกระดาษ'
-            : expenseValueLabel(SUBSTITUTE_RECEIPT_STATUS_LABELS, evidence.status)}</p>
-          <p>{evidence.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : evidence.fundingSource === 'PERSONAL_ADVANCE' ? 'พนักงานสำรองจ่ายเต็มจำนวน' : 'เอกสารเดิมยังไม่ระบุเงินที่ใช้ชำระ'}</p>
+            ? evidence.paperSubmission ? 'รอตรวจรับฉบับเซ็น' : 'รออัปโหลดฉบับเซ็นบนกระดาษ'
+            : expenseSubstituteReceiptStatus(evidence)}</p>
+          <p>{evidence.fundingSource === 'COMPANY' ? 'กิจการจ่ายเต็มจำนวน' : evidence.fundingSource === 'PERSONAL_ADVANCE' ? 'พนักงานสำรองจ่ายเต็มจำนวน' : 'เอกสารเดิมยังไม่ระบุเงินที่ใช้จ่าย'}</p>
           <p>{t('expenses.substitute_wizard.payer', locale)}: {certifierName || (paperAwaiting ? 'รอกรอกชื่อบนกระดาษ' : '—')}</p>
-          {evidence.fundingSource === 'PERSONAL_ADVANCE' && <p className="text-xs text-gray-600">{detail.reimbursementProgress?.requestId ? `สถานะใบเบิก: ${expenseReimbursementProgressLabel(detail.reimbursementProgress)}` : "ใบรับรองนี้ยังไม่ใช่การจ่ายคืนเงินให้พนักงาน"}</p>}
-          <Link className={btnClass} href={evidence.status === 'SUPERSEDED'
+          {evidence.fundingSource === 'PERSONAL_ADVANCE' && <p className="text-sm text-gray-600">{detail.reimbursementProgress?.requestId ? `สถานะใบเบิก: ${expenseReimbursementProgressLabel(detail.reimbursementProgress)}` : "ใบรับรองนี้ยังไม่ใช่การจ่ายคืนเงินให้พนักงาน"}</p>}
+          {documentDetails && <p className="text-gray-600">{evidence.status === 'SUPERSEDED' ? 'สร้างใบรับรองแทนใบเสร็จใหม่จากค่าใช้จ่ายนี้ได้'
+            : canEditSubstituteReceipt(detail, evidence)
+              ? evidence.status === 'PAYER_CERTIFIED' || evidence.wetSignedScanAttachmentId || evidence.paperSubmission
+                ? 'แก้ข้อมูลแล้วใช้ใบรับรองแทนใบเสร็จฉบับล่าสุดและเซ็นใหม่' : 'แก้ข้อมูลแล้วใช้ใบรับรองแทนใบเสร็จฉบับล่าสุด'
+              : 'จะแก้ข้อมูลในใบ ต้องยกเลิกใบนี้แล้วสร้างใบใหม่'}</p>}
+          <Link className={documentDetails ? ghostClass : btnClass} href={evidence.status === 'SUPERSEDED'
             ? `/companies/${encodeURIComponent(companyId)}/expenses/substitute-receipts/${encodeURIComponent(evidence.id)}`
             : substituteAction.href} aria-disabled={busy || dirty} onClick={(event) => { if (busy || dirty) event.preventDefault(); }}>
-            {t(evidence.status === 'SUPERSEDED' ? 'expenses.substitute_hub.view_history' : substituteAction.labelKey, locale)}
+            {documentDetails ? 'เปิดดูเอกสาร' : t(evidence.status === 'SUPERSEDED' ? 'expenses.substitute_hub.view_history' : substituteAction.labelKey, locale)}
           </Link>
         </div>
       )}
     </MangmeeCard>
   );
 }
+export function ExpenseDocumentFacts({ companyId, detail }: { companyId: string; detail: ExpenseDetail }) {
+  const locale = useWorkspaceLocale();
+  const [incomeTypes, setIncomeTypes] = useState<WhtIncomeCategoryOption[]>([]);
+  useEffect(() => {
+    if (!detail.whtCategoryCode) return;
+    let active = true;
+    void listExpenseWhtIncomeCategories(companyId).then(rows => { if (active) setIncomeTypes(rows); }).catch(() => {});
+    return () => { active = false; };
+  }, [companyId, detail.whtCategoryCode]);
+  const lines = detail.lines.filter(line => !isCalculatedExpenseRounding(line));
+  return <div data-expense-document-facts className="space-y-3">
+    <dl className="divide-y divide-gray-100">
+      <Fact label="ชื่อผู้ขาย">{detail.vendorNameSnapshot || 'ยังไม่ระบุ'}</Fact>
+      <Fact label="เลขผู้เสียภาษีผู้ขาย">{detail.vendorTaxIdSnapshot}</Fact>
+      <Fact label="ที่อยู่ผู้ขาย">{detail.vendorAddressSnapshot}</Fact>
+      <Fact label="สาขาผู้ขาย">{detail.vendorBranchCodeSnapshot === '00000' ? 'สำนักงานใหญ่' : detail.vendorBranchCodeSnapshot}</Fact>
+      <Fact label="เลขที่เอกสาร">{detail.vendorDocumentNumber}</Fact>
+      <Fact label="วันที่เอกสาร">{expenseDateIsReadable(detail.aiVerificationSummaryJson) ? dateShort(detail.expenseDate) : 'ยังไม่ระบุ'}</Fact>
+      <Fact label="หมายเหตุ">{detail.note}</Fact>
+      {Number(detail.discountAmount) > 0 && <Fact label="ส่วนลด">{baht(detail.discountAmount)}</Fact>}
+      {Number(detail.vatAmount) > 0 && <Fact label="VAT">{expenseValueLabel(EXPENSE_VAT_MODE_LABELS, detail.vatMode)} · {baht(detail.vatAmount)}</Fact>}
+    </dl>
+    {Number(detail.whtAmount) > 0 && <section aria-labelledby="expense-withholding-heading">
+      <h3 id="expense-withholding-heading" tabIndex={-1} className="text-sm font-semibold text-gray-800">ภาษีหัก ณ ที่จ่าย</h3>
+      <dl className="divide-y divide-gray-100">
+        <Fact label="ผู้รับเงินเป็น">{detail.vendorEntityKindSnapshot ? expenseValueLabel(PAYEE_ENTITY_KIND_LABELS, detail.vendorEntityKindSnapshot) : null}</Fact>
+        <Fact label="จ่ายค่าอะไร">{detail.whtCategoryCode ? incomeTypes.find(type => type.code === detail.whtCategoryCode)?.nameTh ?? t('expenses.wht_category_recorded', locale) : null}</Fact>
+        <Fact label="ภาษีหัก ณ ที่จ่าย">{baht(detail.whtAmount)}{detail.whtRate && <> · {Number(detail.whtRate)}%</>}</Fact>
+        <Fact label="ยอดหลังหักภาษี ณ ที่จ่าย">{baht(detail.netPayableAmount)}</Fact>
+      </dl>
+    </section>}
+    {lines.length > 0 && <>
+      <table className="hidden w-full text-sm sm:table">
+        <thead><tr className="text-left text-gray-500"><th>รายการ</th><th className="text-right">จำนวน</th><th className="text-right">ราคาต่อหน่วย</th><th className="text-right">ส่วนลด</th><th className="text-right">รวม</th></tr></thead>
+        <tbody>{lines.map(line => <tr key={line.id} className="border-t border-gray-100">
+          <td className="py-2">{line.description}</td><td className="text-right tabular-nums">{Number(line.quantity)}</td>
+          <td className="whitespace-nowrap text-right tabular-nums">{baht(line.unitPrice)}</td><td className="whitespace-nowrap text-right tabular-nums">{baht(line.discountAmount)}</td><td className="whitespace-nowrap text-right tabular-nums">{baht(line.lineTotalAmount)}</td>
+        </tr>)}</tbody>
+      </table>
+      <ul className="divide-y divide-gray-100 sm:hidden">{lines.map(line => <li key={line.id} className="py-2 text-sm">
+        <div className="flex items-start justify-between gap-3"><span>{line.description}</span><span className="whitespace-nowrap tabular-nums font-semibold">{baht(line.lineTotalAmount)}</span></div>
+        <p className="text-gray-500">{Number(line.quantity)} × {baht(line.unitPrice)}{Number(line.discountAmount) > 0 && <> · ส่วนลด {baht(line.discountAmount)}</>}</p>
+      </li>)}</ul>
+    </>}
+    {detail.totalsIdentity?.ok === false && <p role="status" className="text-sm text-warning-700">{t('expenses.totals_identity_warning', locale)}</p>}
+  </div>;
+}
 
 type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
-export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, overpaymentCue, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false, permissions = [] }: {
+export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, overpaymentCue, showSaveDraft = false, onSaved, saveRef, onBusyChange, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false, permissions = [], onDirtyChange }: {
   companyId: string;
   detail: ExpenseDetail;
   isMutable: boolean;
@@ -1197,14 +1465,19 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   skipUnchangedSave?: boolean;
   onSaved: () => Promise<void>;
   /** The ถัดไป/chip navigation and the first-step draft button use the same save. */
-  saveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
+  saveRef?: MutableRefObject<((explicitDraftSave?: boolean) => Promise<boolean>) | null>;
+  onBusyChange?: (busy: boolean) => void;
   onValidationChange?: (errorCount: number, firstErrorMessage: string | null) => void;
+  /** For the leave question of the page around this form: true while a field differs from what was last saved or loaded, false after a save or a reload. */
+  onDirtyChange?: (dirty: boolean) => void;
   /** Plan 13.11.B: the VAT card collects "ใช้ยอดตามเอกสาร"; the page's confirm button spends it. */
   vatOverrideRef?: MutableRefObject<ExpenseVatSourceOverrideInput | null>;
 }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
-  const [values, setValues] = useState<ExpenseDraftReviewValues>(() => reviewValues(detail));
+  const [values, setValues] = useState<ExpenseDraftReviewValues>(() => reviewValues(detail, isMutable));
+  const receiptProblem = expenseEvidenceAssessment(detail)?.receiptProblem;
+  const noReceipt = receiptProblem === 'NOT_AVAILABLE' || receiptProblem === 'LOST';
   const [sourceCategories, setSourceCategories] = useState<ExpenseCategorySummary[]>([]);
   const [sourceCategoryError, setSourceCategoryError] = useState(false);
   // WHT certificate system issuance plan §1.2: ACTIVE income categories for the dropdown below.
@@ -1217,6 +1490,22 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   // R4: a freshly chosen หัก shows no red. Leaving a value field or pressing ถัดไป reveals what is missing.
   const [whtReveal, setWhtReveal] = useState(true);
   const [validationRevealed, setValidationRevealed] = useState(false);
+  const [focusInvalidAttempt, setFocusInvalidAttempt] = useState(0);
+  useEffect(() => {
+    if (!focusInvalidAttempt) return;
+    const root = document.getElementById(`expense-review-fields-${detail.id}`);
+    if (!root) return;
+    const focusInvalid = () => {
+      const target = root.querySelector<HTMLElement>('[aria-invalid="true"]');
+      if (!target) return false;
+      focusExpenseField(target);
+      return true;
+    };
+    if (focusInvalid()) return;
+    const observer = new MutationObserver(() => { if (focusInvalid()) observer.disconnect(); });
+    observer.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-invalid'] });
+    return () => observer.disconnect();
+  }, [focusInvalidAttempt, detail.id]);
   // R2: an empty value is only a value being typed until the reviewer leaves the field.
   const [whtValueFocused, setWhtValueFocused] = useState(false);
   const whtBlockRef = useRef<HTMLFieldSetElement>(null);
@@ -1237,8 +1526,11 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     return () => { active = false; };
   }, [companyId, Boolean(detail.sourceDraft)]);
   const [busy, setBusy] = useState(false);
+  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  // "Saved" belongs to the step it was said on: it must not still be on screen after the person moved to another step.
+  useEffect(() => { setInfo(null); }, [showSaveDraft]);
   // §7 cases a-d: what the LAST save did to the counterparty registry. It lives here and not on
   // `detail` because the API returns it on the write response only — a refetch would lose it.
   const [registryNotice, setRegistryNotice] = useState<CounterpartyAutoSaveNotice | null>(null);
@@ -1250,6 +1542,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const [branchIsBranch, setBranchIsBranch] = useState(() => Boolean(detail.vendorBranchCodeSnapshot));
   const [vatSourceDirty, setVatSourceDirty] = useState(false);
   const [taxFactsDirty, setTaxFactsDirty] = useState(false);
+  const removedLineIndex = useRef<number | undefined>(undefined);
   const addedLineKind = useRef<ExpenseLineChargeKind | null | undefined>(undefined);
   // The stored date, not the edited one: a reviewer mid-edit must not have the tax fields vanish
   // under their cursor. `hasRecordedTax` then keeps them visible for a document that already
@@ -1304,8 +1597,11 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const previewIssue = issues.find(issue => issue.severity === 'error' && (issue.field.startsWith('whtInput.') || issue.field === 'whtRate'
     || /^lines\.\d+\.(quantity|unitPrice|discountAmount|vatRate|vatTreatment|chargeKind)$/.test(issue.field)));
   const previewBlocker = vatSourceError ?? (previewIssue ? expenseReviewMessage(previewIssue.messageKey, locale, isMutable, previewIssue.params) : null);
+  // A record with no line saved and none typed has nothing to recalculate: asking the server anyway came
+  // back as "คำนวณยอดล่าสุดไม่ได้" on a brand-new record, before the person had typed a thing.
+  const nothingToTotal = values.lines.length === 0 && detail.lines.length === 0;
   const liveTotals = useExpenseReviewTotals(companyId, detail, values,
-    isMutable && (canReview || !detail.sourceDraft), previewBlocker, totalsRetry, onTotalsChange, whtMissing.length > 0);
+    isMutable && (canReview || !detail.sourceDraft) && !nothingToTotal, previewBlocker, totalsRetry, onTotalsChange, whtMissing.length > 0);
   const totalIssues = liveTotals?.status === 'ready' && liveTotals.totals && aiGrandTotal
     && Math.abs(Number(liveTotals.totals.grandTotalAmount) - Number(aiGrandTotal)) > 0.05
     ? [{ field: 'total', severity: 'warn' as const, messageKey: 'expenses.v_total_mismatch' as const,
@@ -1340,6 +1636,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           : 'ไม่ใช้ VAT';
   // Plan 13.11.B: a blocked reconciliation says which line to open and, for a reviewer, offers the
   // one named way through — "ใช้ยอดตามเอกสาร" with a reason and the VAT line taking the difference.
+  const documentVatDiffers = snapshotSourceAmount !== null && vatSnapshot != null
+    && Math.abs(Number(snapshotSourceAmount) - Number(vatSnapshot.calculation.vatAmount)) > 0.005;
   const vatBlocked = !vatSourceDirty && isBlockingExpenseVatReconciliation(vatSnapshot);
   const vatAttentionLines = (vatSnapshot?.reconciliation.attentionLineNumbers ?? [])
     .map((lineNumber) => ({ lineNumber, description: values.lines[lineNumber - 1]?.description?.trim() ?? '' }));
@@ -1356,9 +1654,9 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     ? <p className="mt-1 text-xs text-warning-700">{t('expenses.source_draft_missing_one', locale)}</p>
     : null;
 
-  const reviewSnapshot = useRef({ id: detail.id, values: reviewValues(detail), withholdingEnabled: expenseReviewWithholdsTax(reviewValues(detail), detail.whtAmount) });
+  const reviewSnapshot = useRef({ id: detail.id, values: reviewValues(detail, isMutable), withholdingEnabled: expenseReviewWithholdsTax(reviewValues(detail), detail.whtAmount) });
   useEffect(() => {
-    const incoming = { id: detail.id, values: reviewValues(detail), withholdingEnabled: expenseReviewWithholdsTax(reviewValues(detail), detail.whtAmount) };
+    const incoming = { id: detail.id, values: reviewValues(detail, isMutable), withholdingEnabled: expenseReviewWithholdsTax(reviewValues(detail), detail.whtAmount) };
     const previous = reviewSnapshot.current;
     if (previous.id !== detail.id) setValidationRevealed(false);
     const keepInput = previous.id === detail.id && isMutable;
@@ -1381,6 +1679,9 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       : null;
   }, [canConfirm, detail.updatedAt, vatBlocked, vatOverrideLineNumber, vatOverrideReason, vatOverrideRef]);
   useEffect(() => { onValidationChange?.(validationRevealed ? blockingIssueCount : 0, null); }, [validationRevealed, blockingIssueCount, onValidationChange]);
+  // Typed and not yet saved: the form's values differ from what the server last gave. A save reloads the record, which makes them equal again.
+  const formDirty = isMutable && JSON.stringify(values) !== JSON.stringify(reviewValues(detail));
+  useEffect(() => { onDirtyChange?.(formDirty); }, [onDirtyChange, formDirty]);
 
   const updateLine = (index: number, field: EditableReviewLineField, value: string, vatTreatment?: ExpenseLineVatTreatment | null) => {
     if (field !== 'description') setVatSourceDirty(true);
@@ -1401,17 +1702,22 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   };
 
   useEffect(() => {
+    if (removedLineIndex.current !== undefined) {
+      const index = Math.min(Math.max(0, removedLineIndex.current - 1), values.lines.length - 1);
+      removedLineIndex.current = undefined;
+      focusExpenseField(document.getElementById(index < 0 ? `expense-add-line-${detail.id}` : `expense-review-line-input-${detail.id}-${index}`));
+      return;
+    }
     if (addedLineKind.current === undefined) return;
     const kind = addedLineKind.current;
     addedLineKind.current = undefined;
     // The shared insertion rule adds the last product or charge; wait for that row to render.
     const index = values.lines.reduce((last, line, at) => (line.chargeKind ?? null) === kind ? at : last, -1);
-    const heading = document.getElementById(`expense-review-line-${detail.id}-${index}`);
-    heading?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-    heading?.focus({ preventScroll: true });
+    focusExpenseField(document.getElementById(`expense-review-line-input-${detail.id}-${index}`));
   }, [detail.id, values.lines.length]);
 
   const removeLine = (index: number) => {
+    removedLineIndex.current = index;
     setVatSourceDirty(true);
     setVatEditors({});
     setValues((v) => removeExpenseReviewLine(v, index));
@@ -1500,10 +1806,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       + (partialSourceSave ? 0 : sourceCategoryIncompleteIndexes.length);
     if (saveIssueCount > 0) {
       setValidationRevealed(true); setWhtReveal(true); setWhtValueFocused(false);
-      window.requestAnimationFrame(() => {
-        const target = document.getElementById(`expense-review-fields-${detail.id}`)?.querySelector<HTMLElement>('[aria-invalid="true"]');
-        target?.scrollIntoView({ block: 'center' }); target?.focus({ preventScroll: true });
-      });
+      setFocusInvalidAttempt(value => value + 1);
       return false;
     }
     const forbidden = findForbiddenChars([
@@ -1529,8 +1832,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             originalLines: detail.lines,
             partial: partialSourceSave,
           } : undefined),
-        ...(disallowsTaxCode && { inputVatClaimStatus: 'NON_CLAIMABLE' as const }),
-      });
+        });
       reviewSnapshot.current = { id: detail.id, values, withholdingEnabled };
       // §7/§8: set before the readback, so a failed refresh still cannot swallow the news that the
       // registry row was created, filled, or missed. NOOP/SKIPPED clear it back to silence.
@@ -1571,10 +1873,6 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         <h3 className="font-semibold text-gray-800">{t('expenses.vendor_and_lines', locale)}</h3>
         {!isMutable && <span className="text-xs text-gray-400">{t('expenses.read_only', locale)}</span>}
       </div>
-      {showSaveDraft && isMutable && <button type="button" className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void save(true)}>
-        {busy ? t('expenses.source_draft_saving', locale)
-          : t(detail.status === 'DRAFT' ? 'expenses.review_save_draft' : 'expenses.source_draft_save', locale)}
-      </button>}
       {error && <ErrorBanner message={error} />}
       {info && <InfoBanner message={info} />}
       {/* §8: the expense saved, the registry write did not. A warning bar, never an error one —
@@ -1605,55 +1903,33 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label>
-          <span className="mb-1 block text-xs font-medium text-gray-600"><AiFieldLabel label={t('expenses.vendor_name', locale)} field="vendorNameSnapshot" summary={detail.aiVerificationSummaryJson} /></span>
-          <input className={validationInputClass(vendorNameIssue)} aria-invalid={vendorNameIssue?.severity === 'error' || undefined} placeholder="ชื่อตามใบเสร็จ" value={values.vendorNameSnapshot} onChange={(e) => setValues((v) => ({ ...v, vendorNameSnapshot: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
+          <span className="mb-1 block text-sm font-medium text-gray-700"><AiFieldLabel label={t('expenses.vendor_name', locale)} field="vendorNameSnapshot" summary={detail.aiVerificationSummaryJson} /></span>
+          <input id={`expense-vendor-name-${detail.id}`} className={validationInputClass(vendorNameIssue)} aria-invalid={vendorNameIssue?.severity === 'error' || undefined} placeholder={isMutable ? noReceipt ? 'ชื่อผู้รับเงิน' : 'ชื่อตามใบเสร็จ' : undefined} value={values.vendorNameSnapshot} onChange={(e) => setValues((v) => ({ ...v, vendorNameSnapshot: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
           <FieldIssueNote canEdit={isMutable} issue={vendorNameIssue} />
           <AiFieldMissingHint canEdit={isMutable} field="vendorNameSnapshot" summary={detail.aiVerificationSummaryJson} />
           {!vendorNameIssue && sourceMissingNote('vendorName')}
         </label>
         <div>
-          <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
+          <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
             <label htmlFor={`expense-vendor-tax-${detail.id}`}><AiFieldLabel label={t('expenses.vendor_tax_id', locale)} field="vendorTaxIdSnapshot" summary={detail.aiVerificationSummaryJson} /></label>
             <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_tax_id', locale)} />
           </span>
           {/* No maxLength: a full ID formats to exactly 17 characters, so the attribute blocked every
               insertion into a complete number — typing the missing leading 0 in front did nothing.
               taxIdDigits already caps the stored value at 13 digits, dropping the overflow. */}
-          <input id={`expense-vendor-tax-${detail.id}`} className={validationInputClass(vendorTaxIdIssue)} aria-invalid={vendorTaxIdIssue?.severity === 'error' || undefined} aria-describedby={vendorTaxIdChecksumWarning ? `expense-vendor-tax-warning-${detail.id}` : undefined} inputMode="numeric" placeholder="0-0000-00000-00-0" value={formatTaxId(values.vendorTaxIdSnapshot)} onChange={(e) => setValues((v) => ({ ...v, vendorTaxIdSnapshot: taxIdDigits(e.target.value) }))} disabled={!isMutable || busy} />
+          <input id={`expense-vendor-tax-${detail.id}`} className={validationInputClass(vendorTaxIdIssue)} aria-invalid={vendorTaxIdIssue?.severity === 'error' || undefined} aria-describedby={vendorTaxIdChecksumWarning ? `expense-vendor-tax-warning-${detail.id}` : undefined} inputMode="numeric" placeholder={isMutable ? '0-0000-00000-00-0' : undefined} value={formatTaxId(values.vendorTaxIdSnapshot)} onChange={(e) => setValues((v) => ({ ...v, vendorTaxIdSnapshot: taxIdDigits(e.target.value) }))} disabled={!isMutable || busy} />
           <FieldIssueNote canEdit={isMutable} issue={vendorTaxIdIssue} />
           {vendorTaxIdChecksumWarning && (
             <p id={`expense-vendor-tax-warning-${detail.id}`} className="mt-1 text-xs text-warning-700">{t('expenses.vendor_tax_id_checksum_warning', locale)}</p>
           )}
           <AiFieldMissingHint canEdit={isMutable} field="vendorTaxIdSnapshot" summary={detail.aiVerificationSummaryJson} />
         </div>
-        {/* Vendor address spec §11.2: under the tax id, a 3-row textarea, the same AI badge as every
-            other read field. No maxLength — §8 says an over-long address is refused with a way
-            forward, never silently truncated, and maxLength would eat the tail of a paste in
-            silence. The length rule lives in the validator, where the reviewer can see it. */}
-        <label className="sm:col-span-2">
-          <span className="mb-1 block text-xs font-medium text-gray-600"><AiFieldLabel label={t('expenses.vendor_address', locale)} field="vendorAddressSnapshot" summary={detail.aiVerificationSummaryJson} /></span>
-          <textarea aria-label={t('expenses.vendor_address', locale)} className={cx(validationInputClass(vendorAddressIssue), 'resize-y')} rows={3}
-            aria-invalid={vendorAddressIssue?.severity === 'error' || undefined} value={values.vendorAddressSnapshot}
-            onChange={(e) => setValues((v) => ({ ...v, vendorAddressSnapshot: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
-          <FieldIssueNote canEdit={isMutable} issue={vendorAddressIssue} />
-          {!vendorAddressIssue && <p className="mt-1 text-xs text-gray-500">{t('expenses.vendor_address_hint', locale)}</p>}
-          <AiFieldMissingHint canEdit={isMutable} field="vendorAddressSnapshot" summary={detail.aiVerificationSummaryJson} />
-          {/* §7 case c / A4: ONE quiet line, no button and nothing to choose. The owner rejected the
-              compare-and-choose panel in round 1; the registry already kept the newest address (or
-              kept its own when locked), and the history lives on the counterparty page. */}
-          {registryNotice?.kind === 'hint' && (
-            <p className="mt-1 text-xs text-gray-500">
-              {t(registryNotice.messageKey, locale)}
-              <RegistryNoticeLink companyId={companyId} notice={registryNotice} />
-            </p>
-          )}
-        </label>
         {/* A6: สำนักงานใหญ่/สาขา plus the code the document prints — never a dropdown of registry
             branches, so there is no "no match" state to explain. `branchIsBranch` is local because
             "สาขา picked, code not typed yet" and "สำนักงานใหญ่" are the same stored value (''),
             exactly like the VAT editors' `custom` flag above. */}
-        <div className="sm:col-span-2">
-          <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.vendor_branch', locale)}</span>
+        <div>
+          <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.vendor_branch', locale)}</span>
           <div className="flex flex-wrap items-start gap-2">
             <div className="mangmee-segmented shrink-0" role="group" aria-label={t('expenses.vendor_branch', locale)}>
               {([false, true] as const).map((isBranch) => (
@@ -1677,32 +1953,320 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               </label>
             )}
           </div>
-          <p className="mt-1 text-xs text-gray-500">{t('expenses.vendor_branch_code_hint', locale)}</p>
+          {isMutable && <p className={FIELD_HINT}>{t('expenses.vendor_branch_code_hint', locale)}</p>}
         </div>
         <label>
-          <span className="mb-1 block text-xs font-medium text-gray-600"><AiFieldLabel label={t('expenses.document_number', locale)} field="vendorDocumentNumber" summary={detail.aiVerificationSummaryJson} /></span>
-          <input className={validationInputClass(documentNumberIssue)} aria-invalid={documentNumberIssue?.severity === 'error' || undefined} value={values.vendorDocumentNumber} onChange={(e) => setValues((v) => ({ ...v, vendorDocumentNumber: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
+          <span className="mb-1 block text-sm font-medium text-gray-700"><AiFieldLabel label={t('expenses.document_number', locale)} field="vendorDocumentNumber" summary={detail.aiVerificationSummaryJson} /></span>
+          <input id={`expense-document-number-${detail.id}`} className={validationInputClass(documentNumberIssue)} aria-invalid={documentNumberIssue?.severity === 'error' || undefined} value={values.vendorDocumentNumber} onChange={(e) => setValues((v) => ({ ...v, vendorDocumentNumber: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
           <FieldIssueNote canEdit={isMutable} issue={documentNumberIssue} />
           <AiFieldMissingHint canEdit={isMutable} field="vendorDocumentNumber" summary={detail.aiVerificationSummaryJson} />
         </label>
+        {/* Vendor address spec §11.2: a full-width, 3-row textarea, the same AI badge as every
+            other read field. No maxLength — §8 says an over-long address is refused with a way
+            forward, never silently truncated, and maxLength would eat the tail of a paste in
+            silence. The length rule lives in the validator, where the reviewer can see it. */}
+        <label className="sm:col-span-2">
+          <span className="mb-1 block text-sm font-medium text-gray-700"><AiFieldLabel label={t('expenses.vendor_address', locale)} field="vendorAddressSnapshot" summary={detail.aiVerificationSummaryJson} /></span>
+          <textarea aria-label={t('expenses.vendor_address', locale)} className={cx(validationInputClass(vendorAddressIssue), 'resize-y')} rows={3}
+            aria-invalid={vendorAddressIssue?.severity === 'error' || undefined} value={values.vendorAddressSnapshot}
+            onChange={(e) => setValues((v) => ({ ...v, vendorAddressSnapshot: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
+          <FieldIssueNote canEdit={isMutable} issue={vendorAddressIssue} />
+          <AiFieldMissingHint canEdit={isMutable} field="vendorAddressSnapshot" summary={detail.aiVerificationSummaryJson} />
+          {/* §7 case c / A4: ONE quiet line, no button and nothing to choose. The owner rejected the
+              compare-and-choose panel in round 1; the registry already kept the newest address (or
+              kept its own when locked), and the history lives on the counterparty page. */}
+          {registryNotice?.kind === 'hint' && (
+            <p className="mt-1 text-xs text-gray-500">
+              {t(registryNotice.messageKey, locale)}
+              <RegistryNoticeLink companyId={companyId} notice={registryNotice} />
+            </p>
+          )}
+        </label>
         <label>
-          <span className="mb-1 block text-xs font-medium text-gray-600"><AiFieldLabel label={t('expenses.expense_date', locale)} field="expenseDate" summary={detail.aiVerificationSummaryJson} /></span>
-          <ThemedDate aria-label={t('expenses.expense_date', locale)} className={validationInputClass(expenseDateIssue)} aria-invalid={expenseDateIssue?.severity === 'error' || undefined} value={values.expenseDate} onChange={(e) => setValues((v) => ({ ...v, expenseDate: e.target.value }))} disabled={!isMutable || busy} />
+          <span className="mb-1 block text-sm font-medium text-gray-700"><AiFieldLabel label={t('expenses.expense_date', locale)} field="expenseDate" summary={detail.aiVerificationSummaryJson} /></span>
+          <ThemedDate id={`expense-date-${detail.id}`} aria-label={t('expenses.expense_date', locale)} className={validationInputClass(expenseDateIssue)} aria-invalid={expenseDateIssue?.severity === 'error' || undefined} value={values.expenseDate} onChange={(e) => setValues((v) => ({ ...v, expenseDate: e.target.value }))} disabled={!isMutable || busy} />
+          {/* One line under the date: what is wrong, or that AI could not read it, or what date is meant. */}
           <FieldIssueNote canEdit={isMutable} issue={expenseDateIssue} />
-          <AiFieldMissingHint canEdit={isMutable} field="expenseDate" summary={detail.aiVerificationSummaryJson} />
-          <p className="mt-1 text-sm text-gray-500">{!isMutable ? "ข้อมูลวันที่ตามเอกสารที่บันทึกไว้" : detail.expenseNumber ? `แก้วันที่ได้ เลขรายจ่าย ${detail.expenseNumber} จะคงเดิม` : 'ตรวจวันที่เอกสารให้ตรงกับหลักฐานก่อนบันทึก วันที่จ่ายบันทึกแยกในขั้นตอนชำระเงิน'}</p>
+          {!expenseDateIssue && <AiFieldMissingHint canEdit={isMutable} field="expenseDate" summary={detail.aiVerificationSummaryJson} />}
+          {isMutable && !expenseDateIssue && !expenseAiFieldProvenance(detail.aiVerificationSummaryJson, 'expenseDate')?.missing && <p className={FIELD_HINT}>{noReceipt ? 'วันที่เกิดค่าใช้จ่าย' : 'วันที่บนใบเสร็จ ไม่ใช่วันที่จ่าย'}</p>}
           {!expenseDateIssue && sourceMissingNote('expenseDate')}
         </label>
         {values.businessPurpose !== undefined && (
           <label className="sm:col-span-2">
-            <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.source_draft_business_purpose', locale)}</span>
+            <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.source_draft_business_purpose', locale)}</span>
             <textarea aria-label={t('expenses.source_draft_business_purpose', locale)} className={inputClass} rows={2} maxLength={500} value={values.businessPurpose}
               onChange={(event) => setValues((current) => ({ ...current, businessPurpose: stripDisallowed(event.target.value) }))}
               disabled={!isMutable || busy} />
           </label>
         )}
+      </div>
+
+      <div id={`expense-line-items-${detail.id}`} tabIndex={-1} className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
+        <h4 className="font-semibold text-gray-800">{t('expenses.line_items', locale)}</h4>
+        {isMutable && (
+          <button id={`expense-add-line-${detail.id}`} type="button" className={ghostClass} disabled={busy} onClick={() => insertLine(null)}>{t('expenses.add_line', locale)}</button>
+        )}
+      </div>
+
+      {values.lines.length === 0 && (
+        <div>
+          <p className="rounded-xl bg-gray-50 px-3 py-4 text-center text-sm text-gray-500">{t('expenses.no_line_items', locale)}</p>
+          <FieldIssueNote canEdit={isMutable} issue={linesIssue} />
+        </div>
+      )}
+      {productEntries.map(({ line, index }) => {
+        const taxAmounts = calculateManualExpenseTotals({ ...line, vatMode: values.vatMode });
+        const descriptionIssue = fieldIssue(shownIssues, `lines.${index}.description`);
+        const quantityIssue = fieldIssue(shownIssues, `lines.${index}.quantity`);
+        const unitPriceIssue = fieldIssue(shownIssues, `lines.${index}.unitPrice`);
+        const discountIssue = fieldIssue(shownIssues, `lines.${index}.discountAmount`);
+        const vatRateIssue = fieldIssue(shownIssues, `lines.${index}.vatRate`);
+        const vatPercent = expenseRatePercent(line.vatRate);
+        // "custom, nothing typed yet" stores the same '' as "unset", so the flag has to be sticky.
+        const showCustomRate = vatRatePreset(line.vatRate, line.vatTreatment) === 'custom' || vatEditors[index]?.custom === true;
+        const linePreset = showCustomRate ? 'custom' : vatRatePreset(line.vatRate, line.vatTreatment);
+        return (
+        <div key={index} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <span id={`expense-review-line-${detail.id}-${index}`} tabIndex={-1} className="text-xs font-semibold text-gray-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">{t('expenses.line_number', locale)} {index + 1}</span>
+            {isMutable && <button type="button" className={cx(tapTargetClass, 'flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50')} disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_line_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
+          </div>
+          {/* Two to a row at every width: จำนวน and ราคาต่อหน่วย are short and are read together. */}
+          <div className="grid grid-cols-2 gap-3">
+            {/* A textarea, not an input: on a phone the single line clipped the description at the
+                field edge (a seeded 33-character line needed 278px of a 264px box at 390 wide, and
+                194px at 320), so the value being checked against the receipt could not be read in
+                one look. Two rows and wrapping at every width — a one-line box would clip the same
+                way on a narrow desktop window, and splitting the control by breakpoint would mean
+                two DOM fields for one value. */}
+            <label className="col-span-2">
+              <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.line_description', locale)}</span>
+              <textarea id={`expense-review-line-input-${detail.id}-${index}`} aria-label={t('expenses.line_description', locale)} className={cx(validationInputClass(descriptionIssue), 'resize-y')} rows={2} aria-invalid={descriptionIssue?.severity === 'error' || undefined} value={line.description} onChange={(e) => updateLine(index, 'description', stripDisallowed(e.target.value))} disabled={!isMutable || busy} />
+              <FieldIssueNote canEdit={isMutable} issue={descriptionIssue} />
+              {!descriptionIssue && (sourceMissingNote('description', line.sourceItemRef) ?? sourceMissingNote('review', line.sourceItemRef))}
+            </label>
+            {detail.sourceDraft && !line.chargeKind && (
+              <label className="col-span-2">
+                <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.category', locale)}</span>
+                <ThemedSelect className={inputClass} value={line.expenseCategoryId ?? ''} disabled={!isMutable || busy || !canReview}
+                  aria-invalid={sourceCategoryIncompleteIndexes.includes(index) || undefined}
+                  aria-label={`${t('expenses.source_draft_item_n', locale).replace('{n}', String(index + 1))} ${t('expenses.category', locale)}`}
+                  onChange={(event) => setValues((current) => ({ ...current, lines: current.lines.map((entry, entryIndex) => entryIndex === index
+                    ? { ...entry, expenseCategoryId: event.target.value || null } : entry) }))}>
+                  <option value="" disabled={Boolean(line.expenseCategoryId)}>{t('expenses.category_unspecified', locale)}</option>
+                  {line.expenseCategoryId && !sourceCategories.some((category) => category.id === line.expenseCategoryId)
+                    && <option value={line.expenseCategoryId}>{t('expenses.source_draft_saved_category', locale)}</option>}
+                  {sourceCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                </ThemedSelect>
+                {(sourceMissing('expenseCategoryId', line.sourceItemRef) || !line.expenseCategoryId)
+                  && <p className="mt-1 text-xs text-warning-700">{t('expenses.source_draft_missing_one', locale)}</p>}
+                {sourceCategoryError && <p role="alert" className="mt-1 text-xs text-warning-700">{t('expenses.source_draft_category_error', locale)}</p>}
+              </label>
+            )}
+            <label>
+              <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.line_quantity', locale)}</span>
+              <input type="number" min="0" step="0.0001" className={validationInputClass(quantityIssue)} aria-invalid={quantityIssue?.severity === 'error' || undefined} value={line.quantity} onChange={(e) => updateLine(index, 'quantity', e.target.value)} disabled={!isMutable || busy} />
+              <FieldIssueNote canEdit={isMutable} issue={quantityIssue} />
+              {!quantityIssue && sourceMissingNote('quantity', line.sourceItemRef)}
+            </label>
+            <label>
+              <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.line_unit_price', locale)}</span>
+              <input type="number" min="0" step="0.0001" className={validationInputClass(unitPriceIssue)} aria-invalid={unitPriceIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
+              {overpaymentCue && <p data-testid="expense-overpayment-cue" className="mt-1 text-xs font-semibold text-error-700">{overpaymentCue}</p>}
+              <FieldIssueNote canEdit={isMutable} issue={unitPriceIssue} />
+              {!unitPriceIssue && sourceMissingNote('unitPrice', line.sourceItemRef)}
+            </label>
+            <label>
+              <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.line_discount', locale)}</span>
+              <input type="number" min="0" step="0.0001" className={validationInputClass(discountIssue)} aria-invalid={discountIssue?.severity === 'error' || undefined} value={line.discountAmount} onChange={(e) => updateLine(index, 'discountAmount', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
+              <FieldIssueNote canEdit={isMutable} issue={discountIssue} />
+            </label>
+            {/* Spec §19g decision 4: a rate, a preset, or the VAT amount the document prints — all
+                three write the same stored decimal fraction. The bare 0–1 box asked reviewers to
+                convert "11.78 VAT TTL" into 0.07 in their heads.
+                The block takes the full row: as a half-width cell its printed-VAT sub-fields wrapped
+                their labels onto two lines and left a column-tall hole beside ส่วนลด. */}
+            {showsVatCard && <div className="col-span-2">
+              <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                <label htmlFor={`expense-vat-rate-${detail.id}-${index}`}>{t('expenses.line_vat_rate', locale)}</label>
+                <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_vat_rate', locale)} />
+              </span>
+              <ThemedSelect
+                id={`expense-vat-rate-${detail.id}-${index}`}
+                aria-label={t('expenses.line_vat_rate', locale)}
+                className={validationInputClass(vatRateIssue)}
+                aria-invalid={vatRateIssue?.severity === 'error' || undefined}
+                value={linePreset}
+                onChange={(e) => {
+                  const preset = e.target.value;
+                  setVatEditors((current) => ({ ...current, [index]: { custom: preset === 'custom' } }));
+                  updateLine(index, 'vatRate', vatRatePresetValue(preset, line.vatRate), vatTreatmentForPreset(preset));
+                }}
+                disabled={!isMutable || busy}
+              >
+                <option value="standard">{t('expenses.vat_rate_preset_standard', locale)}</option>
+                <option value="exempt">{t('expenses.vat_rate_preset_exempt', locale)}</option>
+                <option value="zero">{t('expenses.vat_rate_preset_zero', locale)}</option>
+                <option value="nonVat">{t('expenses.vat_rate_preset_non_vat', locale)}</option>
+                {linePreset === 'unknownZero' && <option value="unknownZero">{t('expenses.vat_rate_preset_unknown_zero', locale)}</option>}
+                <option value="custom">{t('expenses.vat_rate_preset_custom', locale)}</option>
+                {!showCustomRate && line.vatRate.trim() === '' && <option value="unset">{t('expenses.vat_rate_preset_unset', locale)}</option>}
+              </ThemedSelect>
+              <FieldIssueNote canEdit={isMutable} issue={vatRateIssue} />
+              {showCustomRate && (
+                <label className="mt-2 block">
+                  <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.line_vat_percent', locale)}</span>
+                  <input type="number" min="0" max="99.9999" step="0.0001" className={inputClass}
+                    value={expenseRateToPercent(line.vatRate)}
+                    onChange={(e) => updateLine(index, 'vatRate', expensePercentToRate(e.target.value))}
+                    disabled={!isMutable || busy} />
+                </label>
+              )}
+              {vatPercent !== null && showCustomRate && <p className={FIELD_HINT}>{t('expenses.rate_percent_echo', locale).replace('{percent}', vatPercent)}</p>}
+            </div>}
+          </div>
+          {!showsTax ? null
+            : allowsDomesticInputTaxCode(detail.sourceDocumentType, detail.taxEvidenceStatus) ? <div className="mt-3">
+            <TransactionTaxLineSelector
+              companyId={companyId}
+              branchId={detail.branchId ?? undefined}
+              sourceType="expense.record"
+              sourceId={detail.id}
+              sourceLineId={detail.lines[index]?.id ?? `line-${index + 1}`}
+              transactionContext="DOMESTIC_PURCHASE"
+              direction="INPUT"
+              documentDate={values.expenseDate}
+              netAmount={String(taxAmounts.subtotal)}
+              grossAmount={String(taxAmounts.grandTotal)}
+              enteredTaxAmount={String(taxAmounts.vat)}
+              allowNoTax={Number(taxAmounts.vat) === 0}
+              value={line.taxCodeDefinitionId ?? ''}
+              disabled={!isMutable || busy}
+              labelAddon={<InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_tax_code', locale)} />}
+              canConfigureTax={capture.canConfigureTax}
+              hideWhenNothingToChoose
+              suggestedTaxCode={detail.categoryDefaultInputTaxCode ?? null}
+              onChange={(id, definition) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, lines: current.lines.map((item, lineIndex) => lineIndex === index ? { ...item, taxCodeDefinitionId: id || null, externalTaxCode: definition?.externalCode ?? null, vatRate: definition ? taxDefinitionRateForSource(definition.rate, 'expense') : '', vatTreatment: definition && Number(definition.rate) === 0 ? item.vatTreatment : null } : item) })); }}
+            />
+          </div> : <p className="mt-3 text-xs text-gray-500">รหัสภาษีซื้อในประเทศเลือกได้เมื่อเอกสารถูกจัดประเภทเป็นใบกำกับภาษีเท่านั้น</p>}
+        </div>
+        );
+      })}
+
+      {/* Spec §5.1: the additional charges are their own group below the goods, because a service
+          charge is not a thing that was bought. One printed amount each, so the card asks for the
+          kind and the amount and nothing else; quantity stays 1 and the VAT treatment follows the
+          document through the same preset the goods rows use. Single column: at 390px a two-up
+          select and money field left neither readable. */}
+      {/* A locked record with no additional charge has nothing to say here: the heading and its empty line are not drawn. */}
+      {(isMutable || chargeEntries.length > 0) && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
+          <h4 className="font-semibold text-gray-800">{t(chargeEntries.some(({ line }) => line.chargeKind === 'ROUNDING') ? 'expenses.charges_and_adjustments_section' : 'expenses.charges_section', locale)}</h4>
+          {isMutable && (
+            <button type="button" className={ghostClass} disabled={busy} onClick={() => insertLine('SERVICE_CHARGE')}>{t('expenses.add_charge', locale)}</button>
+          )}
+        </div>
+      )}
+
+      {isMutable && chargeEntries.length === 0 && (
+        <p className="rounded-xl bg-gray-50 px-3 py-4 text-center text-sm text-gray-500">{t('expenses.no_charges', locale)}</p>
+      )}
+      {chargeEntries.map(({ line, index }, chargeIndex) => {
+        const chargeKind = line.chargeKind!;
+        const amountIssue = fieldIssue(shownIssues, `lines.${index}.unitPrice`);
+        const quantityIssue = fieldIssue(shownIssues, `lines.${index}.quantity`);
+        const orderIssue = fieldIssue(shownIssues, `lines.${index}.chargeKind`);
+        const vatRateIssue = fieldIssue(shownIssues, `lines.${index}.vatRate`);
+        const showCustomRate = vatRatePreset(line.vatRate, line.vatTreatment) === 'custom' || vatEditors[index]?.custom === true;
+        const linePreset = showCustomRate ? 'custom' : vatRatePreset(line.vatRate, line.vatTreatment);
+        return (
+        <div key={`charge-${index}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <span id={`expense-review-line-${detail.id}-${index}`} tabIndex={-1} className="text-xs font-semibold text-gray-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">{t('expenses.line_number', locale)} {productEntries.length + chargeIndex + 1}</span>
+            {isMutable && <button type="button" className={cx(tapTargetClass, 'flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50')} disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_charge_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
+          </div>
+          <div className="grid grid-cols-1 gap-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700" htmlFor={`expense-charge-kind-${detail.id}-${index}`}>{t(chargeKind === 'ROUNDING' ? 'expenses.adjustment_kind' : 'expenses.charge_kind', locale)}</label>
+              <ThemedSelect
+                id={`expense-charge-kind-${detail.id}-${index}`}
+                className={validationInputClass(orderIssue)}
+                value={chargeKind}
+                onChange={(e) => {
+                  const next = e.target.value as ExpenseLineChargeKind;
+                  setVatSourceDirty(true);
+                  // The reviewer's own wording wins; only the untouched default follows the kind.
+                  setValues((current) => ({
+                    ...current,
+                    lines: current.lines.map((item, lineIndex) => lineIndex === index ? applyChargeKindChange(item, next) : item),
+                  }));
+                }}
+                disabled={!isMutable || busy}
+              >
+                {EXPENSE_LINE_CHARGE_KINDS.map((kind) => (
+                  <option key={kind} value={kind}>{EXPENSE_LINE_CHARGE_KIND_LABELS[kind]}</option>
+                ))}
+              </ThemedSelect>
+              <FieldIssueNote canEdit={isMutable} issue={orderIssue} />
+            </div>
+            <label>
+              <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.line_description', locale)}</span>
+              <input id={`expense-review-line-input-${detail.id}-${index}`} type="text" className={inputClass} value={line.description} onChange={(e) => updateLine(index, 'description', stripDisallowed(e.target.value))} disabled={!isMutable || busy} />
+            </label>
+            <label>
+              <span className="mb-1 block text-sm font-medium text-gray-700">{t(chargeKind === 'ROUNDING' ? 'expenses.adjustment_amount' : 'expenses.charge_amount', locale)}</span>
+              {/* No `min`: ปัดเศษ is the one kind a bill prints as a deduction, and the validator is
+                  what refuses a minus sign on any other kind. */}
+              <input type="number" step="0.0001" className={validationInputClass(amountIssue ?? quantityIssue)} aria-invalid={amountIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
+              {overpaymentCue && <p data-testid="expense-overpayment-cue" className="mt-1 text-xs font-semibold text-error-700">{overpaymentCue}</p>}
+              <FieldIssueNote canEdit={isMutable} issue={amountIssue ?? quantityIssue} />
+              {chargeKind === 'ROUNDING' && <p className="mt-1 text-xs text-gray-500">{t('expenses.rounding_explanation', locale)}</p>}
+            </label>
+            {showsVatCard && <div>
+              <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                <label htmlFor={`expense-charge-vat-${detail.id}-${index}`}>{t('expenses.line_vat_rate', locale)}</label>
+                <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_vat_rate', locale)} />
+              </span>
+              <ThemedSelect
+                id={`expense-charge-vat-${detail.id}-${index}`}
+                aria-label={t('expenses.line_vat_rate', locale)}
+                className={validationInputClass(vatRateIssue)}
+                aria-invalid={vatRateIssue?.severity === 'error' || undefined}
+                value={linePreset}
+                onChange={(e) => {
+                  const preset = e.target.value;
+                  setVatEditors((current) => ({ ...current, [index]: { custom: preset === 'custom' } }));
+                  updateLine(index, 'vatRate', vatRatePresetValue(preset, line.vatRate), vatTreatmentForPreset(preset));
+                }}
+                disabled={!isMutable || busy}
+              >
+                <option value="standard">{t('expenses.vat_rate_preset_standard', locale)}</option>
+                <option value="exempt">{t('expenses.vat_rate_preset_exempt', locale)}</option>
+                <option value="zero">{t('expenses.vat_rate_preset_zero', locale)}</option>
+                <option value="nonVat">{t('expenses.vat_rate_preset_non_vat', locale)}</option>
+                {linePreset === 'unknownZero' && <option value="unknownZero">{t('expenses.vat_rate_preset_unknown_zero', locale)}</option>}
+                <option value="custom">{t('expenses.vat_rate_preset_custom', locale)}</option>
+                {!showCustomRate && line.vatRate.trim() === '' && <option value="unset">{t('expenses.vat_rate_preset_unset', locale)}</option>}
+              </ThemedSelect>
+              <FieldIssueNote canEdit={isMutable} issue={vatRateIssue} />
+              {showCustomRate && (
+                <label className="mt-2 block">
+                  <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.line_vat_percent', locale)}</span>
+                  <input type="number" min="0" max="99.9999" step="0.0001" className={inputClass}
+                    value={expenseRateToPercent(line.vatRate)}
+                    onChange={(e) => updateLine(index, 'vatRate', expensePercentToRate(e.target.value))}
+                    disabled={!isMutable || busy} />
+                </label>
+              )}
+            </div>}
+          </div>
+        </div>
+        );
+      })}
+
+      <div className="grid grid-cols-1 gap-3 border-t border-gray-100 pt-4 sm:grid-cols-2">
         <div className="sm:col-span-2">
-          <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
+          <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
             <label htmlFor={`expense-vat-mode-${detail.id}`}>{t('expenses.vat_mode', locale)}</label>
             <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_vat_mode', locale)} />
             {/* Spec §19g decision 3: the mode never names a rate; the rate comes from the lines. */}
@@ -1710,53 +2274,51 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               <span className="font-semibold text-gray-500">· {effectiveVatRateLabel(values.lines.filter((line) => !isCalculatedExpenseRounding(line)))}</span>
             )}
           </span>
-          <ThemedSelect id={`expense-vat-mode-${detail.id}`} className={inputClass} value={values.vatMode} onChange={(e) => { setVatSourceDirty(true); setValues((v) => ({ ...v, vatMode: e.target.value as ExpenseDraftReviewValues['vatMode'] })); }} disabled={!isMutable || busy}>
+          <ThemedSelect id={`expense-vat-mode-${detail.id}`} aria-label={t('expenses.vat_mode', locale)} className={inputClass} value={values.vatMode} onChange={(e) => { setVatSourceDirty(true); setValues((v) => ({ ...v, vatMode: e.target.value as ExpenseDraftReviewValues['vatMode'] })); }} disabled={!isMutable || busy}>
             {Object.entries(EXPENSE_VAT_MODE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </ThemedSelect>
         </div>
         {showsVatCard && (
           <div className="space-y-3 rounded-xl border border-brand-100 bg-brand-25 p-3 sm:col-span-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="font-semibold text-gray-800">ภาษีมูลค่าเพิ่ม (VAT)</p>
-                <p className="text-xs text-gray-500">เลือกหน่วยตามที่เอกสารพิมพ์ ระบบจะเก็บค่าต้นฉบับแยกจากค่าที่คำนวณ</p>
-              </div>
+              <p className="font-semibold text-gray-800">ภาษีมูลค่าเพิ่ม (VAT)</p>
               {!vatSourceDirty && vatSnapshot && (
                 <MangmeeBadge tone={['MATCHED', 'REVIEWER_ACCEPTED'].includes(vatSnapshot.reconciliation.status) ? 'brand' : ['MISMATCH', 'NEEDS_REVIEW', 'SOURCE_ONLY'].includes(vatSnapshot.reconciliation.status) ? 'danger' : 'slate'}>
                   {vatStatusLabel}
                 </MangmeeBadge>
               )}
             </div>
-            {capture.mode === 'SIMPLE' && (
-              <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-600">VAT นี้เป็นส่วนหนึ่งของต้นทุนและขอคืนไม่ได้ ระบบเก็บเพื่อให้ยอดเอกสารและฐานหัก ณ ที่จ่ายถูกต้อง</p>
+            {capture.vatStatus === 'NOT_REGISTERED' && (
+              <p className="rounded-lg bg-white px-3 py-2 text-sm text-gray-600">ร้านไม่ได้จด VAT: VAT ในใบนับเป็นต้นทุน ขอคืนไม่ได้</p>
             )}
+            {capture.vatStatus === 'UNKNOWN' && <p className="text-sm">ร้านยังไม่ตอบเรื่อง VAT บันทึกรายจ่ายได้ตามเดิม · <>{capture.canAnswerVatStatus ? <Link href={`/companies/${companyId}/settings/profile#shop`} className="underline">ตั้งค่าร้าน › ข้อมูลร้าน</Link> : 'ให้เจ้าของกิจการหรือผู้ดูแลร้านตอบที่ตั้งค่าร้าน › ข้อมูลร้าน'}</></p>}
             <label className="block">
-              <span className="mb-1 block text-xs font-medium text-gray-600">เอกสารระบุ VAT เป็นหน่วยใด</span>
+              <span className="mb-1 block text-sm font-medium text-gray-700">บนใบพิมพ์ VAT ไว้แบบไหน</span>
               <ThemedSelect
                 className={inputClass}
                 value={vatSourceMode}
-                aria-label="เอกสารระบุ VAT เป็นหน่วยใด"
+                aria-label="บนใบพิมพ์ VAT ไว้แบบไหน"
                 onChange={(event) => setVatSourceType(event.target.value as 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE' | 'LINES')}
                 disabled={!isMutable || busy}
               >
-                <option value="NONE">ไม่ได้ระบุ</option>
-                <option value="RATE">เปอร์เซ็นต์ (%)</option>
-                <option value="AMOUNT">จำนวนเงิน (บาท)</option>
-                <option value="BOTH">ระบุทั้งเปอร์เซ็นต์และจำนวนเงิน</option>
-                <option value="LINES">แยกหน่วยตามรายการ</option>
+                <option value="NONE">ไม่ได้พิมพ์ไว้</option>
+                <option value="RATE">เป็น %</option>
+                <option value="AMOUNT">เป็นจำนวนเงิน</option>
+                <option value="BOTH">ทั้ง % และจำนวนเงิน</option>
+                <option value="LINES">แยกตามรายการ</option>
               </ThemedSelect>
             </label>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {(vatSource.inputType === 'RATE' || vatSource.inputType === 'BOTH') && (
                 <label>
-                  <span className="mb-1 block text-xs font-medium text-gray-600">อัตรา VAT จากเอกสาร (%)</span>
+                  <span className="mb-1 block text-sm font-medium text-gray-700">อัตรา VAT จากเอกสาร (%)</span>
                   <div className="relative">
                     <input
                       type="number"
                       min="0"
                       max="99.9999"
                       step="0.0001"
-                      className={cx(inputClass, 'pr-10')}
+                      className={cx(inputClass, '!pr-10')}
                       aria-invalid={Boolean(expenseVatSourceValidationMessage({ inputType: 'RATE', vatRatePercent: vatSource.vatRatePercent }, values.vatMode)) || undefined} value={vatSource.vatRatePercent ?? ''}
                       onChange={(event) => setDocumentVatPercent(event.target.value)}
                       disabled={!isMutable || busy}
@@ -1767,13 +2329,13 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               )}
               {(vatSource.inputType === 'AMOUNT' || vatSource.inputType === 'BOTH') && (
                 <label>
-                  <span className="mb-1 block text-xs font-medium text-gray-600">VAT จากเอกสาร (บาท)</span>
+                  <span className="mb-1 block text-sm font-medium text-gray-700">VAT จากเอกสาร (บาท)</span>
                   <div className="relative">
                     <input
                       type="number"
                       min="0"
                       step="0.01"
-                      className={cx(inputClass, 'pr-14')}
+                      className={cx(inputClass, '!pr-14')}
                       aria-invalid={Boolean(expenseVatSourceValidationMessage({ inputType: 'AMOUNT', vatAmount: vatSource.vatAmount }, values.vatMode)) || undefined} value={vatSource.vatAmount ?? ''}
                       onChange={(event) => setDocumentVatAmount(event.target.value)}
                       disabled={!isMutable || busy}
@@ -1808,14 +2370,14 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                         {(sourceLine.inputType === 'RATE' || sourceLine.inputType === 'BOTH') && (
                           <label className="relative">
                             <span className="sr-only">อัตรา VAT จากเอกสาร รายการ {index + 1}</span>
-                            <input type="number" min="0" max="99.9999" step="0.0001" className={cx(inputClass, 'pr-10')} aria-invalid={Boolean(expenseVatSourceValidationMessage({ inputType: 'RATE', vatRatePercent: sourceLine.vatRatePercent }, values.vatMode)) || undefined} value={sourceLine.vatRatePercent ?? ''} onChange={(event) => setVatLineSourceValue(index, 'vatRatePercent', event.target.value)} disabled={!isMutable || busy} />
+                            <input type="number" min="0" max="99.9999" step="0.0001" className={cx(inputClass, '!pr-10')} aria-invalid={Boolean(expenseVatSourceValidationMessage({ inputType: 'RATE', vatRatePercent: sourceLine.vatRatePercent }, values.vatMode)) || undefined} value={sourceLine.vatRatePercent ?? ''} onChange={(event) => setVatLineSourceValue(index, 'vatRatePercent', event.target.value)} disabled={!isMutable || busy} />
                             <span aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">%</span>
                           </label>
                         )}
                         {(sourceLine.inputType === 'AMOUNT' || sourceLine.inputType === 'BOTH') && (
                           <label className="relative">
                             <span className="sr-only">VAT จากเอกสาร รายการ {index + 1}</span>
-                            <input type="number" min="0" step="0.01" className={cx(inputClass, 'pr-14')} aria-invalid={Boolean(expenseVatSourceValidationMessage({ inputType: 'AMOUNT', vatAmount: sourceLine.vatAmount }, values.vatMode)) || undefined} value={sourceLine.vatAmount ?? ''} onChange={(event) => setVatLineSourceValue(index, 'vatAmount', event.target.value)} disabled={!isMutable || busy} />
+                            <input type="number" min="0" step="0.01" className={cx(inputClass, '!pr-14')} aria-invalid={Boolean(expenseVatSourceValidationMessage({ inputType: 'AMOUNT', vatAmount: sourceLine.vatAmount }, values.vatMode)) || undefined} value={sourceLine.vatAmount ?? ''} onChange={(event) => setVatLineSourceValue(index, 'vatAmount', event.target.value)} disabled={!isMutable || busy} />
                             <span aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">บาท</span>
                           </label>
                         )}
@@ -1827,22 +2389,21 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             )}
             {vatSourceError && <p className="text-xs font-medium text-error-600">{vatSourceError}</p>}
             {vatSourceDirty && liveTotals?.status !== 'ready'
-              ? <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-500">{liveTotals?.status === 'error' ? 'กรุณาตรวจข้อมูลเพื่อคำนวณยอดล่าสุด' : 'กำลังคำนวณยอดล่าสุด…'}</p>
+              ? <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-500">{liveTotals?.status === 'error' ? 'ตรวจข้อมูลเพื่อคำนวณยอดล่าสุด' : 'กำลังคำนวณยอดล่าสุด…'}</p>
               : vatSnapshot && (
                 <div className="rounded-lg bg-white px-3 py-2">
-                  <MoneyRow label="VAT จากเอกสาร" value={snapshotSourceAmount ?? '0'} muted={snapshotSourceAmount === null} />
-                  <MoneyRow label="VAT ที่ระบบคำนวณ" value={vatSnapshot.calculation.vatAmount} />
-                  <MoneyRow label="VAT ที่ใช้บันทึก" value={liveTotals?.totals?.vatAmount ?? detail.vatAmount} />
-                  {vatSnapshot.reconciliation.differenceAmount !== null && <MoneyRow label="ส่วนต่าง" value={vatSnapshot.reconciliation.differenceAmount} />}
-                  <MoneyRow
-                    label={collapsesVatBase ? 'ฐาน VAT (ยอดก่อน VAT ที่ใช้)' : 'ยอดก่อน VAT ที่ใช้'}
-                    value={liveTotals?.totals?.taxableAmount ?? detail.taxableAmount}
-                  />
+                  {/* A number is shown once. The comparison appears only when the paper's VAT was entered and is
+                      another amount; the base and the total are in the money card and are not repeated here. */}
+                  {documentVatDiffers ? <>
+                    <MoneyRow label="VAT จากเอกสาร" value={snapshotSourceAmount ?? '0'} />
+                    <MoneyRow label="VAT ที่ระบบคำนวณ" value={vatSnapshot.calculation.vatAmount} />
+                    <MoneyRow label="VAT ที่ใช้บันทึก" value={liveTotals?.totals?.vatAmount ?? detail.vatAmount} />
+                    {vatSnapshot.reconciliation.differenceAmount !== null && <MoneyRow label="ส่วนต่าง" value={vatSnapshot.reconciliation.differenceAmount} />}
+                    <p className="mt-1 text-sm text-gray-500">ยอดที่ใช้: {vatSnapshot.reconciliation.acceptedSource === 'SOURCE_AMOUNT' ? 'ตามเอกสาร' : 'ระบบคำนวณ'}</p>
+                  </> : <MoneyRow label="VAT ที่คำนวณได้" value={liveTotals?.totals?.vatAmount ?? detail.vatAmount} />}
                   {!collapsesVatBase && vatBaseGroups.map(([rate, amount]) => (
                     <MoneyRow key={rate} label={`ฐาน VAT ${Number(rate)}% (ใช้จริง)`} value={amount.toFixed(4)} />
                   ))}
-                  <MoneyRow label="ยอดรวม (รวม VAT)" value={liveTotals?.totals?.grandTotalAmount ?? detail.grandTotalAmount} />
-                  <p className="mt-1 text-xs text-gray-500">ยอดที่ใช้: {vatSnapshot.reconciliation.acceptedSource === 'SOURCE_AMOUNT' ? 'ตามเอกสาร' : 'ระบบคำนวณ'}</p>
                 </div>
               )}
             {vatBlocked && vatSnapshot && (
@@ -1872,7 +2433,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 {vatWayOut === 'NEEDS_CONFIRMER' && (
                   <div className="space-y-1 border-t border-gray-100 pt-2">
                     <p className="text-xs text-gray-600">
-                      แก้ไขและบันทึกฉบับร่างได้ตามปกติ แต่การยืนยันด้วยยอดตามเอกสารต้องใช้สิทธิ์ยืนยันเอกสาร ให้ส่งต่อผู้ที่มีสิทธิ์นั้นตรวจ
+                      แก้ไขและบันทึกร่างได้ตามปกติ แต่การยืนยันด้วยยอดตามเอกสารต้องใช้สิทธิ์ยืนยันเอกสาร ให้ส่งต่อผู้ที่มีสิทธิ์นั้นตรวจ
                     </p>
                   </div>
                 )}
@@ -1880,7 +2441,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                   <div className="space-y-2 border-t border-gray-100 pt-2">
                     <p className="text-xs font-semibold text-gray-700">ถ้าตรวจแล้วเอกสารถูกต้อง ให้เลือก “ใช้ยอดตามเอกสาร”</p>
                     <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-gray-600">รายการที่รับส่วนต่าง VAT</span>
+                      <span className="mb-1 block text-sm font-medium text-gray-700">รายการที่รับส่วนต่าง VAT</span>
                       <ThemedSelect
                         className={inputClass}
                         value={vatOverrideLineNumber === null ? '' : String(vatOverrideLineNumber)}
@@ -1896,7 +2457,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                       </ThemedSelect>
                     </label>
                     <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-gray-600">เหตุผล (จำเป็น)</span>
+                      <span className="mb-1 block text-sm font-medium text-gray-700">เหตุผล (จำเป็น)</span>
                       <textarea
                         className={inputClass}
                         rows={2}
@@ -1920,263 +2481,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
-        <h4 className="font-semibold text-gray-800">{t('expenses.line_items', locale)}</h4>
-        {isMutable && (
-          <button type="button" className={ghostClass} disabled={busy} onClick={() => insertLine(null)}>{t('expenses.add_line', locale)}</button>
-        )}
-      </div>
-
-      {values.lines.length === 0 && (
-        <div>
-          <p className="rounded-xl bg-gray-50 px-3 py-4 text-center text-xs text-gray-500">{t('expenses.no_line_items', locale)}</p>
-          <FieldIssueNote canEdit={isMutable} issue={linesIssue} />
-        </div>
-      )}
-      {productEntries.map(({ line, index }) => {
-        const taxAmounts = calculateManualExpenseTotals({ ...line, vatMode: values.vatMode });
-        const descriptionIssue = fieldIssue(shownIssues, `lines.${index}.description`);
-        const quantityIssue = fieldIssue(shownIssues, `lines.${index}.quantity`);
-        const unitPriceIssue = fieldIssue(shownIssues, `lines.${index}.unitPrice`);
-        const discountIssue = fieldIssue(shownIssues, `lines.${index}.discountAmount`);
-        const vatRateIssue = fieldIssue(shownIssues, `lines.${index}.vatRate`);
-        const vatPercent = expenseRatePercent(line.vatRate);
-        // "custom, nothing typed yet" stores the same '' as "unset", so the flag has to be sticky.
-        const showCustomRate = vatRatePreset(line.vatRate, line.vatTreatment) === 'custom' || vatEditors[index]?.custom === true;
-        const linePreset = showCustomRate ? 'custom' : vatRatePreset(line.vatRate, line.vatTreatment);
-        return (
-        <div key={index} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <span id={`expense-review-line-${detail.id}-${index}`} tabIndex={-1} className="text-xs font-semibold text-gray-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">{t('expenses.line_number', locale)} {index + 1}</span>
-            {isMutable && <button type="button" className={cx(tapTargetClass, 'flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50')} disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_line_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {/* A textarea, not an input: on a phone the single line clipped the description at the
-                field edge (a seeded 33-character line needed 278px of a 264px box at 390 wide, and
-                194px at 320), so the value being checked against the receipt could not be read in
-                one look. Two rows and wrapping at every width — a one-line box would clip the same
-                way on a narrow desktop window, and splitting the control by breakpoint would mean
-                two DOM fields for one value. */}
-            <label className="sm:col-span-2">
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_description', locale)}</span>
-              <textarea aria-label={t('expenses.line_description', locale)} className={cx(validationInputClass(descriptionIssue), 'resize-y')} rows={2} aria-invalid={descriptionIssue?.severity === 'error' || undefined} value={line.description} onChange={(e) => updateLine(index, 'description', stripDisallowed(e.target.value))} disabled={!isMutable || busy} />
-              <FieldIssueNote canEdit={isMutable} issue={descriptionIssue} />
-              {!descriptionIssue && (sourceMissingNote('description', line.sourceItemRef) ?? sourceMissingNote('review', line.sourceItemRef))}
-            </label>
-            {detail.sourceDraft && !line.chargeKind && (
-              <label className="sm:col-span-2">
-                <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.category', locale)}</span>
-                <ThemedSelect className={inputClass} value={line.expenseCategoryId ?? ''} disabled={!isMutable || busy || !canReview}
-                  aria-invalid={sourceCategoryIncompleteIndexes.includes(index) || undefined}
-                  aria-label={`${t('expenses.source_draft_item_n', locale).replace('{n}', String(index + 1))} ${t('expenses.category', locale)}`}
-                  onChange={(event) => setValues((current) => ({ ...current, lines: current.lines.map((entry, entryIndex) => entryIndex === index
-                    ? { ...entry, expenseCategoryId: event.target.value || null } : entry) }))}>
-                  <option value="" disabled={Boolean(line.expenseCategoryId)}>{t('expenses.category_unspecified', locale)}</option>
-                  {line.expenseCategoryId && !sourceCategories.some((category) => category.id === line.expenseCategoryId)
-                    && <option value={line.expenseCategoryId}>{t('expenses.source_draft_saved_category', locale)}</option>}
-                  {sourceCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-                </ThemedSelect>
-                {(sourceMissing('expenseCategoryId', line.sourceItemRef) || !line.expenseCategoryId)
-                  && <p className="mt-1 text-xs text-warning-700">{t('expenses.source_draft_missing_one', locale)}</p>}
-                {sourceCategoryError && <p role="alert" className="mt-1 text-xs text-warning-700">{t('expenses.source_draft_category_error', locale)}</p>}
-              </label>
-            )}
-            <label>
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_quantity', locale)}</span>
-              <input type="number" min="0" step="0.0001" className={validationInputClass(quantityIssue)} aria-invalid={quantityIssue?.severity === 'error' || undefined} value={line.quantity} onChange={(e) => updateLine(index, 'quantity', e.target.value)} disabled={!isMutable || busy} />
-              <FieldIssueNote canEdit={isMutable} issue={quantityIssue} />
-              {!quantityIssue && sourceMissingNote('quantity', line.sourceItemRef)}
-            </label>
-            <label>
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_unit_price', locale)}</span>
-              <input type="number" min="0" step="0.0001" className={validationInputClass(unitPriceIssue)} aria-invalid={unitPriceIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
-              {overpaymentCue && <p data-testid="expense-overpayment-cue" className="mt-1 text-xs font-semibold text-error-700">{overpaymentCue}</p>}
-              <FieldIssueNote canEdit={isMutable} issue={unitPriceIssue} />
-              {!unitPriceIssue && sourceMissingNote('unitPrice', line.sourceItemRef)}
-            </label>
-            <label>
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_discount', locale)}</span>
-              <input type="number" min="0" step="0.0001" className={validationInputClass(discountIssue)} aria-invalid={discountIssue?.severity === 'error' || undefined} value={line.discountAmount} onChange={(e) => updateLine(index, 'discountAmount', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
-              <FieldIssueNote canEdit={isMutable} issue={discountIssue} />
-            </label>
-            {/* Spec §19g decision 4: a rate, a preset, or the VAT amount the document prints — all
-                three write the same stored decimal fraction. The bare 0–1 box asked reviewers to
-                convert "11.78 VAT TTL" into 0.07 in their heads.
-                The block takes the full row: as a half-width cell its printed-VAT sub-fields wrapped
-                their labels onto two lines and left a column-tall hole beside ส่วนลด. */}
-            {showsVatCard && <div className="sm:col-span-2">
-              <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
-                <label htmlFor={`expense-vat-rate-${detail.id}-${index}`}>{t('expenses.line_vat_rate', locale)}</label>
-                <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_vat_rate', locale)} />
-              </span>
-              <ThemedSelect
-                id={`expense-vat-rate-${detail.id}-${index}`}
-                className={validationInputClass(vatRateIssue)}
-                aria-invalid={vatRateIssue?.severity === 'error' || undefined}
-                value={linePreset}
-                onChange={(e) => {
-                  const preset = e.target.value;
-                  setVatEditors((current) => ({ ...current, [index]: { custom: preset === 'custom' } }));
-                  updateLine(index, 'vatRate', vatRatePresetValue(preset, line.vatRate), vatTreatmentForPreset(preset));
-                }}
-                disabled={!isMutable || busy}
-              >
-                <option value="standard">{t('expenses.vat_rate_preset_standard', locale)}</option>
-                <option value="exempt">{t('expenses.vat_rate_preset_exempt', locale)}</option>
-                <option value="zero">{t('expenses.vat_rate_preset_zero', locale)}</option>
-                <option value="nonVat">{t('expenses.vat_rate_preset_non_vat', locale)}</option>
-                {linePreset === 'unknownZero' && <option value="unknownZero">{t('expenses.vat_rate_preset_unknown_zero', locale)}</option>}
-                <option value="custom">{t('expenses.vat_rate_preset_custom', locale)}</option>
-                {!showCustomRate && line.vatRate.trim() === '' && <option value="unset">{t('expenses.vat_rate_preset_unset', locale)}</option>}
-              </ThemedSelect>
-              <FieldIssueNote canEdit={isMutable} issue={vatRateIssue} />
-              {showCustomRate && (
-                <label className="mt-2 block">
-                  <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_vat_percent', locale)}</span>
-                  <input type="number" min="0" max="99.9999" step="0.0001" className={inputClass}
-                    value={expenseRateToPercent(line.vatRate)}
-                    onChange={(e) => updateLine(index, 'vatRate', expensePercentToRate(e.target.value))}
-                    disabled={!isMutable || busy} />
-                </label>
-              )}
-              {vatPercent !== null && <p className="mt-1 text-xs text-gray-500">{t('expenses.rate_percent_echo', locale).replace('{percent}', vatPercent)}</p>}
-            </div>}
-          </div>
-          {!showsTax ? null
-            : allowsDomesticInputTaxCode(detail.sourceDocumentType, detail.taxEvidenceStatus) ? <div className="mt-3">
-            <TransactionTaxLineSelector
-              companyId={companyId}
-              branchId={detail.branchId ?? undefined}
-              sourceType="expense.record"
-              sourceId={detail.id}
-              sourceLineId={detail.lines[index]?.id ?? `line-${index + 1}`}
-              transactionContext="DOMESTIC_PURCHASE"
-              direction="INPUT"
-              documentDate={values.expenseDate}
-              netAmount={String(taxAmounts.subtotal)}
-              grossAmount={String(taxAmounts.grandTotal)}
-              enteredTaxAmount={String(taxAmounts.vat)}
-              value={line.taxCodeDefinitionId ?? ''}
-              disabled={!isMutable || busy}
-              labelAddon={<InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_tax_code', locale)} />}
-              canConfigureTax={capture.canConfigureTax}
-              suggestedTaxCode={detail.categoryDefaultInputTaxCode ?? null}
-              onChange={(id, definition) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, lines: current.lines.map((item, lineIndex) => lineIndex === index ? { ...item, taxCodeDefinitionId: id || null, externalTaxCode: definition?.externalCode ?? null, vatRate: definition ? taxDefinitionRateForSource(definition.rate, 'expense') : '', vatTreatment: definition && Number(definition.rate) === 0 ? item.vatTreatment : null } : item) })); }}
-            />
-          </div> : <p className="mt-3 text-xs text-gray-500">รหัสภาษีซื้อในประเทศเลือกได้เมื่อเอกสารถูกจัดประเภทเป็นใบกำกับภาษีเท่านั้น</p>}
-        </div>
-        );
-      })}
-
-      {/* Spec §5.1: the additional charges are their own group below the goods, because a service
-          charge is not a thing that was bought. One printed amount each, so the card asks for the
-          kind and the amount and nothing else; quantity stays 1 and the VAT treatment follows the
-          document through the same preset the goods rows use. Single column: at 390px a two-up
-          select and money field left neither readable. */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
-        <h4 className="font-semibold text-gray-800">{t(chargeEntries.some(({ line }) => line.chargeKind === 'ROUNDING') ? 'expenses.charges_and_adjustments_section' : 'expenses.charges_section', locale)}</h4>
-        {isMutable && (
-          <button type="button" className={ghostClass} disabled={busy} onClick={() => insertLine('SERVICE_CHARGE')}>{t('expenses.add_charge', locale)}</button>
-        )}
-      </div>
-
-      {chargeEntries.length === 0 && (
-        <p className="rounded-xl bg-gray-50 px-3 py-4 text-center text-xs text-gray-500">{t('expenses.no_charges', locale)}</p>
-      )}
-      {chargeEntries.map(({ line, index }, chargeIndex) => {
-        const chargeKind = line.chargeKind!;
-        const amountIssue = fieldIssue(shownIssues, `lines.${index}.unitPrice`);
-        const quantityIssue = fieldIssue(shownIssues, `lines.${index}.quantity`);
-        const orderIssue = fieldIssue(shownIssues, `lines.${index}.chargeKind`);
-        const vatRateIssue = fieldIssue(shownIssues, `lines.${index}.vatRate`);
-        const showCustomRate = vatRatePreset(line.vatRate, line.vatTreatment) === 'custom' || vatEditors[index]?.custom === true;
-        const linePreset = showCustomRate ? 'custom' : vatRatePreset(line.vatRate, line.vatTreatment);
-        return (
-        <div key={`charge-${index}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <span id={`expense-review-line-${detail.id}-${index}`} tabIndex={-1} className="text-xs font-semibold text-gray-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">{t('expenses.line_number', locale)} {productEntries.length + chargeIndex + 1}</span>
-            {isMutable && <button type="button" className={cx(tapTargetClass, 'flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50')} disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_charge_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
-          </div>
-          <div className="grid grid-cols-1 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600" htmlFor={`expense-charge-kind-${detail.id}-${index}`}>{t(chargeKind === 'ROUNDING' ? 'expenses.adjustment_kind' : 'expenses.charge_kind', locale)}</label>
-              <ThemedSelect
-                id={`expense-charge-kind-${detail.id}-${index}`}
-                className={validationInputClass(orderIssue)}
-                value={chargeKind}
-                onChange={(e) => {
-                  const next = e.target.value as ExpenseLineChargeKind;
-                  setVatSourceDirty(true);
-                  // The reviewer's own wording wins; only the untouched default follows the kind.
-                  setValues((current) => ({
-                    ...current,
-                    lines: current.lines.map((item, lineIndex) => lineIndex === index ? applyChargeKindChange(item, next) : item),
-                  }));
-                }}
-                disabled={!isMutable || busy}
-              >
-                {EXPENSE_LINE_CHARGE_KINDS.map((kind) => (
-                  <option key={kind} value={kind}>{EXPENSE_LINE_CHARGE_KIND_LABELS[kind]}</option>
-                ))}
-              </ThemedSelect>
-              <FieldIssueNote canEdit={isMutable} issue={orderIssue} />
-            </div>
-            <label>
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_description', locale)}</span>
-              <input type="text" className={inputClass} value={line.description} onChange={(e) => updateLine(index, 'description', stripDisallowed(e.target.value))} disabled={!isMutable || busy} />
-            </label>
-            <label>
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t(chargeKind === 'ROUNDING' ? 'expenses.adjustment_amount' : 'expenses.charge_amount', locale)}</span>
-              {/* No `min`: ปัดเศษ is the one kind a bill prints as a deduction, and the validator is
-                  what refuses a minus sign on any other kind. */}
-              <input type="number" step="0.0001" className={validationInputClass(amountIssue ?? quantityIssue)} aria-invalid={amountIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
-              {overpaymentCue && <p data-testid="expense-overpayment-cue" className="mt-1 text-xs font-semibold text-error-700">{overpaymentCue}</p>}
-              <FieldIssueNote canEdit={isMutable} issue={amountIssue ?? quantityIssue} />
-              {chargeKind === 'ROUNDING' && <p className="mt-1 text-xs text-gray-500">{t('expenses.rounding_explanation', locale)}</p>}
-            </label>
-            {showsVatCard && <div>
-              <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
-                <label htmlFor={`expense-charge-vat-${detail.id}-${index}`}>{t('expenses.line_vat_rate', locale)}</label>
-                <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_vat_rate', locale)} />
-              </span>
-              <ThemedSelect
-                id={`expense-charge-vat-${detail.id}-${index}`}
-                className={validationInputClass(vatRateIssue)}
-                aria-invalid={vatRateIssue?.severity === 'error' || undefined}
-                value={linePreset}
-                onChange={(e) => {
-                  const preset = e.target.value;
-                  setVatEditors((current) => ({ ...current, [index]: { custom: preset === 'custom' } }));
-                  updateLine(index, 'vatRate', vatRatePresetValue(preset, line.vatRate), vatTreatmentForPreset(preset));
-                }}
-                disabled={!isMutable || busy}
-              >
-                <option value="standard">{t('expenses.vat_rate_preset_standard', locale)}</option>
-                <option value="exempt">{t('expenses.vat_rate_preset_exempt', locale)}</option>
-                <option value="zero">{t('expenses.vat_rate_preset_zero', locale)}</option>
-                <option value="nonVat">{t('expenses.vat_rate_preset_non_vat', locale)}</option>
-                {linePreset === 'unknownZero' && <option value="unknownZero">{t('expenses.vat_rate_preset_unknown_zero', locale)}</option>}
-                <option value="custom">{t('expenses.vat_rate_preset_custom', locale)}</option>
-                {!showCustomRate && line.vatRate.trim() === '' && <option value="unset">{t('expenses.vat_rate_preset_unset', locale)}</option>}
-              </ThemedSelect>
-              <FieldIssueNote canEdit={isMutable} issue={vatRateIssue} />
-              {showCustomRate && (
-                <label className="mt-2 block">
-                  <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_vat_percent', locale)}</span>
-                  <input type="number" min="0" max="99.9999" step="0.0001" className={inputClass}
-                    value={expenseRateToPercent(line.vatRate)}
-                    onChange={(e) => updateLine(index, 'vatRate', expensePercentToRate(e.target.value))}
-                    disabled={!isMutable || busy} />
-                </label>
-              )}
-            </div>}
-          </div>
-        </div>
-        );
-      })}
-
       <fieldset data-testid="expense-withholding" ref={whtBlockRef} tabIndex={-1} className="min-w-0 rounded-xl border border-gray-200 bg-gray-50 p-3">
-        <legend className="px-1 text-sm font-semibold text-gray-800">{t('expenses.wht_choice', locale)}</legend>
+        <legend id="expense-withholding-heading" tabIndex={-1} className="px-1 text-sm font-semibold text-gray-800">{t('expenses.wht_choice', locale)}</legend>
         <ThemedSelect aria-label={t('expenses.wht_choice', locale)} aria-describedby={`expense-wht-choice-hint-${detail.id}`} value={withholdingEnabled ? 'YES' : 'NO'}
           onChange={(event) => {
             const enabled = event.target.value === 'YES';
@@ -2192,7 +2498,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         {withholdingEnabled && (
           <div className="mt-3 grid grid-cols-1 gap-3">
             <div>
-              <span className="mb-1 block text-xs font-medium text-gray-600">
+              <span className="mb-1 block text-sm font-medium text-gray-700">
                 <label htmlFor={`expense-payee-entity-kind-${detail.id}`}>{t('expenses.payee_entity_kind', locale)}</label>
               </span>
               <ThemedSelect id={`expense-payee-entity-kind-${detail.id}`} aria-label={t('expenses.payee_entity_kind', locale)} aria-describedby={`expense-payee-kind-hint-${detail.id}`} className={validationInputClass(payeeEntityKindIssue)} aria-invalid={payeeEntityKindIssue?.severity === 'error' || undefined} value={values.vendorEntityKindSnapshot ?? ''} onChange={(e) => { setTaxFactsDirty(true); setValues((v) => changeExpensePayeeType(v, e.target.value as BuyerEntityKind | '', whtCategories)); }} disabled={!isMutable || busy}>
@@ -2204,7 +2510,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               {whtWayOut(payeeEntityKindIssue)}
             </div>
             <div>
-              <span className="mb-1 block text-xs font-medium text-gray-600">
+              <span className="mb-1 block text-sm font-medium text-gray-700">
                 <label htmlFor={`expense-wht-category-${detail.id}`}>{t('expenses.wht_income_category', locale)}</label>
               </span>
               <ThemedSelect id={`expense-wht-category-${detail.id}`} aria-label={t('expenses.wht_income_category', locale)} aria-describedby={isMutable ? `expense-wht-category-hint-${detail.id}` : undefined} className={validationInputClass(whtCategoryIssue)} aria-invalid={whtCategoryIssue?.severity === 'error' || undefined} value={!isMutable || applicableWhtCategories.some((item) => item.code === values.whtCategoryCode) ? values.whtCategoryCode ?? '' : ''} onChange={(e) => {
@@ -2220,7 +2526,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 {!isMutable && values.whtCategoryCode && !applicableWhtCategories.some((item) => item.code === values.whtCategoryCode) && <option value={values.whtCategoryCode}>{t('expenses.wht_category_recorded', locale)}</option>}
                 {expenseWhtCategoryOptions(applicableWhtCategories).map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}
               </ThemedSelect>
-              {isMutable && <p id={`expense-wht-category-hint-${detail.id}`} className="mt-1 text-xs text-gray-500">{t('expenses.wht_income_category_editable_hint', locale)}</p>}
+              {isMutable && <p id={`expense-wht-category-hint-${detail.id}`} className="mt-1 text-xs text-gray-500">{whtFilingRouteHint(whtCategories.find(category => category.code === values.whtCategoryCode)) ?? t('expenses.wht_income_category_editable_hint', locale)}</p>}
               <FieldIssueNote canEdit={isMutable} issue={whtCategoryIssue} />
               {whtWayOut(whtCategoryIssue)}
             </div>
@@ -2229,7 +2535,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             {whtCategoriesState === 'ready' && Boolean(values.vendorEntityKindSnapshot) && applicableWhtCategories.length === 0 && <p role="status" className="text-sm text-warning-700">{t('expenses.wht_categories_empty', locale)}</p>}
             <div className="grid grid-cols-1 gap-3">
               <label>
-                <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.wht_input_unit', locale)}</span>
+                <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.wht_input_unit', locale)}</span>
                 <ThemedSelect
                   aria-label={t('expenses.wht_input_unit', locale)}
                   className={validationInputClass(whtUnitIssue)}
@@ -2244,7 +2550,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 <FieldIssueNote canEdit={isMutable} issue={whtUnitIssue} />
               </label>
               <label>
-                <span className="mb-1 block text-xs font-medium text-gray-600">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_value_baht' : 'expenses.wht_value_percent', locale)}</span>
+                <span className="mb-1 block text-sm font-medium text-gray-700">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_value_baht' : 'expenses.wht_value_percent', locale)}</span>
                 <input
                   id={`expense-wht-rate-${detail.id}`}
                   aria-describedby={isMutable && whtInput.inputType === 'RATE' ? `expense-wht-value-hint-${detail.id}` : undefined}
@@ -2276,7 +2582,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             </div>
             {!values.whtInput && documentWhtRate === null && <p className="mt-1 text-xs text-warning-700">{t('expenses.wht_multiple_rates_hint', locale)}</p>}
             {(Number(whtInput.value) > 0 || whtInput.baseAmount !== undefined) && <label className="mt-3 block">
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.wht_base', locale)}</span>
+              <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.wht_base', locale)}</span>
               <input type="number" inputMode="decimal" min="0" step="0.01"
                 aria-invalid={Boolean(whtBaseIssue)}
                 className={validationInputClass(whtBaseIssue)}
@@ -2297,6 +2603,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           </div>
         )}
       </fieldset>
+
 
       {totalIssues.map((issue, index) => <FieldIssueNote canEdit={isMutable} key={`${issue.messageKey}-${index}`} issue={issue} />)}
 
@@ -2328,13 +2635,16 @@ export const STEP_HELPER_KEYS: Record<ExpenseReviewStepKey, DictionaryKey> = {
 
 // ── List (period + cards + export + chips + search + grid rows + detail) ──────
 // Identity, vendor, dates, amount and status share the table width; narrower screens use cards.
-const GRID = 'grid grid-cols-[minmax(160px,1fr)_minmax(150px,1.4fr)_minmax(150px,1fr)_minmax(100px,0.7fr)_minmax(140px,1fr)_84px] items-center gap-3';
+const GRID = 'grid grid-cols-[minmax(180px,1.6fr)_minmax(150px,1fr)_minmax(100px,0.7fr)_minmax(140px,1fr)_44px] items-center gap-3';
 const LIST_PAGE_SIZE = 10;
 
-function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: { companyId: string; caps: ExpenseCapabilities; canOpenManual: boolean; userId: string; onSelect: (id: string) => void }) {
+export function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: string; caps: ExpenseCapabilities; userId: string; onSelect: (id: string) => void }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const initialListState = readExpenseListState(searchParams, civilPeriodKey(todayCivilDate()));
+  const restoringList = useRef(searchParams.has('month'));
+  const listPath = `/companies/${companyId}/expenses`;
   const requestedView = searchParams.get('view');
   const requestedFrom = searchParams.get('fromDate');
   const requestedTo = searchParams.get('toDate');
@@ -2352,16 +2662,25 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
   const [loading, setLoading] = useState(true);
   const [categoryNamesLoading, setCategoryNamesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Filters ride in the menu-scoped store so opening a row and coming back does not throw the
-  // period away — reviewing กันยายน should not mean re-picking it once per receipt. Refreshing
-  // or leaving for another menu still resets. `page` deliberately stays local: the effect below
-  // forces it back to 1 whenever a filter changes, so a restored page number would not survive.
-  const [chip, setChip] = useMenuFilterState<'all' | 'draft' | 'pending' | 'confirmed' | 'rejected'>('expenses.list.chip', () => 'all');
-  const [query, setQuery] = useMenuFilterState('expenses.list.query', () => '');
-  const [gran, setGran] = useMenuFilterState<Gran>('expenses.list.gran', () => 'month');
-  const [month, setMonth] = useMenuFilterState('expenses.list.month', () => civilPeriodKey(todayCivilDate()));
-  const [day, setDay] = useMenuFilterState('expenses.list.day', () => todayCivilDate());
-  const [page, setPage] = useState(1);
+  // The list URL owns the filters and page, including a detail → list return and a reload.
+  const [chip, setChip] = useState(initialListState.chip);
+  const activeChip = chip;
+  const branchLabel = useBranchScopeLabel();
+  // The backlog of tax invoices without a seller address matters only to a shop that records VAT.
+  const listCapture = useExpenseCapturePolicy(companyId);
+  const showsVatBacklog = showsTaxCapture(listCapture.mode);
+  const [query, setQuery] = useState(initialListState.query);
+  const [gran, setGran] = useMenuFilterState<'day' | 'month'>('expenses.list.gran', () => 'month');
+  const [month, setMonth] = useState(initialListState.month);
+  const [day] = useMenuFilterState('expenses.list.day', () => todayCivilDate());
+  const requestedDay = searchParams.get('day') ?? searchParams.get('date') ?? (requestedFrom === requestedTo ? requestedFrom : null);
+  useEffect(() => {
+    if (restoringList.current) return;
+    if (isCivilDate(requestedDay)) setMonth(expenseListMonth(requestedDay, civilPeriodKey(todayCivilDate())));
+    else if (gran === 'day') setMonth(expenseListMonth(day, civilPeriodKey(todayCivilDate())));
+    if (gran === 'day') setGran('month');
+  }, [requestedDay, gran, day, setMonth, setGran]);
+  const [page, setPage] = useState(initialListState.page);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -2371,18 +2690,18 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  // EXP-UX-01: `?highlight=<expenseId>` is written by ส่งตรวจสอบ. Always the id, never "the newest
+  // EXP-UX-01: `?highlight=<expenseId>` is written by ส่งให้ตรวจ. Always the id, never "the newest
   // row" — with two people submitting at once, "newest" points at somebody else's document.
   const highlightId = searchParams.get('highlight') ?? '';
   const [highlightReadyId, setHighlightReadyId] = useState('');
   useEffect(() => {
-    if (!highlightId || sourceView) return;
+    if (!highlightId || sourceView || restoringList.current) return;
     let active = true;
     // A just-submitted backdated document must open in its document month, where the list now lives.
     void getExpense(companyId, highlightId)
       .then((expense) => {
         if (!active) return;
-        const documentDate = expense.expenseDate.slice(0, 10);
+        const documentDate = expenseDateIsReadable(expense.aiVerificationSummaryJson) ? expense.expenseDate.slice(0, 10) : civilDate(new Date(expense.uploadedAt));
         if (isCivilDate(documentDate)) { setGran('month'); setMonth(civilPeriodKey(documentDate)); }
       })
       .catch(() => {}) // A stale or inaccessible highlight must not block the list.
@@ -2406,12 +2725,12 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
   const branchId = branchFilter?.branchId ?? '';
   const { fromDate, toDate } = sourceView
     ? { fromDate: sourceView === 'confirmed' ? requestedFrom! : undefined, toDate: sourceView === 'confirmed' ? requestedTo! : undefined }
-    : periodRange(gran, month, day);
+    : periodRange(month);
   const loadVersion = useRef(0);
-  useEffect(() => { if (sourceView) { setChip('all'); setQuery(''); } }, [sourceView, requestedFrom, requestedTo, setChip, setQuery]);
+  useEffect(() => { if (sourceView && !searchParams.has('chip') && !searchParams.has('query')) { setChip('all'); setQuery(''); } }, [sourceView, requestedFrom, requestedTo, setChip, setQuery]);
 
   const load = useCallback(async () => {
-    if (highlightId && !sourceView && highlightReadyId !== highlightId) return;
+    if (highlightId && !sourceView && !restoringList.current && highlightReadyId !== highlightId) return;
     const version = ++loadVersion.current;
     setLoading(true); setRows([]); setError(null);
     try {
@@ -2431,7 +2750,7 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
         if (version !== loadVersion.current) return;
         loaded.push(...res.data);
         if (loaded.length >= res.total) break;
-        if (res.data.length === 0 || nextPage >= 50) throw new Error('โหลดรายการไม่ครบ กรุณาเลือกช่วงวันที่สั้นลง หรือลองใหม่');
+        if (res.data.length === 0 || nextPage >= 50) throw new Error('โหลดรายการไม่ครบ เลือกช่วงวันที่ให้สั้นลง แล้วลองอีกครั้ง');
       }
       setRows(loaded);
     } catch (e) {
@@ -2457,42 +2776,61 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
 
   const chipCounts = useMemo(() => ({
     all: sourceRows.length,
-    draft: sourceRows.filter((r) => r.status === 'DRAFT').length,
     pending: sourceRows.filter((r) => isExpensePendingReview(r)).length,
     confirmed: sourceRows.filter((r) => r.status === 'CONFIRMED').length,
-    rejected: sourceRows.filter((r) => r.status === 'REJECTED').length,
+    closed: sourceRows.filter((r) => isExpenseCancelled(r.status)).length,
   }), [sourceRows]);
 
+  // Owner 2026-10-15: the list is in date order, newest first; the date header turns it round.
+  const [dateOrder, setDateOrder] = useState(initialListState.dateOrder);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const day = (r: ExpenseSummary) => (r.dateStatus === 'unverified' ? r.uploadedAt : r.expenseDate) ?? r.uploadedAt ?? '';
     return sourceRows.filter((r) => {
-      if (chip === 'draft' && r.status !== 'DRAFT') return false;
-      if (chip === 'pending' && !isExpensePendingReview(r)) return false;
-      if (chip === 'confirmed' && r.status !== 'CONFIRMED') return false;
-      if (chip === 'rejected' && r.status !== 'REJECTED') return false;
+      if (activeChip === 'pending' && !isExpensePendingReview(r)) return false;
+      if (activeChip === 'confirmed' && r.status !== 'CONFIRMED') return false;
+      if (activeChip === 'closed' && !isExpenseCancelled(r.status)) return false;
       if (!q) return true;
       return `${r.expenseNumber ?? ''} ${r.vendorNameSnapshot ?? ''} ${r.vendorDocumentNumber ?? ''}`.toLowerCase().includes(q);
-    });
-  }, [sourceRows, chip, query]);
+    }).sort((a, b) => (dateOrder === 'newest' ? -1 : 1) * String(day(a)).localeCompare(String(day(b))));
+  }, [sourceRows, activeChip, query, dateOrder]);
 
-  useEffect(() => { setPage(1); setExportNotice(null); }, [chip, query, gran, month, day, branchId]);
+  const previousFilters = useRef<string | null>(null);
+  useEffect(() => {
+    // A branch deep-link is applied by the existing scope control before recording the initial filters.
+    if (requestedBranchId && branchFilter && !branchFilter.locked && branchId !== requestedBranchId && branchFilter.branches.some(b => b.id === requestedBranchId)) return;
+    const key = JSON.stringify([chip, query, month, branchId, dateOrder]);
+    if (previousFilters.current !== null && previousFilters.current !== key) setPage(1);
+    previousFilters.current = key; setExportNotice(null);
+  }, [chip, query, month, branchId, dateOrder, requestedBranchId, branchFilter]);
+  const listQuery = new URLSearchParams(searchParams.toString());
+  if (branchId) listQuery.set('branchId', branchId); else listQuery.delete('branchId');
+  const listUrl = expenseListUrl(listPath, listQuery, { month, chip, query, dateOrder, page });
+  // The address follows what the person changes, never the first settle after loading: a replace at that
+  // moment raced a menu press made as the list appeared and pulled the person back to the list.
+  const settledListUrl = useRef<string | null>(null);
+  useEffect(() => {
+    if (loading || highlightId && !sourceView && !restoringList.current && highlightReadyId !== highlightId) return;
+    if (settledListUrl.current === null) { settledListUrl.current = listUrl; return; }
+    if (settledListUrl.current === listUrl) return;
+    settledListUrl.current = listUrl;
+    if (`${listPath}?${searchParams}` !== listUrl) router.replace(listUrl, { scroll: false });
+  }, [listUrl, listPath, searchParams, router, loading, highlightId, sourceView, highlightReadyId]);
+  const openListRow = (id: string) => router.push(expenseDetailUrl(listPath, id, listUrl));
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / LIST_PAGE_SIZE));
-  useEffect(() => { setPage((current) => Math.min(current, totalPages)); }, [totalPages]);
+  useEffect(() => { if (!loading) setPage((current) => Math.min(current, totalPages)); }, [totalPages, loading]);
 
   const pagedRows = useMemo(() => {
     const start = (page - 1) * LIST_PAGE_SIZE;
     return filtered.slice(start, start + LIST_PAGE_SIZE);
   }, [filtered, page]);
-  const pageStart = filtered.length === 0 ? 0 : (page - 1) * LIST_PAGE_SIZE + 1;
-  const pageEnd = Math.min(page * LIST_PAGE_SIZE, filtered.length);
 
   // Land on the row, not near it: a highlight the user still has to hunt for through a chip, a
-  // search box or a page number is no confirmation at all. Filters survive the detail-page round
-  // trip (MenuFilterScope), so a leftover chip/query would otherwise hide the row that was just
-  // submitted. Once per id — after that the user's own filtering wins.
+  // search box or a page number is no confirmation at all. Old submit links reveal their row;
+  // a saved list URL instead keeps its filters and page. Once per id, then the user's filtering wins.
   useEffect(() => {
-    if (!highlightId || focusedHighlight.current === highlightId) return;
+    if (!highlightId || restoringList.current || focusedHighlight.current === highlightId) return;
     if (!rows.some((row) => row.id === highlightId)) return;
     const index = filtered.findIndex((row) => row.id === highlightId);
     if (index < 0) { setChip('all'); setQuery(''); return; }
@@ -2504,14 +2842,14 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
   // The desktop grid and the mobile card list both render (one is CSS-hidden), so scroll the copy
   // that actually has a layout box; scrollIntoView on a `display:none` node is a silent no-op.
   useEffect(() => {
-    if (!highlightId || scrolledToHighlight.current === highlightId) return;
+    if (loading || categoryNamesLoading || !highlightId || scrolledToHighlight.current === highlightId) return;
     const node = Array.from(
       document.querySelectorAll<HTMLElement>('[data-testid="expenses-row"][data-highlighted], [data-testid="expenses-card"][data-highlighted]'),
     ).find((el) => el.offsetParent !== null);
     if (!node) return;
     scrolledToHighlight.current = highlightId;
-    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [highlightId, pagedRows]);
+    scrollExpenseListRow(node, window.innerHeight);
+  }, [highlightId, pagedRows, loading, categoryNamesLoading]);
   const confirmTarget = rows.find((row) => row.id === confirmId);
   const confirmLabel = confirmTarget && expenseDeleteTargetLabel(confirmTarget);
 
@@ -2522,7 +2860,7 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
       await deleteExpense(companyId, confirmTarget.id);
       setConfirmId(null);
       await load();
-      toast.success('ลบรายการค่าใช้จ่ายเรียบร้อยแล้ว');
+      toast.success(confirmLabel ? `ลบรายจ่าย ${confirmLabel} แล้ว` : 'ลบรายจ่ายแล้ว');
     } catch (e) { setDeleteError(expenseDeleteErrorMessage(e, locale)); }
     finally { setDeleting(false); }
   };
@@ -2543,7 +2881,7 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
       if (result.skippedEvidence.length > 0) {
         setExportNotice((prev) => [prev, `ข้ามไฟล์แนบ ${result.skippedEvidence.length} ไฟล์ที่คุณไม่มีสิทธิ์เปิด`].filter(Boolean).join(' · '));
       }
-      downloadIndexXlsx(result, `expense-index-${gran === 'month' ? month : day}.xlsx`);
+      downloadIndexXlsx(result, `สรุปรายจ่าย-${month}.xlsx`);
       setExported(true); setTimeout(() => setExported(false), 3000);
     } catch (e) {
       if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
@@ -2552,152 +2890,133 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
     finally { setExporting(false); }
   };
 
-  const chips: Array<{ key: typeof chip; label: string }> = [
-    { key: 'all', label: t('expenses.chip_all', locale) }, { key: 'draft', label: t('expenses.chip_draft', locale) }, { key: 'pending', label: t('expenses.chip_pending', locale) }, { key: 'confirmed', label: t('expenses.chip_confirmed', locale) }, { key: 'rejected', label: t('expenses.chip_rejected', locale) },
+  // Four groups whose names do not overlap: everything, what still waits, what is confirmed, what was closed.
+  const chips: Array<{ key: 'all' | 'pending' | 'confirmed' | 'closed'; label: string }> = [
+    { key: 'all', label: t('expenses.chip_all', locale) }, { key: 'pending', label: t('expenses.chip_pending', locale) },
+    { key: 'confirmed', label: t('expenses.chip_confirmed', locale) }, { key: 'closed', label: 'ยกเลิก/ปฏิเสธ' },
   ];
-  const cards = [
-    { label: t('expenses.kpi_total', locale), value: baht(kpi.total), sub: `${kpi.counted} ${t('expenses.kpi_total_sub', locale)}`, icon: ICON.receipt, ...KPI.amber },
-    { label: t('expenses.kpi_pending', locale), value: `${kpi.pending} ${t('expenses.unit_document', locale)}`, sub: t('expenses.kpi_pending_sub', locale), icon: ICON.clock, ...KPI.sky },
-    { label: t('expenses.kpi_outstanding', locale), value: baht(kpi.outstanding), sub: t('expenses.kpi_outstanding_sub', locale), icon: ICON.wallet, ...KPI.purple },
-    { label: t('expenses.kpi_overdue', locale), value: baht(kpi.overdue), sub: `${kpi.overdueCount} ${t('expenses.kpi_overdue_sub', locale)}`, icon: ICON.alert, ...KPI.danger, danger: true },
-    { label: t('expenses.kpi_vat', locale), value: baht(kpi.vat), sub: t('expenses.kpi_vat_sub', locale), icon: ICON.doc, ...KPI.brand },
+  // Owner 2026-10-15: the list's numbers in one card above it, as on the home page (no icons, no second copy below the list).
+  const amount = (value: number) => value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const metricItems = [
+    { key: 'total', label: t('expenses.kpi_total', locale), value: amount(kpi.total), unit: 'บาท', note: `${kpi.counted} ${t('expenses.kpi_total_sub', locale)}`, dot: 'bg-[#5aa95c]', color: 'text-[#3e8a4f]' },
+    { key: 'outstanding', label: 'ค้างจ่าย', value: amount(kpi.outstanding), unit: 'บาท', note: kpi.overdueCount > 0 ? `เกินกำหนด ${baht(kpi.overdue)} · ${kpi.overdueCount} ใบ` : t('expenses.kpi_outstanding_sub', locale), dot: 'bg-gray-400' },
+    { key: 'vat', label: t('expenses.kpi_vat', locale), value: amount(kpi.vat), unit: 'บาท', note: t('expenses.kpi_vat_sub', locale), dot: 'bg-sky-400' },
   ];
+  const searched = query.trim();
+  const emptyState = searched
+    ? <EmptyState title={`ไม่พบ “${searched}”`} action={<button type="button" className={ghostClass} onClick={() => setQuery('')}>ล้างคำค้น</button>} />
+    : activeChip !== 'all' || sourceView
+      ? <EmptyState title="ไม่มีรายการในกลุ่มนี้" />
+      : <EmptyState title="ยังไม่มีรายจ่ายในช่วงที่เลือก" action={caps.canUploadReceipts ? <Link className={btnClass} href={`/companies/${companyId}/expenses/upload`}>อัปโหลดใบเสร็จ</Link> : undefined} />;
+  const openDelete = (id: string) => { setDeleteError(null); setConfirmId(id); };
+  const statusBadges = (e: ExpenseSummary) => {
+    const status = expenseListStatus(e);
+    return <><MangmeeBadge tone={status.tone}>{status.label}</MangmeeBadge>{!isExpenseCancelled(e.status) && showListedInputVatRight(e) && e.inputVatClaimStatus === 'NEEDS_REVIEW' && <MangmeeBadge tone="amber">ภาษีซื้อรอตรวจสอบ</MangmeeBadge>}</>;
+  };
+  const recordedOnAnotherDay = (e: ExpenseSummary) => dateShort(e.uploadedAt) !== dateShort(e.expenseDate);
+  const canExportHere = caps.canExportPackage && (!sourceView || sourceView === 'confirmed');
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        {caps.canUploadReceipts && <Link className={btnClass} href={`/companies/${companyId}/expenses/upload`}>อัปโหลดใบเสร็จ</Link>}
-        {canOpenManual && <Link className={ghostClass} href={`/companies/${companyId}/expenses/manual`}>บันทึกด้วยมือ</Link>}
+      {sourceView && (
+        <Notice tone="info" action={<button type="button" className={ghostClass} onClick={() => router.replace(`/companies/${companyId}/expenses`)}>กลับไปดูรายการตามเดือน</button>}>
+          {sourceView === 'confirmed' ? `รายการยืนยันแล้ว · วันที่เอกสาร ${dateShort(fromDate)} – ${dateShort(toDate)}`
+            : sourceView === 'pending' ? `${t('expenses.chip_pending', locale)} · ทุกเดือน`
+              : sourceView === 'addressMissing' ? (addressMissingRange?.fromDate && addressMissingRange?.toDate
+                  ? `${t('expenses.view_vendor_address_missing', locale)} · วันที่เอกสาร ${dateShort(addressMissingRange.fromDate)} – ${dateShort(addressMissingRange.toDate)}`
+                  : t('expenses.view_vendor_address_missing', locale))
+                : 'ค้างจ่ายที่ยืนยันแล้ว · ทุกเดือน'}
+        </Notice>
+      )}
+      {/* The month and seller/document search are the list's filters. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        {!sourceView && <ThemedDate mode="month" aria-label={t('expenses.document_date', locale)} className={cx(inputClass, 'w-auto min-w-36 shrink-0 whitespace-nowrap')} value={month} onChange={(e) => setMonth(e.target.value)} />}
+        <div className="relative w-full sm:w-72">
+          <input className={cx(inputClass, 'mangmee-input-icon-end w-full')} type="search"
+            aria-label={t('expenses.search_placeholder', locale)}
+            placeholder={t('expenses.search_placeholder', locale)}
+            value={query} onChange={(e) => setQuery(e.target.value)} />
+          <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
+            {ICON.search}
+          </span>
+        </div>
+        {/* Owner 2026-10-15: the export sits next to the search. */}
+        {canExportHere && <button type="button" className={ghostClass} aria-haspopup="dialog" onClick={() => setExportOpen(true)}>{EXPORT_FOR_ACCOUNTANT}</button>}
       </div>
-      {sourceView && <div role="status" className="rounded-xl bg-brand-25 p-3 text-sm text-brand-800">
-        {sourceView === 'confirmed' ? `รายการยืนยันแล้ว · วันที่เอกสาร ${dateShort(fromDate)} – ${dateShort(toDate)}`
-          : sourceView === 'pending' ? 'ใบเสร็จรอตรวจ · ทุกช่วงเวลา รวมฉบับร่าง'
-            : sourceView === 'addressMissing' ? (addressMissingRange?.fromDate && addressMissingRange?.toDate
-                ? `${t('expenses.view_vendor_address_missing', locale)} · วันที่เอกสาร ${dateShort(addressMissingRange.fromDate)} – ${dateShort(addressMissingRange.toDate)}`
-                : t('expenses.view_vendor_address_missing', locale))
-              : 'ค้างจ่ายที่ยืนยันแล้ว · ทุกช่วงเวลา'}
-        <button className="ml-2 min-h-11 underline" onClick={() => router.replace(`/companies/${companyId}/expenses`)}>กลับไปดูรายการตามเดือน</button>
-      </div>}
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        {/* period control (finBar) */}
-        {!sourceView && <div className="w-full sm:w-auto">
-          <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
-            <div className="mangmee-segmented shrink-0 whitespace-nowrap">
-              <button className={cx('mangmee-tab', gran === 'day' && 'mangmee-tab-active')} onClick={() => setGran('day')}>{t('expenses.granularity_day', locale)}</button>
-              <button className={cx('mangmee-tab', gran === 'month' && 'mangmee-tab-active')} onClick={() => setGran('month')}>{t('expenses.granularity_month', locale)}</button>
-            </div>
-            {gran === 'day'
-              ? <ThemedDate className={cx(inputClass, 'w-auto shrink-0 whitespace-nowrap')} value={day} onChange={(e) => setDay(e.target.value)} />
-              : <ThemedDate mode="month" className={cx(inputClass, 'w-auto shrink-0 whitespace-nowrap')} value={month} onChange={(e) => setMonth(e.target.value)} />}
-            {gran === 'day' && <button className={cx(ghostClass, 'shrink-0 whitespace-nowrap px-3')} onClick={() => setDay(todayCivilDate())}>{t('expenses.today', locale)}</button>}
-          </div>
-          <p className="mt-1 text-xs text-gray-400">{t('expenses.document_filter_desc', locale)}</p>
-        </div>}
-        {/* Export uses the shared dialog so opening options never resizes this toolbar. */}
-        {(!sourceView || sourceView === 'confirmed') && (
-          <button type="button" className={cx(ghostClass, 'self-start lg:ml-auto')} aria-haspopup="dialog" onClick={() => setExportOpen(true)}>
-            ส่งออกเอกสารยืนยันแล้ว
-          </button>
-        )}
-      </div>
-      <Modal open={exportOpen} onClose={() => setExportOpen(false)} title="ส่งออกเอกสารยืนยันแล้ว" size="sm"
-        footer={<button type="button" className={cx(btnClass, exporting && 'cursor-wait opacity-60')} onClick={exportExcel} aria-disabled={exporting} aria-busy={exporting}>
+      <Modal open={exportOpen} onClose={() => setExportOpen(false)} title={EXPORT_FOR_ACCOUNTANT} size="sm"
+        footer={<button type="button" className={btnClass} onClick={exportExcel} aria-disabled={exporting} aria-busy={exporting}>
           {exporting ? t('expenses.generating', locale) : t('expenses.export_excel', locale)}
         </button>}>
         <div className="space-y-4">
-          <p className="text-sm text-gray-600">{t('expenses.export_desc', locale)}</p>
-          <p className="text-sm font-semibold text-gray-800">{dateShort(fromDate)} – {dateShort(toDate)}</p>
-          <label className="block space-y-2 text-sm font-semibold text-gray-700">
-            <span>{t('expenses.export_columns', locale)}</span>
+          {/* What will be in the file, in one line: how many, which dates, which branch. */}
+          <p className="text-sm text-gray-700">รายการที่ยืนยันแล้ว {chipCounts.confirmed} รายการ ตามวันที่เอกสาร · <span className="mangmee-unit">{dateShort(fromDate)}</span> – <span className="mangmee-unit">{dateShort(toDate)}</span>{branchLabel ? ` · ${branchLabel}` : ''}</p>
+          <label className="block space-y-1.5">
+            <span className={FIELD_LABEL}>{t('expenses.export_columns', locale)}</span>
             <ThemedSelect className={cx(inputClass, 'w-full')} value={columnSet} onChange={(e) => setColumnSet(e.target.value as 'summary' | 'full')} aria-label={t('expenses.export_columns', locale)}>
               <option value="summary">{t('expenses.export_columns_summary', locale)}</option>
               <option value="full">{t('expenses.export_columns_full', locale)}</option>
             </ThemedSelect>
           </label>
+          <EvidenceBundleDownload companyId={companyId} enabled={exportOpen} showCounts
+            request={{ yearMonth: month, dateField: 'expenseDate', ...(branchId ? { branchId } : {}) }} />
           {exportError && <ErrorBanner message={exportError} />}
           {exportNotice && <p role="status" className="text-sm font-semibold text-warning-700">{exportNotice}</p>}
           {exported && <p role="status" className="text-sm font-semibold text-brand-600">✓ {t('expenses.downloaded', locale)}</p>}
         </div>
       </Modal>
 
-      {/* KPI cards */}
-      <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>
-      <details className="rounded-xl border border-gray-200 bg-white p-3 sm:hidden">
-        <summary className="cursor-pointer text-sm font-semibold">{kpi.counted} รายการ · {baht(kpi.total)} · ดูสรุปยอด</summary>
-        <div className="mt-3 grid gap-2">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>
-      </details>
+      {/* The numbers of the rows below, once, in one card (owner 2026-10-15). */}
+      <section className="mangmee-card p-4 sm:px-6 sm:py-5" data-testid="expenses-summary">
+        <MetricGrid columns={3} items={metricItems} className="gap-2.5" />
+      </section>
 
       {error && <ErrorBanner message={error} />}
 
-      {/* full-width list; row click opens the detail popup */}
       <MangmeeCard className="p-4">
-          <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4 lg:max-w-3xl">
             {chips.map((c) => (
-              <button key={c.key} onClick={() => setChip(c.key)}
-                className={cx('inline-flex min-h-11 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition sm:min-h-0',
-                  chip === c.key ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
+              <button key={c.key} type="button" aria-pressed={activeChip === c.key} onClick={() => setChip(c.key)}
+                className="mangmee-home-tab min-h-10 min-w-0 gap-2">
                 {c.label}
-                <span className={cx('tabular-nums inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', chip === c.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{chipCounts[c.key]}</span>
+                <span className={cx('tabular-nums text-xs', activeChip === c.key ? 'text-white/85' : 'text-gray-500')}>{chipCounts[c.key]}</span>
               </button>
             ))}
-            {/* §11.4: the way into "ใบกำกับที่ยังไม่มีที่อยู่ผู้ขาย". It carries no count because the
-                server answers it across every period, not out of the rows already loaded here.
-                No fromDate/toDate on purpose - unlike the ภ.พ.30 checklist's own link, this chip
-                stays the browse-the-whole-backlog entry point (see addressMissingListFilter). */}
-            <button type="button" aria-pressed={sourceView === 'addressMissing'}
-              onClick={() => router.replace(`/companies/${companyId}/expenses${sourceView === 'addressMissing' ? '' : '?view=addressMissing'}`)}
-              className={cx('col-span-2 inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center text-sm font-semibold leading-tight transition sm:col-span-1',
-                sourceView === 'addressMissing' ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
-              {t('expenses.chip_vendor_address_missing', locale)}
-            </button>
-            <div className="relative order-first col-span-2 w-full sm:col-span-3 lg:col-span-5 lg:ml-auto lg:max-w-[19.2rem]">
-              <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
-                placeholder={t('expenses.search_placeholder', locale)}
-                value={query} onChange={(e) => setQuery(e.target.value)} />
-              <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
-                {ICON.search}
-              </span>
-            </div>
           </div>
 
           {loading || categoryNamesLoading ? <LoadingState label="กำลังโหลด..." />
-            : filtered.length === 0 ? <p className="py-10 text-center text-sm text-gray-500">{t('expenses.empty_period', locale)}</p>
+            : filtered.length === 0 ? emptyState
               : <>
           <div className="hidden xl:block">
           <div className="overflow-x-auto" data-testid="expenses-grid">
             <div className="min-w-[900px]">
-              <div className={cx(GRID, 'mt-3 border-b border-gray-100 px-2 pb-2 text-[13px] font-bold uppercase tracking-wide text-gray-400')}>
-                <div>{t('expenses.col_expense_number', locale)}</div><div>{t('expenses.col_vendor_category', locale)}</div><div>{t('expenses.col_date_source', locale)}</div><div className="text-right">{t('expenses.col_total', locale)}</div><div className="text-right">{t('expenses.col_status', locale)}</div><div className="text-right"><span className="sr-only">การทำงาน</span></div>
+              <div className={cx(GRID, 'mt-3 border-b border-gray-100 px-2 pb-2 text-[13px] font-bold text-gray-500')}>
+                <div>ผู้ขาย</div><div><button type="button" className="inline-flex items-center gap-1 hover:text-gray-800" onClick={() => setDateOrder(order => order === 'newest' ? 'oldest' : 'newest')}
+                  aria-label={dateOrder === 'newest' ? 'วันที่ ใหม่ไปเก่า กดเพื่อเรียงเก่าไปใหม่' : 'วันที่ เก่าไปใหม่ กดเพื่อเรียงใหม่ไปเก่า'}>วันที่ <span aria-hidden="true">{dateOrder === 'newest' ? '↓' : '↑'}</span></button></div><div className="text-right">{t('expenses.col_total', locale)}</div><div className="text-right">{t('expenses.col_status', locale)}</div><div className="text-right"><span className="sr-only">การทำงาน</span></div>
               </div>
-              {loading ? <p className="py-8 text-center text-sm text-gray-500">{t('expenses.loading', locale)}</p>
-                : filtered.length === 0 ? <p className="py-10 text-center text-sm text-gray-500">{t('expenses.empty_period', locale)}</p>
-                  : pagedRows.map((e) => (
-                      <div key={e.id} onClick={() => onSelect(e.id)} data-testid="expenses-row"
+              {pagedRows.map((e) => (
+                      <div key={e.id} onClick={() => openListRow(e.id)} data-testid="expenses-row"
                         {...(e.id === highlightId ? { 'data-highlighted': 'true' } : {})}
                         className={cx(GRID, 'cursor-pointer border-b border-gray-50 px-2 py-3 transition hover:bg-gray-50',
                           e.id === highlightId && 'rounded-xl ring-2 ring-brand-500 bg-brand-25')}>
-                        <div className="min-w-0 font-mono text-sm font-semibold text-gray-700 [overflow-wrap:anywhere]">{firstFilled(e.expenseNumber) ?? t('expenses.number_pending', locale)}</div>
                         <div className="min-w-0">
-                          <div className="truncate text-[15px] font-semibold text-gray-900">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</div>
-                          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-400">
-                            {e.expenseCategoryId && catNames[e.expenseCategoryId] && <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-semibold text-gray-600">{catNames[e.expenseCategoryId]}</span>}
-                          </div>
+                          <div className="text-[15px] font-semibold text-gray-900 [overflow-wrap:anywhere]">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</div>
+                          <div className="mt-0.5 text-xs text-gray-500"><span className="mangmee-unit">{firstFilled(e.expenseNumber) ?? t('expenses.number_pending', locale)}</span></div>
                         </div>
                         <div>
-                          <div className="text-xs text-gray-500"><span className="font-semibold">{t('expenses.document_date', locale)}:</span> {e.dateStatus === 'unverified' ? 'ยังไม่ระบุ' : dateShort(e.expenseDate)}</div>
-                          <div className="mt-0.5 text-xs text-gray-500"><span className="font-semibold">{t('expenses.intake_date', locale)}:</span> {dateShort(e.uploadedAt)}</div>
+                          <div className="text-xs text-gray-500"><span className="mangmee-unit">{e.dateStatus === 'unverified' ? 'ยังไม่ระบุ' : dateShort(e.expenseDate)}</span></div>
+                          {/* The day it was recorded is a second fact only when it is another day. */}
+                          {recordedOnAnotherDay(e) && <div className="mt-0.5 text-xs text-gray-500"><span className="font-semibold">{t('expenses.intake_date', locale)}:</span> <span className="mangmee-unit">{dateShort(e.uploadedAt)}</span></div>}
                           <div className="mt-1 flex flex-wrap gap-1">
                             <LateDocumentBadge expense={e} locale={locale} />
                             <DocumentDateBadge expense={e} />
-                            <MangmeeBadge tone="slate">{expenseValueLabel(CAPTURE_SOURCE_LABELS, e.captureSource, 'ช่องทางอื่น')}</MangmeeBadge>
                           </div>
                         </div>
-                        <div className="tabular-nums text-right text-[15px] font-bold text-gray-900">{baht(e.grandTotalAmount)}</div>
-                        <div className="flex flex-col items-end gap-1">{e.reimbursementProgress ? <span className="text-xs text-success-700">{expenseReimbursementProgressLabel(e.reimbursementProgress)}</span> : <><StatusBadge status={e.status} /><StatusBadge status={expenseOverpaidAmount(e) ? 'OVERPAID' : e.paymentStatus} /></>}</div>
+                        <div className="text-right text-[15px] font-bold text-gray-900"><span className="mangmee-unit">{amountText(e.grandTotalAmount)}</span></div>
+                        <div className="flex flex-col items-end gap-1">{statusBadges(e)}</div>
+                        {/* A press on the row opens it; the only control of its own is the one that does something else. */}
                         <div className="flex items-center justify-end gap-1.5">
-                          <IconBtn title="ดูรายละเอียด" onClick={(event) => { event.stopPropagation(); onSelect(e.id); }}>{ICON.eye}</IconBtn>
                           {canDeleteExpense(e, userId, caps) && (
-                            <IconBtn title="ลบ" tone="danger" onClick={(event) => { event.stopPropagation(); setDeleteError(null); setConfirmId(e.id); }}>{ICON.trash}</IconBtn>
+                            <IconBtn title="ลบ" tone="danger" onClick={(event) => { event.stopPropagation(); openDelete(e.id); }}>{ICON.trash}</IconBtn>
                           )}
                         </div>
                       </div>
@@ -2711,65 +3030,70 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
                 <button
                   type="button"
                   className="block min-h-11 w-full p-4 text-left"
-                  onClick={() => onSelect(e.id)}
+                  onClick={() => openListRow(e.id)}
                   data-testid="expenses-card"
                   {...(e.id === highlightId ? { 'data-highlighted': 'true' } : {})}
                 >
-                  <div className="min-w-0">
-                    <span className="block text-xs font-medium text-gray-500">{t('expenses.col_expense_number', locale)}</span>
-                    <span className="mt-1 block font-mono text-sm font-semibold text-gray-700 [overflow-wrap:anywhere]">{firstFilled(e.expenseNumber) ?? t('expenses.number_pending', locale)}</span>
-                    <span className="mt-2 block truncate text-sm font-semibold text-gray-900">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-gray-500">
-                    <div><span className="block font-semibold">{t('expenses.document_date', locale)}</span>{e.dateStatus === 'unverified' ? 'ยังไม่ระบุ' : dateShort(e.expenseDate)}</div>
-                    <div className="text-right"><span className="block font-semibold">{t('expenses.intake_date', locale)}</span>{dateShort(e.uploadedAt)}</div>
-                  </div>
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                    <StatusBadge status={e.status} />
+                  <span className="flex items-start justify-between gap-3">
+                    <span className="min-w-0 text-[15px] font-semibold text-gray-900 [overflow-wrap:anywhere]">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
+                    <span className="mangmee-unit shrink-0 text-base font-bold text-gray-900">{amountText(e.grandTotalAmount)}</span>
+                  </span>
+                  <span className="mt-1 block text-sm text-gray-500">
+                    <span className="mangmee-unit font-mono">{firstFilled(e.expenseNumber) ?? t('expenses.number_pending', locale)}</span>
+                    {' · '}<span className="mangmee-unit">{e.dateStatus === 'unverified' ? 'ยังไม่ระบุ' : dateShort(e.expenseDate)}</span>
+                    {recordedOnAnotherDay(e) && <>{' · '}{t('expenses.intake_date', locale)} <span className="mangmee-unit">{dateShort(e.uploadedAt)}</span></>}
+                  </span>
+                  <span className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {statusBadges(e)}
                     <LateDocumentBadge expense={e} locale={locale} />
                     <DocumentDateBadge expense={e} />
-                  </div>
-                  <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{baht(e.grandTotalAmount)}</div>
+                  </span>
                 </button>
+                {/* On a phone the bin of the wide table does not exist; a draft the person may delete says so here. */}
+                {canDeleteExpense(e, userId, caps) && (
+                  <div className="flex justify-end border-t border-gray-100 px-2 py-1">
+                    <button type="button" className={quietButtonClass} onClick={() => openDelete(e.id)}>ลบรายจ่ายนี้</button>
+                  </div>
+                )}
               </MangmeeCard>
             ))}
           </div>
           </>}
           {!loading && filtered.length > 0 && (
-            <>
-                  <div className="flex flex-wrap items-center justify-between gap-3 px-2 pt-4 text-sm text-gray-500">
-                    <div className="tabular-nums">
-                      {t('expenses.pagination_showing', locale)} {pageStart}-{pageEnd} {t('expenses.pagination_of', locale)} {filtered.length} {t('expenses.pagination_items', locale)}
-                    </div>
-                    {totalPages > 1 && (
-                      <div className="flex items-center gap-2">
-                        <button className={ghostClass} disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>{t('expenses.previous', locale)}</button>
-                        <span className="tabular-nums rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700">{page} / {totalPages}</span>
-                        <button className={ghostClass} disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>{t('expenses.next', locale)}</button>
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
+            <div className="px-2 pt-4 text-sm text-gray-500">
+              {totalPages > 1 && <Pagination prominent page={page} totalPages={totalPages} onPageChange={setPage} />}
+            </div>
+          )}
       </MangmeeCard>
+
+
+      {/* §11.4: the way into "ใบกำกับที่ยังไม่มีที่อยู่ผู้ขาย", an accountant's backlog across every period. It is a
+          quiet link under the list and only for a shop that records VAT; it used to sit among the status tabs. */}
+      {showsVatBacklog && !sourceView && (
+        <button type="button" className={quietButtonClass} onClick={() => router.replace(`/companies/${companyId}/expenses?view=addressMissing`)}>
+          {t('expenses.chip_vendor_address_missing', locale)}
+        </button>
+      )}
+
+
 
       {/* A11Y-01: the shared Modal owns the dialog role, focus trap, Escape and the labelled close
           button. The hand-rolled overlay this replaces had none of them. */}
       <Modal
         open={Boolean(confirmTarget)}
         size="sm"
-        title={confirmLabel ? `ลบรายการ “${confirmLabel}” อย่างถาวร?` : 'ลบรายการนี้อย่างถาวร?'}
+        title={confirmTarget ? `ลบรายจ่าย ${[confirmLabel, baht(confirmTarget.grandTotalAmount)].filter(Boolean).join(' · ')}?` : 'ลบรายจ่ายนี้?'}
         closeLabel={t('expenses.close', locale)}
         onClose={() => { if (!deleting) setConfirmId(null); }}
         footer={(
           <>
-            <button type="button" className={ghostClass} disabled={deleting} onClick={() => setConfirmId(null)}>ยกเลิก</button>
-            <button type="button" className={dangerClass} disabled={deleting} aria-busy={Boolean(deleting)} onClick={() => void removeExpense()}>{deleting ? 'กำลังลบ...' : 'ลบถาวร'}</button>
+            <button type="button" className={ghostClass} disabled={deleting} onClick={() => setConfirmId(null)}>ไม่ลบ</button>
+            <button type="button" className={dangerClass} disabled={deleting} aria-busy={Boolean(deleting)} onClick={() => void removeExpense()}>{deleting ? 'กำลังลบ…' : 'ลบรายจ่าย'}</button>
           </>
         )}
       >
         <div className="space-y-3">
-          <p className="text-sm leading-relaxed text-gray-600">รายการค่าใช้จ่ายนี้จะถูกลบอย่างถาวรพร้อมข้อมูลที่เกี่ยวข้อง และไม่สามารถย้อนกลับได้</p>
+          <p className="text-sm text-gray-600">ลบแล้วกู้คืนไม่ได้</p>
           {deleteError && <ErrorBanner message={deleteError} />}
         </div>
       </Modal>
@@ -2777,9 +3101,9 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
     </div>
   );
 }
-
-function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entryClosed, onSuccess }: { companyId: string; branchId?: string; canAttachReceipt: boolean; entryClosed: boolean; onSuccess: (expenseId: string) => void }) {
+export function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entryClosed, permissions, onSuccess }: { companyId: string; branchId?: string; canAttachReceipt: boolean; entryClosed: boolean; permissions: string[]; onSuccess: (expenseId: string) => void }) {
   const locale = useWorkspaceLocale();
+  const [payee, setPayee] = useState<{ name: string; id?: string }>({ name: '' });
   const [expenseDate, setExpenseDate] = useState(todayCivilDate());
   const [items, setItems] = useState<ManualExpenseItem[]>([{ description: '', quantity: '1', unitPrice: '', discountAmount: '0' }]);
   const [serviceCharge, setServiceCharge] = useState('');
@@ -2802,6 +3126,7 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entryClosed
   // Set when the draft was created but the receipt upload failed: submitting again
   // would create a second draft, so the submit button becomes "open the saved draft".
   const [savedExpenseId, setSavedExpenseId] = useState<string | null>(null);
+  const [missing, setMissing] = useState<{ index: number; field: 'description' | 'unitPrice' } | null>(null);
   const draftSave = useRef<{ key: string; body?: CreateExpenseDraftInput }>({ key: '' });
 
   const selectReceiptFile = async (file: File | null) => {
@@ -2831,18 +3156,31 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entryClosed
   });
 
   async function submit(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError('');
+    event.preventDefault(); setError('');
+    // The button is always live. A press with something missing says what, under the first empty field, and puts the cursor there.
+    if (!draftSave.current.body) {
+      const at = items.findIndex((item) => !item.description.trim() || !(Number(item.unitPrice) > 0));
+      if (at >= 0) {
+        const field = items[at]!.description.trim() ? 'unitPrice' : 'description';
+        setMissing({ index: at, field });
+        const box = document.getElementById(`manual-item-${at}-${field}`);
+        focusExpenseField(box);
+        return;
+      }
+    }
+    setBusy(true);
     try {
       if (!draftSave.current.body) {
         if (!branchId) throw new Error(t('transaction.source_branch_required', locale));
-        const forbidden = findForbiddenChars(items.map((item) => item.description).join(''));
+        const forbidden = findForbiddenChars(payee.name + items.map((item) => item.description).join(''));
         if (forbidden.length > 0) throw new Error(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' ')));
         if (!(totals.grandTotal > 0)) throw new Error(t('expenses.manual_total_required', locale));
         draftSave.current.key ||= crypto.randomUUID();
         draftSave.current.body = {
           idempotencyKey: draftSave.current.key,
           captureSource: 'WEB_MANUAL', expenseDate, branchId, vatMode,
-          inputVatClaimStatus: taxCodeDefinitionId ? 'NEEDS_REVIEW' : 'NON_CLAIMABLE',
+          ...(payee.name.trim() && { vendorNameSnapshot: payee.name.trim() }),
+          ...(payee.id && { vendorCounterpartyId: payee.id }),
           lines,
         };
       }
@@ -2877,13 +3215,11 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entryClosed
     return { subtotal: sum.subtotal + lineTotals.subtotal, vat: sum.vat + lineTotals.vat, grandTotal: sum.grandTotal + lineTotals.grandTotal };
   }, { subtotal: 0, vat: 0, grandTotal: 0 });
   const amountReady = totals.grandTotal > 0;
-  const sectionTitle = (icon: ReactNode, title: DictionaryKey, helper?: DictionaryKey) => (
-    <div className="flex items-start gap-3">
-      <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[10px] bg-brand-50 text-brand-700">{icon}</span>
-      <div className="min-w-0">
-        <h3 className="font-semibold text-gray-800">{t(title, locale)}</h3>
-        {helper && <p className="mt-0.5 text-xs text-gray-500">{t(helper, locale)}</p>}
-      </div>
+  // A section says its name; an icon tile beside it carried nothing.
+  const sectionTitle = (title: DictionaryKey, helper?: DictionaryKey) => (
+    <div className="min-w-0">
+      <h3 className="font-semibold text-gray-800">{t(title, locale)}</h3>
+      {helper && <p className={FIELD_HINT}>{t(helper, locale)}</p>}
     </div>
   );
   const req = <span aria-hidden="true" className="text-error-500"> *</span>;
@@ -2893,30 +3229,17 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entryClosed
     {entryClosed && !savedExpenseId && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium leading-6 text-amber-900">{t('expenses.manual_entry_closed_notice', locale)}</p>}
     {error && <ErrorBanner message={error} focus />}
     {error && draftSave.current.body && !savedExpenseId && <p role="status" className="text-sm text-gray-600">ยังยืนยันผลการบันทึกไม่ได้ กดบันทึกซ้ำเพื่อตรวจคำสั่งเดิม แล้วเปิดรายการที่บันทึกไว้เพื่อแก้ไขต่อ</p>}
-    <form onSubmit={submit} className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+    {/* One column that fills the page; the total and the save button end the form in the page's action bar. */}
+    <form onSubmit={submit} noValidate className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
       <div className="min-w-0 space-y-4">
         <MangmeeCard className="space-y-3 p-4">
-          {sectionTitle(ICON.doc, 'expenses.manual_document_section')}
-          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-3">
-            <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_date', locale)}{req}</span><ThemedDate aria-label={t('expenses.manual_date', locale)} aria-describedby="expense-manual-date-helper" className={inputClass} value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /><span id="expense-manual-date-helper" className="mt-1 block text-xs text-gray-500">{t('expenses.manual_date_helper', locale)}</span></label>
-            <div className="sm:col-span-2">
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_receipt', locale)}</span>
-              {canAttachReceipt ? <>
-                <ThemedFile className="flex-wrap [&>span:last-child]:max-w-full" file={receiptFile} accept={RECEIPT_UPLOAD_ACCEPT} aria-describedby={!receiptFile && !preparingReceipt ? 'expense-manual-receipt-helper' : undefined} disabled={busy || preparingReceipt || !!savedExpenseId} loading={Boolean(busy || preparingReceipt)} onChange={(file) => void selectReceiptFile(file)} />
-                {preparingReceipt ? <p className="mt-1 text-xs text-gray-500">{t('expenses.upload_preparing', locale)}</p>
-                  : !receiptFile && <p id="expense-manual-receipt-helper" className="mt-1 text-xs text-gray-400">{t('expenses.manual_receipt_helper', locale)}</p>}
-              </> : <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">{t('expenses.manual_receipt_forbidden', locale)}</p>}
-            </div>
-          </div>
-        </MangmeeCard>
-        <MangmeeCard className="space-y-3 p-4">
-          {sectionTitle(ICON.wallet, 'expenses.manual_items_section')}
+          {sectionTitle('expenses.manual_items_section')}
           {items.map((item, index) => (
             <div key={index} className="overflow-hidden rounded-xl border border-gray-200">
               <div className="flex items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
-                <span className="text-xs font-bold text-gray-600">{t('expenses.manual_item_n', locale).replace('{n}', String(index + 1))}</span>
+                <span className="text-sm font-bold text-gray-600">{t('expenses.manual_item_n', locale).replace('{n}', String(index + 1))}</span>
                 <span className="flex items-center gap-1.5">
-                  <span className="tabular-nums text-xs font-semibold text-gray-500">{baht(itemNet(item))}</span>
+                  {items.length > 1 && <span className="mangmee-unit text-sm font-semibold text-gray-500">{baht(itemNet(item))}</span>}
                   {items.length > 1 && (
                     <button type="button" aria-label={t('expenses.manual_remove_item', locale)} disabled={busy} aria-busy={Boolean(busy)} onClick={() => setItems((current) => current.filter((_, i) => i !== index))} className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition hover:bg-error-50 hover:text-error-600">
                       <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-4 w-4"><path d="M3.5 5.5h13m-9.5 0v-1a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5v1m-6.5 0 .6 10a1.5 1.5 0 0 0 1.5 1.4h3.8a1.5 1.5 0 0 0 1.5-1.4l.6-10M8.2 8.5v5m3.6-5v5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -2925,10 +3248,15 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entryClosed
                 </span>
               </div>
               <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 p-3 sm:grid-cols-3">
-                <label className="sm:col-span-3"><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_description', locale)}{req}</span><input required className={inputClass} value={item.description} onChange={(event) => setItem(index, { description: stripDisallowed(event.target.value) })} /></label>
-                <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_quantity', locale)}{req}</span><input required type="number" min="0" step="0.0001" className={inputClass} value={item.quantity} onChange={(event) => setItem(index, { quantity: event.target.value })} /></label>
-                <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_unit_price', locale)}{req}</span><input required type="number" min="0" step="0.0001" className={inputClass} value={item.unitPrice} onChange={(event) => setItem(index, { unitPrice: normalizeDecimalInput(event.target.value) })} /></label>
-                <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_discount', locale)}</span><input type="number" min="0" step="0.0001" className={inputClass} value={item.discountAmount} onChange={(event) => setItem(index, { discountAmount: normalizeDecimalInput(event.target.value) })} /></label>
+                <label className="sm:col-span-3"><span className={FIELD_LABEL}>{t('expenses.manual_description', locale)}{req}</span><input id={`manual-item-${index}-description`} className={cx(inputClass, missing?.index === index && missing.field === 'description' && 'border-error-500 ring-1 ring-error-500')} aria-invalid={(missing?.index === index && missing.field === 'description') || undefined} value={item.description} onChange={(event) => { setItem(index, { description: stripDisallowed(event.target.value) }); setMissing(null); }} />
+                  {missing?.index === index && missing.field === 'description' && <span className="mt-1 block text-sm text-error-500">กรอกรายละเอียด</span>}</label>
+                {/* Price and quantity are short and are read together: side by side at every width. */}
+                <div className="grid grid-cols-2 gap-3 sm:col-span-2">
+                  <label><span className={FIELD_LABEL}>{t('expenses.manual_unit_price', locale)}{req}</span><input id={`manual-item-${index}-unitPrice`} type="number" min="0" step="0.0001" className={cx(inputClass, missing?.index === index && missing.field === 'unitPrice' && 'border-error-500 ring-1 ring-error-500')} aria-invalid={(missing?.index === index && missing.field === 'unitPrice') || undefined} value={item.unitPrice} onChange={(event) => { setItem(index, { unitPrice: normalizeDecimalInput(event.target.value) }); setMissing(null); }} />
+                    {missing?.index === index && missing.field === 'unitPrice' && <span className="mt-1 block text-sm text-error-500">กรอกราคา</span>}</label>
+                  <label><span className={FIELD_LABEL}>{t('expenses.manual_quantity', locale)}{req}</span><input type="number" min="0" step="0.0001" className={inputClass} value={item.quantity} onChange={(event) => setItem(index, { quantity: event.target.value })} /></label>
+                </div>
+                <label><span className={FIELD_LABEL}>{t('expenses.line_discount', locale)}</span><input type="number" min="0" step="0.0001" className={inputClass} value={item.discountAmount} onChange={(event) => setItem(index, { discountAmount: normalizeDecimalInput(event.target.value) })} /></label>
               </div>
             </div>
           ))}
@@ -2936,64 +3264,65 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entryClosed
             <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-4 w-4"><path d="M10 4.5v11m-5.5-5.5h11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
             {t('expenses.manual_add_item', locale)}
           </button>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_service_charge', locale)}</span>
-            <input type="number" min="0" step="0.01" className={inputClass} aria-describedby="expense-manual-service-charge-helper" value={serviceCharge} onChange={(event) => setServiceCharge(event.target.value)} />
-            <p id="expense-manual-service-charge-helper" className="mt-1 text-xs text-gray-400">{t('expenses.manual_service_charge_helper', locale)}</p>
-          </label>
+          <details className="rounded-xl border border-gray-200 px-3" open={Number(serviceCharge || '0') > 0 || undefined}>
+            <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-gray-700">{t('expenses.manual_service_charge', locale)} (ถ้ามี)</summary>
+            <label className="block pb-3">
+              <span className="sr-only">{t('expenses.manual_service_charge', locale)}</span>
+              <input type="number" min="0" step="0.01" className={inputClass} aria-describedby="expense-manual-service-charge-helper" value={serviceCharge} onChange={(event) => setServiceCharge(event.target.value)} />
+              <p id="expense-manual-service-charge-helper" className={FIELD_HINT}>{t('expenses.manual_service_charge_helper', locale)}</p>
+            </label>
+          </details>
+        </MangmeeCard>
+        <MangmeeCard className="space-y-3 p-4">
+          {sectionTitle('expenses.manual_document_section')}
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-3">
+            <ExpensePayeeField companyId={companyId} value={payee} canRead={permissions.includes(COUNTERPARTY_READ_PERMISSION)} disabled={busy || !!savedExpenseId} onChange={setPayee} />
+            <label><span className={FIELD_LABEL}>{t('expenses.manual_date', locale)}{req}</span><ThemedDate aria-label={t('expenses.manual_date', locale)} aria-describedby="expense-manual-date-helper" className={inputClass} value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /><span id="expense-manual-date-helper" className="mt-1 block text-sm text-gray-500">{t('expenses.manual_date_helper', locale)}</span></label>
+            <div className="sm:col-span-2">
+              <span className={FIELD_LABEL}>{t('expenses.manual_receipt', locale)}</span>
+              {canAttachReceipt ? <>
+                <ThemedFile className="flex-wrap [&>span:last-child]:max-w-full" file={receiptFile} accept={RECEIPT_UPLOAD_ACCEPT} aria-describedby={!receiptFile && !preparingReceipt ? 'expense-manual-receipt-helper' : undefined} disabled={busy || preparingReceipt || !!savedExpenseId} loading={Boolean(busy || preparingReceipt)} onChange={(file) => void selectReceiptFile(file)} />
+                {preparingReceipt ? <p className={FIELD_HINT}>{t('expenses.upload_preparing', locale)}</p>
+                  : !receiptFile && <p id="expense-manual-receipt-helper" className={FIELD_HINT}>{t('expenses.manual_receipt_helper', locale)}</p>}
+              </> : <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-500">{t('expenses.manual_receipt_forbidden', locale)}</p>}
+            </div>
+          </div>
         </MangmeeCard>
         {showsTaxCapture(capture.mode) && <MangmeeCard className="space-y-3 p-4">
-          {sectionTitle(ICON.receipt, 'expenses.manual_tax_section', 'expenses.manual_tax_helper')}
-          <TransactionTaxLineSelector companyId={companyId} branchId={branchId} sourceType="expense.record" sourceId="new-manual-expense" sourceLineId="line-1" transactionContext="DOMESTIC_PURCHASE" direction="INPUT" documentDate={expenseDate} netAmount={String(totals.subtotal)} grossAmount={String(totals.grandTotal)} enteredTaxAmount={String(totals.vat)} value={taxCodeDefinitionId} canConfigureTax={capture.canConfigureTax} onChange={(id, definition) => { setTaxCodeDefinitionId(id); setTaxCodeName(definition ? `${definition.externalCode} · ${definition.displayName}` : ''); setExternalTaxCode(definition?.externalCode); setVatRate(definition ? taxDefinitionRateForSource(definition.rate, 'expense') : ''); if (!vatModeTouched) setVatMode(!definition || definition.calculationMethod === 'NONE' ? 'NO_VAT' : definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED'); }} />
+          {sectionTitle('expenses.manual_tax_section', 'expenses.manual_tax_helper')}
+          <TransactionTaxLineSelector hideWhenNothingToChoose companyId={companyId} branchId={branchId} sourceType="expense.record" sourceId="new-manual-expense" sourceLineId="line-1" transactionContext="DOMESTIC_PURCHASE" direction="INPUT" documentDate={expenseDate} netAmount={String(totals.subtotal)} grossAmount={String(totals.grandTotal)} enteredTaxAmount={String(totals.vat)} value={taxCodeDefinitionId} canConfigureTax={capture.canConfigureTax} onChange={(id, definition) => { setTaxCodeDefinitionId(id); setTaxCodeName(definition ? `${definition.externalCode} · ${definition.displayName}` : ''); setExternalTaxCode(definition?.externalCode); setVatRate(definition ? taxDefinitionRateForSource(definition.rate, 'expense') : ''); if (!vatModeTouched) setVatMode(!definition || definition.calculationMethod === 'NONE' ? 'NO_VAT' : definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED'); }} />
           <div>
-            <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
+            <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
               <label htmlFor="manual-expense-vat-mode">{t('expenses.vat_mode', locale)}</label>
               <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_vat_mode', locale)} />
             </span>
-            <ThemedSelect id="manual-expense-vat-mode" className={inputClass} value={vatMode} onChange={(event) => { setVatMode(event.target.value as ExpenseDetail['vatMode']); setVatModeTouched(true); }}>
+            <ThemedSelect id="manual-expense-vat-mode" aria-label={t('expenses.vat_mode', locale)} className={inputClass} value={vatMode} onChange={(event) => { setVatMode(event.target.value as ExpenseDetail['vatMode']); setVatModeTouched(true); }}>
               {Object.entries(EXPENSE_VAT_MODE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </ThemedSelect>
           </div>
         </MangmeeCard>}
       </div>
-      <div className="min-w-0 lg:sticky lg:top-4 lg:self-start">
-        <MangmeeCard className="space-y-4 p-4">
-          <h3 className="font-semibold text-gray-800">{t('expenses.manual_summary_title', locale)}</h3>
-          {(items.length > 1 || Number(serviceCharge || '0') > 0) && (
-            <ul className="space-y-1.5 border-b border-dashed border-gray-200 pb-3 text-xs text-gray-600">
-              {items.map((item, index) => (
-                <li key={index} className="flex items-baseline justify-between gap-2">
-                  <span className="min-w-0 truncate">{item.description || t('expenses.manual_item_n', locale).replace('{n}', String(index + 1))}</span>
-                  <span className="tabular-nums font-medium">{baht(itemNet(item))}</span>
-                </li>
-              ))}
-              {Number(serviceCharge || '0') > 0 && (
-                <li className="flex items-baseline justify-between gap-2">
-                  <span className="min-w-0 truncate">{t('expenses.manual_service_charge', locale)}</span>
-                  <span className="tabular-nums font-medium">{baht(Number(serviceCharge))}</span>
-                </li>
-              )}
-            </ul>
-          )}
-          <div className="space-y-2">
-            <MoneyRow label={t('expenses.manual_before_tax', locale)} value={String(totals.subtotal)} />
-            <MoneyRow label={t('expenses.vat', locale)} value={String(totals.vat)} />
-            <div className="border-t border-dashed border-gray-200 pt-3">
-              <div className="text-sm font-semibold text-gray-700">{t('expenses.manual_total', locale)}</div>
-              <div className="mt-1 tabular-nums text-2xl font-black text-gray-900">{baht(totals.grandTotal)}</div>
-            </div>
-          </div>
+      <FormActionBar summary={
+        // A number is shown once: the lines are above; the make-up of the total appears only when there is VAT to tell apart.
+        <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+          <p className="flex items-baseline gap-2">
+            <span className="text-sm font-semibold text-gray-700">{t('expenses.manual_total', locale)}</span>
+            <span className="mangmee-unit text-xl font-bold text-gray-900">{baht(totals.grandTotal)}</span>
+          </p>
+          {totals.vat > 0 && <p className="text-sm text-gray-600">{t('expenses.manual_before_tax', locale)} <span className="mangmee-unit font-medium">{baht(totals.subtotal)}</span> · {t('expenses.vat', locale)} <span className="mangmee-unit font-medium">{baht(totals.vat)}</span></p>}
           {showsTaxCapture(capture.mode) && <MangmeeBadge tone={taxCodeDefinitionId ? 'purple' : 'slate'}>{taxCodeName || t('expenses.manual_no_tax_code', locale)}</MangmeeBadge>}
-          {savedExpenseId
-            ? <button type="button" className={cx(btnClass, 'w-full')} onClick={() => onSuccess(savedExpenseId)}>{t('expenses.manual_open_saved', locale)}</button>
-            : <>
-              {/* `item.unitPrice` is truthy for "0", so a ฿0 draft used to save happily here and was
-                  only refused much later, by จัดทำใบรับรองแทนใบเสร็จ. The rule belongs to this form. */}
-              <button formNoValidate={Boolean(draftSave.current.body)} disabled={busy || preparingReceipt || (!draftSave.current.body && (!expenseDate || !amountReady || !items.every((item) => item.description.trim() && item.unitPrice)))} aria-busy={Boolean(busy)} className={cx(btnClass, 'w-full')}>{busy ? t('expenses.manual_saving', locale) : t('expenses.manual_save_draft', locale)}</button>
-              {!amountReady && <p className="text-xs font-semibold leading-5 text-warning-700">{t('expenses.manual_total_required', locale)}</p>}
-            </>}
-        </MangmeeCard>
-      </div>
+        </div>
+      }>
+        {savedExpenseId
+          ? <ActionGroup><button type="button" className={btnClass} onClick={() => onSuccess(savedExpenseId)}>{t('expenses.manual_open_saved', locale)}</button></ActionGroup>
+          : (
+            // `item.unitPrice` is truthy for "0", so a ฿0 draft used to save happily here and was
+            // only refused much later, by จัดทำใบรับรองแทนใบเสร็จ. The rule belongs to this form.
+            <ActionGroup>
+              <button disabled={busy || preparingReceipt} aria-busy={Boolean(busy)} className={btnClass}>{busy ? t('expenses.manual_saving', locale) : t('expenses.manual_save_draft', locale)}</button>
+            </ActionGroup>
+          )}
+      </FormActionBar>
     </form>
   </div>;
 }
@@ -3077,43 +3406,55 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', 
   // Outside the branch field and its disabled fieldset below, so this state's own links are never
   // answered with the form's "choose a branch first".
   const manualNotEnabled = tab === 'manual' && !forbidden && manualView === 'not_enabled';
+  // The categories page's one action sits beside its title; the panel owns the dialog it opens.
+  const [categoryCreateOpen, setCategoryCreateOpen] = useState(false);
 
   return (
     <MangmeePage
-      eyebrow={t('expenses.eyebrow', locale)}
+      eyebrow={tab === 'list' || tab === 'upload' || tab === 'evidence' || tab === 'categories' ? undefined : t('expenses.eyebrow', locale)}
+      className={tab === 'list' || tab === 'upload' || tab === 'evidence' || tab === 'categories' ? 'mangmee-flat' : undefined}
       title={t(meta.labelKey, locale)}
-      // The description tells the reader what to fill in; with no form to fill it would be untrue.
-      description={manualNotEnabled ? undefined : t(meta.descKey, locale)}
+      actions={tab === 'categories' && !forbidden ? <button type="button" className={btnClass} onClick={() => setCategoryCreateOpen(true)}>เพิ่มหมวดหมู่</button> : undefined}
+      // The description tells the reader what to fill in; with no form to fill, or no right to the page, it would be
+      // untrue. The list needs none: its title says what it is.
+      description={manualNotEnabled || forbidden || tab === 'list' || tab === 'evidence' || tab === 'categories' ? undefined : t(meta.descKey, locale)}
     >
-      {forbidden ? <StateBanner error="Forbidden" /> : manualNotEnabled ? <ManualExpenseEntryNotEnabled companyId={companyId} caps={caps} readerIsOwner={readerIsOwner} /> : (
+      {forbidden ? (
+        // A refusal carries its way out: one link back to a page this person can use.
+        <StateBanner error="Forbidden" action={canAccessExpenseTab('list', caps) && tab !== 'list'
+          ? <Link className={ghostClass} href={`/companies/${companyId}/expenses`}>{t('expenses.back_to_list', locale)}</Link>
+          : <Link className={ghostClass} href={`/companies/${companyId}/dashboard`}>กลับไปแดชบอร์ด</Link>} />
+      ) : manualNotEnabled ? <ManualExpenseEntryNotEnabled companyId={companyId} caps={caps} readerIsOwner={readerIsOwner} /> : (
         <>
-          {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} canOpenManual={canOpenManual} userId={userId} onSelect={openListExpense} />}
+          {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} userId={userId} onSelect={openListExpense} />}
           {(tab === 'upload' || tab === 'manual') && <>
-            <TransactionBranchField value={createBranchId} invalid={branchTouched && !createBranchId} helpText={tab === 'manual' ? (createBranchId ? null : t('transaction.source_branch_manual_required', locale)) : undefined} />
+            {/* The branch field shares the edges of the cards under it. */}
+            {tab === 'manual' && <TransactionBranchField fill value={createBranchId} invalid={!createBranchId && branchTouched} helpText={createBranchId ? null : t('transaction.source_branch_manual_required', locale)} />}
             {/* Owner report 2026-08-28: with several branches and the all-branches filter on, this panel is
                 disabled — pressing อัปโหลด did nothing and said nothing. The field itself now reads as an
                 error, and pressing the dead panel says why instead of leaving a standing banner on screen.
                 A single-branch company defaults to its branch and never reaches this. */}
             <div onClickCapture={() => {
-              if (createBranchId) return;
+              if (createBranchId || tab !== 'manual') return;
               setBranchTouched(true);
-              toast.error('เลือกสาขาก่อน จึงจะกรอกรายการได้');
+              // Said in the words of the page the person is on: nothing is filled in on the upload page.
+              toast.error('เลือกสาขาก่อน จึงจะกรอกได้');
               // Scroll only, never focus: focusing the control opens its picker, which reads as the
               // page acting for the user (Owner report 2026-08-29). The field's invalid styling and
               // the toast already say what to do. The tag now sits on the field wrapper — the
               // control itself is a ThemedSelect, not a <select>.
               const field = document.querySelector<HTMLElement>('[data-transaction-branch-select]');
-              field?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              focusExpenseField(field);
             }}>
-            <fieldset disabled={!createBranchId} className={cx('min-w-0', !createBranchId && 'pointer-events-none')}>
-              {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} canManagePlan={permissions.includes('company.plan.manage')} {...(caps.canCreate && caps.canReview ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} onBatchSuccess={(created) => { for (const row of created) storeExtractionNotice(row.expenseId, row.notice); router.push(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(created.at(-1)!.expenseId)}`); }} />}
-              {tab === 'manual' && <ManualExpensePanel companyId={companyId} branchId={createBranchId} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} entryClosed={manualView === 'form_closed'} onSuccess={openListExpense} />}
+            <fieldset disabled={tab === 'manual' && !createBranchId} className={cx('min-w-0', tab === 'manual' && !createBranchId && 'pointer-events-none')}>
+              {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} userId={userId} caps={caps} canManagePlan={permissions.includes('company.plan.manage')} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} onBatchSuccess={(created) => { for (const row of created) storeExtractionNotice(row.expenseId, row.notice); router.push(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(created.at(-1)!.expenseId)}`); }} />}
+              {tab === 'manual' && <ManualExpensePanel permissions={permissions} companyId={companyId} branchId={createBranchId} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} entryClosed={manualView === 'form_closed'} onSuccess={openListExpense} />}
             </fieldset>
             </div>
           </>}
-          {tab === 'categories' && <CategoryManagePanel companyId={companyId} />}
+          {tab === 'categories' && <CategoryManagePanel companyId={companyId} createOpen={categoryCreateOpen} onCreateOpenChange={setCategoryCreateOpen} />}
           {tab === 'signatures' && <SignaturePanel companyId={companyId} {...(focusSignatureId ? { focusSignatureId } : {})} />}
-          {tab === 'evidence' && <EvidencePanel companyId={companyId} canExport={caps.canExportPackage} canReadLedger={caps.canReadLedger} canPostLedger={caps.canPostLedger} canPostClaimPayments={caps.canPostLedger && permissions.includes('reimbursement.finance_review')} onOpenExpense={openListExpense} />}
+          {tab === 'evidence' && <EvidencePanel companyId={companyId} canExport={caps.canExportPackage} canReadLedger={caps.canReadLedger} canPostLedger={caps.canPostLedger} canPostClaimPayments={caps.canPostLedger && permissions.includes('reimbursement.finance_review')} />}
         </>
       )}
     </MangmeePage>

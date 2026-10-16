@@ -199,9 +199,22 @@ describe('initialExpenseReviewStep', () => {
     assert.equal(initialFor({ attachments: [], aiVerificationSummaryJson: null }), 'data');
   });
 
-  it('opens at step 1 regardless of expense status', () => {
-    const steps = deriveExpenseReviewSteps({ ...base, vendorNameSnapshot: null }, true);
-    assert.equal(initialExpenseReviewStep(steps, 'READY_FOR_CONFIRMATION'), 'data');
+  it('opens a waiting record at its first incomplete earlier step', () => {
+    for (const canReview of [true, false]) {
+      const incompleteData = deriveExpenseReviewSteps({ ...base, vendorNameSnapshot: null, status: 'READY_FOR_CONFIRMATION' }, canReview);
+      assert.equal(initialExpenseReviewStep(incompleteData, 'READY_FOR_CONFIRMATION', true), 'data');
+      const incompleteEvidence = deriveExpenseReviewSteps({ ...base, aiVerificationSummaryJson: null, status: 'READY_FOR_CONFIRMATION' }, canReview);
+      assert.equal(initialExpenseReviewStep(incompleteEvidence, 'READY_FOR_CONFIRMATION', true), 'evidence');
+    }
+    const duplicateOnly = deriveExpenseReviewSteps({ ...base, duplicateStatus: 'POSSIBLE_DUPLICATE' }, true);
+    assert.equal(initialExpenseReviewStep(duplicateOnly, 'READY_FOR_CONFIRMATION', true), 'review');
+  });
+
+  it('opens waiting confirmation at the last step only for a confirmer', () => {
+    const steps = deriveExpenseReviewSteps(base, true);
+    assert.equal(initialExpenseReviewStep(steps, 'READY_FOR_CONFIRMATION', true), 'review');
+    assert.equal(initialExpenseReviewStep(steps, 'READY_FOR_CONFIRMATION', false), 'data');
+    for (const status of ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'CONFIRMED', 'REJECTED', 'VOIDED'] as const) assert.equal(initialExpenseReviewStep(steps, status, true), 'data');
     assert.equal(initialExpenseReviewStep(steps, 'DRAFT'), 'data');
   });
 });
@@ -276,8 +289,8 @@ describe('step 2 (ภาษีและเอกสาร) enablement truth tabl
     assert.equal(expenseEvidenceStepBlocker({ ...clear, classificationBlocked: false }), null);
   });
 
-  it('asks for the review to be saved before leaving the step, and never in silence', () => {
-    assert.equal(expenseEvidenceStepBlocker({ ...clear, unsavedReview: true }), 'expenses.doc_review_unsaved_next');
+  it('lets navigation save unsaved review answers', () => {
+    assert.equal(expenseEvidenceStepBlocker({ ...clear, unsavedReview: true }), null);
   });
 
   it('routes a check bill to its own recovery card first', () => {
@@ -301,7 +314,7 @@ describe('step 2 (ภาษีและเอกสาร) enablement truth tabl
           for (const unsavedReview of [false, true]) {
             const input = { checkBillBlocked, classificationBlocked, canReview, unsavedReview };
             const blocker = expenseEvidenceStepBlocker(input);
-            const blocked = checkBillBlocked || classificationBlocked || unsavedReview;
+            const blocked = checkBillBlocked || classificationBlocked;
             assert.equal(blocker !== null, blocked, `wrong gate for ${JSON.stringify(input)}`);
           }
         }
@@ -360,15 +373,15 @@ describe('explicit document review before Next', () => {
     assert.equal(stepState({ extractionId: 'new-extraction' }, 'evidence'), 'pending');
     assert.equal(stepState({ primaryAttachmentId: 'new-receipt' }, 'evidence'), 'done', 'moving the primary slot does not replace the explicitly reviewed file');
   });
-  it('does not require an unavailable save for read-only viewers or an issued certificate', () => {
-    assert.equal(deriveExpenseReviewSteps({ ...base, aiVerificationSummaryJson: null }, false).find((step) => step.key === 'evidence')?.state, 'done');
+  it('keeps unreviewed reader facts incomplete while issued certificates and terminal records are complete', () => {
+    assert.equal(deriveExpenseReviewSteps({ ...base, aiVerificationSummaryJson: null }, false).find((step) => step.key === 'evidence')?.state, 'pending');
     assert.equal(stepState({ aiVerificationSummaryJson: null, substituteReceiptEvidence: { status: 'ISSUED', artifactAttachmentId: 'signed-form' } }, 'evidence'), 'done');
     assert.equal(stepState({ aiVerificationSummaryJson: null, status: 'CONFIRMED' }, 'evidence'), 'done');
   });
-  it('blocks an untouched unreviewed form, and prioritizes unsaved edits and classification blockers', () => {
+  it('lets navigation save an untouched review and prioritizes classification blockers', () => {
     const input = { checkBillBlocked: false, classificationBlocked: false, canReview: true, unsavedReview: false, reviewRequired: true };
-    assert.equal(expenseEvidenceStepBlocker(input), 'expenses.doc_review_required_next');
-    assert.equal(expenseEvidenceStepBlocker({ ...input, unsavedReview: true }), 'expenses.doc_review_unsaved_next');
+    assert.equal(expenseEvidenceStepBlocker(input), null);
+    assert.equal(expenseEvidenceStepBlocker({ ...input, unsavedReview: true }), null);
     assert.equal(expenseEvidenceStepBlocker({ ...input, classificationBlocked: true }), 'expenses.evidence_next_needs_classification');
     assert.equal(expenseEvidenceStepBlocker({ ...input, reviewRequired: false }), null);
   });

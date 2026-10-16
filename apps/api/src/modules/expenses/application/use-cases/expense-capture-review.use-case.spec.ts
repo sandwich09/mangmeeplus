@@ -251,15 +251,22 @@ describe('review', () => {
   it('refuses a tax decision from somebody without expense.review', async () => {
     const app = build();
     await assert.rejects(
-      () => reviewAll(app, { taxReview: { 'issuer:ร้านเอ': { vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE', taxEvidenceStatus: 'SUPPORTING_ONLY' } } }),
+      () => reviewAll(app, { taxReview: { 'issuer:ร้านเอ': { vatMode: 'NO_VAT', taxEvidenceStatus: 'SUPPORTING_ONLY' } } }),
       (error: unknown) => status(error) === 403 && code(error) === 'expense_capture_tax_review_forbidden',
     );
+  });
+
+  it('refuses a reviewer-supplied input VAT right in capture review', async () => {
+    const app = build();
+    await assert.rejects(() => reviewAll(app, { taxReview: { 'issuer:ร้านเอ': {
+      vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE', taxEvidenceStatus: 'SUPPORTING_ONLY',
+    } } }, ctx(REVIEWER)), (error: any) => status(error) === 403 && code(error) === 'expense_input_vat_decision_required');
   });
 
   it('stamps a reviewer onto the tax decision and keeps it through the next non-reviewer review', async () => {
     const app = build();
     await reviewAll(app, {
-      taxReview: { 'issuer:ร้านเอ': { vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE', taxEvidenceStatus: 'SUPPORTING_ONLY' } },
+      taxReview: { 'issuer:ร้านเอ': { vatMode: 'NO_VAT', taxEvidenceStatus: 'SUPPORTING_ONLY' } },
     }, ctx(REVIEWER));
     const stored = app.capture.groups.get('g-1').taxReviewJson['issuer:ร้านเอ'];
     assert.equal(stored.reviewedByUserId, 'user-9');
@@ -619,7 +626,7 @@ describe('W04a HTTP DTOs', () => {
     const review = await body(ExpenseCaptureReviewDto, {
       businessUse: 'MIXED', fundingRoute: 'EMPLOYEE', payerUserId: 'user-1', expectedRevision: '2',
       selection: { 'f1:1:1': { companyQuantity: '2' } },
-      taxReview: { 'issuer:x': { vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE', taxEvidenceStatus: 'SUPPORTING_ONLY' } },
+      taxReview: { 'issuer:x': { vatMode: 'NO_VAT', taxEvidenceStatus: 'SUPPORTING_ONLY' } },
       expenseDateChoice: { 'issuer:x': 'payment' },
     }) as ExpenseCaptureReviewDto;
     // `transform` turns the query-style string into the integer the CAS compares.

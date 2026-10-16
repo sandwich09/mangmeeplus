@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { PDFDocument, PDFName } from 'pdf-lib';
 import sharp from 'sharp';
 import { civilDate, formatCompanyLegalAddressForPrint, type CompanyLegalAddress, type PayeeSnapshot, type PayerSnapshot, type WhtFormType } from '@watchdog-bms/contracts';
-import { money, thaiBahtText } from '../../../expenses/domain/logic/substitute-receipt.logic';
+import { fitToWidth, money, thaiBahtText } from '../../../expenses/domain/logic/substitute-receipt.logic';
 
 // Revenue Department printable master: https://rd.go.th/fileadmin/tax_pdf/withhold/approve_wh3_081156.pdf
 const MASTER = join(__dirname, '../../assets/rd-wht50bis.pdf');
@@ -101,8 +101,8 @@ export function makeMarks(fields: WhtCertificateFields, payer: PayerSnapshot, pa
 }
 function overlay(width: number, height: number, marks: Mark[], signature?: WhtCertificateSignature, stamp?: 'SUPERSEDED'): Buffer {
   const text = marks.map((mark) => {
-    const chars = [...mark.text].filter((char) => !/\p{Mark}/u.test(char)).length;
-    const fit = mark.maxWidth && chars * mark.size * 0.67 > mark.maxWidth ? ` textLength="${mark.maxWidth}" lengthAdjust="spacingAndGlyphs"` : '';
+    // The rasterizer ignores textLength: a value wider than its slot gets a smaller font instead.
+    const fit = mark.maxWidth ? fitToWidth(mark.text, mark.maxWidth, mark.size) : '';
     return `<text x="${mark.x}" y="${height - mark.y}" font-size="${mark.size}" text-anchor="${mark.anchor ?? 'start'}"${fit}>${xml(mark.text)}</text>`;
   }).join('');
   const image = signature?.mode === 'AUTO_STAMP' && signature.signatureImageBase64

@@ -1,3 +1,4 @@
+import { formatThaiDate } from '@/common/i18n/thai-date';
 import type { BillingEventDiscountView, BillingOffer, BillingPurchaseMode, BillingPurchaseSource, BillingStatus } from '@watchdog-bms/contracts';
 
 /** Sales-event discount on the package page (sales-event spec §3.4 ก, §8, SD-O12, SD-O13). Plain Thai; never "ตั๋ว". */
@@ -33,7 +34,7 @@ export function eventDiscountCard(view: View | undefined, offer: Pick<BillingOff
 /** Baht with satang only when there are any: "100" or "106.99". */
 export const eventDiscountBaht = (satang: number) =>
   (satang / 100).toLocaleString('th-TH', { minimumFractionDigits: satang % 100 ? 2 : 0, maximumFractionDigits: 2 });
-const day = (value: string) => new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' });
+const day = (value: string) => formatThaiDate(value);
 
 export const eventDiscountCardText = (eventName: string, shownDiscountSatang: number) =>
   `ส่วนลดจากงาน ${eventName} −${eventDiscountBaht(shownDiscountSatang)} บาท`;
@@ -63,7 +64,7 @@ const CREDIT_WHY = {
   CARD_AUTO: 'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้',
   PROMPTPAY_RENEW: 'ร้านนี้ต่ออายุด้วยบิล QR ทุกงวด ส่วนลดจากงานยังใช้กับบิล QR รอบต่ออายุไม่ได้',
   STOPPED: 'การต่ออายุของร้านนี้ปิดอยู่ แต่แพ็กเกจรอบปัจจุบันยังไม่หมด ตอนนี้จึงยังใช้ส่วนลดจากงานไม่ได้',
-  UNPAID: 'ร้านนี้มีค่าต่ออายุที่ยังชำระไม่สำเร็จ ส่วนลดจากงานใช้กับยอดต่ออายุนี้ไม่ได้',
+  UNPAID: 'ร้านนี้มีค่าต่ออายุที่ยังจ่ายไม่สำเร็จ ส่วนลดจากงานใช้กับยอดต่ออายุนี้ไม่ได้',
   OTHER: 'ตอนนี้ร้านนี้ยังใช้ส่วนลดจากงานไม่ได้',
 } as const;
 const creditWhy = ({ renewalState, renewalMode }: BillingEventDiscountView) => CREDIT_WHY[renewalState === 'STOPPED' || renewalState === 'UNPAID' ? renewalState

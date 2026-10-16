@@ -7,6 +7,10 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { formatThaiTime } from '@/common/i18n/thai-date';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { Notice } from '@/common/components/notice';
+import { choiceInputClass } from '@/common/components/field';
+import { primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
 import { type SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { roleDisplayName, roleTemplateChoices } from './role-picker.logic';
 import { employeeFullName } from '@watchdog-bms/contracts';
@@ -44,7 +48,7 @@ import {
 
 // ── Smart Roles: display maps ────────────────────────────────────────────────
 const MODULE_LABEL: Record<string, string> = {
-  foundation: 'งานพื้นฐาน', company: 'ตั้งค่าบริษัท', people: 'พนักงาน',
+  foundation: 'งานพื้นฐาน', company: 'ตั้งค่าร้าน', people: 'พนักงาน',
   inventory: 'สินค้า', sales: 'ลูกค้าและการขาย', billing: 'บิลและใบเสร็จ',
   expense: 'ค่าใช้จ่าย', reimbursement: 'การเบิกจ่าย', procurement: 'ซื้อสินค้าและจ่ายผู้ขาย',
   banking: 'บัญชีธนาคาร', accounting: 'บัญชีและงบการเงิน', tax: 'ภาษี',
@@ -60,7 +64,7 @@ const RISK_STYLE: Record<RiskLevel, string> = {
   CRITICAL: 'bg-red-50 text-red-700 border-red-200',
 };
 const DROP_REASON_LABEL: Record<string, string> = {
-  not_entitled: 'บริษัทนี้ยังใช้งานรายการนี้ไม่ได้',
+  not_entitled: 'แพ็กเกจของร้านยังไม่มีงานนี้',
   above_granter_scope: 'คุณยังมอบหมายงานนี้ให้พนักงานไม่ได้',
   unknown: 'รายการนี้ไม่พร้อมใช้งาน',
 };
@@ -82,7 +86,33 @@ function useRevealedPanel(open: boolean) {
 
 export function RiskBadge({ risk }: { risk: RiskLevel }) {
   if (risk === 'LOW' || risk === 'MEDIUM') return null; // only flag HIGH/CRITICAL to keep the UI calm
-  return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${RISK_STYLE[risk]}`}>{RISK_LABEL[risk]}</span>;
+  return <span className={`rounded border px-1.5 py-0.5 text-xs font-medium ${RISK_STYLE[risk]}`}>{RISK_LABEL[risk]}</span>;
+}
+
+/**
+ * What a role lets a person do, in the builder's own plain sentences (read-only). `packs` and
+ * `corePacks` arrive already limited to what the shop's package has (`roleCanDoPacks`).
+ */
+export function RoleCanDoList({ packs, corePacks }: { packs: CapabilityPackView[]; corePacks: CapabilityPackView[] }) {
+  return (
+    <>
+      {packs.length === 0 ? (
+        <p className="mt-1 text-sm text-gray-600">ทำได้เฉพาะสิ่งที่ทุกบทบาททำได้</p>
+      ) : (
+        <ul className="mt-2 grid gap-2">
+          {packs.map((pack) => (
+            <li key={pack.key} className="flex items-start gap-2 text-sm">
+              <span aria-hidden="true" className="mt-0.5 font-bold text-brand-600">✓</span>
+              <span className="min-w-0"><span className="font-semibold text-gray-900">{pack.nameTh}</span><span className="block text-gray-600">{pack.description}</span></span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {corePacks.length > 0 && (
+        <p className="mt-3 text-sm text-gray-600">ทุกบทบาททำได้: {corePacks.map((pack) => pack.nameTh).join(' · ')}</p>
+      )}
+    </>
+  );
 }
 
 // Packs (excluding core) whose every permission key is present in `keys` — the client-side twin of
@@ -362,7 +392,7 @@ function EmployeesView({ companyId }: { companyId: string }) {
 
       {handoff && (
         <div className="space-y-2 rounded-lg border border-brand-200 bg-brand-50 p-4">
-          <p className="flex items-center gap-2 text-sm font-semibold text-brand-800"><CheckCircleIcon className="h-4 w-4" /> สร้างพนักงานสำเร็จ</p>
+          <p className="flex items-center gap-2 text-sm font-semibold text-brand-800"><CheckCircleIcon className="h-4 w-4" /> สร้างพนักงานแล้ว</p>
           <p className="text-sm text-gray-700">ชื่อผู้ใช้: <span className="font-mono font-semibold">{handoff.username}</span></p>
           <p className="text-sm text-gray-700">รหัสผ่าน: <span className="font-mono font-semibold">{handoff.temporaryPassword}</span></p>
           <p className="text-xs text-gray-500">ใช้วันเดือนปีเกิดเป็นตัวเลข 8 หลัก เรียงวัน เดือน ปี ค.ศ. — ไม่ต้องเปลี่ยนรหัสผ่านตอนเข้าสู่ระบบครั้งแรก</p>
@@ -442,7 +472,7 @@ function CreateEmployeeForm({ companyId, roles, onCancel, onCreated }: { company
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
-    if (roleIds.length !== 1) { setError('กรุณาเลือกบทบาทเพียง 1 บทบาท'); return; }
+    if (roleIds.length !== 1) { setError('เลือกบทบาทเพียง 1 บทบาท'); return; }
     setSaving(true); setError(null);
     try {
       const result = await createEmployee(companyId, {
@@ -478,7 +508,7 @@ function CreateEmployeeForm({ companyId, roles, onCancel, onCreated }: { company
           <input className={inputClass} required pattern="[a-zA-Z0-9._-]+" value={username} onChange={(e) => setUsername(e.target.value)} />
         </div>
           <div>
-          <FieldLabel>ชื่อที่ใช้แสดง</FieldLabel>
+          <FieldLabel>ชื่อที่แสดง</FieldLabel>
           <input className={inputClass} required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
         </div>
         <div>
@@ -568,7 +598,7 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
   };
 
   const saveEmployee = async () => {
-    if (roleIds.length !== 1) { setError('กรุณาเลือกบทบาทเพียง 1 บทบาท'); return; }
+    if (roleIds.length !== 1) { setError('เลือกบทบาทเพียง 1 บทบาท'); return; }
     if (branchScopeMode === 'SELECTED_BRANCHES' && scopeBranchIds.length === 0) {
       setError('เลือกอย่างน้อย 1 สาขาสำหรับขอบเขตแบบเฉพาะสาขา'); return;
     }
@@ -596,7 +626,7 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
           </SectionTitle>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <div>
-              <FieldLabel>ชื่อที่ใช้แสดง</FieldLabel>
+              <FieldLabel>ชื่อที่แสดง</FieldLabel>
               <input className={inputClass} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
             </div>
             <div>
@@ -676,8 +706,8 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
           <CopyIcon className="h-4 w-4" />
           {busy === 'qr' ? 'กำลังสร้าง...' : 'สร้าง QR เชื่อม LINE'}
         </button>
-        <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy !== null)} onClick={() => run('revoke', async () => { await revokeEmployeeLineLinkToken(companyId, employee.id); onChanged(); }, 'ยกเลิกลิงก์ LINE ที่รอดำเนินการแล้ว')}>
-          ยกเลิกลิงก์ LINE ที่รอดำเนินการ
+        <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy !== null)} onClick={() => run('revoke', async () => { await revokeEmployeeLineLinkToken(companyId, employee.id); onChanged(); }, 'ยกเลิกลิงก์ LINE ที่รอทำแล้ว')}>
+          ยกเลิกลิงก์ LINE ที่รอทำ
         </button>
         {employee.status !== 'ACTIVE' && employee.status !== 'DRAFT' && (
           <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy !== null)} onClick={() => run('enable', async () => { await setEmployeeStatus(companyId, employee.id, 'ACTIVE'); onChanged(); }, 'เปิดใช้งานพนักงานอีกครั้งแล้ว')}>
@@ -762,7 +792,7 @@ function RolesView({ companyId }: { companyId: string }) {
     }
 
     if (smartWarnings.length > 0) {
-      setSmartRolesWarning(`โหลด${smartWarnings.join('และ')}ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง`);
+      setSmartRolesWarning(`โหลด${smartWarnings.join('และ')}ไม่สำเร็จ ลองอีกครั้ง`);
     }
 
     setError(nextError);
@@ -926,10 +956,19 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [companyId, selectedPacks, preservedKeys, initial?.id, roleOptionsAvailable]);
 
+  const [nameMissing, setNameMissing] = useState(false);
+  // More than a handful of choices get a search box (thai-ux-standard 3.7). It only narrows what is drawn:
+  // a ticked choice stays ticked while it is out of sight.
+  const [packQuery, setPackQuery] = useState('');
+  const packMatches = (pack: CapabilityPackView) => {
+    const query = packQuery.trim().toLowerCase();
+    return !query || `${pack.nameTh} ${pack.description}`.toLowerCase().includes(query);
+  };
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!roleOptionsAvailable) { setError('ยังโหลดตัวเลือกไม่ได้ กรุณายกเลิกแล้วลองใหม่อีกครั้ง'); return; }
-    if (selectedPacks.length === 0 && preservedKeys.length === 0) { setError('กรุณาเลือกงานอย่างน้อย 1 รายการ'); return; }
+    if (!roleOptionsAvailable) { setError('ยังโหลดตัวเลือกไม่ได้ ยกเลิกแล้วลองอีกครั้ง'); return; }
+    if (!trimmed(name)) { setNameMissing(true); document.getElementById('role-builder-name')?.focus(); return; }
+    if (selectedPacks.length === 0 && preservedKeys.length === 0) { setError('เลือกอย่างน้อย 1 งาน'); return; }
     setSaving(true); setError(null);
     try { await onSubmit({ name: trimmed(name), description: trimmed(description) || undefined, capabilityPackKeys: selectedPacks, permissionKeys: preservedKeys }); }
     // A refusal that names its rule (a reserved role name) has its own sentence; the rest stay generic.
@@ -946,43 +985,43 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
   }, [templates, allPacks, availablePackKeys]);
 
   return (
-    <form onSubmit={submit} className={`${panelClass} min-w-0 overflow-hidden lg:col-span-2`}>
-      <div className="border-b border-gray-100 bg-linear-to-r from-brand-25 to-white px-5 py-4">
-        <SectionTitle eyebrow={initial ? 'แก้หน้าที่พนักงาน' : 'หน้าที่พนักงานใหม่'} title={initial ? 'แก้ไขหน้าที่' : 'เพิ่มหน้าที่'}>
-          หน้าที่นี้จะบอกว่าพนักงานทำอะไรได้ เลือกงานด้านล่าง แล้วระบบจะตั้งค่าการเข้าใช้ให้เอง
-        </SectionTitle>
-      </div>
-      <div className="space-y-5 p-5">
-      {error && <ErrorBanner message={error} />}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <FieldLabel>ชื่อตำแหน่งหรือหน้าที่</FieldLabel>
-          <input className={inputClass} required value={name} onChange={(e) => setName(e.target.value)} />
+    <form onSubmit={submit} noValidate className={`${panelClass} min-w-0 lg:col-span-2`}>
+      <div className="space-y-5 p-4 sm:p-6">
+      <h2 className="break-words text-xl font-bold text-gray-900">{initial ? `แก้ไขบทบาท ${roleDisplayName(initial, locale)}` : 'เพิ่มบทบาท'}</h2>
+      {error && <Notice tone="error">{error}</Notice>}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <label htmlFor="role-builder-name" className="text-sm font-medium text-gray-700">ชื่อบทบาท <span className="text-red-600" aria-hidden="true">*</span></label>
+          <input id="role-builder-name" className="mangmee-input" aria-invalid={nameMissing || undefined} value={name} onChange={(e) => { setName(e.target.value); setNameMissing(false); }} />
+          {nameMissing && <span role="alert" className="text-sm text-red-600">กรอกชื่อบทบาท</span>}
         </div>
-        <div>
-          <FieldLabel>อธิบายหน้าที่นี้ (ถ้ามี)</FieldLabel>
-          <input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} />
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <label htmlFor="role-builder-description" className="text-sm font-medium text-gray-700">คำอธิบาย <span className="font-normal text-gray-500">(ถ้ามี)</span></label>
+          <input id="role-builder-description" className="mangmee-input" value={description} onChange={(e) => setDescription(e.target.value)} />
         </div>
       </div>
+      {allPacks.some((pack) => pack.isCore) && (
+        <p className="text-sm text-gray-600">ทุกบทบาททำได้อยู่แล้ว: {allPacks.filter((pack) => pack.isCore).map((pack) => pack.nameTh).join(' · ')}</p>
+      )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Left: guided selection */}
+      <div className="space-y-5">
+        {/* Guided selection */}
         <div className="min-w-0 space-y-4">
           {/* Step 1 — Job preset */}
           {roleOptionsAvailable && byIndustry.length > 0 && (
             <div>
-              <div className="mb-1 text-xs font-bold text-gray-600">1. เลือกตัวอย่างหน้าที่ (ข้ามได้)</div>
-              <p className="mb-2 text-xs leading-5 text-gray-500">เลือกแบบที่ใกล้เคียงเพื่อเริ่มต้น ระบบจะเปลี่ยนรายการที่เลือกอยู่ให้เป็นตัวอย่างนี้ แล้วคุณแก้รายการด้านล่างต่อได้</p>
+              <h3 className="mb-1 text-sm font-semibold text-gray-900">เริ่มจากตัวอย่าง (ข้ามได้)</h3>
+              <p className="mb-2 text-sm text-gray-600">กดตัวอย่างแล้วรายการที่เลือกด้านล่างจะเปลี่ยนตาม</p>
               <div className={`${mutedPanelClass} space-y-3 p-3`}>
                 {byIndustry.map(([industry, tpls]) => (
                   <div key={industry}>
-                    <div className="mb-1 text-[11px] font-semibold uppercase text-gray-400">{INDUSTRY_LABEL[industry] ?? 'งานทั่วไป'}</div>
+                    <div className="mb-1 text-sm font-semibold text-gray-700">{INDUSTRY_LABEL[industry] ?? 'งานทั่วไป'}</div>
                     <div className="grid gap-2 sm:grid-cols-2">
                       {tpls.map((t) => (
                         <button type="button" key={t.key} onClick={() => applyPreset(t)}
-                          className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-left text-xs text-gray-700 hover:border-brand-300 hover:bg-brand-50">
+                          className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 py-2 text-left text-sm text-gray-700 hover:border-brand-300 hover:bg-brand-50">
                           <span className="block font-semibold">{t.nameTh}</span>
-                          <span className="mt-1 block leading-5 text-gray-500">{t.description}</span>
+                          <span className="mt-0.5 block text-gray-600">{t.description}</span>
                         </button>
                       ))}
                     </div>
@@ -995,28 +1034,33 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
           {/* Step 2 — Capability packs */}
           {roleOptionsAvailable && (
             <div>
-              <div className="mb-1 text-xs font-bold text-gray-600">{byIndustry.length > 0 ? '2. เลือกสิ่งที่พนักงานทำได้' : 'เลือกสิ่งที่พนักงานทำได้'}</div>
-              <p className="mb-2 text-xs leading-5 text-gray-500">เลือกได้หลายข้อ ข้อความใต้แต่ละข้อบอกว่าเมื่อเลือกแล้ว พนักงานจะดู แก้ อนุมัติ หรือจ่ายอะไรได้บ้าง</p>
-              <div className={`${mutedPanelClass} max-h-96 space-y-3 overflow-y-auto p-3`}>
+              <h3 className="text-sm font-semibold text-gray-900">เลือกสิ่งที่บทบาทนี้ทำได้เพิ่ม</h3>
+              {/* What the badge means, once. */}
+              <p className="mb-2 mt-1 text-sm text-gray-600">งานที่ขึ้นว่า “เสี่ยงสูง” ทำผิดแล้วกระทบทั้งร้าน ให้เฉพาะคนที่ไว้ใจ</p>
+              {availablePackKeys.size > 6 && (
+                <input type="search" className="mangmee-input mb-3" value={packQuery} onChange={(e) => setPackQuery(e.target.value)}
+                  placeholder="ค้นหางาน เช่น เบิก ภาษี" aria-label="ค้นหางานที่บทบาทนี้ทำได้" />
+              )}
+              <div className="space-y-4">
                 {packModules.map(({ module, packs }) => {
-                  const shown = packs.filter((p) => availablePackKeys.has(p.key));
+                  const shown = packs.filter((p) => availablePackKeys.has(p.key) && packMatches(p));
                   if (shown.length === 0) return null;
                   return (
                     <div key={module}>
-                      <div className="mb-1 text-[11px] font-semibold uppercase text-gray-400">{MODULE_LABEL[module] ?? 'งานอื่น ๆ'}</div>
+                      <div className="mb-1.5 text-sm font-semibold text-gray-700">{MODULE_LABEL[module] ?? 'งานอื่น ๆ'}</div>
                       {module === 'expense' && <DisbursementVoucherAccessHint entryOpen={disbursementEntryOpen} />}
                       <div className="space-y-1.5">
                         {shown.map((p) => {
                           const checked = selectedPacks.includes(p.key);
                           return (
-                            <label key={p.key} className={`flex min-h-11 min-w-0 items-start gap-2 rounded-lg border px-3 py-2 text-xs [overflow-wrap:anywhere] ${checked ? 'border-brand-200 bg-brand-50' : 'border-gray-200 bg-white hover:border-brand-300'}`}>
-                              <input type="checkbox" className="mt-0.5" checked={checked} onChange={() => togglePack(p.key)} />
+                            <label key={p.key} className={`flex min-h-11 min-w-0 items-start gap-3 rounded-lg border px-3 py-2.5 text-sm [overflow-wrap:anywhere] ${checked ? 'border-brand-200 bg-brand-50' : 'border-gray-200 bg-white hover:border-brand-300'}`}>
+                              <input type="checkbox" className={choiceInputClass} checked={checked} onChange={() => togglePack(p.key)} />
                               <span className="min-w-0 flex-1">
                                 <span className="flex flex-wrap items-center gap-1.5">
-                                  <span className="font-medium text-gray-800">{p.nameTh}</span>
+                                  <span className="font-semibold text-gray-800">{p.nameTh}</span>
                                   <RiskBadge risk={p.riskLevel} />
                                 </span>
-                                <span className="block text-[11px] text-gray-500">{p.description}</span>
+                                <span className="block text-gray-600">{p.description}</span>
                               </span>
                             </label>
                           );
@@ -1031,74 +1075,53 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
                   ตอนนี้ยังไม่มีงานเพิ่มเติมให้เลือก
                 </div>
               )}
+              {availablePackKeys.size > 0 && !allPacks.some((p) => availablePackKeys.has(p.key) && packMatches(p)) && (
+                <p className="text-sm text-gray-600">ไม่พบงานที่ตรงกับ “{packQuery.trim()}”</p>
+              )}
               {preservedKeys.length > 0 && (
-                <details className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs" open>
-                  <summary className="cursor-pointer font-semibold">งานเดิมที่จะเก็บไว้ ({preservedKeys.length} รายการ)</summary>
-                  <p className="mt-2 text-gray-600">รายการเหล่านี้ไม่ตรงกับงานตัวเลือกข้อใดข้อหนึ่ง ระบบจึงแสดงแยกไว้ เมื่อบันทึกจะยังเก็บรายการเดิมไว้ แต่ถ้าเลือกตัวอย่างหน้าที่ รายการที่เลือกอยู่จะเปลี่ยนตามตัวอย่างนั้น</p>
+                <div className="mt-3">
+                  {/* Rights the role already holds that have no box above (for one, those of a feature the
+                      shop's package does not have). They are sent back unchanged on save. */}
+                  <Notice tone="info">สิทธิ์เดิมอีก {preservedKeys.length} ข้อของบทบาทนี้ไม่มีช่องให้ติ๊ก บันทึกแล้วยังอยู่ครบ ยกเว้นเมื่อกดเลือกตัวอย่าง</Notice>
                   {/* Listed only where each line can say something: the role page has no wording for single
                       rights, and printed one sentence 52 times under a standard role. The count stays above. */}
                   {permissionCatalog.length > 0 && (
-                    <ul className="mt-2 list-disc space-y-1 pl-4">
+                    <ul className="mt-2 list-disc space-y-1 pl-4 text-sm">
                       {preservedKeys.map((key) => <li key={key}>{permissionCatalog.find((p) => p.key === key)?.description ?? 'สิทธิ์เดิมที่ตั้งไว้'}</li>)}
                     </ul>
                   )}
-                </details>
+                </div>
               )}
-              <p className="mt-1 text-[11px] text-gray-400">การเข้าใช้งานขึ้นอยู่กับสถานะบัญชี สิทธิ์ และเมนูที่ร้านเปิดใช้</p>
             </div>
           )}
 
           {!roleOptionsAvailable && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
-              โหลดรายการงานไม่สำเร็จ กรุณายกเลิกแล้วลองใหม่อีกครั้ง
-            </div>
+            <Notice tone="warning">โหลดรายการงานไม่สำเร็จ ยกเลิกแล้วลองอีกครั้ง</Notice>
           )}
         </div>
 
-        {/* Right: live preview */}
-        <div className="min-w-0 space-y-3 rounded-lg border border-brand-100 bg-brand-50/70 p-4">
-          <div className="flex flex-wrap items-center justify-between">
-            <div className="text-sm font-bold text-gray-800">พนักงานที่ได้หน้าที่นี้จะทำอะไรได้</div>
-            {previewing && <span className="text-[11px] text-gray-400">กำลังคำนวณ...</span>}
+        {/* The count is of the boxes ticked on this screen, and so is what was added or taken out: the
+            server's own count also holds choices this shop's package does not have. */}
+        {roleOptionsAvailable && (
+          <div className="space-y-2">
+            <p className="text-sm text-gray-600">
+              เลือกไว้ {selectedPacks.length} งาน
+              {initial && selectedPacks.some((key) => !initSelected.includes(key)) && <span className="text-green-700"> · เพิ่ม {selectedPacks.filter((key) => !initSelected.includes(key)).length}</span>}
+              {initial && initSelected.some((key) => !selectedPacks.includes(key)) && <span className="text-red-700"> · เอาออก {initSelected.filter((key) => !selectedPacks.includes(key)).length}</span>}
+            </p>
+            {preview && preview.droppedKeys.length > 0 && (
+              <Notice tone="warning">
+                บางงานเลือกไม่ได้: {[...new Set(preview.droppedKeys.map((d) => d.reason))].map((r) => `${DROP_REASON_LABEL[r] ?? 'งานนี้ไม่พร้อมใช้'} (${preview.droppedKeys.filter((d) => d.reason === r).length})`).join(' · ')}
+              </Notice>
+            )}
           </div>
-          {!roleOptionsAvailable && <p className="text-xs text-gray-500">ยังแสดงตัวอย่างไม่ได้ กรุณาลองใหม่อีกครั้ง</p>}
-          {!preview && !previewing && roleOptionsAvailable && <p className="text-xs text-gray-400">เลือกงานทางซ้ายเพื่อดูตัวอย่าง</p>}
-          {preview && (
-            <>
-              <div className="text-[11px] text-gray-500">เลือกไว้ {preview.capabilities.length} รายการ</div>
-              <div className="flex flex-wrap gap-1">
-                {preview.capabilities.length === 0 && <span className="text-xs text-gray-400">ยังไม่มีกลุ่มงานที่เลือก</span>}
-                {preview.capabilities.map((c) => (
-                  <span key={c.packKey} className="inline-flex items-center gap-1 rounded bg-white border border-brand-100 px-2 py-0.5 text-[11px] text-brand-700">
-                    {c.nameTh}<RiskBadge risk={c.riskLevel} />
-                  </span>
-                ))}
-              </div>
-              {initial && ((preview.addedVsCurrent?.length ?? 0) > 0 || (preview.removedVsCurrent?.length ?? 0) > 0) && (
-                <div className="text-[11px] text-gray-500">
-                  {(preview.addedVsCurrent?.length ?? 0) > 0 && <span className="text-green-700">เพิ่ม {preview.addedVsCurrent!.length} รายการ</span>}{' '}
-                  {(preview.removedVsCurrent?.length ?? 0) > 0 && <span className="text-red-700">เอาออก {preview.removedVsCurrent!.length} รายการ</span>}
-                </div>
-              )}
-              {preview.droppedKeys.length > 0 && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
-                  <div className="font-medium">บางรายการเลือกไม่ได้:</div>
-                  <ul className="list-disc pl-4">
-                    {[...new Set(preview.droppedKeys.map((d) => d.reason))].map((r) => (
-                      <li key={r}>{DROP_REASON_LABEL[r] ?? 'รายการนี้ไม่พร้อมใช้งาน'} ({preview.droppedKeys.filter((d) => d.reason === r).length})</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </>
-          )}
-        </div>
+        )}
       </div>
 
-      <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4">
-        <button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button>
-        <button type="submit" className={btnClass} disabled={saving || !roleOptionsAvailable} aria-busy={Boolean(saving)}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
-      </div>
+      <ActionGroup className="border-t border-gray-100 pt-4">
+        <button type="button" className={secondaryButtonClass} disabled={saving} onClick={onCancel}>ยกเลิก</button>
+        <button type="submit" className={primaryButtonClass} disabled={saving || !roleOptionsAvailable} aria-busy={Boolean(saving)}>บันทึกบทบาท</button>
+      </ActionGroup>
       </div>
     </form>
   );

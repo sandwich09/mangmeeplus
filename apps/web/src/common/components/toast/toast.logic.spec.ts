@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addToast, removeToast, toastDuration, visibleToasts } from './toast.logic';
+import { addToast, removeToast, toastDuration, visibleToasts, toastStackStyle } from './toast.logic';
 import type { ToastItem } from './toast.model';
 
 test('adds toasts with stable ids from the injected clock', () => {
@@ -11,11 +11,12 @@ test('adds toasts with stable ids from the injected clock', () => {
   assert.deepEqual(second.map((item) => item.id), [100, 200]);
 });
 
-test('deduplicates the same tone and message only within the one-second window', () => {
+test('deduplicates a visible message even after one second, and permits it after dismissal', () => {
   const first = addToast([], { tone: 'success', message: 'Saved' }, 100);
   assert.equal(addToast(first, { tone: 'success', message: 'Saved' }, 1_099), first);
   assert.equal(addToast(first, { tone: 'warning', message: 'Saved' }, 1_099).length, 2);
-  assert.equal(addToast(first, { tone: 'success', message: 'Saved' }, 1_100).length, 2);
+  assert.equal(addToast(first, { tone: 'success', message: 'Saved' }, 3_000), first);
+  assert.equal(addToast(removeToast(first, 100), { tone: 'success', message: 'Saved' }, 3_000).length, 1);
 });
 
 test('caps the queue at three and drops the oldest toast', () => {
@@ -51,4 +52,12 @@ test('uses four-second success and warning durations and six seconds for errors'
   assert.equal(toastDuration('success'), 4_000);
   assert.equal(toastDuration('warning'), 4_000);
   assert.equal(toastDuration('error'), 6_000);
+});
+
+
+test('BEH-Q phones place toasts above bottom actions; wide screens clear the top stack', () => {
+  const bounds = { top: 140, bottom: 720, left: 0, right: 390 };
+  assert.deepEqual(toastStackStyle(390, 844, bounds), { top: 'auto', bottom: 'calc(124px + 0.75rem + env(safe-area-inset-bottom, 0px))' });
+  assert.equal(toastStackStyle(1556, 900, { ...bounds, bottom: 900 }).top, 'calc(140px + 0.75rem + env(safe-area-inset-top, 0px))');
+  assert.equal(toastStackStyle(390, 844, { ...bounds, bottom: 844 }).bottom, 'calc(0px + 0.75rem + env(safe-area-inset-bottom, 0px))');
 });

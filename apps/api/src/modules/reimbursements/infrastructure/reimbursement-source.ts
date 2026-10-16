@@ -36,7 +36,7 @@ export async function readReimbursementSource(tx: Prisma.TransactionClient, comp
     // no longer blocks the payer's own claim — and it still never lets a third party claim.
     throw sourceError('reimbursement_source_wrong_payer');
   }
-  if (new Decimal(String(expense.whtAmount ?? 0)).gt(0) || expense.lines.some(line => line.whtAmount.gt(0)) || ['CLAIMABLE', 'NEEDS_REVIEW'].includes(expense.inputVatClaimStatus) || expense.vatMode === 'NEEDS_REVIEW' || expense.taxEvidenceStatus === 'NEEDS_REVIEW') {
+  if (new Decimal(String(expense.whtAmount ?? 0)).gt(0) || expense.lines.some(line => line.whtAmount.gt(0)) || expense.vatMode === 'NEEDS_REVIEW' || expense.taxEvidenceStatus === 'NEEDS_REVIEW') {
     throw sourceError('reimbursement_source_tax_review_required');
   }
   const links = await tx.attachmentLink.findMany({ where: { companyId, targetType: 'expense.record', targetId: expenseId }, select: { attachmentId: true, purpose: true } });
@@ -150,8 +150,8 @@ export async function assertReimbursementSources(tx: any, request: { companyId: 
     const current = await readReimbursementSource(tx, request.companyId, request.requesterUserId, request.branchId!, request.currency, pinned.expenseId);
     // Background review stamps may advance updatedAt without changing any approved fact.
     // The revision remains the draft picker's CAS token; approval is bound to actual facts.
-    const { expenseUpdatedAt: _currentRevision, ...currentFacts } = current;
-    const { expenseUpdatedAt: _pinnedRevision, ...pinnedFacts } = pinned;
+    const { expenseUpdatedAt: _currentRevision, inputVatClaimStatus: _currentRight, ...currentFacts } = current;
+    const { expenseUpdatedAt: _pinnedRevision, inputVatClaimStatus: _pinnedRight, ...pinnedFacts } = pinned;
     if (!isDeepStrictEqual(currentFacts, pinnedFacts)) throw new ConflictException({ code: 'reimbursement_source_changed' });
     if (line.linkedExpenseId !== pinned.expenseId || !new Decimal(line.amount).eq(pinned.totals.netPayableAmount) || coerceCivilDate(line.incurredDate) !== coerceCivilDate(pinned.expenseDate)) throw sourceError('reimbursement_source_fields_mismatch');
   }

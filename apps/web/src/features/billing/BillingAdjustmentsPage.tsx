@@ -159,5 +159,5 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
     <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2">{admin?'ข้อมูลอ้างอิงสำหรับตรวจสอบ':'เลขอ้างอิงสำหรับแจ้งทีมงาน'}</summary><p className="break-all">{admin?`รหัสรายการ ใช้ค้นประวัติในระบบ: ${invoiceId}`:billingSupportReference(invoiceId)}</p></details>
   </>;
   return admin ? <main className="mx-auto max-w-4xl space-y-5 break-words p-4 text-base sm:p-8">{content}</main>
-    : <BillingCustomerFrame title="เอกสารการชำระเงิน" description="เปิดเอกสารจากผู้ให้บริการรับชำระเงินสำหรับรายการชำระเงินนี้" backHref={back} backLabel="กลับไปประวัติการชำระเงิน" onBack={preview?.back} showBackInWorkspace>{content}</BillingCustomerFrame>;
+    : <BillingCustomerFrame title="เอกสารการจ่ายเงิน" description="เปิดเอกสารจากผู้ให้บริการรับเงินสำหรับรายการจ่ายเงินนี้" backHref={back} backLabel="กลับไปประวัติการจ่ายเงิน" onBack={preview?.back} showBackInWorkspace>{content}</BillingCustomerFrame>;
 }

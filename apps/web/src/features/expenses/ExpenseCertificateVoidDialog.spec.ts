@@ -23,7 +23,7 @@ function setup(kind: 'SYSTEM' | 'EXTERNAL' = 'SYSTEM', number: string | null = '
   return { ...dialog, successes, certificate, closed: () => closed, refreshed: () => refreshed, restore: () => transport.mock.restore() };
 }
 
-test('void gives truthful SYSTEM/EXTERNAL copy, full-width safe-area buttons, and no backdrop close', () => {
+test('void gives truthful SYSTEM/EXTERNAL copy, plain footer buttons with the safe one first, and no backdrop close', () => {
   for (const kind of ['SYSTEM', 'EXTERNAL'] as const) for (const number of ['WHT-1', null]) {
     const dialog = setup(kind, number);
     try {
@@ -32,7 +32,8 @@ test('void gives truthful SYSTEM/EXTERNAL copy, full-width safe-area buttons, an
       assert.doesNotMatch(html, /กรุณาแจ้งผู้รับเงิน/);
       assert.match(html, /ยังไม่ได้ยื่นภาษีหัก ณ ที่จ่ายของรายการนี้/);
       assert.doesNotMatch(html, /ข้อมูลที่ยื่นไว้ไม่เปลี่ยนตาม/);
-      assert.match(html, /mangmee-safe-bottom/); assert.match(html, /class="mangmee-safe-bottom grid w-full gap-2"/); assert.doesNotMatch(html, /sm:w-auto/);
+      // The footer is the two buttons themselves (the shared footer sizes, stacks and pads them): the one that backs out first, the red one last.
+      assert.match(html, /<\/form><button[^>]*>ไม่ยกเลิก<\/button><button[^>]*type="submit"[^>]*mangmee-btn-danger[^>]*>[^<]+<\/button><\/section>/); assert.doesNotMatch(html, /mangmee-safe-bottom|sm:w-auto/);
       assert.equal(dialog.find('Modal').closeOnBackdrop, false);
       assert.equal(html.includes('เลขที่'), Boolean(number));
       if (kind === 'SYSTEM') assert.doesNotMatch(html, /ระบบยกเลิกใบที่ร้านออกเอง/);
@@ -54,9 +55,9 @@ test('void requires the server\'s 3-character reason and the tick, keeps the rea
     assert.equal(dialog.find('button', p => p.type === 'submit').disabled, true);
     dialog.find('input').onChange({ target: { checked: true } });
     // One character is refused by the server (expense_void_reason_required): the button says so first.
-    assert.doesNotMatch(dialog.render(), /อย่างน้อย 3 ตัวอักษร/);
+    assert.doesNotMatch(dialog.render(), /เหตุผลต้องมี 3–500 ตัวอักษร/);
     dialog.find('form').onSubmit({ preventDefault() {} });
-    assert.match(dialog.render(), /อย่างน้อย 3 ตัวอักษร/);
+    assert.match(dialog.render(), /เหตุผลต้องมี 3–500 ตัวอักษร/);
     assert.equal(dialog.find('button', p => p.type === 'submit').disabled, false);
     dialog.find('textarea').onChange({ target: { value: 'แก้ยอด' } }); dialog.render();
     assert.equal(dialog.find('button', p => p.type === 'submit').disabled, false);
@@ -122,21 +123,20 @@ test('certificate permission refusal appears before any form for both kinds', ()
       const html = dialog.render();
       assert.ok(html.includes(expenseVoidCertificatePermissionMessage(kind, 'WHT-1')));
       assert.doesNotMatch(html, /textarea|checkbox|<form/);
-      assert.match(html, />ปิด<\/button>/);
+      assert.match(html, />ไม่ยกเลิก<\/button>/);
       assert.equal((html.match(/<button/g) ?? []).length, 1);
     } finally { dialog.restore(); }
   }
 });
 
-test('a filed withholding month is refused before any form, with the server\'s sentence; other locked forms do not stop the dialog', () => {
+test('filed withholding payments still offer cancellation with reason and attestation', () => {
   for (const kind of ['SYSTEM', 'EXTERNAL'] as const) for (const formType of ['PND3', 'PND53'] as const) {
     const dialog = setup(kind, 'WHT-1', [], { lockedTaxPeriods: [{ formType: 'PP30', periodKey: '2026-09' }, { formType, periodKey: '2026-09' }] });
     try {
       const html = dialog.render().replaceAll('&quot;', '"');
-      assert.ok(html.includes(EXPENSE_VOID_CERTIFICATE_WORDS.periodLocked(kind, '2026-09', formType)));
-      assert.match(html, /ก.ย. 2569/); assert.doesNotMatch(html, /09\/2569/);
-      assert.doesNotMatch(html, /textarea|checkbox|<form/);
-      assert.equal((html.match(/<button/g) ?? []).length, 1); assert.match(html, />ปิด<\/button>/);
+      assert.match(html, /textarea|<form/);
+      assert.doesNotMatch(html, /จึงยกเลิกเอกสารนี้ไม่ได้/);
+      assert.match(html, /ยื่นไปแล้ว จะแจ้งคนที่ยื่นภาษีให้ร้านยื่นแบบแก้ไข/);
     } finally { dialog.restore(); }
   }
   const vatOnly = setup('SYSTEM', 'WHT-1', [], { lockedTaxPeriods: [{ formType: 'PP30', periodKey: '2026-09' }] });

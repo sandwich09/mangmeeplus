@@ -69,7 +69,7 @@ test.describe('appendix §25 evidence — the three lanes, photographed', () => 
       await capture(page, 'upload-three-files-picked', manifest, errors);
 
       // 2. Sent one at a time; the landing is the list with the newest highlighted.
-      await page.getByRole('button', { name: /ส่งไฟล์ทั้งหมด|ให้ AI อ่านใบเสร็จ/ }).click();
+      await page.getByRole('button', { name: /^ส่งใบเสร็จ/ }).click();
       await page.waitForURL(/\/expenses\?highlight=/, { timeout: 280_000 });
       await expect(page.locator('[data-highlighted="true"]:visible').first()).toBeVisible();
       await capture(page, 'list-after-three-files', manifest, errors);
@@ -106,7 +106,7 @@ test.describe('appendix §25 evidence — the three lanes, photographed', () => 
       await page.locator('input[type=file].hidden').first().setInputFiles({
         name: `w09-single-${tag}.png`, mimeType: 'image/png', buffer: PNG,
       });
-      await page.getByRole('button', { name: 'ให้ AI อ่านใบเสร็จ', exact: true }).click();
+      await page.getByRole('button', { name: /^ส่งใบเสร็จ(?: \d+ ใบ)?$/ }).click();
       await page.waitForURL(/\/expenses\/(?!upload$)[^/?#]+$/, { timeout: 150_000 });
       expect((await singleIds()).length).toBe(1);
       await capture(page, 'review-single-image', manifest, errors);

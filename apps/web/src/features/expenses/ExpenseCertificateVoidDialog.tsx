@@ -4,7 +4,7 @@ import { ExpenseDisbursementCancellation } from './ExpenseDisbursementCancellati
 import type { ExpenseDetail } from './expenses.model';
 
 import { useState } from 'react';
-import { EXPENSE_VOID_CERTIFICATE_WORDS, EXPENSE_CORRECTION_WORDS, expenseVoidCertificatePermissionMessage, isExpenseVoidReason, type ExpenseCorrectionCapabilities } from '@watchdog-bms/contracts';
+import { EXPENSE_CORRECTION_WORDS, expenseVoidCertificatePermissionMessage, isExpenseVoidReason, type ExpenseCorrectionCapabilities } from '@watchdog-bms/contracts';
 import { Modal } from '@/common/components/modal/Modal';
 import { useToast } from '@/common/components/toast';
 import { findForbiddenChars, REASON_MAX_LENGTH, sanitizeReasonInput } from '@/common/forms/sanitize';
@@ -20,9 +20,9 @@ export function expenseCertificateVoidedMessage(certificate: Pick<ExpenseCertifi
     : `ยกเลิกเอกสารแล้ว และยกเลิกการบันทึกหนังสือรับรอง${number} แล้ว`;
 }
 
-export function ExpenseCertificateVoidDialog({ companyId, expenseId, certificate, payments = [], lockedTaxPeriods, open = true, onClose, onVoided }: {
+export function ExpenseCertificateVoidDialog({ companyId, expenseId, certificate, payments = [], open = true, onClose, onVoided }: {
   open?: boolean; companyId: string; expenseId: string; certificate: ExpenseCertificate; payments?: ExpenseDetail['payments'];
-  /** From the page's capabilities: a filed withholding month is refused by the server, so it is said before any form. */
+  /** Retained for callers: filed withholding facts block edits, not cancellation. */
   lockedTaxPeriods?: ExpenseCorrectionCapabilities['lockedTaxPeriods'];
   onClose: () => void; onVoided: () => Promise<void>;
 }) {
@@ -33,10 +33,7 @@ export function ExpenseCertificateVoidDialog({ companyId, expenseId, certificate
   const toast = useToast();
   const external = certificate.kind === 'EXTERNAL';
   const number = certificate.number ? ` เลขที่ ${certificate.number}` : '';
-  // The server's own order: the certificate permission, then the filed withholding month.
-  const filed = lockedTaxPeriods?.find(period => period.formType === 'PND3' || period.formType === 'PND53');
-  const refusal = !certificate.canCancel ? expenseVoidCertificatePermissionMessage(certificate.kind, certificate.number)
-    : filed ? EXPENSE_VOID_CERTIFICATE_WORDS.periodLocked(certificate.kind, filed.periodKey, filed.formType) : null;
+  const refusal = !certificate.canCancel ? expenseVoidCertificatePermissionMessage(certificate.kind, certificate.number) : null;
   const submit = async (successMessage: (message: string) => string) => {
     if (refusal || busy || !choice) return;
     if (!isExpenseVoidReason(reason) || reason.trim().length > REASON_MAX_LENGTH) { setError(EXPENSE_CORRECTION_WORDS.reasonRequired); return; }
@@ -55,16 +52,16 @@ export function ExpenseCertificateVoidDialog({ companyId, expenseId, certificate
   if (!open) return null;
   if (refusal) return <Modal open title={external ? 'ยกเลิกเอกสารที่บันทึกหนังสือรับรองไว้' : 'ยกเลิกเอกสารที่ออกหนังสือรับรองแล้ว'}
     size="sm" closeOnBackdrop={false} onClose={onClose}
-    footer={<div className="mangmee-safe-bottom w-full"><button type="button" className={`${ghostClass} w-full`} onClick={onClose}>ปิด</button></div>}>
+    footer={<button type="button" className={ghostClass} onClick={onClose}>ไม่ยกเลิก</button>}>
     <ErrorBanner message={refusal} />
   </Modal>;
   return <ExpenseDisbursementCancellation companyId={companyId} expenseId={expenseId} payments={payments}>{(warning, successMessage) => <Modal open title={external ? 'ยกเลิกเอกสารที่บันทึกหนังสือรับรองไว้' : 'ยกเลิกเอกสารที่ออกหนังสือรับรองแล้ว'}
     size="sm" closeOnBackdrop={false} onClose={() => { if (!busy) onClose(); }}
-    /* The action's name is long: the two buttons stack at one width instead of wrapping inside two narrow columns. */
-    footer={<div className="mangmee-safe-bottom grid w-full gap-2">
-      <button type="button" className={`${ghostClass} w-full`} disabled={busy} aria-busy={false} onClick={onClose}>ไม่ยกเลิก</button>
-      <button type="submit" form="expense-certificate-void-form" className={`${dangerClass} w-full`} disabled={busy || !choice} aria-busy={busy}>{external ? 'ยกเลิกเอกสาร' : 'ยกเลิกเอกสารและหนังสือรับรอง'}</button>
-    </div>}>
+    /* Plain buttons: the shared footer gives them one width, and stacks them (the acting one on top) when the long name does not fit beside the other. */
+    footer={<>
+      <button type="button" className={ghostClass} disabled={busy} aria-busy={false} onClick={onClose}>ไม่ยกเลิก</button>
+      <button type="submit" form="expense-certificate-void-form" className={dangerClass} disabled={busy || !choice} aria-busy={busy}>{external ? 'ยกเลิกเอกสาร' : 'ยกเลิกเอกสารและหนังสือรับรอง'}</button>
+    </>}>
     <form noValidate id="expense-certificate-void-form" className="space-y-3 text-sm leading-6 text-gray-700" onSubmit={event => { event.preventDefault(); void submit(successMessage); }}>
       <p className="font-semibold">{external ? 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว' : 'เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) แล้ว'} <span className="whitespace-nowrap">{number.trim()}</span></p>
       {external && <p>ระบบยกเลิกใบที่ร้านออกเองให้ไม่ได้ ร้านต้องยกเลิกเอง</p>}

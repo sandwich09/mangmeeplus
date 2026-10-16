@@ -154,6 +154,13 @@ describe('UpdateBranchUseCase', () => {
     assert.equal((repo.countActive.mock.calls as any[]).length, 0);
   });
 
+  it('restores a previously archived branch through the existing ACTIVE command', async () => {
+    const repo = makeRepo(makeBranch({ status: 'ARCHIVED' }), 1, null, 1);
+    const uc = new UpdateBranchUseCase(repo as any, makeAudit() as any, makePrisma() as any);
+    await uc.execute(makeCtx(['company.branch.manage']), { branchId: 'b-1', status: 'ACTIVE' });
+    assert.equal((repo.update.mock.calls as any[])[0]?.arguments[0].status, 'ACTIVE');
+  });
+
   it('does not re-run the guard when a branch that is already inactive is archived', async () => {
     const repo = makeRepo(makeBranch({ status: 'DISABLED' }), 1, null, 1);
     const uc = new UpdateBranchUseCase(repo as any, makeAudit() as any, makePrisma(9) as any);

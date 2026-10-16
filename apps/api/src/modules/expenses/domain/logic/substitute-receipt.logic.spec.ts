@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
-import { buildSubstituteCertificationText, canonicalSnapshotHash, renderSubstituteReceiptSvg, thaiBahtText, withoutSubstituteReceiptPrintMetadata } from './substitute-receipt.logic';
+import { buildSubstituteCertificationText, fitToWidth, renderSubstituteReceiptAttestationSvg, canonicalSnapshotHash, renderSubstituteReceiptSvg, thaiBahtText, withoutSubstituteReceiptPrintMetadata } from './substitute-receipt.logic';
 
 describe('substitute receipt evidence', () => {
   it('removes only old system heading/footer metadata while preserving references and source bytes', () => {
@@ -195,5 +195,30 @@ describe('substitute receipt evidence', () => {
     const pieces = [...artifact.matchAll(/<tspan x="165"[^>]*>([^<]*)<\/tspan>/g)].map((match) => match[1]!);
     assert.ok(pieces.length > 1, `expected the word to be split, got ${JSON.stringify(pieces)}`);
     assert.equal(pieces.join(''), word, 'no character is dropped by the split');
+  });
+});
+
+describe('certificate for every kind of business', () => {
+  for (const taxId of [null, '0100000000000']) it(`prints business wording and a tax line only when present: ${taxId}`, () => {
+    for (const name of ['ร้านป้าศรี', 'บริษัท ' + 'ทดสอบชื่อกิจการยาว'.repeat(12)]) {
+      const snapshot: any = { documentNumber: 'SRC-1', version: 1, company: { name, taxId, branchName: null },
+        expense: { id: 'e', expenseDate: '2026-10-14', grandTotalAmount: '100', currency: 'THB', businessPurpose: 'ซื้อของ', lines: [] },
+        originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', missingReceiptReason: 'ไม่มีใบเสร็จ', fundingSource: 'COMPANY',
+        paymentStatement: 'ชำระด้วยเงินของบริษัท ' + name + ' เต็มจำนวน',
+        payer: { name: 'สมชาย', position: '', certifiedAt: '2026-10-14' }, evidence: [],
+        certificationText: buildSubstituteCertificationText('สมชาย', '') };
+      for (const paperForm of [false, true]) {
+        const svg = renderSubstituteReceiptSvg(snapshot, undefined, undefined, undefined, { paperForm }).toString();
+        assert.ok(svg.includes(`กิจการ: ${name}`));
+        assert.ok(svg.includes(`y="120"${fitToWidth(`กิจการ: ${name}`, 410)}`));
+        assert.equal(svg.includes('เลขประจำตัวผู้เสียภาษี:'), Boolean(taxId));
+        assert.match(svg.replace(/<[^>]*>/g, ''), /งานของกิจการโดยแท้/);
+        assert.doesNotMatch(svg, /ชำระด้วยเงินของบริษัท|บริษัทจ่ายเต็มจำนวน|งานของบริษัทโดยแท้/);
+        assert.match(svg.replace(/<[^>]*>/g, ''), /ชำระด้วยเงินของกิจการ/);
+      }
+      const attestation = renderSubstituteReceiptAttestationSvg(snapshot, { snapshotChecksumSha256: 'a', wetSignedScanChecksumSha256: 'b' }).toString();
+      assert.equal(attestation.includes('เลขประจำตัวผู้เสียภาษี'), Boolean(taxId));
+      assert.match(attestation, />กิจการ</);
+    }
   });
 });

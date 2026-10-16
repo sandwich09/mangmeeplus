@@ -66,13 +66,13 @@ describe('package page error text', () => {
     assert.match(outage, /ยังไม่พร้อมใช้งาน/);
     assert.match(errorText({ status: 500, message: 'Internal server error' }), /ระบบขัดข้องชั่วคราว/);
     assert.match(errorText({ status: 502 }), /เชื่อมต่อระบบไม่ได้ชั่วคราว/);
-    assert.match(errorText({ kind: 'network_error', message: 'Network request failed.' }), /ตรวจสอบอินเทอร์เน็ต/);
+    assert.match(errorText({ kind: 'network_error', message: 'Network request failed.' }), /ตรวจอินเทอร์เน็ต/);
     for (const text of [outage, errorText({ status: 500 }), errorText({ kind: 'network_error' })]) {
       assert.notEqual(text, BILLING_GENERIC_ERROR);
       assert.doesNotMatch(text, /เลขอ้างอิง/);
     }
     // A code the page knows still wins over the bare status.
-    assert.equal(errorText({ status: 503, code: 'BILLING_CHECKOUT_PENDING' }), 'ระบบกำลังตรวจรายการชำระเงินเดิมกับผู้ให้บริการรับชำระเงิน กรุณารอสักครู่แล้วกดลองใหม่');
+    assert.equal(errorText({ status: 503, code: 'BILLING_CHECKOUT_PENDING' }), 'ระบบกำลังตรวจรายการจ่ายเงินเดิมกับผู้ให้บริการรับเงิน รอสักครู่แล้วกดลองอีกครั้ง');
   });
 
   it('says what the QR-member refusal means and drops the dead legacy mapping', () => {
@@ -113,7 +113,7 @@ describe('resend result copy', () => {
     const documents = billingResendText(result), recipient = billingResendText(result, 'recipient');
     assert.match(documents, /เปิดได้จากปุ่มด้านบน/);
     assert.doesNotMatch(recipient, /ปุ่มด้านบน/);
-    assert.match(recipient, /ประวัติการชำระเงิน/);
+    assert.match(recipient, /ประวัติการจ่ายเงิน/);
     assert.match(recipient, /^ส่งใบแจ้งหนี้ไปที่ a@example\.test แล้ว.* วันนี้ส่งซ้ำได้อีก 3 ครั้ง$/);
   });
 });

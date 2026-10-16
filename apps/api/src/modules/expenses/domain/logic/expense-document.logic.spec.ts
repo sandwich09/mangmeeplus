@@ -1,6 +1,8 @@
+import { asLedgerSource } from '../../../ledger/application/use-cases/journal.use-case';
+import { inflateRawSync } from 'node:zlib';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveTaxEvidence, validateCaptureHints, isExpenseExtractionEligible, toSourceDocumentType, assessLineTextExpenseCapture } from './expense-document.logic';
+import { deriveInputVatPreset, deriveTaxEvidence, validateCaptureHints, isExpenseExtractionEligible, toSourceDocumentType, assessLineTextExpenseCapture } from './expense-document.logic';
 import { buildAccountantIndexRow, buildAccountantIndexCsv, buildAccountantIndexXlsx, buildManifestEntry, accountingPeriod } from './expense-export.logic';
 import { ACCOUNTANT_INDEX_COLUMNS, ACCOUNTANT_INDEX_SUMMARY_COLUMNS, type ExpenseAttachmentRef } from '@watchdog-bms/contracts';
 
@@ -18,14 +20,14 @@ describe('deriveTaxEvidence', () => {
   // Spec §19h — the reported Starbucks slip: `TAX INVOICE(ABB)`, seller tax id and document number
   // both present, so the full-form branch would have called it USABLE_FOR_TAX. Revenue Code s.82/5
   // bars its input VAT regardless of how complete it is.
-  it('maps a complete abbreviated tax invoice to SUPPORTING_ONLY, never USABLE_FOR_TAX', () => {
+  it('keeps abbreviated invoices usable as expense evidence, separately from VAT rights', () => {
     const result = deriveTaxEvidence({
       sourceDocumentType: 'ABBREVIATED_TAX_INVOICE',
       grandTotalAmount: '180', vendorTaxId: '0105541008888', vendorName: 'Starbucks Coffee', documentNumber: '260/05-02-17420',
     });
     assert.deepEqual(result, {
-      taxEvidenceStatus: 'SUPPORTING_ONLY',
-      taxEvidenceReasonCode: 'ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE',
+      taxEvidenceStatus: 'USABLE_FOR_TAX',
+      taxEvidenceReasonCode: 'VALID_RECEIPT_FIELDS',
     });
   });
 
@@ -397,8 +399,26 @@ describe('accountant export logic', () => {
   it('builds a real xlsx: Thai headers, numeric amounts, summary column set by default', () => {
     const rows = [buildAccountantIndexRow(source)];
     const summary = buildAccountantIndexXlsx(rows, 'summary');
-    // Entries are stored uncompressed, so the sheet XML is readable straight from the buffer.
-    const sheet = summary.toString('utf8');
+    const sheetXml = (workbook: Buffer) => {
+      for (let offset = 0; workbook.readUInt32LE(offset) === 0x04034b50;) {
+        const size = workbook.readUInt32LE(offset + 18), nameLength = workbook.readUInt16LE(offset + 26), extraLength = workbook.readUInt16LE(offset + 28);
+        const start = offset + 30 + nameLength + extraLength;
+        if (workbook.subarray(offset + 30, offset + 30 + nameLength).toString() === 'xl/worksheets/sheet1.xml') {
+          const data = workbook.subarray(start, start + size);
+          return (workbook.readUInt16LE(offset + 8) === 8 ? inflateRawSync(data) : data).toString();
+        }
+        offset = start + size;
+      }
+      throw Error('Missing worksheet');
+    };
+    const sheet = sheetXml(summary);
+    for (const receiptProblem of ['NOT_AVAILABLE', 'LOST']) {
+      const noReceipt = buildAccountantIndexRow({ ...source, sourceDocumentType: 'EXPENSE_NOTE_TEXT',
+        aiVerificationSummaryJson: { documentReview: { assessment: { route: 'SUBSTITUTE_RECEIPT', receiptProblem, reason: 'ไม่มีใบเสร็จ', attachmentIds: [] } } } });
+      const file = sheetXml(buildAccountantIndexXlsx([noReceipt], 'full'));
+      assert.match(file, /ไม่มีใบเสร็จ/); assert.doesNotMatch(file, /โน้ตค่าใช้จ่าย/);
+    }
+
 
     assert.equal(summary.subarray(0, 2).toString('utf8'), 'PK');
     assert.ok(sheet.includes('<t xml:space="preserve">วันที่เอกสาร</t>'));
@@ -406,12 +426,14 @@ describe('accountant export logic', () => {
     assert.ok(!sheet.includes('grand_total_amount'));
     assert.ok(sheet.includes('<v>100</v>'), 'amounts must be numeric cells');
     assert.ok(sheet.includes('ยืนยันแล้ว'), 'status code must be shown in Thai');
+    assert.match(sheet, /เปิดไฟล์/);
+    assert.match(sheet, /HYPERLINK/);
     assert.ok(!sheet.includes('เลขผู้เสียภาษีบริษัท'), 'summary set stays short');
-    assert.equal((sheet.match(/<row r="1">.*?<\/row>/s)?.[0].match(/<c /g) ?? []).length, ACCOUNTANT_INDEX_SUMMARY_COLUMNS.length);
+    assert.equal((sheet.match(/<row r="1"[^>]*>.*?<\/row>/s)?.[0].match(/<c /g) ?? []).length, ACCOUNTANT_INDEX_SUMMARY_COLUMNS.length);
 
-    const full = buildAccountantIndexXlsx(rows, 'full').toString('utf8');
+    const full = sheetXml(buildAccountantIndexXlsx(rows, 'full'));
     assert.ok(full.includes('เลขผู้เสียภาษีบริษัท'));
-    assert.equal((full.match(/<row r="1">.*?<\/row>/s)?.[0].match(/<c /g) ?? []).length, ACCOUNTANT_INDEX_COLUMNS.length);
+    assert.equal((full.match(/<row r="1"[^>]*>.*?<\/row>/s)?.[0].match(/<c /g) ?? []).length, ACCOUNTANT_INDEX_COLUMNS.length);
   });
 
   it('builds manifest entries without object keys and with expiring download urls', () => {
@@ -430,4 +452,36 @@ describe('accountant export logic', () => {
     assert.equal(entry.download_url_expires_at, '2026-07-01T10:05:00.000Z');
     assert.ok(!JSON.stringify(entry).includes('objectKey'));
   });
+});
+
+
+describe('input VAT presets are independent of evidence', () => {
+  const types = ['RECEIPT', 'TAX_INVOICE', 'CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT', 'ABBREVIATED_TAX_INVOICE', 'TRANSFER_SLIP', 'HANDWRITTEN_CASH_BILL', 'SUPPLIER_BILL', 'MARKETPLACE_ORDER_SCREENSHOT', 'EXPENSE_NOTE_TEXT', 'SUBSTITUTE_RECEIPT', 'OTHER_EXPENSE_DOCUMENT', 'NEEDS_REVIEW'];
+  for (const sourceDocumentType of types) it(`presets ${sourceDocumentType} for registered and unanswered shops`, () => {
+    for (const vatStatus of ['REGISTERED', 'UNKNOWN'] as const) {
+      const result = deriveInputVatPreset({ sourceDocumentType, vatMode: 'VAT_INCLUDED', vatAmount: '7', vatStatus });
+      assert.equal(result.inputVatClaimStatus, ['TAX_INVOICE', 'CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT'].includes(sourceDocumentType) ? 'NEEDS_REVIEW' : 'NON_CLAIMABLE');
+    }
+    for (const vatMode of ['NO_VAT', 'VAT_INCLUDED']) assert.equal(deriveInputVatPreset({ sourceDocumentType, vatMode, vatAmount: '0', vatStatus: 'REGISTERED' }).inputVatClaimStatus, 'NON_CLAIMABLE');
+    const noRegistration = deriveInputVatPreset({ sourceDocumentType, vatMode: 'VAT_INCLUDED', vatAmount: '7', vatStatus: 'NOT_REGISTERED' });
+    assert.equal(noRegistration.inputVatClaimStatus, 'NON_CLAIMABLE');
+    assert.equal(noRegistration.reasonCode, 'COMPANY_NOT_VAT_REGISTERED_ON_DOCUMENT_DATE');
+  });
+  it('moves the abbreviated invoice reason to its VAT right', () => {
+    assert.equal(deriveInputVatPreset({ sourceDocumentType: 'ABBREVIATED_TAX_INVOICE', vatMode: 'VAT_INCLUDED', vatAmount: '7', vatStatus: 'REGISTERED' }).reasonCode, 'ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE');
+  });
+  for (const sourceDocumentType of ['CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT'] as const) it(`derives usable evidence for ${sourceDocumentType}`, () => {
+    assert.equal(deriveTaxEvidence({ sourceDocumentType }).taxEvidenceStatus, 'USABLE_FOR_TAX');
+  });
+});
+
+
+it('ledger input VAT still needs both CLAIMABLE and usable evidence', () => {
+  for (const inputVatClaimStatus of ['NON_CLAIMABLE', 'NEEDS_REVIEW', 'CLAIMABLE']) {
+    for (const taxEvidenceStatus of ['SUPPORTING_ONLY', 'NOT_TAX_EVIDENCE', 'NEEDS_REVIEW', 'USABLE_FOR_TAX']) {
+      const result = asLedgerSource({ sourceType: 'expense.record', sourceDate: '2026-10-14', periodKey: '2026-10', totalAmount: '107', taxTotal: '7', lines: [{ vatAmount: '7' }], inputVatClaimStatus, taxEvidenceStatus });
+      const expected = inputVatClaimStatus === 'CLAIMABLE' && taxEvidenceStatus === 'USABLE_FOR_TAX' ? '7' : '0';
+      assert.equal(result.taxTotal, expected); assert.equal(result.lines[0].vatAmount, expected);
+    }
+  }
 });

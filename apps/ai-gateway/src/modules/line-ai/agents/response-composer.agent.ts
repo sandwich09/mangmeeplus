@@ -353,7 +353,7 @@ function capabilityLabel(toolName: string, language: 'th' | 'en'): string {
   if (toolName.startsWith('bank.')) return label('ระบบธนาคารและกระทบยอด', 'banking and reconciliation');
   if (toolName.startsWith('workflow.')) return label('ระบบงานอัตโนมัติ', 'workflow automation');
   if (toolName.startsWith('reports.')) return label('ระบบรายงาน', 'reports');
-  if (toolName.startsWith('dashboard.') || toolName.startsWith('notifications.')) return label('แดชบอร์ดและแจ้งเตือน', 'dashboard and notifications');
+  if (toolName.startsWith('dashboard.') || toolName.startsWith('notifications.')) return label('หน้าแรกและแจ้งเตือน', 'dashboard and notifications');
   if (toolName.startsWith('hr.')) return label('ระบบลางาน', 'leave management');
   return label('ส่วนนี้', 'this capability');
 }

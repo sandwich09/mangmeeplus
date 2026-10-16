@@ -1,7 +1,7 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError } from '@/common/models/api-error.model';
-import { deleteEmployeeDraft, listRoles, setEmployeeStatus } from './employee-access.api';
+import { employeeShortName, deleteEmployeeDraft, issueEmployeeLineLinkToken, listRoles, setEmployeeStatus } from './employee-access.api';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 
 const originalFetch = globalThis.fetch;
@@ -37,8 +37,8 @@ describe('employee removal requests', () => {
 
   it('retains actionable draft conflict and not-found codes, including a stale retry', async () => {
     for (const [status, code, copy] of [
-      [404, 'employee_draft_not_found', 'ไม่พบพนักงานนี้แล้ว กรุณาโหลดรายชื่อพนักงานใหม่'],
-      [409, 'employee_draft_not_deletable', 'ลบได้เฉพาะร่างพนักงานที่ยังไม่เสร็จสิ้น กรุณาตรวจสอบสถานะล่าสุด'],
+      [404, 'employee_draft_not_found', 'ไม่พบพนักงานนี้แล้ว เปิดหน้ารายชื่อพนักงานใหม่'],
+      [409, 'employee_draft_not_deletable', 'ลบได้เฉพาะร่างพนักงานที่ยังไม่เสร็จ ตรวจสถานะล่าสุดอีกครั้ง'],
     ] as const) {
       globalThis.fetch = async () => new Response(JSON.stringify({ code, message: 'Internal English diagnostic' }), { status });
       await assert.rejects(deleteEmployeeDraft('company-1', 'employee-1'), (error: any) => {
@@ -87,4 +87,33 @@ describe('listRoles', () => {
       (error: unknown) => error instanceof ApiError && error.code === 'invalid_response',
     );
   });
+});
+
+
+it('issues a fresh LINE link through the existing employee endpoint without saving a profile', async () => {
+  const calls: Array<{ url: string; method?: string }> = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method });
+    return new Response(JSON.stringify({ linkUrl: 'https://example.test/link', qrImageUrl: 'https://example.test/qr', expiresAt: '2026-10-13T10:15:00Z' }), { status: 200 });
+  };
+  const result = await issueEmployeeLineLinkToken('company-1', 'employee-1');
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/companies\/company-1\/settings\/employees\/employee-1\/line-link-token$/);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(result.expiresAt, '2026-10-13T10:15:00Z');
+});
+
+it('a second issued link carries its own token and expiry', async () => {
+  let count = 0;
+  globalThis.fetch = async () => { count++; return new Response(JSON.stringify({ linkUrl: `https://example.test/${count}`, expiresAt: `2026-10-13T10:${count === 1 ? '15' : '18'}:00Z` }), { status: 200 }); };
+  const first = await issueEmployeeLineLinkToken('company-1', 'employee-1');
+  const second = await issueEmployeeLineLinkToken('company-1', 'employee-1');
+  assert.notEqual(first.linkUrl, second.linkUrl);
+  assert.equal(second.expiresAt, '2026-10-13T10:18:00Z');
+});
+
+
+it('employee rows and cards prefer the edit form display name over the account nickname', () => {
+  assert.equal(employeeShortName({ displayName: 'มีนา ใจดี', nickname: 'STAFF' }), 'มีนา ใจดี');
+  assert.equal(employeeShortName({ displayName: 'มีนา ใจดี' }), 'มีนา ใจดี');
 });

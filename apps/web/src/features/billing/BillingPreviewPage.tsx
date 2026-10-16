@@ -71,7 +71,7 @@ export default function BillingPreviewPage({ companyId }: { companyId: string })
         <h2 className="text-2xl font-bold">{view === 'portal' ? 'จำลองหน้าจัดการบัตร' : documentKind === 'invoice' ? 'ใบแจ้งหนี้ตัวอย่าง' : documentKind === 'pdf' ? 'ตัวอย่างก่อนดาวน์โหลด PDF' : 'ใบเสร็จรับเงินตัวอย่าง'}</h2>
         <p className="text-gray-600">{view === 'portal' ? 'ระบบจริงจะเปิดหน้าจัดการบัตรของ Stripe พรีวิวนี้ไม่รับข้อมูลบัตรและไม่เปลี่ยนวิธีชำระเงิน' : 'ระบบจริงเปิดเอกสารของรายการจาก Stripe ข้อมูลด้านล่างใช้ดูทางเข้าและทางกลับเท่านั้น ไม่ใช่เอกสารทางบัญชี'}</p>
         {view === 'document' && <dl className="grid gap-4 rounded-xl bg-gray-50 p-5 sm:grid-cols-3"><div><dt className="text-sm text-gray-500">เลขตัวอย่าง</dt><dd className="mt-1 font-semibold">PREVIEW-0001</dd></div><div><dt className="text-sm text-gray-500">อีเมล</dt><dd className="mt-1 break-all">preview@example.com</dd></div><div><dt className="text-sm text-gray-500">รายการคืนเงิน</dt><dd className="mt-1">ยังไม่มีรายการ</dd></div></dl>}
-        <button className={button} onClick={() => setView('journey')}>{view === 'portal' ? 'กลับไปการชำระเงิน' : 'กลับไปประวัติการชำระเงิน'}</button>
+        <button className={button} onClick={() => setView('journey')}>{view === 'portal' ? 'กลับไปการจ่ายเงิน' : 'กลับไปประวัติการจ่ายเงิน'}</button>
       </section>}
     </div>
   </BillingWorkspaceContext.Provider>;

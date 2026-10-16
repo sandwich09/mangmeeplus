@@ -361,3 +361,16 @@ export const AI_PERMISSION_KEYS = {
   TEMPLATE_MANAGE: 'ai.template.manage',
   TOOL_INVOCATION_READ: 'ai.tool_invocation.read',
 } as const;
+
+/** Source access used by the template catalog and the shop web entry points. */
+export const AI_SUGGESTION_TEMPLATE_SOURCE_PERMISSIONS = {
+  cfo_cash_risk_summary: ['bank.cash.read'],
+  crm_followup_next_action: ['crm.customer.read'],
+  inventory_reorder_review: ['inventory.report.read'],
+  tax_evidence_checklist: ['tax.review_issue.read'],
+  workflow_review_checklist: ['workflow.task.read'],
+} as const;
+
+export function hasAiSuggestionSourceAccess(permissions: readonly string[]): boolean {
+  return Object.values(AI_SUGGESTION_TEMPLATE_SOURCE_PERMISSIONS).some(required => required.every(permission => permissions.includes(permission)));
+}

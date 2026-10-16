@@ -21,7 +21,7 @@ export function monthlyPeriodDateRange(periodKey: string): { fromDate: string; t
 
 /** PND53 reads stored machine values; unknown values must not become user-facing codes. */
 const TAX_PERIOD_STATUS_LABELS: Record<string, string> = {
-  OPEN: 'เปิดงวด', NEEDS_REVIEW: 'ต้องตรวจสอบ', READY_FOR_REVIEW: 'พร้อมตรวจสอบ', AMENDED: 'ปรับปรุงแบบแล้ว', REVIEWED: 'ตรวจสอบแล้ว', EXPORTED: 'ส่งออกแล้ว',
+  OPEN: 'ยังไม่ได้ยื่น', NEEDS_REVIEW: 'ต้องตรวจสอบ', READY_FOR_REVIEW: 'พร้อมตรวจสอบ', AMENDED: 'ปรับปรุงแบบแล้ว', REVIEWED: 'ตรวจสอบแล้ว', EXPORTED: 'ส่งออกแล้ว',
   FILED: 'ยื่นแบบแล้ว', PAID: 'ชำระแล้ว', CLOSED: 'ปิดงวด',
 };
 export function taxPeriodStatusLabel(status: string): string {
@@ -29,22 +29,22 @@ export function taxPeriodStatusLabel(status: string): string {
 }
 
 const TAX_REVIEW_ISSUE_LABELS: Record<string, string> = {
-  MISSING_TAX_ID: 'ยังไม่มีเลขประจำตัวผู้เสียภาษี กรุณาตรวจข้อมูลต้นทาง',
-  MISSING_BRANCH_CODE: 'ยังไม่มีรหัสสาขาภาษี กรุณาตรวจข้อมูลต้นทาง',
-  UNKNOWN_VAT_MODE: 'ยังระบุวิธีคิด VAT ไม่ได้ กรุณาตรวจข้อมูลต้นทาง',
+  MISSING_TAX_ID: 'ยังไม่มีเลขประจำตัวผู้เสียภาษี ตรวจข้อมูลต้นทาง',
+  MISSING_BRANCH_CODE: 'ยังไม่มีรหัสสาขาภาษี ตรวจข้อมูลต้นทาง',
+  UNKNOWN_VAT_MODE: 'ยังระบุวิธีคิด VAT ไม่ได้ ตรวจข้อมูลต้นทาง',
   INPUT_VAT_NOT_CLAIMABLE: 'ภาษีซื้อของรายการนี้ใช้ขอคืนไม่ได้',
-  WHT_RATE_MISMATCH: 'อัตราภาษีหัก ณ ที่จ่ายไม่ตรงกับข้อมูลที่กำหนด กรุณาตรวจข้อมูลต้นทาง',
-  MISSING_TAX_INVOICE: 'ยังไม่มีข้อมูลอ้างอิงใบกำกับภาษี กรุณาตรวจข้อมูลต้นทาง',
-  DUPLICATE_SOURCE: 'พบรายการต้นทางซ้ำ กรุณาตรวจสอบก่อนออกแบบ',
-  CLOSED_PERIOD_CONFLICT: 'รายการต้นทางอยู่ในงวดที่ปิดแล้ว กรุณาตรวจสอบก่อนออกแบบ',
+  WHT_RATE_MISMATCH: 'อัตราภาษีหัก ณ ที่จ่ายไม่ตรงกับข้อมูลที่กำหนด ตรวจข้อมูลต้นทาง',
+  MISSING_TAX_INVOICE: 'ยังไม่มีข้อมูลอ้างอิงใบกำกับภาษี ตรวจข้อมูลต้นทาง',
+  DUPLICATE_SOURCE: 'พบรายการต้นทางซ้ำ ตรวจสอบก่อนออกแบบ',
+  CLOSED_PERIOD_CONFLICT: 'รายการต้นทางอยู่ในงวดที่ปิดแล้ว ตรวจสอบก่อนออกแบบ',
   MISSING_LEDGER_DATA: 'ยังไม่มีข้อมูลบัญชีที่ใช้ตรวจสอบรายการนี้',
-  INCOMPLETE_SOURCE_FACTS: 'ข้อมูลต้นทางยังไม่ครบ กรุณาตรวจสอบก่อนออกแบบ',
-  FUNCTIONAL_CURRENCY_FX_MISSING: 'ข้อมูลแปลงสกุลเงินของรายการต้นทางยังไม่ครบ กรุณาตรวจสอบก่อนออกแบบ',
-  FUNCTIONAL_CURRENCY_SNAPSHOT_INVALID: 'ข้อมูลสกุลเงินไม่ตรงกับบริษัทหรือเอกสารต้นทาง กรุณาตรวจสอบก่อนออกแบบ',
-  VOID_AFTER_TAX_PERIOD_LOCK: 'เอกสารต้นทางถูกยกเลิกหลังปิดงวดภาษี กรุณาตรวจขั้นตอนปรับปรุงรายการ',
-  SOURCE_CHANGED_AFTER_TAX_PERIOD_LOCK: 'ข้อมูลภาษีต้นทางเปลี่ยนหลังปิดงวดภาษี กรุณาตรวจขั้นตอนปรับปรุงรายการ',
+  INCOMPLETE_SOURCE_FACTS: 'ข้อมูลต้นทางยังไม่ครบ ตรวจสอบก่อนออกแบบ',
+  FUNCTIONAL_CURRENCY_FX_MISSING: 'ข้อมูลแปลงสกุลเงินของรายการต้นทางยังไม่ครบ ตรวจสอบก่อนออกแบบ',
+  FUNCTIONAL_CURRENCY_SNAPSHOT_INVALID: 'ข้อมูลสกุลเงินไม่ตรงกับบริษัทหรือเอกสารต้นทาง ตรวจสอบก่อนออกแบบ',
+  VOID_AFTER_TAX_PERIOD_LOCK: 'เอกสารต้นทางถูกยกเลิกหลังปิดงวดภาษี ตรวจขั้นตอนปรับปรุงรายการ',
+  SOURCE_CHANGED_AFTER_TAX_PERIOD_LOCK: 'ข้อมูลภาษีต้นทางเปลี่ยนหลังปิดงวดภาษี ตรวจขั้นตอนปรับปรุงรายการ',
   TAX_EVIDENCE_NOT_VERIFIED: 'ยังไม่ได้ตรวจรับรองหลักฐานภาษีของรายการต้นทาง',
 };
 export function taxReviewIssueLabel(code: string): string {
-  return TAX_REVIEW_ISSUE_LABELS[code] ?? 'พบรายการที่ต้องตรวจสอบ กรุณาให้ผู้มีสิทธิ์จัดทำแบบภาษีตรวจข้อมูลต้นทาง';
+  return TAX_REVIEW_ISSUE_LABELS[code] ?? 'พบรายการที่ต้องตรวจสอบ ให้ผู้มีสิทธิ์จัดทำแบบภาษีตรวจข้อมูลต้นทาง';
 }

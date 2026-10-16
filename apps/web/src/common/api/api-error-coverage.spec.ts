@@ -114,14 +114,14 @@ describe('Thai coverage for default-open feature error codes', () => {
     }
   });
   it('uses document-specific retry sentences while expense cancellation keeps its own sentence', () => {
-    assert.equal(apiErrorMessage({ code: 'disbursement_changed_retry', status: 409 }), 'มีการทำรายการกับใบนี้หรือรายจ่ายในใบพร้อมกัน ระบบยังไม่ได้บันทึกสิ่งที่คุณเพิ่งทำ กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง');
-    assert.equal(apiErrorMessage({ code: 'disbursement_payment_retry', status: 409 }), 'บันทึกไม่สำเร็จ ยังไม่มีการบันทึกจ่ายรายการใด กรุณาลองอีกครั้ง');
-    assert.match(apiErrorMessage({ code: 'expense_changed_retry', status: 409 }), /ยังไม่ได้ยกเลิกเอกสาร/);
+    assert.equal(apiErrorMessage({ code: 'disbursement_changed_retry', status: 409 }), 'มีการทำรายการกับใบนี้หรือรายจ่ายในใบพร้อมกัน ระบบยังไม่ได้บันทึกสิ่งที่คุณเพิ่งทำ เปิดหน้านี้ใหม่แล้วลองอีกครั้ง');
+    assert.equal(apiErrorMessage({ code: 'disbursement_payment_retry', status: 409 }), 'บันทึกไม่สำเร็จ ยังไม่มีการบันทึกจ่ายรายการใด ลองอีกครั้ง');
+    assert.match(apiErrorMessage({ code: 'expense_changed_retry', status: 409 }), /ยังไม่ได้บันทึกการยกเลิก/);
   });
   it('covers every disbursement refusal and preserves the server facts without exposing templates', () => {
     for (const [code, message] of Object.entries(DISBURSEMENT_VOUCHER_ERROR_WORDS)) {
       const expected = code === 'disbursement_amount_invalid' ? DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_invalid_input
-        : code === 'disbursement_source_changed' ? 'รายการในใบนี้ถูกเปลี่ยนแปลงหลังส่งอนุมัติ ใบนี้จึงอนุมัติไม่ได้ กด "กลับไปแก้" เพื่อตรวจรายการใหม่ หรือยกเลิกใบนี้' : message;
+        : code === 'disbursement_source_changed' ? 'รายการในใบนี้ถูกเปลี่ยนแปลงหลังส่งอนุมัติ ใบนี้จึงอนุมัติไม่ได้ กด "ส่งกลับให้แก้" พร้อมเหตุผลให้ผู้เตรียมตรวจรายการใหม่' : message;
       assert.equal(apiErrorMessage({ code, status: 422 }), expected);
       assert.doesNotMatch(apiErrorMessage({ code, status: 422 }), /\{\w+\}/);
     }
@@ -129,7 +129,7 @@ describe('Thai coverage for default-open feature error codes', () => {
     assert.equal(apiErrorMessage({ code: 'disbursement_amount_invalid', details: { message: sentence }, status: 422 }), sentence);
     const changedSource = 'รายการ EXP-1 ถูกเปลี่ยนแปลงหลังส่งอนุมัติ ใบนี้จึงอนุมัติไม่ได้ กด "กลับไปแก้" เพื่อตรวจรายการใหม่ หรือยกเลิกใบนี้';
     assert.equal(apiErrorMessage({ code: 'disbursement_source_changed', details: { message: changedSource }, status: 409 }), changedSource);
-    assert.equal(apiErrorMessage({ code: 'disbursement_version_conflict', status: 409 }), 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาเปิดใหม่ก่อนบันทึก');
+    assert.equal(apiErrorMessage({ code: 'disbursement_version_conflict', status: 409 }), 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว เปิดหน้านี้ใหม่ก่อนบันทึก');
   });
   it('keeps approval-command server sentences intact and exposes no template in a code-only refusal', () => {
     const sentence = 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาเปิดใหม่ก่อนทำต่อ';
@@ -179,7 +179,7 @@ describe('Thai coverage for default-open feature error codes', () => {
   // check while helping nobody.
   it('answers with what to do, for the codes that end a journey', () => {
     for (const [code, expected] of [
-      ['self_approval_denied', /ไม่สามารถอนุมัติคำขอของตนเองได้/],
+      ['self_approval_denied', /ไม่สามารถอนุมัติใบเบิกของตัวเองได้/],
       ['missing_receipt_reason_required', /เหตุผลที่ไม่มีใบเสร็จ/],
       ['reimbursement_accrual_not_posted', /ก่อน/],
       ['employee_phone_conflict', /เบอร์โทรศัพท์/],
@@ -203,7 +203,7 @@ describe('a role that could not be created because other roles were saved at the
     const code = 'role_key_allocation_failed';
     assert.equal(openFeatureErrorCodes().get(code), 'employee-access', `${code} is no longer found in the API source`);
     const thai = translateApiError(code)!;
-    assert.equal(thai, 'ยังไม่ได้สร้างบทบาทนี้ เพราะมีการบันทึกบทบาทอื่นในเวลาเดียวกัน กรุณากดบันทึกอีกครั้ง');
+    assert.equal(thai, 'ยังไม่ได้สร้างบทบาทนี้ เพราะมีการบันทึกบทบาทอื่นในเวลาเดียวกัน กดบันทึกอีกครั้ง');
     assert.doesNotMatch(thai, /ซ้ำ|[A-Za-z]/);
     // The API gives the same sentence as its message, so a reader of the message is told the same thing.
     const useCase = readFileSync(join(API_MODULES, 'employee-access/application/use-cases/create-role.use-case.ts'), 'utf8');
@@ -226,9 +226,9 @@ describe('a role that could not be created because other roles were saved at the
 // claim and copied into the requester's notice) and the reason a payment was made another way than asked
 // (shown on the payment row, and in no notice). One label serves both, so it may say only what is true of both.
 describe('the refusal of a text that carries an account number is true wherever the API gives it', () => {
-  it('says the text is shown to everyone who opens the claim, and nothing about a notice', () => {
+  it('says what to write instead, and nothing about a notice', () => {
     const thai = translateApiError('note_contains_account_number')!;
-    assert.match(thai, /^อย่าพิมพ์เลขบัญชีในช่องนี้ เพราะข้อความนี้แสดงให้ทุกคนที่เปิดใบเบิกเห็น /);
+    assert.equal(thai, 'อย่าพิมพ์เลขบัญชีหรือตัวเลขยาวตั้งแต่ 6 หลัก ถ้าต้องอ้างบัญชี บอกแค่ 4 ตัวท้าย');
     assert.doesNotMatch(thai, /แจ้งเตือน/, 'the payment reason is in no notice');
     assert.match(thai, /4 ตัวท้าย/, 'what to write instead');
     assert.doesNotMatch(thai, /[A-Za-z]/);
@@ -258,12 +258,12 @@ describe('the refusals added with the claim hub and bank-match fixes are plain T
       ['bank_match_payment_not_recorded', /กดรีเฟรชแล้วเลือกรายการอื่น/],
       ['bank_match_state_changed', /กดรีเฟรชแล้วลองอีกครั้ง/],
       // A hub filter the API does not have (a page left open across an update): reload and pick again.
-      ['reimbursement_list_bucket_invalid', /โหลดหน้าใหม่แล้วเลือกตัวกรองอีกครั้ง/],
+      ['reimbursement_list_bucket_invalid', /เปิดหน้านี้ใหม่แล้วเลือกตัวกรองอีกครั้ง/],
     ] as const) {
       const thai = translateApiError(code);
       assert.ok(thai, `${code} has no Thai text`);
       assert.match(thai!, nextStep, code);
-      assert.match(thai!, /กรุณา/, `${code} asks for nothing`);
+      assert.match(thai!, /กด|เปิด/, `${code} asks for nothing`);
       // No Latin letter at all: that rules out an id, a status or enum word, a snake_case code and "THB" at once.
       assert.doesNotMatch(thai!, /[A-Za-z]/, `${code}: ${thai}`);
       // And what the person sees for the HTTP answer is that text, not the code or the English message.
@@ -284,8 +284,8 @@ describe('the refusals of a claim payment over or under its amount say what to e
     const check = logic.slice(logic.indexOf('export function validatePaymentRecording('));
     const returned = [...check.slice(0, check.indexOf('\n}\n')).matchAll(/return '([a-z][a-z0-9_]{3,})'/g)].map((match) => match[1]!);
     for (const [code, nextStep] of [
-      ['payment_amount_invalid', /ต้องมากกว่า 0 กรุณากรอกยอดคงค้างของใบเบิกแล้วกดบันทึกจ่ายอีกครั้ง/],
-      ['payment_over_approved_amount', /เกินยอดคงค้างของใบเบิก กรุณาแก้เป็นยอดคงค้างแล้วกดบันทึกจ่ายอีกครั้ง/],
+      ['payment_amount_invalid', /ต้องมากกว่า 0 กรอกยอดคงค้างของใบเบิกแล้วกดบันทึกจ่ายอีกครั้ง/],
+      ['payment_over_approved_amount', /เกินยอดคงค้างของใบเบิก แก้เป็นยอดคงค้างแล้วกดบันทึกจ่ายอีกครั้ง/],
     ] as const) {
       assert.ok(returned.includes(code), `${code} is no longer returned by the payment check`);
       const thai = translateApiError(code);
@@ -407,16 +407,16 @@ describe('upload errors reaching the translator', () => {
 
 describe('expense certificate void errors (A3)', () => {
   it('shows the retry sentence and preserves operation-specific certificate refusals', () => {
-    assert.equal(apiErrorMessage({ code: 'expense_changed_retry' }), 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้ยกเลิกเอกสาร กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง');
+    assert.equal(apiErrorMessage({ code: 'expense_changed_retry' }), 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้บันทึกการยกเลิก เปิดหน้านี้ใหม่แล้วลองอีกครั้ง');
     for (const [code, message] of [
-      ['expense_certificate_attestation_required', 'กรุณาติ๊กยืนยันเรื่องการยื่นภาษีก่อนยกเลิกรายจ่าย'],
-      ['expense_certificate_attestation_required', 'กรุณาติ๊กยืนยันเรื่องการยื่นภาษีก่อนแก้ไขเอกสาร'],
+      ['expense_certificate_attestation_required', 'ยังไม่ได้ยืนยันเรื่องการยื่นภาษี ติ๊กยืนยันก่อนยกเลิกเอกสาร'],
+      ['expense_certificate_attestation_required', 'ยังไม่ได้ยืนยันเรื่องการยื่นภาษี ติ๊กยืนยันก่อนแก้ไขเอกสาร'],
       ['tax_period_locked', 'ภาษีหัก ณ ที่จ่ายของเดือนนี้ยื่นไปแล้ว จึงยกเลิกรายจ่ายที่ออกหนังสือรับรองแล้วไม่ได้ ถ้าต้องแก้เฉพาะตัวสะกดชื่อหรือที่อยู่บนหนังสือรับรอง ใช้ปุ่ม "แก้ไขหนังสือรับรอง" ได้'],
     ]) assert.equal(apiErrorMessage({ details: { code, message } }), message);
   });
   it('includes the claim certificate number and drops brackets when it is absent', () => {
     for (const certificateNumber of ['WHT-1', null]) assert.equal(apiErrorMessage({ details: { code: 'reimbursement_cancellation_wht_certificate_on_expense', certificateNumber } }),
-      `รายจ่ายของคำขอนี้ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว${certificateNumber ? ` (เลขที่ ${certificateNumber})` : ''} จึงยกเลิกคำขอเบิกตอนนี้ไม่ได้ ระบบยังไม่ได้เปลี่ยนแปลงอะไร กรุณาแจ้งทีมมั่งมีพลัสเพื่อช่วยยกเลิก`);
+      `รายจ่ายของใบเบิกนี้ออกหนังสือรับรอง 50 ทวิแล้ว${certificateNumber ? ` (เลขที่ ${certificateNumber})` : ''} จึงยกเลิกใบเบิกตอนนี้ไม่ได้ ระบบยังไม่ได้เปลี่ยนแปลงอะไร แจ้งทีมงานมั่งมีเพื่อช่วยยกเลิก`);
   });
 });
 
@@ -463,7 +463,7 @@ describe('reserved expense refusal wording (B5b)', () => {
     assert.match(apiErrorMessage({ code: 'expense_disbursement_reserved' }), /ใบเตรียมจ่าย.*สอบถามผู้จัดทำ/);
   });
   it('keeps the existing Thai retry sentence for a reservation committed during void', () => {
-    assert.equal(apiErrorMessage({ code: 'expense_changed_retry', status: 409 }), 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้ยกเลิกเอกสาร กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง');
+    assert.equal(apiErrorMessage({ code: 'expense_changed_retry', status: 409 }), 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้บันทึกการยกเลิก เปิดหน้านี้ใหม่แล้วลองอีกครั้ง');
   });
   for (const viewerMay of ['open', 'none'] as const) it(`keeps the server reservation next step when the viewer may ${viewerMay}`, async () => {
     const { expenseDisbursementReservationMessage } = await import('@watchdog-bms/contracts');
@@ -475,4 +475,23 @@ describe('reserved expense refusal wording (B5b)', () => {
       if (viewerMay === 'none') assert.doesNotMatch(sentence, /กลับไปแก้/);
     }
   });
+});
+
+it('keeps the receipt file refusal specific to payment, posting, review permission and final state', () => {
+  for (const message of [
+    'รายจ่ายนี้ยืนยันแล้ว กดแก้ไขเอกสารก่อนแนบหลักฐานเพิ่ม',
+    'รายจ่ายนี้ปิดแล้ว แนบหลักฐานให้รายจ่ายที่ยังเปิดตรวจอยู่หรือสร้างรายจ่ายใหม่',
+    'รายจ่ายนี้ส่งให้ตรวจแล้ว ให้คนที่มีสิทธิ์ตรวจรายจ่ายเปลี่ยนไฟล์ใบเสร็จให้',
+    'รายจ่ายนี้บันทึกจ่ายแล้ว เปลี่ยนใบเสร็จหลักไม่ได้ ให้แนบเป็นหลักฐานเพิ่ม',
+    'รายจ่ายนี้บันทึกบัญชีแล้ว ให้คนที่ดูแลบัญชีแก้รายการบัญชีก่อนแนบหรือเปลี่ยนไฟล์',
+  ]) {
+    assert.equal(apiErrorMessage({ code: 'expense_receipt_replace_locked', message }), message);
+    assert.equal(apiErrorMessage({ details: { code: 'expense_receipt_replace_locked', message } }), message);
+    assert.doesNotMatch(message, /กรุณา|ดำเนินการ/);
+  }
+});
+
+it('names both review fields and both ways to fix an incompatible withholding income type', () => {
+  const text = apiErrorMessage({ code: 'expense_wht_category_payee_mismatch' });
+  assert.equal(text, 'จ่ายค่าอะไรไม่ตรงกับผู้รับเงิน เลือกประเภทเงินได้ให้ตรง หรือแก้ช่องผู้รับเงินเป็นใครให้ถูกต้อง');
 });

@@ -1,3 +1,4 @@
+import { finishDocumentWaitingNotifications } from '../../dashboard-notifications/infrastructure/document-notification-state';
 import { Injectable } from '@nestjs/common';
 import { reimbursementPayoutCorrectionPhase } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -508,6 +509,7 @@ export class PrismaWorkflowRepository {
     // Superseding ignores the claim's status, so without a claim it would cancel every open
     // approval task of every company. Only ever one claim's.
     if (scope.supersede && !scope.requestId) throw new Error('closeSettledClaimTasks: supersede needs the claim it is for');
+    if (scope.companyId && scope.requestId) await finishDocumentWaitingNotifications(this.prisma.client, scope.companyId, 'reimbursement_request', scope.requestId, scope.supersede);
     const stillOpen = { in: ['OPEN', 'SNOOZED'] as any };
     const tasks = await this.prisma.client.workflowTask.findMany({
       where: {

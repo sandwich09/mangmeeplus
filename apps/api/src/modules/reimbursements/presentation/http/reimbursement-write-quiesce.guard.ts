@@ -10,7 +10,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 export const REIMBURSEMENT_UPGRADE_ERROR_CODE = 'reimbursement_upgrade_in_progress';
 export const REIMBURSEMENT_UPGRADE_RETRY_AFTER_SECONDS = 60;
 export const REIMBURSEMENT_UPGRADE_MESSAGE =
-  'ระบบกำลังอัปเกรดส่วนเบิกค่าใช้จ่ายชั่วคราว ข้อมูลที่กรอกยังอยู่ กรุณารอประมาณ 1 นาทีแล้วลองอีกครั้ง';
+  'ระบบกำลังอัปเกรดส่วนเบิกค่าใช้จ่ายชั่วคราว ข้อมูลที่กรอกยังอยู่ รอประมาณ 1 นาทีแล้วลองอีกครั้ง';
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 

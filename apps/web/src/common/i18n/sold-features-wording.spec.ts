@@ -151,8 +151,9 @@ test('PND53 renders Thai period statuses and review issues, with a Thai fallback
   const branches = source('features/branch-settings/BranchSettingsPage.tsx');
   assert.doesNotMatch(branches, /\?\? b\.(status|type)/);
   assert.doesNotMatch(source('features/tax/TransactionTaxLineSelector.tsx'), /\{item\.externalCode\}/);
-  const page = source('features/tax/Pnd53Page.tsx');
-  assert.doesNotMatch(page, /\{period\.status\}|\{issue\.description\}|\$\{issue\.issueCode\}/);
+  const page = source('features/tax/WithholdingPage.tsx');
+  assert.doesNotMatch(page, /\{period\.status\}|\$\{issue\.issueCode\}/);
+  assert.match(page, /\{issue\.description\}/, 'the server supplies the Thai repair sentence');
 });
 
 test('customer package payment names and provider messages are Thai', () => {

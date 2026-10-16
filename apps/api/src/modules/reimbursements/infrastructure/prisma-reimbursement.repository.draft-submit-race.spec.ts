@@ -320,6 +320,42 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     };
   }
 
+  it('deletes a never-sent draft and its links atomically, rolling back when the audit fails', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const file = await db.attachmentObject.create({ data: { companyId, branchId, storageProvider: 'LOCAL', bucket: 'test',
+      objectKey: `${TAG}/delete-draft`, originalFileName: 'receipt.pdf', mimeType: 'application/pdf', byteSize: 1,
+      checksumSha256: 'd'.repeat(64), uploadedByUserId: `${TAG}-user`, status: 'ACTIVE' } });
+    const draft = await createDraft('delete draft', file.id);
+    const linkWhere = { companyId, targetId: draft.id, targetType: 'reimbursement_request' };
+    await db.attachmentLink.create({ data: { ...linkWhere, attachmentId: file.id, purpose: 'receipt', linkedByUserId: `${TAG}-user` } });
+    const input = { companyId, requestId: draft.id, expectedUpdatedAt: draft.updatedAt, actorUserId: `${TAG}-user`, canPrepareOthers: false, scopes: {} };
+    await assert.rejects(repos[0]!.deleteNeverSentDraftAtomic({ ...input, onDeleted: async () => { throw new Error('audit failed'); } }), /audit failed/);
+    assert.ok(await db.reimbursementRequest.findUnique({ where: { id: draft.id } }));
+    assert.equal(await db.attachmentLink.count({ where: linkWhere }), 1);
+    await repos[0]!.deleteNeverSentDraftAtomic({ ...input, onDeleted: async tx => {
+      await new PrismaAuditRepository({ client: db } as any).log({ companyId, actorUserId: `${TAG}-user`, action: 'reimbursement.request.delete_draft',
+        targetType: 'reimbursement_request', targetId: draft.id, requestId: `${TAG}-delete-draft`, result: 'SUCCESS', riskLevel: 'MEDIUM' } as any, tx);
+    } });
+    assert.equal(await db.reimbursementRequest.count({ where: { id: draft.id } }), 0);
+    assert.equal(await db.attachmentLink.count({ where: linkWhere }), 0);
+    assert.equal(await db.auditLog.count({ where: { companyId, targetId: draft.id, action: 'reimbursement.request.delete_draft' } }), 1);
+    assert.ok(await db.attachmentObject.findUnique({ where: { id: file.id } }));
+  });
+
+  it('serializes draft deletion against submission so exactly one command commits', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const draft = await createDraft('delete vs submit');
+    const outcomes = await Promise.allSettled([
+      repos[0]!.deleteNeverSentDraftAtomic({ companyId, requestId: draft.id, expectedUpdatedAt: draft.updatedAt,
+        actorUserId: draft.requesterUserId, canPrepareOthers: false, scopes: {}, onDeleted: async () => undefined }),
+      repos[1]!.submitDraftAtomic(submitInput(draft)),
+    ]);
+    assert.equal(outcomes.filter(row => row.status === 'fulfilled').length, 1);
+    const remaining = await repos[0]!.findRequestById(companyId, draft.id, true);
+    if (remaining) { assert.equal(remaining.status, 'PENDING_APPROVAL'); assert.ok(remaining.requestNo); assert.equal(remaining.approvalSteps?.length, 1); }
+  });
+
   it('commits exactly one winner and leaves one internally consistent aggregate', async (t) => {
     if (!reachable) return t.skip('no database reachable');
 
@@ -1475,7 +1511,9 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
       assert.deepEqual(await bank.matches(), [[paid.payment.id, 'VOIDED']]);
       assert.equal(await bank.status(), 'UNMATCHED');
       // Both changes are on record, made by the person who voided, in the one request.
-      const audits = await db.auditLog.findMany({ where: { companyId, requestId: voidRequestId }, orderBy: { createdAt: 'asc' } });
+      // Both rows share one transaction and can share a timestamp: compare them by action, not by write order.
+      const audits = (await db.auditLog.findMany({ where: { companyId, requestId: voidRequestId } }))
+        .sort((a, b) => (a.action === 'reimbursement.payment.void' ? 0 : 1) - (b.action === 'reimbursement.payment.void' ? 0 : 1));
       assert.deepEqual(audits.map((row) => [row.action, row.targetType, row.targetId, row.actorUserId, row.result, row.riskLevel]), [
         ['reimbursement.payment.void', 'reimbursement_payment', paid.payment.id, `${TAG}-finance`, 'SUCCESS', 'CRITICAL'],
         ['bank.match.void', 'bank_reconciliation_match', match.id, `${TAG}-finance`, 'SUCCESS', 'HIGH'],
@@ -1688,7 +1726,7 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
       const list = new ListReimbursementsUseCase(repos[0]!);
       const filter = { search: 'สมชาย ทดสอบจำนวน', pageSize: 100 };
       const all = await list.execute(reader, filter);
-      assert.deepEqual(all.hub.counts, { all: 8, draft: 0, review: 0, payment: 2, duplicate_blocked: 6, paid: 0, closed: 0 });
+      assert.deepEqual(all.hub.counts, { all: 8, draft: 0, correction: 0, review: 0, payment: 2, duplicate_blocked: 6, paid: 0, closed: 0 });
       for (const bucket of ['payment', 'duplicate_blocked'] as const) {
         const page = await list.execute(reader, { ...filter, bucket });
         assert.equal(page.items.length, all.hub.counts[bucket]);
@@ -1751,7 +1789,7 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
       ];
       const has = (claim: Fixture, word: string) => [claim.requestNo, claim.requesterDisplayNameSnapshot, claim.reason, claim.categoryLabelSnapshot]
         .some((text) => typeof text === 'string' && text.toLowerCase().includes(word.toLowerCase())) || Number(claim.amount) === Number(word.replace(/,/g, ''));
-      const BUCKETS = ['draft', 'review', 'payment', 'duplicate_blocked', 'paid', 'closed'] as const;
+      const BUCKETS = ['draft', 'correction', 'review', 'payment', 'duplicate_blocked', 'paid', 'closed'] as const;
       /** Every page of one list, seven rows a page, the way the hub walks it. */
       const walk = async (ctx: any, filter: Record<string, unknown>) => {
         const pages: Awaited<ReturnType<typeof list.execute>>[] = [];
@@ -1793,6 +1831,10 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
       assert.deepEqual([waiting.length, sentBack.length, [...new Set(sentBack.map((item) => item.currentDesk?.kind))], [...new Set(waiting.filter((item) => !item.payoutCorrectionPhase).map((item) => item.currentDesk?.kind))]],
         [6, 3, ['REQUESTER'], ['SYSTEM']]);
       assert.equal((await walk(scopes[0]![1], { bucket: 'draft' })).flatMap((answer) => answer.items).some((item) => item.payoutCorrectionPhase), false);
+      const ownCorrections = (await walk(scopes[1]![1], { bucket: 'correction' })).flatMap(answer => answer.items);
+      assert.equal(ownCorrections.filter(item => item.payoutCorrectionPhase === 'AWAITING_REQUESTER').length, 3);
+      assert.ok(ownCorrections.every(item => item.requesterUserId === `${TAG}-user`));
+
 
       // The four scopes really differ, every search narrows its scope, several of them find something in each scope,
       // and the last one finds nothing anywhere.
@@ -3330,6 +3372,35 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     return { requestId: request.id, periodId: period.id, periodKey, expenseIds: projections.map((projection) => projection.expenseId) };
   }
 
+  it('rolls back duplicate dismissal and its audit when confirmation fails while payment waits', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const candidate = await repos[0]!.createDuplicateCandidate({ companyId, reimbursementRequestId: claim.requestId, candidateType: 'MANUAL', score: 100 });
+    await clients[0]!.reimbursementRequest.update({ where: { id: claim.requestId }, data: { duplicateStatus: 'POSSIBLE_DUPLICATE', approvalPolicySnapshotJson: {
+      schemaVersion: 1, policyId: 'pol', policyVersion: 'v1', approvalRequiredFromAmount: '1.00', requiresApproval: true,
+      route: { mode: 'MANAGER_ROLE', roleKey: 'MANAGER', effectiveTaskRole: 'MANAGER', ownerFallbackUsedAtSubmission: false },
+      allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: false,
+    } } });
+    const request = (await repos[0]!.findRequestById(companyId, claim.requestId))!;
+    let entered!: () => void; let release!: () => void;
+    const inside = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const dismissal = repos[0]!.resolvePaymentDuplicatesAtomic({ companyId, requestId: claim.requestId, expectedUpdatedAt: request.updatedAt,
+      actorUserId: FIN, scopes: {}, resolvedAt: new Date(), reason: 'คนละรายการ', onResolvedPersisted: async tx => {
+        await new PrismaAuditRepository({ client: clients[0]! } as any).log({ companyId, actorUserId: FIN, action: 'reimbursement.duplicate.resolve', targetType: 'reimbursement_request', targetId: claim.requestId, requestId: `${S}-duplicate-failure`, result: 'SUCCESS', riskLevel: 'HIGH' }, tx);
+        entered(); await gate; throw new Error('confirmation failed');
+      } });
+    const rejected = assert.rejects(dismissal, /confirmation failed/);
+    await inside;
+    const payment = repos[1]!.recordPaymentAtomic({ companyId, reimbursementRequestId: claim.requestId, idempotencyKey: `${S}-duplicate-race-${claim.requestId}`,
+      paidAmount: '100.0000', currency: 'THB', paymentMethod: 'CASH', paidAt: new Date(), paidByUserId: FIN });
+    const refused = assert.rejects(payment);
+    release(); await Promise.all([rejected, refused]);
+    assert.equal((await clients[0]!.reimbursementDuplicateCandidate.findUniqueOrThrow({ where: { id: candidate.id } })).status, 'OPEN');
+    assert.equal(await clients[0]!.reimbursementPayment.count({ where: { reimbursementRequestId: claim.requestId } }), 0);
+    assert.equal(await clients[0]!.auditLog.count({ where: { companyId, targetId: claim.requestId, action: 'reimbursement.duplicate.resolve' } }), 0);
+  });
+
   const closePeriod = (periodId: string, status: 'CLOSED' | 'OPEN' = 'CLOSED') => clients[0]!.accountingPeriod.update({ where: { id: periodId }, data: { status } });
   /** What a cancellation leaves behind, read from the tables: the claim, its expense records, the reversal journals and the events. */
   async function stored(claim: { requestId: string; expenseIds: string[] }) {
@@ -3983,7 +4054,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const refusedForItsClaim = (requestNo: string) => (error: any) => {
       const response = error.getResponse?.() as { code?: string; message?: string; requestNo?: string } | undefined;
       assert.deepEqual([error.getStatus?.(), response?.code, response?.requestNo], [409, 'expense_belongs_to_reimbursement', requestNo]);
-      assert.ok(response!.message!.includes(`คำขอเบิก ${requestNo}`) && response!.message!.includes('ให้ยกเลิกที่คำขอเบิกนั้นในเมนูการเบิกจ่าย'), response!.message);
+      assert.ok(response!.message!.includes(`ใบเบิก ${requestNo}`) && response!.message!.includes('ให้ยกเลิกที่ใบเบิกนั้นในเมนูการเบิกจ่าย'), response!.message);
       return true;
     };
 
@@ -4013,7 +4084,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.equal((await on(0).cancel.execute(finance(), payable.requestId, 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
     assert.deepEqual([(await stored(payable)).expenses, (await stored(payable)).reversals], [['VOIDED'], 1]);
     // Once the claim has ended it holds the record no more: the expense screen answers by its own rules again.
-    await assert.rejects(() => on(0).expenseScreen.void.execute(accountant(), payable.expenseIds[0]!, 'บันทึกผิด'), /เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว จึงยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้/);
+    await assert.rejects(() => on(0).expenseScreen.void.execute(accountant(), payable.expenseIds[0]!, 'บันทึกผิด'), /เอกสารนี้ยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้/);
   });
 
   // ---- Audit B4: a decision that is on record and was not carried out ----

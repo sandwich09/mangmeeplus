@@ -1,3 +1,4 @@
+import { hasAiSuggestionSourceAccess } from '@watchdog-bms/contracts';
 import { COMPANY_PROFILE_SETTINGS_PATH } from '@watchdog-bms/contracts';
 
 export type RoutePermissionRule = {
@@ -52,6 +53,7 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
   },
   { path: '/tax/evidence', anyOf: ['tax.config.read'] },
   { path: '/tax/reconciliation', anyOf: ['tax.report.read'] },
+  { path: '/tax/withholding', anyOf: ['wht.pnd53.read', 'wht.pnd53.prepare'] },
   { path: '/tax/pnd53', anyOf: ['wht.pnd53.read', 'wht.pnd53.prepare'] },
   { path: '/tax', anyOf: ['tax.period.read'] },
   { path: '/notifications/preferences', anyOf: ['notification.preference.manage'] },
@@ -137,5 +139,6 @@ export function findRoutePermissionRule(path: string): RoutePermissionRule | und
 
 export function canSeeRoute(path: string, permissions: readonly string[]): boolean {
   const rule = findRoutePermissionRule(path);
+  if (rule?.path === '/ai-suggestions' && !hasAiSuggestionSourceAccess(permissions)) return false;
   return Boolean(rule?.anyOf.some((permission) => permissions.includes(permission)));
 }

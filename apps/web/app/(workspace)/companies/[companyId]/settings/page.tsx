@@ -14,7 +14,7 @@ export default async function SettingsPage({
   const showProfileAttention = session?.permissions?.includes('company.legal_identity.manage') ?? false;
 
   return (
-    <MangmeePage title="ตั้งค่า" description="จัดการบริษัท พนักงาน สิทธิ์ สาขา และความปลอดภัยของบัญชีจากศูนย์กลางเดียว">
+    <MangmeePage title="ตั้งค่า">
       {/* Which cards a locked shop keeps is decided inside: only the shell knows it is locked. */}
       <SettingsMenu
         companyId={companyId}

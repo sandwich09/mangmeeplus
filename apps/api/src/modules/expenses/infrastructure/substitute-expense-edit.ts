@@ -11,11 +11,25 @@ const comparable = (value: unknown) => value == null ? '' : value instanceof Dat
 const changed = (before: any, after: any, field: string) => comparable(before[field]) !== comparable(after[field]);
 const printedLines = (row: any) => JSON.stringify((row.lines ?? []).map((line: any) => [line.description, comparable(line.quantity), comparable(line.lineTotalAmount)]));
 
+/** Metadata records ownership of the filled name; matching text alone is not provenance. */
+export function substitutePayeeExpenseFields(expense: any, payeeName: string, current?: any): Record<string, any> {
+  if (current && (current.status !== 'PREPARED' || current.wetSignedScanAttachmentId || current.paperSubmissionJson)) return {};
+  const name = payeeName.trim();
+  const seller = comparable(expense.vendorNameSnapshot).trim();
+  const metadata = expense.sourceChannelMetadataJson ?? {};
+  if (!name || seller === name || seller && !(current?.payeeName === seller && metadata.substituteReceiptPayeeName === seller)) return {};
+  return { vendorNameSnapshot: name, sourceChannelMetadataJson: { ...metadata, substituteReceiptPayeeName: name } };
+}
+
 /** Runs inside the review-save transaction under its existing funding/substitute locks. */
 export async function syncSubstituteAfterExpenseEdit(tx: any, before: any, after: any, actorUserId: string) {
   const current = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId: after.companyId, expenseId: after.id, status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' } });
   if (!current) return null;
-  const materialChange = printedFields.some((field) => changed(before, after, field)) || printedLines(before) !== printedLines(after);
+  // An expense that had no seller name may take the name its certificate already prints: nothing the
+  // signers saw changes, so it is not an edit that needs the certificate cancelled.
+  const payee = comparable(current.payeeName).trim();
+  const takesPayeeName = payee !== '' && !comparable(before.vendorNameSnapshot).trim() && comparable(after.vendorNameSnapshot).trim() === payee;
+  const materialChange = printedFields.some((field) => !(takesPayeeName && field === 'vendorNameSnapshot') && changed(before, after, field)) || printedLines(before) !== printedLines(after);
   if (materialChange) {
     assertSubstituteEditAllowed(current, before);
     await assertFundingMutation(tx, after.companyId, after.id, 'supersede');
@@ -63,7 +77,7 @@ export async function syncSubstituteAfterExpenseEdit(tx: any, before: any, after
 export function assertSubstituteEditAllowed(current: any, expense: any) {
   if (current.status === 'ISSUED' || Number(expense.paidAmount) > 0 || expense.journalEntryId || expense.postingStatus === 'posted') {
     throw new ConflictException({ code: 'substitute_edit_requires_cancellation',
-      message: 'เอกสารออกสมบูรณ์หรือบันทึกการจ่าย/บัญชีแล้ว กรุณายกเลิกใบแทนและจัดการรายการจ่าย บัญชี หรือคำขอเบิกที่เกี่ยวข้องก่อนแก้ไข' });
+      message: 'เอกสารออกสมบูรณ์หรือบันทึกการจ่าย/บัญชีแล้ว ยกเลิกใบรับรองและจัดการรายการจ่าย บัญชี หรือใบเบิกที่เกี่ยวข้องก่อนแก้ไข' });
   }
 }
 

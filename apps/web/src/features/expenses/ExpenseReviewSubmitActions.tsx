@@ -1,11 +1,12 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { t } from '@/common/i18n/workspace-i18n.logic';
-import { btnClass, ghostClass, successBtn, successBtnStyle } from './ExpensesUi';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { btnClass, ghostClass } from './ExpensesUi';
 
-export function ExpenseReviewSubmitActions({ canConfirm, busy, disabled, confirmDisabled, title, onConfirm, onSend }: {
-  canConfirm: boolean; busy: boolean; disabled: boolean; confirmDisabled: boolean; title?: string;
+export function ExpenseReviewSubmitActions({ canConfirm, busy, disabled, confirmDisabled, title, onConfirm, onSend, canSend = true, back }: {
+  back?: ReactNode; canSend?: boolean; canConfirm: boolean; busy: boolean; disabled: boolean; confirmDisabled: boolean; title?: string;
   onConfirm: () => Promise<unknown>; onSend: () => Promise<unknown>;
 }) {
   const pending = useRef(false);
@@ -14,12 +15,10 @@ export function ExpenseReviewSubmitActions({ canConfirm, busy, disabled, confirm
     pending.current = true;
     try { await action(); } finally { pending.current = false; }
   };
-  return <>
-    {canConfirm ? <>
-      <button type="button" className={successBtn} style={successBtnStyle} disabled={busy || disabled || confirmDisabled} aria-busy={busy} title={title} onClick={() => void run(onConfirm, disabled || confirmDisabled)}>{t('expenses.confirm_and_post', 'th')}</button>
-      <button type="button" className={ghostClass} disabled={busy || disabled} aria-busy={busy} onClick={() => void run(onSend, disabled)}>ส่งให้คนอื่นตรวจ</button>
-    </> : <div className="text-right">
-      <button type="button" className={btnClass} disabled={busy || disabled} aria-busy={busy} title={title} onClick={() => void run(onSend, disabled)}>{t('expenses.send_for_review', 'th')}</button>
-    </div>}
-  </>;
+  // The shared group stacks narrow rows with the acting button above Back.
+  return canConfirm ? <ActionGroup>
+    {back}
+    {canSend && <button type="button" className={ghostClass} disabled={busy || disabled} aria-busy={busy} onClick={() => void run(onSend, disabled)}>ส่งให้ตรวจ</button>}
+    <button type="button" className={btnClass} disabled={busy || disabled || confirmDisabled} aria-busy={busy} title={title} onClick={() => void run(onConfirm, disabled || confirmDisabled)}>{t('expenses.confirm_and_post', 'th')}</button>
+  </ActionGroup> : canSend || back ? <ActionGroup>{back}{canSend && <button type="button" className={btnClass} disabled={busy || disabled} aria-busy={busy} title={title} onClick={() => void run(onSend, disabled)}>{t('expenses.send_for_review', 'th')}</button>}</ActionGroup> : null;
 }

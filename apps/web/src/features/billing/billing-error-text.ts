@@ -6,15 +6,15 @@ export const BILLING_GENERIC_ERROR = 'ยังยืนยันผลราย
 
 /** Only what this page says differently from the shared map; every other code falls through to it. */
 const PAGE_LABELS: Record<string, string> = {
-  BILLING_PLAN_CHANGE_REQUIRED: 'แพ็กเกจปัจจุบันชำระด้วยบิล QR ทุกงวด ซื้อหรือเปลี่ยนแพ็กเกจใหม่ได้เมื่อรอบปัจจุบันสิ้นสุด หรือจัดการบิลในแท็บการต่ออายุและชำระเงิน',
+  BILLING_PLAN_CHANGE_REQUIRED: 'แพ็กเกจปัจจุบันจ่ายด้วยบิล QR ทุกงวด ซื้อหรือเปลี่ยนแพ็กเกจใหม่ได้เมื่อรอบปัจจุบันสิ้นสุด หรือจัดการบิลในแท็บการต่ออายุและจ่ายเงิน',
   BILLING_CAP_SELECTION_REQUIRED: 'จำนวนสาขาหรือผู้ใช้เกินแพ็กเกจที่เลือก กรุณาจัดการสิทธิ์หรือติดต่อทีมงานก่อนยืนยัน',
   // R-A1: ลบใน release ถัดไป — the API no longer answers these to a purchase; an older server may, for one release.
   BILLING_COMPANY_PROFILE_REQUIRED: 'กรุณากรอกข้อมูลบริษัทให้ครบก่อนซื้อแพ็กเกจ',
-  BILLING_RECIPIENT_UPDATE_REQUIRED: 'กรุณาตรวจและยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้ในส่วนอีเมล แล้วตรวจสรุปการชำระเงินใหม่',
-  BILLING_EMAIL_CHANGED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อย แล้วตรวจสรุปการชำระเงินใหม่',
-  BILLING_EMAIL_VERIFICATION_REQUIRED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อย แล้วตรวจสรุปการชำระเงินใหม่',
-  // The shared text says "กดอัปเดตข้อมูล"; the button beside this page's error box is "ลองใหม่".
-  BILLING_CHECKOUT_PENDING: 'ระบบกำลังตรวจรายการชำระเงินเดิมกับผู้ให้บริการรับชำระเงิน กรุณารอสักครู่แล้วกดลองใหม่',
+  BILLING_RECIPIENT_UPDATE_REQUIRED: 'กรุณาตรวจและยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้ในส่วนอีเมล แล้วตรวจสรุปการจ่ายเงินใหม่',
+  BILLING_EMAIL_CHANGED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อย แล้วตรวจสรุปการจ่ายเงินใหม่',
+  BILLING_EMAIL_VERIFICATION_REQUIRED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อย แล้วตรวจสรุปการจ่ายเงินใหม่',
+  // The shared text says "กดอัปเดตข้อมูล"; the button beside this page's error box is "ลองอีกครั้ง".
+  BILLING_CHECKOUT_PENDING: 'ระบบกำลังตรวจรายการจ่ายเงินเดิมกับผู้ให้บริการรับเงิน รอสักครู่แล้วกดลองอีกครั้ง',
 };
 
 export function errorStatus(error: unknown): number | undefined {
@@ -34,7 +34,7 @@ export function errorText(error: unknown): string {
   if (status === 403) return `บัญชีนี้ยังไม่มีสิทธิ์จัดการแพ็กเกจของร้านนี้ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจดำเนินการ`;
   if (status === 429 && code !== 'BILLING_RESEND_LIMIT' && code !== 'EMAIL_OTP_RATE_LIMITED') return 'กรุณารอสักครู่แล้วลองใหม่';
   const mapped = code ? (Object.hasOwn(PAGE_LABELS, code) ? PAGE_LABELS[code] : translateApiError(code)) : null;
-  if (mapped) return mapped;
+  if (mapped) return code?.startsWith('BILLING_') ? mapped.replaceAll('รับชำระเงิน', 'รับเงิน').replaceAll('ชำระ', 'จ่าย') : mapped;
   if (status !== undefined && status >= 500) return apiErrorMessage({ status });
   if ((error as { kind?: unknown } | null)?.kind === 'network_error') return apiErrorMessage({ kind: 'network_error' });
   return BILLING_GENERIC_ERROR;
@@ -46,6 +46,6 @@ export function errorText(error: unknown): string {
 export function billingResendText(result: BillingDocumentResendResult, context: 'documents' | 'recipient' = 'documents'): string {
   if (result.receiptUpdated) return `ส่งเอกสารไปที่ ${result.recipientEmail} แล้ว ตรวจกล่องจดหมายและโฟลเดอร์สแปม · วันนี้ส่งซ้ำได้อีก ${result.remainingToday} ครั้ง`;
   return context === 'recipient'
-    ? `ส่งใบแจ้งหนี้ไปที่ ${result.recipientEmail} แล้ว ใบเสร็จไม่ได้ส่งซ้ำเพราะอีเมลยังเป็นอีเมลเดิม เปิดใบเสร็จได้ที่ประวัติการชำระเงิน · วันนี้ส่งซ้ำได้อีก ${result.remainingToday} ครั้ง`
+    ? `ส่งใบแจ้งหนี้ไปที่ ${result.recipientEmail} แล้ว ใบเสร็จไม่ได้ส่งซ้ำเพราะอีเมลยังเป็นอีเมลเดิม เปิดใบเสร็จได้ที่ประวัติการจ่ายเงิน · วันนี้ส่งซ้ำได้อีก ${result.remainingToday} ครั้ง`
     : `ส่งใบแจ้งหนี้ไปที่ ${result.recipientEmail} แล้ว ใบเสร็จไม่ส่งซ้ำเพราะอีเมลไม่เปลี่ยน เปิดได้จากปุ่มด้านบน · วันนี้ส่งซ้ำได้อีก ${result.remainingToday} ครั้ง`;
 }

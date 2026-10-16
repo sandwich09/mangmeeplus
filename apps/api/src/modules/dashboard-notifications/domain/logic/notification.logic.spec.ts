@@ -52,12 +52,13 @@ describe('implemented-trigger gate (LINE preference suppression)', () => {
 
   // The list is short on purpose: every key on it overrides a person's saved trigger list. Adding one
   // is a decision, so the whole list is pinned here.
-  it('always delivers exactly the fifteen certificate, claim and disbursement notices a saved preference list must not drop', () => {
+  it('always delivers the mandatory certificate, claim, disbursement and requested expense-review notices', () => {
     assert.deepEqual(ALWAYS_DELIVERED_TRIGGER_KEYS, [
       // Expense voucher spec §8.6: the person who issued a 50 ทวิ must hear that it was cancelled, even with
       // a preference list saved before this notice existed.
       'expense.wht_certificate_cancelled',
       // Disbursement voucher spec §8.6: these five deliberately override saved trigger preferences.
+      'expense.review_requested',
       'expense.disbursement_pending_approval',
       'expense.disbursement_approved',
       'expense.disbursement_returned',
@@ -202,4 +203,9 @@ it('D3: every duplicate notice is registered for delivery, source state and work
     assert.ok(template.defaultActionJson.every(action => action.configJson['duplicateRecipient']));
   }
   assert.equal(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG.reimbursement_duplicate_confirmed.eventType, 'reimbursement.duplicate_confirmed');
+});
+
+it('requested expense review is implemented and uses the existing expenses entitlement', () => {
+  assert.ok(IMPLEMENTED_TRIGGER_KEYS.includes('expense.review_requested'));
+  assert.deepEqual(NOTIFICATION_TRIGGER_FEATURE_KEYS['expense.review_requested'], ['expenses']);
 });

@@ -34,3 +34,11 @@ export function branchScopeLabel(context: BranchScopeContext | null, locale: Sup
 export function isBranchScope403(error: unknown, selectedBranchId: string | undefined): boolean {
   return Boolean(selectedBranchId) && statusOf(error) === 403;
 }
+
+/** Ignore legacy shop-only keys: a shared device must not carry another person's choice. */
+export function branchStorageKeys(companyId: string, userId: string) {
+  return {
+    filter: `watchdog.branchFilter.${companyId}.${userId}`,
+    lastChosen: `watchdog.lastChosenBranch.${companyId}.${userId}`,
+  };
+}

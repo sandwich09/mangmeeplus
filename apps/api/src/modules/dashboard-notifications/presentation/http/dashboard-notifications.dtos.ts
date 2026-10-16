@@ -4,6 +4,7 @@
 // global ValidationPipe still runs, and apps/workers posts a real body to two of
 // them. A DTO narrower than what the worker sends would break the cron silently
 // — the worker only logs the status code.
+import { Type } from 'class-transformer';
 import { IsArray, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import type { NotificationChannel } from '@watchdog-bms/contracts';
 
@@ -48,4 +49,11 @@ export class GenerateDashboardSnapshotDto {
 export class DailyOwnerSummaryDto {
   // Defaults to today when absent; apps/workers always sends it.
   @Matches(/^\d{4}-\d{2}-\d{2}$/) @IsNotEmpty() @IsOptional() periodKey?: string;
+}
+
+
+/** GET .../dashboard/expense-months — query years are Gregorian, not Buddhist. */
+export class ExpenseMonthsQueryDto {
+  @Type(() => Number) @IsInt() @Min(2000) @Max(2100) year!: number;
+  @IsString() @IsOptional() @MaxLength(64) branchId?: string;
 }

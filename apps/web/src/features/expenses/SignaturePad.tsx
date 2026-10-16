@@ -11,6 +11,7 @@ import {
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { cx } from '@/common/components/mangmee';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
 import { btnClass, ghostClass } from './ExpensesUi';
 import {
   findSignatureCropBounds,
@@ -202,15 +203,16 @@ export function SignaturePad({
           onPointerCancel={endStroke}
         />
       </div>
-      {error && <p role="alert" className="text-xs text-error-700">{error}</p>}
-      <div className="flex flex-wrap gap-2">
+      {error && <p role="alert" className="text-sm text-error-700">{error}</p>}
+      {/* One size, the way back first and the acting one last. The drawing is used only on this press, never by itself. */}
+      <ActionGroup>
         <button type="button" className={ghostClass} disabled={busy || exporting || empty} onClick={clear}>
           {t('expenses.substitute_wizard.signature_clear', locale)}
         </button>
         <button type="button" className={btnClass} disabled={busy || exporting || empty} aria-busy={Boolean(busy || exporting)} onClick={() => void confirm()}>
           {t('expenses.substitute_wizard.signature_use_drawing', locale)}
         </button>
-      </div>
+      </ActionGroup>
     </div>
   );
 }

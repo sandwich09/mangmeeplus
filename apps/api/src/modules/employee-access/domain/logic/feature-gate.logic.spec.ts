@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_ON_FEATURE_KEYS, FEATURE_CATALOG } from '@watchdog-bms/contracts';
-import { filterPermissionsByEntitlement } from './feature-gate.logic';
+import { entitledRoleMenus, filterPermissionsByEntitlement } from './feature-gate.logic';
 import { loadEntitledFeatureKeys } from '../../application/entitlement.helper';
 import { PERMISSIONS } from '../../../auth/permission-registry';
 
@@ -263,7 +263,7 @@ describe('filterPermissionsByEntitlement', () => {
         },
       ],
     );
-    assert.equal(featureByKey.get('company_settings')?.labelTh, 'ตั้งค่าบริษัท');
+    assert.equal(featureByKey.get('company_settings')?.labelTh, 'ตั้งค่าร้าน');
     assert.deepEqual(
       featureByKey.get('company_settings')?.submenus.map(({ key, labelTh, route, permissionKeys }) => ({
         key, labelTh, route, permissionKeys,
@@ -709,4 +709,8 @@ describe('Step 0 company tax identity permissions vs entitlements', () => {
     assert.deepEqual(filterPermissionsByEntitlement([...key], new Set(['sales_documents'])), key);
     assert.deepEqual(filterPermissionsByEntitlement([...key], new Set(['thai_tax'])), []);
   });
+});
+
+it('role menu labels use the same binding as the web menu', () => {
+  assert.equal(entitledRoleMenus(null).find(menu => menu.id === 'dashboard')?.labelTh, 'หน้าแรก');
 });

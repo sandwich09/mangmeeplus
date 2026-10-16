@@ -1,3 +1,5 @@
+import { withholdingPayerPrefill } from '../../tax/application/services/withholding-establishments';
+import { filedWithholdingPaymentPeriods } from '../../tax/application/services/filed-withholding-payment';
 import { Injectable, ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { createHash } from 'node:crypto';
@@ -1627,7 +1629,7 @@ export class PrismaProcurementRepository {
         companyId, sourceType: 'procurement.supplier_payment', sourceId: id, status: 'ACTIVE',
         eventType: { in: ['WHT_PND3', 'WHT_PND53'] },
       }, include: { taxPeriod: true } });
-      if (whtEvents.some((event: any) => ['FILED', 'PAID', 'CLOSED'].includes(String(event.taxPeriod.status)))) {
+      if ((await filedWithholdingPaymentPeriods(tx, companyId, 'procurement.supplier_payment', id)).length) {
         throw new ConflictException('wht_tax_period_locked_requires_amendment');
       }
       // The 50 ทวิ obligation. An UNLINKED handoff is just a to-do the void makes obsolete, so it is
@@ -1842,17 +1844,17 @@ async function createWhtHandoffForPayment(tx: any, input: {
 }): Promise<void> {
   const { companyId, payment, supplier, data } = input;
   const withheldAmount = String(data.whtAmount ?? '0');
-  const [company, category, payerBranch] = await Promise.all([
+  const [company, category] = await Promise.all([
     tx.company.findUnique({ where: { id: companyId }, select: { name: true, registeredName: true, taxId: true, addressJson: true } }),
     data.whtCategoryCode ? tx.whtIncomeCategory.findUnique({ where: { code: data.whtCategoryCode }, select: { nameTh: true } }) : Promise.resolve(null),
-    data.branchId ? tx.branch.findUnique({ where: { companyId_id: { companyId, id: data.branchId } }, select: { taxBranchCode: true } }) : Promise.resolve(null),
   ]);
+  const payerBranch = await withholdingPayerPrefill(tx, companyId, data.paymentDate.toISOString().slice(0, 7), payment.branchId ?? data.branchId ?? null, company?.addressJson);
   const prefill = {
     payerSnapshot: {
       companyName: company?.registeredName ?? company?.name ?? 'Unknown company',
       taxId: company?.taxId ?? null,
-      branchCode: payerBranch?.taxBranchCode ?? null,
-      address: company?.addressJson ? JSON.stringify(company.addressJson) : null,
+      branchCode: payerBranch.branchCode,
+      address: payerBranch.address ? JSON.stringify(payerBranch.address) : null,
     },
     payeeSnapshot: {
       name: supplier.legalNameSnapshot ?? supplier.displayNameSnapshot ?? 'Unknown payee',

@@ -1,6 +1,6 @@
 'use client';
 
-import type { BuyerEntityKind } from '@watchdog-bms/contracts';
+import { thaiTaxIdChecksumValid, type BuyerEntityKind } from '@watchdog-bms/contracts';
 import { SelectField, TextField, TextareaField } from '@/common/components/field';
 import { cx } from '@/common/components/mangmee';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
@@ -16,6 +16,12 @@ type GroupProps = {
   disabled: boolean;
   issue: CounterpartyFormIssue | null;
 };
+
+/** A typed tax number that is not 13 digits, or whose last digit does not check: worth a second look, not a refusal. */
+export function taxIdLooksWrong(value: string): boolean {
+  const digits = value.replace(/[\s-]/g, '');
+  return digits.length > 0 && !(/^\d{13}$/.test(digits) && thaiTaxIdChecksumValid(digits));
+}
 
 function issueFor(issue: CounterpartyFormIssue | null, field: keyof CounterpartyFormValues, locale: SupportedLocale): string | undefined {
   return issue?.field === field ? t(issue.messageKey, locale) : undefined;
@@ -52,13 +58,15 @@ export function CounterpartyIdentityFields({ values, onChange, disabled, issue, 
         name="counterparty-tax-id"
         inputMode="numeric"
         value={values.taxId}
+        hint={taxIdLooksWrong(values.taxId) ? t('counterparties.tax_id_check', locale) : undefined}
         disabled={disabled}
         onChange={(event) => onChange({ taxId: event.target.value })}
       />
       <SelectField
         label={t('counterparties.entity_kind', locale)}
         name="counterparty-entity-kind"
-        hint={t('counterparties.entity_kind_hint', locale)}
+        // The same one line the expense form says beside the same question.
+        hint={t('expenses.payee_entity_kind_hint', locale)}
         value={values.entityKind}
         disabled={disabled}
         onChange={(event) => onChange({ entityKind: event.target.value as BuyerEntityKind | '' })}
@@ -116,13 +124,13 @@ function CounterpartyBranchField({ values, onChange, disabled, issue }: GroupPro
       </div>
       {branchIssue
         ? <span role="alert" className="text-xs font-normal text-red-600">{branchIssue}</span>
-        : <span className="text-xs font-normal text-gray-400">{t('counterparties.branch_code_hint', locale)}</span>}
+        : <span className="text-xs font-normal text-gray-500">{t('counterparties.branch_code_hint', locale)}</span>}
     </div>
   );
 }
 
 /** §11.1 address block. The RD lookup button is absent until `RdVatDetailAdapter` exists (§7). */
-export function CounterpartyAddressFields({ values, onChange, disabled, issue }: GroupProps) {
+export function CounterpartyAddressFields({ values, onChange, disabled, issue, hint = 'พิมพ์ตามที่ใบระบุ' }: GroupProps & { hint?: string }) {
   const locale = useWorkspaceLocale();
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -131,7 +139,7 @@ export function CounterpartyAddressFields({ values, onChange, disabled, issue }:
           label={t('counterparties.address_text', locale)}
           name="counterparty-address-text"
           rows={3}
-          hint={t('counterparties.address_hint', locale)}
+          hint={hint}
           error={issueFor(issue, 'addressText', locale)}
           value={values.addressText}
           disabled={disabled}

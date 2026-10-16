@@ -12,6 +12,7 @@ type EvidenceRow = {
 /** Resolve immutable claim sources without moving their files onto the accounting projection. */
 export async function loadExpenseEvidenceSources(
   db: ExpenseDb, companyId: string, rows: readonly EvidenceRow[], scopes: { branchIds?: string[] } = {},
+  includeUnavailableAttachments = false,
 ) {
   const claimRows = rows.filter((row) => row.sourceReimbursementRequestId && row.sourceReimbursementLineId);
   const lines = claimRows.length ? await db.reimbursementLine.findMany({
@@ -40,19 +41,20 @@ export async function loadExpenseEvidenceSources(
   const evidenceExpenseIds = [...new Set([...rows.map((row) => row.id), ...[...snapshots.values()].map((source) => source.expenseId)])];
   const certificates = evidenceExpenseIds.length ? await db.expenseSubstituteReceiptEvidence.findMany({
     where: { companyId, expenseId: { in: evidenceExpenseIds }, ...branchScopeWhere(scopes) }, orderBy: { version: 'asc' },
-    select: { id: true, expenseId: true, version: true, status: true, fundingSource: true, payerName: true, snapshotJson: true,
+    select: { id: true, expenseId: true, version: true, status: true, fundingSource: true, payerName: true, paymentEvidenceAttachmentIds: true, snapshotJson: true,
       snapshotChecksumSha256: true, correctionOfEvidenceId: true, correctionReason: true, artifactAttachmentId: true, wetSignedScanAttachmentId: true },
   }) : [];
   const links = evidenceExpenseIds.length ? await db.attachmentLink.findMany({
-    where: { companyId, targetType: 'expense.record', targetId: { in: evidenceExpenseIds }, attachment: { companyId, status: 'ACTIVE', ...branchScopeWhere(scopes) } },
-    include: { attachment: true },
+    where: { companyId, targetType: 'expense.record', targetId: { in: evidenceExpenseIds }, attachment: { companyId, ...(!includeUnavailableAttachments && { status: 'ACTIVE', ...branchScopeWhere(scopes) }) } },
+    include: { attachment: true }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   }) : [];
   const attachmentIds = [...new Set([
     ...certificates.flatMap((certificate) => [certificate.artifactAttachmentId, certificate.wetSignedScanAttachmentId]),
     ...[...snapshots.values()].flatMap((source) => source.attachments.map((file) => file.id)),
   ].filter((id): id is string => typeof id === 'string' && Boolean(id)))];
   const certificateFiles = attachmentIds.length ? await db.attachmentObject.findMany({
-    where: { companyId, id: { in: attachmentIds }, status: 'ACTIVE', ...branchScopeWhere(scopes) },
+    where: { companyId, id: { in: attachmentIds }, ...(!includeUnavailableAttachments && { status: 'ACTIVE', ...branchScopeWhere(scopes) }) },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   }) : [];
   const forRow = (row: EvidenceRow) => {
     const source = snapshots.get(row.id);
@@ -68,7 +70,7 @@ export async function loadExpenseEvidenceSources(
       const pinned = pinnedFiles.has(file.id) && (!pinnedFiles.get(file.id) || pinnedFiles.get(file.id) === file.checksumSha256);
       if (certificateFile || pinned) files.set(file.id, { file, purpose: 'expense.review.evidence' });
     }
-    const attachments: ExpenseAttachmentRef[] = [...files.values()].filter(({ file }) => isBranchInScope(scopes, file.branchId)).map(({ file, purpose }) => {
+    const attachments: ExpenseAttachmentRef[] = [...files.values()].filter(({ file }) => includeUnavailableAttachments || isBranchInScope(scopes, file.branchId)).map(({ file, purpose }) => {
       const refs = relevantCertificates.filter((certificate) => certificate.artifactAttachmentId === file.id || certificate.wetSignedScanAttachmentId === file.id);
       const historical = refs.length > 0 && refs.every((certificate) => certificate.status === 'SUPERSEDED');
       return {

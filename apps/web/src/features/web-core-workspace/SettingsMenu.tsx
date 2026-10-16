@@ -2,12 +2,35 @@
 
 import type React from 'react';
 import Link from 'next/link';
-import { GroupIcon, LockIcon, BellIcon, BoxIcon, DollarLineIcon } from '@/common/icons';
+import { DollarLineIcon } from '@/common/icons';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { secondaryButtonClass } from '@/common/components/button/button-classes';
 import { MangmeeCard, MangmeeIconFrame } from '@/common/components/mangmee';
 import { useLockedShell } from '@/features/plan-term/LockedShellScope';
-import { LOCKED_ACCOUNT_CARD, filterSettingsMenuItems, showsLockedAccountCard } from './settings-menu.logic';
+import { LOCKED_ACCOUNT_CARD, PACKAGE_CARD, filterSettingsMenuItems, showsLockedAccountCard, showsPackageCard } from './settings-menu.logic';
 
-const SETTINGS_MENU_ICONS = { BellIcon, BoxIcon, LockIcon, GroupIcon, DollarLineIcon };
+/**
+ * One card of the hub: the name of the place, one plain line, and an arrow that says it opens. No picture: a padlock
+ * on the shop's details and a "$" on a receipt setting named nothing.
+ */
+function SettingsCard({ href, title, desc, badge }: { href: string; title: string; desc: string; badge?: React.ReactNode }) {
+  return (
+    <Link href={href} className="group block">
+      <MangmeeCard className="flex h-full items-center justify-between gap-3 p-4 transition-colors group-hover:border-brand-200 group-hover:bg-brand-25">
+        <span className="min-w-0">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-base font-bold text-gray-900">{title}</span>
+            {/* Its own wrapper: the badge is made by the server page, and React asks for a key when such an element
+                sits directly in a list of siblings ("unique key" warning seen on this page). */}
+            {badge && <span className="inline-flex">{badge}</span>}
+          </span>
+          <span className="mt-1 block text-sm leading-6 text-gray-600">{desc}</span>
+        </span>
+        <span aria-hidden="true" className="shrink-0 text-xl text-gray-400">›</span>
+      </MangmeeCard>
+    </Link>
+  );
+}
 
 /**
  * The settings hub cards. A client island only so the one thing the server page cannot know —
@@ -25,15 +48,15 @@ export function SettingsMenu({ companyId, permissions, profileBadge }: {
   const primary = items.find((item) => item.section === 'primary');
   const advanced = items.filter((item) => item.section === 'advanced');
   const general = items.filter((item) => !item.section);
-  const PrimaryIcon = primary ? SETTINGS_MENU_ICONS[primary.iconKey] : null;
+  const packageCard = showsPackageCard(permissions);
 
   return (
     <>
-      {primary && PrimaryIcon && (
+      {primary && (
         <Link href={`/companies/${companyId}${primary.href}`} className="group mb-6 block">
           <MangmeeCard className="border-brand-200 bg-brand-25 p-6 transition-colors group-hover:bg-brand-50">
             <div className="flex items-start gap-4">
-              <MangmeeIconFrame tone={primary.tone}><PrimaryIcon /></MangmeeIconFrame>
+              <MangmeeIconFrame tone={primary.tone}><DollarLineIcon /></MangmeeIconFrame>
               <div className="min-w-0">
                 <div className="text-lg font-extrabold text-gray-900">{primary.title}</div>
                 <div className="mt-1 text-sm leading-6 text-gray-600">{primary.desc}</div>
@@ -47,47 +70,28 @@ export function SettingsMenu({ companyId, permissions, profileBadge }: {
       {/* Staff in the locked shell: no company card is theirs to open, so ตั้งค่า would be an empty
           page. These two account pages live outside the company and keep working while it is locked. */}
       {showsLockedAccountCard(permissions, locked) && (
-        <MangmeeCard className="p-4">
-          <div className="flex items-start gap-3">
-            <MangmeeIconFrame tone="brand"><LockIcon /></MangmeeIconFrame>
-            <div className="min-w-0">
-              <div className="font-bold text-gray-900">{LOCKED_ACCOUNT_CARD.title}</div>
-              <div className="mt-1 text-sm leading-6 text-gray-500">{LOCKED_ACCOUNT_CARD.desc}</div>
-              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                {/* The account-email page sends its back link to this shop's settings only when it knows the shop. */}
-                {LOCKED_ACCOUNT_CARD.links.map((link) => (
-                  <Link key={link.key} href={link.key === 'email' ? `${link.href}?company=${encodeURIComponent(companyId)}` : link.href}
-                    className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto">
-                    {link.label}
-                  </Link>
-                ))}
-              </div>
-            </div>
-          </div>
+        <MangmeeCard className="mb-4 p-4">
+          <div className="text-base font-bold text-gray-900">{LOCKED_ACCOUNT_CARD.title}</div>
+          <div className="mt-1 text-sm leading-6 text-gray-600">{LOCKED_ACCOUNT_CARD.desc}</div>
+          <ActionGroup align="start" className="mt-3">
+            {/* The account-email page sends its back link to this shop's settings only when it knows the shop. */}
+            {LOCKED_ACCOUNT_CARD.links.map((link) => (
+              <Link key={link.key} href={link.key === 'email' ? `${link.href}?company=${encodeURIComponent(companyId)}` : link.href}
+                className={secondaryButtonClass}>
+                {link.label}
+              </Link>
+            ))}
+          </ActionGroup>
         </MangmeeCard>
       )}
 
-      {general.length > 0 && (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {general.map((item) => {
-            const Icon = SETTINGS_MENU_ICONS[item.iconKey];
-            return (
-              <Link key={item.key} href={`/companies/${companyId}${item.href}`} className="group block">
-                <MangmeeCard className="h-full p-4 transition-colors group-hover:border-brand-200 group-hover:bg-brand-25">
-                  <div className="flex items-start gap-3">
-                    <MangmeeIconFrame tone={item.tone}><Icon /></MangmeeIconFrame>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-bold text-gray-900">{item.title}</span>
-                        {item.key === 'company-profile' && profileBadge}
-                      </div>
-                      <div className="mt-1 text-sm leading-6 text-gray-500">{item.desc}</div>
-                    </div>
-                  </div>
-                </MangmeeCard>
-              </Link>
-            );
-          })}
+      {(general.length > 0 || packageCard) && (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {general.map((item) => (
+            <SettingsCard key={item.key} href={`/companies/${companyId}${item.href}${item.hash ?? ''}`} title={item.title} desc={item.desc}
+              badge={item.key === 'company-profile' ? profileBadge : undefined} />
+          ))}
+          {packageCard && <SettingsCard key="package" href={`/companies/${companyId}${PACKAGE_CARD.href}`} title={PACKAGE_CARD.title} desc={PACKAGE_CARD.desc} />}
         </div>
       )}
 

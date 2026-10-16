@@ -583,6 +583,8 @@ describe('PrismaReimbursementRepository saved claim signatures', () => {
       },
     };
     const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    repo.listClaimDuplicateComparisons = async () => [];
+    repo.listClaimDuplicateExpenseTargets = async () => [];
     assert.equal(await repo.findLatestActiveSavedSignatureAttachmentId('co-1', 'staff-1'), 'att-derived');
   });
 
@@ -611,6 +613,8 @@ describe('PrismaReimbursementRepository saved claim signatures', () => {
       },
     };
     const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    repo.listClaimDuplicateComparisons = async () => [];
+    repo.listClaimDuplicateExpenseTargets = async () => [];
     assert.equal(
       (await repo.findClaimSignatureAttachment('co-1', 'att-saved', 'staff-1', 'rb-1', 'REQUESTER'))?.id,
       'att-saved',
@@ -626,6 +630,8 @@ describe('PrismaReimbursementRepository saved claim signatures', () => {
       },
     };
     const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    repo.listClaimDuplicateComparisons = async () => [];
+    repo.listClaimDuplicateExpenseTargets = async () => [];
     assert.equal(
       await repo.findClaimSignatureAttachment('co-1', 'att-other', 'staff-1', 'rb-1', 'REQUESTER'),
       null,
@@ -774,6 +780,8 @@ describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () =>
       },
     };
     const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    repo.listClaimDuplicateComparisons = async () => [];
+    repo.listClaimDuplicateExpenseTargets = async () => [];
     const rows = await repo.listSignedClaimFormCopies('co-1', 'rb-1');
     // Only the declaration bound to its own link names who made it and when.
     assert.deepEqual(rows.map((row) => [row.attachmentId, row.acknowledged, row.acknowledgedByUserId, row.acknowledgedAt]), [
@@ -932,6 +940,8 @@ describe('moving a misfiled slip recomputes how the document was signed', () => 
     };
     const client = { ...tables, $transaction: async (work: (tx: any) => Promise<unknown>) => work({ ...tables, $executeRaw: async () => 1 }) };
     const repository = new PrismaReimbursementRepository({ client } as any, {} as any);
+    repository.listClaimDuplicateComparisons = async () => [];
+    repository.listClaimDuplicateExpenseTargets = async () => [];
     // Names and policy are not what this is about; everything about copies and slips is the real repository.
     const repo = Object.assign(Object.create(repository), { getUserDisplayNames: async () => ({ 'mgr-1': 'มานี ผู้จัดการ' }), findPolicy: async () => null });
     const evidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any;

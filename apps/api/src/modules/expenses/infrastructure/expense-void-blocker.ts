@@ -1,3 +1,4 @@
+import { filedWithholdingPaymentPeriods } from '../../tax/application/services/filed-withholding-payment';
 import { validateStatusTransition } from '../domain/logic/expense-status.logic';
 import { formPeriodKey, isPeriodLocked } from '../../tax/domain/logic/tax-period.logic';
 import { ConflictException, UnprocessableEntityException, type HttpException } from '@nestjs/common';
@@ -11,24 +12,30 @@ import { disbursementVoucherReadWhere, type DisbursementReadScope } from './pris
 import { disbursementVoucherActions } from '../domain/logic/disbursement-voucher.logic';
 
 /** The pointer is deliberately not a foreign key: fail closed even if its document is missing. */
-export async function readDisbursementReservations(db: any, companyId: string, expenseIds: string[], caller?: DisbursementReadScope & { permissions: string[] }, loadedExpenses?: Array<{ id: string; reservedByDisbursementVoucherId?: string | null }>) {
-  const reservations = new Map<string, { voucherId: string; documentNumber: string | null; preparerName: string | null; canOpen: boolean; viewerMay: 'act' | 'open' | 'none'; viewerCanPay: boolean }>();
+export async function readDisbursementReservations(db: any, companyId: string, expenseIds: string[], caller?: DisbursementReadScope & { permissions: string[] }, loadedExpenses?: Array<{ id: string; reservedByDisbursementVoucherId?: string | null }>, includeDraft = false) {
+  const reservations = new Map<string, { voucherId: string; documentNumber: string | null; preparerName: string | null; canOpen: boolean; viewerMay: 'act' | 'open' | 'none'; viewerCanPay: boolean; status?: string }>();
   if (!expenseIds.length) return reservations;
-  const expenses = loadedExpenses ?? await db.expenseRecord.findMany({ where: { companyId, id: { in: expenseIds }, reservedByDisbursementVoucherId: { not: null } }, select: { id: true, reservedByDisbursementVoucherId: true } });
+  const expenses = loadedExpenses ?? await db.expenseRecord.findMany({ where: { companyId, id: { in: expenseIds }, ...(!includeDraft && { reservedByDisbursementVoucherId: { not: null } }) }, select: { id: true, reservedByDisbursementVoucherId: true } });
   const voucherIds = [...new Set<string>(expenses.flatMap((e: any) => e.reservedByDisbursementVoucherId ? [e.reservedByDisbursementVoucherId] : []))];
-  if (!voucherIds.length) return reservations;
-  const vouchers = await db.disbursementVoucher.findMany({ where: { companyId, id: { in: voucherIds } }, select: { id: true, status: true, documentNumber: true, preparedByUserId: true } });
+  if (!voucherIds.length && !includeDraft) return reservations;
+  const vouchers = await db.disbursementVoucher.findMany({ where: { companyId,
+    ...(includeDraft ? { OR: [{ id: { in: voucherIds } }, { status: 'DRAFT', lines: { some: { companyId, expenseId: { in: expenseIds } } } }] } : { id: { in: voucherIds } }) },
+    ...(includeDraft && { orderBy: { updatedAt: 'desc' } }),
+    select: { id: true, status: true, documentNumber: true, preparedByUserId: true, ...(includeDraft && { lines: { select: { expenseId: true } } }) } });
+  const allVoucherIds = vouchers.map((voucher: any) => voucher.id);
   const preparers = vouchers.length ? await db.user.findMany({ where: { id: { in: [...new Set(vouchers.map((v: any) => v.preparedByUserId))] }, memberships: { some: { companyId } } }, select: { id: true, displayName: true } }) : [];
-  const readable = caller?.permissions.includes('expense.disbursement.read') ? await db.disbursementVoucher.findMany({ where: { ...disbursementVoucherReadWhere({ ...caller, companyId }), id: { in: voucherIds } }, select: { id: true } }) : [];
+  const readable = caller?.permissions.includes('expense.disbursement.read') ? await db.disbursementVoucher.findMany({ where: { ...disbursementVoucherReadWhere({ ...caller, companyId }), id: { in: allVoucherIds } }, select: { id: true } }) : [];
   const names = new Map<string, string>(preparers.map((p: any) => [p.id, p.displayName]));
   const documents = new Map<string, any>(vouchers.map((v: any) => [v.id, v]));
   const readableIds = new Set(readable.map((v: any) => v.id));
   for (const expense of expenses) {
-    if (!expense.reservedByDisbursementVoucherId) continue;
-    const voucher = documents.get(expense.reservedByDisbursementVoucherId);
-    const canOpen = readableIds.has(expense.reservedByDisbursementVoucherId);
+    const draft = vouchers.find((voucher: any) => voucher.status === 'DRAFT' && voucher.lines?.some((line: any) => line.expenseId === expense.id));
+    const voucherId = expense.reservedByDisbursementVoucherId ?? draft?.id;
+    if (!voucherId) continue;
+    const voucher = documents.get(voucherId);
+    const canOpen = readableIds.has(voucherId);
     const actions = voucher && caller ? disbursementVoucherActions(voucher, caller.permissions) : null;
-    reservations.set(expense.id, { voucherId: expense.reservedByDisbursementVoucherId, documentNumber: voucher?.documentNumber ?? null,
+    reservations.set(expense.id, { voucherId, ...(voucher?.status === 'DRAFT' && { status: 'DRAFT' }), documentNumber: voucher?.documentNumber ?? null,
       preparerName: names.get(voucher?.preparedByUserId) ?? null, canOpen, viewerCanPay: canOpen && Boolean(caller?.permissions.includes('expense.disbursement.pay')), viewerMay: canOpen ? actions?.withdraw || actions?.cancel ? 'act' : 'open' : 'none' });
   }
   return reservations;
@@ -90,7 +97,7 @@ export async function hasExpenseTaxWorkspaceCertificate(db: any, companyId: stri
 }
 
 /** The same facts decide both the detail capabilities and the locked mutation's refusal. */
-export async function readExpenseCorrectionCapabilities(db: any, expense: any, permissions: string[], lockPeriods = false, caller?: DisbursementReadScope): Promise<ExpenseCorrectionCapabilities> {
+export async function readExpenseCorrectionCapabilities(db: any, expense: any, permissions: string[], lockPeriods = false, caller?: DisbursementReadScope, includeDraft = false): Promise<ExpenseCorrectionCapabilities> {
   const companyId = expense.companyId;
   const payments = expense.payments ?? await db.expensePayment.findMany({ where: { companyId, expenseId: expense.id } });
   const journals = await db.journalEntry.findMany({ where: { companyId, OR: [
@@ -114,8 +121,8 @@ export async function readExpenseCorrectionCapabilities(db: any, expense: any, p
   const links = await db.attachmentLink.findMany({ where: { companyId, targetType: 'expense.record', targetId: expense.id }, select: { attachmentId: true } });
   const linkedClaim = await db.reimbursementLine.findFirst({ where: expensePaymentClaimWhere(companyId, [expense.id], links.map((link: any) => link.attachmentId)), select: { id: true } });
   const substitute = await db.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId, expenseId: expense.id, status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' } });
-  const reservation = expense.reservedByDisbursementVoucherId ? (await readDisbursementReservations(db, companyId, [expense.id], caller ? { ...caller, permissions } : undefined, [expense])).get(expense.id) : null;
-  const disbursementReservation = reservation ? { voucherId: reservation.canOpen ? reservation.voucherId : null, documentNumber: reservation.documentNumber, preparerName: reservation.preparerName, viewerMay: reservation.viewerMay, viewerCanPay: reservation.viewerCanPay } : null;
+  const reservation = expense.reservedByDisbursementVoucherId || includeDraft ? (await readDisbursementReservations(db, companyId, [expense.id], caller ? { ...caller, permissions } : undefined, [expense], includeDraft)).get(expense.id) : null;
+  const disbursementReservation = reservation ? { ...(reservation.status === 'DRAFT' && { status: 'DRAFT' as const }), voucherId: reservation.canOpen ? reservation.voucherId : null, documentNumber: reservation.documentNumber, preparerName: reservation.preparerName, viewerMay: reservation.viewerMay, viewerCanPay: reservation.viewerCanPay } : null;
   const liveClaim = Boolean(claim || linkedClaim);
   const reopenBlockers: ExpenseCorrectionBlocker[] = [];
   if (expense.reservedByDisbursementVoucherId) reopenBlockers.push('disbursement_reserved');
@@ -169,7 +176,7 @@ export function lockedTaxFormTypesOf(expense: { lines?: any[]; inputVatClaimStat
       }
     }
   }
-  // The claim-status fallback fails closed for rows without components.
+  // Legacy claimed rows may predate component snapshots: fail closed in their VAT month.
   if (expense.inputVatClaimStatus === 'CLAIMABLE' && Number(expense.vatAmount) !== 0) formTypes.add('PP30');
   return [...formTypes];
 }
@@ -196,8 +203,9 @@ export async function readExpensePeriodLocks(db: any, expense: any, eventPeriodI
       ...(eventPeriodIds.length ? [{ id: { in: eventPeriodIds } }] : []),
     ],
   }, select: { formType: true, periodKey: true, status: true } }) : [];
+  const filedPayments = withholdingForms && (Number(expense.whtAmount) > 0 || eventPeriodIds.length) ? await filedWithholdingPaymentPeriods(db, expense.companyId, 'expense.record', expense.id, Number(expense.whtAmount) > 0 ? { formType: expense.vendorEntityKindSnapshot === 'INDIVIDUAL' ? 'PND3' : 'PND53', periodKey } : undefined) : [];
   return { lockedAccountingPeriodKey: accounting && !['OPEN', 'REOPENED'].includes(accounting.status) ? periodKey : null,
-    lockedTaxPeriods: periods.filter((p: any) => isPeriodLocked(p.status)).map((p: any) => ({ formType: p.formType as TaxFormType, periodKey: p.periodKey })) };
+    lockedTaxPeriods: [...periods.filter((p: any) => !['PND3', 'PND53'].includes(p.formType) && isPeriodLocked(p.status)).map((p: any) => ({ formType: p.formType as TaxFormType, periodKey: p.periodKey })), ...filedPayments] };
 }
 
 /** Retire reporting facts before any correction can replace line ids, dates or payee facts. */
@@ -286,13 +294,7 @@ export async function findClaimExpenseVoidBlocker(db: any, companyId: string, ex
   const expense = await db.expenseRecord.findFirst({ where: { id: expenseId, companyId }, include: { lines: true } });
   // Gone or already voided: nothing is left to void. Not confirmed yet: it is closed without a journal.
   if (!expense || expense.status === 'VOIDED') return null;
-  const certificate = await readExpenseCancellationCertificate(db, companyId, expenseId);
   const events = await db.taxEvent.findMany({ where: { companyId, sourceType: 'expense.record', sourceId: expenseId }, select: { id: true, taxPeriodId: true, status: true } });
-  if (certificate) {
-    const locks = await readExpensePeriodLocks(db, expense, events.filter((event: any) => event.status === 'ACTIVE').map((event: any) => event.taxPeriodId));
-    const locked = locks.lockedTaxPeriods.find((period: { formType: string }) => period.formType === 'PND3' || period.formType === 'PND53');
-    if (locked) return { code: 'tax_period_locked', ...locked, certificateKind: certificate.kind };
-  }
   const eventIds = events.map((event: any) => event.id);
   const handoffs = await db.whtCertificateHandoff.findMany({ where: expenseWhtHandoffWhere(companyId, expenseId, eventIds) });
   if (await hasExpenseTaxWorkspaceCertificate(db, companyId, expenseId, eventIds, handoffs)) return { code: 'certificate_issued' };
@@ -334,8 +336,8 @@ export async function findLiveClaimOf(
 export function claimOwnsExpenseError(claim: ExpenseClaimOwner): ConflictException {
   return new ConflictException({
     code: 'expense_belongs_to_reimbursement',
-    message: `รายการนี้เป็นรายการค่าใช้จ่ายของคำขอเบิก${claim.requestNo ? ` ${claim.requestNo}` : ''} จึงยกเลิก ปฏิเสธ หรือลบจากหน้ารายจ่ายไม่ได้ `
-      + 'ให้ยกเลิกที่คำขอเบิกนั้นในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง ถ้าจ่ายเงินคืนแล้ว ให้ยกเลิกการจ่ายที่คำขอเบิกก่อน',
+    message: `รายการนี้เป็นรายการค่าใช้จ่ายของใบเบิก${claim.requestNo ? ` ${claim.requestNo}` : ''} จึงยกเลิก ปฏิเสธ หรือลบจากหน้ารายจ่ายไม่ได้ `
+      + 'ให้ยกเลิกที่ใบเบิกนั้นในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง ถ้าจ่ายเงินคืนแล้ว ให้ยกเลิกการจ่ายที่ใบเบิกก่อน',
     reimbursementRequestId: claim.requestId,
     ...(claim.requestNo && { requestNo: claim.requestNo }),
   });

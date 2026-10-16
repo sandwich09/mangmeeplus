@@ -6,8 +6,16 @@ import { legalAcceptancePath } from '@/common/auth/session-gate.logic';
 import { rememberPendingRedirect } from './auth.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useEffect, useRef, useState } from 'react';
-const field = 'mangmee-input mt-2 min-h-12 w-full min-w-0 text-base';
-const button = 'mangmee-btn mangmee-btn-secondary min-h-12 text-base';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { primaryButtonClass, quietButtonClass, secondaryButtonClass } from '@/common/components/button';
+import { TextField } from '@/common/components/field';
+import { Notice } from '@/common/components/notice';
+import { isThaiMobile } from '@/features/external-signup/signup.logic';
+import { AuthFrame, authTitleClass, BackToLoginLink } from './AuthFrame';
+
+/** Loose on purpose, like the sign-up form: the server decides whether the address really exists. */
+const looksLikeEmail = (value: string) => /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(value);
+type FieldErrors = { email?: string; code?: string; companyName?: string; displayName?: string; phoneNumber?: string };
 type Result = { companyId?: string; passwordChangeRequired?: boolean; legalAcceptanceRequired?: boolean; email?: string; kind?: string; state?: string; message?: string; code?: string; redirectPath?: string;
   deliveryStatus?: string; retryAt?: string; retryAfterSeconds?: number };
 export default function EmailAccessPage() {
@@ -15,10 +23,22 @@ export default function EmailAccessPage() {
   const [email, setEmail] = useState(''), [code, setCode] = useState(''), [step, setStep] = useState('email');
   const [companyName, setCompanyName] = useState(''), [displayName, setDisplayName] = useState(''), [phoneNumber, setPhone] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  // Said under the field it is about, in the page's own words (every form here is `noValidate`:
+  // the browser's own bubble speaks the browser's language and names no field).
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const clearField = (name: keyof FieldErrors) => setFieldErrors(prev => prev[name] ? { ...prev, [name]: undefined } : prev);
+  /** Shows what is wrong and puts the cursor in the first wrong field; true when nothing is wrong. */
+  const check = (errors: FieldErrors, ids: Partial<Record<keyof FieldErrors, string>>) => {
+    setFieldErrors(errors);
+    const first = (Object.keys(ids) as (keyof FieldErrors)[]).find(name => errors[name]);
+    if (!first) return true;
+    setError(''); document.getElementById(ids[first]!)?.focus();
+    return false;
+  };
   const [notice, setNotice] = useState(''), [state, setState] = useState(''), [retryAt, setRetryAt] = useState(0), [now, setNow] = useState(Date.now());
-  const running = useRef(false), key = useRef(''), otp = useRef<HTMLInputElement>(null), alert = useRef<HTMLParagraphElement>(null);
+  const running = useRef(false), key = useRef(''), alert = useRef<HTMLDivElement>(null);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
-  useEffect(() => { if (step === 'code') otp.current?.focus(); }, [step]);
+  useEffect(() => { if (step === 'code') document.getElementById('access-code')?.focus(); }, [step]);
   useEffect(() => { if (error) alert.current?.focus(); }, [error]);
   const wait = Math.max(0, Math.ceil((retryAt - now) / 1000));
   async function call(action: string, body: unknown = {}): Promise<Result> {
@@ -65,38 +85,76 @@ export default function EmailAccessPage() {
       if (!key.current || resend) key.current = crypto.randomUUID();
       const result = await call('request', { email: email.trim(), requestKey: key.current, nextPath: sanitizeNextPath(new URLSearchParams(window.location.search).get('next')) });
       setRetryAt(Date.parse(result.retryAt ?? '') || Date.now() + 60_000); setCode(''); setStep('code');
-      setNotice(result.deliveryStatus === 'ACCEPTED' ? 'ส่งรหัสแล้ว กรุณาตรวจกล่องจดหมายและสแปม' : ['READY', 'SENDING', 'UNKNOWN'].includes(result.deliveryStatus ?? '')
-        ? 'ยังยืนยันผลส่งไม่ได้ หากได้รับรหัสสามารถกรอกได้ หรือรอขอรหัสใหม่' : 'ยังส่งรหัสไม่สำเร็จ กรุณาตรวจอีเมลแล้วขอรหัสใหม่');
+      setNotice(result.deliveryStatus === 'ACCEPTED' ? 'ส่งรหัสแล้ว ถ้าไม่เจอ ดูในอีเมลขยะ' : ['READY', 'SENDING', 'UNKNOWN'].includes(result.deliveryStatus ?? '')
+        ? 'ยังยืนยันไม่ได้ว่าส่งถึงแล้ว ถ้าได้รับรหัสแล้วกรอกได้เลย หรือรอขอรหัสใหม่' : 'ส่งรหัสไม่สำเร็จ ตรวจอีเมลแล้วขอรหัสใหม่');
     });
   }
-  return <main className="min-h-dvh bg-gray-50 px-4 py-8 text-gray-900"><section className="mangmee-card mx-auto max-w-md space-y-5 p-5 sm:p-8">
-    <Link href="/login" className="inline-block py-2 text-brand-700">← กลับหน้าเข้าสู่ระบบ</Link>
-    <h1 className="text-2xl font-bold">{t('auth.email_access.title', 'th')}</h1>
-    <p className="text-base leading-7 text-gray-600">กรอกอีเมลเพื่อรับรหัสยืนยันแบบใช้ครั้งเดียว 6 หลัก แล้วนำรหัสมากรอกในขั้นตอนถัดไป</p>
-    {error && <p ref={alert} tabIndex={-1} role="alert" className="rounded-xl bg-red-50 p-3 text-red-800">{error}</p>}
-    {step === 'email' && <form className="space-y-5" onSubmit={e => { e.preventDefault(); send(); }}>
-      <label className="block" htmlFor="access-email">อีเมลของคุณ<input id="access-email" className={field} type="email" autoComplete="email" maxLength={254} required value={email} disabled={!ready || busy} onChange={e => { setEmail(e.target.value); key.current = ''; }} /></label>
-      <button className="mangmee-btn mangmee-btn-primary min-h-12 w-full text-base" disabled={!ready || busy || wait > 0} aria-busy={busy}>{!ready ? 'กำลังเตรียมหน้า…' : busy ? 'กำลังส่งรหัส…' : wait ? `ขอรหัสใหม่ได้ใน ${wait} วินาที` : 'ส่งรหัสยืนยัน ไปที่อีเมล'}</button>
+  // Each step says where the person is in its own title: the page is the way in for someone who
+  // has an account AND the way to open a shop for someone who has none, so no single sentence
+  // about "signing in" is true on every step.
+  const rejected = state === 'REJECTED' || state === 'SUSPENDED';
+  const title = step === 'code' ? 'กรอกรหัสยืนยัน 6 หลัก' : step === 'signup' ? 'เปิดร้านใหม่'
+    : step === 'status' ? (rejected ? 'ติดต่อทีมงานมั่งมีเรื่องคำขอของคุณ' : 'ทีมงานกำลังตรวจคำขอเปิดร้าน')
+      : step === 'existing' ? 'อีเมลนี้เข้าด้วยรหัสยืนยันทางอีเมลไม่ได้' : t('auth.email_access.title', 'th');
+  return <AuthFrame below={<BackToLoginLink />}>
+    <h1 className={authTitleClass}>{title}</h1>
+    {error && <Notice ref={alert} tabIndex={-1} tone="error" className="mt-4">{error}</Notice>}
+    {step === 'email' && <form className="mt-5 space-y-4" noValidate onSubmit={e => {
+      e.preventDefault();
+      const value = email.trim();
+      if (check({ ...(value ? looksLikeEmail(value) ? {} : { email: 'อีเมลต้องมี @ และชื่อเว็บ เช่น somchai@gmail.com' } : { email: 'กรอกอีเมล' }) }, { email: 'access-email' })) send();
+    }}>
+      <TextField id="access-email" label="อีเมล" type="email" inputMode="email" autoComplete="email" maxLength={254} required value={email} disabled={!ready || busy}
+        hint={fieldErrors.email ? undefined : 'เราจะส่งรหัสยืนยัน 6 หลักไปที่อีเมลนี้'} error={fieldErrors.email}
+        onChange={e => { setEmail(e.target.value); key.current = ''; clearField('email'); }} />
+      <button className={`${primaryButtonClass} w-full`} disabled={!ready || busy || wait > 0} aria-busy={busy}>{!ready ? 'กำลังเตรียมหน้า…' : busy ? 'กำลังส่งรหัส…' : wait ? `ขอรหัสใหม่ได้ใน ${wait} วินาที` : 'ส่งรหัสยืนยัน'}</button>
     </form>}
-    {step === 'code' && <form className="space-y-4" onSubmit={e => { e.preventDefault(); void run(async () => apply(await call('confirm', { code }))); }}>
-      <p className="break-words">อีเมล <strong>{email}</strong></p><p role="status" className="text-gray-600">{notice}</p>
-      <label className="block" htmlFor="access-code">รหัส 6 หลัก<input id="access-code" ref={otp} className={`${field} tracking-widest`} type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" required value={code} disabled={!ready || busy} onChange={e => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))} /></label>
-      <p className="text-gray-600">รหัสใช้ได้ 10 นาที หากเปิดเว็บอีกอุปกรณ์ ให้ขอรหัสจากอุปกรณ์นั้น</p>
-      <button className="mangmee-btn mangmee-btn-primary min-h-12 w-full text-base" disabled={!ready || busy || code.length !== 6} aria-busy={busy}>{busy ? 'กำลังยืนยัน…' : 'ยืนยันและดำเนินการต่อ'}</button>
-      <div className="flex flex-wrap gap-3"><button type="button" className={button} disabled={!ready || busy || wait > 0} aria-busy={busy} onClick={() => send(true)}>{wait ? `ขอใหม่ใน ${wait} วินาที` : 'ขอรหัสใหม่'}</button><button type="button" className={button} disabled={!ready || busy} onClick={() => { setStep('email'); key.current = ''; }}>แก้อีเมล</button></div>
+    {step === 'code' && <form className="mt-3 space-y-4" noValidate onSubmit={e => {
+      e.preventDefault();
+      if (check({ ...(code.length === 6 ? {} : { code: 'กรอกรหัสให้ครบ 6 หลัก' }) }, { code: 'access-code' })) void run(async () => apply(await call('confirm', { code })));
+    }}>
+      <p className="text-[15px] leading-7 text-gray-700 [overflow-wrap:anywhere]">ส่งรหัสไปที่ <strong>{email}</strong></p>
+      <p role="status" className="text-sm text-gray-600">{notice}</p>
+      <TextField id="access-code" label="รหัสยืนยัน 6 หลัก" className="tracking-widest" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} required value={code} disabled={!ready || busy}
+        hint={fieldErrors.code ? undefined : 'รหัสใช้ได้ 10 นาที และใช้ได้กับเครื่องที่ขอรหัสเท่านั้น'} error={fieldErrors.code}
+        onChange={e => { setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 6)); clearField('code'); }} />
+      <button className={`${primaryButtonClass} w-full`} disabled={!ready || busy} aria-busy={busy}>{busy ? 'กำลังยืนยัน…' : 'ยืนยันรหัส'}</button>
+      <ActionGroup>
+        <button type="button" className={secondaryButtonClass} disabled={!ready || busy} onClick={() => { setStep('email'); key.current = ''; setFieldErrors({}); }}>แก้อีเมล</button>
+        <button type="button" className={secondaryButtonClass} disabled={!ready || busy || wait > 0} aria-busy={busy} aria-describedby={wait ? 'access-resend-wait' : undefined} onClick={() => send(true)}>ขอรหัสใหม่</button>
+      </ActionGroup>
+      {/* The reason the button waits is said beside it; a countdown inside its name made the pair too wide to sit on one row. */}
+      {wait > 0 && <p id="access-resend-wait" className="text-center text-sm text-gray-600 sm:text-right">ขอรหัสใหม่ได้ใน {wait} วินาที</p>}
     </form>}
-    {step === 'signup' && <form className="space-y-4" onSubmit={e => { e.preventDefault(); void run(async () => apply(await call('signup', { companyName, displayName, phoneNumber, consentVersion: 'EMAIL_SIGNUP_V1' }))); }}>
+    {step === 'signup' && <form className="mt-2 space-y-4" noValidate onSubmit={e => {
+      e.preventDefault();
+      const phone = phoneNumber.trim();
+      // The same rule the server applies (10 digits from 0; it also takes +66 for the leading 0).
+      const errors: FieldErrors = {
+        ...(companyName.trim() ? {} : { companyName: 'กรอกชื่อร้าน' }),
+        ...(displayName.trim() ? {} : { displayName: 'กรอกชื่อผู้ติดต่อ' }),
+        ...(phone ? isThaiMobile(phone.replace(/^\+66/, '0')) ? {} : { phoneNumber: 'เบอร์มือถือต้องมี 10 หลัก เช่น 0812345678' } : { phoneNumber: 'กรอกเบอร์มือถือ' }),
+      };
+      if (check(errors, { companyName: 'access-shop', displayName: 'access-name', phoneNumber: 'access-phone' })) void run(async () => apply(await call('signup', { companyName, displayName, phoneNumber, consentVersion: 'EMAIL_SIGNUP_V1' })));
+    }}>
       {/* Owner 2026-09-20 (spec R1): no trial. Signing up opens the shop; it works once a package
           is paid for, so this promises the step, not an allowance the shop will not get. */}
-      <h2 className="text-xl font-semibold">เริ่มต้นร้านของคุณ</h2><p>เปิดร้านแล้วเลือกแพ็กเกจเพื่อเริ่มใช้งาน · ไม่ผูกบัตร</p>
-      <label className="block" htmlFor="access-shop">ชื่อร้าน<input id="access-shop" className={field} required maxLength={120} autoComplete="organization" value={companyName} disabled={!ready || busy} onChange={e => setCompanyName(e.target.value)} /></label>
-      <label className="block" htmlFor="access-name">ชื่อผู้ติดต่อ<input id="access-name" className={field} required maxLength={160} autoComplete="name" value={displayName} disabled={!ready || busy} onChange={e => setDisplayName(e.target.value)} /></label>
-      <label className="block" htmlFor="access-phone">เบอร์มือถือ<input id="access-phone" className={field} type="tel" required maxLength={20} autoComplete="tel" value={phoneNumber} disabled={!ready || busy} onChange={e => setPhone(e.target.value)} /></label>
+      <p className="text-sm text-gray-600">เปิดร้านแล้วเลือกแพ็กเกจเพื่อเริ่มใช้งาน ไม่ต้องผูกบัตร</p>
+      <TextField id="access-shop" label="ชื่อร้าน" required maxLength={120} autoComplete="organization" value={companyName} disabled={!ready || busy} error={fieldErrors.companyName} onChange={e => { setCompanyName(e.target.value); clearField('companyName'); }} />
+      <TextField id="access-name" label="ชื่อผู้ติดต่อ" required maxLength={160} autoComplete="name" value={displayName} disabled={!ready || busy} error={fieldErrors.displayName} onChange={e => { setDisplayName(e.target.value); clearField('displayName'); }} />
+      <TextField id="access-phone" label="เบอร์มือถือ" type="tel" inputMode="tel" required maxLength={20} autoComplete="tel" value={phoneNumber} disabled={!ready || busy} error={fieldErrors.phoneNumber} onChange={e => { setPhone(e.target.value); clearField('phoneNumber'); }} />
       <p className="text-sm leading-6 text-gray-600">เมื่อกดเปิดร้าน ถือว่าได้รับทราบ <Link className="underline" href="/terms" target="_blank">ข้อกำหนดการใช้งาน</Link> และ <Link className="underline" href="/privacy" target="_blank">ประกาศความเป็นส่วนตัว</Link> แล้ว โดยจะยืนยันการยอมรับเมื่อเข้าระบบครั้งแรก ทีมงานอาจตรวจคำขอก่อนเปิดร้าน</p>
-      <button className="mangmee-btn mangmee-btn-primary min-h-12 w-full text-base" disabled={!ready || busy} aria-busy={busy}>{busy ? 'กำลังเปิดร้าน…' : 'เปิดร้าน'}</button>
+      <button className={`${primaryButtonClass} w-full`} disabled={!ready || busy} aria-busy={busy}>{busy ? 'กำลังเปิดร้าน…' : 'เปิดร้าน'}</button>
     </form>}
-    {step === 'status' && <div className="space-y-4"><h2 className="text-xl font-semibold">{state === 'REJECTED' || state === 'SUSPENDED' ? 'กรุณาติดต่อทีมงานเรื่องคำขอของคุณ' : 'ทีมงานกำลังตรวจคำขอของคุณ'}</h2><p>{['PENDING_REVIEW', 'RECEIVED', 'VALIDATED', 'REJECTED'].includes(state) ? 'ร้านยังไม่เปิด กลับมาตรวจสถานะได้ด้วยอีเมลเดิม' :'กำลังดำเนินการกับคำขอเดิม กรุณากดตรวจสถานะอีกครั้ง หากยังเข้าไม่ได้ให้ติดต่อทีมงาน'}</p><button className={button} disabled={!ready || busy} aria-busy={busy} onClick={() => void run(async () => apply(await call('status')))}>ตรวจสถานะอีกครั้ง</button></div>}
-    {step === 'existing' && <div className="space-y-4"><h2 className="text-xl font-semibold">ยืนยันอีเมลสำเร็จแล้ว แต่บัญชีนี้เข้าสู่ระบบด้วยรหัสยืนยันทางอีเมลไม่ได้</h2><p>กรุณาเข้าสู่ระบบด้วยรหัสผ่านหรือ LINE เดิม หากยังเข้าไม่ได้ให้ติดต่อทีมงาน</p><Link className={`${button} block text-center`} href="/login">เข้าสู่ระบบด้วยรหัสผ่านหรือ LINE</Link><Link className="block py-2 text-brand-700" href="/forgot-password">ลืมรหัสผ่าน</Link></div>}
-    <p className="text-sm leading-6 text-gray-600">ติดปัญหา ติดต่อทีมงาน <a className="underline" href="tel:0982565628">098-256-5628</a></p>
-  </section></main>;
+    {step === 'status' && <div className="mt-2 space-y-4">
+      <p className="text-[15px] leading-7 text-gray-600">{['PENDING_REVIEW', 'RECEIVED', 'VALIDATED', 'REJECTED'].includes(state) ? 'ร้านยังไม่เปิด กลับมาดูสถานะได้ด้วยอีเมลเดิม' : 'ระบบกำลังเปิดร้านจากคำขอเดิม กดตรวจสถานะอีกครั้ง ถ้ายังเข้าไม่ได้ ติดต่อทีมงานมั่งมี'}</p>
+      <ActionGroup><button className={secondaryButtonClass} disabled={!ready || busy} aria-busy={busy} onClick={() => void run(async () => apply(await call('status')))}>ตรวจสถานะอีกครั้ง</button></ActionGroup>
+    </div>}
+    {step === 'existing' && <div className="mt-2 space-y-4">
+      <p className="text-[15px] leading-7 text-gray-600">เข้าสู่ระบบด้วยรหัสผ่านหรือ LINE แทน</p>
+      <Link className={`${primaryButtonClass} w-full`} href="/login">ไปหน้าเข้าสู่ระบบ</Link>
+      <Link className={`${quietButtonClass} w-full`} href="/forgot-password">ลืมรหัสผ่าน</Link>
+    </div>}
+    <p className="mt-6 border-t border-gray-100 pt-4 text-sm leading-6 text-gray-600">ติดปัญหา ติดต่อทีมงานมั่งมี <a className="mangmee-unit font-semibold text-brand-700 underline" href="tel:0982565628">098-256-5628</a></p>
+  </AuthFrame>;
 }

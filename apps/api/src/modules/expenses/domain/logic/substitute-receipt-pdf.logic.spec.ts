@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 import { PDFDocument } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import sharp from 'sharp';
-import { renderDisbursementVoucherSvg } from './disbursement-voucher-pdf.logic';
+import { DISBURSEMENT_VOUCHER_PRINT_SPACING, renderDisbursementVoucherSvg } from './disbursement-voucher-pdf.logic';
 import {
   planSubstituteReceiptRasterSlices,
   renderSubstituteReceiptPaperArtifactPdf,
@@ -40,6 +40,137 @@ describe('disbursement voucher printed document', () => {
     lines: [{ expenseNumber: 'EXP-1', expenseDate: '2026-10-01', vendorName: 'ร้านป้าแดง', grandTotal: '107', wht: '3', netPayable: '104', amount: '50', paidThisTime: '50', outstandingAfter: '54' }],
     total: '50', totals: { grandTotal: '107', wht: '3', paidThisTime: '50' }, paidDate: '2026-10-11', paymentMethod: 'BANK_TRANSFER', paidFromRef: 'บัญชีกิจการ',
     payeeAccount: { bankName: 'ธนาคาร', accountName: 'ร้านป้าแดง', last4: '7890' }, actors: { preparer: { name: 'สมใจ', at: '2026-10-01T03:00:00Z' }, approver: { name: 'สมชาย', at: '2026-10-02T03:00:00Z', selfApproved: false }, payer: { name: 'สมศรี', at: '2026-10-11T03:00:00Z' } }, ...patch });
+  it('anchors short signatures low, reserves at least 48 points, and keeps all columns on the final page', async () => {
+    assert.ok(DISBURSEMENT_VOUCHER_PRINT_SPACING.signatureGap * (595.28 - 72) / 850 >= 48);
+    assert.ok(DISBURSEMENT_VOUCHER_PRINT_SPACING.signatureArea * (595.28 - 72) / 850 >= 40);
+    for (const count of [1, 25]) {
+      const print = snapshot({ lines: Array.from({ length: count }, (_, i) => ({ ...snapshot().lines[0], expenseNumber: `EXP-${i + 1}`, description: 'ค่าเช่าแผง ต.ค.' })) });
+      const svg = renderDisbursementVoucherSvg(print, true).toString();
+      const block = svg.match(/data-signature-block="true" data-content-bottom="([\d.]+)" data-top="([\d.]+)" data-page="(\d+)" data-height="([\d.]+)"/)!;
+      const [, content, top, page, height] = block.map(Number);
+      assert.ok(top! >= DISBURSEMENT_VOUCHER_PRINT_SPACING.signatureAnchor);
+      assert.ok(top! + height! <= 1190);
+      assert.equal((svg.match(/data-signature-block=/g) || []).length, 1);
+      const pdf = await PDFDocument.load(await renderSubstituteReceiptPdf(Buffer.from(svg), print.documentNumber, { omitPageFooter: true }));
+      assert.equal(pdf.getPageCount(), count === 1 ? 1 : 2);
+      assert.equal(page, pdf.getPageCount());
+      const precedingText = [...svg.slice(0, svg.indexOf('<g data-signature-block')).matchAll(/<text[^>]*y="([\d.]+)"/g)].map(m => Number(m[1]));
+      assert.ok((page! - 1) * 1250 + top! - Math.max(...precedingText) >= DISBURSEMENT_VOUCHER_PRINT_SPACING.signatureGap);
+      if (count === 1) { assert.ok(top! - content! >= DISBURSEMENT_VOUCHER_PRINT_SPACING.signatureGap); assert.doesNotMatch(svg, /หน้า \d|รหัสตรวจสอบเอกสาร/); }
+      else { assert.match(svg, />หน้า 1\/2</); assert.match(svg, />หน้า 2\/2</); assert.doesNotMatch(svg, /รหัสตรวจสอบเอกสาร|เลขที่ PV-.*หน้า/); }
+      const columns = [...svg.matchAll(/<g data-signature-column="\d">([\s\S]*?)<\/g>/g)];
+      assert.equal(columns.length, 3);
+      columns.forEach(column => [...column[1]!.matchAll(/ y="([\d.]+)"/g)].forEach(m => assert.equal(Math.floor(Number(m[1]) / 1250) + 1, page)));
+    }
+  });
+  it('follows lower-page content by the reserved gap or moves the entire signature block to the next page', () => {
+    for (const count of [12, 17]) {
+      const print = snapshot({ lines: Array.from({ length: count }, (_, i) => ({ ...snapshot().lines[0], expenseNumber: `EXP-${i + 1}` })) });
+      const svg = renderDisbursementVoucherSvg(print, true).toString();
+      const block = svg.match(/data-signature-block="true" data-content-bottom="([\d.]+)" data-top="([\d.]+)" data-page="(\d+)" data-height="([\d.]+)"/)!;
+      const [, content, top, page, height] = block.map(Number);
+      assert.ok(content! >= 1250 * 2 / 3);
+      assert.ok(top! + height! <= 1190);
+      assert.equal(page, count === 12 ? 1 : 2);
+      if (count === 12) assert.equal(top! - content!, DISBURSEMENT_VOUCHER_PRINT_SPACING.signatureGap);
+      else assert.ok(content! + DISBURSEMENT_VOUCHER_PRINT_SPACING.signatureGap + height! > 1190);
+      assert.equal((svg.match(/data-signature-block=/g) || []).length, 1);
+    }
+  });
+  it('uses grey party and table bands, a right-aligned header and totals, omitting zero tax in the summary', () => {
+    const svg = renderDisbursementVoucherSvg(snapshot({ lines: [{ ...snapshot().lines[0], wht: '0' }], totals: { grandTotal: '107', wht: '0', paidThisTime: '50' } }), true).toString();
+    assert.match(svg, /x="815"[^>]*text-anchor="end"[^>]*>ใบสำคัญจ่าย</);
+    assert.match(svg, /rx="8" fill="#f5f5f5"/); assert.match(svg, /fill="#eee"/);
+    assert.equal((svg.match(/>ภาษีที่หักไว้</g) || []).length, 1, 'table column remains; zero-tax summary is omitted');
+    assert.doesNotMatch(svg, /ผู้จัดทำ สมใจ|ผู้อนุมัติ สมชาย/);
+    assert.match(svg, /x="503"[^>]*font-weight="700"[^>]*>ยอดที่จ่าย</);
+  });
+  it('uses three signature columns for transfer and cheque, four deliberate blanks otherwise, and draws only snapshotted signatures', () => {
+    for (const paid of [true, false]) for (const method of ['BANK_TRANSFER', 'CHEQUE', 'CASH', 'CARD', 'OTHER', undefined]) {
+      const svg = renderDisbursementVoucherSvg(snapshot({ paymentMethod: method, plannedMethod: method }), paid).toString();
+      assert.equal((svg.match(/data-signature-column=/g) || []).length, ['BANK_TRANSFER', 'CHEQUE'].includes(method!) ? 3 : 4);
+      assert.doesNotMatch(svg, /…|\.{3}/);
+      assert.doesNotMatch(svg, /<image/);
+    }
+    const svg = renderDisbursementVoucherSvg(snapshot({ actors: { preparer: { name: 'สมใจ', signature: { attachmentId: 'sig', checksumSha256: 'hash', userId: 'actor' }, signatureDataUrl: 'data:image/png;base64,AA==' } } }), true).toString();
+    assert.equal((svg.match(/<image/g) || []).length, 1);
+    assert.match(svg, /หลักฐานการรับเงิน: สลิปการโอน/);
+  });
+  it('keeps rules clear of Thai stacked marks and ten typical rows on one page in every variant', async () => {
+    const spacing = DISBURSEMENT_VOUCHER_PRINT_SPACING;
+    // Noto Sans Thai: ascent 1061, descent 450, units/em 1000. Include half the 1-unit rule stroke.
+    assert.ok(spacing.ruleToBaseline - 12 * 1.061 - 0.5 >= 12 * 0.35);
+    assert.ok(spacing.rowHeight - spacing.ruleToBaseline - 12 * 0.450 - 0.5 >= 12 * 0.35);
+    assert.ok(spacing.lineHeight >= 12 * 1.6);
+    assert.ok(spacing.signatureRuleToBaseline - 13 * 1.061 - 0.5 >= 13 * 0.35);
+    for (const paid of [false, true]) for (const cancelled of [false, true]) {
+      const base = snapshot();
+      const print = snapshot({
+        lines: Array.from({ length: 10 }, (_, i) => ({ ...base.lines[0], expenseNumber: `EXP-${i + 1}`,
+          description: i % 2 ? 'ค่าเช่าแผง ต.ค.' : 'ค่าน้ำมันเชื้อเพลิง ค่าซ่อมปั๊มน้ำ', amount: '104', paidThisTime: '104', outstandingAfter: '0' })),
+        total: '1040', totals: { grandTotal: '1070', wht: '30', paidThisTime: '1040' },
+        ...(cancelled ? { cancellation: { at: '2026-10-12', reason: 'โอนผิดบัญชี', expenseIds: ['expense-0'], expenseNumbers: ['EXP-1'] } } : {}),
+      });
+      const svg = renderDisbursementVoucherSvg(print, paid);
+      const source = svg.toString();
+      const rules = [...source.matchAll(/<path d="M35 ([\d.]+) H815"/g)].map(m => Number(m[1]));
+      const texts = [...source.matchAll(/<text x="([\d.]+)" y="([\d.]+)"[^>]*>([^<]+)<\/text>/g)];
+      for (let i = 0; i < 10; i++) {
+        const baseline = Number(texts.find(m => m[3] === `EXP-${i + 1}`)![2]);
+        assert.equal(baseline - rules[i]!, spacing.ruleToBaseline);
+        const lastTextAbove = Math.max(...texts.filter(m => Number(m[2]) < rules[i]!).map(m => Number(m[2])));
+        assert.ok(rules[i]! - lastTextAbove - 12 * 0.450 - 0.5 >= 12 * 0.35);
+      }
+      const signatureRule = Number(source.match(/<path d="M35 ([\d.]+) h(?:180|245)"/)![1]);
+      assert.equal(Number(texts.find(m => m[3] === '(สมใจ)')![2]) - signatureRule, spacing.signatureRuleToBaseline);
+      assert.match(source, /data-pdf-breaks=""/);
+      const pdf = await PDFDocument.load(await renderSubstituteReceiptPdf(svg, base.documentNumber, { omitPageFooter: true }));
+      assert.equal(pdf.getPageCount(), 1);
+    }
+  });
+  it('prints accounting identity, invoice references, header facts and complete signature blanks in every variant', async () => {
+    for (const paid of [false, true]) for (const cancelled of [false, true]) {
+      const base = snapshot();
+      const print = snapshot({ company: { name: 'ชื่อร้าน', registeredName: 'บริษัท ทดสอบ จำกัด', taxId: '0123456789012', phone: '02-123-4567',
+        addressJson: { line1: '9 หมู่ 2', subdistrict: 'สุเทพ', district: 'เมืองเชียงใหม่', province: 'เชียงใหม่', postalCode: '50200' } },
+        documentDate: '2026-10-01', plannedPayDate: '2026-10-12',
+        lines: Array.from({ length: 10 }, (_, i) => ({ ...base.lines[0], expenseId: `expense-${i}`, expenseNumber: `EXP-${i + 1}`, vendorDocumentNumber: `INV-${i + 1}`,
+          vendorTaxId: '0999999999999', vendorBranchCode: '00001', vendorAddress: '88 ถนนผู้ขาย แขวงสีลม เขตบางรัก กรุงเทพมหานคร',
+          description: 'ค่าน้ำมันเชื้อเพลิง', amount: '104', paidThisTime: '104', outstandingAfter: '0' })),
+        total: '1040', totals: { grandTotal: '1070', wht: '30', paidThisTime: '1040' },
+        ...(cancelled ? { cancellation: { at: '2026-10-12', reason: 'โอนผิดบัญชี', expenseIds: ['expense-0'], expenseNumbers: ['EXP-1'] } } : {}),
+      });
+      const svg = renderDisbursementVoucherSvg(print, paid).toString();
+      for (const value of ['บริษัท ทดสอบ จำกัด', 'สำนักงานใหญ่', '9 หมู่ 2 ตำบลสุเทพ อำเภอเมืองเชียงใหม่ จังหวัดเชียงใหม่ 50200', '02-123-4567',
+        'ผู้รับเงิน ร้านป้าแดง', 'สาขาที่ 00001', '0999999999999', '88 ถนนผู้ขาย', 'EXP-1 / INV-1',
+        'วันที่เอกสาร 1 ต.ค. 2569', 'กำหนดจ่าย 12 ต.ค. 2569', paid && cancelled ? '(เก้าร้อยสามสิบหกบาทถ้วน)' : '(หนึ่งพันสี่สิบบาทถ้วน)', '(สมใจ)']) assert.ok(svg.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').includes(value), value);
+      assert.doesNotMatch(svg, /ผู้จัดทำ สมใจ/);
+      assert.doesNotMatch(svg, /ผู้อนุมัติ สมชาย/);
+      assert.doesNotMatch(svg, /รวมจากชื่อร้าน|รวมด้วยการยืนยัน|ชื่อร้าน ·|>ชื่อร้าน</);
+      const pdf = await PDFDocument.load(await renderSubstituteReceiptPdf(Buffer.from(svg), print.documentNumber, { omitPageFooter: true }));
+      assert.equal(pdf.getPageCount(), 1);
+    }
+  });
+  it('uses source payee facts only when every line agrees and otherwise keeps header identity', () => {
+    const a = { ...snapshot().lines[0], vendorName: 'ผู้ขายบนบิล', vendorTaxId: '1111111111111', vendorBranchCode: '00000', vendorAddress: 'ที่อยู่บนบิล' };
+    const payee = { name: 'ชื่อบนใบ', taxId: '2222222222222', branchCode: '00002' };
+    const same = renderDisbursementVoucherSvg(snapshot({ payee, lines: [a, { ...a }] }), false).toString();
+    assert.match(same, /ผู้รับเงิน/); assert.match(same, />ผู้ขายบนบิล</); assert.match(same, /ที่อยู่บนบิล/); assert.match(same, /1111111111111/);
+    for (const patch of [{ vendorAddress: 'อีกที่อยู่' }, { vendorTaxId: null }, { vendorBranchCode: '00003' }, { vendorName: 'อีกร้าน' }]) {
+      const mixed = renderDisbursementVoucherSvg(snapshot({ payee, lines: [a, { ...a, ...patch }] }), false).toString();
+      assert.match(mixed, /ผู้รับเงิน/); assert.match(mixed, />ชื่อบนใบ</); assert.match(mixed, /2222222222222/); assert.match(mixed, /สาขาที่ 00002/);
+      assert.doesNotMatch(mixed, /ที่อยู่บนบิล|อีกที่อยู่|1111111111111/);
+    }
+  });
+  it('prints the amount in Thai words and supports full account numbers only in supplied download facts', () => {
+    for (const [amount, words] of [['0','ศูนย์บาทถ้วน'], ['1','หนึ่งบาทถ้วน'], ['11','สิบเอ็ดบาทถ้วน'], ['21','ยี่สิบเอ็ดบาทถ้วน'],
+      ['101','หนึ่งร้อยเอ็ดบาทถ้วน'], ['1000000','หนึ่งล้านบาทถ้วน'], ['15301.00','หนึ่งหมื่นห้าพันสามร้อยเอ็ดบาทถ้วน'], ['1040.50','หนึ่งพันสี่สิบบาทห้าสิบสตางค์']]) {
+      assert.ok(renderDisbursementVoucherSvg(snapshot({ total: amount }), false).toString().includes(`(${words})`));
+    }
+    assert.match(renderDisbursementVoucherSvg(snapshot(), false).toString(), /xxx-7890/);
+    const full = renderDisbursementVoucherSvg(snapshot({ payeeAccount: { ...snapshot().payeeAccount, accountNumber: '1234567890' } }), false).toString();
+    assert.match(full, /1234567890/); assert.doesNotMatch(full, /xxx-7890/);
+  });
   it('prints frozen descriptions instead of repeated payee names and leaves legacy descriptions empty', () => {
     for (const paid of [false, true]) {
       const legacy = renderDisbursementVoucherSvg(snapshot(), paid).toString();
@@ -111,18 +242,18 @@ describe('disbursement voucher printed document', () => {
     const heading = [...svg.matchAll(/<text([^>]*)>ยอดที่จะจ่าย<\/text>/g)].find(m => Number(m[1].match(/y="(\d+)"/)![1]) < summaryY)!;
     assert.match(heading[1], /x="815"/); assert.match(heading[1], /text-anchor="end"/);
   });
-  it('omits the company tax branch when it has no tax id, retaining the shop branch name', () => {
+  it('prints the company head office or branch independently of the optional tax id', () => {
     const svg = renderDisbursementVoucherSvg(snapshot({ company: { name: 'ร้านทดสอบ', taxId: null } }), false).toString();
-    assert.match(svg, /สาขา สำนักงานใหญ่/); assert.doesNotMatch(svg, /สาขา 00000/);
+    assert.match(svg, />ร้านทดสอบ</); assert.match(svg, /สำนักงานใหญ่/); assert.doesNotMatch(svg, /สาขา 00000/);
     assert.match(renderDisbursementVoucherSvg(snapshot(), false).toString(), /เลขผู้เสียภาษี 0123456789012 · สำนักงานใหญ่/);
     assert.match(renderDisbursementVoucherSvg(snapshot({ branch: { name: 'สยาม', taxBranchCode: '00001' } }), false).toString(), /เลขผู้เสียภาษี 0123456789012 · สาขาที่ 00001/);
   });
   it('prints the shop address in address order with its words, whatever order the stored JSON keys have', () => {
     const addressJson = { line1: '88 ถนนพระราม 4', line2: null, district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110', subdistrict: 'คลองเตยเหนือ' };
     const svg = renderDisbursementVoucherSvg(snapshot({ company: { name: 'บริษัททดสอบ', taxId: '0123456789012', addressJson } }), false).toString();
-    assert.match(svg, /88 ถนนพระราม 4 แขวงคลองเตยเหนือ เขตคลองเตย กรุงเทพมหานคร 10110/);
+    assert.match(svg.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' '), /88 ถนนพระราม 4 แขวงคลองเตยเหนือ เขตคลองเตย กรุงเทพมหานคร 10110/);
     const upcountry = renderDisbursementVoucherSvg(snapshot({ company: { name: 'บริษัททดสอบ', taxId: '0123456789012', addressJson: { province: 'เชียงใหม่', postalCode: '50200', district: 'เมืองเชียงใหม่', subdistrict: 'สุเทพ', line1: '9 หมู่ 2' } } }), false).toString();
-    assert.match(upcountry, /9 หมู่ 2 ตำบลสุเทพ อำเภอเมืองเชียงใหม่ จังหวัดเชียงใหม่ 50200/);
+    assert.match(upcountry.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' '), /9 หมู่ 2 ตำบลสุเทพ อำเภอเมืองเชียงใหม่ จังหวัดเชียงใหม่ 50200/);
   });
   it('aligns the last unpaid money column with the paid table and summary right margin', () => {
     const unpaid = renderDisbursementVoucherSvg(snapshot(), false).toString();
@@ -153,23 +284,23 @@ describe('disbursement voucher printed document', () => {
       assert.doesNotMatch(svg, /<text[^>]*>-<\/text>/); assert.match(svg, /ผู้รับเงิน/);
     }
   });
-  it('marks cancellation on every page without marking the original frozen snapshot', () => {
+  it('marks cancellation on every page with its full facts below totals without changing the frozen snapshot', () => {
     const original = snapshot({ snapshotHash: 'abcdef0123456789', lines: Array.from({ length: 20 }, () => snapshot().lines[0]) });
     const svg = renderDisbursementVoucherSvg({ ...original, cancellation: { at: '2026-10-11', reason: 'ยอดผิด', expenseNumbers: ['EXP-1'], reissuedDocumentNumber: 'PV-NEW' } } as any, true).toString();
-    const pages = Number(svg.match(/height="(\d+)"/)![1]) / 1100;
-    assert.equal((svg.match(/ยกเลิกแล้ว เมื่อ/g) || []).length, pages);
-    assert.equal((svg.match(/เหตุผล: ยอดผิด/g) || []).length, pages);
-    assert.equal((svg.match(/การจ่ายของรายการ EXP-1 ถูกยกเลิก/g) || []).length, pages);
-    assert.equal((svg.match(/ออกใบใหม่แทนแล้ว เลขที่ PV-NEW/g) || []).length, pages);
+    const pages = Number(svg.match(/height="(\d+)"/)![1]) / 1250;
+    assert.equal((svg.match(/>ยกเลิกแล้ว</g) || []).length, pages);
+    assert.equal((svg.match(/เหตุผล: ยอดผิด/g) || []).length, 1);
+    assert.equal((svg.match(/การจ่ายของรายการ EXP-1 ถูกยกเลิก/g) || []).length, 1);
+    assert.equal((svg.match(/ออกใบใหม่แทนแล้ว เลขที่ PV-NEW/g) || []).length, 1);
     assert.doesNotMatch(renderDisbursementVoucherSvg(original, true).toString(), /ยกเลิกแล้ว/);
     assert.match(renderDisbursementVoucherSvg({ ...original, cancellation: { at: '2026-10-11', reason: 'ยอดผิด' } } as any, false).toString(), /ยกเลิกแล้ว/);
   });
-  it('prints formatted aligned money, Thai footers, partial-payment explanation and frozen evidence', () => {
+  it('prints aligned money, partial-payment explanation and frozen evidence without a one-page footer', () => {
     const svg = renderDisbursementVoucherSvg(snapshot({ snapshotHash: 'abcdef0123456789', paymentEvidence: { attachedByName: 'สมใจ', attachedAt: '2026-10-11T03:00:00Z' },
       lines: [{ ...snapshot().lines[0], grandTotal: '13350', wht: '350', netPayable: '13000' }] }), true).toString();
     assert.match(svg, /text-anchor="end"[^>]*>13,350.00</);
-    assert.match(svg, /เลขที่ PV-202610-00001 · หน้า 1\/1/);
-    assert.match(svg, /รหัสตรวจสอบเอกสาร abcdef012345/);
+    assert.doesNotMatch(svg, /หน้า 1\/1/);
+    assert.doesNotMatch(svg, /รหัสตรวจสอบเอกสาร|abcdef012345/);
     assert.match(svg, /ยอดนี้ไม่เท่ากับยอดรวมหักภาษี เพราะมีรายการที่จ่ายบางส่วน หรือเคยจ่ายไปแล้วบางส่วน/);
     assert.match(svg, /หลักฐานการจ่าย: แนบ 1 ไฟล์ โดย สมใจ เมื่อ/);
     const unpaid = renderDisbursementVoucherSvg(snapshot({ plannedPayDate: '2026-10-12' }), false).toString();
@@ -184,12 +315,12 @@ describe('disbursement voucher printed document', () => {
     const paid = renderDisbursementVoucherSvg(snapshot(), true).toString();
     assert.match(unpaid, /ใบเตรียมจ่าย/); assert.match(unpaid, /ยังไม่ได้จ่ายเงิน/); assert.match(unpaid, /ครั้งที่ 1/); assert.match(unpaid, /ยอดที่จะจ่าย/);
     assert.match(paid, /ใบสำคัญจ่าย/); assert.match(paid, /ยอดที่จ่าย/); assert.match(paid, /PV-202610-00001/); assert.match(paid, /xxx-7890/);
-    assert.match(paid, /รวมจากชื่อร้านที่ตรงกัน \(ไม่มีเลขผู้เสียภาษี\)/); assert.match(paid, /ภาษีที่หักไว้/);
-    assert.match(renderDisbursementVoucherSvg(snapshot({ payee: { name: 'ผู้รับเงิน', basis: 'PREPARER_CONFIRMED', confirmerName: 'สมใจ' } }), true).toString(), /รวมด้วยการยืนยันของผู้จัดทำ สมใจ/);
+    assert.doesNotMatch(paid, /รวมจากชื่อร้านที่ตรงกัน/); assert.match(paid, /ภาษีที่หักไว้/);
+    assert.doesNotMatch(renderDisbursementVoucherSvg(snapshot({ payee: { name: 'ผู้รับเงิน', basis: 'PREPARER_CONFIRMED', confirmerName: 'สมใจ' } }), true).toString(), /รวมด้วยการยืนยัน/);
   });
   it('prints direct payments without an approver and re-issued documents with their original number', () => {
     const direct = renderDisbursementVoucherSvg(snapshot({ directPayment: true }), true).toString();
-    assert.match(direct, /บันทึกจ่ายโดยตรง/); assert.ok(!direct.includes('สมชาย'));
+    assert.doesNotMatch(direct, /บันทึกจ่ายโดยตรง/); assert.ok(!direct.includes('สมชาย'));
     assert.match(renderDisbursementVoucherSvg(snapshot({ origin: 'REISSUED', replacesDocumentNumber: 'PV-OLD' }), true).toString(), /ออกแทนใบเลขที่ PV-OLD/);
   });
   it('wraps a 120-character Thai name and paginates twenty complete lines without splitting rows', async () => {

@@ -1,6 +1,7 @@
 'use client';
+import { formatThaiDate } from '@/common/i18n/thai-date';
 import { useEffect, useId, useRef, useState } from 'react';
-import { THAI_SYSTEM_ROLE_NAMES, PLAN_TIER_PRESETS, type PlanTierKey, type BillingCapacityOptions, type BillingCapacitySelection } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, PLAN_TIER_PRESETS, shopPlanTierLabel, type PlanTierKey, type BillingCapacityOptions, type BillingCapacitySelection } from '@watchdog-bms/contracts';
 import { MangmeeBadge } from '@/common/components/mangmee';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { CheckCircleIcon } from '@/common/icons';
@@ -25,8 +26,8 @@ export default function BillingCapacityPicker({ options, repair, scheduledAt, cu
   const branchesListId = useId();
   const membersListId = useId();
   const [accepted, setAccepted] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const currentPlan = currentTierKey && currentTierKey in PLAN_TIER_PRESETS ? PLAN_TIER_PRESETS[currentTierKey as PlanTierKey].labelTh : null;
-  const targetPlan = options.offerKey in PLAN_TIER_PRESETS ? PLAN_TIER_PRESETS[options.offerKey as PlanTierKey].labelTh : 'แพ็กเกจที่เลือก';
+  const currentPlan = currentTierKey && currentTierKey in PLAN_TIER_PRESETS ? shopPlanTierLabel(currentTierKey as PlanTierKey) : null;
+  const targetPlan = options.offerKey in PLAN_TIER_PRESETS ? shopPlanTierLabel(options.offerKey as PlanTierKey) : 'แพ็กเกจที่เลือก';
   const suspendedBranches = options.branches.length - branches.length, suspendedMembers = options.memberships.length - members.length;
   const remainingBranches = Math.max(0, options.branchLimit - branches.length), remainingMembers = Math.max(0, options.employeeLimit - members.length);
   const blockedByWork = (options.branches.some(b => b.openReimbursements > 0) || options.memberships.some(m => m.required && !m.owner)) &&
@@ -39,12 +40,12 @@ export default function BillingCapacityPicker({ options, repair, scheduledAt, cu
     });
   async function run(work: () => Promise<void>) { setBusy(true); setError(''); try { await work(); } catch { setError('ข้อมูลอาจเปลี่ยนหรือยังจัดการรายการค้างไม่ครบ กรุณาโหลดข้อมูลล่าสุดแล้วตรวจการเลือกอีกครั้ง'); } finally { setBusy(false); } }
   return <>
-    <div ref={backNavigation} className="scroll-mt-[calc(var(--app-header-h,0px)+1.5rem)] space-y-1"><button type="button" className={billingBackControl} disabled={busy} onClick={() => onCancel({ sourceHash: options.sourceHash, branchIds: branches, memberships: members })}><span className="text-base leading-none" aria-hidden="true">←</span>{repair ? 'กลับไปสถานะการชำระเงิน' : 'กลับไปเลือกแพ็กเกจ'}</button>
+    <div ref={backNavigation} className="scroll-mt-[calc(var(--app-header-h,0px)+1.5rem)] space-y-1"><button type="button" className={billingBackControl} disabled={busy} onClick={() => onCancel({ sourceHash: options.sourceHash, branchIds: branches, memberships: members })}><span className="text-base leading-none" aria-hidden="true">←</span>{repair ? 'กลับไปสถานะการจ่ายเงิน' : 'กลับไปเลือกแพ็กเกจ'}</button>
       <h2 ref={heading} tabIndex={-1} className="text-xl font-bold text-gray-900 sm:text-2xl">เลือกสาขาและผู้ใช้ที่จะใช้งานต่อ</h2></div>
     <section aria-label="เลือกสาขาและผู้ใช้" className="mangmee-card space-y-5 p-5 sm:p-6">
-      <p className="text-sm text-gray-600">{currentPlan && (currentTierKey !== options.offerKey || currentInterval !== options.interval) ? `จาก ${currentPlan}${currentInterval ? ` · ${currentInterval === 'year' ? 'รายปี' : 'รายเดือน'}` : ''} เป็น ` : repair ? 'แพ็กเกจที่ชำระแล้ว: ' : 'แพ็กเกจที่เลือก: '}<strong className="text-gray-900">{targetPlan} · {options.interval === 'year' ? 'รายปี' : 'รายเดือน'}</strong></p>
-    {scheduledAt ? <p className="rounded-xl bg-brand-50 p-4 text-sm text-brand-800">ใช้แพ็กเกจเดิมได้ถึง {new Date(scheduledAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })} แพ็กเกจใหม่เริ่มเมื่อชำระรอบถัดไปสำเร็จ วันนี้ยังไม่เรียกเก็บเงิน</p>
-      : repair && <p className="rounded-xl bg-brand-50 p-4 text-sm text-brand-800">ชำระแล้ว การยืนยันนี้ใช้รายการเดิม ไม่มีการเรียกเก็บซ้ำ</p>}
+      <p className="text-sm text-gray-600">{currentPlan && (currentTierKey !== options.offerKey || currentInterval !== options.interval) ? `จาก ${currentPlan}${currentInterval ? ` · ${currentInterval === 'year' ? 'รายปี' : 'รายเดือน'}` : ''} เป็น ` : repair ? 'แพ็กเกจที่จ่ายแล้ว: ' : 'แพ็กเกจที่เลือก: '}<strong className="text-gray-900">{targetPlan} · {options.interval === 'year' ? 'รายปี' : 'รายเดือน'}</strong></p>
+    {scheduledAt ? <p className="rounded-xl bg-brand-50 p-4 text-sm text-brand-800">ใช้แพ็กเกจเดิมได้ถึง {formatThaiDate(scheduledAt)} แพ็กเกจใหม่เริ่มเมื่อจ่ายรอบถัดไปสำเร็จ วันนี้ยังไม่เรียกเก็บเงิน</p>
+      : repair && <p className="rounded-xl bg-brand-50 p-4 text-sm text-brand-800">จ่ายแล้ว การยืนยันนี้ใช้รายการเดิม ไม่มีการเรียกเก็บซ้ำ</p>}
     <div className="grid gap-6 lg:grid-cols-2">
       <fieldset disabled={busy} className="min-w-0 space-y-2"><legend className="mb-2 font-semibold">สาขา <span className="ml-2 text-sm font-normal text-gray-500">เลือก {branches.length} / {options.branchLimit}</span></legend>
         <div id={branchesListId} className="space-y-2">{options.branches.filter(branch => showAdditionalBranches || branches.includes(branch.id)).map(branch => {

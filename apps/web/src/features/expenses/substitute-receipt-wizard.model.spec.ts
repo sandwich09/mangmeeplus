@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, it } from 'node:test';
 import {
+  defaultCertifierId,
   defaultSubstituteReceiptReason,
   evaluateDetailsReadiness,
   evaluateEvidenceReadiness,
@@ -102,6 +103,37 @@ test('filters candidate blockers before the user reaches prepare', () => {
   };
   assert.equal(substituteReceiptRenderabilityIssue(longDescription), 'line_description_too_long');
   assert.equal(isSubstituteReceiptCandidateEligible(longDescription), false);
+});
+
+test('names the one reason an expense cannot get a certificate, in the order the checks run', async () => {
+  const { substituteReceiptIneligibleCause } = await import('./substitute-receipt-wizard.model');
+  assert.equal(substituteReceiptIneligibleCause(eligibleCandidate), null);
+  assert.equal(substituteReceiptIneligibleCause({ ...eligibleCandidate, status: 'CONFIRMED' }), 'status');
+  assert.equal(substituteReceiptIneligibleCause({ ...eligibleCandidate, sourceDocumentType: 'SUBSTITUTE_RECEIPT' }), 'documentType');
+  assert.equal(substituteReceiptIneligibleCause({ ...eligibleCandidate, currency: 'USD' }), 'currency');
+  assert.equal(substituteReceiptIneligibleCause({ ...eligibleCandidate, grandTotalAmount: '0' }), 'amount');
+  assert.equal(substituteReceiptIneligibleCause({ ...eligibleCandidate, taxEvidenceStatus: 'USABLE_FOR_TAX' }), 'taxEvidence');
+  assert.equal(substituteReceiptIneligibleCause({ ...eligibleCandidate, lines: [] }), 'lines');
+  assert.equal(substituteReceiptIneligibleCause({ ...eligibleCandidate, expenseCategoryId: null, lines: [{ ...eligibleCandidate.lines[0]!, expenseCategoryId: null }] }), 'category');
+  assert.equal(substituteReceiptIneligibleCause({ ...eligibleCandidate, aiVerificationSummaryJson: { classification: { documentKind: 'QUOTATION' } } }), 'classification');
+  // The yes/no the list and the prepare guard use is the same check.
+  assert.equal(isSubstituteReceiptCandidateOtherwiseEligible({ ...eligibleCandidate, sourceDocumentType: 'SUBSTITUTE_RECEIPT' }), false);
+});
+
+test('keeps an expense in the list of step 1 while the wizard can still finish it', async () => {
+  const { isSubstituteReceiptWizardResumable } = await import('./substitute-receipt-wizard.model');
+  // The answer "make a certificate" was saved and nothing was issued yet.
+  assert.equal(isSubstituteReceiptWizardResumable({ ...eligibleCandidate, substituteReceiptEvidence: null }, 'SUBSTITUTE_RECEIPT'), true);
+  // Its certificate was cancelled: a new one can be made.
+  assert.equal(isSubstituteReceiptWizardResumable({ ...eligibleCandidate, substituteReceiptEvidence: { status: 'SUPERSEDED' } }, 'SUBSTITUTE_RECEIPT'), true);
+  // The document type chosen on step 1 is the only obstacle: step 1 is where it is put right.
+  assert.equal(isSubstituteReceiptWizardResumable({ ...eligibleCandidate, sourceDocumentType: 'SUBSTITUTE_RECEIPT', substituteReceiptEvidence: null }, 'SUBSTITUTE_RECEIPT'), true);
+  // A live certificate, another answer, or another obstacle: not this list's business.
+  assert.equal(isSubstituteReceiptWizardResumable({ ...eligibleCandidate, substituteReceiptEvidence: { status: 'PREPARED' } }, 'SUBSTITUTE_RECEIPT'), false);
+  assert.equal(isSubstituteReceiptWizardResumable({ ...eligibleCandidate, substituteReceiptEvidence: { status: 'ISSUED' } }, 'SUBSTITUTE_RECEIPT'), false);
+  assert.equal(isSubstituteReceiptWizardResumable({ ...eligibleCandidate, substituteReceiptEvidence: null }, 'ALTERNATIVE_EVIDENCE'), false);
+  assert.equal(isSubstituteReceiptWizardResumable({ ...eligibleCandidate, substituteReceiptEvidence: null }, null), false);
+  assert.equal(isSubstituteReceiptWizardResumable({ ...eligibleCandidate, currency: 'USD', substituteReceiptEvidence: null }, 'SUBSTITUTE_RECEIPT'), false);
 });
 
 test('starts receipt-classified expenses with a compatible missing-receipt reason', () => {
@@ -234,6 +266,16 @@ test('resolves the wizard step from evidence status', () => {
   assert.equal(resolveWizardStep({ status: 'PAYER_CERTIFIED' }), 'approve');
   assert.equal(resolveWizardStep({ status: 'ISSUED' }), 'done');
   assert.equal(resolveWizardStep({ status: 'SUPERSEDED' }), 'done');
+});
+
+test('presets the certifier: an owner making the certificate signs it herself', () => {
+  const payers = [{ userId: 'first-owner', isOwner: true }, { userId: 'second-owner', isOwner: true }, { userId: 'staff' }];
+  assert.equal(defaultCertifierId(payers, 'second-owner', 'OWNER_SELF'), 'second-owner');
+  assert.equal(defaultCertifierId(payers, 'staff', 'OWNER_SELF'), 'first-owner');
+  assert.equal(defaultCertifierId(payers, 'outsider', 'OWNER_SELF'), 'first-owner');
+  assert.equal(defaultCertifierId(payers, 'staff', 'DESIGNATED_APPROVERS'), 'staff');
+  assert.equal(defaultCertifierId(payers, 'outsider', 'DESIGNATED_APPROVERS'), '');
+  assert.equal(defaultCertifierId([{ userId: 'staff' }], 'staff', 'OWNER_SELF'), '');
 });
 
 test('allows approval of another payer with expense.confirm', () => {
@@ -558,4 +600,23 @@ it('shows the reimbursement-claim entry point only for an issued personal-advanc
   // Not yet loaded (wizard) — no button.
   assert.equal(canClaimReimbursementFromSubstituteReceipt(null, true), false);
   assert.equal(canClaimReimbursementFromSubstituteReceipt(undefined, true), false);
+});
+
+test('restores the selected signing method and method step after session recovery', async () => {
+  const model = await import('./substitute-receipt-wizard.model');
+  const storage = new Map<string, string>();
+  const adapter = { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => { storage.set(key, value); }, removeItem: (key: string) => { storage.delete(key); } };
+  const draft = { step: 'method', signingMethod: 'DIGITAL', consent: true, reasonCode: 'PAYEE_CANNOT_ISSUE', missingReason: 'ร้านไม่ออกให้', businessPurpose: 'ซื้อของ', payeeName: 'ร้าน', payeeAddress: '', payeeTaxId: '', payerId: 'owner', paymentMethod: 'BANK_TRANSFER', paymentDate: '2026-10-13', supportingIds: [], paymentIds: [], fundingSource: 'COMPANY', paidInFullAcknowledged: true } as const;
+  model.writeSubstituteWizardDraft(adapter, 'co', 'expense', 'user', { ...draft, supportingIds: [], paymentIds: [] });
+  assert.equal(model.readSubstituteWizardDraft(adapter, 'co', 'expense', 'user')?.step, 'method');
+  assert.equal(model.readSubstituteWizardDraft(adapter, 'co', 'expense', 'user')?.signingMethod, 'DIGITAL');
+});
+
+
+test('SUB-DOC signing identifies the first missing field in display order for every combination', () => {
+  for (const previewed of [false, true]) for (const signatureReady of [false, true]) for (const acknowledged of [false, true]) {
+    const result = evaluateSigningReadiness({ previewed, signatureReady, acknowledged });
+    assert.deepEqual(result.missing, [!previewed && 'preview', !signatureReady && 'signature', !acknowledged && 'acknowledgement'].filter(Boolean));
+    assert.equal(result.ready, previewed && signatureReady && acknowledged);
+  }
 });

@@ -2,7 +2,7 @@ import type { UserGuide } from './user-guide.model';
 
 // manual-expense-web-entry-flag spec §9.3. `expenses-guide.content.ts` is pinned by hash for the LINE
 // answer pack (approved-product-help.ts), so the guide of a company that does not show the
-// manual-entry menu is made here, from the RESULT of `buildExpensesGuide`, and that file is untouched.
+// manual-entry menu is made here, from the RESULT of `buildExpensesGuide`, the controller updates its hash after wording changes.
 
 /**
  * One sentence of the spec, in the note's two slots: what is so, then what follows from it. The
@@ -12,7 +12,7 @@ import type { UserGuide } from './user-guide.model';
  */
 export const MANUAL_ENTRY_NOT_ENABLED_GUIDE_NOTE = {
   title: 'เมนูนี้ไม่ได้เปิดใช้สำหรับร้านของคุณ',
-  detail: 'ขั้นตอนในหัวข้อนี้จึงยังใช้ไม่ได้ในขณะนี้',
+  detail: 'ขั้นตอนในหัวข้อนี้ยังใช้ไม่ได้',
 } as const;
 
 const MANUAL_SECTION_ID = 'manual';
@@ -21,7 +21,7 @@ const isManualPageLink = (href: string) => href.endsWith('/expenses/manual');
 /**
  * The same guide with the shortcut to the manual page removed and a note at the top of the
  * "บันทึกด้วยมือ" section. The section, its steps and every other section stay: the guide refers to
- * its sections by number and to "เมนูย่อยทั้ง 8 รายการ".
+ * its sections by number and to the submenu list.
  */
 export function withManualEntryNotEnabled(guide: UserGuide): UserGuide {
   return {

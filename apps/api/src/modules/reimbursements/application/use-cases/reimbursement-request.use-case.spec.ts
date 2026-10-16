@@ -1,8 +1,13 @@
+import { REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS } from '@watchdog-bms/contracts';
+import { ReimbursementController } from '../../presentation/http/reimbursement.controller';
+import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
+import { WORKFLOW_TEMPLATE_CATALOG, WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG } from '../../../workflow/domain/workflow-template-catalog';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
 import {
   CreateReimbursementDraftUseCase,
+  ListReimbursementSourcesUseCase,
   CancelReimbursementUseCase,
   WithdrawReimbursementCancellationUseCase,
   ResumeReimbursementUseCase,
@@ -12,7 +17,7 @@ import {
   UpdateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
   ReimbursementInternalNotesUseCase,
-  reimbursementPeriodKey,
+  reimbursementPeriodKey, hubSummary,
 } from './reimbursement-request.use-case';
 import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, ListFinanceQueueUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere, hubSearchWhere } from '../../infrastructure/prisma-reimbursement.repository';
@@ -47,7 +52,7 @@ import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-con
 import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
-import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
+import { ConfirmExpenseUseCase, VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import {
   applyDraftPayoutChange, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit, readClaimPayout, readClaimPayoutSecret,
   readDraftDefaultPayout, readLegacyPayoutDefault, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan, writeMemberPayoutAccount,
@@ -790,7 +795,7 @@ describe('claim certificate cancellation (A7)', () => {
       reimbursementRequest: table(() => [state.request]), reimbursementPayment: table(() => []), reimbursementApprovalStep: table(() => []),
       expenseRecord: table(() => [expense]), expensePayment: table(() => []), journalEntry: table(() => []),
       whtCertificateHandoff: table(() => handoffs), whtCertificate: table(() => certificates), whtCertificateHistory: table(() => history),
-      taxPeriod: table(() => periods), taxEvent: table(() => events), accountingPeriod: table(() => []),
+      taxPeriod: table(() => periods.map(p => ({ ...p, whtFilings: p.whtFilings ?? [] }))), whtFilingLine: table(() => []), taxEvent: table(() => events), accountingPeriod: table(() => []),
       expenseSubstituteReceiptEvidence: table(() => []), attachmentLink: table(() => []), reimbursementLine: table(() => []),
       auditLog: table(() => audits), documentNumber: table(() => []), outboxEvent: fakeTx(state.calls.outbox).outboxEvent,
       companyMembership: { findFirst: async ({ where }: any) => ({ user: { displayName: where.userId === 'staff-1' ? 'สมชาย' : 'คนดำเนินการต่อ' } }) },
@@ -799,6 +804,13 @@ describe('claim certificate cancellation (A7)', () => {
       $queryRaw: async () => [{ pending: state.request.cancellationPendingAt, attested: state.request.cancellationCertificateAttestedAt }],
       $transaction: async (work: any) => work(client),
     };
+    // Prisma supplies the selected relation even when it is empty. The two queries
+    // distinguish frozen source lines from legacy periods with no preserved paper.
+    client.taxPeriod.findMany = async ({ where, select }: any) => periods.filter(period => {
+      if (where.whtFilings) return (period.whtFilings ?? []).some((paper: any) => paper.status === 'FILED' && paper.lines?.some((line: any) => line.sourceType === 'expense.record' && line.sourceId === 'exp-1'));
+      return ['FILED', 'PAID', 'CLOSED'].includes(period.status) && period.periodKey === '2026-09';
+    }).map(period => ({ formType: period.formType, periodKey: period.periodKey, ...(select.status && { status: period.status }),
+      ...(select.whtFilings && { whtFilings: (period.whtFilings ?? []).filter((paper: any) => paper.status === 'FILED' && (paper.lines?.length || paper.rowsCertain)).map((paper: any) => ({ id: paper.id })) }) }));
     const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
     for (const method of ['findCancellationCertificates', 'findCancellationBlocker', 'beginCancellationAtomic', 'completeCancellationAtomic', 'withdrawCancellationAtomic', 'assertCancellationPending', 'listClaimProjections']) {
       (state.repo as any)[method] = (...args: any[]) => (repo as any)[method](...args);
@@ -816,6 +828,12 @@ describe('claim certificate cancellation (A7)', () => {
       detail: (viewer: any) => new GetReimbursementDetailUseCase(state.repo, evidenceService()).execute(viewer, 'rb-1'),
       withdraw: new WithdrawReimbursementCancellationUseCase(state.repo, noopAudit) };
   }
+  for (const legacy of [false, true]) it(`cancels a certificate-free claim in a ${legacy ? 'legacy filed month' : 'filed paper'}`, async () => {
+    const h = await world();
+    h.periods.push({ companyId: ctx().companyId, formType: 'PND53', periodKey: '2026-09', status: 'FILED', whtFilings: legacy ? [] : [{ id: 'paper' }] });
+    await h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด');
+    assert.equal(h.expense.status, 'VOIDED'); assert.equal(h.state.request.status, 'CANCELLED');
+  });
   const detailBlockers = [
     { code: 'tax_period_locked', periodKey: '2026-09', formType: 'PND53', certificateKind: 'SYSTEM' },
     { code: 'tax_period_locked', periodKey: '2026-09', formType: 'PND53', certificateKind: 'EXTERNAL' },
@@ -880,25 +898,39 @@ describe('claim certificate cancellation (A7)', () => {
     assert.deepEqual(detail.certificates, []); assert.equal(detail.certificateCancelAllowed, false);
     assert.equal(Object.hasOwn(detail, 'certificateCancelBlocker'), false);
   });
-  const periodSentence = (kind: 'SYSTEM' | 'EXTERNAL') => `ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ก.ย. 2569 ยื่นไปแล้ว จึงยกเลิกคำขอเบิกไม่ได้ ${kind === 'SYSTEM'
-    ? 'ถ้าผิดเฉพาะตัวสะกดชื่อหรือที่อยู่บนหนังสือรับรอง ใช้ปุ่ม "แก้ไขหนังสือรับรอง" ได้ ถ้ายอดเงิน อัตรา หรือเลขผู้เสียภาษีผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ'
-    : 'ถ้าข้อมูลผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ'}`;
   for (const kind of ['SYSTEM', 'EXTERNAL'] as const) {
-    for (const status of ['FILED', 'PAID', 'CLOSED']) it(`refuses ${kind} in ${status} before tax-workspace, permission and attestation checks`, async () => {
+    for (const status of ['FILED', 'PAID', 'CLOSED']) it(`keeps the tax-workspace certificate refusal for ${kind} in ${status}, not the former withholding lock`, async () => {
       const h = await world(kind);
       h.periods.push({ companyId: ctx().companyId, formType: 'PND53', periodKey: '2026-09', status });
       h.events.push({ id: 'event-1', companyId: ctx().companyId, sourceType: 'expense.record', sourceId: 'exp-1', status: 'ACTIVE' });
       h.certificates.push({ id: 'tax-cert', companyId: ctx().companyId, status: 'ISSUED', taxEventIdsJson: ['event-1'] });
       await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด'), (error: any) => {
-        assert.equal(error.getResponse().code, 'reimbursement_cancellation_tax_period_locked'); assert.equal(error.getResponse().message, periodSentence(kind)); return true;
+        assert.equal(error.getResponse().code, 'reimbursement_cancellation_certificate_issued'); assert.equal(error.getResponse().message, REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.taxWorkspaceCertificate); return true;
       });
       assert.equal(h.state.request.cancellationPendingAt, undefined); assert.equal(h.history.length, 0);
+    });
+    for (const legacy of [false, true]) it(`cancels ${kind} on a ${legacy ? 'legacy month' : 'filed paper'} with permission and attestation, preserving filed rows`, async () => {
+      const h = await world(kind);
+      const paper = { id: 'filed-paper', status: 'FILED', lines: [{ sourceType: 'expense.record', sourceId: 'exp-1' }] };
+      h.periods.push({ companyId: ctx().companyId, formType: 'PND53', periodKey: '2026-09', status: 'FILED', whtFilings: legacy ? [] : [paper] });
+      h.client.whtFilingLine = { findMany: async () => legacy ? [] : paper.lines };
+      const frozen = JSON.stringify(paper);
+      const { filedWithholdingPaymentPeriods } = await import('../../../tax/application/services/filed-withholding-payment');
+      assert.deepEqual(await filedWithholdingPaymentPeriods(h.client, ctx().companyId, 'expense.record', 'exp-1', { formType: 'PND53', periodKey: '2026-09' }), [{ formType: 'PND53', periodKey: '2026-09' }]);
+      await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด', true), (error: any) => error.getResponse().code === 'reimbursement_cancellation_certificate_permission_missing');
+      await assert.rejects(h.cancel.execute(requester([permission(kind)]), 'rb-1', 'ข้อมูลผิด'), (error: any) => {
+        assert.equal(error.getResponse().message, 'ยังไม่ได้ยืนยันเรื่องการยื่นภาษี ติ๊กยืนยันก่อนยกเลิกใบเบิก'); return true;
+      });
+      await h.cancel.execute(requester([permission(kind)]), 'rb-1', 'ข้อมูลผิด', true);
+      assert.equal(h.expense.status, 'VOIDED'); assert.equal(h.handoffs[0].status, 'CANCELLED');
+      assert.equal(h.history.length, 1); assert.equal(h.history[0].taxFilingAttested, true);
+      assert.equal(JSON.stringify(paper), frozen);
     });
     for (const number of ['WT-1', null]) it(`refuses missing ${kind} permission before attestation (${number ?? 'no number'})`, async () => {
       const h = await world(kind, number);
       await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด'), (error: any) => {
         assert.equal(error.getResponse().code, 'reimbursement_cancellation_certificate_permission_missing');
-        assert.equal(error.getResponse().message, `คำขอนี้มีรายจ่ายที่${kind === 'SYSTEM' ? 'ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว' : 'บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว'}${number ? ` (เลขที่ ${number})` : ''} การยกเลิกคำขอจะยกเลิก${kind === 'SYSTEM' ? 'หนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย' : 'การบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง'} ให้ฝ่ายการเงินหรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิกคำขอนี้`);
+        assert.equal(error.getResponse().message, `ใบเบิกนี้มีรายจ่ายที่${kind === 'SYSTEM' ? 'ออกหนังสือรับรอง 50 ทวิแล้ว' : 'บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวิเองแล้ว'}${number ? ` (เลขที่ ${number})` : ''} การยกเลิกใบเบิกจะยกเลิก${kind === 'SYSTEM' ? 'หนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรอง 50 ทวิ' : 'การบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง'} ให้ฝ่ายการเงินหรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิกใบเบิกนี้`);
         return true;
       });
       assert.equal(h.state.request.cancellationPendingAt, undefined);
@@ -907,7 +939,7 @@ describe('claim certificate cancellation (A7)', () => {
       for (const taxFilingAttested of [false, undefined]) {
         const h = await world(kind);
         await assert.rejects((h.cancel as any).execute(requester([permission(kind)]), 'rb-1', 'ข้อมูลผิด', taxFilingAttested), (error: any) => {
-          assert.equal(error.getResponse().code, 'reimbursement_cancellation_certificate_attestation_required'); assert.equal(error.getResponse().message, 'กรุณาติ๊กยืนยันเรื่องการยื่นภาษีก่อนยกเลิกคำขอเบิก'); return true;
+          assert.equal(error.getResponse().code, 'reimbursement_cancellation_certificate_attestation_required'); assert.equal(error.getResponse().message, 'ยังไม่ได้ยืนยันเรื่องการยื่นภาษี ติ๊กยืนยันก่อนยกเลิกใบเบิก'); return true;
         });
         assert.equal(h.state.request.cancellationPendingAt, undefined);
       }
@@ -954,7 +986,7 @@ describe('claim certificate cancellation (A7)', () => {
     else h.handoffs.push({ id: 'tax-handoff', companyId: ctx().companyId, sourcePaymentType: 'other', sourcePaymentId: 'other', status: 'EXTERNAL_LINKED', taxEventIdsJson: ['event-1'] });
     await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด'), (error: any) => {
       assert.equal(error.getResponse().code, 'reimbursement_cancellation_certificate_issued');
-      assert.equal(error.getResponse().message, 'คำขอนี้มีรายจ่ายที่มีหนังสือรับรองหัก ณ ที่จ่ายที่ออกจากหน้าภาษี จึงยกเลิกคำขอเบิกจากหน้านี้ไม่ได้ กรุณาแจ้งทีมมั่งมีพลัสเพื่อช่วยตรวจสอบ'); return true;
+      assert.equal(error.getResponse().message, 'ใบเบิกนี้มีรายจ่ายที่มีหนังสือรับรอง 50 ทวิที่ออกจากหน้าภาษี จึงยกเลิกใบเบิกจากหน้านี้ไม่ได้ แจ้งทีมงานมั่งมีเพื่อช่วยตรวจสอบ'); return true;
     });
     assert.equal(h.state.request.cancellationPendingAt, undefined);
   });
@@ -1001,6 +1033,29 @@ describe('claim certificate cancellation (A7)', () => {
 });
 
 describe('CancelReimbursementUseCase', () => {
+  it('deletes only a never-sent draft for its requester or a preparer, with its transactional audit', async () => {
+    const state = fakeRepo();
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    const tx = {};
+    const audits: any[] = [];
+    let deleted = 0;
+    (state.repo as any).deleteNeverSentDraftAtomic = async (data: any) => { await data.onDeleted(tx); deleted++; };
+    const cancel = new CancelReimbursementUseCase(state.repo, { log: async (entry: any, transaction: any) => { assert.equal(transaction, tx); audits.push(entry); } } as any, state.voidExpense);
+    await cancel.deleteDraft(ctx({ permissions: ['reimbursement.read_own'] }), 'rb-1');
+    await cancel.deleteDraft(ctx({ userId: 'finance', permissions: ['reimbursement.read', 'reimbursement.finance_review'] }), 'rb-1');
+    assert.equal(deleted, 2);
+    assert.deepEqual(audits.map(row => row.action), ['reimbursement.request.delete_draft', 'reimbursement.request.delete_draft']);
+    await assert.rejects(cancel.deleteDraft(ctx({ userId: 'other', permissions: ['reimbursement.read', 'reimbursement.create'] }), 'rb-1'), ForbiddenException);
+    for (const patch of [{ requestNo: 'RB-1' }, { submittedAt: new Date() }, { approvalSteps: [{ id: 'old-step' }] }, { status: 'PENDING_APPROVAL' }]) {
+      const original = { ...state.request };
+      if ('approvalSteps' in patch) state.repo.findRequestById = async () => state.request;
+      Object.assign(state.request, patch);
+      await assert.rejects(cancel.deleteDraft(ctx(), 'rb-1'), /reimbursement_draft_changed/);
+      Object.keys(patch).forEach(key => { state.request[key] = original[key]; });
+    }
+    assert.equal(deleted, 2);
+  });
+
   it('recognises expense_changed_retry as a claim cancellation race and keeps its intent pending', async () => {
     const state = fakeRepo({ claimProjections: [{ id: 'exp-1', sourceReimbursementLineId: 'rbl-1' }] });
     await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
@@ -1199,6 +1254,8 @@ describe('a claim whose payout account is being corrected reads the same on LINE
   } as any;
   const reader = ctx({ permissions: ['reimbursement.read'] });
 
+
+
   it('says รอผู้เบิกแก้บัญชีรับเงิน on LINE where the web desk is the requester, and counts the claim for no approver', async () => {
     const backlog = await new GetReimbursementApprovalBacklogUseCase(repo, noopAudit).execute(reader, {}, NOW);
     const webDesk = Object.fromEntries(rows.map((claim) => [claim.id,
@@ -1358,6 +1415,8 @@ describe('a list or queue row says when its claim is being cancelled', () => {
       getUserDisplayNames: async () => ({ 'mgr-1': 'สมศรี' }),
     } as any;
     const reader = ctx({ permissions: ['reimbursement.read'] });
+
+
     const summary = await new GetReimbursementAiSummaryUseCase(repo, noopAudit).execute(reader);
     // One claim waits for its approver (and is late), one for its payment: the three being cancelled are in no figure.
     assert.deepEqual([summary.pendingApprovalCount, summary.overdueApprovalCount, summary.unpaidApprovedCount, summary.totalUnpaidAmount], [1, 1, 1, '250.0000']);
@@ -1421,6 +1480,17 @@ describe('a cancellation that was started stays visible and can always be finish
     };
   }
 
+  it('lets the requester cancel a not-approved claim directly with the existing reason and right', async () => {
+    const claim = await claimWorld();
+    Object.assign(claim.state.request, { status: 'REJECTED' });
+    assert.equal((await claim.detail(requester())).viewerCanCancel, true);
+    await assert.rejects(() => claim.cancel.execute(bystander(), 'rb-1', 'ไม่ต้องเบิกแล้ว'), ForbiddenException);
+    await assert.rejects(() => claim.cancel.execute(requester(), 'rb-1', 'ก'), /cancellation_reason_too_short/);
+    const done = await claim.cancel.execute(requester(), 'rb-1', 'ไม่ต้องเบิกแล้ว');
+    assert.equal(done.status, 'CANCELLED');
+    assert.equal(claim.audits.filter(entry => entry.action === 'reimbursement.request.cancel').length, 1);
+  });
+
   it('a claim stranded by a short reason says who started it and why, and anyone who may cancel finishes it with a corrected reason', async () => {
     const claim = await claimWorld();
     claim.strand('ก');
@@ -1461,7 +1531,7 @@ describe('a cancellation that was started stays visible and can always be finish
     await assert.rejects(() => claim.cancel.execute(requester(), 'rb-1', 'ซื้อซ้ำกับใบก่อน'), (error: any) => {
       assert.equal(error.getStatus?.(), 409);
       assert.equal(error.getResponse().code, `reimbursement_cancellation_accounting_period_locked:${PERIOD}`);
-      assert.match(error.getResponse().message, /ยกเลิกคำขอเบิก/);
+      assert.match(error.getResponse().message, /ยกเลิกใบเบิก/);
       return true;
     });
     assert.equal(claim.state.request.cancellationPendingAt, undefined, 'no intent');
@@ -1899,8 +1969,7 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
   };
   const requireReceipt = { ...basePolicy, requireReceipt: true, allowMissingReceiptWithReason: true } as any;
   const noReceiptNeeded = { ...basePolicy, requireReceipt: false, allowMissingReceiptWithReason: false } as any;
-  // Receipt-less rows may be submitted only with the claim-level reason: the expense projection
-  // created at อนุมัติจ่าย confirms on an attachment or that reason, whatever the claim policy says.
+  // A reason is supplied where the case is about another gate; the policy matrix below tests when it is required.
   const withReason = { missingReceiptReason: 'ใบเสร็จหาย' };
 
   async function draftWith(state: any, lines: any[], extra: Record<string, unknown> = {}) {
@@ -2106,18 +2175,23 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     await assert.rejects(() => useCases(state).submit.execute(ctx(), 'rb-1'), /missing_receipt/);
   });
 
-  // BUG-7: without the reason the claim's expense projection can never be confirmed, and the
-  // finance approval that materializes it is already durable when that fails — the claim would
-  // sit at FINANCE_REVIEW forever. A waive policy does not exempt it.
-  it('blocks submit when a line carries no receipt and the claim carries no reason', async () => {
-    const state = fakeRepo({ policy: noReceiptNeeded });
-    await draftWith(state, [inputLine({ attachmentId: 'att-1' }), inputLine({ lineNo: 2 })]);
-    await assert.rejects(
-      () => useCases(state).submit.execute(ctx(), 'rb-1'),
-      /missing_receipt_reason_required/,
-    );
-    assert.equal(state.request.status, 'DRAFT', 'the claim stays a draft the requester can fix');
-  });
+  for (const requireReceipt of [false, true]) for (const allowMissingReceiptWithReason of [false, true]) {
+    for (const hasReceipt of [false, true]) it(`receipt policy ${requireReceipt}/${allowMissingReceiptWithReason}, receipt=${hasReceipt}`, async () => {
+      const state = fakeRepo({ policy: { ...basePolicy, requireReceipt, allowMissingReceiptWithReason } });
+      await draftWith(state, [inputLine(hasReceipt ? { attachmentId: 'att-1' } : {})]);
+      const submit = () => useCases(state).submit.execute(ctx(), 'rb-1');
+      if (!hasReceipt && (requireReceipt || allowMissingReceiptWithReason)) {
+        await assert.rejects(submit, allowMissingReceiptWithReason ? /missing_receipt_reason_required/ : /missing_receipt/);
+        if (allowMissingReceiptWithReason) {
+          await useCases(state).update.execute(ctx(), 'rb-1', { missingReceiptReason: 'ร้านไม่ออกใบเสร็จ' });
+          await submit();
+        }
+      } else {
+        await submit();
+        assert.equal(state.request.receiptRequirementStatus, hasReceipt ? 'ATTACHED' : 'WAIVED_BY_POLICY');
+      }
+    });
+  }
 
   it('submits the same receipt-less claim once the reason is filled in', async () => {
     const state = fakeRepo({ policy: noReceiptNeeded });
@@ -2425,7 +2499,7 @@ describe('claim detail paymentDesk', () => {
 describe('list paging and hub buckets', () => {
   const STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'CANCELLED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'VOIDED'];
   const FINANCE = ['NOT_REQUIRED', 'PENDING', 'NEEDS_INFO', 'APPROVED_FOR_PAYMENT', 'BLOCKED'];
-  const BUCKETS = ['draft', 'review', 'payment', 'duplicate_blocked', 'paid', 'closed'] as const;
+  const BUCKETS = ['draft', 'correction', 'review', 'payment', 'duplicate_blocked', 'paid', 'closed'] as const;
   const at = (second: number) => new Date(Date.UTC(2026, 8, 1, 0, 0, second));
   /** One claim for every status pair the database can hold, twice over for the live ones, so no two buckets are the same size. */
   const claims = STATUSES.flatMap((status, s) => FINANCE.flatMap((financeReviewStatus, f) =>
@@ -2445,6 +2519,8 @@ describe('list paging and hub buckets', () => {
       if (want === undefined) return true;
       if (field === 'AND') return want.every((part: any) => matches(row, part));
       if (field === 'OR') return want.some((part: any) => matches(row, part));
+      if (field === 'NOT') return !matches(row, want);
+      if (want && typeof want === 'object' && 'not' in want) return (row[field] ?? null) !== want.not;
       // The search's `contains` (case-insensitive, as PostgreSQL's ILIKE) and its amount, which the column compares as a number.
       if (want !== null && typeof want === 'object' && 'contains' in want) {
         assert.equal(want.mode, 'insensitive');
@@ -2452,15 +2528,23 @@ describe('list paging and hub buckets', () => {
       }
       if (field === 'amount') return Number(row[field]) === Number(want);
       if (want !== null && typeof want === 'object') return want.in ? want.in.includes(row[field]) : !want.notIn.includes(row[field]);
-      return row[field] === want;
+      return (row[field] ?? null) === want;
     });
     const client = {
       reimbursementRequest: {
-        findMany: async ({ where, skip, take, select }: any) => {
+        findMany: async ({ where, skip, take, select, orderBy }: any) => {
           if (!select) reads.push({ skip, take });
           else factReads.push({ where, select });
           const found = rows.filter((row) => matches(row, where))
-            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1));
+            .sort((a, b) => {
+              for (const entry of orderBy ?? []) {
+                const [key, direction] = Object.entries(entry)[0]!;
+                const left = a[key] instanceof Date ? a[key].getTime() : a[key];
+                const right = b[key] instanceof Date ? b[key].getTime() : b[key];
+                if (left !== right) return (left < right ? -1 : 1) * (direction === 'asc' ? 1 : -1);
+              }
+              return 0;
+            });
           return found.slice(skip ?? 0, take === undefined ? undefined : (skip ?? 0) + take).map((row) => ({ ...row,
             _count: { lines: 1, duplicateCandidates: (row.duplicateCandidates ?? []).filter((candidate: any) => candidate.status === 'OPEN').length } }));
         },
@@ -2476,6 +2560,7 @@ describe('list paging and hub buckets', () => {
           return [...groups.values()];
         },
       },
+      attachmentLink: { findMany: async () => [] },
       reimbursementPolicy: { findMany: async () => [] },
       reimbursementApprovalStep: { findMany: async () => [] },
       companyMembership: { findMany: async () => [] },
@@ -2483,6 +2568,34 @@ describe('list paging and hub buckets', () => {
     return { reads, factReads, list: new ListReimbursementsUseCase(new PrismaReimbursementRepository({ client } as any, {} as any)) };
   }
   const reader = ctx({ permissions: ['reimbursement.read'] });
+  it('CLAIM-LIST dates sort the whole scoped set before pagination with stable ties', async () => {
+    const fixtures = ['c', 'b', 'a'].map(id => ({ ...claims[0], id, incurredDate: new Date(id === 'b' ? '2026-10-02' : '2026-10-01'), createdAt: at(0) }));
+    const { list } = database(fixtures);
+    for (const [order, ids] of [['newest', ['b', 'c', 'a']], ['oldest', ['a', 'c', 'b']]] as const) {
+      const first = await list.execute(reader, { order, pageSize: 2 });
+      const second = await list.execute(reader, { order, pageSize: 2, page: 2 });
+      assert.deepEqual([...first.items, ...second.items].map(row => row.id), ids);
+      assert.equal(first.total, 3);
+      assert.deepEqual(first.hub, second.hub);
+    }
+    assert.deepEqual((await list.execute(reader, { pageSize: 3 })).items.map(row => row.id), ['b', 'c', 'a']);
+  });
+  it('keeps every not-approved claim out of cancelled, and scopes sent-back corrections to requester or preparer', async () => {
+    const row = (id: string, extra: object) => ({ ...claims[0], id, ...extra });
+    const fixtures = [row('rejected', { status: 'REJECTED' }), row('finance-return', { status: 'DRAFT', financeReviewStatus: 'NEEDS_INFO' }),
+      row('account-return', { status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: at(1), payoutCorrectionSubmittedAt: null }),
+      row('other', { status: 'REJECTED', requesterUserId: 'other', createdByUserId: 'other' }),
+      row('cancelled', { status: 'CANCELLED' }), row('resubmitted', { status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: at(1), payoutCorrectionSubmittedAt: at(2) })];
+    const { list } = database(fixtures);
+    const all = await list.execute(reader, { pageSize: 100 });
+    assert.equal((all.hub.counts as any).correction, 4);
+    const page = await list.execute(reader, { bucket: 'correction' as any });
+    assert.deepEqual(page.items.map(row => row.id).sort(), ['account-return', 'finance-return', 'other', 'rejected']);
+    assert.ok(page.items.every(row => reimbursementHubBucket(row) === 'correction'));
+    assert.equal((await list.execute(reader, { bucket: 'closed' })).total, 1);
+  });
+
+
 
   it('Round 4: LINE summary excludes duplicate blockers and backlog keeps them under their own desk', async () => {
     const snapshot = (duplicatePolicy: string) => ({ schemaVersion: 1, policyId: 'pol', policyVersion: 'v1',
@@ -2542,7 +2655,7 @@ describe('list paging and hub buckets', () => {
     const { list, factReads } = database(fixtures);
     const own = ctx({ permissions: ['reimbursement.read_own'], userId: 'staff-1' });
     const all = await list.execute(own, { search: 'ทดสอบจำนวน', pageSize: 100 });
-    assert.deepEqual(all.hub.counts, { all: 9, draft: 1, review: 0, payment: 2, duplicate_blocked: 6, paid: 0, closed: 0 });
+    assert.deepEqual(all.hub.counts, { all: 9, draft: 1, correction: 0, review: 0, payment: 2, duplicate_blocked: 6, paid: 0, closed: 0 });
     assert.equal(Object.entries(all.hub.counts).filter(([key]) => key !== 'all').reduce((sum, [, count]) => sum + count, 0), 9);
     for (const bucket of ['payment', 'duplicate_blocked'] as const) {
       const page = await list.execute(own, { search: 'ทดสอบจำนวน', bucket: bucket as any, pageSize: 100 });
@@ -2652,7 +2765,7 @@ describe('list paging and hub buckets', () => {
   it('places every status pair by its desk, in one bucket, with the same answer for the count and for the filter', () => {
     const expected: Record<string, string> = {
       DRAFT: 'draft', PENDING_APPROVAL: 'review', FINANCE_REVIEW: 'review', READY_FOR_PAYMENT: 'payment', PARTIALLY_PAID: 'payment',
-      PAID: 'paid', REJECTED: 'closed', CANCELLED: 'closed', VOIDED: 'closed',
+      PAID: 'paid', REJECTED: 'correction', CANCELLED: 'closed', VOIDED: 'closed',
     };
     for (const status of STATUSES) {
       for (const financeReviewStatus of FINANCE) {
@@ -2677,10 +2790,10 @@ describe('list paging and hub buckets', () => {
     const mine = claims.filter((row) => row.requesterUserId === 'staff-2');
     assert.ok(mine.length > 0 && mine.length < claims.length);
     assert.deepEqual([own.total, own.hub.counts.all, own.items.length], [mine.length, mine.length, mine.length]);
-    assert.deepEqual(own.hub.counts, { all: mine.length, draft: 5, review: 0, payment: 5, duplicate_blocked: 0, paid: 0, closed: 0 });
+    assert.deepEqual(own.hub.counts, { all: mine.length, draft: 4, correction: 1, review: 0, payment: 5, duplicate_blocked: 0, paid: 0, closed: 0 });
     // An empty scope: zeros everywhere, and a total amount that is still a number.
     const empty = await database([]).list.execute(reader, {});
-    assert.deepEqual(empty.hub, { counts: { all: 0, draft: 0, review: 0, payment: 0, duplicate_blocked: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
+    assert.deepEqual(empty.hub, { counts: { all: 0, draft: 0, correction: 0, review: 0, payment: 0, duplicate_blocked: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0, metrics: { pendingApproval: { count: 0, amount: '0.0000' }, pendingPayment: { count: 0, amount: '0.0000' } } });
     assert.deepEqual([empty.items.length, empty.total], [0, 0]);
   });
 
@@ -5838,10 +5951,153 @@ it('W4 API refuses name mismatch for third-party accounts at payment and correct
     await assert.rejects(() => w.sendBack.execute(answered ? approverCtx() : payerCtx(), id, { reasonCode: 'ACCOUNT_NAME_MISMATCH' }), (error: any) => {
       assert.equal(error.getStatus(), 400);
       assert.equal(error.getResponse().code, 'payout_correction_name_mismatch_third_party');
-      assert.equal(error.getResponse().message, 'บัญชีของบุคคลอื่นใช้เหตุผลว่าชื่อบัญชีไม่ตรงกับผู้เบิกไม่ได้ กรุณาเลือกเหตุผลอื่น');
+      assert.equal(error.getResponse().message, 'บัญชีของบุคคลอื่นใช้เหตุผลว่าชื่อบัญชีไม่ตรงกับผู้เบิกไม่ได้ เลือกเหตุผลอื่น');
       return true;
     });
     assert.equal(JSON.stringify([w.claim(), w.audits, w.events()]), before);
     await w.sendBack.execute(answered ? approverCtx() : payerCtx(), id, { reasonCode: 'ACCOUNT_UNUSABLE' });
   }
+});
+
+
+describe('paid claim list document completion', () => {
+  it('lists digital completion, declared paper completion and an unsigned claim with the same server facts as detail', async () => {
+    const at = new Date('2026-10-13T00:00:00.000Z');
+    const rows = ['digital', 'paper', 'unsigned'].map((id) => ({ id, companyId: 'co-1', requesterUserId: 'staff-1', amount: '100', currency: 'THB',
+      incurredDate: at, status: 'PAID', financeReviewStatus: 'NOT_REQUIRED', createdAt: at, updatedAt: at,
+      claimSignatures: id === 'digital' ? [{ role: 'REQUESTER' }, { role: 'APPROVER' }] : [] }));
+    const repo = { findPolicy: async () => null, listRequestPage: async () => ({ rows, groups: [], duplicateBlockedCount: 0 }),
+      findPendingApprovalSteps: async () => [], getUserDisplayNames: async () => ({}),
+      findAcknowledgedSignedCopyRequestIds: async (_companyId: string, ids: string[]) => { assert.deepEqual(ids, ['digital', 'paper', 'unsigned']); return new Set(['paper']); } } as any;
+    const page = await new ListReimbursementsUseCase(repo).execute(ctx({ permissions: ['reimbursement.read'] }), {});
+    assert.deepEqual(page.items.map((row) => [row.id, row.documentSignedVia]), [['digital', 'DIGITAL'], ['paper', 'PAPER'], ['unsigned', null]]);
+  });
+});
+
+
+it('claim source bootstrap exposes the current receipt rule with create permission', async () => {
+  const repo = { resolveCreateBranchId: async () => 'b', assertReimbursementRequester: async () => {}, listReimbursementRequesters: async () => [], listReimbursementSources: async () => [],
+    findPolicy: async () => ({ requireReceipt: true, allowMissingReceiptWithReason: false }) } as any;
+  const result = await new ListReimbursementSourcesUseCase(repo).execute({ companyId: 'co-1', userId: 'staff-1', permissions: ['reimbursement.create'], scopes: {} } as any, 'b');
+  assert.deepEqual(result.receiptPolicy, { requireReceipt: true, allowMissingReceiptWithReason: false });
+});
+
+describe('hub work queues', () => {
+  it('lets payment recorders read only the payment queue and refuses unrelated readers', async () => {
+    const asked: any[] = [];
+    const queue = new ListFinanceQueueUseCase({ listRequests: async (query: any) => { asked.push(query); return []; }, findPolicy: async () => null } as any);
+    await queue.execute(ctx({ permissions: ['reimbursement.payment.record'] }));
+    assert.deepEqual(asked[0].statuses, ['READY_FOR_PAYMENT', 'PARTIALLY_PAID']);
+    await assert.rejects(queue.execute(ctx()), ForbiddenException);
+  });
+});
+
+describe('requester bell notice routes', () => {
+  for (const [event, key] of [
+    ['reimbursement.approved', 'reimbursement_decision_requester'],
+    ['reimbursement.rejected', 'reimbursement_decision_requester'],
+    ['reimbursement.correction_requested', 'reimbursement_correction_requester'],
+    ['reimbursement.payment_recorded', 'reimbursement_payment_recorded'],
+  ]) it(`${event} already tells only the requester, excluding their own action`, () => {
+    const binding = WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG[key!];
+    assert.ok((binding!.eventTypes as string[] | undefined)?.includes(event!) || binding!.eventType === event);
+    const template = WORKFLOW_TEMPLATE_CATALOG.find(row => row.key === key)!;
+    assert.equal(template.autoEnable, true);
+    const notice = template.defaultActionJson.find(action => action.actionType === 'SEND_NOTIFICATION')!.configJson as any;
+    assert.deepEqual(notice.recipientPayloadKeys, ['requesterUserId']);
+    assert.deepEqual(notice.excludeRecipientPayloadKeys, ['actorUserId']);
+    assert.equal(notice.skipWhenAllRecipientsExcluded, true);
+    assert.match(notice.deepLinkPathTemplate, /reimbursements/);
+  });
+});
+
+describe('claim receipt waiver through expense confirmation', () => {
+  it('carries the submitted waiver through the approver, finance and reconciliation confirmation path', async () => {
+    const expense = { id: 'exp', companyId: 'co-1', branchId: 'branch-1', sourceReimbursementRequestId: 'rb-1', sourceReimbursementLineId: 'line-1',
+      status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'NO_MATCH', attachments: [], lines: [],
+      primaryAttachmentId: null, missingReceiptReason: null, vendorNameSnapshot: 'ร้านตลาด', expenseDate: new Date('2026-01-01'),
+      grandTotalAmount: '100', currency: 'THB', vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE',
+      sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT', taxEvidenceStatus: 'SUPPORTING_ONLY', updatedAt: new Date('2026-01-01') };
+    const writes: any[] = [];
+    const expenses = { findByIdWithRelations: async () => expense, runDuplicateCheck: async () => ({ duplicateStatus: 'NO_MATCH' }),
+      finalizeAndConfirmExpenseCas: async (data: any) => { writes.push(data); return { expense: { ...expense, status: 'CONFIRMED' }, finalized: [] }; } } as any;
+    const confirm = new ConfirmExpenseUseCase(expenses, noopAudit, {} as any, {} as any);
+    const orchestrator = new ReimbursementProjectionOrchestratorService({ listClaimProjections: async () => [expense] } as any, expenses, {} as any, confirm, noopAudit);
+    const request = { id: 'rb-1', branchId: 'branch-1', receiptRequirementStatus: 'WAIVED_BY_POLICY' } as any;
+    await orchestrator.reconcileExisting(ctx(), request, false);
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].substituteCoveredByClaimForm, true);
+    assert.deepEqual(writes[0].reimbursementReview, { requestId: 'rb-1', lineId: 'line-1' });
+    await assert.rejects(orchestrator.reconcileExisting(ctx(), { ...request, receiptRequirementStatus: 'REQUIRED' }, false));
+    await assert.rejects(confirm.execute(ctx({ permissions: ['expense.confirm'] }), 'exp'));
+    await assert.rejects(confirm.executeForReimbursement(ctx(), 'exp', { reimbursementRequestId: 'other', reimbursementLineId: 'line-1', branchId: 'branch-1', allowMissingReceiptWithReason: false, receiptWaivedByPolicy: true }), /reimbursement_projection_authority_mismatch/);
+    assert.equal(writes.length, 1);
+  });
+});
+
+describe('hub bootstrap', () => {
+  it('reads each accessible queue once and counts only actions waiting for this reader', async () => {
+    const controller = Object.create(ReimbursementController.prototype) as any;
+    let approvalReads = 0, financeReads = 0;
+    controller.listRequests = { hubPolicy: async () => ({ financeReviewRequired: false }), execute: async () => ({ total: 9 }) };
+    controller.approvalQueue = { execute: async () => { approvalReads++; return [
+      { approvalActions: { canApprove: true, canReject: true } }, { approvalActions: { canApprove: false, canReject: true } },
+    ]; } };
+    controller.financeQueue = { execute: async () => { financeReads++; return [
+      { status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' }, { status: 'READY_FOR_PAYMENT', branchId: 'b1' },
+      { status: 'READY_FOR_PAYMENT', branchId: 'b1', hasDuplicateBlocker: true }, { status: 'READY_FOR_PAYMENT', branchId: 'b1', cancellationPending: true },
+      { status: 'PARTIALLY_PAID', branchId: 'b1' }, { status: 'READY_FOR_PAYMENT' },
+      { status: 'READY_FOR_PAYMENT', branchId: 'b1', duplicateReasons: ['EXPENSE_CONFIRMATION'] },
+    ]; } };
+    const answer = await controller.hub(ctx({ permissions: ['reimbursement.finance_review', 'reimbursement.payment.record'] }));
+    assert.deepEqual(answer, { financeReviewRequired: false, hasApprovalTasks: true, listCounts: { approvals: 2, finance: 7 }, queueCounts: { approvals: 1, finance: 2 } });
+    assert.deepEqual([approvalReads, financeReads], [1, 1]);
+    assert.deepEqual((await controller.hub(ctx())).queueCounts, { approvals: 1 });
+    assert.equal(financeReads, 1, 'no finance read without a queue right');
+  });
+});
+
+it('list exposes the same self-owner approval action as the detail', async () => {
+ const request = { currentApprovalStepId: 'step', branchId: 'branch-1', incurredDate: new Date(), id: 'rb-own', companyId: 'c1', status: 'PENDING_APPROVAL', requesterUserId: 'owner', amount: '85', currency: 'THB', createdAt: new Date(), updatedAt: new Date() };
+ const repo = { findPolicy: async () => null, listRequestPage: async () => ({ rows: [request], groups: [] }), findPendingApprovalSteps: async () => [{ id: 'step', reimbursementRequestId: request.id, status: 'PENDING', stepOrder: 1, approverRoleSnapshot: 'MANAGER', assignedApproverUserIds: [] }], getUserDisplayNames: async () => ({}), findActiveApproverUserIds: async () => new Set() };
+ const answer = await new ListReimbursementsUseCase(repo as any).execute(ctx({ userId: 'owner', roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.approve'] }), {});
+ assert.equal(answer.items[0]?.approvalActions?.canApprove, true);
+});
+
+it('duplicate comparisons read both directions and retain resolved history', async () => {
+ let where: any;
+ const repo = new PrismaReimbursementRepository({ client: { reimbursementDuplicateCandidate: { findMany: async (query: any) => { where = query.where; return [{ id: 'pair', reimbursementRequestId: 'later', candidateRequestId: 'earlier', status: 'OVERRIDDEN', resolvedByUserId: 'reviewer', resolvedAt: new Date('2026-10-13') }]; } } } } as any, {} as any);
+ const rows = await repo.listClaimDuplicateComparisons('company', 'earlier');
+ assert.deepEqual(where, { companyId: 'company', OR: [{ reimbursementRequestId: 'earlier' }, { candidateRequestId: 'earlier' }], status: { in: ['OPEN', 'OVERRIDDEN', 'DISMISSED'] } });
+ assert.equal(rows[0]?.candidateRequestId, 'later');
+ assert.equal(rows[0]?.resolvedByUserId, 'reviewer');
+ assert.equal(rows[0]?.status, 'OVERRIDDEN');
+});
+
+
+it('the claim list summary carries the saved send-back reason', () => {
+  const summary = toRequestSummary({ id: 'returned', status: 'REJECTED', incurredDate: new Date(), createdAt: new Date(), updatedAt: new Date(),
+    rejectionReason: 'ใบเสร็จซ้ำกับใบก่อน', financeReviewStatus: 'NOT_REQUIRED', duplicateStatus: 'CLEAR' } as any);
+  assert.equal(summary.rejectionReason, 'ใบเสร็จซ้ำกับใบก่อน');
+});
+
+
+describe('CLAIM-LIST scoped queue metrics', () => {
+  it('sums approval and payment amounts from all aggregate groups, excluding returned approval work', () => {
+    const groups = [
+      { status: 'DRAFT', count: 2, amount: '10.10' },
+      { status: 'PENDING_APPROVAL', count: 3, amount: '20.20' },
+      { status: 'PENDING_APPROVAL', needsCorrection: true, count: 1, amount: '5.00' },
+      { status: 'READY_FOR_PAYMENT', count: 4, amount: '30.30' },
+      { status: 'PARTIALLY_PAID', count: 1, amount: '4.40' },
+      { status: 'PAID', count: 1, amount: '9.90' },
+    ];
+    const summary = hubSummary(groups as any, 1);
+    assert.deepEqual(summary.metrics, {
+      pendingApproval: { count: 3, amount: '20.2000' },
+      pendingPayment: { count: 5, amount: '34.7000' },
+    });
+    assert.equal(summary.totalAmount, '79.9000');
+    assert.equal(summary.counts.all, 12);
+  });
 });

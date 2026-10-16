@@ -36,6 +36,21 @@ describe('isActiveNavSubItem', () => {
     assert.equal(isActiveNavSubItem('/companies/co/settings', 'settings', subItems[1], subItems), false);
     assert.equal(isActiveNavSubItem('/companies/co/settings', 'settings', subItems[2], subItems), false);
   });
+
+  // 2026-10-13: adding or editing an employee has no row of its own; the route names the list row, and the settings
+  // overview (a prefix of that address) must not light beside it.
+  it('lights only the row the route names when a page has no row of its own', () => {
+    const subItems: SidebarSubItemRef[] = [
+      { key: 'settings.overview', href: '/companies/co/settings' },
+      { key: 'roles.individual', href: '/companies/co/settings/access-overview' },
+      { key: 'roles.permissions', href: '/companies/co/settings/permissions' },
+    ];
+    const lit = (pathname: string, activeKey?: string) => subItems.filter((sub) => isActiveNavSubItem(pathname, activeKey, sub, subItems)).map((sub) => sub.key);
+
+    assert.deepEqual(lit('/companies/co/settings/employees', 'roles.individual'), ['roles.individual']);
+    assert.deepEqual(lit('/companies/co/settings/access-overview'), ['roles.individual']);
+    assert.deepEqual(lit('/companies/co/settings', 'settings'), ['settings.overview']);
+  });
 });
 
 describe('revealScrollDelta', () => {

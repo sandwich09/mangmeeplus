@@ -1,13 +1,13 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { DISBURSEMENT_VOUCHER_STATUSES, disbursementVoucherPaymentAmount, disbursementVoucherError, disbursementExpenseReasonMessage,
-  DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES,
+  DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_PURPOSE, REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES,
   type DisbursementVoucherHeader, type DisbursementVoucherDetail, type DisbursementVoucherStatus, type DisbursementVoucherPayeeBasis, type ExpensePaymentMethod,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { isBranchInScope, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
 import { expenseReadScopeWhere } from './prisma-expense.repository';
-import { assertDisbursementVoucherAction, disbursementVoucherActions, disbursementVoucherHeader } from '../domain/logic/disbursement-voucher.logic';
+import { disbursementPayeeIdentity, assertDisbursementVoucherAction, disbursementVoucherActions, disbursementVoucherHeader } from '../domain/logic/disbursement-voucher.logic';
 import type { DisbursementVoucherLifecycleAction } from '@watchdog-bms/contracts';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { PrismaWorkflowRepository } from '../../workflow/infrastructure/prisma-workflow.repository';
@@ -33,7 +33,7 @@ export function disbursementVoucherReadWhere(scope: DisbursementReadScope, branc
 }
 
 const detailInclude = { lines: { orderBy: { position: 'asc' as const }, include: { expense: { select: {
-  id: true, status: true, currency: true, expenseNumber: true, expenseDate: true, vendorNameSnapshot: true, vendorTaxIdSnapshot: true, branchId: true,
+  id: true, status: true, currency: true, expenseNumber: true, expenseDate: true, vendorDocumentNumber: true, vendorAddressSnapshot: true, vendorBranchCodeSnapshot: true, vendorNameSnapshot: true, vendorTaxIdSnapshot: true, branchId: true,
   grandTotalAmount: true, whtAmount: true, netPayableAmount: true, outstandingAmount: true,
   lines: { orderBy: { lineNumber: 'asc' as const }, take: 1, select: { description: true } },
 } } } }, revisions: { orderBy: { revision: 'asc' as const } } };
@@ -43,9 +43,13 @@ export type DisbursementLifecycleVoucher = Prisma.DisbursementVoucherGetPayload<
 export class PrismaDisbursementVoucherRepository {
   constructor(private readonly prisma: PrismaService, private readonly documentNumbers: PrismaDocumentSequenceRepository = new PrismaDocumentSequenceRepository(prisma)) {}
 
-  async memberNames(companyId: string, ids: (string | null | undefined)[], db: Prisma.TransactionClient = this.prisma.client) {
+  companyForPrint(companyId: string) {
+    return this.prisma.client.company.findFirst({ where: { id: companyId }, select: { name: true, registeredName: true, taxId: true, addressJson: true, phone: true } });
+  }
+
+  async memberNames(companyId: string, ids: (string | null | undefined)[], db: Prisma.TransactionClient = this.prisma.client, includeInactive = false) {
     const users = await db.user.findMany({ where: { id: { in: [...new Set(ids.filter((id): id is string => Boolean(id)))] },
-      memberships: { some: { companyId, status: { not: 'DISABLED' } } } }, select: { id: true, displayName: true } });
+      memberships: { some: { companyId, ...(!includeInactive ? { status: { not: 'DISABLED' as const } } : {}) } } }, select: { id: true, displayName: true } });
     return new Map(users.map(u => [u.id, u.displayName]));
   }
 
@@ -69,9 +73,13 @@ export class PrismaDisbursementVoucherRepository {
     return eligible.flatMap(userId => userId && names.has(userId) ? [{ userId, displayName: names.get(userId)! }] : []).sort((a, b) => a.displayName.localeCompare(b.displayName, 'th'));
   }
 
-  async activeMemberIds(companyId: string, ids: string[]) {
-    const rows = await this.prisma.client.companyMembership.findMany({ where: { companyId, status: 'ACTIVE', userId: { in: [...new Set(ids)] } }, select: { userId: true } });
+  async activeMemberIds(companyId: string, ids: string[], db: Prisma.TransactionClient = this.prisma.client) {
+    const rows = await db.companyMembership.findMany({ where: { companyId, status: 'ACTIVE', userId: { in: [...new Set(ids)] } }, select: { userId: true } });
     return rows.map(row => row.userId);
+  }
+
+  async canOwnerRecover(voucher: Pick<DisbursementLifecycleVoucher, 'companyId' | 'preparedByUserId' | 'submittedByUserId'>, isOwner: boolean, db: Prisma.TransactionClient = this.prisma.client) {
+    return isOwner && (await this.activeMemberIds(voucher.companyId, [voucher.preparedByUserId, ...(voucher.submittedByUserId ? [voucher.submittedByUserId] : [])], db)).length === 0;
   }
 
   /** Internal post-commit facts only; never returns the account secret or snapshot. */
@@ -93,7 +101,20 @@ export class PrismaDisbursementVoucherRepository {
     return reminder ? new Date(reminder.at) : null;
   }
 
-  async findVisible(scope: DisbursementReadScope, id: string) {
+  async payeeAccount(scope: DisbursementReadScope, payeeKey: string, branchId?: string) {
+    // The existing payee key normalizes Thai names in application code; only masked candidates are read.
+    const rows = await this.prisma.client.disbursementVoucher.findMany({
+      where: { ...disbursementVoucherReadWhere(scope, branchId), payeeAccountLast4: { not: null }, payeeAccountCiphertext: { not: null } },
+      select: { id: true, status: true, createdAt: true, payeeBankName: true, payeeAccountName: true, payeeAccountLast4: true,
+        lines: { orderBy: { position: 'asc' }, take: 1, select: { expense: { select: { id: true, vendorNameSnapshot: true, vendorTaxIdSnapshot: true } } } } },
+    });
+    const rank = { PAID: 0, APPROVED: 1, PENDING_APPROVAL: 1, DRAFT: 2, CANCELLED: 3 };
+    const found = rows.filter(row => row.lines[0] && disbursementPayeeIdentity(row.lines[0].expense).payeeKey === payeeKey)
+      .sort((a, b) => rank[a.status] - rank[b.status] || b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id))[0];
+    return found ? { bankName: found.payeeBankName, accountName: found.payeeAccountName, last4: found.payeeAccountLast4!, sourceVoucherId: found.id } : null;
+  }
+
+  async findVisible(scope: DisbursementReadScope, id: string, includeInactiveNames = false) {
     const voucher = await this.prisma.client.disbursementVoucher.findFirst({ where: { ...disbursementVoucherReadWhere(scope), id }, include: detailInclude });
     if (!voucher) return null;
     const withholdingIds = voucher.lines.filter(l => new Prisma.Decimal(String(l.expense.whtAmount)).greaterThan(0)).map(l => l.expenseId);
@@ -116,7 +137,7 @@ export class PrismaDisbursementVoucherRepository {
       select: { attachmentId: true, linkedByUserId: true, createdAt: true } }) : null;
     const names = await this.memberNames(scope.companyId, [voucher.preparedByUserId, voucher.submittedByUserId, voucher.requestedApproverUserId, voucher.approvedByUserId, voucher.paidByUserId, voucher.returnedByUserId, voucher.cancelledByUserId, voucher.lastReminderToUserId,
       voucher.payeeBasis === 'PREPARER_CONFIRMED' ? voucher.payeeConfirmedByUserId : null,
-      slip?.linkedByUserId, ...voucher.revisions.flatMap(r => [r.submittedByUserId, r.requestedApproverUserId, r.decidedByUserId, r.postApprovalByUserId])]);
+      slip?.linkedByUserId, ...voucher.revisions.flatMap(r => [r.submittedByUserId, r.requestedApproverUserId, r.decidedByUserId, r.postApprovalByUserId])], this.prisma.client, includeInactiveNames);
     // Project legacy pointers from the journal's exact round, even when two actions share a timestamp.
     const lastReminderAt = voucher.lastReminderToUserId ? await this.lastReminder(this.prisma.client, scope.companyId, id, voucher.lastReminderToUserId, voucher.revision) : null;
     const ids = voucher.lines.flatMap(l => l.expensePaymentId ? [l.expensePaymentId] : []);
@@ -125,6 +146,39 @@ export class PrismaDisbursementVoucherRepository {
     const related = await this.prisma.client.disbursementVoucher.findMany({ where: { companyId: scope.companyId, OR: [{ replacesVoucherId: id }, ...(voucher.replacesVoucherId ? [{ id: voucher.replacesVoucherId }] : [])] }, select: { id: true, documentNumber: true, replacesVoucherId: true } });
     const visibleRelated = related.length ? await this.prisma.client.disbursementVoucher.findMany({ where: { ...disbursementVoucherReadWhere(scope), id: { in: related.map(v => v.id) } }, select: { id: true } }) : [];
     return { ...voucher, withholdingCertificates, lastReminderAt, lastReminderToUserId: lastReminderAt ? voucher.lastReminderToUserId : null, slip, related, visibleRelated: new Set(visibleRelated.map(v => v.id)), uncoveredLivePayments: new Set(payments.filter(p => p.status === 'RECORDED' && !covered.some(l => l.coversPaymentId === p.id)).map(p => p.id)), names, livePayments: new Set(payments.filter(p => p.status === 'RECORDED').map(p => p.id)), payeeConfirmerName: voucher.payeeBasis === 'PREPARER_CONFIRMED' ? names.get(voucher.payeeConfirmedByUserId ?? '') ?? null : null };
+  }
+
+  async supportingFiles(companyId: string, id: string) {
+    return this.prisma.client.attachmentLink.findMany({ where: { companyId, targetType: DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE,
+      targetId: id, purpose: DISBURSEMENT_VOUCHER_SUPPORTING_PURPOSE, attachment: { status: 'ACTIVE', companyId } },
+      include: { attachment: true }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+  }
+
+  async findSupportingUpload(companyId: string, id: string, attachmentId: string, userId: string) {
+    return this.prisma.client.attachmentObject.findFirst({ where: { companyId, id: attachmentId, uploadedByUserId: userId,
+      metadataJson: { equals: { generatedFor: DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG, voucherId: id } } } });
+  }
+
+  async changeSupportingFileAtomic(scope: DisbursementReadScope, id: string, attachmentId: string, userId: string, remove: boolean, audit: (tx: Prisma.TransactionClient) => Promise<void>) {
+    return this.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SET LOCAL lock_timeout = '10s'`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${scope.companyId}:${id}:disbursement-voucher-lifecycle`}))`;
+      const voucher = await tx.disbursementVoucher.findFirst({ where: { ...disbursementVoucherReadWhere(scope), id } });
+      if (!voucher) throw new NotFoundException(disbursementVoucherError('disbursement_not_found'));
+      if (voucher.status !== 'DRAFT') throw new ConflictException(disbursementVoucherError('disbursement_supporting_frozen'));
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${scope.companyId}:${attachmentId}:attachment-retention`}))`;
+      const where = { companyId: scope.companyId, attachmentId, targetType: DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, targetId: id, purpose: DISBURSEMENT_VOUCHER_SUPPORTING_PURPOSE };
+      const existing = await tx.attachmentLink.findFirst({ where });
+      if (remove) { await tx.attachmentLink.deleteMany({ where }); }
+      else if (!existing) {
+        const file = await tx.attachmentObject.findFirst({ where: { companyId: scope.companyId, id: attachmentId, branchId: voucher.branchId,
+          uploadedByUserId: userId, status: 'ACTIVE', mimeType: { in: REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES }, byteSize: { gt: 0, lte: REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES },
+          metadataJson: { equals: { generatedFor: DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG, voucherId: id } } } });
+        if (!file || await findAttachmentLinkConflict(tx, where)) throw new UnprocessableEntityException(disbursementVoucherError('disbursement_supporting_not_owned'));
+        await tx.attachmentLink.create({ data: { ...where, linkedByUserId: userId } });
+      }
+      await audit(tx);
+    }, { isolationLevel: 'ReadCommitted', timeout: 20000, maxWait: 5000 });
   }
 
   async findSlipUpload(companyId: string, voucherId: string, attachmentId: string, userId: string) {
@@ -207,7 +261,7 @@ export class PrismaDisbursementVoucherRepository {
     }, { isolationLevel: 'ReadCommitted', timeout: 20000, maxWait: 5000 });
   }
 
-  async lifecycleAtomic(input: DisbursementReadScope & { id: string; action: DisbursementVoucherLifecycleAction; commandId: string; expectedVersion: number; payloadFingerprint: string; permissions: string[]; approveNow?: boolean },
+  async lifecycleAtomic(input: DisbursementReadScope & { id: string; actorUserId: string; isOwner?: boolean; action: DisbursementVoucherLifecycleAction; commandId: string; expectedVersion: number; payloadFingerprint: string; permissions: string[]; approveNow?: boolean },
     mutate: (tx: Prisma.TransactionClient, voucher: DisbursementLifecycleVoucher) => Promise<Prisma.DisbursementVoucherUpdateManyMutationInput>,
     audit: (tx: Prisma.TransactionClient, header: DisbursementVoucherHeader) => Promise<void>) {
     return this.prisma.client.$transaction(async tx => {
@@ -221,7 +275,9 @@ export class PrismaDisbursementVoucherRepository {
         if (prior.payloadFingerprint !== input.payloadFingerprint) throw new ConflictException(disbursementVoucherError('disbursement_command_conflict'));
         return disbursementVoucherHeader(voucher);
       }
-      assertDisbursementVoucherAction(voucher, input.approveNow ? 'submitAndApprove' : input.action, input.permissions);
+      const preparersInactive = (input.action === 'withdraw' || input.action === 'cancel' || input.action === 'return') && await this.canOwnerRecover(voucher, true, tx);
+      const canRecover = input.isOwner === true && preparersInactive;
+      assertDisbursementVoucherAction(voucher, input.approveNow ? 'submitAndApprove' : input.action, input.permissions, input.actorUserId, canRecover, preparersInactive);
       if (voucher.version !== input.expectedVersion) throw new ConflictException(disbursementVoucherError('disbursement_version_conflict'));
       const data = await mutate(tx, voucher);
       const changed = await tx.disbursementVoucher.updateMany({ where: { companyId: input.companyId, id: input.id, version: input.expectedVersion, status: voucher.status }, data: { ...data, version: { increment: 1 } } });
@@ -261,7 +317,7 @@ export class PrismaDisbursementVoucherRepository {
     return count;
   }
 
-  async clearSources(tx: Prisma.TransactionClient, voucher: DisbursementLifecycleVoucher) {
+  async clearSources(tx: Prisma.TransactionClient, voucher: Pick<DisbursementLifecycleVoucher, 'companyId' | 'id'>) {
     await tx.$executeRaw`UPDATE "ExpenseRecord" SET "reservedByDisbursementVoucherId" = NULL WHERE "companyId" = ${voucher.companyId} AND "reservedByDisbursementVoucherId" = ${voucher.id}`;
   }
 
@@ -275,19 +331,32 @@ export class PrismaDisbursementVoucherRepository {
     return number.documentNumber;
   }
 
-  async list(scope: DisbursementReadScope, query: { q?: string; branchId?: string; status?: DisbursementVoucherStatus; page: number; pageSize: number }) {
+  async list(scope: DisbursementReadScope, query: { q?: string; branchId?: string; status?: DisbursementVoucherStatus; order?: 'newest' | 'oldest'; page: number; pageSize: number }) {
     // One snapshot for rows and counts, even when another transaction inserts or changes status.
     return this.prisma.client.$transaction(async tx => {
       const q = query.q?.trim();
       const where: Prisma.DisbursementVoucherWhereInput = { ...disbursementVoucherReadWhere(scope, query.branchId),
         ...(q ? { OR: [{ payeeName: { contains: q, mode: 'insensitive' } }, { documentNumber: { contains: q, mode: 'insensitive' } }] } : {}) };
-      const groups = await tx.disbursementVoucher.groupBy({ by: ['status'], where, _count: { _all: true } });
+      const groups = await tx.disbursementVoucher.groupBy({ by: ['status'], where, _count: { _all: true }, _sum: { totalAmount: true } });
       const counts = Object.fromEntries(DISBURSEMENT_VOUCHER_STATUSES.map(s => [s, 0])) as Record<DisbursementVoucherStatus, number>;
-      for (const group of groups) counts[group.status as DisbursementVoucherStatus] = group._count._all;
-      const rows = await tx.disbursementVoucher.findMany({ where: { ...where, ...(query.status ? { status: query.status } : {}) },
-        orderBy: [{ plannedPayDate: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }, { id: 'asc' }],
-        skip: (query.page - 1) * query.pageSize, take: query.pageSize, include: { _count: { select: { lines: true } } },
-      });
+      const sums = Object.fromEntries(DISBURSEMENT_VOUCHER_STATUSES.map(s => [s, '0.00'])) as Record<DisbursementVoucherStatus, string>;
+      for (const group of groups) {
+        counts[group.status as DisbursementVoucherStatus] = group._count._all;
+        sums[group.status as DisbursementVoucherStatus] = new Prisma.Decimal(group._sum.totalAmount ?? 0).toFixed(2);
+      }
+      // Keep the shared every-line visibility predicate in Prisma; SQL orders only those IDs.
+      const visible = await tx.disbursementVoucher.findMany({ where: { ...where, ...(query.status ? { status: query.status } : {}) }, select: { id: true } });
+      const direction = query.order === 'oldest' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
+      const ordered = visible.length ? await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT "id" FROM "DisbursementVoucher"
+        WHERE "companyId" = ${scope.companyId} AND "id" = ANY(${visible.map(v => v.id)}::text[])
+        ORDER BY COALESCE("paidDate", "plannedPayDate", "createdAt"::date) ${direction}, "createdAt" ${direction}, "id" ${direction}
+        LIMIT ${query.pageSize} OFFSET ${(query.page - 1) * query.pageSize}`) : [];
+      const pageRows = ordered.length ? await tx.disbursementVoucher.findMany({
+        where: { ...where, id: { in: ordered.map(v => v.id) } }, include: { _count: { select: { lines: true } } },
+      }) : [];
+      const byId = new Map(pageRows.map(v => [v.id, v]));
+      const rows = ordered.map(v => byId.get(v.id)!);
       const cancelledIds = rows.filter(v => v.status === 'CANCELLED' && v.cancelledAfterPaid).map(v => v.id);
       const paid = cancelledIds.length ? await tx.$queryRaw<{ voucherId: string; amount: Prisma.Decimal }[]>`
         SELECT l."voucherId", COALESCE(SUM(l."amount") FILTER (WHERE p."status" = 'RECORDED'), 0) AS amount
@@ -299,9 +368,7 @@ export class PrismaDisbursementVoucherRepository {
         const display = disbursementVoucherPaymentAmount(String(v.totalAmount), [{ amount: String(paid.find(p => p.voucherId === v.id)?.amount ?? 0), paymentInEffect: true }]);
         return [v.id, display.excludesCancelled ? display.amount : null];
       }));
-      const users = rows.length ? await tx.user.findMany({ where: { id: { in: [...new Set(rows.map(v => v.preparedByUserId))] }, memberships: { some: { companyId: scope.companyId } } }, select: { id: true, displayName: true } }) : [];
-      const names = new Map(users.map(u => [u.id, u.displayName]));
-      return { rows, counts, names, amountsInEffect, total: query.status ? counts[query.status] : Object.values(counts).reduce((sum, n) => sum + n, 0) };
+      return { rows, counts, sums, amountsInEffect, total: query.status ? counts[query.status] : Object.values(counts).reduce((sum, n) => sum + n, 0) };
     }, { isolationLevel: 'RepeatableRead' });
   }
 
@@ -354,7 +421,8 @@ export class PrismaDisbursementVoucherRepository {
       if (!voucher) throw new NotFoundException(disbursementVoucherError('disbursement_not_found'));
       if (voucher.documentNumber !== null) throw new ConflictException(disbursementVoucherError('disbursement_numbered_delete'));
       assertDisbursementVoucherAction(voucher, 'delete', permissions);
-      const result = await tx.disbursementVoucher.deleteMany({ where: { companyId: scope.companyId, id, status: 'DRAFT', documentNumber: null, version: voucher.version } });
+      await this.clearSources(tx, voucher);
+      const result = await tx.disbursementVoucher.deleteMany({ where: { companyId: scope.companyId, id, status: 'DRAFT', documentNumber: null, revision: 0, version: voucher.version } });
       if (result.count !== 1) throw new ConflictException(disbursementVoucherError('disbursement_version_conflict'));
       await audit(tx);
     });

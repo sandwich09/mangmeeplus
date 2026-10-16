@@ -293,6 +293,14 @@ describe('AuthGuard', () => {
     assert.equal(resolve.execute.mock.callCount(), 0);
   });
 
+  it('preserves the disabled membership code on the open-session shop gate', async () => {
+    const resolve = { execute: async () => { throw new ForbiddenException({ code: 'company_membership_disabled' }); } } as any;
+    const prisma = { client: { ...noopPrisma.client, company: { findUnique: async () => ({ name: 'ร้านเดิม' }) } } } as any;
+    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolve, localConfig, prisma, acceptedLegal);
+    await assert.rejects(() => guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', xCompanyId: 'co-target', path: '/v1/auth/me' })),
+      (error: any) => error.getResponse().code === 'company_membership_disabled');
+  });
+
   it('names the requested company only on a scoped auth/me access denial', async () => {
     const resolve = { execute: async () => { throw new ForbiddenException('No active company membership.'); } } as any;
     const prisma = {
@@ -679,6 +687,7 @@ describe('billing recovery boundaries', () => {
     const routes = [
       ['GET', '/v1/auth/account/email/otp'], ['GET', '/v1/auth/account/email/otp/challenge'],
       ['PATCH', '/v1/auth/me/contact'], ['POST', '/v1/auth/me/password/set'],
+      ['GET', '/v1/auth/account/display-name'], ['PATCH', '/v1/auth/account/display-name'],
       ...['request', 'login-method', 'line-reauth', 'line-reauth/start', 'challenge/resend', 'challenge/confirm', 'challenge/cancel']
         .map(path => ['POST', `/v1/auth/account/email/otp/${path}`]),
       ...['recipient', 'recipient/operation'].map(path => ['GET', `/v1/companies/c1/billing/${path}`]),
@@ -697,7 +706,7 @@ describe('billing recovery boundaries', () => {
       ['DELETE', '/v1/auth/account/email/otp/challenge'], ['POST', '/v1/auth/account/email/otp/challenge/admin']]) {
       assert.equal(isAccountEmailRecoveryRoute(method!, path!), false);
     }
-    for (const [method, path] of [['POST', '/v1/auth/me/contact'], ['PATCH', '/v1/auth/me/password/set'], ['GET', '/v1/auth/me/contact']]) {
+    for (const [method, path] of [['POST', '/v1/auth/me/contact'], ['PATCH', '/v1/auth/me/password/set'], ['GET', '/v1/auth/me/contact'], ['DELETE', '/v1/auth/account/display-name'], ['POST', '/v1/auth/account/display-name']]) {
       await guard.canActivate(makeContext({ method, path, authHeader: 'Bearer token' }));
       assert.equal(recovery, false, `${method} ${path}`);
     }
@@ -1055,18 +1064,21 @@ describe('sold 50 ทวิ signature read boundary', () => {
 
   it('reads only signature fields for the request company and defaults safely when no profile exists', async () => {
     const { TaxController } = await import('../tax/presentation/http/tax.controller');
+    const { UpdateCompanyTaxSignatureUseCase } = await import('../tax/application/use-cases/update-company-tax-signature.use-case');
     let row: any = { signatureMode: 'AUTO_STAMP', signatureImageAttachmentId: 'signature-1' };
     const repo = { prisma: { client: { companyTaxProfile: { findUnique: async (query: any) => {
       assert.deepEqual(query, { where: { companyId: 'company-1' }, select: { signatureMode: true, signatureImageAttachmentId: true } });
       return row;
     } } } } };
-    const value = new TaxController(...[...Array(12).fill({}), repo, {}] as ConstructorParameters<typeof TaxController>);
+    const signature = new UpdateCompanyTaxSignatureUseCase(repo as any, { findById: async () => null } as any, {} as any, {} as any);
+    const dependencies = [...Array(12).fill({}), repo, {}]; dependencies[9] = signature;
+    const value = new TaxController(...dependencies as ConstructorParameters<typeof TaxController>);
     const get = (value as any).getTaxSignature;
     assert.equal(typeof get, 'function');
-    const ctx = { companyId: 'company-1' };
-    assert.deepEqual(await get.call(value, ctx, 'company-1'), row);
+    const ctx = { companyId: 'company-1', permissions: ['company.tax_signature.manage'] };
+    assert.deepEqual(await get.call(value, ctx, 'company-1'), { ...row, signatureImageUrl: null, signatureStoredAt: null });
     row = null;
-    assert.deepEqual(await get.call(value, ctx, 'company-1'), { signatureMode: 'BLANK', signatureImageAttachmentId: null });
+    assert.deepEqual(await get.call(value, ctx, 'company-1'), { signatureMode: 'BLANK', signatureImageAttachmentId: null, signatureImageUrl: null, signatureStoredAt: null });
     await assert.rejects(() => get.call(value, ctx, 'another-company'), ForbiddenException);
   });
 });

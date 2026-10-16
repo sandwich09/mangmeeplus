@@ -191,7 +191,7 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
       userId: 'preparer-1', expenseId: 'expense-secret-cuid', status: 'OPEN',
       targetRevision: UPDATED_AT.toISOString(),
     };
-    const { repo, tx } = makeRepo(null, { lineSubstituteReceiptContinuation: state, keep: 'safe' });
+    const { repo, tx } = makeRepo(null, { lineSubstituteReceiptContinuation: state, keep: 'safe', substituteReceiptPayeeName: 'ชื่อเก่า' });
 
     await repo.createPreparedSubstituteEvidence({
       ...preparedInput(),
@@ -200,6 +200,7 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
 
     const update = tx.expenseRecord.updateMany.mock.calls[0]?.arguments[0];
     assert.equal(update.data.sourceChannelMetadataJson.keep, 'safe');
+    assert.equal(update.data.sourceChannelMetadataJson.substituteReceiptPayeeName, 'ผู้รับเงิน');
     assert.equal(update.data.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'CONSUMED');
     assert.equal(update.data.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.targetRevision, update.data.updatedAt.toISOString());
   });
@@ -211,7 +212,7 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
     };
     const { repo, tx } = makeRepo(null);
     tx.expenseRecord.findFirst = mock.fn(async () => ({
-      id: 'expense-secret-cuid', companyId: 'company-1', status: 'NEEDS_REVIEW', updatedAt: UPDATED_AT, paidAmount: '0', netPayableAmount: '100',
+      id: 'expense-secret-cuid', companyId: 'company-1', status: 'NEEDS_REVIEW', vendorNameSnapshot: 'ร้านที่กรอกไว้', updatedAt: UPDATED_AT, paidAmount: '0', netPayableAmount: '100',
       sourceChannelMetadataJson: null, aiVerificationSummaryJson: summary,
     }));
 
@@ -261,4 +262,42 @@ it('rechecks human review before reserving any new certificate number', async ()
   await assert.rejects(() => h.repo.createPreparedSubstituteEvidence(preparedInput()), (error: any) => error.getResponse().code === 'EXPENSE_EVIDENCE_REVIEW_REQUIRED');
   assert.equal(h.reserveNumberInTransaction.mock.callCount(), 0);
   assert.equal(h.tx.expenseRecord.updateMany.mock.callCount(), 0);
+});
+
+it('preparation writes the payee name and provenance only for an empty expense seller', async () => {
+  for (const seller of [null, 'ชื่อร้านที่กรอกเอง']) {
+    const { repo, tx } = makeRepo(null, { keep: 'safe' });
+    const read = tx.expenseRecord.findFirst;
+    tx.expenseRecord.findFirst = mock.fn(async () => ({ ...await read(), vendorNameSnapshot: seller }));
+    await repo.createPreparedSubstituteEvidence(preparedInput());
+    const data = tx.expenseRecord.updateMany.mock.calls[0].arguments[0].data;
+    assert.equal(data.vendorNameSnapshot, seller === null ? 'ผู้รับเงิน' : undefined);
+    if (seller === null) assert.deepEqual(data.sourceChannelMetadataJson, { keep: 'safe', substituteReceiptPayeeName: 'ผู้รับเงิน' });
+    else assert.equal(data.sourceChannelMetadataJson, undefined);
+    assert.equal(tx.expenseSubstituteReceiptEvidence.create.mock.calls[0].arguments[0].data.payeeName, 'ผู้รับเงิน');
+  }
+});
+
+it('unsigned amendment updates both names and the prepared source revision together', async () => {
+  const { repo, tx } = makeRepo();
+  const input = preparedInput();
+  let expense: any = { id: input.expenseId, companyId: input.companyId, status: 'NEEDS_REVIEW', updatedAt: UPDATED_AT,
+    paidAmount: '0', netPayableAmount: '100', vendorNameSnapshot: null, sourceChannelMetadataJson: { keep: 'safe' } };
+  let evidence: any = { ...input, id: 'evidence-1', status: 'PREPARED', version: 1, documentNumber: 'SRC-202608-00001',
+    updatedAt: UPDATED_AT, createdAt: UPDATED_AT, expenseUpdatedAtAtPreparation: UPDATED_AT };
+  tx.expenseRecord.findFirst = async () => expense;
+  tx.expenseRecord.update = async ({ data }: any) => { expense = { ...expense, ...data }; return expense; };
+  tx.attachmentObject = { count: async () => 0 };
+  tx.expenseSubstituteReceiptEvidence.findFirst = async () => evidence;
+  tx.expenseSubstituteReceiptEvidence.update = async ({ data }: any) => { evidence = { ...evidence, ...data }; return evidence; };
+  tx.expenseSubstituteReceiptEvidence.findUniqueOrThrow = async () => evidence;
+  for (const name of ['ป้าศรี', 'ป้าศรี ตลาดเช้า']) {
+    const result = await repo.createPreparedSubstituteEvidence({ ...input, payeeName: name,
+      expectedExpenseUpdatedAt: expense.updatedAt, amendment: { evidenceId: evidence.id, expectedUpdatedAt: evidence.updatedAt } });
+    assert.equal(expense.vendorNameSnapshot, name);
+    assert.equal(expense.sourceChannelMetadataJson.substituteReceiptPayeeName, name);
+    assert.equal(expense.sourceChannelMetadataJson.keep, 'safe');
+    assert.equal(result.payeeName, name);
+    assert.equal(result.expenseUpdatedAtAtPreparation.getTime(), expense.updatedAt.getTime());
+  }
 });

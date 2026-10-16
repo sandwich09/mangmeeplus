@@ -6,6 +6,8 @@
 import { EXPENSE_CORRECTION_WORDS, IMAGE_SOURCE_TYPES_LABEL, STORED_IMAGE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import { Fragment, useEffect, useRef, type ReactNode } from 'react';
 import { MangmeeBadge, cx, type MangmeeTone } from '@/common/components/mangmee';
+import { dangerButtonClass, primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
+import { Notice } from '@/common/components/notice';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS } from './expenses.model';
@@ -16,17 +18,24 @@ export function err(e: unknown, locale: 'th' | 'en' = 'th') { return apiErrorMes
 // thousand separators ("12,500") — Number() alone would render ฿NaN.
 const money = (v: string | number) => Number((typeof v === 'string' ? v.replace(/,/g, '') : v) || 0) || 0;
 export const baht = (v: string | number) => '฿' + money(v).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** The amount alone: where the column or the unit beside it already says baht (owner 2026-10-15: no ฿ there). */
+export const amountText = (v: string | number) => money(v).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const baht0 = (v: string | number) => '฿' + money(v).toLocaleString('th-TH');
 export const dateShort = (v?: string | null) => formatThaiDate(v, '-');
 
+/** One name for the export, on the expense list and on the evidence page. */
+export const EXPORT_FOR_ACCOUNTANT = 'ส่งออก Excel ให้สำนักงานบัญชี';
+
 export const inputClass = 'mangmee-input';
-export const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50';
-export const ghostClass = 'mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50';
-export const dangerClass = 'mangmee-btn mangmee-btn-danger disabled:cursor-not-allowed disabled:opacity-50';
+// The button looks are the shared ones (common/components/button/button-classes.ts); these are the names this workspace grew up with.
+export const btnClass = primaryButtonClass;
+export const ghostClass = secondaryButtonClass;
+export const dangerClass = dangerButtonClass;
 /** A phone needs 44 px to tap. The hit area grows around a small control; how the control looks does not change. */
 export const tapTargetClass = "relative before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-full before:min-w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']";
-export const successBtn = 'mangmee-btn text-white disabled:cursor-not-allowed disabled:opacity-50';
-export const successBtnStyle = { background: 'linear-gradient(150deg,var(--color-brand-700),var(--color-brand-800))', borderColor: 'var(--color-brand-700)' } as const;
+/** Was a hand-made copy of the primary button; it is the primary button. The style stays as an empty object so call sites need no change. */
+export const successBtn = primaryButtonClass;
+export const successBtnStyle = {} as const;
 
 // ── icons (inline SVG, 1.8 stroke — matches the mock's this.ic() set) ─────────
 function mk(paths: string) {
@@ -65,9 +74,9 @@ export function StatCard({ icon, label, value, sub, color, bg, danger }: {
             child-combinator override (higher specificity) scales it up here only. */}
         <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl [&>svg]:h-6 [&>svg]:w-6" style={{ background: bg, color }}>{icon}</span>
         <div className="ml-auto w-full min-w-0 text-right [container-type:inline-size]">
-          <div className="text-[clamp(1.125rem,12cqi,1.625rem)] font-extrabold leading-tight tracking-tight tabular-nums [overflow-wrap:anywhere]" style={{ color: danger ? '#D92D20' : 'var(--color-gray-900)' }}>{value}</div>
+          <div className="mangmee-unit text-[clamp(1.125rem,12cqi,1.625rem)] font-bold leading-normal" style={{ color: danger ? '#D92D20' : 'var(--color-gray-900)' }}>{value}</div>
           <div className="mt-2 text-sm font-semibold text-gray-700">{label}</div>
-          {sub != null && <div className="mt-0.5 text-[12.5px] text-gray-400">{sub}</div>}
+          {sub != null && <div className="mt-0.5 text-xs text-gray-500">{sub}</div>}
         </div>
       </div>
     </div>
@@ -91,7 +100,7 @@ export function StatusBadge({ status }: { status: string }) {
     OVERPAID: EXPENSE_CORRECTION_WORDS.overpaid, NOT_CHECKED: 'ยังไม่ตรวจรายการซ้ำ', NO_MATCH: 'ไม่พบรายการซ้ำ', POSSIBLE_DUPLICATE: 'อาจเป็นรายการซ้ำ',
     CONFIRMED_DUPLICATE: 'ยืนยันว่าเป็นรายการซ้ำ', OVERRIDDEN: 'ตรวจและยืนยันแล้ว',
     NOT_VERIFIED: 'ยังไม่ตรวจด้วย AI', VERIFYING: 'AI กำลังตรวจ', AI_VERIFIED: 'AI ตรวจแล้ว', PARTIAL: 'ข้อมูลบางส่วน',
-    HUMAN_VERIFIED: 'ผู้ตรวจยืนยันแล้ว', FAILED: 'ดำเนินการไม่สำเร็จ',
+    HUMAN_VERIFIED: 'ผู้ตรวจยืนยันแล้ว', FAILED: 'ทำไม่สำเร็จ',
   };
   const label = (EXPENSE_STATUS_LABELS as Record<string, string>)[status]
     ?? (EXPENSE_PAYMENT_STATUS_LABELS as Record<string, string>)[status]
@@ -127,17 +136,18 @@ export function ErrorBanner({ message, focus = false }: { message: string; focus
     ref.current?.scrollIntoView({ block: 'center' });
     ref.current?.focus({ preventScroll: true });
   }, [message, focus]);
-  return <div ref={ref} tabIndex={-1} role="alert" className="whitespace-pre-line rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm font-medium text-error-700">⚠ <TypeNamesWhole message={message} /></div>;
+  return <Notice ref={ref} tabIndex={-1} tone="error" className="whitespace-pre-line"><TypeNamesWhole message={message} /></Notice>;
 }
 export function InfoBanner({ message }: { message: string }) {
-  return <div className="rounded-xl border border-brand-100 bg-brand-25 px-4 py-3 text-sm font-medium text-brand-700"><TypeNamesWhole message={message} /></div>;
+  return <Notice tone="info"><TypeNamesWhole message={message} /></Notice>;
 }
 export function isForbidden(message: string): boolean {
   return /Insufficient permissions|Missing permission|Forbidden/i.test(message);
 }
-export function StateBanner({ error }: { error: string | null }) {
+/** `action`: the way out of a "no right to this page" state (one link back to a page the person can use). Optional; without it nothing changes. */
+export function StateBanner({ error, action }: { error: string | null; action?: ReactNode }) {
   if (!error) return null;
-  if (isForbidden(error)) return <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">🔒 คุณไม่มีสิทธิ์เข้าถึงส่วนนี้</div>;
+  if (isForbidden(error)) return <Notice tone="info" mark="🔒 " action={action}>คุณไม่มีสิทธิ์เข้าถึงส่วนนี้</Notice>;
   return <ErrorBanner message={error} />;
 }
 

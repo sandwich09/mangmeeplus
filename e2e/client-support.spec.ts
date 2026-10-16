@@ -16,9 +16,9 @@ test.describe('generic client compatibility notice', () => {
 
     await expect(page).toHaveURL(/\/unsupported-browser\?next=%2Flogin$/);
     await expect(page.locator('[data-client-compatibility-notice="generic"]')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'ไม่สามารถเปิด Mangmee Plus ได้' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'ลองใหม่ / Try again' })).toHaveAttribute('href', '/login');
-    await expect(page.getByRole('link', { name: 'ติดต่อเจ้าหน้าที่ / Contact support' })).toHaveAttribute(
+    await expect(page.getByRole('heading', { name: 'เปิด Mangmee Plus บนเครื่องนี้ไม่ได้' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'ลองอีกครั้ง / Try again' })).toHaveAttribute('href', '/login');
+    await expect(page.getByRole('link', { name: 'ติดต่อทีมงานมั่งมี / Contact support' })).toHaveAttribute(
       'href',
       'mailto:contact@mangmeeplus.com',
     );
@@ -36,9 +36,9 @@ test.describe('generic notice without JavaScript', () => {
 
   test('is complete in the initial server HTML', async ({ page }) => {
     await page.goto('/login');
-    await expect(page.getByRole('heading', { name: 'ไม่สามารถเปิด Mangmee Plus ได้' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'เปิด Mangmee Plus บนเครื่องนี้ไม่ได้' })).toBeVisible();
     await expect(page.getByText('Mangmee Plus could not be opened.', { exact: false })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'ลองใหม่ / Try again' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'ลองอีกครั้ง / Try again' })).toBeVisible();
   });
 });
 

@@ -23,6 +23,7 @@ import { REASON_MAX_LENGTH } from '@/common/forms/sanitize';
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 // The screens reach the icon set through ExpensesUi; this runner has no SVG loader.
 require.extensions['.svg'] = (module) => { module.exports = () => null; };
+require.extensions['.css'] = module => { module.exports = { menu: 'menu', panel: 'panel' }; };
 // Modal portals into document.body, which a server render has none of: render the dialog in place.
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const sections = require('./ReimbursementDetailSections') as typeof import('./ReimbursementDetailSections');
@@ -41,7 +42,7 @@ const read = (file: string) => readFileSync(new URL(file, import.meta.url), 'utf
 
 /** What the customer reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
 const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map((match) => match[1]!),
-  ...html.replace(/<[^>]*>/gu, '\n').split('\n')]
+  ...html.replace(/<span class="text-red-600"(?: aria-hidden="true")?> \*<\/span>/gu, ' *').replace(/<[^>]*>/gu, '\n').split('\n')]
   .map((text) => text.replace(/&quot;/gu, '"').replace(/&#x27;/gu, "'").replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&amp;/gu, '&').trim()).filter(Boolean);
 
 /** Renders with some useState starting values swapped in, picked by the component's own initial value. */
@@ -157,7 +158,7 @@ const CONFIRMATION = 'โอนเข้าบัญชีนี้แล้ว 
 describe('pay step: what the payer is shown (spec §12.1, §15)', () => {
   it('a transfer claim: the box "โอนเข้าบัญชีนี้" with the two names side by side, the masked account, the reveal button and who checked it', () => {
     assert.deepEqual(visible(card(transferClaim, { payStep: true })), [
-      'โอนเข้าบัญชีนี้', 'โอนเข้าบัญชี', 'ผู้เบิก', 'สมชาย ใจดี', 'ชื่อบัญชี', 'นาย สมชาย ใจดี', KBANK_LINE, 'แสดงเลขบัญชี',
+      'โอนเข้าบัญชีนี้', 'โอนเข้าบัญชี', 'ผู้เบิก', 'สมชาย ใจดี', 'ชื่อบัญชี', 'นาย สมชาย ใจดี', 'บัญชีรับเงินคืน', KBANK_LINE, 'แสดงเลขบัญชี',
       'ใช้บัญชีประจำของผู้เบิก', 'ตรวจบัญชีแล้วโดย สมหญิง เมื่อ 1 ต.ค. 2569 10:00 น.',
     ]);
     // The three things the line under the account can say.
@@ -183,7 +184,7 @@ describe('pay step: what the payer is shown (spec §12.1, §15)', () => {
 
   it('a PromptPay claim: the phone number masked the same way, with no bank, and a button that shows a phone number', () => {
     assert.deepEqual(visible(card(promptPayClaim, { payStep: true })), [
-      'โอนเข้าบัญชีนี้', 'โอนเข้าบัญชี', 'ผู้เบิก', 'สมชาย ใจดี', 'ชื่อบัญชี', 'นาย สมชาย ใจดี', 'พร้อมเพย์เบอร์ลงท้าย 5678', 'แสดงเบอร์พร้อมเพย์',
+      'โอนเข้าบัญชีนี้', 'โอนเข้าบัญชี', 'ผู้เบิก', 'สมชาย ใจดี', 'ชื่อบัญชี', 'นาย สมชาย ใจดี', 'บัญชีรับเงินคืน', 'พร้อมเพย์เบอร์ลงท้าย 5678', 'แสดงเบอร์พร้อมเพย์',
       'ผู้เบิกระบุบัญชีนี้สำหรับใบนี้', 'ยังไม่มีผู้ตรวจบัญชีนี้',
     ]);
   });
@@ -276,7 +277,7 @@ describe('pay step: what the payer is shown (spec §12.1, §15)', () => {
     assert.match(page, /payStep=\{step\?\.key === 'payment' && step\.actions\.includes\('pay'\)\}/);
     const payerPage = visible(claimPage(transferClaim));
     assert.ok(payerPage.includes('RB-202610-00007'), 'the claim rendered');
-    for (const text of ['โอนเข้าบัญชีนี้', KBANK_LINE, 'แสดงเลขบัญชี', 'บันทึกจ่าย']) assert.ok(payerPage.includes(text), text);
+    for (const text of ['โอนเข้าบัญชีนี้', KBANK_LINE, 'แสดงเลขบัญชี', 'จ่ายเงิน']) assert.ok(payerPage.includes(text), text);
     // A reader with no pay right, and a payer on a claim that is not waiting for its payment.
     const readerPage = visible(claimPage(transferClaim, { userId: ids.reader, permissions: ['reimbursement.read'] }));
     assert.ok(readerPage.includes('การรับเงินคืน') && !readerPage.includes('โอนเข้าบัญชีนี้') && !readerPage.includes('บันทึกจ่าย'));
@@ -285,15 +286,16 @@ describe('pay step: what the payer is shown (spec §12.1, §15)', () => {
     // A claim with no branch is one the payment endpoint refuses: no button, so no box that says to transfer.
     const noBranch = visible(claimPage({ ...transferClaim, branchId: null }));
     assert.ok(!noBranch.includes('บันทึกจ่าย') && !noBranch.includes('โอนเข้าบัญชีนี้'));
-    assert.ok(noBranch.includes('ใบนี้ไม่ได้ระบุสาขา ระบบจึงยังบันทึกจ่ายไม่ได้ กรุณาติดต่อผู้ดูแลระบบ'));
+    assert.ok(noBranch.includes('ใบนี้ไม่ได้ระบุสาขา ระบบจึงยังบันทึกจ่ายไม่ได้ ติดต่อผู้ดูแลระบบ'));
     // The hub's quick-pay dialog shows the same box above the same form (reimbursements.payment-slip.spec.ts pins the wiring).
-    assert.match(read('./ReimbursementsPages.tsx'), /<ClaimPayoutCard companyId=\{companyId\} detail=\{claim\} userId=\{userId\} payoutAccountHref=\{`\$\{claimPath\}\/payout-account`\} payStep \/>/);
+    // (`plain`: the dialog is the frame, so the box is drawn with no card of its own inside it.)
+    assert.match(read('./ReimbursementsPages.tsx'), /<ClaimPayoutCard companyId=\{companyId\} detail=\{claim\} userId=\{userId\} payoutAccountHref=\{`\$\{claimPath\}\/payout-account`\} plain payStep \/>/);
   });
 
   it('opens the form inside the payment step card of the claim page, with the box on the same page', () => {
     const html = claimPage(transferClaim, { payOpen: true });
     const texts = visible(html);
-    for (const text of ['โอนเข้าบัญชีนี้', 'วิธีจ่าย *', `${CONFIRMATION} *`, 'บันทึกจ่าย']) assert.ok(texts.includes(text), text);
+    for (const text of ['โอนเข้าบัญชีนี้', 'วิธีจ่าย *', `${CONFIRMATION} *`, 'บันทึกจ่าย 1,614.50 บาท']) assert.ok(texts.includes(text), text);
     // Not a dialog: the form is in the page's own flow.
     assert.doesNotMatch(html, /role="dialog"/);
     // The phone route (`?pay=1`) arrives at this same state.
@@ -324,7 +326,7 @@ describe('pay step: the form asks exactly what the API asks (spec §12.4, invari
           assert.match(html, new RegExp(`<input type="checkbox"[^>]*aria-required="${confirmation === 'required'}"`), `${name}, ${method}`);
         }
         assert.equal(hasReason(html), reason, `${name}, ${method}: reason`);
-        assert.equal(texts.includes('สลิปหรือหลักฐานการจ่าย *'), slip, `${name}, ${method}: slip`);
+        assert.equal(texts.includes('หลักฐานการจ่าย *'), slip, `${name}, ${method}: slip`);
       }
     }
   });
@@ -414,10 +416,10 @@ describe('pay step: the form asks exactly what the API asks (spec §12.4, invari
     await refusedAs(transferClaim, 'BANK_TRANSFER', { confirmedFor: `default:${TOKEN}` }, TICK);
     // Said of what the claim states: no fact says who chose the method (a preparer may have).
     for (const method of ['CASH', 'CHEQUE', 'OTHER']) {
-      await refusedAs(transferClaim, method, {}, 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล');
-      await refusedAs(transferClaim, method, { mismatchReason: '   ' }, 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล');
+      await refusedAs(transferClaim, method, {}, 'วิธีจ่ายต่างจากที่ระบุในใบ ระบุเหตุผล');
+      await refusedAs(transferClaim, method, { mismatchReason: '   ' }, 'วิธีจ่ายต่างจากที่ระบุในใบ ระบุเหตุผล');
     }
-    await refusedAs(cashClaim, 'BANK_TRANSFER', {}, 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล');
+    await refusedAs(cashClaim, 'BANK_TRANSFER', {}, 'วิธีจ่ายต่างจากที่ระบุในใบ ระบุเหตุผล');
     // The reason is shown on the payment row to every reader of the claim: the API's own guard, before anything is sent.
     for (const mismatchReason of ['โอนเข้า 0045671234 แทน', 'บัญชี 004-5-67123-4 ปิดแล้ว', 'พร้อมเพย์ 081 234 5678']) {
       await refusedAs(transferClaim, 'CASH', { mismatchReason }, 'อย่าพิมพ์เลขบัญชีในช่องเหตุผล เพราะเหตุผลนี้แสดงในประวัติการจ่ายให้ทุกคนที่เปิดใบเบิกเห็น');
@@ -425,7 +427,7 @@ describe('pay step: the form asks exactly what the API asks (spec §12.4, invari
     assert.deepEqual((await press(transferClaim, 'CASH', { mismatchReason: 'จ่ายเงินสดตามใบ RB-202610-00007 ยอด 1,614.50 บาท' })).result, { status: 'saved' });
     // The earlier questions keep their order: the method, the amount, the reference and the slip come first.
     assert.equal(logic.validatePaymentForm({ paidAmount: '1614.5', outstandingAmount: '1614.5', paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-9', hasSlip: false,
-      payout: { rule: reimbursementPaymentRule({ payoutMethod: 'BANK_TRANSFER', hasAccount: true }, 'BANK_TRANSFER'), confirmed: false, mismatchReason: '' } }), 'จ่ายด้วยการโอนต้องแนบสลิป');
+      payout: { rule: reimbursementPaymentRule({ payoutMethod: 'BANK_TRANSFER', hasAccount: true }, 'BANK_TRANSFER'), confirmed: false, mismatchReason: '' } }), 'จ่ายด้วยการโอนต้องแนบหลักฐานการจ่าย');
     // A form that is given no payout side asks nothing of it (the slip rule alone, as before).
     assert.equal(logic.validatePaymentForm({ paidAmount: '1', outstandingAmount: '1', paymentMethod: 'CASH' }), null);
   });
@@ -493,10 +495,10 @@ describe('pay step: the confirmation names one account, and says when the payer 
   });
 
   it('keeps everything typed, ticked and uploaded when saving fails, and says the payment is not recorded', () => {
-    const message = 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่';
+    const message = 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบหลักฐานการจ่ายหรือโอนเงินใหม่';
     const html = paymentForm(transferClaim, { payer: { confirmedFor: 'version:2' }, slip: { attachmentId: ids.slip, name: 'สลิป-กสิกร.jpg' }, error: message });
     const texts = visible(html);
-    for (const text of ['โอนเงิน', 'สลิป-กสิกร.jpg', `⚠ ${message}`, 'บันทึกจ่าย']) assert.ok(texts.includes(text), text);
+    for (const text of ['โอนเงิน', 'สลิป-กสิกร.jpg', `⚠ ${message}`, 'บันทึกจ่าย 1,614.50 บาท']) assert.ok(texts.includes(text), text);
     assert.match(/<input type="checkbox"[^>]*>/.exec(html)![0], /checked=""/);
     // The failed save changes nothing but the banner: no field is reset by it.
     const form = read('./ReimbursementDetailSections.tsx');
@@ -518,18 +520,18 @@ describe('a payment reads the same on its row and in the claim history (spec §1
   const history = (payment: object) => logic.buildClaimTimeline(paidWith(payment)).find((entry) => entry.key === 'payment')!.label;
 
   it('a transfer into the claim\'s account: method, the last 4 digits, when the payer confirmed, and the slip', () => {
-    assert.equal(logic.paymentFactsText(transfer), 'โอนเข้าบัญชีลงท้าย 6789 · มีสลิป');
-    assert.equal(history(transfer), 'จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป');
+    assert.equal(logic.paymentFactsText(transfer), 'โอนเข้าบัญชีลงท้าย 6789 · มีหลักฐานการจ่าย');
+    assert.equal(history(transfer), 'จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีหลักฐานการจ่าย');
     const texts = row(transfer);
-    for (const text of ['RBPAY-202610-00001', '1,614.50 บาท', 'โอนเงิน · บันทึกแล้ว', 'วันที่จ่าย 1 ต.ค. 2569 · เลขอ้างอิง TXN-1002',
-      `โอนเข้า ${KBANK_LINE} · ชื่อบัญชี นาย สมชาย ใจดี · ยืนยันเมื่อ 1 ต.ค. 2569 11:30 น.`, 'จ่ายโดย สมศรี', 'มีสลิปแนบ 1 ไฟล์']) {
+    for (const text of ['RBPAY-202610-00001', '1,614.50 บาท', 'โอนเงิน', 'บันทึกแล้ว', 'วันที่จ่าย', '1 ต.ค. 2569', 'เลขอ้างอิง', 'TXN-1002',
+      `${KBANK_LINE} · ชื่อบัญชี นาย สมชาย ใจดี`, 'จ่ายโดย', 'สมศรี', 'ยืนยันเมื่อ 1 ต.ค. 2569 11:30 น.', 'บัญชีปลายทาง', 'มีหลักฐานการจ่ายแนบ 1 ไฟล์']) {
       assert.ok(texts.includes(text), `${text} in ${JSON.stringify(texts)}`);
     }
     assert.ok(!texts.includes('จ่ายต่างจากที่ระบุในใบ') && !texts.includes('ไม่มีบัญชีรับเงินในใบเบิก'));
     // PromptPay says so, with the same last 4 digits on both.
     const promptPay = { ...transfer, payoutDestination: { version: 1, payoutKind: 'PROMPTPAY_PHONE', accountName: 'นาย สมชาย ใจดี', accountLast4: '5678' } };
-    assert.equal(history(promptPay), 'จ่ายแล้ว โดย สมศรี · โอนเข้าพร้อมเพย์เบอร์ลงท้าย 5678 · มีสลิป');
-    assert.ok(row(promptPay).includes('โอนเข้า พร้อมเพย์เบอร์ลงท้าย 5678 · ชื่อบัญชี นาย สมชาย ใจดี · ยืนยันเมื่อ 1 ต.ค. 2569 11:30 น.'));
+    assert.equal(history(promptPay), 'จ่ายแล้ว โดย สมศรี · โอนเข้าพร้อมเพย์เบอร์ลงท้าย 5678 · มีหลักฐานการจ่าย');
+    assert.ok(row(promptPay).includes('พร้อมเพย์เบอร์ลงท้าย 5678 · ชื่อบัญชี นาย สมชาย ใจดี'));
   });
 
   // Before: "จ่ายต่างจากที่ผู้เบิกขอ". What the payment differs from is the method the claim states, whoever chose it.
@@ -538,7 +540,7 @@ describe('a payment reads the same on its row and in the claim history (spec §1
       methodMismatchReason: 'ผู้เบิกมารับเงินสดเอง' };
     assert.equal(history(cash), 'จ่ายแล้ว โดย สมศรี · เงินสด · จ่ายต่างจากที่ระบุในใบ');
     const texts = row(cash);
-    for (const text of ['เงินสด · บันทึกแล้ว', 'จ่ายต่างจากที่ระบุในใบ', 'เหตุผล: ผู้เบิกมารับเงินสดเอง']) assert.ok(texts.includes(text), `${text} in ${JSON.stringify(texts)}`);
+    for (const text of ['เงินสด', 'บันทึกแล้ว', 'จ่ายต่างจากที่ระบุในใบ', 'เหตุผล: ผู้เบิกมารับเงินสดเอง']) assert.ok(texts.includes(text), `${text} in ${JSON.stringify(texts)}`);
     assert.equal(texts.some((text) => text.includes('ที่ผู้เบิกขอ')), false);
     assert.ok(!texts.some((text) => text.startsWith('โอนเข้า')) && !texts.includes('ไม่มีบัญชีรับเงินในใบเบิก'));
   });
@@ -546,7 +548,7 @@ describe('a payment reads the same on its row and in the claim history (spec §1
   it('a transfer with no account confirmed says so on the row, and nothing about an account in the history', () => {
     // A legacy claim paid into an account the payer asked the requester for, or a payment from before the feature.
     const plain = { ...transfer, payoutDestination: undefined, payoutConfirmedAt: undefined };
-    assert.equal(history(plain), 'จ่ายแล้ว โดย สมศรี · โอนเงิน · มีสลิป');
+    assert.equal(history(plain), 'จ่ายแล้ว โดย สมศรี · โอนเงิน · มีหลักฐานการจ่าย');
     const texts = row(plain);
     assert.ok(texts.includes('ไม่มีบัญชีรับเงินในใบเบิก'));
     assert.ok(!texts.some((text) => text.startsWith('โอนเข้า')));
@@ -561,10 +563,11 @@ describe('a payment reads the same on its row and in the claim history (spec §1
 
   it('shows every reader the same row, with the last 4 digits and never a full number', () => {
     // What a payer can do with the payment (open, add a slip, void) is theirs; what the payment says is everyone's.
-    const controls = ['ดูสลิป', 'แนบสลิปเพิ่ม', 'ยังไม่ได้เลือกไฟล์', 'เลือกไฟล์', 'ยกเลิกการจ่าย'];
+    // The row's void button carries the name of the dialog's own button: one name for the one act.
+    const controls = ['ดูหลักฐานการจ่าย', 'เพิ่มเติม', 'แนบหลักฐานการจ่ายเพิ่ม', 'ยกเลิกรายการจ่ายนี้'];
     const facts = (userId: string, permissions: readonly string[]) => row(transfer, userId, [...permissions]).filter((text) => !controls.includes(text));
     const forRequester = facts(ids.requester, ['reimbursement.read_own']);
-    assert.equal(forRequester.length, 7);
+    assert.equal(forRequester.length, 16);
     for (const [userId, permissions] of [[ids.payer, PAYER], [ids.approver, ['reimbursement.read_related', 'reimbursement.approve']], [ids.reader, ['reimbursement.read']]] as const) {
       assert.deepEqual(facts(userId, permissions), forRequester, userId);
     }
@@ -582,15 +585,15 @@ describe('a payment reads the same on its row and in the claim history (spec §1
     const again = { ...transfer, id: 'cmg7x2k9p0008paymentb2n4m6', paymentNo: 'RBPAY-202610-00002', paymentReference: 'TXN-1003' };
     const html = detailSections(paidWith(voided) && { ...paidWith(voided), payments: [voided, again] }, ids.payer, PAYER);
     for (const paymentNo of ['RBPAY-202610-00001', 'RBPAY-202610-00002']) {
-      assert.ok(paymentRow(html, paymentNo).includes(`โอนเข้า ${KBANK_LINE} · ชื่อบัญชี นาย สมชาย ใจดี · ยืนยันเมื่อ 1 ต.ค. 2569 11:30 น.`), paymentNo);
+      assert.ok(paymentRow(html, paymentNo).includes(`${KBANK_LINE} · ชื่อบัญชี นาย สมชาย ใจดี`), paymentNo);
     }
     assert.ok(paymentRow(html, 'RBPAY-202610-00001').includes('เหตุผลที่ยกเลิก: บันทึกเลขอ้างอิงผิด'));
     // The history speaks of the payment that stands, after the one that was taken back.
     const timeline = logic.buildClaimTimeline({ ...paidWith(voided), payments: [voided, again] });
-    assert.equal(timeline.find((entry) => entry.key === 'payment')!.label, 'จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป');
+    assert.equal(timeline.find((entry) => entry.key === 'payment')!.label, 'จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีหลักฐานการจ่าย');
     // Voided or not is one fact in one wording: the row's status and the history's row, with the same reason.
-    assert.ok(paymentRow(html, 'RBPAY-202610-00001').includes('โอนเงิน · ยกเลิกการจ่ายแล้ว'));
-    assert.ok(paymentRow(html, 'RBPAY-202610-00002').includes('โอนเงิน · บันทึกแล้ว'));
+    assert.ok(paymentRow(html, 'RBPAY-202610-00001').includes('ยกเลิกการจ่ายแล้ว') && paymentRow(html, 'RBPAY-202610-00001').includes('โอนเงิน'));
+    assert.ok(paymentRow(html, 'RBPAY-202610-00002').includes('บันทึกแล้ว') && paymentRow(html, 'RBPAY-202610-00002').includes('โอนเงิน'));
     assert.deepEqual(timeline.map((entry) => entry.label).filter((label) => label.includes('ยกเลิกการจ่าย')), ['ยกเลิกการจ่ายแล้ว: บันทึกเลขอ้างอิงผิด']);
     assert.equal(timeline.filter((entry) => entry.label.includes('ยกเลิกการจ่าย')).length, [voided, again].filter((payment) => payment.status === 'VOIDED').length);
     // The claim's own wording for a voided claim is another word, and no payment row borrows it.
@@ -618,7 +621,7 @@ describe('a payment reads the same on its row and in the claim history (spec §1
       // How it was paid: the history says the shared phrase, the notice is built on it, and the row names the same method.
       assert.ok(history(payment).split(' · ').includes(how), `${how} in ${history(payment)}`);
       assert.ok(notice.includes(how), `${how} in ${notice}`);
-      assert.ok(texts.includes(`${REIMBURSEMENT_PAYMENT_METHOD_LABELS[payment.paymentMethod as 'CASH']} · บันทึกแล้ว`), sentence);
+      assert.ok(texts.includes(REIMBURSEMENT_PAYMENT_METHOD_LABELS[payment.paymentMethod as 'CASH']) && texts.includes('บันทึกแล้ว'), sentence);
       // The amount, written the same way.
       assert.ok(texts.includes('1,614.50 บาท') && notice.includes('1,614.50 บาท'), sentence);
       // The last 4 digits: on all three, or on none of them.
@@ -629,7 +632,7 @@ describe('a payment reads the same on its row and in the claim history (spec §1
       }
       // A slip: said on all three, or on none.
       const hasSlip = payment.slipCount > 0;
-      assert.deepEqual([texts.some((text) => text.startsWith('มีสลิปแนบ')), history(payment).includes('มีสลิป'), notice.includes('มีสลิปแนบ')], [hasSlip, hasSlip, hasSlip], sentence);
+      assert.deepEqual([texts.some((text) => text.startsWith('มีหลักฐานการจ่ายแนบ')), history(payment).includes('มีหลักฐานการจ่าย'), notice.includes('มีสลิปแนบ')], [hasSlip, hasSlip, hasSlip], sentence);
     }
     // The payer's reason is on the row for whoever may read the claim, and never in the notice.
     assert.ok(row(cash).includes('เหตุผล: ผู้เบิกมารับเงินสดเอง') && !reimbursementPaidNotice(cash as any).includes('ผู้เบิกมารับเงินสดเอง'));
@@ -641,16 +644,16 @@ describe('a payment reads the same on its row and in the claim history (spec §1
     // 18:30 on 1 October by UTC is 01:30 on 2 October in Thailand: the day the payer saw on their own screen.
     const late = { ...transfer, paidAt: '2026-10-01T18:30:00.000Z' };
     const html = detailSections(paidWith(late), ids.requester, ['reimbursement.read_own']);
-    assert.ok(paymentRow(html, 'RBPAY-202610-00001').includes('วันที่จ่าย 2 ต.ค. 2569 · เลขอ้างอิง TXN-1002'));
+    for (const fact of ['วันที่จ่าย', '2 ต.ค. 2569', 'เลขอ้างอิง', 'TXN-1002']) assert.ok(paymentRow(html, 'RBPAY-202610-00001').includes(fact));
     const journey = visible(`<ol ${html.split('data-testid="reimbursement-timeline"')[1]!.split('</ol>')[0]}`);
-    const at = journey.indexOf('จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป');
+    const at = journey.indexOf('จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีหลักฐานการจ่าย');
     assert.ok(at > 0, journey.join(' | '));
     assert.equal(journey[at + 1], '2 ต.ค. 2569');
     // A voided payment has two days of its own: when it was paid and when that was taken back.
     const voided = { ...late, status: 'VOIDED', voidedAt: '2026-10-02T17:30:00.000Z', voidReason: 'บันทึกเลขอ้างอิงผิด' };
     const afterVoid = visible(`<ol ${detailSections({ ...paidWith(voided), status: 'READY_FOR_PAYMENT' }, ids.requester, ['reimbursement.read_own']).split('data-testid="reimbursement-timeline"')[1]!.split('</ol>')[0]}`);
-    assert.deepEqual(afterVoid.slice(afterVoid.indexOf('จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป')).slice(0, 5),
-      ['จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป', '2 ต.ค. 2569', '✓', 'ยกเลิกการจ่ายแล้ว: บันทึกเลขอ้างอิงผิด', '3 ต.ค. 2569']);
+    assert.deepEqual(afterVoid.slice(afterVoid.indexOf('จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีหลักฐานการจ่าย')).slice(0, 5),
+      ['จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีหลักฐานการจ่าย', '2 ต.ค. 2569', '✓', 'ยกเลิกการจ่ายแล้ว: บันทึกเลขอ้างอิงผิด', '3 ต.ค. 2569']);
   });
 });
 
@@ -713,9 +716,9 @@ describe('pay step: plain Thai on a 390 px phone (Owner rule 2026-09-27/29)', ()
   it('gives every new refusal its own sentence, which says what to do next', () => {
     const labels = ['payout_confirmation_required', 'payment_method_mismatch_reason_required', 'payment_slip_in_use_elsewhere'].map((code) => translateApiError(code));
     assert.deepEqual(labels, [
-      'ต้องยืนยันว่าโอนเข้าบัญชีที่แสดงแล้ว ติ๊กช่องยืนยันก่อนกดบันทึกจ่าย ถ้าไม่เห็นช่องยืนยัน กรุณาโหลดหน้าใหม่',
-      'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผลก่อนกดบันทึกจ่าย ถ้าไม่เห็นช่องเหตุผล กรุณาโหลดหน้าใหม่',
-      'ไฟล์นี้ถูกใช้เป็นใบเสร็จหรือเอกสารของรายการอื่นด้วย จึงใช้เป็นสลิปไม่ได้ กรุณาแนบสลิปเป็นไฟล์ใหม่',
+      'ต้องยืนยันว่าโอนเข้าบัญชีที่แสดงแล้ว ติ๊กช่องยืนยันก่อนกดบันทึกจ่าย ถ้าไม่เห็นช่องยืนยัน เปิดหน้านี้ใหม่',
+      'วิธีจ่ายต่างจากที่ระบุในใบ กรอกเหตุผลก่อนกดบันทึกจ่าย ถ้าไม่เห็นช่องเหตุผล เปิดหน้านี้ใหม่',
+      'ไฟล์นี้ถูกใช้เป็นใบเสร็จหรือเอกสารของรายการอื่นด้วย จึงใช้เป็นสลิปไม่ได้ แนบสลิปเป็นไฟล์ใหม่',
     ]);
     // Not the sentence for a file of the wrong type or size: this file is fine, it is in use elsewhere.
     assert.notEqual(translateApiError('payment_slip_in_use_elsewhere'), translateApiError('payment_slip_invalid'));
@@ -728,7 +731,10 @@ describe('pay step: plain Thai on a 390 px phone (Owner rule 2026-09-27/29)', ()
     const box = card(long, { payStep: true });
     assert.match(box, /class="[^"]*\[overflow-wrap:anywhere\][^"]*"/);
     assert.match(box, /<dl class="grid grid-cols-2 gap-3"><div class="min-w-0">[\s\S]*?break-words[\s\S]*?<div class="min-w-0">[\s\S]*?break-words/);
-    for (const [control] of box.matchAll(/<button\b[^>]*>/g)) assert.match(control, /min-h-11 w-full sm:w-auto/, control);
+    // The box's buttons are the shared one (44 px high on a phone by the shared rule) inside a shared group, which gives
+    // them the full width on a phone; the send-back at its foot is a line of text with its own 44 px box.
+    assert.match(box, /<div data-align="start" class="mangmee-actions"><button type="button" class="mangmee-btn mangmee-btn-secondary"/);
+    for (const [control] of box.matchAll(/<button\b[^>]*>/g)) assert.match(control, /class="[^"]*(?:\bmangmee-btn\b|\bmin-h-11\b[^"]*\bunderline\b)/, control);
 
     const form = paymentForm(long);
     const [label] = /<label class="[^"]*" data-testid="reimbursement-payment-confirmation">/.exec(form) ?? [];
@@ -752,32 +758,40 @@ describe('pay step: plain Thai on a 390 px phone (Owner rule 2026-09-27/29)', ()
     }
     // The payment row's new lines wrap too: an account name is as long as the bank prints it.
     const rows = read('./ReimbursementDetailSections.tsx');
-    assert.match(rows, /<div className="mt-1 break-words text-gray-500">\s+\{`โอนเข้า \$\{paymentDestinationText\(p\)\}/);
-    assert.match(rows, /<div className="mt-1 break-words text-gray-600">\s+<MangmeeBadge tone="amber">\{PAID_DIFFERENTLY_LABEL\}<\/MangmeeBadge>/);
+    assert.match(rows, /<dd className="mt-1 break-words text-gray-900">\s+\{paymentDestinationText\(p\)/);
+    assert.match(rows, /<div className="mt-3 break-words text-gray-600">\s+<MangmeeBadge tone="amber">\{PAID_DIFFERENTLY_LABEL\}<\/MangmeeBadge>/);
   });
 });
 
 // Spec §12.8: voiding a payment also undoes its match to a bank statement line, in the same transaction. The
 // dialog said what happens to the journal and to the claim, and nothing of the bank match.
 describe('the void dialog says everything a void undoes', () => {
+  const PAYMENT = { id: ids.payment, paymentNo: 'RBPAY-202610-00001', paidAmount: '1614.5000', currency: 'THB' };
   /** The dialog with a reason typed and the acknowledgement ticked or not, and what the page passes it after a refusal. */
   const dialog = (state: { reason?: string; acknowledged?: boolean; error?: string } = {}) => {
     Object.assign(globalThis, { document: { body: {} } }); // Modal's portal target; never touched by a server render
     try {
-      return renderWithState(h(sections.VoidPaymentDialog, { payment: { id: ids.payment, paymentNo: 'RBPAY-202610-00001' }, error: state.error, onClose: noop, onConfirm: noop }),
-        (initial) => (initial === '' ? state.reason : initial === false ? state.acknowledged : undefined));
+      // The dialog's own tick is its first `false` state; the next one is the Modal's "asked whether to close", which stays off.
+      let falses = 0;
+      return renderWithState(h(sections.VoidPaymentDialog, { payment: PAYMENT, error: state.error, onClose: noop, onConfirm: noop }),
+        (initial) => (initial === '' ? state.reason : initial === false && ++falses === 1 ? state.acknowledged : undefined));
     } finally { Reflect.deleteProperty(globalThis, 'document'); }
   };
-  const confirm = (html: string) => /<button type="button" class="[^"]*"( disabled="")? aria-busy="false">ยืนยันยกเลิกการจ่าย<\/button>/.exec(html);
+  const confirm = (html: string) => /<button type="button" class="[^"]*"( disabled="")? aria-busy="false">ยกเลิกรายการจ่ายนี้<\/button>/.exec(html);
 
-  it('names the journal, the claim going back to wait for payment, and the bank match', () => {
+  // 2026-10-13 (L6-13): three sentences in a red box, one of them about undoing a match to a bank-statement line (no screen
+  // of the packs sold makes one), and a safe button "กลับ" beside "ยืนยันยกเลิกการจ่าย". One sentence now, in amber.
+  it('names the payment by its amount, says in one sentence what the void does to the claim, and names both buttons for what they do', () => {
     const texts = visible(dialog());
-    const warning = texts.find((text) => text.includes('ระบบจะกลับรายการจ่าย'));
-    assert.ok(warning, texts.join(' | '));
-    assert.ok(warning.endsWith('ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ใบเบิกจะกลับไปสถานะรอจ่าย ถ้าการจ่ายนี้จับคู่กับรายการเดินบัญชีธนาคารไว้แล้ว ระบบจะยกเลิกการจับคู่นั้นให้ด้วย'), warning);
-    // The words of the bank page's own control for the same act.
-    assert.match(read('../banking/MatchingPanel.tsx'), /ยกเลิกการจับคู่/);
-    for (const text of ['ยกเลิกการจ่าย RBPAY-202610-00001', 'เหตุผล *', 'ยืนยันว่าได้ตรวจสอบและจัดการรายการเงินจริงกับธนาคาร/ผู้รับเงินแล้ว', 'ยืนยันยกเลิกการจ่าย']) assert.ok(texts.includes(text), text);
+    for (const text of ['ยกเลิกรายการจ่ายนี้ 1,614.50 บาท', 'RBPAY-202610-00001', '⚠ ใบเบิกจะกลับไปรอจ่าย', 'เหตุผล *',
+      'ยืนยันว่าตรวจและจัดการเงินจริงกับธนาคารหรือผู้รับเงินแล้ว', 'ไม่ยกเลิก', 'ยกเลิกรายการจ่ายนี้']) assert.ok(texts.includes(text), `${text}: ${texts.join(' | ')}`);
+    for (const text of texts) assert.doesNotMatch(text, /จับคู่|รายการเดินบัญชี|กลับรายการ|^กลับ$|^ยกเลิก$|^ยืนยันยกเลิก/u);
+    // Who the money went to, when the dialog is given the claim.
+    Object.assign(globalThis, { document: { body: {} } });
+    try {
+      const withClaim = visible(renderWithState(h(sections.VoidPaymentDialog, { payment: PAYMENT, claim: { requesterDisplayNameSnapshot: 'พิม ใจดี' }, onClose: noop, onConfirm: noop }), () => undefined));
+      assert.ok(withClaim.includes('RBPAY-202610-00001 · จ่ายให้ พิม ใจดี'));
+    } finally { Reflect.deleteProperty(globalThis, 'document'); }
   });
 
   it('is plain Thai, and still asks for a reason and the acknowledgement before it can be confirmed', () => {
@@ -786,7 +800,7 @@ describe('the void dialog says everything a void undoes', () => {
       const shown = raw.replace('RBPAY-202610-00001', '');
       for (const [name, pattern] of MACHINE_TOKENS) assert.doesNotMatch(shown, pattern, `${name}: ${raw}`);
     }
-    assert.match(html, /<button type="button" class="[^"]*" disabled="" aria-busy="false">ยืนยันยกเลิกการจ่าย<\/button>/);
+    assert.match(html, /<button type="button" class="[^"]*" disabled="" aria-busy="false">ยกเลิกรายการจ่ายนี้<\/button>/);
     // A reason and the acknowledgement together turn it on; either alone does not.
     assert.equal(confirm(dialog({ reason: 'บันทึกเลขอ้างอิงผิด', acknowledged: true }))?.[1], undefined);
     assert.ok(confirm(dialog({ reason: 'บันทึกเลขอ้างอิงผิด' }))?.[1]);
@@ -837,5 +851,69 @@ describe('the void dialog says everything a void undoes', () => {
     assert.match(dtos, /class RejectReimbursementDto[^}]*@MaxLength\(500\) reason!: string;/);
     assert.match(dtos, /class VoidReimbursementPaymentDto[^}]*@MaxLength\(500\) reason!: string;/);
     assert.equal(REASON_MAX_LENGTH, 500);
+  });
+});
+
+it('CLAIM-DETAIL renders a pressable submit for missing receipts or payout, and no submit for a reader', () => {
+  const draft = { ...base, status: 'DRAFT', requestNo: undefined, submittedAt: undefined, approvalSteps: [], currentDesk: null,
+    receiptRequirementStatus: 'REQUIRED', lines: [{ lineNo: 1, incurredDate: '2026-10-01', description: 'ค่าเดินทาง', amount: '650' }], payout: { payoutMethod: 'CASH' } };
+  const permissions = ['reimbursement.read_own', 'reimbursement.submit', 'reimbursement.update_own_draft', 'reimbursement.cancel_own'];
+  for (const claim of [draft, { ...draft, receiptRequirementStatus: 'ATTACHED', payout: { payoutMethod: null } }]) {
+    const html = claimPage(claim, { userId: ids.requester, permissions });
+    const submit = html.match(/<button[^>]*>ส่งอนุมัติ<\/button>/)?.[0];
+    assert.ok(submit); assert.doesNotMatch(submit, /disabled=/);
+    assert.doesNotMatch(visible(html).join(' '), /฿|—/);
+    assert.doesNotMatch(claimPage(claim, { userId: ids.reader, permissions: ['reimbursement.read'] }), />ส่งอนุมัติ<\/button>/);
+  }
+});
+
+function activeCard(html: string) {
+  const start = html.lastIndexOf('<section', html.indexOf('aria-labelledby="journey-step-title"'));
+  let depth = 0, end = start;
+  for (const tag of html.slice(start).matchAll(/<section\b[^>]*>|<\/section>/g)) {
+    depth += tag[0].startsWith('</') ? -1 : 1;
+    if (depth === 0) { end = start + tag.index! + tag[0].length; break; }
+  }
+  return { card: html.slice(start, end), records: html.slice(end) };
+}
+
+describe('CLAIM-STEPS controls belong to the active step', () => {
+  it('items holds missing receipt pickers and payout fixes; records have no file picker', () => {
+    const { card, records } = activeCard(claimPage({ ...cashClaim, status: 'DRAFT', requestNo: null, createdByUserId: ids.requester,
+      requesterUserId: ids.requester, approvalSteps: [], lines: [{ lineNo: 1, description: 'ค่าเดินทาง', amount: '650', incurredDate: '2026-10-10' }] },
+    { userId: ids.requester, permissions: ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit'] }));
+    assert.match(card, /ใบเสร็จรายการที่ 1/);
+    assert.match(card, /ส่งอนุมัติ/);
+    assert.doesNotMatch(records, /type="file"|แนบใบที่เซ็นแล้ว|เซ็นใบเบิก/);
+  });
+  it('approval offers only its actions, no signing or signed-copy picker', () => {
+    const { card, records } = activeCard(claimPage({ ...cashClaim, status: 'PENDING_APPROVAL', approvedAt: null,
+      approvalActions: { canApprove: true, canReject: true }, approvalSteps: [] }, { userId: ids.approver }));
+    assert.match(card, /อนุมัติ/); assert.match(card, /ส่งกลับให้แก้/);
+    assert.doesNotMatch(card + records, /type="file"|แนบใบที่เซ็นแล้ว|เซ็นใบเบิก|ลายเซ็นและใบเบิกที่เซ็นแล้ว/);
+  });
+  it('payment holds the account and form; no signing before payment', () => {
+    const { card, records } = activeCard(claimPage(transferClaim, { payOpen: true }));
+    assert.match(card, /โอนเข้าบัญชีนี้/); assert.match(card, /type="file"/);
+    assert.doesNotMatch(records, /type="file"|เซ็นใบเบิก|แนบใบที่เซ็นแล้ว/);
+  });
+  for (const who of ['signer', 'reader', 'paper', 'digital'] as const) {
+    it(`document offers two ways for ${who}, with only records below`, () => {
+      const { card, records } = activeCard(claimPage({ ...cashClaim, status: 'PAID', outstandingAmount: '0',
+        documentSignedVia: who === 'paper' ? 'PAPER' : who === 'digital' ? 'DIGITAL' : null,
+        signedCopies: who === 'paper' ? [{ attachmentId: 'copy', fileName: 'signed.pdf', acknowledgedAt: '2026-10-10', uploadedAt: '2026-10-10' }] : [],
+      }, { userId: who === 'reader' ? ids.reader : ids.requester, permissions: [] }));
+      for (const text of ['เลือกวิธีใดวิธีหนึ่ง', 'เซ็นในระบบ', 'เซ็นบนกระดาษ', 'ถ่ายรูปหรือสแกน แล้วแนบที่นี่']) assert.ok(card.includes(text), text);
+      assert.equal(card.includes('แนบใบที่เซ็นแล้ว'), who !== 'reader');
+      assert.equal(card.includes('>เซ็นใบเบิก<'), who === 'signer');
+      if (who === 'digital') assert.match(card, /เซ็นในระบบครบแล้ว/);
+      if (who === 'paper') assert.match(card, /เซ็นบนกระดาษ/);
+      assert.doesNotMatch(records, /type="file"|>เซ็นใบเบิก<|แนบใบที่เซ็นแล้ว/);
+    });
+  }
+  it('old signatures remain visible before payment without signing controls', () => {
+    const { records } = activeCard(claimPage({ ...cashClaim, signatures: [{ role: 'REQUESTER', signedByName: 'สมชาย', signedAt: '2026-10-10' }] }, { userId: ids.requester }));
+    assert.match(records, /ลายเซ็นและใบเบิกที่เซ็นแล้ว/); assert.match(records, /เซ็นแล้ว/);
+    assert.doesNotMatch(records, /type="file"|>เซ็นใบเบิก<|แนบใบที่เซ็นแล้ว/);
   });
 });

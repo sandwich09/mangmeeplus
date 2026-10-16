@@ -14,7 +14,7 @@ export const COUNTERPARTY_MANAGE_PERMISSION = 'accounting.counterparty.manage';
 /** §6/§8: the same ceiling the expense column has. Over it the API answers `counterparty_address_too_long`. */
 export const COUNTERPARTY_ADDRESS_MAX_LENGTH = 500;
 export const COUNTERPARTY_BRANCH_CODE_LENGTH = 5;
-export const COUNTERPARTY_PAGE_SIZE = 20;
+export const COUNTERPARTY_PAGE_SIZE = 10;
 
 /**
  * What `GET .../counterparties` really returns. The contract summary predates the columns the

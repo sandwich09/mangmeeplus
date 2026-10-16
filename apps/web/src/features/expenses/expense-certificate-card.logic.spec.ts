@@ -17,8 +17,8 @@ test('one primary action respects each status, missing data, permission and syst
 });
 
 test('self-issued validation requires number and a real date no later than today, reference is optional', () => {
-  const values = { number: ' EXT-1 ', date: '2026-10-11', reference: ' ', note: ' หมายเหตุ ' };
-  assert.deepEqual(selfIssuedCertificateBody(values, 'command', '2026-10-11'), { commandId: 'command', externalCertificateNumber: 'EXT-1', issuedDate: '2026-10-11', externalEvidenceRef: '', note: 'หมายเหตุ' });
+  const values = { number: ' EXT-1 ', date: '2026-10-11', paymentDate: '2026-09-05', reference: ' ', note: ' หมายเหตุ ' };
+  assert.deepEqual(selfIssuedCertificateBody(values, 'command', '2026-10-11'), { commandId: 'command', externalCertificateNumber: 'EXT-1', issuedDate: '2026-10-11', paymentDate: '2026-09-05', externalEvidenceRef: '', note: 'หมายเหตุ' });
   assert.throws(() => selfIssuedCertificateBody({ ...values, number: ' ' }, 'command', '2026-10-11'), /เลขที่หนังสือรับรอง/);
   assert.throws(() => selfIssuedCertificateBody({ ...values, date: '' }, 'command', '2026-10-11'), /วันที่ออก/);
   assert.throws(() => selfIssuedCertificateBody({ ...values, date: '2026-02-31' }, 'command', '2026-10-11'), /วันที่ออก/);
@@ -30,4 +30,11 @@ test('certificate correction money displays two decimals and grouping without fl
   assert.equal(certificateMoneyDisplay('42.0600'), '42.06');
   assert.equal(certificateMoneyDisplay('9999.9950'), '10,000.00');
   assert.equal(certificateMoneyDisplay('9007199254740993.0000'), '9,007,199,254,740,993.00');
+});
+
+test('W6 self-issued paper requires its original payment date and cannot predate the payment', () => {
+  const values = { number: 'EXT-1', date: '2026-10-11', paymentDate: '', reference: '', note: '' };
+  assert.throws(() => selfIssuedCertificateBody(values, 'command', '2026-10-11'), /วันที่จ่าย/);
+  assert.throws(() => selfIssuedCertificateBody({ ...values, paymentDate: '2026-10-12' }, 'command', '2026-10-11'), /วันที่ออก/);
+  assert.equal(selfIssuedCertificateBody({ ...values, paymentDate: '2026-09-05' }, 'command', '2026-10-11').paymentDate, '2026-09-05');
 });

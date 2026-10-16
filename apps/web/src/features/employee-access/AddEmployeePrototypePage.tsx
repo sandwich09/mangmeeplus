@@ -4,28 +4,36 @@ import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { THAI_SYSTEM_ROLE_NAMES, ALL_BRANCH_ROLE_KEYS, type EmployeeLineLinkPackage, type EmployeeSummary, type RoleSummary } from '@watchdog-bms/contracts';
+import { ChoiceRow } from '@/common/components/field';
 import { ThaiAddressFields } from '@/common/components/field/ThaiAddressFields';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
 import { LoadingState } from '@/common/components/state/LoadingState';
-import { MangmeeBranchChip, MangmeeCard, cx } from '@/common/components/mangmee';
+import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
+import { BackLink } from '@/common/components/app-shell/BackLink';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { Notice } from '@/common/components/notice';
+import { primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
+import { useUnsavedNavigation } from '@/common/components/unsaved-navigation/use-unsaved-navigation';
 import { useToast } from '@/common/components/toast';
 import { listBranches as listCompanyBranches, type Branch } from '../branch-settings/branches.api';
 import { completeEmployee, createEmployee, getEmployee, issueEmployeeLineLinkToken, listRoles, updateEmployee, type CreateEmployeeResult } from './employee-access.api';
-import { QrLinkCard } from './EmployeeAccessPages';
 import { employeeDateToIso, formatEmployeeDateInput } from './employee-date.logic';
 import { isEmployeeEmail } from './employee-email.logic';
 import { EMPLOYEE_BRANCH_SCOPE_HELP, assignableRoleOptions, isOperationalRoleTargetReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
-import { t } from '@/common/i18n/workspace-i18n.logic';
+import { formatThaiTime } from '@/common/i18n/thai-date';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { MemberPayoutAccountCard } from '../reimbursements/ReimbursementPayout';
 
 type TitleOption = 'นาย' | 'นาง' | 'นางสาว';
+/** 1–3 are the form (one at a time for a new person, all on one page for an existing one); 4 is the page shown after the save. */
 type AddStep = 1 | 2 | 3 | 4;
 type ValidationIssue = { message: string; fieldId: string };
+type FieldErrors = Record<string, string>;
+type PageProps = { companyId: string; editEmployeeId?: string; viewerUserId?: string; viewerPermissions?: string[]; viewerBranchIds?: string[] };
 
 // Field-specific 409 messages. Codes must match create-employee.use-case.ts (identity/phone/email).
 const EMPLOYEE_CONFLICT_KEYS = {
@@ -47,9 +55,13 @@ const EMPLOYEE_CONFLICT_FIELDS: Partial<Record<keyof typeof EMPLOYEE_CONFLICT_KE
 const STEP_DEFS: Array<{ n: AddStep; label: string }> = [
   { n: 1, label: 'ข้อมูลส่วนตัว' },
   { n: 2, label: 'ช่องทางติดต่อ' },
-  { n: 3, label: 'ตำแหน่งงานและสิทธิ์' },
-  { n: 4, label: 'เข้าใช้งาน' },
+  { n: 3, label: 'บทบาทและสาขา' },
 ];
+
+const labelClass = 'text-sm font-medium text-gray-700';
+const hintClass = 'text-xs text-gray-500';
+const errorClass = 'text-sm text-red-600';
+const sectionTitleClass = 'text-base font-semibold text-gray-900';
 
 function digits(value: string, max: number) {
   return value.replace(/[^0-9]/g, '').slice(0, max);
@@ -58,6 +70,14 @@ function digits(value: string, max: number) {
 function isoToDob(value?: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value ?? '');
   return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
+}
+
+/** A Thai year typed into the ค.ศ. field is the usual slip, so the message says which year to type instead. */
+function birthDateError(value: string) {
+  const year = Number(/(\d{4})$/.exec(value)?.[1] ?? 0);
+  return year > 2400
+    ? `ปี ${year} เป็น พ.ศ. กรอกเป็น ค.ศ. คือ ${year - 543}`
+    : 'วันเดือนปีเกิดไม่ถูกต้อง กรอกเป็น วัน/เดือน/ปี ค.ศ. เช่น 01/02/1995';
 }
 
 /**
@@ -78,87 +98,109 @@ function employeeNameWithoutTitle(employee: EmployeeSummary): string {
   return employee.displayName.slice(employeeTitle(employee).length).trim();
 }
 
+/**
+ * One text field of this form in the shared look. The hint and the error sit outside the `<label>`,
+ * so the field keeps one name ("ชื่อ *") whatever is shown under it, and the line under the field is
+ * the error when there is one, else the hint (never both).
+ */
 function TextField({
+  id,
   label,
   required = false,
   optional,
+  hint,
   error,
   className,
-  inputClassName,
   ...props
-}: React.InputHTMLAttributes<HTMLInputElement> & {
+}: Omit<React.InputHTMLAttributes<HTMLInputElement>, 'id'> & {
+  id: string;
   label: string;
   required?: boolean;
   optional?: string;
+  hint?: string;
   error?: string;
-  inputClassName?: string;
 }) {
-  const errorId = error && props.id ? `${props.id}-error` : undefined;
+  const lineId = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
   return (
-    <label className={cx('block', className)}>
-      <span className="mb-1.5 block text-[15px] font-semibold text-gray-700">
+    <div className={cx('flex min-w-0 flex-col gap-1.5', className)}>
+      <label htmlFor={id} className={labelClass}>
         {label}
-        {required && <span className="text-error-500"> *</span>}
-        {optional && <span className="font-normal text-gray-400"> {optional}</span>}
-      </span>
-      <input
-        {...props}
-        aria-describedby={errorId ?? props['aria-describedby']}
-        aria-invalid={Boolean(error)}
-        className={cx(
-          'h-11 w-full rounded-lg border bg-white px-3.5 text-base text-gray-800 outline-none transition disabled:bg-gray-50 disabled:text-gray-400',
-          error ? 'border-error-400 focus:border-error-500 focus:ring-2 focus:ring-error-100' : 'border-gray-300 focus:border-brand-500 focus:ring-2 focus:ring-brand-100',
-          inputClassName,
-        )}
-      />
-      {error && <span id={errorId} role="alert" className="mt-1.5 block text-sm font-semibold text-error-600">{error}</span>}
-    </label>
-  );
-}
-
-function SummaryValue({ value }: { value: string }) {
-  const empty = !value;
-  return (
-    <div className={cx('min-w-0 break-words text-[14.5px] font-semibold', empty ? 'text-gray-300' : 'text-gray-700')}>
-      {empty ? 'ยังไม่กรอก' : value}
+        {required && <span className="text-red-600"> *</span>}
+        {optional && <span className="font-normal text-gray-500"> {optional}</span>}
+      </label>
+      <input {...props} id={id} aria-describedby={lineId} aria-invalid={error ? true : undefined} className={cx('mangmee-input', error && '!border-red-500')} />
+      {error
+        ? <span id={`${id}-error`} role="alert" className={errorClass}>{error}</span>
+        : hint && <span id={`${id}-hint`} className={hintClass}>{hint}</span>}
     </div>
   );
 }
 
-function LineOaCard({ lineLink, enabled }: { lineLink?: EmployeeLineLinkPackage | null; enabled: boolean }) {
-  return (
-    <div className="rounded-[14px] border border-brand-100 bg-[#F5FBF6] p-4">
-      <div className="mb-1 flex items-center gap-2">
-        <span className="flex h-[22px] w-[22px] items-center justify-center rounded-md bg-[#06C755] text-[12.5px] font-extrabold text-white">L</span>
-        <span className="text-[15px] font-extrabold text-gray-800">เชื่อมต่อ LINE</span>
-      </div>
-      <div className="mb-3 text-[13px] font-medium leading-6 text-gray-400">
-        {enabled ? 'ให้พนักงานสแกน QR / กดลิงก์ เพื่อผูก LINE เข้าระบบ' : 'กด “เสร็จสิ้น” เพื่อเปิดใช้งานพนักงานก่อน แล้วจึงสแกน QR'}
-      </div>
-      {!enabled ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm font-semibold text-amber-700">
-          LINE จะพร้อมเชื่อมหลังเปิดใช้งานพนักงาน
-        </div>
-      ) : lineLink ? (
-        <QrLinkCard linkUrl={lineLink.linkUrl} qrImageUrl={lineLink.qrImageUrl} expiresAt={lineLink.expiresAt} />
+/**
+ * The way to LINE for one person: a QR for their own phone and the link to send them. The address
+ * itself is not printed (a three-line token nobody reads). `data-link` carries it for the browser
+ * tests. The link is short-lived, so the block says until when and offers a new one.
+ */
+function LineLinkBlock({ name, linked, lineLink, busy, error, onIssue, onCopy }: {
+  name: string;
+  linked: boolean;
+  lineLink: EmployeeLineLinkPackage | null;
+  busy: boolean;
+  error: string;
+  onIssue: () => void;
+  onCopy: (linkUrl: string) => void;
+}) {
+  const [expired, setExpired] = useState(false);
+  useEffect(() => {
+    setExpired(false);
+    if (!lineLink) return;
+    const left = new Date(lineLink.expiresAt).getTime() - Date.now();
+    if (left <= 0) { setExpired(true); return; }
+    // setTimeout holds at most about 24 days; a link never lives that long.
+    const timer = window.setTimeout(() => setExpired(true), Math.min(left, 2_000_000_000));
+    return () => window.clearTimeout(timer);
+  }, [lineLink]);
+  const usable = lineLink && !expired ? lineLink : null;
+  const qr = (
+    <>
+      {usable ? (
+        <>
+          <p className="mt-1 text-sm text-gray-600">ให้ {name} สแกน QR นี้ด้วยมือถือของเขา หรือส่งลิงก์ให้เขาเปิด ใช้ได้ถึง {formatThaiTime(usable.expiresAt)}</p>
+          <img src={usable.qrImageUrl} alt={`QR เชื่อม LINE ของ ${name}`} className="mt-3 h-40 w-40 rounded-lg border border-gray-200 bg-white p-1.5" />
+        </>
       ) : (
-        <div className="text-sm text-gray-400">ไม่สามารถออกลิงก์เชื่อม LINE ได้ในขณะนี้</div>
+        <p className="mt-1 text-sm text-gray-600">{lineLink ? 'QR นี้หมดเวลาแล้ว ออก QR ใหม่เพื่อเชื่อม' : 'ยังไม่มี QR สำหรับเชื่อม LINE'}</p>
       )}
-    </div>
+      {error && <p role="alert" className={cx('mt-2', errorClass)}>{error}</p>}
+      <ActionGroup align="start" className="mt-3">
+        {usable && <button type="button" className={secondaryButtonClass} data-link={usable.linkUrl} onClick={() => onCopy(usable.linkUrl)}>คัดลอกลิงก์</button>}
+        <button type="button" className={secondaryButtonClass} disabled={busy} aria-busy={busy} onClick={onIssue}>ออก QR ใหม่</button>
+      </ActionGroup>
+    </>
+  );
+  return (
+    <section className="rounded-xl border border-gray-200 p-4">
+      <h2 className="text-sm font-semibold text-gray-900">เชื่อม LINE</h2>
+      {linked ? (
+        <>
+          <p className="mt-1 text-sm text-gray-600">{name} เชื่อม LINE แล้ว</p>
+          <details className="mt-1">
+            <summary className="cursor-pointer py-2.5 text-sm font-semibold text-gray-700">เชื่อมกับ LINE อีกครั้ง</summary>
+            {qr}
+          </details>
+        </>
+      ) : qr}
+    </section>
   );
 }
 
-const ROLE_COLOR_BY_KEY: Record<string, string> = {
-  OWNER: '#16A34A', ADMIN: '#0BA5EC', MANAGER: '#2E90FA', HR: '#875BF7', SALES: '#F79009',
-  INVENTORY: '#7A5AF8', FINANCE: '#DD2590', ACCOUNTANT: '#12B76A', MARKETING: '#F63D68', STAFF: '#667085',
-  AUDITOR_READONLY: '#06AED4',
-};
-function colorForRole(role?: RoleSummary): string {
-  if (!role) return '#667085';
-  return ROLE_COLOR_BY_KEY[role.key] ?? '#7A5AF8';
+export function AddEmployeePrototypePage(props: PageProps) {
+  // "เพิ่มพนักงานอีกคน" starts again with an empty form: a new key mounts the form anew.
+  const [round, setRound] = useState(0);
+  return <EmployeeForm key={round} {...props} onAddAnother={() => setRound((current) => current + 1)} />;
 }
 
-export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUserId, viewerPermissions = [], viewerBranchIds }: { companyId: string; editEmployeeId?: string; viewerUserId?: string; viewerPermissions?: string[]; viewerBranchIds?: string[] }) {
+function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissions = [], viewerBranchIds, onAddAnother }: PageProps & { onAddAnother: () => void }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const toast = useToast();
@@ -169,6 +211,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   const [step, setStep] = useState<AddStep>(1);
   const [title, setTitle] = useState<TitleOption>('นาย');
@@ -185,6 +228,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   const [amphoe, setAmphoe] = useState('');
   const [tambon, setTambon] = useState('');
   const [addressLine, setAddressLine] = useState('');
+  const [addressOpen, setAddressOpen] = useState(false);
   const [jobTitle, setJobTitle] = useState('');
   const [roleIds, setRoleIds] = useState<string[]>([]);
   const [branchIds, setBranchIds] = useState<string[]>([]);
@@ -192,23 +236,30 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<CreateEmployeeResult | null>(null);
   const [editLineLink, setEditLineLink] = useState<EmployeeLineLinkPackage | null>(null);
+  const [lineLinkBusy, setLineLinkBusy] = useState(false);
+  const [lineLinkError, setLineLinkError] = useState('');
   const [confirmExistingUser, setConfirmExistingUser] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<EmployeeSummary | null>(null);
+  // The person this page added, as the server holds them. Once it is set every later save updates this
+  // person: going back from the result page and saving again must never try to add them a second time.
+  const [createdEmployee, setCreatedEmployee] = useState<EmployeeSummary | null>(null);
   const [draftActivated, setDraftActivated] = useState(false);
-  const [error, setErrorState] = useState('');
-  const [errorFieldId, setErrorFieldId] = useState('');
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [error, setError] = useState('');
+  const [activationError, setActivationError] = useState('');
+  // What the server holds, as one string: the form is "changed" while it differs from this.
+  const [savedForm, setSavedForm] = useState<string | null>(null);
   const isEditing = Boolean(editEmployeeId);
   const employeeActive = draftActivated || editingEmployee?.status === 'ACTIVE';
   const canReadEmployees = viewerPermissions.includes('access.employee.read');
   const canCompleteDraft = viewerPermissions.includes('access.employee.create');
-
-  function setError(message: string, fieldId = '') {
-    setErrorState(message);
-    setErrorFieldId(fieldId);
-  }
+  const person = editingEmployee ?? createdEmployee;
+  const personId = person?.id ?? result?.employeeId;
+  const listHref = `/companies/${companyId}/settings/access-overview`;
 
   useEffect(() => {
     setLoading(true);
+    setLoadError(null);
     void (async () => {
       const [rolesResult, branchesResult, employeeResult] = await Promise.allSettled([
         listRoles(companyId),
@@ -248,6 +299,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         setAmphoe(employee.district ?? '');
         setTambon(employee.subdistrict ?? '');
         setAddressLine(employee.addressLine ?? '');
+        setAddressOpen(Boolean(employee.postalCode || employee.province || employee.addressLine));
         setRoleIds(employee.roles.map((role) => role.id));
         if (branchesResult.status === 'fulfilled') {
           const activeBranchIds = branchesResult.value.filter((branch) => branch.status === 'ACTIVE').map((branch) => branch.id);
@@ -266,10 +318,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
       }
     })().finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, editEmployeeId]);
+  }, [companyId, editEmployeeId, loadAttempt]);
 
   const selectedRoles = roles.filter((role) => roleIds.includes(role.id));
-  const selectedRole = selectedRoles[0];
   const selectedRoleNames = selectedRoles.map((role) => role.name).join(', ');
   // The API always rejects a self role change, so editing yourself shows the role read-only and the
   // unchanged roleIds save as a no-op (spec R4).
@@ -291,98 +342,110 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   }, [branchPickerLocked, branches]);
 
   const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
-  const avatarInitial = fullName ? `${firstName.trim()[0] ?? ''}${lastName.trim()[0] ?? ''}` : '?';
-  // Preview only. Naming it `displayName` is what made the title look like part of the stored name;
-  // what gets stored is `fullName` plus `titlePrefix`, kept apart.
-  const previewName = fullName ? `${title}${fullName}` : 'พนักงานใหม่';
-  const defaultBranchName = branches.find((branch) => branch.id === defaultBranchId)?.name ?? '';
+  const personName = fullName || person?.displayName || 'พนักงาน';
+  // A shop with one branch has nothing to choose: the person works there and it is their main branch.
+  const showBranchPicker = branches.length !== 1 || branchIds.length !== 1 || defaultBranchId !== branchIds[0];
+  const lineLink = editLineLink ?? result?.lineLink ?? null;
 
-  const summaryRows = [
-    { label: 'อีเมล', value: email.trim() },
-    { label: 'เบอร์โทร', value: phone.trim() },
-    { label: 'ตำแหน่งงาน', value: jobTitle.trim() },
-    { label: 'สาขาหลัก', value: defaultBranchName },
-  ];
+  const formNow = JSON.stringify([title, firstName, lastName, nickname, dob, username, idCard, email, phone, postal, province, amphoe, tambon, addressLine, jobTitle, roleIds, branchIds, defaultBranchId]);
+  useEffect(() => {
+    if (!loading && savedForm === null) setSavedForm(formNow);
+  }, [loading, savedForm, formNow]);
+  const dirty = savedForm !== null && formNow !== savedForm;
+  // Two choices only: the shared dialog's third button is named for a draft document, and this form saves with its own button.
+  const navigation = useUnsavedNavigation({ dirty, canSave: false, saving, error: null, onSave: async () => false,
+    title: 'ยังไม่ได้บันทึกสิ่งที่กรอก', description: 'ถ้าออกตอนนี้ สิ่งที่กรอกไว้จะหาย' });
 
-  function setPostal(value: string) {
-    const code = digits(value, 5);
-    setPostalCode(code);
-    setProvince('');
-    setAmphoe('');
-    setTambon('');
+  function clearFieldError(fieldId: string) {
+    setError('');
+    setErrors((current) => {
+      if (!(fieldId in current)) return current;
+      const next = { ...current };
+      delete next[fieldId];
+      return next;
+    });
   }
 
-  function validate(targetStep: AddStep): ValidationIssue | undefined {
+  /** Every problem of one step, in the order of its fields, so one press shows them all. */
+  function validate(targetStep: AddStep): ValidationIssue[] {
+    const issues: ValidationIssue[] = [];
+    const add = (fieldId: string, message: string) => { issues.push({ fieldId, message }); };
     if (targetStep === 1) {
-      if (!firstName.trim()) return { message: 'กรุณากรอกชื่อ', fieldId: 'employee-first-name' };
-      if (!lastName.trim()) return { message: 'กรุณากรอกนามสกุล', fieldId: 'employee-last-name' };
-      if (!editingEmployee && !dob) return { message: 'กรุณากรอกวันเดือนปีเกิด', fieldId: 'employee-date-of-birth' };
-      if (dob && !employeeDateToIso(dob)) return { message: 'วันเดือนปีเกิดไม่ถูกต้อง กรุณาตรวจสอบวัน เดือน และปี ค.ศ.', fieldId: 'employee-date-of-birth' };
-      if (!editingEmployee && !username.trim()) return { message: 'กรุณากรอกชื่อผู้ใช้', fieldId: 'employee-username' };
-      if (!editingEmployee && !/^[a-zA-Z0-9._-]+$/.test(username.trim())) return { message: 'ชื่อผู้ใช้ใช้ได้เฉพาะตัวอักษรละติน ตัวเลข จุด ขีดกลาง และขีดล่าง', fieldId: 'employee-username' };
-      if ((!editingEmployee || idCard) && !/^[0-9]{13}$/.test(idCard)) return { message: 'เลขบัตรประชาชนต้องมี 13 หลัก', fieldId: 'employee-identity' };
+      if (!firstName.trim()) add('employee-first-name', 'กรอกชื่อ');
+      if (!lastName.trim()) add('employee-last-name', 'กรอกนามสกุล');
+      if (!personId) {
+        if (!username.trim()) add('employee-username', 'กรอกชื่อผู้ใช้');
+        else if (!/^[a-zA-Z0-9._-]+$/.test(username.trim())) add('employee-username', 'ชื่อผู้ใช้ใช้ได้เฉพาะตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง และขีดล่าง');
+      }
+      if (!person && !dob) add('employee-date-of-birth', 'กรอกวันเดือนปีเกิด');
+      else if (dob && !employeeDateToIso(dob)) add('employee-date-of-birth', birthDateError(dob));
+      if ((!person || idCard) && !/^[0-9]{13}$/.test(idCard)) add('employee-identity', 'เลขบัตรประชาชนต้องมี 13 หลัก');
     }
     if (targetStep === 2) {
-      if (!email.trim()) return { message: 'กรุณากรอกอีเมล', fieldId: 'employee-email' };
-      if (!isEmployeeEmail(email)) return { message: 'ที่อยู่อีเมลไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง', fieldId: 'employee-email' };
-      if (!phone) return { message: 'กรุณากรอกเบอร์โทรศัพท์', fieldId: 'employee-phone' };
-      if (!/^0[0-9]{9}$/.test(phone)) return { message: 'เบอร์โทรศัพท์ต้องเป็นตัวเลข 10 หลักและขึ้นต้นด้วย 0', fieldId: 'employee-phone' };
+      if (!email.trim()) add('employee-email', 'กรอกอีเมล');
+      else if (!isEmployeeEmail(email)) add('employee-email', 'อีเมลไม่ถูกต้อง');
+      if (!phone) add('employee-phone', 'กรอกเบอร์โทรศัพท์');
+      else if (!/^0[0-9]{9}$/.test(phone)) add('employee-phone', 'เบอร์โทรศัพท์ต้องมี 10 หลักและขึ้นต้นด้วย 0');
     }
     if (targetStep === 3) {
-      if (!jobTitle.trim()) return { message: 'กรุณากรอกตำแหน่งงาน เช่น พนักงานขาย หรือเจ้าหน้าที่บุคคล', fieldId: 'employee-job-title' };
-      if (!editingSelf && !editingProtectedRole && roleIds.length !== 1) return { message: 'กรุณาเลือกบทบาทและสิทธิ์ระบบเพียง 1 บทบาท', fieldId: 'employee-role' };
-      if (branchIds.length === 0) return { message: 'กรุณาเลือกอย่างน้อย 1 สาขา', fieldId: 'employee-branches' };
-      if (!defaultBranchId || !branchIds.includes(defaultBranchId)) return { message: 'กรุณาเลือกสาขาหลัก', fieldId: 'employee-default-branch' };
+      if (!jobTitle.trim()) add('employee-job-title', 'กรอกตำแหน่งงาน');
+      if (!editingSelf && !editingProtectedRole && roleIds.length !== 1) add('employee-role', 'เลือกบทบาท 1 บทบาท');
+      if (branchIds.length === 0) add('employee-branches', 'เลือกอย่างน้อย 1 สาขา');
+      else if (!defaultBranchId || !branchIds.includes(defaultBranchId)) add('employee-default-branch', 'เลือกสาขาหลัก');
     }
+    return issues;
   }
 
-  function showValidationIssue({ message: validationMessage, fieldId }: ValidationIssue) {
-    setError(validationMessage, fieldId);
-    window.requestAnimationFrame(() => document.getElementById(fieldId)?.focus());
+  function showIssues(issues: ValidationIssue[]) {
+    setError('');
+    setErrors(Object.fromEntries(issues.map((issue) => [issue.fieldId, issue.message])));
+    const first = issues[0]?.fieldId;
+    if (first) window.requestAnimationFrame(() => document.getElementById(first)?.focus());
   }
 
-  async function goToStep(target: AddStep) {
-    if (target <= step) {
-      setStep(target);
-      setError('');
-      return;
-    }
-    for (let candidate = step; candidate < target; candidate += 1) {
-      const validationError = validate(candidate as AddStep);
-      if (validationError) {
-        showValidationIssue(validationError);
-        return;
+  /** The first step that still has a problem, shown with all its problems; `true` when there is none. */
+  function stepsAreValid(steps: AddStep[]): boolean {
+    for (const candidate of steps) {
+      const issues = validate(candidate);
+      if (issues.length) {
+        setStep(candidate);
+        showIssues(issues);
+        return false;
       }
     }
-    if (target === 4) {
-      const saved = await submitDraft();
-      if (!saved) return;
-    }
-    setStep(target);
-    setError('');
+    return true;
   }
 
-  async function submitDraft(linkExistingUser = false): Promise<boolean> {
+  function goToStep(target: AddStep) {
+    if (target > step && !stepsAreValid(STEP_DEFS.map((definition) => definition.n).filter((n) => n >= step && n < target))) return;
+    setStep(target);
+    setError('');
+    setErrors({});
+  }
+
+  /** Saves the form. Returns the person's id, or `null` when nothing was saved (the reason is on screen). */
+  async function submitDraft(linkExistingUser = false): Promise<string | null> {
     setSaving(true);
     setError('');
+    setErrors({});
     try {
       const profile = {
         // The stored name is the name alone; the title goes in its own field so nothing downstream
         // has to guess it back out of a concatenated string.
-        displayName: fullName || previewName,
+        displayName: fullName,
         titlePrefix: title,
         jobTitle: jobTitle.trim(),
         phoneNumber: phone,
         email: email.trim(),
         firstName: firstName.trim(),
         lastName: lastName.trim(),
-        nickname: nickname.trim() || (editingEmployee ? null : undefined),
-        dateOfBirth: employeeDateToIso(dob) ?? (editingEmployee ? null : undefined),
-        addressLine: addressLine.trim() || (editingEmployee ? null : undefined),
-        postalCode: postal || (editingEmployee ? null : undefined),
-        province: province.trim() || (editingEmployee ? null : undefined),
-        district: amphoe.trim() || (editingEmployee ? null : undefined),
-        subdistrict: tambon.trim() || (editingEmployee ? null : undefined),
+        nickname: nickname.trim() || (person ? null : undefined),
+        dateOfBirth: employeeDateToIso(dob) ?? (person ? null : undefined),
+        addressLine: addressLine.trim() || (person ? null : undefined),
+        postalCode: postal || (person ? null : undefined),
+        province: province.trim() || (person ? null : undefined),
+        district: amphoe.trim() || (person ? null : undefined),
+        subdistrict: tambon.trim() || (person ? null : undefined),
         roleIds,
       };
       const allBranches = viewerBranchIds === undefined && branchIds.length === branches.length;
@@ -391,18 +454,20 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         branchIds: allBranches ? [] : branchIds,
         defaultBranchId,
       };
-      if (editingEmployee) {
-        const updated = await updateEmployee(companyId, editingEmployee.id, {
+      if (personId) {
+        const updated = await updateEmployee(companyId, personId, {
           ...profile,
           // Profile-only edits must not resubmit legacy roles or mutate self/protected access.
           ...((editingSelf || editingProtectedRole) ? { roleIds: undefined } : {}),
           ...(branchScopeReadOnly ? {} : branchScope),
-          ...(idCard && { identityType: editingEmployee.identityType, identityNumber: idCard }),
+          ...(idCard && { identityType: person?.identityType ?? 'THAI_NATIONAL_ID', identityNumber: idCard }),
         });
-        setEditingEmployee(updated);
-        // ponytail: fresh QR each save-to-step-4; backend keeps a single pending token per employee
+        if (editingEmployee) setEditingEmployee(updated); else setCreatedEmployee(updated);
+        setIdCard('');
+        setSavedForm(null);
+        // ponytail: fresh QR on each save; backend keeps a single pending token per employee
         setEditLineLink(await issueEmployeeLineLinkToken(companyId, updated.id).catch(() => null));
-        return true;
+        return updated.id;
       }
       const created = await createEmployee(companyId, {
         ...profile,
@@ -411,19 +476,21 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         identityNumber: idCard,
         ...(linkExistingUser && { linkExistingUser: true }),
       });
-      await updateEmployee(companyId, created.employeeId, {
-        ...branchScope,
-      });
+      // The person exists from here on, whatever happens to the calls below.
       setResult(created);
       setConfirmExistingUser(false);
-      return true;
+      setCreatedEmployee(await updateEmployee(companyId, created.employeeId, {
+        ...branchScope,
+      }));
+      setIdCard('');
+      setSavedForm(null);
+      return created.employeeId;
     } catch (e) {
       // The username belongs to an existing account (e.g. an owner of another company): offer to
       // attach them here with their existing login instead of surfacing a hard conflict error.
       if ((e as { code?: string })?.code === 'employee_existing_user') {
         setConfirmExistingUser(true);
-        setError('');
-        return false;
+        return null;
       }
       const code = (e as { code?: keyof typeof EMPLOYEE_CONFLICT_KEYS })?.code;
       const message = code && EMPLOYEE_CONFLICT_KEYS[code]
@@ -432,71 +499,72 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
       const target = code ? EMPLOYEE_CONFLICT_FIELDS[code] : undefined;
       if (target) {
         setStep(target.step);
-        showValidationIssue({ message, fieldId: target.fieldId });
+        showIssues([{ message, fieldId: target.fieldId }]);
       } else {
         setError(message);
       }
-      return false;
+      return null;
     } finally {
       setSaving(false);
     }
   }
 
-  async function confirmLinkExistingUser() {
-    const saved = await submitDraft(true);
-    if (saved) {
-      setStep(4);
-      setError('');
-    }
-  }
-
-  function nextStep() {
-    const validationError = validate(step);
-    if (validationError) {
-      showValidationIssue(validationError);
-      return;
-    }
-    if (step < 3) {
-      setStep((step + 1) as AddStep);
-      setError('');
-      return;
-    }
-    if (step === 3) {
-      void goToStep(4);
-      return;
-    }
-    void finishEmployee();
-  }
-
-  async function finishEmployee() {
-    if (employeeActive) {
-      router.push(canReadEmployees
-        ? `/companies/${companyId}/settings/access-overview`
-        : `/companies/${companyId}/dashboard`);
-      // The shell name comes from the server layout's session, and a shared layout survives client
-      // navigation — without this a self-rename stays stale in the sidebar until a full reload.
-      router.refresh();
-      return;
-    }
-    const employeeId = editingEmployee?.id ?? result?.employeeId;
-    if (!employeeId) return;
-    if (!canCompleteDraft) {
-      router.push(canReadEmployees
-        ? `/companies/${companyId}/settings/access-overview`
-        : `/companies/${companyId}/dashboard`);
-      return;
-    }
+  async function activateEmployee(employeeId: string) {
     setSaving(true);
-    setError('');
+    setActivationError('');
     try {
       await completeEmployee(companyId, employeeId);
       setDraftActivated(true);
-      toast.success('เปิดใช้งานพนักงานเรียบร้อยแล้ว');
+      toast.success(`เปิดใช้งาน ${personName} แล้ว`);
     } catch (e) {
-      setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' }));
+      setActivationError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' }));
     } finally {
       setSaving(false);
     }
+  }
+
+  /**
+   * The one save of the form. A new person is saved and switched on in the same press (the two calls
+   * the page always made, one after the other); when the second is refused the person stays a draft
+   * and the result page says so, with the button to try again.
+   */
+  async function saveEmployee(linkExistingUser = false) {
+    if (!stepsAreValid(STEP_DEFS.map((definition) => definition.n))) return;
+    const switchOn = !isEditing && !employeeActive && canCompleteDraft;
+    const employeeId = await submitDraft(linkExistingUser);
+    if (!employeeId) return;
+    setStep(4);
+    if (switchOn) await activateEmployee(employeeId);
+    else toast.success(`บันทึกข้อมูลของ ${personName} แล้ว`);
+  }
+
+  async function issueLineLink() {
+    if (!personId) return;
+    setLineLinkBusy(true);
+    setLineLinkError('');
+    try {
+      setEditLineLink(await issueEmployeeLineLinkToken(companyId, personId));
+    } catch (e) {
+      setLineLinkError(localizedErrorMessage(e, locale, { fallback: 'error.load_failed' }));
+    } finally {
+      setLineLinkBusy(false);
+    }
+  }
+
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success('คัดลอกแล้ว');
+    } catch {
+      toast.error('คัดลอกไม่ได้ จดไว้แทน');
+    }
+  }
+
+  function leavePage() {
+    router.push(canReadEmployees ? listHref : `/companies/${companyId}/dashboard`);
+    // The shell name comes from the server layout's session, and a shared layout survives client
+    // navigation — without this a self-rename stays stale in the sidebar until a full reload.
+    router.refresh();
   }
 
   function toggleBranch(branchId: string) {
@@ -506,7 +574,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     const next = selected ? branchIds.filter((id) => id !== branchId) : [...branchIds, branchId];
     setBranchIds(next);
     if (!next.includes(defaultBranchId)) setDefaultBranchId(next[0] ?? '');
-    setError('');
+    clearFieldError('employee-branches');
   }
 
   function toggleAllBranches() {
@@ -516,318 +584,295 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     const next = allSelected ? (branches[0] ? [branches[0].id] : []) : allIds;
     setBranchIds(next);
     if (!next.includes(defaultBranchId)) setDefaultBranchId(next[0] ?? '');
-    setError('');
+    clearFieldError('employee-branches');
   }
 
-  const nextLabel = step < 3
-    ? 'ถัดไป ›'
-    : step === 3
-      ? (saving ? 'กำลังบันทึก...' : 'ถัดไป ›')
-      : (saving ? 'กำลังเปิดใช้งาน...' : employeeActive || !canCompleteDraft
-        ? (canReadEmployees ? 'ไปหน้าภาพรวมสิทธิ์' : 'กลับหน้าแดชบอร์ด')
-        : 'เสร็จสิ้น');
-
-  return (
-    <div className="mangmee-page">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <nav className="text-sm font-semibold text-gray-500">
-            มั่งมี <span className="mx-2 text-gray-300">/</span> <span className="text-gray-700">{isEditing ? 'แก้ไขพนักงาน' : 'เพิ่มพนักงาน'}</span>
-          </nav>
-          <h1 className="mt-8 text-[30px] font-extrabold leading-tight text-gray-900">{isEditing ? 'แก้ไขพนักงาน' : 'เพิ่มพนักงาน'}</h1>
-          <p className="mt-3 text-base font-semibold text-gray-500">
-            {isEditing ? 'แก้ไขข้อมูลพนักงาน ตำแหน่งงาน บทบาท และสาขาที่สังกัดทีละขั้น' : 'สร้างบัญชีพนักงานใหม่ พร้อมกำหนดตำแหน่งงาน บทบาท และสาขาที่สังกัด'}
-          </p>
+  const renderPersonal = () => (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <fieldset className="min-w-0 sm:col-span-2">
+        <legend className={labelClass}>คำนำหน้า</legend>
+        <div className="flex flex-wrap gap-x-6">
+          {(['นาย', 'นาง', 'นางสาว'] as TitleOption[]).map((item) => (
+            <ChoiceRow key={item} name="employee-title" value={item} label={item} checked={title === item} onChange={() => setTitle(item)} />
+          ))}
         </div>
-        <MangmeeBranchChip label={t('branch.scope.company_wide', locale)} />
+      </fieldset>
+      <fieldset className="grid min-w-0 gap-4 sm:col-span-2 sm:grid-cols-2">
+        <legend className={labelClass}>ชื่อที่แสดง</legend>
+      <TextField id="employee-first-name" label="ชื่อ" required error={errors['employee-first-name']} value={firstName} onChange={(event) => { setFirstName(event.target.value); clearFieldError('employee-first-name'); }} placeholder="เช่น มีนา" />
+      <TextField id="employee-last-name" label="นามสกุล" required error={errors['employee-last-name']} value={lastName} onChange={(event) => { setLastName(event.target.value); clearFieldError('employee-last-name'); }} placeholder="เช่น ใจงาม" />
+      </fieldset>
+      <TextField id="employee-nickname" label="ชื่อเล่น" optional="(ถ้ามี)" value={nickname} onChange={(event) => setNickname(event.target.value)} placeholder="เช่น มีน" />
+      {!personId && (
+        <TextField id="employee-username" label="ชื่อผู้ใช้" required autoCapitalize="none" autoCorrect="off" spellCheck={false}
+          hint="ใช้เข้าสู่ระบบ เป็นตัวอักษรอังกฤษหรือตัวเลข เช่น meena.j"
+          error={errors['employee-username']} value={username}
+          onChange={(event) => { setUsername(event.target.value); clearFieldError('employee-username'); setConfirmExistingUser(false); }} />
+      )}
+      <TextField id="employee-date-of-birth" label="วันเดือนปีเกิด (ค.ศ.)" required={!person} optional={person ? '(ถ้ามี)' : undefined}
+        hint="เช่น 01/02/1995" error={errors['employee-date-of-birth']} value={dob}
+        onChange={(event) => { setDob(formatEmployeeDateInput(event.target.value)); clearFieldError('employee-date-of-birth'); }}
+        inputMode="numeric" placeholder="วว/ดด/ปปปป" maxLength={10} />
+      <TextField id="employee-identity" label="เลขบัตรประชาชน" required={!person}
+        hint={person ? `เลขเดิม ${person.identityMasked} กรอกเฉพาะเมื่อต้องการเปลี่ยน` : '13 หลัก'}
+        error={errors['employee-identity']} value={idCard}
+        onChange={(event) => { setIdCard(digits(event.target.value, 13)); clearFieldError('employee-identity'); }}
+        inputMode="numeric" />
+    </div>
+  );
+
+  const renderContact = () => (
+    <div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <TextField id="employee-email" type="email" inputMode="email" autoComplete="email" maxLength={254} label="อีเมล (ใช้เข้าสู่ระบบ)" required error={errors['employee-email']} value={email} onChange={(event) => { setEmail(event.target.value); clearFieldError('employee-email'); }} />
+        <TextField id="employee-phone" type="tel" label="เบอร์โทรศัพท์" required hint="10 หลัก" error={errors['employee-phone']} value={phone} onChange={(event) => { setPhone(digits(event.target.value, 10)); clearFieldError('employee-phone'); }} inputMode="tel" maxLength={10} />
       </div>
+      <details className="mt-3" open={addressOpen} onToggle={(event) => setAddressOpen(event.currentTarget.open)}>
+        <summary className="cursor-pointer py-2.5 text-sm font-semibold text-gray-700">ที่อยู่ (ถ้ามี)</summary>
+        <ThaiAddressFields companyId={companyId} className="mt-1 grid gap-4 sm:grid-cols-2"
+          value={{ postalCode: postal, province, district: amphoe, subdistrict: tambon }}
+          onChange={(next) => { setPostalCode(next.postalCode); setProvince(next.province); setAmphoe(next.district); setTambon(next.subdistrict); }} />
+        <TextField id="employee-address-line" className="mt-4" label="บ้านเลขที่ หมู่ ถนน" value={addressLine} onChange={(event) => setAddressLine(event.target.value)} placeholder="เช่น 45/1 ซอยสุขุมวิท ถนนสุขุมวิท" />
+      </details>
+    </div>
+  );
 
-      {loadError && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{loadError}</div>}
+  const renderRoleAndBranch = () => (
+    <div className="grid gap-5">
+      <TextField id="employee-job-title" label="ตำแหน่งงาน" required maxLength={120} className="max-w-xl"
+        hint="ชื่อหน้าที่ในร้าน ไม่เกี่ยวกับสิทธิ์" error={errors['employee-job-title']} value={jobTitle}
+        onChange={(event) => { setJobTitle(event.target.value); clearFieldError('employee-job-title'); }}
+        placeholder="เช่น พนักงานขาย หรือหัวหน้าคลัง" />
 
-      <div className="grid gap-5">
-        <MangmeeCard className="flex flex-wrap items-center gap-[18px] p-4 sm:p-[18px_22px]">
-          <div className="flex min-w-0 basis-full items-center gap-3.5 lg:basis-auto lg:shrink-0">
-            <div className="flex h-[52px] w-[52px] items-center justify-center rounded-xl text-[17px] font-extrabold text-white" style={{ backgroundColor: colorForRole(selectedRole) }}>
-              {avatarInitial}
+      <fieldset id="employee-role" tabIndex={-1} className="min-w-0 outline-none">
+        <legend className={labelClass}>บทบาท <span className="text-red-600" aria-hidden="true">*</span></legend>
+        {editingSelf || editingProtectedRole ? (
+          <>
+            <p className="mt-1 text-sm font-semibold text-gray-800">{selectedRoleNames}</p>
+            <p className={cx('mt-1', hintClass)}>
+              {editingSelf ? 'บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้' : `บทบาทระดับนี้ต้องให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ดูแลสิทธิ์เป็นผู้เปลี่ยน`}
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="grid gap-x-6 sm:grid-cols-2">
+              {roles.map((item) => (
+                <ChoiceRow key={item.id} name="employee-role" value={item.id} label={item.name}
+                  checked={roleIds.length === 1 && roleIds[0] === item.id}
+                  onChange={() => { setRoleIds([item.id]); clearFieldError('employee-role'); }} />
+              ))}
             </div>
-            <div className="min-w-0">
-              <div className="truncate text-lg font-extrabold text-gray-900">{previewName}</div>
-              {selectedRoles.length > 0 && (
-                <span className="mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-extrabold" style={{ backgroundColor: `${colorForRole(selectedRole)}1F`, color: colorForRole(selectedRole) }}>
-                  บทบาท: {selectedRoleNames}
-                </span>
-              )}
+            {roles.length === 0 && !loading && <p className="mt-1 text-sm text-gray-500">ยังไม่มีบทบาทให้เลือก</p>}
+            {errors['employee-role']
+              ? <p role="alert" className={errorClass}>{errors['employee-role']}</p>
+              : <p className={hintClass}>1 คนมี 1 บทบาท สิทธิ์ของแต่ละบทบาทอยู่ที่หน้าบทบาทและสิทธิ์</p>}
+            {roleIds.length > 1 && <p role="status" className="mt-1 text-sm text-warning-700">ข้อมูลเดิมมีหลายบทบาท: {selectedRoleNames} เลือก 1 บทบาทเพื่อใช้แทนทั้งหมด</p>}
+          </>
+        )}
+      </fieldset>
+
+      {showBranchPicker && (
+        <>
+          <fieldset id="employee-branches" tabIndex={-1} className="min-w-0 outline-none">
+            <legend className={labelClass}>สาขาที่ทำงาน</legend>
+            <div className="grid gap-x-6 sm:grid-cols-2">
+              <ChoiceRow type="checkbox" label="ทุกสาขา" checked={branches.length > 0 && branchIds.length === branches.length}
+                disabled={branchPickerLocked || branchScopeReadOnly || viewerBranchIds !== undefined} onChange={toggleAllBranches} />
+              {branches.filter((branch) => branchIds.includes(branch.id) || viewerBranchIds === undefined || viewerBranchIds.includes(branch.id)).map((branch) => {
+                const selected = branchIds.includes(branch.id);
+                const last = selected && branchIds.length === 1;
+                return (
+                  <ChoiceRow key={branch.id} type="checkbox" label={branch.name} checked={selected}
+                    disabled={last || branchPickerLocked || branchScopeReadOnly} onChange={() => toggleBranch(branch.id)} />
+                );
+              })}
             </div>
-          </div>
-          <div className="grid min-w-0 basis-full grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2 lg:basis-auto lg:flex-1 xl:grid-cols-4">
-            {summaryRows.map((row) => (
-              <div key={row.label} className="min-w-0">
-                <div className="text-sm text-gray-400">{row.label}</div>
-                <SummaryValue value={row.value} />
-              </div>
-            ))}
-          </div>
-        </MangmeeCard>
+            {errors['employee-branches'] && <p role="alert" className={errorClass}>{errors['employee-branches']}</p>}
+            {viewerBranchIds !== undefined && <p className={hintClass}>{EMPLOYEE_BRANCH_SCOPE_HELP}</p>}
+            {branchPickerLocked && <p className={hintClass}>บทบาท {allBranchRoles.map((role) => role.name).join(', ')} ดูแลทั้งร้าน จึงต้องเห็นทุกสาขา</p>}
+          </fieldset>
 
-        <MangmeeCard className="p-5 sm:p-[26px]">
-          <div className="text-[19px] font-extrabold text-gray-900">{isEditing ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'}</div>
-          <div className="mt-1 text-[15px] font-medium text-gray-500">{isEditing ? 'แก้ไขข้อมูลทีละขั้น · พนักงานแบบร่างจะยังใช้งานไม่ได้จนกด “เสร็จสิ้น”' : 'สร้างบัญชีผู้ใช้ทีละขั้น · ระบบเก็บเป็นแบบร่างจนกด “เสร็จสิ้น”'}</div>
+          <div className="flex max-w-md min-w-0 flex-col gap-1.5">
+            <span className={labelClass}>สาขาหลัก <span className="text-red-600" aria-hidden="true">*</span></span>
+            <ThemedSelect
+              id="employee-default-branch"
+              aria-label="สาขาหลัก"
+              wrapLabel
+              placeholder="เลือกสาขาหลัก"
+              disabled={branchScopeReadOnly}
+              aria-invalid={Boolean(errors['employee-default-branch'])}
+              value={defaultBranchId}
+              onChange={(event) => { setDefaultBranchId(event.target.value); clearFieldError('employee-default-branch'); }}
+            >
+              {branches.filter((branch) => branchIds.includes(branch.id)).map((branch) => (
+                <option key={branch.id} value={branch.id}>{branch.name}</option>
+              ))}
+            </ThemedSelect>
+            {errors['employee-default-branch']
+              ? <span role="alert" className={errorClass}>{errors['employee-default-branch']}</span>
+              : <span className={hintClass}>สาขาที่เลือกให้ก่อนเมื่อเขาบันทึกรายการใหม่</span>}
+          </div>
+        </>
+      )}
+    </div>
+  );
 
+  // The username is taken by an account that already exists: one question, two answers, in place of the save button.
+  const renderExistingUserQuestion = () => (
+    <div className="mt-6">
+      <Notice tone="warning">
+        ชื่อผู้ใช้ {username.trim()} มีบัญชีอยู่แล้ว ถ้าเป็นคนเดียวกัน เพิ่มเข้าร้านนี้ด้วยบัญชีเดิมได้
+      </Notice>
+      <ActionGroup className="mt-4">
+        <button type="button" className={secondaryButtonClass} disabled={saving} aria-busy={saving}
+          onClick={() => { setConfirmExistingUser(false); setStep(1); window.requestAnimationFrame(() => document.getElementById('employee-username')?.focus()); }}>แก้ชื่อผู้ใช้</button>
+        <button type="button" className={primaryButtonClass} disabled={saving} aria-busy={saving} onClick={() => void saveEmployee(true)}>เพิ่มด้วยบัญชีเดิม</button>
+      </ActionGroup>
+    </div>
+  );
+
+  const saveButton = (
+    <button type="button" className={primaryButtonClass} disabled={saving || loading} aria-busy={saving} onClick={() => void saveEmployee()}>
+      {!isEditing && !employeeActive && canCompleteDraft ? 'บันทึกและเปิดใช้งาน' : 'บันทึก'}
+    </button>
+  );
+
+  const renderForm = () => (
+    <>
+      {isEditing ? (
+        <div className="grid gap-6">
+          <section className="grid gap-4"><h2 className={sectionTitleClass}>ข้อมูลส่วนตัว</h2>{renderPersonal()}</section>
+          <section className="grid gap-4 border-t border-gray-100 pt-5"><h2 className={sectionTitleClass}>ช่องทางติดต่อ</h2>{renderContact()}</section>
+          <section className="grid gap-4 border-t border-gray-100 pt-5"><h2 className={sectionTitleClass}>บทบาทและสาขา</h2>{renderRoleAndBranch()}</section>
+        </div>
+      ) : (
+        <>
           <ThemedSteps
-            className="mb-[22px] mt-[22px]"
+            className="mb-6"
             aria-label="ขั้นตอนการเพิ่มพนักงาน"
             steps={STEP_DEFS.map((definition) => ({
               key: String(definition.n),
               label: definition.label,
               state: definition.n === step ? 'current' : definition.n < step ? 'done' : 'upcoming',
-              // Display-only, same rule as the expense review stepper: navigate with ย้อนกลับ/ถัดไป.
             }))}
+            onStepPress={(index) => goToStep((index + 1) as AddStep)}
           />
+          {step === 1 && renderPersonal()}
+          {step === 2 && renderContact()}
+          {step === 3 && renderRoleAndBranch()}
+        </>
+      )}
 
-          {step === 1 && (loading ? <LoadingState label="กำลังโหลด..." /> : (
-            <div className="grid gap-4">
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-[200px_1fr_1fr]">
-                <div>
-                  <div className="mb-1.5 text-[15px] font-semibold text-gray-700">คำนำหน้า <span className="text-error-500">*</span></div>
-                  <div className="flex gap-1.5 rounded-[10px] bg-gray-100 p-1">
-                    {(['นาย', 'นาง', 'นางสาว'] as TitleOption[]).map((item) => (
-                      <button key={item} type="button" onClick={() => { setTitle(item); setError(''); }} className={cx('h-11 flex-1 rounded-md text-sm font-extrabold transition sm:h-9', title === item ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-600')}>
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <TextField id="employee-first-name" label="ชื่อ" required error={errorFieldId === 'employee-first-name' ? error : undefined} value={firstName} onChange={(event) => { setFirstName(event.target.value); setError(''); }} placeholder="เช่น มีนา" />
-                <TextField id="employee-last-name" label="นามสกุล" required error={errorFieldId === 'employee-last-name' ? error : undefined} value={lastName} onChange={(event) => { setLastName(event.target.value); setError(''); }} placeholder="เช่น ใจงาม" />
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <TextField label="ชื่อเล่น" optional="(ใช้แสดงในหน้าจองคิวและสิทธิ์รายบุคคล)" value={nickname} onChange={(event) => { setNickname(event.target.value); setError(''); }} placeholder="เช่น มีน" />
-                {!editingEmployee && <TextField id="employee-username" label="ชื่อผู้ใช้" required error={errorFieldId === 'employee-username' ? error : undefined} value={username} onChange={(event) => { setUsername(event.target.value); setError(''); setConfirmExistingUser(false); }} placeholder="กรอกชื่อผู้ใช้" />}
-                <TextField id="employee-date-of-birth" label="วันเดือนปีเกิด (ค.ศ.)" required={!editingEmployee} optional={editingEmployee ? '(ถ้ามี)' : undefined} error={errorFieldId === 'employee-date-of-birth' ? error : undefined} value={dob} onChange={(event) => { setDob(formatEmployeeDateInput(event.target.value)); setError(''); }} inputMode="numeric" placeholder="กรอกวันเดือนปีเกิด" maxLength={10} />
-                <TextField
-                  id="employee-identity"
-                  label="เลขบัตรประชาชน"
-                  required={!editingEmployee}
-                  optional={editingEmployee ? `(เดิม ${editingEmployee.identityMasked} · กรอกเมื่อต้องการเปลี่ยน)` : undefined}
-                  error={errorFieldId === 'employee-identity' ? error : undefined}
-                  value={idCard}
-                  onChange={(event) => { setIdCard(digits(event.target.value, 13)); setError(''); }}
-                  inputMode="numeric"
-                  placeholder={editingEmployee ? 'กรอกเลข 13 หลักใหม่' : 'เลข 13 หลัก'}
-                  inputClassName="tracking-[.04em]"
-                />
-              </div>
+      {error && <Notice tone="error" className="mt-5">{error}</Notice>}
+
+      {confirmExistingUser ? renderExistingUserQuestion() : isEditing ? (
+        <ActionGroup className="mt-6">{saveButton}</ActionGroup>
+      ) : (
+        <ActionGroup className="mt-6">
+          {step > 1 && <button type="button" className={secondaryButtonClass} disabled={saving} aria-busy={saving} onClick={() => goToStep((step - 1) as AddStep)}>กลับ</button>}
+          {step < 3
+            ? <button type="button" className={primaryButtonClass} disabled={loading} aria-busy={loading} onClick={() => goToStep((step + 1) as AddStep)}>ถัดไป</button>
+            : saveButton}
+        </ActionGroup>
+      )}
+    </>
+  );
+
+  const renderResult = () => (
+    <div className="grid gap-4">
+      {employeeActive ? (
+        <Notice tone="success">
+          {isEditing
+            ? `บันทึกข้อมูลของ ${personName} แล้ว`
+            : result?.reusedExistingAccount
+              ? `เปิดใช้งานพนักงานแล้ว ${personName} เข้าร้านนี้ได้ด้วยชื่อผู้ใช้และรหัสผ่านเดิม`
+              : `เปิดใช้งานพนักงานแล้ว ส่งชื่อผู้ใช้และรหัสผ่านด้านล่างให้ ${personName}`}
+        </Notice>
+      ) : activationError ? (
+        <Notice tone="error">บันทึก {personName} เป็นร่างแล้ว แต่ยังเปิดใช้งานไม่ได้ {activationError}</Notice>
+      ) : canCompleteDraft ? (
+        <Notice tone="warning">{personName} ยังเป็นร่าง เข้าสู่ระบบไม่ได้จนกว่าจะเปิดใช้งาน</Notice>
+      ) : (
+        <Notice tone="info">บันทึกแล้ว {personName} ยังเป็นร่าง ผู้ที่มีสิทธิ์เพิ่มพนักงานต้องเป็นคนเปิดใช้งาน</Notice>
+      )}
+
+      {result && (
+        <section className="rounded-xl border border-gray-200 p-4">
+          <h2 className="text-sm font-semibold text-gray-900">ชื่อผู้ใช้และรหัสผ่าน</h2>
+          <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="min-w-0">
+              <dt className={hintClass}>ชื่อผู้ใช้</dt>
+              <dd className="mt-0.5 break-all text-base font-semibold text-gray-900">{result.username}</dd>
             </div>
-          ))}
-
-          {step === 2 && (
-            <div>
-              <div className="mb-3 text-[13px] font-extrabold tracking-[.04em] text-brand-600">1 · ช่องทางติดต่อ</div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <TextField id="employee-email" type="email" inputMode="email" autoComplete="email" maxLength={254} label="อีเมล (ใช้เข้าสู่ระบบ)" required error={errorFieldId === 'employee-email' ? error : undefined} value={email} onChange={(event) => { setEmail(event.target.value); setError(''); }} placeholder="กรอกที่อยู่อีเมล" />
-                <TextField id="employee-phone" type="tel" label="เบอร์โทรศัพท์" required error={errorFieldId === 'employee-phone' ? error : undefined} value={phone} onChange={(event) => { setPhone(digits(event.target.value, 10)); setError(''); }} inputMode="tel" maxLength={10} placeholder="กรอกหมายเลขโทรศัพท์ 10 หลัก" inputClassName="tracking-[.04em]" />
+            {!result.reusedExistingAccount && (
+              <div className="min-w-0">
+                <dt className={hintClass}>รหัสผ่านครั้งแรก</dt>
+                <dd data-secret className="mt-0.5 break-all text-base font-semibold text-gray-900">{result.temporaryPassword}</dd>
               </div>
-
-              <div className="mb-3 mt-6 border-t border-gray-100 pt-5 text-[13px] font-extrabold tracking-[.04em] text-brand-600">2 · ที่อยู่ <span className="font-normal normal-case text-gray-400">(ถ้ามี)</span></div>
-              <ThaiAddressFields companyId={companyId} className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
-                value={{ postalCode: postal, province, district: amphoe, subdistrict: tambon }}
-                onChange={(next) => { setPostalCode(next.postalCode); setProvince(next.province); setAmphoe(next.district); setTambon(next.subdistrict); }} />
-              <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                <TextField className="sm:col-span-2 xl:col-span-3" label="บ้านเลขที่ / หมู่ / ถนน" value={addressLine} onChange={(event) => setAddressLine(event.target.value)} placeholder="เช่น 45/1 ซอยสุขุมวิท ถนนสุขุมวิท" />
-              </div>
-            </div>
-          )}
-
-          {step === 3 && (
-            <div>
-              <TextField
-                id="employee-job-title"
-                label="ตำแหน่งงาน"
-                required
-                maxLength={120}
-                error={errorFieldId === 'employee-job-title' ? error : undefined}
-                value={jobTitle}
-                onChange={(event) => { setJobTitle(event.target.value); setError(''); }}
-                placeholder="เช่น เจ้าหน้าที่บุคคล พนักงานขาย หรือหัวหน้าคลัง"
-                className="mb-[18px] max-w-xl"
-              />
-              <div className="-mt-3 mb-[18px] text-sm font-medium text-gray-400">ใช้แสดงชื่อหน้าที่ในบริษัท และไม่กระทบสิทธิ์การใช้งานระบบ</div>
-
-              <div id="employee-role" tabIndex={-1} className="mb-2 text-[15px] font-semibold text-gray-700 outline-none">บทบาทและสิทธิ์ระบบ <span className="text-error-500">*</span></div>
-              {editingSelf || editingProtectedRole ? (
-                <>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedRoles.map((role) => <span key={role.id} className="inline-flex rounded-[9px] border border-gray-200 bg-gray-50 px-3.5 py-2 text-[14.5px] font-extrabold text-gray-500">{role.name}</span>)}
-                  </div>
-                  <div className="mt-2 text-sm font-medium text-gray-400">
-                    {editingSelf ? 'บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้' : `บทบาทระดับนี้ต้องให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ดูแลสิทธิ์เป็นผู้เปลี่ยน`}
-                  </div>
-                </>
-              ) : (
-                <div className="flex flex-wrap gap-2.5">
-                  {roles.map((item) => (
-                    <button key={item.id} type="button" aria-pressed={roleIds.length === 1 && roleIds[0] === item.id} onClick={() => { setRoleIds([item.id]); setError(''); }} className={cx('rounded-[9px] border px-3.5 py-2 text-[14.5px] font-extrabold transition', roleIds.length === 1 && roleIds[0] === item.id ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
-                      {roleIds.length === 1 && roleIds[0] === item.id ? '✓ ' : ''}{item.name}
-                    </button>
-                  ))}
-                  {roles.length === 0 && <span className="text-sm text-gray-400">ยังไม่มีบทบาทให้เลือก</span>}
-                </div>
-              )}
-              {errorFieldId === 'employee-role' && <div role="alert" className="mt-2 text-sm font-semibold text-error-600">{error}</div>}
-              <div className="mt-2 text-sm font-medium text-gray-400">พนักงานมีได้ 1 บทบาท ไม่จำเป็นต้องตรงกับตำแหน่งงาน หากต้องการเพิ่มสิทธิ์ให้แก้ที่บทบาทและสิทธิ์</div>
-              {roleIds.length > 1 && <p role="status" className="mt-2 text-sm font-semibold text-warning-700">ข้อมูลเดิมมีหลายบทบาท: {selectedRoleNames} ให้ผู้มีสิทธิ์เลือก 1 บทบาทเพื่อแทนที่ทั้งหมด</p>}
-
-              <div id="employee-branches" tabIndex={-1} className="mb-2 mt-[18px] text-[15px] font-semibold text-gray-700 outline-none">
-                สาขาที่สังกัด <span className="font-normal text-gray-400">(เลือกได้มากกว่า 1 สาขา)</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={toggleAllBranches} disabled={branchPickerLocked || branchScopeReadOnly || viewerBranchIds !== undefined} className={cx('inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[14.5px] font-extrabold transition disabled:cursor-default disabled:opacity-60', branchIds.length === branches.length && branches.length > 0 ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-500')}>
-                  <span>{branchIds.length === branches.length && branches.length > 0 ? '✓' : '+'}</span>
-                  ทุกสาขา
-                </button>
-                {branches.filter((branch) => branchIds.includes(branch.id) || viewerBranchIds === undefined || viewerBranchIds.includes(branch.id)).map((branch) => {
-                  const selected = branchIds.includes(branch.id);
-                  const last = selected && branchIds.length === 1;
-                  return (
-                    <button key={branch.id} type="button" onClick={() => toggleBranch(branch.id)} disabled={last || branchPickerLocked || branchScopeReadOnly} className={cx('inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[14.5px] font-extrabold transition', selected ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-500 hover:border-brand-200', last || branchPickerLocked || branchScopeReadOnly ? 'cursor-default' : 'cursor-pointer')}>
-                      <span className={selected ? 'text-brand-500' : 'text-gray-300'}>{selected ? '✓' : '+'}</span>
-                      {branch.name}
-                    </button>
-                  );
-                })}
-              </div>
-              {errorFieldId === 'employee-branches' && <div role="alert" className="mt-2 text-sm font-semibold text-error-600">{error}</div>}
-              {viewerBranchIds !== undefined && <p className="mt-2 text-sm text-gray-500">{EMPLOYEE_BRANCH_SCOPE_HELP}</p>}
-              {branchPickerLocked && (
-                <div className="mt-2 text-sm font-medium text-gray-400">
-                  บทบาท {allBranchRoles.map((role) => role.name).join(', ')} ดูแลภาพรวมทั้งบริษัท จึงต้องเห็นข้อมูลทุกสาขา — จำกัดสาขาไม่ได้
-                </div>
-              )}
-              <label className="mt-4 block max-w-md">
-                <span className="mb-1.5 block text-[15px] font-semibold text-gray-700">
-                  สาขาหลัก <span className="text-error-500">*</span>
-                </span>
-                <ThemedSelect
-                  id="employee-default-branch"
-                  disabled={branchScopeReadOnly}
-                  aria-invalid={errorFieldId === 'employee-default-branch'}
-                  value={defaultBranchId}
-                  onChange={(event) => { setDefaultBranchId(event.target.value); setError(''); }}
-                  className="h-11 w-full rounded-lg border border-gray-300 bg-white px-3.5 text-base text-gray-800 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                >
-                  <option value="">เลือกสาขาหลัก</option>
-                  {branches.filter((branch) => branchIds.includes(branch.id)).map((branch) => (
-                    <option key={branch.id} value={branch.id}>{branch.name}</option>
-                  ))}
-                </ThemedSelect>
-                {errorFieldId === 'employee-default-branch' && <span role="alert" className="mt-1.5 block text-sm font-semibold text-error-600">{error}</span>}
-                <span className="mt-1.5 block text-sm font-medium text-gray-400">
-                  ระบบใช้สาขานี้เป็นค่าเริ่มต้นสำหรับการจองและรายการใหม่ของพนักงาน
-                </span>
-              </label>
-            </div>
-          )}
-
-          {step === 4 && (result || editingEmployee) && (
-            <div>
-              <div className={cx(
-                'mb-4 rounded-[10px] border px-4 py-3 text-sm font-semibold',
-                employeeActive ? 'border-brand-100 bg-brand-25 text-brand-700' : 'border-amber-200 bg-amber-50 text-amber-800',
-              )}>
-                {employeeActive
-                  ? 'เปิดใช้งานพนักงานแล้ว สามารถส่งข้อมูลเข้าใช้งานและสแกน QR เชื่อม LINE ได้'
-                  : canCompleteDraft
-                    ? 'ข้อมูลนี้ยังเป็นแบบร่าง พนักงานจะเข้าใช้งานเว็บและเชื่อม LINE ได้หลังจากกด “เสร็จสิ้น”'
-                    : 'บันทึกการแก้ไขแล้ว แต่พนักงานยังเป็นแบบร่าง ต้องให้ผู้มีสิทธิ์เพิ่มพนักงานเป็นผู้เปิดใช้งาน'}
-              </div>
-              {result ? <><div className="grid items-stretch gap-4 sm:grid-cols-2">
-                <div className="flex flex-col rounded-[14px] border border-gray-200 p-4">
-                  <div className="text-[15px] font-extrabold text-gray-800">บัญชีเข้าระบบเว็บ</div>
-                  <div className="mb-2.5 mt-0.5 text-[13px] font-medium text-gray-400">ใช้เข้าเว็บไซต์มั่งมี</div>
-                  <div className="text-sm font-semibold text-gray-700">ชื่อผู้ใช้</div>
-                  <div className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-[15px] font-extrabold text-gray-800">{result.username}</div>
-                  {result.reusedExistingAccount ? (
-                    <>
-                      <div className="mt-3 rounded-lg border border-brand-100 bg-[#F5FBF6] px-3 py-2.5 text-[13px] font-semibold leading-6 text-gray-600">ผู้ใช้นี้มีบัญชีในระบบอยู่แล้ว — เข้าใช้งานบริษัทนี้ด้วยรหัสผ่านเดิม ไม่มีการตั้งรหัสผ่านใหม่</div>
-                      <div className="mt-auto pt-3 text-[12.5px] font-medium leading-6 text-gray-400">หลังเปิดใช้งาน บริษัทนี้จะปรากฏในบัญชีเดิมของพนักงานเมื่อเข้าระบบครั้งถัดไป</div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="mb-1.5 mt-3 text-sm font-semibold text-gray-700">รหัสผ่าน</div>
-                      <div className="flex h-[42px] items-center gap-2 rounded-lg border border-gray-300 bg-gray-50 py-0 pl-3 pr-1.5">
-                        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[15px] font-extrabold tracking-[.06em] text-gray-800">{result.temporaryPassword}</span>
-                        <button type="button" onClick={() => void navigator.clipboard?.writeText(result.temporaryPassword)} className="shrink-0 px-1.5 text-[13px] font-extrabold text-brand-600">คัดลอก</button>
-                      </div>
-                      <div className="mt-auto pt-3 text-[12.5px] font-medium leading-6 text-gray-400">ใช้ตัวเลขวัน เดือน และปี ค.ศ. รวม 8 หลัก เรียงต่อกัน · ระบบจะให้พนักงานตั้งรหัสผ่านใหม่เมื่อเข้าใช้งานครั้งแรก</div>
-                    </>
-                  )}
-                </div>
-
-                <LineOaCard lineLink={result.lineLink} enabled={employeeActive} />
-              </div>
-
-              <div className="mt-[18px] flex flex-wrap items-center gap-4 rounded-[14px] border border-gray-200 bg-gray-50 px-[22px] py-5">
-                <div className="min-w-[180px] flex-1">
-                  <div className="text-base font-extrabold text-gray-900">ส่งข้อมูลเข้าใช้งานให้พนักงาน</div>
-                  <div className="mt-0.5 text-[13px] font-medium text-gray-600">{result.reusedExistingAccount ? 'แจ้งพนักงานว่าเข้าใช้งานบริษัทนี้ได้ด้วยบัญชีเดิมที่มีอยู่แล้ว — ไม่ต้องส่งรหัสผ่านใหม่' : 'ต้องตั้งค่าการส่งอีเมลของบริษัทก่อน ระบบจึงจะส่งให้อัตโนมัติได้ — ตอนนี้กรุณาส่งชื่อผู้ใช้และรหัสผ่านด้านบนให้พนักงานเอง'}</div>
-                </div>
-              </div>
-              </> : (
-                <div className="grid items-stretch gap-4 sm:grid-cols-2">
-                  <div className="flex flex-col items-center justify-center rounded-[14px] border border-brand-100 bg-brand-25 px-5 py-6 text-center">
-                    <div className="text-lg font-extrabold text-gray-900">ตรวจสอบและบันทึกข้อมูลครบแล้ว</div>
-                    <div className="mt-2 text-sm font-semibold text-gray-500">{employeeActive
-                      ? (canReadEmployees ? 'เชื่อม LINE ได้แล้ว หรือไปหน้าภาพรวมสิทธิ์เพื่อจัดการต่อ' : 'บันทึกข้อมูลแล้ว กลับหน้าแดชบอร์ดได้')
-                      : canCompleteDraft ? 'กด “เสร็จสิ้น” เพื่อเปิดใช้งานพนักงาน' : 'การเปิดใช้งานต้องใช้สิทธิ์เพิ่มพนักงาน'}</div>
-                  </div>
-                  <LineOaCard lineLink={editLineLink} enabled={employeeActive} />
-                </div>
-              )}
-            </div>
-          )}
-
-          {confirmExistingUser && (
-            <div className="mt-4 rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              <div className="font-extrabold">ชื่อผู้ใช้นี้มีบัญชีในระบบอยู่แล้ว</div>
-              <div className="mt-1 font-medium leading-6">หากเป็นคนเดียวกัน (เช่น {THAI_SYSTEM_ROLE_NAMES.OWNER}อีกบริษัท) กด “ยืนยันเพิ่มเข้าบริษัท” เพื่อเพิ่มเข้าบริษัทนี้โดยใช้บัญชีเดิม — พนักงานจะเข้าระบบด้วยรหัสผ่านเดิม ไม่มีการตั้งรหัสใหม่ · <b>ต้องกรอกอีเมล (ขั้นตอนช่องทางติดต่อ) ที่ไม่ซ้ำกับอีเมลบัญชีเดิม</b> · หากเป็นคนละคน กรุณาแก้ไขชื่อผู้ใช้ให้ไม่ซ้ำ</div>
-              <div className="mt-2.5 flex flex-wrap gap-2">
-                <button type="button" onClick={() => void confirmLinkExistingUser()} disabled={saving} aria-busy={Boolean(saving)} className="flex h-10 items-center justify-center rounded-lg bg-brand-500 px-4 text-sm font-extrabold text-white hover:bg-brand-600 disabled:opacity-60">ยืนยันเพิ่มเข้าบริษัท</button>
-                <button type="button" onClick={() => { setConfirmExistingUser(false); setStep(1); }} className="flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-extrabold text-gray-600 hover:bg-gray-50">แก้ไขชื่อผู้ใช้</button>
-              </div>
-            </div>
-          )}
-
-          {error && !errorFieldId && (
-            <div className="mt-4 rounded-[9px] border border-[#FECDCA] bg-error-50 px-3.5 py-2.5 text-sm font-semibold text-error-700">
-              ⚠ {error}
-            </div>
-          )}
-
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-2.5 border-t border-gray-100 pt-[18px]">
-            <button type="button" onClick={() => { if (step > 1) { setStep((step - 1) as AddStep); setError(''); } }} disabled={step <= 1} className={cx('flex h-11 shrink-0 items-center justify-center rounded-lg px-3.5 text-base font-extrabold sm:px-[18px]', step <= 1 ? 'cursor-default text-gray-300' : 'border border-gray-300 text-gray-600 hover:bg-gray-50')}>
-              ‹ ย้อนกลับ
+            )}
+          </dl>
+          <p className="mt-3 text-sm text-gray-600">
+            {result.reusedExistingAccount ? 'ไม่มีการตั้งรหัสผ่านใหม่ เขาใช้รหัสผ่านเดิมของบัญชีนี้' : 'เขาต้องตั้งรหัสผ่านใหม่เมื่อเข้าสู่ระบบครั้งแรก'}
+          </p>
+          <ActionGroup align="start" className="mt-3">
+            <button type="button" className={secondaryButtonClass}
+              onClick={() => void copyText(result.reusedExistingAccount ? result.username : `ชื่อผู้ใช้: ${result.username}\nรหัสผ่าน: ${result.temporaryPassword}`)}>
+              {result.reusedExistingAccount ? 'คัดลอกชื่อผู้ใช้' : 'คัดลอกชื่อผู้ใช้และรหัสผ่าน'}
             </button>
-            <div className="hidden text-[15px] font-semibold text-gray-400 sm:block">ขั้นที่ {step} จาก 4</div>
-            <button type="button" onClick={nextStep} disabled={saving} aria-busy={Boolean(saving)} className="flex h-[46px] shrink-0 items-center justify-center gap-2 rounded-lg bg-brand-500 px-5 text-base font-extrabold text-white shadow-sm hover:bg-brand-600 disabled:opacity-60 sm:px-[26px]">
-              {nextLabel}
-            </button>
-          </div>
-        </MangmeeCard>
+          </ActionGroup>
+        </section>
+      )}
 
-        {/* One card beside the wizard, saved on its own: where this employee's claims are paid back.
-            Offered only where the company uses reimbursements; the server holds a branch-limited
-            editor to employees inside their own branches, the same reading as the branch picker above.
-            Not for a draft or any other employee who is not active yet: the account owner is told of
-            every change, and that notice reaches active members only (the server refuses the same). */}
-        {editingEmployee && employeeActive && viewerPermissions.includes('reimbursement.create') && (
-          <MemberPayoutAccountCard
-            companyId={companyId}
-            {...(!editingSelf && { memberUserId: editingEmployee.userId })}
-            canEdit={!branchScopeReadOnly}
-            description="ใช้คืนเงินเมื่อพนักงานเบิกค่าใช้จ่าย เมื่อคนอื่นตั้งหรือแก้ให้ พนักงานจะได้รับแจ้งเตือนให้ตรวจทุกครั้ง"
-          />
-        )}
-      </div>
+      {employeeActive && (
+        <LineLinkBlock name={personName} linked={Boolean(person?.lineLinked)} lineLink={lineLink} busy={lineLinkBusy} error={lineLinkError}
+          onIssue={() => void issueLineLink()} onCopy={(linkUrl) => void copyText(linkUrl)} />
+      )}
+
+      <ActionGroup className="mt-2">
+        <button type="button" className={secondaryButtonClass} disabled={saving} onClick={() => { setActivationError(''); setStep(isEditing ? 1 : 3); }}>แก้ไขข้อมูล</button>
+        {!isEditing && employeeActive && <button type="button" className={secondaryButtonClass} onClick={onAddAnother}>เพิ่มพนักงานอีกคน</button>}
+        {!employeeActive && canCompleteDraft && personId
+          ? <button type="button" className={primaryButtonClass} disabled={saving} aria-busy={saving} onClick={() => void activateEmployee(personId)}>{activationError ? 'เปิดใช้งานอีกครั้ง' : 'เปิดใช้งานพนักงาน'}</button>
+          : <button type="button" className={primaryButtonClass} onClick={leavePage}>{canReadEmployees ? 'ไปรายชื่อพนักงาน' : 'ไปหน้าแรก'}</button>}
+      </ActionGroup>
     </div>
+  );
+
+  // An edit page that could not read its person must not turn into an empty "add" form under an "edit" title.
+  const personMissing = isEditing && !loading && !editingEmployee;
+
+  return (
+    <MangmeePage
+      back={canReadEmployees ? <BackLink href={listHref} label="กลับไปรายชื่อพนักงาน" /> : undefined}
+      title={isEditing ? (editingEmployee ? `แก้ไขข้อมูล ${editingEmployee.displayName}` : 'แก้ไขข้อมูลพนักงาน') : 'เพิ่มพนักงาน'}
+    >
+      {loadError && (
+        <Notice tone="error" action={<button type="button" className={secondaryButtonClass} disabled={loading} aria-busy={loading} onClick={() => setLoadAttempt((current) => current + 1)}>ลองอีกครั้ง</button>}>
+          {loadError}
+        </Notice>
+      )}
+
+      {!personMissing && (
+        <MangmeeCard className="p-4 sm:p-6">
+          {loading ? <LoadingState label="กำลังโหลด..." /> : step === 4 && personId ? renderResult() : renderForm()}
+        </MangmeeCard>
+      )}
+
+      {/* One card beside the form, saved on its own: where this employee's claims are paid back.
+          Offered only where the company uses reimbursements; the server holds a branch-limited
+          editor to employees inside their own branches, the same reading as the branch picker above.
+          Not for a draft or any other employee who is not active yet: the account owner is told of
+          every change, and that notice reaches active members only (the server refuses the same). */}
+      {editingEmployee && employeeActive && viewerPermissions.includes('reimbursement.create') && (
+        <MemberPayoutAccountCard
+          embedded
+          companyId={companyId}
+          {...(!editingSelf && { memberUserId: editingEmployee.userId })}
+          canEdit={!branchScopeReadOnly}
+          description="ใช้คืนเงินเมื่อพนักงานเบิกค่าใช้จ่าย เมื่อคนอื่นตั้งหรือแก้ให้ พนักงานจะได้รับแจ้งเตือนให้ตรวจทุกครั้ง"
+        />
+      )}
+      {navigation.dialog}
+    </MangmeePage>
   );
 }

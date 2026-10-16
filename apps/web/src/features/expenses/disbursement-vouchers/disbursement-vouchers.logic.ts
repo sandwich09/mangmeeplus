@@ -1,6 +1,6 @@
 import { disbursementReturnedApprover } from './disbursement-voucher-journey.logic';
 import { disbursementCancelledPaymentSentence } from './disbursement-voucher-reissue.logic';
-import { DISBURSEMENT_VOUCHER_STATUS_LABELS, DISBURSEMENT_VOUCHER_STATUS_TONES, disbursementVoucherPaymentAmount, coerceCivilDate, civilDateToUtcDate, todayCivilDate } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_STATUS_LABELS, DISBURSEMENT_VOUCHER_STATUS_TONES, disbursementVoucherPaymentAmount } from '@watchdog-bms/contracts';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import { DISBURSEMENT_VOUCHER_BADGE_TONES, DISBURSEMENT_VOUCHER_FILTERS } from './disbursement-vouchers.constants';
@@ -52,7 +52,9 @@ export function disbursementVoucherNextSentence(detail: DisbursementVoucherDetai
       : header.documentNumber ? detail.preparerName ? words['expenses.disbursement.draft_again_wait_preparer'].replace('{name}', detail.preparerName) : words['expenses.disbursement.draft_again_wait']
       : detail.preparerName ? words['expenses.disbursement.draft_wait_preparer'].replace('{name}', detail.preparerName) : words['expenses.disbursement.draft_wait'];
     case 'PENDING_APPROVAL': return actions.approve && viewerUserId && header.requestedApproverUserId && viewerUserId !== header.requestedApproverUserId && detail.requestedApproverName
-      ? words['expenses.disbursement.wait_other_approver'].replace('{name}', detail.requestedApproverName) : actions.approve ? words['expenses.disbursement.approval_next'] : detail.requestedApproverName
+      // The sentence names sending back only for a reader who may do it (not on their own document, not when its authors are switched off).
+      ? words[actions.return ? 'expenses.disbursement.wait_other_approver' : 'expenses.disbursement.wait_other_approver_approve_only'].replace('{name}', detail.requestedApproverName)
+      : actions.approve ? words[actions.return ? 'expenses.disbursement.approval_next' : 'expenses.disbursement.approval_next_approve_only'] : detail.requestedApproverName
       ? words['expenses.disbursement.wait_approver'].replace('{name}', detail.requestedApproverName)
       : words['expenses.disbursement.wait_any_approver'];
     case 'APPROVED': return actions.pay ? words['expenses.disbursement.pay_next'] : words['expenses.disbursement.wait_payment'];
@@ -73,7 +75,7 @@ export function canPrepareDisbursementVoucher(permissions: readonly string[]): b
 }
 
 export function disbursementVoucherBadge(status: DisbursementVoucherStatus) {
-  return { label: DISBURSEMENT_VOUCHER_STATUS_LABELS[status], tone: DISBURSEMENT_VOUCHER_BADGE_TONES[DISBURSEMENT_VOUCHER_STATUS_TONES[status]] };
+  return { label: status === 'APPROVED' ? 'รอจ่าย' : DISBURSEMENT_VOUCHER_STATUS_LABELS[status], tone: DISBURSEMENT_VOUCHER_BADGE_TONES[DISBURSEMENT_VOUCHER_STATUS_TONES[status]] };
 }
 
 export function disbursementVoucherPrimaryLabel(row: Pick<DisbursementVoucherListRow, 'status' | 'primaryAction'>): string {
@@ -86,20 +88,16 @@ export function disbursementVoucherPrimaryLabel(row: Pick<DisbursementVoucherLis
   return words[labels[row.primaryAction]];
 }
 
-export function disbursementVoucherDateLine(row: Pick<DisbursementVoucherListRow, 'status' | 'plannedPayDate' | 'paidDate'>, now = new Date()): string | null {
+export function disbursementVoucherDateLine(row: Pick<DisbursementVoucherListRow, 'status' | 'plannedPayDate' | 'paidDate' | 'createdAt'>): string | null {
   const words = workspaceDictionary.th;
-  if (row.status === 'PAID') return row.paidDate ? words['expenses.disbursement.paid_on'].replace('{date}', formatThaiDate(row.paidDate)) : null;
-  if (!row.plannedPayDate) return null;
-  const planned = coerceCivilDate(row.plannedPayDate);
-  const overdue = (civilDateToUtcDate(todayCivilDate('Asia/Bangkok', now)).getTime() - civilDateToUtcDate(planned).getTime()) / 86_400_000;
-  return row.status !== 'CANCELLED' && overdue > 0
-    ? words['expenses.disbursement.overdue'].replace('{n}', String(overdue))
-    : words['expenses.disbursement.planned_on'].replace('{date}', formatThaiDate(planned));
+  // The status badge already says จ่ายแล้ว (owner 2026-10-15): the paid date stands alone.
+  if (row.status === 'PAID') return row.paidDate ? formatThaiDate(row.paidDate) : null;
+  return row.plannedPayDate ? words['expenses.disbursement.planned_on'].replace('{date}', formatThaiDate(row.plannedPayDate)) : formatThaiDate(row.createdAt);
 }
 
-export function disbursementVoucherListQuery(params: URLSearchParams): { filter: DisbursementVoucherFilter; page: number; q: string } {
+export function disbursementVoucherListQuery(params: URLSearchParams): { filter: DisbursementVoucherFilter; page: number; q: string; order: 'newest' | 'oldest' } {
   const value = params.get('status');
   const page = Number(params.get('page') ?? 1);
   return { filter: DISBURSEMENT_VOUCHER_FILTERS.find((filter) => filter === value) ?? 'all',
-    page: Number.isSafeInteger(page) && page > 0 ? page : 1, q: params.get('q')?.trim() ?? '' };
+    page: Number.isSafeInteger(page) && page > 0 ? page : 1, q: params.get('q')?.trim() ?? '', order: params.get('order') === 'oldest' ? 'oldest' : 'newest' };
 }

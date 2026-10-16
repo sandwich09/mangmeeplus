@@ -123,10 +123,10 @@ export function transactionTaxErrorMessage(error: unknown): string {
   // let the shared map answer before the blanket status branches below.
   const shared = code ? translateApiError(code) : null;
   if (shared) return shared;
-  if (candidate.status === 403) return 'คุณไม่มีสิทธิ์ดำเนินการนี้';
-  if (candidate.status === 409) return 'ข้อมูลหรือช่วงวันที่ซ้ำกับการตั้งค่าที่มีอยู่ กรุณาโหลดใหม่';
+  if (candidate.status === 403) return 'คุณไม่มีสิทธิ์ทำรายการนี้ ขอสิทธิ์จากผู้ดูแลสิทธิ์';
+  if (candidate.status === 409) return 'ข้อมูลหรือช่วงวันที่ซ้ำกับการตั้งค่าที่มีอยู่ เปิดหน้านี้ใหม่';
   if (candidate.status === 422 && code === 'tax_profile_incomplete') return 'โปรไฟล์ยังขาดบัญชีหรือกฎรายงานที่จำเป็น';
-  if (candidate.status === 422) return 'รายการภาษีต้องได้รับการตรวจสอบก่อนดำเนินการ';
+  if (candidate.status === 422) return 'ตรวจข้อมูลภาษีของรายการก่อนทำต่อ';
   if (error instanceof Error) return apiErrorMessage(error);
   if (candidate.message) {
     return apiErrorMessage(Object.assign(new Error(candidate.message), { status: candidate.status, code }));
@@ -135,16 +135,16 @@ export function transactionTaxErrorMessage(error: unknown): string {
 }
 
 const TRANSACTION_TAX_DIAGNOSTIC_MESSAGES: Record<string, string> = {
-  tax_code_not_active_or_not_applicable: 'Tax Code นี้ไม่พร้อมใช้กับรายการหรือวันที่เอกสาร กรุณาเลือก Tax Code อื่น',
-  tax_code_ambiguous: 'พบ Tax Code ที่ตรงกันมากกว่าหนึ่งรายการ กรุณาติดต่อผู้ดูแลการตั้งค่าภาษี',
-  tax_account_rule_missing: 'Tax Code นี้ยังไม่ได้ผูกบัญชี กรุณาตั้งค่าบัญชีภาษีก่อนใช้งาน',
-  tax_account_rule_ambiguous: 'Tax Code นี้ผูกบัญชีซ้ำกัน กรุณาตรวจสอบการตั้งค่าบัญชีภาษี',
+  tax_code_not_active_or_not_applicable: 'Tax Code นี้ไม่พร้อมใช้กับรายการหรือวันที่เอกสาร เลือก Tax Code อื่น',
+  tax_code_ambiguous: 'พบ Tax Code ที่ตรงกันมากกว่าหนึ่งรายการ ติดต่อผู้ดูแลการตั้งค่าภาษี',
+  tax_account_rule_missing: 'Tax Code นี้ยังไม่ได้ผูกบัญชี ตั้งค่าบัญชีภาษีก่อนใช้งาน',
+  tax_account_rule_ambiguous: 'Tax Code นี้ผูกบัญชีซ้ำกัน ตรวจสอบการตั้งค่าบัญชีภาษี',
   functional_currency_fx_required: 'รายการสกุลเงินต่างประเทศยังขาดอัตราแลกเปลี่ยน วันที่ หรือแหล่งที่มา',
-  zero_tax_treatment_has_tax_amount: 'รายการภาษีอัตรา 0 ต้องไม่มียอดภาษี กรุณาตรวจสอบยอดเงิน',
-  entered_tax_amount_outside_tolerance: 'ยอดภาษีที่กรอกต่างจากยอดที่ระบบคำนวณเกินกำหนด กรุณาตรวจสอบยอดภาษี',
-  tax_evidence_required: 'รายการนี้ต้องแนบหลักฐานภาษีก่อนดำเนินการต่อ',
-  tax_report_rule_missing: 'Tax Code นี้ยังไม่ได้ผูกช่องรายงานภาษี กรุณาตั้งค่ารายงานภาษี',
-  partial_deductibility_split_policy_required: 'ภาษีซื้อที่ขอคืนได้บางส่วนยังขาดวิธีแบ่งยอด กรุณาตั้งค่านโยบายการแบ่งยอด',
+  zero_tax_treatment_has_tax_amount: 'รายการภาษีอัตรา 0 ต้องไม่มียอดภาษี ตรวจสอบยอดเงิน',
+  entered_tax_amount_outside_tolerance: 'ยอดภาษีที่กรอกต่างจากยอดที่ระบบคำนวณเกินกำหนด ตรวจสอบยอดภาษี',
+  tax_evidence_required: 'รายการนี้ต้องแนบหลักฐานภาษีก่อนทำต่อ',
+  tax_report_rule_missing: 'Tax Code นี้ยังไม่ได้ผูกช่องรายงานภาษี ตั้งค่ารายงานภาษี',
+  partial_deductibility_split_policy_required: 'ภาษีซื้อที่ขอคืนได้บางส่วนยังขาดวิธีแบ่งยอด ตั้งค่านโยบายการแบ่งยอด',
   import_tax_destination_required: 'ภาษีนำเข้ายังไม่ได้ระบุว่าจะบันทึกเป็นค่าใช้จ่ายหรือสินทรัพย์',
 };
 
@@ -152,12 +152,12 @@ const TRANSACTION_TAX_DIAGNOSTIC_MESSAGES: Record<string, string> = {
 export function transactionTaxDiagnosticMessage(diagnostic: string): string {
   const code = diagnostic.split(':', 1)[0] ?? '';
   return TRANSACTION_TAX_DIAGNOSTIC_MESSAGES[code]
-    ?? 'ตรวจสอบภาษีรายการนี้ไม่สำเร็จ กรุณาติดต่อผู้ดูแลการตั้งค่าภาษี';
+    ?? 'ตรวจสอบภาษีรายการนี้ไม่สำเร็จ ติดต่อผู้ดูแลการตั้งค่าภาษี';
 }
 
 const TAX_CODE_IMPORT_MESSAGES: Record<string, string> = {
-  'externalCode is required': 'กรุณาระบุรหัส Tax Code (externalCode)',
-  'displayName is required': 'กรุณาระบุชื่อ Tax Code (displayName)',
+  'externalCode is required': 'ระบุรหัส Tax Code (externalCode)',
+  'displayName is required': 'ระบุชื่อ Tax Code (displayName)',
   'taxRegime is invalid': 'รูปแบบ taxRegime ไม่ถูกต้อง',
   'SAP Tax Code import supports VAT and IMPORT_VAT only': 'นำเข้าได้เฉพาะ taxRegime แบบ VAT หรือ IMPORT_VAT',
   'direction is invalid': 'รูปแบบ direction ไม่ถูกต้อง',
@@ -166,7 +166,7 @@ const TAX_CODE_IMPORT_MESSAGES: Record<string, string> = {
   'claimabilityDefault is invalid': 'รูปแบบ claimabilityDefault ไม่ถูกต้อง',
   'transactionContexts contains an invalid value': 'transactionContexts มีค่าที่ระบบไม่รองรับ',
   'Tax rate must be between 0 and 100': 'อัตราภาษีต้องอยู่ระหว่าง 0 ถึง 100',
-  'At least one transaction context is required': 'กรุณาระบุ transactionContexts อย่างน้อย 1 รายการ',
+  'At least one transaction context is required': 'ระบุ transactionContexts อย่างน้อย 1 รายการ',
   'VAT Tax Codes support only OUTPUT, INPUT, or SELF_ASSESSED direction': 'Tax Code VAT รองรับ direction แบบ OUTPUT, INPUT หรือ SELF_ASSESSED เท่านั้น',
   'OUTPUT direction is incompatible with purchase/import context': 'direction แบบ OUTPUT ใช้กับบริบทซื้อหรือนำเข้าไม่ได้',
   'INPUT direction is incompatible with sale/export context': 'direction แบบ INPUT ใช้กับบริบทขายหรือส่งออกไม่ได้',
@@ -188,7 +188,7 @@ export function taxCodeImportDiagnosticMessage(diagnostic: string): string {
   if (/ requires a positive rate and tax calculation method$/.test(diagnostic)) {
     return 'Tax Code ประเภทนี้ต้องมีอัตราภาษีมากกว่า 0 และระบุวิธีคำนวณภาษี';
   }
-  return 'ข้อมูล Tax Code ในแถวนี้ไม่ถูกต้อง กรุณาตรวจสอบรูปแบบไฟล์';
+  return 'ข้อมูล Tax Code ในแถวนี้ไม่ถูกต้อง ตรวจสอบรูปแบบไฟล์';
 }
 
 /**

@@ -130,7 +130,7 @@ export function ClaimPaymentPosting({ companyId }: { companyId: string }) {
     setPostingId(paymentId); setError(null);
     try {
       await generateSourceJournal(companyId, 'reimbursement.payment', paymentId);
-      toast.success('สร้างสมุดรายวันเรียบร้อยแล้ว');
+      toast.success('สร้างสมุดรายวันแล้ว');
     } catch (e) { setError(err(e)); }
     // Reload either way: a posted row leaves the list, a refused one changes its status.
     await load();

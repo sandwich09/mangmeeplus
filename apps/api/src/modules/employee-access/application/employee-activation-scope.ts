@@ -12,5 +12,5 @@ export async function assertEmployeeActivationScope(tx: Prisma.TransactionClient
   const available = await tx.branch.count({ where: { companyId, status: 'ACTIVE', ...(all ? {} : { id: { in: ids } }) } });
   const validDefault = !membership.defaultBranchId || await tx.branch.count({ where: { companyId, id: membership.defaultBranchId, status: 'ACTIVE' } }) === 1;
   if (!available || !validDefault || (!all && membership.defaultBranchId && !ids.includes(membership.defaultBranchId))) throw new ConflictException({ code: 'EMPLOYEE_BRANCH_SCOPE_UNAVAILABLE',
-    message: 'กรุณาแก้สาขาที่พนักงานมีสิทธิ์และสาขาเริ่มต้นให้ใช้งานได้ ก่อนเปิดสิทธิ์อีกครั้ง' });
+    message: 'สาขาที่พนักงานมีสิทธิ์หรือสาขาเริ่มต้นยังใช้ไม่ได้ แก้ให้เป็นสาขาที่ใช้งานได้ก่อนเปิดสิทธิ์อีกครั้ง' });
 }

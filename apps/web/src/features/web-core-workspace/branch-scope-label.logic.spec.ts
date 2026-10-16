@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { branchScopeLabel, isBranchScope403 } from './branch-scope-label.logic';
+import { branchScopeLabel, isBranchScope403, branchStorageKeys } from './branch-scope-label.logic';
 import type { BranchOption } from './workspace-scope.api';
 
 const hq: BranchOption = { id: 'b-hq', code: 'HQ', name: 'สำนักงานใหญ่', type: 'HEAD_OFFICE' };
@@ -55,4 +55,17 @@ describe('isBranchScope403', () => {
       assert.equal(isBranchScope403(error, siam.id), false);
     }
   });
+});
+
+
+it('remembers filter and form branch per shop and person, ignoring legacy shop-only keys', () => {
+  const storage = new Map<string, string>([['watchdog.branchFilter.shop', 'old-person-branch'], ['watchdog.lastChosenBranch.shop', 'old-person-branch']]);
+  const alice = branchStorageKeys('shop', 'alice'), bob = branchStorageKeys('shop', 'bob');
+  assert.equal(storage.get(alice.filter), undefined); assert.equal(storage.get(alice.lastChosen), undefined);
+  storage.set(alice.filter, 'branch-a'); storage.set(alice.lastChosen, 'branch-a');
+  assert.equal(storage.get(bob.filter), undefined); assert.equal(storage.get(bob.lastChosen), undefined);
+  assert.equal(storage.get(branchStorageKeys('other-shop', 'alice').filter), undefined);
+  assert.equal(storage.get(branchStorageKeys('other-shop', 'alice').lastChosen), undefined);
+  assert.equal(storage.get(branchStorageKeys('shop', 'alice').filter), 'branch-a');
+  assert.equal(storage.get(branchStorageKeys('shop', 'alice').lastChosen), 'branch-a');
 });

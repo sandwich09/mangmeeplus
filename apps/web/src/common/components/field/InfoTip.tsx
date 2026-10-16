@@ -52,6 +52,7 @@ export function InfoTip({ label, text }: { label: string; text: string }): JSX.E
       </button>
       <PopoverPanel
         open={open}
+        onClose={() => setOpen(false)}
         anchorRef={buttonRef}
         panelRef={panelRef}
         height={160}

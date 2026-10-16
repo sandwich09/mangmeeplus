@@ -155,11 +155,13 @@ export function permittedUsageGuidance(
   canOpenManualExpense: boolean = permissions.includes('expense.create'),
 ) {
   return [
-    { path: 'expenses/upload', permission: 'expense.receipt.upload', title: 'อัปโหลดใบเสร็จ', help: 'แนบเอกสาร รออ่านข้อมูล แล้วตรวจยอดและหลักฐานก่อนส่งตรวจ' },
+    { path: 'expenses/upload', permission: 'expense.receipt.upload', title: 'อัปโหลดใบเสร็จ', help: 'แนบเอกสาร รออ่านข้อมูล แล้วตรวจยอดและหลักฐานก่อนส่งให้ตรวจ' },
     { path: 'expenses/manual', permission: 'expense.create', title: 'บันทึกค่าใช้จ่ายด้วยมือ', help: 'กรอกผู้รับเงิน รายการและยอด พร้อมแนบหลักฐานหรือระบุเหตุผลที่ไม่มีใบเสร็จ' },
     { path: 'expenses', permission: 'expense.review', title: 'ตรวจค่าใช้จ่าย', help: 'ตรวจข้อมูลและหลักฐานที่ยังไม่ครบก่อนยืนยันรายการ' },
     { path: 'reimbursements', permission: 'reimbursement.create', title: 'ขอเบิกคืนเงินสำรองจ่าย', help: 'เลือกเอกสารต้นทางที่รองรับ ตรวจข้อมูล แล้วส่งตามลำดับอนุมัติ' },
     { path: 'expenses/evidence', permission: 'expense.evidence.read', title: 'ตรวจหลักฐานทางบัญชี', help: 'ตรวจรายการยืนยันแล้วและความครบของหลักฐานก่อนส่งต่อบัญชี' },
-    { path: 'settings/employees', permission: 'access.employee.update', title: 'จัดการพนักงาน', help: 'กำหนดบทบาทและสาขาที่พนักงานทำงานได้' },
+    // The list: the address used here before opened the add-a-person form for whoever may add people, and sent
+    // everyone else to this same list.
+    { path: 'settings/access-overview', permission: 'access.employee.update', title: 'จัดการพนักงาน', help: 'กำหนดบทบาทและสาขาที่พนักงานทำงานได้' },
   ].filter((item) => permissions.includes(item.permission) && (item.path !== 'expenses/manual' || canOpenManualExpense));
 }

@@ -128,6 +128,11 @@ export const PLAN_TIER_PRESETS: Record<PlanTierKey, { labelTh: string; branchLim
   ENTERPRISE_1999: { labelTh: 'ธุรกิจ (ENTERPRISE)', branchLimit: 10, employeeLimit: 30, monthlySlipLimit: 500 },
 };
 
+/** Shop-web display only; billing and LINE keep the shared preset labels. */
+export function shopPlanTierLabel(tier: PlanTierKey): string {
+  return PLAN_TIER_PRESETS[tier].labelTh.replace(/ \((STARTER|BASIC|PRO|ENTERPRISE)\)$/, '');
+}
+
 /**
  * Owner 2026-09-05 (review R02/F1): the one tier every self-service signup provisions, whichever
  * form it came in through. Named here rather than in provisioning so the page that advertises the

@@ -54,3 +54,21 @@ describe('PrismaLedgerRepository.createJournalEntry', () => {
     assert.equal(credit.debitAmount, '0');
   });
 });
+
+it('refuses a stale VAT right when journal generation overlaps an expense decision', async () => {
+  const tx: any = { $executeRaw: async () => 1, expenseRecord: { findFirst: async () => ({ status: 'CONFIRMED', inputVatClaimStatus: 'CLAIMABLE', taxEvidenceStatus: 'USABLE_FOR_TAX' }) },
+    journalEntry: { create: async () => { throw new Error('stale journal must not be written'); } } };
+  const repo = new PrismaLedgerRepository({ client: {} } as any);
+  await assert.rejects(() => repo.createJournalEntry({ ...entry([]), entryType: 'GENERATED', sourceType: 'expense.record', sourceId: 'e1',
+    expectedInputVatClaimStatus: 'NEEDS_REVIEW', expectedTaxEvidenceStatus: 'USABLE_FOR_TAX' } as any, tx),
+    (error: any) => error.getResponse?.().code === 'expense_posting_source_changed');
+});
+it('posting an expense draft takes the same correction lock as a VAT decision', async () => {
+  const calls: string[] = [];
+  const tx: any = { $executeRaw: async () => { calls.push('lock'); return 1; }, journalEntry: {
+    findUnique: async () => ({ id: 'j1', companyId: 'c1', sourceId: 'e1', sourceType: 'expense.record', entryType: 'GENERATED', status: 'DRAFT' }),
+    update: async () => { calls.push('post'); return { id: 'j1', status: 'POSTED' }; },
+  } };
+  await new PrismaLedgerRepository({ client: {} } as any).postJournalEntry('j1', 'u1', tx);
+  assert.deepEqual(calls, ['lock', 'post']);
+});

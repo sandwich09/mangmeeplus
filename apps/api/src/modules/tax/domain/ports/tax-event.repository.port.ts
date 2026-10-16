@@ -39,7 +39,7 @@ export type TaxEventRecord = {
   updatedAt: Date;
 };
 
-export type UpsertTaxEventInput = Omit<TaxEventRecord, 'id' | 'createdAt' | 'updatedAt'> & { expectedExpenseConfirmedAt?: Date | null };
+export type UpsertTaxEventInput = Omit<TaxEventRecord, 'id' | 'createdAt' | 'updatedAt'> & { expectedExpenseConfirmedAt?: Date | null; expectedInputVatClaimStatus?: string; expectedTaxEvidenceStatus?: string };
 
 export interface TaxEventRepositoryPort {
   findByIdempotencyKey(key: string): Promise<TaxEventRecord | null>;

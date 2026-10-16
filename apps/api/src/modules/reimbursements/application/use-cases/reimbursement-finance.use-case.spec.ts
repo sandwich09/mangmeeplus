@@ -3166,3 +3166,53 @@ it('multi payout 2b: refuses currency and foreign/inactive source banks before r
     assert.equal(req.paymentStatus, 'UNPAID');
   }
 });
+
+it('duplicate comparisons name the matching claim but only grant its link to a reader', async () => {
+  const req = financeReviewedRequest({ duplicateCandidates: [{ id: 'comparison', candidateType: 'ATTACHMENT_CHECKSUM', candidateRequestId: 'other-claim', score: 100, status: 'OPEN' }] });
+  const repo = fakeRepo(req);
+  repo.findRequestById = async () => ({ ...req, id: 'other-claim', requestNo: 'RB-OTHER', requesterUserId: 'other', requesterDisplayNameSnapshot: 'สมชาย', branchId: 'branch-2' });
+  for (const [viewer, canOpen] of [[{ ...ctx([]), permissions: ['reimbursement.read_own'], userId: 'staff-1' }, false], [ctx([]), true]] as const) {
+    const detail = await detailWithFileNames(repo, fakeDetailEvidence as any, 'co-1', req, viewer);
+    assert.equal(detail.duplicateCandidates[0].documentNumber, 'RB-OTHER');
+    assert.equal(detail.duplicateCandidates[0].requesterOrPayee, 'สมชาย');
+    assert.equal(detail.duplicateCandidates[0].amount, '500.0000');
+    assert.equal(detail.duplicateCandidates[0].date, '2026-01-01T00:00:00.000Z');
+    assert.equal(detail.duplicateCandidates[0].canOpen, canOpen);
+  }
+});
+
+it('duplicate comparisons include the claim expense matches with payee, amount, date and expense read authority', async () => {
+  const req = financeReviewedRequest({ possibleDuplicateExpenseCount: 1 });
+  const repo = fakeRepo(req);
+  repo.listClaimDuplicateExpenseTargets = async () => [{ id: 'expense-match', candidateType: 'MANUAL', candidateExpenseId: 'other-expense', status: 'OPEN', score: 90,
+    documentNumber: 'EXP-OTHER', requesterOrPayee: 'ตลาดสด', amount: '65', currency: 'THB', date: '2026-01-01T00:00:00.000Z' }];
+  for (const canOpen of [false, true]) {
+    const detail = await detailWithFileNames(repo, { ...fakeDetailEvidence, canReadExpense: async () => canOpen } as any, 'co-1', req, ctx([]));
+    const comparison = detail.duplicateCandidates[0];
+    assert.equal(comparison.documentNumber, 'EXP-OTHER'); assert.equal(comparison.requesterOrPayee, 'ตลาดสด');
+    assert.equal(comparison.amount, '65'); assert.equal(comparison.date, '2026-01-01T00:00:00.000Z');
+    assert.equal(comparison.canOpen, canOpen); assert.equal(comparison.candidateExpenseId, canOpen ? 'other-expense' : undefined);
+  }
+});
+
+it('duplicate dismissal confirms projections and refreshes payment readiness before its transaction commits', async () => {
+ const req = financeReviewedRequest({ status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED' });
+ const repo = fakeRepo(req); const tx = {}; let inside = false; const calls: string[] = [];
+ repo.resolvePaymentDuplicatesAtomic = async (input: any) => { inside = true; await input.onResolvedPersisted(tx); inside = false; calls.push('commit'); return req; };
+ repo.refreshClaimProjectionState = async (...args: any[]) => { assert.equal(inside, true); assert.equal(args[3], tx); calls.push('ready'); };
+ const uc = new FinanceReviewReimbursementUseCase(repo, { log: async (_entry: any, db: any) => { assert.equal(db, tx); calls.push('audit'); } } as any,
+  { reconcileExisting: async (...args: any[]) => { assert.equal(inside, true); assert.equal(args[3], tx); calls.push('confirm'); } } as any,
+  fakeDetailEvidence as any, { executeForReimbursement: async () => 1 } as any);
+ await uc.execute(ctx(['reimbursement.duplicate.resolve']), 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: 'ใบเสร็จคนละใบ' });
+ assert.ok(calls.indexOf('confirm') < calls.indexOf('commit'));
+ assert.ok(calls.indexOf('ready') < calls.indexOf('commit'));
+});
+
+it('keeps resolved expense comparisons after the duplicate blocker is cleared', async () => {
+ const req = financeReviewedRequest({ possibleDuplicateExpenseCount: 0 });
+ const repo = fakeRepo(req);
+ repo.listClaimDuplicateExpenseTargets = async () => [{ id: 'resolved-pair', candidateType: 'MANUAL', status: 'DISMISSED', candidateExpenseId: 'expense-other', documentNumber: 'EXP-OTHER', score: 90, resolvedByName: 'สมศรี', resolvedAt: '2026-10-13T00:00:00.000Z' }];
+ const detail = await detailWithFileNames(repo, { ...fakeDetailEvidence, canReadExpense: async () => true } as any, 'co-1', req, ctx([]));
+ assert.equal(detail.duplicateCandidates[0]?.documentNumber, 'EXP-OTHER');
+ assert.equal(detail.duplicateCandidates[0]?.resolvedByName, 'สมศรี');
+});

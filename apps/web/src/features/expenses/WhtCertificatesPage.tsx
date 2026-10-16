@@ -1,140 +1,83 @@
 'use client';
 
-import { Fragment, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { WHT_CERTIFICATE_HISTORY_EVENT_LABELS, WHT_HANDOFF_MISSING_LABELS, type WhtCertificateHandoffPageDto } from '@watchdog-bms/contracts';
-import { MangmeeBadge, MangmeeCard, MangmeePage, type MangmeeTone } from '@/common/components/mangmee';
+import { companyProfilePath, WHT_CERTIFICATE_HISTORY_EVENT_LABELS, type WhtCertificateHandoffPageDto } from '@watchdog-bms/contracts';
+import { MangmeeBadge, MangmeeCard, MangmeePage, MetricGrid } from '@/common/components/mangmee';
 import { CoverLoader, EmptyState, ErrorState, ForbiddenState, LoadingState } from '@/common/components/state';
-import { useToast } from '@/common/components/toast';
-import { downloadArtifact } from '@/common/files/download-artifact';
+import { SelectField } from '@/common/components/field';
+import { quietButtonClass } from '@/common/components/button/button-classes';
+import { Pagination } from '@/common/components/data-table/Pagination';
+import { Notice } from '@/common/components/notice';
+import { FilterTabs } from '@/common/components/tabs';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
-import { formatThaiDate } from '@/common/i18n/thai-date';
+import { formatThaiDate, formatThaiMonth } from '@/common/i18n/thai-date';
 import { formatMessage } from '@/common/i18n/error-message.logic';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
-import { baht, btnClass, inputClass, ghostClass, err } from './ExpensesUi';
-import { canIssueWhtReplacementCopy } from './expenses.model';
-import { listWhtHandoffsPaged, issueSystemWhtCertificate, downloadSystemWhtCertificate, issueSystemWhtReplacementCopy } from './expenses.api';
-import { certificateListQuery, certificateListState, certificatePrimaryAction, certificateTab } from './expense-wht-certificates.logic';
-import { WHT_CERTIFICATE_TABS, WHT_CERTIFICATE_PAGE_SIZE, type WhtCertificateListState, type WhtCertificateRow, type WhtCertificateTab, type WhtCertificateCommand } from './expense-wht-certificates.model';
-import { ExpensePreviousCertificate } from './ExpensePreviousCertificate';
-import { WhtPayerIdentityNotice } from './WhtPayerIdentityNotice';
-import { WhtPayeeAddressDialog } from './WhtPayeeAddressDialog';
-import { WhtIssueButton } from './WhtIssueButton';
+import { amountText, inputClass, ghostClass, err } from './ExpensesUi';
+import { listWithholdingCertificates } from '../tax/tax.api';
+import { certificateListQuery, certificateListState, certificateRowHref, certificateRowStatus } from './expense-wht-certificates.logic';
+import { WHT_CERTIFICATE_TABS, WHT_CERTIFICATE_PAGE_SIZE, type WhtCertificateListState, type WhtCertificateRow, type WhtCertificateTab } from './expense-wht-certificates.model';
 import styles from './WhtCertificatesPage.module.css';
 
-type RowProps = { row: WhtCertificateRow; companyId: string; permissions: string[]; locale: SupportedLocale; busy: boolean; error?: string;
-  onAddress: (row: WhtCertificateRow) => void;
-  onAction: (row: WhtCertificateRow, action: WhtCertificateCommand) => void };
-const tones: Record<WhtCertificateTab, MangmeeTone> = { pending: 'amber', system: 'brand', external: 'sky', cancelled: 'rose' };
-function Status({ row, locale }: Pick<RowProps, 'row' | 'locale'>) {
-  const incomplete = row.status === 'REQUIRED' && row.missing.length > 0;
-  return <MangmeeBadge className={styles.badge} tone={incomplete ? 'amber' : tones[certificateTab(row)]}>
-    {t(`expenses.certificates.${incomplete ? 'incomplete' : certificateTab(row)}`, locale)}</MangmeeBadge>;
+type RowProps = { row: WhtCertificateRow; companyId: string; permissions: string[]; locale: SupportedLocale; shopBanner?: boolean;
+  onOpen?: () => void };
+function Status({ row, shopBanner }: Pick<RowProps, 'row' | 'shopBanner'>) {
+  if (!certificateRowStatus(row, shopBanner)) return null;
+  return <MangmeeBadge className={styles.badge} tone={row.status === 'SYSTEM_ISSUED' || certificateRowStatus(row, shopBanner) === 'พร้อมออก' ? 'brand' : row.status === 'REQUIRED' ? 'amber' : 'slate'}>{certificateRowStatus(row, shopBanner)}</MangmeeBadge>;
 }
-function expenseHref(companyId: string, row: WhtCertificateRow) {
-  return `/companies/${companyId}/expenses${row.expenseId ? `/${row.expenseId}` : ''}`;
+function paymentDate(row: WhtCertificateRow) {
+  if (row.status === 'REQUIRED' && row.payments) {
+    if (row.payments.length === 0) return 'ยังไม่จ่าย';
+    if (row.payments.length > 1) return 'หลายการจ่าย';
+    return formatThaiDate(row.payments[0].paidAt, '-');
+  }
+  return formatThaiDate(row.currentCertificate?.paymentDate ?? row.externalPaymentDate ?? row.prefill.paymentDate ?? row.documentDate, '-');
 }
-function IssuedLine({ row, locale }: Pick<RowProps, 'row' | 'locale'>) {
-  const number = row.certificateNumber ?? row.externalCertificateNumber;
-  if (row.status === 'CANCELLED') return <div className="space-y-1">
-    <div>{number && <><span className={styles.unit}>{formatMessage(t('expenses.certificates.number', locale), { number })}</span>{' · '}</>}<span className={styles.unit}>{formatMessage(t('expenses.certificates.cancelled_at', locale), { date: formatThaiDate(row.cancellation?.cancelledAt, '—') })}</span></div>
-    {row.cancellation && <p className="break-words">{WHT_CERTIFICATE_HISTORY_EVENT_LABELS[row.cancellation.eventType].replace(/^ยกเลิก /, '')}{row.cancellation.reason && ` · ${row.cancellation.reason}`}</p>}
-  </div>;
-  // "เลขที่ …" and "ออกเมื่อ …" each stay whole: a number never breaks after its hyphen while it fits the line.
-  return number ? <div>{formatMessage(t('expenses.certificates.issued', locale), { number,
-    date: formatThaiDate(row.certificateIssuedAt ?? row.externalIssuedDate, '-') }).split(' · ')
-    .map((part, index) => <Fragment key={index}>{index > 0 && ' · '}<span className={styles.unit}>{part}</span></Fragment>)}</div> : null;
+function formName(row: WhtCertificateRow) {
+  return row.formType === 'PND3' ? 'ภ.ง.ด.3' : row.formType === 'PND53' ? 'ภ.ง.ด.53' : 'ยังไม่รู้แบบภาษี';
 }
-function MatchedPreviousNumber({ row, locale }: Pick<RowProps, 'row' | 'locale'>) {
-  if (!row.matchedPreviousNumber) return null;
-  const current = row.status === 'SYSTEM_ISSUED' ? row.currentCertificate?.number ?? row.certificateNumber
-    : row.status === 'EXTERNAL_LINKED' ? row.externalCertificateNumber : null;
-  const line = (key: DictionaryKey, number: string) => {
-    const [before, after] = t(key, locale).split('{number}');
-    return <p><span className={styles.unit}>{before}<span className={number.length > 30 ? undefined : 'whitespace-nowrap'}>{number}</span></span>{after}</p>;
-  };
-  return <div className="space-y-1">
-    {line('expenses.certificates.matched_previous', row.matchedPreviousNumber)}
-    {current && line('expenses.certificates.current_number', current)}
+function CertificateDetails(props: Pick<RowProps, 'row' | 'companyId' | 'permissions' | 'locale'>) {
+  const { row, locale } = props;
+  const number = row.status === 'REQUIRED' ? null : row.status === 'EXTERNAL_LINKED' ? row.externalCertificateNumber ?? row.certificateNumber : row.currentCertificate?.number ?? row.certificateNumber;
+  return <div className={styles.number}>
+    <div className={styles.meta}>{number && <><span className={styles.unit}>{number}</span>{row.expenseNumber && ' · '}</>}<span className={styles.unit}>{row.expenseNumber}</span></div>
+    {/* Owner 2026-10-15: no cancelled-certificate history in the list (rows keep one height); the expense page holds it. */}
+    {row.matchedPreviousNumber && <p>{formatMessage(t('expenses.certificates.matched_previous', locale), { number: row.matchedPreviousNumber })}</p>}
+    {row.status === 'CANCELLED' && row.cancellation && <p>
+      {formatMessage(t('expenses.certificates.cancelled_at', locale), { date: formatThaiDate(row.cancellation.cancelledAt, '—') })} · {WHT_CERTIFICATE_HISTORY_EVENT_LABELS[row.cancellation.eventType].replace(/^ยกเลิก /, '')}{row.cancellation.reason && ` · ${row.cancellation.reason}`}
+    </p>}
   </div>;
 }
-/**
- * One control to the expense page per row. A row whose next step is ON the expense page (fix its data, record an own certificate)
- * gets the button and shows its expense number as plain words; every other row keeps the number as the link and gets no button.
- */
-export function certificateRowOpensExpense(row: RowProps['row'], permissions: string[]) {
-  const action = certificatePrimaryAction(row, permissions);
-  return action === 'edit' || action === 'open' && (row.status === 'REQUIRED' || !row.expenseNumber);
-}
-function ExpenseNumber({ row, companyId, permissions, locale }: Pick<RowProps, 'row' | 'companyId' | 'permissions' | 'locale'>) {
-  if (!row.expenseNumber) return null;
-  const words = <span className={styles.unit}>{expenseNumberWords(t('expenses.certificates.expense', locale), row.expenseNumber)}</span>;
-  return certificateRowOpensExpense(row, permissions) ? <div>{words}</div> : <Link className={styles.link} href={expenseHref(companyId, row)}>{words}</Link>;
-}
-function CertificateActions({ row, companyId, permissions, locale, busy, error, onAction, onAddress }: RowProps) {
-  const action = certificatePrimaryAction(row, permissions);
-  const href = expenseHref(companyId, row);
-  // Order of presses: the shop's own details, then the payee address, then issue. A row never offers a press the server will refuse.
-  const payerBlocked = action === 'issue' && !!row.payerMissing?.length;
-  const addressBlocked = action === 'issue' && !payerBlocked && row.hasPayeeAddress === false;
-  return <div>
-    {row.status === 'REQUIRED' && row.missing.length > 0 && <div className={styles.reasons}>{row.missing.map(reason => <p key={reason}>{WHT_HANDOFF_MISSING_LABELS[reason]}</p>)}</div>}
-    {action === 'issue' && row.hasPayeeAddress === false && <p className={styles.warning}>{t('expenses.certificate_card.no_address_warning', locale)}{!addressBlocked && <>{' '}<button type="button" className={styles.link} disabled={busy} aria-busy={busy} onClick={() => onAddress(row)}>{t('expenses.certificates.add_address', locale)}</button></>}</p>}
-    {row.status === 'REQUIRED' && !!row.payerMissing?.length && <WhtPayerIdentityNotice companyId={companyId} missing={row.payerMissing} permissions={permissions} primary={payerBlocked} returnTo={row.expenseId ? `${expenseHref(companyId, row)}#wht-certificate` : undefined} />}
-    {error && <p role="alert" className={styles.error}>{error}</p>}
-    {payerBlocked ? (permissions.includes('company.legal_identity.manage') ? null
-        : <Link data-primary-action="open" href={href} className={`${btnClass} ${styles.primary}`}>{t('expenses.certificates.open', locale)}</Link>)
-      : addressBlocked ? <button type="button" data-primary-action="address" disabled={busy} aria-busy={busy} onClick={() => onAddress(row)} className={`${btnClass} ${styles.primary}`}>{t('expenses.certificates.add_address', locale)}</button>
-      : action === 'issue' ? <WhtIssueButton handoff={row} busy={busy} className={`${btnClass} ${styles.primary}`} onIssue={() => onAction(row, 'issue')} />
-      : action === 'download' ? <button type="button" data-primary-action={action} className={`${btnClass} ${styles.primary}`} disabled={busy} aria-busy={busy}
-      onClick={() => onAction(row, action)}>{t(busy ? 'expenses.certificates.working' : 'expenses.certificates.download', locale)}</button>
-      : !certificateRowOpensExpense(row, permissions) ? null
-      : <Link data-primary-action={action} href={href} className={`${btnClass} ${styles.primary}`}>
-        {t(action === 'edit' ? 'expenses.certificates.edit' : 'expenses.certificates.open', locale)}</Link>}
-    {row.status === 'SYSTEM_ISSUED' && canIssueWhtReplacementCopy(row, permissions) && <button type="button" className={`${ghostClass} ${styles.secondary}`} disabled={busy} aria-busy={busy}
-      onClick={() => onAction(row, 'replacement')}>{t('expenses.certificates.replacement', locale)}</button>}
-    {row.status === 'SYSTEM_ISSUED' && !row.expenseNumber && <Link className={styles.link} href={href}>{t('expenses.certificates.open', locale)}</Link>}
-  </div>;
-}
-function PaidAmounts({ row, locale }: Pick<RowProps, 'row' | 'locale'>) {
-  return <div>{formatMessage(t('expenses.certificates.paid_withheld', locale), {
-    amount: baht(row.currentCertificate?.grossAmount ?? row.prefill.grossAmount), wht: baht(row.withheldAmount),
-  })}</div>;
-}
-/** The words may wrap before the number; the number itself never breaks. */
-function expenseNumberWords(template: string, number: string) {
-  const [before, after = ''] = template.split('{number}');
-  return <>{before}<span className="whitespace-nowrap">{number}</span>{after}</>;
-}
-
 export function WhtCertificateCard(props: RowProps) {
   const { row, companyId, locale } = props;
-  return <article data-testid="wht-certificate-card"><MangmeeCard className={styles.card}>
-    <div className={styles.heading}><span className={styles.name} title={row.payeeName}>{row.payeeName}</span><Status row={row} locale={locale} /></div>
+  return <article data-testid="wht-certificate-card" role="link" tabIndex={0} aria-label={`เปิดรายจ่าย ${row.expenseNumber ?? row.payeeName}`} onClick={props.onOpen}
+    onKeyDown={event => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); props.onOpen?.(); } }}><MangmeeCard className={styles.card}>
+    <div className={styles.heading}><span className={styles.name}>{row.payeeName}</span><span className={styles.money}>{amountText(row.withheldAmount)} บาท</span></div>
     <div className={styles.facts}>
-      {row.expenseDescription && <p className={styles.description} title={row.expenseDescription}>{row.expenseDescription}</p>}
-      <div>{t('expenses.certificates.tax_id', locale)} {row.payeeTaxId || '-'}</div>
-      <ExpenseNumber row={row} companyId={companyId} permissions={props.permissions} locale={locale} />
-      <div>{t('expenses.certificates.date', locale)} {formatThaiDate(row.documentDate, '-')}</div>
-      <PaidAmounts row={row} locale={locale} />
-      <IssuedLine row={row} locale={locale} />
-      <MatchedPreviousNumber row={row} locale={locale} />
-      {row.previousCertificate && <ExpensePreviousCertificate previous={row.previousCertificate} locale={locale} />}
+      <CertificateDetails row={row} companyId={companyId} permissions={props.permissions} locale={locale} />
+      <div className={styles.meta}>{paymentDate(row)} · {formName(row)}</div>
+      <Status row={row} shopBanner={props.shopBanner} />
     </div>
-    <CertificateActions {...props} />
   </MangmeeCard></article>;
 }
 
 export function WhtCertificatesPage({ companyId, permissions }: { companyId: string; permissions: string[] }) {
   const locale = useWorkspaceLocale();
-  const toast = useToast();
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const { tab, search, page } = certificateListState(params);
+  const { tab, search, page, order } = certificateListState(params);
+  const periodKey = params.get('periodKey') ?? '';
+  const formType = params.get('formType') === 'PND3' ? 'PND3' : params.get('formType') === 'PND53' ? 'PND53' : undefined;
+  function filterMonthOrForm(key: string, value: string) {
+    const next = new URLSearchParams(params.toString());
+    if (value) next.set(key, value); else next.delete(key);
+    next.set('page', '1'); router.replace(`${pathname}?${next}`, { scroll: false });
+  }
   const branchId = useBranchFilter()?.branchId || undefined;
   const canRead = permissions.includes('wht.certificate.issue');
   const [searchInput, setSearchInput] = useState(search);
@@ -142,96 +85,100 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
-  const [addressRow, setAddressRow] = useState<WhtCertificateRow | null>(null);
   const navigate = (state: WhtCertificateListState) => router.replace(`${pathname}?${certificateListQuery(new URLSearchParams(params.toString()), state)}`, { scroll: false });
   useEffect(() => { setSearchInput(search); }, [search]);
   useEffect(() => {
     if (searchInput === search) return;
-    const timer = setTimeout(() => navigate({ tab, search: searchInput, page: 1 }), 300);
+    const timer = setTimeout(() => navigate({ tab, order, search: searchInput, page: 1 }), 300);
     return () => clearTimeout(timer);
     // The URL is the saved filter; back/forward restores the input above.
-  }, [searchInput, search, tab, pathname, params, router]);
+  }, [searchInput, search, tab, order, pathname, params, router]);
   useEffect(() => {
     if (!canRead) return;
     let current = true;
     setLoading(true); setError(null);
-    void listWhtHandoffsPaged(companyId, { status: WHT_CERTIFICATE_TABS[tab], search, branchId, page, pageSize: WHT_CERTIFICATE_PAGE_SIZE })
+    void listWithholdingCertificates(companyId, { periodKey: periodKey || undefined, formType, status: WHT_CERTIFICATE_TABS[tab], search, branchId, page, order, pageSize: WHT_CERTIFICATE_PAGE_SIZE })
       .then(result => {
         if (!current) return;
         const lastPage = Math.max(1, Math.ceil(result.total / WHT_CERTIFICATE_PAGE_SIZE));
-        if (page > lastPage) navigate({ tab, search, page: lastPage });
+        if (page > lastPage) navigate({ tab, order, search, page: lastPage });
         setData(result);
       })
       .catch(failure => { if (current) setError(err(failure, locale)); })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
-  }, [companyId, canRead, tab, search, branchId, page, refresh, locale]);
-  const perform = async (row: WhtCertificateRow, action: WhtCertificateCommand) => {
-    if (busyId) return;
-    setBusyId(row.id); setRowErrors(previous => ({ ...previous, [row.id]: '' }));
-    try {
-      const options = { suppressErrorToast: true };
-      const result = action === 'issue' ? await issueSystemWhtCertificate(companyId, row.id, options)
-        : action === 'replacement' ? await issueSystemWhtReplacementCopy(companyId, row.id, options)
-          : await downloadSystemWhtCertificate(companyId, row.id, options);
-      downloadArtifact(result.pdfArtifact);
-      if (action !== 'download') {
-        toast.success(formatMessage(t(action === 'issue' ? 'expenses.certificates.issued_toast' : 'expenses.certificates.replacement_toast', locale), { number: result.certificateNumber }));
-        setRefresh(value => value + 1);
-      }
-    } catch (failure) { setRowErrors(previous => ({ ...previous, [row.id]: err(failure, locale) })); }
-    finally { setBusyId(null); }
-  };
+  }, [companyId, canRead, tab, search, branchId, page, order, refresh, locale, periodKey, formType]);
   const rows = data?.rows ?? [];
   const otherTabs = search.trim() && rows.length === 0
     ? (Object.keys(WHT_CERTIFICATE_TABS) as WhtCertificateTab[]).filter(choice => choice !== tab && (data?.counts[WHT_CERTIFICATE_TABS[choice]] ?? 0) > 0) : [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / WHT_CERTIFICATE_PAGE_SIZE));
-  const rowProps = (row: WhtCertificateRow): RowProps => ({ row, companyId, permissions, locale, busy: busyId === row.id, error: rowErrors[row.id], onAction: perform, onAddress: setAddressRow });
+  const returnTo = `${pathname}${params.size ? `?${params}` : ''}`;
+  const openRow = (row: WhtCertificateRow) => router.push(certificateRowHref(companyId, row, permissions, returnTo));
+  const rowProps = (row: WhtCertificateRow): RowProps => ({ row, companyId, permissions, locale, shopBanner, onOpen: () => openRow(row) });
   const word = (key: DictionaryKey) => t(key, locale);
-  return <MangmeePage title={word('expenses.certificates.title')} description={word('expenses.certificates.description')}>
-    {!canRead ? <ForbiddenState locale={locale} /> : <MangmeeCard className={styles.card}><div className={styles.section}>
-      <div className={styles.filters} aria-label={word('expenses.certificates.title')}>
-        {(Object.keys(WHT_CERTIFICATE_TABS) as WhtCertificateTab[]).map(choice => <button key={choice} type="button" className={styles.filter}
-          aria-pressed={tab === choice} disabled={loading || !!busyId} aria-busy={loading && tab === choice} onClick={() => navigate({ tab: choice, search: searchInput, page: 1 })}>
-          {word(`expenses.certificates.${choice}`)} ({data?.counts[WHT_CERTIFICATE_TABS[choice]] ?? 0})</button>)}
-      </div>
+  const waitingForShop = rows.filter(row => row.status === 'REQUIRED' && row.payerMissing?.length);
+  const shopMissing = [...new Set(waitingForShop.flatMap(row => row.payerMissing ?? []))];
+  const canFillShop = permissions.includes('company.legal_identity.manage');
+  const shopBanner = canFillShop && shopMissing.length > 0;
+  // A status column only when some row has something to say beyond the tab's name.
+  const statusColumn = rows.some(row => certificateRowStatus(row, shopBanner));
+  // Return the former menu column's room to the payee; every tab totals 100%.
+  const columnWidths = statusColumn ? [37, 11, 9, 13, 12, 18] : [49, 13, 10, 14, 14];
+  const changeOrder = () => navigate({ tab, search, page: 1, order: order === 'newest' ? 'oldest' : 'newest' });
+  return <MangmeePage title={word('expenses.certificates.title')} description={word('expenses.certificates.description')} className="mangmee-flat">
+    {!canRead ? <ForbiddenState locale={locale} /> : <div className={styles.section}>
+      <MangmeeCard className="mb-4 p-4"><MetricGrid columns={2} items={[
+        { key: 'count', label: word(`expenses.certificates.${tab}`), value: data ? total.toLocaleString('th-TH') : '—', unit: 'ใบ', dot: 'bg-gray-400' },
+        { key: 'withheld', label: 'ภาษีที่หักไว้', value: data?.sums ? amountText(data.sums.withheld) : '—', unit: 'บาท', dot: 'bg-brand-500' },
+      ]} /></MangmeeCard>
+      <MangmeeCard className="p-4">
+      <FilterTabs className={styles.tabs} aria-label={word('expenses.certificates.title')} value={tab} onChange={choice => navigate({ tab: choice, order, search: searchInput, page: 1 })}
+        tabs={(Object.keys(WHT_CERTIFICATE_TABS) as WhtCertificateTab[]).map(choice => ({ key: choice, label: word(`expenses.certificates.${choice}`), count: data?.counts[WHT_CERTIFICATE_TABS[choice]] ?? 0, disabled: loading }))} />
+      {/* What can be searched is said once, inside the box (the full list of what matches is the box's spoken name). */}
+      <div className="mb-4 grid grid-cols-1 items-end gap-4 lg:grid-cols-3">
+        <SelectField id="certificate-month" label="เดือนที่จ่าย" value={periodKey} disabled={loading} onChange={e => filterMonthOrForm('periodKey', e.target.value)}>
+          <option value="">ทุกเดือน</option>
+          {(data?.months ?? []).map(month => <option key={month} value={month}>{formatThaiMonth(month)}</option>)}
+        </SelectField>
+        <SelectField id="certificate-form" label="แบบภาษี" value={formType ?? ''} disabled={loading} onChange={e => filterMonthOrForm('formType', e.target.value)}><option value="">ทั้งหมด</option><option value="PND3">ภ.ง.ด.3</option><option value="PND53">ภ.ง.ด.53</option></SelectField>
       <input type="search" className={`${inputClass} ${styles.search}`} aria-label={word('expenses.certificates.search')} placeholder={word('expenses.certificates.search_short')}
-        value={searchInput} disabled={!!busyId} onChange={event => setSearchInput(event.target.value)} />
-      <p className={styles.hint}>{word('expenses.certificates.search')}</p>
+        value={searchInput} onChange={event => setSearchInput(event.target.value)} />
+      </div>
       <CoverLoader active={loading && !!data} label={word('expenses.certificates.loading')}>
         {loading && !data ? <LoadingState label={word('expenses.certificates.loading')} /> : error ? <ErrorState description={error} locale={locale} onRetry={() => setRefresh(value => value + 1)} />
           : rows.length === 0 && otherTabs.length > 0 ? <div className="space-y-3 py-6" role="status">
             {otherTabs.map(choice => <div key={choice} className="flex flex-wrap items-center gap-2">
               <p>{formatMessage(word('expenses.certificates.found_elsewhere'), { count: data!.counts[WHT_CERTIFICATE_TABS[choice]], tab: word(`expenses.certificates.${choice}`) })}</p>
               <button type="button" className={ghostClass} disabled={loading} aria-busy={loading}
-                onClick={() => navigate({ tab: choice, search, page: 1 })}>{word('expenses.certificates.view')}</button>
+                onClick={() => navigate({ tab: choice, order, search, page: 1 })}>{word('expenses.certificates.view')}</button>
             </div>)}
           </div> : rows.length === 0 ? <EmptyState locale={locale} title={word(search.trim() ? 'expenses.certificates.empty_search' : `expenses.certificates.empty_${tab}`)}
             description={!search.trim() && tab === 'pending' ? word('expenses.certificates.empty_hint') : ''} /> : <>
+            {shopBanner && <Notice tone="warning" className={styles.notice}
+              action={<Link className={ghostClass} href={`${companyProfilePath(companyId)}?${new URLSearchParams({ returnTo })}`}>กรอกข้อมูลร้าน</Link>}>
+              ข้อมูลร้านยังไม่ครบ ออกหนังสือรับรองไม่ได้
+            </Notice>}
+            <div className={styles.phoneSort}><button type="button" className={quietButtonClass} onClick={changeOrder}>
+              เรียง: {order === 'newest' ? 'ใหม่ไปเก่า ↓' : 'เก่าไปใหม่ ↑'}
+            </button></div>
             <div className={styles.cards} data-testid="wht-certificate-card-list">{rows.map(row => <WhtCertificateCard key={row.id} {...rowProps(row)} />)}</div>
-            <table className={`mangmee-table ${styles.table}`} data-testid="wht-certificate-table"><thead><tr>
-              {(['payee', 'date', 'amount', 'certificate', 'actions'] as const).map(key => <th key={key}>{word(`expenses.certificates.${key}`)}</th>)}
-            </tr></thead><tbody>{rows.map(row => <tr key={row.id}>
-              <td><div>{row.payeeName}</div>{row.expenseDescription && <p className={styles.description} title={row.expenseDescription}>{row.expenseDescription}</p>}<div>{row.payeeTaxId || '-'}</div><Status row={row} locale={locale} />
-                <ExpenseNumber row={row} companyId={companyId} permissions={permissions} locale={locale} /></td>
-              <td>{formatThaiDate(row.documentDate, '-')}</td><td><PaidAmounts row={row} locale={locale} /></td><td><IssuedLine row={row} locale={locale} /><MatchedPreviousNumber row={row} locale={locale} />{row.previousCertificate && <ExpensePreviousCertificate previous={row.previousCertificate} locale={locale} />}</td>
-              <td><CertificateActions {...rowProps(row)} /></td>
+            <table className={styles.table} data-testid="wht-certificate-table"><colgroup>{columnWidths.map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup><thead><tr>
+              <th>ผู้รับเงิน</th><th aria-sort={order === 'newest' ? 'descending' : 'ascending'}><button type="button" className="inline-flex items-center gap-1 hover:text-gray-800" onClick={changeOrder}
+                aria-label={order === 'newest' ? 'วันที่ ใหม่ไปเก่า กดเพื่อเรียงเก่าไปใหม่' : 'วันที่ เก่าไปใหม่ กดเพื่อเรียงใหม่ไปเก่า'}>วันที่ <span aria-hidden="true">{order === 'newest' ? '↓' : '↑'}</span></button></th><th>แบบ</th><th className={styles.money}>ยอดจ่าย</th><th className={styles.money}>ภาษีหักไว้</th>{statusColumn && <th className={styles.status}>สถานะ</th>}
+            </tr></thead><tbody>{rows.map(row => <tr key={row.id} role="link" tabIndex={0} aria-label={`เปิดรายจ่าย ${row.expenseNumber ?? row.payeeName}`} onClick={() => openRow(row)}
+              onKeyDown={event => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); openRow(row); } }}>
+              <td><div className={styles.name}>{row.payeeName}</div><CertificateDetails row={row} companyId={companyId} permissions={permissions} locale={locale} /></td>
+              <td className={styles.date}><span className={styles.unit}>{paymentDate(row)}</span></td><td>{formName(row)}</td>
+              <td className={styles.money}>{amountText(row.currentCertificate?.grossAmount ?? row.prefill.grossAmount)}</td><td className={styles.money}>{amountText(row.withheldAmount)}</td>
+              {statusColumn && <td className={styles.status}><Status row={row} shopBanner={shopBanner} /></td>}
             </tr>)}</tbody></table>
           </>}
         {total > 0 && <div className={styles.pager}>
-          <span>{formatMessage(word('expenses.certificates.pager'), { from: (page - 1) * WHT_CERTIFICATE_PAGE_SIZE + 1, to: Math.min(page * WHT_CERTIFICATE_PAGE_SIZE, total), total })}</span>
-          {totalPages > 1 && <div className={styles.pagerControls}>
-            <button type="button" className={ghostClass} disabled={loading || !!busyId || page <= 1} aria-busy={loading} onClick={() => navigate({ tab, search, page: page - 1 })}>{word('expenses.certificates.previous')}</button>
-            <span>{page} / {totalPages}</span>
-            <button type="button" className={ghostClass} disabled={loading || !!busyId || page >= totalPages} aria-busy={loading} onClick={() => navigate({ tab, search, page: page + 1 })}>{word('expenses.certificates.next')}</button>
-          </div>}
+          {totalPages > 1 && <Pagination prominent page={page} totalPages={totalPages} disabled={loading} locale={locale} onPageChange={next => navigate({ tab, order, search, page: next })} />}
         </div>}
       </CoverLoader>
-    </div></MangmeeCard>}
-    {addressRow && <WhtPayeeAddressDialog key={`${companyId}:${addressRow.id}`} companyId={companyId} row={addressRow} locale={locale}
-      onClose={() => setAddressRow(null)} onSaved={() => { setAddressRow(null); setRefresh(value => value + 1); }} />}
+      </MangmeeCard>
+    </div>}
   </MangmeePage>;
 }

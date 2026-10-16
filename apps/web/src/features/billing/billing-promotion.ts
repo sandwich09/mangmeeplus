@@ -1,3 +1,4 @@
+import { formatThaiDate } from '@/common/i18n/thai-date';
 import { BILLING_PAID_TIERS, type BillingBenefitChoice, type BillingInvoiceItem, type BillingOffer, type BillingPromotionOfferView, type BillingPromotionUnavailableReason,
   type BillingPromotionUse, type BillingQuote, type BillingStatus } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
@@ -14,7 +15,7 @@ type Reason = BillingPromotionUnavailableReason;
 type Card = { offerKey: string; interval: string };
 type Priced = Pick<BillingOffer, 'priceSatang'>;
 
-const day = (value: string) => new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' });
+const day = (value: string) => formatThaiDate(value);
 /** Thailand has no daylight saving, so its clock is the instant plus seven hours; this keeps the text the same on every machine. */
 const clock = (value: string) => {
   const at = new Date(Date.parse(value) + 7 * 3_600_000);
@@ -28,7 +29,7 @@ const REASON_TEXT: Record<Reason, string> = {
   PAUSED: 'โปรโมชั่นนี้หยุดรับสิทธิ์ชั่วคราว',
   CAP_FULL: 'สิทธิ์โปรโมชั่นครบจำนวนแล้ว',
   ALREADY_USED: 'ร้านนี้ใช้สิทธิ์โปรโมชั่นนี้แล้ว',
-  IN_PROGRESS: 'มีรายการชำระที่ใช้สิทธิ์นี้ค้างอยู่ เปิดรายการเดิมเพื่อชำระต่อ',
+  IN_PROGRESS: 'มีรายการจ่ายที่ใช้สิทธิ์นี้ค้างอยู่ เปิดรายการเดิมเพื่อจ่ายต่อ',
   CATALOG_STALE: 'ราคาหรือเงื่อนไขแพ็กเกจเปลี่ยน โปรโมชั่นนี้จึงใช้ไม่ได้ในตอนนี้',
   OFFER_NOT_COVERED: 'แพ็กเกจนี้ไม่ร่วมโปรโมชั่น',
   PURCHASE_KIND_UNSUPPORTED: 'โปรโมชั่นนี้ยังใช้กับการซื้อแบบนี้ไม่ได้',
@@ -51,8 +52,8 @@ export const PROMOTION_ONCE = 'ใช้ได้ครั้งเดียว�
 export const PROMOTION_NOT_PICKED = 'ครั้งนี้ไม่ได้เลือกใช้โปรโมชั่นนี้';
 export function promotionCard(row: Row, offer: Priced) {
   return { name: row.displayName, headline: promotionHeadline(row, offer), lines: [
-    `ชำระ ${row.totalMonths - row.bonusMonths} เดือน แถมฟรี ${row.bonusMonths} เดือน`,
-    `ใบเสร็จ ${row.totalReceiptUnits} ใบ (รวมแถม ${row.bonusReceiptUnits} ใบ) ได้ทันทีเมื่อชำระสำเร็จ`,
+    `จ่าย ${row.totalMonths - row.bonusMonths} เดือน แถมฟรี ${row.bonusMonths} เดือน`,
+    `ใบเสร็จ ${row.totalReceiptUnits} ใบ (รวมแถม ${row.bonusReceiptUnits} ใบ) ได้ทันทีเมื่อจ่ายสำเร็จ`,
     PROMOTION_ONCE,
     `โปรโมชั่นสิ้นสุด ${day(row.endsAt)} เวลา ${clock(row.endsAt)} น.`] };
 }
@@ -153,7 +154,7 @@ export function promotionReview(quote: Pick<BillingQuote, 'promotion' | 'offer' 
   return {
     title: `โปรโมชั่น ${p.displayName}`,
     rows: [
-      { label: 'ช่วงที่ชำระ', value: `${day(p.paidStart)} – ${day(p.paidEnd)}` },
+      { label: 'ช่วงที่จ่าย', value: `${day(p.paidStart)} – ${day(p.paidEnd)}` },
       { label: 'ช่วงแถมฟรี', value: `${day(p.paidEnd)} – ${day(p.benefitEnd)}` },
       { label: 'ใช้ได้ถึง', value: day(p.benefitEnd) },
       { label: 'ใบเสร็จ', value: `${base} + แถม ${p.bonusReceiptUnits} = ${p.totalReceiptUnits} ใบ` },
@@ -161,9 +162,9 @@ export function promotionReview(quote: Pick<BillingQuote, 'promotion' | 'offer' 
     // A one-time mode has no next charge (`expectedNextChargeAt` null); the page already says "จ่ายครั้งเดียว".
     next: p.expectedNextChargeAt ? `รอบถัดไปเรียกเก็บวันที่ ${day(p.expectedNextChargeAt)} ราคาปกติ ${money(quote.totalSatang)}${
       quote.purchaseMode === 'PROMPTPAY_RENEW' ? ' (ออกบิล QR ให้สแกน)' : quote.purchaseMode === 'CARD_AUTO' ? ' (ตัดบัตรอัตโนมัติ)' : ''}` : null,
-    estimate: 'วันที่ทั้งหมดเป็นการประมาณ ระบบจะยืนยันวันจริงเมื่อชำระสำเร็จ',
+    estimate: 'วันที่ทั้งหมดเป็นการประมาณ ระบบจะยืนยันวันจริงเมื่อจ่ายสำเร็จ',
     /** The sentence that replaces "ใช้งานได้ 1 เดือน" for a promotion, so the page never says two different lengths. */
-    summary: `เมื่อชำระสำเร็จ ใช้งานได้ ${paidMonths + p.bonusMonths} เดือน (ชำระ ${paidMonths} เดือน แถมฟรี ${p.bonusMonths} เดือน)`,
+    summary: `เมื่อจ่ายสำเร็จ ใช้งานได้ ${paidMonths + p.bonusMonths} เดือน (จ่าย ${paidMonths} เดือน แถมฟรี ${p.bonusMonths} เดือน)`,
     totalReceiptUnits: p.totalReceiptUnits,
     benefitEnd: p.benefitEnd,
   };
@@ -191,9 +192,9 @@ export function promotionLostNotice(error: unknown) {
   const details = (error as { details?: unknown } | null)?.details, raw = details && typeof details === 'object' ? (details as { reason?: unknown }).reason : undefined;
   const reason: Reason | null = typeof raw === 'string' && Object.hasOwn(REASON_TEXT, raw) ? raw as Reason : null;
   return { title: 'โปรโมชั่นที่เลือกไว้ใช้ไม่ได้แล้ว', text: promotionReasonText(reason),
-    hint: reason === 'IN_PROGRESS' ? 'เปิดรายการเดิมที่ค้างอยู่ด้านล่างเพื่อชำระต่อ ไม่ต้องเริ่มรายการใหม่'
-      : reason === 'CHANGED' ? 'กรุณาตรวจสอบรายการใหม่ แล้วอ่านเวลา ใบเสร็จ และราคาอีกครั้งก่อนชำระ'
-      : 'ถ้าซื้อต่อ จะไม่ได้เวลาและใบเสร็จแถมจากโปรโมชั่น กรุณาตรวจสอบรายการใหม่ก่อนชำระ',
+    hint: reason === 'IN_PROGRESS' ? 'เปิดรายการเดิมที่ค้างอยู่ด้านล่างเพื่อจ่ายต่อ ไม่ต้องเริ่มรายการใหม่'
+      : reason === 'CHANGED' ? 'กรุณาตรวจสอบรายการใหม่ แล้วอ่านเวลา ใบเสร็จ และราคาอีกครั้งก่อนจ่าย'
+      : 'ถ้าซื้อต่อ จะไม่ได้เวลาและใบเสร็จแถมจากโปรโมชั่น กรุณาตรวจสอบรายการใหม่ก่อนจ่าย',
     /** With a payment already open there is nothing to quote: the open payment is the way on. */
     canRecheck: reason !== 'IN_PROGRESS' };
 }
@@ -212,19 +213,19 @@ export function promotionStatus(use: BillingPromotionUse | null | undefined, run
   if (!running && use.state === 'CONSUMED' && use.benefitEnd) return null;
   const name = `โปรโมชั่น ${use.displayName}`;
   // The right is held for a Checkout still open: not used yet, and the words must not say it was.
-  if (use.state === 'RESERVED') return { title: 'จองสิทธิ์โปรโมชั่นไว้ให้รายการชำระนี้แล้ว', lines: [name, 'สิทธิ์จะเริ่มใช้เมื่อชำระเงินสำเร็จ'], checking: false };
+  if (use.state === 'RESERVED') return { title: 'จองสิทธิ์โปรโมชั่นไว้ให้รายการจ่ายนี้แล้ว', lines: [name, 'สิทธิ์จะเริ่มใช้เมื่อจ่ายเงินสำเร็จ'], checking: false };
   const until = use.benefitEnd ? day(use.benefitEnd) : null, pending = use.renewalSetupState === 'PENDING';
   const renewal: string | null = {
-    PENDING: `ชำระแล้ว ${until ? `ใช้ได้ถึง ${until} ` : ''}กำลังตั้งค่ารอบถัดไป ไม่ต้องชำระซ้ำ`,
+    PENDING: `จ่ายแล้ว ${until ? `ใช้ได้ถึง ${until} ` : ''}กำลังตั้งค่ารอบถัดไป ไม่ต้องจ่ายซ้ำ`,
     // 2026-10-10: the system keeps setting the next round by itself, and staff see the case; the words state only what holds in both.
-    REVIEW: 'ชำระแล้ว การตั้งรอบถัดไปยังไม่เสร็จ ไม่ต้องชำระซ้ำ',
+    REVIEW: 'จ่ายแล้ว การตั้งรอบถัดไปยังไม่เสร็จ ไม่ต้องจ่ายซ้ำ',
     READY: use.expectedNextChargeAt ? `ตั้งต่ออายุแล้ว รอบถัดไปเรียกเก็บวันที่ ${day(use.expectedNextChargeAt)}` : 'ตั้งต่ออายุแล้ว',
     NOT_REQUIRED: null,
     CANCELLED: null,
   }[use.renewalSetupState] ?? null;
   const bonus = [use.bonusMonths > 0 && `แถมฟรี ${use.bonusMonths} เดือน`, use.bonusReceiptUnits > 0 && `ใบเสร็จเพิ่ม ${use.bonusReceiptUnits} ใบ`].filter(Boolean).join(' · ');
   return { title: 'ใช้สิทธิ์โปรโมชั่นแล้ว', checking: pending,
-    lines: [name, ...(pending ? [] : [until ? `ใช้ได้ถึง ${until}` : 'กำลังเปิดสิทธิ์ให้ ไม่ต้องชำระซ้ำ']), ...(renewal ? [renewal] : []), ...(bonus ? [bonus] : [])] };
+    lines: [name, ...(pending ? [] : [until ? `ใช้ได้ถึง ${until}` : 'กำลังเปิดสิทธิ์ให้ ไม่ต้องจ่ายซ้ำ']), ...(renewal ? [renewal] : []), ...(bonus ? [bonus] : [])] };
 }
 
 /** One line under a history row for a promotion purchase: the free time and the bonus receipts. The invoice's own period and amount stay as they are. */

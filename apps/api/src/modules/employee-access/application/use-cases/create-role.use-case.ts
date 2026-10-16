@@ -84,7 +84,7 @@ export function reservedRoleKey(name: string, roleTemplateKey?: string): boolean
 const ROLE_KEY_ATTEMPTS = 5;
 const ROLE_KEY_ALLOCATION_FAILED = {
   code: 'role_key_allocation_failed',
-  message: 'ยังไม่ได้สร้างบทบาทนี้ เพราะมีการบันทึกบทบาทอื่นในเวลาเดียวกัน กรุณากดบันทึกอีกครั้ง',
+  message: 'ยังไม่ได้สร้างบทบาทนี้ เพราะมีการบันทึกบทบาทอื่นในเวลาเดียวกัน กดบันทึกอีกครั้ง',
 };
 
 @Injectable()
@@ -93,7 +93,7 @@ export class CreateRoleUseCase {
 
   async execute(cmd: CreateRoleCommand): Promise<RoleDetail> {
     if (reservedRoleKey(cmd.name, cmd.roleTemplateKey)) {
-      throw new ConflictException({ code: 'role_name_reserved', message: 'ชื่อนี้ซ้ำกับบทบาทมาตรฐานของระบบ กรุณาใช้ชื่ออื่น' });
+      throw new ConflictException({ code: 'role_name_reserved', message: 'ชื่อนี้ซ้ำกับบทบาทมาตรฐานของระบบ ใช้ชื่ออื่น' });
     }
     const rawKeys = cmd.permissionKeys ?? [];
     const knownKeys = new Set(COMPANY_PERMISSION_KEYS);

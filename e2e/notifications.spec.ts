@@ -9,10 +9,15 @@ type Rule = { id: string; name?: string; status?: string };
 test.describe('NOTIF — notifications', () => {
   test('NOTIF-01 @smoke notifications list renders', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/notifications');
-    await expect(authedPage.getByRole('heading', { name: /ศูนย์การแจ้งเตือน|Notifications/i })).toBeVisible();
-    await expect(authedPage.getByRole('button', { name: /อ่านทั้งหมด|Read all/i })).toBeVisible();
+    // 2026-10-13: the page carries the bell's own name, and "mark all" (ทำเป็นอ่านแล้วทั้งหมด) is drawn only while something is unread.
+    await expect(authedPage.getByRole('heading', { name: /^การแจ้งเตือน$|Notifications/i })).toBeVisible();
     const center = authedPage.locator('main');
     await expect(center.getByRole('button', { name: 'ยังไม่ได้อ่าน', exact: true })).toBeVisible();
+    await expect(center.getByRole('button', { name: 'ยังรออยู่', exact: true })).toBeVisible();
+    const waitingRead = authedPage.waitForRequest(request => request.url().includes('/notifications?') && new URL(request.url()).searchParams.get('waiting') === 'true');
+    await center.getByRole('button', { name: 'ยังรออยู่', exact: true }).click();
+    expect(new URL((await waitingRead).url()).searchParams.has('read')).toBe(false);
+    await expect(authedPage).toHaveURL(/tab=waiting/);
     await expect(center.getByRole('button', { name: 'ทั้งหมด', exact: true })).toBeVisible();
     await expect(center.getByRole('link', { name: /^(ตั้งค่า|กฎ|Preferences|Settings|Rules)$/i })).toHaveCount(0);
   });

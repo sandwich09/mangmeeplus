@@ -90,3 +90,12 @@ export function requestMyEmailVerification(newEmail: string, currentPassword?: s
     suppressErrorToast: true,
   });
 }
+
+export const ACCOUNT_NAME_CHANGED_EVENT = 'mangmee:account-name-changed';
+export type DisplayNameHistory = { displayName: string; history: { id: string; changedAt: string; oldName: string; newName: string; changedByName: string | null }[] };
+export function getDisplayNameHistory(companyId: string, userId?: string): Promise<DisplayNameHistory> {
+  return apiFetch(`/v1/auth/account/display-name?${new URLSearchParams({ companyId, ...(userId ? { userId } : {}) })}`, { headers: { 'x-company-id': companyId } });
+}
+export function setMyDisplayName(companyId: string, displayName: string): Promise<DisplayNameHistory> {
+  return apiFetch('/v1/auth/account/display-name', { method: 'PATCH', headers: { 'x-company-id': companyId }, body: JSON.stringify({ companyId, displayName }), suppressErrorToast: true });
+}

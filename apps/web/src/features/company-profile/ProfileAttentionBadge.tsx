@@ -5,7 +5,7 @@ import { checklistIsComplete } from './company-profile.logic';
 import { useProfileChecklist } from './use-profile-checklist';
 
 /**
- * "ยังกรอกไม่ครบ" on the ข้อมูลร้านและบัญชีของฉัน card of the settings hub (§15.4.1 E), so the
+ * "ยังไม่ครบ" on the ข้อมูลร้าน card of the settings hub (§15.4.1 E; the same word as the menu row and the home card), so the
  * owner of a shop opened from LINE can see there is something to finish without opening the page.
  *
  * A client island inside a server page. Nothing while the answer is unknown and nothing once the
@@ -18,5 +18,5 @@ export function ProfileAttentionBadge({ companyId }: { companyId: string }) {
 
   if (!items || checklistIsComplete(items)) return null;
 
-  return <MangmeeBadge tone="amber">ยังกรอกไม่ครบ</MangmeeBadge>;
+  return <MangmeeBadge tone="amber">ยังไม่ครบ</MangmeeBadge>;
 }

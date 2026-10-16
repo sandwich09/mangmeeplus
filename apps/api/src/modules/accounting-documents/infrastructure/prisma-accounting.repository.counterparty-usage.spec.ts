@@ -27,6 +27,7 @@ function harness(
   let expenseGroupByCalls = 0;
   let documentGroupByCalls = 0;
   const client: any = {
+    $queryRaw: async () => [{ all: rows.length, bought: 0, sold: 0, addressMissing: rows.length }],
     accountingCounterparty: {
       findMany: async ({ where, skip, take }: any) => rows.filter((row) => row.companyId === where.companyId).slice(skip, skip + take),
       count: async ({ where }: any) => rows.filter((row) => row.companyId === where.companyId).length,
@@ -97,4 +98,40 @@ describe('listCounterparties usage badges (§11.1/§12)', () => {
     assert.deepEqual(data, []);
     assert.deepEqual(calls(), { expenseGroupByCalls: 0, documentGroupByCalls: 0 });
   });
+});
+
+
+it('COUNTERPARTY-1 tab counts use one company/search aggregate independent of the selected tab and page', async () => {
+  const queries: any[] = [];
+  const client: any = {
+    accountingCounterparty: { findMany: async () => [], count: async () => 1 },
+    $queryRaw: async (query: any) => { queries.push(query); return [{ all: 7, bought: 4, sold: 3, addressMissing: 2 }]; },
+  };
+  const repo = new PrismaAccountingRepository({ client } as any);
+  for (const filter of [{ search: ' ร้าน ' }, { search: ' ร้าน ', usage: 'sold' as const }, { search: ' ร้าน ', addressMissing: true }]) {
+    const result = await repo.listCounterparties(CO, 2, 10, filter);
+    assert.deepEqual((result as any).counts, { all: 7, bought: 4, sold: 3, addressMissing: 2 });
+  }
+  assert.equal(queries.length, 3);
+  for (const query of queries) {
+    assert.deepEqual(query.values, [CO, '%ร้าน%', '%ร้าน%', '%ร้าน%']);
+    assert.match(query.sql, /COUNT\(\*\) FILTER/g);
+    assert.match(query.sql, /"ExpenseRecord"/);
+    assert.match(query.sql, /"AccountingDocument"/);
+    assert.match(query.sql, /"AccountingPayment"[\s\S]*'RECEIVED'/);
+    assert.match(query.sql, /"billingAddressJson" IS NULL/);
+    assert.doesNotMatch(query.sql, /LIMIT|OFFSET/);
+  }
+});
+
+it('COUNTERPARTY-1 recent purchases expose the EXP number alongside the vendor number under the existing company scope', async () => {
+  const client: any = {
+    expenseRecord: { count: async () => 1, findMany: async (query: any) => {
+      assert.deepEqual(query.where, { companyId: CO, vendorCounterpartyId: 'cp-1' });
+      assert.equal(query.select.expenseNumber, true);
+      return [{ id: 'e1', expenseNumber: 'EXP-202610-1', expenseDate: new Date('2026-10-16'), vendorDocumentNumber: 'INV-7', grandTotalAmount: '1000.00' }];
+    } }, accountingDocument: { count: async () => 0 },
+  };
+  const result = await new PrismaAccountingRepository({ client } as any).counterpartyUsage(CO, 'cp-1');
+  assert.deepEqual(result.recentExpenses, [{ id: 'e1', expenseNumber: 'EXP-202610-1', expenseDate: '2026-10-16', vendorDocumentNumber: 'INV-7', grandTotalAmount: '1000.00' }]);
 });

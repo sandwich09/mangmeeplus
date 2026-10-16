@@ -110,6 +110,7 @@ describe('CreateOrUpdateNotificationEventUseCase recipients', () => {
       { findByDedupKey: async () => null, create: async () => event } as any,
       {
         findByEventAndUser: async () => null,
+        trackWaiting: async () => undefined,
         create: async (data: any) => { createdRecipients.push(data.userId); return { id: `recipient-${data.userId}` }; },
       } as any,
       { create: async () => ({}) } as any,
@@ -153,6 +154,7 @@ describe('CreateOrUpdateNotificationEventUseCase periods', () => {
     const deliveries: any[] = [];
     const alertStates = new Map<string, any>();
     const client = {
+      $executeRaw: async () => 1,
       companyFeatureEntitlement: { findMany: async () => [] },
       notificationEvent: {
         findFirst: async ({ where }: any) => events.find((row) => row.companyId === where.companyId && row.dedupKey === where.dedupKey) ?? null,
@@ -174,6 +176,12 @@ describe('CreateOrUpdateNotificationEventUseCase periods', () => {
       },
       companyMembership: { findMany: async ({ where }: any) => where.userId.in.map((userId: string) => ({ userId })) },
       notificationRecipient: {
+        findFirst: async ({ where }: any) => recipients.find(row => row.id === where.id && row.companyId === where.companyId && row.userId === where.userId),
+        update: async ({ where, data }: any) => Object.assign(recipients.find(row => row.id === where.id), data),
+        updateMany: async ({ where, data }: any) => {
+          const hits = recipients.filter(row => Object.entries(where).every(([key, value]: any) => value === null ? row[key] == null : value?.not ? row[key] !== value.not : row[key] === value));
+          hits.forEach(row => Object.assign(row, data)); return { count: hits.length };
+        },
         findUnique: async ({ where }: any) => recipients.find((row) => row.eventId === where.eventId_userId.eventId && row.userId === where.eventId_userId.userId) ?? null,
         create: async ({ data }: any) => { const row = { id: `recipient-${recipients.length + 1}`, ...data }; recipients.push(row); return row; },
       },
@@ -223,12 +231,12 @@ describe('CreateOrUpdateNotificationEventUseCase periods', () => {
       triggerKey: 'workflow.reimbursement_decision_requester', recipientUserIds: ['staff-1'], periodKey, body,
     }));
 
-    await decision('run-reject', 'ผลการพิจารณา: ไม่อนุมัติ');
+    await decision('run-reject', 'ผลการพิจารณา: ส่งกลับให้แก้แล้ว');
     const approved = await decision('run-approve', 'ผลการพิจารณา: อนุมัติ');
 
     assert.deepEqual(pushedTo(approved.event!.id), ['staff-1']);
     assert.deepEqual(events.map((row) => [row.body, row.status]), [
-      ['ผลการพิจารณา: ไม่อนุมัติ', 'RESOLVED'], ['ผลการพิจารณา: อนุมัติ', 'OPEN'],
+      ['ผลการพิจารณา: ส่งกลับให้แก้แล้ว', 'RESOLVED'], ['ผลการพิจารณา: อนุมัติ', 'OPEN'],
     ]);
   });
 

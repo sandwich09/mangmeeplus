@@ -2,6 +2,8 @@ export interface ResolvedAccess {
   membershipId: string;
   companyId: string;
   roles: string[];        // role keys e.g. OWNER, ADMIN
+  /** Display-only package availability; never grants the reader a permission. */
+  availablePermissions?: string[];
   permissions: string[];  // permission keys e.g. account.session.read
   /** Otherwise-granted permissions removed only because their owning feature is OFF. */
   entitlementDeniedPermissions?: Record<string, string>;

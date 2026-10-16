@@ -22,13 +22,14 @@ function makePrisma(opts: {
   membershipBranchIds?: string[];
   membershipDefaultBranchId?: string;
   profileStatus?: string;
+  failNameAudit?: boolean;
 } = {}) {
-  const writes = { profileUpdate: undefined as any, userUpdate: undefined as any, membershipUpdate: undefined as any, scopeDeletes: 0, scopeCreates: undefined as any, auditArgs: undefined as any, assignedRoleIds: undefined as any, transactions: 0, contextInvalidations: [] as any[] };
+  const writes = { profileUpdate: undefined as any, userUpdate: undefined as any, membershipUpdate: undefined as any, scopeDeletes: 0, scopeCreates: undefined as any, auditArgs: undefined as any, assignedRoleIds: undefined as any, transactions: 0, audits: [] as any[], contextInvalidations: [] as any[] };
   const tx = {
     $queryRaw: async () => [],
     aiConversation: { findMany: async () => [], deleteMany: async ({ where }: any) => { writes.contextInvalidations.push(where); return { count: 1 }; } },
-    employeeAccessProfile: { update: async (args: any) => { writes.profileUpdate = args; return {}; } },
-    user: { update: async (args: any) => { writes.userUpdate = args; return {}; } },
+    employeeAccessProfile: { findUniqueOrThrow: async () => ({ displayName: 'ชื่อในร้านเดิม' }), update: async (args: any) => { writes.profileUpdate = args; return {}; } },
+    user: { findUniqueOrThrow: async () => ({ displayName: 'ชื่อบัญชีเดิม' }), update: async (args: any) => { writes.userUpdate = args; return {}; } },
     membershipRole: {
       deleteMany: async () => ({}),
       createMany: async (args: any) => { writes.assignedRoleIds = args.data.map((d: any) => d.roleId); return {}; },
@@ -38,7 +39,7 @@ function makePrisma(opts: {
       deleteMany: async () => { writes.scopeDeletes += 1; return {}; },
       createMany: async (args: any) => { writes.scopeCreates = args; return {}; },
     },
-    auditLog: { create: async (args: any) => { writes.auditArgs = args; return {}; } },
+    auditLog: { create: async (args: any) => { if (opts.failNameAudit && args.data.action === 'account.display_name.update') throw new Error('audit unavailable'); writes.audits.push(args.data); writes.auditArgs = args; return {}; } },
   };
   const prisma = {
     client: {
@@ -61,7 +62,7 @@ function makePrisma(opts: {
       auditLog: { create: tx.auditLog.create },
       branch: { count: async () => opts.validBranchCount ?? 0 },
       membershipBranchScope: { count: async () => opts.existingScopeRows ?? 0 },
-      $transaction: async (fn: any) => { writes.transactions += 1; return fn(tx); },
+      $transaction: async (fn: any) => { writes.transactions += 1; try { return await fn(tx); } catch (error) { writes.profileUpdate = undefined; writes.userUpdate = undefined; writes.audits = []; throw error; } },
     },
   } as any;
   return { prisma, writes };
@@ -490,5 +491,31 @@ describe('UpdateEmployeeUseCase all-branch role guardrail', () => {
     await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b1', 'b2'] });
     assert.equal(writes.membershipUpdate.data.branchScopeMode, 'SELECTED_BRANCHES');
     assert.deepEqual(writes.scopeCreates.data.map((d: any) => d.branchId), ['b1', 'b2']);
+  });
+});
+
+
+describe('employee edits join the account display-name history', () => {
+  for (const otherCompanyMemberships of [0, 1]) it(`audits old-to-new in the same transaction for ${otherCompanyMemberships ? 'a company-local profile on a shared account' : 'the account name'}`, async () => {
+    const { prisma, writes } = makePrisma({ otherCompanyMemberships });
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, displayName: 'ชื่อใหม่' });
+    const entry = writes.audits.find(row => row.action === 'account.display_name.update');
+    assert.ok(entry);
+    assert.equal(entry.companyId, baseCmd.companyId); assert.equal(entry.actorUserId, baseCmd.requestingUserId);
+    assert.equal(entry.targetType, 'User'); assert.equal(entry.targetId, PROFILE.userId);
+    assert.equal(entry.requestId, baseCmd.requestId); assert.equal(entry.result, 'SUCCESS');
+    assert.equal(entry.metadataJson.oldName, otherCompanyMemberships ? 'ชื่อในร้านเดิม' : 'ชื่อบัญชีเดิม');
+    assert.equal(entry.metadataJson.newName, 'ชื่อใหม่');
+    assert.equal(writes.transactions, 1);
+  });
+  it('does not add a name-history row when the account name is unchanged', async () => {
+    const { prisma, writes } = makePrisma();
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, displayName: 'ชื่อบัญชีเดิม' });
+    assert.equal(writes.audits.filter(row => row.action === 'account.display_name.update').length, 0);
+  });
+  it('fails and rolls back the employee and account writes if the name audit fails', async () => {
+    const { prisma, writes } = makePrisma({ failNameAudit: true });
+    await assert.rejects(() => new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, displayName: 'ชื่อใหม่' }), /audit unavailable/);
+    assert.equal(writes.profileUpdate, undefined); assert.equal(writes.userUpdate, undefined);
   });
 });

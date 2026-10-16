@@ -5,7 +5,7 @@ import { sanitizeNextPath } from '@/common/auth/middleware.logic';
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: 'Device compatibility | MangmeePlus',
+  title: 'เปิดบนเครื่องนี้ไม่ได้ | MangmeePlus',
   robots: { index: false, follow: false },
 };
 

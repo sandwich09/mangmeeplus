@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { expenseEvidenceFingerprint } from '@watchdog-bms/contracts';
 import { before, after, describe, it } from 'node:test';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../generated/prisma/client';
@@ -61,6 +62,50 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     preparedByUserId: userId, preparedFromChannel: 'WEB', idempotencyKey: `amend:${evidence.id}:${evidence.updatedAt.toISOString()}`,
     ...extra,
   });
+  it('preparation fills the empty seller in the same transaction and unsigned amendments follow only its own name', async () => {
+    const fixture = await source();
+    await client.expenseSubstituteReceiptEvidence.delete({ where: { id: fixture.evidence.id } });
+    let expense = await client.expenseRecord.update({ where: { id: fixture.expense.id }, data: { vendorNameSnapshot: null, sourceChannelMetadataJson: { unrelated: 'kept' } } });
+    const reviewed = (await repo.findByIdWithRelations(companyId, expense.id))!;
+    const assessment = { route: 'SUBSTITUTE_RECEIPT' as const, receiptProblem: 'NOT_AVAILABLE' as const, attachmentIds: [], reason: 'ไม่มีใบเสร็จ' };
+    expense = await client.expenseRecord.update({ where: { id: expense.id }, data: { aiVerificationSummaryJson: {
+      documentReview: { version: 2, reviewedAt: at.toISOString(), reviewedByUserId: userId, assessment, fingerprint: expenseEvidenceFingerprint(reviewed, assessment) },
+    } } });
+    const evidence = await amend(expense, fixture.evidence, { amendment: undefined, idempotencyKey: `new-name:${expense.id}`, payeeName: 'ป้าศรี แผงผัก' });
+    const first = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
+    assert.equal(first.vendorNameSnapshot, 'ป้าศรี แผงผัก');
+    assert.equal((first.sourceChannelMetadataJson as any).unrelated, 'kept');
+    assert.equal(evidence.expenseUpdatedAtAtPreparation.getTime(), first.updatedAt.getTime());
+    const changed = await amend(first, evidence, { payeeName: 'ป้าศรี ตลาดเช้า' });
+    const second = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
+    assert.equal(second.vendorNameSnapshot, 'ป้าศรี ตลาดเช้า');
+    assert.equal(changed.expenseUpdatedAtAtPreparation.getTime(), second.updatedAt.getTime());
+    await edit(second, { expenseDate: second.expenseDate, vendorNameSnapshot: 'ชื่อที่แก้เอง' });
+    const third = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
+    assert.equal((third.sourceChannelMetadataJson as any).substituteReceiptPayeeName, undefined);
+    const current = (await repo.findSubstituteEvidence(companyId, expense.id))!;
+    await amend(third, current, { payeeName: 'ผู้รับแทนร้าน' });
+    assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } })).vendorNameSnapshot, 'ชื่อที่แก้เอง');
+  });
+
+  it('an unsigned legacy certificate fills an empty seller but never replaces a separately entered seller', async () => {
+    for (const name of [null, 'ชื่อร้านที่กรอกไว้']) {
+      const { expense, evidence } = await source();
+      const current = await client.expenseRecord.update({ where: { id: expense.id }, data: { vendorNameSnapshot: name } });
+      await amend(current, evidence, { payeeName: 'ผู้รับเงินตามใบรับรอง' });
+      assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } })).vendorNameSnapshot, name ?? 'ผู้รับเงินตามใบรับรอง');
+    }
+  });
+
+  it('a stale amendment never changes either payee name or seller provenance', async () => {
+    const { expense, evidence } = await source();
+    const current = await client.expenseRecord.update({ where: { id: expense.id }, data: { vendorNameSnapshot: null } });
+    await assert.rejects(amend(current, evidence, { payeeName: 'ชื่อที่ต้องไม่ถูกเขียน', expectedExpenseUpdatedAt: new Date(0) }), /เปิดหน้านี้ใหม่/);
+    const after = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
+    assert.equal(after.vendorNameSnapshot, null); assert.equal(after.sourceChannelMetadataJson, null);
+    assert.equal((await repo.findSubstituteEvidence(companyId, expense.id))!.payeeName, evidence.payeeName);
+  });
+
   for (const mode of ['DIGITAL', 'PAPER']) it(`${mode}: changes a step-3 payment month with the same ID/number and invalidates the previous form`, async () => {
     const { expense, evidence } = await source(mode);
     const old = mode === 'PAPER'
@@ -75,7 +120,7 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     assert.equal(synced.vendorNameSnapshot, expense.vendorNameSnapshot);
     assert.equal(synced.netPayableAmount.toString(), expense.netPayableAmount.toString());
     assert.equal(synced.paidAmount.toString(), expense.paidAmount.toString());
-    await assert.rejects(amend(expense, old), /โหลดข้อมูลล่าสุด/);
+    await assert.rejects(amend(expense, old), /เปิดหน้านี้ใหม่/);
     if (mode === 'PAPER') {
       await assert.rejects(repo.freezeSubstitutePaperForm(companyId, expense.id, old.id, old.paperFormSnapshotJson as Record<string, unknown>, old.updatedAt, expense.updatedAt), /substitute_paper_form_changed/);
       await composeUnsignedSubstituteReceiptFormPdf(repo, companyId, (await repo.findByIdWithRelations(companyId, expense.id))!, updated);
@@ -99,8 +144,8 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
   it('edits a submitted paper without removing the old scan and rejects cross-tenant/stale/funding/signing changes', async () => {
     const { expense, evidence } = await source('PAPER');
     const old = await client.expenseSubstituteReceiptEvidence.update({ where: { id: evidence.id }, data: { wetSignedScanAttachmentId: 'old-scan', wetSignedScanChecksumSha256: 'old-hash', paperSubmissionJson: { payer: { name: 'ผู้รับรอง' } } } });
-    await assert.rejects(amend(expense, old, { companyId: 'another-company' }), /โหลดข้อมูลล่าสุด/);
-    await assert.rejects(amend(expense, old, { expectedExpenseUpdatedAt: at }), /โหลดข้อมูลล่าสุด/);
+    await assert.rejects(amend(expense, old, { companyId: 'another-company' }), /เปิดหน้านี้ใหม่/);
+    await assert.rejects(amend(expense, old, { expectedExpenseUpdatedAt: at }), /เปิดหน้านี้ใหม่/);
     await assert.rejects(amend(expense, old, { fundingSource: 'PERSONAL_ADVANCE' }), /แหล่งเงินเดิม/);
     await assert.rejects(amend(expense, old, { signatureMode: 'DIGITAL', payerUserId: userId }), /แหล่งเงินเดิม/);
     await assert.rejects(amend(expense, old, { supportingAttachmentIds: ['not-linked'] }), /หลักฐานเปลี่ยนแปลง/);
@@ -114,8 +159,8 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
       ? { status, supersededAt: at, supersedeReason: 'test' }
       : { status: 'ISSUED', approverUserId: userId, approverName: 'ผู้อนุมัติ', approverPosition: '', approverSignatureAttachmentId: prepared.payerSignatureAttachmentId,
           approvedAt: at, issuedByUserId: userId, artifactAttachmentId: prepared.certifiedArtifactAttachmentId, checksumSha256: 'a'.repeat(64), issuedAt: at } });
-    await assert.rejects(amend(expense, evidence), /โหลดข้อมูลล่าสุด/);
-    if (status === 'ISSUED') await assert.rejects(edit(expense), /กรุณายกเลิกใบแทน/);
+    await assert.rejects(amend(expense, evidence), /เปิดหน้านี้ใหม่/);
+    if (status === 'ISSUED') await assert.rejects(edit(expense), /ยกเลิกใบรับรอง/);
   });
   for (const mode of ['DIGITAL', 'PAPER']) it(`${mode}: refreshes unsigned data under the same ID/number and invalidates an old form`, async () => {
     const { expense, evidence } = await source(mode);
@@ -165,8 +210,8 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     const paid = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
     const issued = (await repo.findSubstituteEvidence(companyId, expense.id))!;
     const payments = await client.expensePayment.findMany({ where: { expenseId: expense.id } });
-    await assert.rejects(edit(paid), /กรุณายกเลิกใบแทน/);
-    await assert.rejects(edit(paid, { netPayableAmount: '200', grandTotalAmount: '200' }), /กรุณายกเลิกใบแทน/);
+    await assert.rejects(edit(paid), /ยกเลิกใบรับรอง/);
+    await assert.rejects(edit(paid, { netPayableAmount: '200', grandTotalAmount: '200' }), /ยกเลิกใบรับรอง/);
     assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), paid);
     const reviewed = await repo.updateExpense({ companyId, id: expense.id, updatedByUserId: userId, expectedUpdatedAt: paid.updatedAt,
       vendorEntityKindSnapshot: 'JURISTIC', refreshSubstituteEvidence: { requestId: 'metadata-review' } });
@@ -175,6 +220,33 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     assert.equal(after.id, issued.id); assert.equal(after.status, 'ISSUED');
     assert.equal(after.documentNumber, issued.documentNumber);
     assert.deepEqual(await client.expensePayment.findMany({ where: { expenseId: expense.id } }), payments);
+  });
+
+  it('an issued certificate lets its expense take the certificate\'s own payee name when the expense had none; any other name still needs cancellation', async () => {
+    // Seen on the real screen: the wizard's quick record keeps no seller name, the payee is typed in the
+    // certificate, and after it was issued the expense could neither be confirmed (no name) nor be given one.
+    const { expense, evidence } = await source('DIGITAL', 'PAYER_CERTIFIED');
+    await client.expenseRecord.update({ where: { id: expense.id }, data: { vendorNameSnapshot: null, updatedAt: expense.updatedAt } });
+    await repo.issueSubstituteEvidence({ companyId, expenseId: expense.id, evidenceId: evidence.id, approverUserId: userId, approverName: 'ผู้อนุมัติ', approverPosition: '', allowSelfApproval: true, approvedAt: at, approverSignatureAttachmentId: evidence.payerSignatureAttachmentId ?? undefined,
+      expectedExpenseUpdatedAt: expense.updatedAt, referencedAttachmentIds: [], expectedVersion: evidence.version, expectedEvidenceUpdatedAt: evidence.updatedAt,
+      artifact: { storageProvider: 'LOCAL', bucket: 'local', objectKey: `tests/${companyId}/${++seq}`, objectVersionId: '1', byteSize: 1, checksumSha256: 'a'.repeat(64), originalFileName: 'issued.svg' } });
+    const paid = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
+    assert.equal(paid.vendorNameSnapshot, null);
+    const issued = (await repo.findSubstituteEvidence(companyId, expense.id))!;
+    const payments = await client.expensePayment.findMany({ where: { expenseId: expense.id } });
+    const name = (row: any, vendorNameSnapshot: string, extra: any = {}) => repo.updateExpense({ companyId, id: expense.id, updatedByUserId: userId, expectedUpdatedAt: row.updatedAt,
+      vendorNameSnapshot, refreshSubstituteEvidence: { requestId: `name-${++seq}` }, ...extra });
+    await assert.rejects(name(paid, 'ร้านอื่น'), /ยกเลิกใบรับรอง/);
+    await assert.rejects(name(paid, 'ร้านเดิม', { netPayableAmount: '200', grandTotalAmount: '200' }), /ยกเลิกใบรับรอง/);
+    assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), paid);
+    const named = await name(paid, 'ร้านเดิม');
+    assert.equal(named.vendorNameSnapshot, 'ร้านเดิม');
+    const after = (await repo.findSubstituteEvidence(companyId, expense.id))!;
+    assert.equal(after.id, issued.id); assert.equal(after.status, 'ISSUED'); assert.equal(after.version, issued.version);
+    assert.equal(after.documentNumber, issued.documentNumber); assert.equal(after.payeeName, 'ร้านเดิม');
+    assert.deepEqual(await client.expensePayment.findMany({ where: { expenseId: expense.id } }), payments);
+    // With a name of its own the expense is under the ordinary rule again.
+    await assert.rejects(name(named, 'ร้านอื่น'), /ยกเลิกใบรับรอง/);
   });
 
   it('cancels a paid unconfirmed draft atomically, retiring its active revision and root-owned number', async () => {
@@ -189,14 +261,14 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     assert.equal((await client.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: revision.id } })).status, 'SUPERSEDED');
     const number = await client.documentNumber.findFirstOrThrow({ where: { companyId, documentNumber: evidence.documentNumber } });
     assert.equal(number.ownerId, evidence.id); assert.equal(number.status, 'VOIDED');
-    await assert.rejects(repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'กดซ้ำ'), /เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว จึงยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้/);
+    await assert.rejects(repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'กดซ้ำ'), /เอกสารนี้ยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้/);
     assert.equal(await client.expensePayment.count({ where: { expenseId: expense.id } }), 1);
     assert.notEqual(paid.status, 'CONFIRMED');
   });
 
   it('cannot use the financial cancellation path for an ordinary unpaid unconfirmed expense', async () => {
     const { expense, evidence } = await source();
-    await assert.rejects(repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'ยังไม่ได้จ่าย'), /เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว จึงยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้/);
+    await assert.rejects(repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'ยังไม่ได้จ่าย'), /เอกสารนี้ยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้/);
     assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), expense);
     assert.equal((await repo.findSubstituteEvidence(companyId, expense.id))!.id, evidence.id);
   });
@@ -260,7 +332,7 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     await edit(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), { note: 'LINE receipt upload', missingReceiptReason: null });
     const incomplete = (await repo.findSubstituteEvidence(companyId, expense.id))!;
     assert.equal(incomplete.businessPurpose, ''); assert.equal(incomplete.missingReceiptReason, '');
-    await assert.rejects(composeUnsignedSubstituteReceiptFormPdf(repo, companyId, (await repo.findByIdWithRelations(companyId, expense.id))!, incomplete), /ข้อมูลใบแทนยังไม่ครบ/);
+    await assert.rejects(composeUnsignedSubstituteReceiptFormPdf(repo, companyId, (await repo.findByIdWithRelations(companyId, expense.id))!, incomplete), /ข้อมูลใบรับรองยังไม่ครบ/);
     const repaired = await amend(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), incomplete, { businessPurpose: 'ซ่อมอุปกรณ์', missingReceiptReason: 'ไม่มีต้นฉบับ', paymentDate: at });
     assert.equal(repaired.documentNumber, evidence.documentNumber); assert.equal(repaired.id, evidence.id);
     await composeUnsignedSubstituteReceiptFormPdf(repo, companyId, (await repo.findByIdWithRelations(companyId, expense.id))!, repaired);
@@ -281,8 +353,8 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     const locked = await client.expenseRecord.update({ where: { id: expense.id }, data: financial === 'paid'
       ? { paidAmount: '100', outstandingAmount: '0', paymentStatus: 'PAID', paidAt: at, paymentMethod: 'CASH' }
       : { journalEntryId: 'existing-journal', postingStatus: 'posted' } });
-    await assert.rejects(amend(locked, evidence, { paymentDate: at, businessPurpose: 'แก้คำอธิบาย' }), /กรุณายกเลิกใบแทน/);
-    await assert.rejects(edit(locked), /กรุณายกเลิกใบแทน/);
+    await assert.rejects(amend(locked, evidence, { paymentDate: at, businessPurpose: 'แก้คำอธิบาย' }), /ยกเลิกใบรับรอง/);
+    await assert.rejects(edit(locked), /ยกเลิกใบรับรอง/);
     assert.deepEqual(await client.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }), evidence);
     assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), locked);
     assert.equal(await client.expensePayment.count({ where: { expenseId: expense.id } }), 0);
@@ -292,7 +364,7 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     const { expense, evidence } = await source();
     const amendment = { evidenceId: evidence.id, expectedUpdatedAt: evidence.updatedAt };
     const count = await client.documentNumber.count({ where: { companyId } });
-    await assert.rejects(amend(expense, evidence, { amendment }), /กรุณายืนยันเปลี่ยนเดือน/);
+    await assert.rejects(amend(expense, evidence, { amendment }), /ติ๊กยืนยันว่าจะเปลี่ยนเดือน/);
     assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), expense);
     assert.deepEqual(await client.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }), evidence);
     const same = await amend(expense, evidence, { amendment, paymentDate: new Date('2026-09-14T00:00:00Z') });

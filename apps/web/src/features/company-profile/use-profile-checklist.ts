@@ -1,9 +1,11 @@
 'use client';
 
+import { COMPANY_PROFILE_CHANGED_EVENT } from '../web-core-workspace/workspace-scope.api';
 import { useEffect, useState } from 'react';
 import { getAccountProfile, getCompanyIdentity } from './company-profile.api';
 import {
   profileChecklist,
+  clearChecklistCache,
   readChecklistCache,
   writeChecklistCache,
   type ChecklistItem,
@@ -37,10 +39,10 @@ function loadChecklist(companyId: string, storage: Storage | undefined): Promise
         hasPassword: account.hasPassword,
         emailDeliveryEnabled: account.emailDeliveryEnabled,
       });
-      writeChecklistCache(storage, companyId, items);
+      if (inFlight.get(companyId) === request) writeChecklistCache(storage, companyId, items);
       return items;
     })
-    .finally(() => { inFlight.delete(companyId); });
+    .finally(() => { if (inFlight.get(companyId) === request) inFlight.delete(companyId); });
   inFlight.set(companyId, request);
   return request;
 }
@@ -54,14 +56,21 @@ export function useProfileChecklist(companyId: string, enabled = true): Checklis
     const storage = typeof window === 'undefined' ? undefined : window.sessionStorage;
 
     const cached = readChecklistCache(storage, companyId);
-    if (cached) { setItems(cached); return undefined; }
-
-    // A failed read stays `null`: a settings API being down is not something to announce on a
-    // dashboard, in a sidebar, or on a card the owner did not ask for.
-    void loadChecklist(companyId, storage)
-      .then((next) => { if (!cancelled) setItems(next); })
-      .catch(() => { if (!cancelled) setItems(null); });
-    return () => { cancelled = true; };
+    let revision = 0;
+    const refresh = () => {
+      const current = ++revision;
+      void loadChecklist(companyId, storage)
+        .then(next => { if (!cancelled && current === revision) setItems(next); })
+        .catch(() => { if (!cancelled && current === revision) setItems(null); });
+    };
+    if (cached) setItems(cached); else refresh();
+    const changed = () => {
+      clearChecklistCache(storage, companyId);
+      inFlight.delete(companyId); // an older read must not put its pre-save answer back in the cache
+      refresh();
+    };
+    window.addEventListener(COMPANY_PROFILE_CHANGED_EVENT, changed);
+    return () => { cancelled = true; window.removeEventListener(COMPANY_PROFILE_CHANGED_EVENT, changed); };
   }, [companyId, enabled]);
 
   return items;

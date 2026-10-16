@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_PDF_PURPOSE, DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, DISBURSEMENT_VOUCHER_ERROR_WORDS } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_PDF_PURPOSE, DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_PURPOSE, DISBURSEMENT_VOUCHER_ERROR_WORDS } from '@watchdog-bms/contracts';
 import {
   REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
   REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
@@ -101,7 +101,7 @@ export async function findAttachmentLinkConflict(
       NOT: { targetType: input.targetType, targetId: input.targetId, purpose: input.purpose } }, select: { targetType: true } });
     const file = await db.attachmentObject.findFirst({ where: { id: input.attachmentId, companyId: input.companyId }, select: { metadataJson: true } });
     const metadata = file?.metadataJson as Record<string, unknown> | null | undefined;
-    if (other || clash || metadata?.['generatedFor'] && metadata['generatedFor'] !== DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG
+    if (other || clash || metadata?.['generatedFor'] && ![DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG].includes(String(metadata['generatedFor']))
       || metadata?.['generatedBy'] === 'disbursement_voucher' && input.purpose !== DISBURSEMENT_VOUCHER_PDF_PURPOSE
       || await isReimbursementPaymentSlipFile(db, input)) return DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_slip_link_conflict;
   }
@@ -118,7 +118,7 @@ export async function findAttachmentLinkConflict(
 
 /** Exclusive from upload onward, including replaced slips whose link has been removed. */
 export async function isDisbursementVoucherFile(db: AttachmentLinkReader, input: { companyId: string; attachmentId: string }): Promise<boolean> {
-  for (const purpose of [DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_PDF_PURPOSE]) {
+  for (const purpose of [DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_SUPPORTING_PURPOSE, DISBURSEMENT_VOUCHER_PDF_PURPOSE]) {
     const link = await db.attachmentLink.findFirst({ where: { companyId: input.companyId, attachmentId: input.attachmentId,
       targetType: DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, purpose }, select: { targetType: true } });
     // Believe the row, not only the filter: a link of another kind is never this document's file.
@@ -126,7 +126,7 @@ export async function isDisbursementVoucherFile(db: AttachmentLinkReader, input:
   }
   const file = await db.attachmentObject.findFirst({ where: { id: input.attachmentId, companyId: input.companyId }, select: { metadataJson: true } });
   const metadata = file?.metadataJson as Record<string, unknown> | null | undefined;
-  return metadata?.['generatedFor'] === DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG || metadata?.['generatedBy'] === 'disbursement_voucher';
+  return metadata?.['generatedFor'] === DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG || metadata?.['generatedFor'] === DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG || metadata?.['generatedBy'] === 'disbursement_voucher';
 }
 
 /** Whether these bytes are a reimbursement payment slip: linked to a payment, or uploaded to become one. */

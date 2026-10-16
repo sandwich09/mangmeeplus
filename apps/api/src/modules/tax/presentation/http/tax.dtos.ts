@@ -8,9 +8,10 @@
 //
 // Field list is the UNION of the contract type and what apps/web actually sends — under
 // `whitelist + forbidNonWhitelisted` an extra field is a 400 and a missing one is silently stripped.
-import { IsIn, IsNotEmpty, IsObject, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { Equals, IsInt, Min, IsIn, IsNotEmpty, IsObject, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import type {
+  AnswerWhtPayerModeRequest, WhtPayerMode,
   CorrectWhtCertificateDto as CorrectWhtCertificateContract,
   LinkExternalWhtCertificateDto as LinkExternalWhtCertificateContract,
   RemoveExternalWhtCertificateDto as RemoveExternalWhtCertificateContract,
@@ -24,8 +25,22 @@ import type {
 import { WHT_HANDOFF_PAYEE_ADDRESS_MAX } from '@watchdog-bms/contracts';
 import { WHT_LINK_ISSUED_DATE, WHT_LINK_LIMITS } from '../../domain/logic/wht-link-evidence.logic';
 
+export class WhtCertificateHandoffListQueryDto {
+  @IsOptional() @IsString() status?: string;
+  @IsOptional() @IsString() branchId?: string;
+  @IsOptional() @IsString() sourcePaymentId?: string;
+  @IsOptional() @IsString() page?: string;
+  @IsOptional() @IsString() pageSize?: string;
+  @IsOptional() @IsString() search?: string;
+  @IsOptional() @IsString() periodKey?: string;
+  @IsOptional() @IsString() formType?: string;
+  @IsOptional() @IsIn(['newest', 'oldest']) order?: 'newest' | 'oldest';
+}
+
 export class ExportPnd53Dto {
-  @IsIn(['PDF']) exportFormat!: 'PDF';
+  @IsOptional() @Matches(/^\d{5}$/) establishmentCode?: string;
+  @IsOptional() @IsInt() @Min(0) sequence?: number;
+  @IsIn(['PDF', 'XLSX']) exportFormat!: 'PDF' | 'XLSX';
 }
 
 export class ResolvePnd53IssueDto {
@@ -33,11 +48,24 @@ export class ResolvePnd53IssueDto {
 }
 
 export class MarkPnd53FiledDto {
+  @IsOptional() @Matches(/^\d{5}$/) establishmentCode?: string;
+  @IsOptional() @IsInt() @Min(0) sequence?: number;
   @IsString() @IsOptional() @MaxLength(500) note?: string;
 }
 
 // Bounds come from the shared validator the use case also runs, so the two layers cannot drift.
 export class LinkExternalWhtCertificateDto implements LinkExternalWhtCertificateContract {
+  @IsOptional()
+  @IsString()
+  @Matches(WHT_LINK_ISSUED_DATE)
+  paymentDate?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  paymentId?: string;
+
   /** Caller-stable: the same command id replays instead of linking twice. */
   @IsString() @IsNotEmpty() @MaxLength(WHT_LINK_LIMITS.commandId) commandId!: string;
 
@@ -114,4 +142,27 @@ export class WhtCertificateCorrectionInputDto implements WhtCertificateCorrectio
 export class CorrectWhtCertificateDto implements CorrectWhtCertificateContract {
   @IsObject() @ValidateNested() @Type(() => WhtCertificateCorrectionInputDto) corrected!: WhtCertificateCorrectionInputDto;
   @IsString() @IsNotEmpty() @MaxLength(500) reason!: string;
+}
+
+export class AnswerWhtPayerModeDto implements AnswerWhtPayerModeRequest {
+  @IsIn(['HEAD_OFFICE_PAYS_ALL', 'EACH_BRANCH_PAYS'], { message: 'วิธีจ่ายไม่ถูกต้อง เลือกผู้ที่จ่ายเงินและหักภาษีอีกครั้ง' }) mode!: WhtPayerMode;
+  @IsOptional() @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'เดือนที่เริ่มใช้ไม่ถูกต้อง เลือกเดือนอีกครั้ง' }) effectiveFromPeriodKey?: string;
+}
+
+export class ExportTaxPackageDto {
+  @IsIn(['REVIEW_JSON', 'CSV', 'XLSX', 'PDF']) exportFormat!: 'REVIEW_JSON' | 'CSV' | 'XLSX' | 'PDF';
+  @IsOptional() @Matches(/^\d{5}$/) establishmentCode?: string;
+  @IsOptional() @IsInt() @Min(0) sequence?: number;
+}
+
+export class ConfirmWhtFilingRowsDto {
+  @Equals(true) confirmed!: true;
+}
+
+export class IssueWhtCertificateDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  paymentId?: string;
 }

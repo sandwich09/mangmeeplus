@@ -20,6 +20,7 @@ import { SALES_BANK_NAMES } from '../sales-console/sales-console.logic';
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 // The screens reach the icon set through ExpensesUi; this runner has no SVG loader.
 require.extensions['.svg'] = (module) => { module.exports = () => null; };
+require.extensions['.css'] = module => { module.exports = { menu: 'menu', panel: 'panel' }; };
 // Modal portals into document.body, which a server render has none of: render the dialog in place.
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const ui = require('./ReimbursementPayout') as typeof import('./ReimbursementPayout');
@@ -38,7 +39,7 @@ const read = (file: string) => readFileSync(new URL(file, import.meta.url), 'utf
 
 /** What the customer reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
 const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map((match) => match[1]!),
-  ...html.replace(/<[^>]*>/gu, '\n').split('\n')]
+  ...html.replace(/<span class="text-red-600"(?: aria-hidden="true")?> \*<\/span>/gu, ' *').replace(/<[^>]*>/gu, '\n').split('\n')]
   .map((text) => text.replace(/&quot;/gu, '"').replace(/&#x27;/gu, "'").replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&amp;/gu, '&').trim()).filter(Boolean);
 
 const ids = { company: 'cmg7x2k9p0000companyq1w2e3', request: 'cmg7x2k9p0001requestq8w3e5', requester: 'cmg7x2k9p0002userr4t6y8a1', approver: 'cmg7x2k9p0003useru1i3o5p7' };
@@ -74,12 +75,12 @@ describe('payout account form: the same rule the server runs, said in Thai', () 
   it('names the first field that is wrong, and accepts what a person really types', () => {
     const problem = (overrides: Parameters<typeof form>[0]) => logic.payoutAccountFormError(form(overrides));
     for (const accountNumber of ['0123456789', '012-3-45678-9', '012 345 6789', '000123', '12345678901234567890']) assert.equal(problem({ accountNumber }), null, accountNumber);
-    assert.deepEqual(problem({ bankChoice: '' }), { field: 'bankName', text: 'กรุณาเลือกธนาคาร' });
-    assert.deepEqual(problem({ bankChoice: logic.OTHER_BANK, bankOther: ' ' }), { field: 'bankName', text: 'กรุณาระบุชื่อธนาคาร ไม่เกิน 80 ตัวอักษร และไม่ใส่เลขบัญชีในช่องนี้' });
+    assert.deepEqual(problem({ bankChoice: '' }), { field: 'bankName', text: 'เลือกธนาคาร' });
+    assert.deepEqual(problem({ bankChoice: logic.OTHER_BANK, bankOther: ' ' }), { field: 'bankName', text: 'ระบุชื่อธนาคาร ไม่เกิน 80 ตัวอักษร และไม่ใส่เลขบัญชีในช่องนี้' });
     for (const accountName of ['', 'ก', '1234567890']) assert.equal(problem({ accountName })?.field, 'accountName', accountName);
     // The two names are shown unmasked everywhere: a full number typed into either is refused, in words.
     assert.deepEqual(problem({ accountName: 'นาย สมชาย ใจดี 012-3-45678-9' }),
-      { field: 'accountName', text: 'กรุณาระบุชื่อบัญชีตามที่ธนาคารแสดง 2 ถึง 140 ตัวอักษร ไม่ใช่ตัวเลขล้วน และไม่ใส่เลขบัญชีในช่องนี้' });
+      { field: 'accountName', text: 'ระบุชื่อบัญชีตามที่ธนาคารแสดง 2 ถึง 140 ตัวอักษร ไม่ใช่ตัวเลขล้วน และไม่ใส่เลขบัญชีในช่องนี้' });
     assert.equal(problem({ bankChoice: logic.OTHER_BANK, bankOther: 'สหกรณ์ออมทรัพย์ 0123456789' })?.field, 'bankName');
     assert.equal(problem({ accountName: 'บริษัท เอบีซี 1999 จำกัด' }), null, 'a name with a year in it is a name');
     for (const accountNumber of ['', '12345', '123456789012345678901', '01234x6789', '๐๑๒๓๔๕๖']) {
@@ -133,15 +134,19 @@ describe('what a claim says about where the money goes back to', () => {
 
   it('reads a claim from before the field existed the same way in every status and for every viewer', () => {
     for (const status of ['PENDING_APPROVAL', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PAID', 'REJECTED', 'CANCELLED']) {
-      assert.deepEqual(logic.claimPayoutView({ status, requesterUserId: ids.requester }), { state: 'legacy', line: logic.LEGACY_PAYOUT_NOTE, notes: [] }, status);
+      assert.deepEqual(logic.claimPayoutView({ status, requesterUserId: ids.requester, submittedAt: '2026-09-01T03:00:00.000Z' }), status === 'CANCELLED' ? { state: 'unknown', line: '', notes: [] } : { state: 'legacy', line: logic.LEGACY_PAYOUT_NOTE, notes: [] }, status);
       assert.equal(logic.claimNeedsPayoutAttestation({}), false);
       assert.equal(logic.claimPayoutSubmitBlock({ status }), null);
       for (const viewer of [ids.requester, ids.approver]) {
-        const html = card(claim({ status, payout: undefined }), viewer);
-        assert.deepEqual(visible(html), ['การรับเงินคืน', 'ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีบัญชีที่ผ่านการอนุมัติในใบ'], `${status} ${viewer}`);
+        const html = card(claim({ status, payout: undefined, submittedAt: '2026-09-01T03:00:00.000Z' }), viewer);
+        assert.deepEqual(visible(html), status === 'CANCELLED' ? [] : ['การรับเงินคืน', 'ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีบัญชีที่ผ่านการอนุมัติในใบ'], `${status} ${viewer}`);
         assert.doesNotMatch(html, /<button/, 'nothing to reveal');
       }
     }
+    // A draft cancelled before it was ever sent is no claim "sent before the field existed": it has no number and was
+    // never sent, so nothing is said of an account (seen 2026-10-13 on a draft made and cancelled the same day).
+    assert.deepEqual(logic.claimPayoutView({ status: 'CANCELLED', requesterUserId: ids.requester }), { state: 'unknown', line: '', notes: [] });
+    assert.equal(card(claim({ status: 'CANCELLED', payout: undefined, requestNo: undefined, submittedAt: undefined }), ids.requester), '');
   });
 
   it('shows a draft what it will be sent with, and says so when the default is edited, removed or missing', () => {
@@ -281,7 +286,7 @@ describe('the card "การรับเงินคืน": where the account 
 // to follow. It keeps the account it was sent with, and the requester is told so, with what to do.
 describe('the requester is told when their default changed after the claim was sent', () => {
   const changed = claim({ payout: { ...transfer, defaultAccountChanged: true } });
-  const canStill = 'บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดปุ่มแก้ไข (เปิดกลับเป็นร่าง) ในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง';
+  const canStill = 'บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดแก้ไขใบเบิกในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง';
   const tooLate = 'บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ตอนนี้คุณเปิดใบนี้กลับเป็นร่างเองไม่ได้แล้ว ถ้าต้องการเปลี่ยนบัญชี แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน';
 
   it('says the claim still uses the earlier account, and how to change it while that is still possible', () => {
@@ -291,16 +296,18 @@ describe('the requester is told when their default changed after the claim was s
     for (const payout of [transfer, { ...transfer, defaultAccountChanged: false as never }, undefined]) assert.equal(logic.payoutDefaultChangedHint(claim({ payout }), true), null);
 
     const withdrawable = render(h(ui.ClaimPayoutCard, { companyId: ids.company, detail: changed, userId: ids.requester, payoutAccountHref: '/payout-account', canWithdraw: true }));
-    assert.ok(visible(withdrawable).includes(canStill));
-    assert.match(withdrawable, /<p class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว/);
-    assert.ok(visible(card(changed, ids.requester)).includes(tooLate));
-    assert.ok(!visible(card(claim(), ids.requester)).some((text) => text.startsWith('บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว')));
+    // Said in the shared warning notice (its mark is part of the text), not a hand-made amber box.
+    assert.ok(visible(withdrawable).includes(`⚠ ${canStill}`));
+    assert.match(withdrawable, /<div role="status" data-tone="warning" class="[^"]*">⚠ บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว/);
+    assert.ok(visible(card(changed, ids.requester)).includes(`⚠ ${tooLate}`));
+    assert.ok(!visible(card(claim(), ids.requester)).some((text) => text.includes('บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว')));
   });
 
   it('names the page own withdraw button and follows its condition', () => {
     const page = read('./ReimbursementJourneyPage.tsx');
     // The words in the hint are the label of the button it points to.
-    assert.match(page, /action === 'reopen' && detail\.status === 'PENDING_APPROVAL' \? 'แก้ไข \(เปิดกลับเป็นร่าง\)'/);
+    assert.match(page, /reopen: 'แก้ไขใบเบิก'/);
+    assert.ok(canStill.includes('กดแก้ไขใบเบิก'));
     assert.match(page, /canWithdraw=\{detail\.status === 'PENDING_APPROVAL' && Boolean\(step\?\.actions\.includes\('reopen'\)\)\}/);
     assert.match(read('./ReimbursementPayout.tsx'), /const defaultChanged = payoutDefaultChangedHint\(detail, canWithdraw\);/);
   });
@@ -337,8 +344,16 @@ describe('the full number: offered only when the server allows it, never in the 
     assert.match(screen, /canReveal=\{own\}\s+last4=\{account\.accountLast4\} onReveal=\{async \(\) => \(await revealMyPayoutAccount\(companyId\)\)\.accountNumber\}/);
     assert.match(screen, /const own = !memberUserId;/);
     assert.doesNotMatch(screen, /localStorage|sessionStorage|console\./);
-    // The edit form always starts empty: a saved number is never loaded back into a field.
-    assert.match(screen, /setForm\(emptyPayoutAccountForm\(\)\); setMethod\(account\?\.payoutMethod \?\? 'BANK_TRANSFER'\);/);
+    // The edit form opens with what the card already shows (kind, bank, name), so "แก้ไขบัญชี" is not an empty form.
+    // A saved number is never loaded back into a field: that one field always starts empty.
+    assert.match(screen, /setForm\(payoutAccountFormOf\(account\)\); setMethod\(account\?\.payoutMethod \?\? 'BANK_TRANSFER'\);/);
+    assert.deepEqual(logic.payoutAccountFormOf({ payoutMethod: 'BANK_TRANSFER', ...KBANK }),
+      { payoutKind: 'BANK_ACCOUNT', bankChoice: KBANK.bankName, bankOther: '', accountName: KBANK.accountName, accountNumber: '' });
+    assert.deepEqual(logic.payoutAccountFormOf({ payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารที่ไม่อยู่ในรายการ', accountName: 'ก ข' }),
+      { payoutKind: 'BANK_ACCOUNT', bankChoice: logic.OTHER_BANK, bankOther: 'ธนาคารที่ไม่อยู่ในรายการ', accountName: 'ก ข', accountNumber: '' });
+    assert.deepEqual(logic.payoutAccountFormOf({ payoutMethod: 'BANK_TRANSFER', payoutKind: 'PROMPTPAY_PHONE', accountName: 'ก ข' }),
+      { payoutKind: 'PROMPTPAY_PHONE', bankChoice: '', bankOther: '', accountName: 'ก ข', accountNumber: '' });
+    for (const none of [null, undefined, { payoutMethod: 'CASH' }]) assert.deepEqual(logic.payoutAccountFormOf(none), logic.emptyPayoutAccountForm());
 
     const api = read('./reimbursement-payout.api.ts');
     assert.deepEqual([...api.matchAll(/export function (\w+)/g)].map((match) => match[1]).sort(),
@@ -371,12 +386,13 @@ describe('the full number: offered only when the server allows it, never in the 
     assert.match(screen, /const accountNumber = await onReveal\(\);\s+if \(revealedNumberMatchesCard\(accountNumber, last4\)\) setRevealed\(\{ revealKey, accountNumber \}\);\s+else setError\(errorMessage\('payout_destination_changed'\)\);/);
     assert.deepEqual([logic.revealedNumberMatchesCard('0123456789', '6789'), logic.revealedNumberMatchesCard('0812345678', '5678')], [true, true]);
     for (const [number, last4] of [['0123456780', '6789'], ['6789012345', '6789'], ['789', '6789']] as const) assert.equal(logic.revealedNumberMatchesCard(number, last4), false, number);
-    assert.equal(translateApiError('payout_destination_changed'), 'บัญชีรับเงินของใบนี้เปลี่ยนไปจากที่แสดงไว้ กรุณาเปิดใบใหม่ ตรวจบัญชีที่แสดงล่าสุด แล้วทำรายการอีกครั้ง');
+    assert.equal(translateApiError('payout_destination_changed'), 'บัญชีรับเงินของใบนี้เปลี่ยนไปจากที่แสดงไว้ เปิดหน้านี้ใหม่ ตรวจบัญชีที่แสดงล่าสุด แล้วทำรายการอีกครั้ง');
     // The claim and its account version, and the default as last saved, are what a number belongs to.
     assert.match(screen, /revealKey=\{`\$\{detail\.id\}:\$\{payout\.version \?\? ''\}`\}/);
     assert.match(screen, /revealKey=\{`\$\{companyId\}:\$\{account\.userId\}:\$\{account\.updatedAt\}`\}/);
     // The hide control hangs on the number alone, never on the right to reveal.
-    assert.match(screen, /\{shown \? \(\s+<div[^>]*>\s+<button[^\n]*>\{words\.copy\}<\/button>\s+<button[^\n]*onClick=\{\(\) => setRevealed\(null\)\}>\{words\.hide\}<\/button>\s+<\/div>\s+\) : canReveal && \(/);
+    // (One group of two plain buttons, the one that backs out first: neither is the main button of the page it sits on.)
+    assert.match(screen, /\{shown \? \(\s+<ActionGroup[^>]*>\s+<button[^\n]*onClick=\{\(\) => setRevealed\(null\)\}>\{words\.hide\}<\/button>\s+<button[^\n]*>\{words\.copy\}<\/button>\s+<\/ActionGroup>\s+\) : canReveal && \(/);
     // What those two buttons, the one that shows the number and the label over it are called follows the kind of account:
     // a PromptPay destination is a phone number, which the entry form calls "เบอร์พร้อมเพย์" and nothing calls "เลขบัญชี".
     assert.deepEqual([logic.payoutNumberWords('BANK_ACCOUNT'), logic.payoutNumberWords(undefined), logic.payoutNumberWords('A_KIND_ADDED_LATER')].map((words) => [words.show, words.full, words.copy, words.copied, words.hide]),
@@ -411,7 +427,7 @@ describe('the receiving choice on the claim form', () => {
     assert.ok(visible(section({ defaultAccount: undefined })).includes('กำลังโหลดบัญชีประจำของคุณ...'));
     // Set by someone else: the requester is told on the form too, until they save it themselves.
     assert.ok(visible(section({ defaultAccount: { userId: ids.requester, payoutMethod: 'BANK_TRANSFER', ...KBANK, updatedAt: '2026-10-01T03:00:00.000Z', setByOtherName: 'วิภา' } }))
-      .some((text) => /^ตั้งโดย วิภา เมื่อ .+ ตรวจว่าเป็นบัญชีของคุณ$/.test(text)));
+      .some((text) => /^⚠ ตั้งโดย วิภา เมื่อ .+ ตรวจว่าเป็นบัญชีของคุณ$/.test(text)));
 
     const typing = section({ value: { mode: 'SPECIFIED', account: logic.emptyPayoutAccountForm(), saveAsDefault: true } });
     // One bank list for the whole product: the shared one, the same array the sales screens pick from.
@@ -490,12 +506,12 @@ describe('the receiving choice on the claim form', () => {
 describe('the approver attests the account version shown before approving a transfer claim', () => {
   it('renders the attestation with a full-size touch target', () => {
     const html = render(h(ui.PayoutAttestationCheck, { checked: false, onChange: noop }));
-    assert.deepEqual(visible(html), ['ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก', 'ดูชื่อบัญชี เลขบัญชี และธนาคารในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ']);
+    assert.deepEqual(visible(html), ['ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก', 'ดูชื่อบัญชี เลขบัญชี และธนาคารในการ์ดการรับเงินคืนของใบนี้ ระบบบันทึกชื่อคุณและเวลาที่ตรวจ']);
     assert.match(html, /<label class="flex min-h-11 [^"]*"><input type="checkbox" class="[^"]*h-5 w-5[^"]*"/);
     assert.doesNotMatch(html, /checked=""/);
     // A PromptPay destination has a phone number and no bank: its approver is told to look at what the card shows of it.
     assert.deepEqual(visible(render(h(ui.PayoutAttestationCheck, { checked: false, onChange: noop, payoutKind: 'PROMPTPAY_PHONE' }))),
-      ['ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก', 'ดูชื่อบัญชีและเบอร์พร้อมเพย์ในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ']);
+      ['ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก', 'ดูชื่อบัญชีและเบอร์พร้อมเพย์ในการ์ดการรับเงินคืนของใบนี้ ระบบบันทึกชื่อคุณและเวลาที่ตรวจ']);
     assert.deepEqual(visible(render(h(ui.PayoutAttestationCheck, { checked: false, onChange: noop, payoutKind: 'BANK_ACCOUNT' }))), visible(html));
     assert.match(read('./ReimbursementJourneyPage.tsx'), /<PayoutAttestationCheck checked=\{attested\} disabled=\{busyAction !== null\} payoutKind=\{detail\.payout\?\.payoutKind\}/);
   });
@@ -505,12 +521,12 @@ describe('the approver attests the account version shown before approving a tran
     assert.match(page, /const \[attestedVersion, setAttestedVersion\] = useState<number \| null>\(null\);/);
     assert.match(page, /const needsAttestation = Boolean\(step\?\.actions\.includes\('approve'\)\) && claimNeedsPayoutAttestation\(detail\);/);
     // A claim sent again with another account version is no longer ticked.
-    assert.match(page, /disabled=\{busyAction !== null \|\| previewLoadingKey !== null \|\| Boolean\(blockedReason\)\}/);
+    assert.match(page, /disabled=\{busyAction !== null \|\| previewLoadingKey !== null \|\| \(action !== 'submit' && Boolean\(blockedReason\)\)\}/);
     assert.match(page, /acceptance\.acceptedFor !== payoutApprovalKey\(target\)/);
     // Also after a stale-approval review: the version ticked must be the version about to be approved.
     assert.match(read('./reimbursements.api.ts'), /payoutThirdPartyAccepted === true/);
     // The card sits above the step card, so the account is read before the tick.
-    assert.ok(page.indexOf('<ClaimPayoutCard') > 0 && page.indexOf('<ClaimPayoutCard') < page.indexOf('<PayoutAttestationCheck'));
+    assert.ok(page.indexOf('<ClaimPayoutCard') > 0 && page.indexOf('{!payoutInStep && payoutCard}') > page.indexOf('<PayoutAttestationCheck'));
     // A draft that cannot be sent yet says why on the submit button.
     assert.match(page, /const readiness = receiptReadiness\.blocked \|\| !payoutBlock \? receiptReadiness : \{ blocked: true, message: payoutBlock \};/);
   });
@@ -519,13 +535,16 @@ describe('the approver attests the account version shown before approving a tran
     const hub = read('./ReimbursementsPages.tsx');
     // One rule says what a queue row offers and where its decision is made (`approvalRowOffers`); the press and both layouts ask it.
     assert.match(hub, /if \(approvalRowOffers\(r\)\.onClaimPage\) \{ onOpenDetail\(r\.id\); return; \}/);
-    assert.equal(hub.match(/\{approvalRowOffers\(r\)\.approveLabel && <button[^\n]*onClick=\{[^\n]*approveRow\(r\)[^\n]*\{approvalRowOffers\(r\)\.approveLabel\}<\/button>\}/g)?.length, 2, 'table row and phone card');
+    // One button a row, built once and placed in both layouts.
+    assert.match(hub, /const rowButton = \(r: any\) => approvalRowOffers\(r\)\.approveLabel && \(\s*<button[^\n]*\n\s*onClick=\{[^\n]*approveRow\(r\)[^\n]*\{approvalRowOffers\(r\)\.approveLabel\}<\/button>/);
+    assert.match(hub, /queue="approvals"[^\n]*action=\{rowButton\}/);
+    assert.equal(hub.match(/action\?\.\(row, '(?:table|cards)'\)/g)?.length, 2, 'shared table row and phone card actions');
     const { approvalRowOffers } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
     const may = { canApprove: true, canReject: true };
     assert.deepEqual(approvalRowOffers({ approvalActions: may, payoutMethod: 'BANK_TRANSFER' }), { approveLabel: 'ตรวจบัญชีและอนุมัติ', reject: true, onClaimPage: true });
     assert.deepEqual(approvalRowOffers({ approvalActions: may, payoutMethod: 'CASH' }), { approveLabel: 'อนุมัติ', reject: true, onClaimPage: false });
     assert.deepEqual(approvalRowOffers({ approvalActions: may }), { approveLabel: 'อนุมัติ', reject: true, onClaimPage: false });
-    assert.match(hub, /href=\{`\/companies\/\$\{companyId\}\/reimbursements\/payout-account`\}[^\n]*>บัญชีรับเงินคืนของฉัน<\/Link>/);
+    assert.match(hub, /href=\{`\/companies\/\$\{companyId\}\/reimbursements\/payout-account`\}[^>]*>\s*บัญชีรับเงินคืนของฉัน\s*<\/Link>/);
   });
 });
 
@@ -535,7 +554,7 @@ describe('a claim is sent with the account its page showed', () => {
     assert.match(read('./reimbursements.api.ts'), /\/submit`, \{ method: 'POST', body: JSON\.stringify\(\{ payoutSubmitToken \}\) \}/);
     // The card with the account sits above the step card that holds the button.
     const page = read('./ReimbursementJourneyPage.tsx');
-    assert.ok(page.indexOf('<ClaimPayoutCard') < page.indexOf('cardActions.map(actionButton)'));
+    assert.ok(page.indexOf('<ClaimPayoutCard') > 0 && page.indexOf('{payoutInStep && payoutCard}') < page.indexOf('.map(actionButton)'));
   });
 
   it('sends a draft paid into an account from its own page, never from a list row', () => {
@@ -547,9 +566,9 @@ describe('a claim is sent with the account its page showed', () => {
     // Only cash the draft itself chose depends on nothing shown.
     assert.equal(logic.draftRowSubmitsFromItsPage({ payoutMethod: 'CASH' }), false);
     const hub = read('./ReimbursementsPages.tsx');
-    assert.match(hub, /const submitRow = \(r: any\) => \(draftRowSubmitsFromItsPage\(r\)\s+\? onOpenDetail\(r\.id\)\s+: void action\(r\.id, \(\) => submitReimbursement\(companyId, r\.id\), 'ส่งขออนุมัติเรียบร้อยแล้ว'\)\);/);
-    assert.equal(hub.match(/\{draftRowSubmitLabel\(r\)\}/g)?.length, 2, 'table row and phone card');
-    assert.equal(hub.match(/submitReimbursement\(/g)?.length, 1, 'no other list path submits');
+    // The list sends nothing at all now: every draft is sent from its own page, where its account is shown.
+    assert.doesNotMatch(hub, /submitReimbursement|draftRowSubmitLabel|draftRowSubmitsFromItsPage/, 'no list path submits');
+    assert.match(read('./ReimbursementJourneyPage.tsx'), /submitReimbursement\(companyId, requestId, detail\.payout\?\.submitToken\)/);
   });
 });
 
@@ -584,11 +603,14 @@ describe('the stale-approval dialog names an account change and never approves a
         return visible(render(h(StaleApprovalDialog, { requestNo: 'RB-202610-00001', diff, lines: [], currency: 'THB', busy: false, error: null, onClose: noop, onConfirm: noop, ...props })));
       } finally { Reflect.deleteProperty(globalThis, 'document'); }
     };
-    for (const text of ['รับเงินคืนทาง', 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · นาย สมชาย ใจดี', 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · นาย สมชาย ใจดี', 'อนุมัติด้วยข้อมูลล่าสุด']) {
+    for (const text of ['รับเงินคืนทาง', 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · นาย สมชาย ใจดี', 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · นาย สมชาย ใจดี', 'อนุมัติ']) {
       assert.ok(dialog().includes(text), text);
     }
     const guarded = dialog({ confirmLabel: 'ปิดเพื่อตรวจบัญชีรับเงิน' });
-    assert.ok(guarded.includes('ปิดเพื่อตรวจบัญชีรับเงิน') && !guarded.includes('อนุมัติด้วยข้อมูลล่าสุด'));
+    assert.ok(guarded.includes('ปิดเพื่อตรวจบัญชีรับเงิน') && !guarded.includes('อนุมัติ'));
+    // Left alone, the dialog approves under the plain name of the act, beside "ปิด": never "ยกเลิก" for a button that only closes.
+    assert.ok(dialog().includes('อนุมัติ') && dialog().includes('ปิด') && !dialog().includes('ยกเลิก'));
+    assert.ok(dialog().includes('⚠ ใบนี้ถูกแก้หลังส่งอนุมัติ ดูสิ่งที่เปลี่ยนก่อนอนุมัติ'), 'advice in amber, in one sentence');
   });
 
   it('approves from the dialog only an account version the approver ticked; otherwise sends them to the account', () => {
@@ -609,10 +631,15 @@ describe('the stale-approval dialog names an account change and never approves a
 describe('"บัญชีรับเงินคืนของฉัน" and the employee page', () => {
   it('opens for whoever may file a claim, and says so plainly to anyone else', () => {
     const page = visible(render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: true })));
-    for (const text of ['บัญชีรับเงินคืนของฉัน', 'บัญชีรับเงินคืนประจำ', 'กำลังโหลดบัญชีรับเงินคืน...',
-      'ตั้งครั้งเดียว ใบเบิกใหม่จะใช้บัญชีนี้เอง ใบที่ส่งไปแล้วใช้บัญชีที่บันทึกไว้กับใบนั้น ไม่เปลี่ยนตาม']) assert.ok(page.includes(text), text);
+    // One line under the title. What a change leaves alone is said after a change (the message of the save), and who
+    // sees the number is said in the form that takes it: neither stands above an account nobody is editing.
+    for (const text of ['กลับไปการเบิกจ่าย', 'บัญชีรับเงินคืนของฉัน', 'บัญชีรับเงินคืนประจำ', 'กำลังโหลดบัญชีรับเงินคืน...', 'ใบเบิกใหม่ใช้บัญชีนี้เอง']) assert.ok(page.includes(text), text);
+    for (const gone of ['ตั้งครั้งเดียว', 'ผู้อนุมัติจะเห็นชื่อบัญชี ธนาคาร และ 4 ตัวท้าย']) assert.equal(page.some((text) => text.includes(gone)), false, gone);
+    const card = read('./ReimbursementPayout.tsx');
+    assert.match(card, /\{own && method === 'BANK_TRANSFER' && <p[^>]*>\{`คนอื่นเห็นแค่ 4 ตัวท้าย \$\{payoutNumberWords\(form\.payoutKind\)\.full\}เปิดดูได้เฉพาะคุณ ผู้อนุมัติของใบนั้น และผู้ที่บันทึกจ่าย`\}<\/p>\}/);
+    assert.match(card, /\$\{replaced \? ' ใบเบิกที่ส่งไปแล้วยังใช้บัญชีเดิม' : ''\}/);
     const refused = visible(render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: false })));
-    for (const text of ['ยังตั้งบัญชีรับเงินคืนไม่ได้', 'บัญชีนี้ยังไม่มีสิทธิ์สร้างคำขอเบิก กรุณาติดต่อเจ้าของกิจการหรือผู้ดูแลบริษัท']) assert.ok(refused.includes(text), text);
+    for (const text of ['ยังตั้งบัญชีรับเงินคืนไม่ได้', 'บัญชีนี้ยังไม่มีสิทธิ์สร้างใบเบิก ติดต่อเจ้าของกิจการหรือผู้ดูแลบริษัท']) assert.ok(refused.includes(text), text);
     const route = read('../../../app/(workspace)/companies/[companyId]/reimbursements/payout-account/page.tsx');
     assert.match(route, /canManage=\{\(session\?\.permissions \?\? \[\]\)\.includes\('reimbursement\.create'\)\}/);
   });
@@ -730,13 +757,22 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
   });
 
   it('stacks on a phone: full-width 44 px controls, one column, long names wrap', () => {
+    // Inside a shared button group: the group gives its buttons the full width on a phone and one size beside each other.
+    const inGroup = (html: string, at: number) => {
+      const group = html.lastIndexOf('class="mangmee-actions', at);
+      const between = group < 0 ? '' : html.slice(html.lastIndexOf('<div', group), at);
+      return group >= 0 && (between.match(/<div\b/g)?.length ?? 0) - (between.match(/<\/div>/g)?.length ?? 0) === 1;
+    };
     for (const [screen, html] of screens) {
-      for (const [control] of html.matchAll(/<(?:button|a)\b[^>]*>/g)) {
-        // The page header's back link sits in the page's pill: as wide as its words, and 44 px high on a phone by its own box.
-        if (control.startsWith('<a ') && control.includes('-my-[13px]')) { assert.match(control, /\bmin-h-11\b/, `${screen}: ${control}`); continue; }
+      for (const match of html.matchAll(/<(?:button|a)\b[^>]*>/g)) {
+        const control = match[0];
         if (!control.includes('class="')) continue;
         if (/class="[^"]*underline/.test(control)) { assert.match(control, /min-h-11/, `${screen}: ${control}`); continue; }
-        assert.match(control, /min-h-11 w-full sm:w-auto/, `${screen}: ${control}`);
+        // Every other control is the shared button: 44 px high on a phone by the shared rule, never a hand-made height.
+        assert.match(control, /class="[^"]*\bmangmee-btn\b/, `${screen}: ${control}`);
+        // The page's back link is as wide as its words; any other button sits in a group.
+        if (control.startsWith('<a ') && /\bw-fit\b/.test(control)) continue;
+        assert.ok(inGroup(html, match.index!), `${screen}: outside a button group: ${control}`);
       }
       for (const [grid] of html.matchAll(/class="[^"]*\bgrid-cols-\d[^"]*"/g)) {
         // Two columns on a phone only for the short name pair; every form grid is one column until sm.
@@ -748,7 +784,9 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
     assert.match(cardHtml, /class="[^"]*\[overflow-wrap:anywhere\][^"]*"/);
     // Requester name and account name sit side by side so a person can compare them, and both wrap.
     assert.match(cardHtml, /<dl class="grid grid-cols-2 gap-3"><div class="min-w-0">[\s\S]*?break-words[\s\S]*?<div class="min-w-0">[\s\S]*?break-words/);
-    assert.match(read('./ReimbursementPayout.tsx'), /break-all font-mono text-lg[^"]*" data-testid="payout-account-number"/);
+    // A revealed number is one unit and is never broken over two lines (20 digits fit a 390 px phone at this size).
+    assert.match(read('./ReimbursementPayout.tsx'), /className="mangmee-unit [^"]*font-mono text-lg[^"]*" data-testid="payout-account-number"/);
+    assert.doesNotMatch(read('./ReimbursementPayout.tsx'), /break-all/);
     for (const [radio] of screens[10]![1].matchAll(/<label class="[^"]*"><input type="radio"/g)) assert.match(radio, /min-h-11/);
   });
 });
@@ -759,5 +797,54 @@ describe('draft row submission words', () => {
     assert.equal(logic.draftRowSubmitLabel({ payoutMethod: null }), 'เลือกวิธีรับเงินคืนและส่งอนุมัติ');
     assert.equal(logic.draftRowSubmitLabel({ payoutMethod: 'BANK_TRANSFER' }), 'ตรวจบัญชีและส่งอนุมัติ');
     assert.equal(logic.draftRowSubmitLabel({ payoutMethod: 'CASH' }), 'ส่งอนุมัติ');
+  });
+});
+
+// 2026-10-13 (L6-15): a person with no default account was put on "ตามบัญชีรับเงินคืนประจำของฉัน" all the same. The draft
+// saved, and the next page blocked it with three red sentences.
+describe('the claim form chooses no receiving method for a person who has no default account', () => {
+  const DEFAULT_CHOICE = 'ตามบัญชีรับเงินคืนประจำของฉัน';
+  const unchosen = { ...logic.emptyClaimPayoutForm(), mode: '' as const };
+
+  it('offers cash or an account, with nothing chosen, and not a default that does not exist', () => {
+    const html = section({ noDefaultAccount: true, value: unchosen });
+    const texts = visible(html);
+    assert.equal(texts.includes(DEFAULT_CHOICE), false);
+    for (const choice of ['รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้']) assert.ok(texts.includes(choice), choice);
+    assert.doesNotMatch(html, /<input type="radio"[^>]*checked=""/u, 'nothing is chosen for the person');
+    assert.equal(texts.some((text) => text.includes('คุณยังไม่ได้ตั้งบัญชีประจำ')), false);
+  });
+
+  it('keeps the choice where it is still true: a default that exists, one that could not be read, a draft saved on it', () => {
+    // Without the flag (a default exists, or its read failed and the server decides at submit) the choice is offered as before.
+    assert.ok(visible(section({ value: unchosen })).includes(DEFAULT_CHOICE));
+    // A draft already saved on it keeps showing what it is on, with why that does not work.
+    const saved = visible(section({ noDefaultAccount: true }));
+    assert.ok(saved.includes(DEFAULT_CHOICE) && saved.some((text) => text.includes('คุณยังไม่ได้ตั้งบัญชีประจำ')));
+  });
+
+  it('says at the choice itself that one is needed, when the form was sent without one', () => {
+    const html = section({ noDefaultAccount: true, value: unchosen, invalidField: 'mode', error: 'เลือกวิธีรับเงินคืน' });
+    assert.match(html, /<div role="radiogroup" aria-label="รับเงินคืนทาง" tabindex="-1" aria-invalid="true"/u);
+    assert.ok(visible(html).includes('เลือกวิธีรับเงินคืน'));
+    assert.equal(visible(section({ noDefaultAccount: true, value: unchosen })).includes('เลือกวิธีรับเงินคืน'), false, 'not before it was sent');
+    // The form with no choice is not saved: the same rule the save runs.
+    assert.ok(logic.claimPayoutFormError(unchosen));
+    assert.equal(logic.claimPayoutInput(unchosen), undefined);
+  });
+});
+
+// Controller request 2026-10-13: the card is also drawn inside the edit-employee page, whose one main button is its own "บันทึก".
+describe('the default-account card can sit inside another page\'s form without a second main button', () => {
+  it('draws its starting button with the secondary look when `embedded`, and changes nothing else', () => {
+    const source = read('./ReimbursementPayout.tsx');
+    assert.match(source, /export function MemberPayoutAccountCard\(\{ companyId, memberUserId, canEdit, title = 'บัญชีรับเงินคืน', description, embedded = false \}/);
+    // Editing an account that exists is never the main button either: only setting the first one is, on the lane's own page.
+    assert.match(source, /className=\{embedded \|\| account \? ghostClass : btnClass\} onClick=\{startEdit\}>\{account \? 'แก้ไขบัญชี' : 'ตั้งบัญชีรับเงินคืน'\}<\/button>/);
+    // Deleting the account is said in red and comes before it in the group (below it when the two stack on a phone).
+    assert.match(source, /<ActionGroup>\s+\{own && account && <button type="button" className=\{dangerClass\}[^>]*onClick=\{\(\) => void remove\(\)\}>ลบบัญชี<\/button>\}/);
+    assert.equal(source.match(/\bembedded\b/g)?.length, 3, 'the prop, its note and the one button: no other use');
+    // The lane's own page does not pass it: there the card's button is the page's main one.
+    assert.doesNotMatch(read('./ReimbursementPayoutAccountPage.tsx'), /embedded/);
   });
 });

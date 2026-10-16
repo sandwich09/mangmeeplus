@@ -40,6 +40,7 @@ export function isRenewalPath(pathname: string): boolean {
 export function isLockedShellPath(pathname: string, companyId: string): boolean {
   const base = `/companies/${encodeURIComponent(companyId)}`;
   return pathname === `${base}/settings` || pathname === `${base}/settings/profile`
+    || pathname === `${base}/account`
     || isRenewalPath(pathname) || isBillingCustomerRecoveryPath(pathname, companyId);
 }
 
@@ -48,24 +49,31 @@ export function planLockReason(source: { lockReason?: PlanLockReason } | null | 
   return source?.lockReason ?? 'trial_ended';
 }
 
+/** Who can act when the reader cannot: the one clause both `staff` lines are built from. */
+const STAFF_WHO = `ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจ`;
+
 /**
  * The one wording table for a locked shop (spec R2/R10), read by the shell banner, the renewal
  * page and the package page. A shop that never had a package is told it has none to renew.
  * `staff` is for a member who cannot buy (review 2026-09-29): it says who can, since a hint with
  * no button under it was a dead end — and never "พักการใช้งาน" for a shop that is only unpaid.
+ * `staffNext` is the same line without what is the matter, for the renewal page: its title has
+ * already said that, and the same sentence stood twice on one screen.
  */
-export const PLAN_LOCK_COPY: Record<PlanLockReason, { banner: string; title: string; body: string; staff: string }> = {
+export const PLAN_LOCK_COPY: Record<PlanLockReason, { banner: string; title: string; body: string; staff: string; staffNext: string }> = {
   no_package: {
     banner: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ · เลือกแพ็กเกจเพื่อเริ่มใช้งาน',
     title: 'ยังไม่มีแพ็กเกจ',
     body: 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน ข้อมูลร้านและการตั้งค่าของคุณอยู่ครบ',
-    staff: `ร้านนี้ยังไม่มีแพ็กเกจ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อเริ่มใช้งาน`,
+    staff: `ร้านนี้ยังไม่มีแพ็กเกจ ${STAFF_WHO}เพื่อเริ่มใช้งาน`,
+    staffNext: `${STAFF_WHO}เพื่อเริ่มใช้งาน`,
   },
   trial_ended: {
     banner: 'แพ็กเกจของร้านหมดอายุแล้ว · เลือกแพ็กเกจเพื่อใช้งานต่อ',
     title: 'แพ็กเกจหมดอายุแล้ว',
-    body: 'ข้อมูลทั้งหมดยังอยู่ครบ ไม่มีอะไรหาย เมื่อเลือกแพ็กเกจแล้วใช้งานต่อได้ทันที',
-    staff: `แพ็กเกจของร้านหมดอายุแล้ว ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อใช้งานต่อ`,
+    body: 'เลือกแพ็กเกจแล้วใช้งานต่อได้ทันที ข้อมูลยังอยู่ครบ',
+    staff: `แพ็กเกจของร้านหมดอายุแล้ว ${STAFF_WHO}เพื่อใช้งานต่อ`,
+    staffNext: `${STAFF_WHO}เพื่อใช้งานต่อ`,
   },
 };
 
@@ -89,27 +97,11 @@ export function claimUnlockReload(storage: () => Pick<Storage, 'getItem' | 'setI
   }
 }
 
-// ---- Sidebar card (Owner 2026-08-31: the warning lives in the sidebar, user-collapsible) ----
-
-export type WarningBucket = '7' | '3' | '1';
-
-/** Which ladder step the remaining time falls in — mirrors the 7/3/1 notification ladder. */
-export function warningBucket(daysLeft: number): WarningBucket {
-  if (daysLeft > 3) return '7';
-  if (daysLeft > 1) return '3';
-  return '1';
+/** D3: the warning is one row; no stored collapse state. */
+export function planTermReminderText(daysLeft: number): string {
+  return daysLeft < 0 ? 'แพ็กเกจหมดอายุแล้ว' : daysLeft === 0 ? 'แพ็กเกจหมดอายุวันนี้' : `เหลืออีก ${daysLeft} วัน`;
 }
 
-/**
- * Collapsed only while the stored bucket matches the current one: collapsing at 7 days stays
- * collapsed through that window, then the card re-opens by itself at 3 days and again at 1 day —
- * three reminders at most, never a nag on every visit.
- */
-export function cardCollapsed(storedBucket: string | null, current: WarningBucket): boolean {
-  return storedBucket === current;
-}
-
-/** Fill of the time-left bar, out of the 7-day warning window. Clamped so a sliver stays visible. */
-export function warningProgressPercent(daysLeft: number): number {
-  return Math.min(100, Math.max(6, Math.round((daysLeft / 7) * 100)));
+export function cardRenewalRunning(status: Pick<import('@watchdog-bms/contracts').BillingStatus, 'renewalMode' | 'subscriptionState' | 'cancelAtPeriodEnd'>): boolean {
+  return status.renewalMode === 'CARD_AUTO' && status.subscriptionState === 'active' && !status.cancelAtPeriodEnd;
 }

@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { MangmeeCard, MangmeeIconFrame, MangmeePage } from '@/common/components/mangmee';
-import { WORKSPACE_ICON_NODES } from '@/features/web-core-workspace/design-icons';
+import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { quietButtonClass } from '@/common/components/button/button-classes';
 import type { GuideBlock, GuideSection, UserGuide } from './user-guide.model';
 
 /**
@@ -35,7 +35,7 @@ function GuideLinkButton({ label, href }: { label: string; href: string }) {
   return (
     <Link
       href={href}
-      className="mt-2 inline-flex min-h-11 items-center gap-1.5 rounded-full border border-brand-100 bg-brand-25 px-3.5 py-2 text-xs font-bold text-brand-700 transition-colors hover:bg-brand-50 sm:min-h-9"
+      className="mt-2 inline-flex min-h-11 items-center gap-1.5 rounded-full border border-brand-100 bg-brand-25 px-3.5 py-2 text-sm font-bold text-brand-700 transition-colors hover:bg-brand-50 sm:min-h-10"
     >
       {label}
       <span aria-hidden="true">→</span>
@@ -88,7 +88,7 @@ function GuideBlockView({ block }: { block: GuideBlock }) {
             <li key={row.join('|')} className="rounded-xl border border-gray-200 p-3">
               {row.map((cell, index) => (
                 <div key={`${row[0]}-${index}`} className={index === 0 ? '' : 'mt-2'}>
-                  <p className="text-[11px] font-bold text-gray-400">{block.headers[index]}</p>
+                  <p className="text-xs font-bold text-gray-500">{block.headers[index]}</p>
                   <p className={`text-sm leading-6 break-words ${
                     index === 0 ? 'font-bold text-gray-800' : 'text-gray-600'
                   }`}
@@ -210,16 +210,14 @@ function GuideSectionView({
             open ? 'border-b border-gray-100' : ''
           }`}
         >
-          <MangmeeIconFrame tone={section.tone}>{WORKSPACE_ICON_NODES[section.iconKey]}</MangmeeIconFrame>
+          {/* The number is the marker: a coloured picture on every topic (lightning, people, a box) named nothing. */}
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-extrabold text-gray-900 sm:text-base">
+            <span className="block text-base font-extrabold text-gray-900">
               {index}. {section.title}
             </span>
             {section.summary && (
-              // Collapsed rows keep a short preview so the closed page still reads as a menu; open
-              // rows show the full sentence. `block` is dropped while clamping because both
-              // utilities set `display` and the clamp needs its own box to win.
-              <span className={`mt-0.5 text-xs leading-6 text-gray-500 sm:text-sm ${open ? 'block' : 'line-clamp-2'}`}>
+              // The whole sentence at reading size, closed or open: at 12 px and cut at two lines it ended in "…".
+              <span className="mt-0.5 block text-sm leading-6 text-gray-600">
                 {section.summary}
               </span>
             )}
@@ -261,11 +259,9 @@ export function UserGuidePage({ guide }: { guide: UserGuide }) {
       title={guide.title}
       description={guide.description}
       actions={
+        // Quiet: the person came to read, and the page's one green button used to be the way out of the guide.
         guide.primaryLink && (
-          <Link
-            href={guide.primaryLink.href}
-            className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-linear-to-br from-brand-500 to-brand-700 px-4 text-sm font-bold text-white hover:from-brand-600 hover:to-brand-800 sm:min-h-10"
-          >
+          <Link href={guide.primaryLink.href} className={quietButtonClass}>
             {guide.primaryLink.label}
             <span aria-hidden="true">→</span>
           </Link>
@@ -274,16 +270,13 @@ export function UserGuidePage({ guide }: { guide: UserGuide }) {
     >
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-bold text-gray-500">
+          <p className="text-sm text-gray-600">
             คู่มือนี้มี {guide.sections.length} หัวข้อ · เลือกหัวข้อที่ต้องการเพื่อเปิดอ่าน
           </p>
-          <button
-            type="button"
-            onClick={toggleAll}
-            className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold text-gray-600 transition-colors hover:border-brand-100 hover:text-brand-700 sm:min-h-9"
-          >
+          <button type="button" onClick={toggleAll} aria-expanded={allOpen} className={quietButtonClass}>
             {allOpen ? 'ย่อทุกหัวข้อ' : 'เปิดอ่านทุกหัวข้อ'}
-            <ChevronIcon open={!allOpen} className="text-gray-400" />
+            {/* Down while there is something to open, up once everything is open (it used to be the other way round). */}
+            <ChevronIcon open={allOpen} className="text-gray-400" />
           </button>
         </div>
 

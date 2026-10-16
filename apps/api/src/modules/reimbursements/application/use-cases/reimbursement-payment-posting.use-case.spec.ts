@@ -86,6 +86,8 @@ describe('RecordReimbursementPaymentUseCase — a payment date in a closed accou
       accountingPeriod: { findUnique: async (args: any) => { periodReads.push(args); return periodStatus ? { status: periodStatus } : null; } },
     };
     const repo: any = new PrismaReimbursementRepository({ client } as any, {} as any);
+    repo.listClaimDuplicateComparisons = async () => [];
+    repo.listClaimDuplicateExpenseTargets = async () => [];
     // Projection readiness runs its own queries and has its own specs.
     repo.assertClaimProjectionsReady = async () => undefined;
     const written: any[] = [];

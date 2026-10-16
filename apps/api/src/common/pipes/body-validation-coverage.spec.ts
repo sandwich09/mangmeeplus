@@ -67,7 +67,7 @@ const KNOWN_UNVALIDATED_BY_FILE: Readonly<Record<string, number>> = {
   'modules/expenses/presentation/http/expense.controller.ts': 15,
   'modules/tax/presentation/http/transaction-tax.controller.ts': 11,
   'modules/crm/presentation/http/crm-customer.controller.ts': 9,
-  'modules/tax/presentation/http/tax.controller.ts': 9,
+  'modules/tax/presentation/http/tax.controller.ts': 7,
   'modules/crm/presentation/http/crm-opportunity.controller.ts': 8,
   'modules/crm-inbox/presentation/http/crm-conversation.controller.ts': 7,
   'modules/crm/presentation/http/crm-follow-up.controller.ts': 5,
@@ -75,7 +75,7 @@ const KNOWN_UNVALIDATED_BY_FILE: Readonly<Record<string, number>> = {
 };
 
 /** Total across every controller, including the long tail not listed individually above. */
-const KNOWN_UNVALIDATED_TOTAL = 144;
+const KNOWN_UNVALIDATED_TOTAL = 142;
 
 describe('request body validation coverage (audit H-23)', () => {
   it('does not grow the unvalidated-body backlog', () => {

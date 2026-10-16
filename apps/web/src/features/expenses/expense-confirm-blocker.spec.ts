@@ -54,7 +54,7 @@ describe('a refused confirmation always names its reason', () => {
       substituteReceiptEvidence: null,
     });
     assert.deepEqual(expenseConfirmBlocker({ ...ok, evidenceError }), {
-      literal: 'กรุณาบันทึกการตรวจเอกสารและหลักฐานล่าสุดก่อนยืนยัน',
+      key: 'expenses.confirm_needs_document_review',
     });
   });
 });

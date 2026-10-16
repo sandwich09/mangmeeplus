@@ -43,8 +43,8 @@ test('prepare is a secondary link with the expense selected and disappears when 
   const node = (permissions: string[], entryOpen: boolean) => h(child.ExpenseDisbursementPrepareEntry, { companyId: 'shop', detail, permissions, entryOpen });
   assert.equal(render(node([], true)), ''); assert.equal(render(node(['expense.disbursement.prepare'], false)), '');
   const html = render(node(['expense.disbursement.prepare'], true));
-  assert.match(html, /new\?expenseId=expense%2Fone/); assert.match(html, /เพิ่มเข้าใบเตรียมจ่าย/);
-  assert.match(html, /รวมหลายรายการ หรือรออนุมัติก่อนจ่าย/);
+  assert.match(html, /new\?expenseId=expense%2Fone/); assert.match(html, /รวมกับบิลอื่น หรือให้คนอื่นอนุมัติก่อนจ่าย → ใบเตรียมจ่าย/);
+  assert.doesNotMatch(html, /รวมหลายรายการ หรือรออนุมัติก่อนจ่าย/);
 });
 test('payment rows show one eligible action only inside the payment card, with a non-openable document as text', () => {
   const payment = { id: 'payment', status: 'RECORDED', canIssueDisbursementVoucher: true, disbursementVoucher: null };
@@ -77,12 +77,13 @@ test('the issue confirmation keeps a server refusal inside its dialog and reuses
     runtime.useState = (init: any) => { const pair = realState(init), index = i++; return index < 3 ? [state[index], (value: any) => { state[index] = value; }] : pair; };
     runtime.useRef = (value: any) => { const real = realRef(value), index = r++; return index < 2 ? refs[index] : real; };
     runtime.createElement = (tag: any, props: any, ...children: any[]) => { if (tag === 'button') nodes.push({ ...props, children }); return realCreate(tag, props, ...children); };
-    try { return render(h(child.ExpenseDisbursementPaymentScope, null, h(child.ExpenseDisbursementPaymentEntry, { companyId: 'shop', expenseId: 'expense', payment: { id: 'payment', status: 'RECORDED', canIssueDisbursementVoucher: true }, permissions: ['expense.disbursement.issue'], entryOpen: true }))); }
+    try { return render(h(child.ExpenseDisbursementPaymentScope, null, h(child.ExpenseDisbursementPaymentEntry, { companyId: 'shop', expenseId: 'expense', payment: { id: 'payment', amount: '9700', status: 'RECORDED', canIssueDisbursementVoucher: true }, permissions: ['expense.disbursement.issue'], entryOpen: true }))); }
     finally { runtime.useState = realState; runtime.useRef = realRef; runtime.createElement = realCreate; }
   }
   try {
     let html = draw();
-    assert.match(html, /ออกใบสำคัญจ่ายสำหรับการจ่ายนี้\? ระบบจะออกเลขที่ใบให้ และใบจะอยู่ในหน้ารายการใบเตรียมจ่าย\/ใบสำคัญจ่าย/);
+    // The question names the payment by its amount; the body is the one consequence.
+    assert.match(html, /<h2>ออกใบสำคัญจ่ายสำหรับการจ่าย ฿9,700.00\?<\/h2>/); assert.match(html, /ระบบจะออกเลขที่ใบให้ทันที/);
     for (let attempt = 0; attempt < 2; attempt++) {
       nodes.findLast(node => node.children.includes('ออกใบสำคัญจ่าย')).onClick();
       await new Promise(resolve => setImmediate(resolve)); html = draw();
@@ -178,4 +179,68 @@ test('reserved refusals have a readable document exit, and void makes opening it
   }
   const page = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
   assert.match(page, /!detail.correctionCapabilities\?\.canReopen && <ExpenseDisbursementOpenLink companyId=\{companyId\}/);
+});
+
+const prepareLabel = 'รวมกับบิลอื่น หรือให้คนอื่นอนุมัติก่อนจ่าย → ใบเตรียมจ่าย';
+function prepareHarness(permissions: string[], canRecordPayment = true, entryOpen = true) {
+  const runtime = require('react');
+  let state: any = null, ref = { current: null as any }, cleanup: (() => void) | undefined;
+  const draw = () => {
+    const originalState = runtime.useState, originalRef = runtime.useRef, originalEffect = runtime.useEffect;
+    let s = 0, r = 0, e = 0, effect: any;
+    runtime.useState = (init: any) => { const pair = originalState(init); return s++ === 0 ? [state, (next: any) => { state = next; }] : pair; };
+    runtime.useRef = (init: any) => { const value = originalRef(init); return r++ === 0 ? ref : value; };
+    runtime.useEffect = (fn: any, deps: any) => { if (e++ === 0) effect = fn; originalEffect(fn, deps); };
+    let html: string;
+    try { html = render(h(child.ExpenseDisbursementPrepareEntry, { companyId: 'shop', detail, permissions, entryOpen, canRecordPayment }, canRecordPayment ? h('button', { className: 'mangmee-btn mangmee-btn-primary' }, 'บันทึกจ่าย') : null)); }
+    finally { runtime.useState = originalState; runtime.useRef = originalRef; runtime.useEffect = originalEffect; }
+    cleanup?.(); cleanup = effect?.();
+    return html!;
+  };
+  return { draw, leave: () => cleanup?.() };
+}
+for (const approve of [false, true]) for (const outcome of ['other', 'alone', 'failed']) test(`PAY-LINK approve=${approve}, payable read=${outcome}`, async () => {
+  const rows = [{ expenseId: detail.id, payeeKey: 'payee', selectable: true },
+    { expenseId: 'different-payee', payeeKey: 'different', selectable: true },
+    { expenseId: 'reserved', payeeKey: 'payee', selectable: false, reservation: { voucherId: 'draft' } },
+    ...(outcome === 'other' ? [{ expenseId: 'other', payeeKey: 'payee', selectable: true, reservation: null }] : [])];
+  const read = mock.method(api, 'listDisbursementPayableExpenses', async (...args: any[]) => {
+    assert.deepEqual(args, ['shop', {}, { suppressErrorToast: true }]);
+    if (outcome === 'failed') throw new Error('offline'); return rows;
+  });
+  const screen = prepareHarness(['expense.disbursement.prepare', ...(approve ? ['expense.disbursement.approve'] : [])]);
+  try {
+    screen.draw(); await new Promise(resolve => setImmediate(resolve));
+    const html = screen.draw();
+    assert.equal(html.includes(prepareLabel), !approve || outcome !== 'alone');
+    assert.match(html, />บันทึกจ่าย<\/button>/);
+    assert.doesNotMatch(html, /mangmee-btn-secondary|เพิ่มเข้าใบเตรียมจ่าย/);
+    if (html.includes(prepareLabel)) assert.ok(html.indexOf('</button>') < html.indexOf(prepareLabel));
+    screen.draw(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(read.mock.callCount(), approve ? 1 : 0);
+  } finally { screen.leave(); read.mock.restore(); }
+});
+test('PAY-LINK without direct payment keeps a secondary route even for an approver; unavailable path does not read', () => {
+  const read = mock.method(api, 'listDisbursementPayableExpenses', async () => []);
+  try {
+    const permissions = ['expense.disbursement.prepare', 'expense.disbursement.approve'];
+    const html = prepareHarness(permissions, false).draw();
+    assert.match(html, /class="mangmee-btn mangmee-btn-secondary/); assert.ok(html.includes(prepareLabel));
+    assert.doesNotMatch(html, />บันทึกจ่าย</);
+    assert.doesNotMatch(prepareHarness(permissions, true, false).draw(), /ใบเตรียมจ่าย/);
+    assert.equal(read.mock.callCount(), 0);
+  } finally { read.mock.restore(); }
+});
+
+test('PAY-LINK an approver waits for the optional read before offering the quiet route, while direct payment stays available', async () => {
+  let answer!: (rows: any[]) => void;
+  const read = mock.method(api, 'listDisbursementPayableExpenses', () => new Promise(resolve => { answer = resolve; }));
+  const screen = prepareHarness(['expense.disbursement.prepare', 'expense.disbursement.approve']);
+  try {
+    const pending = screen.draw();
+    assert.doesNotMatch(pending, /รวมกับบิลอื่น/); assert.match(pending, />บันทึกจ่าย<\/button>/);
+    screen.draw(); assert.equal(read.mock.callCount(), 1);
+    answer([{ expenseId: detail.id, payeeKey: 'payee', selectable: true }, { expenseId: 'other', payeeKey: 'payee', selectable: true }]);
+    await new Promise(resolve => setImmediate(resolve)); assert.ok(screen.draw().includes(prepareLabel));
+  } finally { screen.leave(); read.mock.restore(); }
 });

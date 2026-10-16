@@ -2,6 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PLAN_TERM_STATE_LABEL_TH,
+  PLAN_TIER_PRESETS,
+  shopPlanTierLabel,
   planTermLockReason,
   planTermState,
   planTermStateLabel,
@@ -113,4 +115,10 @@ describe('planTermStateLabel / PLAN_TERM_STATE_LABEL_TH', () => {
     assert.equal(PLAN_TERM_STATE_LABEL_TH.NO_PACKAGE, 'ยังไม่มีแพ็กเกจ');
     assert.equal(planTermStateLabel('NO_PACKAGE'), 'ยังไม่มีแพ็กเกจ');
   });
+});
+
+
+it('shop tier labels omit English brackets while billing presets stay unchanged', () => {
+  assert.deepEqual(Object.keys(PLAN_TIER_PRESETS).map(key => shopPlanTierLabel(key as keyof typeof PLAN_TIER_PRESETS)), ['ทดลองใช้ฟรี', 'เริ่มต้น', 'เติบโต', 'มืออาชีพ', 'ธุรกิจ']);
+  assert.equal(PLAN_TIER_PRESETS.STARTER_249.labelTh, 'เริ่มต้น (STARTER)');
 });

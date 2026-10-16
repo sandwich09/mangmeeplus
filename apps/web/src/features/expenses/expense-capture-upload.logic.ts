@@ -24,6 +24,7 @@ export type CaptureUploadEntry = {
   state: CaptureUploadState;
   /** Set once the file became an expense, so a retry never uploads the same receipt twice. */
   expenseId?: string;
+  error?: string;
 };
 
 export { expenseCaptureMegabytes as captureMegabytes } from '@watchdog-bms/contracts';
@@ -38,6 +39,13 @@ export function captureFileRejection(
     && !capability.allowedMimeTypes.includes(file.type)) return 'unsupported';
   if (capability && file.size > capability.maxBytes) return 'too_large';
   return null;
+}
+
+/** Compare the picked originals, before image preparation changes their size. */
+export function appendReceiptFiles<T extends Pick<File, 'name' | 'size' | 'lastModified'>>(existing: T[], picked: T[]): T[] {
+  const files = [...existing];
+  for (const file of picked) if (!files.some(old => old.name === file.name && old.size === file.size && old.lastModified === file.lastModified)) files.push(file);
+  return files;
 }
 
 export const entryForFile = (file: { name: string; size: number }): CaptureUploadEntry =>
@@ -60,6 +68,8 @@ const patch = (
 export async function runSingleFileUploads<T>(input: {
   entries: Array<{ entry: CaptureUploadEntry; file: File | null }>;
   upload: (file: File) => Promise<{ expenseId: string; result?: T }>;
+  retryIndex?: number;
+  describeFailure?: (cause: unknown) => string;
   onChange?: (entries: CaptureUploadEntry[]) => void;
 }): Promise<{ entries: CaptureUploadEntry[]; created: Array<{ expenseId: string; result?: T }> }> {
   let entries = input.entries.map(({ entry }) => entry);
@@ -68,22 +78,20 @@ export async function runSingleFileUploads<T>(input: {
 
   for (const [index, { file }] of input.entries.entries()) {
     const current = entries[index]!;
-    if (current.expenseId) continue;
+    if (current.expenseId || input.retryIndex !== undefined && input.retryIndex !== index) continue;
     if (!file) {
       entries = patch(entries, index, { state: 'FAILED' });
       publish();
       continue;
     }
-    entries = patch(entries, index, { state: 'UPLOADING' });
+    entries = patch(entries, index, { state: 'UPLOADING', error: undefined });
     publish();
     try {
       const done = await input.upload(file);
       created.push(done);
       entries = patch(entries, index, { state: 'STORED', expenseId: done.expenseId });
-    } catch {
-      // The caller has already shown the server's own words; the row only records that this file
-      // is the one to send again.
-      entries = patch(entries, index, { state: 'FAILED' });
+    } catch (cause) {
+      entries = patch(entries, index, { state: 'FAILED', error: input.describeFailure?.(cause) });
     }
     publish();
   }

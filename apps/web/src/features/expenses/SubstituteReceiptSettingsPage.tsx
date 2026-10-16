@@ -10,11 +10,15 @@ import type {
   UpdateSubstituteReceiptPolicyInput,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { BackLink } from '@/common/components/app-shell/BackLink';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { ChoiceRow } from '@/common/components/field';
+import { Notice } from '@/common/components/notice';
+import { primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
 import { LoadingState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
 import { getSubstituteReceiptPolicy, updateSubstituteReceiptPolicy } from './expenses.api';
-import { ErrorBanner } from './ExpensesUi';
 import { validApproverSelection, validateSubstituteReceiptPolicy } from './substitute-receipt-policy.model';
 
 const STRICT = 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE';
@@ -34,7 +38,9 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  // The list's error shows after the first press of the save button, under the list it is about.
+  const [attempted, setAttempted] = useState(false);
+  const [adviceOpen, setAdviceOpen] = useState(false);
 
   const applySettings = useCallback((value: SubstituteReceiptPolicySettings) => {
     setSettings(value);
@@ -42,6 +48,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
     setApproverUserIds(validApproverSelection(value.approverUserIds, value.invalidApproverUserIds));
     setCashEvidencePolicy(value.cashEvidencePolicy);
     setCashEvidenceInstructions(value.cashEvidenceInstructions ?? '');
+    setAdviceOpen(Boolean(value.cashEvidenceInstructions));
   }, []);
 
   const load = useCallback(async () => {
@@ -67,20 +74,23 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
   const validationError = validateSubstituteReceiptPolicy(input);
 
   const toggleApprover = (userId: string) => {
-    setSaved(false);
     setApproverUserIds((current) => current.includes(userId)
       ? current.filter((id) => id !== userId)
       : [...current, userId]);
   };
 
   const save = async () => {
-    if (validationError || saving) return;
+    if (saving) return;
+    setAttempted(true);
+    if (validationError) {
+      document.getElementById('substitute-approvers')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
     setSaving(true);
-    setSaved(false);
     setError(null);
     try {
       applySettings(await updateSubstituteReceiptPolicy(companyId, input));
-      setSaved(true);
+      setAttempted(false);
       toast.success('บันทึกการตั้งค่าใบรับรองแทนใบเสร็จแล้ว');
     } catch (saveError) {
       setError(message(saveError));
@@ -89,136 +99,85 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
     }
   };
 
+  const sectionTitle = 'text-base font-semibold text-gray-900';
   return (
     <MangmeePage
-      eyebrow={<><Link href={`/companies/${companyId}/settings`}>ตั้งค่า</Link><span className="mx-2">/</span>ใบรับรองแทนใบเสร็จ</>}
-      title="ตั้งค่าใบรับรองแทนใบเสร็จรับเงิน"
-      description="กำหนดรูปแบบการอนุมัติ ผู้มีอำนาจอนุมัติ และหลักฐานขั้นต่ำสำหรับรายการจ่ายเงินสดของบริษัท"
-      meta={settings && <MangmeeBadge tone={settings.configured ? 'brand' : 'amber'}>{settings.configured ? 'ตั้งค่าแล้ว' : 'ยังไม่ตั้งค่า'}</MangmeeBadge>}
+      back={<BackLink href={`/companies/${companyId}/settings`} label="กลับไปตั้งค่า" />}
+      title="ตั้งค่าใบรับรองแทนใบเสร็จ"
     >
       {loading ? (
         <LoadingState label="กำลังโหลด..." />
+      ) : !settings ? (
+        <Notice tone="error" action={<button type="button" className={secondaryButtonClass} onClick={() => void load()}>ลองอีกครั้ง</button>}>
+          {error ?? 'โหลดการตั้งค่าไม่สำเร็จ'}
+        </Notice>
       ) : (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
-          <div className="grid content-start gap-5">
-            <MangmeeCard className="p-5 sm:p-6">
-              <h2 className="text-xl font-extrabold text-gray-900">รูปแบบการอนุมัติและตรวจรับ</h2>
-              <p className="mt-2 text-sm leading-6 text-gray-500">สำหรับฉบับกระดาษ การตั้งค่านี้กำหนดผู้มีสิทธิ์ตรวจรับด้วย หากต้องการระบุผู้ตรวจรับ ให้เลือกกำหนดรายชื่อด้านล่าง ผู้ตรวจรับต้องมีสิทธิ์ยืนยันค่าใช้จ่าย</p>
-              <div className="mt-4 grid gap-3">
-                <label className={`flex cursor-pointer gap-3 rounded-xl border p-4 ${approvalMode === 'OWNER_SELF' ? 'border-brand-200 bg-brand-25' : 'border-gray-200'}`}>
-                  <input type="radio" name="approval-mode" checked={approvalMode === 'OWNER_SELF'} onChange={() => { setApprovalMode('OWNER_SELF'); setSaved(false); }} className="mt-1 accent-brand-700" />
-                  <span>
-                    <span className="font-bold text-gray-900">เจ้าของกิจการลงนามและอนุมัติด้วยตนเอง (ค่าเริ่มต้น)</span>
-                    <span className="mt-1 block text-sm leading-6 text-gray-500">เหมาะกับกิจการเจ้าของคนเดียว เมื่อ{THAI_SYSTEM_ROLE_NAMES.OWNER}ลงนามทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ ระบบจะระบุไว้ในเอกสาร และบันทึกประวัติไว้ตรวจสอบย้อนหลัง</span>
-                  </span>
-                </label>
-                <label className={`flex cursor-pointer gap-3 rounded-xl border p-4 ${approvalMode === 'DESIGNATED_APPROVERS' ? 'border-brand-200 bg-brand-25' : 'border-gray-200'}`}>
-                  <input type="radio" name="approval-mode" checked={approvalMode === 'DESIGNATED_APPROVERS'} onChange={() => { setApprovalMode('DESIGNATED_APPROVERS'); setSaved(false); }} className="mt-1 accent-brand-700" />
-                  <span>
-                    <span className="font-bold text-gray-900">กำหนดรายชื่อผู้อนุมัติ / ผู้ตรวจรับ</span>
-                    <span className="mt-1 block text-sm leading-6 text-gray-500">เหมาะกับกิจการที่ต้องการแบ่งหน้าที่ ระบบจะบังคับให้ผู้จ่ายเงินและผู้อนุมัติเป็นคนละคน</span>
-                  </span>
-                </label>
-              </div>
-            </MangmeeCard>
+        <MangmeeCard className="grid gap-6 p-4 sm:p-6">
+          <fieldset className="min-w-0">
+            <legend className={sectionTitle}>ใครอนุมัติใบรับรอง</legend>
+            <div className="mt-2 grid gap-2">
+              <ChoiceRow framed name="approval-mode" checked={approvalMode === 'OWNER_SELF'} onChange={() => setApprovalMode('OWNER_SELF')}
+                label={`${THAI_SYSTEM_ROLE_NAMES.OWNER}เซ็นและอนุมัติเอง`} description="เหมาะกับร้านที่เจ้าของทำเอง" />
+              <ChoiceRow framed name="approval-mode" checked={approvalMode === 'DESIGNATED_APPROVERS'} onChange={() => setApprovalMode('DESIGNATED_APPROVERS')}
+                label="กำหนดผู้อนุมัติ" description="ผู้รับรองการจ่ายกับผู้อนุมัติต้องเป็นคนละคน" />
+            </div>
+          </fieldset>
 
-            <MangmeeCard className="p-5 sm:p-6">
-              <h2 className="text-xl font-extrabold text-gray-900">ผู้อนุมัติออนไลน์ / ผู้ตรวจรับฉบับกระดาษ</h2>
-              <p className="mt-2 text-sm leading-6 text-gray-500">
-                {approvalMode === 'OWNER_SELF'
-                  ? 'ขณะนี้ใช้สิทธิ์ยืนยันค่าใช้จ่ายในการตรวจรับ รายชื่อด้านล่างยังไม่มีผล ให้เลือก “กำหนดรายชื่อผู้อนุมัติ / ผู้ตรวจรับ” ก่อน แล้วเลือกรายชื่อและบันทึก'
-                  : 'รายชื่อที่เลือกมีสิทธิ์อนุมัติเอกสารออนไลน์และตรวจรับฉบับกระดาษ โดยต้องเป็นสมาชิกที่ยังใช้งานและมีสิทธิ์ยืนยันค่าใช้จ่าย การลงนามของผู้รับรองและผู้อนุมัติต้องแยกคนกัน'}
-              </p>
-              {settings?.invalidApproverUserIds.length ? (
-                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                  ผู้อนุมัติเดิมบางคนไม่มีสิทธิ์หรือไม่ได้ใช้งานแล้ว กรุณาเลือกผู้อนุมัติใหม่ก่อนบันทึก
-                </div>
-              ) : null}
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                {settings?.approverCandidates.map((candidate) => (
-                  <label key={candidate.userId} className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-4 hover:border-brand-200 hover:bg-brand-25">
-                    <input
-                      type="checkbox"
-                      checked={approverUserIds.includes(candidate.userId)}
-                      onChange={() => toggleApprover(candidate.userId)}
-                      className="mt-1 h-4 w-4 shrink-0 accent-brand-700"
-                    />
-                    <span>
-                      <span className="block font-bold text-gray-900">{candidate.displayName}</span>
-                      <span className="mt-1 block text-xs text-gray-500">มีสิทธิ์ยืนยันค่าใช้จ่าย</span>
-                    </span>
-                  </label>
+          {/* The people are asked for only where they count: under the choice that uses them. */}
+          {approvalMode === 'DESIGNATED_APPROVERS' && (
+            <fieldset id="substitute-approvers" className="min-w-0 scroll-mt-24">
+              <legend className={sectionTitle}>ผู้อนุมัติ (ใช้ตรวจรับฉบับกระดาษด้วย)</legend>
+              {settings.invalidApproverUserIds.length > 0 && (
+                <Notice tone="warning" className="mt-2">ผู้อนุมัติเดิมบางคนไม่มีสิทธิ์หรือไม่ได้ใช้งานแล้ว เลือกผู้อนุมัติใหม่ก่อนบันทึก</Notice>
+              )}
+              <div className="mt-1 grid gap-x-6 sm:grid-cols-2">
+                {settings.approverCandidates.map((candidate) => (
+                  <ChoiceRow key={candidate.userId} type="checkbox" label={candidate.displayName}
+                    checked={approverUserIds.includes(candidate.userId)} onChange={() => toggleApprover(candidate.userId)} />
                 ))}
               </div>
-              {settings?.approverCandidates.length === 0 ? (
-                <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm leading-6 text-gray-600">
-                  ยังไม่มีผู้ใช้ที่มีสิทธิ์อนุมัติ ไปที่ <Link className="font-bold text-brand-700 underline" href={`/companies/${companyId}/settings/roles`}>บทบาทและสิทธิ์</Link> หรือ <Link className="font-bold text-brand-700 underline" href={`/companies/${companyId}/settings/employees`}>พนักงาน</Link>
-                </div>
-              ) : null}
-            </MangmeeCard>
+              {settings.approverCandidates.length === 0 && (
+                <Notice tone="info" action={<Link className={secondaryButtonClass} href={`/companies/${companyId}/settings/permissions`}>ไปบทบาทและสิทธิ์</Link>}>
+                  ยังไม่มีใครมีสิทธิ์ยืนยันค่าใช้จ่าย เพิ่มสิทธิ์นี้ให้บทบาทของเขาก่อน
+                </Notice>
+              )}
+              {attempted && validationError && <p role="alert" className="mt-1 text-sm text-red-600">{validationError}</p>}
+            </fieldset>
+          )}
 
-            <MangmeeCard className="p-5 sm:p-6">
-              <h2 className="text-xl font-extrabold text-gray-900">หลักฐานเมื่อชำระเงินสด</h2>
-              <div className="mt-4 grid gap-3">
-                <label className="flex cursor-pointer gap-3 rounded-xl border border-brand-200 bg-brand-25 p-4">
-                  <input type="radio" name="cash-policy" checked={cashEvidencePolicy === STRICT} onChange={() => { setCashEvidencePolicy(STRICT); setSaved(false); }} className="mt-1 accent-brand-700" />
-                  <span>
-                    <span className="font-bold text-gray-900">บังคับหลักฐานการจ่ายเงินแยกอย่างน้อย 1 ไฟล์</span>
-                    <span className="mt-1 block text-sm leading-6 text-gray-500">ต้องมีภาพ/PDF ในช่องหลักฐานการจ่าย นอกเหนือจากเอกสารประกอบรายการ</span>
-                  </span>
-                </label>
-                <label className="flex cursor-pointer gap-3 rounded-xl border border-gray-200 p-4">
-                  <input type="radio" name="cash-policy" checked={cashEvidencePolicy === ALLOW} onChange={() => { setCashEvidencePolicy(ALLOW); setSaved(false); }} className="mt-1 accent-brand-700" />
-                  <span>
-                    <span className="font-bold text-gray-900">อนุญาตให้ใช้เอกสารประกอบรายการเพียงอย่างเดียว (ค่าเริ่มต้น)</span>
-                    <span className="mt-1 block text-sm leading-6 text-gray-500">ควรใช้เมื่อผู้ทำบัญชีของบริษัทรับรองนโยบายนี้แล้ว ระบบยังคงบังคับให้ผู้จ่ายรับรองและผู้มีสิทธิอนุมัติลงลายมือชื่อตามรูปแบบที่กำหนด</span>
-                  </span>
-                </label>
-              </div>
-              <label className="mt-5 block text-sm font-bold text-gray-700">
-                คำแนะนำหลักฐานของบริษัท
-                <textarea
-                  value={cashEvidenceInstructions}
-                  onChange={(event) => { setCashEvidenceInstructions(event.target.value); setSaved(false); }}
-                  maxLength={500}
-                  rows={4}
-                  className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm font-normal leading-6 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                  placeholder="เช่น แนบใบสำคัญจ่ายที่ผู้รับเงินลงชื่อ หรือสำเนาบัตรผู้รับเงินตามที่ผู้ทำบัญชีกำหนด"
-                />
-              </label>
-              <div className="mt-1 text-right text-xs text-gray-400">{cashEvidenceInstructions.length}/500</div>
-            </MangmeeCard>
-          </div>
+          <fieldset className="min-w-0">
+            <legend className={sectionTitle}>จ่ายเงินสดต้องแนบอะไร</legend>
+            <div className="mt-2 grid gap-2">
+              <ChoiceRow framed name="cash-policy" checked={cashEvidencePolicy === STRICT} onChange={() => setCashEvidencePolicy(STRICT)}
+                label="ต้องมีหลักฐานการจ่ายอย่างน้อย 1 ไฟล์" description="แนบแยกจากหลักฐานประกอบ" />
+              <ChoiceRow framed name="cash-policy" checked={cashEvidencePolicy === ALLOW} onChange={() => setCashEvidencePolicy(ALLOW)}
+                label="ใช้หลักฐานประกอบอย่างเดียวได้" description="ควรตกลงกับผู้ทำบัญชีของร้านก่อน ผู้รับรองการจ่ายยังต้องเซ็นรับรองทุกใบ" />
+            </div>
+            <details className="mt-2" open={adviceOpen} onToggle={(event) => setAdviceOpen(event.currentTarget.open)}>
+              <summary className="cursor-pointer py-2.5 text-sm font-semibold text-gray-700">เพิ่มคำแนะนำให้พนักงาน</summary>
+              <label htmlFor="substitute-cash-advice" className="block text-sm font-medium text-gray-700">คำแนะนำเรื่องหลักฐาน</label>
+              <textarea
+                id="substitute-cash-advice"
+                value={cashEvidenceInstructions}
+                onChange={(event) => setCashEvidenceInstructions(event.target.value)}
+                maxLength={500}
+                rows={3}
+                className="mangmee-input mt-1.5"
+                placeholder="เช่น ให้ผู้รับเงินเซ็นชื่อรับเงินบนกระดาษ แล้วถ่ายรูปแนบ"
+              />
+              <p className="mt-1 text-right text-xs text-gray-500">{cashEvidenceInstructions.length}/500</p>
+            </details>
+          </fieldset>
 
-          <div className="grid content-start gap-5">
-            <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm leading-7 text-amber-900">
-              <h2 className="text-lg font-extrabold">ขอบเขตทางภาษี</h2>
-              <p className="mt-2">การตั้งค่านี้เป็นการควบคุมภายในบริษัท ไม่ทำให้เอกสารกลายเป็นใบกำกับภาษี และไม่สร้างสิทธิ์ภาษีซื้อโดยอัตโนมัติ</p>
-              <a className="mt-3 inline-flex min-h-11 items-center font-bold underline sm:min-h-0" href="https://www.rd.go.th/fileadmin/download/15277290359.pdf" target="_blank" rel="noreferrer">ดูคู่มือกรมสรรพากร</a>
-            </section>
-            <MangmeeCard className="p-5">
-              <h2 className="text-lg font-extrabold text-gray-900">ก่อนเปิดใช้งานจริง</h2>
-              <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-gray-600">
-                <li>เลือกรูปแบบการอนุมัติให้เหมาะกับบริษัท</li>
-                <li>ตกลงหลักฐานเงินสดกับผู้ทำบัญชี</li>
-                <li>ทดสอบขั้นตอนลงลายมือชื่อและอนุมัติให้ครบถ้วน</li>
-              </ol>
-              {error ? <div className="mt-4"><ErrorBanner message={error} /></div> : null}
-              {validationError ? <div className="mt-4 text-sm font-bold text-amber-700">{validationError}</div> : null}
-              {saved ? <div className="mt-4 text-sm font-bold text-brand-700">บันทึกการตั้งค่าแล้ว</div> : null}
-              <button
-                type="button"
-                onClick={() => void save()}
-                disabled={Boolean(validationError) || saving}
-                aria-busy={saving}
-                className="mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-brand-700 px-4 text-sm font-extrabold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50" data-loading-indicator
-              >
-                {saving ? <span aria-hidden="true" className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" /> : null}
-                {saving ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า'}
-              </button>
-            </MangmeeCard>
-          </div>
-        </div>
+          <Notice tone="info" action={<a className={secondaryButtonClass} href="https://www.rd.go.th/fileadmin/download/15277290359.pdf" target="_blank" rel="noreferrer">คู่มือกรมสรรพากร</a>}>
+            ใบรับรองแทนใบเสร็จไม่ใช่ใบกำกับภาษี ใช้ขอคืนภาษีซื้อไม่ได้
+          </Notice>
+
+          {error && <Notice tone="error">{error}</Notice>}
+          <ActionGroup>
+            <button type="button" className={primaryButtonClass} disabled={saving} aria-busy={saving} onClick={() => void save()}>บันทึกการตั้งค่า</button>
+          </ActionGroup>
+        </MangmeeCard>
       )}
     </MangmeePage>
   );

@@ -98,6 +98,19 @@ test('source readers send server search, payee group and paging rather than filt
     '/api/v1/companies/shop/disbursement-vouchers/payable-expenses?search=%E0%B8%A3%E0%B9%89%E0%B8%B2%E0%B8%99%E0%B8%AD%E0%B8%B7%E0%B9%88%E0%B8%99',
   ]);
 });
+test('payee search sends partial Thai and Latin words unchanged and preserves server prefix order and counts', async () => {
+  const result = { data: [
+    { payeeKey: 'prefix', displayName: 'T3B ร้านวัสดุทวีทรัพย์', expenseCount: 2, selectableExpenseCount: 1, totalOutstanding: '10.0000', taxId: null },
+    { payeeKey: 'contains', displayName: 'สาขา T3B ร้านวัสดุทวีทรัพย์', expenseCount: 1, selectableExpenseCount: 1, totalOutstanding: '500.0000', taxId: null },
+  ], total: 2, page: 1, pageSize: 20 };
+  globalThis.fetch = (async input => {
+    const url = new URL(String(input), 'http://localhost');
+    assert.equal(url.searchParams.get('search'), 't3b ร้านวัสดุ');
+    assert.equal(url.searchParams.get('page'), '1');
+    return Response.json(result);
+  }) as typeof fetch;
+  assert.deepEqual(await listDisbursementPayees('shop', { search: 't3b ร้านวัสดุ', page: 1, pageSize: 20 }), result);
+});
 test('draft create and edit preserve command id, exact amounts and expected version across a lost-answer retry', async () => {
   const requests: { method?: string; url: string; body: unknown }[] = [];
   let lost = true;
@@ -186,7 +199,7 @@ test('pay refusals keep the server sentence and suppress automatic error toasts'
   try {
     for (const [code, message] of [
       ['disbursement_payment_source_changed', 'รายจ่าย EX-1 เปลี่ยนไปหลังส่งอนุมัติ กด "กลับไปแก้" เพื่อปรับรายการ แล้วส่งใหม่'],
-      ['expense_changed_retry', 'บันทึกไม่สำเร็จ ยังไม่มีการบันทึกจ่ายรายการใด กรุณาลองอีกครั้ง'],
+      ['expense_changed_retry', 'บันทึกไม่สำเร็จ ยังไม่มีการบันทึกจ่ายรายการใด ลองอีกครั้ง'],
       ['disbursement_version_conflict', 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาเปิดใหม่ก่อนทำต่อ'],
     ]) {
       globalThis.fetch = (async () => Response.json({ code, message }, { status: 409 })) as typeof fetch;
@@ -244,7 +257,7 @@ test('account create sends the full number once, edits omit it to keep it, clear
   const answer = { id: 'doc', payeeAccountLast4: '5678' };
   globalThis.fetch = (async (input, init) => {
     requests.push({ url: String(input), method: init?.method, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
-    return Response.json(String(input).endsWith('/reveal') ? { accountNumber: number } : answer);
+    return Response.json(String(input).split('?')[0]!.endsWith('/reveal') ? { accountNumber: number } : answer);
   }) as typeof fetch;
   const base = { commandId: 'create', lines: [{ expenseId: 'expense', amount: '100.00' }] };
   const fields = { ...emptyDisbursementAccount, payeeBankName: 'กสิกรไทย', payeeAccountName: 'ร้าน ก', payeeAccountNumber: '001-234 5678' };
@@ -261,6 +274,8 @@ test('account create sends the full number once, edits omit it to keep it, clear
     assert.equal((requests[1]!.body as any).payeeAccountNumber, undefined);
     assert.equal((requests[2]!.body as any).payeeAccountNumber, '');
     assert.deepEqual(requests.at(-1), { url: '/api/v1/companies/shop%2Fone/disbursement-vouchers/doc%2Fone/payee-account/reveal', method: 'POST' });
+    assert.deepEqual(await api.revealDisbursementVoucherAccount('shop/one', 'source/one', undefined, 'prefill'), { accountNumber: number });
+    assert.deepEqual(requests.at(-1), { url: '/api/v1/companies/shop%2Fone/disbursement-vouchers/source%2Fone/payee-account/reveal?purpose=prefill', method: 'POST' });
     assert.deepEqual(observedToasts, []);
   } finally { unsubscribe(); }
 });
@@ -294,7 +309,7 @@ test('PDF and reveal refusals preserve the server sentence without automatic toa
   (globalThis as Record<string, unknown>)['window'] = {};
   const events: ToastEvent[] = [];
   const unsubscribe = subscribeToastBus(event => events.push(event));
-  const message = 'ยังจัดทำไฟล์ใบสำคัญจ่ายไม่สำเร็จ การจ่ายและเลขใบยังอยู่ กรุณาลองดาวน์โหลดอีกครั้ง';
+  const message = 'ยังจัดทำไฟล์ใบสำคัญจ่ายไม่สำเร็จ การจ่ายและเลขใบยังอยู่ ลองดาวน์โหลดอีกครั้ง';
   globalThis.fetch = (async () => Response.json({ code: 'disbursement_file_unavailable', message }, { status: 503 })) as typeof fetch;
   try {
     await assert.rejects(() => api.downloadDisbursementVoucherDocument('shop', 'doc', 'DV-1'), error => { assert.equal(apiErrorMessage(error), message); return true; });

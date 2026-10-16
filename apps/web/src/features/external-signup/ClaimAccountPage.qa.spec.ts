@@ -9,7 +9,7 @@ test('R11: a network or 5xx on load is a retry, not a verdict on the link', () =
   // applicant opened their email retired a link that was perfectly good.
   assert.match(source, /isTransientLoadFailure/);
   assert.doesNotMatch(source, /\.catch\(\(\) => \{\s*\n\s*if \(active\) setUnusable\(true\)/);
-  assert.match(source, /ลองใหม่อีกครั้ง/);
+  assert.match(source, /ลองอีกครั้ง/);
 });
 
 test('R12: an unusable link points at the status page when the id is known', () => {

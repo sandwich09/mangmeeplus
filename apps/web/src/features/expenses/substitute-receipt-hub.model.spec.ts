@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { SubstituteReceiptListItem } from '@watchdog-bms/contracts';
-import { buildSubstituteReceiptHubModel } from './substitute-receipt-hub.model';
+import { buildSubstituteReceiptHubModel, substituteReceiptHubStatus } from './substitute-receipt-hub.model';
 
 function item(
   evidenceId: string,
@@ -92,4 +92,31 @@ test('never offers a non-owner their own certificate to approve, even in owner-s
     currentYearMonth: '2026-08',
   });
   assert.deepEqual(nonOwner.waitingForApproval.map(({ evidenceId }) => evidenceId), ['approve-other']);
+});
+
+test('a row of the list has one status, and a paper certificate says which paper step it waits for', () => {
+  const row = (status: SubstituteReceiptListItem['status'], extra: Partial<SubstituteReceiptListItem> = {}) =>
+    substituteReceiptHubStatus({ ...item('row', status, 'someone'), ...extra });
+  assert.equal(row('PREPARED'), 'waitingSignature');
+  assert.equal(row('PREPARED', { signatureMode: 'PAPER', payerUserId: null }), 'waitingPaper');
+  assert.equal(row('PREPARED', { signatureMode: 'PAPER', payerUserId: null, paperSubmission: {} as NonNullable<SubstituteReceiptListItem['paperSubmission']> }), 'waitingPaperReview');
+  // A paper certificate whose signer is known is signed on screen like any other.
+  assert.equal(row('PREPARED', { signatureMode: 'PAPER' }), 'waitingSignature');
+  assert.equal(row('PAYER_CERTIFIED'), 'waitingApproval');
+  assert.equal(row('ISSUED'), 'issued');
+  assert.equal(row('SUPERSEDED'), 'cancelled');
+});
+
+import { SUBSTITUTE_RECEIPT_HUB_PAGE_SIZE, SUBSTITUTE_RECEIPT_HUB_TABS, substituteReceiptHubListState, substituteReceiptHubListQuery } from './substitute-receipt-hub.model';
+test('hub tabs map to stored states and ten-row paging defaults safely', () => {
+  assert.equal(SUBSTITUTE_RECEIPT_HUB_PAGE_SIZE, 10);
+  assert.deepEqual(SUBSTITUTE_RECEIPT_HUB_TABS.map(tab => tab.key), ['', 'PREPARED', 'PAYER_CERTIFIED', 'ISSUED', 'SUPERSEDED']);
+  assert.deepEqual(substituteReceiptHubListState(new URLSearchParams('page=-2&status=bad&yearMonth=2026-13&order=bad')), { page: 1, status: '', yearMonth: '', order: 'newest' });
+});
+test('hub URL restores status, month, date order and page without losing unrelated parameters', () => {
+  const state = { page: 3, status: 'ISSUED' as const, yearMonth: '2026-10', order: 'oldest' as const };
+  const query = new URLSearchParams(substituteReceiptHubListQuery(new URLSearchParams('keep=yes'), state));
+  assert.deepEqual(substituteReceiptHubListState(query), state); assert.equal(query.get('keep'), 'yes');
+  const cleared = new URLSearchParams(substituteReceiptHubListQuery(query, { ...state, status: '', yearMonth: '', page: 1 }));
+  assert.equal(cleared.has('status'), false); assert.equal(cleared.has('yearMonth'), false);
 });

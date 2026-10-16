@@ -1,3 +1,4 @@
+import { filedWithholdingPaymentPeriods } from '../services/filed-withholding-payment';
 import { currentWhtPayerDetails } from '../services/wht-payer-identity';
 import { normalizeTaxId } from '../../../data-model-core/domain/logic/company-legal-identity.logic';
 import { whtPayerIdentity, whtPayerIdentityMissingMessage } from '@watchdog-bms/contracts';
@@ -23,7 +24,6 @@ import { appendWhtCertificateHistory } from '../services/wht-certificate-history
 import { lockExpenseCorrection } from '../../../expenses/infrastructure/expense-void-blocker';
 import { coerceCivilDate, EXPENSE_CORRECTION_WORDS, WHT_CERTIFICATE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 
-const FINANCIAL_PERIOD_LOCK_STATUSES = ['FILED', 'PAID', 'CLOSED'];
 
 /**
  * Corrects a SYSTEM-issued 50 ทวิ certificate — the AP/Expenses "แก้ไขหนังสือรับรอง" button
@@ -78,7 +78,7 @@ export class CorrectWhtCertificateUseCase {
     // v1 scope (spec §3/§4.1): only a certificate the SYSTEM itself issued may be corrected here —
     // EXTERNAL_LINKED documents are untouched.
     if (row.status !== 'SYSTEM_ISSUED' || !row.certificateId) {
-      throw new ConflictException({ code: 'wht_certificate_not_correctable', message: 'แก้ไขหนังสือรับรองนี้ไม่ได้ เพราะไม่ใช่เอกสารที่ระบบออกให้', status: row.status });
+      throw new ConflictException({ code: 'wht_certificate_not_correctable', message: 'แก้ไขหนังสือรับรองนี้ไม่ได้ เพราะรายการนี้ไม่มีหนังสือรับรอง 50 ทวิที่ระบบออกให้และยังใช้งานอยู่ เปิดหน้านี้ใหม่เพื่อตรวจสถานะ', status: row.status });
     }
 
     const current = await this.taxRepo.prisma.client.whtCertificate.findUnique({ where: { id: row.certificateId } });
@@ -86,7 +86,7 @@ export class CorrectWhtCertificateUseCase {
     // Defense-in-depth: should not happen while handoff.certificateId is kept current, but a cheap
     // guard against correcting an already-superseded certificate twice.
     if (current.supersededByCertificateId) {
-      throw new ConflictException({ code: 'wht_certificate_already_superseded', message: 'หนังสือรับรองนี้ถูกแทนที่ไปแล้ว กรุณาโหลดข้อมูลใหม่' });
+      throw new ConflictException({ code: 'wht_certificate_already_superseded', message: 'หนังสือรับรองนี้ถูกแทนที่ไปแล้ว เปิดหน้านี้ใหม่' });
     }
     if (!(await this.isCorrectionOpen())) {
       throw new ConflictException({ code: 'wht_system_correction_unavailable', message: 'ระบบยังไม่เปิดการแก้ไขหนังสือรับรองอัตโนมัติ' });
@@ -112,10 +112,17 @@ export class CorrectWhtCertificateUseCase {
       payerSnapshot: { ...currentPayerSnapshot, ...Object.fromEntries(Object.entries(corrected.payerSnapshot ?? {}).filter(([, value]) => value !== undefined)) } as PayerSnapshot,
       payeeSnapshot: { ...currentPayeeSnapshot, ...Object.fromEntries(Object.entries(corrected.payeeSnapshot ?? {}).filter(([, value]) => value !== undefined)) } as PayeeSnapshot,
     };
+    const refuseFiledFacts = async () => {
+      if ((await filedWithholdingPaymentPeriods(this.taxRepo.prisma.client, ctx.companyId, row.sourcePaymentType ?? '', row.sourcePaymentId ?? '', { formType: currentFormType, periodKey: formPeriodKey(currentFormType, new Date(current.paymentDate)) })).length) {
+        throw new ConflictException({ code: 'wht_certificate_correction_tax_period_locked',
+          message: 'รายการนี้ยื่นภาษีแล้ว แก้ข้อเท็จจริงไม่ได้ ให้ยกเลิกเอกสารแล้วบันทึกใหม่ ให้ผู้ทำบัญชีแจ้งกรมสรรพากรเรื่องแบบเดิม' });
+      }
+    };
     if (merged.formType !== currentFormType || merged.incomeCategoryCode !== current.incomeCategoryCode || merged.incomeCategoryName !== current.incomeCategoryName
       || !new Decimal(merged.whtRate).eq(current.whtRate.toString()) || !new Decimal(merged.grossAmount).eq(current.grossAmount.toString())
       || !new Decimal(merged.withheldAmount).eq(current.withheldAmount.toString())
       || normalizeTaxId(merged.payeeSnapshot.taxId ?? '') !== normalizeTaxId(currentPayeeSnapshot.taxId ?? '')) {
+      await refuseFiledFacts();
       throw new ConflictException({ code: 'wht_correction_field_locked', message: WHT_CERTIFICATE_CORRECTION_WORDS.fieldLocked });
     }
     // Equivalent strings from older whole-form screens keep the certificate's original facts.
@@ -143,15 +150,8 @@ export class CorrectWhtCertificateUseCase {
       throw new ConflictException({ code: 'wht_certificate_correction_no_changes', message: WHT_CERTIFICATE_CORRECTION_WORDS.noChanges });
     }
 
-    // §5.1's kept guard, mirroring `wht_tax_period_locked_requires_amendment` exactly: a financial
-    // correction never silently bypasses a filed/paid/closed tax period — it is refused outright and
-    // deferred to the existing accounting-amendment flow.
-    if (isFinancial && currentPeriod && FINANCIAL_PERIOD_LOCK_STATUSES.includes(currentPeriod.status)) {
-      throw new ConflictException({
-        code: 'wht_certificate_correction_tax_period_locked',
-        message: 'งวดภาษีของหนังสือรับรองนี้ปิดแล้ว ไม่สามารถแก้ไขยอด/อัตรา/หมวดเงิน/วันที่ได้ กรุณาทำรายการแก้ไขทางบัญชีแยกต่างหาก',
-      });
-    }
+    // A filed row stays fixed; cancellation and a new source are the correction route.
+    if (isFinancial) await refuseFiledFacts();
 
     const periodKey = formPeriodKey(merged.formType, new Date(merged.paymentDate));
     const period = await this.taxRepo.upsertPeriod({ companyId: ctx.companyId, taxType: 'WHT', formType: merged.formType, periodKey });
@@ -172,7 +172,8 @@ export class CorrectWhtCertificateUseCase {
       return this.reloadWinner(handoffId, current.id);
     }
 
-    const issuedAt = new Date();
+    const correctedAt = new Date();
+    const issuedAt = current.issuedAt ?? current.createdAt;
     const fields = {
       certificateNumber: reserved.documentNumber,
       formType: merged.formType,
@@ -228,12 +229,12 @@ export class CorrectWhtCertificateUseCase {
         const voided = await tx.whtCertificate.updateMany({
           where: { id: current.id, companyId: ctx.companyId, status: 'ISSUED', supersededByCertificateId: null },
           data: {
-            status: 'VOIDED', voidedAt: issuedAt, voidedByUserId: ctx.userId,
+            status: 'VOIDED', voidedAt: correctedAt, voidedByUserId: ctx.userId,
             voidReason: 'SUPERSEDED_BY_CORRECTION', supersededByCertificateId: newRow.id, correctionReason: reason,
           },
         });
         if (voided.count === 0) {
-          throw new ConflictException({ code: 'wht_certificate_already_superseded', message: 'หนังสือรับรองนี้ถูกแทนที่ไปแล้ว กรุณาโหลดข้อมูลใหม่' });
+          throw new ConflictException({ code: 'wht_certificate_already_superseded', message: 'หนังสือรับรองนี้ถูกแทนที่ไปแล้ว เปิดหน้านี้ใหม่' });
         }
         await appendWhtCertificateHistory(tx, row, {
           eventType: 'CORRECTED', actorUserId: ctx.userId, isExternal: false,
@@ -252,7 +253,7 @@ export class CorrectWhtCertificateUseCase {
           where: { id: row.id, certificateId: current.id },
           data: { certificateId: newRow.id },
         });
-        if (handoffUpdated.count !== 1) throw new ConflictException({ code: 'wht_certificate_already_superseded', message: 'หนังสือรับรองนี้ถูกแทนที่ไปแล้ว กรุณาโหลดข้อมูลใหม่' });
+        if (handoffUpdated.count !== 1) throw new ConflictException({ code: 'wht_certificate_already_superseded', message: 'หนังสือรับรองนี้ถูกแทนที่ไปแล้ว เปิดหน้านี้ใหม่' });
         return newRow;
       });
     } catch (error) {
@@ -310,7 +311,7 @@ export class CorrectWhtCertificateUseCase {
         return { ...this.toDto(cert), pdfArtifact: pdf };
       }
     }
-    throw new ConflictException({ code: 'wht_certificate_issue_in_progress', message: 'กำลังแก้ไขหนังสือรับรองนี้อยู่ กรุณาลองใหม่อีกครั้ง' });
+    throw new ConflictException({ code: 'wht_certificate_issue_in_progress', message: 'กำลังแก้ไขหนังสือรับรองนี้อยู่ ลองอีกครั้ง' });
   }
 
   private async inferFormType(cert: { taxPeriodId: string; companyId: string }): Promise<WhtFormType> {

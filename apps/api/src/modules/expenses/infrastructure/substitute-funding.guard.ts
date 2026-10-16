@@ -38,8 +38,8 @@ export async function assertFundingMutation(tx: any, companyId: string, expenseI
     request: { status: { notIn: terminalClaims } }, OR: [
     { linkedExpenseId: expenseId }, { attachmentId: { in: links.map((r: any) => r.attachmentId) } },
   ] } });
-  if (claim) throw new ConflictException({ code: 'substitute_source_has_live_claim', message: 'หลักฐานนี้อยู่ในคำขอเบิกแล้ว กรุณาดำเนินการผ่านคำขอเบิกเดิม' });
+  if (claim) throw new ConflictException({ code: 'substitute_source_has_live_claim', message: 'หลักฐานนี้เชื่อมกับใบเบิกที่ยังไม่จบ เปิดใบเบิกนั้นแล้วทำต่อที่ใบเบิก' });
   if ((kind === 'payment' || kind === 'confirm') && source?.fundingSource === 'PERSONAL_ADVANCE') {
-    throw new ConflictException({ code: 'substitute_personal_settles_via_reimbursement', message: 'ใบรับรองนี้ระบุว่าพนักงานจ่ายร้านแล้ว การคืนเงินให้พนักงานต้องดำเนินการแยกตามขั้นตอนการเงิน' });
+    throw new ConflictException({ code: 'substitute_personal_settles_via_reimbursement', message: 'ใบรับรองนี้ระบุว่าพนักงานจ่ายร้านแล้ว ให้คืนเงินพนักงานแยกต่างหากตามขั้นตอนการเงิน' });
   }
 }

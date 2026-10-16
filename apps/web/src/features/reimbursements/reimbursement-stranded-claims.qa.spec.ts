@@ -14,6 +14,7 @@ import { ToastContext } from '@/common/components/toast/use-toast';
  */
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 require.extensions['.svg'] = (module) => { module.exports = () => null; };
+require.extensions['.css'] = module => { module.exports = { menu: 'menu', panel: 'panel' }; };
 // Modal portals into document.body, which a server render has none of: render the dialog in place.
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as typeof import('./ReimbursementJourneyPage');
@@ -45,7 +46,7 @@ function renderWithState(element: React.ReactElement, pick: (initial: any) => un
 
 /** What the person reads: text nodes plus aria labels, placeholders and tooltips. */
 const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map(match => match[1]!),
-  ...html.replace(/<[^>]*>/gu, '\n').split('\n')]
+  ...html.replace(/<span class="text-red-600"(?: aria-hidden="true")?> \*<\/span>/gu, ' *').replace(/<[^>]*>/gu, '\n').split('\n')]
   .map(text => text.replace(/&quot;/gu, '"').replace(/&#x27;/gu, "'").replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&amp;/gu, '&').trim()).filter(Boolean);
 
 const OWNER = ['reimbursement.read', 'reimbursement.create', 'reimbursement.submit', 'reimbursement.update_own_draft', 'reimbursement.cancel_own',
@@ -66,11 +67,18 @@ function assertPlainThai(texts: string[], where: string) {
 }
 /** The step card of a rendered claim page: its note and the labels of its buttons and links. */
 function stepCard(html: string) {
-  const card = html.slice(html.indexOf('aria-labelledby="journey-step-title"'));
-  const section = card.slice(0, card.indexOf('</section>'));
+  const start = html.lastIndexOf('<section', html.indexOf('aria-labelledby="journey-step-title"'));
+  let depth = 0, end = start;
+  for (const tag of html.slice(start).matchAll(/<section\b[^>]*>|<\/section>/g)) {
+    depth += tag[0].startsWith('</') ? -1 : 1;
+    if (!depth) { end = start + tag.index! + tag[0].length; break; }
+  }
+  const section = html.slice(start, end);
+  // The account has moved inside this step; its separately tested reveal/send-back controls are not step decisions.
+  const decisions = section.replace(/<section class="space-y-3 border-b[\s\S]*?<\/section>/g, '');
   return {
-    note: visible(section.slice(section.indexOf('</h2>'), section.includes('<div class="flex flex-col gap-2') ? section.indexOf('<div class="flex flex-col gap-2') : undefined))[0] ?? '',
-    buttons: [...section.matchAll(/<(?:button|a)\b[^>]*>([^<]+)<\/(?:button|a)>/gu)].map((match) => match[1]!),
+    note: visible(section.slice(section.indexOf('</h2>'), section.includes('class="mangmee-actions') ? section.indexOf('class="mangmee-actions') : undefined))[0] ?? '',
+    buttons: [...decisions.matchAll(/<(?:button|a)\b[^>]*>([^<]+)<\/(?:button|a)>/gu)].map((match) => match[1]!).filter(label => label !== 'พิมพ์ใบเบิก'),
   };
 }
 const deskLine = (html: string) => visible(html).filter((text) => text.startsWith('อยู่ที่'));
@@ -152,18 +160,24 @@ function button(html: string, label: string): { shown: boolean; disabled: boolea
 
 describe('cancelling a claim asks for a reason the system can finish the cancellation with (audit B3)', () => {
   const owner = { userId: 'owner', permissions: OWNER };
-  const dialog = (typed: string) => withDialog(claim(), owner, 'cancel', 'ยกเลิกคำขอ RB-202610-00007', typed);
+  const dialog = (typed: string) => withDialog(claim(), owner, 'cancel', 'ยกเลิกใบเบิก RB-202610-00007', typed);
 
   // Before: any non-empty reason was sent, and one or two characters left the claim half cancelled for good.
-  it('keeps ยืนยันยกเลิกคำขอ off until the reason is as long as the expense void takes, and says how long', () => {
+  it('keeps ยกเลิกใบเบิก off until the reason is as long as the expense void takes, and says how long', () => {
     assert.equal(EXPENSE_VOID_REASON_MIN_LENGTH, 3);
     for (const typed of ['', 'ก', 'ab', '  ab  ']) {
-      assert.deepEqual(button(dialog(typed), 'ยืนยันยกเลิกคำขอ'), { shown: true, disabled: true }, JSON.stringify(typed));
+      assert.deepEqual(button(dialog(typed), 'ยกเลิกใบเบิก'), { shown: true, disabled: true }, JSON.stringify(typed));
     }
     for (const typed of ['abc', 'ซื้อซ้ำกับใบก่อน']) {
-      assert.deepEqual(button(dialog(typed), 'ยืนยันยกเลิกคำขอ'), { shown: true, disabled: false }, typed);
+      assert.deepEqual(button(dialog(typed), 'ยกเลิกใบเบิก'), { shown: true, disabled: false }, typed);
     }
     assert.ok(visible(dialog('')).includes('อย่างน้อย 3 ตัวอักษร'));
+    // The title says what is cancelled (the number and the amount), the body what it means in one sentence, and the button
+    // that backs out is named for what it leaves undone: never a second "ยกเลิก" beside the one that cancels.
+    const shown = visible(dialog('abc'));
+    assert.ok(shown.some((text) => /^ยกเลิกใบเบิก RB-202610-00007 [\d,]+\.\d{2} บาท$/u.test(text)), shown.filter((text) => text.includes('RB-')).join(' | '));
+    for (const text of ['ยกเลิกแล้วนำกลับมาใช้ไม่ได้', 'เหตุผล', 'ไม่ยกเลิก']) assert.ok(shown.includes(text), text);
+    assert.deepEqual([button(dialog('abc'), 'ยกเลิก').shown, button(dialog('abc'), 'กลับ').shown], [false, false]);
     // The page's other reason dialogs take any reason, as their endpoints do, and show no length hint.
     const blocked = claim({ duplicateBlocksPayment: true, duplicateCandidates: [{ id: 'd1', candidateType: 'ATTACHMENT_CHECKSUM', status: 'OPEN', score: 80 }] });
     const other = withDialog(blocked, owner, 'resolve-duplicate', 'ปลดรายการซ้ำ RB-202610-00007', 'ก');
@@ -189,28 +203,28 @@ describe('a claim whose cancellation has not completed says so in the step card 
     // The server answers no decision for a claim being cancelled; the page asks for none either way.
     approvalActions: { canApprove: false, canReject: false } }, cancellation);
 
-  it('shows who started it, when and why, hides every decision the API refuses, and offers ดำเนินการยกเลิกต่อ and ถอนการยกเลิก to whoever may cancel', () => {
+  it('shows who started it, when and why, hides every decision the API refuses, and offers ทำต่อเพื่อยกเลิก and ถอนการยกเลิก to whoever may cancel', () => {
     const html = claimPage(cancelling(), owner);
     const card = stepCard(html);
-    assert.deepEqual(card.buttons, ['ดำเนินการยกเลิกต่อ', 'ถอนการยกเลิก', 'พิมพ์ใบเบิก']);
-    assert.equal(card.note, 'กำลังยกเลิกคำขอ รอระบบปรับสถานะ · พิม ใจดี เริ่มยกเลิกคำขอนี้ เมื่อ 1 ต.ค. 2569 09:00 น. แต่ยังยกเลิกไม่เสร็จ'
-      + ' · ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที หรือกดดำเนินการยกเลิกต่อได้เลย · ถ้าไม่ต้องการยกเลิกแล้ว กดถอนการยกเลิก ใบจะกลับไปเดินต่อตามเดิม'
-      + ' · ระหว่างนี้ยังอนุมัติ ปฏิเสธ แก้ไข หรือบันทึกจ่ายใบนี้ไม่ได้');
-    // The owner holds every right, and still gets no บันทึกจ่าย, no second ยกเลิกคำขอ, no decision and no payment form anywhere on the page.
+    assert.deepEqual(card.buttons, ['ถอนการยกเลิก', 'ทำต่อเพื่อยกเลิก'], 'back-out first, the acting button last; printing sits with the document');
+    assert.equal(card.note, 'กำลังยกเลิกใบเบิก รอระบบปรับสถานะ · พิม ใจดี เริ่มยกเลิกใบเบิกนี้ เมื่อ 1 ต.ค. 2569 09:00 น. แต่ยังยกเลิกไม่เสร็จ'
+      + ' · ระบบจะทำต่อให้เองภายในไม่กี่นาที หรือกดทำต่อเพื่อยกเลิกได้เลย · ถ้าไม่ต้องการยกเลิกแล้ว กดถอนการยกเลิก ใบจะกลับไปเดินต่อตามเดิม'
+      + ' · ระหว่างนี้ยังอนุมัติ ส่งกลับให้แก้ แก้ไข หรือบันทึกจ่ายใบนี้ไม่ได้');
+    // The owner holds every right, and still gets no บันทึกจ่าย, no second ยกเลิกใบเบิก, no decision and no payment form anywhere on the page.
     const pressable = [...html.matchAll(/<button\b[^>]*>([^<]*)<\/button>/gu)].map((match) => match[1]!);
-    for (const refused of ['บันทึกจ่าย', 'ยกเลิกคำขอ', 'อนุมัติ', 'ปฏิเสธ', 'อนุมัติจ่าย']) assert.equal(pressable.includes(refused), false, refused);
+    for (const refused of ['บันทึกจ่าย', 'ยกเลิกใบเบิก', 'อนุมัติ', 'ส่งกลับให้แก้', 'อนุมัติจ่าย']) assert.equal(pressable.includes(refused), false, refused);
     assert.equal(visible(html).includes('วิธีจ่าย *'), false);
 
     // At the approval step: the approver the step was sent to reads why they cannot decide, and gets no button.
     const waiting = stepCard(claimPage(atApproval({ canResume: false, canWithdraw: false }), approver));
-    assert.deepEqual(waiting.buttons, ['พิมพ์ใบเบิก']);
-    assert.match(waiting.note, /^กำลังยกเลิกคำขอ รอระบบปรับสถานะ · พิม ใจดี เริ่มยกเลิกคำขอนี้/u);
-    assert.match(waiting.note, /ผู้ที่ดำเนินการต่อได้คือผู้เบิกหรือผู้มีสิทธิ์ตรวจการเงิน · ระหว่างนี้ยังอนุมัติ ปฏิเสธ แก้ไข หรือบันทึกจ่ายใบนี้ไม่ได้$/u);
+    assert.deepEqual(waiting.buttons, []);
+    assert.match(waiting.note, /^กำลังยกเลิกใบเบิก รอระบบปรับสถานะ · พิม ใจดี เริ่มยกเลิกใบเบิกนี้/u);
+    assert.match(waiting.note, /ผู้ที่ทำต่อได้คือผู้เบิกหรือผู้มีสิทธิ์ตรวจการเงิน · ระหว่างนี้ยังอนุมัติ ส่งกลับให้แก้ แก้ไข หรือบันทึกจ่ายใบนี้ไม่ได้$/u);
     // The requester of the same claim: continue or take it back, and no "แก้ไข (เปิดกลับเป็นร่าง)" the API would refuse.
-    assert.deepEqual(stepCard(claimPage(atApproval(), requester)).buttons, ['ดำเนินการยกเลิกต่อ', 'ถอนการยกเลิก', 'พิมพ์ใบเบิก']);
+    assert.deepEqual(stepCard(claimPage(atApproval(), requester)).buttons, ['ถอนการยกเลิก', 'ทำต่อเพื่อยกเลิก']);
     // A draft being cancelled takes no edit and no submit either.
     const draft = cancelling({ status: 'DRAFT', requestNo: undefined, submittedAt: undefined, approvedAt: undefined, approvalSteps: [] });
-    assert.deepEqual(stepCard(claimPage(draft, requester)).buttons, ['ดำเนินการยกเลิกต่อ', 'ถอนการยกเลิก']);
+    assert.deepEqual(stepCard(claimPage(draft, requester)).buttons, ['ถอนการยกเลิก', 'ทำต่อเพื่อยกเลิก']);
   });
 
   it('follows the server for each button: no ถอนการยกเลิก once a record was voided, nothing for a viewer who may not cancel', () => {
@@ -227,16 +241,16 @@ describe('a claim whose cancellation has not completed says so in the step card 
 
   it('says what stands in the way in words a person can act on', () => {
     const note = (blocker: Record<string, unknown>) => stepCard(claimPage(cancelling({}, { blocker }), owner)).note;
-    assert.match(note({ code: 'reason_too_short' }), /แต่ยังยกเลิกไม่เสร็จ เพราะเหตุผลที่ระบุไว้สั้นเกินไป ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ · กดดำเนินการยกเลิกต่อ แล้วระบุเหตุผลใหม่อย่างน้อย 3 ตัวอักษร/u);
+    assert.match(note({ code: 'reason_too_short' }), /แต่ยังยกเลิกไม่เสร็จ เพราะเหตุผลที่ระบุไว้สั้นเกินไป ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ · กดทำต่อเพื่อยกเลิก แล้วระบุเหตุผลใหม่อย่างน้อย 3 ตัวอักษร/u);
     assert.match(note({ code: 'accounting_period_locked', periodKey: '2026-09' }),
-      /เพราะงวดบัญชี ก\.ย\. 2569 ปิดแล้ว ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ ต้องให้ผู้มีสิทธิ์เปิดงวดบัญชีนั้นก่อน · เมื่อแก้ไขแล้ว กดดำเนินการยกเลิกต่อ/u);
+      /เพราะงวดบัญชี ก\.ย\. 2569 ปิดแล้ว ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ ต้องให้ผู้มีสิทธิ์เปิดงวดบัญชีนั้นก่อน · เมื่อแก้ไขแล้ว กดทำต่อเพื่อยกเลิก/u);
     assert.match(note({ code: 'tax_period_locked', periodKey: '2026-09', formType: 'PP30' }), /เพราะงวดภาษี ก\.ย\. 2569 ยื่นแบบหรือปิดแล้ว/u);
-    assert.match(note({ code: 'posting_unresolved' }), /ยังลงบัญชีไม่เรียบร้อย ต้องให้ผู้ดูแลบัญชีตรวจการลงบัญชีก่อน · เมื่อแก้ไขแล้ว กดดำเนินการยกเลิกต่อ/u);
-    assert.match(note({ code: 'expense_not_voidable' }), /อยู่ในสถานะที่ระบบยกเลิกให้ไม่ได้ กรุณาติดต่อผู้ดูแลระบบ/u);
+    assert.match(note({ code: 'posting_unresolved' }), /ยังลงบัญชีไม่เรียบร้อย ต้องให้ผู้ดูแลบัญชีตรวจการลงบัญชีก่อน · เมื่อแก้ไขแล้ว กดทำต่อเพื่อยกเลิก/u);
+    assert.match(note({ code: 'expense_not_voidable' }), /อยู่ในสถานะที่ระบบยกเลิกให้ไม่ได้ ติดต่อผู้ดูแลระบบ/u);
     // A cancel refused up front for the same reason reads the same, period named in Thai.
     assert.equal(errorText(new Error('reimbursement_cancellation_accounting_period_locked:2026-09')),
-      'ยังยกเลิกคำขอนี้ไม่ได้ เพราะงวดบัญชี ก.ย. 2569 ปิดแล้ว ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ ต้องให้ผู้มีสิทธิ์เปิดงวดบัญชีนั้นก่อน');
-    assert.equal(errorText(new Error('cancellation_reason_too_short')), 'เหตุผลที่ยกเลิกคำขอต้องยาวอย่างน้อย 3 ตัวอักษร');
+      'ยังยกเลิกใบเบิกนี้ไม่ได้ เพราะงวดบัญชี ก.ย. 2569 ปิดแล้ว ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ ต้องให้ผู้มีสิทธิ์เปิดงวดบัญชีนั้นก่อน');
+    assert.equal(errorText(new Error('cancellation_reason_too_short')), 'เหตุผลที่ยกเลิกใบเบิกต้องยาวอย่างน้อย 3 ตัวอักษร');
     // Every state reads in plain Thai: no code, key or ISO period on the page.
     for (const blocker of [undefined, { code: 'reason_too_short' }, { code: 'accounting_period_locked', periodKey: '2026-09' },
       { code: 'tax_period_locked', periodKey: '2026-09', formType: 'PP30' }, { code: 'posting_unresolved' }, { code: 'expense_not_voidable' },
@@ -248,14 +262,14 @@ describe('a claim whose cancellation has not completed says so in the step card 
 
   it('asks for a corrected reason only when the stored one is what blocks it, starting from the reason on record', () => {
     const stranded = cancelling({}, { reason: 'ก', blocker: { code: 'reason_too_short' } });
-    const dialog = (typed?: string) => withDialog(stranded, owner, 'resume-cancel', 'ดำเนินการยกเลิกต่อ RB-202610-00007', typed, 'ก');
+    const dialog = (typed?: string) => withDialog(stranded, owner, 'resume-cancel', 'ยกเลิกใบเบิกต่อ RB-202610-00007', typed, 'ก');
     // It opens on the reason on record, which is still too short to confirm.
     const opened = dialog();
     assert.match(opened, /<textarea\b[^>]*>ก<\/textarea>/u);
-    assert.deepEqual(button(opened, 'ยืนยันยกเลิกคำขอ'), { shown: true, disabled: true });
-    assert.ok(visible(opened).some((text) => text.startsWith('เหตุผลที่ระบุไว้เดิมสั้นเกินไป')));
-    assert.deepEqual(button(dialog('ab'), 'ยืนยันยกเลิกคำขอ'), { shown: true, disabled: true });
-    assert.deepEqual(button(dialog('ซื้อซ้ำกับใบก่อน'), 'ยืนยันยกเลิกคำขอ'), { shown: true, disabled: false });
+    assert.deepEqual(button(opened, 'ยกเลิกใบเบิก'), { shown: true, disabled: true });
+    assert.ok(visible(opened).some((text) => text.startsWith('เหตุผลเดิมสั้นเกินไป')));
+    assert.deepEqual(button(dialog('ab'), 'ยกเลิกใบเบิก'), { shown: true, disabled: true });
+    assert.deepEqual(button(dialog('ซื้อซ้ำกับใบก่อน'), 'ยกเลิกใบเบิก'), { shown: true, disabled: false });
   });
 
   it('names the system on the อยู่ที่ line, in the step note and in the timeline, as the LINE backlog does', () => {
@@ -263,7 +277,7 @@ describe('a claim whose cancellation has not completed says so in the step card 
       const html = claimPage(detail, owner);
       assert.deepEqual(deskLine(html), [`อยู่ที่ ${REIMBURSEMENT_DESK_LABELS.SYSTEM}`], String(detail.status));
       assert.equal(currentDeskText(detail.currentDesk as any), 'ระบบ');
-      assert.ok(stepCard(html).note.startsWith(`กำลังยกเลิกคำขอ ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`), String(detail.status));
+      assert.ok(stepCard(html).note.startsWith(`กำลังยกเลิกใบเบิก ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`), String(detail.status));
       const timeline = buildClaimTimeline(detail);
       assert.deepEqual(timeline.filter((row) => row.state === 'current').map((row) => row.label), [`กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`], String(detail.status));
       // Nobody else is said to be waited for: no approver, payer or finance desk on any of the three.
@@ -274,9 +288,9 @@ describe('a claim whose cancellation has not completed says so in the step card 
     }
     // The timeline keeps what happened and ends at the cancellation: who started it, then the system.
     assert.deepEqual(buildClaimTimeline(atApproval()).map((row) => `${row.state}:${row.label}`),
-      ['done:ยื่นใบ', 'done:เริ่มยกเลิกคำขอ โดย พิม ใจดี', 'current:กำลังรอระบบปรับสถานะ']);
+      ['done:ยื่นใบ', 'done:เริ่มยกเลิกใบเบิก โดย พิม ใจดี', 'current:กำลังรอระบบปรับสถานะ']);
     assert.deepEqual(buildClaimTimeline(cancelling()).map((row) => `${row.state}:${row.label}`),
-      ['done:ยื่นใบ', 'done:อนุมัติโดย สมศรี', 'done:เริ่มยกเลิกคำขอ โดย พิม ใจดี', 'current:กำลังรอระบบปรับสถานะ']);
+      ['done:ยื่นใบ', 'done:อนุมัติโดย สมศรี', 'done:เริ่มยกเลิกใบเบิก โดย พิม ใจดี', 'current:กำลังรอระบบปรับสถานะ']);
   });
 });
 
@@ -297,8 +311,12 @@ describe('the hub offers nothing the API refuses on a claim that is being cancel
     // A claim nobody had to approve that still waits for the system is APPROVED: it is not paid from a row either.
     assert.equal(queueRowOffersPayment(row({ status: 'APPROVED' }), payer), false);
     // Both layouts ask the two rules, and nothing in the queue decides it from the status alone any more.
-    assert.equal(hub.match(/\{queueRowOffersFinanceReview\(r\) && <button/g)?.length, 2);
-    assert.equal(hub.match(/\{queueRowOffersPayment\(r, permissions\) && <button/g)?.length, 2);
+    // One builder makes the row's one button for both layouts.
+    assert.match(hub, /const rowButton = \(r: any, layout: 'cards' \| 'table'\) => \{[\s\S]*?if \(queueRowOffersFinanceReview\(r\)\) \{[\s\S]*?return queueRowOffersPayment\(r, permissions\) && \(\s*<button/);
+    assert.equal(hub.match(/queueRowOffersFinanceReview\(r\)\) \{/g)?.length, 1);
+    assert.equal(hub.match(/queueRowOffersPayment\(r, permissions\) && \(/g)?.length, 1);
+    assert.match(hub, /queue="finance"[^\n]*action=\{rowButton\}/);
+    assert.deepEqual([hub.match(/action\?\.\(row, 'table'\)/g)?.length, hub.match(/action\?\.\(row, 'cards'\)/g)?.length], [1, 1]);
     assert.equal(hub.includes("r.status === 'FINANCE_REVIEW' && <button"), false);
   });
 
@@ -321,15 +339,15 @@ describe('the hub offers nothing the API refuses on a claim that is being cancel
     assert.equal(quickPayBlockedNote(claim(), owner.permissions, owner.userId), null, 'a claim waiting for payment');
     const cancelling = claim({ currentDesk: { kind: 'SYSTEM' }, cancellationPending: true,
       pendingCancellation: { startedAt: '2026-10-01T02:00:00.000Z', startedByName: 'พิม ใจดี', reason: 'ซื้อซ้ำกับใบก่อน', canResume: true, canWithdraw: true } });
-    assert.match(quickPayBlockedNote(cancelling, owner.permissions, owner.userId)!, /^บันทึกจ่ายใบนี้ไม่ได้ · กำลังยกเลิกคำขอ รอระบบปรับสถานะ/u);
+    assert.match(quickPayBlockedNote(cancelling, owner.permissions, owner.userId)!, /^บันทึกจ่ายใบนี้ไม่ได้ · กำลังยกเลิกใบเบิก รอระบบปรับสถานะ/u);
     const waiting = claim({ status: 'APPROVED', approvalSteps: [], awaitingSystem: { kind: 'NO_APPROVAL_NEEDED', canResume: true } });
     assert.match(quickPayBlockedNote(waiting, owner.permissions, owner.userId)!, /^บันทึกจ่ายใบนี้ไม่ได้ · ใบนี้ไม่ต้องอนุมัติตามนโยบาย · ระบบยังเตรียมรายการสำหรับจ่ายเงินของใบนี้ไม่เสร็จ/u);
     // Paid by someone else meanwhile, cancelled meanwhile, or a viewer the payment is not taken from: no form
     // either, and no word of a payment "not yet" for a claim that will never take one.
     const paid = claim({ status: 'PAID', paymentStatus: 'PAID', currentDesk: undefined, payments: [{ id: 'p1', status: 'RECORDED', paidAt: '2026-10-01T05:00:00.000Z' }] });
-    assert.match(quickPayBlockedNote(paid, owner.permissions, owner.userId)!, /^บันทึกจ่ายใบนี้ไม่ได้ · จ่ายเงินคืนแล้ว/u);
+    assert.match(quickPayBlockedNote(paid, owner.permissions, owner.userId)!, /^บันทึกจ่ายใบนี้ไม่ได้ · รอผู้เบิกเซ็น.*รอผู้อนุมัติเซ็น/u);
     const cancelled = claim({ status: 'CANCELLED', currentDesk: undefined });
-    assert.equal(quickPayBlockedNote(cancelled, owner.permissions, owner.userId), 'บันทึกจ่ายใบนี้ไม่ได้ · ยกเลิกคำขอแล้ว');
+    assert.equal(quickPayBlockedNote(cancelled, owner.permissions, owner.userId), 'บันทึกจ่ายใบนี้ไม่ได้ · ยกเลิกใบเบิกแล้ว');
     assert.ok(quickPayBlockedNote(claim(), ['reimbursement.read'], 'reader'));
     for (const stale of [cancelling, waiting, paid, cancelled]) {
       const note = quickPayBlockedNote(stale, owner.permissions, owner.userId)!;
@@ -347,7 +365,7 @@ describe('the hub offers nothing the API refuses on a claim that is being cancel
 
 // Audit B4: a claim whose decision is on record and was not carried out. Before: an approved claim sat at
 // "รออนุมัติ" with no button for anyone, and a claim nobody had to approve offered a บันทึกจ่าย the API refused.
-describe('a claim that was decided and has not moved on says so in the approval step and offers ดำเนินการต่อ to whoever the API takes it from', () => {
+describe('a claim that was decided and has not moved on says so in the approval step and offers ทำต่อ to whoever the API takes it from', () => {
   const requester = { userId: 'staff', permissions: STAFF };
   const owner = { userId: 'owner', permissions: OWNER };
   const approver = { userId: 'boss', permissions: APPROVER };
@@ -366,28 +384,32 @@ describe('a claim that was decided and has not moved on says so in the approval 
   const pressable = (html: string) => [...html.matchAll(/<button\b[^>]*>([^<]*)<\/button>/gu)].map((match) => match[1]!);
   const NOT_READY = 'ระบบยังเตรียมรายการสำหรับจ่ายเงินของใบนี้ไม่เสร็จ จึงยังบันทึกจ่ายไม่ได้';
 
-  it('an approved claim: its approver reads that the system has it and gets ดำเนินการต่อ, with no second approval and no attestation asked', () => {
+  it('an approved claim: its approver reads that the system has it and gets ทำต่อ, with no second approval and no attestation asked', () => {
     const html = claimPage(approved(true), approver);
     const card = stepCard(html);
-    assert.deepEqual(card.buttons, ['ดำเนินการต่อ', 'พิมพ์ใบเบิก']);
-    assert.equal(card.note, `สมศรี อนุมัติแล้ว รอระบบปรับสถานะ · ${NOT_READY} · ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที หรือกดดำเนินการต่อได้เลย ไม่ต้องอนุมัติซ้ำ`);
+    assert.deepEqual(card.buttons, ['ทำต่อ']);
+    // Printing is offered once, with the document, and not among the step's buttons.
+    assert.equal(pressable(html).filter((label) => label === 'พิมพ์ใบเบิก').length, 1);
+    assert.equal(card.note, `สมศรี อนุมัติแล้ว รอระบบปรับสถานะ · ${NOT_READY} · ระบบจะทำต่อให้เองภายในไม่กี่นาที หรือกดทำต่อได้เลย ไม่ต้องอนุมัติซ้ำ`);
     assert.equal(activeJourneyStep(buildJourneySteps(approved(true), approver.permissions, approver.userId))!.key, 'approval');
     // The decision is made. Nothing asks for it again: no อนุมัติ, no ปฏิเสธ, no "ตรวจบัญชีแล้ว" for the transfer, and no payment yet.
-    for (const refused of ['อนุมัติ', 'ปฏิเสธ', 'บันทึกจ่าย']) assert.equal(pressable(html).includes(refused), false, refused);
+    for (const refused of ['อนุมัติ', 'ส่งกลับให้แก้', 'บันทึกจ่าย']) assert.equal(pressable(html).includes(refused), false, refused);
     assert.equal(visible(html).includes('ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก'), false);
     assert.equal(html.includes('type="checkbox"'), false);
 
     // Whoever the server does not take it from reads the same state and who can press, and gets no button for it.
     const other = stepCard(claimPage(approved(false), requester));
-    assert.deepEqual(other.buttons, ['ยกเลิกคำขอ', 'พิมพ์ใบเบิก'], 'no ดำเนินการต่อ, and no "แก้ไข (เปิดกลับเป็นร่าง)" for a claim that was decided');
-    assert.equal(other.note, `สมศรี อนุมัติแล้ว รอระบบปรับสถานะ · ${NOT_READY} · ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที ไม่ต้องอนุมัติซ้ำ ถ้ายังค้างอยู่ ผู้อนุมัติใบนี้กดดำเนินการต่อได้`);
+    assert.deepEqual(other.buttons, ['ยกเลิกใบเบิกนี้'], 'no ทำต่อ, and no "แก้ไขใบเบิก" for a claim that was decided');
+    // Cancelling is a shared danger button of the step.
+    assert.equal(pressable(claimPage(approved(false), requester)).filter((label) => label === 'ยกเลิกใบเบิกนี้').length, 1);
+    assert.equal(other.note, `สมศรี อนุมัติแล้ว รอระบบปรับสถานะ · ${NOT_READY} · ระบบจะทำต่อให้เองภายในไม่กี่นาที ไม่ต้องอนุมัติซ้ำ ถ้ายังค้างอยู่ ผู้อนุมัติใบนี้กดทำต่อได้`);
   });
 
-  it('a claim nobody had to approve stands at the approval step while it cannot be paid: no บันทึกจ่าย, and ดำเนินการต่อ for whoever may record the payment', () => {
+  it('a claim nobody had to approve stands at the approval step while it cannot be paid: no บันทึกจ่าย, and ทำต่อ for whoever may record the payment', () => {
     const html = claimPage(noApprovalNeeded(true), owner);
     const card = stepCard(html);
-    assert.deepEqual(card.buttons, ['ดำเนินการต่อ', 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก']);
-    assert.equal(card.note, `ใบนี้ไม่ต้องอนุมัติตามนโยบาย · ${NOT_READY} · ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที หรือกดดำเนินการต่อได้เลย`);
+    assert.deepEqual(card.buttons, ['ยกเลิกใบเบิกนี้', 'ทำต่อ']);
+    assert.equal(card.note, `ใบนี้ไม่ต้องอนุมัติตามนโยบาย · ${NOT_READY} · ระบบจะทำต่อให้เองภายในไม่กี่นาที หรือกดทำต่อได้เลย`);
     // The owner holds the pay right, and the API would refuse the payment: the page offers none, and no payment form.
     assert.equal(pressable(html).includes('บันทึกจ่าย'), false);
     assert.equal(visible(html).includes('วิธีจ่าย *'), false);
@@ -395,21 +417,21 @@ describe('a claim that was decided and has not moved on says so in the approval 
     assert.deepEqual(steps.map((step) => `${step.key}:${step.state}`), ['items:done', 'approval:current', 'payment:upcoming', 'document:upcoming']);
 
     const other = stepCard(claimPage(noApprovalNeeded(false), requester));
-    assert.deepEqual(other.buttons, ['ยกเลิกคำขอ', 'พิมพ์ใบเบิก']);
-    assert.equal(other.note, `ใบนี้ไม่ต้องอนุมัติตามนโยบาย · ${NOT_READY} · ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที ถ้ายังค้างอยู่ วราภรณ์ หรือ สมศรี กดดำเนินการต่อได้`);
+    assert.deepEqual(other.buttons, ['ยกเลิกใบเบิกนี้']);
+    assert.equal(other.note, `ใบนี้ไม่ต้องอนุมัติตามนโยบาย · ${NOT_READY} · ระบบจะทำต่อให้เองภายในไม่กี่นาที ถ้ายังค้างอยู่ วราภรณ์ หรือ สมศรี กดทำต่อได้`);
 
     // Once the server no longer reports it, the same claim stands at the payment step and takes the payment.
     const payable = stepCard(claimPage(noApprovalNeeded(true, { awaitingSystem: undefined }), owner));
-    assert.deepEqual(payable.buttons, ['บันทึกจ่าย', 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก']);
+    assert.deepEqual(payable.buttons, ['ยกเลิกใบเบิกนี้', 'จ่ายเงิน']);
   });
 
-  it('follows the server for ดำเนินการต่อ in both directions, whatever the viewer holds', () => {
+  it('follows the server for ทำต่อ in both directions, whatever the viewer holds', () => {
     for (const [kind, build] of [['approved', approved], ['nobody had to approve', noApprovalNeeded]] as const) {
       for (const [who, viewer] of [['every right', owner], ['the approver', approver], ['the requester', requester], ['no right at all', { userId: 'guest', permissions: [] }]] as const) {
         for (const canResume of [true, false]) {
           const actions = activeJourneyStep(buildJourneySteps(build(canResume), viewer.permissions, viewer.userId))!.actions;
           assert.equal(actions.includes('resume'), canResume, `${kind}, ${who}, server says ${canResume}`);
-          assert.equal(button(claimPage(build(canResume), viewer), 'ดำเนินการต่อ').shown, canResume, `${kind}, ${who}, server says ${canResume}`);
+          assert.equal(button(claimPage(build(canResume), viewer), 'ทำต่อ').shown, canResume, `${kind}, ${who}, server says ${canResume}`);
           // And never the decisions or the payment the API refuses in this state.
           for (const refused of ['approve', 'reject', 'pay', 'reopen'] as const) assert.equal(actions.includes(refused), false, `${kind}, ${who}: ${refused}`);
         }
@@ -435,15 +457,15 @@ describe('a claim that was decided and has not moved on says so in the approval 
     const waiting = noApprovalNeeded(false);
     const waitingHtml = claimPage(waiting, requester);
     assert.deepEqual(deskLine(waitingHtml), ['อยู่ที่ วราภรณ์ หรือ สมศรี']);
-    assert.match(stepCard(waitingHtml).note, /ถ้ายังค้างอยู่ วราภรณ์ หรือ สมศรี กดดำเนินการต่อได้$/u);
+    assert.match(stepCard(waitingHtml).note, /ถ้ายังค้างอยู่ วราภรณ์ หรือ สมศรี กดทำต่อได้$/u);
     assert.deepEqual(buildClaimTimeline(waiting).map((row) => `${row.state}:${row.label}`),
-      ['done:ยื่นใบ', 'current:กำลังรอ วราภรณ์ หรือ สมศรี ดำเนินการต่อ', 'future:รอบันทึกจ่าย']);
+      ['done:ยื่นใบ', 'current:กำลังรอ วราภรณ์ หรือ สมศรี ทำต่อ', 'future:รอบันทึกจ่าย']);
     // With nobody named, all three print the pool, in the words the LINE backlog uses for the same claim.
     const pool = noApprovalNeeded(false, { paymentDesk: undefined });
     const poolHtml = claimPage(pool, requester);
     assert.deepEqual(deskLine(poolHtml), [`อยู่ที่ ${REIMBURSEMENT_DESK_LABELS.PAYMENT}`]);
-    assert.ok(stepCard(poolHtml).note.endsWith(`ถ้ายังค้างอยู่ ${REIMBURSEMENT_DESK_LABELS.PAYMENT} กดดำเนินการต่อได้`));
-    assert.deepEqual(buildClaimTimeline(pool).filter((row) => row.state === 'current').map((row) => row.label), [`กำลังรอ ${REIMBURSEMENT_DESK_LABELS.PAYMENT} ดำเนินการต่อ`]);
+    assert.ok(stepCard(poolHtml).note.endsWith(`ถ้ายังค้างอยู่ ${REIMBURSEMENT_DESK_LABELS.PAYMENT} กดทำต่อได้`));
+    assert.deepEqual(buildClaimTimeline(pool).filter((row) => row.state === 'current').map((row) => row.label), [`กำลังรอ ${REIMBURSEMENT_DESK_LABELS.PAYMENT} ทำต่อ`]);
 
     // Each of them reads in plain Thai.
     for (const [detail, viewer] of [[approved(true), approver], [approved(false), requester], [noApprovalNeeded(true), owner], [noApprovalNeeded(false), requester], [pool, requester]] as const) {
@@ -452,9 +474,9 @@ describe('a claim that was decided and has not moved on says so in the approval 
     }
   });
 
-  it('sends the resume call when ดำเนินการต่อ is pressed, and nothing that decides: no approval, no attestation', async () => {
+  it('sends the resume call when ทำต่อ is pressed, and nothing that decides: no approval, no attestation', async () => {
     for (const [detail, viewer] of [[approved(true), approver], [noApprovalNeeded(true), owner]] as const) {
-      const calls = await press(detail, viewer, 'ดำเนินการต่อ');
+      const calls = await press(detail, viewer, 'ทำต่อ');
       assert.deepEqual(calls[0], { url: '/api/v1/companies/company-1/reimbursements/claim-1/resume', method: 'POST', body: {} }, String(detail.status));
       // Then the page reads the claim again, as after every action. No other write.
       assert.deepEqual(calls.slice(1).map((call) => [call.method, call.url]), [['GET', '/api/v1/companies/company-1/reimbursements/claim-1']], String(detail.status));
@@ -462,9 +484,9 @@ describe('a claim that was decided and has not moved on says so in the approval 
   });
 
   it('says in plain Thai why a press was not taken', () => {
-    assert.equal(errorText(new Error('reimbursement_resume_in_progress')), 'ระบบกำลังดำเนินการใบนี้อยู่ กรุณาโหลดรายการใหม่อีกครั้ง');
-    assert.equal(errorText(new Error('reimbursement_resume_not_allowed')), 'ผู้ที่กดดำเนินการต่อได้คือผู้อนุมัติใบนี้ หรือผู้มีสิทธิ์บันทึกจ่ายสำหรับใบที่ไม่ต้องอนุมัติ');
-    assert.equal(errorText(new Error('stale_approval_snapshot')), 'คำขอถูกแก้ไขหลังส่งอนุมัติ กรุณาเปิดดูรายละเอียดใหม่ก่อนตัดสินใจ');
+    assert.equal(errorText(new Error('reimbursement_resume_in_progress')), 'ระบบกำลังทำรายการของใบนี้อยู่ เปิดหน้านี้ใหม่อีกครั้ง');
+    assert.equal(errorText(new Error('reimbursement_resume_not_allowed')), 'ผู้ที่กดทำต่อได้คือผู้อนุมัติใบนี้ หรือผู้มีสิทธิ์บันทึกจ่ายสำหรับใบที่ไม่ต้องอนุมัติ');
+    assert.equal(errorText(new Error('stale_approval_snapshot')), 'ใบเบิกถูกแก้ไขหลังส่งอนุมัติ เปิดดูรายละเอียดใหม่ก่อนตัดสินใจ');
     for (const code of ['reimbursement_resume_in_progress', 'reimbursement_resume_not_allowed', 'reimbursement_resume_unavailable']) {
       assertPlainThai([errorText(new Error(code))], code);
     }
@@ -485,30 +507,30 @@ describe('the status badge of a claim the system holds reads รอระบบ�
   /** Every text on the page that is exactly this label: the badges, never a sentence that merely contains the words. */
   const exactly = (html: string, label: string) => visible(html).filter((text) => text === label).length;
 
-  it('on the claim page: the header badge and the status row say what the อยู่ที่ line, the step note and the timeline say', () => {
+  it('on the claim page: the header badge says what the อยู่ที่ line, the step note and the timeline say', () => {
     for (const viewer of [approver, requester]) {
       const html = claimPage(approvedWaiting, viewer);
       assert.equal(exactly(html, 'รออนุมัติ'), 0, 'approved already: nothing on the page says it waits for approval');
-      assert.equal(exactly(html, REIMBURSEMENT_SYSTEM_WAIT_LABEL), 2, 'the header badge and the status row');
+      assert.equal(exactly(html, REIMBURSEMENT_SYSTEM_WAIT_LABEL), 1, 'the header badge: the status is said once');
       // One state, in the shared words, in all four places.
       assert.deepEqual(deskLine(html), [`อยู่ที่ ${REIMBURSEMENT_DESK_LABELS.SYSTEM}`]);
       assert.ok(stepCard(html).note.includes(REIMBURSEMENT_SYSTEM_WAIT_LABEL));
       assert.equal(exactly(html, `กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`), 1, 'the timeline row');
     }
     const cancelling = claimPage(cancellingAtPayment, requester);
-    assert.deepEqual([exactly(cancelling, 'พร้อมจ่าย'), exactly(cancelling, REIMBURSEMENT_SYSTEM_WAIT_LABEL)], [0, 2]);
-    assert.ok(stepCard(cancelling).note.startsWith(`กำลังยกเลิกคำขอ ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`));
+    assert.deepEqual([exactly(cancelling, 'พร้อมจ่าย'), exactly(cancelling, REIMBURSEMENT_SYSTEM_WAIT_LABEL)], [0, 1]);
+    assert.ok(stepCard(cancelling).note.startsWith(`กำลังยกเลิกใบเบิก ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`));
   });
 
   it('keeps the status words of every claim that is with a person', () => {
     const waiting = claim({ status: 'PENDING_APPROVAL', approvedAt: undefined, currentDesk: { kind: 'APPROVER', names: ['สมศรี'] },
       approvalSteps: [{ id: 'step-1', sequenceNo: 1, status: 'PENDING', approverName: 'สมศรี' }] });
-    assert.deepEqual([exactly(claimPage(waiting, requester), 'รออนุมัติ'), exactly(claimPage(waiting, requester), REIMBURSEMENT_SYSTEM_WAIT_LABEL)], [2, 0]);
-    assert.equal(exactly(claimPage(claim(), requester), 'พร้อมจ่าย'), 2);
+    assert.deepEqual([exactly(claimPage(waiting, requester), 'รออนุมัติ'), exactly(claimPage(waiting, requester), REIMBURSEMENT_SYSTEM_WAIT_LABEL)], [1, 0]);
+    assert.equal(exactly(claimPage(claim(), requester), 'พร้อมจ่าย'), 1);
     // Nobody had to approve it and it cannot be paid yet: it is with whoever may record its payment, and keeps its status.
     const noApproval = claim({ status: 'APPROVED', approvalSteps: [], currentDesk: { kind: 'PAYMENT' }, awaitingSystem: { kind: 'NO_APPROVAL_NEEDED', canResume: false } });
-    assert.deepEqual([exactly(claimPage(noApproval, requester), 'อนุมัติแล้ว'), exactly(claimPage(noApproval, requester), REIMBURSEMENT_SYSTEM_WAIT_LABEL)], [2, 0]);
-    for (const [status, label] of [['DRAFT', 'ร่าง'], ['PENDING_APPROVAL', 'รออนุมัติ'], ['FINANCE_REVIEW', 'รอตรวจสอบการเงิน'], ['READY_FOR_PAYMENT', 'พร้อมจ่าย'], ['PAID', 'จ่ายแล้ว'], ['CANCELLED', 'ยกเลิก']] as const) {
+    assert.deepEqual([exactly(claimPage(noApproval, requester), 'อนุมัติแล้ว'), exactly(claimPage(noApproval, requester), REIMBURSEMENT_SYSTEM_WAIT_LABEL)], [1, 0]);
+    for (const [status, label] of [['DRAFT', 'ร่าง'], ['PENDING_APPROVAL', 'รออนุมัติ'], ['FINANCE_REVIEW', 'รอตรวจสอบการเงิน'], ['READY_FOR_PAYMENT', 'พร้อมจ่าย'], ['PAID', 'จ่ายแล้ว'], ['CANCELLED', 'ยกเลิกแล้ว']] as const) {
       assert.equal(claimStatusBadge({ status }).label, label);
       assert.equal(claimStatusBadge({ status, currentDesk: { kind: 'PAYMENT' } }).label, label);
     }
@@ -520,9 +542,9 @@ describe('the status badge of a claim the system holds reads รอระบบ�
     }
     // Each hands the badge the whole row: after the desk it reads the row's place in a payout round, with what the claim
     // holds and what was answered, which no single field of a row says.
-    assert.equal(hub.match(/<StatusBadge claim=\{r\} \/>/g)?.length, 6,
-      'the list, its cards, the approval cards, the approval table (a row of a round), the finance table and its cards');
-    assert.doesNotMatch(hub, /<StatusBadge (?!claim=\{r\} \/>)/u, 'no badge is given less than the row');
+    assert.equal(hub.match(/const status = claimListBadge\(row\)/g)?.length, 1, 'one badge builder for every queue');
+    assert.equal(hub.match(/<ClaimQueueRows rows=\{pagedData\}/g)?.length, 3, 'all queues share it');
+    assert.equal(hub.match(/badge\(row\)/g)?.length, 2, 'wide and phone rows');
     // By the words its row shows: the badge's, and the finance review's where the row says one.
     assert.match(hub, /claimStatusBadge\(r\)\.label,\s+financeLine\(r\)/);
   });
@@ -592,14 +614,14 @@ describe('moving a file of ใบเบิกที่เซ็นแล้ว t
       const [value, set] = (realUseState as (initial: unknown) => [unknown, (next: unknown) => void])(initial);
       return [value, (next: any) => { if (typeof next?.resolve === 'function') { asked.push(next); next.resolve(answer); } else set(next); }];
     });
-    try { return { calls: await press(paidInCash, payer, 'ใช้ไฟล์นี้เป็นสลิปการจ่าย'), asked }; } finally { Reflect.set(reactRuntime, 'useState', realUseState); }
+    try { return { calls: await press(paidInCash, payer, 'ใช้ไฟล์นี้เป็นหลักฐานการจ่าย'), asked }; } finally { Reflect.set(reactRuntime, 'useState', realUseState); }
   }
 
   it('says before the yes that the file cannot be moved back and its declaration is withdrawn, and sends that yes with the call', async () => {
     const { calls, asked } = await pressAndAnswer(true);
-    assert.deepEqual(asked.map((dialog) => [dialog.title, dialog.confirmLabel]), [['ใช้ไฟล์นี้เป็นสลิปการจ่าย', 'ย้ายเป็นสลิปการจ่าย']]);
+    assert.deepEqual(asked.map((dialog) => [dialog.title, dialog.confirmLabel]), [['ใช้ไฟล์นี้เป็นหลักฐานการจ่าย', 'ย้ายเป็นหลักฐานการจ่าย']]);
     const message = String(asked[0]!.message);
-    for (const part of ['ไฟล์ สลิปโอนเงิน.jpg จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นสลิปของการจ่าย RBPAY-202610-00003', 'ย้ายกลับไม่ได้', 'ระบบจะถอนการยืนยันนั้น']) {
+    for (const part of ['ไฟล์ สลิปโอนเงิน.jpg จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นหลักฐานการจ่าย RBPAY-202610-00003', 'ย้ายกลับไม่ได้', 'ระบบจะถอนการยืนยันนั้น']) {
       assert.ok(message.includes(part), `${part} in ${message}`);
     }
     assert.deepEqual(calls.filter((call) => call.method === 'POST'), [
@@ -615,9 +637,9 @@ it('the duplicate-clear dialog covers source-document duplicates and confirmatio
   const blocked = claim({ duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_DOCUMENT'] });
   const dialog = withDialog(blocked, { userId: 'owner', permissions: OWNER }, 'resolve-duplicate', 'ปลดรายการซ้ำ RB-202610-00007', 'คนละการซื้อ');
   const text = visible(dialog).join(' ');
-  assert.match(text, /เพื่อปลดและยืนยันเอกสารก่อนบันทึกจ่าย/);
-  assert.match(text, /ถ้าการยืนยันยังไม่เสร็จ/);
-  assert.doesNotMatch(text, /ใบนี้ไม่ได้เบิกซ้ำกับคำขออื่น/);
+  assert.match(text, /ระบบบันทึกชื่อคุณและเหตุผลนี้/);
+  assert.doesNotMatch(text, /กดปลดรายการซ้ำอีกครั้ง/);
+  assert.doesNotMatch(text, /ใบนี้ไม่ได้เบิกซ้ำกับใบเบิกอื่น/);
 });
 
 it('a confirmed duplicate shows cancellation throughout the page and offers no payout send-back', () => {

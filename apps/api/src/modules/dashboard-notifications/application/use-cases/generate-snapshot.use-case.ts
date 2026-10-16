@@ -2,7 +2,7 @@ import { Injectable, ForbiddenException } from '@nestjs/common';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { PrismaDashboardSnapshotRepository } from '../../infrastructure/prisma-dashboard.repository';
-import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
+import { assertFeatureEnabled, loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import { InventoryHealthProvider } from '../providers/inventory-health.provider';
 import { ExpenseSummaryProvider } from '../providers/expense-summary.provider';
 import { getPeriodBoundaries, computeFreshness } from '../../domain/logic/notification.logic';
@@ -34,16 +34,7 @@ export class GenerateSnapshotUseCase {
     }
     if (ctx.companyId !== companyId) throw new ForbiddenException('Company mismatch');
 
-    // The branch dimension, resolved once (spec R4). Written out rather than delegated to
-    // `isBranchInScope`, which returns true for an absent branchId (branch.logic.ts:48-52) and so
-    // cannot express "this explicit branch is out of scope".
-    const scopedBranchIds = ctx.scopes.branchIds;
-    if (options.branchId && scopedBranchIds && !scopedBranchIds.includes(options.branchId)) {
-      throw new ForbiddenException('Branch out of scope');
-    }
-    // A restricted caller with no selection gets their own branches, never the company total —
-    // that is the leak this closes. An unrestricted caller with no selection stays company-wide.
-    const branchIds = options.branchId ? [options.branchId] : scopedBranchIds;
+    const branchIds = this.resolveBranchIds(ctx, options.branchId);
     const scope: DashboardScope = branchIds ? 'branch' : 'company';
     // Sorted so two callers holding the same branches share one cached row (spec R5).
     const scopeKey = branchIds ? [...branchIds].sort().join(',') : undefined;
@@ -109,6 +100,27 @@ export class GenerateSnapshotUseCase {
     });
 
     return this.toDto(snapshot, this.visibleWidgets(widgets, ctx.permissions));
+  }
+
+  async getExpenseMonths(ctx: RequestContext, companyId: string, options: { year: number; branchId?: string }) {
+    if (!ctx.permissions.includes('dashboard.read') || !this.expenseProvider.readPermissions.some(key => ctx.permissions.includes(key))) {
+      throw new ForbiddenException('dashboard.read and expense.read required');
+    }
+    if (ctx.companyId !== companyId) throw new ForbiddenException('Company mismatch');
+    const branchIds = this.resolveBranchIds(ctx, options.branchId);
+    assertFeatureEnabled(await loadEntitledFeatureKeys(this.prisma, companyId), this.expenseProvider.featureKey);
+    const company = await this.prisma.client.company.findUniqueOrThrow({ where: { id: companyId }, select: { timezone: true } });
+    return this.expenseProvider.collectMonths({ companyId, year: options.year, branchIds, timezone: company.timezone });
+  }
+
+  /** Explicit branch selection is exact; an absent selection keeps the reader's own scope.
+   * Only an unrestricted combined view includes company-central rows (spec R4). */
+  private resolveBranchIds(ctx: RequestContext, branchId?: string): string[] | undefined {
+    const scopedBranchIds = ctx.scopes.branchIds;
+    if (branchId && scopedBranchIds && !scopedBranchIds.includes(branchId)) {
+      throw new ForbiddenException('Branch out of scope');
+    }
+    return branchId ? [branchId] : scopedBranchIds;
   }
 
   /** Deny by default: a stored widget is returned only to a caller holding one of its provider's

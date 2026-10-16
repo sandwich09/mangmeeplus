@@ -1,0 +1,289 @@
+/** Fresh isolated starter shop: waiting never blocks confirmation, and a reviewer decides later.
+ * Labels/presses read from ExpenseInputVatRight, ExpensesPages, CompanyProfilePage and the evidence page.
+ * No API writes: the API assertions only verify the facts produced by the screens. */
+import { readFile } from 'node:fs/promises';
+import { inflateRawSync } from 'node:zlib';
+import type { Page } from '@playwright/test';
+import type { ExpenseDetail } from '@watchdog-bms/contracts';
+import { test, expect } from '../harness/fixtures';
+import { ensureBrowserLegalAcceptance } from '../harness/auth';
+import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
+import { QA_ACCOUNTS } from '../harness/roles';
+import { AFTER_PRESS, FIRST_SIGHT, idFromUrl, picture, pressForDownload, pressMenu, thaiDate, thaiMonth } from './journey-kit';
+
+const SHOP = 'seed-local-input-vat-shop';
+const BRANCH = 'สำนักงานใหญ่ (สำนักงานใหญ่)';
+const scope = { headers: { 'X-Company-Id': SHOP } };
+const ticks = ['ซื้อเพื่อใช้ในกิจการ', 'ไม่ใช่ภาษีซื้อต้องห้าม เช่น ค่ารับรอง', 'ผู้ออกใบมีสิทธิออกใบกำกับภาษี'];
+async function pick(page: Page, label: string, value: string) {
+  const field = page.locator('main').getByRole('combobox', { name: label, exact: true });
+  await expect(field).toBeVisible(AFTER_PRESS);
+  if ((await field.innerText()).trim() !== value) await chooseThemedOption(page, field, value);
+}
+/** Step 3 keeps the draft summary; confirmed documents show only failing checks. */
+const summaryCard = (page: Page) => page.locator('main .mangmee-card').filter({ has: page.getByRole('heading', { name: 'สรุปการตรวจ', exact: true }) });
+async function enter(page: Page) {
+  await ensureBrowserLegalAcceptance(page.context(), SHOP);
+  await page.goto(`/companies/${SHOP}/dashboard`, FIRST_SIGHT);
+}
+async function openFromList(page: Page, seller: string, waiting = false) {
+  await pressMenu(page, 'รายการค่าใช้จ่าย', 'ค่าใช้จ่ายและใบเสร็จ');
+  const main = page.locator('main');
+  await expect(main.getByRole('heading', { name: 'รายการค่าใช้จ่าย', exact: true })).toBeVisible(FIRST_SIGHT);
+  await expect(main.getByRole('combobox', { name: 'สิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
+  await main.getByRole('searchbox', { name: 'ค้นหาผู้ขายหรือเลขที่', exact: true }).fill(seller);
+  // Wide rows and phone buttons are separate renderings of the same source row.
+  const row = main.getByTestId('expenses-row').filter({ hasText: seller }).filter({ visible: true });
+  await expect(row).toBeVisible(AFTER_PRESS);
+  if (waiting) await expect(row.getByText('ภาษีซื้อรอตรวจสอบ', { exact: true })).toBeVisible();
+  await row.getByText(seller, { exact: true }).first().click();
+  await expect(main.getByRole('heading', { level: 1, name: seller, exact: true })).toBeVisible(FIRST_SIGHT);
+}
+async function manualDraft(page: Page, seller: string) {
+  const main = page.locator('main');
+  await pressMenu(page, 'บันทึกด้วยมือ', 'ค่าใช้จ่ายและใบเสร็จ');
+  await expect(main.getByRole('heading', { level: 1, name: 'บันทึกด้วยมือ', exact: true })).toBeVisible(FIRST_SIGHT);
+  await pick(page, 'สาขา', BRANCH);
+  await main.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true }).fill(unique('ของใช้ในร้าน'));
+  await main.getByRole('combobox', { name: 'ชื่อผู้ขาย', exact: true }).fill(seller);
+  await main.getByRole('spinbutton', { name: 'ราคาต่อหน่วย', exact: true }).fill('107');
+  await main.locator('input[type="file"]').first().setInputFiles(picture(`${seller}.png`));
+  await expect(main.getByRole('button', { name: 'นำไฟล์ออก', exact: true })).toBeVisible(AFTER_PRESS);
+  await main.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
+  await expect(main.getByRole('heading', { level: 1, name: seller, exact: true })).toBeVisible(FIRST_SIGHT);
+  return idFromUrl(page);
+}
+async function reviewPaper(page: Page, invoice: boolean) {
+  const main = page.locator('main');
+  await pick(page, 'รูปแบบ VAT', 'VAT รวมในราคา');
+  await pick(page, 'อัตรา VAT', 'มี VAT 7%');
+  await pick(page, 'บนใบพิมพ์ VAT ไว้แบบไหน', 'ทั้ง % และจำนวนเงิน');
+  await main.getByRole('spinbutton', { name: 'อัตรา VAT จากเอกสาร (%)', exact: true }).fill('7');
+  await main.getByRole('spinbutton', { name: 'VAT จากเอกสาร (บาท)', exact: true }).fill('7');
+  await expect(main.getByRole('textbox', { name: 'เลขประจำตัวผู้เสียภาษีผู้ขาย', exact: true })).toBeVisible();
+  await main.getByRole('textbox', { name: 'เลขประจำตัวผู้เสียภาษีผู้ขาย', exact: true }).fill('0105558000014');
+  await main.locator('input[id^="expense-document-number-"]').fill(unique('VAT'));
+  await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+  await expect(main.locator('[aria-current="step"]').filter({ hasText: 'ภาษีและเอกสาร' })).toBeVisible(AFTER_PRESS);
+  await pick(page, 'ประเภทเอกสาร', invoice ? 'ใบกำกับภาษี (เต็มรูป)' : 'ใบเสร็จรับเงิน');
+  if (invoice) await expect(main.getByText('มีใบกำกับภาษีเต็มรูป — รอตรวจสอบสิทธิภาษีซื้อ', { exact: true })).toBeVisible();
+  await pick(page, 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', 'ใช้ได้');
+  await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+  await expect(main.locator('[aria-current="step"]').filter({ hasText: 'ตรวจสรุป' })).toBeVisible(AFTER_PRESS);
+}
+async function assertPhoneConditions(page: Page) {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const conditions = page.locator('main').getByRole('region', { name: 'สิทธิภาษีซื้อ', exact: true });
+  await expect(conditions).toBeVisible();
+  // Measured once the page has settled: for about 0.1 s after 1556 → 390 the header and title are still
+  // laid out for the wide window (scrollWidth 396–405, seen 2026-10-14), then everything fits. A phone never resizes.
+  await expect(async () => {
+    const box = await conditions.boundingBox(); expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0); expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+    for (const label of ticks) {
+      await expect(conditions.getByRole('checkbox', { name: label, exact: true })).toBeVisible();
+      const labelBox = await conditions.locator('label').filter({ hasText: label }).boundingBox();
+      expect(labelBox!.x + labelBox!.width).toBeLessThanOrEqual(390);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  }).toPass({ timeout: 5_000 });
+}
+function sheetRows(file: Buffer): string[][] {
+  let xml = '';
+  for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+    const size = file.readUInt32LE(offset + 18), names = file.readUInt16LE(offset + 26), extra = file.readUInt16LE(offset + 28);
+    const start = offset + 30 + names + extra;
+    if (file.subarray(offset + 30, offset + 30 + names).toString() === 'xl/worksheets/sheet1.xml') {
+      const bytes = file.subarray(start, start + size); xml = (file.readUInt16LE(offset + 8) === 8 ? inflateRawSync(bytes) : bytes).toString(); break;
+    }
+    offset = start + size;
+  }
+  expect(xml).toContain('<sheetData>');
+  const decode = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  return [...xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)].map(row => [...row[1]!.matchAll(/<c\b[^>]*>([\s\S]*?)<\/c>/g)].map(cell => decode(cell[1]!.match(/<t\b[^>]*>([\s\S]*?)<\/t>|<v>([^<]*)<\/v>/)?.slice(1).find(v => v !== undefined) ?? '')));
+}
+
+test('@journey input VAT: unknown shop answers from its link, waiting confirms, owner decides later, staff reads facts, accountant receives both answers', async ({ pageAs, apiAs }) => {
+  test.setTimeout(300_000);
+  const owner = await pageAs('OWNER'), staff = await pageAs('STAFF'), api = await apiAs('OWNER');
+  owner.setDefaultTimeout(30_000); staff.setDefaultTimeout(30_000);
+  await owner.setViewportSize({ width: 1556, height: 1000 }); await staff.setViewportSize({ width: 390, height: 844 });
+  const main = owner.locator('main');
+  await enter(owner); await enter(staff);
+  const policy = await json<any>(await api.get(`companies/${SHOP}/expenses/capture-policy`, scope));
+  expect(policy.vatStatus, 'Reset the proof database: this isolated journey starts with an unanswered VAT question.').toBe('UNKNOWN');
+  await test.step('waiting list offers the shop question; answer yes and save shop facts through the screen', async () => {
+    // Owner 2026-10-15: the expense list no longer carries the shop's VAT reminder; the question lives in ข้อมูลร้าน
+    // (and on an expense's VAT card, see below).
+    await owner.goto(`/companies/${SHOP}/settings/profile#shop`);
+    await expect(main.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true })).toBeVisible(FIRST_SIGHT);
+    await pick(owner, 'ร้านจดทะเบียน VAT หรือยัง', 'จดทะเบียน VAT แล้ว');
+    await main.getByRole('button', { name: 'บันทึกข้อมูลร้าน', exact: true }).click();
+    await expect(owner.getByRole('status').filter({ hasText: 'บันทึกข้อมูลร้านแล้ว' }).first()).toBeVisible(AFTER_PRESS);
+  });
+  const invoiceSeller = unique('ร้านใบกำกับภาษีทดลอง'), receiptSeller = unique('ร้านใบเสร็จทดลอง');
+  // The staff records this paper, so she can read it later through her own-expense permission.
+  const invoiceId = await test.step('staff records the paper by hand without judging its VAT right', () => manualDraft(staff, invoiceSeller));
+  await test.step('owner chooses full tax invoice; waiting is a fact, incomplete ticks refuse only the decision', async () => {
+    await openFromList(owner, invoiceSeller); await reviewPaper(owner, true);
+    await expect(main.getByText('สิทธิภาษีซื้อ: รอตรวจสอบ', { exact: true })).toBeVisible();
+    await main.getByRole('button', { name: 'กลับ', exact: true }).click();
+    await pick(owner, 'สิทธิภาษีซื้อ', 'ใช้ได้ตามเงื่อนไข');
+    await expect(main.getByText('กรอกชื่อจดทะเบียนและเลขผู้เสียภาษีของร้านที่ข้อมูลร้าน', { exact: true })).toBeVisible();
+    await expect(main.getByRole('checkbox', { name: 'ตรวจชื่อและเลขผู้เสียภาษีของร้านบนใบแล้ว ตรงกับข้อมูลร้าน', exact: true })).toHaveCount(0);
+    const shopLink = main.getByRole('link', { name: 'ตั้งค่าร้าน › ข้อมูลร้าน', exact: true });
+    const destination = new URL((await shopLink.getAttribute('href'))!, owner.url());
+    expect(destination.searchParams.get('returnTo')).toBe(`/companies/${SHOP}/expenses/${invoiceId}#expense-input-vat-${invoiceId}`);
+    await shopLink.click();
+    await expect(main.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true })).toBeVisible(FIRST_SIGHT);
+    await main.getByRole('textbox', { name: /^ชื่อจดทะเบียน/ }).fill('บริษัท ทดลองภาษีซื้อ จำกัด');
+    await main.getByRole('textbox', { name: /^เลขผู้เสียภาษี/ }).fill('0105558000014');
+    await main.getByRole('textbox', { name: 'รหัสไปรษณีย์', exact: true }).fill('10110');
+    await expect(main.getByRole('combobox', { name: 'จังหวัด', exact: true })).toHaveText('กรุงเทพมหานคร', AFTER_PRESS);
+    await pick(owner, 'อำเภอ / เขต', 'คลองเตย'); await pick(owner, 'ตำบล / แขวง', 'คลองเตย');
+    await main.getByRole('textbox', { name: 'ที่อยู่ (บ้านเลขที่ ถนน)', exact: true }).fill('88 ถนนพระราม 4');
+    await main.getByRole('button', { name: 'บันทึกข้อมูลร้าน', exact: true }).click();
+    await expect(owner.getByRole('status').filter({ hasText: 'บันทึกข้อมูลร้านแล้ว' }).first()).toBeVisible(AFTER_PRESS);
+    await main.getByRole('link', { name: 'กลับไปตรวจสิทธิภาษีซื้อ', exact: true }).last().click();
+    await expect(owner).toHaveURL(new RegExp(`/expenses/${invoiceId}#expense-input-vat-${invoiceId}$`));
+    await expect(main.getByRole('region', { name: 'สิทธิภาษีซื้อ', exact: true })).toBeVisible(AFTER_PRESS);
+    await pick(owner, 'สิทธิภาษีซื้อ', 'ใช้ได้ตามเงื่อนไข');
+    await main.getByRole('checkbox', { name: 'ตรวจชื่อและเลขผู้เสียภาษีของร้านบนใบแล้ว ตรงกับข้อมูลร้าน', exact: true }).check();
+    await expect(main.getByText('✓ ชื่อและเลขผู้เสียภาษีของร้านบนใบตรงกับข้อมูลร้าน', { exact: true })).toBeVisible();
+    await expect(main.getByText('ยังไม่ครบ: ชื่อและเลขผู้เสียภาษีของร้านบนใบตรงกับข้อมูลร้าน', { exact: true })).toHaveCount(0);
+    await assertPhoneConditions(owner);
+    await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await expect(main.getByRole('alert').filter({ hasText: 'ติ๊กเงื่อนไขให้ครบก่อนเลือก “ใช้ได้ตามเงื่อนไข”' })).toBeVisible(AFTER_PRESS);
+    await pick(owner, 'สิทธิภาษีซื้อ', 'รอตรวจสอบ');
+    await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await owner.setViewportSize({ width: 390, height: 844 });
+    const bar = main.locator('[data-form-action-bar]').filter({ has: owner.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true }) });
+    await expect(bar.locator('.mangmee-actions')).toHaveAttribute('data-layout', 'stack');
+    const confirmBox = await bar.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true }).boundingBox();
+    const backBox = await bar.getByRole('button', { name: 'กลับ', exact: true }).boundingBox();
+    expect(confirmBox!.y).toBeLessThan(backBox!.y);
+    expect(confirmBox!.width).toBe(backBox!.width);
+    expect(confirmBox!.height).toBeLessThanOrEqual(44);
+    await main.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true }).click();
+    await expect(owner.getByText('ยืนยันเอกสารแล้ว', { exact: true }).first()).toBeVisible(AFTER_PRESS);
+    const detail = await json<ExpenseDetail>(await api.get(`companies/${SHOP}/expenses/${invoiceId}`, scope));
+    expect(detail.status).toBe('CONFIRMED'); expect(detail.inputVatClaimStatus).toBe('NEEDS_REVIEW');
+    expect(detail.inputVatRight?.latestDecision).toBeNull(); expect(detail.inputVatRight?.postsToLedger).toBe(false);
+    await expect(main.getByText('ภาษีซื้อรอตรวจสอบ', { exact: true })).toBeVisible();
+  });
+  await test.step('filter the waiting list, decide after confirmation, and read who and when', async () => {
+    await owner.setViewportSize({ width: 1556, height: 1000 }); await openFromList(owner, invoiceSeller, true);
+    await main.getByRole('button', { name: 'ตรวจสิทธิภาษีซื้อ', exact: true }).click();
+    await pick(owner, 'สิทธิภาษีซื้อ', 'ใช้ได้ตามเงื่อนไข'); await assertPhoneConditions(owner);
+    await main.getByRole('checkbox', { name: 'ตรวจชื่อและเลขผู้เสียภาษีของร้านบนใบแล้ว ตรงกับข้อมูลร้าน', exact: true }).check();
+    for (const label of ticks) await main.getByRole('checkbox', { name: label, exact: true }).check();
+    await main.getByRole('button', { name: 'บันทึกสิทธิภาษีซื้อ', exact: true }).click();
+    const facts = main.locator(`#expense-document-review-${invoiceId}`);
+    await expect(main.locator('dt').filter({ hasText: /^สิทธิภาษีซื้อ$/ })).toHaveCount(1);
+    await expect(main.locator('dt').filter({ hasText: /^หลักฐานรายจ่าย$/ })).toHaveCount(1);
+    await expect(facts.getByText('ใช้ได้ตามเงื่อนไข', { exact: true })).toBeVisible(AFTER_PRESS);
+    await expect(facts.getByText(`ตรวจโดย ${QA_ACCOUNTS.OWNER.displayName}`, { exact: false })).toContainText(thaiDate());
+    await expect(summaryCard(owner)).toHaveCount(0);
+    await expect(main.getByRole('heading', { name: 'รายละเอียดเอกสาร', exact: true })).toBeVisible();
+    await facts.getByRole('button', { name: 'เปลี่ยนผลตรวจสิทธิภาษีซื้อ', exact: true }).click();
+    const reason = facts.getByRole('textbox', { name: 'เหตุผลสิทธิภาษีซื้อ', exact: true });
+    await expect(reason).toBeVisible();
+    for (const label of ticks) await expect(facts.getByRole('checkbox', { name: label, exact: true })).toBeChecked();
+    await expect(facts.getByRole('checkbox', { name: 'ตรวจชื่อและเลขผู้เสียภาษีของร้านบนใบแล้ว ตรงกับข้อมูลร้าน', exact: true })).toBeChecked();
+    await expect(facts.getByText('ยังไม่ครบ: ชื่อและเลขผู้เสียภาษีของร้านบนใบตรงกับข้อมูลร้าน', { exact: true })).toHaveCount(0);
+    await expect(facts.locator('dt').filter({ hasText: /^สิทธิภาษีซื้อ$/ })).toHaveCount(0);
+    const form = facts.getByRole('region', { name: 'สิทธิภาษีซื้อ', exact: true });
+    for (const width of [390, 1556]) {
+      await owner.setViewportSize({ width, height: 1000 });
+      await expect(form).toHaveCSS('text-align', 'left');
+      // Both boxes in one frame, polled: after a resize the shell still animates its columns for a moment.
+      await expect.poll(async () => form.evaluate((section, label) => {
+        const field = section.querySelector(`textarea[aria-label="${label}"]`)!.getBoundingClientRect(), box = section.getBoundingClientRect();
+        return field.x === box.x && field.width > box.width - 4;
+      }, 'เหตุผลสิทธิภาษีซื้อ')).toBe(true);
+    }
+
+    const reasonBox = await reason.boundingBox();
+    const rightBox = await facts.getByRole('combobox', { name: 'สิทธิภาษีซื้อ', exact: true }).boundingBox();
+    expect(reasonBox!.y).toBeLessThan(rightBox!.y);
+    await facts.getByRole('button', { name: 'กลับ', exact: true }).click();
+    const detail = await json<ExpenseDetail>(await api.get(`companies/${SHOP}/expenses/${invoiceId}`, scope));
+    expect(detail.status).toBe('CONFIRMED'); expect(detail.inputVatClaimStatus).toBe('CLAIMABLE');
+    expect(detail.inputVatRight?.latestDecision?.conditions.every(c => c.answer)).toBe(true);
+    expect(detail.inputVatRight?.latestDecision?.decidedByName).toBe(QA_ACCOUNTS.OWNER.displayName);
+  });
+  await test.step('staff reads both saved answers with no decision controls at phone width', async () => {
+    await staff.reload();
+    const sm = staff.locator('main'), facts = sm.locator(`#expense-document-review-${invoiceId}`);
+    await expect(facts.locator('dt').filter({ hasText: /^หลักฐานรายจ่าย$/ }).locator('..').locator('dd')).toHaveText('ใช้ได้', AFTER_PRESS);
+    await expect(facts.getByText('ใช้ได้ตามเงื่อนไข', { exact: true })).toBeVisible();
+    await expect(sm.getByRole('button', { name: 'ตรวจสิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
+    await expect(sm.getByRole('button', { name: 'เปลี่ยนผลตรวจสิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
+    await expect(sm.getByRole('combobox', { name: 'สิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
+    for (const label of ticks) await expect(sm.getByRole('checkbox', { name: label, exact: true })).toHaveCount(0);
+  });
+  let receiptId = '';
+  await test.step('ordinary receipt with VAT is usable expense evidence, with a fixed nonclaimable right', async () => {
+    await owner.setViewportSize({ width: 1556, height: 1000 }); receiptId = await manualDraft(owner, receiptSeller); await reviewPaper(owner, false);
+    await expect(summaryCard(owner).getByText('หลักฐานรายจ่าย: ใช้ได้', { exact: true })).toBeVisible();
+    await expect(summaryCard(owner).getByText('สิทธิภาษีซื้อ: ใช้ไม่ได้', { exact: true })).toBeVisible();
+    await main.getByRole('button', { name: 'กลับ', exact: true }).click();
+    const step2 = main.locator(`#expense-document-review-${receiptId}`);
+    await expect(step2.getByText('สิทธิภาษีซื้อ: ใช้ไม่ได้', { exact: true })).toBeVisible();
+    await expect(step2.getByText('ไม่ใช่ใบกำกับภาษี จึงใช้ภาษีซื้อไม่ได้ ไม่เกี่ยวกับการเป็นหลักฐานรายจ่าย', { exact: true })).toBeVisible();
+    await expect(main.getByRole('combobox', { name: 'สิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
+    await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await main.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true }).click();
+    await expect(owner.getByText('ยืนยันเอกสารแล้ว', { exact: true }).first()).toBeVisible(AFTER_PRESS);
+  });
+  await test.step('accounting office workbook carries both rows with the shared words and the appended decision', async () => {
+    await pressMenu(owner, 'หลักฐานทางบัญชี', 'ค่าใช้จ่ายและใบเสร็จ');
+    const month = main.getByRole('combobox', { name: 'เดือน', exact: true }); await month.click();
+    await owner.getByRole('option', { name: new RegExp(`^${thaiMonth().replace(/\./g, '\\.')} · \\d+ รายการ`) }).click();
+    await main.locator('summary').filter({ hasText: 'เพิ่มเติม' }).click();
+    const file = await pressForDownload(owner, () => main.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click());
+    const [headers, ...rows] = sheetRows(await readFile((await file.download.path())!));
+    expect(headers!.slice(-7, -3)).toEqual(['สิทธิภาษีซื้อ', 'เหตุผลสิทธิภาษีซื้อ', 'ผู้ตรวจสิทธิภาษีซื้อ', 'วันเวลาที่ตรวจสิทธิภาษีซื้อ']);
+    expect(headers!.slice(-3)).toEqual(['เลขใบสำคัญจ่าย', 'เลขหนังสือรับรอง 50 ทวิ', 'ชื่อไฟล์ในชุดเอกสาร']);
+    const cell = (row: string[], label: string) => row[headers!.indexOf(label)];
+    const invoice = rows.find(row => cell(row, 'ผู้ขาย/ผู้รับเงิน') === invoiceSeller)!;
+    const receipt = rows.find(row => cell(row, 'ผู้ขาย/ผู้รับเงิน') === receiptSeller)!;
+    expect(invoice).toBeDefined(); expect(receipt).toBeDefined();
+    for (const row of [invoice, receipt]) expect(cell(row, 'หลักฐานรายจ่าย')).toBe('ใช้ได้');
+    expect(cell(invoice, 'สิทธิภาษีซื้อ')).toBe('ใช้ได้ตามเงื่อนไข'); expect(cell(invoice, 'ผู้ตรวจสิทธิภาษีซื้อ')).toBe(QA_ACCOUNTS.OWNER.displayName);
+    expect(cell(invoice, 'วันเวลาที่ตรวจสิทธิภาษีซื้อ')).toContain(thaiDate());
+    expect(cell(receipt, 'สิทธิภาษีซื้อ')).toBe('ใช้ไม่ได้'); expect(cell(receipt, 'ผู้ตรวจสิทธิภาษีซื้อ')).toBe('');
+    const saved = await json<ExpenseDetail>(await api.get(`companies/${SHOP}/expenses/${receiptId}`, scope));
+    expect(saved.inputVatClaimStatus).toBe('NON_CLAIMABLE'); expect(saved.inputVatRight?.latestDecision).toBeNull();
+  });
+  await test.step('one download from the expense list includes the papers and their Excel index', async () => {
+    await pressMenu(owner, 'รายการค่าใช้จ่าย', 'ค่าใช้จ่ายและใบเสร็จ');
+    // The menu press returns before the list has arrived; open the export on the list that is showing.
+    await owner.waitForURL(/\/expenses(\?.*)?$/, FIRST_SIGHT);
+    await expect(main.getByTestId('expenses-summary')).toBeVisible(FIRST_SIGHT);
+    await main.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
+    const dialog = owner.getByRole('dialog', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true });
+    // One line: the file count, then only the kinds of paper the bundle holds (a kind with none is left out).
+    await expect(dialog.getByRole('status').filter({ hasText: /^\d+ ไฟล์ · / })).toHaveText(
+      /^\d+ ไฟล์ · ใบเสร็จ [1-9]\d*(?: · (?:ใบรับรองแทนใบเสร็จ|สลิป|ใบสำคัญจ่าย|50 ทวิ) [1-9]\d*)*$/, AFTER_PRESS);
+    const download = await pressForDownload(owner, () => dialog.getByRole('button', { name: 'ดาวน์โหลดไฟล์ทั้งหมด', exact: true }).click());
+    const zip = await readFile((await download.download.path())!);
+    const files = new Map<string, Buffer>();
+    for (let offset = 0; zip.readUInt32LE(offset) === 0x04034b50;) {
+      const size = zip.readUInt32LE(offset + 18), length = zip.readUInt16LE(offset + 26);
+      const name = zip.subarray(offset + 30, offset + 30 + length).toString();
+      const start = offset + 30 + length + zip.readUInt16LE(offset + 28);
+      files.set(name, zip.subarray(start, start + size)); offset = start + size;
+    }
+    expect(files.has('สารบัญ.xlsx')).toBe(true);
+    const [headers, ...rows] = sheetRows(files.get('สารบัญ.xlsx')!);
+    for (const seller of [invoiceSeller, receiptSeller]) {
+      const row = rows.find(row => row[headers!.indexOf('ผู้ขาย/ผู้รับเงิน')] === seller);
+      expect(row).toBeDefined();
+      const names = row![headers!.indexOf('ชื่อไฟล์ในชุดเอกสาร')]!.split('\n').filter(Boolean);
+      expect(names.some(name => name.startsWith('ใบเสร็จ/EXP-'))).toBe(true);
+      for (const name of names) expect(files.has(name), name).toBe(true);
+    }
+
+  });
+});
