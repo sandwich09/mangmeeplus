@@ -168,3 +168,13 @@ describe('settings menu', () => {
     );
   });
 });
+
+it('settings view-only and manage-only both list profile and branches without granting unrelated cards', () => {
+  for (const permissions of [['company.setup.read', 'company.branch.read', 'document.sequence.read'], ['company.setup.manage', 'company.branch.manage', 'document.sequence.manage']]) {
+    const keys = filterSettingsSidebarItems(permissions).map(item => item.key);
+    assert.ok(keys.includes('company-profile'));
+    assert.ok(keys.includes('branches'));
+    assert.ok(!keys.includes('tax-signature'));
+    assert.ok(!keys.includes('accounting-tax-setup'));
+  }
+});

@@ -61,7 +61,11 @@ export function compileRole(input: CompileInput): {
   // Raw advanced keys bypass pack entitlement but still respect company scope + granter scope.
   for (const k of input.permissionKeys ?? []) add.add(k);
 
-  const granter = input.granterPermissionKeys ?? null;
+  const granter = input.granterPermissionKeys ? new Set(input.granterPermissionKeys) : null;
+  // A legacy manager may delegate the same implied reads they may now use themselves.
+  if (granter?.has('company.setup.manage')) {
+    for (const key of CAPABILITY_PACK_BY_KEY.get('pack.company.settings.view')!.permissionKeys) granter.add(key);
+  }
   const result: string[] = [];
   for (const k of add) {
     if (!COMPANY_KEYS.has(k)) {
@@ -75,6 +79,13 @@ export function compileRole(input: CompileInput): {
       continue;
     }
     result.push(k);
+  }
+  // Only an actually granted manage right implies view; filtering an unauthorized manage
+  // request must not grant its reads. Pack definitions stay stable for older role checkboxes.
+  if (result.includes('company.setup.manage')) {
+    for (const key of CAPABILITY_PACK_BY_KEY.get('pack.company.settings.view')!.permissionKeys) {
+      if (!result.includes(key)) result.push(key);
+    }
   }
   return { permissionKeys: result.sort(), dropped };
 }

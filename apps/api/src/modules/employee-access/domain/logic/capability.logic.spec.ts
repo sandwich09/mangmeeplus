@@ -339,3 +339,27 @@ describe('summarize', () => {
     assert.ok(perms[0].description.length > 0);
   });
 });
+
+describe('settings manage implies view without changing pack membership', () => {
+  it('compiles view rights for manage chosen as a pack or as legacy raw permissions', () => {
+    const manage = CAPABILITY_PACK_BY_KEY.get('pack.company.settings.manage')!;
+    const view = CAPABILITY_PACK_BY_KEY.get('pack.company.settings.view')!;
+    assert.ok(!manage.permissionKeys.includes('company.setup.read'), 'the existing pack definition must not change');
+    for (const input of [{ capabilityPackKeys: [manage.key] }, { permissionKeys: manage.permissionKeys }]) {
+      const result = compileRole({ ...input, entitledFeatureKeys: null });
+      for (const key of view.permissionKeys) assert.ok(result.permissionKeys.includes(key), key);
+      assert.ok(!result.permissionKeys.includes('company.legal_identity.manage'), 'tax identity remains separately delegated');
+    }
+  });
+});
+
+it('a delegated legacy settings manager grants the implied read rights, but a caller without manage cannot', () => {
+  const manage = CAPABILITY_PACK_BY_KEY.get('pack.company.settings.manage')!;
+  const view = CAPABILITY_PACK_BY_KEY.get('pack.company.settings.view')!;
+  const result = compileRole({ capabilityPackKeys: [manage.key, view.key], entitledFeatureKeys: null, granterPermissionKeys: new Set(manage.permissionKeys) });
+  assert.deepEqual(result.dropped.filter(item => view.permissionKeys.includes(item.key)), [], 'the required view is not reported as refused');
+  for (const key of view.permissionKeys) assert.ok(result.permissionKeys.includes(key), key);
+  const denied = compileRole({ capabilityPackKeys: [manage.key], entitledFeatureKeys: null, granterPermissionKeys: new Set() });
+  assert.ok(!denied.permissionKeys.includes('company.setup.manage'));
+  assert.ok(!denied.permissionKeys.includes('company.setup.read'));
+});

@@ -128,3 +128,9 @@ export function isRoleFieldReadOnly(input: {
 }): boolean {
   return !input.canEditEmployee || input.isOwnerTarget || input.isSelfTarget || input.optionCount <= 1;
 }
+
+/** Editing settings needs the view choice too; leave it selected when editing is turned off. */
+export function settingsViewIncluded(packKeys: readonly string[]): string[] {
+  return packKeys.includes('pack.company.settings.manage') && !packKeys.includes('pack.company.settings.view')
+    ? [...packKeys, 'pack.company.settings.view'] : [...packKeys];
+}

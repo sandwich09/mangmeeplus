@@ -15,7 +15,7 @@ export class ListBranchesUseCase {
   constructor(private readonly branches: PrismaBranchRepository) {}
 
   async execute(ctx: RequestContext, query: ListBranchesQuery): Promise<PaginatedBranches> {
-    if (!ctx.permissions.includes('company.branch.read')) throw new ForbiddenException();
+    if (!ctx.permissions.some(key => key === 'company.branch.read' || key === 'company.branch.manage')) throw new ForbiddenException();
     return this.branches.list({ ...query, companyId: ctx.companyId });
   }
 }

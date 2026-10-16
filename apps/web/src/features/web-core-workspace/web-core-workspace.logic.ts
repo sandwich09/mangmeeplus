@@ -353,7 +353,7 @@ export function buildNavItems(
 
     if (mod.key === 'settings') {
       const childItems: NavItem['subItems'] = [];
-      if (hasAnyPermission(userPermissions, ['company.settings.view', 'company.setup.manage'])) {
+      if (hasAnyPermission(userPermissions, ['company.settings.view', 'company.setup.read', 'company.setup.manage'])) {
         childItems.push({
           key: 'settings.overview',
           label: 'ภาพรวมการตั้งค่า',
