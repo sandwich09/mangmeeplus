@@ -549,7 +549,7 @@ export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, 
   const handleUpload = async (files = selectedFiles) => {
     if (uploadPending.current) return;
     if (preparing) { sendAfterPreparation.current = true; return; }
-    if (quotaBlocked) { focusExpenseField(document.querySelector('[data-upload-quota]')); return; }
+    if (quotaBlocked) { focusExpenseField(document.querySelector<HTMLElement>('[data-upload-quota]')); return; }
     if (!branchId || files.length === 0) {
       setValidationAttempt(attempt => attempt + 1);
       return;
