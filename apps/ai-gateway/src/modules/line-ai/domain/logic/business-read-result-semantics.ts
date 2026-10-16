@@ -154,8 +154,8 @@ export const REIMBURSEMENT_APPROVAL_NOT_PERMITTED = 'REIMBURSEMENT_APPROVAL_NOT_
 /** Terminal, permission-scoped answer — never a question, never a waiting task. */
 export function reimbursementApprovalNotPermittedReplyText(english: boolean): string {
   return english
-    ? 'Your role does not have permission to view or approve other people\'s reimbursement claims. If you want to check your own claim, just ask — for example, "How is my reimbursement claim going?"'
-    : 'บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ ถ้าต้องการดูใบเบิกของตัวเอง ถามได้เลย เช่น “ใบเบิกของฉันถึงไหนแล้ว”';
+    ? 'Your role does not have permission to view or approve other people\'s reimbursement claims; ask the company owner or an authorized approver, or ask about your own claim.'
+    : 'บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ ให้เจ้าของกิจการหรือผู้มีสิทธิ์อนุมัติช่วยได้ค่ะ หรือถามว่า “ใบเบิกของฉันถึงไหนแล้ว” ได้ค่ะ';
 }
 
 // ─── Advisor S3: reimbursement.get_approval_backlog wording that must not depend on the model ──────
@@ -526,7 +526,7 @@ function comparisonBasis(data: UnknownRecord): string {
 /** Failed/refused/incomplete reads are named without pretending their amount is zero. */
 export function expenseComparisonUnavailableReplyText(fromDate: string, toDate: string, status: 'forbidden' | 'incomplete' | 'unavailable', english = false): string {
   const label = periodLabel(fromDate, toDate, english);
-  if (status === 'forbidden') return english ? `You do not have permission to view expenses for ${label}.` : `คุณไม่มีสิทธิ์ดูค่าใช้จ่าย ${label} ค่ะ`;
+  if (status === 'forbidden') return english ? `You do not have permission to view expenses for ${label}; ask the company owner or an authorized person.` : `คุณไม่มีสิทธิ์ดูค่าใช้จ่าย ${label} ค่ะ ให้เจ้าของกิจการหรือผู้มีสิทธิ์ดูข้อมูลช่วยตรวจสอบได้ค่ะ`;
   if (status === 'incomplete') return english ? `Expense data for ${label} is incomplete, so a total is not available.` : `ข้อมูลค่าใช้จ่าย ${label} ยังไม่ครบ จึงยังสรุปยอดไม่ได้ค่ะ`;
   return english ? `Expense data for ${label} is not available yet.` : `ข้อมูลค่าใช้จ่าย ${label} ยังไม่พร้อมค่ะ`;
 }
@@ -713,8 +713,34 @@ export function expenseBreakdownShares(data: UnknownRecord): string {
       const amount = Number(row['totalAmount'] ?? NaN);
       const label = String(row['category'] ?? row['branch'] ?? row['vendor'] ?? '').trim();
       if (!label || !Number.isFinite(amount)) continue;
-      lines.push(`${label}: สัดส่วน ${(amount / totalAmount * 100).toFixed(1)}%`);
+      const rank = 1 + rows.filter(peer => peer['currency'] === row['currency'] && Number(peer['totalAmount']) > amount).length;
+      lines.push(`${label}: สัดส่วน ${(amount / totalAmount * 100).toFixed(1)}% อันดับ ${rank}`);
     }
   }
   return lines.join('\n');
+}
+
+/** Keep the named vendor's position visible even when prose drops the supplied ranking facts. */
+export function withAskedVendorRanking(text: string, results: readonly ToolResult[], question: string, english: boolean): string {
+  if (!/ทำไม|\bwhy\b/iu.test(question)) return text;
+  for (const result of results) {
+    const data = record(result.data), filters = record(record(data?.['queryApplied'])?.['filters']);
+    if (result.toolName !== 'expense.get_breakdown' || result.status !== 'ok' || !data || aggregationIncomplete(data)
+      || data['mixedCurrency'] === true || result.completeness?.aggregate && result.completeness.aggregate !== 'complete'
+      || result.completeness?.groups?.hasMore
+      || filters?.['vendorId'] || filters?.['vendorName'] || !Array.isArray(data['byVendor'])) continue;
+    const rows = data['byVendor'].map(record).filter((row): row is UnknownRecord => !!row);
+    const row = rows.filter(row => typeof row['vendor'] === 'string' && question.includes(row['vendor']))
+      .sort((a, b) => String(b['vendor']).length - String(a['vendor']).length)[0];
+    const total = Number(data['totalAmount']), amount = Number(row?.['totalAmount']);
+    if (!row || !(total > 0) || !Number.isFinite(amount) || row['currency'] !== 'THB') continue;
+    const rank = 1 + rows.filter(peer => peer['currency'] === row['currency'] && Number(peer['totalAmount']) > amount).length;
+    const share = (amount / total * 100).toFixed(1), money = formatSignedMoney(amount);
+    if (text.includes(share + '%') && new RegExp(`(?:อันดับ|rank)\\s*${rank}(?![0-9])`, 'iu').test(text)
+      && (text.includes(money) || text.includes(String(amount)))) return text;
+    const lead = english ? `${row['vendor']}: ${money} THB, ${share}% of the period total, rank ${rank}.`
+      : `${row['vendor']} รวม ${money} บาท คิดเป็น ${share}% ของยอดช่วงนี้ เป็นอันดับ ${rank} ค่ะ`;
+    return `${lead}\n${text}`;
+  }
+  return text;
 }

@@ -31,7 +31,7 @@ import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config
 import { createProvider } from '../infrastructure/provider/provider.factory';
 import { currentBudgetGrantV2 } from '../../../common/usage/usage-context';
 import type { IModelProvider, ProviderToolCall, ProviderToolMessage, ProviderToolResult, ProviderToolSpec } from '../infrastructure/provider/provider.port';
-import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, misroutedReadTool, nameFilterGroundedInText } from './read-tool-input';
+import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, isExpenseReadReference, misroutedReadTool, nameFilterGroundedInText, resolveExpenseReadReferences } from './read-tool-input';
 import { documentExplanationTopic, scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic';
 
 // Spec item 2(b): same grounding rule as the fast lane's isGroundedFilterValue — a categoryName/
@@ -573,7 +573,7 @@ type PeriodGuard = {
 
 function sanitizeToolInput(meta: ToolMeta, raw: unknown, guard?: PeriodGuard, messageText?: string, recentReads?: readonly LineAiReadMemory[], captureContext?: Pick<LineAiConversationContext, 'recentCapturedExpenses' | 'activeExpenseDrafts'>): Record<string, unknown> | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  const canonicalRaw = canonicalizeReadToolEnums(meta, raw as Record<string, unknown>);
+  const canonicalRaw = canonicalizeReadToolEnums(meta, raw as Record<string, unknown>, messageText);
   if (!canonicalRaw) return undefined;
   const allowed = new Set([...(meta.requiredInputFields ?? []), ...(meta.optionalInputFields ?? [])]);
   const input: Record<string, unknown> = {};
@@ -602,6 +602,8 @@ function sanitizeToolInput(meta: ToolMeta, raw: unknown, guard?: PeriodGuard, me
       && !(recentReads ?? []).some((entry) => (entry as unknown as Record<string, unknown>)[key] === value)) continue;
     // Spec §4 R-M5: expenseId/reimbursementId are accepted ONLY when the exact id appears in some
     // recentReads shownItems or API-issued capture/draft references — never message text.
+    if (meta.name === 'expense.get_detail' && key === 'expenseId'
+      && !isExpenseReadReference(value, { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: recentReads ? [...recentReads] : [], ...captureContext })) continue;
     if ((RECORD_ID_GROUNDING_FIELD[meta.name] === key || meta.name === 'expense.action.preview' && ['reimbursementId', 'voucherId'].includes(key))
       && !(recentReads ?? []).some((entry) => (meta.name !== 'expense.action.preview'
         || (key === 'voucherId' ? entry.tool.startsWith('voucher.') : (key === 'reimbursementId' ? ['reimbursement.get_summary', 'reimbursement.get_detail', 'reimbursement.list_pending_approvals'] : ['expense.list_recent', 'expense.get_detail', 'expense.list_substitute_receipts_to_sign']).includes(entry.tool)))
@@ -1117,7 +1119,7 @@ export function preparedSimplePreCallCheck(
   // Prepared lane: a proposed date MUST be deterministically backed (today or an unambiguous candidate),
   // else the sanitizer drops it and the exact-equality check below fails.
   const toolInput = sanitizeToolInput(tool, call.input, preparedAllowedPeriods(preparedCandidates, todayIso), req.messageText, req.conversationContext?.recentReads, req.conversationContext);
-  const canonicalProposed = canonicalizeReadToolEnums(tool, call.input);
+  const canonicalProposed = canonicalizeReadToolEnums(tool, call.input, req.messageText);
   if (!toolInput || !canonicalProposed || canonicalize(canonicalProposed) !== canonicalize(toolInput)) {
     return { ok: false, reason: 'input_sanitizer_changed' };
   }
@@ -1139,6 +1141,7 @@ export class OrchestratorAgent {
   ) {}
 
   async run(req: LineAiTurnRequest): Promise<AgentRunResult> {
+    req = resolveExpenseReadReferences(req);
     const result = await this.runTurn(req);
     // The semantic lane renders each clause separately; preserve its complete coverage.
     if (!req.semanticSubrequests?.length && result.plan.intents.length === 1 && !result.plan.refusals.length) {
@@ -1171,7 +1174,7 @@ export class OrchestratorAgent {
           : [];
         return { plan: { status: 'ROUTABLE', language, intents: [], refusals: [], requiresHumanReview: false },
           outputs: [], replyText: override.text, sourceRefs: [], webLinks, durationMs: Date.now() - policyCheckStartedMs,
-          semanticCoverage: [{ index: soleItem.index, status: 'unsupported', reasonCode: override.reasonCode }] };
+          semanticCoverage: [{ index: soleItem.index, status: override.reasonCode === 'LINE_ACTION_NOT_SUPPORTED' && !override.webPage ? 'denied' : 'unsupported', reasonCode: override.reasonCode }] };
       }
     }
     if (req.inputEvidence && req.budgetGrantV2 && req.semanticSubrequests?.length) {

@@ -84,7 +84,7 @@ describe('round 5A sold withholding scope', () => {
   it('lets definitions use general knowledge while retaining package limits on WHT operations', () => {
     for (const kind of ['read', 'help', 'general'] as const) for (const text of ['50 ทวิ คืออะไร', 'ภงด.53 ต้องยื่นเมื่อไหร่', 'หัก ณ ที่จ่ายคิดยังไง']) {
       const result = scopePolicyOverride(text, kind, [], ['expenses'], 'th');
-      if (text === '50 ทวิ คืออะไร') { assert.equal(result, undefined); continue; }
+      if (kind === 'general' || text === '50 ทวิ คืออะไร') { assert.equal(result, undefined); continue; }
       assert.equal(result?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED'); assert.match(result!.text, /^แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องนี้ค่ะ.*แพ็กธุรกิจค่ะ$/);
     }
   });

@@ -109,7 +109,7 @@ describe('Fix-up 17A: LINE_ACTION_RULES × permission', () => {
     const text = `ช่วย${rule.verb[0]}${rule.noun[0] ?? ''}ให้หน่อย`;
     it(`${rule.actionLabelTh} permission=${granted}: ${rule.page === 'substitute-receipts' ? 'web boundary' : 'existing use-case decides'}`, () => {
       const reply = lineActionBoundaryReplyText(text, granted ? [rule.permission] : [], 'th');
-      if (rule.page !== 'substitute-receipts') assert.equal(reply, undefined);
+      if (rule.page !== 'substitute-receipts' && granted) assert.equal(reply, undefined);
       else assert.match(reply!, granted ? /เว็บ/ : /ไม่มีสิทธิ์/);
     });
   }
@@ -175,7 +175,7 @@ describe('scopePolicyOverride: combined entry point and kind exemption', () => {
 
   it('never exempts the LINE action boundary for kind "help"', () => {
     const override = scopePolicyOverride('อนุมัติใบเบิกทำยังไงคะ ช่วยอนุมัติให้เลยได้ไหม', 'help', [], undefined, 'th');
-    assert.equal(override, undefined);
+    assert.match(override!.text, /ไม่มีสิทธิ์อนุมัติใบเบิก.*เจ้าของกิจการ/u);
   });
 
   it('applies the unsold-module check for kind "read" and "write"', () => {
@@ -195,7 +195,7 @@ describe('scopePolicyOverride: combined entry point and kind exemption', () => {
 
   it('still applies the LINE action boundary to kind "general"', () => {
     const override = scopePolicyOverride('ช่วยอนุมัติใบเบิกของสมชายให้หน่อยค่ะ', 'general', [], ['expenses'], 'th');
-    assert.equal(override, undefined);
+    assert.match(override!.text, /ไม่มีสิทธิ์อนุมัติใบเบิก.*เจ้าของกิจการ/u);
   });
 
   it('a company with the feature entitled is never blocked', () => {

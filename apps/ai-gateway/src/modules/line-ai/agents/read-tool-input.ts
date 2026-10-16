@@ -1,5 +1,43 @@
 import { LINE_AI_VALUE_CANDIDATES_V2_LIMITS, extractValueCandidates, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, resolvePeriodCandidates } from '@watchdog-bms/contracts';
-import type { LineAiConversationContext, LineAiInputEvidenceV2, LineAiSourceRefV2, LineAiValueCandidates, ToolMeta } from '@watchdog-bms/contracts';
+import type { LineAiConversationContext, LineAiInputEvidenceV2, LineAiSourceRefV2, LineAiValueCandidates, LineAiTurnRequest, ToolMeta } from '@watchdog-bms/contracts';
+
+/** Read memory identifies a record, never grants access or supplies its current figures. */
+export function isExpenseReadReference(id: unknown, context?: LineAiConversationContext): boolean {
+  return typeof id === 'string' && (context?.recentReads?.some(entry =>
+    ['expense.list_recent', 'expense.get_detail', 'expense.list_substitute_receipts_to_sign'].includes(entry.tool)
+    && entry.shownItems?.some(item => !item.kind && item.id === id)) === true
+    || context?.recentCapturedExpenses?.some(item => item.id === id) === true
+    || context?.activeExpenseDrafts?.some(item => item.expenseId === id) === true);
+}
+
+/** Repair the router's record/group confusion only from API-owned, typed shown items. */
+export function resolveExpenseReadReferences(req: LineAiTurnRequest): LineAiTurnRequest {
+  if (!req.semanticSubrequests?.length) return req;
+  return { ...req, semanticSubrequests: req.semanticSubrequests.map(item => {
+    if (item.kind !== 'read' || !item.toolHint?.startsWith('expense.')) return item;
+    const text = evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText);
+    const ordinal = /(?:อัน|รายการ|อันดับ)(?:ที่)?\s*(แรก|[0-9๐-๙]+)/u.exec(text)?.[1];
+    const number = ordinal === 'แรก' ? 1 : Number(ordinal?.replace(/[๐-๙]/gu, digit => String('๐๑๒๓๔๕๖๗๘๙'.indexOf(digit))));
+    const id = item.requestedFilters.expenseId;
+    if (id === undefined && (!ordinal || item.toolHint !== 'expense.get_detail')) return item;
+    const memory = req.conversationContext?.recentReads?.find(entry => entry.tool.startsWith('expense.')
+      && (!item.requestedFilters.documentStatus || item.requestedFilters.documentStatus === entry.documentStatus)
+      && entry.shownItems?.some(row => id !== undefined ? row.id === id : row.ordinal === number));
+    const row = memory?.shownItems?.find(row => id !== undefined ? row.id === id : row.ordinal === number);
+    if (!memory || !row) return item;
+    const { expenseId: _id, groupBy: _group, ...filters } = item.requestedFilters;
+    if (memory.tool === 'expense.get_breakdown' && row.kind) {
+      return { ...item, toolHint: 'expense.list_recent', requestedFilters: {
+        ...(memory.period ?? {}), ...Object.fromEntries(['documentStatus', 'paymentStatus', 'categoryId', 'categoryName', 'vendorId', 'vendorName', 'branchId', 'branchName']
+          .flatMap(key => memory[key as keyof typeof memory] === undefined ? [] : [[key, memory[key as keyof typeof memory]]])),
+        ...filters, [`${row.kind}Id`]: row.id } };
+    }
+    if (item.toolHint === 'expense.get_detail' && !row.kind && isExpenseReadReference(row.id, req.conversationContext)) {
+      return { ...item, requestedFilters: { expenseId: row.id } };
+    }
+    return item;
+  }) };
+}
 
 export type ConversationReadCandidates = {
   turns: Array<{ at: string; todayIso: string; dates: LineAiValueCandidates['dates']; periods: NonNullable<LineAiValueCandidates['periods']> }>;
@@ -102,11 +140,16 @@ export function resolvePeriodKeyAlias(periodKey: string, todayIso: string | unde
 export function canonicalizeReadToolEnums(
   meta: Pick<ToolMeta, 'inputEnumValues'>,
   raw: Record<string, unknown>,
+  messageText?: string,
 ): Record<string, unknown> | undefined {
   const canonical = { ...raw };
+  if (meta.inputEnumValues?.documentStatus?.includes('NEEDS_REVIEW')
+    && ['DRAFT', 'READY_FOR_CONFIRMATION'].includes(String(canonical.documentStatus))
+    && /ยัง(?:ไม่|ไม่ได้)ยืนยัน|\bunconfirmed\b/iu.test(messageText ?? '')
+    && !/ร่าง|พร้อมยืนยัน|\bdraft\b|ready.for.confirmation/iu.test(messageText ?? '')) canonical.documentStatus = 'NEEDS_REVIEW';
   for (const [key, values] of Object.entries(meta.inputEnumValues ?? {})) {
-    if (!(key in raw)) continue;
-    const value = raw[key];
+    if (!(key in canonical)) continue;
+    const value = canonical[key];
     if (typeof value !== 'string') return undefined;
     const matches = values.filter(candidate => candidate.toLocaleLowerCase('en-US') === value.toLocaleLowerCase('en-US'));
     if (matches.length !== 1) return undefined;
