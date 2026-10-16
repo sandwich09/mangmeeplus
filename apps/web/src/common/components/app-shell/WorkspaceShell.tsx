@@ -7,7 +7,7 @@ import Backdrop from './Backdrop';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { WorkspaceLocaleContext } from '@/common/i18n/locale-context';
-import type { NavItem } from './AppSidebar';
+import type { AccountLink, NavItem } from './AppSidebar';
 
 type Props = {
   children: React.ReactNode;
@@ -22,6 +22,8 @@ type Props = {
   userRoles?: string[];
   userRoleNames?: Record<string, string>;
   showAccountSecurity?: boolean;
+  /** The person's own pages (account, signature), listed first in the user menu. */
+  accountLinks?: AccountLink[];
   locale: SupportedLocale;
   navItems?: NavItem[];
   activeKey?: string;
@@ -39,6 +41,7 @@ function ShellInner({
   userRoles,
   userRoleNames,
   showAccountSecurity,
+  accountLinks,
   locale,
   navItems = [],
   activeKey,
@@ -73,6 +76,7 @@ function ShellInner({
         userRoles={userRoles}
         userRoleNames={userRoleNames}
         showAccountSecurity={showAccountSecurity}
+        accountLinks={accountLinks}
         footerExtras={sidebarFooter}
       />
       <Backdrop />
@@ -103,6 +107,7 @@ export function WorkspaceShell({
   userRoles,
   userRoleNames,
   showAccountSecurity,
+  accountLinks,
   locale,
   navItems,
   activeKey,
@@ -119,6 +124,7 @@ export function WorkspaceShell({
         userRoles={userRoles}
         userRoleNames={userRoleNames}
         showAccountSecurity={showAccountSecurity}
+        accountLinks={accountLinks}
         locale={locale}
         navItems={navItems}
         activeKey={activeKey}

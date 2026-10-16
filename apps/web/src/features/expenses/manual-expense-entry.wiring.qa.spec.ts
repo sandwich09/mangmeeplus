@@ -33,7 +33,7 @@ test('the server pages tell the hub whether the reader is the owner, and the hub
   }
   assert.match(read('src/features/expenses/ExpensesPages.tsx'), /<ManualExpenseEntryNotEnabled companyId=\{companyId\} caps=\{caps\} readerIsOwner=\{readerIsOwner\} \/>/);
   // The owner's name comes from the one list of role names, not a literal.
-  assert.match(read('src/common/i18n/workspace-dictionary.ts'), /'expenses\.manual_entry_contact_owner': `กรุณาติดต่อ\$\{THAI_SYSTEM_ROLE_NAMES\.OWNER\}`,/);
+  assert.match(read('src/common/i18n/workspace-dictionary.ts'), /'expenses\.manual_entry_contact_owner': `ติดต่อ\$\{THAI_SYSTEM_ROLE_NAMES\.OWNER\}`,/);
 });
 
 test('the manual page always renders the hub: the server never answers 403 or redirects because of the setting', () => {
@@ -48,12 +48,11 @@ test('the sidebar item is built from the same predicate, by the layout that owns
   assert.match(layout, /const canOpenManual = canOpenManualWeb\(session, companyId\);/);
 });
 
-test('the expense list and the ledger offer the manual page only through the value they were handed', () => {
+test('LIST-1 removes the list shortcut while the ledger still gates its manual entrances', () => {
   const lines = (path: string) => read(path).split('\n').filter((line) => line.includes('/expenses/manual'));
 
   const list = lines('src/features/expenses/ExpensesPages.tsx');
-  assert.equal(list.length, 1);
-  assert.match(list[0]!, /\{canOpenManual && <Link /);
+  assert.equal(list.length, 0, 'the list has no manual-entry shortcut; use the gated side menu');
 
   const ledger = read('src/features/accounting-documents/IncomeExpenseLedgerPage.tsx');
   // The button, the empty state and the card's own condition: no entrance left on the bare permission.
@@ -74,7 +73,8 @@ test('the manual tab renders by its admission: the not-enabled state, the form, 
   // A revoked permission still wins (the Forbidden state), and the not-enabled state replaces the
   // whole create area — it is not rendered inside the branch fieldset.
   assert.match(hub, /const manualNotEnabled = tab === 'manual' && !forbidden && manualView === 'not_enabled';/);
-  assert.match(hub, /\{forbidden \? <StateBanner error="Forbidden" \/> : manualNotEnabled \? <ManualExpenseEntryNotEnabled companyId=\{companyId\} caps=\{caps\} readerIsOwner=\{readerIsOwner\} \/> : \(/);
+  // 2026-10-13: the no-right state carries a way out (one link back to a page the reader can use); the order of the three states is what is protected.
+  assert.match(hub, /\{forbidden \? \([\s\S]{0,200}<StateBanner error="Forbidden" action=\{[\s\S]{0,500}\} \/>\s*\) : manualNotEnabled \? <ManualExpenseEntryNotEnabled companyId=\{companyId\} caps=\{caps\} readerIsOwner=\{readerIsOwner\} \/> : \(/);
   assert.match(hub, /<ManualExpensePanel [^>]*entryClosed=\{manualView === 'form_closed'\}/);
   // The note stands only while an entry is in progress: not once the draft is saved.
   assert.match(hub, /\{entryClosed && !savedExpenseId && <p role="status"[^>]*>\{t\('expenses\.manual_entry_closed_notice', locale\)\}<\/p>\}/);
@@ -85,15 +85,10 @@ test('the guide page applies the company setting to the result of the pinned gui
   assert.match(page, /manualExpenseWebEntryShown\(session\) \? guide : withManualEntryNotEnabled\(guide\)/);
 });
 
-// The upload page's "ไม่มีไฟล์ใบเสร็จ/ใบกำกับภาษี? บันทึกด้วยมือแล้วจัดทำใบรับรองแทนใบเสร็จรับเงิน" link
-// leads to the substitute-receipt flow, where only a holder of expense.review may record a new expense or
-// prepare a certificate. Offered to everyone who may create, it promised manual entry to staff who can do
-// neither there, and with the manual page hidden by default they have no other way on the web.
-test('the upload page offers the no-document link only to someone the substitute-receipt flow lets use it', () => {
-  assert.match(read('src/features/expenses/ExpensesPages.tsx'),
-    /\{\.\.\.\(caps\.canCreate && caps\.canReview \? \{ onNoDocument: \(\) => router\.push\(`\/companies\/\$\{companyId\}\/expenses\/substitute-receipts\/new`\) \} : \{\}\)\}/);
+test('the upload page has no no-document link; the substitute-receipt entrance keeps its permission gate', () => {
+  assert.doesNotMatch(read('src/features/expenses/ExpensesPages.tsx'), /onNoDocument|expenses\.upload_no_document_link/);
   // …the gate the substitute-receipt hub puts on its create button, and the wizard on both of its ways in.
-  assert.match(read('src/features/expenses/SubstituteReceiptHubPage.tsx'), /actions=\{canReview \? \(/);
+  assert.match(read('src/features/expenses/SubstituteReceiptHubPage.tsx'), /actions=\{canReview \|\| \(hasOwnCandidate && items.length > 0\) \? <Link className=\{btnClass\} href=\{createHref\}>/);
   assert.match(read('src/features/expenses/SubstituteReceiptWizardPage.tsx'), /const canReview = !viewOnly && permissions\.includes\('expense\.review'\);/);
 });
 
@@ -110,7 +105,6 @@ test('no other file links to the manual page: a new entrance must come here and 
     'src/features/user-guide/expenses-guide-manual-entry.ts',
     'src/features/ai-suggestions/ai-suggestions.logic.ts',
     'src/features/web-core-workspace/web-core-workspace.logic.ts',
-    'src/features/expenses/ExpensesPages.tsx',
     'src/features/accounting-documents/IncomeExpenseLedgerPage.tsx',
   ].sort());
 });

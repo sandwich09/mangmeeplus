@@ -1,6 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { canonicalFingerprint } from '../../../common/security/canonical-fingerprint';
+import { ListSubstituteReceiptCandidatesUseCase } from '../application/use-cases/substitute-receipt.use-case';
 import { PrismaExpenseRepository } from './prisma-expense.repository';
 import { randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -85,7 +86,7 @@ describe('substitute receipt payment history', () => {
     assert.equal(payments.length, 1);
     assert.deepEqual(payments[0], {
       companyId: 'company-1', expenseId: 'expense-1', amount: '100.0000', currency: 'THB',
-      paymentMethod: 'CASH', paidAt: PAID_AT, status: 'RECORDED', postingStatus: 'pending',
+      paymentMethod: 'CASH', paidAt: new Date('2026-08-07T17:00:00.000Z'), paidAtConfirmed: true, status: 'RECORDED', postingStatus: 'pending',
       createdByUserId: 'approver-1',
       idempotencyKey: 'substitute-receipt:evidence-1',
       payloadFingerprint: canonicalFingerprint({ expenseId: 'expense-1', amount: '100.0000', paymentMethod: 'CASH', paidAt: PAID_AT.toISOString() }),
@@ -103,7 +104,7 @@ describe('substitute receipt payment history', () => {
 
   it('refuses partial payment without adding the remainder', async () => {
     const { repo, payments } = harness('40.0000');
-    await assert.rejects(() => issue(repo), /รองรับบริษัทจ่ายเต็ม/);
+    await assert.rejects(() => issue(repo), /รองรับเฉพาะร้านจ่ายเต็มจำนวน/);
     assert.equal(payments.length, 0);
   });
 
@@ -213,6 +214,32 @@ describe('substitute approval reservations and cancelled personal receipts (real
       certifiedArtifactAttachmentId: artifact.id, certifiedArtifactChecksumSha256: 'a'.repeat(64) } });
     return { expense, evidence };
   }
+  it('candidate paging finds sources older than 200 rows, searches items, and respects creator and branch scope', async (t) => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const ids = Array.from({ length: 205 }, () => randomUUID());
+    const otherBranch = await client!.branch.create({ data: { companyId, code: 'OTHER', name: 'สาขาอื่น' } });
+    await client!.expenseRecord.createMany({ data: ids.map((id, index) => ({ id, companyId, branchId, createdByUserId: 'candidate-payer',
+      expenseNumber: `CANDIDATE-${index}`, expenseDate: PAID_AT, createdAt: new Date(VERSION.getTime() - index * 1000),
+      status: 'NEEDS_REVIEW', sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY',
+      inputVatClaimStatus: 'NON_CLAIMABLE', vendorNameSnapshot: 'ผู้ขายทดสอบ', accountHintKey: 'GENERAL_EXPENSE',
+      grandTotalAmount: '100', netPayableAmount: '100', outstandingAmount: '100' })) });
+    await client!.expenseLine.createMany({ data: ids.map((expenseId, index) => ({ companyId, expenseId, lineNumber: 1,
+      description: `สินค้าทดสอบ ${index}`, quantity: '1', unitPrice: '100', lineTotalAmount: '100' })) });
+    // Newer records belonging to another creator or branch must not consume an own-reader page.
+    await client!.expenseRecord.update({ where: { id: ids[0]! }, data: { createdByUserId: 'other-payer' } });
+    await client!.expenseRecord.update({ where: { id: ids[1]! }, data: { branchId: otherBranch.id } });
+    const useCase = new ListSubstituteReceiptCandidatesUseCase(new PrismaExpenseRepository({ client } as any));
+    const own = { companyId, userId: 'candidate-payer', permissions: ['expense.read_own'], scopes: { branchIds: [branchId] }, authProvider: 'watchdog' } as any;
+    const first = await useCase.execute(own, { pageSize: 5 });
+    assert.equal(first.total, 203); assert.equal(first.items[0]?.id, ids[2]);
+    const last = await useCase.execute(own, { page: 41, pageSize: 5 });
+    assert.deepEqual(last.items.map((row) => row.id), ids.slice(202));
+    for (const search of ['CANDIDATE-204', 'สินค้าทดสอบ 204']) {
+      const result = await useCase.execute(own, { search }); assert.equal(result.total, 1); assert.equal(result.items[0]?.id, ids[204]);
+    }
+    assert.equal((await useCase.execute(own, { search: 'ผู้ขายทดสอบ' })).total, 203);
+  });
+
   it('company substitute approval refuses the committed reservation before issuing or paying and succeeds after release', async (t) => {
     if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
     const { expense, evidence } = await source('COMPANY'); const repo = new PrismaExpenseRepository({ client } as any);
@@ -234,6 +261,44 @@ describe('substitute approval reservations and cancelled personal receipts (real
     await repo.issueSubstituteEvidence(input);
     assert.equal(await client!.expensePayment.count({ where: { expenseId: expense.id } }), 1);
   });
+  it('combined owner signing commits both signatures and audits together, and rolls certification back if issuance fails', async (t) => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const ownerId = `combined-owner-${randomUUID()}`;
+    await client!.user.create({ data: { id: ownerId, displayName: 'เจ้าของกิจการ' } });
+    try {
+      const { expense, evidence } = await source('COMPANY');
+      const prepared = await client!.expenseSubstituteReceiptEvidence.update({ where: { id: evidence.id }, data: { status: 'PREPARED', payerUserId: ownerId, payerSignatureAttachmentId: null, payerSignatureChecksumSha256: null, certifiedArtifactAttachmentId: null, certifiedArtifactChecksumSha256: null, certifiedAt: null, snapshotChecksumSha256: null } });
+      const repo = new PrismaExpenseRepository({ client } as any);
+      const artifact = { storageProvider: 'LOCAL', bucket: 'test', objectKey: `${companyId}/${evidence.id}/${randomUUID()}`, objectVersionId: 'v1', byteSize: 1, checksumSha256: 'a'.repeat(64), originalFileName: 'signed.svg' };
+      const signatureId = evidence.payerSignatureAttachmentId!;
+      const certification = { companyId, expenseId: expense.id, evidenceId: evidence.id, payerUserId: ownerId, payerPosition: 'เจ้าของกิจการ',
+        payerSignatureAttachmentId: signatureId, payerSignatureChecksumSha256: 'a'.repeat(64), referencedAttachmentIds: [signatureId],
+        snapshotJson: { payer: { userId: ownerId, certifiedAt: VERSION.toISOString() } }, snapshotChecksumSha256: 'snapshot', certifiedAt: VERSION,
+        expectedVersion: 1, expectedEvidenceUpdatedAt: prepared.updatedAt, artifact };
+      const issuance = { companyId, expenseId: expense.id, evidenceId: evidence.id, approverUserId: ownerId, approverName: 'เจ้าของกิจการ', approverPosition: 'เจ้าของกิจการ',
+        allowSelfApproval: true, approverSignatureAttachmentId: signatureId, approvedAt: VERSION, expectedExpenseUpdatedAt: expense.updatedAt,
+        referencedAttachmentIds: [signatureId], expectedVersion: 1, expectedEvidenceUpdatedAt: prepared.updatedAt, artifact: { ...artifact, objectKey: `${artifact.objectKey}-issued` } };
+      const auditEntries = ['certify', 'approve'].map((stage) => ({ companyId, actorUserId: ownerId, action: `expense.substitute_receipt.${stage}`,
+        targetType: 'expense_substitute_receipt', targetId: evidence.id, requestId: ownerId, result: 'SUCCESS' as const }));
+      const input = { certification, issuance, actorRoles: ['OWNER'], auditEntries };
+      const before = await client!.attachmentObject.count({ where: { companyId } });
+      await assert.rejects(repo.certifyAndIssueSubstituteEvidence({ ...input, issuance: { ...issuance, expectedExpenseUpdatedAt: new Date(0) } }), /Expense details changed/);
+      assert.equal((await client!.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } })).status, 'PREPARED');
+      assert.equal((await client!.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } })).certifiedAt, null);
+      assert.equal(await client!.attachmentObject.count({ where: { companyId } }), before);
+      assert.equal(await client!.auditLog.count({ where: { companyId, requestId: ownerId } }), 0);
+      const issued = await repo.certifyAndIssueSubstituteEvidence(input);
+      assert.equal(issued.status, 'ISSUED');
+      assert.equal(issued.payerSignatureAttachmentId, issued.approverSignatureAttachmentId);
+      assert.equal(issued.certifiedAt!.getTime(), issued.approvedAt!.getTime());
+      assert.ok(issued.certifiedArtifactAttachmentId && issued.artifactAttachmentId);
+      assert.equal(await client!.auditLog.count({ where: { companyId, requestId: ownerId } }), 2);
+      assert.equal(await client!.expensePayment.count({ where: { expenseId: expense.id } }), 1);
+    } finally {
+      await client!.auditLog.deleteMany({ where: { companyId, requestId: ownerId } });
+      await client!.user.delete({ where: { id: ownerId } });
+    }
+  });
   it('E4: cancelling a personal receipt restores confirmation and direct payment without changing its history', async (t) => {
     if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
     const { expense, evidence } = await source('PERSONAL_ADVANCE'); const repo = new PrismaExpenseRepository({ client } as any);
@@ -253,4 +318,38 @@ describe('substitute approval reservations and cancelled personal receipts (real
     assert.equal((await client!.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } })).status, 'CONFIRMED');
     assert.equal((await client!.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } })).status, 'SUPERSEDED');
   });
+});
+
+it('candidate search combines its OR with the existing branch OR instead of replacing it', async () => {
+  let query: any;
+  const repo = new PrismaExpenseRepository({ client: { expenseRecord: { findMany: async (input: any) => { query = input; return []; } } } } as any);
+  const branchScope = { companyId: 'co', createdByUserId: 'payer', OR: [{ branchId: { in: ['allowed'] } }, { branchId: null }] };
+  await repo.listSubstituteReceiptCandidateSources({ ...branchScope, search: 'old' }, {});
+  assert.deepEqual(query.where.AND[0], branchScope);
+  assert.equal(query.where.AND[1].OR[2].lines.some.description.contains, 'old');
+});
+
+it('certificate signer choices identify the active owner without changing branch visibility', async () => {
+  const repo = new PrismaExpenseRepository({ client: { companyMembership: { findMany: async () => [
+    { userId: 'owner', user: { displayName: 'เจ้าของ' }, branchScopeMode: 'ALL_BRANCHES', roles: [{ role: { key: 'OWNER', status: 'ACTIVE' } }] },
+    { userId: 'other', user: { displayName: 'ต่างสาขา' }, branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'other', roles: [] },
+  ] } } } as any);
+  assert.deepEqual(await repo.listActiveMemberIdentities('co', 'b1'), [{ userId: 'owner', displayName: 'เจ้าของ', isOwner: true }]);
+});
+
+
+it('candidate sources read active receipt files through the tenant and branch scoped evidence path', async () => {
+  let links: any;
+  const row = { id: 'expense', companyId: 'co', branchId: 'b1', lines: [], substituteReceiptEvidences: [], grandTotalAmount: '0', vatMode: 'NO_VAT' };
+  const file = { id: 'receipt', companyId: 'co', branchId: 'b1', status: 'ACTIVE', originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 12, checksumSha256: 'hash', createdAt: new Date() };
+  const repo = new PrismaExpenseRepository({ client: {
+    expenseRecord: { findMany: async () => [row] },
+    expenseSubstituteReceiptEvidence: { findMany: async () => [] },
+    attachmentLink: { findMany: async (query: any) => { links = query; return [{ targetId: row.id, attachmentId: file.id, purpose: 'expense.receipt.primary', attachment: file }]; } },
+  } } as any);
+  const result = await repo.listSubstituteReceiptCandidateSources({ companyId: 'co' }, { branchIds: ['b1'] });
+  assert.equal(result[0].attachments[0].id, 'receipt');
+  assert.equal(links.where.companyId, 'co'); assert.equal(links.where.attachment.companyId, 'co');
+  assert.equal(links.where.attachment.status, 'ACTIVE');
+  assert.match(JSON.stringify(links.where.attachment), /b1/);
 });

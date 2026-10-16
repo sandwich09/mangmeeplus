@@ -3,6 +3,11 @@ import { cx, mangmeeToneClass, type MangmeeTone } from './mangmee-design';
 
 type PageProps = {
   eyebrow?: ReactNode;
+  /**
+   * The way back, shown above the title: `<BackLink href={…} label="กลับไปรายการค่าใช้จ่าย" />` or a
+   * `<Link className={quietButtonClass}>`. Use this instead of putting a link inside the eyebrow pill.
+   */
+  back?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
@@ -11,11 +16,12 @@ type PageProps = {
   className?: string;
 };
 
-export function MangmeePage({ eyebrow, title, description, actions, meta, children, className }: PageProps) {
+export function MangmeePage({ eyebrow, back, title, description, actions, meta, children, className }: PageProps) {
   return (
     <div className={cx('mangmee-page', className)}>
       <div className="mangmee-page-header">
         <div className="min-w-0">
+          {back && <div className="mangmee-page-back">{back}</div>}
           {eyebrow && <div data-breadcrumb className="mangmee-eyebrow">{eyebrow}</div>}
           <h1 className="mangmee-page-title">{title}</h1>
           {description && <p className="mangmee-page-description">{description}</p>}

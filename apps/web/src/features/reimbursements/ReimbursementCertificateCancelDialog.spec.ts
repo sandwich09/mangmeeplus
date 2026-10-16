@@ -11,7 +11,7 @@ function setup(certificates = [certificate()], extra: Record<string, unknown> = 
   const calls: unknown[][] = [];
   let closed = 0;
   const dialog = certificateHarness(() => h(ReimbursementCertificateCancelDialog, {
-    title: 'ยกเลิกคำขอ', certificates, onClose: () => { closed++; }, onConfirm: (...args: unknown[]) => calls.push(args), ...extra,
+    title: 'ยกเลิกใบเบิก', certificates, onClose: () => { closed++; }, onConfirm: (...args: unknown[]) => calls.push(args), ...extra,
   }), state);
   const transport = mock.method(modal, 'Modal', ({ children, footer, title }: any) => h('section', null, h('h2', null, title), children, footer));
   return { ...dialog, calls, closed: () => closed, restore: () => transport.mock.restore() };
@@ -23,21 +23,21 @@ test('claim cancellation explains each certificate kind, omits absent numbers, a
     const dialog = setup([facts]);
     try {
       const html = dialog.render();
-      assert.match(html, kind === 'SYSTEM' ? /คำขอนี้มีรายจ่ายที่ออกหนังสือรับรอง/ : /คำขอนี้มีรายจ่ายที่บันทึกไว้ว่าออกหนังสือรับรอง/);
-      assert.match(html, kind === 'SYSTEM' ? /ระบบจะยกเลิกหนังสือรับรองใบนี้ด้วย/ : /ระบบยกเลิกหนังสือรับรองที่คุณออกเองให้ไม่ได้ กรุณายกเลิกใบนั้นเอง/);
+      assert.match(html, kind === 'SYSTEM' ? /ใบเบิกนี้มีรายจ่ายที่ออกหนังสือรับรอง/ : /ใบเบิกนี้มีรายจ่ายที่บันทึกไว้ว่าออกหนังสือรับรอง/);
+      assert.match(html, kind === 'SYSTEM' ? /ระบบจะยกเลิกหนังสือรับรองใบนี้ด้วย/ : /ระบบยกเลิกหนังสือรับรองที่คุณออกเองให้ไม่ได้ ยกเลิกใบนั้นเอง/);
       assert.equal(html.includes(t('wht.print_certificate', 'th')), kind === 'SYSTEM');
-      if (kind === 'EXTERNAL') assert.match(html, /ให้ทำคำขอเบิกใหม่ด้วยข้อมูลที่ถูก แล้วบันทึกหนังสือรับรองใบใหม่/);
-      assert.match(html, /ถ้าเคยส่งใบให้ผู้รับเงินแล้ว กรุณาแจ้งผู้รับเงินว่าใบนี้ยกเลิก/);
-      assert.match(html, /<label[^>]*>เหตุผลที่ยกเลิกคำขอ/);
-      assert.match(html, /คำขอที่ยกเลิกแล้วนำกลับมาใช้อีกไม่ได้/);
+      if (kind === 'EXTERNAL') assert.match(html, /ให้ทำใบเบิกใหม่ด้วยข้อมูลที่ถูก แล้วบันทึกหนังสือรับรองใบใหม่/);
+      assert.match(html, /ถ้าเคยส่งใบให้ผู้รับเงินแล้ว แจ้งผู้รับเงินว่าใบนี้ยกเลิก/);
+      assert.match(html, /<label[^>]*>เหตุผลที่ยกเลิกใบเบิก/);
+      assert.match(html, /ใบเบิกที่ยกเลิกแล้วนำกลับมาใช้อีกไม่ได้/);
       assert.equal(html.includes('เลขที่'), Boolean(number));
       assert.equal(dialog.find('Modal').closeOnBackdrop, false);
       assert.match(html, /mangmee-safe-bottom/);
       assert.match(html, /w-full sm:w-auto/);
-      assert.equal(dialog.find('button', p => p.type === 'submit').children[0], kind === 'SYSTEM' ? 'ยกเลิกคำขอและหนังสือรับรอง' : 'ยกเลิกคำขอ');
+      assert.equal(dialog.find('button', p => p.type === 'submit').children[0], kind === 'SYSTEM' ? 'ยกเลิกใบเบิกและหนังสือรับรอง' : 'ยกเลิกใบเบิก');
       assert.equal(reimbursementCertificatesCancelledMessage([facts]), kind === 'SYSTEM'
-        ? `ยกเลิกคำขอและหนังสือรับรอง${number ? `เลขที่ ${number}` : ''} แล้ว`
-        : `ยกเลิกคำขอแล้ว และยกเลิกการบันทึกหนังสือรับรอง${number ? `เลขที่ ${number}` : ''} แล้ว`);
+        ? `ยกเลิกใบเบิกและหนังสือรับรอง${number ? `เลขที่ ${number}` : ''} แล้ว`
+        : `ยกเลิกใบเบิกแล้ว และยกเลิกการบันทึกหนังสือรับรอง${number ? `เลขที่ ${number}` : ''} แล้ว`);
     } finally { dialog.restore(); }
   }
 });
@@ -47,7 +47,7 @@ test('multiple certificate numbers get separate fact paragraphs; facts, reason, 
   try {
     const html = dialog.render();
     assert.match(html, /เลขที่ WHT-1<\/span>/); assert.match(html, /เลขที่ EXT-2<\/span>/);
-    assert.ok(html.indexOf('คำขอนี้') < html.indexOf('<textarea'));
+    assert.ok(html.indexOf('ใบเบิกนี้') < html.indexOf('<textarea'));
     assert.ok(html.indexOf('<textarea') < html.indexOf('type="checkbox"'));
     assert.ok(html.indexOf('type="checkbox"') < html.indexOf('<button'));
   } finally { dialog.restore(); }
@@ -85,10 +85,10 @@ test('server blockers per kind and code show facts, the exact refusal and only c
       const dialog = setup([facts], { blocker, continuation });
       try {
         const html = dialog.render().replaceAll('&quot;', '"');
-        const refusal = blocker.code === 'certificate_permission_missing' ? blocker.message.slice(blocker.message.indexOf('การยกเลิกคำขอ')) : blocker.message;
+        const refusal = blocker.code === 'certificate_permission_missing' ? blocker.message.slice(blocker.message.indexOf('การยกเลิกใบเบิก')) : blocker.message;
         assert.equal(html.split(refusal).length - 1, 1);
         assert.ok(html.indexOf('เลขที่ WHT-1') < html.indexOf(refusal));
-        if (blocker.code === 'certificate_permission_missing') assert.equal((html.match(/คำขอนี้มีรายจ่ายที่/g) ?? []).length, 1);
+        if (blocker.code === 'certificate_permission_missing') assert.equal((html.match(/ใบเบิกนี้มีรายจ่ายที่/g) ?? []).length, 1);
         if (blocker.code.includes('tax_period_locked')) { assert.match(html, /ต.ค. 2569/); assert.doesNotMatch(html, /10\/2569/); }
         assert.doesNotMatch(html, /<form|textarea|checkbox/);
         assert.equal((html.match(/<button/g) ?? []).length, 1);
@@ -125,7 +125,7 @@ test('server refusal appears once with fields retained, and page keeps the certi
 test('claim refusals name the first expense and additional items only when an expense number is known', () => {
   for (const blocked of [false, true]) for (const count of [1, 3]) for (const known of [false, true]) {
     const certificates = Array.from({ length: count }, (_, index) => ({ ...certificate(), expenseNumber: known ? `EXP-${index + 1}` : null }));
-    const message = 'กรุณาใช้ปุ่มแก้ไขหนังสือรับรองที่หน้ารายจ่าย';
+    const message = 'ใช้ปุ่มแก้ไขหนังสือรับรองที่หน้ารายจ่าย';
     const dialog = setup(certificates, blocked ? { blocker: { code: 'tax_period_locked', message } } : { error: message });
     try {
       const html = dialog.render();
@@ -141,6 +141,7 @@ test('claim page wires certificate permission and attestation to the real cancel
   const { AppRouterContext } = require('next/dist/shared/lib/app-router-context.shared-runtime');
   const { ToastContext } = require('@/common/components/toast/use-toast');
   require.extensions['.svg'] = (module: any) => { module.exports = () => null; };
+require.extensions['.css'] = module => { module.exports = { menu: 'menu', panel: 'panel' }; };
   const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage');
   const source = readFileSync(new URL('./ReimbursementJourneyPage.tsx', import.meta.url), 'utf8');
   const names = [...source.matchAll(/const \[(\w+),[^\n]*useState/g)].map(match => match[1]);
@@ -164,7 +165,7 @@ test('claim page wires certificate permission and attestation to the real cancel
       let html = view.render();
       if (!allowed) {
         const refusal = REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.permissionMissing(facts);
-        assert.ok(html.includes(refusal.slice(refusal.indexOf('การยกเลิกคำขอ'))));
+        assert.ok(html.includes(refusal.slice(refusal.indexOf('การยกเลิกใบเบิก'))));
         assert.doesNotMatch(html, /reimbursement-certificate-cancel-form|type="checkbox"/);
         continue;
       }
@@ -233,8 +234,8 @@ test('claim page resumes directly with stored attestation and opens the required
         h(ToastContext.Provider, { value: { success: (message: string) => successes.push(message), error() {}, warning() {} } },
           h(ReimbursementJourneyPage, { companyId: 'co', requestId: 'claim', userId: 'staff', permissions: ['reimbursement.cancel_own', 'wht.certificate.correct'] }))), state);
       const before = view.render();
-      if (needsAttestation) assert.doesNotMatch(before, /ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที/);
-      view.find('button', p => p.children.includes('ดำเนินการยกเลิกต่อ')).onClick();
+      if (needsAttestation) assert.doesNotMatch(before, /ระบบจะทำต่อให้เองภายในไม่กี่นาที/);
+      view.find('button', p => p.children.includes('ทำต่อเพื่อยกเลิก')).onClick();
       if (needsAttestation) {
         assert.deepEqual(bodies, []);
         const html = view.render(); assert.match(html, /เลขที่ WHT-1/);

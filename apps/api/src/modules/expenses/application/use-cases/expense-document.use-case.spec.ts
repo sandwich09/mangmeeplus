@@ -6,6 +6,7 @@ import { PAYMENT_IDEMPOTENCY_KEY_PATTERN } from '../../../accounting-documents/d
 import sharp from 'sharp';
 import { CreateSignatureAssetUseCase, ArchiveSignatureAssetUseCase, FillSignatureUseCase, ListSignatureAssetsUseCase, GetSignatureImageUseCase, InitSignatureUploadUseCase } from './signature-asset.use-case';
 import { normalizeSignatureImage, SIGNATURE_MAX_BYTES } from '../../domain/logic/signature-image.logic';
+import { loadExpenseEvidenceSources } from '../../infrastructure/expense-evidence-sources';
 import { CreateAccountantPackageUseCase, GetSharedEvidenceViewUseCase } from './expense-evidence.use-case';
 import type { RequestContext } from '@watchdog-bms/contracts';
 
@@ -963,7 +964,7 @@ describe('GetSharedEvidenceViewUseCase', () => {
   it('rejects an explicit branch outside the caller scope before reading or exporting', async () => {
     const scoped = { ...ctx(['expense.evidence.read', 'expense.export', 'expense.read']), scopes: { branchIds: ['b1'] } };
     await assert.rejects(() => new GetSharedEvidenceViewUseCase({} as any).execute(scoped, { branchId: 'b2' }), /branch/i);
-    await assert.rejects(() => new CreateAccountantPackageUseCase({} as any, {} as any, audit, {} as any).execute(scoped, { branchId: 'b2' }), /branch/i);
+    await assert.rejects(() => new CreateAccountantPackageUseCase({} as any, {} as any, audit, {} as any, {} as any, {} as any).execute(scoped, { branchId: 'b2' }), /branch/i);
   });
   const repo = {
     summarizeSharedEvidenceFolders: async () => [],
@@ -974,6 +975,7 @@ describe('GetSharedEvidenceViewUseCase', () => {
     const useCase = new GetSharedEvidenceViewUseCase(repo);
     const result = await useCase.execute(ctx(['expense.evidence.read']), {});
     assert.deepEqual(result.rows, []);
+    assert.equal(result.dateField, 'expenseDate');
     await assert.rejects(() => useCase.execute(ctx(['expense.read']), {}), /expense.evidence.read/);
   });
 });
@@ -988,6 +990,7 @@ describe('CreateAccountantPackageUseCase', () => {
           rows: [{
             id: 'exp-1', branchId: 'b1', expenseNumber: 'EXP-1', status: 'CONFIRMED', captureSource: 'LINE_UPLOAD',
             sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', taxEvidenceReasonCode: 'VALID_TAX_INVOICE_FIELDS',
+            inputVatClaimStatus: 'CLAIMABLE', latestInputVatDecision: { reason: 'ตรวจใบแล้ว', decidedByName: 'ผู้ตรวจภาษี', decidedAt: '2026-07-02T03:00:00.000Z' },
             uploadedAt: new Date('2026-07-01T10:00:00Z'), expenseDate: new Date('2026-06-28T00:00:00Z'),
             createdByUserId: 'user-1', reviewedByUserId: null,
             vendorNameSnapshot: 'ผู้ขาย', vendorTaxIdSnapshot: '123', vendorBranchCodeSnapshot: null, vendorDocumentNumber: 'INV-1',
@@ -1010,18 +1013,41 @@ describe('CreateAccountantPackageUseCase', () => {
         branch: { findMany: async () => [{ id: 'b1', code: 'SIAM' }] },
         user: { findMany: async () => [{ id: 'user-1', displayName: 'สมชาย', email: null }] },
         expenseSubstituteReceiptEvidence: { findMany: async () => [] },
+        expensePayment: { findMany: async () => [] },
       },
     } as any;
 
-    const useCase = new CreateAccountantPackageUseCase(repo, downloadUrl, audit, prisma);
+    const useCase = new CreateAccountantPackageUseCase(repo, downloadUrl, audit, prisma, {} as any, {} as any);
     const result = await useCase.execute(ctx(['expense.export', 'expense.read', 'attachment.read']), { branchId: 'b1', expenseIds: ['exp-1'] });
     assert.equal(appliedFilter.branchId, 'b1');
     assert.deepEqual(appliedFilter.expenseIds, ['exp-1']);
     assert.equal(result.indexRows[0]?.branch_code, 'SIAM');
+    assert.equal(result.indexRows[0]?.input_vat_right, 'CLAIMABLE');
+    assert.equal(result.indexRows[0]?.input_vat_reason, 'ตรวจใบแล้ว');
+    assert.equal(result.indexRows[0]?.input_vat_decided_by, 'ผู้ตรวจภาษี');
+    assert.equal(result.indexRows[0]?.input_vat_decided_at, '2026-07-02T03:00:00.000Z');
     assert.equal(result.rowCount, 1);
     assert.equal(result.totalMatched, 2);
     assert.equal(result.truncated, true);
     assert.equal(appliedFilter.status, 'CONFIRMED');
+    assert.equal(appliedFilter.dateField, 'expenseDate');
+    assert.equal(result.indexRows[0]?.web_url, '/companies/company-1/expenses/exp-1');
+    const { inflateRawSync } = await import('node:zlib');
+    const workbook = Buffer.from(result.indexXlsxBase64, 'base64');
+    let sheet = '';
+    for (let offset = 0; workbook.readUInt32LE(offset) === 0x04034b50;) {
+      const size = workbook.readUInt32LE(offset + 18), nameLength = workbook.readUInt16LE(offset + 26), extraLength = workbook.readUInt16LE(offset + 28);
+      const start = offset + 30 + nameLength + extraLength;
+      if (workbook.subarray(offset + 30, offset + 30 + nameLength).toString() === 'xl/worksheets/sheet1.xml') {
+        const data = workbook.subarray(start, start + size);
+        sheet = (workbook.readUInt16LE(offset + 8) === 8 ? inflateRawSync(data) : data).toString();
+      }
+      offset = start + size;
+    }
+    assert.match(sheet, /เปิดไฟล์/);
+    assert.match(sheet, /HYPERLINK/);
+    assert.match(sheet, /companies\/company-1\/expenses\/exp-1/);
+    assert.doesNotMatch(sheet, /local-storage|download\/tok/);
     assert.ok(result.indexCsv.startsWith('company_name,'));
     assert.ok(result.indexCsv.includes('TAX_INVOICE'));
     assert.equal(result.evidenceManifest.length, 1);
@@ -1035,7 +1061,7 @@ describe('CreateAccountantPackageUseCase', () => {
       repo,
       { execute: async () => { throw new Error('A personal signature image is only available to the person it belongs to.'); } } as any,
       audit,
-      prisma,
+      prisma, {} as any, {} as any,
     );
     const short = await denied.execute(ctx(['expense.export', 'expense.read', 'attachment.read']), {});
     assert.equal(short.evidenceManifest.length, 0);
@@ -1046,7 +1072,7 @@ describe('CreateAccountantPackageUseCase', () => {
   });
 
   it('requires expense.export', async () => {
-    const useCase = new CreateAccountantPackageUseCase({} as any, {} as any, audit, {} as any);
+    const useCase = new CreateAccountantPackageUseCase({} as any, {} as any, audit, {} as any, {} as any, {} as any);
     await assert.rejects(() => useCase.execute(ctx(['expense.read']), {}), /expense.export/);
   });
 });
@@ -1071,6 +1097,241 @@ describe('GetSharedEvidenceViewUseCase', () => {
     assert.deepEqual(filters.map((filter) => filter.branchId), ['b1', 'b1']);
 
     assert.deepEqual(filters.map((filter) => filter.status), ['CONFIRMED', 'CONFIRMED']);
+    assert.deepEqual(filters.map((filter) => filter.dateField), ['expenseDate', 'expenseDate']);
     assert.equal(result.folders[0]?.evidenceCount, 1);
+  });
+});
+
+describe('accountant evidence bundle', () => {
+  const reader = { ...ctx(['expense.export', 'expense.read', 'attachment.read']), scopes: { branchIds: ['b1'] } };
+  const file = (id: string, byteSize = 1, status = 'ACTIVE') => ({ id, byteSize, status, purpose: 'expense.receipt.primary', originalFileName: `${id}.jpeg`, mimeType: 'image/jpeg' });
+  function fixture(rows: any[], readBytes = async (_ctx: any, cmd: any) => Buffer.from(cmd.attachmentId)) {
+    rows = rows.map(row => ({ uploadedAt: new Date('2026-10-01'), expenseDate: new Date('2026-10-01'), ...row }));
+    const queries: any[] = [], audits: any[] = [];
+    const repo = { listSharedEvidence: async (companyId: string, filter: any, scopes: any, options: any) => {
+      queries.push({ companyId, filter, scopes, options });
+      return { rows: rows.slice((filter.page - 1) * filter.pageSize, filter.page * filter.pageSize).map(row => ({ ...row, attachments: row.attachments.filter((file: any) => options || file.status === 'ACTIVE') })), total: rows.length, page: filter.page, pageSize: filter.pageSize };
+    } } as any;
+    return { queries, audits, useCase: new CreateAccountantPackageUseCase(repo, { readBytes, execute: async () => ({ downloadUrl: '/file', expiresAt: new Date() }) } as any, { log: async (entry: any) => { if (entry.action === 'expense.accountant_bundle.download') audits.push(entry); } } as any, { client: { expensePayment: { findMany: async () => [] }, company: { findUnique: async () => ({ name: 'ร้าน' }) }, user: { findMany: async () => [] }, branch: { findMany: async () => [] } } } as any, {} as any, {} as any) };
+  }
+  function unzip(bytes: Buffer) {
+    const entries = new Map<string, Buffer>();
+    let offset = 0;
+    while (bytes.readUInt32LE(offset) === 0x04034b50) {
+      const size = bytes.readUInt32LE(offset + 18), length = bytes.readUInt16LE(offset + 26);
+      const name = bytes.subarray(offset + 30, offset + 30 + length).toString('utf8');
+      assert.equal(bytes.readUInt16LE(offset + 8), 0, 'store method');
+      if (/[^\x00-\x7f]/.test(name)) assert.equal(bytes.readUInt16LE(offset + 6) & 0x800, 0x800);
+      const start = offset + 30 + length + bytes.readUInt16LE(offset + 28);
+      entries.set(name, bytes.subarray(start, start + size));
+      offset = start + size;
+    }
+    let centralCount = 0;
+    while (bytes.readUInt32LE(offset) === 0x02014b50) {
+      const length = bytes.readUInt16LE(offset + 28);
+      const name = bytes.subarray(offset + 46, offset + 46 + length).toString('utf8');
+      assert.ok(entries.has(name));
+      if (/[^\x00-\x7f]/.test(name)) assert.equal(bytes.readUInt16LE(offset + 8) & 0x800, 0x800);
+      offset += 46 + length + bytes.readUInt16LE(offset + 30) + bytes.readUInt16LE(offset + 32);
+      centralCount += 1;
+    }
+    assert.equal(bytes.readUInt32LE(offset), 0x06054b50);
+    assert.equal(bytes.readUInt16LE(offset + 10), entries.size);
+    assert.equal(centralCount, entries.size);
+    return entries;
+  }
+  it('packages paid vouchers, direct-issued vouchers, slips and issued 50 ทวิ for an earlier expense with scoped month counts and index links', async () => {
+    const row = { uploadedAt: new Date('2026-09-01'), expenseDate: new Date('2026-09-01'), id: 'e', expenseNumber: 'EXP-1', branchId: 'b1', attachments: [file('receipt')] };
+    const queries: any = {}, calls: string[] = [];
+    const db = { company: { findUnique: async () => ({ name: 'ร้าน', timezone: 'Asia/Bangkok' }) },
+      user: { findMany: async () => [] }, branch: { findMany: async () => [] },
+      expensePayment: { findMany: async (q: any) => { queries.payments = q; return [{ id: 'pay', expenseId: 'e' }]; } },
+      attachmentLink: { findMany: async () => [{ targetId: 'pay', attachment: file('payment-slip') }] },
+      disbursementVoucher: { findMany: async (q: any) => { queries.vouchers = q; return [
+        { id: 'v', documentNumber: 'PV-1', slipAttachmentId: 'voucher-slip', lines: [{ expenseId: 'e' }] },
+        { id: 'direct', documentNumber: 'PV-2', slipAttachmentId: null, lines: [{ expenseId: 'e' }] },
+      ]; } },
+      whtCertificate: { findMany: async (q: any) => { queries.certificates = q; return [{ id: 'c', certificateNumber: 'WHT-1' }]; } },
+      whtCertificateHandoff: { findMany: async () => [{ id: 'h', certificateId: 'c', sourcePaymentType: 'expense.record', sourcePaymentId: 'e' }] },
+    };
+    const repo = { listSharedEvidence: async (_company: string, filter: any) => ({ rows: filter.yearMonth ? [] : [row], total: filter.yearMonth ? 0 : 1, page: 1, pageSize: 500 }) };
+    const downloads = { execute: async () => ({ downloadUrl: '/file', expiresAt: new Date() }), readBytes: async (_: any, c: any) => Buffer.from(c.attachmentId) };
+    const vouchers = { supportingFiles: async (_: any, id: string) => id === 'v' ? [{ id: 'support-1', name: 'bank.png', mimeType: 'image/png' }] : [], supportingFileBytes: async () => ({ data: Buffer.from('bank page'), mimeType: 'image/png' }), documentPdf: async (_: any, id: string) => { calls.push(id); return { data: Buffer.from('masked PDF'), fileName: id + '.pdf' }; },
+      slipBytes: async () => ({ data: Buffer.from('slip'), fileName: 'slip.jpg', mimeType: 'image/jpeg' }) };
+    const certificates = { download: async () => { calls.push('h'); return { pdfArtifact: { contentBase64: Buffer.from('issued PDF').toString('base64') } }; } };
+    const useCase = new CreateAccountantPackageUseCase(repo as any, downloads as any, audit, { client: db } as any, vouchers as any, certificates as any);
+    const allowed = { ...reader, permissions: [...reader.permissions, 'expense.disbursement.read', 'wht.certificate.read'] };
+    const request = { yearMonth: '2026-10', branchId: 'b1' };
+    const plan = await useCase.planBundle(allowed, request);
+    assert.deepEqual(plan.counts, { receipts: 1, substituteReceipts: 0, paymentSlips: 2, vouchers: 2, supportingFiles: 1, whtCertificates: 1 });
+    assert.equal(plan.missingReceiptCount, 0);
+    assert.equal(plan.fileCount, 7);
+    assert.equal(plan.counts.supportingFiles, 1);
+    assert.equal(queries.vouchers.where.status, 'PAID');
+    assert.equal(queries.vouchers.where.companyId, reader.companyId);
+    assert.equal(queries.vouchers.where.branchId, 'b1');
+    assert.equal(queries.vouchers.where.paidDate.gte.toISOString(), '2026-10-01T00:00:00.000Z');
+    assert.equal(queries.vouchers.where.paidDate.lt.toISOString(), '2026-11-01T00:00:00.000Z');
+    assert.equal(queries.certificates.where.status, 'ISSUED');
+    assert.equal(queries.payments.where.paidAt.gte.toISOString(), '2026-09-30T17:00:00.000Z');
+    assert.equal(queries.payments.where.paidAt.lt.toISOString(), '2026-10-31T17:00:00.000Z');
+    assert.equal(queries.payments.where.expense.branchId, 'b1');
+    assert.ok(queries.vouchers.where.lines.every.expense.is, 'the voucher must expose only readable source expenses');
+    const entries = unzip((await useCase.downloadBundle(allowed, request, 1)).bytes);
+    for (const folder of ['ใบเสร็จ/', 'สลิปการจ่าย/', 'ใบสำคัญจ่าย/', '50ทวิ/']) assert.ok([...entries.keys()].some(name => name.startsWith(folder + 'EXP-1-')), folder);
+    assert.deepEqual([...new Set(calls)].sort(), ['direct', 'h', 'v']);
+    assert.equal(entries.get('เอกสารประกอบการจ่าย/PV-1-1.png')?.toString(), 'bank page');
+    assert.ok(entries.has('สารบัญ.xlsx'));
+    const index = await useCase.execute(allowed, { ...request, columnSet: 'full' });
+    assert.equal(index.indexRows[0].voucher_numbers, 'PV-1, PV-2');
+    assert.equal(index.indexRows[0].wht_certificate_numbers, 'WHT-1');
+    for (const name of [...entries.keys()].filter(name => name !== 'สารบัญ.xlsx')) assert.ok(index.indexRows[0].bundle_file_names.includes(name), name);
+    const withoutTax = await useCase.planBundle(reader, request);
+    assert.equal(withoutTax.counts.whtCertificates, 0);
+    assert.equal(withoutTax.counts.vouchers, 0);
+    calls.length = 0;
+    const restricted = unzip((await useCase.downloadBundle(reader, request, 1)).bytes);
+    assert.ok(![...restricted.keys()].some(name => name.startsWith('50ทวิ/') || name.startsWith('ใบสำคัญจ่าย/') || name.startsWith('เอกสารประกอบการจ่าย/')));
+    assert.deepEqual(calls, []);
+  });
+  it('keeps substitute papers in their folder and warns when supporting evidence is not a receipt', async () => {
+    const { useCase } = fixture([
+      { id: 'e', expenseNumber: 'EXP-1', attachments: [file('sub')], evidenceSources: { certificates: [{ artifactAttachmentId: 'sub', status: 'ISSUED' }] } },
+      { id: 'no-receipt', expenseNumber: 'EXP-2', attachments: [{ ...file('proof'), purpose: 'expense.review.evidence' }] },
+    ]);
+    const plan = await useCase.planBundle(reader, { yearMonth: '2026-10' });
+    assert.equal(plan.counts.substituteReceipts, 1);
+    assert.equal(plan.missingReceiptCount, 1);
+    const entries = unzip((await useCase.downloadBundle(reader, { yearMonth: '2026-10' }, 1)).bytes);
+    assert.ok(entries.has('ใบรับรองแทนใบเสร็จ/EXP-1-1.jpg'));
+    assert.ok(entries.has('ใบเสร็จ/EXP-2-1.jpg'));
+  });
+  it('keeps Excel filenames identical to the ZIP when an earlier linked file is unavailable', async () => {
+    const { useCase } = fixture([{ id: 'e', expenseNumber: 'EXP-1', attachments: [file('pending', 1, 'PENDING_UPLOAD'), file('ready')] }]);
+    const index = await useCase.execute(reader, { yearMonth: '2026-10', columnSet: 'full' });
+    const entries = unzip((await useCase.downloadBundle(reader, { yearMonth: '2026-10' }, 1)).bytes);
+    assert.ok(entries.has('ใบเสร็จ/EXP-1-2.jpg'));
+    assert.ok(index.indexRows[0].bundle_file_names.split('\n').includes('ใบเสร็จ/EXP-1-2.jpg'));
+  });
+  it('plans empty, single, count-limited, byte-limited and oversized parts', async () => {
+    for (const [files, expectedParts] of [
+      [[], 1], [[file('one')], 1], [Array.from({ length: 61 }, (_, i) => file(String(i))), 2],
+      [[file('a', 40_000_000), file('b', 30_000_000)], 2],
+      [[file('a', 60_000_001), file('b'), file('c')], 2],
+      [[file('a', 60_000_000), file('b')], 2],
+      [[file('a'), file('b', 60_000_001), file('c')], 3],
+    ] as [any[], number][]) {
+      const { useCase } = fixture([{ id: 'e', expenseNumber: 'EXP-1', attachments: files }]);
+      assert.deepEqual(await useCase.planBundle(reader, { yearMonth: '2026-10' }), { fileCount: files.length, partCount: expectedParts, counts: { receipts: files.length, substituteReceipts: 0, paymentSlips: 0, vouchers: 0, supportingFiles: 0, whtCertificates: 0 }, missingReceiptCount: files.length ? 0 : 1 });
+    }
+  });
+  it('uses all query pages with the package filters and caller scope, without a 500-row cutoff', async () => {
+    const { useCase, queries } = fixture(Array.from({ length: 501 }, (_, i) => ({ id: `e${i}`, expenseNumber: `EXP-${String(i).padStart(3, '0')}`, attachments: [file(`a${i}`)] })));
+    assert.deepEqual(await useCase.planBundle(reader, { yearMonth: '2026-10', dateField: 'uploadedAt', branchId: 'b1', expenseIds: ['selection'] }), { fileCount: 501, partCount: 9, counts: { receipts: 501, substituteReceipts: 0, paymentSlips: 0, vouchers: 0, supportingFiles: 0, whtCertificates: 0 }, missingReceiptCount: 0 });
+    assert.equal(queries.length, 2);
+    for (const query of queries) {
+      assert.equal(query.companyId, 'company-1'); assert.deepEqual(query.scopes, reader.scopes);
+      assert.equal(query.filter.yearMonth, '2026-10'); assert.equal(query.filter.dateField, 'uploadedAt');
+      assert.equal(query.filter.branchId, 'b1'); assert.equal(query.filter.status, 'CONFIRMED');
+      assert.deepEqual(query.filter.expenseIds, ['selection']);
+    }
+  });
+  it('keeps part membership stable across query ordering and names each numbered download', async () => {
+    const rows = Array.from({ length: 61 }, (_, i) => ({ id: `e${i}`, expenseNumber: `EXP-${String(i).padStart(3, '0')}`, attachments: [file(`a${i}`)] }));
+    const first = await fixture(rows).useCase.downloadBundle(reader, { yearMonth: '2026-10' }, 2);
+    const reversed = await fixture([...rows].reverse()).useCase.downloadBundle(reader, { yearMonth: '2026-10' }, 2);
+    assert.equal(first.fileName, 'หลักฐาน-2026-10-ชุดที่-2.zip');
+    assert.deepEqual([...unzip(first.bytes).keys()], [...unzip(reversed.bytes).keys()]);
+    assert.deepEqual(unzip(first.bytes).get('ใบเสร็จ/EXP-060-1.jpg'), unzip(reversed.bytes).get('ใบเสร็จ/EXP-060-1.jpg')); // Workbook ZIP timestamps need not match.
+    assert.deepEqual([...unzip(first.bytes).keys()], ['ใบเสร็จ/EXP-060-1.jpg', 'สารบัญ.xlsx']);
+  });
+  it('checks export/read permission and branch scope before planning or downloading', async () => {
+    const { useCase, queries } = fixture([]);
+    for (const operation of [() => useCase.planBundle(ctx(['expense.read']), {}), () => useCase.downloadBundle(ctx(['expense.read']), {}, 1)]) await assert.rejects(operation, /expense.export/);
+    await assert.rejects(() => useCase.planBundle(ctx(['expense.export']), {}), /expense.read/);
+    for (const operation of [() => useCase.planBundle(reader, { branchId: 'b2' }), () => useCase.downloadBundle(reader, { branchId: 'b2' }, 1)]) await assert.rejects(operation, /branch/i);
+    assert.equal(queries.length, 0);
+  });
+  it('returns shared 404 for a part outside the plan', async () => {
+    const { useCase } = fixture([{ id: 'e', attachments: [file('one')] }]);
+    for (const part of [0, -1, 2, 1.5, NaN]) await assert.rejects(() => useCase.downloadBundle(reader, {}, part), (error: any) => error.getStatus() === 404);
+    await assert.rejects(() => fixture([]).useCase.downloadBundle(reader, {}, 1), (error: any) => error.getStatus() === 404);
+  });
+  it('writes a parseable UTF-8 ZIP in number/sequence order, reads sequentially and audits once', async () => {
+    let reading = false;
+    const reads: string[] = [];
+    const { useCase, audits } = fixture([
+      { id: 'later', expenseNumber: 'EXP-2', attachments: [file('three')] },
+      { id: 'first', expenseNumber: 'EXP-1', attachments: [file('one'), { ...file('two'), mimeType: 'application/pdf' }] },
+      { id: 'fallback-id', expenseNumber: null, attachments: [file('four')] },
+      { id: 'thai', expenseNumber: 'รายจ่าย/1', attachments: [file('five')] },
+    ], async (context, command) => {
+      assert.equal(reading, false); reading = true; reads.push(command.attachmentId);
+      assert.equal(context, reader); await Promise.resolve(); reading = false;
+      return Buffer.from(command.attachmentId);
+    });
+    const result = await useCase.downloadBundle(reader, { yearMonth: '2026-10', dateField: 'uploadedAt', branchId: 'b1' }, 1);
+    const entries = unzip(result.bytes);
+    assert.deepEqual([...entries.keys()], ['ใบเสร็จ/EXP-1-1.jpg', 'ใบเสร็จ/EXP-1-2.pdf', 'ใบเสร็จ/EXP-2-1.jpg', 'ใบเสร็จ/fallback-id-1.jpg', 'ใบเสร็จ/รายจ่าย_1-1.jpg', 'สารบัญ.xlsx']);
+    assert.deepEqual(reads, ['one', 'two', 'three', 'four', 'five']);
+    assert.equal(entries.get('ใบเสร็จ/EXP-1-2.pdf')?.toString(), 'two');
+    assert.equal(result.fileName, 'หลักฐาน-2026-10.zip');
+    assert.equal(audits.length, 1); assert.equal(audits[0].actorUserId, 'user-1');
+    assert.equal(audits[0].action, 'expense.accountant_bundle.download');
+    assert.deepEqual(audits[0].metadataJson, { yearMonth: '2026-10', dateField: 'uploadedAt', branchId: 'b1', part: 1, fileCount: 5, skippedCount: 0 });
+    assert.doesNotMatch([...entries.keys()].join(','), /https?:|objectKey|downloadUrl/);
+    // With no month chosen the file is named in Thai like the page's own choice, not with an English word.
+    assert.equal((await useCase.downloadBundle(reader, { dateField: 'uploadedAt', branchId: 'b1' }, 1)).fileName, 'หลักฐาน-ทุกเดือน.zip');
+  });
+  it('omits refused, missing and unscanned files with a plain Thai manifest, retaining sequence gaps', async () => {
+    const reads: string[] = [];
+    const { useCase, audits } = fixture([{ id: 'e', expenseNumber: 'EXP-1', attachments: [file('denied'), file('pending', 1, 'PENDING_UPLOAD'), file('missing'), file('ok')] }], async (_context, command) => {
+      reads.push(command.attachmentId);
+      if (command.attachmentId === 'denied') throw Object.assign(new Error('private backend information'), { status: 403 });
+      if (command.attachmentId === 'missing') throw Object.assign(new Error('private object key'), { code: 'ENOENT' });
+      return Buffer.from('ok');
+    });
+    const entries = unzip((await useCase.downloadBundle(reader, {}, 1)).bytes);
+    assert.deepEqual([...entries.keys()], ['ใบเสร็จ/EXP-1-4.jpg', 'ไฟล์ที่ไม่ได้รวม.txt', 'สารบัญ.xlsx']);
+    const manifest = entries.get('ไฟล์ที่ไม่ได้รวม.txt')!.toString();
+    assert.match(manifest, /EXP-1.*denied.jpeg.*ไม่มีสิทธิ์เปิดไฟล์/);
+    assert.match(manifest, /pending.jpeg.*ไฟล์ยังตรวจสอบไม่เสร็จ/);
+    assert.match(manifest, /missing.jpeg.*ไม่พบไฟล์/);
+    assert.doesNotMatch(manifest, /private/); assert.deepEqual(reads, ['denied', 'missing', 'ok']);
+    assert.equal(audits[0].metadataJson.fileCount, 1); assert.equal(audits[0].metadataJson.skippedCount, 3);
+  });
+});
+
+
+it('bundle planning retains unavailable linked-file metadata without relaxing the expense/source scope', async () => {
+  const queries: any = {};
+  const db: any = {
+    expenseSubstituteReceiptEvidence: { findMany: async (query: any) => { queries.cert = query; return []; } },
+    attachmentLink: { findMany: async (query: any) => {
+      queries.links = query;
+      return [{ targetId: 'source', attachmentId: 'pending', purpose: 'expense.receipt.primary', attachment: {
+        id: 'pending', status: 'PENDING_UPLOAD', branchId: 'outside', originalFileName: 'pending.pdf', mimeType: 'application/pdf', byteSize: 20n, createdAt: new Date(),
+      } }];
+    } },
+  };
+  const evidence = (await loadExpenseEvidenceSources(db, 'co1', [{ id: 'source', branchId: 'b1' }], { branchIds: ['b1'] }, true)).get('source')!;
+  assert.ok(evidence.attachments.some(file => file.id === 'pending'));
+  assert.deepEqual(queries.links.where.attachment, { companyId: 'co1' });
+  assert.deepEqual(queries.links.orderBy, [{ createdAt: 'asc' }, { id: 'asc' }]);
+  assert.equal(queries.cert.where.companyId, 'co1');
+  assert.deepEqual(queries.cert.where.OR, [{ branchId: { in: ['b1'] } }, { branchId: null }]);
+});
+
+describe('receipt absence in the evidence read model', () => {
+  it('labels only the neutral type for missing or lost receipts without changing its stored value', async () => {
+    for (const receiptProblem of ['NOT_AVAILABLE', 'LOST', 'NONE']) {
+      const repo = { summarizeSharedEvidenceFolders: async () => [], listSharedEvidence: async () => ({ rows: [{
+        id: 'e1', sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY', attachments: [],
+        aiVerificationSummaryJson: { documentReview: { assessment: { route: 'SUBSTITUTE_RECEIPT', receiptProblem, reason: 'ไม่มีใบเสร็จ', attachmentIds: [] } } },
+      }], total: 1, page: 1, pageSize: 50 }) } as any;
+      const result = await new GetSharedEvidenceViewUseCase(repo).execute(ctx(['expense.evidence.read']), {});
+      assert.equal(result.rows[0].sourceDocumentType, 'EXPENSE_NOTE_TEXT');
+      assert.equal(result.rows[0].sourceDocumentTypeLabel, receiptProblem === 'NONE' ? undefined : 'ไม่มีใบเสร็จ');
+    }
   });
 });

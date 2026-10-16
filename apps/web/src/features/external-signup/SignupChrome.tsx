@@ -1,4 +1,5 @@
 import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
+import { primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
 import { SIGNUP_SUPPORT_PHONE } from './signup.logic';
 
 /** Shared top bar for the public signup journey (มั่งมี Brand Kit dark green). */
@@ -25,23 +26,19 @@ export function SignupBrandHeader() {
 export function SignupUnavailableNotice({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="space-y-4" role="alert">
-      <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">เปิดหน้าสมัครไม่ได้ตอนนี้</h1>
+      <h1 className="text-[22px] font-bold leading-9 text-gray-900">เปิดหน้าสมัครไม่ได้ตอนนี้</h1>
       <p className="text-[15px] leading-7 text-gray-600">
-        ระบบขัดข้องชั่วคราว ยังเปิดรับสมัครอยู่ กรุณาลองใหม่อีกครั้ง
+        ระบบขัดข้องชั่วคราว ยังเปิดรับสมัครอยู่
       </p>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="flex h-12 w-full items-center justify-center rounded-xl bg-[#046B29] text-[15.5px] font-semibold text-white"
-      >
-        ลองใหม่อีกครั้ง
-      </button>
-      <a
-        href={`tel:${SIGNUP_SUPPORT_PHONE.replace(/-/g, '')}`}
-        className="flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 hover:border-[#046B29]"
-      >
-        โทร {SIGNUP_SUPPORT_PHONE}
-      </a>
+      {/* One width for both, the acting one on top (a phone-width column, so they always stack). */}
+      <div className="grid gap-3">
+        <button type="button" onClick={onRetry} className={`${primaryButtonClass} w-full`}>
+          ลองอีกครั้ง
+        </button>
+        <a href={`tel:${SIGNUP_SUPPORT_PHONE.replace(/-/g, '')}`} className={`${secondaryButtonClass} w-full`}>
+          โทร <span className="mangmee-unit">{SIGNUP_SUPPORT_PHONE}</span>
+        </a>
+      </div>
     </div>
   );
 }
@@ -50,15 +47,12 @@ export function SignupUnavailableNotice({ onRetry }: { onRetry: () => void }) {
 export function SignupClosedNotice() {
   return (
     <div className="space-y-4" role="status">
-      <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">ยังไม่เปิดรับสมัครทางออนไลน์</h1>
+      <h1 className="text-[22px] font-bold leading-9 text-gray-900">ยังไม่เปิดรับสมัครทางออนไลน์</h1>
       <p className="text-[15px] leading-7 text-gray-600">
-        ตอนนี้ยังไม่เปิดให้สมัครใช้งานผ่านหน้าเว็บ หากสนใจใช้งานมั่งมีพลัส ติดต่อทีมงานได้เลย
+        ตอนนี้ยังสมัครผ่านหน้าเว็บไม่ได้ สนใจใช้งานมั่งมีพลัส ติดต่อทีมงานมั่งมีได้เลย
       </p>
-      <a
-        href={`tel:${SIGNUP_SUPPORT_PHONE.replace(/-/g, '')}`}
-        className="flex h-12 w-full items-center justify-center rounded-xl bg-[#046B29] text-[15.5px] font-semibold text-white"
-      >
-        โทร {SIGNUP_SUPPORT_PHONE}
+      <a href={`tel:${SIGNUP_SUPPORT_PHONE.replace(/-/g, '')}`} className={`${primaryButtonClass} w-full`}>
+        โทร <span className="mangmee-unit">{SIGNUP_SUPPORT_PHONE}</span>
       </a>
     </div>
   );

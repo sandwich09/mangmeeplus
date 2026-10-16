@@ -76,7 +76,7 @@ export function TaxAccountSettingsPage({ companyId, permissions }: { companyId: 
         effectiveTo: String(form.get('effectiveTo') || '') || null,
       });
       await load();
-      toast.success('บันทึกกฎบัญชีเรียบร้อยแล้ว');
+      toast.success('บันทึกกฎบัญชีแล้ว');
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); }
   }
   const importGoodsDefinition = selected?.transactionContexts.includes('IMPORT_GOODS') ?? false;
@@ -95,7 +95,7 @@ export function TaxAccountSettingsPage({ companyId, permissions }: { companyId: 
         effectiveTo: String(form.get('effectiveTo') || '') || null,
       });
       await load();
-      toast.success('บันทึกกฎรายงานเรียบร้อยแล้ว');
+      toast.success('บันทึกกฎรายงานแล้ว');
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); }
   }
 

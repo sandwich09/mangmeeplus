@@ -14,7 +14,7 @@ const IN_FLIGHT = ['QUEUED', 'RUNNING', 'RECONCILING'];
 type Step = 'idle' | 'choose' | 'code_sent' | 'previewed' | 'op_pending' | 'done';
 // An ended request says why from its own code; the provider read only knows the current address, so the text claims no more than that.
 const opText = (state: string, errorCode?: string | null) => state === 'FAILED' && errorCode === 'provider_email_not_target'
-  ? 'ตรวจกับผู้ให้บริการรับชำระเงินแล้ว อีเมลผู้รับเอกสารตอนนี้ยังไม่ใช่อีเมลใหม่ที่ขอไว้ คำขอนี้จบแล้ว ถ้ายังต้องการเปลี่ยน ให้ทำรายการใหม่'
+  ? 'ตรวจกับผู้ให้บริการรับเงินแล้ว อีเมลผู้รับเอกสารตอนนี้ยังไม่ใช่อีเมลใหม่ที่ขอไว้ คำขอนี้จบแล้ว ถ้ายังต้องการเปลี่ยน ให้ทำรายการใหม่'
   : state === 'FAILED' && errorCode === 'email_authorization_changed' ? 'ข้อมูลเปลี่ยนหรือคำขอหมดอายุก่อนเริ่มดำเนินการ คำขอนี้จบแล้ว ถ้ายังต้องการเปลี่ยน ให้ทำรายการใหม่'
   : state === 'BLOCKED' ? 'ข้อมูลเปลี่ยนหรือยังดำเนินการไม่ได้ กรุณายกเลิกคำขอแล้วตรวจใหม่'
   : state === 'RECONCILING' ? 'กำลังตรวจผลกับผู้ให้บริการ หากยังไม่สำเร็จ ติดต่อทีมงานพร้อมเลขอ้างอิงด้านล่าง'

@@ -41,8 +41,8 @@ test('the renewal panel states the renewal only for a shop that has one, in the 
     billingRenewalLine({ cancelAtPeriodEnd: over.cancelAtPeriodEnd ?? false, collectionPause: over.collectionPause ? { behavior: 'keep_as_draft', resumesAt: null } : null, renewalMode });
   assert.equal(line('CARD_AUTO'), 'ต่ออายุอัตโนมัติเปิดอยู่');
   assert.equal(line('PROMPTPAY_RENEW'), 'ระบบออกบิล QR ทุกงวด ต้องสแกนจ่ายเอง');
-  assert.equal(line('CARD_AUTO', { cancelAtPeriodEnd: true }), 'ปิดการต่ออายุอัตโนมัติแล้ว ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้');
-  assert.equal(line('PROMPTPAY_RENEW', { cancelAtPeriodEnd: true }), 'ปิดการออกบิล QR ทุกงวดแล้ว ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้');
+  assert.equal(line('CARD_AUTO', { cancelAtPeriodEnd: true }), 'หยุดต่ออายุแล้ว');
+  assert.equal(line('PROMPTPAY_RENEW', { cancelAtPeriodEnd: true }), 'หยุดออกบิลแล้ว');
   assert.equal(line('CARD_AUTO', { collectionPause: true }), 'พักการเรียกเก็บเงินชั่วคราว');
   for (const mode of ['CARD_ONCE', 'PROMPTPAY_ONCE', 'NONE', undefined] as const) assert.equal(line(mode), null, String(mode));
 });
@@ -74,4 +74,24 @@ test('monthly receipts and fixed Admin gifts are described with separate renewal
   assert.equal(billingMonthlyAllowanceText({}),null);
   const text=billingMonthlyAllowanceText({monthlyAllowance:{limit:15,used:15,additionalRemaining:4,additionalExpiresAt:'2026-10-01T00:00:00.000Z'}})!;
   assert.match(text,/15 ใบต่อเดือน/);assert.match(text,/เหลือ 4 ใบ/);assert.match(text,/ไม่เติมใหม่ทุกเดือน/);assert.doesNotMatch(text,/19 ใบต่อเดือน/);
+});
+
+test('D1 all four purchase modes stay visible; policy, account availability and allowed actions keep their authority', async () => {
+  const { billingPurchaseChoices } = await import('./billing-display');
+  const status = { enabledPurchaseModes: ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'],
+    availablePurchaseModes: ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'], allowedActions: ['new_sales'] } as any;
+  assert.equal(billingPurchaseChoices(status).length, 4);
+  assert.ok(billingPurchaseChoices(status).every(choice => !choice.disabled && !choice.reason));
+  const closed = billingPurchaseChoices({ ...status, enabledPurchaseModes: ['CARD_AUTO'], availablePurchaseModes: ['CARD_AUTO'] });
+  assert.equal(closed.length, 4);
+  assert.ok(closed.filter(choice => choice.mode !== 'CARD_AUTO').every(choice => choice.disabled && choice.reason === 'ยังไม่เปิดใช้วิธีนี้'));
+  const incompatible = billingPurchaseChoices({ ...status, availablePurchaseModes: ['CARD_AUTO'] });
+  assert.ok(incompatible.filter(choice => choice.mode !== 'CARD_AUTO').every(choice => choice.disabled && !!choice.reason));
+  assert.ok(billingPurchaseChoices({ ...status, allowedActions: [], purchaseBlockCode: 'BILLING_CHECKOUT_PENDING' }).every(choice => choice.disabled && !!choice.reason));
+});
+
+test('D1 only the two one-time modes accept by purchase button', async () => {
+  const { billingOneTimePurchase } = await import('./billing-display');
+  for (const mode of ['CARD_ONCE', 'PROMPTPAY_ONCE'] as const) assert.equal(billingOneTimePurchase(mode), true);
+  for (const mode of ['CARD_AUTO', 'PROMPTPAY_RENEW', undefined] as const) assert.equal(billingOneTimePurchase(mode), false);
 });

@@ -12,7 +12,7 @@
  */
 import type { BrowserContext, Page } from '@playwright/test';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { ALL_FEATURE_ENTITLEMENT_KEYS } from '@watchdog-bms/contracts';
+import { hasAiSuggestionSourceAccess, ALL_FEATURE_ENTITLEMENT_KEYS } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../apps/api/src/generated/prisma/client';
 import { test, expect } from './harness/fixtures';
 import { SEED_USERS, WEB_BASE_URL, ensureBrowserLegalAcceptance, expectNoClientError, loginViaDevBff } from './harness/auth';
@@ -22,7 +22,7 @@ const SHOP = 'seed-local-company-2';
 const SWITCH = 'แสดงเมนูบันทึกด้วยมือบนเว็บ';
 const NOT_ENABLED = 'หน้าบันทึกด้วยมือไม่ได้เปิดใช้สำหรับร้านของคุณ';
 const CLOSED_NOTICE = 'หน้านี้ถูกปิดสำหรับร้านของคุณแล้ว คุณยังบันทึกรายการที่กำลังกรอกได้';
-const GUIDE_NOTE = ['เมนูนี้ไม่ได้เปิดใช้สำหรับร้านของคุณ', 'ขั้นตอนในหัวข้อนี้จึงยังใช้ไม่ได้ในขณะนี้'] as const;
+const GUIDE_NOTE = ['เมนูนี้ไม่ได้เปิดใช้สำหรับร้านของคุณ', 'ขั้นตอนในหัวข้อนี้ยังใช้ไม่ได้'] as const;
 const CONFIRM_HIDE = 'ซ่อนเมนูบันทึกด้วยมือของร้านนี้ใช่ไหม พนักงานที่กำลังกรอกอยู่จะบันทึกต่อได้ แต่ถ้าหน้าเว็บถูกโหลดใหม่จะกลับเข้าหน้านี้ไม่ได้ แนะนำให้ปิดนอกเวลางาน';
 const CONFIRM_UPLOAD_OFF = 'ร้านนี้ปิดอัปโหลดใบเสร็จอยู่ ถ้าซ่อนเมนูนี้ด้วย พนักงานที่ไม่มีสิทธิ์ตรวจสอบค่าใช้จ่ายจะไม่มีปุ่มสร้างรายจ่ายบนเว็บ';
 const UPLOAD_OFF_NOTE = 'ร้านนี้ปิดอัปโหลดใบเสร็จอยู่ และไม่ได้แสดงเมนูบันทึกด้วยมือ พนักงานที่ไม่มีสิทธิ์ตรวจสอบค่าใช้จ่ายจึงไม่มีปุ่มสร้างรายจ่ายบนเว็บ';
@@ -120,7 +120,12 @@ test.describe('manual-expense web entry — the setting a system admin switches 
       // The AI page's "how to" list (folded, so counted in the page rather than on screen) names the
       // other expense work and not this page.
       await shop.goto(`/companies/${SHOP}/ai-suggestions`);
-      await expect(shop.getByRole('main').locator('a[href$="/expenses/upload"]')).toHaveCount(1);
+      if (hasAiSuggestionSourceAccess(session.permissions)) {
+        await expect(shop.getByRole('main').locator('a[href$="/expenses/upload"]')).toHaveCount(1);
+      } else {
+        await expect(shop.getByRole('heading', { name: 'ไม่มีสิทธิ์เข้าถึง', exact: true })).toBeVisible();
+        await expect(shop.getByRole('main').getByRole('link', { name: /^กลับไป/ })).toBeVisible();
+      }
       await expect(manualLinks(shop)).toHaveCount(0);
 
       // The guide opens the section its address names; the note is the first thing in it.
@@ -137,8 +142,8 @@ test.describe('manual-expense web entry — the setting a system admin switches 
       await expect(shop).toHaveURL(new RegExp(`/companies/${SHOP}/expenses/manual$`));
       await expect(shop.getByRole('heading', { name: NOT_ENABLED, exact: true })).toBeVisible();
       await expect(shop.getByRole('main').getByRole('link', { name: 'อัปโหลดใบเสร็จ', exact: true })).toBeVisible();
-      await expect(shop.getByRole('main').getByRole('link', { name: 'ไปหน้ารายการค่าใช้จ่าย', exact: true })).toBeVisible();
-      await expect(shop.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true })).toHaveCount(0);
+      await expect(shop.getByRole('main').getByRole('link', { name: 'กลับไปรายการค่าใช้จ่าย', exact: true })).toBeVisible();
+      await expect(shop.getByRole('button', { name: 'บันทึกร่าง', exact: true })).toHaveCount(0);
       await expect(shop.getByText(/ไม่มีสิทธิ์|Forbidden/)).toHaveCount(0);
       await expectNoClientError(shop);
       expect(await fitsTheScreen(shop)).toBeLessThanOrEqual(1);
@@ -171,7 +176,7 @@ test.describe('manual-expense web entry — the setting a system admin switches 
       await shop.evaluate(() => { (window as unknown as { sameDocument?: boolean }).sameDocument = true; });
       const sameDocument = () => shop.evaluate(() => (window as unknown as { sameDocument?: boolean }).sameDocument === true);
       await shop.evaluate(() => window.dispatchEvent(new Event('focus')));
-      await expect(shop.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true })).toBeVisible();
+      await expect(shop.getByRole('button', { name: 'บันทึกร่าง', exact: true })).toBeVisible();
       await expect(shop.getByRole('heading', { name: NOT_ENABLED, exact: true })).toHaveCount(0);
       expect(await sidebarExpenseLinks(shop)).toEqual([...menuWithout.slice(0, menuWithout.indexOf('/expenses/upload') + 1), '/expenses/manual', ...menuWithout.slice(menuWithout.indexOf('/expenses/upload') + 1)]);
       expect(await sameDocument(), 'the page was refreshed in place, not reloaded or signed in again').toBe(true);
@@ -210,7 +215,7 @@ test.describe('manual-expense web entry — the setting a system admin switches 
       await shop.screenshot({ path: test.info().outputPath('shop-390-form-left-open.png'), fullPage: true });
 
       // Saved once, by the same permission as ever: hiding the menu is not a refusal to record by hand.
-      await shop.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
+      await shop.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
       // On to the saved record's own page (any address under /expenses except the manual page itself).
       await expect(shop).toHaveURL(new RegExp(`/companies/${SHOP}/expenses/(?!manual$)[^/]+$`));
       const saved = await client.expenseRecord.findMany({ where: { companyId: SHOP, lines: { some: { description } } }, select: { captureSource: true, status: true } });
@@ -219,7 +224,7 @@ test.describe('manual-expense web entry — the setting a system admin switches 
       // A new visit is judged again: the form does not open.
       await shop.goto(`/companies/${SHOP}/expenses/manual`);
       await expect(shop.getByRole('heading', { name: NOT_ENABLED, exact: true })).toBeVisible();
-      await expect(shop.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true })).toHaveCount(0);
+      await expect(shop.getByRole('button', { name: 'บันทึกร่าง', exact: true })).toHaveCount(0);
 
       // The same states on a computer screen, and the admin's row on a phone: nothing off the edge.
       await shop.setViewportSize({ width: 1280, height: 900 });
@@ -307,7 +312,7 @@ test.describe('manual-expense web entry — the setting a system admin switches 
       await admin.route('**/manual-expense-web-entry', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"boom"}' }));
       await toggle.click();
       await admin.getByRole('dialog').getByRole('button', { name: 'ซ่อนเมนู', exact: true }).click();
-      await expect(admin.getByText('ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง', { exact: true })).toBeVisible();
+      await expect(admin.getByText('ระบบขัดข้องชั่วคราว ลองอีกครั้ง', { exact: true })).toBeVisible();
       await expect(admin.getByText('boom')).toHaveCount(0);
       await expect(toggle).toHaveAttribute('aria-checked', 'true');
       await expect(toggle).toBeEnabled();

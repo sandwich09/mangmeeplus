@@ -82,7 +82,7 @@ describe('signup form validation', () => {
     assert.match(errors.ownerFirstName!, /ชื่อ/);
     assert.match(errors.ownerLastName!, /นามสกุล/);
     assert.match(errors.contactEmail!, /อีเมล/);
-    assert.match(errors.phoneNumber!, /เบอร์โทร/);
+    assert.match(errors.phoneNumber!, /เบอร์มือถือ/);
   });
 
   // The MX check is the server's job (422): a local rule that guesses would reject addresses the
@@ -284,7 +284,7 @@ describe('submit error copy', () => {
     // Unrelated 409s keep the reviewed generic copy — this is a mapping, not a relabelling.
     assert.match(
       signupSubmitErrorMessage(Object.assign(new Error('Conflict'), { status: 409 })),
-      /ดำเนินการต่อไม่ได้ในสถานะปัจจุบัน/,
+      /ทำต่อไม่ได้ในสถานะปัจจุบัน/,
     );
   });
 });
@@ -313,7 +313,7 @@ describe('recovering from a rejected submit', () => {
     assert.equal(signupFieldRejection(outage), null);
     const message = signupSubmitErrorMessage(outage);
     assert.match(message, /ตรวจอีเมลไม่ได้ชั่วคราว/);
-    assert.match(message, /ลองใหม่/);
+    assert.match(message, /กดส่งคำขอสมัครอีกครั้ง/);
     assert.doesNotMatch(message, /ตรวจตัวสะกด/);
     assert.doesNotMatch(message, /\+/);
   });

@@ -51,6 +51,8 @@ export type EmployeeSummary = {
   membershipId: string;
   /** The name WITHOUT คำนำหน้า. Use `employeeFullName` to render it with the title. */
   displayName: string;
+  /** Current account name; the shop profile name above is independently editable. */
+  accountDisplayName?: string;
   titlePrefix?: EmployeeTitlePrefix;
   /** Company-visible job title only; it never grants system permissions. */
   jobTitle?: string;

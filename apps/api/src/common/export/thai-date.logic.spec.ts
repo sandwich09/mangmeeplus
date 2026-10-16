@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { inflateRawSync } from 'node:zlib';
 import {
   ACCOUNTANT_INDEX_COLUMNS,
   type AccountantPackageIndexRow,
@@ -11,6 +12,20 @@ import {
 } from '../../modules/expenses/domain/logic/expense-export.logic';
 import { buildTaxExportArtifact } from '../../modules/tax/domain/logic/tax-export.logic';
 import { formatThaiExportDate, isIsoDateLike } from './thai-date.logic';
+
+function sheetXml(workbook: Buffer): string {
+  for (let offset = 0; workbook.readUInt32LE(offset) === 0x04034b50;) {
+    const size = workbook.readUInt32LE(offset + 18);
+    const nameLength = workbook.readUInt16LE(offset + 26);
+    const start = offset + 30 + nameLength + workbook.readUInt16LE(offset + 28);
+    if (workbook.subarray(offset + 30, offset + 30 + nameLength).toString() === 'xl/worksheets/sheet1.xml') {
+      const data = workbook.subarray(start, start + size);
+      return (workbook.readUInt16LE(offset + 8) === 8 ? inflateRawSync(data) : data).toString('utf8');
+    }
+    offset = start + size;
+  }
+  throw new Error('Workbook has no first sheet');
+}
 
 describe('Thai export date formatting', () => {
   it('renders ISO dates with Thai months and Buddhist years', () => {
@@ -48,7 +63,7 @@ describe('Thai export date formatting', () => {
 });
 
 describe('XLSX-only Thai export dates', () => {
-  it('keeps the accountant CSV byte-identical while formatting XLSX date columns', () => {
+  it('keeps the existing accountant CSV columns byte-identical while appending the VAT decision', () => {
     const row = Object.fromEntries(
       ACCOUNTANT_INDEX_COLUMNS.map((column) => [column, '']),
     ) as AccountantPackageIndexRow;
@@ -62,11 +77,15 @@ describe('XLSX-only Thai export dates', () => {
     });
 
     const csv = buildAccountantIndexCsv([row]);
-    const xlsx = buildAccountantIndexXlsx([row], 'full').toString('utf8');
+    const xlsx = sheetXml(buildAccountantIndexXlsx([row], 'full'));
 
+    // The full CSV now includes the appended document/evidence/address columns; dates stay ISO.
+    assert.equal(csv.split('\n')[0], ACCOUNTANT_INDEX_COLUMNS.join(','));
+    assert.ok(csv.includes('2026-07-28T23:59:00Z'));
+    assert.ok(csv.includes('2026-07-28T12:00:00Z'));
     assert.equal(
-      createHash('sha256').update(csv).digest('hex'),
-      '14916f6f7161050794cd67ed9edd681d1c18e93d8273d76293f5aa8bfd06fa95',
+      createHash('sha256').update(csv.split('\n').map(line => line.split(',').slice(0, -7).join(',')).join('\n')).digest('hex'),
+      '166ccf1be75f9f933cc439efef421396f041e0a4d317e146883ed57fc3e0b1a4',
     );
     assert.ok(xlsx.includes('29 ก.ค. 2569'));
     assert.ok(xlsx.includes('28 ก.ค. 2569'));
@@ -85,10 +104,10 @@ describe('XLSX-only Thai export dates', () => {
       buildTaxExportArtifact('CSV', 'tax', rows, {}).contentBase64,
       'base64',
     );
-    const xlsx = Buffer.from(
+    const xlsx = sheetXml(Buffer.from(
       buildTaxExportArtifact('XLSX', 'tax', rows, {}).contentBase64,
       'base64',
-    ).toString('utf8');
+    ));
 
     assert.equal(
       createHash('sha256').update(csv).digest('hex'),

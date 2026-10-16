@@ -25,13 +25,13 @@ test('says the page is not enabled for the shop and offers the two ways on that 
   assert.match(html, />หน้าบันทึกด้วยมือไม่ได้เปิดใช้สำหรับร้านของคุณ</);
   assert.deepEqual(hrefs(html), [
     ['/companies/co-1/expenses/upload', 'อัปโหลดใบเสร็จ'],
-    ['/companies/co-1/expenses', 'ไปหน้ารายการค่าใช้จ่าย'],
+    ['/companies/co-1/expenses', 'กลับไปรายการค่าใช้จ่าย'],
   ]);
   assert.doesNotMatch(html, /กรุณาติดต่อ/);
 });
 
 test('offers only the button the reader may open', async () => {
-  assert.deepEqual(hrefs(await render(['expense.create', 'expense.read_own'])), [['/companies/co-1/expenses', 'ไปหน้ารายการค่าใช้จ่าย']]);
+  assert.deepEqual(hrefs(await render(['expense.create', 'expense.read_own'])), [['/companies/co-1/expenses', 'กลับไปรายการค่าใช้จ่าย']]);
   assert.deepEqual(hrefs(await render(['expense.create', 'expense.receipt.upload'])), [['/companies/co-1/expenses/upload', 'อัปโหลดใบเสร็จ']]);
 });
 
@@ -40,8 +40,8 @@ test('offers only the button the reader may open', async () => {
 test('with no button to offer, asks the reader to contact the business owner and leaves no link behind', async () => {
   const html = await render(['expense.create']);
   assert.match(html, />หน้าบันทึกด้วยมือไม่ได้เปิดใช้สำหรับร้านของคุณ</);
-  assert.match(html, />กรุณาติดต่อเจ้าของกิจการ</);
-  assert.ok(html.includes(`>กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}<`), 'the owner is named from the one list of role names');
+  assert.match(html, />ติดต่อเจ้าของกิจการ</);
+  assert.ok(html.includes(`>ติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}<`), 'the owner is named from the one list of role names');
   assert.doesNotMatch(html, /ผู้ดูแลร้าน|ทีมงาน/);
   assert.deepEqual(hrefs(html), []);
   assert.doesNotMatch(html, /<button/);
@@ -52,13 +52,13 @@ test('with no button to offer, asks the reader to contact the business owner and
 test('tells an owner with no button to offer to contact the team, never to contact the owner', async () => {
   const html = await render(['expense.create'], true);
   assert.match(html, />หน้าบันทึกด้วยมือไม่ได้เปิดใช้สำหรับร้านของคุณ</);
-  assert.match(html, />กรุณาติดต่อทีมงานเพื่อเปิดหน้านี้ให้ร้านของคุณ</);
+  assert.match(html, />ติดต่อทีมงานเพื่อเปิดหน้านี้ให้ร้านของคุณ</);
   assert.ok(!html.includes(THAI_SYSTEM_ROLE_NAMES.OWNER), 'no sentence sends the owner to the owner');
   assert.deepEqual(hrefs(html), []);
   // With a button to offer, the owner reads the same buttons as anyone else.
   assert.deepEqual(hrefs(await render(['expense.create', 'expense.read', 'expense.receipt.upload'], true)), [
     ['/companies/co-1/expenses/upload', 'อัปโหลดใบเสร็จ'],
-    ['/companies/co-1/expenses', 'ไปหน้ารายการค่าใช้จ่าย'],
+    ['/companies/co-1/expenses', 'กลับไปรายการค่าใช้จ่าย'],
   ]);
 });
 
@@ -81,12 +81,12 @@ test('a sentence that lists file types keeps every type name whole, in the banne
   assert.equal(unsupported.replace(/<[^>]*>/g, ''), `⚠ รองรับเฉพาะไฟล์ ${ATTACHMENT_SOURCE_TYPES_LABEL}`); // the words themselves are untouched
   assert.ok(renderToStaticMarkup(React.createElement(InfoBanner, { message: `กรุณาเลือกไฟล์ลายมือชื่อเป็น${SIGNATURE_FILE_TYPES_LABEL}` })).includes(`รูปภาพ (${whole('เจเพ็ก,')} ${whole('พีเอ็นจี')})`));
   // Any other sentence is shown exactly as written: long Thai clauses must stay free to wrap.
-  const plain = renderToStaticMarkup(React.createElement(ErrorBanner, { message: 'บันทึกไม่สำเร็จ กรุณาลองใหม่' }));
-  assert.doesNotMatch(plain, /whitespace-nowrap/); assert.ok(plain.includes('⚠ บันทึกไม่สำเร็จ กรุณาลองใหม่'));
+  const plain = renderToStaticMarkup(React.createElement(ErrorBanner, { message: 'บันทึกไม่สำเร็จ ลองอีกครั้ง' }));
+  assert.doesNotMatch(plain, /whitespace-nowrap/); assert.ok(plain.includes('⚠ บันทึกไม่สำเร็จ ลองอีกครั้ง'));
   assert.equal(renderToStaticMarkup(React.createElement(WholeWords, { text: 'PDF หรือรูปภาพ' })), `${whole('PDF')} ${whole('หรือรูปภาพ')}`);
   const { readFileSync } = await import('node:fs');
   const source = (file: string) => readFileSync(new URL(file, import.meta.url), 'utf8');
-  assert.match(source('./ExpensesPages.tsx'), /<WholeWords text=\{t\('expenses\.upload_dropzone_hint', locale\)\} \/>/);
+  assert.match(source('./ExpensesPages.tsx'), /<WholeWords text="PDF หรือรูปภาพ" \/>/);
   assert.match(source('./ExpensesWorkspacePanels.tsx'), /<WholeWords text=\{IMAGE_SOURCE_TYPES_LABEL\} \/>/);
   assert.match(source('./SubstitutePaperSigningPanel.tsx'), /หรือ<WholeWords text=\{SIGNATURE_FILE_TYPES_LABEL\} \/> ขนาดไม่เกิน <span className="whitespace-nowrap">10 เมกะไบต์<\/span>/);
   // The claim forms draw from the same component.

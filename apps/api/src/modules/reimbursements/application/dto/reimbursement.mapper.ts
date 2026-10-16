@@ -31,7 +31,7 @@ import {
 } from '../../domain/logic/reimbursement.logic';
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest, type EffectivePolicy } from '../../domain/reimbursement.constants';
-import { assertCanReadRequestOrAssignment, mayCancelReimbursement } from '../use-cases/reimbursement-request.use-case';
+import { assertCanReadRequestOrAssignment, mayCancelReimbursement, mayDeleteReimbursementDraft } from '../use-cases/reimbursement-request.use-case';
 import { ForbiddenException } from '@nestjs/common';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import type { ClaimPayoutRecord, ClaimPayoutVersionRecord, PaymentPayoutDestinationRecord } from '../../infrastructure/reimbursement-payout';
@@ -69,7 +69,7 @@ export function toRequestSummary(
   r: ReimbursementRequestRecord,
   // `approverNames` is what turns a PENDING_APPROVAL desk from the pool label into named
   // people; a caller that has not loaded the names simply gets the pool.
-  options: { allowMissingReceiptWithReason?: boolean; approverNames?: Record<string, string>; currentPolicy?: EffectivePolicy } = {},
+  options: { allowMissingReceiptWithReason?: boolean; approverNames?: Record<string, string>; currentPolicy?: EffectivePolicy; hasAcknowledgedPaperCopy?: boolean } = {},
 ): ReimbursementRequestSummary {
   // A claim sent back from the pay step for its payout destination (payout spec §14): whom it waits for.
   const correctionPhase = payoutCorrectionPhase(r);
@@ -98,6 +98,8 @@ export function toRequestSummary(
     currency: r.currency,
     incurredDate: r.incurredDate.toISOString(),
     status: r.status,
+    rejectionReason: r.rejectionReason,
+    ...(r.claimSignatures ? { documentSignedVia: documentSignedVia(r, options.hasAcknowledgedPaperCopy ?? false) } : {}),
     ...(desk ? { currentDesk: desk } : {}),
     // A cancelled claim keeps the intent it was cancelled with; only one still on its way is pending.
     ...(r.cancellationPendingAt && r.status !== 'CANCELLED' && r.status !== 'VOIDED' ? { cancellationPending: true as const } : {}),
@@ -458,14 +460,25 @@ export async function detailWithFileNames(
     : req.receiptRequirementStatus;
   // The ack hash is the LIVE claim, not the submit-frozen approval hash: a signer
   // acknowledges what the form prints right now.
-  const duplicateCandidates = await Promise.all((req.duplicateCandidates ?? []).map(async candidate => {
+  const comparisons = repo.listClaimDuplicateComparisons ? await repo.listClaimDuplicateComparisons(companyId, req.id) : req.duplicateCandidates ?? [];
+  const resolverNames = await repo.getUserDisplayNames(companyId, comparisons.flatMap(row => row.resolvedByUserId ? [row.resolvedByUserId] : []));
+  const duplicateCandidates: ReimbursementDuplicateCandidateSummary[] = await Promise.all(comparisons.map(async candidate => {
     const summary = toDuplicateSummary(candidate);
     const target = candidate.candidateRequestId ? await repo.findRequestById(companyId, candidate.candidateRequestId, true) : null;
     const readable = target && await assertCanReadRequestOrAssignment({ ...viewer, companyId } as RequestContext, target, repo)
       .then(() => true, error => { if (error instanceof ForbiddenException) return false; throw error; });
-    if (readable) return summary;
-    return { id: summary.id, candidateType: summary.candidateType, score: summary.score, status: summary.status, reason: reimbursementDuplicateReasonText([summary.candidateType]) };
+    const resolution = { resolvedAt: candidate.resolvedAt?.toISOString(), resolvedByName: candidate.resolvedByUserId ? resolverNames[candidate.resolvedByUserId] ?? 'ผู้ตรวจรายการซ้ำ' : undefined };
+    const facts = target ? { ...resolution, documentNumber: target.requestNo, requesterOrPayee: target.requesterDisplayNameSnapshot,
+      amount: target.amount, currency: target.currency, date: target.incurredDate.toISOString(), canOpen: Boolean(readable) } : { ...resolution, canOpen: false };
+    if (readable) return { ...summary, ...facts };
+    return { ...facts, id: summary.id, candidateType: summary.candidateType, score: summary.score, status: summary.status, reason: reimbursementDuplicateReasonText([summary.candidateType]) };
   }));
+  if (repo.listClaimDuplicateExpenseTargets) {
+    for (const comparison of await repo.listClaimDuplicateExpenseTargets(companyId, req.id)) {
+      const canOpen = await evidence.canReadExpense({ ...viewer, companyId } as RequestContext, comparison.candidateExpenseId);
+      duplicateCandidates.push({ ...comparison, candidateExpenseId: canOpen ? comparison.candidateExpenseId : undefined, canOpen });
+    }
+  }
   return { ...toRequestDetail({ ...req, receiptRequirementStatus }, primaryFileName, lineFileNames, displayNames, {
     signedCopies: toSignedCopySummaries(signedCopies, displayNames),
     claimSignatureAckHash: claimSignatureAckHash(req),
@@ -486,5 +499,5 @@ export async function detailWithFileNames(
     payout: toPayoutSummary(payout, displayNames),
     paymentDestinations,
     payoutCorrection: toPayoutCorrection(req, displayNames, approvedVersion === undefined ? undefined : approvedAccounts?.[approvedVersion]),
-  }), duplicateCandidates, viewerCanCancel: !req.cancellationPendingAt && mayCancelReimbursement({ ...viewer, companyId } as RequestContext, req) };
+  }), duplicateCandidates, viewerCanCancel: !req.cancellationPendingAt && (mayCancelReimbursement({ ...viewer, companyId } as RequestContext, req) || mayDeleteReimbursementDraft({ ...viewer, companyId } as RequestContext, req)) };
 }

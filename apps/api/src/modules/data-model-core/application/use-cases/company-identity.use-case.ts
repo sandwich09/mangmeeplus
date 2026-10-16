@@ -222,7 +222,7 @@ export class CompanyIdentityUseCase {
       const company = await tx.company.findUnique({
         where: { id: companyId },
         select: {
-          taxId: true, registeredName: true, addressJson: true, timezone: true,
+          name: true, taxId: true, registeredName: true, addressJson: true, timezone: true,
           legalIdentityVersion: true, legalIdentityCaptureCompletedAt: true,
           lastLegalChangeEffectiveDate: true, legalIdentityAuthoritativeAt: true,
         },
@@ -250,7 +250,9 @@ export class CompanyIdentityUseCase {
         today: todayCivilDate(company.timezone),
       };
 
-      const rejection = rejectLegalIdentityChange(body, context);
+      // The shop's web name is independent of the established legal fields and their latches.
+      const displayNameChanged = normalized.displayName !== undefined && normalized.displayName !== company.name;
+      const rejection = displayNameChanged && changedFields.length === 0 ? null : rejectLegalIdentityChange(body, context);
       if (rejection) {
         throw new UnprocessableEntityException(
           rejection.code === 'identity_change_kind_not_allowed'
@@ -263,6 +265,7 @@ export class CompanyIdentityUseCase {
         );
       }
 
+      const changeKind = changedFields.length === 0 ? 'CORRECTION' : body.changeKind;
       const nextVersion = company.legalIdentityVersion + 1;
       const taxIdChanged = changedFields.includes('taxId');
       const nextIdentity = {
@@ -274,11 +277,12 @@ export class CompanyIdentityUseCase {
       await tx.company.update({
         where: { id: companyId },
         data: {
+          ...(normalized.displayName !== undefined ? { name: normalized.displayName } : {}),
           ...(normalized.taxId !== undefined ? { taxId: normalized.taxId } : {}),
           ...(normalized.registeredName !== undefined ? { registeredName: normalized.registeredName } : {}),
           ...(normalized.addressJson !== undefined ? { addressJson: normalized.addressJson as Prisma.InputJsonValue } : {}),
           legalIdentityVersion: nextVersion,
-          ...(body.changeKind === 'LEGAL_CHANGE'
+          ...(changeKind === 'LEGAL_CHANGE'
             ? { lastLegalChangeEffectiveDate: civilDateToUtcDate(body.effectiveFrom!) }
             : {}),
           // A new number invalidates every verification of the old one. The authoritative latch
@@ -309,9 +313,9 @@ export class CompanyIdentityUseCase {
           companyId,
           legalIdentityVersion: nextVersion,
           snapshotJson: nextIdentity as unknown as Prisma.InputJsonValue,
-          changeKind: body.changeKind,
-          effectiveFrom: body.changeKind === 'LEGAL_CHANGE' ? civilDateToUtcDate(body.effectiveFrom!) : null,
-          correctionReason: body.changeKind === 'CORRECTION' ? body.correctionReason : null,
+          changeKind,
+          effectiveFrom: changeKind === 'LEGAL_CHANGE' ? civilDateToUtcDate(body.effectiveFrom!) : null,
+          correctionReason: changeKind === 'CORRECTION' ? body.correctionReason : null,
           note: body.note ?? null,
           evidenceRef: body.evidenceRef ?? null,
           actorUserId: ctx.userId,
@@ -331,12 +335,13 @@ export class CompanyIdentityUseCase {
           result: 'SUCCESS',
           riskLevel: 'CRITICAL',
           metadataJson: {
-            changeKind: body.changeKind,
+            changeKind,
             changedFields,
             subjectLast4Prev: maskTaxId(company.taxId),
             subjectLast4Next: maskTaxId(nextIdentity.taxId),
             registeredNameChanged: changedFields.includes('registeredName'),
             addressFieldsChanged: changedFields.includes('addressJson'),
+            displayNameChanged,
           },
         },
         tx,
@@ -345,7 +350,7 @@ export class CompanyIdentityUseCase {
       // R-A2/R-E3: the registered name and address are what Stripe prints on the documents, so every
       // write of them — the shop's own, or the team's through UpdatePartnerIdentityUseCase — queues the
       // Customer sync in this same transaction. A no-op with billing off or no Stripe Customer yet.
-      await enqueueCustomerProfileSync(tx, this.config, companyId, syncReason, ctx.userId, nextVersion);
+      if (changedFields.length) await enqueueCustomerProfileSync(tx, this.config, companyId, syncReason, ctx.userId, nextVersion);
 
       return { legalIdentityVersion: nextVersion, revisionId: revision.id };
     });
@@ -416,11 +421,16 @@ export class CompanyIdentityUseCase {
   }
 
   private normalizeBody(body: PatchCompanyIdentityRequest): {
+    displayName?: string;
     taxId?: string;
     registeredName?: string;
     addressJson?: CompanyLegalAddress;
   } {
-    const normalized: { taxId?: string; registeredName?: string; addressJson?: CompanyLegalAddress } = {};
+    const normalized: { displayName?: string; taxId?: string; registeredName?: string; addressJson?: CompanyLegalAddress } = {};
+    if (body.displayName !== undefined) {
+      if (typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.trim().length > 200) throw new UnprocessableEntityException('ชื่อร้านต้องมี 1 ถึง 200 ตัวอักษร แก้ชื่อร้านแล้วบันทึกอีกครั้ง');
+      normalized.displayName = body.displayName.trim();
+    }
     if (body.taxId !== undefined) {
       const digits = normalizeTaxId(body.taxId);
       if (!/^\d{13}$/.test(digits)) throw new UnprocessableEntityException('taxId must be 13 digits');

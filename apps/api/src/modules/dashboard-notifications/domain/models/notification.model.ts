@@ -167,6 +167,7 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   'expense.substitute_receipt_approval_pending',
   'expense.wht_certificate_cancelled',
   // Disbursement voucher spec §8.6: direct notices, including mandatory LINE delivery.
+  'expense.review_requested',
   'expense.disbursement_pending_approval',
   'expense.disbursement_approved',
   'expense.disbursement_returned',
@@ -204,6 +205,7 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
 export const ALWAYS_DELIVERED_TRIGGER_KEYS: string[] = [
   'expense.wht_certificate_cancelled',
   // Disbursement voucher spec §8.6: direct notices, including mandatory LINE delivery.
+  'expense.review_requested',
   'expense.disbursement_pending_approval',
   'expense.disbursement_approved',
   'expense.disbursement_returned',
@@ -273,6 +275,7 @@ export const NOTIFICATION_TRIGGER_FEATURE_KEYS: Readonly<Record<string, readonly
   'expense.substitute_receipt_signature_pending': ['expenses'],
   'expense.substitute_receipt_approval_pending': ['expenses'],
   'expense.wht_certificate_cancelled': ['expenses'],
+  'expense.review_requested': ['expenses'],
   'expense.disbursement_pending_approval': ['expenses'],
   'expense.disbursement_approved': ['expenses'],
   'expense.disbursement_returned': ['expenses'],

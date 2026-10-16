@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { primaryButtonClass } from '@/common/components/button/button-classes';
 import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
 
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
@@ -16,10 +17,9 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-brand-500 to-brand-900">
               <MangmeeLogo size={36} />
             </div>
-            <p className="mt-6 text-xs font-bold uppercase tracking-[.2em] text-brand-600">System error</p>
-            <h1 className="mt-3 text-2xl font-extrabold text-gray-900">ระบบขัดข้องชั่วคราว</h1>
-            <p className="mt-3 text-sm leading-7 text-gray-500">กรุณาลองเปิดระบบอีกครั้ง หากยังพบปัญหาให้ติดต่อผู้ดูแลระบบ</p>
-            <button type="button" onClick={reset} className="mt-7 inline-flex h-10 items-center rounded-lg bg-linear-to-br from-brand-500 to-brand-700 px-4 text-sm font-medium text-white">
+            <h1 className="mt-6 text-2xl font-extrabold text-gray-900">ระบบขัดข้องชั่วคราว</h1>
+            <p className="mt-3 text-sm leading-7 text-gray-500">ลองอีกครั้ง ถ้ายังไม่ได้ ติดต่อทีมงานมั่งมี <a href="tel:0982565628" className="font-semibold text-brand-700 underline">098-256-5628</a></p>
+            <button type="button" onClick={reset} className={`${primaryButtonClass} mt-7`}>
               ลองอีกครั้ง
             </button>
           </section>

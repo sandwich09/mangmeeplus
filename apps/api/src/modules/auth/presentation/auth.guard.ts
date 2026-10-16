@@ -59,6 +59,7 @@ const TERM_RECOVERY_ROUTES = new Set([
   'GET /v1/auth/legal-acceptance', 'POST /v1/auth/legal-acceptance',
   'POST /v1/auth/password/change', 'POST /v1/auth/logout',
   'GET /v1/auth/account/security',
+  'GET /v1/auth/account/display-name', 'PATCH /v1/auth/account/display-name',
   'PATCH /v1/auth/me/contact', 'POST /v1/auth/me/password/set',
 ]);
 
@@ -254,7 +255,7 @@ export class AuthGuard implements CanActivate {
         }).catch(() => null);
         if (company) {
           throw new ForbiddenException({
-            code: 'company_access_unavailable',
+            code: (error.getResponse() as { code?: string }).code === 'company_membership_disabled' ? 'company_membership_disabled' : 'company_access_unavailable',
             message: 'No access to the requested company.',
             companyName: company.name,
           });

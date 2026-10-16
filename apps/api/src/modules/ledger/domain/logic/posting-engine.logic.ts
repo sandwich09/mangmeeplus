@@ -294,7 +294,11 @@ export function buildBoundExpenseAccrualLines(
 export type TransactionTaxPostingResult = { lines?: LedgerJournalLineInput[]; error?: string; handled: boolean };
 
 /** Builds tax lines only from immutable server snapshots; never from caller-supplied account ids. */
-export function buildTransactionTaxPostingLines(source: LedgerSourcePostingInput, baseLines?: LedgerJournalLineInput[] | null): TransactionTaxPostingResult {
+export function buildTransactionTaxPostingLines(source: LedgerSourcePostingInput & { inputVatClaimStatus?: string; taxEvidenceStatus?: string }, baseLines?: LedgerJournalLineInput[] | null): TransactionTaxPostingResult {
+  const expenseCannotClaim = source.sourceType === 'expense.record'
+    && !(source.inputVatClaimStatus === 'CLAIMABLE' && source.taxEvidenceStatus === 'USABLE_FOR_TAX');
+  const isExpenseVatCost = (component: TransactionTaxComponentPreview) => expenseCannotClaim
+    && component.snapshot.taxRegime === 'VAT' && component.snapshot.taxDirection === 'INPUT';
   const lineComponents = source.lines.flatMap((line) => (line.taxComponents ?? []).map((component) => ({ line, component })));
   const snapshots = lineComponents.length
     ? lineComponents.map(({ component }) => component.snapshot)
@@ -350,6 +354,7 @@ export function buildTransactionTaxPostingLines(source: LedgerSourcePostingInput
   }));
   const adjustment = { DEBIT: new Decimal(0), CREDIT: new Decimal(0) };
   for (const { component } of lineComponents.filter(({ component }) => component.componentKey === 'VAT')) {
+    if (isExpenseVatCost(component)) continue; // Domestic VAT is already in the gross cost.
     const amount = new Decimal(component.snapshot.taxAmount).abs();
     for (const assignment of component.accountAssignments) adjustment[assignment.postingSide] = adjustment[assignment.postingSide].add(amount);
   }
@@ -362,10 +367,19 @@ export function buildTransactionTaxPostingLines(source: LedgerSourcePostingInput
     if (new Decimal(base[amountKey] ?? 0).isZero()) lines.splice(lines.indexOf(base), 1);
   }
   for (const { line, component } of lineComponents) {
+    if (isExpenseVatCost(component) && component.componentKey === 'VAT') continue;
     const amount = new Decimal(component.snapshot.taxAmount).abs();
     if (amount.lte('0.0001')) continue;
     if (!component.accountAssignments.length) return { handled: true, error: `tax_account_mapping_missing:${component.componentKey}` };
     for (const assignment of component.accountAssignments) {
+      if (isExpenseVatCost(component) && assignment.postingSide === 'DEBIT') {
+        // Import/service VAT is additional to the commercial gross: keep its liability,
+        // but charge the debit to the commercial cost instead of any input-VAT account.
+        const cost = lines.find(entry => decimal(entry.debitAmount).gt(0) && !entry.taxComponentKey);
+        if (!cost) return { handled: true, error: 'tax_base_assignment_missing:DEBIT' };
+        cost.debitAmount = decimal(cost.debitAmount).add(amount).toFixed(4);
+        continue;
+      }
       lines.push({
         accountId: assignment.accountId,
         ...(assignment.postingSide === 'DEBIT' ? { debitAmount: amount.toFixed(4) } : { creditAmount: amount.toFixed(4) }),

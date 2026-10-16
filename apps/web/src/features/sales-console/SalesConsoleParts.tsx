@@ -84,7 +84,7 @@ export function SalesDealSummary({ deal }: { deal: SalesDealView }) {
         <dd className="text-gray-900">
           {[
             snapshot.featureKeys.includes('thai_tax') && 'เมนูภาษี (สิทธิ์ดีลเดิม)',
-            snapshot.featureKeys.includes('wht_pnd53') && 'ออก ภ.ง.ด.53 ในระบบ',
+            snapshot.featureKeys.includes('wht_pnd53') && 'ออก ภ.ง.ด.3 และ ภ.ง.ด.53 ในระบบ',
             snapshot.featureKeys.includes('wht_50bis') && 'ออกหนังสือรับรอง 50 ทวิในระบบ',
           ].filter(Boolean).join(' · ') || 'ไม่มี'}
         </dd>

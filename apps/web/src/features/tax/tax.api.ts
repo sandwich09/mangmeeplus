@@ -1,3 +1,4 @@
+import type { WhtCertificateHandoffListQuery, WithholdingMonthDto, WithholdingMonthsDto, WhtCertificateHandoffPageDto, WhtFormType, WhtHandoffStatus, WhtReportDto } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 import { prepareAttachmentUpload, withGenericUploadError } from '@/common/files/upload-file.logic';
 import { uploadReceiptFile } from '../expenses/expenses.api';
@@ -130,7 +131,7 @@ export function getTaxProfile(companyId: string): Promise<CompanyTaxProfile> {
   return apiFetch(`/v1/companies/${companyId}/tax/profile`);
 }
 
-export type CompanyTaxSignature = Pick<CompanyTaxProfile, 'signatureMode' | 'signatureImageAttachmentId'>;
+export type CompanyTaxSignature = Pick<CompanyTaxProfile, 'signatureMode' | 'signatureImageAttachmentId'> & { signatureImageUrl: string | null; signatureStoredAt: string | null };
 
 export function getTaxSignature(companyId: string): Promise<CompanyTaxSignature> {
   return apiFetch(`/v1/companies/${companyId}/tax/profile/signature`);
@@ -184,8 +185,8 @@ export function resolveReviewIssue(companyId: string, issueId: string, note: str
   return apiFetch(`/v1/companies/${companyId}/tax/review-issues/${issueId}/resolve`, { method: 'PATCH', body: JSON.stringify({ note }) });
 }
 
-export function markFiled(companyId: string, periodId: string, note?: string): Promise<TaxPeriod> {
-  return apiFetch(`/v1/companies/${companyId}/tax/periods/${periodId}/mark-filed`, { method: 'PATCH', body: JSON.stringify({ note }) });
+export function markFiled(companyId: string, periodId: string, note?: string, establishmentCode?: string, sequence?: number): Promise<TaxPeriod> {
+  return apiFetch(`/v1/companies/${companyId}/tax/periods/${periodId}/mark-filed`, { method: 'PATCH', body: JSON.stringify({ note, establishmentCode, sequence }) });
 }
 
 export function markPaid(companyId: string, periodId: string, note?: string): Promise<TaxPeriod> {
@@ -194,4 +195,60 @@ export function markPaid(companyId: string, periodId: string, note?: string): Pr
 
 export function listWhtCategories(companyId: string, status?: string): Promise<WhtCategory[]> {
   return apiFetch(`/v1/companies/${companyId}/tax/wht-categories${qs({ status })}`);
+}
+
+
+export function listWithholdingMonths(companyId: string): Promise<WithholdingMonthsDto> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/months`);
+}
+
+export function getWithholdingMonth(companyId: string, periodKey: string): Promise<WithholdingMonthDto> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/months/${encodeURIComponent(periodKey)}`);
+}
+
+export function listWithholdingPeriods(companyId: string, formType: WhtFormType): Promise<{ items: TaxPeriod[]; total: number }> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/${formType}/periods`);
+}
+
+export function listWithholdingEvents(companyId: string, formType: WhtFormType, periodId: string): Promise<TaxEvent[]> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/${formType}/periods/${periodId}/events`);
+}
+
+export function syncWithholding(companyId: string, formType: WhtFormType): Promise<{ synced: true }> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/${formType}/sync`, { method: 'POST', suppressErrorToast: true });
+}
+
+export function generateWithholdingReport(companyId: string, formType: WhtFormType, periodId: string): Promise<WhtReportDto> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/${formType}/periods/${periodId}/report`, { method: 'POST' });
+}
+
+export function exportWithholding(companyId: string, formType: WhtFormType, periodId: string, exportFormat: 'PDF' | 'XLSX' = 'PDF', establishmentCode?: string, sequence?: number): Promise<TaxFilingPackageResult> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/${formType}/periods/${periodId}/export`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ exportFormat, establishmentCode, sequence }) });
+}
+
+export function listWithholdingIssues(companyId: string, formType: WhtFormType, periodId: string): Promise<ReviewIssue[]> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/${formType}/periods/${periodId}/review-issues`);
+}
+
+export function resolveWithholdingIssue(companyId: string, formType: WhtFormType, issueId: string, note: string): Promise<ReviewIssue> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/${formType}/review-issues/${issueId}/resolve`, { method: 'PATCH', body: JSON.stringify({ note }) });
+}
+
+export function markWithholdingFiled(companyId: string, formType: WhtFormType, periodId: string, note?: string, establishmentCode?: string, sequence?: number): Promise<TaxPeriod> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/${formType}/periods/${periodId}/mark-filed`, { method: 'PATCH', body: JSON.stringify({ note, establishmentCode, sequence }) });
+}
+
+export function listWithholdingCertificates(companyId: string, params: WhtCertificateHandoffListQuery = {}): Promise<WhtCertificateHandoffPageDto> {
+  return apiFetch(`/v1/companies/${companyId}/wht/payment-handoffs${qs({ page: 1, ...params })}`);
+}
+
+export function getWhtPayerMode(companyId: string, periodKey?: string) {
+  return apiFetch<import('@watchdog-bms/contracts').WhtPayerModeDto>(`/v1/companies/${companyId}/tax/withholding/payer-mode${qs({ periodKey })}`, { suppressErrorToast: true });
+}
+export function answerWhtPayerMode(companyId: string, answer: import('@watchdog-bms/contracts').AnswerWhtPayerModeRequest) {
+  return apiFetch<import('@watchdog-bms/contracts').WhtPayerModeDto>(`/v1/companies/${companyId}/tax/withholding/payer-mode`, { method: 'POST', body: JSON.stringify(answer), suppressErrorToast: true });
+}
+
+export function confirmWithholdingRows(companyId: string, filingId: string): Promise<{ confirmed: true }> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/filings/${filingId}/confirm-rows`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ confirmed: true }) });
 }

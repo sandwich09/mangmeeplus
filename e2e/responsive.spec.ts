@@ -65,14 +65,12 @@ const CARD_VIEW_CASES = [
     cardTestId: 'reimbursements-mine-card',
     // A card opens the claim's journey page (reimbursement step journey, Phase 2).
     url: /\/reimbursements\/[^/?#]+$/,
-    // 9, not 8. The header has carried nine columns since before this branch — the region is
-    // byte-identical to origin/develop — so the constant had simply gone stale and the desktop
-    // parity test was failing on develop too. Corrected rather than left red, since a test
-    // nobody trusts is worse than no test.
-    columnCount: 9,
-    // The hub's lists switch by the width of their own card, and the nine-column table needs 1280 px of it:
-    // on a 1280 px screen the side menu leaves 901 px, where the list is cards and no table scrolls sideways.
-    desktopViewport: { width: 1920, height: 1080 },
+    // Five since 2026-10-13: เลขที่, ใบเบิก, สถานะ, วันที่, ยอดเงิน. The row itself opens the claim, so the list has no
+    // action column, and the nine columns before it (count, category, payment, desk, age …) are said on the claim.
+    columnCount: 5,
+    // The hub's lists switch by the width of their own card (52rem): on a 1280 px screen the side menu leaves
+    // 901 px, where the five columns read as a table. Before, the nine-column table needed 1920 px of screen.
+    desktopViewport: { width: 1280, height: 800 },
   },
   {
     route: '/expenses',
@@ -193,7 +191,8 @@ test.describe('P24-2a shared-shell targets', () => {
       const originalUrl = authedPage.url();
       const drawer = authedPage.locator('aside').first();
       const compact = width < 1024;
-      const toggle = authedPage.locator(compact ? 'header' : 'aside').getByRole('button', { name: 'สลับเมนู', exact: true });
+      // The wide-screen button says what it does since 2026-10-13: ย่อเมนู while open, ขยายเมนู while it is a rail.
+      const toggle = authedPage.locator(compact ? 'header' : 'aside').getByRole('button', { name: compact ? 'สลับเมนู' : /^(ย่อเมนู|ขยายเมนู)$/, exact: true });
       const bell = authedPage.getByRole('button', { name: 'การแจ้งเตือน', exact: true });
 
       // Each fixture has a fresh page/context; also prove the initial desktop state in rendered pixels.
@@ -279,7 +278,7 @@ test.describe('P24-2a shared-shell targets', () => {
       await gotoAndSettle(authedPage, companyId, '/dashboard');
       expect(await authedPage.evaluate(() => window.matchMedia('(forced-colors: active)').matches)).toBe(true);
       await authedPage.keyboard.press('Tab');
-      const toggle = authedPage.locator(width < 1024 ? 'header' : 'aside').getByRole('button', { name: 'สลับเมนู', exact: true });
+      const toggle = authedPage.locator(width < 1024 ? 'header' : 'aside').getByRole('button', { name: width < 1024 ? 'สลับเมนู' : /^(ย่อเมนู|ขยายเมนู)$/, exact: true });
       const bell = authedPage.getByRole('button', { name: 'การแจ้งเตือน', exact: true });
       for (const control of [toggle, bell]) {
         await expect(control).toBeVisible();
@@ -299,7 +298,7 @@ test.describe('P24-2a shared-shell targets', () => {
 });
 
 test.describe('P24-2b scope-selector targets', () => {
-  const retryName = 'โหลดข้อมูลไม่สำเร็จ · ลองใหม่';
+  const retryName = 'โหลดข้อมูลไม่สำเร็จ · ลองอีกครั้ง';
   const companyUrl = '**/api/v1/auth/me/companies';
   const branchUrl = '**/api/v1/companies/*/branches?status=ACTIVE&pageSize=100';
 
@@ -350,7 +349,7 @@ test.describe('P24-2b scope-selector targets', () => {
       await authedPage.setViewportSize({ width, height: width === 360 ? 740 : width === 390 ? 844 : 900 });
       await gotoAndSettle(authedPage, companyId, '/dashboard');
       const originalUrl = authedPage.url();
-      const company = authedPage.getByRole('button', { name: 'สลับบริษัท', exact: true });
+      const company = authedPage.getByRole('button', { name: 'เปลี่ยนร้าน', exact: true });
       const branch = authedPage.getByRole('button', { name: 'เลือกสาขา', exact: true });
       await expect(company).toContainText(companies.find((c) => c.companyId === companyId)!.companyName);
       await expect(branch).toHaveText('ทุกสาขา (รวม)');
@@ -406,7 +405,7 @@ test.describe('P24-2b scope-selector targets', () => {
       });
       await authedPage.setViewportSize({ width, height: width === 360 ? 740 : width === 390 ? 844 : 900 });
       await gotoAndSettle(authedPage, companyId, '/dashboard');
-      for (const name of ['สลับบริษัท', 'เลือกสาขา']) {
+      for (const name of ['เปลี่ยนร้าน', 'เลือกสาขา']) {
         const trigger = authedPage.getByRole('button', { name, exact: true });
         await target(trigger, name);
         await trigger.click();
@@ -429,7 +428,7 @@ test.describe('P24-2b scope-selector targets', () => {
   }
 
   for (const width of [360, 390, 1280]) for (const [kind, url, name, count] of [
-    ['company', companyUrl, 'สลับบริษัท', 20],
+    ['company', companyUrl, 'เปลี่ยนร้าน', 20],
     ['branch', branchUrl, 'เลือกสาขา', 100],
   ] as const) {
     test(`${width}px — synthetic long ${kind} menu scrolls to a valid last option (geometry only)`, async ({ authedPage, api, companyId }, testInfo) => {
@@ -508,7 +507,7 @@ test.describe('P24-2b scope-selector targets', () => {
         await target(control, 'lookup retry');
         await expect(control).toHaveAttribute('aria-label', retryName);
         await expect(control).toHaveAttribute('title', retryName);
-        const visibleAction = width < 640 ? 'ลองใหม่' : retryName;
+        const visibleAction = width < 640 ? 'ลองอีกครั้ง' : retryName;
         const visibleCopy = control.getByText(visibleAction, { exact: true });
         await expect(visibleCopy).toBeVisible();
         await expect(control).toHaveAccessibleName(new RegExp(visibleAction, 'i'));
@@ -523,7 +522,7 @@ test.describe('P24-2b scope-selector targets', () => {
       const before = { ...reads };
       fail = false;
       await retries.first().press('Enter');
-      await expect(authedPage.getByRole('button', { name: 'สลับบริษัท', exact: true })).toBeVisible();
+      await expect(authedPage.getByRole('button', { name: 'เปลี่ยนร้าน', exact: true })).toBeVisible();
       await expect(retries).toHaveCount(1);
       await retries.press('Enter');
       await expect(authedPage.getByRole('button', { name: 'เลือกสาขา', exact: true })).toBeVisible();
@@ -540,7 +539,7 @@ test.describe('P24-2b scope-selector targets', () => {
       await gotoAndSettle(authedPage, companyId, '/dashboard');
       expect(await authedPage.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true);
       await authedPage.keyboard.press('Tab');
-      for (const name of ['สลับบริษัท', 'เลือกสาขา']) {
+      for (const name of ['เปลี่ยนร้าน', 'เลือกสาขา']) {
         const trigger = authedPage.getByRole('button', { name, exact: true });
         await focus(trigger, true);
         await target(trigger, name);
@@ -566,14 +565,14 @@ test.describe('P24-2b scope-selector targets', () => {
     await authedPage.route(branchUrl, (route) => route.fulfill({ status: 403, json: { statusCode: 403, message: 'Forbidden', error: 'Forbidden' } }));
     await authedPage.setViewportSize({ width: 390, height: 844 });
     await gotoAndSettle(authedPage, companyId, '/dashboard');
-    await expect(authedPage.getByRole('button', { name: 'สลับบริษัท', exact: true })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'เปลี่ยนร้าน', exact: true })).toBeVisible();
     await expect(authedPage.getByRole('button', { name: 'เลือกสาขา', exact: true })).toHaveCount(0);
     await expect(authedPage.locator('header').getByRole('button', { name: retryName, exact: true })).toHaveCount(0);
     await authedPage.route(companyUrl, (route) => route.fulfill({ status: 403, json: { statusCode: 403, message: 'Forbidden', error: 'Forbidden' } }));
     await authedPage.reload();
     const retry = authedPage.locator('header').getByRole('button', { name: retryName, exact: true });
     await target(retry, 'company 403 retry');
-    await expect(authedPage.getByRole('button', { name: 'สลับบริษัท', exact: true })).toHaveCount(0);
+    await expect(authedPage.getByRole('button', { name: 'เปลี่ยนร้าน', exact: true })).toHaveCount(0);
     await expect(authedPage.getByRole('button', { name: 'เลือกสาขา', exact: true })).toHaveCount(0);
   });
 
@@ -650,6 +649,8 @@ test.describe('Mobile responsive invariants', () => {
 
   test('/settings/access-overview — permission summary keeps names and status readable', async ({ authedPage, companyId }) => {
     await gotoAndSettle(authedPage, companyId, '/settings/access-overview');
+    // Below 1024 px the list is the page and a person is their own view: open a person first.
+    if ((authedPage.viewportSize()?.width ?? 1280) < 1024) await authedPage.getByRole('button', { name: /^OW OWNER/ }).click();
 
     const summary = authedPage.getByTestId('access-permission-summary');
     await expect(summary.getByTestId('access-permission-row').first()).toBeVisible();
@@ -671,6 +672,8 @@ test.describe('Mobile responsive invariants', () => {
   // only the menu names showed and the ticks had to be scrolled to sideways.
   test('/settings/permissions — a role’s menu rights are read without scrolling sideways', async ({ authedPage, companyId }) => {
     await gotoAndSettle(authedPage, companyId, '/settings/permissions');
+    // Below 1024 px the list of roles is the page and a role is its own view: open a role first.
+    if ((authedPage.viewportSize()?.width ?? 1280) < 1024) await authedPage.getByRole('button', { name: /ฝ่ายบัญชี/ }).first().click();
     await expect(authedPage.getByRole('heading', { name: /^สิทธิ์เข้าถึงเมนู/ })).toBeVisible();
 
     const sidewaysScrollers = await authedPage.locator('main').evaluate((main) => [...main.querySelectorAll('*')].flatMap((node) => {
@@ -730,7 +733,7 @@ test.describe('Mobile responsive invariants', () => {
     await expect(guide).toHaveAttribute('aria-expanded', 'true');
 
     const scrollRoot = drawer.locator('nav').locator('..');
-    const lastGuide = drawer.getByRole('link', { name: 'การเบิกจ่ายและอนุมัติ' });
+    const lastGuide = drawer.getByRole('link', { name: 'การเบิกจ่าย', exact: true }).last();
     await expect.poll(async () => {
       const [rootBox, triggerBox, lastGuideBox] = await Promise.all([
         scrollRoot.boundingBox(),
@@ -757,6 +760,11 @@ test.describe('Mobile responsive invariants', () => {
   for (const route of PRIORITY_ROUTES) {
     test(`${route} — INV-5 no iOS zoom fields`, async ({ authedPage, companyId }, testInfo) => {
       await gotoAndSettle(authedPage, companyId, route);
+      if (route === '/settings/substitute-receipt') {
+        // Since 2026-10-13 the page's one typed field sits under "เพิ่มคำแนะนำให้พนักงาน": open it so the field is measured.
+        const advice = authedPage.locator('details').filter({ hasText: 'เพิ่มคำแนะนำให้พนักงาน' });
+        if (!(await advice.evaluate((element) => (element as HTMLDetailsElement).open))) await advice.locator('summary').click();
+      }
       const fieldCount = await expectNoZoomFields(authedPage, route, {
         requireFields: ROUTES_THAT_MUST_HAVE_FIELDS.has(route),
       });
@@ -848,7 +856,8 @@ test.describe('Desktop card-view parity', () => {
       await expect(authedPage.getByTestId(cardView.cardListTestId)).toBeHidden();
 
       if (cardView.route === '/expenses') {
-        await expect(table.locator('[class*="uppercase"][class*="tracking-wide"]').first().locator(':scope > div')).toHaveText(cardView.columns);
+        // The heading row is found by its place (the grid's first row): its uppercase/tracking classes left on 2026-10-13.
+        await expect(table.locator(':scope > div > div').first().locator(':scope > div')).toHaveText(cardView.columns);
       } else {
         await expect(table.locator('th')).toHaveCount(cardView.columnCount);
       }

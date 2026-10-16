@@ -25,6 +25,38 @@ export class CreateDownloadUrlUseCase {
   ) {}
 
   async execute(ctx: RequestContext, cmd: CreateDownloadUrlCommand): Promise<CreateDownloadUrlResult> {
+    const existing = await this.readableAttachment(ctx, cmd);
+
+    const signed = await this.storage.createDownloadUrl({
+      bucket: existing.bucket,
+      objectKey: existing.objectKey,
+      objectVersionId: existing.objectVersionId,
+      mimeType: existing.mimeType,
+      fileName: existing.originalFileName,
+      ...(cmd.disposition ? { disposition: cmd.disposition } : {}),
+    });
+
+    void this.audit.log({
+      companyId: ctx.companyId, actorUserId: ctx.userId,
+      action: 'attachment.download_url.create', targetType: 'attachment', targetId: existing.id,
+      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
+    });
+
+    return { downloadUrl: signed.url, expiresAt: signed.expiresAt };
+  }
+
+  /** Same private-file gate as a single download, without creating an externally usable URL. */
+  async readBytes(ctx: RequestContext, cmd: CreateDownloadUrlCommand): Promise<Buffer> {
+    const existing = await this.readableAttachment(ctx, cmd);
+    // ACTIVE is set only after upload inspection/scanning (or trusted server generation).
+    if (existing.status !== 'ACTIVE') throw new ForbiddenException('Attachment is not accessible.');
+    const object = await this.storage.getObject({
+      bucket: existing.bucket, objectKey: existing.objectKey, objectVersionId: existing.objectVersionId,
+    });
+    return object.bytes;
+  }
+
+  private async readableAttachment(ctx: RequestContext, cmd: CreateDownloadUrlCommand) {
     if (!ctx.permissions.includes('attachment.read')) {
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId,
@@ -82,21 +114,6 @@ export class CreateDownloadUrlUseCase {
       throw new ForbiddenException('A personal signature image is only available to the person it belongs to.');
     }
 
-    const signed = await this.storage.createDownloadUrl({
-      bucket: existing.bucket,
-      objectKey: existing.objectKey,
-      objectVersionId: existing.objectVersionId,
-      mimeType: existing.mimeType,
-      fileName: existing.originalFileName,
-      ...(cmd.disposition ? { disposition: cmd.disposition } : {}),
-    });
-
-    void this.audit.log({
-      companyId: ctx.companyId, actorUserId: ctx.userId,
-      action: 'attachment.download_url.create', targetType: 'attachment', targetId: existing.id,
-      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
-    });
-
-    return { downloadUrl: signed.url, expiresAt: signed.expiresAt };
+    return existing;
   }
 }

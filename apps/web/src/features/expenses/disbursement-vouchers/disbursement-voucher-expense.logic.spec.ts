@@ -15,16 +15,19 @@ test('prepare entry needs the right, visible menu, confirmed balance and no rese
 
 test('cancellation warns only that the document will be cancelled and uses the short document toast', () => {
   const payments = [{ id: 'payment', status: 'RECORDED', disbursementVoucher: { id: 'voucher', documentNumber: 'DV-1' } }] as NonNullable<ExpenseDetail['payments']>;
-  const prefix = 'ยกเลิกรายการจ่ายนี้ แล้วใบสำคัญจ่ายเลขที่ DV-1 จะถูกยกเลิกด้วย';
+  const prefix = 'ใบสำคัญจ่ายเลขที่ DV-1 จะถูกยกเลิกด้วย';
   assert.deepEqual(expenseDisbursementCancellationWarnings(payments, {}, 'expense', 'payment'), [prefix]);
   const vouchers = { voucher: { lines: [{ expenseId: 'expense', expensePaymentId: 'payment', paymentInEffect: true }] } } as any;
   assert.deepEqual(expenseDisbursementCancellationWarnings(payments, vouchers, 'expense', 'payment'), [prefix]);
   vouchers.voucher.lines.push({ expenseId: 'other', expensePaymentId: 'other-payment', paymentInEffect: true });
   assert.deepEqual(expenseDisbursementCancellationWarnings(payments, vouchers, 'expense', 'payment'), [prefix]);
-  assert.deepEqual(expenseDisbursementCancellationWarnings(payments, vouchers, 'expense'), [prefix]);
+  // Cancelling the whole expense (no single payment named) says so: it is not "this payment".
+  const whole = 'รายการจ่ายและใบสำคัญจ่ายเลขที่ DV-1 จะถูกยกเลิกด้วย';
+  assert.deepEqual(expenseDisbursementCancellationWarnings(payments, vouchers, 'expense'), [whole]);
   vouchers.voucher.lines[1].paymentInEffect = false;
-  assert.deepEqual(expenseDisbursementCancellationWarnings(payments, vouchers, 'expense'), [prefix]);
+  assert.deepEqual(expenseDisbursementCancellationWarnings(payments, vouchers, 'expense'), [whole]);
   assert.equal(expenseDisbursementCancellationToast('ยกเลิกแล้ว', payments, 'payment'), 'ยกเลิกรายการจ่ายแล้ว ใบสำคัญจ่ายเลขที่ DV-1 ถูกยกเลิกด้วย');
+  assert.equal(expenseDisbursementCancellationToast('ยกเลิกเอกสารแล้ว', payments), 'ยกเลิกเอกสารแล้ว ใบสำคัญจ่ายเลขที่ DV-1 ถูกยกเลิกด้วย');
   assert.equal(expenseDisbursementCancellationToast('ยกเลิกแล้ว', payments, 'other-payment'), 'ยกเลิกแล้ว');
 });
 test('payment entries use server eligibility and never offer a command without rights or a visible menu', () => {

@@ -2,8 +2,11 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { quietButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
 import {
   checklistIsComplete,
+  COMPANY_PROFILE_ACCOUNT_HASH,
   companyProfileHref,
   dismissChecklistFor,
   readChecklistDismissal,
@@ -38,24 +41,16 @@ export function ProfileCompletenessCard({ companyId }: { companyId: string }) {
     setDismissed(true);
   };
 
+  // One row: what is missing, said in words, and the one place that fixes it (thai-ux-standard §2.6, §3.6). It used to
+  // be a closed arrow hiding three links and a button that all opened the same page.
+  const first = incompleteItems[0]!;
   return (
-    <section
-      aria-labelledby="profile-completeness-title"
-      className="mt-5 rounded-2xl border border-gray-200 bg-white p-4"
-    >
-      <details>
-        <summary id="profile-completeness-title" className="min-h-11 cursor-pointer py-2 text-base font-semibold text-gray-700">ข้อมูลร้านยังไม่ครบ · เพิ่มภายหลังได้</summary>
-        <p className="mt-1 text-base text-gray-600">ใช้งานได้ตามปกติ เพิ่มข้อมูลเพื่อออกเอกสารและช่วยกู้บัญชี</p>
-        <ul className="mt-2 grid gap-1">
-          {incompleteItems.map((item) => (
-            <li key={item.key}><Link href={companyProfileHref(companyId, item.hash)} className="inline-flex min-h-11 items-center text-base text-brand-700 underline underline-offset-4">{item.label}</Link></li>
-          ))}
-        </ul>
-        <div className="mt-3 flex flex-wrap gap-3">
-          <Link href={companyProfileHref(companyId, incompleteItems[0]!.hash)} className="mangmee-btn mangmee-btn-secondary !min-h-11 !text-base">กรอกข้อมูลให้ครบ</Link>
-          <button type="button" onClick={dismiss} className="min-h-11 px-3 text-base text-gray-600 underline">ไว้ก่อน</button>
-        </div>
-      </details>
+    <section aria-label="ข้อมูลที่ยังไม่ครบ" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mangmee-card mangmee-card-shadow p-4">
+      <p className="min-w-0 flex-1 basis-64 text-sm font-medium text-gray-700">ยังไม่ครบ: {incompleteItems.map((item) => item.label).join(' · ')}</p>
+      <ActionGroup>
+        <button type="button" onClick={dismiss} className={quietButtonClass}>ไว้ก่อน</button>
+        <Link href={companyProfileHref(companyId, first.hash)} className={secondaryButtonClass}>{first.hash === COMPANY_PROFILE_ACCOUNT_HASH ? 'ไปที่บัญชีของฉัน' : 'กรอกข้อมูลร้าน'}</Link>
+      </ActionGroup>
     </section>
   );
 }

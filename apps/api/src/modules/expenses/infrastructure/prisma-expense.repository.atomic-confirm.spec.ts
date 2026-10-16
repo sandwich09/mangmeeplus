@@ -95,6 +95,7 @@ function harness(options: { accountingStatus?: string; taxStatus?: string; withA
       }] : [],
     },
     accountingPeriod: { findUnique: async () => options.accountingStatus ? { status: options.accountingStatus } : null },
+    whtPayerModeFact: { findMany: async () => [] },
     taxPeriod: { findMany: async () => options.taxStatus ? [{ formType: 'PP30', status: options.taxStatus }] : [] },
     tradeTaxEvidence: { findMany: async () => [] },
     attachmentObject: { count: async () => 0 },
@@ -426,8 +427,8 @@ describe('WHT certificate handoff at expense confirmation', () => {
     row.vendorTaxIdSnapshot = '1111111111111';
     const handoffs: any[] = [];
     client.company = { findUnique: async () => ({ name: 'ผู้จ่าย', registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '9999999999999', addressJson: null }) };
-    client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
-    client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า' }) };
+    client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00002' }] };
+    client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า', formType: 'PND3', defaultRate: '3', status: 'ACTIVE' }) };
     client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { handoffs.push(data); } };
     const input = await inputFor(repo, updatedAt);
     const result = await repo.finalizeAndConfirmExpenseCas(input, finalize);
@@ -510,8 +511,8 @@ describe('confirmation after expense correction', () => {
       const retired: any = { id: 'handoff-old', status: 'CANCELLED', payeeAddress: 'บ้านเลขที่ 99', payeeAddressByUserId: 'recorder', payeeAddressAt: typedAt,
         prefillSnapshotJson: { payeeSnapshot: { name: oldName, taxId: oldTaxId, address: null } }, prefillSnapshotHash: 'old' };
       h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
-      h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
-      h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า' }) };
+      h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00002' }] };
+      h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า', formType: 'PND3', defaultRate: '3', status: 'ACTIVE' }) };
       h.client.whtCertificateHandoff = { findFirst: async () => retired, create: async () => { throw Error('duplicate handoff'); },
         update: async ({ data }: any) => { Object.assign(retired, data); return retired; } };
       await h.repo.finalizeAndConfirmExpenseCas(await inputFor(h.repo, h.updatedAt), finalize);
@@ -535,8 +536,8 @@ describe('confirmation after expense correction', () => {
       const retired: any = { id: 'handoff-old', status: 'CANCELLED', payeeAddress: 'บ้านเลขที่ 99', payeeAddressByUserId: 'recorder', payeeAddressAt: new Date('2026-07-15T12:00:00Z'),
         prefillSnapshotJson: { payeeSnapshot: { name: 'ร้านเดิม', taxId: '1111111111111', address: oldAddress } }, prefillSnapshotHash: 'old' };
       h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
-      h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
-      h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า' }) };
+      h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00002' }] };
+      h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า', formType: 'PND3', defaultRate: '3', status: 'ACTIVE' }) };
       h.client.whtCertificateHandoff = { findFirst: async () => retired, create: async () => { throw Error('duplicate handoff'); },
         update: async ({ data }: any) => { Object.assign(retired, data); return retired; } };
       await h.repo.finalizeAndConfirmExpenseCas(await inputFor(h.repo, h.updatedAt), finalize);
@@ -551,8 +552,8 @@ describe('confirmation after expense correction', () => {
     Object.assign(h.row, { whtAmount: 30, whtCategoryCode: 'CAT1', whtRate: 3, vendorEntityKindSnapshot: 'INDIVIDUAL', expenseNumber: 'EXP-KEEP' });
     const retired: any = { id: 'handoff-old', status: 'CANCELLED', payeeAddress: 'ที่อยู่ของผู้รับเงินเดิม', prefillSnapshotJson: { withheldAmount: 'wrong' } };
     h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
-    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
-    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า' }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00002' }] };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า', formType: 'PND3', defaultRate: '3', status: 'ACTIVE' }) };
     h.client.whtCertificateHandoff = {
       findFirst: async () => retired,
       update: async ({ where, data }: any) => { assert.equal(where.id, retired.id); Object.assign(retired, data); return retired; },
@@ -574,8 +575,8 @@ describe('confirmation keeps its own period gate', () => {
     h.row.vendorEntityKindSnapshot = formType === 'PND3' ? 'INDIVIDUAL' : 'JURISTIC';
     h.row.vendorNameSnapshot = 'ผู้รับเงิน'; h.row.vendorTaxIdSnapshot = '1111111111111';
     h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย', registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '9999999999999', addressJson: null }) };
-    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
-    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ' }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00002' }] };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ', formType, defaultRate: '3', status: 'ACTIVE' }) };
     h.client.whtCertificateHandoff = { findFirst: async () => null, create: async () => undefined };
     h.client.taxPeriod.findMany = async ({ where }: any) => where.OR?.some((p: any) => p.formType === formType)
       ? [{ formType, periodKey: '2026-07', status: 'FILED' }] : [];
@@ -596,8 +597,8 @@ describe('expense certificate income base (E1)', () => {
       Object.assign(h.row.lines[0], { taxableAmount: '1401.87', vatAmount: '98.13', lineTotalAmount: '1500', whtAmount: source === 'legacy fallback' ? '0' : '42.06' });
       const papers: any[] = [];
       h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
-      h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }) };
-      h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ' }) };
+      h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00000' }] };
+      h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ', formType: 'PND3', defaultRate: '3', status: 'ACTIVE' }) };
       h.client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { papers.push(data); } };
       const input = await inputFor(h.repo, h.updatedAt);
       if (path === 'confirm') await h.repo.confirmExpenseCas(input);
@@ -612,8 +613,8 @@ describe('expense certificate income base (E1)', () => {
     Object.assign(h.row.lines[0], { taxableAmount: '1401.87', whtAmount: '30' });
     let paper: any;
     h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
-    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }) };
-    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ' }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00000' }] };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ', formType: 'PND3', defaultRate: '3', status: 'ACTIVE' }) };
     h.client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { paper = data; } };
     await h.repo.finalizeAndConfirmExpenseCas(await inputFor(h.repo, h.updatedAt), finalize);
     assert.equal(Number(paper.prefillSnapshotJson.grossAmount), 1000);
@@ -625,11 +626,38 @@ describe('expense certificate income base (E1)', () => {
     h.row.lines.push({ ...h.row.lines[0], id: 'line-2', lineNumber: 2, taxableAmount: '250', whtAmount: '0' });
     let paper: any;
     h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
-    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }) };
-    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ' }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00000' }] };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ', formType: 'PND3', defaultRate: '3', status: 'ACTIVE' }) };
     h.client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { paper = data; } };
     await h.repo.confirmExpenseCas(await inputFor(h.repo, h.updatedAt));
     assert.equal(Number(paper.prefillSnapshotJson.grossAmount), 1401.87);
   });
 
+});
+
+describe('confirmation checks legacy withholding income classification inside its transaction', () => {
+  it('switches the same-rate twin at confirmation', async () => {
+    const h = harness();
+    Object.assign(h.row, { vendorEntityKindSnapshot: 'INDIVIDUAL', whtCategoryCode: 'WHT_SERVICE_5', whtRate: '3', whtAmount: '3', netPayableAmount: '104', outstandingAmount: '104' });
+    Object.assign(h.row.lines[0], { whtAmount: '3', whtRate: '3' });
+    const handoffs: any[] = [];
+    h.client.company = { findUnique: async () => ({ name: 'ร้านผู้จ่าย', taxId: '9999999999999' }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00000' }] };
+    h.client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { handoffs.push(data); } };
+    h.client.whtIncomeCategory = { findUnique: async ({ where }: any) => ({ code: where.code, formType: where.code === 'WHT_SERVICE_5' ? 'PND53' : 'PND3', defaultRate: '3', status: 'ACTIVE' }) };
+    const result = await h.repo.finalizeAndConfirmExpenseCas(await inputFor(h.repo, h.updatedAt), async () => (await finalize()).map(line => ({ ...line, whtRate: '3', whtAmount: '3' })));
+    assert.equal(result.expense.whtCategoryCode, 'WHT_SERVICE_3');
+    assert.equal(h.row.whtCategoryCode, 'WHT_SERVICE_3');
+    assert.equal(handoffs.length, 1);
+    assert.equal(handoffs[0].prefillSnapshotJson.incomeCategoryCode, 'WHT_SERVICE_3');
+    assert.equal(handoffs[0].prefillSnapshotJson.formType, 'PND3');
+  });
+  it('refuses a twin with a different rate before confirmation, audit or outbox writes', async () => {
+    const h = harness();
+    Object.assign(h.row, { vendorEntityKindSnapshot: 'INDIVIDUAL', whtCategoryCode: 'WHT_SERVICE_5', whtRate: '5' });
+    h.client.whtIncomeCategory = { findUnique: async ({ where }: any) => ({ code: where.code, formType: where.code === 'WHT_SERVICE_5' ? 'PND53' : 'PND3', defaultRate: '3', status: 'ACTIVE' }) };
+    await assert.rejects(h.repo.finalizeAndConfirmExpenseCas(await inputFor(h.repo, h.updatedAt), finalize), (error: any) => error.getResponse().code === 'expense_wht_category_payee_mismatch');
+    assert.equal(h.row.status, 'READY_FOR_CONFIRMATION');
+    assert.equal(h.writes.header, 0); assert.equal(h.writes.outbox, 0);
+  });
 });

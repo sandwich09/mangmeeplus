@@ -4,8 +4,13 @@ import { t } from '@/common/i18n/workspace-i18n.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { IMAGE_SOURCE_TYPES_LABEL, UPLOAD_HEIC_CONVERSION_MESSAGE } from '@watchdog-bms/contracts';
 
-import { useState, useEffect, useCallback, useMemo, useRef, type MouseEventHandler, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef, type MouseEventHandler, type ReactNode } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { MoreActions } from '@/common/components/actions/MoreActions';
+import { FilterTabs } from '@/common/components/tabs';
+import { expenseDetailUrl } from './expense-list-navigation.logic';
+import evidenceStyles from './WhtCertificatesPage.module.css';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { EmptyState, LoadingState } from '@/common/components/state';
 import { pageBounds } from '@/common/table/paging.logic';
@@ -16,33 +21,38 @@ import {
   getSharedEvidence, createAccountantPackage, downloadIndexXlsx,
 } from './expenses.api';
 import {
-  SIGNATURE_ASSET_STATUS_LABELS, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, TAX_EVIDENCE_REASON_LABELS,
+  SIGNATURE_ASSET_STATUS_LABELS, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS,
   EXPENSE_STATUS_LABELS, POSTING_STATUS_LABELS, removeLightBackground, expenseValueLabel,
 } from './expenses.model';
 import type { ExpenseCategorySummary, SignatureAssetSummary, SharedEvidenceView, AccountantPackageResult } from './expenses.model';
 import type { ExpenseBackfillBlocker, ExpenseBackfillPreview } from '@watchdog-bms/contracts';
-import { MangmeeBadge, MangmeeCard, MangmeeStatCard, cx } from '@/common/components/mangmee';
-import { Modal } from '@/common/components/modal';
+import { MangmeeBadge, MangmeeCard, MangmeeStatCard, MetricGrid, cx } from '@/common/components/mangmee';
+import { Modal, useConfirm } from '@/common/components/modal';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { quietButtonClass } from '@/common/components/button/button-classes';
 import { findForbiddenChars, stripDisallowed } from '@/common/forms/sanitize';
 import { assertAllowedUploadFile, uploadErrorMessage } from '@/common/files/upload-file.logic';
 import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import { SignaturePad } from './SignaturePad';
-import { err, baht, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, StateBanner, HowItWorks, WholeWords } from './ExpensesUi';
+import { err, baht0, amountText, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, StateBanner, WholeWords, EXPORT_FOR_ACCOUNTANT } from './ExpensesUi';
+import { Pagination } from '@/common/components/data-table/Pagination';
+
+/** Labels above the filters of the evidence page: 14 px, like every field label of this workspace. */
+const FILTER_LABEL = 'mb-1 block text-sm font-medium text-gray-700';
+const TAX_EVIDENCE_FILTER_LABEL = 'หลักฐานรายจ่าย';
 import {
   deriveEvidenceRowFlags,
   evidenceRowState,
   filterRowsByFlag,
-  summarizeEvidenceFlags,
   summarizeEvidenceRows,
-  TAX_EVIDENCE_TONE,
-  type EvidenceFlagKey,
+  evidenceRowBadge, evidenceRowsInDateOrder, readEvidenceListState,
 } from './evidence-audit.logic';
-import { generateSourceJournal, previewExpenseBackfill, runExpenseBackfill } from '../ledger/ledger.api';
+import { previewExpenseBackfill, runExpenseBackfill } from '../ledger/ledger.api';
+import { EvidenceBundleDownload } from './EvidenceBundleDownload';
 import { ClaimPaymentPosting } from './ClaimPaymentPosting';
 import { showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
 import { listTaxCodeDefinitions } from '../tax/transaction-tax.api';
 import { availableTaxDefinitions } from '../tax/transaction-tax.model';
-import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
 import { useBranchFilter, useBranchScopeLabel } from '../web-core-workspace/WorkspaceScope';
 import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
 import { todayCivilDate } from '@watchdog-bms/contracts';
@@ -51,21 +61,21 @@ import { classifySignatureUploadFile, HeicDecodeError, prepareSignatureFile, SIG
 
 /** Mirrors `@MaxLength(255)` on the signature-asset label the API accepts. */
 const SIGNATURE_LABEL_MAX_LENGTH = 255;
-const SIGNATURE_LABEL_TOO_LONG = `ชื่อ/ป้ายกำกับลายเซ็นยาวได้ไม่เกิน ${SIGNATURE_LABEL_MAX_LENGTH} ตัวอักษร กรุณาย่อให้สั้นลง`;
+const SIGNATURE_LABEL_TOO_LONG = `ชื่อลายเซ็นยาวได้ไม่เกิน ${SIGNATURE_LABEL_MAX_LENGTH} ตัวอักษร`;
 
 // A category is a label and an id. Nothing on it is inherited by an expense — the
 // accountHintKey/taxCategory the ledger reads live on the expense record and line,
 // not here — so the panel deliberately shows no per-category tax attribute.
 const BACKFILL_BLOCKER_LABELS: Record<ExpenseBackfillBlocker, string> = {
   NO_ACTIVE_EVIDENCE: 'ไม่มีไฟล์หลักฐาน',
-  TAX_EVIDENCE_NEEDS_REVIEW: 'รอตรวจหลักฐานภาษี',
-  NOT_TAX_EVIDENCE: 'ไม่ใช่หลักฐานภาษี',
+  TAX_EVIDENCE_NEEDS_REVIEW: 'รอตรวจ',
+  NOT_TAX_EVIDENCE: 'ใช้ไม่ได้',
   VENDOR_NAME_MISSING: 'ไม่ระบุผู้ขาย',
 };
 
-function Toggle({ on, disabled, loading = false, onToggle }: { on: boolean; disabled?: boolean; loading?: boolean; onToggle: () => void }) {
+function Toggle({ on, disabled, loading = false, label, onToggle }: { on: boolean; disabled?: boolean; loading?: boolean; label?: string; onToggle: () => void }) {
   return (
-    <button role="switch" aria-checked={on} disabled={disabled || loading} aria-busy={loading} data-loading-indicator onClick={onToggle}
+    <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled || loading} aria-busy={loading} data-loading-indicator onClick={onToggle}
       // The pill stays 24px; the button itself carries the 44px touch height on a phone and
       // the negative margin cancels it out of the layout, so no row shifts. A ::after overlay
       // would have looked equivalent and been invisible to getBoundingClientRect — the thing
@@ -95,7 +105,7 @@ export function IconBtn({ title, tone, disabled, loading = false, onClick, child
 }
 
 // ── Category management ───────────────────────────────────────────────────────
-export function CategoryManagePanel({ companyId }: { companyId: string }) {
+export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreateOpenChange: setShowCreate }: { companyId: string; createOpen: boolean; onCreateOpenChange: (open: boolean) => void }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   // Company-level screen with no document date, so the policy is read for today.
@@ -115,11 +125,9 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
   const updating = updatingId !== null;
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   // `keepVisible` for the refresh that follows a write: `loading` swaps the whole table for the
   // spinner, so re-reading the list after one selection unmounted all eighteen rows and remounted
@@ -150,6 +158,9 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
     return () => { cancelled = true; };
   }, [companyId, showsTax]);
 
+  // The page header opens the dialog; each opening starts without the last refusal.
+  useEffect(() => { if (showCreate) setCreateError(null); }, [showCreate]);
+
   const create = async () => {
     const forbidden = findForbiddenChars(name);
     if (forbidden.length > 0) { setCreateError(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`); return; }
@@ -164,125 +175,148 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
       setName(''); setNewTaxCode('');
       await load(true);
       setShowCreate(false);
-      toast.success('เพิ่มหมวดหมู่เรียบร้อยแล้ว');
+      toast.success('เพิ่มหมวดหมู่แล้ว');
     } catch (e) { setCreateError(err(e)); }
     finally { setSaving(false); }
   };
 
-  const runUpdate = async (id: string, body: Parameters<typeof updateExpenseCategory>[2], successMessage?: string) => {
-    if (updating) return;
+  const runUpdate = async (id: string, body: Parameters<typeof updateExpenseCategory>[2], successMessage?: string): Promise<boolean> => {
+    if (updating) return false;
     setUpdatingId(id);
     setActionError(null);
-    try { await updateExpenseCategory(companyId, id, body); await load(true); if (successMessage) toast.success(successMessage); }
-    catch (e) { setActionError(err(e)); }
+    try { await updateExpenseCategory(companyId, id, body); await load(true); if (successMessage) toast.success(successMessage); return true; }
+    catch (e) { setActionError(err(e)); return false; }
     finally { setUpdatingId(null); }
   };
   const saveName = async (id: string) => {
     const trimmed = editName.trim();
     const forbidden = findForbiddenChars(editName);
     if (forbidden.length > 0) { setActionError(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`); return; }
-    if (trimmed && trimmed !== categories.find((category) => category.id === id)?.name) await runUpdate(id, { name: trimmed }, 'บันทึกชื่อหมวดหมู่เรียบร้อยแล้ว');
-    if (trimmed) setEditId(null);
+    if (!trimmed) return;
+    // The dialog closes only when the name is saved (or was not changed): a refused save keeps what was typed.
+    if (trimmed === categories.find((category) => category.id === id)?.name || await runUpdate(id, { name: trimmed }, 'แก้ชื่อหมวดหมู่แล้ว')) setEditId(null);
   };
 
-  const confirmTarget = categories.find((c) => c.id === confirmId);
+  // One way to stop using a category: its switch. The bin that did the same thing behind a
+  // confirmation is gone (a switch that undoes itself needs no question).
+  const toggle = (c: ExpenseCategorySummary) => {
+    const active = c.status === 'ACTIVE';
+    return runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? `ปิดหมวดหมู่ “${c.name}” แล้ว เปิดใช้ใหม่ได้ที่สวิตช์` : `เปิดใช้หมวดหมู่ “${c.name}” แล้ว`);
+  };
+  const editTarget = categories.find((c) => c.id === editId);
+  const openRename = (c: ExpenseCategorySummary) => { setActionError(null); setEditId(c.id); setEditName(c.name); };
+  const switchWithWord = (c: ExpenseCategorySummary) => {
+    const active = c.status === 'ACTIVE';
+    return (
+      <span className="flex shrink-0 items-center gap-2 text-sm text-gray-600">
+        <span>{active ? 'ใช้อยู่' : 'ปิดไว้'}</span>
+        <Toggle label={`ใช้หมวดหมู่ ${c.name}`} on={active} disabled={updatingId === c.id} loading={updatingId === c.id} onToggle={() => void toggle(c)} />
+      </span>
+    );
+  };
+  const taxCodeSelect = (c: ExpenseCategorySummary) => (
+    <ThemedSelect className={cx(inputClass, 'min-w-0 w-full')} value={c.defaultInputTaxCode ?? ''}
+      aria-label={`${t('expenses.category_default_tax_code', locale)} ${c.name}`}
+      disabled={updatingId === c.id}
+      onChange={(e) => void runUpdate(c.id, { defaultInputTaxCode: e.target.value || null })}>
+      <option value="">ไม่กำหนด</option>
+      {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.displayName}</option>)}
+    </ThemedSelect>
+  );
+  // No controls on a built-in row already says it cannot be changed; the note only says where it came from.
+  const builtInNote = <span className="text-sm text-gray-500">มากับระบบ</span>;
 
   return (
     <div>
       <MangmeeCard className="overflow-hidden">
-        <div className="mangmee-card-header flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-base font-bold text-gray-900">หมวดหมู่ค่าใช้จ่าย</div>
-            <div className="mt-0.5 text-sm text-gray-500">AI จะเลือกได้เฉพาะหมวดหมู่ที่เปิดใช้งานเท่านั้น · ระบบไม่อนุญาตให้ AI สร้าง/แก้ไขหมวดหมู่เอง</div>
-          </div>
-          <button className={btnClass} onClick={() => { setCreateError(null); setShowCreate(true); }}>+ เพิ่มหมวดหมู่ใหม่</button>
-        </div>
-        {actionError && <div className="p-4 pb-0"><ErrorBanner message={actionError} /></div>}
+        {actionError && !editTarget && <div className="p-4 pb-0"><ErrorBanner message={actionError} /></div>}
         {error ? <div className="p-4"><StateBanner error={error} /></div> : loading ? (
           <LoadingState label="กำลังโหลด..." />
         ) : (
-          <div className="mangmee-table-scroll">
-            <table className="mangmee-table">
-              <thead><tr>{['ชื่อหมวดหมู่', ...(showsTax ? [t('expenses.category_default_tax_code', locale)] : []), 'ที่มา', 'เปิดใช้', ''].map((h) => <th key={h} className={cx('!text-[13px]', (h === 'ที่มา' || h === 'เปิดใช้') && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
-              <tbody>
-                {categories.length === 0 && <tr><td colSpan={showsTax ? 5 : 4} className="py-8 text-center text-gray-500">ไม่มีหมวดหมู่</td></tr>}
-                {categories.map((c) => {
-                  const active = c.status === 'ACTIVE';
-                  const owned = !!c.companyId;
-                  return (
-                    <tr key={c.id} className={active ? '' : 'opacity-60'}>
-                      <td className="font-semibold text-gray-900">
-                        {editId === c.id ? (
-                          <span className="flex min-w-64 items-center gap-2">
-                            <input autoFocus className="mangmee-input h-9" value={editName} disabled={updating} onChange={(e) => setEditName(stripDisallowed(e.target.value))}
-                              onKeyDown={(e) => { if (e.key === 'Enter') void saveName(c.id); if (e.key === 'Escape') setEditId(null); }} />
-                            <button className={cx(btnClass, 'h-9 px-3 text-xs')} disabled={updating || !editName.trim() || editName.trim() === c.name} aria-busy={Boolean(updating)} onClick={() => void saveName(c.id)}>{updating ? 'กำลังบันทึก...' : 'บันทึก'}</button>
-                            <button className={cx(ghostClass, 'h-9 px-3 text-xs')} disabled={updating} onClick={() => setEditId(null)}>ยกเลิก</button>
-                          </span>
-                        ) : c.name}
-                      </td>
-                      {showsTax && <td className="whitespace-nowrap text-xs">
-                        {owned ? (
-                          <ThemedSelect className={cx(inputClass, 'h-9 w-auto !text-xs')} value={c.defaultInputTaxCode ?? ''}
-                            disabled={updatingId === c.id}
-                            onChange={(e) => void runUpdate(c.id, { defaultInputTaxCode: e.target.value || null })}>
-                            <option value="">ไม่กำหนด</option>
-                            {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.displayName}</option>)}
-                          </ThemedSelect>
-                        ) : <span className="text-gray-400">{c.defaultInputTaxCode ? taxCodes.find((code) => code.externalCode === c.defaultInputTaxCode)?.displayName ?? 'รหัสภาษีเดิม' : '—'}</span>}
-                      </td>}
-                      <td className="whitespace-nowrap text-xs text-gray-500">{owned ? 'ของบริษัท' : 'ค่าเริ่มต้นระบบ'}</td>
-                      <td className="whitespace-nowrap"><Toggle on={active} disabled={!owned || updatingId === c.id} loading={updatingId === c.id} onToggle={() => runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว' : 'เปิดใช้งานหมวดหมู่เรียบร้อยแล้ว')} /></td>
-                      <td className="w-px whitespace-nowrap text-right">
-                        {owned ? (
-                          <span className="inline-flex items-center justify-end gap-1.5">
-                            {editId !== c.id && <IconBtn title="แก้ชื่อ" onClick={() => { setEditId(c.id); setEditName(c.name); }}>{ICON.edit}</IconBtn>}
-                            {active && <IconBtn title="เก็บถาวร" tone="danger" onClick={() => setConfirmId(c.id)}>{ICON.trash}</IconBtn>}
-                          </span>
-                        ) : <span className="text-xs text-gray-300">—</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <>
+            {/* Under 640 px each category is a stacked row: the name on its own line at full width, its
+                two controls under it. The table that scrolled sideways here kept the name whole but left
+                the row's buttons off the screen (2026-10-13). */}
+            <ul className="divide-y divide-gray-100 sm:hidden" data-category-rows>
+              {categories.length === 0 && <li className="px-4 py-8 text-center text-sm text-gray-500">ยังไม่มีหมวดหมู่</li>}
+              {categories.map((c) => {
+                const owned = !!c.companyId;
+                return (
+                  <li key={c.id} className={cx('space-y-2 px-4 py-3', c.status !== 'ACTIVE' && 'opacity-60')}>
+                    <div className="min-w-0 flex-1 font-semibold text-gray-900">{c.name}</div>
+                    {showsTax && owned && <div>{taxCodeSelect(c)}</div>}
+                    {owned ? (
+                      <div className="flex items-center justify-between gap-3">
+                        <button type="button" className={ghostClass} onClick={() => openRename(c)}>แก้ชื่อ</button>
+                        {switchWithWord(c)}
+                      </div>
+                    ) : <div>{builtInNote}</div>}
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="mangmee-table-scroll hidden sm:block">
+              <table className="mangmee-table">
+                <thead><tr>{['ชื่อหมวดหมู่', ...(showsTax ? [t('expenses.category_default_tax_code', locale)] : []), 'ใช้งาน', ''].map((h) => <th key={h} className={cx('!text-[13px]', h === 'ใช้งาน' && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {categories.length === 0 && <tr><td colSpan={showsTax ? 4 : 3} className="py-8 text-center text-gray-500">ยังไม่มีหมวดหมู่</td></tr>}
+                  {categories.map((c) => {
+                    const owned = !!c.companyId;
+                    return (
+                      <tr key={c.id} className={c.status === 'ACTIVE' ? '' : 'opacity-60'}>
+                        <td className="font-semibold text-gray-900">{c.name}</td>
+                        {showsTax && <td className="whitespace-nowrap text-sm">
+                          {owned ? taxCodeSelect(c) : <span className="text-gray-500">{c.defaultInputTaxCode ? taxCodes.find((code) => code.externalCode === c.defaultInputTaxCode)?.displayName ?? 'รหัสภาษีเดิม' : 'ไม่กำหนด'}</span>}
+                        </td>}
+                        {owned ? <>
+                          <td className="whitespace-nowrap">{switchWithWord(c)}</td>
+                          <td className="w-px whitespace-nowrap text-right"><button type="button" className={ghostClass} onClick={() => openRename(c)}>แก้ชื่อ</button></td>
+                        </> : <td colSpan={2} className="whitespace-nowrap">{builtInNote}</td>}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </MangmeeCard>
 
-      <Modal open={showCreate} title="เพิ่มหมวดหมู่ใหม่" size="sm" onClose={() => { if (!saving) setShowCreate(false); }}
-        footer={<><button className={ghostClass} onClick={() => setShowCreate(false)} disabled={saving}>ยกเลิก</button><button className={btnClass} onClick={() => void create()} disabled={saving || !name.trim()} aria-busy={Boolean(saving)}>{saving ? 'กำลังบันทึก...' : 'เพิ่มหมวดหมู่'}</button></>}>
+      <Modal open={showCreate} title="เพิ่มหมวดหมู่" size="sm" onClose={() => { if (!saving) setShowCreate(false); }}
+        footer={<><button type="button" className={ghostClass} onClick={() => setShowCreate(false)} disabled={saving}>ยกเลิก</button><button type="button" className={btnClass} onClick={() => { if (!name.trim()) { setCreateError('กรอกชื่อหมวดหมู่'); return; } void create(); }} disabled={saving} aria-busy={Boolean(saving)}>{saving ? 'กำลังบันทึก...' : 'เพิ่มหมวดหมู่'}</button></>}>
           <div className="space-y-3">
           {createError && <ErrorBanner message={createError} />}
-          <label className="text-sm font-semibold text-gray-700">ชื่อหมวดหมู่ *</label>
-          <input className={inputClass} placeholder="เช่น ค่าโฆษณาออนไลน์" value={name} onChange={(e) => setName(stripDisallowed(e.target.value))} />
+          <label className="block space-y-1.5">
+            <span className="block text-sm font-medium text-gray-700">ชื่อหมวดหมู่</span>
+            <input className={inputClass} placeholder="เช่น ค่าโฆษณาออนไลน์" value={name} onChange={(e) => { setName(stripDisallowed(e.target.value)); setCreateError(null); }} />
+          </label>
           {showsTax && <>
-            <label className="text-sm font-semibold text-gray-700">{t('expenses.category_default_tax_code', locale)}</label>
+            <label className="text-sm font-medium text-gray-700">{t('expenses.category_default_tax_code', locale)}</label>
             <ThemedSelect className={inputClass} value={newTaxCode} onChange={(e) => setNewTaxCode(e.target.value)}>
               <option value="">ไม่กำหนด</option>
               {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.displayName}</option>)}
             </ThemedSelect>
-            <p className="text-xs text-gray-500">ใช้เป็นค่าตั้งต้นของรายการที่ยังไม่ได้เลือกรหัสภาษี ผู้มีสิทธิ์แก้ไขเปลี่ยนได้ก่อนยืนยันเอกสาร</p>
+            <p className="text-sm text-gray-500">ใช้เป็นค่าตั้งต้นของรายการที่ยังไม่ได้เลือกรหัสภาษี เปลี่ยนได้ก่อนยืนยันเอกสาร</p>
           </>}
           </div>
       </Modal>
 
-      {confirmTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setConfirmId(null)}>
-          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="text-base font-bold text-gray-900">เก็บถาวร “{confirmTarget.name}” ?</div>
-            <p className="mt-1.5 text-sm leading-relaxed text-gray-500">หมวดหมู่ที่เก็บถาวรจะไม่แสดงให้ AI หรือผู้ใช้เลือกอีก แต่รายการเดิมที่ใช้หมวดนี้ยังอยู่ครบ · เปิดใช้ใหม่ได้ทุกเมื่อจากปุ่มสวิตช์</p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button className={ghostClass} disabled={updating} onClick={() => setConfirmId(null)}>ยกเลิก</button>
-              <button className={dangerClass} disabled={updating} aria-busy={Boolean(updating)} onClick={async () => { await runUpdate(confirmTarget.id, { status: 'ARCHIVED' }, 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว'); setConfirmId(null); }}>{updating ? 'กำลังเก็บถาวร...' : 'เก็บถาวร'}</button>
-            </div>
+      {/* Renaming happens in the same small dialog as adding, at every width: a box and two buttons
+          inside a table cell were cut off on a phone. */}
+      <Modal open={Boolean(editTarget)} title="แก้ชื่อหมวดหมู่" size="sm" onClose={() => { if (!updating) setEditId(null); }}
+        footer={<><button type="button" className={ghostClass} onClick={() => setEditId(null)} disabled={updating}>ยกเลิก</button><button type="button" className={btnClass} onClick={() => { if (!editName.trim()) { setActionError('กรอกชื่อหมวดหมู่'); return; } if (editTarget) void saveName(editTarget.id); }} disabled={updating} aria-busy={Boolean(updating)}>{updating ? 'กำลังบันทึก...' : 'บันทึก'}</button></>}>
+          <div className="space-y-3">
+          {actionError && <ErrorBanner message={actionError} />}
+          <label className="block space-y-1.5">
+            <span className="block text-sm font-medium text-gray-700">ชื่อหมวดหมู่</span>
+            <input autoFocus className={inputClass} value={editName} disabled={updating} onChange={(e) => { setEditName(stripDisallowed(e.target.value)); setActionError(null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && editTarget && editName.trim()) void saveName(editTarget.id); }} />
+          </label>
           </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }
-
 // ── Signature assets ──────────────────────────────────────────────────────────
 // No asset id can collide with this, so a whole-panel action stays distinguishable from a row's.
 const ALL_ROWS_BUSY = '*';
@@ -305,7 +339,7 @@ export function SignatureThumb({ url, alt, className }: { url: string; alt: stri
 export const RETURN_CLAIM_ID = /^[A-Za-z0-9]{8,64}$/;
 /** What a signer who came here from a claim is told: before a signature is saved, and once there is one. */
 export function signatureReturnText(hasSignature: boolean): string {
-  return hasSignature ? 'ลายเซ็นของคุณพร้อมใช้แล้ว กลับไปกดลงนามในใบเบิกได้เลย' : 'เมื่อบันทึกลายเซ็นแล้ว กลับไปกดลงนามในใบเบิกได้ทันที';
+  return hasSignature ? 'ลายเซ็นของคุณพร้อมใช้แล้ว กลับไปกดเซ็นในใบเบิกได้เลย' : 'เมื่อบันทึกลายเซ็นแล้ว กลับไปกดเซ็นในใบเบิกได้ทันที';
 }
 
 /**
@@ -320,6 +354,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   focusSignatureId?: string;
 }) {
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [assets, setAssets] = useState<SignatureAssetSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -397,7 +432,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   const buildPreview = async () => {
     if (saving || preparingFile || previewPendingRef.current) return;
     const file = preparedFile;
-    if (!file) { setActionError('กรุณาเลือกรูปลายเซ็นหรือถ่ายรูปก่อน'); return; }
+    if (!file) { setActionError('เลือกรูปลายเซ็นก่อน'); return; }
     previewPendingRef.current = true;
     setPreviewing(true);
     setActionError(null);
@@ -428,6 +463,9 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
     }
   };
 
+  // Choosing a picture is enough: the cleaned picture is built at once, so there is one button left to press.
+  useEffect(() => { if (preparedFile) void buildPreview(); }, [preparedFile]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const resetDraft = () => {
     prepareRequestRef.current += 1;
     setLabel(''); setFileName(''); setPreparedFile(null); setPreparingFile(false); setPreview(null); setDerivedBlob(null);
@@ -439,7 +477,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   const submit = async (withDerived: boolean, source?: File) => {
     if (saving || preparingFile || previewPendingRef.current) return;
     const file = source ?? preparedFile;
-    if (!file) { setActionError('กรุณาเลือกรูปลายเซ็น'); return; }
+    if (!file) { setActionError('เลือกรูปลายเซ็นก่อน'); return; }
     const forbidden = findForbiddenChars(label);
     if (forbidden.length > 0) { setActionError(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`); return; }
     // Checked BEFORE the upload starts: the API rejects an over-long label at the last call, which
@@ -463,7 +501,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
       resetDraft();
       await load(true);
       setShowUpload(false);
-      toast.success('บันทึกลายเซ็นแล้ว ใช้ลงนามได้ทันที');
+      toast.success('บันทึกลายเซ็นแล้ว ใช้เซ็นได้ทันที');
     } catch (e) { setActionError(err(e)); }
     finally { setSaving(false); }
   };
@@ -488,12 +526,19 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   const current = assets.find((a) => a.status === 'ACTIVE');
   const previous = assets.filter((a) => a.id !== current?.id);
   const focusRefFor = (id: string) => (id === focusSignatureId ? (focusRef as React.RefObject<never>) : undefined);
-  const openUpload = () => { setActionError(null); resetDraft(); setMethod('upload'); setShowUpload(true); };
+  // On a phone the natural way is to sign on the screen; with a mouse, choosing a picture.
+  const openUpload = () => { setActionError(null); resetDraft(); setMethod(typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches ? 'draw' : 'upload'); setShowUpload(true); };
+  // Deleting cannot be undone (a deleted signature never signs again), so it asks first.
+  const removeSignature = async (asset: SignatureAssetSummary) => {
+    if (!(await confirm({ title: 'ลบลายเซ็นของฉัน?', message: 'ลบแล้วเซ็นเอกสารใหม่ไม่ได้ จนกว่าจะเพิ่มลายเซ็นใหม่', confirmLabel: 'ลบลายเซ็น', cancelLabel: 'ไม่ลบ' }))) return;
+    await doAction(() => archiveSignatureAsset(companyId, asset.id), 'ลบลายเซ็นแล้ว', asset.id);
+  };
+  const uploadBusy = saving || preparingFile || previewing;
 
   return (
     <div className="space-y-4">
-      <HowItWorks title="ลายเซ็นของฉันทำงานอย่างไร" steps={['เพิ่มลายเซ็น: วาดบนหน้าจอหรืออัปโหลดรูป ระบบลบพื้นหลังให้', 'บันทึกแล้วใช้ได้ทันที ไม่ต้องรออนุมัติ ลายเซ็นนี้เป็นของคุณ', 'เลือกใช้ลายเซ็นในหน้าตรวจเอกสารค่าใช้จ่าย']} />
-      {actionError && <ErrorBanner message={actionError} />}
+      {confirmDialog}
+      {actionError && !showUpload && <ErrorBanner message={actionError} />}
       <StateBanner error={error} />
       {fromClaimId && !loading && !error && (
         <div className="rounded-xl border border-brand-100 bg-brand-25 px-4 py-3" data-testid="signature-return-to-claim">
@@ -508,10 +553,6 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
       {!error && (
         <div className="space-y-4">
           <MangmeeCard className="overflow-hidden">
-            <div className="mangmee-card-header flex items-center justify-between gap-3 text-sm font-bold text-gray-800">
-              <span className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-[9px]" style={{ background: '#F4EBFF', color: '#6941C6' }}>{ICON.signature}</span>ลายเซ็นของฉัน</span>
-              <button className={btnClass} onClick={openUpload}>{current ? 'เปลี่ยนลายเซ็น' : 'เพิ่มลายเซ็น'}</button>
-            </div>
             {loading ? <LoadingState label="กำลังโหลด..." /> : (
               <div className="p-4">
                 {current ? (
@@ -520,26 +561,28 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
                     className={cx('flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 p-3',
                       current.id === focusSignatureId && 'border-brand-400 ring-2 ring-brand-200')}
                   >
-                    <div className="flex items-center gap-3">
-                      {current.previewUrl && <SignatureThumb url={current.previewUrl} alt={current.label ?? 'ลายเซ็นของฉัน'} />}
-                      <div>
-                        <div className="font-semibold text-gray-800">{current.label ?? 'ลายเซ็นของฉัน'}</div>
-                        <div className="text-xs text-gray-500">
-                          บันทึกจาก {current.submittedFromChannel === 'LINE' ? 'LINE' : 'เว็บ'} · {dateShort(current.createdAt)}
-                          {current.derivedAttachmentId && <span className="ml-2 text-brand-600">พื้นหลังโปร่งใส</span>}
-                        </div>
-                      </div>
+                    <div className="flex min-w-0 items-center gap-3">
+                      {current.previewUrl && <SignatureThumb url={current.previewUrl} alt="ลายเซ็นของฉัน" />}
+                      <p className="text-sm text-gray-600">
+                        บันทึกเมื่อ <span className="mangmee-unit">{dateShort(current.createdAt)}</span>{current.submittedFromChannel === 'LINE' && ' · จาก LINE'}
+                      </p>
                     </div>
-                    <button
-                      className={cx(dangerClass, 'h-9 px-3 text-xs')}
-                      disabled={busyId === current.id} aria-busy={Boolean(busyId === current.id)}
-                      onClick={() => doAction(() => archiveSignatureAsset(companyId, current.id), 'ลบลายเซ็นเรียบร้อยแล้ว', current.id)}
-                    >
-                      {busyId === current.id ? 'กำลังดำเนินการ...' : 'ลบลายเซ็น'}
-                    </button>
+                    {/* Rare once a signature exists: neither is the page's main button. */}
+                    <ActionGroup>
+                      <button type="button" className={dangerClass} disabled={busyId === current.id} aria-busy={Boolean(busyId === current.id)} onClick={() => void removeSignature(current)}>
+                        {busyId === current.id ? 'กำลังลบ…' : 'ลบลายเซ็น'}
+                      </button>
+                      <button type="button" className={ghostClass} onClick={openUpload}>เปลี่ยนลายเซ็น</button>
+                    </ActionGroup>
                   </div>
                 ) : (
-                  <EmptyState title="ยังไม่มีลายเซ็นของคุณ" description="เซ็นบนหน้าจอหรืออัปโหลดรูปลายเซ็น แล้วใช้ลงนามเอกสารได้ทันที" />
+                  // An empty page says what belongs here and offers the one action that fills it.
+                  <div className="space-y-3 py-6 text-center">
+                    <p className="font-semibold text-gray-800">ยังไม่มีลายเซ็นของคุณ</p>
+                    <ActionGroup align="center">
+                      <button type="button" className={btnClass} onClick={openUpload}>เพิ่มลายเซ็น</button>
+                    </ActionGroup>
+                  </div>
                 )}
 
                 {previous.length > 0 && (
@@ -548,8 +591,8 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
                         pictured here, so without saying it the user reads the list as "my signature
                         is still there" right after pressing ลบลายเซ็น. */}
                     <div className="mb-2">
-                      <div className="text-xs font-semibold text-gray-500">ลายเซ็นที่เลิกใช้แล้ว</div>
-                      <div className="text-xs text-gray-400">ลบแล้วหรือถูกแทนที่ ใช้ลงนามใหม่ไม่ได้ · เก็บไว้เพื่อให้เอกสารที่ลงนามไปแล้วยังใช้ได้</div>
+                      <div className="text-sm font-semibold text-gray-600">ลายเซ็นที่เลิกใช้แล้ว</div>
+                      <div className="text-sm text-gray-500">ใช้เซ็นใหม่ไม่ได้ เก็บไว้ให้เอกสารที่เซ็นไปแล้วยังใช้ได้</div>
                     </div>
                     <div className="space-y-2">
                       {previous.map((a) => (
@@ -561,12 +604,12 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
                             a.id === focusSignatureId && 'border-brand-400 ring-2 ring-brand-200')}
                         >
                           <span className="flex items-center gap-3">
-                            {a.previewUrl && <SignatureThumb url={a.previewUrl} alt={a.label ?? 'ลายเซ็น'} className="max-h-12" />}
-                            <span className="text-gray-700">{a.label ?? 'ลายเซ็นไม่มีชื่อ'}<span className="ml-2 text-xs text-gray-500">{dateShort(a.createdAt)}</span></span>
+                            {a.previewUrl && <SignatureThumb url={a.previewUrl} alt="ลายเซ็นที่เลิกใช้แล้ว" className="max-h-12" />}
+                            <span className="text-gray-600">บันทึกเมื่อ <span className="mangmee-unit">{dateShort(a.createdAt)}</span></span>
                           </span>
                           <span className="flex items-center gap-2">
                             <MangmeeBadge tone={a.status === 'ACTIVE' ? 'brand' : 'slate'}>{expenseValueLabel(SIGNATURE_ASSET_STATUS_LABELS, a.status, 'สถานะลายเซ็นอื่น')}</MangmeeBadge>
-                            {a.status !== 'ARCHIVED' && <IconBtn title="ลบลายเซ็น" tone="danger" disabled={busyId === a.id} loading={Boolean(busyId === a.id)} onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'ลบลายเซ็นเรียบร้อยแล้ว', a.id)}>{ICON.trash}</IconBtn>}
+                            {a.status !== 'ARCHIVED' && <IconBtn title="ลบลายเซ็น" tone="danger" disabled={busyId === a.id} loading={Boolean(busyId === a.id)} onClick={() => void removeSignature(a)}>{ICON.trash}</IconBtn>}
                           </span>
                         </div>
                       ))}
@@ -577,19 +620,21 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
             )}
           </MangmeeCard>
 
-          <Modal open={showUpload} title={current ? 'เปลี่ยนลายเซ็นของฉัน' : 'เพิ่มลายเซ็นของฉัน'} size="md" onClose={() => { if (!saving && !preparingFile && !previewing) setShowUpload(false); }}>
+          <Modal open={showUpload} title={current ? 'เปลี่ยนลายเซ็นของฉัน' : 'เพิ่มลายเซ็นของฉัน'} size="md" onClose={() => { if (!uploadBusy) setShowUpload(false); }}
+            footer={method === 'upload' ? (
+              <>
+                <button type="button" className={ghostClass} disabled={uploadBusy} onClick={() => setShowUpload(false)}>ยกเลิก</button>
+                <button type="button" className={btnClass} onClick={() => { if (!preparedFile) { setActionError('เลือกรูปลายเซ็นก่อน'); return; } void submit(!!derivedBlob); }} disabled={uploadBusy} aria-busy={Boolean(uploadBusy)}>{previewing ? 'กำลังลบพื้นหลัง...' : preparingFile ? 'กำลังเตรียมรูป...' : saving ? 'กำลังบันทึก...' : 'บันทึกลายเซ็น'}</button>
+              </>
+            ) : undefined}>
             {actionError && <div className="mb-3"><ErrorBanner message={actionError} /></div>}
-            <div className="mt-0.5 mb-3 text-sm text-gray-500">ใช้ลงนามได้ทันทีหลังบันทึก · การประทับทำจากหน้ารีวิวค่าใช้จ่าย{current ? ' · ลายเซ็นใหม่จะถูกใช้แทนอันเดิม' : ''}</div>
-            <div className="mb-3 flex gap-2">
-              {([['upload', 'อัปโหลดรูป'], ['draw', 'เซ็นบนหน้าจอ']] as const).map(([key, text]) => (
-                <button key={key} className={cx(method === key ? btnClass : ghostClass, 'h-9 px-3 text-xs')} disabled={saving || preparingFile || previewing} onClick={() => { setMethod(key); setActionError(null); }}>{text}</button>
+            {current && <p className="mb-3 text-sm text-gray-600">ลายเซ็นใหม่จะใช้แทนอันเดิม</p>}
+            {/* A choice between two ways, not two actions: a two-part switch, so the dialog keeps one main button. */}
+            <div className="mangmee-segmented mb-3" role="group" aria-label="วิธีเพิ่มลายเซ็น">
+              {([['draw', 'เซ็นบนหน้าจอ'], ['upload', 'อัปโหลดรูป']] as const).map(([key, text]) => (
+                <button key={key} type="button" aria-pressed={method === key} className={cx('mangmee-tab', method === key && 'mangmee-tab-active')} disabled={uploadBusy} onClick={() => { setMethod(key); setActionError(null); }}>{text}</button>
               ))}
             </div>
-            {/* maxLength mirrors the API's own limit. Without it a pasted long label passed the
-                whole upload, then failed at the final POST with a generic system error — leaving an
-                orphaned PNG in storage and no way to retry successfully. */}
-            <input className={cx(inputClass, label.length >= SIGNATURE_LABEL_MAX_LENGTH ? 'mb-1' : 'mb-3')} maxLength={SIGNATURE_LABEL_MAX_LENGTH} placeholder="ชื่อ/ป้ายกำกับ เช่น ลายเซ็นกรรมการ (ไม่บังคับ)" value={label} onChange={(e) => setLabel(stripDisallowed(e.target.value))} />
-            {label.length >= SIGNATURE_LABEL_MAX_LENGTH && <p className="mb-3 text-xs font-semibold text-warning-700">{SIGNATURE_LABEL_TOO_LONG}</p>}
             {method === 'draw' ? (
               // The pad exports an already-cropped transparent PNG, so it needs no derived pass.
               <SignaturePad
@@ -599,31 +644,29 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
               />
             ) : (
               <>
-                <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-300 py-8 text-center text-sm text-gray-500 hover:border-brand-300 hover:bg-brand-25">
+                <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-300 py-8 text-center text-sm text-gray-600 hover:border-brand-300 hover:bg-brand-25">
                   <span className="text-gray-400 [&>svg]:h-8 [&>svg]:w-8">{ICON.upload}</span>
-                  {fileName ? <span className="font-semibold text-brand-700">✓ {fileName}</span> : (
+                  {fileName ? <span className="font-semibold text-brand-700 [overflow-wrap:anywhere]">✓ {fileName}</span> : (
                     <>
                       <span>เลือกรูปลายเซ็นหรือถ่ายรูป</span>
-                      <span className="text-xs text-gray-400"><WholeWords text={IMAGE_SOURCE_TYPES_LABEL} /></span>
+                      <span className="text-sm text-gray-500"><WholeWords text={IMAGE_SOURCE_TYPES_LABEL} /></span>
                     </>
                   )}
-                  <input ref={fileRef} type="file" accept={SIGNATURE_UPLOAD_ACCEPT} className="hidden" disabled={saving || preparingFile || previewing} onChange={(e) => void selectSignatureFile(e.target.files?.[0] ?? null)} />
+                  <input ref={fileRef} type="file" accept={SIGNATURE_UPLOAD_ACCEPT} className="hidden" disabled={uploadBusy} onChange={(e) => void selectSignatureFile(e.target.files?.[0] ?? null)} />
                 </label>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button className={ghostClass} onClick={buildPreview} disabled={saving || preparingFile || previewing || !preparedFile} aria-busy={Boolean(previewing)}>{previewing ? 'กำลังลบพื้นหลัง...' : 'ลบพื้นหลัง (ดูตัวอย่าง)'}</button>
-                  <button className={btnClass} onClick={() => submit(!!derivedBlob)} disabled={saving || preparingFile || previewing || !preparedFile} aria-busy={Boolean(previewing || preparingFile || saving)}>{previewing ? 'กำลังลบพื้นหลัง...' : preparingFile ? 'กำลังเตรียมรูป...' : saving ? 'กำลังบันทึก...' : derivedBlob ? 'บันทึกลายเซ็น (พร้อมไฟล์โปร่งใส)' : 'บันทึกลายเซ็น'}</button>
-                </div>
+                {/* The background is taken out as soon as a picture is chosen; the result is shown before saving. */}
+                {(preparingFile || previewing) && <p role="status" className="mt-3 text-sm font-semibold text-brand-700">กำลังลบพื้นหลัง...</p>}
                 {preview && (
                   <div className="mt-3 grid grid-cols-2 gap-3">
                     <div>
-                      <p className="mb-1 text-xs text-gray-500">ต้นฉบับ</p>
+                      <p className="mb-1 text-sm text-gray-500">รูปที่เลือก</p>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={preview.original} alt="original signature" className="max-h-32 rounded-lg border bg-white" />
+                      <img src={preview.original} alt="รูปลายเซ็นที่เลือก" className="max-h-32 rounded-lg border bg-white" />
                     </div>
                     <div>
-                      <p className="mb-1 text-xs text-gray-500">พื้นหลังโปร่งใส</p>
+                      <p className="mb-1 text-sm text-gray-500">ลายเซ็นที่จะบันทึก</p>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={preview.derived} alt="derived signature" className="max-h-32 rounded-lg border" style={{ backgroundImage: 'repeating-conic-gradient(#f3f4f6 0% 25%, white 0% 50%)', backgroundSize: '16px 16px' }} />
+                      <img src={preview.derived} alt="ลายเซ็นที่ลบพื้นหลังแล้ว" className="max-h-32 rounded-lg border" style={{ backgroundImage: 'repeating-conic-gradient(#f3f4f6 0% 25%, white 0% 50%)', backgroundSize: '16px 16px' }} />
                     </div>
                   </div>
                 )}
@@ -636,16 +679,14 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
     </div>
   );
 }
-
 // ── Accountant shared evidence + export package ───────────────────────────────
-export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedger, canPostClaimPayments = false, onOpenExpense }: {
+export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedger, canPostClaimPayments = false }: {
   companyId: string;
   canExport: boolean;
   canReadLedger: boolean;
   canPostLedger: boolean;
   /** May post to the ledger AND read the claim payout worklist (`reimbursement.finance_review`). */
   canPostClaimPayments?: boolean;
-  onOpenExpense: (expenseId: string) => void;
 }) {
   const toast = useToast();
   const showPosting = canReadLedger || canPostLedger;
@@ -659,23 +700,25 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   const [view, setView] = useState<SharedEvidenceView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Menu-scoped like the expense list's period: opening an expense from a folder and coming back
-  // keeps the folder. '' means "all months" and has to round-trip as a real stored value.
-  const [dateField, setDateField] = useMenuFilterState<'uploadedAt' | 'expenseDate'>('expenses.evidence.dateField', () => 'uploadedAt');
-  const [yearMonth, setYearMonth] = useMenuFilterState('expenses.evidence.yearMonth', () => '');
-  const [documentStatus, setDocumentStatus] = useState('CONFIRMED');
-  const [taxEvidenceStatus, setTaxEvidenceStatus] = useState('');
-  const [sourceDocumentType, setSourceDocumentType] = useState('');
-  // flagFilter replaces the old attentionOnly checkbox: 'attention' is one of its chips, and the
-  // other chips narrow to a specific problem. postingStatus stays a separate dimension.
-  const [flagFilter, setFlagFilter] = useState<EvidenceFlagKey | 'all' | 'attention'>('all');
-  const [postingStatus, setPostingStatus] = useState('');
-  const [page, setPage] = useState(1);
-  const [folderPage, setFolderPage] = useState(1);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const state = readEvidenceListState(searchParams ?? new URLSearchParams(), todayCivilDate().slice(0, 7));
+  const { dateField, yearMonth, documentStatus, taxEvidenceStatus, sourceDocumentType, flagFilter, postingStatus, page, order } = state;
+  const update = (patch: Partial<typeof state>) => {
+    const query = new URLSearchParams(searchParams?.toString());
+    for (const [key, value] of Object.entries({ ...state, page: 1, ...patch })) query.set(key, String(value));
+    router.replace(`/companies/${companyId}/expenses/evidence?${query}`, { scroll: false });
+  };
+  const setYearMonth = (yearMonth: string) => update({ yearMonth });
+  const setDateField = (dateField: typeof state.dateField) => update({ dateField });
+  const setDocumentStatus = (documentStatus: string) => update({ documentStatus });
+  const setTaxEvidenceStatus = (taxEvidenceStatus: string) => update({ taxEvidenceStatus });
+  const setSourceDocumentType = (sourceDocumentType: string) => update({ sourceDocumentType });
+  const setPostingStatus = (postingStatus: string) => update({ postingStatus });
+  const setFlagFilter = (flagFilter: typeof state.flagFilter) => update({ flagFilter });
+  const setPage = (page: number) => update({ page });
   const [packageResult, setPackageResult] = useState<AccountantPackageResult | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [confirmExport, setConfirmExport] = useState(false);
-  const [postingExpenseId, setPostingExpenseId] = useState<string | null>(null);
   const [backfillPreview, setBackfillPreview] = useState<ExpenseBackfillPreview | null>(null);
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
@@ -696,10 +739,10 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
       const next = await getSharedEvidence(companyId, { ...filters, page: 1, pageSize: 200 });
       if (version !== loadVersion.current) return;
       for (let nextPage = 2; next.rows.length < next.total; nextPage += 1) {
-        if (nextPage > 50) throw new Error('รายการมากเกินไป กรุณาเลือกเดือนเพื่อดูข้อมูลให้ครบ');
+        if (nextPage > 50) throw new Error('รายการมากเกินไป เลือกเดือนเพื่อดูข้อมูลให้ครบ');
         const more = await getSharedEvidence(companyId, { ...filters, page: nextPage, pageSize: next.pageSize });
         if (version !== loadVersion.current) return;
-        if (!more.rows.length) throw new Error('โหลดหลักฐานไม่ครบ กรุณาลองใหม่');
+        if (!more.rows.length) throw new Error('โหลดหลักฐานไม่ครบ ลองอีกครั้ง');
         next.rows.push(...more.rows);
       }
       setView(next);
@@ -713,52 +756,28 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
   useEffect(() => {
     exportScopeVersion.current += 1;
-    setConfirmExport(false); setPackageResult(null); setPage(1);
+    setPackageResult(null);
   }, [branchId, dateField, yearMonth, documentStatus, taxEvidenceStatus, sourceDocumentType, postingStatus, flagFilter]);
 
   const exportPackage = async () => {
     const version = loadVersion.current;
     const scopeVersion = exportScopeVersion.current;
-    setConfirmExport(false);
     setExporting(true); setError(null);
     try {
-      const result = await createAccountantPackage(companyId, {
-        expenseIds: visibleRows.map((row) => row.expenseId),
-        ...(branchId ? { branchId } : {}),
-        dateField,
-        status: documentStatus,
-        // ponytail: this panel is the accounting-office view — always the full column set.
-        columnSet: 'full',
-        ...(yearMonth ? { yearMonth } : {}),
-        ...(taxEvidenceStatus ? { taxEvidenceStatus } : {}),
-        ...(sourceDocumentType ? { sourceDocumentType } : {}),
-        ...(postingStatus ? { postingStatus } : {}),
-      });
+      const result = await createAccountantPackage(companyId, { ...exportFilters, columnSet: 'full' });
       if (version !== loadVersion.current || scopeVersion !== exportScopeVersion.current) return;
       // Same guard as the list page (ebed6dfb): a header-only workbook reads as a broken export.
       if (result.rowCount === 0) { toast.warning('ไม่มีรายการตามตัวกรองในช่วงนี้ จึงยังส่งออกไม่ได้'); return; }
       setPackageResult(result);
-      downloadIndexXlsx(result, `expense-index-${yearMonth || 'all'}.xlsx`);
+      downloadIndexXlsx(result, `สรุปรายจ่าย-${yearMonth || 'ทุกเดือน'}.xlsx`);
+      // Said where the person is looking, the moment it happens.
+      toast.success(`ดาวน์โหลด Excel แล้ว ${result.rowCount} รายการ`);
     } catch (e) {
       if (version !== loadVersion.current || scopeVersion !== exportScopeVersion.current) return;
       if (isBranchScope403(e, branchId)) branchFilter?.reportBranchForbidden();
       setError(err(e));
     }
     finally { setExporting(false); }
-  };
-
-  const postExpense = async (
-    expenseId: string,
-    sourceType: 'expense.record' | 'expense.payment',
-    sourceId: string,
-  ) => {
-    setPostingExpenseId(expenseId); setError(null);
-    try {
-      await generateSourceJournal(companyId, sourceType, sourceId);
-      await load();
-      toast.success('สร้างสมุดรายวันเรียบร้อยแล้ว');
-    } catch (e) { setError(err(e)); }
-    finally { setPostingExpenseId(null); }
   };
 
   const previewHistoricalBackfill = async () => {
@@ -774,53 +793,44 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
     setBackfillBusy(true); setError(null);
     try {
       const result = await runExpenseBackfill(companyId, { confirmed: true, limit: 50 });
-      setBackfillMessage(`ลงบัญชีย้อนหลังสำเร็จ ${result.posted} รายการ · ไม่สำเร็จ ${result.failed} · คงเหลือที่พร้อมลง ${result.remaining} · รอตรวจโดยนักบัญชี ${result.skipped}`);
+      setBackfillMessage(`ลงบัญชีย้อนหลังแล้ว ${result.posted} รายการ · ไม่สำเร็จ ${result.failed} · คงเหลือที่พร้อมลง ${result.remaining} · รอตรวจโดยนักบัญชี ${result.skipped}`);
       setBackfillPreview(null);
       await load();
     } catch (e) { setError(err(e)); }
     finally { setBackfillBusy(false); }
   };
 
-  const downloadManifest = () => {
-    if (!packageResult) return;
-    const blob = new Blob([JSON.stringify(packageResult.evidenceManifest, null, 2)], { type: 'application/json' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'evidence_manifest.json';
-    link.click();
-    URL.revokeObjectURL(link.href);
-  };
 
   const rows = view?.rows ?? [];
   const summary = summarizeEvidenceRows(rows);
-  const flagSummary = summarizeEvidenceFlags(rows);
-  const visibleRows = filterRowsByFlag(rows, flagFilter);
+  const visibleRows = evidenceRowsInDateOrder(filterRowsByFlag(rows, flagFilter), order);
   const total = visibleRows.reduce((s, r) => s + Number(r.grandTotalAmount || 0), 0);
   const exportAttentionCount = summarizeEvidenceRows(visibleRows).attention;
-  const filterOptions: Array<{ key: EvidenceFlagKey | 'all' | 'attention'; label: string; count: number }> = [
-    { key: 'all', label: 'ทั้งหมด', count: rows.length },
-    ...(summary.attention > 0 ? [{ key: 'attention' as const, label: '⚠ ต้องตรวจ', count: summary.attention }] : []),
-    ...flagSummary,
+  const exportFilters = {
+    expenseIds: visibleRows.map((row) => row.expenseId),
+    ...(branchId ? { branchId } : {}), dateField, status: documentStatus,
+    ...(yearMonth ? { yearMonth } : {}),
+    ...(taxEvidenceStatus ? { taxEvidenceStatus } : {}),
+    ...(sourceDocumentType ? { sourceDocumentType } : {}),
+    ...(postingStatus ? { postingStatus } : {}),
+  };
+  const filterOptions = [
+    { key: 'all' as const, label: 'ทั้งหมด', count: rows.length },
+    { key: 'attention' as const, label: 'ต้องแก้', count: summary.attention },
+    { key: 'ok' as const, label: 'ครบแล้ว', count: summary.ok },
   ];
-  const activeFilterCount = flagFilter === 'all'
-    ? rows.length
-    : flagFilter === 'attention'
-      ? summary.attention
-      : flagSummary.find((flag) => flag.key === flagFilter)?.count ?? 0;
-  const bounds = useMemo(() => pageBounds(visibleRows.length, page), [visibleRows.length, page]);
-  const pagedRows = useMemo(() => visibleRows.slice(bounds.start, bounds.end), [visibleRows, bounds]);
-  const folderBounds = useMemo(() => pageBounds(view?.folders.length ?? 0, folderPage, 12), [view?.folders.length, folderPage]);
-  const pagedFolders = useMemo(() => (view?.folders ?? []).slice(folderBounds.start, folderBounds.end), [view?.folders, folderBounds]);
-  useEffect(() => { if (flagFilter !== 'all' && activeFilterCount === 0) setFlagFilter('all'); }, [activeFilterCount, flagFilter]);
-  useEffect(() => { setPage(1); }, [yearMonth, documentStatus, taxEvidenceStatus, sourceDocumentType, postingStatus, flagFilter, view?.dateField]);
-  useEffect(() => { setFolderPage(1); }, [view?.dateField]);
+  const bounds = pageBounds(visibleRows.length, page, 10);
+  const pagedRows = visibleRows.slice(bounds.start, bounds.end);
+  const listQuery = new URLSearchParams(searchParams?.toString());
+  for (const [key, value] of Object.entries(state)) listQuery.set(key, String(value));
+  const back = `/companies/${companyId}/expenses/evidence?${listQuery}`;
+  const openRow = (row: typeof rows[number]) => router.push(`${expenseDetailUrl(`/companies/${companyId}/expenses`, row.expenseId, back)}${evidenceRowState(deriveEvidenceRowFlags(row)) === 'attention' ? '&section=checks' : ''}`);
+  const sortLabel = order === 'newest' ? 'วันที่ ใหม่ไปเก่า กดเพื่อเรียงเก่าไปใหม่' : 'วันที่ เก่าไปใหม่ กดเพื่อเรียงใหม่ไปเก่า';
+  const toggleOrder = () => update({ order: order === 'newest' ? 'oldest' : 'newest' });
+  const months = [...new Set([yearMonth, ...(view?.folders ?? []).map(folder => folder.yearMonth)])].filter(Boolean).sort().reverse();
 
   return (
     <div className="space-y-4">
-      {/* Step 2 used to promise "คลิกเปิดแก้ได้ทันที". This tab only ever lists CONFIRMED
-          documents, and CONFIRMED is locked for editing everywhere — API and UI alike — so the
-          promise was false for every row it was shown on. */}
-      <HowItWorks title="เตรียมหลักฐานให้สำนักงานบัญชี" steps={['เปิดรายการที่มีคำเตือนเพื่อตรวจข้อมูล', 'หากเอกสารยืนยันแล้วผิด ให้ยกเลิกแล้วบันทึกใหม่', 'ตรวจความครบถ้วนก่อนส่งออกให้บัญชี']} />
       <StateBanner error={error} />
       {backfillMessage && <InfoBanner message={backfillMessage} />}
       {/* Outside the `!error` block on purpose: a refused post is an answer, not a broken screen. */}
@@ -828,299 +838,111 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
 
       {!error && (
         <>
-          <div className="flex flex-wrap gap-3">
-            <div className="min-w-[180px] flex-1"><MangmeeStatCard tone="brand" icon={ICON.doc} label={EXPENSE_STATUS_LABELS[documentStatus as keyof typeof EXPENSE_STATUS_LABELS] ?? 'เอกสาร'} value={`${visibleRows.length} รายการ`} sub={yearMonth ? formatThaiMonth(yearMonth) : 'ทั้งหมด'} /></div>
-            <div className="min-w-[180px] flex-1"><MangmeeStatCard tone="indigo" icon={ICON.wallet} label="ยอดรวมตามตัวกรอง" value={baht(total)} sub={`${visibleRows.length} รายการ`} /></div>
-            {/* Toggles the same 'attention' state the filter chips below use, so the card and the
-                chip row can never disagree about what is currently filtered. */}
-            <button type="button" aria-pressed={flagFilter === 'attention'}
-              onClick={() => setFlagFilter((current) => (current === 'attention' ? 'all' : 'attention'))}
-              className={cx('min-w-[180px] flex-1 rounded-2xl text-left', flagFilter === 'attention' && 'ring-2 ring-warning-500 ring-offset-2')}>
-              <MangmeeStatCard tone="amber" icon="⚠" label="ต้องตรวจเพิ่ม" value={`${summary.attention} รายการ`} sub="คลิกเพื่อดูเฉพาะรายการที่ต้องตรวจ" />
-            </button>
-          </div>
-
-          <MangmeeCard className="flex flex-col gap-3 p-4 sm:flex-row sm:flex-wrap sm:items-end">
-            <div>
-              <div className="mb-1 text-xs font-semibold text-gray-600">เกณฑ์วันที่</div>
+          <MangmeeCard className="p-4"><MetricGrid columns={3} items={[
+            { key: 'documents', label: 'เอกสาร', value: String(visibleRows.length), unit: 'รายการ', note: `ยอดรวม ${amountText(total)} บาท`, dot: 'bg-brand-500' },
+            { key: 'complete', label: 'ครบแล้ว', value: String(visibleRows.length - exportAttentionCount), unit: 'รายการ', dot: 'bg-success-500' },
+            { key: 'attention', label: 'ต้องแก้', value: String(exportAttentionCount), unit: 'รายการ', dot: 'bg-warning-500' },
+          ]} /></MangmeeCard>
+          {/* One row of filters: which month, how the month is counted, which documents. */}
+          <MangmeeCard className="flex min-w-0 flex-col gap-3 p-4 lg:flex-row lg:items-end">
+            <label className="min-w-0 flex-1">
+              <span className={FILTER_LABEL}>เดือน</span>
+              <ThemedSelect className={cx(inputClass, 'min-w-0 w-full')} aria-label="เดือน" value={yearMonth} onChange={(e) => setYearMonth(e.target.value)}>
+                <option value="">ทุกเดือน</option>
+                {months.map(month => <option key={month} value={month}>{`${formatThaiMonth(month)} · ${view?.folders.find(folder => folder.yearMonth === month)?.expenseCount ?? 0} รายการ`}</option>)}
+              </ThemedSelect>
+            </label>
+            <div className="shrink-0">
+              <div className={FILTER_LABEL}>นับเดือนตาม</div>
               <div className="mangmee-segmented">
-                <button className={cx('mangmee-tab', dateField === 'uploadedAt' && 'mangmee-tab-active')} onClick={() => { setDateField('uploadedAt'); setYearMonth(''); }}>วันที่ส่งเข้า</button>
-                <button className={cx('mangmee-tab', dateField === 'expenseDate' && 'mangmee-tab-active')} onClick={() => { setDateField('expenseDate'); setYearMonth(''); }}>วันที่เอกสาร</button>
+                <button type="button" className={cx('mangmee-tab', dateField === 'uploadedAt' && 'mangmee-tab-active')} onClick={() => { setDateField('uploadedAt'); }}>วันที่ส่งเข้า</button>
+                <button type="button" className={cx('mangmee-tab', dateField === 'expenseDate' && 'mangmee-tab-active')} onClick={() => { setDateField('expenseDate'); }}>วันที่เอกสาร</button>
               </div>
             </div>
-            <label>
-              <span className="mb-1 block text-xs font-semibold text-gray-600">สถานะเอกสาร</span>
-              <ThemedSelect className={cx(inputClass, 'w-auto')} value={documentStatus} onChange={(e) => setDocumentStatus(e.target.value)}>
+            <label className="min-w-0 flex-1">
+              <span className={FILTER_LABEL}>สถานะเอกสาร</span>
+              <ThemedSelect className={cx(inputClass, 'min-w-0 w-full')} value={documentStatus} onChange={(e) => setDocumentStatus(e.target.value)}>
                 <option value="CONFIRMED">{EXPENSE_STATUS_LABELS.CONFIRMED}</option>
                 <option value="VOIDED">{EXPENSE_STATUS_LABELS.VOIDED}</option>
               </ThemedSelect>
             </label>
-            <label>
-              <span className="mb-1 block text-xs font-semibold text-gray-600">ประเภทเอกสาร</span>
-              <ThemedSelect className={cx(inputClass, 'w-auto')} value={sourceDocumentType} onChange={(e) => setSourceDocumentType(e.target.value)}>
+            <label className="min-w-0 flex-1">
+              <span className={FILTER_LABEL}>ประเภทเอกสาร</span>
+              <ThemedSelect className={cx(inputClass, 'min-w-0 w-full')} value={sourceDocumentType} onChange={(e) => setSourceDocumentType(e.target.value)}>
                 <option value="">ทุกประเภทเอกสาร</option>
                 {Object.entries(SOURCE_DOCUMENT_TYPE_LABELS).map(([key, labelText]) => <option key={key} value={key}>{labelText}</option>)}
               </ThemedSelect>
             </label>
-            {showPosting && <label>
-              <span className="mb-1 block text-xs font-semibold text-gray-600">สถานะลงบัญชี</span>
-              <ThemedSelect className={cx(inputClass, 'w-auto')} value={postingStatus} onChange={(e) => setPostingStatus(e.target.value)}>
+            {showPosting && <label className="min-w-0 flex-1">
+              <span className={FILTER_LABEL}>สถานะลงบัญชี</span>
+              <ThemedSelect className={cx(inputClass, 'min-w-0 w-full')} value={postingStatus} onChange={(e) => setPostingStatus(e.target.value)}>
                 <option value="">ทุกสถานะลงบัญชี</option>
                 {Object.entries(POSTING_STATUS_LABELS).map(([key, labelText]) => <option key={key} value={key}>{labelText}</option>)}
               </ThemedSelect>
             </label>}
-            {showsTax && <label>
-              <span className="mb-1 block text-xs font-semibold text-gray-600">สถานะหลักฐานภาษี</span>
-              <ThemedSelect className={cx(inputClass, 'w-auto')} value={taxEvidenceStatus} onChange={(e) => setTaxEvidenceStatus(e.target.value)}>
-                <option value="">ทุกสถานะหลักฐานภาษี</option>
+            {showsTax && <label className="min-w-0 flex-1">
+              <span className={FILTER_LABEL}>{TAX_EVIDENCE_FILTER_LABEL}</span>
+              <ThemedSelect className={cx(inputClass, 'min-w-0 w-full')} value={taxEvidenceStatus} onChange={(e) => setTaxEvidenceStatus(e.target.value)}>
+                <option value="">ทุกคำตอบ</option>
                 {Object.entries(TAX_EVIDENCE_STATUS_LABELS).map(([key, labelText]) => <option key={key} value={key}>{labelText}</option>)}
               </ThemedSelect>
             </label>}
             {/* No attention checkbox here: that filter now lives in the chip row with the others. */}
-            {canPostLedger && <button className={cx(ghostClass, 'sm:ml-auto')} onClick={() => void previewHistoricalBackfill()} disabled={backfillBusy} aria-busy={Boolean(backfillBusy)}>{backfillBusy ? 'กำลังตรวจ...' : 'ตรวจรายการเก่าก่อน Auto-post'}</button>}
-            {canExport && <button className={cx(btnClass, canPostLedger ? '' : 'sm:ml-auto')} onClick={() => setConfirmExport(true)} disabled={exporting || loading || !view?.total}>{exporting ? 'กำลังสร้าง...' : 'ส่งออกชุดเอกสารให้บัญชี'}</button>}
+            {canPostLedger && <button type="button" className={cx(ghostClass, 'sm:ml-auto')} onClick={() => void previewHistoricalBackfill()} disabled={backfillBusy} aria-busy={Boolean(backfillBusy)}>{backfillBusy ? 'กำลังตรวจ...' : 'ตรวจรายการเก่าก่อน Auto-post'}</button>}
           </MangmeeCard>
 
-          {/* Themed confirm instead of window.confirm(): the browser dialog ignored the app theme. */}
-          <Modal
-            open={confirmExport}
-            title="ส่งออกชุดเอกสารให้บัญชี"
-            size="sm"
-            onClose={() => setConfirmExport(false)}
-            footer={
-              <>
-                <button className={ghostClass} onClick={() => setConfirmExport(false)}>ยกเลิก</button>
-                <button className={btnClass} onClick={() => void exportPackage()} disabled={exporting} aria-busy={Boolean(exporting)}>{exporting ? 'กำลังสร้าง...' : 'ยืนยันส่งออก'}</button>
-              </>
-            }
-          >
-            <div className="space-y-3 text-sm">
-              <p className="text-gray-600">ระบบจะส่งออกเอกสารตามตัวกรองปัจจุบัน</p>
-              <p className="font-semibold">รายการที่ส่งออก: {visibleRows.length} รายการ · รวมทุกหน้าที่ตรงกับตัวกรอง</p>
-              <p className="font-semibold text-gray-900">สาขา: {branchLabel ?? 'กำลังตรวจสอบสาขา'}</p>
-              <p className="text-gray-600">{dateField === 'uploadedAt' ? 'วันที่ส่งเข้า' : 'วันที่เอกสาร'}: {yearMonth ? formatThaiMonth(yearMonth) : 'ทุกช่วงเวลา'} · {EXPENSE_STATUS_LABELS[documentStatus as keyof typeof EXPENSE_STATUS_LABELS] ?? documentStatus}</p>
-              {exportAttentionCount > 0 ? (
-                <div className="rounded-lg border border-warning-100 bg-warning-50 p-3 text-warning-800">
-                  ⚠ พบ {exportAttentionCount} รายการที่มีคำเตือนในชุดที่เลือก ระบบจะรวมรายการเหล่านี้ในชุดส่งออกด้วย
+          {dateField === 'expenseDate' && rows.some(row => row.dateStatus === 'unverified' || row.dateStatus === 'implausible') && <p className="text-sm text-gray-600">รายการที่ยังไม่มีวันที่เอกสารนับตามวันที่ส่งเข้า</p>}
+
+          {/* The export: one line says what the file holds (the filters above say which month), and the result is said right here.
+              A download can be repeated and undone by deleting a file, so it asks nothing first. */}
+          {canExport && (
+            <MangmeeCard className="space-y-3 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end [&>details]:w-full sm:[&>details]:w-auto [&>details>summary]:w-full">
+                <EvidenceBundleDownload accountant showCounts companyId={companyId} request={exportFilters} enabled={!loading && !!view} key={JSON.stringify([companyId, exportFilters])} />
+                <MoreActions label="เพิ่มเติม" align="end" closeOnPress busy={exporting}>
+                  <button type="button" className={ghostClass} onClick={() => void exportPackage()} disabled={exporting || loading || !visibleRows.length} aria-busy={Boolean(exporting || loading)}>{exporting ? 'กำลังสร้าง...' : EXPORT_FOR_ACCOUNTANT}</button>
+                </MoreActions>
+              </div>
+              {exportAttentionCount > 0 && <p className="text-sm text-gray-500">มี {exportAttentionCount} รายการต้องแก้ ดาวน์โหลดได้ แต่ควรแก้ก่อนส่ง</p>}
+              {packageResult && (
+                <div className="space-y-1 rounded-xl border border-brand-100 bg-brand-25 p-3 text-sm" role="status">
+                  <p className="font-semibold text-brand-700">✓ ดาวน์โหลด Excel แล้ว {packageResult.rowCount} รายการ</p>
+                  {packageResult.truncated && <p className="font-semibold text-warning-700">⚠ ส่งออก {packageResult.rowCount} จากทั้งหมด {packageResult.totalMatched} รายการ เลือกเดือนหรือปรับตัวกรองให้แคบลง แล้วส่งออกอีกครั้ง</p>}
+                  <p className="text-gray-500">สร้างเมื่อ {formatThaiDateTime(packageResult.generatedAt)}</p>
+
                 </div>
-              ) : (
-                <p className="text-gray-500">หากมีรายการที่มีคำเตือน ระบบจะรวมไว้ในชุดส่งออกด้วย</p>
               )}
-            </div>
-          </Modal>
-
-          {loading && !view ? <LoadingState label="กำลังโหลด..." /> : view && (
-            <div className={cx('grid grid-cols-1 gap-4 transition-opacity 2xl:grid-cols-[220px_1fr]', loading && 'pointer-events-none opacity-50')}>
-              <MangmeeCard className="space-y-1 p-3">
-                <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-gray-700"><span className="text-gray-400">{ICON.folder}</span>โฟลเดอร์ ({view.dateField === 'uploadedAt' ? 'วันที่ส่งเข้า' : 'วันที่เอกสาร'})</div>
-                <FolderBtn active={yearMonth === ''} label="ทั้งหมด" onClick={() => setYearMonth('')} />
-                {pagedFolders.map((folder) => <FolderBtn key={folder.yearMonth} active={yearMonth === folder.yearMonth} label={formatThaiMonth(folder.yearMonth)} count={folder.expenseCount} incomplete={folder.evidenceCount < folder.expenseCount} onClick={() => setYearMonth(folder.yearMonth)} />)}
-                {view.folders.length === 0 && (
-                  <div className="px-2 py-6 text-center">
-                    <div className="text-gray-300">{ICON.folder}</div>
-                    <p className="mt-1 text-xs text-gray-400">ยังไม่มีเอกสารในช่วงนี้</p>
-                  </div>
-                )}
-                {folderBounds.totalPages > 1 && (
-                  <div className="flex items-center justify-between gap-2 px-1 pt-2 text-xs text-gray-500">
-                    <button type="button" aria-label="หน้าก่อนหน้า" className="rounded px-2 py-1 hover:bg-gray-100 disabled:opacity-40"
-                      disabled={folderBounds.page <= 1} onClick={() => setFolderPage(folderBounds.page - 1)}>‹</button>
-                    <span className="tabular-nums">{folderBounds.page} / {folderBounds.totalPages}</span>
-                    <button type="button" aria-label="หน้าถัดไป" className="rounded px-2 py-1 hover:bg-gray-100 disabled:opacity-40"
-                      disabled={folderBounds.page >= folderBounds.totalPages} onClick={() => setFolderPage(folderBounds.page + 1)}>›</button>
-                  </div>
-                )}
-              </MangmeeCard>
-
-              <MangmeeCard className="overflow-hidden">
-                <div className="flex w-full items-center gap-2 overflow-x-auto border-b border-gray-100 p-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
-                  {filterOptions.map((filter) => (
-                    <button
-                      key={filter.key}
-                      type="button"
-                      aria-pressed={flagFilter === filter.key}
-                      onClick={() => setFlagFilter((current) => current === filter.key && filter.key !== 'all' ? 'all' : filter.key)}
-                      className={cx(
-                        'inline-flex shrink-0 items-center gap-2 min-h-11 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition sm:min-h-0',
-                        flagFilter === filter.key
-                          ? 'border-brand-400 bg-brand-50 text-brand-700'
-                          : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200',
-                      )}
-                    >
-                      {filter.label}
-                      <span className={cx(
-                        'inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold tabular-nums',
-                        flagFilter === filter.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500',
-                      )}>{filter.count}</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="hidden overflow-x-auto md:block">
-                  {/* เลขที่ค่าใช้จ่าย/ประเภท fold into เอกสาร, ส่งเข้า folds into วันที่, and ไฟล์ is
-                      covered by the ไม่มีไฟล์ chip — 12 columns down to 9 without losing a signal. */}
-                  <table className="mangmee-table [&_td]:!px-3 [&_th]:!px-3">
-                    {/* The หลักฐานภาษี header and its cell below are dropped together — dropping one
-                        alone silently shifts every column right of it. */}
-                    <thead><tr>{['สถานะ', 'เอกสาร', ...(showPosting ? ['ลงบัญชี'] : []), 'วันที่', 'ผู้ขาย', 'ยอดรวม', ...(showsTax ? ['หลักฐานภาษี'] : []), 'สิ่งที่ต้องแก้', ''].map((heading) => <th key={heading} className={cx(
-                      '!text-[13px]',
-                      heading !== 'สิ่งที่ต้องแก้' && 'whitespace-nowrap',
-                      heading === 'ยอดรวม' && 'whitespace-nowrap text-right tabular-nums',
-                      heading === '' && 'w-px whitespace-nowrap',
-                    )}>{heading}</th>)}</tr></thead>
-                    <tbody>
-                      {visibleRows.length === 0 && (
-                        <tr><td colSpan={7 + Number(showsTax) + Number(showPosting)}>
-                          <EmptyState
-                            title={flagFilter === 'attention' ? 'ไม่มีรายการที่ต้องตรวจ' : flagFilter === 'all' ? 'ไม่มีรายการ' : 'ไม่มีรายการที่ตรงกับตัวกรอง'}
-                            description={flagFilter === 'attention' ? 'ทุกรายการในช่วงนี้มีหลักฐานครบแล้ว' : flagFilter === 'all' ? 'ลองเลือกเดือนอื่น หรือปรับตัวกรองด้านบน' : 'ลองเลือกทั้งหมด หรือปรับตัวกรองด้านบน'}
-                          />
-                        </td></tr>
-                      )}
-                      {pagedRows.map((r) => {
-                        const flags = deriveEvidenceRowFlags(r);
-                        const rowState = evidenceRowState(flags);
-                        const actionFlags = flags.filter((flag) => flag.key === 'NO_FILE' || flag.key === 'NO_VENDOR' || flag.key === 'NO_CATEGORY');
-                        const amount = Number(r.grandTotalAmount);
-                        return (
-                        <tr
-                          key={r.expenseId}
-                          role="link"
-                          tabIndex={0}
-                          aria-label={`เปิดรายการค่าใช้จ่าย ${r.expenseNumber ?? r.expenseId}`}
-                          className={cx(
-                            'cursor-pointer hover:bg-brand-25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500',
-                            rowState === 'attention' && 'border-l-4 border-warning-500',
-                          )}
-                          onClick={() => onOpenExpense(r.expenseId)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              onOpenExpense(r.expenseId);
-                            }
-                          }}
-                        >
-                          <td className="whitespace-nowrap"><MangmeeBadge tone={rowState === 'attention' ? 'amber' : 'brand'}>{rowState === 'attention' ? '⚠ ต้องตรวจ' : '✓ ครบถ้วน'}</MangmeeBadge></td>
-                          <td className="whitespace-nowrap">
-                            <div className={cx('text-xs font-bold tabular-nums', r.expenseNumber ? 'text-brand-700' : 'text-gray-400')}>{r.expenseNumber || 'รายการเดิม'}</div>
-                            <div className="mt-1 text-xs text-gray-500">{expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, r.sourceDocumentType, 'เอกสารค่าใช้จ่าย')}</div>
-                          </td>
-                          {showPosting && <td className="whitespace-nowrap text-xs" title={r.postingError ?? undefined}><MangmeeBadge tone={r.postingStatus === 'posted' ? 'brand' : r.postingStatus === 'posting_error' ? 'danger' : r.postingStatus === 'pending' ? 'amber' : 'slate'}>{POSTING_STATUS_LABELS[r.postingStatus]}</MangmeeBadge></td>}
-                          <td className="whitespace-nowrap text-xs">
-                            <div>{dateShort(r.expenseDate)}</div>
-                            <div className="mt-1 text-gray-500">ส่งเข้า {dateShort(r.uploadedAt)}</div>
-                          </td>
-                          <td className="whitespace-nowrap text-xs">{r.vendorNameSnapshot?.trim() || <span className="text-gray-400">—</span>}</td>
-                          <td className="whitespace-nowrap text-right text-xs font-semibold tabular-nums">{amount === 0 ? <span className="font-normal text-gray-400">—</span> : amount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</td>
-                          {showsTax && <td className="whitespace-nowrap text-xs" title={r.taxEvidenceReasonCode ? TAX_EVIDENCE_REASON_LABELS[r.taxEvidenceReasonCode] : undefined}><MangmeeBadge tone={TAX_EVIDENCE_TONE[r.taxEvidenceStatus]}>{expenseValueLabel(TAX_EVIDENCE_STATUS_LABELS, r.taxEvidenceStatus, 'รอตรวจหลักฐานภาษี')}</MangmeeBadge></td>}
-                          <td className="text-xs">
-                            {actionFlags.length > 0 ? <div className="flex flex-wrap gap-1.5">{actionFlags.map((flag) => (
-                              <MangmeeBadge key={flag.key} tone={flag.severity === 'warn' ? 'amber' : 'slate'} className="whitespace-nowrap">{flag.label}</MangmeeBadge>
-                            ))}</div> : <span className="text-gray-400">—</span>}
-                          </td>
-                          <td className="w-px whitespace-nowrap text-xs">
-                            {canPostLedger && r.pendingPostingSourceType ? (
-                              <button type="button" className={cx(ghostClass, '!min-h-8 !px-2 !py-1 !text-xs')} disabled={postingExpenseId === r.expenseId} aria-busy={Boolean(postingExpenseId === r.expenseId)}
-                                onClick={(event) => { event.stopPropagation(); if (r.pendingPostingSourceId) void postExpense(r.expenseId, r.pendingPostingSourceType!, r.pendingPostingSourceId); }}>
-                                {postingExpenseId === r.expenseId ? 'กำลังลง...' : r.postingStatus === 'posting_error' ? 'ลองอีกครั้ง' : 'ลงบัญชี'}
-                              </button>
-                            ) : canReadLedger && r.journalEntryId ? (
-                              <a className="font-semibold text-brand-700 hover:underline"
-                                href={`/companies/${companyId}/journal?sourceId=${encodeURIComponent(r.expenseId)}`}
-                                onClick={(event) => event.stopPropagation()}>
-                                {r.journalEntryNumber ?? 'ดู JV'}
-                              </a>
-                            ) : <span className="text-gray-400">›</span>}
-                          </td>
-                        </tr>
-                      );})}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* หลักฐานทางบัญชี on a phone. The desktop table stays byte-identical above; this
-                    list carries the same signals in reading order — state, document, amount,
-                    what needs fixing — with the row action last instead of in a ninth column
-                    the thumb never reaches. Reuses the shape shipped for the expenses list. */}
-                <div className="space-y-3 p-3 md:hidden" data-testid="evidence-card-list">
-                  {pagedRows.map((r) => {
-                    const flags = deriveEvidenceRowFlags(r);
-                    const rowState = evidenceRowState(flags);
-                    const actionFlags = flags.filter((flag) => flag.key === 'NO_FILE' || flag.key === 'NO_VENDOR' || flag.key === 'NO_CATEGORY');
-                    const amount = Number(r.grandTotalAmount);
-                    return (
-                      <MangmeeCard key={r.expenseId} className={cx('overflow-hidden p-0', rowState === 'attention' && 'border-l-4 border-l-warning-500')}>
-                        <button
-                          type="button"
-                          data-testid="evidence-card"
-                          aria-label={`เปิดรายการค่าใช้จ่าย ${r.expenseNumber ?? r.expenseId}`}
-                          className="block min-h-11 w-full p-4 text-left"
-                          onClick={() => onOpenExpense(r.expenseId)}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className={cx('truncate text-xs font-bold tabular-nums', r.expenseNumber ? 'text-brand-700' : 'text-gray-400')}>{r.expenseNumber || 'ยังไม่มีเลขที่'}</div>
-                              <div className="mt-0.5 truncate text-sm font-semibold text-gray-900">{r.vendorNameSnapshot?.trim() || '—'}</div>
-                            </div>
-                            <div className="shrink-0 text-right text-sm font-bold tabular-nums text-gray-900">{amount === 0 ? <span className="font-normal text-gray-400">—</span> : amount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</div>
-                          </div>
-                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                            <MangmeeBadge tone={rowState === 'attention' ? 'amber' : 'brand'}>{rowState === 'attention' ? 'ต้องตรวจ' : 'ครบ'}</MangmeeBadge>
-                            {showPosting && <MangmeeBadge tone={r.postingStatus === 'posted' ? 'brand' : 'slate'}>{r.postingStatus === 'posted' ? 'ลงบัญชีแล้ว' : 'ยังไม่ลงบัญชี'}</MangmeeBadge>}
-                            {actionFlags.map((flag) => (
-                              <MangmeeBadge key={flag.key} tone={flag.severity === 'warn' ? 'amber' : 'slate'} className="whitespace-nowrap">{flag.label}</MangmeeBadge>
-                            ))}
-                          </div>
-                          <div className="mt-2 text-xs text-gray-500">{dateShort(r.expenseDate)} · ส่งเข้า {dateShort(r.uploadedAt)}</div>
-                        </button>
-                        {(canPostLedger && r.pendingPostingSourceType) || (canReadLedger && r.journalEntryId) ? (
-                          <div className="border-t border-gray-100 px-4 py-2">
-                            {canPostLedger && r.pendingPostingSourceType ? (
-                              <button type="button" className={cx(ghostClass, 'w-full')} disabled={postingExpenseId === r.expenseId} aria-busy={Boolean(postingExpenseId === r.expenseId)}
-                                onClick={() => { if (r.pendingPostingSourceId) void postExpense(r.expenseId, r.pendingPostingSourceType!, r.pendingPostingSourceId); }}>
-                                {postingExpenseId === r.expenseId ? 'กำลังลง...' : r.postingStatus === 'posting_error' ? 'ลองอีกครั้ง' : 'ลงบัญชี'}
-                              </button>
-                            ) : (
-                              <a className="flex min-h-11 items-center justify-center font-semibold text-brand-700 hover:underline"
-                                href={`/companies/${companyId}/journal?sourceId=${encodeURIComponent(r.expenseId)}`}>
-                                {r.journalEntryNumber ?? 'ดู JV'}
-                              </a>
-                            )}
-                          </div>
-                        ) : null}
-                      </MangmeeCard>
-                    );
-                  })}
-                </div>
-
-                {visibleRows.length > 0 && (
-                  <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm text-gray-500">
-                    <div className="tabular-nums">แสดง {bounds.from}-{bounds.to} จาก {visibleRows.length} รายการ</div>
-                    {bounds.totalPages > 1 && (
-                      <div className="flex items-center gap-2">
-                        <button type="button" className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
-                          disabled={bounds.page <= 1} onClick={() => setPage(bounds.page - 1)}>ก่อนหน้า</button>
-                        <span className="tabular-nums rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700">{bounds.page} / {bounds.totalPages}</span>
-                        <button type="button" className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
-                          disabled={bounds.page >= bounds.totalPages} onClick={() => setPage(bounds.page + 1)}>ถัดไป</button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </MangmeeCard>
-            </div>
+            </MangmeeCard>
           )}
 
-          {packageResult && (
-            <MangmeeCard className="border-brand-100 bg-brand-25 p-4 text-sm">
-              <p className="font-semibold text-brand-700">✓ สร้างชุดเอกสารแล้ว: {packageResult.rowCount} รายการ, ไฟล์หลักฐาน {packageResult.evidenceManifest.length} ไฟล์</p>
-              {packageResult.truncated && <p className="mt-1 font-semibold text-warning-700">⚠ ส่งออก {packageResult.rowCount} จากทั้งหมด {packageResult.totalMatched} รายการ กรุณาแบ่งช่วงเดือนหรือปรับตัวกรองแล้วส่งออกอีกครั้ง</p>}
-              {packageResult.skippedEvidence.length > 0 && <p className="mt-1 font-semibold text-warning-700">⚠ ข้ามไฟล์แนบ {packageResult.skippedEvidence.length} ไฟล์ที่คุณไม่มีสิทธิ์เปิด ชุดเอกสารนี้จึงยังไม่ครบ</p>}
-              <p className="mt-1 text-xs text-gray-500">ดาวน์โหลดไฟล์รายการ Excel แล้ว · สร้างเมื่อ {formatThaiDateTime(packageResult.generatedAt)} · ลิงก์ดาวน์โหลดตรวจสิทธิ์รายไฟล์และระบุวันหมดอายุในรายการหลักฐาน</p>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs text-gray-500">รายการลิงก์ดาวน์โหลดหลักฐาน — ลิงก์มีวันหมดอายุ</span>
-                <button className={ghostClass} onClick={downloadManifest}>ดาวน์โหลดรายการลิงก์หลักฐาน</button>
-              </div>
-            </MangmeeCard>
+          {loading && !view ? <LoadingState label="กำลังโหลด..." /> : view && (
+            <div className={cx('transition-opacity', loading && 'pointer-events-none opacity-50')}>
+              <MangmeeCard className={`p-4 ${evidenceStyles.section}`}>
+                <FilterTabs aria-label="ความครบของหลักฐาน" value={flagFilter} onChange={setFlagFilter} tabs={filterOptions} className={evidenceStyles.tabs} />
+                <button type="button" className={`${quietButtonClass} ${evidenceStyles.phoneSort}`} aria-label={sortLabel} onClick={toggleOrder}>เรียง: {order === 'newest' ? 'ใหม่ไปเก่า ↓' : 'เก่าไปใหม่ ↑'}</button>
+                <>
+                  <table className={evidenceStyles.table}>
+                    <colgroup><col style={{ width: '32%' }} /><col style={{ width: '16%' }} /><col style={{ width: '18%' }} /><col style={{ width: '17%' }} /><col style={{ width: '17%' }} /></colgroup>
+                    <thead><tr><th>ผู้ขาย</th><th><button type="button" className="min-h-11 text-left" aria-label={sortLabel} onClick={toggleOrder}>วันที่เอกสาร {order === 'newest' ? '↓' : '↑'}</button></th><th>ประเภทเอกสาร</th><th className={evidenceStyles.money}>ยอดรวม (บาท)</th><th className={evidenceStyles.status}>สถานะ</th></tr></thead>
+                    <tbody>{!visibleRows.length && <tr><td colSpan={5}><EmptyState title="ไม่มีรายการที่ตรงกับตัวกรอง" description="ลองเลือกเดือนอื่น หรือปรับตัวกรองด้านบน" /></td></tr>}{pagedRows.map(r => <tr key={r.expenseId} role="link" tabIndex={0} aria-label={`เปิดรายการค่าใช้จ่าย ${r.expenseNumber || 'ยังไม่มีเลขที่'}`}
+                      onClick={() => openRow(r)} onKeyDown={event => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); openRow(r); } }}>
+                      <td><div className={evidenceStyles.name}>{r.vendorNameSnapshot?.trim() || 'ไม่มีผู้ขาย'}</div><div className={evidenceStyles.number}>{r.expenseNumber || 'ยังไม่มีเลขที่'}</div></td>
+                      <td className={evidenceStyles.date}>{dateShort(r.expenseDate)}</td>
+                      <td>{r.sourceDocumentTypeLabel ?? expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, r.sourceDocumentType, 'เอกสารค่าใช้จ่าย')}</td>
+                      <td className={evidenceStyles.money}>{amountText(r.grandTotalAmount)}</td>
+                      <td className={evidenceStyles.status}><MangmeeBadge className={evidenceStyles.badge} tone={evidenceRowState(deriveEvidenceRowFlags(r)) === 'ok' ? 'brand' : 'amber'}>{evidenceRowBadge(r)}</MangmeeBadge></td>
+                    </tr>)}</tbody>
+                  </table>
+                  <div className={evidenceStyles.cards} data-testid="evidence-card-list">{!visibleRows.length && <EmptyState title="ไม่มีรายการที่ตรงกับตัวกรอง" description="ลองเลือกเดือนอื่น หรือปรับตัวกรองด้านบน" />}{pagedRows.map(r => <article key={r.expenseId} className={`mangmee-card ${evidenceStyles.card}`} data-testid="evidence-card" role="link" tabIndex={0} aria-label={`เปิดรายการค่าใช้จ่าย ${r.expenseNumber || 'ยังไม่มีเลขที่'}`}
+                    onClick={() => openRow(r)} onKeyDown={event => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); openRow(r); } }}>
+                    <div className={evidenceStyles.heading}><div className={evidenceStyles.name}>{r.vendorNameSnapshot?.trim() || 'ไม่มีผู้ขาย'}</div><div className={`${evidenceStyles.money} text-[15px] font-bold`}>{amountText(r.grandTotalAmount)} บาท</div></div>
+                    <div className={evidenceStyles.number}>{r.expenseNumber || 'ยังไม่มีเลขที่'} · {dateShort(r.expenseDate)} · {r.sourceDocumentTypeLabel ?? expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, r.sourceDocumentType, 'เอกสารค่าใช้จ่าย')}</div>
+                    <div className="mt-2 text-right"><MangmeeBadge className={evidenceStyles.badge} tone={evidenceRowState(deriveEvidenceRowFlags(r)) === 'ok' ? 'brand' : 'amber'}>{evidenceRowBadge(r)}</MangmeeBadge></div>
+                  </article>)}</div>
+                </>
+                {bounds.totalPages > 1 && <div className={evidenceStyles.pager}><Pagination prominent page={bounds.page} totalPages={bounds.totalPages} onPageChange={setPage} /></div>}
+              </MangmeeCard>
+            </div>
           )}
 
           <Modal
@@ -1143,7 +965,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <MangmeeStatCard tone="brand" icon="✓" label="พร้อมลงบัญชี" value={`${backfillPreview.eligibleCount} รายการ`} sub="ทำครั้งละไม่เกิน 50 รายการ" />
                   <MangmeeStatCard tone="amber" icon="⚠" label="รอนักบัญชีตรวจ" value={`${backfillPreview.manualReviewCount} รายการ`} sub="ไม่ถูก backfill" />
-                  <MangmeeStatCard tone="indigo" icon={ICON.doc} label="รอดำเนินการทั้งหมด" value={`${backfillPreview.totalHistoricalPending} รายการ`} sub="ก่อนวันเปิดใช้" />
+                  <MangmeeStatCard tone="indigo" icon={ICON.doc} label="รอทำทั้งหมด" value={`${backfillPreview.totalHistoricalPending} รายการ`} sub="ก่อนวันเปิดใช้" />
                 </div>
                 {backfillPreview.manualReviewCount > 0 && (
                   <div className="rounded-lg border border-warning-100 bg-warning-50 p-3 text-xs text-warning-800">
@@ -1171,21 +993,12 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                     </div>
                   </div>
                 )}
-                <p className="text-xs font-semibold text-gray-600">การกด “ยืนยันลงบัญชี” จะผ่านกติกาผังบัญชี ภาษี และงวดบัญชีเดิมทุกข้อ รายการที่ไม่ผ่านจะค้างให้แก้ไขและลองใหม่</p>
+                <p className="text-xs font-semibold text-gray-600">การกด “ยืนยันลงบัญชี” จะผ่านกติกาผังบัญชี ภาษี และงวดบัญชีเดิมทุกข้อ รายการที่ไม่ผ่านจะค้างให้แก้ไขและลองอีกครั้ง</p>
               </div>
             )}
           </Modal>
         </>
       )}
     </div>
-  );
-}
-
-function FolderBtn({ active, label, count, incomplete, onClick }: { active: boolean; label: ReactNode; count?: number; incomplete?: boolean; onClick: () => void }) {
-  return (
-    <button className={cx('flex w-full items-center justify-between gap-2 min-h-11 rounded-lg px-3 py-2 text-left text-sm font-medium sm:min-h-0', active ? 'bg-brand-50 text-brand-700' : 'text-gray-600 hover:bg-gray-100')} onClick={onClick}>
-      <span>{label}</span>
-      {count != null && <span className="text-xs text-gray-400">{count} รายการ {incomplete && <span className="text-warning-700" title="บางรายการไม่มีไฟล์หลักฐาน">⚠</span>}</span>}
-    </button>
   );
 }

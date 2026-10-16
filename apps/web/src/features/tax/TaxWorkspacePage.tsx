@@ -207,7 +207,7 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
       const updated = await markFiled(companyId, selectedPeriod.id, note || undefined);
       setSelectedPeriod(updated);
       await loadPeriods();
-      toast.success('บันทึกการยื่นแบบเรียบร้อยแล้ว');
+      toast.success('บันทึกการยื่นแบบแล้ว');
     } catch (e) { setError(err(e)); }
     finally { setBusyAction(null); }
   }, [companyId, selectedPeriod, note, loadPeriods, toast]);
@@ -219,7 +219,7 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
       const updated = await markPaid(companyId, selectedPeriod.id, note || undefined);
       setSelectedPeriod(updated);
       await loadPeriods();
-      toast.success('บันทึกการชำระภาษีเรียบร้อยแล้ว');
+      toast.success('บันทึกการชำระภาษีแล้ว');
     } catch (e) { setError(err(e)); }
     finally { setBusyAction(null); }
   }, [companyId, selectedPeriod, note, loadPeriods, toast]);
@@ -235,7 +235,7 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
       } else if (selectedPeriod.taxType === 'WHT') {
         await generateWhtReport(companyId, selectedPeriod.id, selectedPeriod.periodKey, selectedPeriod.formType === 'PND3' ? 'PND3' : 'PND53');
       }
-      setMessage('คำนวณรายงานสำเร็จ');
+      setMessage('คำนวณรายงานแล้ว');
     } catch (e) { setError(err(e)); }
     finally { setBusyAction(null); }
   }, [companyId, selectedPeriod]);
@@ -248,7 +248,7 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
     try {
       const result = await generateFilingPackage(companyId, selectedPeriod.id, format);
       downloadArtifact(result.artifact);
-      setMessage(`สร้าง export ${result.exportNumber} สำเร็จ`);
+      setMessage(`สร้าง export ${result.exportNumber} แล้ว`);
       await loadPeriods();
     } catch (e) { setError(err(e)); }
     finally { setBusyAction(null); }
@@ -281,7 +281,7 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
 
         {syncResult && (
           <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-            ซิงค์สำเร็จ: ภาษีขาย {syncResult.vatOutputCreated} · ภาษีซื้อ {syncResult.vatInputCreated} · WHT {syncResult.whtCreated} · ปัญหา {syncResult.reviewIssuesCreated} · ล็อก {syncResult.skippedLocked}
+            ซิงค์แล้ว: ภาษีขาย {syncResult.vatOutputCreated} · ภาษีซื้อ {syncResult.vatInputCreated} · WHT {syncResult.whtCreated} · ปัญหา {syncResult.reviewIssuesCreated} · ล็อก {syncResult.skippedLocked}
           </div>
         )}
 

@@ -304,7 +304,9 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
         id: 'supplier-1', supplierType: 'JURISTIC_PERSON', displayNameSnapshot: 'ผู้ขาย',
         legalNameSnapshot: 'บริษัท ผู้ขาย จำกัด', taxId: '1234567890123', branchCode: '00000', addressJson: { line1: 'x' },
       }) },
-      branch: { findFirst: async () => ({ id: 'branch-1' }), findUnique: async () => null },
+      branch: { findFirst: async () => ({ id: 'branch-1' }), findUnique: async () => null,
+        findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', name: 'ร้าน', taxBranchCode: (await client.branch.findUnique())?.taxBranchCode ?? null }] },
+      whtPayerModeFact: { findMany: async () => [] },
       supplierBankAccount: { findFirst: async () => ({ id: 'acct-1' }) },
       company: { findUnique: async () => ({ name: 'ผู้จ่าย', registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '9999999999999', addressJson: null }) },
       // `allocations` last on purpose: the create payload carries a nested `{ create: [...] }`
@@ -398,6 +400,19 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
     assert.equal(result.id, 'pay-1');
     assert.equal(result.status, 'RECORDED');
     assert.equal(handoffs.length, 1);
+  });
+
+  it('settlement prefills the paying establishment code and address in both payer modes', async () => {
+    for (const mode of ['HEAD_OFFICE_PAYS_ALL', 'EACH_BRANCH_PAYS']) {
+      const handoffs: any[] = [], client = settlementClient(handoffs);
+      client.company.findUnique = async () => ({ name: 'ร้าน', addressJson: { line1: 'ที่อยู่ร้าน' } });
+      client.branch.findMany = async () => [{ id: 'head', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: null },
+        { id: 'branch-1', type: 'BRANCH', status: 'ACTIVE', taxBranchCode: '00002', addressJson: { line1: 'ที่อยู่สาขา' } }];
+      client.whtPayerModeFact.findMany = async () => [{ mode, effectiveFromPeriodKey: '2026-01', supersededAt: null }];
+      await new PrismaProcurementRepository({ client } as any).createSupplierPayment('company-1', withholdingPayment as any, 'user-1', []);
+      assert.equal(handoffs[0].prefillSnapshotJson.payerSnapshot.branchCode, mode === 'HEAD_OFFICE_PAYS_ALL' ? '00000' : '00002');
+      assert.equal(JSON.parse(handoffs[0].prefillSnapshotJson.payerSnapshot.address).line1, mode === 'HEAD_OFFICE_PAYS_ALL' ? 'ที่อยู่ร้าน' : 'ที่อยู่สาขา');
+    }
   });
 
   // Phase 1.1 fix: the payer's branch tax code was previously hardcoded to null on every handoff,

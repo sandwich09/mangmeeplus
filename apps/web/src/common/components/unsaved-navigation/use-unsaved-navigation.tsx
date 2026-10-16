@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Modal } from '../modal';
+import { primaryButtonClass, secondaryButtonClass } from '../button/button-classes';
 import { CoverLoader } from '../state';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import styles from './unsaved-navigation.module.css';
@@ -85,11 +86,13 @@ export function useUnsavedNavigation(options: Options) {
   const dialog = (
     <Modal open={open} title={options.title ?? t('common.unsaved.title', 'th')} onClose={stay} closeOnBackdrop={false}
       closeLabel={t('common.unsaved.stay', 'th')} size="sm"
-      footer={<div className={styles.footer}>
-        <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={options.saving} onClick={stay}>{t('common.unsaved.stay', 'th')}</button>
-        <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={options.saving} onClick={() => { if (!latest.current.saving) finishLeave(); }}>{t('common.unsaved.discard', 'th')}</button>
-        {options.canSave && <button type="button" className="mangmee-btn mangmee-btn-primary" disabled={options.saving} onClick={() => void saveAndLeave()}>{t('common.unsaved.save_leave', 'th')}</button>}
-      </div>}>
+      // Plain buttons, back-out first: the Modal footer gives them one width, puts the acting one on top
+      // when they stack, and clears the phone's home indicator (env(safe-area-inset-bottom)).
+      footer={<>
+        <button type="button" className={secondaryButtonClass} disabled={options.saving} onClick={stay}>{t('common.unsaved.stay', 'th')}</button>
+        <button type="button" className={secondaryButtonClass} disabled={options.saving} onClick={() => { if (!latest.current.saving) finishLeave(); }}>{t('common.unsaved.discard', 'th')}</button>
+        {options.canSave && <button type="button" className={primaryButtonClass} disabled={options.saving} onClick={() => void saveAndLeave()}>{t('common.unsaved.save_leave', 'th')}</button>}
+      </>}>
       <CoverLoader active={options.saving} scope="modal" label={t('common.loading', 'th')}>
         <p>{options.description ?? t('common.unsaved.description', 'th')}</p>
         {options.error && <p role="alert" className={styles.error}>{options.error}</p>}

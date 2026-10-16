@@ -6,7 +6,7 @@ type Branch = { id: string; name: string; type: string };
 // Owner report 2026-08-29 (UAT): the source-branch control drew the unstyled OS popup on the
 // upload page, so it is a ThemedSelect now — a details/summary combobox, not a real <select>.
 // Its value is the text on the trigger, and options only exist in the DOM while it is open.
-const UNSET_BRANCH = 'กรุณาเลือกสาขาของรายการ';
+const UNSET_BRANCH = 'เลือกสาขา';
 const draft = () => ({
   captureSource: 'WEB_MANUAL', expenseDate: civilDate(new Date()), vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE',
   lines: [{ lineNumber: 1, description: unique('QA source branch'), quantity: '1', unitPrice: '1' }],
@@ -45,7 +45,7 @@ for (const width of [390, 1280]) {
     const { items } = await json<{ items: Branch[] }>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
     const chosen = items.find((branch) => branch.type === 'HEAD_OFFICE')!;
     await gotoCompany(page, companyId, '/expenses/manual');
-    const field = page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true });
+    const field = page.getByRole('combobox', { name: 'สาขา', exact: true });
     const description = page.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true });
     await expect(field).toBeEnabled();
     await expect(field).toHaveText(UNSET_BRANCH);
@@ -53,13 +53,13 @@ for (const width of [390, 1280]) {
     await page.screenshot({ path: info.outputPath(`manual-${width}-needs-selection.png`), fullPage: true });
     await chooseThemedOption(page, field, branchName(chosen));
     await description.fill('ทดสอบเลือกสาขา — ยังไม่บันทึก');
-    await chooseThemedOption(page, field, UNSET_BRANCH);
-    await expect(description).toBeDisabled();
     await chooseThemedOption(page, field, branchName(chosen));
     await expect(description).toHaveValue('ทดสอบเลือกสาขา — ยังไม่บันทึก');
     await page.screenshot({ path: info.outputPath(`manual-${width}-selected.png`), fullPage: true });
     await gotoCompany(page, companyId, '/expenses/upload');
-    await expect(page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true })).toHaveText(branchName(chosen));
+    await expect(page.getByRole('combobox', { name: 'สาขา', exact: true })).toHaveText(branchName(chosen));
+    await expect(page.getByRole('button', { name: '+ หมายเหตุ', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'ไม่มีใบเสร็จ ทำใบรับรองแทนใบเสร็จ', exact: true })).toHaveCount(0);
     // The note field is labelled "หมายเหตุ (ไม่บังคับ)"; "เช่น ค่ากาแฟทีมงาน" is only its placeholder.
     await expect(page.getByRole('textbox', { name: 'หมายเหตุ (ไม่บังคับ)', exact: true })).toBeEnabled();
     await page.screenshot({ path: info.outputPath(`upload-${width}-inherited.png`), fullPage: true });
@@ -74,7 +74,7 @@ for (const width of [390, 1280]) {
     const { items } = await json<{ items: Branch[] }>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
     const chosen = items.find((branch) => branch.type === 'HEAD_OFFICE')!;
     await gotoCompany(page, companyId, '/expenses/manual');
-    const field = page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true });
+    const field = page.getByRole('combobox', { name: 'สาขา', exact: true });
     await expect(field).toBeEnabled();
     await expect(field).toHaveText(UNSET_BRANCH);
     await expect(page.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true })).toBeDisabled();
@@ -83,7 +83,7 @@ for (const width of [390, 1280]) {
     await page.getByRole('spinbutton', { name: 'ราคาต่อหน่วย', exact: true }).fill('1');
     await page.screenshot({ path: info.outputPath(`manual-${width}-selected.png`), fullPage: true });
     const response = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith(`/companies/${companyId}/expenses`));
-    await page.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
+    await page.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
     const result = await response;
     expect(result.ok()).toBeTruthy();
     const created = await result.json();
@@ -100,7 +100,7 @@ for (const width of [390, 1280]) {
       await page.screenshot({ path: info.outputPath(`manual-${width}-saved.png`), fullPage: true });
       expect(errors).toEqual([]);
       await gotoCompany(page, companyId, '/expenses/upload');
-      await expect(page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true })).toHaveText(branchName(chosen));
+      await expect(page.getByRole('combobox', { name: 'สาขา', exact: true })).toHaveText(branchName(chosen));
       await page.screenshot({ path: info.outputPath(`upload-${width}-inherited.png`), fullPage: true });
     } finally {
       expect((await api.delete(`companies/${companyId}/expenses/${created.id}`)).ok()).toBeTruthy();
@@ -115,14 +115,14 @@ for (const width of [390, 1280]) {
     const chosen = items.find((branch) => branch.type !== 'HEAD_OFFICE')!;
     expect(chosen, 'the seeded multi-branch fixture is present').toBeTruthy();
     await gotoCompany(page, companyId, '/expenses/upload');
-    const field = page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true });
+    const field = page.getByRole('combobox', { name: 'สาขา', exact: true });
     await expect(field).toHaveText(UNSET_BRANCH);
-    const submit = page.getByRole('button', { name: 'ให้ AI อ่านใบเสร็จ', exact: true });
-    await expect(submit).toBeDisabled();
+    const submit = page.getByRole('button', { name: /^ส่งใบเสร็จ(?: \d+ ใบ)?$/ });
+    await expect(submit).toBeEnabled();
     await chooseThemedOption(page, field, branchName(chosen));
     // Synthetic PNG proves transport/storage, not OCR accuracy; no external AI is mocked as success.
     const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
-    await page.locator('input[type="file"]').first().setInputFiles({ name: `branch-proof-${width}.png`, mimeType: 'image/png', buffer: bytes });
+    await page.locator('input[type="file"][multiple]').first().setInputFiles({ name: `branch-proof-${width}.png`, mimeType: 'image/png', buffer: bytes });
     const intentResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith(`/companies/${companyId}/expenses/receipt-uploads`));
     const completedResponse = page.waitForResponse((response) => response.request().method() === 'POST' && /\/receipt-uploads\/[^/]+\/complete$/.test(response.url()));
     await submit.click();
@@ -162,7 +162,7 @@ test('a single available branch defaults in the entry form (controlled branch-li
     await route.fulfill({ response, json: { ...body, items: [chosen], total: 1 } });
   });
   await gotoCompany(page, companyId, '/expenses/manual');
-  const field = page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true });
+  const field = page.getByRole('combobox', { name: 'สาขา', exact: true });
   await expect(field).toHaveText(branchName(chosen));
   await expect(page.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true })).toBeEnabled();
   // ThemedSelect's list is portaled and only exists while open, so the branch has to be on screen

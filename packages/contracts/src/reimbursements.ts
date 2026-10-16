@@ -451,7 +451,7 @@ export function canOpenReimbursementPaymentSlip(viewer: ReimbursementPayoutViewe
 export const REIMBURSEMENT_POLICY_TAB_LABEL = 'ตั้งค่านโยบาย';
 export const REIMBURSEMENT_SELF_APPROVAL_SWITCH_LABEL = 'ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้';
 export const REIMBURSEMENT_SELF_APPROVAL_HELP = `ให้ผู้อนุมัติคนอื่นตัดสินแทน หรือให้ผู้มีสิทธิ์ตั้งค่านโยบายเปิด "${REIMBURSEMENT_SELF_APPROVAL_SWITCH_LABEL}" ใน${REIMBURSEMENT_POLICY_TAB_LABEL} ใบที่เก็บนโยบายไว้ตอนส่งต้องเปิดกลับเป็นร่างและส่งอนุมัติใหม่เมื่อยังไม่มีใครตัดสิน เพื่อใช้นโยบายที่เปิด`;
-export const REIMBURSEMENT_SELF_APPROVAL_DENIED = `ไม่สามารถอนุมัติคำขอของตนเองได้ตามนโยบายที่ใบนี้ใช้ ${REIMBURSEMENT_SELF_APPROVAL_HELP}`;
+export const REIMBURSEMENT_SELF_APPROVAL_DENIED = `ไม่สามารถอนุมัติใบเบิกของตัวเองได้ตามนโยบายที่ใบนี้ใช้ ${REIMBURSEMENT_SELF_APPROVAL_HELP}`;
 
 export type ReimbursementDuplicateReason = 'ATTACHMENT_CHECKSUM' | 'EXPENSE_LINK' | 'AMOUNT_DATE_VENDOR' | 'MANUAL' | 'EXPENSE_DOCUMENT' | 'EXPENSE_CONFIRMATION' | 'EXPENSE_CONFIRMED_DUPLICATE';
 const POSSIBLE_OTHER_CLAIM_TEXT = 'อาจซ้ำกับคำขอเบิกอื่น';
@@ -510,7 +510,7 @@ export function reimbursementDuplicateBlockNotice(reasons: readonly string[] = [
     if (context.status === 'CANCELLED' || context.status === 'VOIDED') {
       help = `${context.status === 'CANCELLED' ? 'ใบนี้ยกเลิกแล้ว' : 'ใบนี้เพิกถอนแล้ว'} ${DUPLICATE_NEW_CLAIM_HELP}`;
     } else if (context.status === 'REJECTED') {
-      help = `ใบนี้ถูกปฏิเสธแล้ว จึงยกเลิกคำขอในสถานะนี้ไม่ได้ ${DUPLICATE_NEW_CLAIM_HELP}`;
+      help = `ใบนี้ถูกส่งกลับให้แก้ ${DUPLICATE_NEW_CLAIM_HELP}`;
     } else if (context.cancellationPending) {
       help = `ใบนี้กำลังดำเนินการยกเลิก ${context.canResumeCancellation ? 'กดดำเนินการยกเลิกต่อในหน้าใบเบิกนี้' : `ให้${DUPLICATE_CANCEL_ACTOR}ดำเนินการยกเลิกต่อ`} เมื่อยกเลิกเสร็จแล้ว ${DUPLICATE_NEW_CLAIM_HELP}`;
     } else if (context.status === 'PARTIALLY_PAID' || context.status === 'PAID') {
@@ -568,10 +568,18 @@ export const REIMBURSEMENT_DUPLICATE_POLICY_NOTE = 'ใบเสร็จหร�
 // ---- Duplicate candidate ----
 
 export type ReimbursementDuplicateCandidateSummary = {
+  resolvedByName?: string;
+  resolvedAt?: string;
   id: string;
   candidateType: 'ATTACHMENT_CHECKSUM' | 'EXPENSE_LINK' | 'AMOUNT_DATE_VENDOR' | 'MANUAL';
   candidateRequestId?: string;
   candidateExpenseId?: string;
+  documentNumber?: string;
+  requesterOrPayee?: string;
+  amount?: string;
+  currency?: string;
+  date?: string;
+  canOpen?: boolean;
   score: number;
   status: 'OPEN' | 'DISMISSED' | 'CONFIRMED' | 'OVERRIDDEN';
   reason?: string;
@@ -616,6 +624,7 @@ export type ReimbursementSourceOption = {
   amount: string; currency: string; snapshot?: ReimbursementSourceSnapshot;
 };
 export type ReimbursementSourceOptions = {
+  receiptPolicy?: { requireReceipt: boolean; allowMissingReceiptWithReason: boolean };
   requesters: Array<{ userId: string; displayName: string }>;
   items: ReimbursementSourceOption[];
 };
@@ -690,12 +699,22 @@ export const REIMBURSEMENT_SELF_APPROVED_NOTE = 'ผู้เบิกและ�
 
 // ---- หน้ารวม (hub) buckets ----
 
+/** A returned claim is work for its requester or the person who prepared it. */
+export function reimbursementNeedsCorrection(claim: {
+  status: string; financeReviewStatus: string; requesterUserId: string; createdByUserId?: string;
+  payoutCorrectionRequestedAt?: unknown; payoutCorrectionSubmittedAt?: unknown;
+}, userId: string): boolean {
+  return (claim.requesterUserId === userId || claim.createdByUserId === userId)
+    && (claim.status === 'REJECTED' || (claim.status === 'DRAFT' && claim.financeReviewStatus === 'NEEDS_INFO')
+      || (claim.status === 'PENDING_APPROVAL' && !!claim.payoutCorrectionRequestedAt && !claim.payoutCorrectionSubmittedAt));
+}
+
 /** Every claim sits in exactly one bucket, so the hub's chips add up to "ทั้งหมด". */
-export type ReimbursementHubBucket = 'draft' | 'review' | 'payment' | 'duplicate_blocked' | 'paid' | 'closed';
+export type ReimbursementHubBucket = 'draft' | 'correction' | 'review' | 'payment' | 'duplicate_blocked' | 'paid' | 'closed';
 
 /**
  * Where a claim's status alone places it. Typed over every status, so a status added later has to be
- * placed here and cannot fall into ปฏิเสธ/ยกเลิก unnoticed.
+ * placed here and cannot fall into ยกเลิก unnoticed.
  */
 const HUB_BUCKET_BY_STATUS: Record<ReimbursementRequestStatus, ReimbursementHubBucket> = {
   DRAFT: 'draft',
@@ -705,7 +724,7 @@ const HUB_BUCKET_BY_STATUS: Record<ReimbursementRequestStatus, ReimbursementHubB
   READY_FOR_PAYMENT: 'payment',
   PARTIALLY_PAID: 'payment',
   PAID: 'paid',
-  REJECTED: 'closed',
+  REJECTED: 'correction',
   CANCELLED: 'closed',
   VOIDED: 'closed',
 };
@@ -716,11 +735,13 @@ const HUB_BUCKET_BY_STATUS: Record<ReimbursementRequestStatus, ReimbursementHubB
  * draft is a draft whether or not the row carries a desk. One rule for the cards, the chips and the list.
  */
 export function reimbursementHubBucket(claim: {
+  needsCorrection?: boolean;
   status?: string;
   financeReviewStatus?: string;
   currentDesk?: { kind?: string } | null;
   hasDuplicateBlocker?: boolean;
 }): ReimbursementHubBucket {
+  if (claim.needsCorrection) return 'correction';
   const paymentBucket = claim.hasDuplicateBlocker ? 'duplicate_blocked' : 'payment';
   switch (claim.currentDesk?.kind) {
     // A claim waiting for approval that is with its requester was sent back to have its payout account
@@ -737,6 +758,15 @@ export function reimbursementHubBucket(claim: {
 }
 
 /** The whole list scope as the server counted it, or what a search found in it: what the hub's cards and chips print. */
+export type ReimbursementHubBootstrap = {
+  financeReviewRequired: boolean;
+  /** Exact assignments can keep this queue available after a role change. */
+  hasApprovalTasks: boolean;
+  queueCounts: { approvals: number; finance?: number };
+  /** Visible rows, including held work; queueCounts above still chooses the initial work queue. */
+  listCounts?: { mine?: number; approvals: number; finance?: number };
+};
+
 export type ReimbursementHubSummary = {
   /** Claims per bucket, and `all` for the scope. The buckets add up to `all`. */
   counts: Record<'all' | ReimbursementHubBucket, number>;
@@ -744,11 +774,17 @@ export type ReimbursementHubSummary = {
   totalAmount: string;
   /** Drafts that still owe a receipt before they can be submitted. */
   blockedDraftCount: number;
+  /** Whole searched scope, before paging. Amounts are claimed totals, including held payments. */
+  metrics?: { pendingApproval: { count: number; amount: string }; pendingPayment: { count: number; amount: string } };
 };
 
 // ---- Request ----
 
 export type ReimbursementRequestSummary = {
+  approvalActions?: { canApprove: boolean; canReject: boolean };
+  needsCorrection?: boolean;
+  /** Saved approver reason, also shown on the requester’s list row. */
+  rejectionReason?: string;
   cancelledCertificates?: Array<{ expenseId: string; kind: 'SYSTEM' | 'EXTERNAL'; number: string | null }>;
   /** The payment predicate evaluated on this claim's submitted policy and own duplicate facts. */
   hasDuplicateBlocker?: boolean;
@@ -807,6 +843,8 @@ export type ReimbursementRequestSummary = {
   approvedAt?: string;
   createdAt: string;
   updatedAt: string;
+  /** Signed document completion, read on the list as on the claim page. */
+  documentSignedVia?: ReimbursementDocumentSignedVia;
 };
 
 // ---- Claim-form signatures + signed copies (lane F) ----
@@ -872,23 +910,23 @@ export type LinkReimbursementSignedCopyInput = {
 
 /** What stands in the way of a cancellation that was started: a reason the expense void refuses, or what stops the void itself. */
 export function reimbursementCertificateCancellationMessage(number: string | null): string {
-  return `รายจ่ายของคำขอนี้ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว${number ? ` (เลขที่ ${number})` : ''} จึงยกเลิกคำขอเบิกตอนนี้ไม่ได้ ระบบยังไม่ได้เปลี่ยนแปลงอะไร กรุณาแจ้งทีมมั่งมีพลัสเพื่อช่วยยกเลิก`;
+  return `รายจ่ายของใบเบิกนี้ออกหนังสือรับรอง 50 ทวิแล้ว${number ? ` (เลขที่ ${number})` : ''} จึงยกเลิกใบเบิกตอนนี้ไม่ได้ ระบบยังไม่ได้เปลี่ยนแปลงอะไร แจ้งทีมงานมั่งมีเพื่อช่วยยกเลิก`;
 }
 
 export type ReimbursementCancellationCertificate = { expenseNumber: string | null; kind: 'SYSTEM' | 'EXTERNAL'; number: string | null };
 
 export const REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS = {
-  attestationRequired: 'กรุณาติ๊กยืนยันเรื่องการยื่นภาษีก่อนยกเลิกคำขอเบิก',
-  accountingPeriodLocked: (periodKey: string): string => `เดือน ${expenseCorrectionMonth(periodKey)} ของรายจ่ายในคำขอนี้ยังไม่เปิดให้ทำรายการ จึงยกเลิกคำขอเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบและเปิดเดือนนั้นก่อน แล้วลองอีกครั้ง`,
-  taxPeriodLocked: (periodKey: string): string => `ภาษีของรายจ่ายในคำขอนี้สำหรับเดือน ${expenseCorrectionMonth(periodKey)} ถูกล็อกแล้ว จึงยกเลิกคำขอเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบเรื่องการยื่นแบบเพิ่มเติมก่อน แล้วลองอีกครั้ง`,
-  postingUnresolved: 'ยังตรวจสอบการลงบัญชีของรายจ่ายในคำขอนี้ไม่ได้ จึงยกเลิกคำขอเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบการลงบัญชีก่อน แล้วลองอีกครั้ง',
-  expenseNotVoidable: 'รายจ่ายในคำขอนี้ยังไม่พร้อมให้ยกเลิก จึงยกเลิกคำขอเบิกไม่ได้ กรุณาเปิดหน้านี้ใหม่ ถ้ายังยกเลิกไม่ได้ ให้แจ้งทีมมั่งมีพลัสเพื่อช่วยตรวจสอบ',
-  taxWorkspaceCertificate: 'คำขอนี้มีรายจ่ายที่มีหนังสือรับรองหัก ณ ที่จ่ายที่ออกจากหน้าภาษี จึงยกเลิกคำขอเบิกจากหน้านี้ไม่ได้ กรุณาแจ้งทีมมั่งมีพลัสเพื่อช่วยตรวจสอบ',
+  attestationRequired: 'ยังไม่ได้ยืนยันเรื่องการยื่นภาษี ติ๊กยืนยันก่อนยกเลิกใบเบิก',
+  accountingPeriodLocked: (periodKey: string): string => `เดือน ${expenseCorrectionMonth(periodKey)} ของรายจ่ายในใบเบิกนี้ยังไม่เปิดให้ทำรายการ จึงยกเลิกใบเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบและเปิดเดือนนั้นก่อน แล้วลองอีกครั้ง`,
+  taxPeriodLocked: (periodKey: string): string => `ภาษีของรายจ่ายในใบเบิกนี้สำหรับเดือน ${expenseCorrectionMonth(periodKey)} ถูกล็อกแล้ว จึงยกเลิกใบเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบเรื่องการยื่นแบบเพิ่มเติมก่อน แล้วลองอีกครั้ง`,
+  postingUnresolved: 'ยังตรวจสอบการลงบัญชีของรายจ่ายในใบเบิกนี้ไม่ได้ จึงยกเลิกใบเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบการลงบัญชีก่อน แล้วลองอีกครั้ง',
+  expenseNotVoidable: 'รายจ่ายในใบเบิกนี้ยังไม่พร้อมให้ยกเลิก จึงยกเลิกใบเบิกไม่ได้ เปิดหน้านี้ใหม่ ถ้ายังยกเลิกไม่ได้ ให้แจ้งทีมงานมั่งมีเพื่อช่วยตรวจสอบ',
+  taxWorkspaceCertificate: 'ใบเบิกนี้มีรายจ่ายที่มีหนังสือรับรอง 50 ทวิที่ออกจากหน้าภาษี จึงยกเลิกใบเบิกจากหน้านี้ไม่ได้ แจ้งทีมงานมั่งมีเพื่อช่วยตรวจสอบ',
   permissionMissing: ({ kind, number }: Pick<ReimbursementCancellationCertificate, 'kind' | 'number'>): string =>
-    `คำขอนี้มีรายจ่ายที่${kind === 'SYSTEM' ? 'ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว' : 'บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว'}${number ? ` (เลขที่ ${number})` : ''} การยกเลิกคำขอจะยกเลิก${kind === 'SYSTEM'
-      ? 'หนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย'
-      : 'การบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง'} ให้${THAI_SYSTEM_ROLE_NAMES.FINANCE}หรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิกคำขอนี้`,
-  periodLocked: (kind: 'SYSTEM' | 'EXTERNAL', periodKey: string, formType: string): string => withholdingPeriodLockedMessage(periodKey, 'ยกเลิกคำขอเบิก', formType, kind),
+    `ใบเบิกนี้มีรายจ่ายที่${kind === 'SYSTEM' ? 'ออกหนังสือรับรอง 50 ทวิแล้ว' : 'บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวิเองแล้ว'}${number ? ` (เลขที่ ${number})` : ''} การยกเลิกใบเบิกจะยกเลิก${kind === 'SYSTEM'
+      ? 'หนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรอง 50 ทวิ'
+      : 'การบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง'} ให้${THAI_SYSTEM_ROLE_NAMES.FINANCE}หรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิกใบเบิกนี้`,
+  periodLocked: (kind: 'SYSTEM' | 'EXTERNAL', periodKey: string, formType: string): string => withholdingPeriodLockedMessage(periodKey, 'ยกเลิกใบเบิก', formType, kind),
 } as const;
 
 export type ReimbursementCancellationBlocker = { code: 'reason_too_short' }
@@ -936,7 +974,6 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   createdByName?: string;
   currentApproverUserId?: string;
   currentApprovalStepId?: string;
-  rejectionReason?: string;
   financeReviewedByUserId?: string;
   financeReviewedByName?: string;
   financeReviewedAt?: string;
@@ -963,7 +1000,6 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   claimSignatureAckHash?: string;
   /** Which blocks the printed form carries, so the screen shows the same slots. */
   claimFormLayout?: ReimbursementClaimFormLayout;
-  documentSignedVia?: ReimbursementDocumentSignedVia;
   /** Whether this claim has the finance review step: its frozen policy once submitted, the current policy while a draft. Detail only. */
   financeReviewRequired?: boolean;
   /**
@@ -1106,7 +1142,7 @@ export const REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS = {
   REQUESTER_ASKED_METHOD: 'ผู้เบิกขอเปลี่ยนวิธีรับเงินคืน',
   OTHER: 'อื่น ๆ',
 } as const;
-export const REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY = 'บัญชีของบุคคลอื่นใช้เหตุผลว่าชื่อบัญชีไม่ตรงกับผู้เบิกไม่ได้ กรุณาเลือกเหตุผลอื่น';
+export const REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY = 'บัญชีของบุคคลอื่นใช้เหตุผลว่าชื่อบัญชีไม่ตรงกับผู้เบิกไม่ได้ เลือกเหตุผลอื่น';
 export type ReimbursementPayoutCorrectionReason = keyof typeof REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS;
 
 export function isReimbursementPayoutCorrectionReason(value: unknown): value is ReimbursementPayoutCorrectionReason {
@@ -1794,6 +1830,7 @@ export type VoidReimbursementPaymentInput = {
 };
 
 export type ListReimbursementsFilter = {
+  order?: 'newest' | 'oldest';
   scope?: 'own' | 'related' | 'team' | 'all';
   status?: ReimbursementRequestStatus;
   paymentStatus?: ReimbursementPaymentStatus;
@@ -1930,32 +1967,32 @@ export const REIMBURSEMENT_SAVED_PAYOUT_WORDS = {
   title: 'บัญชีอื่นที่บันทึกไว้', row: 'บัญชีที่บันทึกไว้', add: 'เพิ่มบัญชี',
   empty: 'ยังไม่มีบัญชีอื่นที่บันทึกไว้', loading: 'กำลังโหลดบัญชีที่บันทึกไว้...',
   label: 'ชื่อเรียก (ไม่บังคับ)', holder: 'เจ้าของบัญชี',
-  labelInvalid: `ชื่อเรียกต้องไม่เกิน ${PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH} ตัวอักษร และไม่ใส่เลขบัญชี กรุณาแก้ชื่อเรียก`,
+  labelInvalid: `ชื่อเรียกต้องไม่เกิน ${PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH} ตัวอักษร และไม่ใส่เลขบัญชี แก้ชื่อเรียกแล้วลองอีกครั้ง`,
   limit: `บันทึกบัญชีอื่นได้ไม่เกิน ${PAYOUT_SAVED_ACCOUNT_LIMIT} บัญชี หากครบแล้วให้ลบบัญชีที่ไม่ใช้ก่อนเพิ่มบัญชีใหม่`,
   makeDefault: 'ตั้งเป็นบัญชีประจำ', saved: 'เพิ่มบัญชีแล้ว', removed: 'ลบบัญชีที่บันทึกไว้แล้ว', madeDefault: 'ตั้งเป็นบัญชีประจำแล้ว',
   madeDefaultWithPrevious: 'ตั้งเป็นบัญชีประจำแล้ว บัญชีประจำเดิมอยู่ในรายการบัญชีที่บันทึกไว้',
   deleteTitle: 'ลบบัญชีที่บันทึกไว้', deleteNotice: 'บัญชีนี้จะหายจากรายการ ใบเบิกที่บันทึกหรือส่งไปแล้วจะยังใช้บัญชีของใบนั้นตามเดิม',
   saveForLater: 'บันทึกบัญชีนี้ไว้ใช้ครั้งหน้า', choose: 'กรุณาเลือกวิธีรับเงินคืนของใบนี้',
-  notFound: 'ไม่พบบัญชีที่เลือกในรายการแล้ว กรุณาโหลดรายการล่าสุดและเลือกวิธีรับเงินคืนใหม่',
+  notFound: 'ไม่พบบัญชีที่เลือกในรายการแล้ว เปิดหน้านี้ใหม่และเลือกวิธีรับเงินคืนอีกครั้ง',
   accountNameHint: 'กรอกชื่อตามที่ธนาคารแสดง เพื่อให้ผู้อนุมัติตรวจบัญชีที่เลือก',
 };
 export const REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS = {
   payout_saved_account_not_found: REIMBURSEMENT_SAVED_PAYOUT_WORDS.notFound,
   payout_saved_account_limit: REIMBURSEMENT_SAVED_PAYOUT_WORDS.limit,
-  payout_saved_account_duplicate: 'บันทึกบัญชีนี้ไว้แล้ว กรุณาเลือกบัญชีจากรายการเดิม',
-  payout_saved_account_is_default: 'บัญชีนี้เป็นบัญชีประจำอยู่แล้ว กรุณาใช้บัญชีประจำหรือเพิ่มบัญชีอื่น',
-  payout_default_must_be_own: 'บัญชีประจำต้องเป็นบัญชีของตัวเอง กรุณาใช้บัญชีนี้เฉพาะใบเบิกหรือเลือกบัญชีของตัวเอง',
-  payout_holder_type_invalid: 'กรุณาเลือกเจ้าของบัญชีจากตัวเลือกที่แสดง',
+  payout_saved_account_duplicate: 'บันทึกบัญชีนี้ไว้แล้ว เลือกบัญชีจากรายการเดิม',
+  payout_saved_account_is_default: 'บัญชีนี้เป็นบัญชีประจำอยู่แล้ว ใช้บัญชีประจำหรือเพิ่มบัญชีอื่น',
+  payout_default_must_be_own: 'บัญชีประจำต้องเป็นบัญชีของตัวเอง ใช้บัญชีนี้เฉพาะใบเบิกหรือเลือกบัญชีของตัวเอง',
+  payout_holder_type_invalid: 'เจ้าของบัญชีไม่ถูกต้อง เลือกจากตัวเลือกที่แสดง',
   payout_holder_note_invalid: `${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.noteInvalid} ${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.noteContainsAccountNumber}`,
   payout_saved_account_label_invalid: REIMBURSEMENT_SAVED_PAYOUT_WORDS.labelInvalid,
   payout_third_party_acceptance_required: REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdPartyAcceptanceRequired,
   payout_third_party_needs_approval: 'ใบนี้ใช้บัญชีของบุคคลอื่นไม่ได้เพราะไม่มีขั้นอนุมัติ เลือกบัญชีของตัวเองหรือเงินสด หรือยกเลิกใบนี้แล้วส่งใบใหม่',
-  payment_currency_mismatch: 'สกุลเงินที่จ่ายไม่ตรงกับใบเบิก กรุณาใช้สกุลเงินเดียวกับใบเบิก',
-  payment_source_bank_account_invalid: 'บัญชีที่ใช้จ่ายไม่พร้อมใช้งานในบริษัทนี้ กรุณาโหลดข้อมูลล่าสุดและเลือกบัญชีที่ใช้จ่ายใหม่',
+  payment_currency_mismatch: 'สกุลเงินที่จ่ายไม่ตรงกับใบเบิก ใช้สกุลเงินเดียวกับใบเบิก',
+  payment_source_bank_account_invalid: 'บัญชีที่ใช้จ่ายไม่พร้อมใช้งานในร้านนี้ เปิดหน้านี้ใหม่และเลือกบัญชีที่ใช้จ่ายใหม่',
   // A choice the form should never send, and the two the command refuses for who is filling the form.
-  payout_mode_invalid: 'เลือกวิธีรับเงินคืนไม่สำเร็จ กรุณาโหลดหน้าใหม่แล้วเลือกวิธีรับเงินคืนอีกครั้ง',
-  payout_save_options_invalid: 'เลือกได้อย่างเดียว: บันทึกเป็นบัญชีประจำ หรือบันทึกบัญชีนี้ไว้ใช้ครั้งหน้า กรุณาเอาเครื่องหมายออกหนึ่งช่อง',
-  payout_saved_account_owner_required: 'บัญชีที่บันทึกไว้เป็นของผู้เบิก จึงเลือกหรือบันทึกเพิ่มได้เฉพาะเมื่อผู้เบิกกรอกใบเบิกเอง กรุณาเลือกบัญชีประจำของผู้เบิก เงินสด หรือกรอกบัญชีสำหรับใบนี้',
+  payout_mode_invalid: 'เลือกวิธีรับเงินคืนไม่สำเร็จ เปิดหน้านี้ใหม่แล้วเลือกวิธีรับเงินคืนอีกครั้ง',
+  payout_save_options_invalid: 'เลือกได้อย่างเดียว: บันทึกเป็นบัญชีประจำ หรือบันทึกบัญชีนี้ไว้ใช้ครั้งหน้า เอาเครื่องหมายออกหนึ่งช่อง',
+  payout_saved_account_owner_required: 'บัญชีที่บันทึกไว้เป็นของผู้เบิก จึงเลือกหรือบันทึกเพิ่มได้เฉพาะเมื่อผู้เบิกกรอกใบเบิกเอง เลือกบัญชีประจำของผู้เบิก เงินสด หรือกรอกบัญชีสำหรับใบนี้',
 };
 
 // Source: Bank of Thailand financial institution directory, checked 2026-09-23.
@@ -2250,3 +2287,16 @@ export const REIMBURSEMENT_SEQUENCE_KEYS = {
   REQUEST: 'reimbursement.request',
   PAYMENT: 'reimbursement.payment',
 } as const;
+
+export const REIMBURSEMENT_STATUS_LABELS: Record<string, string> = {
+  DRAFT: 'ร่าง',
+  PENDING_APPROVAL: 'รออนุมัติ',
+  APPROVED: 'อนุมัติแล้ว',
+  REJECTED: 'ถูกส่งกลับให้แก้',
+  CANCELLED: 'ยกเลิกแล้ว',
+  FINANCE_REVIEW: 'รอตรวจสอบการเงิน',
+  READY_FOR_PAYMENT: 'พร้อมจ่าย',
+  PARTIALLY_PAID: 'จ่ายบางส่วน',
+  PAID: 'จ่ายแล้ว',
+  VOIDED: 'เพิกถอน',
+};

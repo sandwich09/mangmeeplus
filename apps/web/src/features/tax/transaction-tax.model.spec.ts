@@ -76,7 +76,7 @@ describe('transaction tax web model', () => {
   it('reports an entitlement 403 as feature-not-enabled, not as a permission denial', () => {
     assert.equal(transactionTaxErrorMessage({ status: 403, code: 'feature_not_enabled' }), 'ยังไม่ได้เปิดฟีเจอร์นี้');
     // A plain permission 403 (no code) keeps the permission copy.
-    assert.equal(transactionTaxErrorMessage({ status: 403 }), 'คุณไม่มีสิทธิ์ดำเนินการนี้');
+    assert.equal(transactionTaxErrorMessage({ status: 403 }), 'คุณไม่มีสิทธิ์ทำรายการนี้ ขอสิทธิ์จากผู้ดูแลสิทธิ์');
   });
 
   it('renders success-payload tax diagnostics without exposing unknown server text', () => {
@@ -84,16 +84,16 @@ describe('transaction tax web model', () => {
     assert.match(transactionTaxDiagnosticMessage('tax_evidence_required'), /แนบหลักฐาน/);
     assert.equal(
       transactionTaxDiagnosticMessage('select * from hidden_table'),
-      'ตรวจสอบภาษีรายการนี้ไม่สำเร็จ กรุณาติดต่อผู้ดูแลการตั้งค่าภาษี',
+      'ตรวจสอบภาษีรายการนี้ไม่สำเร็จ ติดต่อผู้ดูแลการตั้งค่าภาษี',
     );
   });
 
   it('renders import diagnostics as actionable Thai and fails closed for unknown text', () => {
-    assert.equal(taxCodeImportDiagnosticMessage('externalCode is required'), 'กรุณาระบุรหัส Tax Code (externalCode)');
+    assert.equal(taxCodeImportDiagnosticMessage('externalCode is required'), 'ระบุรหัส Tax Code (externalCode)');
     assert.match(taxCodeImportDiagnosticMessage('STANDARD requires a positive rate and tax calculation method'), /อัตราภาษีมากกว่า 0/);
     assert.equal(
       taxCodeImportDiagnosticMessage('Prisma constraint secret'),
-      'ข้อมูล Tax Code ในแถวนี้ไม่ถูกต้อง กรุณาตรวจสอบรูปแบบไฟล์',
+      'ข้อมูล Tax Code ในแถวนี้ไม่ถูกต้อง ตรวจสอบรูปแบบไฟล์',
     );
   });
 

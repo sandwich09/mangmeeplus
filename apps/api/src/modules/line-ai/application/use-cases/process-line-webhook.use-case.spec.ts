@@ -1,3 +1,4 @@
+import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import { capabilityFollowUpReply } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
@@ -4952,7 +4953,9 @@ describe('ProcessLineWebhookUseCase', () => {
         },
       } as any,
     );
-    (useCase as any).expenseRepo = { findByIdWithRelations: async () => structuredClone(saved), listCategories: async () => [], findByLineMessageId: async () => null };
+    (useCase as any).expenseRepo = {
+      updateExpense: async ({ id, companyId, expectedUpdatedAt, ...data }: any) => updateSavedMedia(saved, { where: { id, companyId, updatedAt: expectedUpdatedAt }, data }),
+      findByIdWithRelations: async () => structuredClone(saved), listCategories: async () => [], findByLineMessageId: async () => null };
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
     (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'receipt.jpg',
@@ -4988,9 +4991,15 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, 'completed');
   });
 
-  it('applies OCR fields from AI Gateway to LINE receipt draft', async () => {
+  for (const vatCase of [
+    { name: 'plain receipt', type: 'RECEIPT', label: 'ใบเสร็จรับเงิน', shop: 'REGISTERED', right: 'NON_CLAIMABLE', reason: 'DOCUMENT_NOT_INPUT_VAT_CLAIMABLE' },
+    { name: 'full tax invoice', type: 'TAX_INVOICE', label: 'ใบกำกับภาษี', shop: 'REGISTERED', right: 'NEEDS_REVIEW', reason: 'INPUT_VAT_REVIEW_REQUIRED' },
+    { name: 'full tax invoice in an unanswered shop', type: 'TAX_INVOICE', label: 'ใบกำกับภาษี', shop: 'UNKNOWN', right: 'NEEDS_REVIEW', reason: 'INPUT_VAT_REVIEW_REQUIRED' },
+    { name: 'full tax invoice in a shop not registered', type: 'TAX_INVOICE', label: 'ใบกำกับภาษี', shop: 'NOT_REGISTERED', right: 'NON_CLAIMABLE', reason: 'COMPANY_NOT_VAT_REGISTERED_ON_DOCUMENT_DATE' },
+  ] as const) it(`applies OCR fields from AI Gateway to LINE receipt draft: ${vatCase.name}`, async () => {
     const { prisma } = makePrisma();
     const saved = savedMediaFixture('expense-ocr-1');
+    const expenseRepository = new PrismaExpenseRepository(prisma as any);
     prisma.client.expenseRecord.update = async (args: any) => updateSavedMedia(saved, args);
     const replies: any[] = [];
     const receiptOcrRequests: any[] = [];
@@ -4998,7 +5007,15 @@ describe('ProcessLineWebhookUseCase', () => {
     const lineCreates: any[] = [];
     (prisma.client as any).$transaction = async (fn: (tx: any) => Promise<void>) => fn({
       $executeRaw: async () => 0,
+      companyVatRegistrationFact: { findMany: async ({ where }: any) => {
+        assert.equal(where.companyId, saved.companyId);
+        return vatCase.shop === 'UNKNOWN' ? [] : [{ status: vatCase.shop, effectiveFrom: new Date('2020-01-01'), effectiveTo: null, supersededAt: null, answeredAt: new Date('2020-01-01') }];
+      } },
+      attachmentLink: { findMany: async () => [] },
+      expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+      reimbursementLine: { findFirst: async () => null },
       expenseRecord: {
+        updateMany: async (args: any) => { updateSavedMedia(saved, args); return { count: 1 }; },
         findFirst: async () => ({ ...saved, expenseCategoryId: null, expenseCategory: null }),
         findFirstOrThrow: async () => structuredClone(saved),
         update: async (args: any) => { recordUpdates.push(args); return updateSavedMedia(saved, args); },
@@ -5030,7 +5047,7 @@ describe('ProcessLineWebhookUseCase', () => {
           receiptOcrRequests.push(input);
           return {
           status: 'ok',
-          classification: receiptClassification('11875'),
+          classification: { ...receiptClassification('11875'), documentKind: vatCase.type },
           fields: {
             vendorName: 'บริษัท โฟลว์แอคเคาท์ ทดสอบ จำกัด',
             documentNumber: 'CA2025020012',
@@ -5091,6 +5108,7 @@ describe('ProcessLineWebhookUseCase', () => {
       undefined,
       undefined,
       {
+        updateExpense: expenseRepository.updateExpense.bind(expenseRepository),
         findByIdWithRelations: async () => structuredClone(saved),
         listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
         findByLineMessageId: async () => null,
@@ -5118,6 +5136,10 @@ describe('ProcessLineWebhookUseCase', () => {
       messagingChannelId: 'msg-channel-1',
     });
 
+    assert.equal(recordUpdates.length, 1, 'OCR updates the draft inside its transaction');
+    assert.equal(saved.sourceDocumentType, vatCase.type);
+    assert.equal(saved.inputVatClaimStatus, vatCase.right, 'the final draft keeps the server preset after LINE stores the type');
+    assert.equal(saved.sourceChannelMetadataJson.inputVatPresetReasonCode, vatCase.reason);
     const data = recordUpdates[0].data;
     assert.equal(data.vendorDocumentNumber, 'CA2025020012');
     assert.equal(data.grandTotalAmount, '11875.0000');
@@ -5134,12 +5156,12 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.doesNotMatch(replies[0].canonicalText, /CA2025020012|เลขที่เอกสาร/);
     assert.doesNotMatch(replies[0].altText, /CA2025020012|เลขที่เอกสาร/);
     const card = readLineSystemCard(replies[0]);
-    assert.deepEqual(card.header, ['ข้อมูลใบเสร็จ', 'รอตรวจสอบ']);
+    assert.deepEqual(card.header, [vatCase.type === 'RECEIPT' ? 'ข้อมูลใบเสร็จ' : 'ข้อมูลเอกสาร', 'รอตรวจสอบ']);
     assert.deepEqual(card.rows, [
       ['ผู้ขาย / ร้านค้า', ':', 'บริษัท โฟลว์แอคเคาท์ ทดสอบ จำกัด'],
       ['วันที่เอกสาร', ':', '27 ก.พ. 2568'],
       ['เลขเอกสาร', ':', 'CA2025020012'],
-      ['ประเภทเอกสาร', ':', 'ใบเสร็จรับเงิน'],
+      ['ประเภทเอกสาร', ':', vatCase.label],
       ['หมวดค่าใช้จ่าย', ':', 'ค่าอาหาร'],
       ['ยอดรวม', ':', '11,875.00 บาท'],
       ['VAT', ':', '776.87 บาท'],
@@ -8220,7 +8242,7 @@ describe('receipt reliability: saved facts, notification and provider-input cont
       status: 'READY_FOR_CONFIRMATION', sourceChannelMetadataJson: { ...expense.sourceChannelMetadataJson, humanNote: 'keep' },
       aiVerificationSummaryJson: { humanReview: true }, updatedAt: new Date(expense.updatedAt.getTime() + 1) });
     base.prisma.client.expenseRecord.update = async (args: any) => {
-      if (options.changeBefore === (args.data.captureSource ? 'final-summary' : 'capture-summary')) humanEdit();
+      if (options.changeBefore === 'capture-summary') humanEdit();
       return updateSavedMedia(expense, args);
     };
     const run = makeUseCase(base.prisma, {
@@ -8249,6 +8271,10 @@ describe('receipt reliability: saved facts, notification and provider-input cont
         return { committedUpdatedAt: expense.updatedAt, candidatesCreated: 0, dateVerified: true, dateStatus: 'verified', charges: [] };
       } },
       expenseRepo: {
+        updateExpense: async ({ id, companyId, expectedUpdatedAt, ...data }: any) => {
+          if (options.changeBefore === 'final-summary') humanEdit();
+          return updateSavedMedia(expense, { where: { id, companyId, updatedAt: expectedUpdatedAt }, data });
+        },
         findByLineMessageId: async (_companyId: string, messageId: string) => expense?.lineMessageId === messageId ? { ...expense } : null,
         findById: async () => expense ? { ...expense } : null,
         findByIdWithRelations: async () => expense ? { ...expense, lines: expense.lines ?? [], attachments: [] } : null,

@@ -91,7 +91,7 @@ export function TradeTaxEvidencePage({ companyId, permissions }: { companyId: st
 
   async function submit(form: FormData) {
     const file = form.get('attachment');
-    if (!(file instanceof File) || !file.size) { setError('กรุณาแนบหลักฐานอย่างน้อย 1 ไฟล์'); return; }
+    if (!(file instanceof File) || !file.size) { setError('แนบหลักฐานอย่างน้อย 1 ไฟล์'); return; }
     setBusy(true); setError('');
     try {
       const attachmentId = await uploadTradeTaxEvidenceAttachment(companyId, branch?.branchId || undefined, file);
@@ -116,7 +116,7 @@ export function TradeTaxEvidencePage({ companyId, permissions }: { companyId: st
         attachmentIds: [attachmentId],
       });
       await load();
-      toast.success('บันทึกหลักฐานเรียบร้อยแล้ว');
+      toast.success('บันทึกหลักฐานแล้ว');
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); }
   }
 
@@ -158,7 +158,7 @@ export function TradeTaxEvidencePage({ companyId, permissions }: { companyId: st
     try {
       await verifyTradeTaxEvidence(companyId, id, status);
       await load();
-      toast.success(status === 'VERIFIED' ? 'ยืนยันหลักฐานเรียบร้อยแล้ว' : 'ปฏิเสธหลักฐานเรียบร้อยแล้ว');
+      toast.success(status === 'VERIFIED' ? 'ยืนยันหลักฐานแล้ว' : 'ปฏิเสธหลักฐานแล้ว');
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); }
     finally { setVerifying(null); }
   }
@@ -206,7 +206,7 @@ export function TradeTaxEvidencePage({ companyId, permissions }: { companyId: st
       source={attachmentPreview}
       closeLabel="ปิด"
       loadingLabel="กำลังเปิดเอกสาร..."
-      errorLabel="แสดงไฟล์หลักฐานไม่สำเร็จ กรุณาลองใหม่"
+      errorLabel="แสดงไฟล์หลักฐานไม่สำเร็จ ลองอีกครั้ง"
       retryLabel="ลองอีกครั้ง"
       openNewTabLabel="เปิดในแท็บใหม่"
       onClose={closeAttachmentPreview}

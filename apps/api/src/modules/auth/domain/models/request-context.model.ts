@@ -10,6 +10,8 @@ export type RequestContext = {
   companyId: string;
   membershipId: string;
   roles: string[];
+  /** Display-only package availability; never grants the reader a permission. */
+  availablePermissions?: string[];
   permissions: string[];
   entitlementDeniedPermissions?: Record<string, string>;
   scopes: {

@@ -29,12 +29,13 @@ test('the receipt-quota branch stays on the upload tab instead of navigating awa
   assert.doesNotMatch(branch, /window\.location/, 'no navigation out of the upload tab');
 });
 
-test('the quota branch raises the latch that paints the banner and disables the button', () => {
+test('the quota branch raises the latch; pressing Send returns to its reason without a duplicate upload', () => {
   const branch = uploadCatchBlock();
   assert.match(branch, /setQuotaLatch\(\{\s*monthKey: bangkokMonthKey\(todayCivilDate\(\)\)/);
   // Stamped with a month so the ceiling's own reset on the 1st clears it without a reload.
   assert.match(source, /const quotaBlocked = isReceiptQuotaBlocked\(quotaLatch, todayCivilDate\(\)\)/);
-  assert.match(source, /disabled=\{loading \|\| preparing \|\| quotaBlocked\}/);
+  assert.match(source, /if \(quotaBlocked\) \{ focusExpenseField\(document\.querySelector\('\[data-upload-quota\]'\)\); return; \}/);
+  assert.match(source, /disabled=\{loading\} aria-busy=\{loading\} data-loading-indicator/);
 });
 
 test('the quota banner offers the two things the shop can still do', () => {
@@ -124,19 +125,18 @@ test('the money-refusal notices are info, scope-aware, and never the generic fai
  * ever reaches a capture-group route.
  */
 test('one file keeps the existing expense path, in the same three requests', () => {
-  const one = source.slice(source.indexOf('const uploadOneFile = async ('), source.indexOf('const handleBatchUpload = async ()'));
+  const one = source.slice(source.indexOf('const uploadOneFile = async ('), source.indexOf('const handleBatchUpload = async (files = selectedFiles, retryIndex?: number)'));
   assert.match(one, /const intent = await initReceiptUpload\(companyId, \{/);
   assert.match(one, /await uploadReceiptFile\(intent\.uploadUrl/);
   assert.match(one, /await completeReceiptUpload\(companyId, intent\.expenseId, intent\.attachmentId, \{ byteSize: file\.size \}\)/);
   assert.match(one, /requestExpenseExtractionWithRecovery\(/);
-  const single = source.slice(source.indexOf('const handleUpload = async ()'), source.indexOf('/** Rows come from the machine'));
-  assert.match(single, /if \(selectedFiles\.length > 1 \|\| captureFiles\.length > 1\) \{ await handleBatchUpload\(\); return; \}/);
-  assert.match(single, /const done = await uploadOneFile\(file\);/);
-  assert.match(single, /if \(done\.notice\) onSuccess\(done\.expenseId, done\.notice\);/);
+  const single = source.slice(source.indexOf('const handleUpload = async (files = selectedFiles)'), source.indexOf('/** Rows come from the machine'));
+  assert.match(single, /await handleBatchUpload\(files\);/);
+  assert.match(source, /else if \(created\.length === 1\) onSuccess\(created\[0\]!\.expenseId, created\[0\]!\.notice\);/);
 });
 
 test('several files are N ordinary single uploads — no group, no second screen', () => {
-  const batch = source.slice(source.indexOf('const handleBatchUpload = async ()'), source.indexOf('const handleUpload = async ()'));
+  const batch = source.slice(source.indexOf('const handleBatchUpload = async (files = selectedFiles, retryIndex?: number)'), source.indexOf('const handleUpload = async (files = selectedFiles)'));
   assert.match(batch, /runSingleFileUploads<ExtractionNotice \| null>\(\{/);
   assert.match(batch, /const done = await uploadOneFile\(file\);/);
   // The machine itself is exercised in expense-capture-upload.logic.spec.ts; this is the wiring.
@@ -148,8 +148,8 @@ test('several files are N ordinary single uploads — no group, no second screen
 test('the batch lands where a single receipt lands: the list, with the newest highlighted', () => {
   assert.match(source, /onBatchSuccess=\{\(created\) => \{ for \(const row of created\) storeExtractionNotice\(row\.expenseId, row\.notice\); router\.push\(`\/companies\/\$\{companyId\}\/expenses\?highlight=\$\{encodeURIComponent\(created\.at\(-1\)!\.expenseId\)\}`\); \}\}/);
   // A refused read latches the banner instead of landing, so nothing claims work that did not happen.
-  const batch = source.slice(source.indexOf('const handleBatchUpload = async ()'), source.indexOf('const handleUpload = async ()'));
-  assert.match(batch, /if \(created\.length !== run\.created\.length \|\| created\.length === 0\) return;/);
+  const batch = source.slice(source.indexOf('const handleBatchUpload = async (files = selectedFiles, retryIndex?: number)'), source.indexOf('const handleUpload = async (files = selectedFiles)'));
+  assert.match(batch, /if \(run\.entries\.some\(row => !row\.expenseId \|\| !notices\.current\.has\(row\.expenseId\)\)\) return;/);
 });
 
 test('the picker and the dropzone take several files; the camera still takes one photo', () => {
@@ -180,8 +180,45 @@ test('the client no longer carries a PDF ceiling of its own', () => {
 test('a refused read still leaves the draft reachable and the spinner cleared', () => {
   // A `finally` owns each spinner, so no refusal path can leave one turning.
   assert.match(source, /\} finally \{ setExtracting\(false\); \}/);
-  assert.equal((source.match(/finally \{ setLoading\(false\); \}/g) ?? []).length >= 2, true);
+  assert.match(source, /finally \{ uploadPending\.current = false; setLoading\(false\); \}/);
   // The notice path carries the draft id, so the file and the draft survive a refusal.
   assert.match(source, /return \{ expenseId: intent\.expenseId, notice: extractionNotice\(outcome\.result, locale\) \};/);
-  assert.match(source, /if \(done\.notice\) onSuccess\(done\.expenseId, done\.notice\);/);
+  assert.match(source, /if \(done\.notice\) notices\.current\.set\(done\.expenseId, done\.notice\);/);
+  assert.match(source, /onSuccess\(created\[0\]!\.expenseId, created\[0\]!\.notice\)/);
+});
+
+
+test('UX4 VAT mode and every line rate use their printed label as the chooser name', () => {
+  for (const id of ['expense-vat-rate-', 'expense-charge-vat-']) {
+    const at = source.indexOf('id={`' + id);
+    assert.ok(at >= 0);
+    assert.match(source.slice(at, at + 180), /aria-label=\{t\('expenses.line_vat_rate', locale\)\}/);
+  }
+  assert.match(source, /<ThemedSelect id=\{`expense-vat-mode-\$\{detail.id\}`\} aria-label=\{t\('expenses.vat_mode', locale\)\}/);
+});
+
+test('UX8 certificate funding calls every shop กิจการ', async () => {
+  const { t } = await import('@/common/i18n/workspace-i18n.logic');
+  assert.match(source, /กิจการจ่ายเต็มจำนวน/);
+  assert.doesNotMatch(source, /บริษัทจ่ายเต็มจำนวน/);
+  assert.equal(t('expenses.substitute_wizard.company_payer_help', 'th'), 'กิจการจ่าย: เลือกผู้จ่ายและทราบข้อเท็จจริงของรายจ่าย');
+  assert.equal(t('expenses.substitute_wizard.evidence_readiness_description', 'th'), 'ระบบตรวจชนิดหลักฐานตามวิธีจ่ายเงินและนโยบายของกิจการ');
+});
+
+test('LIST-1 keeps a monthly list with three metrics and one export beside the search', () => {
+  const list = source.slice(source.indexOf('function ExpenseListPage('), source.indexOf('// ──', source.indexOf('function ExpenseListPage(')));
+  assert.match(source, /const LIST_PAGE_SIZE = 10;/);
+  assert.match(list, /<MetricGrid columns=\{3\} items=\{metricItems\}/);
+  for (const removed of ['granularity_day', 'granularity_month', 'vatRightFilter', 'ร้านยังไม่ตอบเรื่อง VAT', 'รายการที่ยังไม่มีวันที่เอกสารนับตามวันที่ส่งเข้า', 'pagination_showing', 'CAPTURE_SOURCE_LABELS', 'col_expense_number', 'kpi_pending', 'kpi_overdue']) assert.ok(!list.includes(removed), removed);
+  assert.doesNotMatch(list, /expenses\/manual/);
+  const rows = list.slice(list.indexOf('data-testid="expenses-grid"'));
+  assert.doesNotMatch(rows, /expenses\.document_date/);
+  assert.equal((list.match(/\{EXPORT_FOR_ACCOUNTANT\}<\/button>/g) ?? []).length, 1);
+  // Owner 2026-10-15: beside the search, before the numbers and the rows.
+  assert.ok(list.indexOf('{EXPORT_FOR_ACCOUNTANT}</button>') < list.indexOf('data-testid="expenses-summary"'));
+  assert.match(list, /setDateOrder\(order => order === 'newest' \? 'oldest' : 'newest'\)/);
+  assert.match(list, /<Pagination prominent page=/);
+  assert.match(list, /expenseListStatus\(e\)/);
+  assert.match(list, /เกินกำหนด.*kpi.overdueCount/);
+  assert.match(list, /LateDocumentBadge/); assert.match(list, /DocumentDateBadge/);
 });

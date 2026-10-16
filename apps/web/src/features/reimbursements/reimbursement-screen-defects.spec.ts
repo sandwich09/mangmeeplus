@@ -44,10 +44,10 @@ for (const [name, mode, holderType] of [['default', 'DEFAULT', 'SELF'], ['own sa
 for (const [field, value] of [['bankName', { ...account, bankChoice: '' }], ['bankName', { ...account, bankChoice: logic.OTHER_BANK }],
   ['accountName', { ...account, accountName: '' }], ['accountNumber', { ...account, accountNumber: '' }], ['payoutKind', account]]) {
   it(`W3 account refusal is described directly at ${field} (${value.bankChoice}) and clears the header`, () => {
-    const html = render(h(ui.PayoutAccountFields, { value, onChange: noop, invalidField: field, error: 'กรุณาตรวจช่องนี้' }));
+    const html = render(h(ui.PayoutAccountFields, { value, onChange: noop, invalidField: field, error: 'ตรวจช่องนี้' }));
     const control = html.match(/<(?:input|button|summary)[^>]*aria-invalid="true"[^>]*>/)?.[0];
     assert.ok(control); const id = control.match(/aria-describedby="([^"]+)"/)?.[1]; assert.ok(id);
-    assert.match(html, new RegExp(`id="${id}" role="alert"[^>]*>กรุณาตรวจช่องนี้`));
+    assert.match(html, new RegExp(`id="${id}" role="alert"[^>]*>ตรวจช่องนี้`));
     assert.match(html, /scroll-mt-\[calc\(var\(--app-header-h\)\+1rem\)\]/);
     assert.ok(html.indexOf(`id="${id}"`) > html.indexOf(control));
   });
@@ -105,4 +105,62 @@ it('W4 send-back form omits name mismatch only for another persons account', () 
     assert.deepEqual(third, own.filter(([code]: string[]) => code !== 'ACCOUNT_NAME_MISMATCH'));
     assert.equal(require('@/common/api/api-error-message').translateApiError('payout_correction_name_mismatch_third_party'), require('@watchdog-bms/contracts').REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY);
   }
+});
+
+
+it('paid claim header says paid independently of the unchanged fourth document step', () => {
+  const journey = readFileSync(new URL('./ReimbursementJourneyPage.tsx', import.meta.url), 'utf8');
+  assert.ok(journey.includes('<StatusBadge claim={detail} /><span>{readerTurn ?? claimWaitingText(detail)}</span>'));
+  assert.ok(journey.includes('ขั้นตอน ${stepIndex + 1} จาก ${steps.length}'));
+});
+
+it('claim work is full width before facts, lines, account and history at every viewport', () => {
+ const page = read('./ReimbursementJourneyPage.tsx');
+ assert.doesNotMatch(page, /lg:grid-cols-\[minmax/);
+ assert.ok(page.indexOf('aria-labelledby="journey-step-title"') < page.indexOf('<ClaimSummaryCard'));
+ assert.ok(page.indexOf('<ClaimSummaryCard') < page.indexOf('<ClaimLines {...sectionProps} onLineReceipt'));
+ assert.ok(page.indexOf('<ClaimLines {...sectionProps} onLineReceipt') < page.indexOf('{!payoutInStep && payoutCard}'));
+ assert.ok(page.indexOf('{!payoutInStep && payoutCard}') < page.indexOf('<ClaimHistory'));
+ assert.match(page, /<ActionGroup>[\s\S]*variant="danger"[\s\S]*\{\[\.\.\.cardActions\]\.reverse\(\)\.map\(actionButton\)\}\s*<\/ActionGroup>/);
+});
+
+
+it('R5 return links preserve a work tab and its group, while menu and policy start fresh', () => {
+  const { claimHubQuery, claimHubFilter, initialHubTab } = require('./reimbursements.logic');
+  assert.equal(claimHubQuery('mine', 'correction'), '?tab=mine&filter=correction');
+  assert.equal(claimHubQuery('approvals', 'all'), '?tab=approvals');
+  for (const tab of [null, 'policy', 'unknown']) assert.equal(claimHubQuery(tab, 'correction'), '');
+  assert.equal(claimHubFilter('unknown'), 'all');
+  assert.equal(initialHubTab(null, ['mine', 'approvals', 'finance', 'policy'], { approvals: 1, finance: 1 }), 'approvals');
+  assert.doesNotMatch(read('./ReimbursementsPages.tsx'), /sessionStorage|visitTab/);
+});
+it('R5 a cancelled claim never invents a legacy account explanation from an absent payout', () => {
+  assert.equal(logic.claimPayoutView({ status: 'CANCELLED', requestNo: 'RB-1', submittedAt: '2026-10-13' }).state, 'unknown');
+  assert.equal(logic.claimPayoutView({ status: 'CANCELLED', payout: { payoutMethod: 'CASH' } }).state, 'cash');
+  assert.equal(logic.claimPayoutView({ status: 'CANCELLED', payout: { payoutMethod: 'BANK_TRANSFER', bankName: 'ธนาคารกสิกรไทย', accountName: 'สมชาย', accountLast4: '6789' } }).state, 'transfer');
+  assert.equal(logic.claimPayoutView({ status: 'PENDING_APPROVAL', requestNo: 'RB-old' }).state, 'legacy');
+});
+it('R5 draft deletion shares the step action group and receipt refusals have a focusable row', () => {
+  const journey = read('./ReimbursementJourneyPage.tsx');
+  assert.match(journey, /<ActionGroup>[\s\S]*?<Button type="button" variant="danger"[\s\S]*?neverSentDraft/);
+  assert.doesNotMatch(journey, /Rare and final/);
+  const create = read('./ReimbursementCreatePage.tsx');
+  assert.match(create, /tabIndex=\{-1\} aria-invalid=\{Boolean\(lineProblems\?\.receipt\)\}/);
+  assert.match(create, /field\?\.scrollIntoView\(\{ block: 'start' \}\)/);
+  assert.match(read('./ReimbursementsPages.tsx'), /<FilterTabs aria-label="งานเบิกจ่าย"/);
+});
+
+it('R5 a not-approved duplicate directs cancellation without first editing the claim', () => {
+  const { duplicateNoticeForViewer } = require('./reimbursements.logic');
+  const detail = { status: 'REJECTED', requesterUserId: 'me', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] };
+  const mine = duplicateNoticeForViewer(detail, ['reimbursement.cancel_own'], 'me');
+  assert.doesNotMatch(mine, /ยกเลิกคำขอในสถานะนี้ไม่ได้|ปฏิเสธ/);
+  assert.match(mine, /ยกเลิก/);
+  assert.match(duplicateNoticeForViewer(detail, [], 'reader'), /ผู้เบิก/);
+});
+
+it('the hub picks its opening tab from the work counts once; paying the last claim does not move the reader off รอจ่าย', () => {
+  const hub = read('./ReimbursementsPages.tsx');
+  assert.match(hub, /if \(!requestedTab && countsPickedFor\.current === companyId\) \{\n\s+setTab\(current => \(tabs\.includes\(current\) \? current : parseHubTab\('mine', tabs\)\)\);\n\s+return;/);
+  assert.match(hub, /if \(counted\) countsPickedFor\.current = companyId;/);
 });

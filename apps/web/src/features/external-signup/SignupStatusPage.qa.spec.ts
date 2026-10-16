@@ -13,7 +13,7 @@ test('R11: a queued resend is reported as queued, not as a delivered email', () 
 
 test('R11: an outage on the way to the status is offered a retry, never called a dead link', () => {
   assert.match(source, /isTransientLoadFailure/);
-  assert.match(source, /ลองใหม่อีกครั้ง/);
+  assert.match(source, /ลองอีกครั้ง/);
   // The "this link is wrong" sentence may only be reached when the server actually said so.
   assert.doesNotMatch(source, /\{loadError \? \([\s\S]{0,200}ไม่พบคำขอนี้/);
 });

@@ -15,7 +15,6 @@ import {
 import {
   EXPENSE_CAPTURE_ALLOCATION_POLICY,
   EXPENSE_CAPTURE_ALLOCATION_POLICY_VERSION,
-  INPUT_VAT_CLAIM_STATUSES,
   type CaptureAllocationResult,
   type CaptureAllocationSelection,
   type CaptureExpenseDateChoice,
@@ -25,7 +24,6 @@ import {
   type ExpenseCaptureBusinessUse,
   type ExpenseCaptureFundingRoute,
   type ExpenseCaptureReviewResultDto,
-  type InputVatClaimStatus,
   type RequestContext,
   type TaxEvidenceStatus,
 } from '@watchdog-bms/contracts';
@@ -121,15 +119,13 @@ export function validateCaptureTaxReview(value: unknown): Record<string, Capture
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw invalid(`taxReview.${scopeKey} must be an object.`);
     const { vatMode, inputVatClaimStatus, taxEvidenceStatus } = entry as Record<string, unknown>;
     if (typeof vatMode !== 'string' || !VAT_MODES.includes(vatMode)) throw invalid(`taxReview.${scopeKey}.vatMode is not a VAT mode.`);
-    if (typeof inputVatClaimStatus !== 'string' || !(INPUT_VAT_CLAIM_STATUSES as readonly string[]).includes(inputVatClaimStatus)) {
-      throw invalid(`taxReview.${scopeKey}.inputVatClaimStatus is not a claim status.`);
-    }
+    if (inputVatClaimStatus !== undefined) throw new ForbiddenException({ code: 'expense_input_vat_decision_required', message: 'สิทธิภาษีซื้อกำหนดโดยระบบ บันทึกข้อมูลรายจ่ายได้โดยไม่ต้องส่งสิทธิภาษีซื้อ' });
     if (typeof taxEvidenceStatus !== 'string' || !TAX_EVIDENCE_STATUSES.includes(taxEvidenceStatus)) {
       throw invalid(`taxReview.${scopeKey}.taxEvidenceStatus is not an evidence status.`);
     }
     review[scopeKey] = {
       vatMode: vatMode as CaptureTaxReviewEntry['vatMode'],
-      inputVatClaimStatus: inputVatClaimStatus as InputVatClaimStatus,
+      inputVatClaimStatus: vatMode === 'NO_VAT' ? 'NON_CLAIMABLE' : 'NEEDS_REVIEW',
       taxEvidenceStatus: taxEvidenceStatus as TaxEvidenceStatus,
     };
   }
@@ -363,7 +359,7 @@ export class ReviewExpenseCaptureGroupUseCase {
     if (!member) {
       throw new UnprocessableEntityException({
         code: 'expense_capture_payer_invalid',
-        message: 'ผู้จ่ายต้องเป็นสมาชิกที่ใช้งานอยู่ของบริษัทและอยู่ในสาขาของงานนี้',
+        message: 'ผู้จ่ายต้องเป็นสมาชิกที่ใช้งานอยู่ของร้านและอยู่ในสาขาของงานนี้ เลือกผู้จ่ายที่มีสิทธิ์สาขานี้',
       });
     }
     return payerUserId;

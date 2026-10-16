@@ -50,7 +50,7 @@ for (const signatureMode of ['DIGITAL', 'PAPER']) {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(url);
-    const back = () => page.getByRole('button', { name: 'ย้อนกลับ', exact: true });
+    const back = () => page.getByRole('button', { name: 'กลับ', exact: true });
     const next = () => page.getByRole('button', { name: 'ถัดไป', exact: true });
     await back().click();
     await expect(page.getByRole('textbox', { name: /ชื่อผู้รับเงิน/ })).toBeEditable();
@@ -59,7 +59,7 @@ for (const signatureMode of ['DIGITAL', 'PAPER']) {
     await back().click();
     await next().click();
     await next().click();
-    await expect(page.getByRole('navigation', {name:'การนำทางขั้นตอนลงนาม'})).toBeVisible();
+    await expect(page.getByRole('navigation', {name:'การนำทางขั้นตอนเซ็น'})).toBeVisible();
     let history = await json(await api.get(`${base}/expenses/${draft.id}/substitute-receipt/history`));
     expect(history[0].id).toBe(previous.id);
     expect(history[0].updatedAt).toBe(previous.updatedAt);
@@ -72,12 +72,12 @@ for (const signatureMode of ['DIGITAL', 'PAPER']) {
     await page.getByRole('spinbutton', {name:'จำนวน', exact:true}).fill('2');
     await next().click();
     await expect(page.getByRole('textbox', { name: /ชื่อผู้รับเงิน/ })).toHaveValue('ผู้รับเงินแก้ในฟอร์ม');
-    await expect(page.getByRole('textbox', { name: /วัตถุประสงค์ทางธุรกิจ/ })).toHaveValue('วัตถุประสงค์ล่าสุดจากรายการค่าใช้จ่าย');
+    await expect(page.getByRole('textbox', { name: /ซื้อไปใช้ทำอะไร/ })).toHaveValue('วัตถุประสงค์ล่าสุดจากรายการค่าใช้จ่าย');
     await page.getByRole('textbox', { name: /เหตุผลที่ไม่มีใบเสร็จรับเงิน/ }).fill('');
     await expect(next()).toBeDisabled();
     await page.getByRole('textbox', { name: /เหตุผลที่ไม่มีใบเสร็จรับเงิน/ }).fill('เหตุผลที่แก้จากฟอร์ม');
     await next().click();
-    await expect(page.getByRole('navigation', {name:'การนำทางขั้นตอนลงนาม'})).toBeVisible();
+    await expect(page.getByRole('navigation', {name:'การนำทางขั้นตอนเซ็น'})).toBeVisible();
     detail = await json(await api.get(`${base}/expenses/${draft.id}`));
     history = await json(await api.get(`${base}/expenses/${draft.id}/substitute-receipt/history`));
     const current = detail.substituteReceiptEvidence;

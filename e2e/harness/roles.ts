@@ -113,7 +113,7 @@ const ALL = ALL_ROLES;
 
 /** Top-level menus in the catalogue's scope. */
 export const MENUS: MenuSpec[] = [
-  { key: 'dashboard',   th: 'แดชบอร์ด',              en: 'Dashboard',                 path: 'dashboard',              visibleTo: ALL },
+  { key: 'dashboard',   th: 'หน้าแรก',              en: 'Dashboard',                 path: 'dashboard',              visibleTo: ALL },
   { key: 'booking',     th: 'การจองออนไลน์',          en: 'Online Booking',            path: 'bookings',               visibleTo: ['OWNER', 'ADMIN', 'MANAGER', 'SALES'] },
   // 88aef194 put `salesdoc` back in the sidebar (WorkspaceLayout); visibility is permission-based and
   // every company role holds accounting.document.read_related (the seed writes no entitlement rows).
@@ -128,12 +128,12 @@ export const MENUS: MenuSpec[] = [
   // The roles parent renders when ANY child survives its per-child registry key and points at
   // the first visible child. COMPANY_VIEW holds only access.role.read — no child, no parent.
   // SALES reaches it through นโยบายส่วนลด (crm.customer.update); MANAGER through
-  // รายชื่อพนักงาน/เพิ่มพนักงาน (access.employee.read).
+  // รายชื่อพนักงาน (access.employee.read).
   { key: 'roles',       th: 'พนักงานและสิทธิ์',        en: 'Employees & Access',        path: 'settings/permissions',   visibleTo: ['OWNER', 'ADMIN', 'MANAGER', 'SALES'] },
   // The hub key list (web-core-workspace.constants.ts `settings`) includes tax.config.read and
   // ledger read keys, so MANAGER / FINANCE / ACCOUNTANT see the hub too — matching the cards
   // (accounting/tax setup) they can actually open inside it.
-  { key: 'settings',    th: 'ตั้งค่าบริษัท',           en: 'Company Settings',          path: 'settings',               visibleTo: ['OWNER', 'COMPANY_VIEW', 'ADMIN', 'MANAGER', 'FINANCE', 'ACCOUNTANT'] },
+  { key: 'settings',    th: 'ตั้งค่าร้าน',           en: 'Company Settings',          path: 'settings',               visibleTo: ['OWNER', 'COMPANY_VIEW', 'ADMIN', 'MANAGER', 'FINANCE', 'ACCOUNTANT'] },
 ];
 
 /**
@@ -157,7 +157,6 @@ export const SUB_MENUS: SubMenuSpec[] = [
   // need it. The route and its permissions are unchanged; no role sees the entry here any more.
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.signatures', th: 'ลายเซ็นของฉัน',           en: 'My signature',    path: 'expenses/signatures', visibleTo: [] },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.substitute_receipts', th: 'ใบรับรองแทนใบเสร็จ', en: 'Substitute receipts', path: 'expenses/substitute-receipts', visibleTo: ALL },
-  { parent: 'expenses', routeGuard: 'own',    key: 'expenses.substitute', th: 'ตั้งค่าใบรับรองแทนใบเสร็จ', en: 'Substitute receipt settings', path: 'settings/substitute-receipt', visibleTo: ['OWNER', 'ADMIN'] },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.evidence',   th: 'หลักฐานทางบัญชี',         en: 'Accounting evidence', path: 'expenses/evidence', visibleTo: ['OWNER', 'COMPANY_VIEW', 'ADMIN', 'MANAGER', 'FINANCE', 'ACCOUNTANT'] },
 
   // พนักงานและสิทธิ์ — visibility mirrors route-permissions.ts (the single web registry):
@@ -166,15 +165,18 @@ export const SUB_MENUS: SubMenuSpec[] = [
   // needs crm.customer.update, LINE OA needs crm.channel.manage.
   { parent: 'roles', routeGuard: 'own', key: 'roles.permissions', th: 'บทบาทและสิทธิ์',   en: 'Roles & permissions', path: 'settings/permissions',      visibleTo: ['OWNER'] },
   { parent: 'roles', routeGuard: 'own', key: 'roles.individual',  th: 'รายชื่อพนักงาน',   en: 'Employee directory',  path: 'settings/access-overview',  visibleTo: ['OWNER', 'ADMIN', 'MANAGER'] },
-  { parent: 'roles', routeGuard: 'own', key: 'roles.employees',   th: 'เพิ่มพนักงาน',      en: 'Add employee',        path: 'settings/employees',        visibleTo: ['OWNER', 'ADMIN', 'MANAGER'] },
+  // "เพิ่มพนักงาน" left this submenu on 2026-10-13: it is an action, and the employee list page carries its button.
+  // The route and its rule are unchanged; the page lights รายชื่อพนักงาน.
   { parent: 'roles', routeGuard: 'own', key: 'roles.poapproval',  th: 'อนุมัติคำสั่งซื้อ',  en: 'PO Approval',         path: 'settings/po-approval',      visibleTo: ['OWNER', 'ADMIN'] },
   { parent: 'roles', routeGuard: 'own', key: 'roles.discount',    th: 'นโยบายส่วนลด',     en: 'Discount policy',     path: 'settings/discount-policy',  visibleTo: ['OWNER', 'ADMIN', 'SALES'] },
   { parent: 'roles', routeGuard: 'own', key: 'roles.lineoa',      th: 'เชื่อมต่อ LINE OA', en: 'LINE OA',            path: 'settings/line-oa',          visibleTo: ['OWNER', 'ADMIN'] },
 
-  // ตั้งค่าบริษัท. The สาขา page keeps its own rule (company.branch.read, which every role holds),
+  // ตั้งค่าร้าน. The สาขา page keeps its own rule (company.branch.read, which every role holds),
   // so it stays reachable by direct URL even for roles that no longer see the hub — the hub is
   // the only way in through the UI. Left as-is deliberately; raise it if that leak matters.
   { parent: 'settings', routeGuard: 'own', key: 'settings.branches', th: 'สาขา', en: 'Branches', path: 'settings/branches', visibleTo: ALL },
+  // Moved here from ค่าใช้จ่ายและใบเสร็จ on 2026-10-13 (a setting, not daily work); same key, route and roles.
+  { parent: 'settings', routeGuard: 'own', key: 'expenses.substitute', th: 'ตั้งค่าใบรับรองแทนใบเสร็จ', en: 'Substitute receipt settings', path: 'settings/substitute-receipt', visibleTo: ['OWNER', 'ADMIN'] },
 ];
 
 export function menu(key: string): MenuSpec {
@@ -204,8 +206,12 @@ function topLevelNavLabel(page: Page, label: string) {
   return page.locator('aside nav .menu-item').getByText(label, { exact: true });
 }
 
-function subMenuLabel(page: Page, label: string) {
-  return page.locator('aside nav .menu-dropdown-item').getByText(label, { exact: true });
+/** Scoped to the parent's own list: since 2026-10-13 the คู่มือ menu carries a guide with the same name as
+ *  the expenses child (ใบรับรองแทนใบเสร็จ), so a nav-wide lookup counts two. */
+function subMenuLabel(page: Page, parentLabel: string, label: string) {
+  return page.locator('aside nav li')
+    .filter({ has: page.getByRole('button', { name: parentLabel, exact: true }) })
+    .locator('.menu-dropdown-item').getByText(label, { exact: true });
 }
 
 /**
@@ -240,7 +246,7 @@ export async function expectSubMenuMatchesRole(page: Page, role: RoleKey, parent
     // drawer still reports a bounding box, so toBeVisible() passes even when it is hidden.
     // Presence/absence is what the matrix is about; drawer state is asserted separately.
     await expect(
-      subMenuLabel(page, child.th),
+      subMenuLabel(page, parent.th, child.th),
       `${role} ${shouldSee ? 'should see' : 'must NOT see'} sub-menu "${child.th}"`,
     ).toHaveCount(shouldSee ? 1 : 0);
   }
@@ -308,7 +314,8 @@ export async function expectRouteAccess(
   } else {
     await expect(page, `${role} must be refused on ${target}, not sent elsewhere`).toHaveURL(new RegExp(`${spec.path.replace(/\//g, '\\/')}(\\?|$|\\/)`));
     await expect(page.getByText('ไม่มีสิทธิ์เข้าถึง', { exact: true }), `${role} must see the no-access state on ${target}`).toBeVisible();
-    await expect(page.getByRole('link', { name: 'กลับไปหน้าที่ใช้ได้' }), `${role} needs a way back from ${target}`).toBeVisible();
+    // The way back is named after where it goes since 2026-10-13 (กลับไปหน้าแรก, กลับไปค่าใช้จ่ายและใบเสร็จ …).
+    await expect(page.locator('main').getByRole('link', { name: /^กลับไป/ }), `${role} needs a way back from ${target}`).toBeVisible();
     await expect(page.locator('header'), `${role} keeps the workspace shell on ${target}`).toBeVisible();
   }
 }

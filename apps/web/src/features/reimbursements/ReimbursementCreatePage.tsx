@@ -1,24 +1,27 @@
 'use client';
 
-import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
-
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { reimbursementIncurredDateError, todayCivilDate, type SavedPayoutAccountSummary, type MemberPayoutAccountSummary, type ReimbursementPayoutSummary, type ReimbursementSourceOption, type ReimbursementSourceOptions, type ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { formatThaiDate } from '@/common/i18n/thai-date';
-import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
+import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { FormActionBar } from '@/common/components/actions/FormActionBar';
+import { FieldError } from '@/common/components/field/Field';
+import { Notice } from '@/common/components/notice';
+import { useToast } from '@/common/components/toast';
 import { EmptyState } from '@/common/components/state/EmptyState';
 import { LoadingState } from '@/common/components/state/LoadingState';
-import { createReimbursement, getReimbursementSourceOptions, getReimbursement, updateReimbursementDraft, uploadReceiptFile } from './reimbursements.api';
+import { createReimbursement, getReimbursementSourceOptions, getReimbursement, updateReimbursementDraft, submitReimbursement, uploadReceiptFile } from './reimbursements.api';
 import { ICON, ErrorBanner, inputClass, btnClass, ghostClass } from '../expenses/ExpensesUi';
 import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
-import { collectReceiptUploadResults, draftSentBackNote, mergeDraftLineEvidence, validateRequestForm, errorMessage, sumLineAmounts, formatMoney, errorText, money, categoryText } from './reimbursements.logic';
+import { suggestReimbursementCategory, claimHubQuery, collectReceiptUploadResults, draftSentBackNote, mergeDraftLineEvidence, requestFormProblems, typedAmount, validateRequestForm, errorMessage, sumLineAmounts, formatMoney, errorText, money, categoryText } from './reimbursements.logic';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
-import { ReimbursementSourceFacts, WholeWords } from './ReimbursementSourceFacts';
+import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
 import { REIMBURSEMENT_CREATE_UNAVAILABLE } from './reimbursements.model';
 import { BackToClaimsLink, ClaimPayoutFormSection } from './ReimbursementPayout';
 import { getMySavedPayoutAccounts, getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
@@ -31,6 +34,8 @@ const CATEGORY_OPTIONS: { value: string; label: string }[] = [
   { value: 'accommodation', label: 'ที่พัก' },
   { value: 'other', label: 'อื่น ๆ' },
 ];
+/** The required mark of every field on this form, red like the shared fields' (owner 2026-10-16). */
+const req = <span className="text-red-600"> *</span>;
 const categoryLabel = (key: string) => CATEGORY_OPTIONS.find(c => c.value === key)?.label ?? key;
 
 type FormLine = {
@@ -38,6 +43,7 @@ type FormLine = {
   description: string;
   purpose: string;
   categoryKey: string;
+  categoryChosen: boolean;
   amount: string;
   file: File | null;
   attachmentId?: string | null;
@@ -47,13 +53,20 @@ type FormLine = {
   sourceExpenseSnapshot?: ReimbursementSourceSnapshot;
   categoryLabel?: string;
 };
-const emptyLine = (): FormLine => ({ incurredDate: '', description: '', purpose: '', categoryKey: 'travel', amount: '', file: null,
+// A new line starts on today (most receipts are today's) and with no category: "เดินทาง" was chosen for every claim
+// nobody looked at, so bags and drinking water were filed as travel.
+const emptyLine = (): FormLine => ({ incurredDate: todayCivilDate(), description: '', purpose: '', categoryKey: '', categoryChosen: false, amount: '', file: null,
   attachmentId: null, attachmentFileName: undefined, linkedExpenseId: null, sourceExpenseUpdatedAt: undefined, sourceExpenseSnapshot: undefined, categoryLabel: undefined });
+/** A line has its evidence: a file chosen now, one attached before, or the saved expense it is taken from. */
+const hasReceipt = (line: FormLine) => !!line.file || !!line.attachmentId || !!line.linkedExpenseId;
+const labelClass = 'mb-1.5 block text-sm font-semibold text-gray-700';
+const hintClass = 'mt-1 text-sm text-gray-500';
+const textLinkClass = 'inline-flex min-h-11 items-center text-sm font-semibold text-brand-700 underline underline-offset-4';
 const emptyForm = () => ({ reason: '', currency: 'THB', missingReceiptReason: '', lines: [emptyLine()] });
 
 /** One-line preview of a collapsed row: date · description · amount. */
 function lineSummary(line: FormLine): string {
-  const parts = [formatThaiDate(line.incurredDate, ''), line.description.trim(), line.amount ? money(line.amount) : ''].filter(Boolean);
+  const parts = [formatThaiDate(line.incurredDate, ''), line.description.trim(), line.amount ? money(typedAmount(line.amount)) : ''].filter(Boolean);
   return parts.length > 0 ? parts.join(' · ') : 'ยังไม่ได้กรอกข้อมูล';
 }
 
@@ -72,6 +85,8 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   const router = useRouter();
   const branchId = useTransactionCreateBranchId();
   const hubHref = `/companies/${companyId}/reimbursements`;
+  const searchParams = useSearchParams();
+  const returnQuery = claimHubQuery(searchParams?.get('tab') ?? null, searchParams?.get('filter') ?? null);
   const editing = Boolean(requestId);
   const [form, setForm] = useState(emptyForm);
   const [requesterUserId, setRequesterUserId] = useState(userId);
@@ -102,16 +117,27 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   const [editLoaded, setEditLoaded] = useState(!editing);
   const [error, setError] = useState<string | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (error && !payoutInvalidField) {
-      errorRef.current?.scrollIntoView({ block: 'start' }); errorRef.current?.focus({ preventScroll: true });
-    }
-  }, [error, payoutInvalidField]);
   const [correctionNote, setCorrectionNote] = useState<string | null>(null);
   const [sourceBranchId, setSourceBranchId] = useState<string | null>(null);
   // Set only when the draft was created but its receipts failed to attach. Re-submitting would
   // create a second claim, so the primary action becomes "open the draft" instead.
   const [strandedDraftId, setStrandedDraftId] = useState<string | null>(null);
+  // After the first press of the save button every field that is still wrong says so under itself, until it is fixed.
+  const [showProblems, setShowProblems] = useState(false);
+  /** The line whose "choose from saved expenses" is open; a line taken from one shows it always. */
+  const [pickerOpen, setPickerOpen] = useState<number | null>(null);
+  const [showUnclaimable, setShowUnclaimable] = useState(false);
+  const toast = useToast();
+  // The person's own default could not be read: "follow my default" stays offered, since the server reads it at submit.
+  const defaultUnreadRef = useRef(false);
+  const payoutChosenRef = useRef(false);
+  // A refusal that belongs to no field is brought into view. A field's own problem is said at the field, which is
+  // scrolled to instead (`toFirstProblem`).
+  useEffect(() => {
+    if (error && !payoutInvalidField && !showProblems) {
+      errorRef.current?.scrollIntoView({ block: 'start' }); errorRef.current?.focus({ preventScroll: true });
+    }
+  }, [error, payoutInvalidField, showProblems]);
 
   useEffect(() => {
     if (!requestId || !canUpdate) return;
@@ -119,8 +145,8 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     setLoading(true); setError(null);
     void getReimbursement(companyId, requestId).then(detail => {
       if (!active) return;
-      if (detail.status !== 'DRAFT') throw new Error('แก้ไขได้เฉพาะคำขอฉบับร่าง');
-      if (detail.requesterUserId !== userId && !canPrepareForOthers) throw new Error('คำขอนี้แก้ไขได้เฉพาะผู้เบิก หรือผู้ที่มีสิทธิ์ทำคำขอแทนผู้เบิก');
+      if (detail.status !== 'DRAFT') throw new Error('แก้ไขได้เฉพาะใบเบิกที่ยังเป็นร่าง');
+      if (detail.requesterUserId !== userId && !canPrepareForOthers) throw new Error('ใบเบิกนี้แก้ไขได้เฉพาะผู้เบิก หรือผู้ที่มีสิทธิ์ทำใบเบิกแทนผู้เบิก');
       setRequesterUserId(detail.requesterUserId);
       setSourceBranchId(detail.branchId ?? null);
       setForm({
@@ -131,7 +157,8 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           incurredDate: String(line.incurredDate ?? '').slice(0, 10),
           description: line.description ?? '',
           purpose: line.purpose ?? '',
-          categoryKey: line.categoryKey ?? 'travel',
+          categoryKey: line.categoryKey ?? '',
+          categoryChosen: Boolean(line.categoryKey),
           amount: String(line.amount ?? ''),
           file: null,
           attachmentId: line.attachmentId ?? null,
@@ -168,9 +195,17 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         setMaySaveAsDefault(response.canEdit === true);
       })
       // Without the preview the choice still works: the server reads the default at submit.
-      .catch(() => { if (active && forSelf) setMyPayoutAccount(null); });
+      .catch(() => { if (active && forSelf) { defaultUnreadRef.current = true; setMyPayoutAccount(null); } });
     return () => { active = false; };
   }, [canCreate, canEditEmployees, canUpdate, companyId, editing, requesterUserId, userId]);
+
+  // A person who is known to have no default account is not left on "follow my default": that choice let the draft be
+  // saved and then blocked it on the next page. Nothing is chosen for them, and saving asks for the choice here.
+  const noDefaultAccount = requesterUserId === userId && myPayoutAccount === null && !defaultUnreadRef.current;
+  useEffect(() => {
+    if (!noDefaultAccount || payoutChosenRef.current) return;
+    setPayout(current => (current.mode === 'DEFAULT' ? { ...current, mode: '' } : current));
+  }, [noDefaultAccount]);
 
   useEffect(() => {
     let active = true;
@@ -196,7 +231,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     const selectedBranch = editing ? sourceBranchId : branchId;
     if (!selectedBranch || !requesterUserId || (editing && !editLoaded)) return;
     let active = true;
-    setSourcesLoading(true); setSourcesError(null); setSourceOptions(current => ({ requesters: current.requesters, items: [] }));
+    setSourcesLoading(true); setSourcesError(null); setSourceOptions(current => ({ ...current, items: [] }));
     const timer = setTimeout(() => {
       void getReimbursementSourceOptions(companyId, { branchId: selectedBranch, requesterUserId, search: sourceSearch })
         .then(options => { if (active) setSourceOptions(options); })
@@ -209,7 +244,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   /** What a chosen source becomes, in ONE place, so the picker and the `?expenseId=` link agree. */
   const lineFromSource = (source: ReimbursementSourceOption): Partial<FormLine> => ({
     incurredDate: source.incurredDate, description: source.description, purpose: source.purpose, categoryKey: source.categoryKey,
-    categoryLabel: source.categoryLabel, amount: source.amount, file: null, attachmentId: null, attachmentFileName: undefined,
+    categoryLabel: source.categoryLabel, categoryChosen: true, amount: source.amount, file: null, attachmentId: null, attachmentFileName: undefined,
     linkedExpenseId: source.expenseId, sourceExpenseUpdatedAt: source.updatedAt, sourceExpenseSnapshot: source.snapshot,
   });
 
@@ -243,6 +278,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         if (!source) { setSourceLinkNotice(errorMessage('reimbursement_source_unavailable')); return; }
         // Keep it in the picker too, so the row shows what it is bound to and can be changed.
         setSourceOptions(current => ({
+          ...current, receiptPolicy: options.receiptPolicy,
           requesters: current.requesters.length > 0 ? current.requesters : options.requesters,
           items: current.items.some(item => item.expenseId === source.expenseId) ? current.items : [source, ...current.items],
         }));
@@ -280,29 +316,65 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   };
 
   const setLine = (index: number, patch: Partial<FormLine>) =>
-    setForm(f => ({ ...f, lines: f.lines.map((l, i) => (i === index ? { ...l, ...patch } : l)) }));
-  const total = sumLineAmounts(form.lines);
+    setForm(f => ({ ...f, lines: f.lines.map((line, i) => {
+      if (i !== index) return line;
+      const next = { ...line, ...patch };
+      if (patch.description !== undefined && patch.categoryKey === undefined && !next.categoryChosen && !next.linkedExpenseId) {
+        next.categoryKey = suggestReimbursementCategory(next.description);
+        next.categoryLabel = undefined;
+      }
+      return next;
+    }) }));
+  // What is checked, summed and sent: the amounts without the separators a person types.
+  const checkedLines = form.lines.map(l => ({ ...l, amount: typedAmount(l.amount), hasReceipt: hasReceipt(l) }));
+  const total = sumLineAmounts(checkedLines);
   const maxIncurredDate = todayCivilDate();
   const allLinesCollapsed = form.lines.every((_line, i) => !!collapsedLines[i]);
+  const [validationIntent, setValidationIntent] = useState<'draft' | 'send'>('send');
+  const checked = { intent: validationIntent, reason: form.reason, missingReceiptReason: form.missingReceiptReason, receiptPolicy: sourceOptions.receiptPolicy, lines: checkedLines };
+  const problems = showProblems ? requestFormProblems(checked) : null;
+  const branchMissing = showProblems && !editing && !branchId;
+  const modeMissing = showProblems && payoutInvalidField === 'mode';
+  const problemFields = (problems?.count ?? 0) + (branchMissing ? 1 : 0) + (modeMissing ? 1 : 0);
+  // One field: its own sentence. Several: how many, since each says its own under itself.
+  const shownError = problemFields > 1 ? `ยังกรอกไม่ครบ ${problemFields} ช่อง`
+    : problemFields === 1 ? (branchMissing ? 'เลือกสาขา' : modeMissing ? error : (problems?.lines.some(line => line.receipt) ? 'แนบใบเสร็จในรายการที่ระบุ' : validateRequestForm(checked))) : error;
+  const asksReceiptReason = sourceOptions.receiptPolicy?.allowMissingReceiptWithReason === true
+    && form.lines.some(l => !hasReceipt(l) && (l.description.trim() !== '' || l.amount.trim() !== ''));
+  const claimable = (source: ReimbursementSourceOption) => source.eligible && source.currency === form.currency;
+
+  const finishSavedDraft = async (id: string, send: boolean) => {
+    if (send) {
+      const saved = await getReimbursement(companyId, id);
+      await submitReimbursement(companyId, id, saved.payout?.submitToken);
+    }
+    toast.success(send ? 'ส่งอนุมัติแล้ว' : 'บันทึกร่างแล้ว');
+    router.push(`${hubHref}/${id}${returnQuery}`);
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(null); setPayoutInvalidField(undefined);
-    if (!editing && !branchId) { setError('กรุณาเลือกสาขาของรายการ'); return; }
-    const v = validateRequestForm({
-      reason: form.reason,
-      missingReceiptReason: form.missingReceiptReason,
-      lines: form.lines.map(l => ({ ...l, hasReceipt: !!l.file || !!l.attachmentId || !!l.linkedExpenseId })),
+    e.preventDefault();
+    const send = (e.nativeEvent as SubmitEvent).submitter?.getAttribute('value') !== 'draft';
+    setValidationIntent(send ? 'send' : 'draft');
+    setError(null); setPayoutInvalidField(undefined);
+    const formElement = e.currentTarget;
+    const toFirstProblem = () => requestAnimationFrame(() => {
+      const field = formElement.querySelector<HTMLElement>('[aria-invalid="true"]');
+      field?.scrollIntoView({ block: 'start' }); field?.focus({ preventScroll: true });
     });
-    // Expand collapsed rows so the field named in the error is actually visible.
-    if (v) { setError(v); setCollapsedLines({}); return; }
-    const payoutError = claimPayoutFormError(payout);
+    // Every field is checked at once, marked, and says its own problem; rows are expanded so the marked field is visible.
+    if (requestFormProblems({ ...checked, intent: send ? 'send' : 'draft' }).count > 0 || (!editing && !branchId)) {
+      setShowProblems(true); setCollapsedLines({});
+      // A receiving method not chosen yet is said in the same pass, at its own section.
+      if (!payout.mode) { setError('เลือกวิธีรับเงินคืน'); setPayoutInvalidField('mode'); }
+      toFirstProblem(); return;
+    }
+    if (!sourceOptions.receiptPolicy) { setError(sourcesError ?? 'กำลังโหลดกติกาใบเสร็จ ลองอีกครั้ง'); return; }
+    setShowProblems(false);
+    const payoutError = !payout.mode ? 'เลือกวิธีรับเงินคืน' : claimPayoutFormError(payout);
     if (payoutError) {
-      setError(payoutError); setPayoutInvalidField(claimPayoutFieldError(payout)?.field);
-      const formElement = e.currentTarget;
-      requestAnimationFrame(() => {
-        const field = formElement.querySelector<HTMLElement>('[aria-invalid="true"]');
-        field?.scrollIntoView({ block: 'start' }); field?.focus({ preventScroll: true });
-      });
+      setError(payoutError); setPayoutInvalidField(!payout.mode ? 'mode' : claimPayoutFieldError(payout)?.field);
+      toFirstProblem();
       return;
     }
     // Undefined leaves an existing draft's receiving choice as it is.
@@ -319,13 +391,13 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         description: l.description.trim(),
         purpose: l.purpose.trim() || undefined,
         categoryKey: l.categoryKey,
-        categoryLabel: l.categoryLabel ?? categoryLabel(l.categoryKey),
-        amount: l.amount,
+        categoryLabel: l.categoryLabel?.trim() || categoryLabel(l.categoryKey),
+        amount: typedAmount(l.amount),
         linkedExpenseId: l.linkedExpenseId ?? null,
         sourceExpenseUpdatedAt: l.sourceExpenseUpdatedAt,
       }));
       if (requestId) {
-        if (!sourceBranchId) throw new Error('คำขอเดิมยังไม่ระบุสาขา กรุณาตรวจสอบสาขาของเอกสารก่อนบันทึก');
+        if (!sourceBranchId) throw new Error('ใบเบิกนี้ยังไม่ระบุสาขา ตรวจสอบสาขาของเอกสารก่อนบันทึก');
         const results = await Promise.allSettled(form.lines.map(l => (l.file ? uploadReceiptFile(companyId, l.file, sourceBranchId) : Promise.resolve(null))));
         const { attachmentIds, failedLineNumbers, firstFailure } = collectReceiptUploadResults(results);
         if (failedLineNumbers.length > 0) {
@@ -341,7 +413,8 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
             ...mergeDraftLineEvidence(form.lines[i], attachmentIds[i]),
           })),
         });
-        router.push(`${hubHref}/${requestId}`);
+        createdId = requestId;
+        await finishSavedDraft(requestId, send);
         return;
       }
       const created = await createReimbursement(companyId, {
@@ -369,13 +442,18 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           throw new Error('receipt_upload_failed');
         }
       }
-      // The draft opens on its journey page at step 1, where it is checked and sent for approval.
-      router.push(`${hubHref}/${created.id}`);
+      await finishSavedDraft(created.id, send);
     } catch (e) {
+      if (send && createdId) {
+        const message = receiptFailureMessage ?? errorText(e);
+        try { window.sessionStorage.setItem(`claim-submit:${createdId}`, message); } catch { /* The saved draft is still reachable. */ }
+        router.push(`${hubHref}/${createdId}${returnQuery}`);
+        return;
+      }
       const recovery = !createdId && claimPayoutSavedRefusal(payout, e);
       if (recovery) { setPayout(recovery.form); setSavedAccountsReload(value => value + 1); }
       setError(createdId
-        ? `บันทึกร่างคำขอเบิกแล้ว แต่แนบไฟล์ไม่ครบ: ${receiptFailureMessage ?? errorText(e)}${linkedReceiptCount > 0 ? ` ระบบเก็บไฟล์ที่แนบสำเร็จ ${linkedReceiptCount} รายการไว้แล้ว` : ''} กรุณาเปิดร่างและเลือกไฟล์รายการที่ยังขาดใหม่`
+        ? `บันทึกร่างแล้ว แต่แนบไฟล์ไม่ครบ: ${receiptFailureMessage ?? errorText(e)}${linkedReceiptCount > 0 ? ` ระบบเก็บไฟล์ที่แนบแล้ว ${linkedReceiptCount} รายการไว้แล้ว` : ''} เปิดร่างแล้วเลือกไฟล์ของรายการที่ยังขาดอีกครั้ง`
         : errorText(e));
       setStrandedDraftId(createdId);
     } finally {
@@ -383,15 +461,15 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     }
   };
 
-  if (loading) return <LoadingState label="กำลังโหลดคำขอ..." />;
+  if (loading) return <LoadingState label="กำลังโหลดใบเบิก..." />;
 
   if (editing ? !canUpdate : !canCreate) {
     return (
-      <MangmeePage eyebrow={<BackToClaimsLink href={hubHref} />} title={editing ? 'แก้ไขคำขอเบิก' : 'สร้างคำขอเบิก'}>
+      <MangmeePage className="mangmee-flat" back={<BackToClaimsLink href={`${hubHref}${returnQuery}`} />} title={editing ? 'แก้ไขใบเบิก' : 'สร้างใบเบิก'}>
         <MangmeeCard className="p-6">
           <EmptyState
-            title={editing ? 'ไม่มีสิทธิ์แก้ไขคำขอเบิก' : 'ไม่มีสิทธิ์สร้างคำขอเบิก'}
-            description={editing ? 'เฉพาะผู้เบิกที่มีสิทธิ์แก้ไขร่างเท่านั้น' : REIMBURSEMENT_CREATE_UNAVAILABLE}
+            title={editing ? 'บัญชีนี้แก้ไขใบเบิกนี้ไม่ได้' : 'บัญชีนี้สร้างใบเบิกไม่ได้'}
+            description={editing ? 'ร่างแก้ไขได้เฉพาะผู้เบิกของใบนั้น' : REIMBURSEMENT_CREATE_UNAVAILABLE}
           />
         </MangmeeCard>
       </MangmeePage>
@@ -400,60 +478,193 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
 
   if (editing && !editLoaded) {
     return (
-      <MangmeePage eyebrow={<BackToClaimsLink href={hubHref} />} title="แก้ไขคำขอเบิก">
-        <MangmeeCard className="p-6"><ErrorBanner message={error ?? 'โหลดคำขอไม่สำเร็จ'} /></MangmeeCard>
+      <MangmeePage back={<BackToClaimsLink href={`${hubHref}${returnQuery}`} />} title="แก้ไขใบเบิก">
+        <MangmeeCard className="p-6"><ErrorBanner message={error ?? 'โหลดใบเบิกไม่สำเร็จ'} /></MangmeeCard>
       </MangmeePage>
     );
   }
 
   return (
-    <MangmeePage
-      eyebrow={<BackToClaimsLink href={hubHref} />}
-      title={editing ? 'แก้ไขคำขอเบิก' : 'สร้างคำขอเบิก'}
-      // "ตามเหตุผลที่ส่งกลับ" only for a draft someone sent back, whose reason is shown below: any other draft is just edited.
-      description={editing ? (correctionNote ? 'แก้ไขข้อมูลตามเหตุผลที่ส่งกลับ แล้วบันทึกร่างก่อนส่งอนุมัติใหม่' : 'แก้ไขข้อมูลคำขอ แล้วบันทึกร่างก่อนส่งอนุมัติ') : 'กรอกเหตุผลและรายการที่ขอเบิก ระบบจะบันทึกเป็นฉบับร่างให้ตรวจก่อนส่งอนุมัติ'}
-    >
+    <MangmeePage className="mangmee-flat" back={<BackToClaimsLink href={`${hubHref}${returnQuery}`} />} title={editing ? 'แก้ไขใบเบิก' : 'สร้างใบเบิก'}>
       {/* noValidate: collapsed rows hide required inputs with CSS, and the browser aborts a
-          submit it cannot focus — silently, with no message and no request. validateRequestForm
-          covers every field with a Thai, line-numbered message instead. */}
-      <form onSubmit={handleCreate} noValidate className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          submit it cannot focus — silently, with no message and no request. requestFormProblems
+          covers every field in Thai, under the field itself, instead. */}
+      {/* One column that fills the page; the buttons end the form in the page's action bar (owner 2026-10-13). */}
+      <form onSubmit={handleCreate} noValidate className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
         <div className="space-y-4">
-          {!editing && <TransactionBranchField value={branchId} />}
-          {correctionNote && <ErrorBanner message={correctionNote} />}
+          {/* Why the draft came back, said once, beside the fields it asks to change. */}
+          {correctionNote && <Notice tone="warning">{correctionNote}</Notice>}
           {/* `?expenseId=`: why the source the link named is not on line 1 — never a blank draft. */}
           {sourceLinkNotice && <ErrorBanner message={`รายการต้นทางที่เลือกมายังเบิกไม่ได้: ${sourceLinkNotice}`} />}
-          <MangmeeCard className="p-4">
-            <h3 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h3>
-            <label className="mt-3 block text-xs font-semibold text-gray-600">ผู้เบิก
-              <ThemedSelect aria-label="ผู้เบิก" className={cx(inputClass, 'mt-1.5')} value={requesterUserId} disabled={editing || !canPrepareForOthers || sourcesLoading}
-                onChange={event => { setRequesterUserId(event.target.value); setForm(current => ({ ...current, lines: [emptyLine()] })); setPayout(resetClaimPayoutForRequester); setPayoutInvalidField(undefined); }}>
-                {!sourceOptions.requesters.some(member => member.userId === requesterUserId) && <option value={requesterUserId}>{requesterUserId === userId ? 'ฉัน' : 'ผู้เบิกของใบนี้'}</option>}
-                {sourceOptions.requesters.map(member => <option key={member.userId} value={member.userId}>{member.displayName}</option>)}
-              </ThemedSelect>
-            </label>
-            <p className="mt-1 text-xs text-gray-500">ผู้เบิกคือคนที่จ่ายเงินไปก่อน และบริษัทจะคืนเงินให้ ผู้จัดทำคำขออาจเป็นคนละคนกับผู้เบิก</p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <label className="mb-1.5 block text-xs font-semibold text-gray-600">เหตุผล *</label>
-                <input aria-label="เหตุผล" className={inputClass} required value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} />
-              </div>
-              {/* One currency per claim, and only THB is supported — a dropdown of one beats a free-text box that can be typed wrong. */}
+          <MangmeeCard className="grid gap-3 p-4 sm:grid-cols-2">
+            {/* Only someone who may prepare a claim for another person chooses whose it is: anyone else saw their own
+                name in a greyed-out list. */}
+            {canPrepareForOthers && (
               <div>
-                <label className="mb-1.5 block text-xs font-semibold text-gray-600">สกุลเงิน</label>
-                <ThemedSelect aria-label="สกุลเงิน" className={inputClass} value={form.currency} onChange={e => setForm(f => ({ ...f, currency: e.target.value }))}>
-                  <option value="THB">บาท</option>
+                <label className={labelClass}>ผู้เบิก</label>
+                <ThemedSelect searchable aria-label="ผู้เบิก" className={inputClass} value={requesterUserId} disabled={editing || sourcesLoading}
+                  onChange={event => { setRequesterUserId(event.target.value); setForm(current => ({ ...current, lines: [emptyLine()] })); setPayout(resetClaimPayoutForRequester); setPayoutInvalidField(undefined); }}>
+                  {!sourceOptions.requesters.some(member => member.userId === requesterUserId) && <option value={requesterUserId}>{requesterUserId === userId ? 'ฉัน' : 'ผู้เบิกของใบนี้'}</option>}
+                  {sourceOptions.requesters.map(member => <option key={member.userId} value={member.userId}>{member.displayName}</option>)}
                 </ThemedSelect>
+                <p className={hintClass}>คนที่จ่ายเงินไปก่อน และจะได้เงินคืน</p>
               </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-gray-600">เหตุผลที่ไม่มีใบเสร็จ (จำเป็นเมื่อมีรายการที่ไม่แนบใบเสร็จ)</label>
-                <input aria-label="เหตุผลที่ไม่มีใบเสร็จ" className={inputClass} value={form.missingReceiptReason} onChange={e => setForm(f => ({ ...f, missingReceiptReason: e.target.value }))} />
-              </div>
+            )}
+            {!canPrepareForOthers && <div><label className={labelClass}>ผู้เบิก</label><p className="min-h-11 py-2 text-sm">{sourceOptions.requesters.find(member => member.userId === requesterUserId)?.displayName ?? 'ฉัน'}</p></div>}
+            {!editing && <TransactionBranchField fill value={branchId} invalid={branchMissing} hint={branchMissing ? 'เลือกสาขา' : undefined} />}
+            <div className="sm:col-span-2">
+              <label className={labelClass}>เหตุผล{req}</label>
+              <input aria-label="เหตุผล" className={inputClass} required value={form.reason} placeholder="เช่น ค่าเดินทางไปส่งของให้ลูกค้า"
+                aria-invalid={problems?.reason ? true : undefined} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} />
+              {problems?.reason && <FieldError>{problems.reason}</FieldError>}
             </div>
+          </MangmeeCard>
+
+          <MangmeeCard className="p-4">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-base font-bold text-gray-900">รายการที่ขอเบิก{form.lines.length > 1 ? ` (${form.lines.length})` : ''}</h3>
+              {form.lines.length >= 2 && (
+                <button type="button" className={ghostClass}
+                  onClick={() => setCollapsedLines(allLinesCollapsed ? {} : Object.fromEntries(form.lines.map((_line, i) => [i, true])))}>
+                  {allLinesCollapsed ? 'ขยายทั้งหมด' : 'ย่อทั้งหมด'}
+                </button>
+              )}
+            </div>
+            {problems?.form && <div className="mt-2"><FieldError>{problems.form}</FieldError></div>}
+            <div className="mt-3 space-y-3">
+              {form.lines.map((l, i) => {
+                const lineProblems = problems?.lines[i];
+                const unclaimable = sourceOptions.items.filter(source => !claimable(source) && source.expenseId !== l.linkedExpenseId).length;
+                return (
+                <div key={i} className="rounded-xl border border-gray-200 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    {form.lines.length === 1 ? <h4 className="text-sm font-bold text-gray-700">รายการที่ 1</h4> : <button type="button" className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
+                      aria-expanded={!collapsedLines[i]} onClick={() => setCollapsedLines(c => ({ ...c, [i]: !c[i] }))}>
+                      <span className={cx('text-gray-400 transition-transform', !collapsedLines[i] && 'rotate-90')}>▶</span>
+                      <span className="shrink-0 text-sm font-bold text-gray-700">รายการที่ {i + 1}</span>
+                      {collapsedLines[i] && <span className="min-w-0 break-words text-sm text-gray-500">{lineSummary(l)}</span>}
+                    </button>}
+                    {form.lines.length > 1 && (
+                      <button type="button" aria-label="ลบรายการ" className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-error-700 hover:text-error-700"
+                        onClick={() => setForm(f => ({ ...f, lines: f.lines.filter((_x, j) => j !== i) }))}>{ICON.trash}</button>
+                    )}
+                  </div>
+
+                  <div className={cx('mt-3 grid gap-3 lg:grid-cols-3', form.lines.length > 1 && collapsedLines[i] && 'hidden')}>
+                    {/* The receipt first: it is what the person holds, and the rest is read off it. */}
+                    <div className="lg:col-span-3 scroll-mt-[calc(var(--app-header-h)+1rem)]" tabIndex={-1} aria-invalid={Boolean(lineProblems?.receipt)}>
+                      <label className={labelClass}>ใบเสร็จ</label>
+
+                      {!l.linkedExpenseId && <ThemedFile aria-label="ใบเสร็จ" file={l.file} accept={RECEIPT_UPLOAD_ACCEPT} onChange={file => setLine(i, { file })} />}
+                    {sourceOptions.receiptPolicy?.requireReceipt && !sourceOptions.receiptPolicy.allowMissingReceiptWithReason
+                      && !hasReceipt(l) && (l.description.trim() || l.amount.trim()) && <div className="mt-2"><FieldError>ร้านนี้ต้องแนบใบเสร็จทุกรายการก่อนส่งอนุมัติ</FieldError></div>}
+                      {l.attachmentId && !l.file && (
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-500">
+                          <span className="min-w-0 break-words">ไฟล์เดิม: {l.attachmentFileName ?? 'ใบเสร็จที่แนบไว้'}</span>
+                          <button type="button" className="inline-flex min-h-11 items-center font-semibold text-error-700 underline underline-offset-4" onClick={() => setLine(i, { attachmentId: null, attachmentFileName: undefined })}>นำไฟล์เดิมออก</button>
+                        </div>
+                      )}
+                      {l.linkedExpenseId ? <p className={hintClass}>ใช้ใบเสร็จของค่าใช้จ่ายที่เลือกไว้ด้านล่าง</p>
+                        : <p className={hintClass}>PDF หรือรูปภาพ</p>}
+                      {!l.linkedExpenseId && pickerOpen !== i && (
+                        <button type="button" className={textLinkClass} onClick={() => setPickerOpen(i)}>เลือกจากค่าใช้จ่ายที่บันทึกไว้</button>
+                      )}
+                    </div>
+                    {/* A line taken from a saved expense: chosen from the ones that can be claimed; the rest are behind one line. */}
+                    {(l.linkedExpenseId || pickerOpen === i) && (
+                      <div className="rounded-xl bg-gray-50 p-3 lg:col-span-3">
+                        <label className={labelClass}>ค่าใช้จ่ายที่บันทึกไว้</label>
+                        <input className={cx(inputClass, 'mb-2')} aria-label="ค้นหาค่าใช้จ่ายที่บันทึกไว้" value={sourceSearch} onChange={event => setSourceSearch(event.target.value)} placeholder="ค้นหาชื่อผู้ขายหรือเลขที่เอกสาร" />
+                        <ThemedSelect aria-label={`ค่าใช้จ่ายที่บันทึกไว้ของรายการที่ ${i + 1}`} className={inputClass} value={l.linkedExpenseId ?? ''} disabled={sourcesLoading}
+                          onChange={event => selectSource(i, event.target.value)}>
+                          <option value="">กรอกและแนบใบเสร็จเอง</option>
+                          {l.linkedExpenseId && !sourceOptions.items.some(source => source.expenseId === l.linkedExpenseId) && <option value={l.linkedExpenseId}>รายการต้นทางที่บันทึกไว้</option>}
+                          {sourceOptions.items.filter(source => claimable(source) || source.expenseId === l.linkedExpenseId || showUnclaimable).map(source => <option key={source.expenseId} value={source.expenseId} disabled={!claimable(source) || form.lines.some((other, j) => j !== i && other.linkedExpenseId === source.expenseId)}>
+                            {source.label} · {money(source.amount, source.currency)} {source.reason ? `— ${errorMessage(source.reason)}` : source.currency !== form.currency ? '— สกุลเงินไม่ตรงกับใบเบิก' : ''}
+                          </option>)}
+                        </ThemedSelect>
+                        {sourcesLoading && <p role="status" className={hintClass}>กำลังโหลดค่าใช้จ่ายที่บันทึกไว้...</p>}
+                        {sourcesError && <div className="mt-2"><ErrorBanner message={sourcesError} /></div>}
+                        {unclaimable > 0 && (
+                          <button type="button" aria-expanded={showUnclaimable} className={textLinkClass} onClick={() => setShowUnclaimable(shown => !shown)}>
+                            {showUnclaimable ? 'ซ่อนรายการที่เบิกไม่ได้' : `ดูรายการที่เบิกไม่ได้ ${unclaimable} รายการ`}
+                          </button>
+                        )}
+                        {l.sourceExpenseSnapshot && <ReimbursementSourceFacts source={l.sourceExpenseSnapshot} />}
+                        {l.linkedExpenseId && <div><button type="button" className={textLinkClass} disabled={refreshingSource !== null} aria-busy={Boolean(refreshingSource === i)} onClick={() => void refreshSource(i, l.linkedExpenseId!)}>โหลดข้อมูลต้นทางล่าสุดและตรวจใหม่</button></div>}
+                      </div>
+                    )}
+                    <div className="lg:col-span-3">
+                      <label className={labelClass}>รายการ{req}</label>
+                      <input aria-label="รายการ" className={inputClass} required value={l.description} aria-invalid={lineProblems?.description ? true : undefined}
+                        onChange={e => setLine(i, { description: e.target.value })} />
+                      {lineProblems?.description && <FieldError>{lineProblems.description}</FieldError>}
+                    </div>
+                    <div>
+                      <label className={labelClass}>จำนวนเงิน{req}</label>
+                      {/* Text with the number keypad: a typed "1,200" stays as typed (a number field dropped it without a word). */}
+                      <div className="relative">
+                        <input aria-label="จำนวนเงิน" className={cx(inputClass, 'mangmee-input-icon-end text-right tabular-nums')} readOnly={!!l.linkedExpenseId} type="text" inputMode="decimal" autoComplete="off" required
+                          value={l.amount} aria-invalid={lineProblems?.amount ? true : undefined} onChange={e => setLine(i, { amount: e.target.value })} />
+                        <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-gray-500">บาท</span>
+                      </div>
+                      {lineProblems?.amount && <FieldError>{lineProblems.amount}</FieldError>}
+                    </div>
+                    <div>
+                      <label className={labelClass}>วันที่{req}</label>
+                      <ThemedDate aria-label="วันที่" className={inputClass} disabled={!!l.linkedExpenseId} required value={l.incurredDate} max={maxIncurredDate} today={maxIncurredDate}
+                        aria-invalid={Boolean(lineProblems?.incurredDate) || (!!l.incurredDate && !!reimbursementIncurredDateError(l.incurredDate, maxIncurredDate))}
+                        onChange={e => setLine(i, { incurredDate: e.target.value })} />
+                      {lineProblems?.incurredDate && <FieldError>{lineProblems.incurredDate}</FieldError>}
+                    </div>
+                    <div>
+                      <label className={labelClass}>หมวด{req}</label>
+                      <ThemedSelect aria-label="หมวด" className={inputClass} value={l.categoryKey} aria-invalid={lineProblems?.categoryKey ? true : undefined}
+                        onChange={e => setLine(i, { categoryKey: e.target.value, categoryLabel: undefined, categoryChosen: true })}>
+                        {l.categoryKey === '' && <option value="">เลือกหมวด</option>}
+                        {l.categoryKey !== '' && !CATEGORY_OPTIONS.some(category => category.value === l.categoryKey) && <option value={l.categoryKey}>{categoryText(l.categoryLabel)}</option>}
+                        {CATEGORY_OPTIONS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                      </ThemedSelect>
+                      {lineProblems?.categoryKey && <FieldError>{lineProblems.categoryKey}</FieldError>}
+                      {l.linkedExpenseId && <p className={hintClass}>หมวดบัญชีใช้ตามค่าใช้จ่ายที่เลือกไว้</p>}
+                    </div>
+                    {l.categoryKey === 'other' && !l.linkedExpenseId && (
+                      <div className="lg:col-span-3">
+                        <label className={labelClass}>ระบุหมวดอื่น{req}</label>
+                        <input aria-label="ระบุหมวดอื่น" className={inputClass} required maxLength={160} placeholder="เช่น ค่าจอดรถ" value={l.categoryLabel ?? ''}
+                          aria-invalid={lineProblems?.categoryLabel ? true : undefined} onChange={e => setLine(i, { categoryLabel: e.target.value })} />
+                        {lineProblems?.categoryLabel && <FieldError>{lineProblems.categoryLabel}</FieldError>}
+                      </div>
+                    )}
+                    <div className="lg:col-span-3">
+                      <label className={labelClass}>วัตถุประสงค์ (ไม่บังคับ)</label>
+                      <input aria-label="วัตถุประสงค์" className={inputClass} value={l.purpose} onChange={e => setLine(i, { purpose: e.target.value })} />
+                    </div>
+                  </div>
+                </div>
+                );
+              })}
+            </div>
+            <ActionGroup align="start" className="mt-3">
+              <button type="button" className={ghostClass} onClick={() => {
+                setForm(f => ({ ...f, lines: [...f.lines, emptyLine()] }));
+                setCollapsedLines(c => ({ ...c, [form.lines.length]: false }));
+              }}>+ เพิ่มรายการ</button>
+            </ActionGroup>
+            {asksReceiptReason && (
+              <div className="mt-4 border-t border-gray-100 pt-4">
+                <label className={labelClass}>เหตุผลที่ไม่มีใบเสร็จ</label>
+                <input aria-label="เหตุผลที่ไม่มีใบเสร็จ" className={inputClass} value={form.missingReceiptReason} aria-invalid={problems?.missingReceiptReason ? true : undefined}
+                  onChange={e => setForm(f => ({ ...f, missingReceiptReason: e.target.value }))} />
+                {problems?.missingReceiptReason ? <FieldError>{problems.missingReceiptReason}</FieldError>
+                  : <p className={hintClass}>กรอกเมื่อมีรายการที่ไม่มีใบเสร็จ ใช้ได้เมื่อร้านรับเหตุผลแทนใบเสร็จ</p>}
+              </div>
+            )}
           </MangmeeCard>
 
           <ClaimPayoutFormSection
             value={payout}
-            onChange={value => { setPayout(value); setPayoutInvalidField(undefined); setError(null); }}
+            onChange={value => { payoutChosenRef.current = true; setPayout(value); setPayoutInvalidField(undefined); setError(null); }}
             invalidField={payoutInvalidField}
             error={error}
             savedAccounts={savedAccounts}
@@ -462,128 +673,33 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
             onReloadSaved={() => setSavedAccountsReload(value => value + 1)}
             forSelf={requesterUserId === userId}
             defaultAccount={requesterUserId === userId ? myPayoutAccount : null}
+            noDefaultAccount={noDefaultAccount}
             current={currentPayout}
             canSaveAsDefault={maySaveAsDefault}
             payoutAccountHref={`${hubHref}/payout-account`}
           />
-
-          <MangmeeCard className="p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-gray-900">รายการที่ขอเบิก</h3>
-                <MangmeeBadge tone="slate">{form.lines.length} รายการ</MangmeeBadge>
-              </div>
-              {form.lines.length >= 2 && (
-                <button type="button" className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
-                  onClick={() => setCollapsedLines(allLinesCollapsed ? {} : Object.fromEntries(form.lines.map((_line, i) => [i, true])))}>
-                  {allLinesCollapsed ? 'ขยายทั้งหมด' : 'ย่อทั้งหมด'}
-                </button>
-              )}
-            </div>
-            <label className="mt-3 block text-xs font-semibold text-gray-600">ค้นหาค่าใช้จ่ายเดิม
-              <input className={cx(inputClass, 'mt-1.5')} aria-label="ค้นหาค่าใช้จ่ายเดิม" value={sourceSearch} onChange={event => setSourceSearch(event.target.value)} placeholder="ชื่อผู้ขายหรือเลขที่เอกสาร" />
-            </label>
-            {sourcesLoading && <p role="status" className="mt-2 text-xs text-gray-500">กำลังโหลดรายการต้นทาง...</p>}
-            {sourcesError && <ErrorBanner message={sourcesError} />}
-            <div className="mt-3 space-y-3">
-              {form.lines.map((l, i) => (
-                <div key={i} className="rounded-xl border border-gray-200 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <button type="button" className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
-                      aria-expanded={!collapsedLines[i]} onClick={() => setCollapsedLines(c => ({ ...c, [i]: !c[i] }))}>
-                      <span className={cx('text-gray-400 transition-transform', !collapsedLines[i] && 'rotate-90')}>▶</span>
-                      <span className="shrink-0 text-sm font-bold text-gray-700">รายการที่ {i + 1}</span>
-                      {collapsedLines[i] && <span className="truncate text-xs text-gray-500">{lineSummary(l)}</span>}
-                    </button>
-                    {form.lines.length > 1 && (
-                      <button type="button" aria-label="ลบรายการ" className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-error-700 hover:text-error-700"
-                        onClick={() => setForm(f => ({ ...f, lines: f.lines.filter((_x, j) => j !== i) }))}>{ICON.trash}</button>
-                    )}
-                  </div>
-                  <div className={cx('mt-3 grid gap-3 sm:grid-cols-2', collapsedLines[i] && 'hidden')}>
-                    <div className="sm:col-span-2">
-                      <label className="mb-1.5 block text-xs font-semibold text-gray-600">หลักฐานต้นทาง</label>
-                      <ThemedSelect aria-label={`หลักฐานต้นทางรายการ ${i + 1}`} className={inputClass} value={l.linkedExpenseId ?? ''} disabled={sourcesLoading}
-                        onChange={event => selectSource(i, event.target.value)}>
-                        <option value="">กรอกและแนบใบเสร็จเอง</option>
-                        {l.linkedExpenseId && !sourceOptions.items.some(source => source.expenseId === l.linkedExpenseId) && <option value={l.linkedExpenseId}>รายการต้นทางที่บันทึกไว้</option>}
-                        {sourceOptions.items.map(source => <option key={source.expenseId} value={source.expenseId} disabled={!source.eligible || source.currency !== form.currency || form.lines.some((other, j) => j !== i && other.linkedExpenseId === source.expenseId)}>
-                          {source.label} · {money(source.amount, source.currency)} {source.reason ? `— ${errorMessage(source.reason)}` : source.currency !== form.currency ? '— สกุลเงินไม่ตรงกับใบเบิก' : ''}
-                        </option>)}
-                      </ThemedSelect>
-                      {l.sourceExpenseSnapshot && <ReimbursementSourceFacts source={l.sourceExpenseSnapshot} />}
-                      {l.linkedExpenseId && <button type="button" className="mt-2 text-xs font-semibold text-brand-700" disabled={refreshingSource !== null} aria-busy={Boolean(refreshingSource === i)} onClick={() => void refreshSource(i, l.linkedExpenseId!)}>{refreshingSource === i ? 'กำลังโหลดข้อมูลล่าสุด...' : 'โหลดข้อมูลต้นทางล่าสุดและตรวจใหม่'}</button>}
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่ *</label>
-                      <ThemedDate aria-label="วันที่" className={inputClass} disabled={!!l.linkedExpenseId} required value={l.incurredDate} max={maxIncurredDate} today={maxIncurredDate}
-                        aria-invalid={!!l.incurredDate && !!reimbursementIncurredDateError(l.incurredDate, maxIncurredDate)}
-                        aria-describedby={`incurred-date-help-${i}`}
-                        onChange={e => setLine(i, { incurredDate: e.target.value })} />
-                      <p id={`incurred-date-help-${i}`} className="mt-1 text-xs text-gray-500">วันที่รายการเบิกต้องไม่เกินวันนี้ (เวลาไทย)</p>
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-xs font-semibold text-gray-600">หมวดใบเบิก *</label>
-                      <ThemedSelect aria-label="หมวด" className={inputClass} value={l.categoryKey} onChange={e => setLine(i, { categoryKey: e.target.value, categoryLabel: undefined })}>
-                        {!CATEGORY_OPTIONS.some(category => category.value === l.categoryKey) && <option value={l.categoryKey}>{categoryText(l.categoryLabel)}</option>}
-                        {CATEGORY_OPTIONS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                      </ThemedSelect>
-                      {l.linkedExpenseId && <p className="mt-1 text-xs text-gray-500">หมวดบัญชีใช้ตามค่าใช้จ่ายต้นทาง</p>}
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="mb-1.5 block text-xs font-semibold text-gray-600">รายการ *</label>
-                      <input aria-label="รายการ" className={inputClass} required value={l.description} onChange={e => setLine(i, { description: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-xs font-semibold text-gray-600">วัตถุประสงค์</label>
-                      <input aria-label="วัตถุประสงค์" className={inputClass} value={l.purpose} onChange={e => setLine(i, { purpose: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-xs font-semibold text-gray-600">จำนวนเงิน *</label>
-                      <input aria-label="จำนวนเงิน" className={inputClass} readOnly={!!l.linkedExpenseId} type="number" step="0.01" required value={l.amount} onChange={e => setLine(i, { amount: e.target.value })} />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="mb-1.5 block text-xs font-semibold text-gray-600">ใบเสร็จ</label>
-                      {!l.linkedExpenseId && <ThemedFile aria-label="ใบเสร็จ" file={l.file} accept={RECEIPT_UPLOAD_ACCEPT} onChange={file => setLine(i, { file })} />}
-                      {l.attachmentId && !l.file && (
-                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
-                          <span>ไฟล์เดิม: {l.attachmentFileName ?? 'ใบเสร็จที่แนบไว้'}</span>
-                          <button type="button" className="text-error-700 hover:underline" onClick={() => setLine(i, { attachmentId: null, attachmentFileName: undefined })}>นำไฟล์เดิมออก</button>
-                        </div>
-                      )}
-                      {l.linkedExpenseId && !l.file && <p className="mt-2 text-xs text-gray-500">เชื่อมกับค่าใช้จ่ายที่บันทึกไว้</p>}
-                      <p className="mt-1 text-xs leading-5 text-gray-400">รองรับ <WholeWords text={ATTACHMENT_SOURCE_TYPES_LABEL} /> ระบบจะแปลงรูปให้อัตโนมัติก่อนแนบ</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <button type="button" className={cx(ghostClass, 'mt-3')} onClick={() => {
-              setForm(f => ({ ...f, lines: [...f.lines, emptyLine()] }));
-              setCollapsedLines(c => ({ ...c, [form.lines.length]: false }));
-            }}>+ เพิ่มรายการ</button>
-          </MangmeeCard>
         </div>
 
-        <MangmeeCard className="sticky top-4 h-fit p-4">
-          <h3 className="text-sm font-bold text-gray-900">สรุปคำขอ</h3>
-          <dl className="mt-4 space-y-3 text-sm">
-            <div className="flex items-center justify-between gap-3"><dt className="text-gray-500">จำนวนรายการ</dt><dd className="font-semibold tabular-nums text-gray-900">{form.lines.length}</dd></div>
-            <div className="flex items-center justify-between gap-3"><dt className="text-gray-500">มีหลักฐานแล้ว</dt><dd className="font-semibold tabular-nums text-gray-900">{form.lines.filter(l => l.file || l.attachmentId || l.linkedExpenseId).length} / {form.lines.length}</dd></div>
-          </dl>
-          <div className="my-4 border-t border-gray-100 pt-4">
-            <div className="text-xs font-semibold text-gray-500">ยอดรวม</div>
-            <div className="mt-2 text-[26px] font-extrabold leading-none tracking-tight tabular-nums text-gray-900">{formatMoney(total, form.currency)}</div>
-          </div>
-          {error && <div ref={errorRef} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={error} /></div>}
-          <div className="mt-4 space-y-2">
+        {shownError && <div ref={errorRef} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={shownError} /></div>}
+        <FormActionBar
+          // The total only where there is something to add up: with one line it repeated the amount typed above it.
+          summary={form.lines.length > 1 ? (
+            <p className="flex items-baseline gap-3">
+              <span className="text-sm font-semibold text-gray-600">ยอดรวม</span>
+              <span className="mangmee-unit text-xl font-bold text-gray-900">{formatMoney(total, form.currency)}</span>
+            </p>
+          ) : undefined}>
+          <ActionGroup>
+            {/* Leaving the edit of a draft goes back to that draft, not to the list. */}
+            <Link href={editing ? `${hubHref}/${requestId}${returnQuery}` : `${hubHref}${returnQuery}`} className={ghostClass}>ยกเลิก</Link>
             {strandedDraftId
-              ? <Link href={`${hubHref}/${strandedDraftId}`} className={cx(btnClass, 'w-full')}>เปิดร่างเพื่อแก้ไขไฟล์</Link>
-              : <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy || refreshingSource !== null} aria-busy={Boolean(busy)}>{busy ? 'กำลังเตรียมไฟล์และบันทึก...' : editing ? 'บันทึกการแก้ไข' : 'บันทึกร่างคำขอเบิก'}</button>}
-            <Link href={hubHref} className={cx(ghostClass, 'w-full')}>ยกเลิก</Link>
-          </div>
-          <p className="mt-3 text-xs leading-5 text-gray-500">ระบบจะบันทึกเป็นฉบับร่าง คุณตรวจสอบและกดส่งอนุมัติได้ภายหลัง</p>
-        </MangmeeCard>
+              ? <Link href={`${hubHref}/${strandedDraftId}${returnQuery}`} className={btnClass}>เปิดร่างเพื่อแก้ไขไฟล์</Link>
+              : <>
+                <button type="submit" name="intent" value="draft" className={ghostClass} disabled={busy || refreshingSource !== null} aria-busy={Boolean(busy)}>บันทึกร่าง</button>
+                <button type="submit" name="intent" value="send" className={btnClass} disabled={busy || sourcesLoading || refreshingSource !== null} aria-busy={Boolean(busy)}>ส่งอนุมัติ</button>
+              </>}
+          </ActionGroup>
+        </FormActionBar>
       </form>
     </MangmeePage>
   );

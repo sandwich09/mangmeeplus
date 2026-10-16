@@ -28,8 +28,8 @@ export default async function AccountEmailPage({ searchParams }: { searchParams:
   // card): the package picker would only tell them they have no shop to manage.
   const backHref = billingReturn ? `/companies/${encodeURIComponent(company)}/billing${query.has('interval') ? `?interval=${query.get('interval')}` : ''}`
     : company ? `/companies/${encodeURIComponent(company)}/settings` : '/billing/companies';
-  return <BillingCustomerFrame eyebrow="บัญชีของฉัน" title="จัดการอีเมลบัญชี" description="อีเมลบัญชีใช้เข้าสู่ระบบสำรองและรับแจ้งเตือน ไม่ต้องยืนยันก่อนซื้อแพ็กเกจ · ถ้ายืนยันแล้ว การซื้อครั้งแรกจะใช้อีเมลนี้รับเอกสาร · เปลี่ยนอีเมลรับเอกสารได้ที่หน้าแพ็กเกจ"
-    backHref={backHref} backLabel={billingReturn ? 'กลับไปเลือกแพ็กเกจ' : company ? 'กลับหน้าตั้งค่า' : 'กลับหน้าเลือกบริษัท'}>
+  return <BillingCustomerFrame eyebrow="บัญชีของฉัน" title="จัดการอีเมลบัญชี" description="ใช้เข้าสู่ระบบสำรองและรับแจ้งเตือน ไม่ต้องยืนยันก่อนซื้อแพ็กเกจ"
+    backHref={backHref} backLabel={billingReturn ? 'กลับไปหน้าแพ็กเกจ' : company ? 'กลับไปหน้าตั้งค่า' : 'กลับไปเลือกร้าน'}>
     <AccountEmailOtpPanel reauthReturnTo={next} />
   </BillingCustomerFrame>;
 }

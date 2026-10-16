@@ -14,6 +14,16 @@ import {
   type CompanyLegalAddress,
 } from '@watchdog-bms/contracts';
 
+/** The tax detour accepts an origin key, never a URL supplied in the address. */
+export function withholdingProfileReturnPath(companyId: string, search: string): string | null {
+  return new URLSearchParams(search).get('from') === 'withholding' ? `/companies/${encodeURIComponent(companyId)}/tax/withholding` : null;
+}
+
+export function companyProfileReturnLabel(path: string | null): string {
+  if (path?.includes('#expense-input-vat-')) return 'กลับไปตรวจสิทธิภาษีซื้อ';
+  return path?.includes('/expenses/substitute-receipts/') ? 'กลับไปทำใบรับรอง' : 'กลับไปออกหนังสือรับรอง';
+}
+
 export type IdentityField = 'taxId' | 'registeredName' | 'addressJson';
 
 export function companyProfileReturnPath(companyId: string, search: string): string | null {
@@ -151,7 +161,7 @@ export function addressErrorMessages(error: unknown): string[] {
     // `is not an allowed field` are shape errors — telling the owner to fill in a box they already
     // filled in would send them to fix the wrong thing.
     const text = /\d+ digits/.test(entry) ? `${label} ต้องเป็นตัวเลข 5 หลัก`
-      : /is required/.test(entry) ? `กรุณากรอก ${label}`
+      : /is required/.test(entry) ? `กรอก${label}`
         : `${label} ค่าไม่ถูกต้อง`;
     if (!messages.includes(text)) messages.push(text);
   }
@@ -296,11 +306,17 @@ export function writeChecklistCache(
   } catch { /* private mode: the card simply refetches next time */ }
 }
 
-/** Exported so `buildShopSave` can tell "nothing to send" from a real validation problem. */
-export const NO_CHANGES_MESSAGE = 'ยังไม่มีอะไรเปลี่ยนค่ะ';
+/** Who has a signature of their own to manage: one rule for the card on the account tab and the row in the user menu. */
+export const OWN_SIGNATURE_PERMISSIONS: readonly string[] = ['expense.signature.self_manage', 'expense.review', 'expense.confirm', 'expense.signature.manage'];
 
-export type ShopForm = { registeredName: string; taxId: string; address: Record<string, string | null | undefined>; businessTypeCode?: string; businessTypeOther?: string };
-export type CurrentIdentity = { registeredName: string | null; taxId: string | null; addressJson: Record<string, unknown> | null; businessType?: CompanyBusinessType } | null;
+/** Exported so `buildShopSave` can tell "nothing to send" from a real validation problem. */
+export const NO_CHANGES_MESSAGE = 'ยังไม่ได้แก้อะไร';
+/** Shown under the tax number field, in the field's own words (thai-ux-standard §1.6). */
+export const SHOP_NAME_ERROR_MESSAGE = 'ชื่อร้านต้องมี 1 ถึง 200 ตัวอักษร แก้ชื่อร้านแล้วบันทึกอีกครั้ง';
+export const TAX_ID_ERROR_MESSAGE = 'เลขผู้เสียภาษีต้องมี 13 หลัก';
+
+export type ShopForm = { displayName?: string; registeredName: string; taxId: string; address: Record<string, string | null | undefined>; businessTypeCode?: string; businessTypeOther?: string };
+export type CurrentIdentity = { displayName?: string; registeredName: string | null; taxId: string | null; addressJson: Record<string, unknown> | null; businessType?: CompanyBusinessType } | null;
 
 /**
  * The exact PATCH body this form should send, or the Thai reason it should not send one.
@@ -318,6 +334,9 @@ export function buildIdentityPatch(
   // legal record by a day.
   today: string = todayCivilDate('Asia/Bangkok'),
 ): { body: Record<string, unknown> } | { error: string } {
+  const displayName = form.displayName?.trim();
+  if (displayName !== undefined && (!displayName || displayName.length > 200)) return { error: SHOP_NAME_ERROR_MESSAGE };
+  const displayNameChanged = displayName !== undefined && displayName !== current?.displayName;
   const taxId = form.taxId.replace(/[^0-9]/g, '');
   const registeredName = form.registeredName.trim();
 
@@ -326,16 +345,17 @@ export function buildIdentityPatch(
   if (registeredName !== (current?.registeredName ?? '')) fields.push('registeredName');
   if (addressChanged(form.address, current?.addressJson ?? null)) fields.push('addressJson');
 
-  if (fields.length === 0) return { error: NO_CHANGES_MESSAGE };
+  if (fields.length === 0 && !displayNameChanged) return { error: NO_CHANGES_MESSAGE };
   if (fields.includes('taxId') && taxId !== '' && !isThaiTaxIdInput(taxId)) {
-    return { error: 'เลขผู้เสียภาษีต้องเป็นตัวเลข 13 หลักค่ะ' };
+    return { error: TAX_ID_ERROR_MESSAGE };
   }
 
-  const changeKind = identityChangeKind(control, fields);
+  const changeKind = fields.length === 0 ? 'CORRECTION' : identityChangeKind(control, fields);
   return {
     body: {
       expectedLegalIdentityVersion: control.legalIdentityVersion,
       changeKind,
+      ...(displayNameChanged ? { displayName } : {}),
       ...(fields.includes('taxId') ? { taxId } : {}),
       ...(fields.includes('registeredName') ? { registeredName } : {}),
       ...(fields.includes('addressJson')
@@ -382,7 +402,7 @@ export function buildShopSave(
     try { value = normalizeCompanyBusinessType(form.businessTypeCode || null, form.businessTypeOther); }
     catch (error) {
       const code = (error as Error).message;
-      return { error: code === 'company_business_type_other_required' ? 'กรุณาระบุประเภทธุรกิจอื่น ๆ'
+      return { error: code === 'company_business_type_other_required' ? 'ระบุประเภทธุรกิจอื่น ๆ'
         : code === 'company_business_type_other_invalid' ? 'ระบุประเภทธุรกิจอื่น ๆ ไม่เกิน 200 ตัวอักษร'
           : translateApiError('company_business_type_invalid')! };
     }
@@ -458,10 +478,10 @@ export function passwordFormError(
   account: AccountLoginState,
   form: { password: string; confirmPassword: string; username: string },
 ): string | null {
-  if (form.password.length < 8) return 'รหัสผ่านต้องยาวอย่างน้อย 8 ตัวค่ะ';
-  if (form.password !== form.confirmPassword) return 'รหัสผ่านสองช่องยังไม่ตรงกันค่ะ';
+  if (form.password.length < 8) return 'รหัสผ่านต้องมีอย่างน้อย 8 ตัว';
+  if (form.password !== form.confirmPassword) return 'รหัสผ่านสองช่องไม่ตรงกัน';
   if (usernameFieldRequired(account) && !form.username.trim()) {
-    return 'ตั้งชื่อผู้ใช้ด้วยนะคะ ไว้ใช้คู่กับรหัสผ่านตอนเข้าจากคอมพิวเตอร์';
+    return 'ตั้งชื่อผู้ใช้ด้วย ใช้คู่กับรหัสผ่านตอนเข้าจากคอมพิวเตอร์';
   }
   // Same rule as the server, so a Thai name is named as the problem here rather than coming back
   // as a generic English sentence from the API.

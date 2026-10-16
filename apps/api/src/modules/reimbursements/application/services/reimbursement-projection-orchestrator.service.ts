@@ -3,7 +3,7 @@ import type { RequestContext } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
 import { ConfirmExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
-import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
+import { PrismaExpenseRepository, type ExpenseDb } from '../../../expenses/infrastructure/prisma-expense.repository';
 import type { ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { MaterializeClaimExpensesService } from './materialize-claim-expenses.service';
@@ -72,14 +72,14 @@ export class ReimbursementProjectionOrchestratorService {
     await this.confirmProjections(ctx, request, projections, decision.allowMissingReceiptWithReason, scopes, decision.actorUserId, decision.systemReconcile);
   }
 
-  async reconcileExisting(ctx: RequestContext, request: ReimbursementRequestRecord, allowMissingReceiptWithReason: boolean): Promise<void> {
-    const projections = await this.reimbursements.listClaimProjections(ctx.companyId, request.id);
-    await this.confirmProjections(ctx, request, projections.map(row => ({ expenseId: row.id, reimbursementLineId: row.sourceReimbursementLineId })), allowMissingReceiptWithReason, ctx.scopes ?? {}, ctx.userId);
+  async reconcileExisting(ctx: RequestContext, request: ReimbursementRequestRecord, allowMissingReceiptWithReason: boolean, db?: ExpenseDb): Promise<void> {
+    const projections = await this.reimbursements.listClaimProjections(ctx.companyId, request.id, db);
+    await this.confirmProjections(ctx, request, projections.map(row => ({ expenseId: row.id, reimbursementLineId: row.sourceReimbursementLineId })), allowMissingReceiptWithReason, ctx.scopes ?? {}, ctx.userId, undefined, db);
   }
 
-  private async confirmProjections(ctx: RequestContext, request: ReimbursementRequestRecord, projections: { expenseId: string; reimbursementLineId: string }[], allowMissingReceiptWithReason: boolean, scopes: { branchIds?: string[] }, actorUserId: string, systemReconcile?: boolean): Promise<void> {
+  private async confirmProjections(ctx: RequestContext, request: ReimbursementRequestRecord, projections: { expenseId: string; reimbursementLineId: string }[], allowMissingReceiptWithReason: boolean, scopes: { branchIds?: string[] }, actorUserId: string, systemReconcile?: boolean, db?: ExpenseDb): Promise<void> {
     for (const projection of projections) {
-      const expense = await this.expenses.findByIdWithRelations(ctx.companyId, projection.expenseId, undefined, scopes);
+      const expense = await this.expenses.findByIdWithRelations(ctx.companyId, projection.expenseId, db, scopes);
       if (!expense) throw new ConflictException('reimbursement_projection_source_mismatch');
       if (expense.sourceReimbursementRequestId !== request.id
         || expense.sourceReimbursementLineId !== projection.reimbursementLineId
@@ -97,6 +97,7 @@ export class ReimbursementProjectionOrchestratorService {
         projection.expenseId,
         actorUserId,
         scopes,
+        db,
       );
       if (duplicate.duplicateStatus === 'POSSIBLE_DUPLICATE'
         || duplicate.duplicateStatus === 'CONFIRMED_DUPLICATE') {
@@ -107,8 +108,9 @@ export class ReimbursementProjectionOrchestratorService {
         reimbursementLineId: projection.reimbursementLineId,
         branchId: request.branchId,
         allowMissingReceiptWithReason,
+        receiptWaivedByPolicy: request.receiptRequirementStatus === 'WAIVED_BY_POLICY',
         systemReconcile,
-      });
+      }, db);
     }
   }
 }

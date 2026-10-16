@@ -4,7 +4,9 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { lineLinkReason, withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { Button } from '@/common/components/button';
+import { Button, quietButtonClass, secondaryButtonClass } from '@/common/components/button';
+import { Modal } from '@/common/components/modal';
+import { Notice } from '@/common/components/notice';
 import { sanitizeNextPath } from '@/common/auth/middleware.logic';
 import {
   legalAcceptancePath,
@@ -27,13 +29,15 @@ const SHOW_DEV_LOGIN = process.env.NODE_ENV !== 'production';
 // Thai-only like the other login-page notices that have no dictionary entry yet.
 const LINE_NOTICE_TEXT: Record<string, string> = {
   'link-required': 'บัญชี LINE นี้ยังไม่ได้เชื่อมกับผู้ใช้ในระบบ — เข้าสู่ระบบด้วยรหัสผ่านหนึ่งครั้ง แล้วระบบจะเชื่อมบัญชี LINE ให้อัตโนมัติ',
-  'link-failed': 'เชื่อมบัญชี LINE ไม่สำเร็จ (บัญชี LINE นี้อาจถูกเชื่อมกับผู้ใช้อื่นอยู่แล้ว) กรุณาลองใหม่อีกครั้งหรือติดต่อผู้ดูแลระบบ',
+  // A refusal carries its way out on the same screen (thai-ux-standard §1.6): the password form is
+  // right below, and the team's number is said instead of an unnamed "ผู้ดูแลระบบ".
+  'link-failed': 'เชื่อมบัญชี LINE ไม่สำเร็จ บัญชี LINE นี้อาจเชื่อมกับผู้ใช้อื่นอยู่แล้ว ลองอีกครั้ง หรือติดต่อทีมงานมั่งมี 098-256-5628',
   // The link lane normally sends this back to the page that started it; a request with no usable
   // returnTo lands here instead, so the certain version of the message has to exist on this page.
-  'link-conflict': 'บัญชี LINE นี้เชื่อมกับผู้ใช้อื่นในระบบอยู่แล้ว จึงเชื่อมกับบัญชีนี้ไม่ได้ กรุณาติดต่อผู้ดูแลระบบ',
+  'link-conflict': 'บัญชี LINE นี้เชื่อมกับผู้ใช้อื่นในระบบอยู่แล้ว จึงเชื่อมกับบัญชีนี้ไม่ได้ เข้าสู่ระบบด้วยรหัสผ่าน หรือติดต่อทีมงานมั่งมี 098-256-5628',
   canceled: 'ยกเลิกการเข้าสู่ระบบด้วย LINE แล้ว',
-  failed: 'เข้าสู่ระบบด้วย LINE ไม่สำเร็จ กรุณาลองใหม่อีกครั้งหรือเข้าสู่ระบบด้วยรหัสผ่าน',
-  unavailable: 'การเข้าสู่ระบบด้วย LINE ยังไม่เปิดใช้งาน',
+  failed: 'เข้าสู่ระบบด้วย LINE ไม่สำเร็จ ลองอีกครั้ง หรือเข้าสู่ระบบด้วยรหัสผ่าน',
+  unavailable: 'การเข้าสู่ระบบด้วย LINE ยังไม่เปิดใช้งาน ใช้รหัสผ่านแทนได้',
   // P12-3a: a scanned desktop QR landed on the approve page without a session.
   'qr-approve': 'เข้าสู่ระบบก่อน แล้วระบบจะพากลับไปหน้ายืนยันการเข้าสู่ระบบบนคอมพิวเตอร์',
   // P12-3b: a LINE deep-link handoff token was expired, already used, or no longer authorised.
@@ -90,12 +94,12 @@ function HeroPanel({ locale }: { locale: 'th' | 'en' }) {
 
         <div aria-hidden className="login-float-1 relative mt-9 max-w-[400px] rounded-[20px] bg-white p-5 shadow-[0_30px_60px_rgba(0,0,0,.22)]">
           <div className="flex flex-wrap items-center justify-between">
-            <span className="text-[13px] font-semibold text-gray-500">ภาพรวมวันนี้ · สาขาสยาม</span>
-            <span className="rounded-lg bg-brand-100 px-2.5 py-1 text-[11px] font-bold text-brand-700">ตัวอย่าง</span>
+            <span className="text-[13px] font-semibold text-gray-500">ค่าใช้จ่ายเดือนนี้ · สาขาสยาม</span>
+            <span className="rounded-lg bg-brand-100 px-2.5 py-1 text-xs font-bold text-brand-700">ตัวอย่าง</span>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-extrabold text-gray-900">฿24,150</span>
-            <span className="text-[13px] font-bold text-brand-600">▲ 12%</span>
+            <span className="text-[13px] font-bold text-brand-600">ใบเสร็จ 42 ใบ</span>
           </div>
           <div className="mt-4 flex h-14 items-end gap-1.5">
             {[42, 60, 48, 78, 64, 100, 72].map((height, index) => (
@@ -113,7 +117,7 @@ function HeroPanel({ locale }: { locale: 'th' | 'en' }) {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#B45309" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 12h16M4 18h10" /></svg>
           </div>
           <div>
-            <div className="text-[11px] text-gray-400">บิลรอตรวจ</div>
+            <div className="text-xs text-gray-500">ใบเสร็จรอตรวจ</div>
             <div className="text-base font-extrabold text-gray-900">18</div>
           </div>
         </div>
@@ -122,7 +126,7 @@ function HeroPanel({ locale }: { locale: 'th' | 'en' }) {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#15803D" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>
           </div>
           <div>
-            <div className="text-[11px] text-gray-400">กำไรสุทธิ</div>
+            <div className="text-xs text-gray-500">การเบิกจ่ายรออนุมัติ</div>
             <div className="text-base font-extrabold text-gray-900">฿15,730</div>
           </div>
         </div>
@@ -341,7 +345,8 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
     const retryParams = new URLSearchParams(searchParams.toString());
     retryParams.delete(RECOVERY_PARAM);
     const retryQuery = retryParams.toString();
-    return <GenericClientNotice alert retryHref={retryQuery ? `/login?${retryQuery}` : '/login'} />;
+    // Our own server did not answer: said as that, never as a problem with the person's phone.
+    return <GenericClientNotice alert reason="service" locale={locale} retryHref={retryQuery ? `/login?${retryQuery}` : '/login'} />;
   }
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -396,7 +401,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
           403: 'auth.login.error.temp_expired',
           429: 'auth.login.error.rate_limited',
           fallback: 'auth.login.error.failed',
-          conflictCodes: { company_access_unavailable: 'auth.login.error.company_access_unavailable' },
+          conflictCodes: { company_membership_disabled: 'auth.login.error.company_membership_disabled', company_access_unavailable: 'auth.login.error.company_access_unavailable' },
         }),
       );
       setLoading(false);
@@ -451,10 +456,18 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   // LINE round trip and still escapes the LINE in-app browser.
   const lineLeadLane = (lineNotice === 'qr-approve' || fromLineLink) && lineLoginAvailable;
 
+  // LINE sign-in that is switched off draws nothing. While the answer is awaited or could not be
+  // read the button keeps its place (disabled), so the form does not jump when LINE turns out to be on.
+  const showLineBlock = lineLoginState !== 'unavailable';
+  // Owner 2026-10-13: on a phone LINE is drawn first. Not in link mode: there the password is the
+  // step that links LINE, and LINE first would send the person round in a circle.
+  const phoneLineFirst = showLineBlock && !lineLeadLane && !linkMode;
+  const passwordChanged = searchParams.get('changed') === '1';
+
   const orDivider = (
     <div className="mt-5 flex items-center gap-3">
       <div className="h-px flex-1 bg-gray-200" />
-      <span className="text-[13px] text-gray-400">หรือ</span>
+      <span className="text-[13px] text-gray-500">{locale === 'th' ? 'หรือ' : 'or'}</span>
       <div className="h-px flex-1 bg-gray-200" />
     </div>
   );
@@ -465,12 +478,24 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
       disabled={!lineLoginAvailable}
       aria-describedby={!lineLoginAvailable ? 'line-login-status' : undefined}
       onClick={() => window.location.assign(withLineExternalBrowser(nextPath ? lineStartUrl(nextPath) : '/api/auth/line-login/start', navigator.userAgent))}
-      className="mt-4 flex h-12 w-full items-center justify-center gap-2.5 rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 transition enabled:hover:border-[#06C755] disabled:cursor-not-allowed disabled:text-gray-400"
+      data-size="lg"
+      className={`${secondaryButtonClass} mt-4 w-full`}
     >
       <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-md bg-[#06C755] text-sm font-extrabold text-white">L</span>
       {locale === 'th' ? 'เข้าสู่ระบบด้วย LINE' : 'Sign in with LINE'}
     </button>
   );
+
+  // Scanning is only useful where the phone is a second device, so the entry point is drawn from
+  // 768 px only; on a phone the LINE button already is the shortest path.
+  const qrEntry = lineLoginAvailable ? (
+    <div className="mt-2 hidden md:block">
+      <button type="button" onClick={openQrModal} className={`${quietButtonClass} w-full`}>
+        <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><path d="M14 14h3v3h-3zM20 14v3M14 20h3M20 20h1" /></svg>
+        สแกน QR ด้วย LINE เพื่อเข้าสู่เว็บไซต์
+      </button>
+    </div>
+  ) : null;
 
   // R-B5 ขยาย: moved out of the JSX tree so a LINE-link arrival can fold it under a <details> below
   // the LINE button instead of showing it first (§4 L3).
@@ -510,7 +535,8 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
           <label htmlFor="login-password" className="text-[13.5px] font-semibold text-gray-700">
             {t('auth.login.password', locale)}
           </label>
-          <Link href="/forgot-password" className="text-[13px] font-semibold text-brand-700 hover:text-brand-800">
+          {/* The negative margin keeps the label row where it was; the link itself is 44 px tall to tap. */}
+          <Link href="/forgot-password" className="-my-3 inline-flex min-h-11 items-center text-[13px] font-semibold text-brand-700 hover:text-brand-800">
             {t('auth.login.forgot', locale)}
           </Link>
         </div>
@@ -537,7 +563,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             type="button"
             onClick={() => setShowPassword((visible) => !visible)}
             aria-label={t(showPassword ? 'auth.login.hide_password' : 'auth.login.show_password', locale)}
-            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-gray-500 hover:text-gray-700"
           >
             {showPassword ? (
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18 18 0 0 1-2.16 3.19M6.61 6.61A18 18 0 0 0 2 12s3 8 10 8a9 9 0 0 0 5.39-1.61" /><path d="M1 1l22 22" /></svg>
@@ -562,7 +588,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
         {t('auth.login.remember', locale)}
       </label>
 
-      <Button type="submit" size="lg" className="w-full !rounded-xl shadow-[0_12px_24px_rgba(21,128,61,.3)]" loading={loading}>
+      <Button type="submit" size="lg" className="w-full" loading={loading}>
         {linkMode ? 'เข้าสู่ระบบและเชื่อม LINE' : t('auth.login.submit', locale)}
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
       </Button>
@@ -584,15 +610,12 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             </div>
           </div>
 
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-[28px] font-extrabold tracking-tight text-gray-900">{t('auth.login.title', locale)}</h1>
-              <p className="mt-1.5 text-sm text-gray-500">{t('auth.login.subtitle', locale)}</p>
-            </div>
+          <div className="flex items-center justify-between gap-4">
+            <h1 className="text-[28px] font-bold text-gray-900">{t('auth.login.title', locale)}</h1>
             <button
               type="button"
               onClick={() => setLocale(locale === 'th' ? 'en' : 'th')}
-              className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-50"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-gray-200 px-2.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
               aria-label={t('shell.language', locale)}
             >
               {locale === 'th' ? 'EN' : 'ไทย'}
@@ -612,183 +635,155 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             </div>
           ) : null}
 
+          {passwordChanged ? (
+            <Notice tone="success" className="mt-5">{t('auth.login.password_changed', locale)}</Notice>
+          ) : null}
+
           {lineNoticeText ? (
-            <div
-              role={lineNoticeIsAlert ? 'alert' : 'status'}
-              data-line-notice={lineNotice}
-              className={`mt-5 rounded-xl border px-4 py-3 text-sm leading-6 ${
-                lineNoticeIsAlert
-                  ? 'border-red-200 bg-red-50 text-red-700'
-                  : 'border-amber-200 bg-amber-50 text-amber-900'
-              }`}
-            >
+            <Notice tone={lineNoticeIsAlert ? 'error' : 'warning'} data-line-notice={lineNotice} className="mt-5">
               {lineNoticeText}
-            </div>
+            </Notice>
           ) : null}
 
-          {error ? (
-            <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {error}
+          {error ? <Notice tone="error" className="mt-5">{error}</Notice> : null}
+
+          {/* The ways to sign in. On a phone LINE comes first when it can be used (one tap, nothing to
+              type), then the password form, then the e-mail code; from 640 px the password form stays
+              first. Only the drawn order changes (`order-*`): the DOM, the tab order and the one
+              LINE button below are the same at every width. */}
+          <div className="flex flex-col">
+            {lineLeadLane ? (
+              <>
+                {lineLoginButton}
+                {orDivider}
+              </>
+            ) : null}
+
+            <div className={phoneLineFirst ? 'order-3 sm:order-1' : undefined}>
+              {fromLineLink && lineLoginAvailable ? (
+                <details className="mt-6">
+                  <summary className="flex min-h-11 cursor-pointer list-none items-center justify-center text-center text-sm font-semibold text-gray-600">เข้าสู่ระบบด้วยรหัสผ่านแทน</summary>
+                  {passwordForm}
+                </details>
+              ) : passwordForm}
             </div>
-          ) : null}
 
-          {lineLeadLane ? (
-            <>
-              {lineLoginButton}
-              {orDivider}
-            </>
-          ) : null}
-
-          {fromLineLink && lineLoginAvailable ? (
-            <details className="mt-6">
-              <summary className="min-h-11 cursor-pointer list-none text-center text-sm font-semibold text-gray-600">เข้าสู่ระบบด้วยรหัสผ่านแทน</summary>
-              {passwordForm}
-            </details>
-          ) : passwordForm}
-
-          {!linkMode && <><Link href={nextPath ? `/email-access?next=${encodeURIComponent(nextPath)}` : "/email-access"} className="mt-3 block rounded-xl border px-4 py-3 text-center text-base font-semibold text-brand-700">{t('auth.email_access.title', locale)}</Link><p className="mt-2 text-center text-sm text-gray-500">{locale === 'th' ? 'รับรหัส 6 หลักทางอีเมล เพื่อใช้แทนรหัสผ่าน' : 'Get a 6-digit code by email instead of using a password.'}</p></>}
-
-          {lineLeadLane ? null : (
-            <>
-              {orDivider}
-              {lineLoginButton}
-            </>
-          )}
-          {!lineLoginAvailable && (
-            <div id="line-login-status" role="status" className="mt-2 text-center text-sm leading-6 text-gray-500">
-              {lineLoginState === 'loading'
-                ? (locale === 'th' ? 'กำลังตรวจสอบการเข้าสู่ระบบด้วย LINE…' : 'Checking LINE sign-in…')
-                : lineLoginState === 'unavailable'
-                  ? (locale === 'th' ? 'ยังไม่เปิดให้เข้าสู่ระบบด้วย LINE ในขณะนี้ ใช้รหัสผ่านหรือเข้าสู่ระบบด้วยรหัสยืนยันทางอีเมลได้' : 'LINE sign-in is not enabled right now. Use your password or an email code.')
-                  : (locale === 'th' ? 'ตรวจสอบสถานะ LINE ไม่สำเร็จ' : 'Could not check LINE sign-in availability.')}
-              {lineLoginState === 'error' && <button type="button" onClick={() => setLineCheck(value => value + 1)} className="mx-auto block min-h-11 px-3 font-semibold text-brand-700 underline">{locale === 'th' ? 'ลองตรวจสอบอีกครั้ง' : 'Try again'}</button>}
-            </div>
-          )}
-          {lineLoginAvailable ? (
-            <>
-              {/* Scanning is only useful where the phone is a second device, so the entry point is
-                  desktop-only; on a phone the LINE button above already is the shortest path. */}
-              <div className="mt-3 hidden md:flex">
-                <button
-                  type="button"
-                  onClick={openQrModal}
-                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl text-[14.5px] font-semibold text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
-                >
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><path d="M14 14h3v3h-3zM20 14v3M14 20h3M20 20h1" /></svg>
-                  สแกน QR ด้วย LINE เพื่อเข้าสู่เว็บไซต์
-                </button>
+            {!linkMode && (
+              <div className={`mt-2 ${phoneLineFirst ? 'order-4 sm:order-2' : ''}`}>
+                <Link href={nextPath ? `/email-access?next=${encodeURIComponent(nextPath)}` : '/email-access'} className={`${quietButtonClass} w-full`}>
+                  {t('auth.login.email_code', locale)}
+                </Link>
               </div>
-            </>
-          ) : null}
+            )}
+
+            {lineLeadLane ? null : (
+              // LINE sign-in that is switched off shows nothing: no dead button and no apology.
+              showLineBlock ? (
+                <>
+                  <div className={phoneLineFirst ? 'order-2 sm:order-3' : undefined}>{orDivider}</div>
+                  <div className={phoneLineFirst ? 'order-1 sm:order-4' : undefined}>
+                    {lineLoginButton}
+                    {!lineLoginAvailable && (
+                      <div id="line-login-status" role="status" className={lineLoginState === 'loading' ? 'sr-only' : 'mt-2 text-center text-sm leading-6 text-gray-500'}>
+                        {lineLoginState === 'loading'
+                          ? (locale === 'th' ? 'กำลังตรวจสอบการเข้าสู่ระบบด้วย LINE…' : 'Checking LINE sign-in…')
+                          : (locale === 'th' ? 'ตรวจสอบสถานะ LINE ไม่สำเร็จ' : 'Could not check LINE sign-in availability.')}
+                        {lineLoginState === 'error' && <button type="button" onClick={() => setLineCheck(value => value + 1)} className="mx-auto block min-h-11 px-3 font-semibold text-brand-700 underline">{locale === 'th' ? 'ลองตรวจสอบอีกครั้ง' : 'Try again'}</button>}
+                      </div>
+                    )}
+                    {qrEntry}
+                  </div>
+                </>
+              ) : null
+            )}
+            {lineLeadLane ? qrEntry : null}
+          </div>
+
+          <p className="mt-5 text-center text-sm text-gray-600">
+            {t('auth.login.no_account', locale)}{' '}
+            <Link href="/signup" className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline underline-offset-4 hover:text-brand-800">
+              {t('auth.login.open_shop', locale)}
+            </Link>
+          </p>
 
           {SHOW_DEV_LOGIN ? (
             <button
               type="button"
               onClick={handleDevLogin}
               disabled={loading} aria-busy={Boolean(loading)}
-              className="mt-6 w-full rounded-lg border border-dashed border-gray-300 px-4 py-2 text-xs font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+              className="mt-3 w-full rounded-lg border border-dashed border-gray-300 px-4 py-2 text-xs font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
             >
               Dev sign-in (local seed OWNER)
             </button>
           ) : null}
 
           {/* Public legal notices must remain reachable before authentication. */}
-          <nav aria-label="เอกสารทางกฎหมาย" className="mt-6 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs text-gray-400">
-            <Link href="/privacy" className="underline hover:text-gray-600">ประกาศความเป็นส่วนตัว</Link>
-            <span aria-hidden>·</span>
-            <Link href="/terms" className="underline hover:text-gray-600">ข้อกำหนดการใช้งาน</Link>
-            <span aria-hidden>·</span>
-            <Link href="/data-deletion" className="underline hover:text-gray-600">การลบข้อมูล</Link>
+          <nav aria-label="เอกสารทางกฎหมาย" className="mt-3 flex flex-wrap items-center justify-center gap-x-2 text-center text-xs text-gray-500">
+            <Link href="/privacy" className="inline-flex min-h-11 items-center underline hover:text-gray-700">ประกาศความเป็นส่วนตัว</Link>
+            <Link href="/terms" className="inline-flex min-h-11 items-center underline hover:text-gray-700">ข้อกำหนดการใช้งาน</Link>
+            <Link href="/data-deletion" className="inline-flex min-h-11 items-center underline hover:text-gray-700">การลบข้อมูล</Link>
+            <a href="https://official.mangmeeplus.com/" className="inline-flex min-h-11 items-center underline hover:text-gray-700">
+              {locale === 'th' ? 'รู้จักมั่งมีพลัส' : 'Explore MangmeePlus'}
+            </a>
           </nav>
-          <a
-            href="https://official.mangmeeplus.com/"
-            className="mt-2 flex h-11 w-full items-center justify-center rounded-xl text-[14.5px] font-semibold text-gray-600 no-underline transition hover:bg-gray-50 hover:text-gray-900"
-          >
-            {locale === 'th' ? 'รู้จักมั่งมีพลัส' : 'Explore MangmeePlus'}
-          </a>
         </div>
       </div>
 
-      {qrOpen ? (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/55 p-6"
-          role="dialog"
-          aria-modal="true"
-          aria-label="สแกน QR ด้วย LINE เพื่อเข้าสู่เว็บไซต์"
-          onClick={closeQrModal}
-        >
-          <div
-            className="w-[400px] max-w-full overflow-hidden rounded-[20px] bg-white shadow-xl"
-            onClick={(event) => event.stopPropagation()}
+      {/* The shared dialog: Escape and the backdrop close it, the focus moves in and comes back. */}
+      <Modal
+        open={qrOpen}
+        size="sm"
+        title="สแกน QR ด้วย LINE เพื่อเข้าสู่เว็บไซต์"
+        onClose={closeQrModal}
+        footer={qrError ? (
+          <Button
+            type="button"
+            onClick={() => {
+              qrRenewalsRef.current = 0;
+              void requestQr();
+            }}
           >
-            <div className="flex items-center gap-3 bg-[#06C755] px-[22px] py-[18px] text-white">
-              <span className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-white text-lg font-extrabold text-[#06C755]">L</span>
-              <div className="flex-1">
-                <div className="text-lg font-bold">เข้าสู่ระบบด้วย LINE</div>
-                <div className="text-[13.5px] opacity-90">สแกน QR ด้วยแอป LINE บนมือถือ</div>
-              </div>
-              <button type="button" onClick={closeQrModal} aria-label="ปิด" className="text-[22px] opacity-90">
-                ✕
-              </button>
-            </div>
-            <div className="px-[22px] py-[26px] text-center">
-              {qrError ? (
-                <div role="alert" className="space-y-4">
-                  <p className="text-[15px] leading-7 text-gray-600">
-                    {qrError === 'expired'
-                      ? 'หมดเวลา กดสร้าง QR ใหม่'
-                      : 'สร้าง QR ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'}
-                  </p>
-                  <Button
-                    type="button"
-                    size="lg"
-                    className="w-full !rounded-xl"
-                    onClick={() => {
-                      qrRenewalsRef.current = 0;
-                      void requestQr();
-                    }}
-                  >
-                    สร้าง QR ใหม่
-                  </Button>
-                </div>
+            สร้าง QR ใหม่
+          </Button>
+        ) : undefined}
+      >
+        {qrError ? (
+          <p role="alert" className="text-center text-sm text-gray-700">
+            {qrError === 'expired' ? 'QR หมดเวลาแล้ว' : 'สร้าง QR ไม่สำเร็จ'}
+          </p>
+        ) : (
+          <div className="text-center">
+            <p className="text-sm text-gray-700">เปิด LINE บนมือถือ กดสแกน แล้วสแกน QR นี้</p>
+            <div className="relative mx-auto mt-4 flex h-[236px] w-[236px] items-center justify-center rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              {qrImageUrl ? (
+                // Rendered by the API as an inline SVG data URI (H-09): the one-time code
+                // never travels to an external image service.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={qrImageUrl} alt="QR สำหรับเข้าสู่ระบบ" className="h-full w-full" />
               ) : (
-                <>
-                  <div className="relative mx-auto flex h-[236px] w-[236px] items-center justify-center rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                    {qrImageUrl ? (
-                      // Rendered by the API as an inline SVG data URI (H-09): the one-time code
-                      // never travels to an external image service.
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={qrImageUrl} alt="QR สำหรับเข้าสู่ระบบ" className="h-full w-full" />
-                    ) : (
-                      <span className="text-sm text-gray-400">กำลังสร้าง QR…</span>
-                    )}
-                  </div>
-
-                  <div className="mt-[18px] h-1.5 overflow-hidden rounded-md bg-gray-100">
-                    <div
-                      className="h-full rounded-md transition-[width] duration-1000 ease-linear"
-                      style={{
-                        width: `${qrTtlSeconds > 0 ? (qrSeconds / qrTtlSeconds) * 100 : 0}%`,
-                        background: qrSeconds <= 10 ? '#F04438' : '#06C755',
-                      }}
-                    />
-                  </div>
-                  <div className="mt-2.5 text-[15px] text-gray-500">
-                    QR หมดอายุใน{' '}
-                    <span className={`font-bold tabular-nums ${qrSeconds <= 10 ? 'text-red-500' : 'text-gray-700'}`}>
-                      {Math.floor(qrSeconds / 60)}:{String(qrSeconds % 60).padStart(2, '0')}
-                    </span>
-                  </div>
-
-                  <div className="mt-[18px] border-t border-gray-100 pt-4 text-[13.5px] leading-relaxed text-gray-400">
-                    เปิดแอป LINE → ปุ่มสแกน → สแกน QR นี้ · ยืนยันบนมือถือแล้วหน้านี้จะเข้าสู่ระบบให้เอง
-                  </div>
-                </>
+                <span className="text-sm text-gray-500">กำลังสร้าง QR…</span>
               )}
             </div>
+
+            <div className="mt-[18px] h-1.5 overflow-hidden rounded-md bg-gray-100">
+              <div
+                className="h-full rounded-md transition-[width] duration-1000 ease-linear"
+                style={{
+                  width: `${qrTtlSeconds > 0 ? (qrSeconds / qrTtlSeconds) * 100 : 0}%`,
+                  background: qrSeconds <= 10 ? '#F04438' : '#06C755',
+                }}
+              />
+            </div>
+            <p className="mt-2.5 text-sm text-gray-600">
+              QR หมดอายุใน{' '}
+              <span className={`mangmee-unit font-bold ${qrSeconds <= 10 ? 'text-red-600' : 'text-gray-800'}`}>
+                {Math.floor(qrSeconds / 60)}:{String(qrSeconds % 60).padStart(2, '0')}
+              </span>
+            </p>
+            <p className="mt-3 text-sm text-gray-500">ยืนยันบนมือถือแล้ว หน้านี้จะเข้าสู่ระบบให้เอง</p>
           </div>
-        </div>
-      ) : null}
+        )}
+      </Modal>
     </div>
   );
 }

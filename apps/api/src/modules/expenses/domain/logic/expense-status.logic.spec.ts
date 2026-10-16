@@ -23,6 +23,7 @@ describe('expenseTaxSourceChecksum', () => {
     const token = expenseTaxSourceChecksum(expense);
     assert.notEqual(token, expenseTaxSourceChecksum({ ...expense, whtInputJson: { ...expense.whtInputJson, inputType: 'AMOUNT' } }));
     assert.notEqual(token, expenseTaxSourceChecksum({ ...expense, lines: [{ ...expense.lines[0], whtAmount: '3.01' }] }));
+    assert.notEqual(token, expenseTaxSourceChecksum({ ...expense, lines: [{ ...expense.lines[0], whtCategoryCode: 'WHT_RENT' }] }));
   });
 
   it('protects zero-treatment meaning even when the numeric amounts do not change', () => {
@@ -137,8 +138,8 @@ describe('validateDomesticInputVatEvidence', () => {
 
   // No UI writes a registration fact yet, so every company in production reads UNKNOWN. Rejecting
   // here would block them all — absence of a fact is not a fact.
-  it('lets UNKNOWN and REGISTERED claim exactly as before', () => {
-    assert.equal(validateDomesticInputVatEvidence({ ...validTaxInvoice, vatStatus: 'UNKNOWN' }), null);
+  it('requires the shop VAT answer only for claiming', () => {
+    assert.equal(validateDomesticInputVatEvidence({ ...validTaxInvoice, vatStatus: 'UNKNOWN' }), 'input_vat_company_registration_unanswered');
     assert.equal(validateDomesticInputVatEvidence({ ...validTaxInvoice, vatStatus: 'REGISTERED' }), null);
     assert.equal(validateDomesticInputVatEvidence(validTaxInvoice), null);
   });
@@ -501,4 +502,12 @@ describe('confirmed expense correction transition', () => {
     assert.equal(canTransition('CONFIRMED', 'DRAFT'), false);
     assert.equal(canTransition('CONFIRMED', 'READY_FOR_CONFIRMATION'), false);
   });
+});
+
+it('accepts the two additional claimable papers with all domestic evidence checks', () => {
+ for (const sourceDocumentType of ['CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT']) {
+ const facts = { sourceDocumentType, taxEvidenceStatus: 'USABLE_FOR_TAX', inputVatClaimStatus: 'CLAIMABLE', primaryAttachmentId: 'a', vendorTaxIdSnapshot: '1234567890123', vendorDocumentNumber: '1', lines: [], vatStatus: 'REGISTERED' as const };
+ assert.equal(validateDomesticInputVatEvidence(facts), null);
+ assert.ok(validateDomesticInputVatEvidence({ ...facts, primaryAttachmentId: null }));
+ }
 });

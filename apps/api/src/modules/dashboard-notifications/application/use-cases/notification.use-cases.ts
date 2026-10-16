@@ -1,3 +1,4 @@
+import { finishDocumentWaitingNotifications } from '../../infrastructure/document-notification-state';
 import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { lineMessagePreview } from '../../../line-ai/domain/logic/line-message-preview.logic';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
@@ -193,6 +194,10 @@ export class CreateOrUpdateNotificationEventUseCase {
     private readonly prisma: PrismaService,
   ) {}
 
+  async finishDocumentWaiting(companyId: string, sourceType: string, sourceId: string) {
+    await finishDocumentWaitingNotifications(this.prisma.client, companyId, sourceType, sourceId);
+  }
+
   /** Join a state change to the existing durable event/recipient/delivery queue. No I/O egress. */
   async executeInTransaction(input: Parameters<CreateOrUpdateNotificationEventUseCase['execute']>[0], tx: Prisma.TransactionClient) {
     const key = buildDedupKey(input);
@@ -267,6 +272,7 @@ export class CreateOrUpdateNotificationEventUseCase {
     for (const { userId } of activeRecipients) {
       const recipient = await this.recipients.findByEventAndUser(event.id, userId) ??
         await this.recipients.create({ eventId: event.id, companyId: input.companyId, userId, recipientReason: 'role', readAt: undefined, dismissedAt: undefined, snoozedUntil: undefined });
+      await this.recipients.trackWaiting(recipient, event);
       // A retry repairs partial old event/recipient writes even during cooldown. Sent/failed
       // deliveries are owned by the existing delivery worker, never recreated by this producer.
       for (const channel of (input.webOnlyRecipientUserIds?.includes(userId) ? ['web'] : ['web', 'line']) as Array<'web' | 'line'>) {

@@ -26,7 +26,7 @@ export async function expenseNumberInTransaction(
     } });
     // Legacy records can predate the registry. Preserve their identity without inventing history.
     if (existing && (existing.status !== 'COMMITTED' || existing.ownerType !== 'expense_record' || existing.ownerId !== expense.id)) {
-      throw new ConflictException({ code: 'EXPENSE_NUMBER_OWNER_CONFLICT', message: 'เลขรายจ่ายไม่ตรงกับทะเบียน กรุณาให้ผู้ดูแลตรวจสอบ' });
+      throw new ConflictException({ code: 'EXPENSE_NUMBER_OWNER_CONFLICT', message: 'เลขรายจ่ายไม่ตรงกับทะเบียน ให้ผู้ดูแลตรวจสอบ' });
     }
     return expense.expenseNumber;
   }

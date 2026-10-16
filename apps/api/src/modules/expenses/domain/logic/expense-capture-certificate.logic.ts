@@ -41,19 +41,19 @@ export type CaptureCertificateGateInput = {
 const REFUSALS: Record<CaptureCertificateRefusal['code'], CaptureCertificateRefusal> = {
   substitute_capture_allocation_superseded: {
     code: 'substitute_capture_allocation_superseded', status: 409,
-    message: 'การจัดส่วนเปลี่ยนไปแล้ว กรุณาสร้างรายการใหม่ก่อนทำใบรับรอง',
+    message: 'การจัดส่วนเปลี่ยนไปแล้ว สร้างรายการใหม่ก่อนทำใบรับรอง',
   },
   substitute_capture_unpaid_evidence: {
     code: 'substitute_capture_unpaid_evidence', status: 422,
-    message: 'หลักฐานของร้านนี้ยังไม่แสดงว่าจ่ายเงินแล้ว (เช่น คำสั่งซื้อที่ยังรอชำระ) จึงยังจัดทำใบรับรองแทนใบเสร็จไม่ได้ กรุณาเพิ่มหลักฐานการจ่ายหรือยืนยันการจ่ายในกลุ่มหลักฐานก่อน',
+    message: 'หลักฐานของผู้ขายรายนี้ยังไม่แสดงว่าจ่ายเงินแล้ว (เช่น คำสั่งซื้อที่ยังรอจ่าย) จึงยังจัดทำใบรับรองแทนใบเสร็จไม่ได้ เพิ่มหลักฐานการจ่ายหรือยืนยันการจ่ายในกลุ่มหลักฐานก่อน',
   },
   substitute_capture_document_mismatch: {
     code: 'substitute_capture_document_mismatch', status: 422,
-    message: 'ยอดในเอกสารของร้านนี้ยังไม่ตรงกัน กรุณาตรวจจุดที่ไม่ตรงในกลุ่มหลักฐานก่อนจัดทำใบรับรอง',
+    message: 'ยอดในเอกสารของผู้ขายรายนี้ยังไม่ตรงกัน ตรวจจุดที่ไม่ตรงในกลุ่มหลักฐานก่อนจัดทำใบรับรอง',
   },
   substitute_capture_funding_route_mismatch: {
     code: 'substitute_capture_funding_route_mismatch', status: 422,
-    message: 'แหล่งเงินในใบรับรองต้องตรงกับผู้จ่ายที่ตรวจแล้วในกลุ่มหลักฐาน กรุณาเลือกให้ตรงกันก่อน',
+    message: 'แหล่งเงินในใบรับรองต้องตรงกับผู้จ่ายที่ตรวจแล้วในกลุ่มหลักฐาน เลือกให้ตรงกันก่อน',
   },
 };
 

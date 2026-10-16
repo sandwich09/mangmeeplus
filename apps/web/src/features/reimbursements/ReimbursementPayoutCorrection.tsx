@@ -9,6 +9,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { REIMBURSEMENT_SAVED_PAYOUT_WORDS as SAVED_WORDS, REIMBURSEMENT_PAYOUT_HOLDER_WORDS as HOLDER_WORDS, type SavedPayoutAccountSummary, reimbursementDuplicateBlockNotice, REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE, REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, type ReimbursementPayoutCorrectionReason } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { Notice } from '@/common/components/notice';
 import { LoadingState, ErrorState } from '@/common/components/state';
 import { cx } from '@/common/components/mangmee';
 import { sanitizeReasonInput } from '@/common/forms/sanitize';
@@ -99,7 +101,7 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
         <p className="text-sm font-semibold text-gray-900" data-testid="reimbursement-payout-correction-reason">{`เหตุผล: ${onlyReason[1]}`}</p>
       ) : (
         <div>
-          <div className={labelClass}>เหตุผลที่ส่งกลับ *</div>
+          <div className={labelClass}>เหตุผลที่ส่งกลับ<span className="text-red-600"> *</span></div>
           <div role="radiogroup" aria-label="เหตุผลที่ส่งกลับ" aria-required className="grid gap-2 sm:grid-cols-2">
             {reasons.map(([code, label]) => (
               <label key={code} className={cx(choiceClass, reasonCode === code && 'border-brand-300 bg-brand-25')}>
@@ -116,16 +118,18 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
         <textarea id="reimbursement-payout-correction-note" className={cx(inputClass, 'min-h-20 resize-y')} maxLength={REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH}
           disabled={busy} value={note} onChange={(event) => { setNote(sanitizeReasonInput(event.target.value)); setError(null); }}
           placeholder={payoutRoundTexts(detail).notePlaceholder} />
-        <div className="mt-1 flex justify-between gap-3 text-xs leading-5 text-gray-500">
+        <div className="mt-1 flex justify-between gap-3 text-sm text-gray-500">
           <span className="min-w-0">ผู้เบิกและทุกคนที่เปิดใบนี้เห็นหมายเหตุนี้ อย่าพิมพ์เลขบัญชี</span>
-          <span className="shrink-0 tabular-nums">{note.length}/{REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH}</span>
+          <span className="mangmee-unit shrink-0">{note.length}/{REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH}</span>
         </div>
       </div>
       {error && <ErrorBanner message={error} />}
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <button type="button" className={cx(ghostClass, 'w-full sm:w-auto')} disabled={busy} onClick={onCancel}>ยกเลิก</button>
-        <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy} aria-busy={busy}>{busy ? 'กำลังส่งกลับ...' : 'ยืนยันส่งกลับ'}</button>
-      </div>
+      {/* One group: the one that backs out first, the one that acts last (on top when they stack on a phone). The name
+          stays while it works, so the button keeps its width. */}
+      <ActionGroup>
+        <button type="button" className={ghostClass} disabled={busy} onClick={onCancel}>ยกเลิก</button>
+        <button type="submit" className={btnClass} disabled={busy} aria-busy={busy}>ยืนยันส่งกลับ</button>
+      </ActionGroup>
     </form>
   );
 }
@@ -216,8 +220,9 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
     // With the claim the form was opened on (`updatedAt`): a press that arrives after an earlier one was taken is refused.
     const input = invalid ? null : payoutCorrectionInput(form, defaultAccount?.token, canSaveAsDefault, detail.updatedAt, forSelf);
     if (!thirdPartyAllowed && selectedHolder?.holderType === 'THIRD_PARTY') { setError(translateApiError('payout_third_party_needs_approval')); return; }
-    if (!offers(form.mode as Exclude<PayoutCorrectionForm['mode'], ''>)) { setError(SAVED_WORDS.choose); return; }
-    if (invalid || !input) { setError(invalid?.text ?? 'กรุณาเลือกวิธีรับเงินคืนของใบนี้'); setInvalidField(invalid?.field); return; }
+    // (Nothing chosen yet is said by the line below, in this form's own words.)
+    if (form.mode && !offers(form.mode)) { setError(SAVED_WORDS.choose); return; }
+    if (invalid || !input) { setError(invalid?.text ?? 'เลือกวิธีรับเงินคืนของใบนี้'); setInvalidField(invalid?.field); return; }
     sending.current = true; setBusy(true); setError(null); setInvalidField(undefined);
     try {
       onDone(await submitReimbursementPayoutCorrection(companyId, detail.id, input));
@@ -236,7 +241,7 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
         onChange={() => change({ mode })} />
       <span className="min-w-0">
         <span className="block font-semibold text-gray-900">{label}</span>
-        {hint && <span className="mt-0.5 block break-words text-xs text-gray-500">{hint}</span>}
+        {hint && <span className="mt-0.5 block break-words text-sm text-gray-500">{hint}</span>}
         <PayoutHolderNotice account={account} />
       </span>
     </label>
@@ -258,12 +263,13 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
         {typingOffered && option('SPECIFIED', 'ระบุบัญชีสำหรับใบนี้', forSelf ? null : REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE)}
         {previousAccount && (thirdPartyAllowed || previousAccount.holderType !== 'THIRD_PARTY') && offers('PREVIOUS') && option('PREVIOUS', PAYOUT_CORRECTION_PREVIOUS_LABEL, `${payoutCorrectionAccountText(previousAccount)} · เลือกเมื่อตรวจแล้วว่าบัญชีนี้ถูกต้อง`, previousAccount)}
       </div>
-      {!thirdPartyAllowed && <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{translateApiError('payout_third_party_needs_approval')}</p>}
+      {/* What this form cannot take, known before anyone chose: a note in the shared look, not a hand-made amber box. */}
+      {!thirdPartyAllowed && <Notice tone="info">{translateApiError('payout_third_party_needs_approval')}</Notice>}
       {thirdPartyAllowed && selectedHolder?.holderType === 'THIRD_PARTY' && <p className="text-sm text-amber-800">{HOLDER_WORDS.thirdPartyApprovalNotice}</p>}
       {/* Known before anyone typed: said as what the form is, not as something that went wrong. */}
       {typing === 'refused' ? <ErrorBanner message={PAYOUT_CORRECTION_TYPING_REFUSED} />
         : payoutCorrectionTypingRefusedUpFront(detail) && (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="reimbursement-payout-correction-typing-note">{PAYOUT_CORRECTION_TYPING_REFUSED}</p>
+          <Notice tone="info" data-testid="reimbursement-payout-correction-typing-note">{PAYOUT_CORRECTION_TYPING_REFUSED}</Notice>
         )}
       {form.mode === 'SPECIFIED' && typingOffered && (
         <div className="space-y-3 border-t border-gray-100 pt-3">
@@ -282,7 +288,7 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
       )}
       {/* True of every choice: what is approved may be the same account, a first one, or cash, and the step that
           approves it keeps only those of the claim's approvers who are still on its route. */}
-      <p className="text-xs leading-5 text-gray-500">
+      <p className="text-sm text-gray-500">
         {detail.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE')
           ? reimbursementDuplicateBlockNotice(detail.duplicateReasons, false, { status: detail.status })
           : detail.payoutCorrectionPhase === 'AWAITING_APPROVAL'
@@ -292,13 +298,15 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
       {/* Whoever answers for the requester: the requester is told of it, whatever is chosen. Said only where a notice can
           reach them: a requester who is no longer an active member is told nothing, and the form says that case above. */}
       {!forSelf && typingOffered && (
-        <p className="text-xs leading-5 text-gray-500" data-testid="reimbursement-payout-correction-on-behalf-notice">{PAYOUT_CORRECTION_ON_BEHALF_NOTICE}</p>
+        <p className="text-sm text-gray-500" data-testid="reimbursement-payout-correction-on-behalf-notice">{PAYOUT_CORRECTION_ON_BEHALF_NOTICE}</p>
       )}
-      {error && <div ref={errorRef} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={error} /></div>}
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <button type="button" className={cx(ghostClass, 'w-full sm:w-auto')} disabled={busy} onClick={onCancel}>ยกเลิก</button>
-        <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy} aria-busy={busy}>{busy ? 'กำลังบันทึก...' : PAYOUT_CORRECTION_SAVE_LABEL}</button>
-      </div>
+      {/* A typed field's own problem is said under that field, once; this box is for everything else (a choice not made,
+          a refusal of the API). Only the typed-account and holder fields draw their own line. */}
+      {error && (!invalidField || invalidField === 'savedAccountId') && <div ref={errorRef} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={error} /></div>}
+      <ActionGroup>
+        <button type="button" className={ghostClass} disabled={busy} onClick={onCancel}>ยกเลิก</button>
+        <button type="submit" className={btnClass} disabled={busy} aria-busy={busy}>{PAYOUT_CORRECTION_SAVE_LABEL}</button>
+      </ActionGroup>
     </form>
   );
 }
@@ -318,24 +326,24 @@ export function PayoutCorrectionComparison({ detail }: { detail: any }) {
       {view.labels.length === 1 ? (
         <dl>
           <div className="min-w-0" data-testid="reimbursement-payout-correction-same-account">
-            <dt className="text-xs font-semibold text-gray-600">{view.labels[0]}</dt>
+            <dt className="text-sm text-gray-600">{view.labels[0]}</dt>
             <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}<PayoutHolderNotice account={detail.payout} /></dd>
           </div>
         </dl>
       ) : (
         <dl className="grid gap-3 sm:grid-cols-2">
           <div className="min-w-0">
-            <dt className="text-xs font-semibold text-gray-600">{view.labels[0]}</dt>
+            <dt className="text-sm text-gray-600">{view.labels[0]}</dt>
             <dd className="mt-1 break-words text-sm text-gray-700">{view.previous}<PayoutHolderNotice account={detail.payoutCorrection?.previous} /></dd>
           </div>
           <div className="min-w-0">
-            <dt className="text-xs font-semibold text-gray-600">{view.labels[1]}</dt>
+            <dt className="text-sm text-gray-600">{view.labels[1]}</dt>
             <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}<PayoutHolderNotice account={detail.payout} /></dd>
           </div>
         </dl>
       )}
-      <p className="text-sm text-gray-700">{view.unchanged}</p>
-      <ul className="space-y-1 text-xs text-gray-600">
+      <p className="text-sm text-gray-700">{view.unchanged.replace(/฿([\d,]+\.\d{2})/g, '$1 บาท')}</p>
+      <ul className="space-y-1 text-sm text-gray-600">
         <li>{view.sentBack}</li>
         {view.note && <li>หมายเหตุ: {view.note}</li>}
         {view.submitted && <li>{view.submitted}</li>}

@@ -65,7 +65,7 @@ function renderEmail(account: Partial<AccountEmailOtpState> = {}, step = 'email'
  * Renders the page in its post-load state. `useState` is keyed on the initial value: `identity`
  * and `account` both start `null`, `loading` starts `true` — the three the effect would have set.
  */
-function renderLoaded(options: { permissions: string[]; identity?: unknown; account?: unknown; emailLoginEnabled?: boolean; certificateReturnHref?: string; shopSaved?: boolean }): string {
+function renderLoaded(options: { accountOnly?: boolean; permissions: string[]; identity?: unknown; account?: unknown; emailLoginEnabled?: boolean; certificateReturnHref?: string; withholdingReturnHref?: string; shopSaved?: boolean }): string {
   const identity = options.identity ?? FULL_IDENTITY;
   const account = options.account ?? LINE_ONLY_ACCOUNT;
   const realUseState = reactRuntime.useState;
@@ -80,6 +80,7 @@ function renderLoaded(options: { permissions: string[]; identity?: unknown; acco
       nullsSeen += 1;
       if (nullsSeen === 1) return [identity, state[1]];
       if (nullsSeen === 2) return [account, state[1]];
+      if (nullsSeen === 12) return [options.withholdingReturnHref ?? null, state[1]];
       if (nullsSeen === 11) return [options.certificateReturnHref ?? null, state[1]];
     }
     if (initialState === true) return [false, state[1]];
@@ -90,7 +91,7 @@ function renderLoaded(options: { permissions: string[]; identity?: unknown; acco
     return renderToStaticMarkup(React.createElement(
       ToastContext.Provider,
       { value: { success: noop, warning: noop, error: noop } },
-      React.createElement(CompanyProfilePage, { companyId: 'company-1', permissions: options.permissions }),
+      React.createElement(CompanyProfilePage, { companyId: 'company-1', permissions: options.permissions, accountOnly: options.accountOnly }),
     ));
   } finally {
     Reflect.set(reactRuntime, 'useState', realUseState);
@@ -122,7 +123,7 @@ describe('account email and password copy follows the available account facts', 
           assert.equal(panel.includes('>ยืนยันแล้ว</span>'), Boolean(email) && emailVerified);
           assert.equal(panel.includes('ไม่ได้รับรหัสยืนยันทางอีเมล'), Boolean(email));
           assert.doesNotMatch(panel, /อีเมลเดิมยังคงอยู่|กำลังรอยืนยันอีเมลใหม่|อีเมลนี้ยืนยันแล้ว/, 'no pending request or email draft exists in this matrix');
-          assert.match(panel, /ยืนยันอีเมลเพื่อใช้กับบัญชีของคุณ · อีเมลรับเอกสารจัดการแยกที่หน้าแพ็กเกจ/);
+          assert.match(panel, /อีเมลรับเอกสารจัดการแยกที่หน้าแพ็กเกจ/);
           assert.doesNotMatch(panel.replace(/\bLINE\b/g, ''), /ให้ตั้งชื่อผู้ใช้และรหัสผ่านสำรอง|ทุกครั้งที่เข้าสู่ระบบ|[A-Z]{2,}/);
           assert.equal(panel.includes('หากต้องการใช้รหัสผ่านเข้าสู่ระบบ จัดการรหัสผ่านสำรองได้ในหน้าบัญชีของฉัน'), !hasPassword && !emailLoginEnabled);
           assert.equal(panel.includes('เข้าสู่ระบบด้วยรหัสทางอีเมล'), emailVerified);
@@ -130,8 +131,10 @@ describe('account email and password copy follows the available account facts', 
             assert.ok(panel.includes(emailLoginEnabled ? '>เปิดใช้งานอยู่<' : '>ยังไม่เปิดใช้งาน<'));
             assert.match(panel, /เมื่อเลือกเข้าสู่ระบบด้วยรหัสทางอีเมล ให้นำรหัสยืนยันแบบใช้ครั้งเดียว 6 หลักที่ได้รับมากรอกแทนรหัสผ่าน/);
           }
-          const page = renderLoaded({ permissions: OWNER, account, emailLoginEnabled });
-          assert.match(page, /จัดการรหัสผ่านสำรอง/);
+          const page = renderLoaded({ accountOnly: true, permissions: OWNER, account, emailLoginEnabled });
+          // 2026-10-13: with a password the row's own button is the link; the arrow and its heading remain only for setting the first one.
+          assert.equal(/จัดการรหัสผ่านสำรอง/.test(page), !hasPassword);
+          assert.match(page, /รหัสผ่านสำรอง/);
           assert.equal(/autocomplete="username"/i.test(page), !hasPassword && !username && !email);
           assert.equal(page.includes('href="/change-password"'), hasPassword);
           assert.equal(page.includes('ยืนยันตัวตนผ่าน LINE ก่อนตั้งรหัสผ่าน'), !hasPassword && !(emailLoginEnabled && email) && lineLinked);
@@ -202,14 +205,14 @@ describe('the shop section respects the permission that would refuse the save', 
 describe('the account section asks for what a login actually needs', () => {
   // F1: without a username and without a verified email the credential is unreachable.
   it('asks a LINE-only account for a username alongside the first password', () => {
-    const html = renderLoaded({ permissions: OWNER });
+    const html = renderLoaded({ accountOnly: true, permissions: OWNER });
     assert.match(html, /ตั้งรหัสผ่านสำรอง/);
     assert.match(html, /ชื่อผู้ใช้/, 'a password with no login identifier is a locked door');
     assert.doesNotMatch(html, /รหัสผ่านปัจจุบัน/, 'there is no current password to prove');
   });
 
   it('does not ask for a username once a verified email can carry the login', () => {
-    const html = renderLoaded({
+    const html = renderLoaded({ accountOnly: true,
       permissions: OWNER,
       account: { ...LINE_ONLY_ACCOUNT, email: 'owner@example.com', emailVerified: true },
     });
@@ -217,7 +220,7 @@ describe('the account section asks for what a login actually needs', () => {
   });
 
   it('does not ask for a username when the saved account email is still unverified', () => {
-    const html = renderLoaded({
+    const html = renderLoaded({ accountOnly: true,
       permissions: OWNER,
       account: { ...LINE_ONLY_ACCOUNT, email: 'owner@example.com' },
     });
@@ -226,7 +229,7 @@ describe('the account section asks for what a login actually needs', () => {
   });
 
   it('sends an account that already has a password to change-password instead', () => {
-    const html = renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, hasPassword: true } });
+    const html = renderLoaded({ accountOnly: true, permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, hasPassword: true } });
     assert.match(html, /href="\/change-password"/);
     assert.match(renderEmail({ hasPassword: true }, 'identity'), /รหัสผ่านปัจจุบัน/, 'email proof offers the existing password in step 2');
     assert.doesNotMatch(html, /พิมพ์รหัสผ่านอีกครั้ง/, 'the first-password form is gone');
@@ -257,7 +260,7 @@ describe('handlers that no static render reaches', () => {
   });
 
   it('sends the username with the first password and reports the stored form back', () => {
-    const savePassword = block('const savePassword = async () => {', 'if (loading && !identity) {');
+    const savePassword = block('const savePassword = async () => {', 'if (loading && !(accountOnly ? account : identity)) {');
     assert.match(savePassword, /passwordFormError\(account, \{ password, confirmPassword, username: newUsername \}\)/);
     assert.match(savePassword, /setMyFirstPassword\(password, newUsername\.trim\(\) \|\| undefined\)/);
     assert.match(savePassword, /saved\.username/, 'the login name is lower-cased server-side; the user has to be told');
@@ -266,7 +269,7 @@ describe('handlers that no static render reaches', () => {
   // The native fragment jump already ran against an empty page, so the page has to redo it once
   // the sections exist — otherwise "ใส่เลย" lands the owner at the top (rehearsal 26).
   it('jumps to the hashed section once the sections are in the DOM', () => {
-    const effect = block('const jumpedToHash = useRef(false);', 'if (loading && !identity) {');
+    const effect = block('const jumpedToHash = useRef(false);', 'if (loading && !(accountOnly ? account : identity)) {');
     assert.match(effect, /if \(loading \|\| loadError\) return undefined;/, 'the sections do not exist yet while loading');
     assert.match(effect, /sectionIdFromHash\(window\.location\.hash\)/, 'only the page\u2019s own ids may reach the DOM');
     assert.match(effect, /document\.getElementById\(id\)\?\.scrollIntoView\(\{ block: 'start' \}\)/);
@@ -320,7 +323,7 @@ describe('handlers that no static render reaches', () => {
     // §15.4.1 A: two independent writes behind one press. An identity 409 must not also swallow
     // the VAT answer the owner just gave, and a half-failed press must not answer "บันทึกแล้ว".
     assert.match(saveShop, /\n {6}if \(plan\.vatStatus && identity\?\.vatRegistration\) \{/, 'the VAT write must not be gated on the identity result');
-    assert.match(saveShop, /if \(!failed\) toast\.success\(/, 'a half-failed save must not report success');
+    assert.match(saveShop, /if \(!failed && !withholdingReturnHref\) toast\.success\(/, 'a half-failed save must not report success');
   });
 });
 
@@ -347,18 +350,18 @@ describe('the shared OTP block matches current account and delivery facts', () =
     assert.match(html, /new@example\.com/);
     assert.match(html, /กำลังรอยืนยันอีเมลใหม่/);
     assert.match(html, /ขอรหัสใหม่/);
-    assert.match(html, /ย้อนกลับ/);
+    assert.match(html, />กลับ</);
     assert.match(html, /type="text"[^>]*inputMode="numeric"[^>]*autoComplete="one-time-code"/);
     assert.doesNotMatch(html, /ส่งลิงก์|ลิงก์มีอายุ/);
   });
 
   it('lets a LINE account request OTP without a password and never offers direct saving', () => {
     const html = renderEmail();
-    assert.match(html, /อีเมลที่ต้องการยืนยัน/);
+    assert.match(html, /<label[^>]*>อีเมล</);
     assert.match(html, /ถัดไป/);
     assert.doesNotMatch(html, /ยืนยันตัวตนผ่าน LINE/);
     const identity = renderEmail({}, 'identity');
-    assert.match(identity, /ถัดไป · ขอรหัสยืนยัน/);
+    assert.match(identity, />ขอรหัสยืนยัน</);
     assert.match(identity, /ยืนยันตัวตนผ่าน LINE/);
     assert.doesNotMatch(identity, /type="email"|รหัสผ่านปัจจุบัน/);
     assert.doesNotMatch(html, /บันทึกอีเมลบัญชี|ส่งลิงก์|รหัสผ่านปัจจุบัน/);
@@ -389,15 +392,15 @@ describe('the shared OTP block matches current account and delivery facts', () =
 /** §15.4.1 D. "จะมาบอกว่าเว้น 0 ทำไม" — the hint read as "leave the leading zero out". */
 describe('the phone block says the rule plainly', () => {
   it('uses the shared copy and never mentions leaving the field blank', () => {
-    const html = renderLoaded({ permissions: OWNER });
+    const html = renderLoaded({ accountOnly: true, permissions: OWNER });
     assert.match(html, /ใส่เบอร์มือถือ 10 หลัก เช่น 0812345678/);
     assert.doesNotMatch(html, /เว้นว่างไว้ก็ได้/);
   });
 
   it('offers "ลบเบอร์ออก" only when there is a number to remove', () => {
-    assert.doesNotMatch(renderLoaded({ permissions: OWNER }), /ลบเบอร์ออก/);
+    assert.doesNotMatch(renderLoaded({ accountOnly: true, permissions: OWNER }), /ลบเบอร์ออก/);
     assert.match(
-      renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, phoneNumber: '0812345678' } }),
+      renderLoaded({ accountOnly: true, permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, phoneNumber: '0812345678' } }),
       /ลบเบอร์ออก/,
     );
   });
@@ -406,7 +409,7 @@ describe('the phone block says the rule plainly', () => {
 /** F: the "optional username" branch promised a login by verified email that did not exist. */
 describe('the backup-password block tells the truth about the login name', () => {
   it('states an existing username instead of offering to silently rename it', () => {
-    const html = renderLoaded({
+    const html = renderLoaded({ accountOnly: true,
       permissions: OWNER,
       account: { ...LINE_ONLY_ACCOUNT, username: 'mangmee.shop' },
     });
@@ -422,7 +425,7 @@ describe('the completeness card stays out of the way', () => {
 
   it('renders nothing while loading, when complete, when dismissed, or when a read fails', () => {
     assert.match(card, /if \(dismissed \|\| !items \|\| checklistIsComplete\(items\)\) return null;/);
-    assert.match(hook, /\.catch\(\(\) => \{ if \(!cancelled\) setItems\(null\); \}\)/);
+    assert.match(hook, /\.catch\(\(\) => \{ if \(!cancelled && current === revision\) setItems\(null\); \}\)/);
   });
 
   // L2: the dismissal must outlive the tab; the 10-minute answer cache need not. Since §15.4.1 E
@@ -452,7 +455,7 @@ describe('the completeness card stays out of the way', () => {
     const fetchAt = effect.indexOf('loadChecklist(');
     assert.notEqual(cacheAt, -1, 'the cache read is what stops two GETs on every dashboard mount');
     assert.ok(cacheAt < fetchAt, 'the cache must be consulted first, or it saves nothing');
-    assert.match(effect, /if \(cached\) \{ setItems\(cached\); return undefined; \}/);
+    assert.match(effect, /if \(cached\) setItems\(cached\); else refresh\(\);/);
     assert.match(hook, /writeChecklistCache\(storage, companyId, items\)/);
     // Two consumers mount together on the settings page; without this they fire the same pair.
     assert.match(hook, /inFlight\.set\(companyId, request\)/);
@@ -469,7 +472,7 @@ it('a certificate detour has a quiet return above the form and a primary return 
   assert.match(source, /setCertificateReturnHref\(companyProfileReturnPath\(companyId, window.location.search\)\)/);
   assert.match(source, /certificateReturnHref && <Link href=\{certificateReturnHref\} className=\{`\$\{LINK_BUTTON\}/);
   assert.match(source, /certificateReturnHref && shopSaved && <Link href=\{certificateReturnHref\} className=\{`\$\{ACTION_BUTTON\} mangmee-btn-primary`\}/);
-  assert.equal(source.split('กลับไปออกหนังสือรับรอง').length - 1, 2);
+  assert.equal(source.split('{certificateReturnLabel}').length - 1, 2);
   const save = source.slice(source.indexOf('const saveShop = async () => {'), source.indexOf('const savePhoneValue = async'));
   assert.match(save, /setShopSaved\(false\)/);
   assert.match(save, /if \(!failed\) setShopSaved\(true\)/);
@@ -481,4 +484,85 @@ it('a certificate detour has a quiet return above the form and a primary return 
     assert.ok(html.indexOf('กลับไปออกหนังสือรับรอง') < html.indexOf('id="business-type"'));
     assert.equal(/<a[^>]*class="[^"]*mangmee-btn-primary"[^>]*>กลับไปออกหนังสือรับรอง<\/a>/.test(html), saved);
   }
+});
+
+
+it('shop name is the first editable shop field and a successful name write refreshes the header chooser', () => {
+  assert.ok(source.indexOf('label="ชื่อร้าน"') < source.indexOf('htmlFor="business-type"'));
+  assert.match(source, /label="ชื่อร้าน" value=\{displayName\} required maxLength=\{200\}/);
+  assert.match(source, /disabled=\{!canEditShop \|\| shopSaving\}/);
+  assert.match(source, /await patchCompanyIdentity[\s\S]*notifyCompanyProfileChanged\(\)/);
+  assert.match(source, /<FormActionBar><ActionGroup>/);
+  const scope = readFileSync(new URL('../web-core-workspace/WorkspaceScope.tsx', import.meta.url), 'utf8');
+  assert.match(scope, /window.addEventListener\(COMPANY_PROFILE_CHANGED_EVENT, refresh\)/);
+  assert.match(scope, /window.removeEventListener\(COMPANY_PROFILE_CHANGED_EVENT, refresh\)/);
+});
+
+it('serves the account independently of shop settings and preserves the old bookmark as a redirect', () => {
+  const html = renderLoaded({ accountOnly: true, permissions: [] });
+  assert.match(html, /บัญชีของฉัน/); assert.doesNotMatch(html, /ชื่อจดทะเบียน/);
+  assert.match(source, /accountOnly \? Promise.resolve\(null\) : getCompanyIdentity/);
+  assert.match(source, /<AccountDisplayName companyId=\{companyId\}/);
+  assert.match(source, /href=\{`\/companies\/\$\{companyId\}\/account`\}>บัญชีของฉัน/);
+  const shell = readFileSync(new URL('../web-core-workspace/WorkspaceLayout.tsx', import.meta.url), 'utf8');
+  assert.match(shell, /window.location.hash === '#account'.*router.replace\(`\/companies\/\$\{companyId\}\/account`\)/);
+  assert.match(shell, /ACCOUNT_NAME_CHANGED_EVENT, refresh/);
+  const route = readFileSync(new URL('../../../app/(workspace)/companies/[companyId]/account/page.tsx', import.meta.url), 'utf8');
+  assert.match(route, /fetchServerSession\(companyId\)/); assert.match(route, /accountOnly/);
+  assert.doesNotMatch(route, /requireRoutePermission|company.setup/);
+});
+
+
+it('account name uses the first form column and stays quiet until its trimmed value changes', () => {
+  const { AccountDisplayName } = require('./AccountDisplayName') as typeof import('./AccountDisplayName');
+  const original = reactRuntime.useState;
+  try {
+    for (const name of ['ชื่อใหม่', ' ชื่อใหม่ ', 'แก้แล้ว']) {
+      let index = 0;
+      Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
+        const state = (original as (value: unknown) => [unknown, unknown])(initial);
+        index++;
+        if (index === 1) return [{ displayName: 'ชื่อใหม่', history: [{ id: 'change', changedAt: '2026-10-13T01:00:00.000Z', oldName: 'ชื่อเดิม', newName: 'ชื่อใหม่', changedByName: 'คนแก้' }] }, state[1]];
+        if (index === 2) return [name, state[1]];
+        return state;
+      });
+      const noop = () => undefined;
+      const html = renderToStaticMarkup(React.createElement(ToastContext.Provider, { value: { success: noop, warning: noop, error: noop } },
+        React.createElement(AccountDisplayName, { companyId: 'company-1' })));
+      assert.equal((html.match(/ประวัติการแก้ชื่อ/g) ?? []).length, 1);
+      assert.match(html, /ชื่อเดิม → ชื่อใหม่/); assert.match(html, /แก้โดย คนแก้/);
+      assert.match(html, /<time[^>]*dateTime="2026-10-13T01:00:00.000Z"/);
+      assert.match(html, /class="grid gap-4 sm:grid-cols-2"/);
+      assert.match(html, /maxLength="160"/);
+      assert.match(html, new RegExp(`class="mangmee-btn mangmee-btn-${name.trim() === 'ชื่อใหม่' ? 'quiet' : 'primary'}"[^>]*>บันทึกชื่อ`));
+      assert.match(html, /data-form-action-bar/); assert.match(html, /mangmee-actions/);
+    }
+  } finally { Reflect.set(reactRuntime, 'useState', original); }
+});
+
+it('the long shop form ends with its sticky bar outside the card and any short wrapper', () => {
+  assert.match(source, /id="shop"[^>]+flex min-h-full flex-col gap-5/);
+  const shop = source.slice(source.indexOf('<div id="shop"'), source.indexOf('<div id="account"'));
+  assert.ok(shop.indexOf('</MangmeeCard>') < shop.indexOf('<FormActionBar>'));
+  assert.match(shop, /<FormActionBar><ActionGroup>[\s\S]*<\/ActionGroup><\/FormActionBar>\s*<\/>\s*\)}\s*<\/div>/);
+});
+
+
+it('after saving a withholding detour the notice carries its fixed return and names any remaining shop facts', () => {
+  const html = renderLoaded({ permissions: ['company.legal_identity.manage'], withholdingReturnHref: '/companies/company-1/tax/withholding', shopSaved: true });
+  assert.match(html, /บันทึกข้อมูลร้านแล้ว/);
+  assert.match(html, /href="\/companies\/company-1\/tax\/withholding"[^>]*>กลับไปภาษีหัก ณ ที่จ่าย/);
+  assert.match(html, /ข้อมูลร้านยังขาด: เลขผู้เสียภาษี/);
+  assert.doesNotMatch(html, /ข้อมูลร้านยังขาด: ชื่อจดทะเบียน/);
+  assert.match(source, /clearChecklistCache[\s\S]*notifyCompanyProfileChanged\(\)/);
+});
+
+it('UX4 the substitute certificate detour has its own return action before and after saving', () => {
+  for (const shopSaved of [false, true]) {
+    const href = '/companies/company-1/expenses/substitute-receipts/new?expenseId=expense';
+    const html = renderLoaded({ permissions: ['company.legal_identity.manage'], certificateReturnHref: href, shopSaved });
+    assert.match(html, /กลับไปทำใบรับรอง/);
+    assert.ok(html.includes(href));
+  }
+  assert.match(source, /id="vat-status"\s+aria-label="ร้านจดทะเบียน VAT หรือยัง"/);
 });

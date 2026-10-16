@@ -1,11 +1,12 @@
 import type React from 'react';
-import { MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contracts';
-import type { WorkspaceModule, NavGroup, NavItem } from './web-core-workspace.model';
+import { COMPANY_PROFILE_ACCOUNT_HASH, COMPANY_PROFILE_SETTINGS_PATH, MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contracts';
+import type { WorkspaceModule, NavItemGroup, NavItem } from './web-core-workspace.model';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
-import { filterSettingsSidebarItems } from './settings-menu.logic';
+import { filterSettingsSidebarItems, PACKAGE_CARD } from './settings-menu.logic';
 import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
 import { ACCOUNTING_UI_HIDDEN, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } from './web-core-workspace.constants';
+import { OWN_SIGNATURE_PERMISSIONS } from '@/features/company-profile/company-profile.logic';
 
 /** Accounting screens are closed this launch while the ledger keeps posting — see the constant. */
 function accountingUiHidden(moduleKey: string): boolean {
@@ -34,6 +35,7 @@ export function filterModulesByPermissions(
     if (mod.key === 'roles') {
       return ROLE_NAV_ROUTE_PATHS.some((path) => canSeeRoute(path, userPermissions));
     }
+    if (mod.key === 'ai-suggestions') return canSeeRoute('/ai-suggestions', userPermissions);
     if (mod.key === 'tax') return canSeeRoute('/tax', userPermissions);
     const routePath = ROUTE_GATED_MODULE_PATHS.get(mod.key);
     if (routePath) return canSeeRoute(routePath, userPermissions);
@@ -84,8 +86,8 @@ const USER_GUIDE_NAV_KEY = 'guide';
  */
 const USER_GUIDE_PAGES = [
   { key: 'guide.expenses', label: 'ค่าใช้จ่ายและใบเสร็จ', slug: 'expenses', iconKey: 'FileIcon' },
-  { key: 'guide.substitute_receipts', label: 'ใบรับรองแทนใบเสร็จรับเงิน', slug: 'substitute-receipts', iconKey: 'SwapIcon' },
-  { key: 'guide.reimbursements', label: 'การเบิกจ่ายและอนุมัติ', slug: 'reimbursements', iconKey: 'DollarLineIcon' },
+  { key: 'guide.substitute_receipts', label: 'ใบรับรองแทนใบเสร็จ', slug: 'substitute-receipts', iconKey: 'SwapIcon' },
+  { key: 'guide.reimbursements', label: 'การเบิกจ่าย', slug: 'reimbursements', iconKey: 'DollarLineIcon' },
 ] as const;
 
 function buildUserGuideNavItem(companyId: string, iconMap: Record<string, React.ReactNode>): NavItem {
@@ -103,8 +105,28 @@ function buildUserGuideNavItem(companyId: string, iconMap: Record<string, React.
     icon: iconMap.DocsIcon ?? null,
     href: subItems[0]!.href,
     subItems,
-    group: 'admin',
+    // Its own heading: under "ตั้งค่า" the guide was the only row an employee had there.
+    group: 'help',
   };
+}
+
+/**
+ * The person's own pages, for the user menu (found 2026-10-13: an employee had no way to them). Someone without a
+ * company-settings right gets the account page that lives outside the company. A locked shop keeps the account row and
+ * loses the signature row, which is a business page.
+ */
+export function buildAccountLinks(companyId: string, permissions: readonly string[], locked = false): { key: string; label: string; href: string }[] {
+  const base = `/companies/${encodeURIComponent(companyId)}`;
+  return [
+    {
+      key: 'account',
+      label: 'บัญชีของฉัน',
+      href: `${base}/account`,
+    },
+    ...(!locked && OWN_SIGNATURE_PERMISSIONS.some((key) => permissions.includes(key))
+      ? [{ key: 'signature', label: 'ลายเซ็นของฉัน', href: `${base}/expenses/signatures` }]
+      : []),
+  ];
 }
 
 /** Prevents protected workspace pages from rendering when opened by URL directly. */
@@ -114,6 +136,7 @@ export function canAccessWorkspacePath(
   companyId: string,
   pathname: string,
 ): boolean {
+  if (pathname === `/companies/${companyId}/account`) return true;
   const reportsBase = `/companies/${companyId}/reports`;
   // Retained history stays discoverable in navigation, but its narrow snapshot grant opens only
   // the exact history workspace. It must never open future report sub-routes that may create work.
@@ -180,8 +203,9 @@ export function buildNavItems(
 
   const moduleItems = modules.flatMap((mod) => {
     if (settingsChildKeys.has(mod.key)) return [];
-    // Hide the entry only: existing review links and background AI retain their permission gates.
-    if (MENU_ENTITLEMENT_BINDINGS.some((binding) => binding.navKey === mod.key && binding.navigation === 'contextual')) return [];
+    if (mod.key === 'ai-suggestions') {
+      if (!canSeeRoute('/ai-suggestions', userPermissions)) return [];
+    } else if (MENU_ENTITLEMENT_BINDINGS.some((binding) => binding.navKey === mod.key && binding.navigation === 'contextual')) return [];
     // Retained-only Reports (snapshot read without the catalog) can no longer create anything, and
     // the sidebar cannot tell whether this company ever produced an artifact — for the launch
     // package it never did, so the row would be a permanently empty one. The page keeps its route
@@ -191,7 +215,9 @@ export function buildNavItems(
     const item: NavItem = {
       key: mod.key,
       label: t(mod.labelKey as Parameters<typeof t>[0], locale),
-      icon: iconMap[mod.iconKey] ?? null,
+      // The settings row draws sliders: its three-dots key (kept, the contracts binding names it) read as "more" and,
+      // on the icon-only rail, as a group separator.
+      icon: (mod.key === 'settings' ? iconMap.SettingsIcon : undefined) ?? iconMap[mod.iconKey] ?? null,
       href: mod.status === 'disabled' ? undefined : mod.buildHref(companyId),
       disabled: mod.status === 'disabled',
       group: mod.navGroup,
@@ -199,6 +225,17 @@ export function buildNavItems(
 
     if (mod.key === 'roles') {
       const childItems: NavItem['subItems'] = [];
+      const canSeeEmployeeList = canSeeRoute('/settings/access-overview', userPermissions);
+      // The list first: it is where the work with people starts (2026-10-13).
+      if (canSeeEmployeeList) {
+        childItems.push({
+          key: 'roles.individual',
+          label: t('module.individual' as Parameters<typeof t>[0], locale),
+          href: MODULELESS_SUBITEM_HREFS.accessOverview(companyId),
+          icon: iconMap.UserIcon,
+          tone: 'slate',
+        });
+      }
       // The settings landing no longer carries a บทบาทและสิทธิ์ card, so this child is the only
       // way in. The shared route rule keeps it aligned with direct-path access.
       if (canSeeRoute('/settings/permissions', userPermissions)) {
@@ -210,16 +247,9 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      if (canSeeRoute('/settings/access-overview', userPermissions)) {
-        childItems.push({
-          key: 'roles.individual',
-          label: t('module.individual' as Parameters<typeof t>[0], locale),
-          href: MODULELESS_SUBITEM_HREFS.accessOverview(companyId),
-          icon: iconMap.UserIcon,
-          tone: 'slate',
-        });
-      }
-      if (userPermissions.includes('access.employee.create')) {
+      // เพิ่มพนักงาน is an action, and the list page carries its button. The row stays only for someone who may add
+      // people but may not open the list, so that nobody loses their one way in.
+      if (!canSeeEmployeeList && userPermissions.includes('access.employee.create')) {
         childItems.push({
           key: 'employees',
           label: t('module.add_employee' as Parameters<typeof t>[0], locale),
@@ -277,18 +307,19 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
+      // The order of the work (2026-10-13): record, pay, the papers that follow a payment, then what is rarely opened.
+      if (canOpenDisbursementVoucher && userPermissions.includes('expense.disbursement.read')) {
+        childItems.push({
+          key: 'expenses.disbursement_vouchers',
+          label: t('expenses.tab_disbursement_vouchers', locale),
+          href: `/companies/${companyId}/expenses/disbursement-vouchers`,
+          icon: iconMap.DocsIcon,
+          tone: 'slate',
+        });
+      }
       if (userPermissions.includes('wht.certificate.issue')) {
         childItems.push({ key: 'expenses.wht_certificates', label: t('expenses.certificates.title', locale),
           href: `/companies/${companyId}/expenses/wht-certificates`, icon: iconMap.DocsIcon, tone: 'slate' });
-      }
-      if (hasAnyPermission(userPermissions, ['expense.category.manage'])) {
-        childItems.push({
-          key: 'expenses.categories',
-          label: t('expenses.tab_categories' as Parameters<typeof t>[0], locale),
-          href: `/companies/${companyId}/expenses/categories`,
-          icon: iconMap.TagIcon,
-          tone: 'slate',
-        });
       }
       if (hasAnyPermission(userPermissions, ['expense.review', 'expense.confirm', 'expense.read_related', 'expense.read_own'])) {
         childItems.push({
@@ -296,15 +327,6 @@ export function buildNavItems(
           label: t('expenses.tab_substitute_receipts' as Parameters<typeof t>[0], locale),
           href: `/companies/${companyId}/expenses/substitute-receipts`,
           icon: iconMap.SwapIcon,
-          tone: 'slate',
-        });
-      }
-      if (hasAnyPermission(userPermissions, ['company.setup.manage'])) {
-        childItems.push({
-          key: 'expenses.substitute_receipt_policy',
-          label: 'ตั้งค่าใบรับรองแทนใบเสร็จ',
-          href: MODULELESS_SUBITEM_HREFS.substituteReceiptPolicy(companyId),
-          icon: iconMap.DollarLineIcon,
           tone: 'slate',
         });
       }
@@ -317,13 +339,12 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-
-      if (canOpenDisbursementVoucher && userPermissions.includes('expense.disbursement.read')) {
+      if (hasAnyPermission(userPermissions, ['expense.category.manage'])) {
         childItems.push({
-          key: 'expenses.disbursement_vouchers',
-          label: t('expenses.tab_disbursement_vouchers', locale),
-          href: `/companies/${companyId}/expenses/disbursement-vouchers`,
-          icon: iconMap.DocsIcon,
+          key: 'expenses.categories',
+          label: t('expenses.tab_categories' as Parameters<typeof t>[0], locale),
+          href: `/companies/${companyId}/expenses/categories`,
+          icon: iconMap.TagIcon,
           tone: 'slate',
         });
       }
@@ -360,11 +381,11 @@ export function buildNavItems(
   if (userPermissions.includes('company.plan.manage')) {
     let settings = moduleItems.find(item => item.key === 'settings');
     if (!settings) {
-      settings = { key: 'settings', label: t('module.settings', locale), icon: iconMap.HorizontalDotsIcon ?? null, group: 'admin', subItems: [] };
+      settings = { key: 'settings', label: t('module.settings', locale), icon: iconMap.SettingsIcon ?? null, group: 'admin', subItems: [] };
       moduleItems.push(settings);
     }
     settings.subItems = [...(settings.subItems ?? []), {
-      key: 'settings.billing', label: 'แพ็กเกจและการชำระเงิน', href: `/companies/${companyId}/billing`,
+      key: 'settings.billing', label: PACKAGE_CARD.title, href: `/companies/${companyId}${PACKAGE_CARD.href}`,
       icon: iconMap.BoxIcon ?? null, tone: 'slate',
     }];
   }
@@ -386,16 +407,16 @@ export function buildLockedNavItems(
   const items: NavItem[] = [{
     key: 'settings',
     label: 'ตั้งค่า',
-    icon: iconMap.HorizontalDotsIcon ?? null,
+    icon: iconMap.SettingsIcon ?? null,
     href: `/companies/${companyId}/settings`,
     group: 'admin',
   }];
   if (permissions.includes('company.plan.manage')) {
     items.push({
       key: 'billing',
-      label: 'แพ็กเกจ',
+      label: PACKAGE_CARD.title,
       icon: iconMap.BoxIcon ?? null,
-      href: `/companies/${companyId}/billing`,
+      href: `/companies/${companyId}${PACKAGE_CARD.href}`,
       group: 'admin',
     });
   }
@@ -422,6 +443,15 @@ export function getActiveModuleKey(
   return match?.key ?? null;
 }
 
+/**
+ * The add/edit employee page has no row of its own (the list page carries its button), so it lights the list it is
+ * opened from. Null when the list row is not in this person's menu: their own เพิ่มพนักงาน row then lights by its path.
+ */
+export function employeePageMenuKey(companyId: string, pathname: string, items: NavItem[]): string | null {
+  if (!isUnderHref(pathname, MODULELESS_SUBITEM_HREFS.employees(companyId))) return null;
+  return items.some((item) => item.subItems?.some((sub) => sub.key === 'roles.individual')) ? 'roles.individual' : null;
+}
+
 /** Every navigable menu target, parents and sub-items alike. A disabled module has no href. */
 export function collectMenuTargets(items: NavItem[]): { key: string; href: string }[] {
   return items.flatMap((item) => [
@@ -446,8 +476,8 @@ export function resolveMenuKey(pathname: string, targets: { key: string; href: s
 
 export function groupNavItems(
   items: NavItem[],
-  groupOrder: NavGroup[],
-): { group: NavGroup; items: NavItem[] }[] {
+  groupOrder: NavItemGroup[],
+): { group: NavItemGroup; items: NavItem[] }[] {
   return groupOrder
     .map((group) => ({ group, items: items.filter((item) => item.group === group) }))
     .filter((g) => g.items.length > 0);

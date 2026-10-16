@@ -45,6 +45,9 @@ describe('formPeriodKey', () => {
   it('returns monthly key for PP36', () => {
     assert.equal(formPeriodKey('PP36', new Date(2026, 2, 10)), '2026-03');
   });
+  it('returns the Bangkok monthly key for PND2', () => {
+    assert.equal(formPeriodKey('PND2', new Date('2026-08-31T19:00:00.000Z')), '2026-09');
+  });
   it('returns monthly key for PND3', () => {
     assert.equal(formPeriodKey('PND3', new Date(2026, 2, 10)), '2026-03');
   });

@@ -2,7 +2,22 @@ import { workspaceDictionary, type DictionaryKey, type SupportedLocale } from '.
 import { t } from '../../common/i18n/workspace-i18n.logic';
 import { THAI_SYSTEM_ROLE_NAMES, HR_ASSIGNABLE_ROLE_KEYS, type AssignableRoleSummary, type CapabilityPackView, type RoleSummary, type RoleTemplate } from '@watchdog-bms/contracts';
 
-export const EMPLOYEE_BRANCH_SCOPE_HELP = `กำหนดได้เฉพาะสาขาที่บัญชีของคุณเข้าถึง หากต้องการเปลี่ยนขอบเขตนอกเหนือจากนี้ กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}`;
+export const EMPLOYEE_BRANCH_SCOPE_HELP = `กำหนดได้เฉพาะสาขาที่บัญชีของคุณเข้าถึง สาขาอื่นให้${THAI_SYSTEM_ROLE_NAMES.OWNER}กำหนด`;
+
+/**
+ * What a role lets a person do in THIS shop, for the read-only lists (the role page, a person's rights).
+ * A choice is listed when the role holds every right of it and the shop's package has it. `locked` is
+ * the server's own answer (list-capability-packs.use-case): the choice's feature is not among the
+ * shop's entitled features, by the same evaluator that strips those rights from the session.
+ * Nothing is taken out of the role: the rights of a locked choice stay saved as they are.
+ */
+export function roleCanDoPacks<P extends Pick<CapabilityPackView, 'isCore' | 'locked' | 'permissionKeys'>>(
+  permissionKeys: readonly string[],
+  packs: readonly P[],
+): P[] {
+  const held = new Set(permissionKeys);
+  return packs.filter((pack) => !pack.isCore && !pack.locked && pack.permissionKeys.length > 0 && pack.permissionKeys.every((key) => held.has(key)));
+}
 
 /**
  * The name the API stores for each standard role. Editing one gives the company

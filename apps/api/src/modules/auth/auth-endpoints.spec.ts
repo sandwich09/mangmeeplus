@@ -553,6 +553,13 @@ describe('PasswordLoginUseCase', () => {
     assert.deepEqual(membershipWhere.company, { status: 'ACTIVE' });
   });
 
+  it('names a shop-disabled membership after valid credentials and issues no token', async () => {
+    const prisma = { client: { user: { findFirst: async () => ({ id: 'u', status: 'ACTIVE', credential: { status: 'ACTIVE', passwordHash: hashPassword('watchdogbms11') } }) },
+      companyMembership: { findFirst: async ({ where }: any) => where.status?.in ? { id: 'disabled-membership' } : null } } } as any;
+    await assert.rejects(() => new PasswordLoginUseCase(prisma, { execute: async () => { assert.fail('no token'); } } as any, pendingLegalAcceptance).execute('owner', 'watchdogbms11'),
+      (error: any) => error.getResponse().code === 'company_membership_disabled');
+  });
+
   it('rejects valid credentials with company_access_unavailable and issues no token when no active-company membership exists', async () => {
     let issueTokenCalls = 0;
     const issueToken = { execute: async () => { issueTokenCalls += 1; return {}; } } as any;

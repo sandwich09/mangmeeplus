@@ -14,6 +14,7 @@ import { ReimbursementEvidenceService } from '../services/reimbursement-evidence
 import { effectivePolicy, effectivePolicyForRequest, parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import {
   isSelfApproval,
+  isOwnerSelfApproval,
   matchesApproverRole,
   frozenApprovalAuthority,
   validateRejectionReason,
@@ -51,8 +52,10 @@ export function isEligibleApprover(
   userId: string,
   roles: string[],
   activeApproverUserIds?: Set<string>,
+  requesterUserId?: string,
 ): boolean {
   if (!step || step.status !== 'PENDING') return false;
+  if (requesterUserId && isOwnerSelfApproval(requesterUserId, userId, roles)) return true;
   const frozenAuthority = frozenApprovalAuthority(
     step.assignedApproverUserIds,
     activeApproverUserIds ?? new Set(step.assignedApproverUserIds ?? []),
@@ -77,10 +80,11 @@ function canResumeApprovedDecision(
   userId: string,
   roles: string[],
   activeApproverUserIds?: Set<string>,
+  requesterUserId?: string,
 ): boolean {
   return Boolean(step
     && ((step.status === 'APPROVED' && step.decisionByUserId === userId)
-      || isEligibleApprover(step, userId, roles, activeApproverUserIds)));
+      || isEligibleApprover(step, userId, roles, activeApproverUserIds, requesterUserId)));
 }
 
 async function appendOutboxWithinTx(tx: any, input: {
@@ -137,10 +141,10 @@ export function pendingApprovalActions(
   if (request.cancellationPendingAt) return NO_APPROVAL_ACTIONS;
   const step = currentApprovalStep(request);
   const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
-  const eligible = isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers);
+  const eligible = isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers, request.requesterUserId);
   // Assignment resolution already applied the self-approval rule at submission.
   // Re-evaluating it from a later role would hide a still-actionable task.
-  if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, ctx.userId, allowSelfApproval)) {
+  if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, ctx.userId, allowSelfApproval, ctx.roles)) {
     // They hold the approval this step waits on, so only the switch stands in the way.
     const blockedOnlyBySwitch = step?.status === 'PENDING'
       && ctx.permissions.includes('reimbursement.approve')
@@ -389,14 +393,14 @@ export class ApproveReimbursementUseCase {
     if (!ctx.permissions.includes('reimbursement.approve') && !assignedBySnapshot) {
       throw new ForbiddenException('Missing permission: reimbursement.approve');
     }
-    if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval)) {
+    if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.approval.self_approval_denied',
         targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH',
       });
       throw new ForbiddenException('self_approval_denied');
     }
-    if (!canResumeApprovedDecision(step, ctx.userId, ctx.roles, activeApprovers)) {
+    if (!canResumeApprovedDecision(step, ctx.userId, ctx.roles, activeApprovers, req.requesterUserId)) {
       throw new ForbiddenException('not_eligible_approver');
     }
     // Nothing is approved unseen: the approver names the claim content they were looking at — the
@@ -421,7 +425,7 @@ export class ApproveReimbursementUseCase {
       // (payout spec §14.6) and nothing waits for the reconciler.
       const selfApproval = req.requesterUserId === ctx.userId ? {
         approvedOwnRequest: true,
-        via: soloAtSubmission ? 'no_other_approver' : policy.allowSelfApproval ? 'company_policy' : 'frozen_assignment',
+        via: soloAtSubmission ? 'no_other_approver' : policy.allowSelfApproval ? 'company_policy' : assignedBySnapshot ? 'frozen_assignment' : 'owner_role',
         actorRoles: ctx.roles,
       } : undefined;
       await this.repo.approvePayoutCorrectionAtomic({
@@ -530,7 +534,7 @@ export class ApproveReimbursementUseCase {
               ? {
                 selfApproval: {
                   approvedOwnRequest: true,
-                  via: soloAtSubmission ? 'no_other_approver' : policy.allowSelfApproval ? 'company_policy' : 'frozen_assignment',
+                  via: soloAtSubmission ? 'no_other_approver' : policy.allowSelfApproval ? 'company_policy' : assignedBySnapshot ? 'frozen_assignment' : 'owner_role',
                   actorRoles: ctx.roles,
                 },
               }
@@ -666,10 +670,10 @@ export class RejectReimbursementUseCase {
     if (!ctx.permissions.includes('reimbursement.reject') && !assignedBySnapshot) {
       throw new ForbiddenException('Missing permission: reimbursement.reject');
     }
-    if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval)) {
+    if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
       throw new ForbiddenException('self_approval_denied');
     }
-    if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers)) {
+    if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers, req.requesterUserId)) {
       throw new ForbiddenException('not_eligible_approver');
     }
     // Refusing the account a correction round gave the claim sends it back to its requester again

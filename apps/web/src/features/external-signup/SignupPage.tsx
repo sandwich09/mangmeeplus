@@ -4,8 +4,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { THAI_SYSTEM_ROLE_NAMES, SIGNUP_DISCOVERY_OTHER_MAX, SIGNUP_DISCOVERY_SOURCE_OPTIONS, type PublicCompanySignupBody, type SignupDiscoverySource } from '@watchdog-bms/contracts';
-import { Button } from '@/common/components/button';
-import { SelectField, SwitchField, TextField } from '@/common/components/field';
+import { Button, secondaryButtonClass } from '@/common/components/button';
+import { ChoiceRow, SelectField, TextField } from '@/common/components/field';
+import { Notice } from '@/common/components/notice';
 import { trimmed } from '@/common/forms/trim';
 import { getSignupAvailability, submitCompanySignup } from './external-signup.api';
 import { SignupBrandHeader, SignupClosedNotice, SignupUnavailableNotice } from './SignupChrome';
@@ -48,10 +49,9 @@ const EMPTY_FORM: SignupFormValues = {
  */
 export function TrialNotice() {
   return (
-    <section className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] p-3.5">
-      <h2 className="text-[15.5px] font-bold text-[#046B29]">{SIGNUP_TRIAL_HEADLINE}</h2>
-      <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_AFTER}</p>
-    </section>
+    <p className="text-sm leading-6 text-gray-600">
+      <span className="font-semibold text-gray-800">{SIGNUP_TRIAL_HEADLINE}</span> {SIGNUP_TRIAL_AFTER}
+    </p>
   );
 }
 
@@ -62,7 +62,7 @@ function SubmittedView({ requestId }: { requestId: string }) {
         <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4Z" /></svg>
       </span>
       <div className="space-y-2">
-        <h1 className="text-[22px] font-extrabold text-gray-900">ได้รับคำขอแล้ว กำลังตรวจสอบ</h1>
+        <h1 className="text-[22px] font-bold leading-9 text-gray-900">ได้รับคำขอแล้ว กำลังตรวจสอบ</h1>
         {/* Someone who already has a มั่งมีพลัส account does NOT set a new password — the claim page
             offers both lanes — so promising "set a password" told half of them the wrong story. */}
         <p className="text-[15px] leading-7 text-gray-600">
@@ -72,7 +72,7 @@ function SubmittedView({ requestId }: { requestId: string }) {
       <TrialNotice />
       <Link
         href={`/signup/status/${encodeURIComponent(requestId)}`}
-        className="flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 hover:border-[#046B29]"
+        className={`${secondaryButtonClass} w-full`}
       >
         ตรวจสอบสถานะคำขอ
       </Link>
@@ -81,7 +81,7 @@ function SubmittedView({ requestId }: { requestId: string }) {
           line sent the applicant looking for a control that is not there. No approval time is
           promised either; the honest fallback is the phone number. */}
       <p className="text-[13px] leading-6 text-gray-500">
-        เก็บลิงก์หน้าตรวจสอบสถานะไว้ กลับมาดูได้ตลอด เมื่ออนุมัติแล้วจึงขอส่งลิงก์ใหม่ได้ หากรอนาน โทร {SIGNUP_SUPPORT_PHONE}
+        เก็บลิงก์หน้าตรวจสอบสถานะไว้ กลับมาดูได้ตลอด เมื่ออนุมัติแล้วจึงขอส่งลิงก์ใหม่ได้ ถ้ารอนาน โทร {SIGNUP_SUPPORT_PHONE}
       </p>
     </div>
   );
@@ -215,23 +215,25 @@ export default function SignupPage() {
             <SubmittedView requestId={requestId} />
           ) : (
             <>
-              <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">สมัครใช้งานมั่งมีพลัส</h1>
-              <Link href="/email-access" className="mt-5 block rounded-xl bg-green-700 px-4 py-3 text-center text-base font-semibold text-white">สมัครด้วยรหัสทางอีเมล ไม่ต้องตั้งรหัสผ่าน</Link>
-              <p className="my-4 text-[15px] leading-7 text-gray-600">ใช้ LINE อยู่แล้ว? สมัครผ่านเมนูใน LINE มั่งมี หรือ <Link href="/login" className="underline">เข้าสู่บัญชีเดิม</Link></p>
-              <h2 className="text-lg font-semibold">ให้ทีมงานช่วยสมัคร</h2>
-              <p className="mt-1.5 text-[15px] leading-7 text-gray-600">
-                กรอกข้อมูลร้านของคุณ ทีมงานจะตรวจสอบ แล้วส่งอีเมลให้ตั้งรหัสผ่าน
-              </p>
+              <h1 className="text-[22px] font-bold leading-9 text-gray-900">สมัครใช้งานมั่งมีพลัส</h1>
+              {/* Two ways to apply stay, in the order they had (which one should lead is the owner's
+                  to decide). The view has one main button, the form's own: the first way is a plain
+                  button, so two green buttons no longer compete. */}
+              <Link href="/email-access" className={`${secondaryButtonClass} mt-4 w-full`}>สมัครด้วยรหัสยืนยันทางอีเมล</Link>
+              <p className="mt-2 text-sm leading-6 text-gray-600">ไม่ต้องตั้งรหัสผ่าน · ใช้ LINE อยู่แล้ว สมัครจากเมนูใน LINE มั่งมีได้</p>
+              <div className="mt-5 flex items-center gap-3">
+                <div className="h-px flex-1 bg-gray-200" />
+                <span className="text-[13px] text-gray-500">หรือ</span>
+                <div className="h-px flex-1 bg-gray-200" />
+              </div>
+              <h2 className="mt-5 text-base font-semibold text-gray-900">กรอกข้อมูลร้านเพื่อสมัคร</h2>
+              <p className="mt-1 text-sm leading-6 text-gray-600">ทีมงานตรวจแล้วส่งอีเมลให้ตั้งรหัสผ่าน</p>
 
-              {error ? (
-                <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[15px] leading-7 text-red-700">
-                  {error}
-                </div>
-              ) : null}
+              {error ? <Notice tone="error" className="mt-4">{error}</Notice> : null}
 
-              <form onSubmit={handleSubmit} className="mt-6 space-y-4" noValidate>
+              <form onSubmit={handleSubmit} className="mt-4 space-y-4" noValidate>
                 <TextField
-                  label="ชื่อร้าน หรือบริษัท"
+                  label="ชื่อร้าน"
                   name="companyName"
                   value={values.companyName}
                   onChange={(event) => set('companyName', event.target.value)}
@@ -258,15 +260,15 @@ export default function SignupPage() {
                 </div>
                 {/* It is the DISPLAY name, not the login name — the login name is chosen on the
                     claim page, and reading this as "your username" made people type one here. */}
-                <p className="-mt-3 text-[13px] leading-6 text-gray-500">
-                  ชื่อจริงของ{THAI_SYSTEM_ROLE_NAMES.OWNER} ใช้แสดงในระบบ ไม่ใช่ชื่อสำหรับเข้าสู่ระบบ
+                <p className="-mt-3 text-xs leading-6 text-gray-500">
+                  ชื่อจริงของ{THAI_SYSTEM_ROLE_NAMES.OWNER} ไม่ใช่ชื่อสำหรับเข้าสู่ระบบ
                 </p>
                 <TextField
                   label="อีเมล"
                   name="contactEmail"
                   type="email"
                   inputMode="email"
-                  hint="ใช้รับลิงก์ตั้งรหัสผ่าน กรุณาตรวจตัวสะกดให้ถูกต้อง"
+                  hint={fieldErrors.contactEmail ? undefined : 'ใช้รับลิงก์ตั้งรหัสผ่าน'}
                   value={values.contactEmail}
                   onChange={(event) => set('contactEmail', event.target.value)}
                   error={fieldErrors.contactEmail}
@@ -277,31 +279,28 @@ export default function SignupPage() {
                   name="phoneNumber"
                   type="tel"
                   inputMode="numeric"
-                  hint="ใช้ติดต่อกลับกรณีอีเมลส่งไม่ถึง"
+                  hint={fieldErrors.phoneNumber ? undefined : 'ใช้โทรกลับถ้าอีเมลส่งไม่ถึง'}
                   maxLength={MOBILE_DIGITS}
                   value={values.phoneNumber}
                   onChange={(event) => set('phoneNumber', clampMobileInput(event.target.value))}
                   error={fieldErrors.phoneNumber}
                   autoComplete="tel"
                 />
-                <div className="space-y-3 rounded-xl border border-gray-200 p-3.5">
+                <div className="space-y-3">
                   <fieldset>
-                    <legend className="text-sm font-semibold text-gray-800">การจดทะเบียน VAT</legend>
-                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:gap-6">
+                    <legend className="text-sm font-medium text-gray-700">การจดทะเบียน VAT</legend>
+                    <div className="mt-1 sm:flex sm:gap-6">
                       {([
                         { value: false, label: 'ยังไม่จดทะเบียน VAT' },
                         { value: true, label: 'จดทะเบียน VAT แล้ว' },
                       ] as const).map((choice) => (
-                        <label key={String(choice.value)} className="flex items-center gap-2 text-[15px] text-gray-800">
-                          <input
-                            type="radio"
-                            name="vatRegistered"
-                            className="h-4 w-4 accent-brand-600"
-                            checked={values.vatRegistered === choice.value}
-                            onChange={() => set('vatRegistered', choice.value)}
-                          />
-                          {choice.label}
-                        </label>
+                        <ChoiceRow
+                          key={String(choice.value)}
+                          name="vatRegistered"
+                          label={choice.label}
+                          checked={values.vatRegistered === choice.value}
+                          onChange={() => set('vatRegistered', choice.value)}
+                        />
                       ))}
                     </div>
                   </fieldset>
@@ -310,7 +309,7 @@ export default function SignupPage() {
                       label="เลขประจำตัวผู้เสียภาษี"
                       name="taxId"
                       inputMode="numeric"
-                      hint="13 หลัก ไม่ต้องกรอกก็ได้ กรอกภายหลังได้"
+                      hint={fieldErrors.taxId ? undefined : '13 หลัก กรอกภายหลังได้'}
                       value={values.taxId}
                       onChange={(event) => set('taxId', event.target.value)}
                       error={fieldErrors.taxId}
@@ -346,7 +345,7 @@ export default function SignupPage() {
                   <TextField
                     label="รหัสเซลล์"
                     name="referralSalesCode"
-                    hint="ตัวอักษรอังกฤษตัวใหญ่หรือตัวเลข 3–6 ตัว ตามที่เซลล์แจ้งไว้"
+                    hint={fieldErrors.referralSalesCode ? undefined : 'ตัวอักษรอังกฤษตัวใหญ่หรือตัวเลข 3–6 ตัว ตามที่เซลล์แจ้งไว้'}
                     value={values.referralSalesCode}
                     onChange={(event) => set('referralSalesCode', clampSalesCodeInput(event.target.value))}
                     error={fieldErrors.referralSalesCode}
@@ -360,14 +359,14 @@ export default function SignupPage() {
                     in-app on first login, so this form only SHOWS the documents — no checkbox to tick.
                     consentVersion still rides the submit as the record of what was displayed here. */}
                 <p className="pt-1 text-[13.5px] leading-6 text-gray-600">
-                  เมื่อกดส่งคำขอ ถือว่าท่านได้อ่านและรับทราบ{' '}
+                  เมื่อกดส่งคำขอ ถือว่าคุณได้อ่านและรับทราบ{' '}
                   <Link href="/terms" target="_blank" className="font-semibold text-[#046B29] underline">ข้อกำหนดการใช้งาน</Link>
                   {' '}และ{' '}
                   <Link href="/privacy" target="_blank" className="font-semibold text-[#046B29] underline">ประกาศความเป็นส่วนตัว</Link>
                   {' '}แล้ว โดยจะมีขั้นตอนยืนยันการยอมรับอีกครั้งเมื่อเข้าสู่ระบบครั้งแรก
                 </p>
 
-                <Button type="submit" size="lg" className="w-full !rounded-xl" loading={loading}>
+                <Button type="submit" className="w-full" loading={loading}>
                   ส่งคำขอสมัคร
                 </Button>
               </form>
@@ -377,7 +376,7 @@ export default function SignupPage() {
 
         <p className="mt-5 text-center text-[13.5px] text-gray-500">
           มีบัญชีอยู่แล้ว?{' '}
-          <Link href="/login" className="font-semibold text-[#046B29] underline">เข้าสู่ระบบ</Link>
+          <Link href="/login" className="inline-flex min-h-11 items-center font-semibold text-[#046B29] underline">เข้าสู่ระบบ</Link>
         </p>
       </main>
     </div>

@@ -11,14 +11,14 @@ test.describe('TOAST — global feedback', () => {
     const successToasts = authedPage.locator('[role="status"].toast-enter');
 
     await lineToggle.click();
-    await expect(successToasts.filter({ hasText: /ช่องทาง LINE เรียบร้อยแล้ว/ })).toBeVisible();
-    const firstToast = await successToasts.filter({ hasText: /ช่องทาง LINE เรียบร้อยแล้ว/ }).first().textContent();
+    await expect(successToasts.filter({ hasText: /ช่องทาง LINE แล้ว/ })).toBeVisible();
+    const firstToast = await successToasts.filter({ hasText: /ช่องทาง LINE แล้ว/ }).first().textContent();
 
     await lineToggle.click();
     await expect(successToasts.filter({
       hasText: firstToast?.includes('เปิดช่องทาง LINE')
-        ? 'ปิดช่องทาง LINE เรียบร้อยแล้ว'
-        : 'เปิดช่องทาง LINE เรียบร้อยแล้ว',
+        ? 'ปิดช่องทาง LINE แล้ว'
+        : 'เปิดช่องทาง LINE แล้ว',
     })).toBeVisible();
   });
 

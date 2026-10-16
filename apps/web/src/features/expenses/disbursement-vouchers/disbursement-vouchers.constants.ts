@@ -1,7 +1,7 @@
 import { DISBURSEMENT_VOUCHER_STATUSES } from '@watchdog-bms/contracts';
 import type { MangmeeTone } from '@/common/components/mangmee';
 
-export const DISBURSEMENT_VOUCHER_PAGE_SIZE = 20;
+export const DISBURSEMENT_VOUCHER_PAGE_SIZE = 10;
 export const DISBURSEMENT_VOUCHER_FILTERS = ['all', ...DISBURSEMENT_VOUCHER_STATUSES] as const;
 export const DISBURSEMENT_VOUCHER_BADGE_TONES = {
   grey: 'slate', yellow: 'amber', blue: 'sky', green: 'brand', soft_red: 'danger',

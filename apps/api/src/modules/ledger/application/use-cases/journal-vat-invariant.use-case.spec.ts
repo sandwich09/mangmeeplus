@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { asLedgerSource } from './journal.use-case.js';
-import { buildDefaultPostingLines, DEFAULT_ACCOUNT_CODES } from '../../domain/logic/posting-engine.logic.js';
+import { buildDefaultPostingLines, buildTransactionTaxPostingLines, DEFAULT_ACCOUNT_CODES } from '../../domain/logic/posting-engine.logic.js';
 
 function expenseSource(inputVatClaimStatus?: string, taxEvidenceStatus?: string) {
   return {
@@ -65,3 +65,32 @@ describe('expense VAT ledger invariant', () => {
     assert.equal(source.lines[0]?.vatAmount, '0');
   });
 });
+
+function inputComponent(key = 'VAT'): any {
+  return { componentKey: key, snapshot: { taxCodeDefinitionId: 'vat-code', externalTaxCode: 'I1',
+    taxRegime: 'VAT', taxDirection: 'INPUT', taxTreatment: 'STANDARD', taxContext: 'DOMESTIC_PURCHASE',
+    taxCurrency: 'THB', sourceCurrency: 'THB', exchangeRate: '1', taxAmount: '7', taxBaseAmount: '100',
+    taxRate: '7', claimability: 'CLAIMABLE', evidenceStatus: 'VERIFIED' },
+    accountAssignments: [{ accountId: 'input-vat-account', accountRole: 'INPUT_VAT_CLAIMABLE', postingSide: 'DEBIT', ruleVersion: 1 },
+      ...(key === 'IMPORT_VAT' ? [{ accountId: 'customs-payable', accountRole: 'IMPORT_TAX_SETTLEMENT_PAYABLE', postingSide: 'CREDIT', ruleVersion: 1 }] : [])],
+    reportContributions: [] };
+}
+for (const right of ['NEEDS_REVIEW', 'NON_CLAIMABLE', 'CLAIMABLE']) for (const evidence of ['USABLE_FOR_TAX', 'SUPPORTING_ONLY']) {
+  for (const key of ['VAT', 'IMPORT_VAT', 'PP36_INPUT']) it(`${right}/${evidence}: ${key} follows the expense right and stays balanced`, () => {
+    const raw: any = expenseSource(right, evidence);
+    raw.lines[0].taxComponents = [inputComponent(key)];
+    if (key !== 'VAT') { raw.grandTotalAmount = '100'; raw.vatAmount = '0'; raw.lines[0].vatAmount = '0'; }
+    if (key === 'PP36_INPUT') raw.lines[0].taxComponents.push({ ...inputComponent('PP36_OUTPUT'),
+      snapshot: { ...inputComponent().snapshot, taxDirection: 'OUTPUT' },
+      accountAssignments: [{ accountId: 'pp36-payable', accountRole: 'PP36_OUTPUT_VAT_PAYABLE', postingSide: 'CREDIT', ruleVersion: 1 }] });
+    const original = structuredClone(raw);
+    const source = asLedgerSource(raw);
+    const result = buildTransactionTaxPostingLines(source, buildDefaultPostingLines({ ...source, taxTotal: '0' }));
+    assert.equal(result.error, undefined);
+    const claimable = right === 'CLAIMABLE' && evidence === 'USABLE_FOR_TAX';
+    assert.equal(result.lines?.some(l => l.accountId === 'input-vat-account'), claimable);
+    assert.equal(result.lines?.filter(l => l.accountId === DEFAULT_ACCOUNT_CODES.EXPENSE_GENERAL).reduce((n, l) => n + Number(l.debitAmount ?? 0), 0), claimable ? 100 : 107);
+    assert.equal(result.lines?.reduce((n, l) => n + Number(l.debitAmount ?? 0) - Number(l.creditAmount ?? 0), 0), 0);
+    assert.deepEqual(raw, original, 'immutable tax snapshots are not rewritten');
+  });
+}

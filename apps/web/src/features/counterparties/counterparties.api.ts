@@ -1,3 +1,4 @@
+import type { AccountingCounterpartyListCounts } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 import type { CounterpartyDetail, CounterpartyListFilter, CounterpartySummary } from './counterparties.model';
 import { COUNTERPARTY_PAGE_SIZE } from './counterparties.model';
@@ -16,7 +17,7 @@ function qs(params: Record<string, unknown>): string {
 export function listCounterparties(
   companyId: string,
   params: { page: number; search?: string; filter?: CounterpartyListFilter },
-): Promise<{ data: CounterpartySummary[]; total: number }> {
+): Promise<{ data: CounterpartySummary[]; total: number; counts?: AccountingCounterpartyListCounts }> {
   return apiFetch(`${base(companyId)}${qs({
     page: params.page,
     pageSize: COUNTERPARTY_PAGE_SIZE,

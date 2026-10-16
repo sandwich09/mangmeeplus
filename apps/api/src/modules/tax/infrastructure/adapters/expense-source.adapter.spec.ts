@@ -2,6 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ExpenseSourceAdapter } from './expense-source.adapter.js';
 
+const paidFixture = (row: any) => ({ ...row, netPayableAmount: row.netPayableAmount ?? '100',
+  payments: row.payments ?? [{ id: 'payment', amount: row.netPayableAmount ?? '100', paidAt: row.expenseDate, paidAtConfirmed: true, status: 'RECORDED', createdAt: row.expenseDate }],
+  whtAmount: row.whtAmount ?? '3', taxableAmount: row.taxableAmount ?? '100' });
+const companyFixture = { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) };
+
 describe('ExpenseSourceAdapter VAT evidence', () => {
   it('carries tax evidence status into tax sync rows', async () => {
     let query: any;
@@ -35,15 +40,19 @@ describe('ExpenseSourceAdapter WHT source facts', () => {
   type WhtLine = { whtRate: string | null; taxableAmount: string };
   const whtRow = (lines: WhtLine[], entityKind: string | null) => ({
     id: 'expense-1', companyId: 'company-1', expenseDate: new Date('2026-07-13T00:00:00.000Z'),
-    whtAmount: '30', taxableAmount: '1500', taxCategory: 'SERVICE_FEE',
+    whtAmount: '30', taxableAmount: '1500', taxCategory: 'SERVICE_FEE', whtCategoryCode: 'WHT_SERVICE_5',
     vendorNameSnapshot: 'ผู้รับเงิน', vendorTaxIdSnapshot: '0100000000000', vendorBranchCodeSnapshot: '00003',
     vendorEntityKindSnapshot: entityKind, currency: 'THB', updatedAt: new Date(), lines,
   });
   const queries: any[] = [];
   const adapter = (row: unknown) => new ExpenseSourceAdapter({
-    client: { expenseRecord: { findMany: async (input: any) => { queries.push(input); return [row]; } } },
+    client: { company: companyFixture, whtFilingLine: { findMany: async () => [] }, expenseRecord: { findMany: async (input: any) => { queries.push(input); return [paidFixture(row)]; } } },
   } as any);
 
+  it('uses the withholding category rather than the unrelated expense tax category', async () => {
+    const [source] = await adapter(whtRow([], 'JURISTIC')).findConfirmedWithWhtByCompany('company-1');
+    assert.equal(source.incomeCategoryCode, 'WHT_SERVICE_5');
+  });
   it('retains whole-bill base and no fabricated rate for explicit amount-only WHT', async () => {
     const row = { ...whtRow([{ whtRate: null, taxableAmount: '1000' }], 'JURISTIC'),
       whtInputJson: { inputType: 'AMOUNT', value: '0.01', origin: 'REVIEWER' }, whtAmount: '0.01' };
@@ -57,7 +66,7 @@ describe('ExpenseSourceAdapter WHT source facts', () => {
     const row = { ...whtRow([{ whtRate: '0.0300', taxableAmount: '100' }], 'JURISTIC'),
       taxableAmount: '100.10', whtInputJson: { inputType: 'RATE', value: '3', origin: 'REVIEWER' }, whtAmount: '3' };
     const [source] = await adapter(row).findConfirmedWithWhtByCompany('company-1');
-    assert.equal(source?.grossAmount, '100.10');
+    assert.equal(source?.grossAmount, '100.1');
     assert.equal(source?.whtRate, '3.0000');
     assert.equal(source?.whtAmount, '3');
   });
@@ -66,7 +75,7 @@ describe('ExpenseSourceAdapter WHT source facts', () => {
       const [source] = await adapter({ ...whtRow([], 'JURISTIC'), taxableAmount: '70.50', whtAmount: '2.71',
         whtInputJson: { inputType, value: inputType === 'RATE' ? '1' : '2.71', baseAmount: '270.50', origin: 'REVIEWER' },
       }).findConfirmedWithWhtByCompany('company-1');
-      assert.equal(source?.grossAmount, '270.50');
+      assert.equal(source?.grossAmount, '270.5');
       assert.equal(source?.whtRate, inputType === 'RATE' ? '1.0000' : null);
     }
   });
@@ -81,17 +90,21 @@ describe('ExpenseSourceAdapter WHT source facts', () => {
     // ExpenseLine.whtRate is a fraction; TaxEvent.whtRate is a percent.
     assert.equal(rows[0]?.whtRate, '3.0000');
     // Header taxableAmount is 1500 (a non-WHT line rides along); only the 1000 the rate applies to counts.
-    assert.equal(rows[0]?.grossAmount, '1000.0000');
+    assert.equal(rows[0]?.grossAmount, '1000');
     // Only withholding lines may supply the rate and the base.
     assert.deepEqual(queries.at(-1).include.lines.where, { whtAmount: { gt: 0 } });
   });
 
-  it('leaves the header rate null for a mixed-rate document and an unclassified payee', async () => {
-    const rows = await adapter(whtRow([{ whtRate: '0.0300', taxableAmount: '1000' }, { whtRate: '0.0500', taxableAmount: '500' }], null)).findConfirmedWithWhtByCompany('company-1');
-
-    assert.equal(rows[0]?.whtRate, null);
-    assert.equal(rows[0]?.payeeEntityKind, null);
-    assert.equal(rows[0]?.grossAmount, '1500.0000');
+  it('allocates each mixed-rate income line separately with its own remainder', async () => {
+    const source = { ...whtRow([], 'INDIVIDUAL'), netPayableAmount: '291', whtAmount: '9',
+      lines: [{ id: 'rent', whtCategoryCode: 'RENT', whtRate: '0.05', taxableAmount: '100', whtAmount: '5' },
+        { id: 'service', whtCategoryCode: 'SERVICE', whtRate: '0.02', taxableAmount: '200', whtAmount: '4' }],
+      payments: ['97', '194'].map((amount, i) => ({ id: `p${i}`, amount, paidAt: new Date(`2026-${10+i}-05`), createdAt: new Date(i), status: 'RECORDED', paidAtConfirmed: true })) };
+    const rows = await adapter(source).findConfirmedWithWhtByCompany('company-1');
+    assert.deepEqual(rows.map(r => [r.paymentId, r.incomeCategoryCode, r.whtRate, r.grossAmount, r.whtAmount]), [
+      ['p0', 'RENT', '5.0000', '33.33', '1.67'], ['p1', 'RENT', '5.0000', '66.67', '3.33'],
+      ['p0', 'SERVICE', '2.0000', '66.67', '1.33'], ['p1', 'SERVICE', '2.0000', '133.33', '2.67']]);
+    assert.equal(new Set(rows.map(r => r.sourceLineKey)).size, 4);
   });
 
   it('leaves the rate null and falls back to the header base when no line carries a rate', async () => {
@@ -109,7 +122,8 @@ describe('ExpenseSourceAdapter vendor address registry fallback', () => {
     const counterpartyQueries: any[] = [];
     const prisma = {
       client: {
-        expenseRecord: { findMany: async () => rows },
+        company: companyFixture, whtFilingLine: { findMany: async () => [] },
+        expenseRecord: { findMany: async () => rows.map(paidFixture) },
         accountingCounterparty: {
           findMany: async (args: any) => { counterpartyQueries.push(args); return counterpartyRows; },
         },
@@ -190,7 +204,7 @@ describe('ExpenseSourceAdapter vendor address registry fallback', () => {
     const { adapter: subject } = harness(
       [{
         id: 'expense-2', companyId: 'company-1', expenseDate: new Date('2026-07-13T00:00:00.000Z'),
-        whtAmount: '30', taxableAmount: '1500', taxCategory: 'SERVICE_FEE',
+        whtAmount: '30', taxableAmount: '1500', taxCategory: 'SERVICE_FEE', whtCategoryCode: 'WHT_SERVICE_5',
         vendorNameSnapshot: 'ผู้รับเงิน', vendorTaxIdSnapshot: '0100000000000', vendorBranchCodeSnapshot: '00003',
         vendorEntityKindSnapshot: 'JURISTIC', currency: 'THB', updatedAt: new Date(), lines: [],
         vendorAddressSnapshot: null, vendorCounterpartyId: 'cp-1',
@@ -200,4 +214,65 @@ describe('ExpenseSourceAdapter vendor address registry fallback', () => {
     const [result] = await subject.findConfirmedWithWhtByCompany('company-1');
     assert.equal(result?.vendorAddress, 'ที่อยู่ทะเบียน');
   });
+});
+
+it('resolves an unknown expense payee from its linked counterparty on the next sync and carries the paying branch', async () => {
+  const source: any = { id: 'e', companyId: 'c', branchId: 'b', vendorEntityKindSnapshot: null, vendorCounterpartyId: 'cp',
+    vendorAddressSnapshot: 'ที่อยู่', lines: [], expenseDate: new Date('2026-09-01') };
+  let kind: string | null = null;
+  const adapter = new ExpenseSourceAdapter({ client: { company: companyFixture, whtFilingLine: { findMany: async () => [] }, expenseRecord: { findMany: async () => [paidFixture(source)] },
+    accountingCounterparty: { findMany: async ({ where }: any) => { assert.equal(where.companyId, 'c'); assert.deepEqual(where.id.in, ['cp']); return [{ id: 'cp', entityKind: kind }]; } },
+  } } as any);
+  assert.equal((await adapter.findConfirmedWithWhtByCompany('c'))[0].payeeEntityKind, null);
+  kind = 'INDIVIDUAL';
+  const [resolved] = await adapter.findConfirmedWithWhtByCompany('c');
+  assert.equal(resolved.payeeEntityKind, 'INDIVIDUAL'); assert.equal(resolved.branchId, 'b');
+  source.vendorEntityKindSnapshot = 'JURISTIC';
+  assert.equal((await adapter.findConfirmedWithWhtByCompany('c'))[0].payeeEntityKind, 'JURISTIC');
+});
+
+describe('W1–W4 payment-date withholding', () => {
+  const payment = (id: string, amount: string, paidAt: string, extra = {}) => ({ id, amount, paidAt: new Date(paidAt), paidAtConfirmed: true, status: 'RECORDED', createdAt: new Date(paidAt), updatedAt: new Date(paidAt), ...extra });
+  const read = async (payments: unknown[]) => new ExpenseSourceAdapter({ client: {
+    company: { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) }, whtFilingLine: { findMany: async () => [] },
+    expenseRecord: { findMany: async () => [{ id: 'e', companyId: 'c', expenseDate: new Date('2026-10-28'),
+      netPayableAmount: '97', whtAmount: '3', taxableAmount: '100', currency: 'THB', updatedAt: new Date('2026-10-28'),
+      vendorEntityKindSnapshot: 'INDIVIDUAL', vendorAddressSnapshot: 'กทม.', whtInputJson: { inputType: 'RATE', value: '3' }, payments }] },
+  } } as any).findConfirmedWithWhtByCompany('c');
+  it('recognizes 28 October invoice paid 5 November in November on 5 November', async () => {
+    const [row] = await read([payment('p', '97', '2026-11-04T18:00:00Z')]);
+    assert.equal(row.expenseDate.toISOString().slice(0, 10), '2026-11-05');
+    assert.equal(row.paymentId, 'p');
+  });
+  it('confirmed unpaid, voided and unconfirmed-date payments make no paper rows', async () => {
+    assert.deepEqual(await read([]), []);
+    assert.deepEqual(await read([payment('p', '97', '2026-11-05', { status: 'VOIDED' })]), []);
+    assert.deepEqual(await read([payment('p', '97', '2026-11-05', { paidAtConfirmed: false })]), []);
+  });
+  it('allocates net cash shares to two months with the completion taking the exact remainder', async () => {
+    const rows = await read([payment('a', '32.33', '2026-10-29'), payment('b', '64.67', '2026-11-05')]);
+    assert.equal(rows.length, 2);
+    assert.deepEqual(rows.map(r => [r.grossAmount, r.whtAmount]), [['33.33', '1'], ['66.67', '2']]);
+  });
+});
+
+it('W3 tiny partial shares never over-allocate withholding before the final remainder', async () => {
+  const { allocateExpenseWithholding } = await import('../../domain/logic/expense-payment-withholding.logic');
+  const rows = allocateExpenseWithholding(Array.from({ length: 3 }, (_, i) => ({ id: String(i), amount: '1', status: 'RECORDED', createdAt: new Date(i) })), '3', '3.01', '0.02');
+  assert.deepEqual(rows.map(r => r.whtAmount), ['0.01', '0', '0.01']);
+  assert.deepEqual(rows.map(r => r.grossAmount), ['1', '1.01', '1']);
+});
+it('W3 preserves the share already filed when an earlier payment is voided, and gives the replacement the remainder', async () => {
+  const { allocateExpenseWithholding } = await import('../../domain/logic/expense-payment-withholding.logic');
+  const payments = [{ id: 'p2', amount: '1', status: 'RECORDED', createdAt: new Date(2) }, { id: 'replacement', amount: '2', status: 'RECORDED', createdAt: new Date(3) }];
+  const frozen = new Map([['p2', { grossAmount: '1.01', whtAmount: '0' }]]);
+  const rows = allocateExpenseWithholding(payments, '3', '3.01', '0.02', frozen);
+  assert.deepEqual(rows.map(r => [r.grossAmount, r.whtAmount]), [['1.01', '0'], ['2', '0.02']]);
+});
+
+it('W7 gross cash still carries the full income and tax duty, never an extra or missing share', async () => {
+  const { allocateExpenseWithholding } = await import('../../domain/logic/expense-payment-withholding.logic');
+  const payments = ['500', '500'].map((amount, i) => ({ id: String(i), amount, status: 'RECORDED', createdAt: new Date(i) }));
+  const rows = allocateExpenseWithholding(payments, '970', '1000', '30');
+  assert.deepEqual(rows.map(r => [r.grossAmount, r.whtAmount]), [['500', '15'], ['500', '15']]);
 });

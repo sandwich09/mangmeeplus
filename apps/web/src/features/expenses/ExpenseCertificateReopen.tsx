@@ -59,6 +59,6 @@ function CertificateReopenAttestation({ certificate, busy, children, payments }:
       : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว'} <span className="whitespace-nowrap">{number.trim()}</span></div>
     {certificate.kind === 'EXTERNAL' && <p>ระบบยกเลิกใบที่ร้านออกเองให้ไม่ได้ ร้านต้องยกเลิกเอง</p>}
     <ExpenseDisbursementReopenNotice payments={payments} />
-  </div>, /* The action's name is long ("ยกเลิกหนังสือรับรองและแก้ไข"): the two buttons stack at one width instead of a short one beside a long one. */
-  content => <div className="mangmee-safe-bottom grid w-full gap-2">{content}</div>, <ExpenseTaxFilingChoice name="expense-reopen-tax-filing" value={choice} onChange={setChoice} busy={busy} />);
+  </div>, /* The buttons go to the window as they are: its shared footer gives them one width, stacked when the long name ("ยกเลิกหนังสือรับรองและแก้ไขเอกสาร") does not fit beside the other. */
+  content => content, <ExpenseTaxFilingChoice name="expense-reopen-tax-filing" value={choice} onChange={setChoice} busy={busy} />);
 }

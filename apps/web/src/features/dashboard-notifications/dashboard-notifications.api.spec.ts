@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateSnapshot, getDashboard, normalizeNotification, normalizeRule, markRead, markAllRead, dismissNotification, NOTIFICATIONS_CHANGED_EVENT } from './dashboard-notifications.api';
+import { generateSnapshot, getDashboard, getExpenseMonths, normalizeNotification, normalizeRule, markRead, markAllRead, dismissNotification, NOTIFICATIONS_CHANGED_EVENT } from './dashboard-notifications.api';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -118,4 +118,28 @@ it('preserves the source-resolved status independently of unread history', () =>
   const item = normalizeNotification({ id: 'completed', companyId: 'c1', triggerKey: 'workflow.reimbursement_ready_for_payment', severity: 'action', status: 'resolved', title: 'old work', body: '', createdAt: '', readAt: undefined });
   assert.equal(item.status, 'resolved');
   assert.equal(item.read, false);
+});
+
+it('sends waiting, unread, severity and cursor together without dropping a filter', async () => {
+  const { listNotifications } = await import('./dashboard-notifications.api');
+  let requested = '';
+  globalThis.fetch = async input => { requested = String(input); return Response.json({ items: [], nextCursor: 'next' }); };
+  const result = await listNotifications('co', { waiting: true, read: false, severity: 'action', cursor: 'prev', pageSize: 2 });
+  const query = new URL(requested, 'http://local').searchParams;
+  assert.equal(query.get('waiting'), 'true'); assert.equal(query.get('read'), 'false');
+  assert.equal(query.get('severity'), 'action'); assert.equal(query.get('cursor'), 'prev'); assert.equal(query.get('pageSize'), '2');
+  assert.equal(result.nextCursor, 'next');
+});
+
+
+it('HOME-1 reads twelve expense months with Gregorian year and optional branch, preserving money strings', async () => {
+  const payload = { year: 2026, months: Array.from({ length: 12 }, (_, i) => ({ month: `2026-${String(i + 1).padStart(2, '0')}`, total: '0.00', count: 0 })), years: [2025, 2026] };
+  let requested = '';
+  globalThis.fetch = async input => { requested = String(input); return Response.json(payload); };
+  assert.deepEqual(await getExpenseMonths('c1', 2026, 'b1'), payload);
+  assert.equal(requested, '/api/v1/companies/c1/dashboard/expense-months?year=2026&branchId=b1');
+  await getExpenseMonths('c1', 2026);
+  assert.equal(requested, '/api/v1/companies/c1/dashboard/expense-months?year=2026');
+  globalThis.fetch = async () => Response.json({ message: 'Forbidden' }, { status: 403 });
+  await assert.rejects(() => getExpenseMonths('c1', 2026), (error: any) => error.status === 403);
 });

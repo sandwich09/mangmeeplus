@@ -13,13 +13,16 @@ import Link from 'next/link';
 import { payoutHolderChoiceLabel, payoutHolderLine, REIMBURSEMENT_PAYOUT_HOLDER_WORDS as HOLDER_WORDS, PAYOUT_HOLDER_NOTE_MAX_LENGTH, type PayoutHolderFacts, type SavedPayoutAccountSummary, maskedPayoutAccount, type MemberPayoutAccountSummary, type ReimbursementLegacyPayoutDefault, type ReimbursementPayoutSummary } from '@watchdog-bms/contracts';
 // The pay step's line as the claim's own requester reads it (its own import, apart from the line above).
 import { REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER } from '@watchdog-bms/contracts';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { BackLink } from '@/common/components/app-shell/BackLink';
 import { FieldError } from '@/common/components/field/Field';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { MangmeeBadge, MangmeeCard, cx } from '@/common/components/mangmee';
+import { Notice } from '@/common/components/notice';
 import { ErrorState, LoadingState } from '@/common/components/state';
 import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
-import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/ExpensesUi';
+import { ErrorBanner, btnClass, dangerClass, ghostClass, inputClass } from '../expenses/ExpensesUi';
 import { errorMessage, errorText } from './reimbursements.logic';
 import {
   deleteMyPayoutAccount, getMemberPayoutAccount, getMyPayoutAccount, revealClaimPayoutAccount, revealMyPayoutAccount,
@@ -28,7 +31,7 @@ import {
 import {
   BANK_OPTIONS, LEGACY_ASK_REQUESTER_NOTE, LEGACY_DEFAULT_LABEL, OTHER_BANK, PAYER_CONFIRMATION_TEXT, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT,
   savedPayoutAccountTitle, setClaimPayoutHolder, setClaimPayoutSaving, chooseClaimPayoutMode, claimCashNote, claimPayoutHistory, claimPayoutView, emptyPayoutAccountForm,
-  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutCorrectionCardNote, payoutDefaultChangedHint, payoutRoundTexts, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
+  memberPayoutAccountInput, payoutAccountFormError, payoutAccountFormOf, payoutAccountLine, payoutCorrectionCardNote, payoutDefaultChangedHint, payoutRoundTexts, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
   type ClaimPayoutForm, type PaymentFormConfirmation, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
 // What the number of an account is called, by its kind (its own import, apart from the block above).
@@ -36,26 +39,42 @@ import { REIMBURSEMENT_SAVED_PAYOUT_WORDS as SAVED_PAYOUT_WORDS } from '@watchdo
 import { isPayoutRevealDenied, payoutNumberWords } from './reimbursement-payout.logic';
 
 /**
- * "← กลับไปการเบิกจ่าย" in the eyebrow pill of a claim page. The pill is 28 px high. On a phone the link's own box is
- * 44 px high and reaches past the pill above and below, so it is a full tap target and the pill stays as it is.
+ * "← กลับไปการเบิกจ่าย", in the `back` slot of every page of this area: the shared back link, 44 px high on a phone and
+ * 40 px from 640 px. (It was a line of text inside the eyebrow pill, 18 px high on a tablet.)
  */
 export function BackToClaimsLink({ href }: { href: string }) {
-  return <Link href={href} className="-my-[13px] inline-flex min-h-11 items-center sm:my-0 sm:min-h-0">← กลับไปการเบิกจ่าย</Link>;
+  return <BackLink href={href} label="กลับไปการเบิกจ่าย" />;
 }
 
-export const labelClass = 'mb-1.5 block text-xs font-semibold text-gray-600';
+/** The mark of a `<details>` of this area: drawn, so it is no text on the page, and it turns when the box is open (the summary's parent is `group`). */
+export function DisclosureChevron() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-5 w-5 shrink-0 text-gray-500 transition-transform group-open:rotate-180">
+      <path d="M5 7.5l5 5 5-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** A field's label: 14 px, the same as on the claim form (it was 12 px, smaller than the text typed under it). */
+export const labelClass = 'mb-1.5 block text-sm font-semibold text-gray-700';
+/** A fact's name in a list of facts (a `dt`): quieter than the fact, and still 14 px. */
+const factLabelClass = 'text-sm text-gray-500';
 export const choiceClass = 'flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700';
 
 /** Bank, account name and number. The number stays text from the first keystroke: leading zeros are part of it. */
-export function PayoutAccountFields({ value, onChange, disabled = false, invalidField, error, accountNameHint }: {
+export function PayoutAccountFields({ value, onChange, disabled = false, invalidField, error, accountNameHint, accountNumberPlaceholder }: {
   value: PayoutAccountForm;
   onChange: (next: PayoutAccountForm) => void;
   disabled?: boolean;
   invalidField?: string;
   error?: string | null;
   accountNameHint?: string;
+  /** Said inside the empty number field of a form that changes a saved account: the saved number is never put back into a field. */
+  accountNumberPlaceholder?: string;
 }) {
   const errorId = useId();
+  // One line under a field: what is wrong with it when something is, else its hint (the two together said one rule twice).
+  const wrong = (field: string) => invalidField === field && !!error;
   const fieldsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!invalidField) return;
@@ -67,7 +86,7 @@ export function PayoutAccountFields({ value, onChange, disabled = false, invalid
   return (
     <div ref={fieldsRef} className="grid gap-3 sm:grid-cols-2 [&_.mangmee-input]:min-h-11 [&_input]:scroll-mt-[calc(var(--app-header-h)+1rem)] [&_button]:scroll-mt-[calc(var(--app-header-h)+1rem)] [&_summary]:scroll-mt-[calc(var(--app-header-h)+1rem)]">
       <div>
-        <label className={labelClass}>ประเภทบัญชี *</label>
+        <label className={labelClass}>ประเภทบัญชี<span className="text-red-600"> *</span></label>
         <ThemedSelect aria-label="ประเภทบัญชี" aria-invalid={invalidField === 'payoutKind'} aria-describedby={invalidField === 'payoutKind' && error ? errorId : undefined} className={inputClass} value={value.payoutKind} disabled={disabled}
           onChange={(event) => set({ payoutKind: event.target.value === 'PROMPTPAY_PHONE' ? 'PROMPTPAY_PHONE' : 'BANK_ACCOUNT' })}>
           {Object.entries(PAYOUT_KIND_TEXT).map(([kind, text]) => <option key={kind} value={kind}>{text}</option>)}
@@ -76,8 +95,9 @@ export function PayoutAccountFields({ value, onChange, disabled = false, invalid
       </div>
       {!promptPay && (
         <div>
-          <label className={labelClass}>ธนาคาร *</label>
-          <ThemedSelect aria-label="ธนาคาร" aria-invalid={invalidField === 'bankName' && value.bankChoice !== OTHER_BANK} aria-describedby={invalidField === 'bankName' && value.bankChoice !== OTHER_BANK && error ? errorId : undefined} className={inputClass} value={value.bankChoice} disabled={disabled}
+          <label className={labelClass}>ธนาคาร<span className="text-red-600"> *</span></label>
+          {/* `required`: "เลือกธนาคาร" is the prompt of an empty field, shown in the closed control and not as a row of the list. */}
+          <ThemedSelect required aria-label="ธนาคาร" aria-invalid={invalidField === 'bankName' && value.bankChoice !== OTHER_BANK} aria-describedby={invalidField === 'bankName' && value.bankChoice !== OTHER_BANK && error ? errorId : undefined} className={inputClass} value={value.bankChoice} disabled={disabled}
             onChange={(event) => set({ bankChoice: event.target.value })}>
             <option value="">เลือกธนาคาร</option>
             {BANK_OPTIONS.map((bank) => <option key={bank} value={bank}>{bank}</option>)}
@@ -88,29 +108,27 @@ export function PayoutAccountFields({ value, onChange, disabled = false, invalid
       )}
       {!promptPay && value.bankChoice === OTHER_BANK && (
         <div className="sm:col-span-2">
-          <label className={labelClass}>ชื่อธนาคาร *</label>
+          <label className={labelClass}>ชื่อธนาคาร<span className="text-red-600"> *</span></label>
           <input aria-label="ชื่อธนาคาร" aria-invalid={invalidField === 'bankName'} aria-describedby={invalidField === 'bankName' && error ? errorId : undefined} className={inputClass} maxLength={80} disabled={disabled}
             value={value.bankOther} onChange={(event) => set({ bankOther: event.target.value })} />
           {invalidField === 'bankName' && error && <FieldError id={errorId}>{error}</FieldError>}
         </div>
       )}
       <div className="sm:col-span-2">
-        <label className={labelClass}>ชื่อบัญชี *</label>
+        <label className={labelClass}>ชื่อบัญชี<span className="text-red-600"> *</span></label>
         <input aria-label="ชื่อบัญชี" aria-invalid={invalidField === 'accountName'} aria-describedby={invalidField === 'accountName' && error ? errorId : undefined} className={inputClass} maxLength={140} disabled={disabled}
           autoComplete="off" value={value.accountName} onChange={(event) => set({ accountName: event.target.value })} />
-        {invalidField === 'accountName' && error && <FieldError id={errorId}>{error}</FieldError>}
-        <p className="mt-1 text-xs text-gray-500">{accountNameHint ?? 'ตามที่ธนาคารแสดง ผู้อนุมัติจะเทียบชื่อนี้กับชื่อผู้เบิก'}</p>
+        {wrong('accountName') ? <FieldError id={errorId}>{error}</FieldError>
+          : <p className="mt-1 text-xs text-gray-500">{accountNameHint ?? 'ตามที่ธนาคารแสดง ผู้อนุมัติจะเทียบชื่อนี้กับชื่อผู้เบิก'}</p>}
       </div>
       <div className="sm:col-span-2">
         <label className={labelClass}>{promptPay ? 'เบอร์พร้อมเพย์ *' : 'เลขบัญชี *'}</label>
         {/* text + numeric keypad, never type="number": that would drop a leading zero. */}
         <input aria-label={promptPay ? 'เบอร์พร้อมเพย์' : 'เลขบัญชี'} aria-invalid={invalidField === 'accountNumber'} aria-describedby={invalidField === 'accountNumber' && error ? errorId : undefined}
-          className={cx(inputClass, 'tracking-[.04em]')} type="text" inputMode="numeric" autoComplete="off" maxLength={40} disabled={disabled}
+          className={cx(inputClass, 'tracking-[.04em]')} type="text" inputMode="numeric" autoComplete="off" maxLength={40} disabled={disabled} placeholder={accountNumberPlaceholder}
           value={value.accountNumber} onChange={(event) => set({ accountNumber: event.target.value })} />
-        {invalidField === 'accountNumber' && error && <FieldError id={errorId}>{error}</FieldError>}
-        <p className="mt-1 text-xs text-gray-500">
-          {promptPay ? 'เบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0' : 'ตัวเลข 6 ถึง 20 หลัก พิมพ์ขีดหรือเว้นวรรคได้ ระบบเก็บเฉพาะตัวเลข'}
-        </p>
+        {wrong('accountNumber') ? <FieldError id={errorId}>{error}</FieldError>
+          : <p className="mt-1 text-xs text-gray-500">{promptPay ? 'เบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0' : 'ตัวเลข 6 ถึง 20 หลัก พิมพ์ขีดหรือเว้นวรรคได้'}</p>}
       </div>
     </div>
   );
@@ -137,7 +155,7 @@ export function PayoutHolderFields({ value, onChange, forSelf, disabled = false,
       </label>)}
     </div>
     {invalidField === 'holderType' && error && <FieldError id={errorId}>{error}</FieldError>}
-    {value.holderType === 'THIRD_PARTY' && <label className={labelClass}>{HOLDER_WORDS.noteLabel} *
+    {value.holderType === 'THIRD_PARTY' && <label className={labelClass}>{HOLDER_WORDS.noteLabel}<span className="text-red-600"> *</span>
       <textarea aria-label={HOLDER_WORDS.noteLabel} aria-invalid={invalidField === 'holderNote'} aria-describedby={invalidField === 'holderNote' && error ? errorId : undefined} className={cx(inputClass, 'mt-1.5 min-h-24 w-full')} maxLength={PAYOUT_HOLDER_NOTE_MAX_LENGTH}
         disabled={disabled} placeholder={HOLDER_WORDS.noteExample} value={value.holderNote ?? ''} onChange={event => onChange({ ...value, holderNote: event.target.value })} />
       {invalidField === 'holderNote' && error && <FieldError id={errorId}>{error}</FieldError>}
@@ -209,7 +227,7 @@ export function AccountNumberReveal({ masked, payoutKind, revealKey, canReveal, 
     try {
       await navigator.clipboard.writeText(shown ?? '');
       toast.success(words.copied);
-    } catch { setError('คัดลอกไม่สำเร็จ กรุณาคัดลอกด้วยตนเอง'); }
+    } catch { setError('คัดลอกไม่สำเร็จ คัดลอกด้วยตนเอง'); }
   };
 
   return (
@@ -217,22 +235,23 @@ export function AccountNumberReveal({ masked, payoutKind, revealKey, canReveal, 
       <div className="break-words text-sm font-semibold text-gray-900">{masked}</div>
       {shown && (
         <div className="rounded-xl border border-brand-100 bg-brand-25 p-3">
-          <div className="text-xs font-semibold text-gray-500">{words.full}</div>
-          <div className="mt-1 break-all font-mono text-lg font-bold tracking-[.06em] text-gray-900" data-testid="payout-account-number">{shown}</div>
+          <div className={factLabelClass}>{words.full}</div>
+          {/* One unit: a number is never broken over two lines (20 digits fit a 390 px phone at this size). */}
+          <div className="mangmee-unit mt-1 font-mono text-lg font-bold tracking-[.06em] text-gray-900" data-testid="payout-account-number">{shown}</div>
         </div>
       )}
-      {/* The hide control follows the number itself: whenever a number is on screen, so is the way to hide it. */}
+      {/* The hide control follows the number itself: whenever a number is on screen, so is the way to hide it. Neither
+          button is the main one of the page it sits on (the pay step has "บันทึกจ่าย"); the one that backs out comes first. */}
       {shown ? (
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} onClick={() => void copy()}>{words.copy}</button>
-          <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} onClick={() => setRevealed(null)}>{words.hide}</button>
-        </div>
+        <ActionGroup align="start">
+          <button type="button" className={ghostClass} onClick={() => setRevealed(null)}>{words.hide}</button>
+          <button type="button" className={ghostClass} onClick={() => void copy()}>{words.copy}</button>
+        </ActionGroup>
       ) : canReveal && (
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={() => void reveal()}>
-            {busy ? 'กำลังเปิด...' : words.show}
-          </button>
-        </div>
+        <ActionGroup align="start">
+          {/* The name stays while it works, so the button keeps its width; the mark of `aria-busy` says it is working. */}
+          <button type="button" className={ghostClass} disabled={busy} aria-busy={busy} onClick={() => void reveal()}>{words.show}</button>
+        </ActionGroup>
       )}
       {error && <ErrorBanner message={error} />}
     </div>
@@ -244,13 +263,18 @@ export function AccountNumberReveal({ masked, payoutKind, revealKey, canReveal, 
  * employee page. The owner can reveal and remove their own; whoever edits it for someone else types
  * the number once and sees the last 4 digits afterwards, like everyone else.
  */
-export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, title = 'บัญชีรับเงินคืน', description }: {
+export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, title = 'บัญชีรับเงินคืน', description, embedded = false }: {
   companyId: string;
   /** Omitted: the signed-in member's own account. */
   memberUserId?: string;
   canEdit: boolean;
   title?: string;
   description?: string;
+  /**
+   * The card sits inside another page's form (the edit-employee page), which has its own main button: the card's
+   * button that starts setting or editing the account is then drawn with the secondary look. Nothing else changes.
+   */
+  embedded?: boolean;
 }) {
   const own = !memberUserId;
   const toast = useToast();
@@ -286,8 +310,9 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
   }, [companyId, memberUserId, reloadKey]);
 
   const startEdit = () => {
-    // The form always starts empty: the saved number cannot be shown again to be retyped over.
-    setForm(emptyPayoutAccountForm()); setMethod(account?.payoutMethod ?? 'BANK_TRANSFER');
+    // What the card already shows of the account is filled in (its kind, bank and name). The number never is: a saved
+    // number cannot be shown again to be retyped over, so that one field starts empty and says so.
+    setForm(payoutAccountFormOf(account)); setMethod(account?.payoutMethod ?? 'BANK_TRANSFER');
     setError(null); setInvalidField(undefined); setEditing(true);
   };
 
@@ -303,11 +328,13 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
       return;
     }
     setBusy(true); setError(null); setInvalidField(undefined);
+    // What a change leaves alone is said when a change was made, not above an account nobody is changing.
+    const replaced = !!account;
     try {
       const input = memberPayoutAccountInput(method, form);
       const response = memberUserId ? await setMemberPayoutAccount(companyId, memberUserId, input) : await setMyPayoutAccount(companyId, input);
       setAccount(response.account); setEditing(false); setForm(emptyPayoutAccountForm());
-      toast.success(own ? 'บันทึกบัญชีรับเงินคืนแล้ว' : 'บันทึกบัญชีรับเงินคืนแล้ว ระบบแจ้งเจ้าของบัญชีให้ตรวจ');
+      toast.success(`${own ? 'บันทึกบัญชีรับเงินคืนแล้ว' : 'บันทึกบัญชีรับเงินคืนแล้ว ระบบแจ้งเจ้าของบัญชีให้ตรวจ'}${replaced ? ' ใบเบิกที่ส่งไปแล้วยังใช้บัญชีเดิม' : ''}`);
     } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
 
@@ -315,7 +342,7 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
     if (!(await confirm({
       title: 'ลบบัญชีรับเงินคืนประจำ',
       message: 'ใบเบิกที่ส่งไปแล้วยังใช้บัญชีเดิมของใบนั้น ร่างที่ยังไม่ส่งจะต้องเลือกวิธีรับเงินคืนใหม่ก่อนส่งอนุมัติ',
-      confirmLabel: 'ลบบัญชี', cancelLabel: 'กลับ', variant: 'danger',
+      confirmLabel: 'ลบบัญชี', cancelLabel: 'ไม่ลบ', variant: 'danger',
     }))) return;
     setBusy(true); setError(null);
     try {
@@ -345,13 +372,17 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
                   </label>
                 ))}
               </div>
-              {method === 'BANK_TRANSFER' && <PayoutAccountFields value={form} onChange={(next) => { setForm(next); setError(null); setInvalidField(undefined); }} disabled={busy} invalidField={invalidField} error={error} />}
-              {!own && <p className="text-xs text-gray-500">หลังบันทึก คุณจะเห็นเฉพาะ 4 ตัวท้าย และเจ้าของบัญชีจะได้รับแจ้งเตือนให้ตรวจ</p>}
-              {error && <div ref={errorRef} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={error} /></div>}
-              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} onClick={() => { setEditing(false); setError(null); }}>ยกเลิก</button>
-                <button type="submit" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึกบัญชี'}</button>
-              </div>
+              {method === 'BANK_TRANSFER' && <PayoutAccountFields value={form} onChange={(next) => { setForm(next); setError(null); setInvalidField(undefined); }} disabled={busy} invalidField={invalidField} error={error}
+                accountNumberPlaceholder={account?.payoutMethod !== 'BANK_TRANSFER' ? undefined : form.payoutKind === 'PROMPTPAY_PHONE' ? 'กรอกเบอร์พร้อมเพย์ใหม่' : 'กรอกเลขบัญชีใหม่'} />}
+              {/* Who will see the number, said where the number is typed (it was a paragraph above an account nobody was editing). */}
+              {own && method === 'BANK_TRANSFER' && <p className="text-sm text-gray-500">{`คนอื่นเห็นแค่ 4 ตัวท้าย ${payoutNumberWords(form.payoutKind).full}เปิดดูได้เฉพาะคุณ ผู้อนุมัติของใบนั้น และผู้ที่บันทึกจ่าย`}</p>}
+              {!own && <p className="text-sm text-gray-500">หลังบันทึก คุณจะเห็นเฉพาะ 4 ตัวท้าย และเจ้าของบัญชีจะได้รับแจ้งเตือนให้ตรวจ</p>}
+              {/* A field's own problem is said under that field, once; this box is for what no field can be blamed for. */}
+              {error && !invalidField && <div ref={errorRef} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={error} /></div>}
+              <ActionGroup>
+                <button type="button" className={ghostClass} disabled={busy} onClick={() => { setEditing(false); setError(null); setInvalidField(undefined); }}>ยกเลิก</button>
+                <button type="submit" className={btnClass} disabled={busy} aria-busy={busy}>บันทึกบัญชี</button>
+              </ActionGroup>
             </form>
           ) : (
             <>
@@ -359,9 +390,9 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
                 <div className="text-sm font-semibold text-gray-900">{PAYOUT_METHOD_TEXT.CASH}</div>
               ) : (
                 <dl className="grid gap-3 sm:grid-cols-2">
-                  <div><dt className="text-xs font-semibold text-gray-500">ชื่อบัญชี</dt><dd className="mt-1 break-words text-sm text-gray-900">{account.accountName}</dd></div>
+                  <div><dt className={factLabelClass}>ชื่อบัญชี</dt><dd className="mt-1 break-words text-sm font-semibold text-gray-900">{account.accountName}</dd></div>
                   <div>
-                    <dt className="text-xs font-semibold text-gray-500">บัญชี</dt>
+                    <dt className={factLabelClass}>บัญชี</dt>
                     <dd className="mt-1">
                       <AccountNumberReveal masked={payoutAccountLine(account)} payoutKind={account.payoutKind} revealKey={`${companyId}:${account.userId}:${account.updatedAt}`} canReveal={own}
                         last4={account.accountLast4} onReveal={async () => (await revealMyPayoutAccount(companyId)).accountNumber} />
@@ -369,14 +400,15 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
                   </div>
                 </dl>
               )}
-              {setBy && <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{setBy} ตรวจว่าเป็นบัญชีของ{own ? 'คุณ' : 'พนักงาน'}</p>}
+              {setBy && <Notice tone="warning">{setBy} ตรวจว่าเป็นบัญชีของ{own ? 'คุณ' : 'พนักงาน'}</Notice>}
               {error && <div ref={errorRef} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={error} /></div>}
               {canEdit && mayEdit ? (
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} onClick={startEdit}>{account ? 'แก้ไขบัญชี' : 'ตั้งบัญชีรับเงินคืน'}</button>
-                  {own && account && <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={() => void remove()}>ลบบัญชี</button>}
-                </div>
-              ) : <p className="text-xs text-gray-500">{`บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี ${THAI_SYSTEM_ROLE_NAMES.OWNER} หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN} ส่วน${THAI_SYSTEM_ROLE_NAMES.MANAGER}และ${THAI_SYSTEM_ROLE_NAMES.HR}ตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล`}</p>}
+                <ActionGroup>
+                  {own && account && <button type="button" className={dangerClass} disabled={busy} aria-busy={busy} onClick={() => void remove()}>ลบบัญชี</button>}
+                  {/* Setting the first account is the card's main act; editing one that exists is not (the page showed two green buttons). */}
+                  <button type="button" className={embedded || account ? ghostClass : btnClass} onClick={startEdit}>{account ? 'แก้ไขบัญชี' : 'ตั้งบัญชีรับเงินคืน'}</button>
+                </ActionGroup>
+              ) : <p className="text-sm text-gray-500">{`บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี ${THAI_SYSTEM_ROLE_NAMES.OWNER} หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN} ส่วน${THAI_SYSTEM_ROLE_NAMES.MANAGER}และ${THAI_SYSTEM_ROLE_NAMES.HR}ตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล`}</p>}
             </>
           )}
       {confirmDialog}
@@ -396,20 +428,25 @@ export function MemberPayoutAccountLine({ companyId, memberUserId }: { companyId
       .catch(() => undefined);
     return () => { active = false; };
   }, [companyId, memberUserId]);
-  return line ? <p className="mt-0.5 break-words text-xs font-semibold text-gray-500">บัญชีรับเงินคืน: {line}</p> : null;
+  return line ? <p className="mt-0.5 break-words text-sm font-semibold text-gray-500">บัญชีรับเงินคืน: {line}</p> : null;
 }
 
 /**
  * "รับเงินคืนทาง" on the claim form. A claim follows the requester's default account unless it says
  * otherwise. Holder facts say whether a selected account belongs to the requester or another person.
  */
-export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccount, current, canSaveAsDefault, payoutAccountHref, invalidField, error, savedAccounts = [], savedAccountsLoading = false, savedAccountsError, onReloadSaved }: {
+export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccount, noDefaultAccount = false, current, canSaveAsDefault, payoutAccountHref, invalidField, error, savedAccounts = [], savedAccountsLoading = false, savedAccountsError, onReloadSaved }: {
   value: ClaimPayoutForm;
   onChange: (next: ClaimPayoutForm) => void;
   /** The person filling the form is the requester. */
   forSelf: boolean;
   /** The requester's own default when `forSelf`: undefined while loading, null when none is set. */
   defaultAccount?: MemberPayoutAccountSummary | null;
+  /**
+   * The requester is known to have no default account (a new claim of their own): "follow my default" is not offered
+   * as a choice that cannot be sent, and nothing is chosen for them. A draft already saved on it keeps showing it.
+   */
+  noDefaultAccount?: boolean;
   /** An existing draft's account for this claim, masked. */
   current?: ReimbursementPayoutSummary | null;
   /** The server's answer: this viewer may save a typed account as the requester's default. */
@@ -434,7 +471,7 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
       <input type="radio" name="claim-payout-mode" className="mt-0.5 h-5 w-5 shrink-0" checked={value.mode === mode} onChange={() => choose(mode)} />
       <span className="min-w-0">
         <span className="block font-semibold text-gray-900">{label}</span>
-        {hint && <span className="mt-0.5 block break-words text-xs text-gray-500">{hint}</span>}
+        {hint && <span className="mt-0.5 block break-words text-sm text-gray-500">{hint}</span>}
       </span>
     </label>
   );
@@ -444,10 +481,10 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
   return (
     <MangmeeCard className="p-4 [overflow-wrap:anywhere] [&_input]:scroll-mt-[calc(var(--app-header-h)+1rem)] [&_button]:scroll-mt-[calc(var(--app-header-h)+1rem)] [&_summary]:scroll-mt-[calc(var(--app-header-h)+1rem)]">
       <h3 className="text-sm font-bold text-gray-900">รับเงินคืนทาง</h3>
-      <div role="radiogroup" aria-label="รับเงินคืนทาง" className="mt-3 space-y-2">
-        {option('DEFAULT', forSelf ? 'ตามบัญชีรับเงินคืนประจำของฉัน' : 'ตามบัญชีรับเงินคืนประจำของผู้เบิก', defaultHint)}
+      <div role="radiogroup" aria-label="รับเงินคืนทาง" tabIndex={-1} aria-invalid={invalidField === 'mode' ? true : undefined} className="mt-3 space-y-2">
+        {!(noDefaultAccount && value.mode !== 'DEFAULT') && option('DEFAULT', forSelf ? 'ตามบัญชีรับเงินคืนประจำของฉัน' : 'ตามบัญชีรับเงินคืนประจำของผู้เบิก', defaultHint)}
         {forSelf && defaultAccount && setByOtherLine(defaultAccount) && (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{setByOtherLine(defaultAccount)} ตรวจว่าเป็นบัญชีของคุณ</p>
+          <Notice tone="warning">{setByOtherLine(defaultAccount)} ตรวจว่าเป็นบัญชีของคุณ</Notice>
         )}
         {forSelf && savedAccounts.map((account, index) => <SavedPayoutAccountOption key={account.id} account={account} index={index} checked={value.mode === 'SAVED' && value.savedAccountId === account.id} onChange={() => onChange({ ...value, mode: 'SAVED', savedAccountId: account.id })} />)}
         {forSelf && savedAccountsLoading && <LoadingState label={SAVED_PAYOUT_WORDS.loading} />}
@@ -457,6 +494,8 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
         {option('SPECIFIED', hasOwnAccount ? 'ระบุบัญชีใหม่สำหรับใบนี้' : 'ระบุบัญชีสำหรับใบนี้',
           forSelf ? null : REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE)}
       </div>
+      {/* Nothing chosen yet: said here, where the choice is made, when the form was sent without one. */}
+      {invalidField === 'mode' && error && <div className="mt-2"><FieldError>{error}</FieldError></div>}
       {selectedHolder?.holderType === 'THIRD_PARTY' && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{HOLDER_WORDS.thirdPartyApprovalNotice}</p>}
       {!forSelf && <p className="mt-3 text-sm text-gray-600">{reimbursementPayoutOnBehalfNotice(true)}</p>}
       {value.mode === 'SPECIFIED' && (
@@ -482,6 +521,11 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
   );
 }
 
+/** The content of a card where something else is already the frame (a dialog): spacing only, no border of its own. */
+function PlainFrame({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <section className={className}>{children}</section>;
+}
+
 /**
  * The claim page's "การรับเงินคืน" card: the receiving method and the masked account, the requester's
  * name beside the account name so a person can compare them, who attested it, and the reveal button
@@ -493,12 +537,14 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
  * claim froze no account, so its payer is shown the requester's current default instead, labelled
  * as never approved on this claim, or is told to ask the requester (§15).
  */
-export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAccountHref, canWithdraw = false, payStep = false, sendBack }: {
+export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAccountHref, canWithdraw = false, payStep = false, sendBack, plain = false }: {
   companyId: string;
   detail: any;
   userId: string;
   editHref?: string;
   payoutAccountHref: string;
+  /** Drawn inside a dialog, which is its frame already: the same content with no card around it (never a card inside a card). */
+  plain?: boolean;
   /** The viewer may still take this sent claim back to a draft (the page's own withdraw action). */
   canWithdraw?: boolean;
   /** The claim waits for its payment and this viewer is offered to record it. */
@@ -528,13 +574,15 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
   // Side by side on purpose: people, not the system, judge whether the two names belong together.
   const names = (accountName?: string) => (
     <dl className="grid grid-cols-2 gap-3">
-      <div className="min-w-0"><dt className="text-xs font-semibold text-gray-500">ผู้เบิก</dt><dd className="mt-1 break-words text-sm font-semibold text-gray-900">{detail.requesterDisplayNameSnapshot ?? '—'}</dd></div>
-      <div className="min-w-0"><dt className="text-xs font-semibold text-gray-500">ชื่อบัญชี</dt><dd className="mt-1 break-words text-sm font-semibold text-gray-900">{accountName ?? '—'}</dd></div>
+      <div className="min-w-0"><dt className={factLabelClass}>ผู้เบิก</dt><dd className="mt-1 break-words text-sm font-semibold text-gray-900">{detail.requesterDisplayNameSnapshot ?? 'ยังไม่ระบุ'}</dd></div>
+      <div className="min-w-0"><dt className={factLabelClass}>ชื่อบัญชี</dt><dd className="mt-1 break-words text-sm font-semibold text-gray-900">{accountName ?? 'ยังไม่ระบุ'}</dd></div>
     </dl>
   );
   const reveal = async () => (await revealClaimPayoutAccount(companyId, detail.id)).accountNumber;
+  // In a dialog (`plain`) the dialog is the frame: the same content with no card drawn around it.
+  const Frame = plain ? PlainFrame : MangmeeCard;
   return (
-    <MangmeeCard className="space-y-3 p-4 [overflow-wrap:anywhere] sm:p-5">
+    <Frame className={plain ? 'space-y-3 border-b border-gray-100 pb-4 [overflow-wrap:anywhere]' : 'space-y-3 p-4 [overflow-wrap:anywhere] sm:p-5'}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         {/* Only the claim's own approved account is an instruction; a legacy claim's default is shown under its own label. */}
         <h2 className="font-bold text-gray-900">{payStep && view.state === 'transfer' ? 'โอนเข้าบัญชีนี้' : 'การรับเงินคืน'}</h2>
@@ -558,10 +606,12 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
       {view.state === 'missing' && (
         <>
           <ErrorBanner message={view.line} />
-          <div className="flex flex-col gap-2 sm:flex-row">
-            {editHref && <Link href={editHref} className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')}>เลือกวิธีรับเงินคืนในใบนี้</Link>}
-            {isRequester && <Link href={payoutAccountHref} className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')}>ตั้งบัญชีรับเงินคืนของฉัน</Link>}
-          </div>
+          {(editHref || isRequester) && (
+            <ActionGroup align="start">
+              {isRequester && <Link href={payoutAccountHref} className={ghostClass}>ตั้งบัญชีรับเงินคืนของฉัน</Link>}
+              {editHref && <Link href={editHref} className={ghostClass}>เลือกวิธีรับเงินคืนในใบนี้</Link>}
+            </ActionGroup>
+          )}
         </>
       )}
       {/* Who chose cash: the requester, or whoever answered a payout round with cash on their behalf. */}
@@ -570,43 +620,50 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
         <>
           {names(payout.accountName)}
           <PayoutHolderNotice account={payout} />
-          <AccountNumberReveal masked={view.line} payoutKind={payout.payoutKind} revealKey={`${detail.id}:${payout.version ?? ''}`} canReveal={payout.canRevealAccountNumber === true}
-            last4={payout.accountLast4} onReveal={reveal} />
+          <dl><dt className={factLabelClass}>บัญชีรับเงินคืน</dt><dd className="mt-1">
+            <AccountNumberReveal masked={view.line} payoutKind={payout.payoutKind} revealKey={`${detail.id}:${payout.version ?? ''}`} canReveal={payout.canRevealAccountNumber === true}
+              last4={payout.accountLast4} onReveal={reveal} />
+          </dd></dl>
         </>
       )}
       {view.notes.length > 0 && (
-        <ul className="space-y-1 text-xs text-gray-500">{view.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+        <ul className="space-y-1 text-sm text-gray-500">{view.notes.map((note) => <li key={note}>{note}</li>)}</ul>
       )}
-      {defaultChanged && <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{defaultChanged}</p>}
+      {defaultChanged && <Notice tone="warning">{defaultChanged}</Notice>}
       {history.length > 0 && (
-        <div className="border-t border-gray-100 pt-3" data-testid="reimbursement-payout-history">
-          <h3 className="text-xs font-semibold text-gray-500">ประวัติบัญชีรับเงินของใบนี้</h3>
-          <ol className="mt-2 space-y-2">
+        // Behind one press: the account in force is above, and a claim that went through a round has a list here long
+        // enough to push the step and its button off the screen.
+        <details className="group border-t border-gray-100 pt-1" data-testid="reimbursement-payout-history">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-gray-600 [&::-webkit-details-marker]:hidden">
+            <span>ประวัติบัญชีรับเงินของใบนี้</span>
+            <DisclosureChevron />
+          </summary>
+          <ol className="mt-1 divide-y divide-gray-100">
             {history.map((row) => (
-              <li key={row.version} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2">
+              <li key={row.version} className="min-w-0 py-2 first:pt-0 last:pb-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="min-w-0 break-words text-sm font-semibold text-gray-900">{row.line}</span>
                   {row.current && <MangmeeBadge tone="teal">ใช้อยู่ตอนนี้</MangmeeBadge>}
                 </div>
                 <PayoutHolderNotice account={row.holder} />
-                <ul className="mt-1 space-y-0.5 text-xs text-gray-500">{row.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+                <ul className="mt-1 space-y-0.5 text-sm text-gray-500">{row.notes.map((note) => <li key={note}>{note}</li>)}</ul>
               </li>
             ))}
           </ol>
-        </div>
+        </details>
       )}
       {sendBack && (
         <div className="border-t border-gray-100 pt-3" data-testid="reimbursement-payout-send-back">
           {/* By what the claim holds: an account to correct, cash to choose again, or (a claim with no account of its own,
               which is paid as it is) an account to add. "อย่าเพิ่งจ่าย" is said only to whoever is offered the payment. */}
-          <p className="text-xs leading-5 text-gray-500">{payStep ? lead.payLead : lead.payLeadCannotPay}</p>
+          <p className="text-sm text-gray-500">{payStep ? lead.payLead : lead.payLeadCannotPay}</p>
           <button type="button" disabled={sendBack.disabled} onClick={sendBack.onPress}
             className="inline-flex min-h-11 items-center text-left text-sm font-semibold text-gray-700 underline underline-offset-4 hover:text-gray-900 disabled:opacity-50">
             {round.payLink}
           </button>
         </div>
       )}
-    </MangmeeCard>
+    </Frame>
   );
 }
 
@@ -628,7 +685,7 @@ export function PayoutAttestationCheck({ checked, onChange, disabled = false, pa
       <input ref={inputRef} type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
       <span>
         <span className="block font-semibold text-gray-900">{holderType === 'THIRD_PARTY' ? HOLDER_WORDS.thirdPartyAcceptance : PAYOUT_ATTESTATION_TEXT}</span>
-        {holderType === 'THIRD_PARTY' ? checked && forSelf && <span className="mt-0.5 block text-xs text-gray-500">{HOLDER_WORDS.thirdPartySelfAttestation}</span> : <span className="mt-0.5 block text-xs text-gray-500">{payoutNumberWords(payoutKind).check}</span>}
+        {holderType === 'THIRD_PARTY' ? checked && forSelf && <span className="mt-0.5 block text-sm text-gray-500">{HOLDER_WORDS.thirdPartySelfAttestation}</span> : <span className="mt-0.5 block text-sm text-gray-500">{payoutNumberWords(payoutKind).check}</span>}
       </span>
     </label>
   );
@@ -650,10 +707,10 @@ export function PayerConfirmationCheck({ confirmation, checked, onChange, disabl
       <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={checked} disabled={disabled} aria-required={confirmation.required}
         onChange={(event) => onChange(event.target.checked)} />
       <span className="min-w-0">
-        <span className="block font-semibold text-gray-900">{confirmation.holder?.holderType === 'THIRD_PARTY' ? HOLDER_WORDS.thirdPartyPaymentConfirmation : PAYER_CONFIRMATION_TEXT}{confirmation.required && ' *'}</span>
-        <span className="mt-0.5 block text-xs text-gray-600">{confirmation.accountLine}</span>
+        <span className="block font-semibold text-gray-900">{confirmation.holder?.holderType === 'THIRD_PARTY' ? HOLDER_WORDS.thirdPartyPaymentConfirmation : PAYER_CONFIRMATION_TEXT}{confirmation.required && <span className="text-red-600"> *</span>}</span>
+        <span className="mt-0.5 block text-sm text-gray-600">{confirmation.accountLine}</span>
         <PayoutHolderNotice account={confirmation.holder} />
-        {confirmation.note && <span className="mt-0.5 block text-xs text-gray-500">{confirmation.note}</span>}
+        {confirmation.note && <span className="mt-0.5 block text-sm text-gray-500">{confirmation.note}</span>}
       </span>
     </label>
   );

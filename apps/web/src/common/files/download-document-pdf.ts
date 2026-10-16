@@ -30,7 +30,7 @@ export async function downloadDocumentAsPdf(
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext('2d');
-    if (!context) throw new Error('เบราว์เซอร์นี้สร้างไฟล์ PDF ไม่ได้ กรุณาใช้ปุ่มเปิดแท็บใหม่แทน');
+    if (!context) throw new Error('เบราว์เซอร์นี้สร้างไฟล์ PDF ไม่ได้ ใช้ปุ่มเปิดแท็บใหม่แทน');
     // JPEG carries no alpha: paint the sheet white first or transparent areas turn black.
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, width, height);
@@ -41,7 +41,7 @@ export async function downloadDocumentAsPdf(
       jpegDataUrl = canvas.toDataURL('image/jpeg', 0.95);
     } catch {
       // Tainted canvas: the source is cross-origin without CORS headers.
-      throw new Error('ดาวน์โหลดไฟล์นี้เป็น PDF ไม่ได้ กรุณาใช้ปุ่มเปิดแท็บใหม่แทน');
+      throw new Error('ดาวน์โหลดไฟล์นี้เป็น PDF ไม่ได้ ใช้ปุ่มเปิดแท็บใหม่แทน');
     }
 
     pages.push({ jpeg: base64ToBytes(jpegDataUrl.slice(jpegDataUrl.indexOf(',') + 1)), pixelWidth: width, pixelHeight: height, maxDrawWidthPt: plan.maxDrawWidthPt });
@@ -58,7 +58,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     // Storage URLs are another origin; without this the canvas would be tainted.
     image.crossOrigin = 'anonymous';
     image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('โหลดเอกสารไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'));
+    image.onerror = () => reject(new Error('โหลดเอกสารไม่สำเร็จ ลองอีกครั้ง'));
     image.src = src;
   });
 }

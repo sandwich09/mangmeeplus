@@ -27,7 +27,7 @@ export function ErrorState({
       </span>
       <div className="flex flex-col gap-1">
         <p className="text-sm font-semibold text-gray-700">{title ?? t('state.error.title', locale)}</p>
-        {description && <p className="text-sm text-gray-400">{description}</p>}
+        {description && <p className="text-sm text-gray-500">{description}</p>}
       </div>
       {onRetry && (
         <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
@@ -35,7 +35,7 @@ export function ErrorState({
         </Button>
       )}
       {requestId && (
-        <p className="text-xs text-gray-300 font-mono">{t('common.request_id', locale)}: {requestId}</p>
+        <p className="text-xs text-gray-500 font-mono">{t('common.request_id', locale)}: <span className="mangmee-unit">{requestId}</span></p>
       )}
     </div>
   );

@@ -1,3 +1,4 @@
+import type { ReimbursementHubBootstrap } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 // resolveUploadUrl is no longer imported here: the direct fetch was replaced by the shared
 // uploadReceiptFile helper, which resolves the URL and turns a failed PUT into a readable message.
@@ -63,13 +64,13 @@ export function listReimbursements(companyId: string, params?: Record<string, un
  */
 export function loadHubPage(
   companyId: string,
-  params: { scope?: string; filter: HubFilter; search?: string; page: number },
+  params: { scope?: string; filter: HubFilter; search?: string; order?: 'newest' | 'oldest'; page: number },
   handlers: { onPage: (result: any) => void; onError: (error: unknown) => void },
 ): () => void {
   let held = true;
   // `.catch` after `.then`, so a page the caller cannot take is reported like a page that did not arrive.
   listReimbursements(companyId, {
-    scope: params.scope, bucket: params.filter === 'all' ? undefined : params.filter, search: params.search, page: params.page, pageSize: HUB_PAGE_SIZE,
+    order: params.order, scope: params.scope, bucket: params.filter === 'all' ? undefined : params.filter, search: params.search, page: params.page, pageSize: HUB_PAGE_SIZE,
   })
     .then((result) => {
       // The cards are the server's counts: an answer without them is not shown as a scope of zero claims.
@@ -86,6 +87,9 @@ export function loadHubPage(
  * list claims, so one row is asked for and the fact is read off the answer. An answer without it is refused, never
  * read as a company with no finance step. No error toast: the hub then keeps the wording of the right the session holds.
  */
+export function getReimbursementHub(companyId: string) {
+  return apiFetch<ReimbursementHubBootstrap>(`${base(companyId)}/hub`, { suppressErrorToast: true });
+}
 export async function getReimbursementFinanceStep(companyId: string, scope?: string): Promise<{ financeReviewRequired: boolean }> {
   const answer = await apiFetch<any>(`${base(companyId)}${qs({ scope, pageSize: 1 })}`, { suppressErrorToast: true });
   if (typeof answer?.financeReviewRequired !== 'boolean') throw new Error('ข้อมูลที่ได้รับไม่ครบ');
@@ -172,6 +176,9 @@ export function submitReimbursement(companyId: string, id: string, payoutSubmitT
  * Cancels a claim, or continues a cancellation that was started and has not completed. A continue sends no
  * reason (the one on record stays), except the corrected reason when the stored one is what blocks it.
  */
+export function deleteReimbursementDraft(companyId: string, id: string) {
+  return apiFetch<void>(`${base(companyId)}/${id}`, { method: 'DELETE', suppressErrorToast: true });
+}
 export function cancelReimbursement(companyId: string, id: string, reason?: string, taxFilingAttested?: true) {
   return apiFetch<any>(`${base(companyId)}/${id}/cancel`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason, ...(taxFilingAttested === true ? { taxFilingAttested } : {}) }) });
 }

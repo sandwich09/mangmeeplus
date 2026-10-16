@@ -26,10 +26,11 @@ function makeSpy(addressJson: unknown = { line1: 'ที่อยู่กิจ
   const taxRepo = {
     findPeriodById: async () => (record('read:period'), { id: 'period-1', companyId: 'company-1', periodKey: '2026-07', formType: 'PND3' }),
     findEventsByPeriod: async () => (record('read:events'), [
-      { id: 'event-1', eventType: 'WHT_PND3', grossAmount: '1000.0000', withheldAmount: '30.0000', taxAmount: '30.0000' },
+      { id: 'event-1', sourceType: 'procurement.supplier_payment', sourceId: 'supplier-payment-1', eventType: 'WHT_PND3', grossAmount: '1000.0000', withheldAmount: '30.0000', taxAmount: '30.0000' },
     ]),
     prisma: { client: {
-      company: { findUnique: async () => (record('read:company'), { id: 'company-1', name: 'บริษัท', taxId: '9999999999999', addressJson }) },
+      company: { findUnique: async () => (record('read:company'), { id: 'company-1', name: 'บริษัท', registeredName: 'บริษัท', taxId: '9999999999999', addressJson }) },
+      supplierPayment: { findFirst: async () => ({ paymentDate: new Date('2026-07-15') }) },
       companyTaxProfile: { findUnique: async () => (record('read:profile'), null) },
       whtIncomeCategory: { findUnique: async () => (record('read:category'), { code: '3', nameTh: 'ค่าบริการ' }) },
       whtCertificate: { create: async ({ data }: any) => (record('write:certificate'), {
@@ -212,9 +213,10 @@ describe('tax-workspace issuance from an expense being corrected', () => {
   it('refuses expense events after reopening or superseding the source, before creating a certificate', async () => {
     for (const mode of ['reopened', 'superseded']) for (const state of ['OPEN', 'CLOSED'] as const) {
       const spy = makeSpy();
-      const event = { id: 'event-1', companyId: 'company-1', sourceType: 'expense.record', sourceId: 'exp-1', status: 'ACTIVE', sourceHash: 'old', eventType: 'WHT_PND3', grossAmount: '1000.0000', withheldAmount: '30.0000', taxAmount: '30.0000' };
+      const event = { id: 'event-1', companyId: 'company-1', sourceType: 'expense.record', sourceId: 'exp-1', sourceLineKey: 'payment:p1', status: 'ACTIVE', sourceHash: 'old', eventType: 'WHT_PND3', grossAmount: '1000.0000', withheldAmount: '30.0000', taxAmount: '30.0000' };
       spy.taxRepo.findEventsByPeriod = async () => [event];
       const client = spy.taxRepo.prisma.client;
+      client.expensePayment = { findFirst: async () => ({ paidAt: new Date('2026-07-15'), paidAtConfirmed: true }) };
       client.$executeRaw = async () => 0;
       client.$transaction = async (work: any) => work(client);
       client.expenseRecord = { findFirst: async () => ({ status: mode === 'reopened' ? 'NEEDS_REVIEW' : 'CONFIRMED' }) };
@@ -233,7 +235,7 @@ for (const seam of ['reservation', 'certificate']) it(`A9 reports a tax-workspac
   else spy.taxRepo.prisma.client.whtCertificate.create = fail;
   await assert.rejects(useCase(guard({ state: 'OPEN' }), spy).value.execute(ctx, input), (error: any) => {
     assert.equal(error.getResponse().code, 'wht_certificate_number_duplicate');
-    assert.equal(error.getResponse().message, 'ออกหนังสือรับรองไม่สำเร็จเพราะเลขที่เอกสารซ้ำ กรุณาลองอีกครั้ง ถ้ายังไม่สำเร็จ ให้แจ้งทีมมั่งมีพลัสพร้อมเลขที่เอกสารรายจ่ายนี้'); return true;
+    assert.equal(error.getResponse().message, 'ออกหนังสือรับรองไม่สำเร็จเพราะเลขที่เอกสารซ้ำ ลองอีกครั้ง ถ้ายังไม่สำเร็จ ให้แจ้งทีมงานมั่งมีพร้อมเลขที่เอกสารรายจ่ายนี้'); return true;
   });
 });
 
@@ -244,7 +246,7 @@ describe('C7 direct certificate address', () => {
       const { value, spy } = useCase(guard({ state: 'OPEN' }));
       await assert.rejects(value.execute(ctx, { ...input, payeeSnapshot: { ...input.payeeSnapshot, address } }), (error: any) => {
         assert.equal(error.getStatus(), 409); assert.equal(error.getResponse().code, 'wht_handoff_payee_address_missing');
-        assert.equal(error.getResponse().message, 'ยังไม่มีที่อยู่ผู้รับเงิน กรุณาเพิ่มที่อยู่ผู้รับเงินก่อน แล้วกด “ออกหนังสือรับรอง 50 ทวิ” อีกครั้ง'); return true;
+        assert.equal(error.getResponse().message, 'ยังไม่มีที่อยู่ผู้รับเงิน เพิ่มที่อยู่ผู้รับเงินก่อน แล้วกด “ออกหนังสือรับรอง 50 ทวิ” อีกครั้ง'); return true;
       });
       assert.equal(spy.calls.some(call => call.startsWith('write:') || call === 'render:pdf'), false);
     }
@@ -257,4 +259,41 @@ it('C9 direct create refuses missing shop details before a missing payee address
   const { value } = useCase(guard({ state: 'OPEN' }), spy);
   await assert.rejects(value.execute(ctx, { ...input, payeeSnapshot: { ...input.payeeSnapshot, address: null } }), (error: any) => error.getStatus() === 409 && error.getResponse().code === 'wht_payer_identity_missing');
   assert.equal(spy.calls.some(call => call.startsWith('write:') || call === 'render:pdf'), false);
+});
+
+it('refuses direct system issuance for a dividend or PND2 type before writes', async () => {
+  for (const incomeCategoryCode of ['WHT_INTEREST', 'WHT_DIVIDEND_IND', 'WHT_DIVIDEND']) {
+    const h = makeSpy();
+    const useCase = new CreateWhtCertificateUseCase(h.taxRepo, h.reserveNumber, h.commitNumber, h.audit, guard({ state: 'OPEN' }), {} as any, makeRenderer(h.calls), {} as any, {} as any);
+    await assert.rejects(useCase.execute(ctx, { ...input, incomeCategoryCode }), (e: any) => e.getResponse().code === 'wht_certificate_income_unsupported');
+    assert.ok(h.calls.every(call => !call.startsWith('write:')));
+  }
+});
+
+it('a caller cannot relabel a dividend payment as service to issue a system certificate', async () => {
+  const h = makeSpy();
+  h.taxRepo.findEventsByPeriod = async () => [{ id: 'event-1', sourceType: 'procurement.supplier_payment', sourceId: 'supplier-payment-1', eventType: 'WHT_PND53', incomeCategoryCode: 'WHT_DIVIDEND', grossAmount: '1000.0000', withheldAmount: '30.0000', taxAmount: '30.0000' }];
+  const value = new CreateWhtCertificateUseCase(h.taxRepo, h.reserveNumber, h.commitNumber, h.audit, guard({ state: 'OPEN' }), {} as any, makeRenderer(h.calls), {} as any, {} as any);
+  await assert.rejects(value.execute(ctx, input), (e: any) => e.getResponse().code === 'wht_certificate_income_unsupported');
+  assert.ok(h.calls.every(call => !call.startsWith('write:')));
+});
+
+it('W1 the tax-workspace route cannot issue a document-date event without a real payment', async () => {
+  const h = makeSpy();
+  h.taxRepo.findEventsByPeriod = async () => [{ id: 'event-1', sourceType: 'expense.record', sourceId: 'exp-1', sourceLineKey: '__HEADER__', eventType: 'WHT_PND3', grossAmount: '1000', withheldAmount: '30', taxAmount: '30' }];
+  await assert.rejects(useCase(guard({ state: 'OPEN' }), h).value.execute(ctx, input), (e: any) => e.getResponse().code === 'wht_certificate_payment_required');
+  assert.equal(h.calls.includes('write:reserve-number'), false);
+});
+
+it('refuses issue without a registered payer name even when the display name exists', async () => {
+  const { value, spy } = useCase(guard({ state: 'OPEN' }));
+  spy.taxRepo.prisma.client.company.findUnique = async () => ({ name: 'Display name', registeredName: ' ', taxId: '9999999999999', addressJson: { line1: 'ที่อยู่ร้าน' } });
+  await assert.rejects(() => value.execute(ctx, input), (error: any) => error.getResponse().code === 'wht_payer_identity_missing' && error.getResponse().payerMissing.includes('REGISTERED_NAME'));
+  for (const write of CERTIFICATE_WRITES) assert.ok(!spy.calls.includes(write));
+});
+it('issues with the registered payer name instead of the shop display name', async () => {
+  const { value, spy } = useCase(guard({ state: 'OPEN' }));
+  spy.taxRepo.prisma.client.company.findUnique = async () => ({ name: 'Display name', registeredName: 'ชื่อจดทะเบียนจริง', taxId: '9999999999999', addressJson: { line1: 'ที่อยู่ร้าน' } });
+  const result = await value.execute(ctx, input);
+  assert.equal(result.payerSnapshot.companyName, 'ชื่อจดทะเบียนจริง');
 });

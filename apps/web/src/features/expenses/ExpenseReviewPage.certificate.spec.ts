@@ -11,6 +11,7 @@ import { expenseEvidenceFingerprint } from '@watchdog-bms/contracts';
 import { h, mutable } from './expense-certificate-test-harness';
 import type { ExpenseCertificate } from './ExpenseCertificateReopen';
 import { expenseCertificateReopenedMessage } from './ExpenseCertificateReopen';
+require.extensions['.css'] = m => { m.exports = { __esModule: true, default: new Proxy({}, { get: (_, key) => key }) }; };
 const svg = require.extensions['.svg'];
 require.extensions['.svg'] = (m) => { m.exports = () => null; };
 const api = mutable('./expenses.api');
@@ -150,13 +151,18 @@ test('reopen toast uses the server cancelled certificate instead of the old dial
   }
 });
 
-test('certificate void renders the child modal and hides the bottom reason box; certificate-free void keeps it', () => {
+test('certificate void renders the child modal; a certificate-free void asks in its own window, and the bottom bar never holds a form', () => {
   for (const certificate of [{ kind: 'SYSTEM', number: 'WHT-1', date: null, canCancel: true }, { kind: 'EXTERNAL', number: null, date: null, canCancel: true }, null] as const) {
     const page = setup(certificate, 'แก้ยอด', false, { correctionAction: null, showVoid: true });
     const html = page.render();
     assert.equal(html.includes('id="expense-certificate-void-form"'), Boolean(certificate));
-    assert.equal(html.includes('rows="2"'), !certificate);
-    assert.ok(html.indexOf('mangmee-safe-bottom sticky') < (html.indexOf('expense-certificate-void-form') < 0 ? Infinity : html.indexOf('expense-certificate-void-form')));
+    // 2026-10-13: the reason box left the sticky bar (thai-ux-standard §4): each case asks in one dialog that names the document.
+    assert.equal(html.includes('id="expense-void-form"'), !certificate);
+    const bar = html.indexOf('data-form-action-bar'), firstDialog = html.indexOf('data-dialog');
+    assert.equal(bar, -1, 'confirmed expenses keep cancellation in More without an empty sticky bar');
+    assert.match(html.slice(0, firstDialog), /เพิ่มเติม/);
+    assert.doesNotMatch(html.slice(0, firstDialog), /id="expense-void-form"|id="expense-certificate-void-form"/);
+    if (!certificate) { assert.match(html, /<h2>ยกเลิกเอกสาร[^<]*<\/h2>/); assert.match(html, />ไม่ยกเลิก<\/button>/); assert.match(html, /type="submit"[^>]*form="expense-void-form"|form="expense-void-form"[^>]*type="submit"/); }
   }
 });
 
@@ -201,7 +207,7 @@ test('C3 rendered correction shows the printed Thai income name, grouped money, 
   assert.ok(html.includes('10,000.00')); assert.doesNotMatch(html, /id="wht-correct-gross-/);
   assert.equal(page.find('textarea', 'wht-correct-payee-address-expense').rows, 4);
   assert.equal(page.find('input', 'wht-correct-reason-expense').placeholder, 'เช่น สะกดชื่อผู้รับเงินผิด');
-  assert.doesNotMatch(html, />ดาวน์โหลด<\/button>/);
+  assert.doesNotMatch(html, />ดาวน์โหลดหนังสือรับรอง<\/button>/);
 });
 
 test('AW2 sends only the changed payee field and reopens with the newly corrected certificate', async () => {
@@ -372,7 +378,7 @@ test('correction names the new-certificate result, explains disabled presses and
   const submit = () => page.nodes.find(node => node.tag === 'button' && node.props.type === 'submit')!.props;
   assert.ok(html.includes('ระบบจะยกเลิกใบเดิมและออกใบใหม่ เลขที่ใหม่ ใบเดิมเก็บไว้ในประวัติ'));
   assert.ok(html.includes('ออกใบใหม่แทนใบเดิม')); assert.ok(html.includes('กรอกเหตุผลก่อน')); assert.equal(submit().disabled, true);
-  assert.doesNotMatch(html, />ดาวน์โหลด<\/button>|>พิมพ์ใบแทน \(เลขที่เดิม\)<\/button>|height:6rem/);
+  assert.doesNotMatch(html, />ดาวน์โหลดหนังสือรับรอง<\/button>|>พิมพ์ใบแทน \(เลขที่เดิม\)<\/button>|height:6rem/);
   changeCorrection(page, 'reason', 'แก้ชื่อ'); html = page.render(); assert.ok(html.includes('ยังไม่ได้แก้ไขข้อมูลใด')); assert.equal(submit().disabled, true);
   changeCorrection(page, 'payee-name', 'ชื่อใหม่'); html = page.render(); assert.equal(submit().disabled, false);
   assert.doesNotMatch(html, /กรอกเหตุผลก่อน|ยังไม่ได้แก้ไขข้อมูลใด/);
@@ -392,7 +398,7 @@ test('the issue answer immediately supplies the card number and date and names t
         page.render(); page.nodes.find(node => node.tag === 'WhtIssueButton')!.props.onIssue();
         await new Promise(done => setImmediate(done));
         assert.equal(page.state.whtHandoff.certificateNumber, number ?? null); assert.equal(page.state.whtHandoff.certificateIssuedAt, '2026-10-11T00:00:00Z');
-        assert.deepEqual(page.successes, [number ? `ออกหนังสือรับรองเลขที่ ${number} แล้ว` : 'ออกหนังสือรับรองหัก ณ ที่จ่ายในระบบเรียบร้อยแล้ว']);
+        assert.deepEqual(page.successes, [number ? `ออกหนังสือรับรองเลขที่ ${number} แล้ว` : 'ออกหนังสือรับรองแล้ว']);
         if (number) assert.ok(page.render().replace(/<[^>]*>/g, '').includes('ออกแล้ว เลขที่ WHT-ISSUED วันที่'));
       } finally { issue.mock.restore(); }
     }
@@ -450,21 +456,92 @@ test('C16 closing and reopening the expense edit keeps its reason and uses a des
   const page = setup({ kind: 'SYSTEM', number: 'WHT-1', date: null, canCancel: true }, 'เหตุผลที่จำไว้', true);
   page.render();
   assert.match(page.find('button', 'expense-correction-form').className, /mangmee-btn-danger/);
-  const close = page.nodes.find(node => node.tag === 'Modal' && node.props.title === 'แก้ไขเอกสาร')!;
+  const close = page.nodes.find(node => node.tag === 'Modal' && node.props.title?.props?.children === 'แก้ไขเอกสาร')!;
   close.props.onClose(); page.render();
-  const reopen = page.nodes.find(node => node.tag === 'button' && node.props.children.includes('แก้ไขเอกสาร') && node.props.className?.includes('whitespace-nowrap'))!;
-  reopen.props.onClick(); page.render();
+  const reopen = page.nodes.find(node => node.tag === 'button' && node.props.children.includes('แก้ไขเอกสาร') && !node.props.form)!;
+  reopen.props.onClick({ currentTarget: { closest: () => null, focus: () => {} } }); page.render();
   assert.equal(page.find('textarea', 'expense-correction-reason').value, 'เหตุผลที่จำไว้');
 });
 
 test('C16 reason guidance appears only after an invalid edit submit and editable certificate fields precede compact facts', async () => {
   const edit = setup({ kind: 'SYSTEM', number: 'WHT-1', date: null, canCancel: true }, '', true);
-  assert.doesNotMatch(edit.render(), /กรุณาระบุเหตุผลอย่างน้อย/);
-  assert.match(await edit.submit(), /กรุณาระบุเหตุผลอย่างน้อย 3 ตัวอักษร และไม่เกิน 500 ตัวอักษร/);
+  assert.doesNotMatch(edit.render(), /เหตุผลต้องมี/);
+  assert.match(await edit.submit(), /เหตุผลต้องมี 3–500 ตัวอักษร แก้เหตุผลแล้วลองอีกครั้ง/);
   const page = correctionPage(correctionHandoff(currentCertificate())); page.render(); const html = toggleCorrection(page);
   assert.ok(html.indexOf('wht-correct-payment-date') < html.indexOf('wht-correct-payee-name'));
   assert.ok(html.indexOf('wht-correct-payee-address') < html.indexOf('wht-correct-reason'));
   assert.ok(html.indexOf('ออกใบใหม่แทนใบเดิม') < html.indexOf('line-clamp-2'));
   assert.ok(html.indexOf('line-clamp-2') < html.indexOf('ถ้าส่วนนี้ผิด'));
   assert.doesNotMatch(html, /ปิดฟอร์มแก้ไข/);
+});
+
+test('paid receipt replacement keeps the specific refusal on the page beside the supporting-evidence way out', async () => {
+  const { withGenericUploadError } = await import('@/common/files/upload-file.logic');
+  const message = 'รายจ่ายนี้บันทึกจ่ายแล้ว เปลี่ยนใบเสร็จหลักไม่ได้ ให้แนบเป็นหลักฐานเพิ่ม';
+  const upload = mock.method(api, 'uploadExpenseEvidenceFile', async () => withGenericUploadError(() => withGenericUploadError(async () => {
+    throw Object.assign(new Error(message), { code: 'expense_receipt_replace_locked' });
+  })));
+  const page = setup(null, '', false, { detail: { ...detail(null), status: 'NEEDS_REVIEW', paymentStatus: 'PAID', paidAmount: '100', outstandingAmount: '0' }, step: 'evidence', correctionAction: null });
+  try {
+    page.render();
+    const input = page.nodes.find(node => node.tag === 'input' && node.props.type === 'file')!;
+    assert.ok(input);
+    input.props.onChange({ target: { files: [{ name: 'replacement.png', size: 100, type: 'image/png' }], value: 'picked' } });
+    await new Promise(resolve => setImmediate(resolve));
+    const html = page.render();
+    assert.equal(page.state.error, message);
+    assert.match(html, new RegExp(message));
+    assert.match(html, /แนบหลักฐานเพิ่ม/);
+    assert.doesNotMatch(html, /เปลี่ยนหรือแนบไฟล์ตรงนี้ไม่ได้/);
+    assert.equal(page.state.conflictReload, false);
+  } finally { upload.mock.restore(); }
+});
+
+
+test('expense certificate download saves the artifact and toasts its number only on success', async () => {
+  const artifact = { fileName: 'หนังสือรับรอง-50-ทวิ-WHT-2.pdf', mimeType: 'application/pdf', contentBase64: '' };
+  let refusal = false;
+  const read = mock.method(api, 'downloadSystemWhtCertificate', async () => {
+    if (refusal) throw new Error('ลองอีกครั้ง');
+    return { certificateNumber: 'WHT-2', pdfArtifact: artifact };
+  });
+  const save = mock.method(downloads, 'downloadArtifact', () => {});
+  const page = correctionPage(correctionHandoff());
+  try {
+    page.render(); page.nodes.find(n => n.tag === 'ExpenseCertificateCard')!.props.onDownload();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(save.mock.calls[0]!.arguments, [artifact]);
+    assert.deepEqual(page.successes, ['ดาวน์โหลดหนังสือรับรอง WHT-2 แล้ว']);
+    refusal = true;
+    page.render(); page.nodes.find(n => n.tag === 'ExpenseCertificateCard')!.props.onDownload();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(page.successes.length, 1);
+    assert.equal(save.mock.callCount(), 1);
+  } finally { read.mock.restore(); save.mock.restore(); }
+});
+
+test('filed payment changes direct the reader to cancel the document and record it again', async () => {
+  const { expenseCorrectionBlockerMessage } = await import('@watchdog-bms/contracts');
+  for (const formType of ['PND3', 'PND53'] as const) for (const operation of ['reopen', 'recordPayment', 'cancelPayment'] as const) {
+    const text = expenseCorrectionBlockerMessage('tax_period_filed', operation, { lockedTaxPeriods: [{ formType, periodKey: '2026-10' }] } as any);
+    assert.match(text, /ให้ยกเลิกเอกสารแล้วบันทึกใหม่/);
+    assert.match(text, /ให้ผู้ทำบัญชีแจ้งกรมสรรพากรเรื่องแบบเดิม/);
+  }
+});
+
+test('paid header requires certificates for every active withholding payment and keeps the way to finish', () => {
+  for (const [outstanding, complete, expected] of [
+    ['3880', false, null], // no payment
+    ['1940', false, null], // part paid
+    ['0', false, 'จ่ายครบแล้ว ยังออกหนังสือรับรองไม่ครบ'], // none or some certificates
+    ['0', true, 'จ่ายครบและมีหนังสือรับรองแล้ว'],
+    ['1940', true, null], // the other payment was cancelled
+  ] as const) {
+    const page = setup(null, '', false, { correctionAction: null, detail: { ...detail(null), whtAmount: '120', outstandingAmount: outstanding },
+      whtHandoff: { status: 'SYSTEM_ISSUED', prefill: { payeeSnapshot: {} } }, whtCertificatesComplete: complete });
+    const html = page.render();
+    if (expected) assert.ok(html.includes(expected));
+    else assert.doesNotMatch(html, /จ่ายครบและมีหนังสือรับรองแล้ว|จ่ายครบแล้ว ยังออกหนังสือรับรองไม่ครบ/);
+    if (!complete) assert.match(html, /ไปที่หนังสือรับรอง 50 ทวิ/);
+  }
 });

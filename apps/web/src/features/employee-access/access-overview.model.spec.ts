@@ -4,7 +4,7 @@ import type { MenuDefinition, PermissionMatrixRow } from '@watchdog-bms/contract
 import { accountAccessNotice, capabilityLabels, grantedActions, projectGrantedMenus } from './access-overview.model';
 
 const MENUS: MenuDefinition[] = [
-  { id: 'dashboard', labelTh: 'แดชบอร์ด', group: 'main', route: '/dashboard', actions: { view: ['dashboard.read'] } },
+  { id: 'dashboard', labelTh: 'หน้าแรก', group: 'main', route: '/dashboard', actions: { view: ['dashboard.read'] } },
   {
     id: 'expenses', labelTh: 'ค่าใช้จ่าย+ใบเสร็จ', group: 'fin', route: '/expenses',
     actions: { view: ['expense.read'], create: ['expense.create'], edit: ['expense.review'], del: ['expense.delete'], approve: ['expense.confirm'] },

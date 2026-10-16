@@ -1,10 +1,14 @@
-import { expenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import { webLink } from '../../../../common/http/web-link';
+import { expenseDocumentDateStatus, expenseDateIsReadable, expenseEvidenceAssessment, civilDate } from '@watchdog-bms/contracts';
 import {
   ACCOUNTANT_INDEX_COLUMNS,
   ACCOUNTANT_INDEX_COLUMN_LABELS,
   EXPENSE_STATUS_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS,
   TAX_EVIDENCE_STATUS_LABELS,
+  TAX_EVIDENCE_REASON_LABELS,
+  INPUT_VAT_RIGHT_LABELS,
+  type ExpenseSummary,
   accountantIndexColumns,
   type AccountantIndexColumn,
   type AccountantIndexColumnSet,
@@ -15,7 +19,7 @@ import {
   type TaxEvidenceStatus,
 } from '@watchdog-bms/contracts';
 import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
-import { buildXlsx, type XlsxCell } from '../../../../common/export/xlsx.logic';
+import { buildWorkbook, type XlsxCell } from '../../../../common/export/xlsx.logic';
 import { safeCsvCell } from '../../../../common/export/csv.logic';
 
 export type AccountantIndexSource = {
@@ -32,6 +36,9 @@ export type AccountantIndexSource = {
   sourceDocumentType: SourceDocumentType;
   taxEvidenceStatus: TaxEvidenceStatus;
   taxEvidenceReasonCode: string | null;
+  inputVatClaimStatus?: ExpenseSummary['inputVatClaimStatus'];
+  latestInputVatDecision?: ExpenseSummary['latestInputVatDecision'];
+  inputVatRecordedBeforeReview?: boolean;
   postingStatus: string;
   postingError: string | null;
   journalEntryNumber: string | null;
@@ -119,7 +126,7 @@ export function captureGroupRef(captureGroupId: string): string {
 
 /** Accounting period = YYYY-MM from document date, falling back to uploaded date. */
 export function accountingPeriod(expenseDate: string | null, uploadedAt: string): string {
-  const source = expenseDate && expenseDate.length >= 7 ? expenseDate : uploadedAt;
+  const source = expenseDate && expenseDate.length >= 7 ? expenseDate : civilDate(new Date(uploadedAt));
   return source.slice(0, 7);
 }
 
@@ -128,18 +135,31 @@ export function accountingPeriod(expenseDate: string | null, uploadedAt: string)
  *  documented twice, and would put the signature page in the supporting-evidence folder. */
 export const WET_SIGNED_SCAN_EVIDENCE_ROLE = 'substitute.wet_signed_scan';
 
-export function buildAccountantIndexRow(source: AccountantIndexSource): AccountantPackageIndexRow {
+export function noReceiptDocumentLabel(source: Pick<AccountantIndexSource, 'sourceDocumentType' | 'taxEvidenceStatus' | 'aiVerificationSummaryJson'>): string | undefined {
+  const problem = expenseEvidenceAssessment(source)?.receiptProblem;
+  return source.sourceDocumentType === 'EXPENSE_NOTE_TEXT' && (problem === 'NOT_AVAILABLE' || problem === 'LOST') ? 'ไม่มีใบเสร็จ' : undefined;
+}
+
+export function buildAccountantIndexRow(source: AccountantIndexSource): AccountantPackageIndexRow & { sourceDocumentTypeLabel?: string; inputVatRightLabel?: string } {
   const primary = source.attachments.find((a) => a.id === source.primaryAttachmentId)
     ?? source.attachments.find((a) => a.purpose === 'expense.receipt.primary');
   const wetSignedScanIds = new Set(source.wetSignedScanAttachmentIds ?? []);
   const supporting = source.attachments.filter((a) => a.id !== primary?.id && !wetSignedScanIds.has(a.id));
+  const documentDate = expenseDateIsReadable(source.aiVerificationSummaryJson) ? source.expenseDate : null;
   return {
+    ...(noReceiptDocumentLabel(source) ? { sourceDocumentTypeLabel: noReceiptDocumentLabel(source) } : {}),
+    ...(source.inputVatRecordedBeforeReview ? { inputVatRightLabel: 'ไม่ได้ใช้ภาษีซื้อ (บันทึกก่อนมีการตรวจสิทธิ)' } : {}),
+    voucher_numbers: '', wht_certificate_numbers: '', bundle_file_names: '',
+    input_vat_right: source.inputVatClaimStatus ?? '',
+    input_vat_reason: source.latestInputVatDecision?.reason ?? '',
+    input_vat_decided_by: source.latestInputVatDecision?.decidedByName ?? '',
+    input_vat_decided_at: source.latestInputVatDecision?.decidedAt ?? '',
     company_name: source.companyName,
     company_tax_id: source.companyTaxId ?? '',
     branch_code: source.branchCode ?? '',
-    accounting_period: accountingPeriod(source.expenseDate, source.uploadedAt),
+    accounting_period: accountingPeriod(documentDate, source.uploadedAt),
     uploaded_at: source.uploadedAt,
-    document_date: source.expenseDate ?? '',
+    document_date: documentDate ?? '',
     expense_number: source.expenseNumber ?? source.expenseId,
     expense_status: source.status,
     source_channel: exportSourceChannel(source.captureSource),
@@ -211,6 +231,8 @@ const VALUE_LABELS: Partial<Record<AccountantIndexColumn, Record<string, string>
   expense_status: EXPENSE_STATUS_LABELS,
   source_document_type: SOURCE_DOCUMENT_TYPE_LABELS,
   tax_evidence_status: TAX_EVIDENCE_STATUS_LABELS,
+  tax_evidence_reason: TAX_EVIDENCE_REASON_LABELS,
+  input_vat_right: INPUT_VAT_RIGHT_LABELS,
 };
 
 function xlsxCell(column: AccountantIndexColumn, value: string): XlsxCell {
@@ -218,20 +240,25 @@ function xlsxCell(column: AccountantIndexColumn, value: string): XlsxCell {
     const amount = Number(value);
     return value !== '' && Number.isFinite(amount) ? amount : '';
   }
+  if (column === 'input_vat_decided_at' && value) return `${formatThaiExportDate(value)} ${new Intl.DateTimeFormat('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }).format(new Date(value))} น.`;
   if (DATE_COLUMNS.has(column)) return formatThaiExportDate(value);
   return VALUE_LABELS[column]?.[value] ?? value;
 }
 
 /** Real .xlsx of the accountant index, headed by Thai labels instead of column keys. */
-export function buildAccountantIndexXlsx(rows: AccountantPackageIndexRow[], columnSet: AccountantIndexColumnSet): Buffer {
+export function buildAccountantIndexXlsx(rows: (AccountantPackageIndexRow & { sourceDocumentTypeLabel?: string; inputVatRightLabel?: string })[], columnSet: AccountantIndexColumnSet): Buffer {
   const columns = accountantIndexColumns(columnSet);
-  return buildXlsx(
-    [
+  return buildWorkbook([{
+    name: 'รายการค่าใช้จ่าย',
+    freezeRows: 1,
+    rows: [
       columns.map((col) => ACCOUNTANT_INDEX_COLUMN_LABELS[col]),
-      ...rows.map((row) => columns.map((col) => xlsxCell(col, row[col] ?? ''))),
+      ...rows.map((row) => columns.map((col) => col === 'web_url' && row[col]
+        ? { value: 'เปิดไฟล์', formula: `HYPERLINK("${webLink(row[col]).replace(/"/g, '""')}","เปิดไฟล์")` }
+        : col === 'input_vat_right' && row.inputVatRightLabel ? row.inputVatRightLabel
+        : col === 'source_document_type' && row.sourceDocumentTypeLabel ? row.sourceDocumentTypeLabel : xlsxCell(col, row[col] ?? ''))),
     ],
-    'รายการค่าใช้จ่าย',
-  );
+  }]);
 }
 
 export type ManifestEntrySource = {

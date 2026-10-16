@@ -57,6 +57,8 @@ export type ExpenseCategoryStatus = 'ACTIVE' | 'ARCHIVED';
 export type SourceDocumentType =
   | 'RECEIPT'
   | 'TAX_INVOICE'
+  | 'CUSTOMS_VAT_RECEIPT'
+  | 'PP36_RECEIPT'
   /** ใบกำกับภาษีอย่างย่อ (Revenue Code s.86/6) — its own type, not a TAX_INVOICE variant, because
    *  its input VAT is non-creditable under s.82/5. Spec §19h. */
   | 'ABBREVIATED_TAX_INVOICE'
@@ -72,6 +74,8 @@ export type SourceDocumentType =
 const FINANCE_OVERRIDE_SOURCE_DOCUMENT_TYPES: ReadonlySet<SourceDocumentType> = new Set([
   'RECEIPT',
   'TAX_INVOICE',
+  'CUSTOMS_VAT_RECEIPT',
+  'PP36_RECEIPT',
   'TRANSFER_SLIP',
   'HANDWRITTEN_CASH_BILL',
   'SUPPLIER_BILL',
@@ -175,6 +179,22 @@ export type TaxEvidenceReasonCode =
    *  credit (Revenue Code s.82/5). Distinct from a missing-field reason — nothing is missing. */
   | 'ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE'
   | 'MANUAL_OVERRIDE';
+
+export const TAX_EVIDENCE_REASON_LABELS: Record<TaxEvidenceReasonCode, string> = {
+  VALID_TAX_INVOICE_FIELDS: 'ข้อมูลใบกำกับภาษีครบถ้วน',
+  VALID_RECEIPT_FIELDS: 'ข้อมูลใบเสร็จรับเงินครบถ้วน',
+  PAYMENT_EVIDENCE_ONLY: 'เป็นหลักฐานการจ่ายเงินเท่านั้น',
+  MARKETPLACE_SCREENSHOT_ONLY: 'เป็นภาพคำสั่งซื้อจากมาร์เก็ตเพลสเท่านั้น',
+  HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE: 'หลักฐานประกอบการจ่าย ตรวจข้อมูลและเลือกหลักฐานให้ตรงกับรายการ',
+  HANDWRITTEN_RECEIPT_REVIEW: 'บิลเงินสดเขียนมือ ตรวจข้อมูลและหลักฐานของรายการ',
+  MISSING_VENDOR_TAX_ID: 'ขาดเลขประจำตัวผู้เสียภาษีของผู้ขาย',
+  MISSING_DOCUMENT_NUMBER: 'ขาดเลขที่เอกสาร',
+  MISSING_MONETARY_AMOUNT: 'ขาดยอดเงิน',
+  UNREADABLE_OR_LOW_CONFIDENCE: 'เอกสารอ่านไม่ชัดหรือข้อมูลยังไม่น่าเชื่อถือ',
+  NOT_BUSINESS_EVIDENCE: 'ไม่ใช่หลักฐานทางธุรกิจ',
+  ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE: 'ใบกำกับภาษีอย่างย่อ ใช้เป็นค่าใช้จ่ายได้ แต่ขอคืนภาษีซื้อไม่ได้ — ถ้าต้องการเครดิตภาษีซื้อ ขอใบกำกับภาษีเต็มรูปจากผู้ขาย',
+  MANUAL_OVERRIDE: 'ผู้ตรวจแก้ไขผลด้วยตนเอง',
+};
 
 export type ExpenseLineReviewStatus = 'SUGGESTED' | 'REVIEWED' | 'NEEDS_REVIEW';
 
@@ -398,8 +418,8 @@ export function expenseVatReconciliationMessage(snapshot: ExpenseVatCaptureSnaps
     value !== null && Number.isFinite(Number(value)) ? Math.abs(Number(value)).toFixed(2) : null;
   const attention = snapshot.reconciliation.attentionLineNumbers ?? [];
   const check = attention.length
-    ? `กรุณาตรวจรายการที่ ${attention.join(', ')} หรือเลือก “ใช้ยอดตามเอกสาร” พร้อมระบุเหตุผล`
-    : 'กรุณาตรวจรายการในเอกสาร หรือเลือก “ใช้ยอดตามเอกสาร” พร้อมระบุเหตุผล';
+    ? `ตรวจรายการที่ ${attention.join(', ')} หรือเลือก “ใช้ยอดตามเอกสาร” พร้อมระบุเหตุผล`
+    : 'ตรวจรายการในเอกสาร หรือเลือก “ใช้ยอดตามเอกสาร” พร้อมระบุเหตุผล';
   const documentVat = satang(snapshot.source.vatAmount);
   const difference = satang(snapshot.reconciliation.differenceAmount);
   const calculated = satang(snapshot.calculation.vatAmount) ?? '0.00';
@@ -429,6 +449,8 @@ export function effectiveVatRateLabel(lines: Array<{ vatRate?: string | null }>)
 
 export const SOURCE_DOCUMENT_TYPE_LABELS: Record<SourceDocumentType, string> = {
   RECEIPT: 'ใบเสร็จรับเงิน',
+  CUSTOMS_VAT_RECEIPT: 'ใบเสร็จรับเงินกรมศุลกากร (VAT นำเข้า)',
+  PP36_RECEIPT: 'ใบเสร็จรับเงิน ภ.พ.36',
   TAX_INVOICE: 'ใบกำกับภาษี (เต็มรูป)',
   ABBREVIATED_TAX_INVOICE: 'ใบกำกับภาษีอย่างย่อ',
   TRANSFER_SLIP: 'สลิปโอนเงิน',
@@ -442,10 +464,20 @@ export const SOURCE_DOCUMENT_TYPE_LABELS: Record<SourceDocumentType, string> = {
 };
 
 export const TAX_EVIDENCE_STATUS_LABELS: Record<TaxEvidenceStatus, string> = {
-  USABLE_FOR_TAX: 'ใช้เป็นหลักฐานภาษีได้',
-  SUPPORTING_ONLY: 'หลักฐานประกอบเท่านั้น',
-  NOT_TAX_EVIDENCE: 'ไม่ใช่หลักฐานภาษี',
-  NEEDS_REVIEW: 'รอตรวจหลักฐานภาษี',
+  USABLE_FOR_TAX: 'ใช้ได้',
+  SUPPORTING_ONLY: 'ใช้ได้เมื่อมีหลักฐานอื่นประกอบ',
+  NOT_TAX_EVIDENCE: 'ใช้ไม่ได้',
+  NEEDS_REVIEW: 'รอตรวจ',
+};
+
+export const INPUT_VAT_RIGHT_LABEL = 'สิทธิภาษีซื้อ';
+export const TAX_EVIDENCE_LABEL = 'หลักฐานรายจ่าย';
+export const INPUT_VAT_RIGHT_LABELS: Record<InputVatClaimStatus, string> = {
+  NEEDS_REVIEW: 'รอตรวจสอบ', CLAIMABLE: 'ใช้ได้ตามเงื่อนไข', NON_CLAIMABLE: 'ใช้ไม่ได้',
+};
+export const TAX_EVIDENCE_BADGE_LABELS: Record<TaxEvidenceStatus, string> = {
+  USABLE_FOR_TAX: 'หลักฐานรายจ่ายใช้ได้', SUPPORTING_ONLY: 'หลักฐานรายจ่ายต้องมีเอกสารอื่นประกอบ',
+  NOT_TAX_EVIDENCE: 'ไม่ใช่หลักฐานรายจ่าย', NEEDS_REVIEW: 'หลักฐานรายจ่ายรอตรวจ',
 };
 
 /** PENDING_OWNER_APPROVAL and REJECTED are history only since the personal-signature decision
@@ -570,6 +602,7 @@ export type ExpenseLineSummary = {
   vatRate: string | null;
   vatTreatment?: ExpenseLineVatTreatment | null;
   vatAmount: string;
+  whtCategoryCode?: string | null;
   whtRate: string | null;
   whtAmount: string;
   lineSubtotalAmount: string;
@@ -600,6 +633,7 @@ export type ExpenseAttachmentRef = {
 };
 
 export type RecordExpensePaymentInput = {
+  slipAttachmentId?: string;
   /** Stable for one intent, including network retries; omitted only by legacy callers. */
   idempotencyKey?: string;
   paidAmount: string;
@@ -610,6 +644,8 @@ export type RecordExpensePaymentInput = {
 };
 
 export type ExpensePaymentSummary = {
+  slipAttachmentId?: string | null;
+  paidAtConfirmed?: boolean;
   id: string;
   amount: string;
   currency: string;
@@ -635,7 +671,7 @@ export type ExpenseCorrectionBlocker = 'disbursement_reserved' | 'not_confirmed'
 
 /** Read by the server from persisted financial/legal state, never inferred by the client. */
 export type ExpenseCorrectionCapabilities = {
-  disbursementReservation: { voucherId: string | null; documentNumber: string | null; preparerName: string | null; viewerMay: 'act' | 'open' | 'none'; viewerCanPay: boolean } | null;
+  disbursementReservation: { status?: 'DRAFT'; voucherId: string | null; documentNumber: string | null; preparerName: string | null; viewerMay: 'act' | 'open' | 'none'; viewerCanPay: boolean } | null;
   canReopen: boolean;
   reopenBlockers: ExpenseCorrectionBlocker[];
   certificateOnExpense?: { kind: 'SYSTEM' | 'EXTERNAL'; number: string | null; date: string | null; canCancel: boolean } | null;
@@ -664,15 +700,15 @@ export function expenseDisbursementReservationMessage(operation: 'recordPayment'
 }
 
 export const EXPENSE_VOID_CERTIFICATE_WORDS = {
-  permissionMissing: `เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว การยกเลิกเอกสารจะยกเลิกหนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก`,
-  permissionMissingExternal: 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว การยกเลิกเอกสารจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก',
-  taxWorkspaceCertificate: 'รายจ่ายนี้มีหนังสือรับรองหัก ณ ที่จ่ายที่ออกจากหน้าภาษี จึงยกเลิกเอกสารจากหน้านี้ไม่ได้ กรุณาแจ้งทีมมั่งมีพลัสเพื่อช่วยตรวจสอบ',
-  attestationRequired: 'กรุณาติ๊กยืนยันเรื่องการยื่นภาษีก่อนยกเลิกเอกสาร',
+  permissionMissing: `เอกสารนี้ออกหนังสือรับรอง 50 ทวิแล้ว การยกเลิกเอกสารจะยกเลิกหนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรอง 50 ทวิ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก`,
+  permissionMissingExternal: 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวิเองแล้ว การยกเลิกเอกสารจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก',
+  taxWorkspaceCertificate: 'รายจ่ายนี้มีหนังสือรับรอง 50 ทวิที่ออกจากหน้าภาษี จึงยกเลิกเอกสารจากหน้านี้ไม่ได้ แจ้งทีมงานมั่งมีเพื่อช่วยตรวจสอบ',
+  attestationRequired: 'ยังไม่ได้ยืนยันเรื่องการยื่นภาษี ติ๊กยืนยันก่อนยกเลิกเอกสาร',
   periodLocked: (kind: 'SYSTEM' | 'EXTERNAL', periodKey: string, formType: string): string => withholdingPeriodLockedMessage(periodKey, 'ยกเลิกเอกสารนี้', formType, kind),
-  changedRetry: 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้ยกเลิกเอกสาร กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
-  statusChanged: 'เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว จึงยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้ กรุณาเปิดหน้านี้ใหม่',
+  changedRetry: 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้บันทึกการยกเลิก เปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
+  statusChanged: 'เอกสารนี้ยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้ เปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด',
   permissionDenied: `คุณไม่มีสิทธิ์ยกเลิกเอกสาร ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ที่มีสิทธิ์เป็นผู้ยกเลิก`,
-  reasonRequired: 'กรุณาระบุเหตุผลที่ยกเลิกเอกสารอย่างน้อย 3 ตัวอักษร',
+  reasonRequired: 'เหตุผลที่ยกเลิกเอกสารสั้นเกินไป กรอกอย่างน้อย 3 ตัวอักษร',
   numberUnavailable: `ระบบยังออกเลขสำหรับยกเลิกเอกสารไม่ได้ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}ตรวจการตั้งค่าเลขเอกสารก่อนแล้วลองอีกครั้ง`,
   postingUnresolved: 'ยังตรวจสอบการลงบัญชีของเอกสารนี้ไม่ได้ จึงยกเลิกเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจสอบการลงบัญชีก่อนแล้วลองอีกครั้ง',
   accountingPeriodLocked: (periodKey: string): string => `เอกสารอยู่ในเดือน ${expenseCorrectionMonth(periodKey)} ที่ปิดบัญชีแล้ว จึงยกเลิกเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจสอบและเปิดเดือนนั้นก่อน`,
@@ -685,13 +721,13 @@ export function expenseVoidCertificatePermissionMessage(kind: 'SYSTEM' | 'EXTERN
 }
 
 export const EXPENSE_CORRECTION_WORDS = {
-  statusChanged: 'เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว กรุณาเปิดหน้านี้ใหม่',
-  notFound: 'ไม่พบเอกสารนี้แล้ว กรุณาเปิดหน้ารายจ่ายใหม่',
+  statusChanged: 'สถานะเอกสารนี้ยังแก้ไขไม่ได้ เปิดหน้านี้ใหม่เพื่อตรวจสถานะ',
+  notFound: 'ไม่พบเอกสารนี้แล้ว เปิดหน้ารายจ่ายใหม่',
   permissionDenied: `คุณไม่มีสิทธิ์แก้ไขเอกสาร ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ที่มีสิทธิ์เป็นผู้แก้ไข`,
-  branchForbidden: 'คุณไม่มีสิทธิ์ทำรายการกับเอกสารของสาขานี้ ให้ผู้ที่มีสิทธิ์ดูแลสาขานี้เป็นผู้ดำเนินการ',
-  webRequired: 'กรุณาเปิดเอกสารในเว็บและเข้าสู่ระบบก่อนแก้ไขเอกสาร',
-  certificateSourceChanged: 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว กรุณาเปิดหน้ารายจ่ายใหม่',
-  certificateAttestationRequired: 'กรุณาติ๊กยืนยันเรื่องการยื่นภาษีก่อนแก้ไขเอกสาร',
+  branchForbidden: 'คุณไม่มีสิทธิ์ทำรายการกับเอกสารของสาขานี้ ให้ผู้ที่มีสิทธิ์ดูแลสาขานี้ทำรายการให้',
+  webRequired: 'แก้ไขเอกสารผ่านช่องทางนี้ไม่ได้ เปิดเอกสารในเว็บและเข้าสู่ระบบก่อนแก้ไขเอกสาร',
+  certificateSourceChanged: 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว เปิดหน้ารายจ่ายใหม่',
+  certificateAttestationRequired: 'ยังไม่ได้ยืนยันเรื่องการยื่นภาษี ติ๊กยืนยันก่อนแก้ไขเอกสาร',
   certificateSpellingCorrection: 'ถ้าต้องแก้เฉพาะตัวสะกดชื่อหรือที่อยู่บนหนังสือรับรอง ใช้ปุ่ม "แก้ไขหนังสือรับรอง" ได้',
   saving: 'กำลังบันทึก…',
   reopen: 'แก้ไขเอกสาร',
@@ -700,33 +736,33 @@ export const EXPENSE_CORRECTION_WORDS = {
   cancelReason: 'เหตุผลที่ยกเลิก',
   reject: 'ยกเลิกรายการ',
   reopenSubmit: 'เปิดเอกสารกลับไปตรวจสอบ',
-  reopenDescription: 'เอกสารจะกลับไปตรวจสอบ ใช้เลขเอกสารเดิม กรุณาตรวจข้อมูลก่อนยืนยันอีกครั้ง',
+  reopenDescription: 'เอกสารจะกลับไปตรวจสอบด้วยเลขเอกสารเดิม ตรวจข้อมูลก่อนยืนยันอีกครั้ง',
   retainedPayments: 'รายการจ่ายเดิมยังอยู่',
   correcting: 'กำลังแก้ไขเอกสารที่ยืนยันแล้ว',
   downloadAgain: 'ดาวน์โหลดเอกสารอีกครั้ง',
   certificateIssued: 'ออกเอกสารแล้ว',
   futurePaymentDate: PAYMENT_DATE_IN_FUTURE.message,
-  sourceRefreshed: 'โหลดข้อมูลล่าสุดแล้ว กรุณาตรวจยอดและประวัติการจ่ายก่อนทำรายการอีกครั้ง',
-  alreadyReopened: 'เอกสารเปิดแก้ไขอยู่แล้ว กรุณาตรวจข้อมูลล่าสุด',
-  sourceRefreshFailed: 'โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณาโหลดหน้าใหม่ก่อนทำรายการอีกครั้ง',
+  sourceRefreshed: 'โหลดข้อมูลล่าสุดแล้ว ตรวจยอดและประวัติการจ่ายก่อนทำรายการอีกครั้ง',
+  alreadyReopened: 'เอกสารเปิดแก้ไขอยู่แล้ว ตรวจข้อมูลล่าสุด',
+  sourceRefreshFailed: 'โหลดข้อมูลล่าสุดไม่สำเร็จ เปิดหน้านี้ใหม่ก่อนทำรายการอีกครั้ง',
   paymentOnReopened: 'เอกสารถูกเปิดแก้ไขแล้ว จึงบันทึกจ่ายไม่ได้ ให้ผู้มีสิทธิ์ตรวจและยืนยันเอกสารก่อน',
   paymentOnUnconfirmed: 'เอกสารยังไม่ได้ยืนยัน จึงบันทึกจ่ายไม่ได้ ให้ผู้มีสิทธิ์ยืนยันเอกสารก่อน',
-  paymentAlreadyCancelled: 'รายการจ่ายนี้ถูกยกเลิกแล้ว โหลดข้อมูลล่าสุดแล้ว กรุณาตรวจประวัติการจ่าย',
+  paymentAlreadyCancelled: 'รายการจ่ายนี้ถูกยกเลิกไปแล้ว ดูได้ในประวัติการจ่าย',
   paymentReplayCancelled: 'การจ่ายรายการนี้ถูกยกเลิกไปแล้ว ระบบจึงไม่ได้บันทึกซ้ำ ถ้าต้องการจ่ายอีกครั้ง ให้เปิดหน้านี้ใหม่แล้วบันทึกการจ่ายใหม่',
   overpaid: 'จ่ายเกินยอดสุทธิ',
   // Direction-free: the payment card sits above this sentence on the last step and below it on the first.
   cancelBeforeConfirm: 'ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน',
-  /** Beside ส่งตรวจสอบ, which over-payment does not block: say what is true there. */
-  sendableWhileOverpaid: 'ส่งตรวจสอบได้ แต่ยืนยันเอกสารไม่ได้จนกว่าจะยกเลิกรายการจ่ายที่เกิน',
+  /** Beside ส่งให้ตรวจ, which over-payment does not block: say what is true there. */
+  sendableWhileOverpaid: 'ส่งให้ตรวจได้ แต่ยืนยันเอกสารไม่ได้จนกว่าจะยกเลิกรายการจ่ายที่เกิน',
   askCancelBeforeConfirm: 'ให้ผู้มีสิทธิ์ยกเลิกรายการจ่ายก่อนยืนยัน',
   legacyOverpaid: 'ไม่พบรายการจ่ายให้ยกเลิก ติดต่อผู้มีสิทธิ์ยกเลิกเอกสาร',
-  reasonRequired: 'กรุณาระบุเหตุผลอย่างน้อย 3 ตัวอักษร และไม่เกิน 500 ตัวอักษร',
-  reopened: 'เปิดเอกสารให้แก้ไขแล้ว กรุณาตรวจยอดก่อนยืนยันอีกครั้ง',
-  paymentCancelled: 'ยกเลิกรายการจ่ายแล้ว กรุณาตรวจยอดค้างจ่ายก่อนบันทึกรายการใหม่',
-  unavailable: 'ยังตรวจสิทธิ์แก้ไขไม่ได้ กรุณาโหลดหน้าใหม่',
-  sourceChanged: 'ข้อมูลเอกสารเปลี่ยนแล้ว กรุณาโหลดหน้าใหม่และตรวจข้อมูลก่อนดำเนินการ',
-  certificateUnavailable: 'ยังไม่มีหนังสือรับรองที่ระบบออกให้ดาวน์โหลด กรุณาตรวจสถานะเอกสาร',
-  paidExceedsPayable: 'ยอดที่จ่ายแล้วเกินยอดสุทธิที่ต้องจ่าย กรุณาตรวจยอดและประวัติการจ่ายก่อนยืนยัน',
+  reasonRequired: 'เหตุผลต้องมี 3–500 ตัวอักษร แก้เหตุผลแล้วลองอีกครั้ง',
+  reopened: 'เปิดเอกสารให้แก้ไขแล้ว ตรวจยอดก่อนยืนยันอีกครั้ง',
+  paymentCancelled: 'ยกเลิกรายการจ่ายแล้ว ตรวจยอดค้างจ่ายก่อนบันทึกรายการใหม่',
+  unavailable: 'ยังตรวจสิทธิ์แก้ไขไม่ได้ เปิดหน้านี้ใหม่',
+  sourceChanged: 'ข้อมูลเอกสารเปลี่ยนแล้ว เปิดหน้านี้ใหม่และตรวจข้อมูลก่อนทำรายการ',
+  certificateUnavailable: 'ยังไม่มีหนังสือรับรองที่ระบบออกให้ดาวน์โหลด ตรวจสถานะเอกสาร',
+  paidExceedsPayable: 'ยอดที่จ่ายแล้วเกินยอดสุทธิที่ต้องจ่าย ตรวจยอดและประวัติการจ่ายก่อนยืนยัน',
 } as const;
 
 export function expenseReopenedMessage(hasPayments: boolean): string {
@@ -753,10 +789,10 @@ export const EXPENSE_WITHHOLDING_WORDS = {
   percentHint: 'กรอกเปอร์เซ็นต์ตามเอกสาร เช่น 3 หมายถึง 3% ของฐานหัก ณ ที่จ่าย',
   amountHint: 'เก็บยอดบาทที่กรอกไว้แม้แก้รายการ ระบบตรวจว่าไม่เกินฐานหักและยอดรวมเมื่อบันทึก',
 } as const;
-/** Last review step: the sentence follows the button actually shown (ส่งตรวจสอบ keeps the dictionary's approver sentence). */
+/** Last review step: the sentence follows the button actually shown (ส่งให้ตรวจ keeps the dictionary's approver sentence). */
 export const EXPENSE_REVIEW_STEP_WORDS = {
   thenConfirm: 'ดูสรุปอีกครั้ง แล้วยืนยัน',
-  sentAwaitingConfirm: 'ดูสรุปทั้งหมดอีกครั้ง เอกสารนี้ส่งตรวจสอบแล้ว รอผู้มีสิทธิ์ยืนยัน',
+  sentAwaitingConfirm: 'ดูสรุปทั้งหมดอีกครั้ง เอกสารนี้ส่งให้ตรวจแล้ว รอผู้มีสิทธิ์ยืนยัน',
 } as const;
 /** Keep the existing positive-money boundary; only remove insignificant leading zeroes. */
 export function normalizeExpensePaymentAmount(value: string): string { return value.replace(/^0+(?=\d)/, ''); }
@@ -771,7 +807,7 @@ export function expenseCorrectionBlockerMessage(blocker: ExpenseCorrectionBlocke
   if (!showsLedger && ['ledger_posted', 'journal_pending', 'posting_unresolved', 'accounting_period_locked'].includes(blocker)) return `รายการนี้ถูกล็อกไว้ จึง${action}ไม่ได้ ติดต่อผู้ดูแลรายจ่าย`;
   switch (blocker) {
     case 'disbursement_reserved': return expenseDisbursementReservationMessage(operation === 'recordPayment' ? 'recordPayment' : 'reopen', facts?.disbursementReservation?.documentNumber ?? null, facts?.disbursementReservation?.preparerName ?? null, facts?.disbursementReservation?.viewerMay ?? 'act', facts?.disbursementReservation?.viewerCanPay ?? true);
-    case 'not_confirmed': return `สถานะเอกสารนี้${action}ไม่ได้ กรุณากลับไปหน้ารายจ่าย`;
+    case 'not_confirmed': return `สถานะเอกสารนี้${action}ไม่ได้ กลับไปหน้ารายจ่าย`;
     case 'ledger_posted': return `มีรายการลงบัญชีแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
     case 'posting_unresolved': return `สถานะการลงบัญชียังไม่ชัดเจน จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
     case 'journal_pending': return `มีรายการบัญชีรอผ่านรายการ จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
@@ -783,11 +819,12 @@ export function expenseCorrectionBlockerMessage(blocker: ExpenseCorrectionBlocke
     case 'tax_period_filed': {
       const withholding = facts?.lockedTaxPeriods?.find(period => period.formType === 'PND3' || period.formType === 'PND53');
       if (withholding && operation === 'reopen') return withholdingPeriodLockedMessage(withholding.periodKey, 'แก้ไขเอกสารนี้', withholding.formType, facts?.certificateOnExpense?.kind);
+      if (withholding) return `รายการนี้ยื่นภาษีแล้ว จึง${action}ไม่ได้ ให้ยกเลิกเอกสารแล้วบันทึกใหม่ ให้ผู้ทำบัญชีแจ้งกรมสรรพากรเรื่องแบบเดิม`;
       return `รอบภาษีของเอกสารถูกล็อกแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี` + (operation === 'reopen' && facts?.certificateOnExpense?.kind === 'SYSTEM' ? ` ${EXPENSE_CORRECTION_WORDS.certificateSpellingCorrection}` : '');
     }
-    case 'live_claim': return `เอกสารอยู่ในคำขอเบิกที่ยังดำเนินการ จึง${action}จากหน้านี้ไม่ได้ ติดต่อผู้ดูแลคำขอเบิก`;
-    case 'permission_denied': return `คุณไม่มีสิทธิ์${action} ติดต่อผู้มีสิทธิ์ดำเนินการ`;
-    case 'payment_voided': return 'รายการจ่ายนี้ยกเลิกแล้ว กรุณาโหลดหน้าใหม่';
+    case 'live_claim': return `เอกสารอยู่ในคำขอเบิกที่ยังไม่จบ จึง${action}จากหน้านี้ไม่ได้ ติดต่อผู้ดูแลคำขอเบิก`;
+    case 'permission_denied': return `คุณไม่มีสิทธิ์${action} ติดต่อผู้มีสิทธิ์${action}`;
+    case 'payment_voided': return 'รายการจ่ายนี้ยกเลิกแล้ว โหลดหน้าใหม่';
     case 'no_balance': return 'ไม่มียอดค้างจ่าย จึงบันทึกจ่ายเพิ่มไม่ได้';
     case 'missing_branch': return 'เอกสารยังไม่มีสาขา จึงบันทึกจ่ายไม่ได้ ติดต่อผู้ดูแลรายจ่าย';
     case 'personal_advance': return 'ใบรับรองระบุว่าพนักงานจ่ายร้านแล้ว จึงบันทึกจ่ายซ้ำไม่ได้ ติดต่อผู้ดูแลการเบิกคืน';
@@ -816,7 +853,7 @@ export function isExpensePendingReview(row: { status: ExpenseStatus; reimburseme
 }
 export function expenseReimbursementProgressLabel(progress: ExpenseReimbursementProgress): string {
   if (progress.hasConfirmedDuplicate && progress.status !== 'PAID') return REIMBURSEMENT_DUPLICATE_BLOCK_LABEL;
-  const labels: Record<string, string> = { WAITING_CLAIM: 'รอยื่นเบิกคืน', DRAFT: 'ใบเบิกฉบับร่าง', PENDING_APPROVAL: 'รออนุมัติเบิกคืน', APPROVED: 'อนุมัติเบิกคืนแล้ว', FINANCE_REVIEW: 'รอตรวจการเงิน', READY_FOR_PAYMENT: 'รอจ่ายคืน', PARTIALLY_PAID: 'จ่ายคืนบางส่วน', PAID: 'จ่ายคืนแล้ว' };
+  const labels: Record<string, string> = { WAITING_CLAIM: 'รอยื่นเบิกคืน', DRAFT: 'ใบเบิกยังเป็นร่าง', PENDING_APPROVAL: 'รออนุมัติเบิกคืน', APPROVED: 'อนุมัติเบิกคืนแล้ว', FINANCE_REVIEW: 'รอตรวจการเงิน', READY_FOR_PAYMENT: 'รอจ่ายคืน', PARTIALLY_PAID: 'จ่ายคืนบางส่วน', PAID: 'จ่ายคืนแล้ว' };
   return labels[progress.status] ?? 'ติดตามใบเบิกคืน';
 }
 
@@ -842,6 +879,11 @@ export type ExpenseSummary = {
   currency: string;
   vatMode: ExpenseVatMode;
   vatAmount: string;
+  latestInputVatDecision?: Pick<ExpenseInputVatDecisionView, 'reason' | 'decidedByName' | 'decidedAt'> | null;
+  /** Whether the right is relevant for this document date and VAT amount; presentation only. */
+  inputVatRightVisible?: boolean;
+  inputVatRecordedBeforeReview?: boolean;
+  inputVatClaimStatus?: InputVatClaimStatus;
   grandTotalAmount: string;
   netPayableAmount: string;
   paidAmount: string;
@@ -1005,6 +1047,11 @@ export type ExpenseBuyerAsPrinted = {
 };
 
 export type ExpenseDetail = ExpenseSummary & {
+  /** Same resolved evidence facts as the accounting evidence list. */
+  sourceEvidenceUnavailable?: boolean;
+  categoryName?: string | null;
+  inputVatRight?: ExpenseInputVatRightView;
+  reviewRequest?: { requestedReviewerUserId: string; requestedReviewerName: string; submittedByUserId: string; submittedByName: string; submittedAt: string } | null;
   /** Reopen audit, present only while correcting; not inferred from a document number. */
   correctionOpenedAt?: string | null;
   correctionCapabilities?: ExpenseCorrectionCapabilities;
@@ -1087,10 +1134,11 @@ export type CreateExpenseDraftInput = {
   captureSource: ExpenseCaptureSource;
   branchId?: string;
   vendorCounterpartyId?: string;
+  vendorNameSnapshot?: string;
   expenseDate: string;
   currency?: string;
   vatMode: ExpenseVatMode;
-  inputVatClaimStatus: InputVatClaimStatus;
+  inputVatClaimStatus?: InputVatClaimStatus;
   expenseCategoryId?: string;
   accountHintKey?: string;
   note?: string;
@@ -1116,6 +1164,7 @@ export type CreateExpenseDraftInput = {
     discountAmount?: string;
     vatRate?: string;
     vatTreatment?: ExpenseLineVatTreatment | null;
+    whtCategoryCode?: string;
     whtRate?: string;
     expenseCategoryId?: string;
     accountHintKey?: string;
@@ -1348,6 +1397,7 @@ export type SubstituteReceiptListItem = {
 };
 
 export type SubstituteReceiptListFilter = {
+  order?: 'newest' | 'oldest';
   status?: SubstituteReceiptEvidenceStatus;
   yearMonth?: string;
   payerUserId?: string;
@@ -1356,6 +1406,12 @@ export type SubstituteReceiptListFilter = {
 };
 
 export type SubstituteReceiptListResult = {
+  counts: Record<SubstituteReceiptEvidenceStatus, number>;
+  sums: { total: string };
+  attention: {
+    signature: { count: number; evidenceId: string | null };
+    approval: { count: number; evidenceId: string | null };
+  };
   items: SubstituteReceiptListItem[];
   total: number;
   page: number;
@@ -1452,6 +1508,11 @@ export type SupersedeSubstituteReceiptInput = {
   reason: string;
   expectedEvidenceUpdatedAt: string;
 };
+
+export type SubstituteReceiptCandidateFilter = { includeBlocked?: boolean; branchId?: string; search?: string; page?: number; pageSize?: number };
+export type SubstituteReceiptCandidate = { blockedReason?: 'USABLE_RECEIPT'; id: string; expenseNumber: string | null; expenseDate: string;
+  vendorNameSnapshot: string | null; grandTotalAmount: string; currency: string; lines: Array<{ description: string }> };
+export type SubstituteReceiptCandidatePage = { items: SubstituteReceiptCandidate[]; total: number; page: number; pageSize: number };
 
 export type GenerateSubstituteReceiptInput = {
   fundingSource: SubstituteReceiptFundingSource;
@@ -1609,6 +1670,9 @@ export type SharedEvidenceFilter = {
 };
 
 export type SharedEvidenceRow = {
+  sourceDocumentTypeLabel?: string;
+  /** Missing document dates use uploadedAt for the accounting period. */
+  dateStatus?: import('./line-ai-value-normalizer.js').ExpenseDocumentDateStatus;
   sourceEvidenceUnavailable?: boolean;
   expenseId: string;
   expenseNumber: string | null;
@@ -1713,6 +1777,13 @@ export const ACCOUNTANT_INDEX_COLUMNS = [
   // tax invoice needs the seller address that is printed on the paper, and it was nowhere in the
   // file that leaves the system. Appended so every position-based consumer keeps its offsets.
   'vendor_address',
+  'input_vat_right',
+  'input_vat_reason',
+  'input_vat_decided_by',
+  'input_vat_decided_at',
+  'voucher_numbers',
+  'wht_certificate_numbers',
+  'bundle_file_names',
 ] as const;
 
 export type AccountantIndexColumn = (typeof ACCOUNTANT_INDEX_COLUMNS)[number];
@@ -1729,8 +1800,8 @@ export const ACCOUNTANT_INDEX_COLUMN_LABELS: Record<AccountantIndexColumn, strin
   expense_status: 'สถานะรายการ',
   source_channel: 'ช่องทางส่งเข้า',
   source_document_type: 'ประเภทเอกสาร',
-  tax_evidence_status: 'สถานะหลักฐานภาษี',
-  tax_evidence_reason: 'เหตุผลสถานะภาษี',
+  tax_evidence_status: 'หลักฐานรายจ่าย',
+  tax_evidence_reason: 'เหตุผลหลักฐานรายจ่าย',
   posting_status: 'สถานะลงบัญชี',
   posting_error: 'สาเหตุลงบัญชีไม่สำเร็จ',
   journal_entry_number: 'เลขที่ JV',
@@ -1760,7 +1831,7 @@ export const ACCOUNTANT_INDEX_COLUMN_LABELS: Record<AccountantIndexColumn, strin
   substitute_receipt_ref: 'อ้างอิงใบแทนใบเสร็จ',
   primary_evidence_ref: 'ไฟล์หลักฐานหลัก',
   supporting_evidence_refs: 'ไฟล์แนบเพิ่มเติม',
-  web_url: 'ลิงก์เปิดในระบบ',
+  web_url: 'เปิดไฟล์',
   notes: 'หมายเหตุ',
   additional_charges_amount: 'ค่าใช้จ่ายเพิ่ม',
   document_date_status: 'สถานะวันที่เอกสาร',
@@ -1768,6 +1839,13 @@ export const ACCOUNTANT_INDEX_COLUMN_LABELS: Record<AccountantIndexColumn, strin
   certifying_payer_name: 'ผู้จ่ายและรับรอง',
   substitute_evidence_provenance: 'ต้นทางใบรับรองและประวัติแก้ไข',
   vendor_address: 'ที่อยู่ผู้ขายตามใบ',
+  input_vat_right: 'สิทธิภาษีซื้อ',
+  input_vat_reason: 'เหตุผลสิทธิภาษีซื้อ',
+  input_vat_decided_by: 'ผู้ตรวจสิทธิภาษีซื้อ',
+  input_vat_decided_at: 'วันเวลาที่ตรวจสิทธิภาษีซื้อ',
+  voucher_numbers: 'เลขใบสำคัญจ่าย',
+  wht_certificate_numbers: 'เลขหนังสือรับรอง 50 ทวิ',
+  bundle_file_names: 'ชื่อไฟล์ในชุดเอกสาร',
 };
 
 /** Everyday view: what a non-accountant needs to read the export at a glance. */
@@ -1779,6 +1857,8 @@ export const ACCOUNTANT_INDEX_SUMMARY_COLUMNS: readonly AccountantIndexColumn[] 
   'grand_total_amount',
   'vat_amount',
   'expense_status',
+  'web_url',
+  'voucher_numbers', 'wht_certificate_numbers', 'bundle_file_names',
 ];
 
 export type AccountantIndexColumnSet = 'summary' | 'full';
@@ -1820,6 +1900,12 @@ export type AccountantPackageRequest = SharedEvidenceFilter & {
   format?: 'csv';
   /** Column set of the downloadable index file. Default `summary`. */
   columnSet?: AccountantIndexColumnSet;
+};
+
+export type AccountantEvidenceBundlePlan = {
+  fileCount: number; partCount: number;
+  counts: { receipts: number; substituteReceipts: number; paymentSlips: number; vouchers: number; supportingFiles?: number; whtCertificates: number };
+  missingReceiptCount: number;
 };
 
 export type AccountantPackageResult = {
@@ -1905,8 +1991,8 @@ export const ATTACHMENT_SOURCE_TYPES_LABEL = `PDF หรือรูปภาพ
 export const SIGNATURE_FILE_TYPES_LABEL = `รูปภาพ (${STORED_IMAGE_TYPES_LABEL})`;
 export const SIGNATURE_FILE_REQUIRED_MESSAGE = `ไฟล์ลายเซ็นต้องเป็น${SIGNATURE_FILE_TYPES_LABEL} ขนาดไม่เกิน 2 เมกะไบต์`;
 export const SIGNATURE_FILE_TOO_LARGE_MESSAGE = 'ไฟล์ลายเซ็นต้องมีขนาดไม่เกิน 2 เมกะไบต์';
-export const UPLOAD_FILE_TYPE_MISMATCH_MESSAGE = `ไฟล์นี้มีชนิดไฟล์ไม่ตรงกับข้อมูลภายใน ระบบจึงแนบไม่ได้ กรุณาเลือกไฟล์ใหม่ หรือบันทึกเป็น PDF หรือ${SIGNATURE_FILE_TYPES_LABEL} แล้วลองอีกครั้ง`;
-export const UPLOAD_HEIC_CONVERSION_MESSAGE = `แปลงรูปไม่สำเร็จ กรุณาบันทึกรูปเป็น${SIGNATURE_FILE_TYPES_LABEL} แล้วลองอีกครั้ง`;
+export const UPLOAD_FILE_TYPE_MISMATCH_MESSAGE = `ไฟล์นี้มีชนิดไฟล์ไม่ตรงกับข้อมูลภายใน ระบบจึงแนบไม่ได้ เลือกไฟล์ใหม่ หรือบันทึกเป็น PDF หรือ${SIGNATURE_FILE_TYPES_LABEL} แล้วลองอีกครั้ง`;
+export const UPLOAD_HEIC_CONVERSION_MESSAGE = `แปลงรูปไม่สำเร็จ บันทึกรูปเป็น${SIGNATURE_FILE_TYPES_LABEL} แล้วลองอีกครั้ง`;
 
 /** The same binary-megabyte display on web and LINE; limits themselves are unchanged. */
 export const expenseCaptureMegabytes = (bytes: number): string => `${(bytes / 1_048_576).toFixed(1)} เมกะไบต์`;
@@ -1916,3 +2002,32 @@ export const EXPENSE_MANUAL_EDIT_HELP_TH = 'ผู้มีสิทธิ์แ
 export const EXPENSE_SAVED_MANUAL_HELP_TH = `เก็บไฟล์ไว้แล้ว ${EXPENSE_MANUAL_EDIT_HELP_TH}`;
 export const EXPENSE_READ_FAILED_HELP_TH = `อ่านข้อมูลไม่สำเร็จค่ะ ${EXPENSE_SAVED_MANUAL_HELP_TH}`;
 export const EXPENSE_READ_PARTIAL_HELP_TH = `อ่านข้อมูลได้บางส่วนค่ะ ${EXPENSE_SAVED_MANUAL_HELP_TH}`;
+
+export const EXPENSE_REVIEW_REQUEST_WORDS = {
+  title: 'มีรายจ่ายรอคุณตรวจ',
+  body: '{sender} ส่งรายจ่าย {number} ให้คุณตรวจ',
+} as const;
+
+/** The reviewer answers; system conditions are read again by the decision transaction. */
+export const INPUT_VAT_REVIEWER_CONDITIONS = [
+  { code: 'BUSINESS_USE', label: 'ซื้อเพื่อใช้ในกิจการ' },
+  { code: 'NOT_PROHIBITED', label: 'ไม่ใช่ภาษีซื้อต้องห้าม เช่น ค่ารับรอง' },
+  { code: 'ISSUER_ENTITLED', label: 'ผู้ออกใบมีสิทธิออกใบกำกับภาษี' },
+] as const;
+export type DecideExpenseInputVatInput = {
+  toStatus: 'CLAIMABLE' | 'NON_CLAIMABLE'; reason?: string;
+  reviewerConditions?: string[]; buyerConfirmed?: boolean;
+};
+export type ExpenseInputVatDecisionView = {
+  id: string; fromStatus: InputVatClaimStatus; toStatus: InputVatClaimStatus; reason: string | null;
+  conditions: Array<{ code: string; answer: boolean; source: 'SYSTEM' | 'REVIEWER'; fact: unknown; answeredByUserId?: string }>;
+  evidenceAttachmentIds: string[]; decidedByUserId: string; decidedByName: string; decidedAt: string;
+};
+export type ExpenseInputVatRightView = {
+  vatStatus?: 'REGISTERED' | 'NOT_REGISTERED' | 'UNKNOWN';
+  conditions?: ExpenseInputVatDecisionView['conditions'];
+  buyerMatchStatus?: string;
+  postsToLedger?: boolean;
+  decisionBlocker?: 'tax_period_locked' | 'input_vat_posted_journal_immutable' | null;
+  status: InputVatClaimStatus; fixed: boolean; reasonCode: string | null; latestDecision: ExpenseInputVatDecisionView | null;
+};

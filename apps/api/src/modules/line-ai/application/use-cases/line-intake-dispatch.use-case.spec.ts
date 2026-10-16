@@ -355,6 +355,11 @@ function makeHarness(opts: {
     },
     updateExpense: async (input: any) => {
       updateExpenseCalls.push(input);
+      // Final receipt metadata now uses the repository; preserve the same durable-write probe and revision check.
+      if (input.sourceChannelMetadataJson?.kind === 'media') {
+        const { id, companyId, expectedUpdatedAt, ...data } = input;
+        return prisma.client.expenseRecord.update({ where: { id, companyId, updatedAt: expectedUpdatedAt }, data });
+      }
       const saved = { id: input.id, expenseNumber: 'EXP-REAL-1', grandTotalAmount: '50.0000', createdByUserId: 'user-1',
         branchId: legacyBranchIds[0], captureSource: 'LINE_UPLOAD', updatedAt: new Date(), ...input };
       if (input.sourceChannelMetadataJson?.kind === 'text_note') capturedRows.set(saved.id, saved);
@@ -2826,7 +2831,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.deepEqual(recordUpdates[0].data.aiVerificationSummaryJson.recognizedFields, validReceiptOcr().fields);
     assert.equal(recordUpdates[0].data.lineMessageId, undefined, 'the first write is only the captured source result');
     assert.equal(recordUpdates[1].data.lineMessageId, MEDIA_EVENT.lineMessageId);
-    assert.equal(recordUpdates[1].data.captureSource, 'LINE_UPLOAD');
+    assert.equal((await (h.useCase as any).expenseRepo.findByIdWithRelations('company-1', 'expense-1')).captureSource, 'LINE_UPLOAD');
     assert.equal(pendingMediaRows.length, 0);
     assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว \(รอตรวจสอบ\)/);
     assert.match(h.replies[0] ?? '', /ยอดรวม – 120\.00/);

@@ -10,6 +10,11 @@ import {
   DownloadSubstituteReceiptPdfUseCase,
   InitSubstituteSignatureUploadUseCase,
   PrepareSubstituteReceiptUseCase,
+  ListCompanySubstituteReceiptsUseCase,
+  ListSubstituteReceiptHistoryUseCase,
+  ListSubstituteReceiptCandidatesUseCase,
+  SubstituteReceiptEvidenceUploadUseCase,
+  SaveOwnSubstituteReceiptReviewUseCase,
   PreviewSubstituteReceiptUseCase,
 } from './substitute-receipt.use-case';
 import { SetSignatureDerivedAssetUseCase } from './signature-asset.use-case';
@@ -99,14 +104,14 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     await assert.rejects(useCase.executeAmendment(ctx('reader', []), 'exp-1', 'sub-1', input), /expense.review/);
     await assert.rejects(useCase.executeAmendment({ ...ctx(), authProvider: 'line' }, 'exp-1', 'sub-1', input), /authenticated web/);
     await assert.rejects(useCase.executeAmendment({ ...ctx(), companyId: 'other' }, 'exp-1', 'sub-1', input), /not found/);
-    await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, expectedEvidenceUpdatedAt: '2026-01-01' }), /โหลดข้อมูลล่าสุด/);
+    await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, expectedEvidenceUpdatedAt: '2026-01-01' }), /เปิดหน้านี้ใหม่/);
     await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, payeeTaxId: '123' }), /13 digits/);
     await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, paymentMethod: 'BANK_TRANSFER' }), /Attach separate proof/);
-    await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, paymentDate: '2026-02-31' }), /วันที่จ่ายเงินที่ถูกต้อง/);
-    await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, paymentMethod: 'invalid' }), /วิธีชำระเงินที่ถูกต้อง/);
+    await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, paymentDate: '2026-02-31' }), /วันที่จ่ายเงินไม่ถูกต้อง/);
+    await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, paymentMethod: 'invalid' }), /วิธีจ่ายไม่ถูกต้อง/);
     for (const status of ['ISSUED', 'SUPERSEDED']) {
       current.status = status;
-      await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', input), /โหลดข้อมูลล่าสุด/);
+      await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', input), /เปิดหน้านี้ใหม่/);
     }
   });
   it('prepares a version without replacing the original source type', async () => {
@@ -1669,7 +1674,7 @@ describe('paper signing without account identities', () => {
     const input: any = { payer: { name: 'สมชาย', position: 'พนักงาน', signedOn: '2026-02-30' }, approver: { name: 'สมชาย', position: 'กรรมการ', signedOn: '2026-07-13' }, samePerson: false, formMatchesAcknowledged: true };
     await assert.rejects(useCase.submit(ctx(), 'exp-1', 'sub-1', input), /วันที่/);
     input.payer.signedOn = '2026-07-13';
-    await assert.rejects(useCase.submit(ctx(), 'exp-1', 'sub-1', input), /ชื่อผู้ลงนามตรงกัน/);
+    await assert.rejects(useCase.submit(ctx(), 'exp-1', 'sub-1', input), /ชื่อผู้เซ็นตรงกัน/);
   });
   it('does not accept an upload as an issued document without all review acknowledgements', async () => {
     const { useCase } = setup();
@@ -1682,5 +1687,339 @@ describe('paper signing without account identities', () => {
     assert.equal((svg.match(/วันที่ ________/g) ?? []).length, 2);
     assert.doesNotMatch(svg, /<image|ตัวอย่างก่อนลงนาม|รอผู้อนุมัติลงนาม|ลงนามโดยเจ้าของกิจการ/);
     assert.match(svg, /ข้าพเจ้า ________ ตำแหน่ง \(ถ้ามี\) ________/);
+  });
+});
+
+
+describe('owner certifies and issues in one signing', () => {
+  function combinedFixture(mode = 'OWNER_SELF', payerUserId = 'owner-1') {
+    const evidence = prepared({ payerUserId });
+    let combined: any;
+    const repo = {
+      findSubstituteEvidence: async () => evidence,
+      findByIdWithRelations: async () => expense(),
+      findPersonalSignatureAttachment: async () => ({ id: 'sig-owner', bucket: 'b', objectKey: 'sig', mimeType: 'image/png', byteSize: png.length, checksumSha256: null }),
+      findSubstituteEvidenceAttachments: async () => [{ id: 'att-source', originalFileName: 'bill.jpg', mimeType: 'image/jpeg', checksumSha256: 'src' }],
+      getSubstituteCompanyContext: async () => ({ name: 'ร้านทดสอบ', taxId: '0101', branchName: null }),
+      getSubstituteReceiptPolicy: async () => ({ approvalMode: mode, approverUserIds: ['approver-1'] }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'owner-1' }, { userId: 'approver-1' }],
+      findActiveMemberIdentity: async () => ({ userId: 'owner-1', displayName: 'สมชาย' }),
+      markSubstituteEvidenceCertified: async () => prepared({ status: 'PAYER_CERTIFIED' }),
+      certifyAndIssueSubstituteEvidence: async (input: any) => {
+        combined = input;
+        return prepared({ ...input.certification, ...input.issuance, status: 'ISSUED',
+          artifactAttachmentId: 'issued', certifiedArtifactAttachmentId: 'certified', issuedAt: input.issuance.approvedAt });
+      },
+    } as any;
+    const storage = { getObject: async () => ({ bytes: png }), putObject: async (input: any) => ({ bucket: 'b', objectKey: input.objectKey, storageProvider: 'local', objectVersionId: 'v1', byteSize: input.bytes.length }) } as any;
+    return { repo, useCase: new CertifySubstituteReceiptUseCase(repo, storage, audit, notification, cleanup), combined: () => combined };
+  }
+  const owner = () => ctx('owner-1', ['expense.confirm'], ['OWNER']);
+  async function command(fixture: ReturnType<typeof combinedFixture>) {
+    const preview = await new PreviewSubstituteReceiptUseCase(fixture.repo).execute(owner(), 'exp-1', 'sub-1', {});
+    return { certificationAcknowledged: true, approvalAcknowledged: true, signatureAttachmentId: 'sig-owner',
+      previewChecksumSha256: preview.previewChecksumSha256, expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString() } as any;
+  }
+  it('owner-self command stores both signatures with one drawing and time and both audit rows', async () => {
+    const fixture = combinedFixture();
+    const result = await fixture.useCase.execute(owner(), 'exp-1', 'sub-1', await command(fixture));
+    assert.equal(result.status, 'ISSUED');
+    const { certification, issuance, auditEntries } = fixture.combined();
+    assert.equal(certification.payerSignatureAttachmentId, issuance.approverSignatureAttachmentId);
+    assert.equal(certification.certifiedAt, issuance.approvedAt);
+    assert.equal(certification.snapshotChecksumSha256, canonicalSnapshotHash(certification.snapshotJson));
+    assert.equal(issuance.allowSelfApproval, true);
+    assert.deepEqual(auditEntries.map((entry: any) => entry.action), ['expense.substitute_receipt.certify', 'expense.substitute_receipt.approve']);
+    assert.equal(auditEntries[1].metadataJson.selfApproved, true);
+  });
+  it('refuses combined signing for designated approvers and anyone without the owner role', async () => {
+    const designated = combinedFixture('DESIGNATED_APPROVERS');
+    await assert.rejects(designated.useCase.execute(owner(), 'exp-1', 'sub-1', await command(designated)), /combined_signing_denied/);
+    const fixture = combinedFixture();
+    const input = await command(fixture);
+    for (const roles of [[], ['ADMIN'], ['MANAGER']]) {
+      await assert.rejects(fixture.useCase.execute(ctx('owner-1', ['expense.confirm'], roles), 'exp-1', 'sub-1', input), /combined_signing_denied/);
+    }
+    await assert.rejects(fixture.useCase.execute(ctx('approver-1', ['expense.confirm'], ['OWNER']), 'exp-1', 'sub-1', input), /selected actual payer/);
+    assert.equal(fixture.combined(), undefined);
+  });
+  it('keeps document reading, certification, approval permission and paper-route checks', async () => {
+    const fixture = combinedFixture(); const input = await command(fixture);
+    await assert.rejects(fixture.useCase.execute(owner(), 'exp-1', 'sub-1', { ...input, certificationAcknowledged: false }), /acknowledge/);
+    await assert.rejects(fixture.useCase.execute(owner(), 'exp-1', 'sub-1', { ...input, previewChecksumSha256: 'stale' }), /preview no longer matches/);
+    await assert.rejects(fixture.useCase.execute(ctx('owner-1', [], ['OWNER']), 'exp-1', 'sub-1', input), /expense.confirm/);
+    assert.equal(fixture.combined(), undefined);
+  });
+});
+
+
+describe('own expense certificate preparation', () => {
+  function fixture(createdByUserId = 'payer-1') {
+    const source = expense({ createdByUserId }); let preparedInput: any;
+    const repo = { findByIdWithRelations: async () => source, findById: async () => source,
+      findActiveMemberIdentity: async (_company: string, userId: string) => ({ userId, displayName: userId }),
+      listEligibleSubstituteReceiptPayers: async () => [{ userId: 'payer-1', displayName: 'ผู้จ่าย' }],
+      getSubstituteReceiptPolicy: async () => ({ approvalMode: 'OWNER_SELF', approverUserIds: [] }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'owner-1' }],
+      findSubstituteEvidenceAttachments: async () => [],
+      createPreparedSubstituteEvidence: async (input: any) => { preparedInput = input; return prepared(); },
+      listSubstituteEvidenceHistory: async () => [prepared({ payerUserId: 'other-payer' })],
+      listCompanySubstituteReceipts: async (_company: string, _filter: any, scope: any) => { assert.equal(scope.createdByUserId, 'payer-1'); return { rows: [], total: 0 }; },
+    } as any;
+    return { source, repo, preparedInput: () => preparedInput };
+  }
+  const input = { fundingSource: 'PERSONAL_ADVANCE', paidInFullAcknowledged: true, reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ไม่มีใบเสร็จ',
+    businessPurpose: 'ซื้อของใช้ในร้าน', paymentDate: '2026-07-13', paymentMethod: 'CASH', payerUserId: 'payer-1',
+    idempotencyKey: 'own-prepare', expectedExpenseUpdatedAt: now.toISOString() } as any;
+  it('read-own creator may prepare and read the certificate without review permission', async () => {
+    const f = fixture(); f.source.aiVerificationSummaryJson = null; const own = ctx('payer-1', ['expense.read_own']);
+    await new PrepareSubstituteReceiptUseCase(f.repo, audit, notification).execute(own, 'exp-1', input);
+    assert.equal(f.preparedInput().preparedByUserId, 'payer-1');
+    assert.equal((await new ListSubstituteReceiptHistoryUseCase(f.repo).execute(own, 'exp-1')).length, 1);
+    await new ListCompanySubstituteReceiptsUseCase(f.repo).execute(own, {});
+  });
+  it('other creators and callers without expense rights keep the prepare refusal; reviewers remain allowed', async () => {
+    const f = fixture('someone-else'); const useCase = new PrepareSubstituteReceiptUseCase(f.repo, audit, notification);
+    await assert.rejects(useCase.execute(ctx('payer-1', ['expense.read_own']), 'exp-1', input), /Missing permission: expense.review/);
+    await assert.rejects(useCase.execute(ctx('payer-1', []), 'exp-1', input), /Missing permission: expense.review/);
+    await useCase.execute(ctx(), 'exp-1', input);
+    assert.equal(f.preparedInput().preparedByUserId, 'payer-1');
+  });
+});
+
+describe('server certificate candidate list', () => {
+  function candidates(rows: any[]) {
+    const repo = { listSubstituteReceiptCandidateSources: async (_filter: any, _scope: any) => rows } as any;
+    return new ListSubstituteReceiptCandidatesUseCase(repo);
+  }
+  it('offers unanswered drafts and incomplete facts to their recorder and reviewers, but never another employee', async () => {
+    const row = expense({ attachments: [], createdByUserId: 'payer-1', sourceDocumentType: 'NEEDS_REVIEW', taxEvidenceStatus: 'NEEDS_REVIEW', aiVerificationSummaryJson: null, substituteReceiptEvidence: null, expenseCategoryId: null,
+      lines: [{ description: 'น้ำแข็ง', expenseCategoryId: null, accountHintKey: null }] });
+    row.aiVerificationSummaryJson = null;
+    const list = new ListSubstituteReceiptCandidatesUseCase({ listSubstituteReceiptCandidateSources: async (scope: any) => !scope.createdByUserId || scope.createdByUserId === row.createdByUserId ? [row] : [] } as any);
+    assert.equal((await list.execute(ctx('payer-1', ['expense.read_own']), {})).total, 1);
+    assert.equal((await list.execute(ctx(), {})).total, 1);
+    assert.equal((await list.execute(ctx('other', ['expense.read_own']), {})).total, 0);
+  });
+  it('excludes unanswered receipt uploads until a receipt problem is recorded, while keeping manual entries', async () => {
+    const row = expense({ createdByUserId: 'payer-1', substituteReceiptEvidence: null });
+    row.aiVerificationSummaryJson = null;
+    for (const includeBlocked of [false, true]) {
+      assert.equal((await candidates([row]).execute(ctx(), { includeBlocked })).total, 0);
+      assert.equal((await candidates([{ ...row, attachments: [] }]).execute(ctx(), { includeBlocked })).total, 1);
+    }
+    const supporting = { ...row, attachments: row.attachments.map((file: { purpose: string }) => ({ ...file, purpose: 'expense.receipt.supporting' })) };
+    assert.equal((await candidates([supporting]).execute(ctx(), { includeBlocked: true })).total, 0);
+    for (const receiptProblem of ['NOT_AVAILABLE', 'LOST', 'MATERIAL_INCOMPLETE']) {
+      row.aiVerificationSummaryJson = { documentReview: { assessment: { route: 'SUBSTITUTE_RECEIPT', receiptProblem, reason: 'ไม่มีใบเสร็จ', attachmentIds: [] } } };
+      assert.equal((await candidates([row]).execute(ctx(), {})).total, 1);
+    }
+  });
+  it('excludes live certificates and cancelled expenses, and usable receipts even when a legacy caller requests blocked rows', async () => {
+    const base = expense({ createdByUserId: 'payer-1', substituteReceiptEvidence: null });
+    for (const patch of [{ status: 'REJECTED' }, { status: 'VOIDED' }, { substituteReceiptEvidence: prepared() }]) {
+      assert.equal((await candidates([{ ...base, ...patch }]).execute(ctx(), { includeBlocked: true })).total, 0);
+    }
+    base.aiVerificationSummaryJson.documentReview.assessment = { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: ['att-source'], reason: '' };
+    assert.equal((await candidates([base]).execute(ctx(), { includeBlocked: true })).total, 0);
+  });
+  it('lists older-than-200 sources and missing facts without hiding them, and pages/searches on the server', async () => {
+    const base = expense({ createdByUserId: 'payer-1', substituteReceiptEvidence: null });
+    const valid = Array.from({ length: 205 }, (_, i) => ({ ...base, id: `e-${i}`, expenseNumber: `EXP-${i}`, createdAt: new Date(now.getTime()-i*1000) }));
+    valid.push({ ...base, id: 'cancelled', substituteReceiptEvidence: prepared({ status: 'SUPERSEDED' }), createdAt: new Date(0) });
+    const invalid = [{ status: 'CONFIRMED' }, { currency: 'USD' }, { grandTotalAmount: '0' }, { taxEvidenceStatus: 'USABLE_FOR_TAX' },
+      { sourceDocumentType: 'NEEDS_REVIEW' }, { lines: [] }, { lines: [{ description: '' }] }, { expenseCategoryId: null, lines: [{ description: 'ของ', expenseCategoryId: null, accountHintKey: null }] },
+      { paidAmount: '20', netPayableAmount: '65' }, { substituteReceiptEvidence: prepared() }].map((patch, i) => ({ ...base, id: `bad-${i}`, createdAt: new Date(1), ...patch }));
+    const list = candidates([...valid, ...invalid]);
+    const page = await list.execute(ctx('payer-1', ['expense.read_own']), { page: 41, pageSize: 5 });
+    assert.equal(page.total, 213); assert.ok(page.items.some((row: any) => row.id === 'e-204'));
+    assert.equal((await list.execute(ctx('payer-1', ['expense.read_own']), { page: 43, pageSize: 5 })).items.at(-1)?.id, 'cancelled');
+    for (const search of ['EXP-204', 'ผู้ขายในตลาด', 'ผักสด']) assert.ok((await list.execute(ctx('payer-1', ['expense.read_own']), { search })).total > 0);
+  });
+  it('keeps repairable preparation facts visible but excludes final states, unsupported currency and non-expense documents', async () => {
+    const valid = expense({ createdAt: now, substituteReceiptEvidence: null });
+    const cases = [
+      [{ status: 'DRAFT' }, true], [{ status: 'READY_FOR_CONFIRMATION' }, true], [{ status: 'CONFIRMED' }, false], [{ currency: 'USD' }, false], [{ status: 'VOIDED' }, false], [{ status: 'REJECTED' }, false],
+      [{ sourceDocumentType: 'RECEIPT' }, true], [{ sourceDocumentType: 'SUBSTITUTE_RECEIPT' }, true],
+      [{ taxEvidenceStatus: 'NEEDS_REVIEW' }, true], [{ paidAmount: '65', netPayableAmount: '65' }, true], [{ paidAmount: '66', netPayableAmount: '65' }, true],
+      [{ lines: Array.from({ length: 100 }, () => ({ description: 'ของ', expenseCategoryId: 'cat' })) }, true],
+      [{ lines: [{ description: 'ก'.repeat(1000), expenseCategoryId: 'cat' }] }, true],
+      [{ aiVerificationSummaryJson: { classification: { documentKind: 'QUOTATION' } } }, false],
+    ] as const;
+    for (const [patch, expected] of cases) {
+      const result = await candidates([{ ...valid, ...patch }]).execute(ctx(), {});
+      assert.equal(result.total === 1, expected, JSON.stringify(patch));
+    }
+    for (const problem of ['LOST', 'MATERIAL_INCOMPLETE']) {
+      const source = expense({ createdAt: now, sourceDocumentType: 'RECEIPT', substituteReceiptEvidence: null });
+      source.aiVerificationSummaryJson.documentReview.assessment.receiptProblem = problem;
+      assert.equal((await candidates([source]).execute(ctx(), {})).total, 1);
+    }
+  });
+  it('filters usable receipts before pagination and search even for legacy includeBlocked callers', async () => {
+    const source = expense({ createdAt: now, sourceDocumentType: 'RECEIPT', substituteReceiptEvidence: null });
+    source.aiVerificationSummaryJson.documentReview.assessment = { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: ['att-source'], reason: '' };
+    const eligible = expense({ id: 'eligible', createdAt: new Date(0), substituteReceiptEvidence: null });
+    const list = candidates([source, eligible]);
+    const page = await list.execute(ctx(), { includeBlocked: true, page: 1, pageSize: 1 });
+    assert.equal(page.total, 1);
+    assert.deepEqual(page.items.map(row => row.id), ['eligible']);
+    assert.equal((await list.execute(ctx(), { page: 2, pageSize: 1 })).items.length, 0);
+    assert.equal((await list.execute(ctx(), { search: 'ไม่มีในรายการ' })).total, 0);
+  });
+  it('uses creator and branch scope and refuses callers without expense read rights', async () => {
+    let scope: any;
+    const list = new ListSubstituteReceiptCandidatesUseCase({ listSubstituteReceiptCandidateSources: async (filter: any, branches: any) => { scope = { filter, branches }; return []; } } as any);
+    await list.execute(ctx('payer-1', ['expense.read_own']), {});
+    assert.equal(scope.filter.createdByUserId, 'payer-1');
+    await list.execute(ctx(), {}); assert.equal(scope.filter.createdByUserId, undefined);
+    await assert.rejects(list.execute({ ...ctx('payer-1', ['expense.read_own']), scopes: { branchIds: ['allowed'] } }, { branchId: 'other' }), /Branch/);
+    await assert.rejects(list.execute(ctx('payer-1', []), {}), /Missing permission: expense.review/);
+  });
+});
+
+describe('own certificate evidence uploads', () => {
+  it('allows only the readable creator or reviewer, and binds completion to their expense upload', async () => {
+    const source = expense({ createdByUserId: 'payer-1', substituteReceiptEvidence: null });
+    let linked = false;
+    const repo = { findByIdWithRelations: async () => source,
+      findSubstitutePreparationUpload: async (_c: string, _e: string, _a: string, user: string) => user === 'payer-1' ? { status: 'PENDING_UPLOAD' } : null,
+      updateExpense: async (_input: any, callback: any) => callback({ expenseSubstituteReceiptEvidence: { findFirst: async () => null } }), linkAttachment: async () => { linked = true; } } as any;
+    const useCase = new SubstituteReceiptEvidenceUploadUseCase(repo, { execute: async (_ctx: any, input: any) => input } as any, { execute: async () => ({}) } as any);
+    const input = { originalFileName: 'proof.png', mimeType: 'image/png', byteSize: 10, purpose: 'expense.payment.evidence' as const };
+    const own = ctx('payer-1', ['expense.read_own']);
+    const upload = await useCase.init(own, 'exp-1', input);
+    assert.equal((upload as any).metadataJson.expenseId, 'exp-1');
+    await useCase.complete(own, 'exp-1', 'file', input); assert.equal(linked, true);
+    for (const actor of [ctx('other', ['expense.read_own']), ctx('payer-1', [])]) await assert.rejects(useCase.init(actor, 'exp-1', input), /Missing permission/);
+    await assert.rejects(useCase.complete(ctx('other', ['expense.review', 'attachment.create']), 'exp-1', 'file', input), /upload/i);
+    await assert.rejects(useCase.init(own, 'exp-1', { ...input, purpose: 'expense.receipt.primary' } as any), /purpose/i);
+  });
+});
+
+it('certificate deep links preserve assigned payer access after the preparation hub becomes creator-only', async () => {
+  const source = expense({ createdByUserId: 'someone-else' });
+  const repo = { findExpenseIdForSubstituteReceipt: async () => 'exp-1', findById: async () => source,
+    listSubstituteEvidenceHistory: async () => [prepared()] } as any;
+  const reader = new ListSubstituteReceiptHistoryUseCase(repo);
+  assert.equal(await reader.resolveExpenseId(ctx('payer-1', ['expense.read_own']), 'sub-1'), 'exp-1');
+  await assert.rejects(reader.resolveExpenseId(ctx('unrelated', ['expense.read_own']), 'sub-1'), /Cannot read/);
+});
+
+it('own certificate continuation saves only the no-receipt review and cannot review other facts or usable receipts', async () => {
+  const source = expense({ createdByUserId: 'payer-1' }); let saved = 0;
+  const repo = { findByIdWithRelations: async () => source } as any;
+  const save = new SaveOwnSubstituteReceiptReviewUseCase(repo, { execute: async (_ctx: any, _id: string, body: any, options: any) => {
+    assert.equal(options.ownSubstituteReceiptReview, true); assert.equal(body.evidenceAssessment.route, 'SUBSTITUTE_RECEIPT'); saved++; return source;
+  } } as any);
+  const input = { expectedUpdatedAt: now.toISOString(), sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE', documentReviewAcknowledged: true,
+    evidenceAssessment: { route: 'SUBSTITUTE_RECEIPT', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [], reason: '' } } as any;
+  await save.execute(ctx('payer-1', ['expense.read_own']), 'exp-1', input); assert.equal(saved, 1);
+  await assert.rejects(save.execute(ctx('other', ['expense.read_own']), 'exp-1', input), /expense.review/);
+  await assert.rejects(save.execute(ctx('payer-1', []), 'exp-1', input), /expense.review/);
+  await assert.rejects(save.execute(ctx('payer-1', ['expense.read_own']), 'exp-1', { ...input, grandTotalAmount: '1' }), /review/);
+  source.aiVerificationSummaryJson.documentReview.assessment = { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: ['att-source'], reason: '' };
+  await assert.rejects(save.execute(ctx('payer-1', ['expense.read_own']), 'exp-1', input), /usable receipt/);
+  assert.equal(saved, 1);
+});
+
+it('no-receipt acknowledgement can precede category completion without granting category edits', async () => {
+  const source = expense({ createdByUserId: 'payer-1', sourceDocumentType: 'NEEDS_REVIEW', taxEvidenceStatus: 'NEEDS_REVIEW', expenseCategoryId: null, lines: [{ description: 'น้ำแข็ง', expenseCategoryId: null }] });
+  source.aiVerificationSummaryJson = null;
+  const save = new SaveOwnSubstituteReceiptReviewUseCase({ findByIdWithRelations: async () => source } as any, { execute: async () => ({ id: source.id }) } as any);
+  const input = { expectedUpdatedAt: now.toISOString(), sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE', documentReviewAcknowledged: true,
+    evidenceAssessment: { route: 'SUBSTITUTE_RECEIPT', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [], reason: '' } } as any;
+  assert.equal((await save.execute(ctx('payer-1', ['expense.read_own']), 'exp-1', input)).id, 'exp-1');
+  await assert.rejects(save.execute(ctx('payer-1', ['expense.read_own']), 'exp-1', { ...input, expenseCategoryId: 'cat' }), /Only the no-receipt/);
+});
+
+
+describe('certificate payee name provenance on the source expense', () => {
+  it('fills only an empty seller, follows its own unsigned name, and keeps other metadata', async () => {
+    const { substitutePayeeExpenseFields } = await import('../../infrastructure/substitute-expense-edit');
+    const source = { vendorNameSnapshot: null, sourceChannelMetadataJson: { unrelated: 'kept' } };
+    const first = substitutePayeeExpenseFields(source, 'ป้าศรี');
+    assert.equal(first.vendorNameSnapshot, 'ป้าศรี');
+    assert.equal(first.sourceChannelMetadataJson.unrelated, 'kept');
+    const current = { status: 'PREPARED', payeeName: 'ป้าศรี' };
+    assert.equal(substitutePayeeExpenseFields({ ...source, ...first }, 'ป้าสม', current).vendorNameSnapshot, 'ป้าสม');
+    assert.deepEqual(substitutePayeeExpenseFields({ ...source, vendorNameSnapshot: 'ชื่อที่คนกรอก' }, 'ป้าศรี'), {});
+    assert.deepEqual(substitutePayeeExpenseFields({ ...source, ...first, vendorNameSnapshot: 'ชื่อที่แก้เอง' }, 'ป้าสม', current), {});
+    assert.deepEqual(substitutePayeeExpenseFields({ ...source, vendorNameSnapshot: 'ป้าศรี' }, 'ป้าสม', current), {}, 'same text without provenance is still a person-entered seller');
+    for (const signed of [{ status: 'PAYER_CERTIFIED' }, { status: 'ISSUED' }, { wetSignedScanAttachmentId: 'scan' }, { paperSubmissionJson: { submitted: true } }]) {
+      assert.deepEqual(substitutePayeeExpenseFields({ ...source, ...first }, 'ป้าสม', { ...current, ...signed }), {});
+    }
+  });
+});
+
+describe('substitute receipt hub paging', () => {
+  it('returns all-page decimal totals, status counts and personal attention independently of the page', async () => {
+    const counts = { PREPARED: 12, PAYER_CERTIFIED: 3, ISSUED: 8, SUPERSEDED: 1 };
+    const attention = { signature: { count: 12, evidenceId: 'sub-first' }, approval: { count: 3, evidenceId: 'sub-approve' } };
+    const repo = {
+      getSubstituteReceiptPolicy: async () => ({ approvalMode: 'OWNER_SELF' }),
+      listCompanySubstituteReceipts: async (_company: string, filter: any, scope: any) => {
+        assert.equal(filter.order, 'oldest'); assert.equal(filter.page, 2); assert.equal(filter.pageSize, 10);
+        assert.equal(scope.userId, 'payer-1'); assert.equal(scope.canApprove, true); assert.equal(scope.canSelfApprove, true);
+        return { rows: [], total: 12, counts, sums: { total: '123456.78' }, attention };
+      },
+    } as any;
+    const result = await new ListCompanySubstituteReceiptsUseCase(repo).execute(ctx('payer-1', ['expense.confirm'], ['OWNER']), { status: 'PREPARED', yearMonth: '2026-10', page: 2, pageSize: 10, order: 'oldest' } as any);
+    assert.deepEqual(result, { items: [], total: 12, page: 2, pageSize: 10, counts, sums: { total: '123456.78' }, attention });
+  });
+
+  it('rejects an invalid date order before reading the list', async () => {
+    const repo = { listCompanySubstituteReceipts: async () => { throw new Error('must not read'); } } as any;
+    await assert.rejects(new ListCompanySubstituteReceiptsUseCase(repo).execute(ctx(), { order: 'unsafe' } as any), BadRequestException);
+  });
+});
+
+
+describe('substitute hub repository totals and order', () => {
+  it('aggregates once across all pages, retains month/tenant/branch/creator/payer scope, and orders before paging', async () => {
+    const sql: any[] = []; let hydrated: any;
+    const groups = [
+      { status: 'PREPARED', count: 12, total: '1000.005', signatureCount: 2, signatureId: 'first', approvalCount: 1, approvalId: 'paper' },
+      { status: 'ISSUED', count: 5, total: '8999.995', signatureCount: 0, signatureId: null, approvalCount: 0, approvalId: null },
+    ];
+    const tx: any = {
+      $queryRaw: async (query: any) => { sql.push(query); return query.sql.includes('GROUP BY') ? groups : [{ id: 'sub-2' }, { id: 'sub-1' }]; },
+      expenseSubstituteReceiptEvidence: { findMany: async (query: any) => { hydrated = query; return [{ id: 'sub-1' }, { id: 'sub-2' }]; } },
+    };
+    const repo = new PrismaExpenseRepository({ client: { $transaction: async (fn: any) => fn(tx) } } as any);
+    for (const order of ['newest', 'oldest'] as const) {
+      sql.length = 0;
+      const result = await repo.listCompanySubstituteReceipts('co-1', { status: 'PREPARED', yearMonth: '2026-10', payerUserId: 'payer-1', order, page: 2, pageSize: 10 },
+        { onlyPayerUserId: null, branchIds: ['b-1'], createdByUserId: 'creator-1', userId: 'payer-1', canApprove: true, canSelfApprove: false });
+      assert.equal(result.total, 12); assert.deepEqual(result.sums, { total: '1000.01' });
+      assert.deepEqual(result.counts, { PREPARED: 12, PAYER_CERTIFIED: 0, ISSUED: 5, SUPERSEDED: 0 });
+      assert.deepEqual(result.attention, { signature: { count: 2, evidenceId: 'first' }, approval: { count: 1, evidenceId: 'paper' } });
+      assert.deepEqual(result.rows.map(row => row.id), ['sub-2', 'sub-1']);
+      assert.equal(sql.filter(q => q.sql.includes('GROUP BY')).length, 1);
+      const aggregate = sql[0]; const page = sql[1];
+      for (const query of sql) {
+        assert.match(query.sql, /r\."companyId" =/); assert.match(query.sql, /e\."companyId" =/);
+        assert.match(query.sql, /r\."branchId" IS NULL OR r\."branchId" IN/);
+        assert.match(query.sql, /e\."branchId" IS NULL OR e\."branchId" IN/);
+        for (const value of ['co-1', 'b-1', 'creator-1', 'payer-1']) assert.ok(query.values.includes(value));
+        assert.ok(query.values.some((v: any) => v instanceof Date && v.toISOString() === '2026-10-01T00:00:00.000Z'));
+        assert.ok(query.values.some((v: any) => v instanceof Date && v.toISOString() === '2026-11-01T00:00:00.000Z'));
+      }
+      assert.doesNotMatch(aggregate.sql, /LIMIT|OFFSET/);
+      const direction = order === 'newest' ? 'DESC' : 'ASC';
+      assert.ok(page.sql.includes(`ORDER BY COALESCE(r."paymentDate", e."expenseDate") ${direction}, r."createdAt" ${direction}, r.id ${direction}`));
+      assert.match(page.sql, /ORDER BY[\s\S]*LIMIT \? OFFSET \?/); assert.deepEqual(page.values.slice(-2), [10, 10]);
+      assert.equal(hydrated.where.companyId, 'co-1'); assert.equal(hydrated.where.status, 'PREPARED');
+    }
+    const all = await repo.listCompanySubstituteReceipts('co-1', {}, { onlyPayerUserId: null });
+    assert.equal(all.total, 17); assert.equal(all.sums.total, '10000.00');
+  });
+  it('returns zero summaries and central-only predicates for an empty branch scope', async () => {
+    const queries: any[] = [];
+    const tx = { $queryRaw: async (q: any) => { queries.push(q); return []; }, expenseSubstituteReceiptEvidence: { findMany: async () => [] } };
+    const repo = new PrismaExpenseRepository({ client: { $transaction: async (fn: any) => fn(tx) } } as any);
+    const result = await repo.listCompanySubstituteReceipts('co-1', {}, { onlyPayerUserId: null, branchIds: [] });
+    assert.equal(result.total, 0); assert.equal(result.sums.total, '0.00'); assert.equal(result.attention.approval.count, 0);
+    assert.match(queries[0].sql, /r\."branchId" IS NULL/); assert.doesNotMatch(queries[0].sql, / IN \(\)/);
   });
 });

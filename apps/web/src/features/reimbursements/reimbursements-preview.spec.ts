@@ -11,9 +11,15 @@ const source = ['ReimbursementsPages.tsx', 'ReimbursementDetailSections.tsx']
 
 describe('reimbursement self-service entry', () => {
   it('uses the effective create permission on every screen width, with matching unavailable-create guidance', () => {
-    assert.match(source, /canCreate=\{permissions\.includes\('reimbursement\.create'\)\}/);
-    assert.match(source, /actions=\{permissions\.includes\('reimbursement\.create'\) && tab === 'mine' \? \([\s\S]*?reimbursements\/new[\s\S]*?min-h-11 w-full sm:w-auto/);
-    assert.match(source, /\? canCreate \? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : REIMBURSEMENT_CREATE_UNAVAILABLE/);
+    // One answer for the page's button, the list's empty state and the notice of an account that cannot create.
+    assert.match(source, /const canCreate = permissions\.includes\('reimbursement\.create'\);/);
+    assert.match(source, /canCreate=\{canCreate\}/);
+    // The page's one green button, full width on a phone through the shared button group.
+    assert.match(source, /actions=\{<div className="grid w-full auto-cols-fr grid-flow-col gap-3/);
+    assert.match(source, /canCreate && tab === 'mine' && <Link[^>]*className=\{btnClass\}>\+ สร้างใบเบิก<\/Link>/);
+    assert.match(source, /description=\{canCreate \? [^\n]+ : REIMBURSEMENT_CREATE_UNAVAILABLE\}/);
+    // Said once above the lists, as advice and not as an error, whichever list is open.
+    assert.match(source, /\{!canCreate && <Notice tone="info">\{REIMBURSEMENT_CREATE_UNAVAILABLE\}<\/Notice>\}/);
     const createPage = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ReimbursementCreatePage.tsx'), 'utf8');
     assert.match(createPage, /editing \? !canUpdate : !canCreate/);
     assert.match(createPage, /description=\{editing \? [^\n]+ : REIMBURSEMENT_CREATE_UNAVAILABLE\}/);
@@ -23,22 +29,24 @@ describe('reimbursement self-service entry', () => {
 describe('hub list loading', () => {
   // The loader and the list it fills are exercised in reimbursements.api.spec.ts; this holds the page to them.
   it('takes its own list through the page loader, and lets go of a request it no longer wants', () => {
-    assert.match(source, /const nextPage = hubNextPage\(list, [^)]+\);\s+useEffect\(\(\) => \{\s+if \(nextPage === null\) return;[\s\S]*?return loadHubPage\(companyId, \{ scope, [^}]*page: nextPage \}, \{\s+onPage: \(result\) => setHeld\(\(current\) => withHubPage\(current, listKey, result\)\),\s+onError: \(e\) => setHeld\(\(current\) => withHubFailure\(current, listKey, err\(e\)\)\),\s+\}\);\s+\}, \[/);
+    assert.match(source, /const nextPage = hubNextPage\(list, [^)]+\);\s+useEffect\(\(\) => \{\s+if \(nextPage === null\) return;[\s\S]*?return loadHubPage\(companyId, \{ scope, [^}]*page: nextPage \}, \{\s+onPage: \(result\) => \{ setHeld\(\(current\) => withHubPage\(current, listKey, result\)\);[^\n]+\},\s+onError: \(e\) => setHeld\(\(current\) => withHubFailure\(current, listKey, err\(e\)\)\),\s+\}\);\s+\}, \[/);
     // No other way into the list: an unpaged or unguarded call would bring the old faults back.
     assert.doesNotMatch(source, /listAllReimbursements|listReimbursements\(/);
     assert.match(source, /onClick=\{\(\) => setHeld\(withHubRetry\)\}>ลองอีกครั้ง</);
     // Lazy: what the screen needs is the table page shown, with a search as without one; the open filter and the search
     // are part of which list is held, and go to the API with every page.
-    assert.match(source, /const listKey = hubListKey\(companyId, scope, statusFilter, refreshKey, reload, search\);/);
+    // Nothing on a row changes a claim any more, so the list has no reload count of its own (0).
+    assert.match(source, /const listKey = hubListKey\(companyId, scope, statusFilter, refreshKey, 0, search, order\);/);
     assert.match(source, /hubNextPage\(list, page \* QUEUE_PAGE_SIZE\)/);
-    assert.match(source, /loadHubPage\(companyId, \{ scope, filter: statusFilter, search, page: nextPage \}/);
+    assert.match(source, /loadHubPage\(companyId, \{ scope, filter: statusFilter, search, order, page: nextPage \}/);
     // The search is the text typed once the typing has paused, and the API does the searching: the hub filters no rows itself.
     assert.match(source, /const timer = setTimeout\(\(\) => setSearch\(query\.trim\(\)\), HUB_SEARCH_DELAY_MS\);\s+return \(\) => clearTimeout\(timer\);\s+\}, \[query\]\);/);
     assert.doesNotMatch(source, /searching \? Infinity|rows\.filter\(r => matchesSearch/);
-    // The cards and chips print the server's counts, and a card tapped twice goes back to ทั้งหมด.
-    assert.match(source, /value: summary\.counts\.payment/);
-    assert.match(source, /\{summary\.counts\[chip\.key\]\}/);
-    assert.match(source, /onClick=\{\(\) => setStatusFilter\(hubCardFilter\(statusFilter, card\.key\)\)\}/);
+    // Nonempty statuses use one chooser; queue tabs remain separate.
+    assert.match(source, /<ThemedSelect aria-label="สถานะ"[^\n]+value=\{statusFilter\}/);
+    assert.match(source, /statusChips\.filter\(chip => chip\.key === 'all' \|\| summary\.counts\[chip\.key\] > 0\)/);
+    assert.doesNotMatch(source, /<FilterTabs[^\n]+aria-label="สถานะ"/);
+    assert.doesNotMatch(source, /reimbursements-mine-summary|hubCardFilter/);
   });
 });
 
@@ -68,7 +76,7 @@ describe('reimbursement document preview lifecycle', () => {
 
 describe('reimbursement policy role-picker contract', () => {
   it('uses constrained role checkboxes (any holder decides) with human outcome copy and no holder-count helper', () => {
-    assert.match(source, /<legend[^>]*>ส่งใบเบิกให้ใครอนุมัติ\?<\/legend>[\s\S]*?roleOptions\.map[\s\S]*?type="checkbox"[\s\S]*?toggleRole\(option\.key\)/);
+    assert.match(source, /<legend[^>]*>ส่งใบเบิกให้ใครอนุมัติ<\/legend>[\s\S]*?roleOptions\.map[\s\S]*?type="checkbox"[\s\S]*?toggleRole\(option\.key\)/);
     assert.match(source, /defaultApproverRoles: form\.defaultApproverRoles/);
     assert.match(source, /policyDecisionPreview\(\{\s*approvalRequiredFromAmount: form\.approvalRequiredFromAmount/);
     assert.doesNotMatch(source, /บทบาทผู้อนุมัติเริ่มต้น/);

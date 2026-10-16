@@ -18,7 +18,7 @@ it('resolves completed source work, retains active work and can reopen after a p
   assert.deepEqual(queries[0].where.recipients, { some: { userId: 'u1', dismissedAt: null } });
   paymentStatus = 'READY_FOR_PAYMENT';
   assert.deepEqual(await completedDocumentNotificationIds(db, 'co1', 'u1'), ['signed']);
-  assert.equal(localizeReimbursementDecision('ผลการพิจารณา: REJECTED · 125 THB'), 'ผลการพิจารณา: ไม่อนุมัติ · 125 THB');
+  assert.equal(localizeReimbursementDecision('ผลการพิจารณา: REJECTED · 125 THB'), 'ผลการพิจารณา: ส่งกลับให้แก้แล้ว · 125 THB');
 });
 it('keeps the payment reminder to do while the claim waits for payment, and done once it is paid (audit B9)', async () => {
   let status = 'READY_FOR_PAYMENT';

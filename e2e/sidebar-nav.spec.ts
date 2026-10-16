@@ -4,7 +4,7 @@ import { gotoCompany } from './harness/e2e-utils';
 import { openSubmenuLabels } from './harness/roles';
 
 // A route must light up exactly one sidebar row. Regression guard for the case where
-// /settings/line-oa lit up both "เชื่อมต่อ LINE OA" and its parent "ตั้งค่าบริษัท",
+// /settings/line-oa lit up both "เชื่อมต่อ LINE OA" and its parent "ตั้งค่าร้าน",
 // because the active module resolved to the shortest matching href instead of the
 // most specific one.
 const ACTIVE_TOP = 'aside a.menu-item[data-active="true"], aside button.menu-item[data-active="true"]';
@@ -24,7 +24,10 @@ test.describe('NAV — sidebar active state', () => {
   test('NAV-01 @p1 clicking เชื่อมต่อ LINE OA highlights only that row', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/dashboard');
 
-    // Click the sub-item the way a user does, rather than deep-linking to it.
+    // Click the sub-item the way a user does, rather than deep-linking to it. Since 2026-10-13 the group that is open on
+    // first load is ค่าใช้จ่ายและใบเสร็จ, so the row's own group is opened first.
+    const lineOaParent = authedPage.locator('aside li:has(a[href$="/settings/line-oa"]) > button.menu-item');
+    if ((await lineOaParent.getAttribute('aria-expanded')) !== 'true') await lineOaParent.click();
     const lineOa = authedPage.locator('aside a[href$="/settings/line-oa"]');
     await lineOa.scrollIntoViewIfNeeded();
     await lineOa.click();
@@ -32,7 +35,7 @@ test.describe('NAV — sidebar active state', () => {
     await expectNoClientError(authedPage);
 
     const { top, sub } = await activeRows(authedPage);
-    expect(top, 'parent ตั้งค่าบริษัท must not light up too').toEqual([]);
+    expect(top, 'parent ตั้งค่าร้าน must not light up too').toEqual([]);
     expect(sub.length, 'exactly one sub-item active').toBe(1);
     expect(sub[0]).toContain('LINE OA');
   });
@@ -42,7 +45,7 @@ test.describe('NAV — sidebar active state', () => {
     await expectNoClientError(authedPage);
 
     const { top, sub } = await activeRows(authedPage);
-    expect(top, 'parent ตั้งค่าบริษัท stays dark').toEqual([]);
+    expect(top, 'parent ตั้งค่าร้าน stays dark').toEqual([]);
     expect(sub.length, 'exactly one sub-item active').toBe(1);
     expect(sub[0]).toContain('ภาพรวมการตั้งค่า');
   });
@@ -102,7 +105,7 @@ test.describe('NAV — sidebar active state', () => {
 test('NAV-BILLING owner package link belongs to company settings', async ({ authedPage: page, companyId }) => {
   await gotoCompany(page, companyId, '/settings/branches');
   const parent = page.locator('aside li').filter({ has: page.locator('a[href$="/billing"]') });
-  await expect(parent.locator('button.menu-item')).toHaveText(/ตั้งค่าบริษัท/);
+  await expect(parent.locator('button.menu-item')).toHaveText(/ตั้งค่าร้าน/);
   const billing = page.locator('aside a[href$="/billing"]');
   await expect(billing).toHaveCount(1);
   await expect(billing).toHaveClass(/menu-dropdown-item/);

@@ -20,15 +20,18 @@ const h = React.createElement;
 const slip = { attachmentId: 'private', attachedByName: 'คุณเอ', attachedAt: '2026-10-11T17:30:00Z' };
 const render = (patch: any = {}) => renderToStaticMarkup(h(DisbursementVoucherSlip, { companyId: 'shop', id: 'doc', slip: null, canAttach: false, ...patch }));
 test('paid slip rendering follows the server right: view only, attach, replace, or nothing', () => {
-  assert.equal(render(), '');
+  assert.match(render(), /หลักฐานการจ่าย · ยังไม่ได้แนบ/);
+  assert.doesNotMatch(render(), /<h3/);
+  assert.doesNotMatch(render(), /<button/);
   assert.match(render({ canAttach: true }), /แนบหลักฐาน/);
   const reader = render({ slip });
-  assert.match(reader, /หลักฐานการจ่าย: แนบโดย คุณเอ เมื่อ/); assert.match(reader, /ดูหลักฐาน/); assert.doesNotMatch(reader, /เปลี่ยนหลักฐานการจ่าย|type="file"/);
-  assert.match(render({ slip, canAttach: true }), /เปลี่ยนหลักฐานการจ่าย/);
+  assert.match(reader, /หลักฐานการจ่าย: แนบโดย คุณเอ เมื่อ/); assert.match(reader, /ดูไฟล์/); assert.doesNotMatch(reader, />เปลี่ยน<|type="file"/);
+  // Beside the statement "หลักฐานการจ่าย: แนบโดย …" the button is the short word: the long name wrapped inside half a phone row.
+  assert.match(render({ slip, canAttach: true }), />เปลี่ยน<\/button>/);
 });
 test('approved form shows a pre-attached slip with its author and a view button', () => {
   const html = render({ slip, canAttach: true, paymentForm: true });
-  assert.match(html, /แนบหลักฐานการจ่าย \(ไม่บังคับ\)/); assert.match(html, /หลักฐานการจ่าย: แนบโดย คุณเอ เมื่อ/); assert.match(html, /ดูหลักฐาน/);
+  assert.match(html, /แนบหลักฐานการจ่าย \(ถ้ามี\)/); assert.match(html, /หลักฐานการจ่าย: แนบโดย คุณเอ เมื่อ/); assert.match(html, /ดูไฟล์/);
 });
 test('upload failures retain the chosen file, show retry and allow payment without the slip', () => {
   const source = readFileSync(new URL('./DisbursementVoucherSlip.tsx', import.meta.url), 'utf8');
@@ -39,7 +42,9 @@ test('upload failures retain the chosen file, show retry and allow payment witho
 test('replacement requires confirmation, keeps refusals inside and uses the shared preview and picker', () => {
   const source = readFileSync(new URL('./DisbursementVoucherSlip.tsx', import.meta.url), 'utf8');
   assert.match(source, /setConfirmOpen\(true\)/); assert.match(source, /closeOnBackdrop=\{false\}/);
-  assert.match(source, /word\('slip_replace_confirm'\)/); assert.match(source, /styles.modalFooter/);
+  assert.match(source, /word\('slip_replace_confirm'\)/);
+  // The footer is the two plain buttons (the shared dialog sizes and orders them); the safe one says what it keeps.
+  assert.match(source, /footer=\{<>\s+<button[^\n]*word\('slip_keep'\)[^\n]*\n\s+<button[^\n]*word\('slip_replace'\)/); assert.doesNotMatch(source, /ไม่ออก|styles.modalFooter/);
   assert.match(source, /<ThemedFile/); assert.match(source, /ATTACHMENT_UPLOAD_ACCEPT/); assert.match(source, /<DocumentPreviewModal/);
   assert.match(source, /URL.revokeObjectURL/); assert.match(source, /attachDisbursementVoucherSlip/);
 });
@@ -48,27 +53,28 @@ test('pay waits only during upload, carries the optional id and shows slip refus
   assert.match(source, /<DisbursementVoucherSlip/); assert.match(source, /slipUploading/);
   assert.match(source, /onChange=\{slipAttachmentId => change\(\{ slipAttachmentId \}\)\}/);
   assert.match(source, /refusal=\{slipError \? error : null\}/); assert.match(source, /error !== null && !dateError && !slipError/);
-  assert.ok(source.indexOf('<DisbursementVoucherSlip') < source.indexOf('<div ref={bar}'));
+  assert.ok(source.indexOf('<DisbursementVoucherSlip') < source.indexOf('<FormActionBar>'));
 });
 
 function slipHarness(patch: any = {}) {
   const runtime = require('react');
   const realState = runtime.useState, realRef = runtime.useRef, realCreate = runtime.createElement, realEffect = runtime.useEffect;
   let cleanup: () => void = () => {};
-  const states: any[] = [patch.slip ?? null, null, null, false, null, false, null];
+  let localCleanup: (() => void) | undefined, previousFile: File | null | undefined;
+  const states: any[] = [patch.slip ?? null, null, null, false, null, false, null, null];
   const refs: any[] = [{ current: { click: () => { picked++; } } }, { current: false }, { current: 0 }, { current: null }];
   let picked = 0;
   const nodes: any[] = [];
   const draw = () => {
     let i = 0, r = 0, e = 0; nodes.length = 0;
-    runtime.useEffect = (effect: any, dependencies: any) => { if (e++ === 0) cleanup = effect(); else realEffect(effect, dependencies); };
-    runtime.useState = (init: any) => { const pair = realState(init), index = i++; return index < 7 ? [states[index], (value: any) => { states[index] = typeof value === 'function' ? value(states[index]) : value; }] : pair; };
+    runtime.useEffect = (effect: any, dependencies: any) => { const index = e++; if (index === 0) cleanup = effect(); else if (index === 2 && dependencies[0] !== previousFile) { localCleanup?.(); previousFile = dependencies[0]; localCleanup = effect(); } else realEffect(effect, dependencies); };
+    runtime.useState = (init: any) => { const pair = realState(init), index = i++; return index < 8 ? [states[index], (value: any) => { states[index] = typeof value === 'function' ? value(states[index]) : value; }] : pair; };
     runtime.useRef = (value: any) => { const ref = realRef(value), index = r++; return index < 4 ? refs[index] : ref; };
-    runtime.createElement = (tag: any, props: any, ...children: any[]) => { if (tag === 'button' || tag?.name === 'ThemedFile') nodes.push({ tag, ...props, children }); return realCreate(tag, props, ...children); };
+    runtime.createElement = (tag: any, props: any, ...children: any[]) => { if (tag === 'button' || tag?.name === 'ThemedFile' || tag?.name === 'DocumentPreviewModal') nodes.push({ tag, ...props, children }); return realCreate(tag, props, ...children); };
     try { return render(patch); }
     finally { runtime.useState = realState; runtime.useRef = realRef; runtime.createElement = realCreate; runtime.useEffect = realEffect; }
   };
-  return { draw, nodes, states, refs, cleanup: () => cleanup(), picked: () => picked };
+  return { draw, nodes, states, refs, cleanup: () => { cleanup(); localCleanup?.(); }, picked: () => picked };
 }
 const pickedFile = () => new File(['image'], 'สลิป.jpg', { type: 'image/jpeg' });
 test('failed upload keeps the file and releases pay immediately; retry uploads it and returns the id', async () => {
@@ -99,9 +105,9 @@ test('a replacement opens the picker only after confirmation, then uploads and a
   });
   const screen = slipHarness({ slip, canAttach: true });
   try {
-    screen.draw(); screen.nodes.find(node => node.children.includes('เปลี่ยนหลักฐานการจ่าย')).onClick();
+    screen.draw(); screen.nodes.find(node => node.children.includes('เปลี่ยน')).onClick();
     assert.equal(screen.picked(), 0); assert.deepEqual(calls, []);
-    assert.match(screen.draw(), /เปลี่ยนหลักฐานการจ่ายของใบนี้\? หลักฐานเดิมจะไม่แสดงในใบนี้อีก/);
+    const asked = screen.draw(); assert.match(asked, /เปลี่ยนหลักฐานการจ่าย\?/); assert.match(asked, /หลักฐานเดิมจะไม่แสดงในใบนี้อีก/); assert.match(asked, />ไม่เปลี่ยน<\/button>/);
     screen.nodes.filter(node => node.children.includes('เปลี่ยนหลักฐานการจ่าย')).at(-1).onClick(); assert.equal(screen.picked(), 1);
     screen.nodes.find(node => node.tag?.name === 'ThemedFile').onChange(pickedFile()); await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(calls, ['upload', 'attach']); assert.match(screen.draw(), /หลักฐานการจ่าย: แนบโดย คุณบี เมื่อ/);
@@ -118,14 +124,14 @@ require.cache[modalPath]!.exports = { ...modal, Modal: (props: any) => props.ope
 const { DisbursementVoucherPayCard } = require('./DisbursementVoucherPayCard');
 require.cache[modalPath]!.exports = modal;
 const { ToastContext } = require('@/common/components/toast/use-toast');
-function payHarness() {
+function payHarness(patch: any = {}) {
   const runtime = require('react'), realState = runtime.useState, realRef = runtime.useRef, realCreate = runtime.createElement;
   // These handler tests exercise the confirmed payment after the required 600 ms hold.
   const states: any[] = [undefined, null, false, false, true, false, false, null];
   const refs: any[] = Array.from({ length: 8 }, () => ({ current: null }));
   refs[3].current = false; refs[6].current = false; refs[7].current = { version: 2, id: undefined };
   const nodes: any[] = [];
-  const detail = { header: { id: 'doc', documentNumber: 'DV-1', status: 'APPROVED', version: 2, plannedMethod: 'CASH', totalAmount: '100.00', payeeName: 'ร้าน ก' }, actions: { pay: true }, canAttachSlip: true, slip: null, lines: [] };
+  const detail = { header: { id: 'doc', documentNumber: 'DV-1', status: 'APPROVED', version: 2, plannedMethod: 'CASH', totalAmount: '100.00', payeeName: 'ร้าน ก' }, actions: { pay: true }, canAttachSlip: true, slip: null, lines: [], ...patch };
   const draw = () => {
     let i = 0, r = 0; nodes.length = 0;
     runtime.useState = (init: any) => { const pair = realState(init), index = i++; if (index >= 7) return pair; if (states[index] === undefined) states[index] = pair[0]; return [states[index], (value: any) => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; };
@@ -160,7 +166,7 @@ test('pay attaches the upload first, uses its new version, and retries a lost an
   const order: string[] = [], bodies: any[] = [];
   const attach = mock.method(api, 'attachDisbursementVoucherSlip', async () => { order.push('attach'); return { header: { status: 'APPROVED', version: 3 }, slip: { ...slip, attachmentId: 'uploaded' } }; });
   const pay = mock.method(api, 'payDisbursementVoucher', async (_company: string, _id: string, body: any) => {
-    order.push('pay'); bodies.push(body); if (bodies.length === 1) throw new Error('บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง'); return { documentNumber: 'DV-1' };
+    order.push('pay'); bodies.push(body); if (bodies.length === 1) throw new Error('บันทึกไม่สำเร็จ ลองอีกครั้ง'); return { documentNumber: 'DV-1' };
   });
   const screen = payHarness();
   try {
@@ -205,7 +211,7 @@ test('attaching never adopts unrelated newer edits as permission to pay an unsee
   try {
     screen.draw(); screen.nodes.find(node => node.tag?.name === 'DisbursementVoucherSlip').onChange('uploaded');
     screen.draw(); screen.submit(); await new Promise(resolve => setImmediate(resolve));
-    assert.equal(payments, 0); assert.match(screen.draw(), /ใบนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาเปิดใหม่ก่อนบันทึก/);
+    assert.equal(payments, 0); assert.match(screen.draw(), /ใบนี้ถูกแก้ไขจากที่อื่นแล้ว เปิดหน้านี้ใหม่ก่อนบันทึก/);
     assert.match(screen.draw(), /โหลดข้อมูลล่าสุด/);
   } finally { attach.mock.restore(); pay.mock.restore(); }
 });
@@ -219,9 +225,9 @@ test('view uses a fresh URL for every press and releases the preview when leavin
   const revoke = mock.method(URL, 'revokeObjectURL', (url: string) => { revoked.push(url); });
   const screen = slipHarness({ slip });
   try {
-    screen.draw(); screen.nodes.find(node => node.children.includes('ดูหลักฐาน')).onClick(); await new Promise(resolve => setImmediate(resolve));
+    screen.draw(); screen.nodes.find(node => node.children.includes('ดูไฟล์')).onClick(); await new Promise(resolve => setImmediate(resolve));
     assert.equal(screen.states[6].url, 'blob:slip-1');
-    screen.draw(); screen.nodes.find(node => node.children.includes('ดูหลักฐาน')).onClick(); await new Promise(resolve => setImmediate(resolve));
+    screen.draw(); screen.nodes.find(node => node.children.includes('ดูไฟล์')).onClick(); await new Promise(resolve => setImmediate(resolve));
     assert.equal(screen.states[6].url, 'blob:slip-2'); assert.deepEqual(revoked, ['blob:slip-1']);
     screen.cleanup(); assert.deepEqual(revoked, ['blob:slip-1', 'blob:slip-2']);
     assert.doesNotMatch(render({ slip }), /blob:slip/); assert.equal(reads, 2);
@@ -241,4 +247,50 @@ test('retry of a failed attach reuses the completed upload and keeps the old vis
     screen.nodes.find(node => node.children.includes('ลองอีกครั้ง')).onClick(); await new Promise(resolve => setImmediate(resolve));
     assert.match(screen.draw(), /หลักฐานการจ่าย: แนบโดย คุณบี เมื่อ/); assert.equal(uploads, 1); assert.equal(attaches, 2);
   } finally { upload.mock.restore(); attach.mock.restore(); }
+});
+
+test('pay fields share the concept input style and optional evidence label', () => {
+  const html = payHarness().draw();
+  assert.match(html, /แนบหลักฐานการจ่าย \(ถ้ามี\)/);
+  assert.match(html.match(/<input[^>]*placeholder="เช่น บัญชีร้าน[^>]*>/)![0], /mangmee-input/);
+});
+test('transfer without an approved account asks the named preparer; switching to cash clears the warning', () => {
+  const screen = payHarness({ preparerName: 'คุณเอ' });
+  screen.draw(); screen.states[0].paymentMethod = 'BANK_TRANSFER';
+  assert.match(screen.draw(), /ใบนี้ไม่มีบัญชีผู้รับ ถามผู้จัดทำ คุณเอ ก่อนโอน/);
+  screen.states[0].paymentMethod = 'CASH';
+  assert.doesNotMatch(screen.draw(), /ใบนี้ไม่มีบัญชีผู้รับ/);
+});
+
+test('local image and document previews open, remove clears the upload, and object URLs are released', async () => {
+  const changes: any[] = [], revoked: string[] = [];
+  let seq = 0;
+  const create = mock.method(URL, 'createObjectURL', () => `blob:local-${++seq}`);
+  const revoke = mock.method(URL, 'revokeObjectURL', (url: string) => { revoked.push(url); });
+  const upload = mock.method(api, 'uploadDisbursementVoucherSlip', async () => 'uploaded');
+  const screen = slipHarness({ canAttach: true, paymentForm: true, onChange: (id: any) => changes.push(id) });
+  try {
+    screen.draw(); screen.nodes.find(n => n.tag?.name === 'ThemedFile').onChange(pickedFile());
+    await new Promise(resolve => setImmediate(resolve)); screen.draw();
+    assert.match(screen.draw(), /<img[^>]*src="blob:local-1"[^>]*alt="สลิป.jpg"/);
+    screen.nodes.find(n => n.children.includes('ดูไฟล์')).onClick(); screen.draw();
+    assert.equal(screen.nodes.find(n => n.tag?.name === 'DocumentPreviewModal').source.url, 'blob:local-1');
+    screen.nodes.find(n => n.children.includes('เอาออก')).onClick(); screen.draw();
+    assert.equal(changes.at(-1), undefined); assert.deepEqual(revoked, ['blob:local-1']);
+    assert.doesNotMatch(screen.draw(), /disbursement-local-slip/);
+    screen.nodes.find(n => n.tag?.name === 'ThemedFile').onChange(new File(['pdf'], 'หลักฐาน.pdf', { type: 'application/pdf' }));
+    await new Promise(resolve => setImmediate(resolve)); screen.draw();
+    assert.match(screen.draw(), /หลักฐาน.pdf/); assert.doesNotMatch(screen.draw(), /<img/);
+    screen.nodes.find(n => n.tag?.name === 'ThemedFile').onChange(pickedFile());
+    await new Promise(resolve => setImmediate(resolve)); screen.draw();
+    assert.deepEqual(revoked, ['blob:local-1', 'blob:local-2']);
+    screen.cleanup(); assert.deepEqual(revoked, ['blob:local-1', 'blob:local-2', 'blob:local-3']);
+  } finally { create.mock.restore(); revoke.mock.restore(); upload.mock.restore(); }
+});
+
+test('approved account sits before the pay fields and preserves the named recipient snapshot', () => {
+  const html = payHarness({ header: { id: 'doc', status: 'APPROVED', version: 2, totalAmount: '100.00', plannedMethod: 'BANK_TRANSFER', payeeName: 'ร้าน ก', payeeBankName: 'กสิกรไทย', payeeAccountName: 'นาย ก', payeeAccountLast4: '5678' } }).draw();
+  for (const fact of ['โอนเข้าบัญชี', 'ผู้รับเงิน', 'ร้าน ก', 'กสิกรไทย', 'นาย ก', 'xxx-5678']) assert.ok(html.includes(fact), fact);
+  assert.ok(html.indexOf('โอนเข้าบัญชี') < html.indexOf('วันที่จ่ายจริง'));
+  assert.doesNotMatch(html, /ใบนี้ไม่มีบัญชีผู้รับ/);
 });

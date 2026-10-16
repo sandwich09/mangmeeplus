@@ -13,6 +13,7 @@ import {
   SOURCE_DOCUMENT_TYPE_LABELS,
   STOCK_MOVEMENT_TYPE_LABELS,
   TAX_EVIDENCE_STATUS_LABELS,
+  INPUT_VAT_RIGHT_LABELS,
   WORKFLOW_DEAD_LETTER_RESOLUTION_LABELS as DEAD_LETTER,
   WORKFLOW_RULE_STATUS_LABELS as RULE,
   WORKFLOW_RUN_STATUS_LABELS as RUN,
@@ -59,7 +60,7 @@ export const REPORT_VALUE_TEXT: Readonly<Record<string, Readonly<Record<string, 
     sourceDocumentType: SOURCE_DOCUMENT_TYPE_LABELS,
     taxEvidenceStatus: TAX_EVIDENCE_STATUS_LABELS,
     expenseStatus: EXPENSE_STATUS_LABELS,
-    inputVatClaimStatus: { CLAIMABLE: 'ใช้ภาษีซื้อได้', NON_CLAIMABLE: 'ใช้ภาษีซื้อไม่ได้', NEEDS_REVIEW: 'รอตรวจว่าใช้ภาษีซื้อได้หรือไม่' },
+    inputVatClaimStatus: INPUT_VAT_RIGHT_LABELS,
     currency: REPORT_CURRENCY_WORDS,
   },
   'tax.summary': {
@@ -118,7 +119,7 @@ export function reportResultForPeople<T extends Pick<ReportResultDto, 'dataset' 
   const label = (value: string) => Object.values(columns).map((words) => wordFor(words, value)).find(Boolean) ?? value;
   return {
     ...result,
-    rows: result.rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, cell(key, value)]))),
+    rows: result.rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, result.dataset.code === 'expense.accountant_evidence' && key === 'inputVatClaimStatus' && row.inputVatRecordedBeforeReview === true ? 'ไม่ได้ใช้ภาษีซื้อ (บันทึกก่อนมีการตรวจสิทธิ)' : cell(key, value)]))),
     ...(result.chart ? { chart: { ...result.chart, labels: result.chart.labels.map(label) } } : {}),
   };
 }

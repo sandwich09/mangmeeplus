@@ -1,3 +1,5 @@
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
+import { errorText } from './billing-error-text';
 import type {MouseEvent} from 'react';
 import type {BillingReceiptUsage, BillingApprovalMode, BillingPurchaseMode, BillingStatus} from '@watchdog-bms/contracts';
 export { billingLabel, billingPlanLabel, billingOfferLabel, billingPermissionLabel, billingEventLabel, billingDeliveryLabel, billingIssueLabel, billingTimelineLabel } from '@watchdog-bms/contracts';
@@ -12,8 +14,8 @@ export const billingPrimaryControl = `${billingControl} !border-brand-700 !bg-br
 
 export function billingMonthlyAllowanceText(usage:Pick<BillingReceiptUsage,'monthlyAllowance'>):string|null {
   const monthly=usage.monthlyAllowance;if(!monthly)return null;
-  const end=monthly.additionalExpiresAt?new Date(monthly.additionalExpiresAt).toLocaleString('th-TH',{timeZone:'Asia/Bangkok'}):null;
-  return `โควตาปกติ ${monthly.limit===null?'ไม่จำกัด':`${monthly.limit} ใบต่อเดือน`} · ผู้ดูแลเพิ่มให้ เหลือ ${monthly.additionalRemaining} ใบ${end?` ใช้ได้ถึง ${end}`:''} ส่วนที่เพิ่มไม่เติมใหม่ทุกเดือน`;
+  const end=monthly.additionalExpiresAt?formatThaiDateTime(monthly.additionalExpiresAt):null;
+  return `ใบเสร็จปกติ ${monthly.limit===null?'ไม่จำกัด':`${monthly.limit} ใบต่อเดือน`} · ผู้ดูแลเพิ่มให้ เหลือ ${monthly.additionalRemaining} ใบ${end?` ใช้ได้ถึง ${end}`:''} ส่วนที่เพิ่มไม่เติมใหม่ทุกเดือน`;
 }
 
 /** Opening another tab or selecting the current link does not abandon this page's pending work. */
@@ -48,7 +50,7 @@ export function billingRecipientLocked(status: Pick<BillingStatus, 'recipient' |
   return status.recipient ? !status.recipient.canChange
     : Boolean(status.attemptId && status.applyState !== 'APPLIED' && status.paymentState !== 'FAILED');
 }
-export const BILLING_RECIPIENT_WAIT_TEXT = 'แก้อีเมลรับเอกสารได้เมื่อรายการชำระเงินปัจจุบันเปิดสิทธิ์เสร็จ';
+export const BILLING_RECIPIENT_WAIT_TEXT = 'แก้อีเมลรับเอกสารได้เมื่อรายการจ่ายเงินปัจจุบันเปิดสิทธิ์เสร็จ';
 
 /** One wording for both pickers on the package page: the catalog's and the deal card's (R10/S39). */
 export function billingPurchaseModeLabel(mode: BillingPurchaseMode): string {
@@ -63,10 +65,28 @@ export function billingPurchaseModeLabel(mode: BillingPurchaseMode): string {
 export function billingRenewalLine(status: Pick<BillingStatus, 'cancelAtPeriodEnd' | 'collectionPause' | 'renewalMode'>): string | null {
   const qr = status.renewalMode === 'PROMPTPAY_RENEW';
   if (!qr && status.renewalMode !== 'CARD_AUTO') return null;
-  return status.cancelAtPeriodEnd ? `${qr ? 'ปิดการออกบิล QR ทุกงวดแล้ว' : 'ปิดการต่ออายุอัตโนมัติแล้ว'} ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้`
+  return status.cancelAtPeriodEnd ? (qr ? 'หยุดออกบิลแล้ว' : 'หยุดต่ออายุแล้ว')
     : status.collectionPause ? 'พักการเรียกเก็บเงินชั่วคราว' : qr ? 'ระบบออกบิล QR ทุกงวด ต้องสแกนจ่ายเอง' : 'ต่ออายุอัตโนมัติเปิดอยู่';
 }
 
 export function billingApprovalLabel(mode: BillingApprovalMode): string {
   return mode === 'SINGLE_ADMIN' ? 'ยืนยันโดยผู้ดูแลระบบคนเดียว' : 'อนุมัติโดยผู้ตรวจอีกคน';
+}
+
+/** D1: visibility is not permission to sell a mode. Keep every choice and explain the read's gate. */
+export function billingPurchaseChoices(status: BillingStatus) {
+  const modes: BillingPurchaseMode[] = ['PROMPTPAY_ONCE', 'CARD_ONCE', 'CARD_AUTO', 'PROMPTPAY_RENEW'];
+  return modes.map(mode => {
+    const enabled = (status.enabledPurchaseModes ?? status.availablePurchaseModes ?? []).includes(mode);
+    const available = (status.availablePurchaseModes ?? []).includes(mode);
+    const reason = status.purchaseBlockCode ? errorText({ code: status.purchaseBlockCode })
+      : !enabled ? 'ยังไม่เปิดใช้วิธีนี้'
+      : !available ? 'วิธีนี้ยังใช้กับแพ็กเกจปัจจุบันไม่ได้'
+      : !status.allowedActions.includes('new_sales') ? 'ยังซื้อแพ็กเกจไม่ได้' : null;
+    return { mode, disabled: !!reason, reason };
+  });
+}
+
+export function billingOneTimePurchase(mode: BillingPurchaseMode | undefined): boolean {
+  return mode === 'CARD_ONCE' || mode === 'PROMPTPAY_ONCE';
 }

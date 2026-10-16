@@ -2,9 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LOCKED_ACCOUNT_CARD,
+  PACKAGE_CARD,
   filterSettingsMenuItems,
   filterSettingsSidebarItems,
   showsLockedAccountCard,
+  showsPackageCard,
   SETTINGS_MENU_ITEMS,
 } from './settings-menu.logic';
 import { canAccessWorkspacePath } from './web-core-workspace.logic';
@@ -16,23 +18,35 @@ describe('settings menu', () => {
     assert.deepEqual(
       SETTINGS_MENU_ITEMS.map(({ title, href }) => [title, href]),
       [
-        ['ข้อมูลร้านและบัญชีของฉัน', '/settings/profile'],
+        // What a sold shop sees comes first, in the order of the hub (2026-10-13).
+        ['ข้อมูลร้าน', '/settings/profile'],
+        ['บัญชีของฉัน', '/settings/profile'],
+        ['สาขา', '/settings/branches'],
+        ['พนักงานและสิทธิ์', '/settings/access-overview'],
+        ['ตั้งค่าใบรับรองแทนใบเสร็จ', '/settings/substitute-receipt'],
+        ['ลายเซ็นบน 50 ทวิ', '/settings/tax-signature'],
         ['เชื่อมต่อ LINE OA', '/settings/line-oa'],
         ['สินค้าและบริการสำหรับ CRM', '/settings/crm-catalog'],
-        ['สาขา', '/settings/branches'],
         ['ตั้งค่าบัญชีและภาษี', '/settings/accounting-tax-setup'],
-        ['ตั้งค่าใบรับรองแทนใบเสร็จ', '/settings/substitute-receipt'],
         ['Tax Code และ Tax Profile', '/settings/tax-codes'],
         ['Tax Account Determination', '/settings/tax-accounts'],
         ['ผังบัญชี Master Data', '/settings/chart-of-accounts'],
-        ['ลายเซ็นผู้จ่ายเงินสำหรับ 50 ทวิ', '/settings/tax-signature'],
       ],
     );
     for (const item of SETTINGS_MENU_ITEMS) assert.ok(findRoutePermissionRule(item.href), item.key);
+    // One page, two cards: the second opens the person's own part of it.
+    assert.deepEqual(SETTINGS_MENU_ITEMS.filter((item) => item.hash).map((item) => [item.key, item.hash]), [['my-account', '#account']]);
+    // The 50 ทวิ signature is an ordinary card: it used to be the only row of a "การตั้งค่าขั้นสูง" block in a sold shop.
+    assert.equal(SETTINGS_MENU_ITEMS.find((item) => item.key === 'tax-signature')?.section, undefined);
+    // The package page has no settings route: its card follows the company grant alone, under the menu's own name.
+    assert.deepEqual([PACKAGE_CARD.title, PACKAGE_CARD.href], ['แพ็กเกจ', '/billing']);
+    assert.equal(showsPackageCard(['company.plan.manage']), true);
+    assert.equal(showsPackageCard(['company.setup.manage']), false);
   });
 
-  it('shows all nine cards to a fully permitted user', () => {
+  it('shows all ten cards to a fully permitted user', () => {
     // account-security is parked (owner decision 2026-08-05), so its card no longer counts.
+    // Ten since 2026-10-13: the profile page has two cards (the shop's details, the person's own account).
     assert.equal(filterSettingsMenuItems([
       'company.setup.read',
       'crm.channel.manage',
@@ -43,14 +57,14 @@ describe('settings menu', () => {
       'ledger.posting-rule.read',
       'ledger.account.read',
       'company.tax_signature.manage',
-    ]).length, 9);
+    ]).length, 10);
   });
 
   it('filters every card by any listed permission', () => {
     assert.deepEqual(filterSettingsMenuItems([]).map((item) => item.key), []);
     assert.deepEqual(
       filterSettingsMenuItems(['inventory.product.read', 'company.branch.manage']).map((item) => item.key),
-      ['crm-catalog', 'branches'],
+      ['branches', 'crm-catalog'],
     );
   });
 
@@ -111,23 +125,23 @@ describe('settings menu', () => {
 
   // Owner 2026-09-20 (spec §12): the hub is one of the two pages a shop with no package may open,
   // so every card that leads somewhere the term guard refuses has to be gone from it.
-  it('keeps only ข้อมูลร้านและบัญชีของฉัน while the shop has no usable package', () => {
+  it('keeps only ข้อมูลร้าน and บัญชีของฉัน while the shop has no usable package', () => {
     const everything = [
       'company.setup.read', 'crm.channel.manage', 'inventory.product.read', 'company.branch.read',
       'tax.profile.read', 'ledger.posting-rule.read', 'ledger.account.read',
     ];
-    assert.deepEqual(filterSettingsMenuItems(everything, true).map((item) => item.key), ['company-profile']);
-    assert.equal(filterSettingsMenuItems(everything).length, 8, 'an unlocked shop keeps every card');
+    assert.deepEqual(filterSettingsMenuItems(everything, true).map((item) => item.key), ['company-profile', 'my-account']);
+    assert.equal(filterSettingsMenuItems(everything).length, 9, 'an unlocked shop keeps every card');
     // Being locked never opens a card the member could not open anyway.
     assert.deepEqual(filterSettingsMenuItems(['company.branch.read'], true), []);
   });
 
-  // ข้อมูลร้านและบัญชีของฉัน needs company.setup.read, which staff do not have — so without this the
+  // ข้อมูลร้าน and บัญชีของฉัน need company.setup.read, which staff do not have — so without this the
   // one menu they are given in the locked shell opened an empty page.
   it('gives a locked member with no company card the account card instead', () => {
     assert.equal(showsLockedAccountCard(['expense.read'], true), true);
     assert.equal(showsLockedAccountCard(['company.setup.read'], true), false, 'the owner gets the shop card');
-    assert.deepEqual(filterSettingsMenuItems(['company.setup.read'], true).map((item) => item.key), ['company-profile']);
+    assert.deepEqual(filterSettingsMenuItems(['company.setup.read'], true).map((item) => item.key), ['company-profile', 'my-account']);
     // Never outside the locked shell: an unlocked hub already has its own cards.
     assert.equal(showsLockedAccountCard(['expense.read'], false), false);
     // Both pages live outside the company workspace, which is why a locked term still serves them.
@@ -141,6 +155,16 @@ describe('settings menu', () => {
         'tax.config.read', 'ledger.posting-rule.read', 'company.branch.read', 'account.identity.link',
       ]).map((item) => item.key),
       ['accounting-tax-setup', 'chart-of-accounts', 'tax-codes', 'tax-accounts', 'branches'],
+    );
+  });
+
+  // 2026-10-13: the shop's details had no row (three names led to one form), and the policy page sat with the daily
+  // expense rows. A sold shop reads these four, top to bottom.
+  it('gives a sold shop the rows it looks for under ตั้งค่าร้าน', () => {
+    assert.deepEqual(
+      filterSettingsSidebarItems(['company.setup.read', 'company.setup.manage', 'company.branch.read', 'company.tax_signature.manage'])
+        .map((item) => [item.key, item.title]),
+      [['company-profile', 'ข้อมูลร้าน'], ['branches', 'สาขา'], ['substitute-receipt', 'ตั้งค่าใบรับรองแทนใบเสร็จ'], ['tax-signature', 'ลายเซ็นบน 50 ทวิ']],
     );
   });
 });

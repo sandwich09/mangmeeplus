@@ -4,8 +4,9 @@ import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { SignupClaimInfoDto, SignupClaimResultDto } from '@watchdog-bms/contracts';
-import { Button } from '@/common/components/button';
+import { Button, primaryButtonClass, quietButtonClass, secondaryButtonClass } from '@/common/components/button';
 import { TextField } from '@/common/components/field';
+import { Notice } from '@/common/components/notice';
 import { trimmed } from '@/common/forms/trim';
 import { readEmailLinkToken } from '@/features/auth/auth.logic';
 import { attachSignupClaimToExistingUser, getSignupClaimInfo, setSignupClaimPassword } from './external-signup.api';
@@ -21,9 +22,6 @@ import {
   type ClaimPasswordErrors,
 } from './signup.logic';
 
-const secondaryButtonClass =
-  'flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 hover:border-[#046B29]';
-
 /**
  * One view for every unusable token — invalid, expired, already spent. Telling them apart would
  * tell someone holding a guessed token which guess was closer (spec §4B: single-use, hash-only).
@@ -33,23 +31,27 @@ const secondaryButtonClass =
  * beside the token, so when it is there this offers the page it is telling them to open.
  */
 function UnusableLinkView({ statusRequestId }: { statusRequestId?: string }) {
+  // A refusal with its way out on the same screen (thai-ux-standard §1.6). With the request id the
+  // status page is one press away. Without it the page cannot name that page, so it says who can
+  // send a new link, and still offers the sign-in for someone whose link was simply used already.
   return (
     <div className="space-y-4" role="status">
-      <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">ลิงก์ไม่พร้อมใช้งาน</h1>
+      <h1 className="text-[22px] font-bold leading-9 text-gray-900">ลิงก์นี้ใช้ไม่ได้แล้ว</h1>
       <p className="text-[15px] leading-7 text-gray-600">
-        ลิงก์นี้อาจหมดอายุ หรือถูกใช้ไปแล้ว ขอลิงก์ใหม่ได้จากหน้าตรวจสอบสถานะคำขอของคุณ
+        {statusRequestId
+          ? 'ลิงก์หมดอายุหรือถูกใช้ไปแล้ว ขอลิงก์ใหม่ได้ที่หน้าสถานะคำขอ'
+          : `ลิงก์หมดอายุหรือถูกใช้ไปแล้ว ถ้าตั้งรหัสผ่านแล้วให้เข้าสู่ระบบ ถ้ายังไม่ได้ตั้ง ติดต่อทีมงานมั่งมี ${SIGNUP_SUPPORT_PHONE} เพื่อขอลิงก์ใหม่`}
       </p>
-      {statusRequestId ? (
-        <Link
-          href={`/signup/status/${encodeURIComponent(statusRequestId)}`}
-          className="flex h-12 w-full items-center justify-center rounded-xl bg-[#046B29] text-[15.5px] font-semibold text-white"
-        >
-          ไปหน้าตรวจสอบสถานะคำขอ
+      <div className="grid gap-3">
+        {statusRequestId ? (
+          <Link href={`/signup/status/${encodeURIComponent(statusRequestId)}`} className={`${primaryButtonClass} w-full`}>
+            ดูสถานะคำขอ
+          </Link>
+        ) : null}
+        <Link href="/login" className={`${statusRequestId ? secondaryButtonClass : primaryButtonClass} w-full`}>
+          ไปหน้าเข้าสู่ระบบ
         </Link>
-      ) : null}
-      <Link href="/login" className={secondaryButtonClass}>
-        ไปหน้าเข้าสู่ระบบ
-      </Link>
+      </div>
     </div>
   );
 }
@@ -62,12 +64,12 @@ function UnusableLinkView({ statusRequestId }: { statusRequestId?: string }) {
 function ClaimCheckFailedView({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="space-y-4" role="alert">
-      <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">ตรวจสอบลิงก์ไม่ได้ตอนนี้</h1>
+      <h1 className="text-[22px] font-bold leading-9 text-gray-900">ตรวจสอบลิงก์ไม่ได้ตอนนี้</h1>
       <p className="text-[15px] leading-7 text-gray-600">
-        ระบบขัดข้องชั่วคราว ยังไม่ทราบว่าลิงก์นี้ใช้ได้หรือไม่ กรุณาลองใหม่อีกครั้ง
+        ระบบขัดข้องชั่วคราว ยังตรวจลิงก์นี้ไม่ได้
       </p>
-      <Button type="button" size="lg" className="w-full !rounded-xl" onClick={onRetry}>
-        ลองใหม่อีกครั้ง
+      <Button type="button" className="w-full" onClick={onRetry}>
+        ลองอีกครั้ง
       </Button>
     </div>
   );
@@ -88,6 +90,7 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
   const [identifier, setIdentifier] = useState('');
   const [existingPassword, setExistingPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<ClaimPasswordErrors>({});
+  const [attachErrors, setAttachErrors] = useState<{ identifier?: string; password?: string }>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -117,6 +120,18 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
 
   const handleAttach = async (event: React.FormEvent) => {
     event.preventDefault();
+    // Nothing is sent while a field is empty: an empty form used to go to the server and come back
+    // as "wrong user name or password" for someone who had typed neither.
+    const missing = {
+      ...(trimmed(identifier) ? {} : { identifier: 'กรอกชื่อผู้ใช้หรืออีเมล' }),
+      ...(existingPassword ? {} : { password: 'กรอกรหัสผ่าน' }),
+    };
+    setAttachErrors(missing);
+    if (missing.identifier || missing.password) {
+      setError(null);
+      document.getElementById(missing.identifier ? 'identifier' : 'password')?.focus();
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -136,18 +151,14 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
     <>
       <span className="inline-flex items-center gap-1.5 rounded-full bg-[#E7F4EC] px-3 py-1.5 text-[13px] font-bold text-[#046B29]">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
-        ยืนยันอีเมลเรียบร้อย
+        ยืนยันอีเมลแล้ว
       </span>
 
-      {error ? (
-        <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[15px] leading-7 text-red-700">
-          {error}
-        </div>
-      ) : null}
+      {error ? <Notice tone="error" className="mt-4">{error}</Notice> : null}
 
       {mode === 'set-password' ? (
         <>
-          <h1 className="mt-4 text-[22px] font-extrabold leading-9 text-gray-900">ตั้งรหัสผ่าน</h1>
+          <h1 className="mt-4 text-[22px] font-bold leading-9 text-gray-900">ตั้งรหัสผ่าน</h1>
           <p className="mt-1.5 text-[15px] leading-7 text-gray-600">สำหรับเข้าใช้งาน {companyName}</p>
 
           <form onSubmit={handleSetPassword} className="mt-6 space-y-4" noValidate>
@@ -159,7 +170,7 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
               name="username"
               autoComplete="username"
               maxLength={CLAIM_USERNAME_MAX}
-              hint={`${CLAIM_USERNAME_HINT} ใช้เข้าสู่ระบบได้ทั้งชื่อผู้ใช้ และอีเมล${info.maskedEmail ? ` ${info.maskedEmail}` : ''}`}
+              hint={fieldErrors.username ? undefined : `${CLAIM_USERNAME_HINT} ใช้เข้าสู่ระบบได้ทั้งชื่อผู้ใช้ และอีเมล${info.maskedEmail ? ` ${info.maskedEmail}` : ''}`}
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               onBlur={(event) => setUsername(trimmed(event.target.value))}
@@ -171,7 +182,7 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
               name="new-password"
               type="password"
               autoComplete="new-password"
-              hint="อย่างน้อย 8 ตัว มีทั้งตัวอักษร และตัวเลข"
+              hint={fieldErrors.password ? undefined : 'อย่างน้อย 8 ตัว มีทั้งตัวอักษร และตัวเลข'}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               error={fieldErrors.password}
@@ -185,29 +196,28 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
               onChange={(event) => setConfirmPassword(event.target.value)}
               error={fieldErrors.confirmPassword}
             />
-            <Button type="submit" size="lg" className="w-full !rounded-xl" loading={loading}>
-              เริ่มใช้งาน
+            <Button type="submit" className="w-full" loading={loading}>
+              ตั้งรหัสผ่านและเริ่มใช้งาน
             </Button>
           </form>
 
           <p className="mt-3 text-[13px] leading-6 text-gray-500">
-            รหัสนี้ใช้กับระบบมั่งมีพลัส ไม่เกี่ยวกับรหัสของ LINE
+            รหัสผ่านนี้ใช้กับมั่งมีพลัส ไม่ใช่รหัสผ่านของ LINE
           </p>
 
           <div className="mt-6 flex items-center gap-3">
             <div className="h-px flex-1 bg-gray-200" />
-            <span className="text-[13px] text-gray-400">หรือ</span>
+            <span className="text-[13px] text-gray-500">หรือ</span>
             <div className="h-px flex-1 bg-gray-200" />
           </div>
 
-          <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
-            <p className="text-[14.5px] font-semibold text-gray-800">เคยมีบัญชีมั่งมีพลัสอยู่แล้ว?</p>
-            <p className="mt-1 text-[13.5px] leading-6 text-gray-500">เช่น เป็นพนักงานอยู่ในระบบ</p>
+          {/* No box of its own: it is one sentence and its button, already set apart by the "หรือ" line. */}
+          <div className="mt-4">
+            <p className="text-sm leading-6 text-gray-700">เคยมีบัญชีมั่งมีพลัสอยู่แล้ว เช่น เป็นพนักงานอยู่ในระบบ</p>
             <Button
               type="button"
-              size="lg"
               variant="secondary"
-              className="mt-3 w-full !rounded-xl"
+              className="mt-3 w-full"
               onClick={() => {
                 setMode('existing-account');
                 setError(null);
@@ -219,7 +229,7 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
         </>
       ) : (
         <>
-          <h1 className="mt-4 text-[22px] font-extrabold leading-9 text-gray-900">เข้าสู่ระบบด้วยบัญชีเดิม</h1>
+          <h1 className="mt-4 text-[22px] font-bold leading-9 text-gray-900">เข้าสู่ระบบด้วยบัญชีเดิม</h1>
           <p className="mt-1.5 text-[15px] leading-7 text-gray-600">
             {emailHasAccount
               ? `อีเมลนี้มีบัญชีมั่งมีพลัสอยู่แล้ว ให้เข้าสู่ระบบด้วยบัญชีเดิม เพื่อผูก ${companyName} เข้ากับบัญชีเดิม`
@@ -232,9 +242,10 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
               name="identifier"
               autoComplete="username"
               value={identifier}
-              onChange={(event) => setIdentifier(event.target.value)}
+              onChange={(event) => { setIdentifier(event.target.value); if (attachErrors.identifier) setAttachErrors((prev) => ({ ...prev, identifier: undefined })); }}
               onBlur={(event) => setIdentifier(trimmed(event.target.value))}
               required
+              error={attachErrors.identifier}
             />
             <TextField
               label="รหัสผ่าน"
@@ -242,10 +253,11 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
               type="password"
               autoComplete="current-password"
               value={existingPassword}
-              onChange={(event) => setExistingPassword(event.target.value)}
+              onChange={(event) => { setExistingPassword(event.target.value); if (attachErrors.password) setAttachErrors((prev) => ({ ...prev, password: undefined })); }}
               required
+              error={attachErrors.password}
             />
-            <Button type="submit" size="lg" className="w-full !rounded-xl" loading={loading}>
+            <Button type="submit" className="w-full" loading={loading}>
               เข้าสู่ระบบ และเพิ่มร้านนี้
             </Button>
           </form>
@@ -260,7 +272,7 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
             <Link href="/forgot-password" target="_blank" className="font-semibold text-[#046B29] underline">
               ตั้งรหัสผ่านใหม่
             </Link>
-            {' '}แล้วกลับมาที่หน้านี้อีกครั้ง เคยเข้าด้วย LINE อย่างเดียว ยังไม่เคยตั้งรหัสผ่าน โทร {SIGNUP_SUPPORT_PHONE}
+            {' '}แล้วกลับมาที่หน้านี้อีกครั้ง ถ้าเคยเข้าด้วย LINE อย่างเดียวและยังไม่เคยตั้งรหัสผ่าน ติดต่อทีมงานมั่งมี {SIGNUP_SUPPORT_PHONE}
           </p>
 
           {/* Going back is only offered when a new account is actually reachable: for a duplicate
@@ -273,9 +285,9 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
                 setMode('set-password');
                 setError(null);
               }}
-              className="mt-4 w-full text-[14.5px] font-semibold text-gray-600 underline hover:text-gray-900"
+              className={`${quietButtonClass} mt-3 w-full`}
             >
-              ย้อนกลับไปสร้างบัญชีใหม่สำหรับร้านนี้ (ร้านจะไม่รวมกับบัญชีเดิม)
+              กลับไปสร้างบัญชีใหม่สำหรับร้านนี้ (ร้านจะไม่รวมกับบัญชีเดิม)
             </button>
           )}
         </>

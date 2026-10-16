@@ -33,6 +33,7 @@ export type WhtLinkEvidenceInput = {
   externalCertificateNumber?: unknown;
   externalEvidenceRef?: unknown;
   issuedDate?: unknown;
+  paymentDate?: unknown;
   note?: unknown;
 };
 
@@ -41,6 +42,7 @@ export type NormalizedWhtLinkEvidence = {
   externalCertificateNumber: string;
   externalEvidenceRef: string;
   issuedDate: Date;
+  paymentDate?: Date;
   note: string | null;
 };
 
@@ -82,6 +84,13 @@ export function normalizeWhtLinkEvidence(input: WhtLinkEvidenceInput): WhtLinkEv
     return { ok: false, error: 'issuedDate must be a valid calendar date.' };
   }
 
+  let paymentDate: Date | undefined;
+  if (input.paymentDate !== undefined) {
+    const checked = normalizeWhtLinkEvidence({ ...input, issuedDate: input.paymentDate, paymentDate: undefined });
+    if (!checked.ok) return { ok: false, error: 'paymentDate must be a valid calendar date.' };
+    paymentDate = checked.value.issuedDate;
+    if (paymentDate > issuedDate) return { ok: false, error: 'paymentDate must not be after issuedDate.' };
+  }
   let note: string | null = null;
   if (input.note !== undefined && input.note !== null) {
     if (typeof input.note !== 'string') return { ok: false, error: 'note must be a string.' };
@@ -97,6 +106,7 @@ export function normalizeWhtLinkEvidence(input: WhtLinkEvidenceInput): WhtLinkEv
       externalCertificateNumber: externalCertificateNumber.value,
       externalEvidenceRef: externalEvidenceRef.value,
       issuedDate,
+      ...(paymentDate ? { paymentDate } : {}),
       note,
     },
   };

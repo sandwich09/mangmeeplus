@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useId, useRef, useState, type RefObject } from 'react';
 import { cx } from '@/common/components/mangmee';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 
@@ -28,6 +28,13 @@ export type ThemedFileProps = {
   disabled?: boolean;
   loading?: boolean;
   className?: string;
+  /**
+   * One line under the picker: which files it takes, how big ("รองรับไฟล์รูปภาพและ PDF"). It wraps
+   * instead of being cut, and the input is described by it. The picker itself keeps the short
+   * "ยังไม่ได้เลือกไฟล์" / the file's name.
+   */
+  hint?: string;
+  /** The old name of `hint`: it used to sit inside the picker, where a phone cut it ("รองรับไฟล์รูปภาพแ…"). Shown under the picker like `hint`. */
   placeholder?: string;
   /** FormData forms: the native input keeps the FileList under this name. */
   name?: string;
@@ -38,7 +45,7 @@ export type ThemedFileProps = {
   'aria-required'?: boolean;
 };
 
-export function ThemedFile({ file, inputRef: suppliedRef, labels: suppliedLabels, onChange, accept, capture, disabled: disabledProp = false, loading = false, className, placeholder, name, required, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-required': ariaRequired }: ThemedFileProps) {
+export function ThemedFile({ file, inputRef: suppliedRef, labels: suppliedLabels, onChange, accept, capture, disabled: disabledProp = false, loading = false, className, hint: hintProp, placeholder, name, required, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-required': ariaRequired }: ThemedFileProps) {
   const disabled = disabledProp || loading;
   const locale = useWorkspaceLocale();
   const labels = { ...(LABELS[locale] ?? LABELS.th), ...suppliedLabels };
@@ -46,6 +53,8 @@ export function ThemedFile({ file, inputRef: suppliedRef, labels: suppliedLabels
   const inputRef = suppliedRef ?? ownRef;
   const [innerName, setInnerName] = useState('');
   const controlled = file !== undefined;
+  const hint = hintProp ?? placeholder;
+  const hintId = useId();
   const shownName = controlled ? (typeof file === 'string' ? file : file?.name ?? '') : innerName;
 
   // React 19 form actions clear uncontrolled fields via form.reset(), which fires a
@@ -71,13 +80,14 @@ export function ThemedFile({ file, inputRef: suppliedRef, labels: suppliedLabels
     pick(null);
   }
 
-  return (
+  const picker = (
     // A <label> so a click anywhere opens the dialog natively (the clear <button> is
     // interactive content, which the label activation behavior skips by spec).
     <label
       aria-busy={loading}
       className={cx(
-        'mangmee-input flex items-center gap-2',
+        // @container: in a narrow column (under 15rem) the empty text gives way to the button, which says the same; it used to be cut to one letter.
+        'mangmee-input @container flex items-center gap-2',
         disabled
           ? 'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-500'
           : 'cursor-pointer focus-within:border-brand-700 focus-within:shadow-[var(--shadow-focus)]',
@@ -94,7 +104,7 @@ export function ThemedFile({ file, inputRef: suppliedRef, labels: suppliedLabels
         capture={capture}
         disabled={disabled}
         aria-label={ariaLabel}
-        aria-describedby={ariaDescribedBy}
+        aria-describedby={hint ? [ariaDescribedBy, hintId].filter(Boolean).join(' ') : ariaDescribedBy}
         aria-required={ariaRequired}
         className="sr-only"
         onChange={(event) => pick(event.target.files?.[0] ?? null)}
@@ -102,8 +112,8 @@ export function ThemedFile({ file, inputRef: suppliedRef, labels: suppliedLabels
       <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-[18px] w-[18px] shrink-0 text-gray-400">
         <path d="m14.5 8.5-4.6 4.6a2.55 2.55 0 0 1-3.6-3.6l5.3-5.3a1.7 1.7 0 0 1 2.4 2.4l-5.3 5.3a.85.85 0 0 1-1.2-1.2l4.6-4.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
-      <span className={cx('min-w-0 flex-1 truncate', shownName ? 'text-gray-800' : 'text-gray-400')}>
-        {shownName || placeholder || labels.empty}
+      <span className={cx('min-w-0 flex-1 truncate', shownName ? 'text-gray-800' : 'hidden text-gray-500 @[15rem]:block')}>
+        {shownName || labels.empty}
       </span>
       {shownName && !disabled && (
         <button
@@ -124,5 +134,13 @@ export function ThemedFile({ file, inputRef: suppliedRef, labels: suppliedLabels
         <span role={loading ? 'status' : undefined}>{loading ? labels.loading : shownName ? labels.change : labels.pick}</span>
       </span>
     </label>
+  );
+  // Without a hint the picker renders alone, exactly as it always has (a caller's className and child selectors still land on the label).
+  if (!hint) return picker;
+  return (
+    <div className="min-w-0">
+      {picker}
+      <p id={hintId} className="mt-1 text-xs text-gray-500">{hint}</p>
+    </div>
   );
 }

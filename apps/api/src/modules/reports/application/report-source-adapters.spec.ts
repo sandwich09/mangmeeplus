@@ -702,3 +702,18 @@ describe('executive purchase kinds — owner answers 2026-10-03', () => {
     assert.equal(kind('INITIAL', { isDeal: true, subscriptionConversion: true }), 'UNKNOWN');
   });
 });
+
+it('accountant evidence uses shared right words and carries the latest reason and reviewer', async () => {
+  const adapter = adapters({ expenses: { execute: async () => ({ data: [{ id: 'e1', status: 'CONFIRMED', taxEvidenceStatus: 'USABLE_FOR_TAX', inputVatClaimStatus: 'CLAIMABLE',
+    latestInputVatDecision: { reason: 'ตรวจแล้ว', decidedByName: 'ผู้ตรวจหนึ่ง', decidedAt: '2026-10-14T03:00:00.000Z' } },
+    { id: 'e2', status: 'CONFIRMED', inputVatClaimStatus: 'NON_CLAIMABLE', inputVatRecordedBeforeReview: true }], total: 2 }), listCategoryNames: async () => [] } });
+  const raw = await adapter.execute({ ...ctx, permissions: [...ctx.permissions, 'expense.export'] }, enabled('expense.accountant_evidence'), { filters: {}, chartKind: 'table', page: 1, pageSize: 100 });
+  assert.equal(raw.columns.find(c => c.key === 'taxEvidenceStatus')?.label, 'หลักฐานรายจ่าย');
+  assert.equal(raw.columns.find(c => c.key === 'inputVatClaimStatus')?.label, 'สิทธิภาษีซื้อ');
+  assert.equal(raw.rows[0]?.inputVatReason, 'ตรวจแล้ว'); assert.equal(raw.rows[0]?.inputVatDecidedBy, 'ผู้ตรวจหนึ่ง');
+  const shown = reportResultForPeople({ ...raw, dataset: enabled('expense.accountant_evidence') });
+  assert.equal(shown.rows[0]?.taxEvidenceStatus, 'ใช้ได้'); assert.equal(shown.rows[0]?.inputVatClaimStatus, 'ใช้ได้ตามเงื่อนไข');
+  assert.equal(shown.rows[1]?.inputVatClaimStatus, 'ไม่ได้ใช้ภาษีซื้อ (บันทึกก่อนมีการตรวจสิทธิ)');
+  assert.equal(raw.rows[1]?.inputVatClaimStatus, 'NON_CLAIMABLE');
+  assert.equal(REPORT_VALUE_TEXT['expense.accountant_evidence']?.inputVatClaimStatus, contracts.INPUT_VAT_RIGHT_LABELS);
+});

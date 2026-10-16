@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test, mock } from 'node:test';
+import { test, mock, after } from 'node:test';
 import { readFileSync } from 'node:fs';
 import * as React from 'react';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
@@ -13,8 +13,12 @@ import { WHT_CERTIFICATE_TABS } from './expense-wht-certificates.model';
 const loaders = ['.svg', '.css'].map(ext => [ext, require.extensions[ext]] as const);
 require.extensions['.svg'] = m => { m.exports = () => null; };
 require.extensions['.css'] = m => { m.exports = { __esModule: true, default: new Proxy({}, { get: (_, key) => key }) }; };
+// The shared select owns its outside-click DOM listeners; this SSR harness exercises the page's requests and handlers.
+const outsideClick = mutable('@/common/hooks/use-close-on-outside-click');
+const outsideClickMock = mock.method(outsideClick, 'useCloseOnOutsideClick', () => {});
+after(() => outsideClickMock.mock.restore());
 const api = mutable('./expenses.api');
-const downloads = mutable('@/common/files/download-artifact');
+const taxApi = mutable('../tax/tax.api');
 const { WhtCertificateCard, WhtCertificatesPage } = require('./WhtCertificatesPage');
 for (const [ext, loader] of loaders) { if (loader) require.extensions[ext] = loader; else delete require.extensions[ext]; }
 const permissions = ['wht.certificate.issue', 'wht.certificate.correct'];
@@ -26,63 +30,50 @@ const row = (over: Partial<WhtCertificateRow> = {}) => ({
   prefill: { grossAmount: '100', withheldAmount: '3', payeeSnapshot: { name: 'ร้านทดสอบ', address: null } } as WhtCertificateRow['prefill'],
   externalCertificateNumber: null, externalIssuedDate: null, ...over,
 } as WhtCertificateRow);
-const data = (rows: WhtCertificateRow[] = []): WhtCertificateHandoffPageDto => ({ rows, total: rows.length, page: 1, pageSize: 20,
+const data = (rows: WhtCertificateRow[] = []): WhtCertificateHandoffPageDto => ({ rows, total: rows.length, page: 1, pageSize: 10, sums: { withheld: '3.00' },
   counts: { REQUIRED: rows.filter(r => r.status === 'REQUIRED').length, SYSTEM_ISSUED: rows.filter(r => r.status === 'SYSTEM_ISSUED').length,
     EXTERNAL_LINKED: rows.filter(r => r.status === 'EXTERNAL_LINKED').length, CANCELLED: rows.filter(r => r.status === 'CANCELLED').length } });
 function setup(opts: { tab?: WhtCertificateTab; search?: string; rows?: WhtCertificateRow[]; permissions?: string[]; loading?: boolean; error?: string; result?: WhtCertificateHandoffPageDto } = {}) {
   const query = new URLSearchParams({ tab: opts.tab ?? 'pending', search: opts.search ?? '' });
-  const success: string[] = [], replaced: string[] = [];
+  const success: string[] = [], replaced: string[] = [], pushed: string[] = [];
   const props = { companyId: 'co', permissions: opts.permissions ?? permissions };
-  const router = { replace: (href: string) => replaced.push(href), push: () => {}, prefetch: () => {} };
+  const router = { replace: (href: string) => replaced.push(href), push: (href: string) => pushed.push(href), prefetch: () => {} };
   const view = certificateHarness(() => h(AppRouterContext.Provider, { value: router as any },
     h(SearchParamsContext.Provider, { value: query }, h(PathnameContext.Provider, { value: '/companies/co/expenses/wht-certificates' },
       h(ToastContext.Provider, { value: { success: (text: string) => success.push(text), warning: () => {}, error: () => {} } }, h(WhtCertificatesPage, props))))),
-    [opts.search ?? '', opts.result ?? data(opts.rows), opts.loading ?? false, opts.error ?? null, 0, null, {}]);
-  return { ...view, query, props, success, replaced };
+    [opts.search ?? '', opts.result ?? data(opts.rows), opts.loading ?? false, opts.error ?? null, 0]);
+  return { ...view, query, props, success, replaced, pushed };
 }
-test('each card has one primary action; missing facts use the contract sentences and link to its expense', () => {
-  for (const [r, label] of [
-    [row(), 'ออกหนังสือรับรอง 50 ทวิ'],
-    [row({ missing: ['FORM_TYPE_UNRESOLVED', 'INCOME_CATEGORY_OR_RATE_MISSING'] }), 'เปิดรายจ่ายเพื่อแก้ไข'],
-    [row({ status: 'SYSTEM_ISSUED', certificateId: 'cert-private', certificateNumber: 'WT-01', certificateIssuedAt: '2026-10-11' }), 'ดาวน์โหลด'],
-    // A row with nothing left to do carries no button: its expense number is the link.
-    [row({ status: 'EXTERNAL_LINKED' }), null], [row({ status: 'CANCELLED' }), null],
-    [row({ systemIssuanceOpen: false }), 'เปิดรายจ่าย'],
-  ] as const) {
-    const view = certificateHarness(() => h(WhtCertificateCard, { row: r, companyId: 'co', permissions, locale: 'th', busy: false, onAction: () => {} }));
+test('every card is one accessible row with facts and no list actions', () => {
+  for (const status of ['REQUIRED', 'SYSTEM_ISSUED', 'EXTERNAL_LINKED', 'CANCELLED'] as const) {
+    const view = setup({ rows: [row({ status, certificateNumber: 'WT-01' })] });
     const html = view.render();
-    assert.equal((html.match(/data-primary-action=/g) ?? []).length, label ? 1 : 0);
-    // Exactly one control leads to the expense page: the button where the next step is there, otherwise the number.
-    assert.equal((html.match(/href="\/companies\/co\/expenses\/expense-private"/g) ?? []).length, 1);
-    if (label) assert.ok(html.includes(label)); else assert.ok(!html.includes('เปิดรายจ่าย'));
-    assert.ok(html.includes('จ่าย ฿100.00 · หักไว้ ฿3.00')); assert.ok(html.includes('รายจ่ายเลขที่ <span class="whitespace-nowrap">EX-01</span>'));
-    assert.doesNotMatch(html, /ภ\.ง\.ด\.|REQUIRED|SYSTEM_ISSUED|EXTERNAL_LINKED|CANCELLED|cert-private/);
-    assert.match(html, /href="\/companies\/co\/expenses\/expense-private"/);
-    if (r.missing.length) {
-      assert.ok(html.includes('ข้อมูลไม่ครบ'));
-      for (const reason of r.missing) assert.ok(html.includes(WHT_HANDOFF_MISSING_LABELS[reason]));
-      assert.ok(!html.includes('ออกหนังสือรับรอง 50 ทวิ'));
-    }
-    if (r.status === 'SYSTEM_ISSUED') { assert.ok(html.replace(/<[^>]*>/g, '').includes('เลขที่ WT-01 · ออกเมื่อ')); assert.ok(html.includes('>เลขที่ WT-01</span>')); assert.ok(!html.includes('<details'), 'a single rarer action is not hidden in a menu'); }
+    assert.equal(view.nodes.filter(n => n.tag === 'MoreActions' || n.tag === 'WhtIssueButton' || n.tag === 'WhtPayeeAddressDialog').length, 0);
+    const card = view.find('article');
+    assert.equal(card.role, 'link'); assert.equal(card.tabIndex, 0); assert.equal(card['aria-label'], 'เปิดรายจ่าย EX-01');
+    assert.match(html, /3.00 บาท/);
+    assert.doesNotMatch(html, /data-primary-action|ตัวเลือก|พิมพ์ใบแทน|ดาวน์โหลดหนังสือรับรอง|รายจ่ายเลขที่|เลขผู้เสียภาษี<|฿/);
+    if (status !== 'REQUIRED') assert.match(html, /WT-01/);
     view.cleanup();
   }
 });
-test('walk C: an empty tax id reads "-", a busy card says so on its one button, the search sentence is a line under the box', () => {
-  const busy = certificateHarness(() => h(WhtCertificateCard, { row: row({ payeeTaxId: '' }), companyId: 'co', permissions, locale: 'th', busy: true, onAction: () => {} }));
-  const html = busy.render();
-  assert.ok(html.includes('เลขผู้เสียภาษี -')); assert.ok(html.includes('กำลังออกหนังสือรับรอง…')); assert.ok(!html.includes('ออกหนังสือรับรอง 50 ทวิ'));
-  assert.equal((html.match(/data-primary-action=/g) ?? []).length, 1); busy.cleanup();
-  const view = setup({ rows: [row()] }); const page = view.render();
-  assert.equal(view.find('input').placeholder, 'ค้นหา'); assert.ok(page.includes('>ค้นชื่อผู้รับเงิน เลขผู้เสียภาษี เลขที่ใบ หรือเลขที่รายจ่าย</p>')); view.cleanup();
+
+test('search retains its full spoken name and one short placeholder', () => {
+  const view = setup({ rows: [row()] }); const html = view.render();
+  assert.equal(view.find('input', p => !!p.placeholder).placeholder, 'ค้นชื่อผู้รับเงิน เลขผู้เสียภาษี หรือเลขที่');
+  assert.equal(view.find('input', p => !!p.placeholder)['aria-label'], 'ค้นชื่อผู้รับเงิน เลขผู้เสียภาษี เลขที่ใบ หรือเลขที่รายจ่าย');
+  assert.doesNotMatch(html, />ค้นชื่อผู้รับเงิน เลขผู้เสียภาษี เลขที่ใบ หรือเลขที่รายจ่าย<\/p>/); view.cleanup();
 });
-test('replacement copy is a quiet button under the download, without a menu, and requires both its permission and open route', () => {
+
+test('issued rows route to the certificate section regardless of replacement eligibility', () => {
   for (const allowed of [true, false]) for (const open of [true, false]) {
-    const view = certificateHarness(() => h(WhtCertificateCard, { row: row({ status: 'SYSTEM_ISSUED', certificateId: 'cert', systemReplacementOpen: open }),
-      companyId: 'co', permissions: allowed ? permissions : ['wht.certificate.issue'], locale: 'th', busy: false, onAction: () => {} }));
-    const html = view.render(); assert.equal(html.includes('พิมพ์ใบแทน (เลขที่เดิม)'), allowed && open);
-    assert.ok(!html.includes('เพิ่มเติม')); assert.ok(!html.includes('เปิดรายจ่าย')); assert.equal((html.match(/data-primary-action=/g) ?? []).length, 1); view.cleanup();
+    const view = setup({ rows: [row({ status: 'SYSTEM_ISSUED', certificateId: 'cert', systemReplacementOpen: open })], permissions: allowed ? permissions : ['wht.certificate.issue'] });
+    assert.doesNotMatch(view.render(), /ดาวน์โหลด|พิมพ์ใบแทน|ตัวเลือก/);
+    view.find('tr', p => p.role === 'link').onClick();
+    assert.equal(view.pushed.at(-1), '/companies/co/expenses/expense-private?section=certificate'); view.cleanup();
   }
 });
+
 test('each tab and an unmatched search put its one empty sentence in EmptyState title', () => {
   const titles = { pending: 'ไม่มีรายการที่ต้องออกหนังสือรับรอง', system: 'ยังไม่มีใบที่ออกในระบบ', external: 'ยังไม่มีรายการที่บันทึกว่าออกเอง', cancelled: 'ไม่มีรายการที่ยกเลิก' };
   for (const tab of Object.keys(titles) as WhtCertificateTab[]) {
@@ -91,23 +82,23 @@ test('each tab and an unmatched search put its one empty sentence in EmptyState 
     assert.equal(html.includes('เมื่อยืนยันรายจ่ายที่หักภาษี ณ ที่จ่าย รายการจะมาอยู่ที่นี่'), tab === 'pending');
     assert.equal(view.nodes.filter(n => n.tag === 'button' && 'aria-pressed' in n.props).length, 4);
     assert.equal(view.nodes.filter(n => n.tag === 'button' && n.props['aria-pressed'] === true).length, 1);
-    assert.ok(html.includes('หัก ณ ที่จ่าย (50 ทวิ)')); view.cleanup();
+    assert.ok(html.includes('หนังสือรับรอง 50 ทวิ')); view.cleanup(); // one name for the page and its menu row (the glossary's)
   }
   const view = setup({ search: 'ไม่มี' }); view.render(); assert.equal(view.find('EmptyState').title, 'ไม่พบรายการที่ค้นหา'); view.cleanup();
 });
 test('loading, retry and forbidden use shared states without a request id and forbidden performs no read', async () => {
-  const request = mock.method(api, 'listWhtHandoffsPaged', async () => data());
+  const request = mock.method(taxApi, 'listWithholdingCertificates', async () => data());
   const denied = setup({ permissions: [] }); assert.match(denied.render(true), /ไม่มีสิทธิ์/); await denied.settle(); assert.equal(request.mock.callCount(), 0);
   const loading = setup({ loading: true, result: null as any }); loading.state[1] = null;
   loading.render(); assert.ok(loading.nodes.some(n => n.tag === 'LoadingState'));
-  const failed = setup({ error: 'ยังโหลดไม่ได้ กรุณาลองใหม่' }); failed.render();
+  const failed = setup({ error: 'ยังโหลดไม่ได้ กรุณาลองอีกครั้ง' }); failed.render();
   const state = failed.find('ErrorState'); assert.equal(state.requestId, undefined); state.onRetry(); assert.equal(failed.state[4], 1);
   for (const view of [denied, loading, failed]) view.cleanup(); request.mock.restore();
 });
 test('list sends URL status/search/page and ignores a superseded company response', async () => {
   let resolveOld!: (value: WhtCertificateHandoffPageDto) => void;
-  const request = mock.method(api, 'listWhtHandoffsPaged', (...args: any[]) => {
-    assert.equal(args[1].status, 'EXTERNAL_LINKED'); assert.equal(args[1].search, 'ชื่อ'); assert.equal(args[1].pageSize, 20);
+  const request = mock.method(taxApi, 'listWithholdingCertificates', (...args: any[]) => {
+    assert.equal(args[1].status, 'EXTERNAL_LINKED'); assert.equal(args[1].search, 'ชื่อ'); assert.equal(args[1].pageSize, 10);
     return args[0] === 'co' ? new Promise<WhtCertificateHandoffPageDto>(resolve => { resolveOld = resolve; }) : Promise.resolve(data([row({ id: 'new' })]));
   });
   const view = setup({ tab: 'external', search: 'ชื่อ' });
@@ -115,51 +106,39 @@ test('list sends URL status/search/page and ignores a superseded company respons
     resolveOld(data([row({ id: 'stale' })])); await view.settle(); assert.equal((view.state[1] as WhtCertificateHandoffPageDto).rows[0].id, 'new');
   } finally { view.cleanup(); request.mock.restore(); }
 });
-test('issue downloads, toasts the number and reloads; a server refusal stays on its card with suppressed toast', async () => {
-  const download = mock.method(downloads, 'downloadArtifact', () => {});
-  const refusal = 'รายจ่ายเปลี่ยนไปแล้ว กรุณาเปิดรายจ่ายและตรวจสอบอีกครั้ง';
-  let reject = false;
-  const issue = mock.method(api, 'issueSystemWhtCertificate', async (...args: any[]) => {
-    assert.deepEqual(args, ['co', 'handoff-private', { suppressErrorToast: true }]);
-    if (reject) throw { code: 'expense_wht_source_changed', message: refusal };
-    return { certificateNumber: 'WT-01', pdfArtifact: { mimeType: 'application/pdf' } };
-  });
+test('ready rows delegate issue and refusals to the expense certificate section without list mutations', () => {
+  const issue = mock.method(api, 'issueSystemWhtCertificate', () => { throw Error('list must not issue'); });
   const view = setup({ rows: [row()] });
   try {
-    view.render(); await view.find('WhtIssueButton', p => p.handoff.id === 'handoff-private').onIssue();
-    assert.equal(download.mock.callCount(), 1); assert.deepEqual(view.success, ['ออกหนังสือรับรองเลขที่ WT-01 แล้ว']); assert.equal(view.state[4], 1);
-    reject = true; view.render(); await view.find('WhtIssueButton', p => p.handoff.id === 'handoff-private').onIssue();
-    assert.match(view.render(), new RegExp(refusal)); assert.equal(view.success.length, 1); assert.equal(download.mock.callCount(), 1);
-  } finally { view.cleanup(); issue.mock.restore(); download.mock.restore(); }
+    assert.doesNotMatch(view.render(), /data-primary-action|ออกหนังสือรับรอง 50 ทวิ/);
+    view.find('article').onClick();
+    assert.equal(view.pushed.at(-1), '/companies/co/expenses/expense-private?section=certificate');
+    assert.equal(issue.mock.callCount(), 0); assert.deepEqual(view.success, []);
+  } finally { view.cleanup(); issue.mock.restore(); }
 });
-test('download and replacement use the existing calls with one download and the replacement number toast', async () => {
-  const download = mock.method(downloads, 'downloadArtifact', () => {});
-  const result = { certificateNumber: 'WT-01', pdfArtifact: { mimeType: 'application/pdf' } };
-  const read = mock.method(api, 'downloadSystemWhtCertificate', async (...args: any[]) => {
-    assert.deepEqual(args, ['co', 'handoff-private', { suppressErrorToast: true }]); return result;
-  });
-  const replace = mock.method(api, 'issueSystemWhtReplacementCopy', async (...args: any[]) => {
-    assert.deepEqual(args, ['co', 'handoff-private', { suppressErrorToast: true }]); return result;
-  });
+
+test('downloads and replacement copies leave no command or toast on the list', () => {
+  const read = mock.method(api, 'downloadSystemWhtCertificate', () => { throw Error('list must not download'); });
+  const replace = mock.method(api, 'issueSystemWhtReplacementCopy', () => { throw Error('list must not replace'); });
   const view = setup({ tab: 'system', rows: [row({ status: 'SYSTEM_ISSUED', certificateId: 'cert', certificateNumber: 'WT-01' })] });
   try {
-    view.render(); await view.find('button', p => p['data-primary-action'] === 'download').onClick();
-    assert.equal(download.mock.callCount(), 1); assert.equal(view.state[4], 0); assert.deepEqual(view.success, []);
-    view.render(); await view.find('button', p => p.children.includes('พิมพ์ใบแทน (เลขที่เดิม)')).onClick();
-    assert.equal(download.mock.callCount(), 2); assert.equal(replace.mock.callCount(), 1);
-    assert.deepEqual(view.success, ['พิมพ์ใบแทนเลขที่ WT-01 แล้ว']); assert.equal(view.state[4], 1);
-  } finally { view.cleanup(); for (const stub of [download, read, replace]) stub.mock.restore(); }
+    assert.doesNotMatch(view.render(), /ดาวน์โหลด|พิมพ์ใบแทน|ตัวเลือก/);
+    view.find('article').onClick();
+    assert.equal(view.pushed.at(-1), '/companies/co/expenses/expense-private?section=certificate');
+    assert.equal(read.mock.callCount(), 0); assert.equal(replace.mock.callCount(), 0); assert.deepEqual(view.success, []);
+  } finally { view.cleanup(); read.mock.restore(); replace.mock.restore(); }
 });
+
 test('tabs and debounced search persist in the URL, restore browser filters, and invalid pages return to the last page', async () => {
-  const request = mock.method(api, 'listWhtHandoffsPaged', async () => data());
+  const request = mock.method(taxApi, 'listWithholdingCertificates', async () => data());
   let runTimer: (() => void) | undefined;
   const timer = mock.method(globalThis, 'setTimeout', ((fn: () => void, delay: number) => { assert.equal(delay, 300); runTimer = fn; return 1; }) as any);
   const clear = mock.method(globalThis, 'clearTimeout', () => {});
   const view = setup();
   try {
-    view.render(); view.find('button', p => p.children.includes('ออกในระบบแล้ว')).onClick();
+    view.render(); view.find('FilterTabs').onChange('system');
     assert.equal(new URL(view.replaced.at(-1)!, 'http://localhost').searchParams.get('tab'), 'system');
-    view.find('input').onChange({ target: { value: 'ชื่อ & เลข' } }); view.render(true);
+    view.find('input', p => p.type === 'search').onChange({ target: { value: 'ชื่อ & เลข' } }); view.render(true);
     assert.ok(runTimer); runTimer();
     assert.equal(new URL(view.replaced.at(-1)!, 'http://localhost').searchParams.get('search'), 'ชื่อ & เลข');
     view.query.set('search', 'จากลิงก์'); view.query.set('tab', 'cancelled'); view.query.set('page', '3');
@@ -167,12 +146,13 @@ test('tabs and debounced search persist in the URL, restore browser filters, and
     const url = new URL(view.replaced.at(-1)!, 'http://localhost'); assert.equal(url.searchParams.get('tab'), 'cancelled'); assert.equal(url.searchParams.has('page'), false);
   } finally { view.cleanup(); for (const stub of [request, timer, clear]) stub.mock.restore(); }
 });
-test('phone card and wide table share actions; CSS keeps a single-line header, two-column tabs and 44px controls', () => {
+test('phone card and wide table share destinations; names and badges wrap separately and numeric columns align right', () => {
   const css = readFileSync(new URL('./WhtCertificatesPage.module.css', import.meta.url), 'utf8');
   const source = readFileSync(new URL('./WhtCertificatesPage.tsx', import.meta.url), 'utf8');
-  assert.match(css, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/); assert.match(css, /min-height: 44px/);
-  assert.match(css, /\.name[^}]*-webkit-line-clamp: 2/); assert.doesNotMatch(css.match(/\.name[^}]*}/)?.[0] ?? '', /white-space: nowrap/); assert.match(css, /\.badge[^}]*white-space: nowrap/);
-  assert.match(css, /@container[^}]*\.cards \{ display: none;/); assert.doesNotMatch(css + source, /overflow-x|ภ\.ง\.ด\./);
+  // The tabs are the shared filter tabs (one row that scrolls on a phone, compact from 640 px), not a grid of wide buttons.
+  assert.match(source, /<FilterTabs className=\{styles.tabs\}/); assert.doesNotMatch(css, /\.filters/); assert.match(css, /min-height: 44px/);
+  assert.match(css, /\.table \.money \{ text-align: right; \}/); assert.doesNotMatch(css, /-webkit-line-clamp/); assert.doesNotMatch(css.match(/\.name[^}]*}/)?.[0] ?? '', /white-space: nowrap/); assert.match(css, /\.badge[^}]*white-space: normal/);
+  assert.match(css, /@container[^}]*\.cards \{ display: none;/); assert.doesNotMatch(css + source, /overflow-x/); assert.match(source, /<th>แบบ<\/th>/);
   const view = setup({ rows: [row()] }); const html = view.render();
   assert.match(html, /data-testid="wht-certificate-card-list"/); assert.match(html, /data-testid="wht-certificate-table"/);
   view.cleanup();
@@ -183,31 +163,41 @@ test('phone card and wide table share actions; CSS keeps a single-line header, t
 });
 
 
-test('list pending cards remember cancellation; without a payee address the row offers the address step instead of issue', () => {
+test('list pending cards show no cancelled-certificate history (owner 2026-10-15); without a payee address the row names the missing address', () => {
   for (const kind of ['SYSTEM', 'EXTERNAL'] as const) for (const number of ['OLD-1', null]) {
     const r = row({ previousCertificate: { kind, number, cancelledAt: '2026-10-10T03:00:00Z' }, hasPayeeAddress: false, certificateNumber: null, certificateIssuedAt: null });
     const view = certificateHarness(() => h(WhtCertificateCard, { row: r, companyId: 'co', permissions, locale: 'th', busy: false, onAction() {} }));
     const html = view.render().replace(/<[^>]*>/g, '');
-    assert.ok(html.includes(kind === 'SYSTEM' ? 'ใบเดิม' : 'การบันทึกเดิม'));
-    assert.equal(html.includes('เดิมเลขที่ OLD-1'), number !== null);
-    assert.ok(html.includes('ถูกยกเลิกเมื่อ'));
-    assert.ok(html.includes('ยังไม่มีที่อยู่ผู้รับเงิน'));
-    assert.ok(html.includes('เพิ่มที่อยู่')); assert.ok(!html.includes('ออกหนังสือรับรอง 50 ทวิ'));
-    assert.match(view.render(), /data-primary-action="address"/); assert.equal((html.match(/เพิ่มที่อยู่/g) ?? []).length, 1, 'the one button explains the address step');
-    assert.ok(!html.includes('ออกเมื่อ')); assert.equal(view.find('button', p => p['data-primary-action'] === 'address').href, undefined);
-    assert.equal((view.render().match(/data-primary-action=/g) ?? []).length, 1); view.cleanup();
+    assert.ok(!html.includes('ใบเดิม')); assert.ok(!html.includes('OLD-1')); assert.ok(!html.includes('ยกเลิกแล้ว'));
+    assert.ok(html.includes('ขาดที่อยู่ผู้รับเงิน'));
+    assert.doesNotMatch(html, /เพิ่มที่อยู่|ออกหนังสือรับรอง 50 ทวิ/);
+    assert.doesNotMatch(view.render(), /data-primary-action|<button|<details/);
+    assert.ok(!html.includes('ออกเมื่อ'));
+    assert.equal((view.render().match(/data-primary-action=/g) ?? []).length, 0); view.cleanup();
   }
   for (const over of [{ hasPayeeAddress: true }, { missing: ['FORM_TYPE_UNRESOLVED'] as const }, { status: 'SYSTEM_ISSUED' as const }]) {
     const view = certificateHarness(() => h(WhtCertificateCard, { row: row(over as any), companyId: 'co', permissions, locale: 'th', busy: false, onAction() {} }));
     assert.ok(!view.render().includes('เพิ่มที่อยู่ก่อนจึงจะออกหนังสือรับรองได้')); view.cleanup();
   }
-  assert.equal(workspaceDictionary.th['expenses.certificates.external'], 'ออกเองแล้ว');
+  // One set of names for the tabs of the list and the states of the card on the expense page.
+  assert.deepEqual((['pending', 'system', 'external', 'cancelled'] as const).map(tab => workspaceDictionary.th[`expenses.certificates.${tab}`]), ['ยังไม่ออก', 'ออกแล้ว', 'ร้านออกเอง', 'ยกเลิกแล้ว']);
 });
 
 
 test('a pending list row names missing payer fields and links managers to the profile without offering issue', () => {
   const view = certificateHarness(() => h(WhtCertificateCard, { row: row({ payerMissing: ['ADDRESS'] }), companyId: 'co', permissions: [...permissions, 'company.legal_identity.manage'], locale: 'th', busy: false, onAction() {} }));
-  const html = view.render(); assert.ok(html.includes('ข้อมูลร้านยังขาด: ที่อยู่ของร้าน')); assert.ok(html.includes('href="/companies/co/settings/profile?returnTo=')); assert.ok(!html.includes('ออกหนังสือรับรอง 50 ทวิ')); view.cleanup();
+  // The shop's own missing details are one fact about the shop: a row only says it waits for them, and offers no issue.
+  const html = view.render(); assert.ok(html.includes('ขาดข้อมูลร้าน')); assert.ok(!html.includes('settings/profile')); assert.ok(!html.includes('ออกหนังสือรับรอง 50 ทวิ')); assert.doesNotMatch(html, /mangmee-btn-primary/); view.cleanup();
+  // The page says it once above the list, with the one button for a person who may fill the shop's details in.
+  for (const allowed of [true, false]) {
+    const page = setup({ rows: [row({ id: 'a', payerMissing: ['ADDRESS'] }), row({ id: 'b', payerMissing: ['TAX_ID', 'ADDRESS'] }), row({ id: 'c' })], permissions: [...permissions, ...(allowed ? ['company.legal_identity.manage'] : [])] });
+    const list = page.render();
+    assert.equal(list.split('ข้อมูลร้านยังไม่ครบ ออกหนังสือรับรองไม่ได้').length - 1, allowed ? 1 : 0);
+    assert.ok(list.includes('ขาดข้อมูลร้าน')); assert.ok(list.includes('พร้อมออก')); // each row says what it lacks
+    assert.equal(list.includes('href="/companies/co/settings/profile?returnTo='), allowed); assert.equal(list.includes('กรอกข้อมูลร้าน'), allowed);
+    assert.doesNotMatch(list, /mangmee-btn-primary/, 'a list of rows has no filled button');
+    page.cleanup();
+  }
 });
 
 
@@ -231,11 +221,11 @@ test('a list card shows a two-line payee name and keeps certificate and expense 
   const view = certificateHarness(() => h(WhtCertificateCard, { row: value, companyId: 'co', permissions, locale: 'th', busy: false, onAction() {} }));
   const html = view.render();
   assert.ok(html.includes('บริษัท ดอกไม้และของขวัญ จำกัด'));
-  assert.match(html, /<span class="unit">เลขที่ WHT-2026-00036<\/span>/);
+  assert.match(html, /<span class="unit">WHT-2026-00036<\/span>/);
   // The words may wrap before the number; the number itself never breaks.
-  assert.match(html, /<span class="unit">รายจ่ายเลขที่ <span class="whitespace-nowrap">EXP-2026-00036<\/span><\/span>/);
+  assert.match(html, /<span class="unit">EXP-2026-00036<\/span>/); assert.doesNotMatch(html, /รายจ่ายเลขที่/);
   const css = readFileSync(new URL('./WhtCertificatesPage.module.css', import.meta.url), 'utf8');
-  assert.match(css, /\.name[^}]*-webkit-line-clamp: 2/); assert.match(css, /\.unit[^}]*display: inline-block[^}]*max-width: 100%/);
+  assert.match(css, /\.table \.money \{ text-align: right; \}/); assert.doesNotMatch(css, /-webkit-line-clamp/); assert.match(css, /\.unit[^}]*display: inline-block[^}]*max-width: 100%/);
 });
 
 
@@ -244,7 +234,7 @@ test('empty search points to every matching tab and keeps the search when viewin
   const view = setup({ search: 'WHT-2026-00037', result });
   try {
     const html = view.render();
-    assert.ok(html.includes('ไม่พบในแท็บนี้ · พบ 1 รายการใน “ออกในระบบแล้ว”'));
+    assert.ok(html.includes('ไม่พบในแท็บนี้ · พบ 1 รายการใน “ออกแล้ว”'));
     assert.ok(html.includes('ไม่พบในแท็บนี้ · พบ 2 รายการใน “ยกเลิกแล้ว”'));
     assert.ok(!html.includes('ไม่พบรายการที่ค้นหา'));
     const actions = view.nodes.filter(n => n.tag === 'button' && n.props.children.includes('ดู'));
@@ -256,26 +246,18 @@ test('empty search points to every matching tab and keeps the search when viewin
 });
 test('paid amounts use the current certificate when corrected and the pending prefill otherwise', () => {
   const view = setup({ rows: [row({ status: 'SYSTEM_ISSUED', currentCertificate: { grossAmount: '2500' } as WhtCertificateRow['currentCertificate'], withheldAmount: '75' })] });
-  try { assert.ok(view.render().includes('จ่าย ฿2,500.00 · หักไว้ ฿75.00')); } finally { view.cleanup(); }
+  try { const html = view.render(); assert.match(html, /<td class="money">2,500.00<\/td><td class="money">75.00<\/td>/); assert.match(html, /75.00 บาท/); assert.doesNotMatch(html, /฿/); } finally { view.cleanup(); }
 });
-test('address buttons open the list dialog; saving re-reads the row before offering issue', async () => {
-  const originalSelf = globalThis.self;
-  globalThis.self = globalThis as any;
-  const pending = row({ hasPayeeAddress: false });
-  const request = mock.method(api, 'listWhtHandoffsPaged', async () => data([row({ hasPayeeAddress: true, payeeAddress: '99 ถนนทดสอบ' })]));
-  const view = setup({ rows: [pending] });
+test('missing address routes to the expense certificate section with no list dialog', () => {
+  const view = setup({ rows: [row({ hasPayeeAddress: false })] });
   try {
-    view.render(); view.find('button', p => p['data-primary-action'] === 'address').onClick(); view.render();
-    const dialog = view.find('WhtPayeeAddressDialog');
-    assert.equal(dialog.row.id, pending.id); assert.equal(dialog.companyId, 'co');
-    dialog.onSaved(); view.render(true); await view.settle();
-    const html = view.render();
-    assert.ok(!view.nodes.some(n => n.tag === 'WhtPayeeAddressDialog'));
-    assert.ok(html.includes('ออกหนังสือรับรอง 50 ทวิ'));
-    assert.ok(!html.includes('เพิ่มที่อยู่ก่อนจึงจะออกหนังสือรับรองได้'));
-  } finally { view.cleanup(); request.mock.restore(); if (originalSelf === undefined) delete (globalThis as any).self; else globalThis.self = originalSelf; }
+    assert.match(view.render(), /ขาดที่อยู่ผู้รับเงิน/);
+    assert.equal(view.nodes.some(n => n.tag === 'WhtPayeeAddressDialog'), false);
+    view.find('article').onClick();
+    assert.equal(view.pushed.at(-1), '/companies/co/expenses/expense-private?section=certificate');
+    assert.equal(view.state[4], 0);
+  } finally { view.cleanup(); }
 });
-
 
 test('historical search names the old number and only names a certificate still in effect', () => {
   for (const status of ['REQUIRED', 'SYSTEM_ISSUED', 'EXTERNAL_LINKED', 'CANCELLED'] as const) {
@@ -283,18 +265,174 @@ test('historical search names the old number and only names a certificate still 
     const view = certificateHarness(() => h(WhtCertificateCard, { row: value, companyId: 'co', permissions, locale: 'th', busy: false, onAction() {}, onAddress() {} }));
     const html = view.render().replace(/<[^>]*>/g, '');
     assert.ok(html.includes('เลขที่ WHT-OLD ถูกแทนหรือยกเลิกแล้ว'));
-    assert.equal(html.includes('ใบปัจจุบันคือ'), ['SYSTEM_ISSUED', 'EXTERNAL_LINKED'].includes(status));
-    if (status === 'SYSTEM_ISSUED') assert.ok(html.includes('ใบปัจจุบันคือ WHT-NEW'));
-    if (status === 'EXTERNAL_LINKED') assert.ok(html.includes('ใบปัจจุบันคือ EXT-NEW'));
+    assert.equal(html.includes('ใบปัจจุบันคือ'), false);
+    if (status === 'SYSTEM_ISSUED') assert.ok(html.includes('WHT-NEW'));
+    if (status === 'EXTERNAL_LINKED') assert.ok(html.includes('EXT-NEW'));
     view.cleanup();
   }
 });
-test('expense description is the first detail line on cards and is also shown in the table with ellipsis', () => {
+test('description and tax id are absent on cards and table; expense numbers remain reachable', () => {
   const view = setup({ rows: [row({ expenseDescription: 'ค่าเดินทาง; ค่าจอดรถ' })] });
   const html = view.render();
-  assert.match(html, /class="facts"><p class="description" title="ค่าเดินทาง; ค่าจอดรถ">ค่าเดินทาง; ค่าจอดรถ<\/p>/);
-  assert.equal((html.match(/class="description"/g) ?? []).length, 2);
-  const css = readFileSync(new URL('./WhtCertificatesPage.module.css', import.meta.url), 'utf8');
-  assert.match(css, /\.description[^}]*white-space: nowrap[^}]*text-overflow: ellipsis/);
+  assert.doesNotMatch(html, /ค่าเดินทาง|ค่าจอดรถ|1234567890123|รายจ่ายเลขที่/);
+  assert.equal((html.match(/>EX-01<\/span>/g) ?? []).length, 2); assert.equal((html.match(/aria-label="เปิดรายจ่าย EX-01"/g) ?? []).length, 2);
   view.cleanup();
+});
+
+test('month and form filters reach the paged read, reset paging and keep the status tab', async () => {
+  const request = mock.method(taxApi, 'listWithholdingCertificates', async () => data());
+  const view = setup({ tab: 'external', rows: [] });
+  view.query.set('periodKey', '2026-10'); view.query.set('formType', 'PND3');
+  try {
+    const html = view.render(true); await view.settle();
+    assert.ok(html.includes('ภ.ง.ด.3')); assert.ok(html.includes('แบบภาษี'));
+    assert.equal(request.mock.calls[0].arguments[1].periodKey, '2026-10');
+    assert.equal(request.mock.calls[0].arguments[1].formType, 'PND3');
+    view.find('SelectField', p => p.label === 'แบบภาษี').onChange({ target: { value: 'PND53' } });
+    assert.match(view.replaced.at(-1)!, /formType=PND53/); assert.match(view.replaced.at(-1)!, /tab=external/); assert.match(view.replaced.at(-1)!, /page=1/);
+  } finally { view.cleanup(); request.mock.restore(); }
+});
+
+test('month chooser uses the shared Thai select with all months and only server data months', () => {
+  const view = setup({ result: { ...data(), months: ['2026-10', '2026-07'] } });
+  try {
+    const html = view.render();
+    assert.doesNotMatch(html, /type="month"/);
+    const chooser = view.find('SelectField', p => p.label === 'เดือนที่จ่าย');
+    const options = React.Children.toArray(chooser.children.flat()) as React.ReactElement[];
+    assert.deepEqual(options.map(option => (option.props as any).value), ['', '2026-10', '2026-07']);
+    assert.deepEqual(options.map(option => (option.props as any).children), ['ทุกเดือน', 'ต.ค. 2569', 'ก.ค. 2569']);
+    chooser.onChange({ target: { value: '2026-07' } });
+    assert.match(view.replaced.at(-1)!, /periodKey=2026-07/);
+    chooser.onChange({ target: { value: '' } });
+    assert.doesNotMatch(view.replaced.at(-1)!, /periodKey=/);
+  } finally { view.cleanup(); }
+});
+
+
+test('month, form and search share one row from 1024px; phone uses a single row target', () => {
+  const view = setup({ result: data() });
+  try {
+    const html = view.render();
+    const month = view.find('SelectField', p => p.label === 'เดือนที่จ่าย');
+    const form = view.find('SelectField', p => p.label === 'แบบภาษี');
+    assert.equal(month.disabled, form.disabled);
+    assert.match(html, /grid-cols-1 items-end gap-4 lg:grid-cols-3/);
+    assert.doesNotMatch(html, /<select/);
+    const css = readFileSync(new URL('./WhtCertificatesPage.module.css', import.meta.url), 'utf8');
+    assert.doesNotMatch(css, /\.primary/);
+    assert.match(css, /\.heading \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto;/);
+  } finally { view.cleanup(); }
+});
+
+
+test('concept list uses filtered metrics, separate numeric columns and the prominent pager without range text', () => {
+  const result = { ...data([row()]), total: 41, sums: { withheld: '1234.50' } };
+  const view = setup({ result }); const html = view.render();
+  assert.match(html, /mangmee-flat/);
+  assert.deepEqual(view.find('MetricGrid').items.map((item: any) => [item.label, item.value, item.unit]), [['ยังไม่ออก', '41', 'ใบ'], ['ภาษีที่หักไว้', '1,234.50', 'บาท']]);
+  assert.equal(view.find('MetricGrid').columns, 2);
+  for (const label of ['ผู้รับเงิน', 'แบบ', 'ยอดจ่าย', 'ภาษีหักไว้']) assert.ok(html.includes('>' + label + '</th>'), label);
+  // สถานะ appears only when a row has something beyond the tab's own name to say.
+  assert.equal(view.find('Pagination').prominent, true);
+  assert.equal(view.find('Pagination').totalPages, 5);
+  assert.doesNotMatch(html, /฿|รายจ่ายเลขที่|แสดง 1-/);
+  view.cleanup();
+});
+
+test('payment date uses the recorded payment, never the expense date for pending unpaid or multiple payments', () => {
+  for (const [payments, expected] of [
+    [[], 'ยังไม่จ่าย'],
+    [[{ paidAt: '2026-10-15', paidAtConfirmed: true }], '15 ต.ค. 2569'],
+    [[{ paidAt: '2026-10-15' }, { paidAt: '2026-10-16' }], 'หลายการจ่าย'],
+  ] as const) {
+    const view = certificateHarness(() => h(WhtCertificateCard, { row: row({ payments: payments as any }), companyId: 'co', permissions, locale: 'th', busy: false, onAction() {} }));
+    assert.ok(view.render().includes(expected));
+    assert.ok(!view.render().includes('11 ต.ค. 2569'));
+    view.cleanup();
+  }
+});
+
+test('date order persists in the URL, resets the page and reaches the ten-row server query', async () => {
+  const originalSelf = globalThis.self; globalThis.self = globalThis as any;
+  const calls: any[] = [];
+  const request = mock.method(taxApi, 'listWithholdingCertificates', async (_company: string, query: any) => { calls.push(query); return { ...data([row()]), total: 25 }; });
+  const view = setup({ rows: [row()], result: { ...data([row()]), total: 25 } });
+  try {
+    view.query.set('page', '2'); view.query.set('periodKey', '2026-10');
+    view.render(true); await view.settle();
+    view.find('button', p => p['aria-label'] === 'วันที่ ใหม่ไปเก่า กดเพื่อเรียงเก่าไปใหม่').onClick();
+    const url = new URL(view.replaced.at(-1)!, 'http://localhost');
+    assert.equal(url.searchParams.get('order'), 'oldest'); assert.equal(url.searchParams.has('page'), false);
+    assert.equal(url.searchParams.get('periodKey'), '2026-10');
+    view.query.set('order', 'oldest'); view.query.delete('page'); view.render(true); await view.settle();
+    assert.equal(calls.at(-1).order, 'oldest'); assert.equal(calls.at(-1).pageSize, 10); assert.equal(calls.at(-1).page, 1);
+    assert.equal(view.find('Pagination').totalPages, 3);
+    view.find('button', p => p['aria-label'] === 'วันที่ เก่าไปใหม่ กดเพื่อเรียงใหม่ไปเก่า').onClick();
+    assert.equal(new URL(view.replaced.at(-1)!, 'http://localhost').searchParams.has('order'), false);
+  } finally { view.cleanup(); request.mock.restore(); if (originalSelf === undefined) delete (globalThis as any).self; else globalThis.self = originalSelf; }
+});
+
+test('all tab column widths total 100 percent and certificate metadata stays under the payee', () => {
+  const css = readFileSync(new URL('./WhtCertificatesPage.module.css', import.meta.url), 'utf8');
+  assert.match(css, /\.table th \{[^}]*font-size: 13px; font-weight: 700; color: var\(--color-gray-500\)/);
+  assert.doesNotMatch(css, /menuCell/);
+  assert.match(css, /\.table \.status \{ text-align: right;/);
+  for (const tab of ['pending', 'system', 'external', 'cancelled'] as const) for (const held of [false, true]) {
+    const view = setup({ tab, rows: [row({ status: WHT_CERTIFICATE_TABS[tab], missing: held ? ['FORM_TYPE_UNRESOLVED'] : [], certificateNumber: 'WHT-2026-00065' })] });
+    const html = view.render();
+    assert.doesNotMatch(html, /<th[^>]*>หนังสือรับรอง<\/th>|ออกเมื่อ/);
+    const columns = view.nodes.filter(node => node.tag === 'col');
+    assert.ok(columns.length >= 5); assert.ok(columns.every(node => node.props.style.width.endsWith('%')));
+    // With no action column, data columns fill 100% and the payee stays widest.
+    const widths = columns.map(node => Number(node.props.style.width.replace('%', '')));
+    assert.equal(widths.reduce((sum, width) => sum + width, 0), 100); assert.equal(Math.max(...widths), widths[0]);
+    if (tab === 'system') assert.match(html, /WHT-2026-00065<\/span> · <span[^>]*>EX-01/);
+    view.cleanup();
+  }
+});
+
+test('rows and cards route to the first missing section by click or Enter without nested controls', () => {
+  for (const [over, section] of [[{}, 'certificate'], [{ payments: [] }, 'payment'], [{ missing: ['FORM_TYPE_UNRESOLVED'] }, 'withholding']] as const) {
+    const view = setup({ rows: [row(over as any)] });
+    try {
+      const html = view.render();
+      for (const tag of ['tr', 'article']) {
+        const props = view.find(tag, p => p.role === 'link');
+        props.onClick(); assert.equal(view.pushed.at(-1), `/companies/co/expenses/expense-private?section=${section}`);
+        const target = {}; let prevented = false; const before = view.pushed.length;
+        props.onKeyDown({ key: 'Enter', target, currentTarget: target, preventDefault() { prevented = true; } });
+        assert.equal(prevented, true); assert.equal(view.pushed.length, before + 1);
+        props.onKeyDown({ key: 'Enter', target: {}, currentTarget: target });
+        assert.equal(view.pushed.length, before + 1);
+      }
+      assert.doesNotMatch(html, /ตัวเลือก|data-primary-action/);
+      const source = readFileSync(new URL('./WhtCertificatesPage.tsx', import.meta.url), 'utf8');
+      assert.match(source, /<MangmeeCard className="p-4">\s*<FilterTabs/);
+    } finally { view.cleanup(); }
+  }
+});
+test('shop rows use the banner destination and preserve every list filter', () => {
+  for (const allowed of [true, false]) {
+    const view = setup({ rows: [row({ payerMissing: ['ADDRESS'] })], permissions: [...permissions, ...(allowed ? ['company.legal_identity.manage'] : [])] });
+    view.query.set('periodKey', '2026-10'); view.query.set('order', 'oldest'); view.render();
+    view.find('article').onClick();
+    if (allowed) {
+      const banner = view.nodes.find(node => node.props.href?.includes('settings/profile'))!.props;
+      assert.equal(view.pushed.at(-1), banner.href);
+      assert.equal(new URL(view.pushed.at(-1)!, 'http://localhost').searchParams.get('returnTo'), `/companies/co/expenses/wht-certificates?${view.query}`);
+    } else assert.equal(view.pushed.at(-1), '/companies/co/expenses/expense-private?section=certificate');
+    view.cleanup();
+  }
+});
+
+test('expense-list typography, padding, rule and hover are reused on every table tab', () => {
+  const css = readFileSync(new URL('./WhtCertificatesPage.module.css', import.meta.url), 'utf8');
+  assert.match(css, /\.name \{ font-size: 15px; color: var\(--color-gray-900\);[^}]*font-weight: 600/);
+  assert.match(css, /\.number \{[^}]*color: var\(--color-gray-500\); font-size: 12px/);
+  assert.match(css, /padding: calc\(var\(--spacing\) \* 3\) calc\(var\(--spacing\) \* 2\)/);
+  assert.match(css, /\.table td.money \{ font-size: 15px; font-weight: 700; color: var\(--color-gray-900\)/);
+  assert.match(css, /\.table \.date \{ font-size: 12px; color: var\(--color-gray-500\)/);
+  assert.match(css, /border-bottom: 1px solid var\(--color-gray-50\)/);
+  assert.match(css, /tr:hover \{ background: var\(--color-gray-50\)/);
 });

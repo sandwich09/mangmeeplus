@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { primaryButtonClass, secondaryButtonClass } from '@/common/components/button';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { PlanTermNoticeError, readPlanTermNotice, type PlanTermNotice } from './plan-term.api';
 import {
@@ -54,24 +55,38 @@ export default function CompanyTermExpiredPage({ companyId, canOpenProfile = fal
     );
   }
 
+  // One card at one width for every state of this page; the title is the size the locked states use.
+  const frame = 'w-full px-4 py-8 sm:px-6';
+  const heading = 'text-[22px] font-bold leading-9';
+  const phone = <a href={`tel:${PLAN_TERM_RENEW_PHONE.replace(/-/g, '')}`} className="mangmee-unit font-semibold text-brand-700 underline">{PLAN_TERM_RENEW_PHONE}</a>;
+
   if (error !== null) {
-    const title = error === 401 ? 'กรุณาเข้าสู่ระบบอีกครั้ง' : error === 403
-      ? 'ไม่มีสิทธิ์ดูสถานะบริษัทนี้' : 'โหลดสถานะไม่สำเร็จ';
+    // Three different things, each with its own way out: signed out, not allowed, our own failure.
+    const title = error === 401 ? 'ต้องเข้าสู่ระบบอีกครั้ง' : error === 403
+      ? 'ไม่มีสิทธิ์ดูสถานะร้านนี้' : 'โหลดสถานะไม่สำเร็จ';
     return (
-      <div role="alert" className="mx-auto max-w-md p-6">
-        <h1 className="text-xl font-bold">{title}</h1>
-        <p className="mt-3">ยังตรวจสอบสถานะไม่ได้ กรุณาลองใหม่หรือติดต่อผู้ดูแล</p>
-        {error === 401 ? <a className="mt-4 inline-block underline" href={`/login?next=${encodeURIComponent(`/companies/${companyId}/renew`)}`}>เข้าสู่ระบบ</a>
-          : <button className="mt-4 rounded-lg border px-4 py-3" onClick={() => setRetry(value => value + 1)}>ลองใหม่</button>}
+      <div role="alert" className={frame}>
+        <div className="mangmee-card p-5 sm:p-7">
+          <h1 className={`${heading} text-gray-900`}>{title}</h1>
+          {error === 401 ? null : (
+            <p className="mt-3 text-[15px] leading-7 text-gray-700">
+              {error === 403 ? <>ให้ผู้ดูแลร้านตรวจสิทธิ์ของคุณ หรือติดต่อทีมงานมั่งมี {phone}</> : <>ระบบขัดข้องชั่วคราว ถ้าลองแล้วยังไม่ได้ ติดต่อทีมงานมั่งมี {phone}</>}
+            </p>
+          )}
+          {error === 401 ? <a className={`${primaryButtonClass} mt-5 w-full`} href={`/login?next=${encodeURIComponent(`/companies/${companyId}/renew`)}`}>เข้าสู่ระบบ</a>
+            : <button type="button" className={`${error === 403 ? secondaryButtonClass : primaryButtonClass} mt-5 w-full`} onClick={() => setRetry(value => value + 1)}>ลองอีกครั้ง</button>}
+        </div>
       </div>
     );
   }
 
   if (!notice || notice.derivedState !== 'EXPIRED') {
     return (
-      <div role="status" className="mx-auto max-w-md p-6">
-        <h1 className="text-xl font-bold">บริษัทนี้ยังใช้งานได้ตามสิทธิ์</h1>
-        <a className="mt-4 inline-block underline" href={`/companies/${companyId}/dashboard`}>กลับไปใช้งาน</a>
+      <div role="status" className={frame}>
+        <div className="mangmee-card p-5 sm:p-7">
+          <h1 className={`${heading} text-gray-900`}>ร้านนี้ใช้งานได้ตามปกติ</h1>
+          <a className={`${primaryButtonClass} mt-5 w-full`} href={`/companies/${companyId}/dashboard`}>กลับไปหน้าแรก</a>
+        </div>
       </div>
     );
   }
@@ -86,11 +101,11 @@ export default function CompanyTermExpiredPage({ companyId, canOpenProfile = fal
   const titleTone = reason === 'no_package' ? 'text-brand-700' : 'text-error-700';
 
   return (
-    <div className="mx-auto w-full max-w-md px-4 py-8 sm:max-w-lg">
+    <div className={frame}>
       {canManagePlan ? (
         <div role="alert" className="mangmee-card p-5 sm:p-7">
-          <h1 className={`text-[22px] font-extrabold leading-9 ${titleTone}`}>{copy.title}</h1>
-          <p className="mt-3 text-[15px] leading-7 text-gray-700">{copy.body}</p>
+          <h1 className={`${heading} ${titleTone}`}>{copy.title}</h1>
+          <p className="mt-3 text-balance text-[15px] leading-7 text-gray-700">{copy.body}</p>
           {/* A shop that never had a package has an end date equal to its start: a date here would
               read as "your package ended today", which is the sentence this page exists to undo. */}
           {reason === 'trial_ended' && notice?.termEndsAt ? (
@@ -98,29 +113,23 @@ export default function CompanyTermExpiredPage({ companyId, canOpenProfile = fal
               หมดอายุเมื่อวันที่ {formatThaiDate(notice.termEndsAt)}
             </p>
           ) : null}
-          <a className="mangmee-btn mangmee-btn-primary mt-5 w-full" href={`/companies/${companyId}/billing`}>{PLAN_LOCK_CTA}</a>
-          <a
-            href={`tel:${PLAN_TERM_RENEW_PHONE.replace(/-/g, '')}`}
-            className="mangmee-btn mangmee-btn-secondary mt-2.5 w-full"
-          >
-            ติดต่อ {PLAN_TERM_RENEW_PHONE}
-          </a>
-          <a
-            href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}
-            className="mangmee-btn mangmee-btn-secondary mt-2.5 w-full"
-          >
-            อีเมล {PLAN_TERM_CONTACT_EMAIL}
-          </a>
+          {/* One button: the one move that fixes it. Help is one quiet line, not two more full-width buttons. */}
+          <a className={`${primaryButtonClass} mt-5 w-full`} href={`/companies/${companyId}/billing`}>{PLAN_LOCK_CTA}</a>
+          <p className="mt-4 text-sm leading-6 text-gray-600">
+            ติดปัญหา โทร {phone} หรืออีเมล{' '}
+            <a href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`} className="whitespace-nowrap font-semibold text-brand-700 underline">{PLAN_TERM_CONTACT_EMAIL}</a>
+          </p>
           {/* F28: Stripe Checkout collects the address, so the shop profile is optional, and last. */}
-          {canOpenProfile && <a className="mt-3 inline-flex min-h-11 w-full items-center justify-center text-sm text-brand-700 underline" href={`/companies/${companyId}/settings/profile#shop`}>เติมข้อมูลร้านไว้ล่วงหน้า (ไม่บังคับ)</a>}
+          {canOpenProfile && <a className="mt-2 inline-flex min-h-11 w-full items-center justify-center text-sm text-brand-700 underline" href={`/companies/${companyId}/settings/profile#shop`}>เติมข้อมูลร้านไว้ล่วงหน้า (ไม่บังคับ)</a>}
         </div>
       ) : (
         <div role="status" className="mangmee-card p-5 sm:p-7">
-          <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">{copy.title}</h1>
+          <h1 className={`${heading} text-gray-900`}>{copy.title}</h1>
+          {/* The title has said what is the matter; this line says who can act (the banner above keeps to the matter on this page). */}
           <p className="mt-3 text-[15px] leading-7 text-gray-600">
-            {copy.staff} ข้อมูลทั้งหมดยังอยู่ครบ
+            {copy.staffNext} ข้อมูลทั้งหมดยังอยู่ครบ
           </p>
-          <a className="mangmee-btn mangmee-btn-secondary mt-5 w-full" href={`/companies/${companyId}/settings`}>ตั้งค่า</a>
+          <a className={`${secondaryButtonClass} mt-5 w-full`} href={`/companies/${companyId}/settings`}>ไปหน้าตั้งค่า</a>
         </div>
       )}
     </div>

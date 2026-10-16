@@ -69,6 +69,7 @@ function harness(sources: {
     findEventByIdempotencyKey: async () => null,
     supersedeEvent: async () => undefined,
     upsertEvent: async (input: any) => { events.push(input); },
+    resolveSourceIssues: async () => undefined,
     createIssue: async () => undefined,
   } as any;
   const docSource = { findIssuedWithVatByCompany: async () => sources.documents ?? [] } as any;
@@ -82,7 +83,7 @@ function harness(sources: {
 }
 
 describe('SyncTaxEventsUseCase payee address', () => {
-  it('PND53-only sync leaves VAT and PND3 source events untouched', async () => {
+  it('legacy PND53 scope includes both withholding forms and leaves VAT untouched', async () => {
     const h = harness({
       documents: [outputDocument()],
       vatExpenses: [vatExpense()],
@@ -90,7 +91,7 @@ describe('SyncTaxEventsUseCase payee address', () => {
       payments: [whtPayment(), whtPayment({ id: 'payment-individual', supplierType: 'INDIVIDUAL' })],
     });
     const result = await h.run('PND53');
-    assert.deepEqual(h.events.map((event) => event.eventType), ['WHT_PND53', 'WHT_PND53']);
+    assert.deepEqual(h.events.map((event) => event.eventType), ['WHT_PND53', 'WHT_PND3', 'WHT_PND53', 'WHT_PND3']);
     assert.equal(result.vatInputCreated, 0);
     assert.equal(result.vatOutputCreated, 0);
   });

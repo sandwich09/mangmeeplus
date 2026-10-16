@@ -73,7 +73,7 @@ describe('VoidExpenseUseCase (H-04)', () => {
     const uc = new VoidExpenseUseCase(repo, s.audit as any, s.outbox as any, {} as any, {} as any, {} as any);
     await assert.rejects(uc.execute(ctx, 'exp_1', 'กรอกผิด'), (error: any) => {
       assert.equal(error.getResponse().code, 'expense_changed');
-      assert.equal(error.getResponse().message, 'เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว จึงยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้ กรุณาเปิดหน้านี้ใหม่'); return true;
+      assert.equal(error.getResponse().message, 'เอกสารนี้ยกเลิกจากหน้าที่เปิดค้างไว้ไม่ได้ เปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด'); return true;
     });
   });
   for (const condition of ['permission', 'reason', 'missing', 'branch']) it(`returns coded Thai for void ${condition} refusal`, async () => {
@@ -161,7 +161,7 @@ describe('VoidExpenseUseCase (H-04)', () => {
 
   it('translates P2034 into a retry sentence without retrying and releases reservations', async () => {
     repo.voidExpenseTrueReversal = mock.fn(async () => { throw Object.assign(new Error('serialization failure'), { code: 'P2034' }); });
-    await assert.rejects(make().execute(ctx, 'exp_1', 'บันทึกผิด'), (error: any) => error instanceof ConflictException && (error.getResponse() as any).code === 'expense_changed_retry' && (error.getResponse() as any).message === 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้ยกเลิกเอกสาร กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง');
+    await assert.rejects(make().execute(ctx, 'exp_1', 'บันทึกผิด'), (error: any) => error instanceof ConflictException && (error.getResponse() as any).code === 'expense_changed_retry' && (error.getResponse() as any).message === 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้บันทึกการยกเลิก เปิดหน้านี้ใหม่แล้วลองอีกครั้ง');
     assert.equal(repo.voidExpenseTrueReversal.mock.callCount(), 1); assert.equal(s.cancelNumber.execute.mock.callCount(), 1);
   });
   it('translates a raw-statement serialization failure and releases reservations', async () => {
@@ -264,7 +264,7 @@ describe('an expense record that belongs to a claim ends with the claim, never f
     const response = error.getResponse() as { code: string; message: string; reimbursementRequestId: string; requestNo?: string };
     assert.deepEqual([response.code, response.reimbursementRequestId], ['expense_belongs_to_reimbursement', 'claim-1']);
     // Plain Thai that says where to do it instead.
-    assert.match(response.message, /ให้ยกเลิกที่คำขอเบิกนั้นในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง/u);
+    assert.match(response.message, /ให้ยกเลิกที่ใบเบิกนั้นในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง/u);
     assert.doesNotMatch(response.message, /[A-Za-z_]{4,}/u, 'no code or key in what a person reads');
     return response;
   };
@@ -273,7 +273,7 @@ describe('an expense record that belongs to a claim ends with the claim, never f
     const w = world(claimRecord(), LIVE);
 
     await assert.rejects(() => w.voids.execute(ctx, 'exp_1', 'บันทึกผิด'), (error) => {
-      assert.match(refusal(error).message, /คำขอเบิก RB-202610-00007/u);
+      assert.match(refusal(error).message, /ใบเบิก RB-202610-00007/u);
       return true;
     });
 

@@ -69,15 +69,15 @@ test.describe('XC — cross-cutting', () => {
     // the shell with a way back, instead of bouncing to the dashboard (SET-09 checks the same for qa.company).
     await expect(page).toHaveURL(new RegExp(`/companies/${COMPANY_ID}/settings/permissions$`));
     await expect(page.getByText('ไม่มีสิทธิ์เข้าถึง', { exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: /บทบาทและสิทธิ์|Permissions/i })).toHaveCount(0);
   });
 
   test('XC-04 @p1 bogus company id is handled gracefully', async ({ authedPage }) => {
     await authedPage.goto('/companies/not-a-company/dashboard');
     // The API resolves an unknown company id to 403 (no active membership), which the
-    // workspace layout renders as CompanyAccessUnavailable ("ไม่สามารถเข้าถึงบริษัทนี้ได้" /
-    // "This company is unavailable") rather than a generic not-found/forbidden string.
-    await expect(authedPage.getByText(/ไม่พบหน้านี้|not found|This page could not be found|ไม่มีสิทธิ์|Forbidden|ไม่สามารถเข้าถึงบริษัทนี้ได้|company is unavailable/i).first()).toBeVisible();
+    // workspace layout renders as CompanyAccessUnavailable ("เข้าร้านนี้ไม่ได้" /
+    // "This shop is unavailable") rather than a generic not-found/forbidden string.
+    await expect(authedPage.getByText(/ไม่พบหน้านี้|not found|This page could not be found|ไม่มีสิทธิ์|Forbidden|เข้าร้านนี้ไม่ได้|shop is unavailable/i).first()).toBeVisible();
   });
 
   test('XC-05 @p1 logged-out deep route preserves next target through login', async ({ page }) => {

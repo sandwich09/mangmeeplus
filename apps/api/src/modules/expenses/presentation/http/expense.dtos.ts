@@ -17,7 +17,7 @@
  * getting 400s the moment this deploys.
  */
 import { Transform, Type } from 'class-transformer';
-import { normalizeExpensePaymentAmount } from '@watchdog-bms/contracts';
+import { INPUT_VAT_REVIEWER_CONDITIONS, EXPENSE_STATUSES, EXPENSE_PAYMENT_STATUSES, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, type SharedEvidenceFilter, normalizeExpensePaymentAmount } from '@watchdog-bms/contracts';
 import {
   IsInt,
   IsBoolean,
@@ -57,6 +57,7 @@ export class ExpenseTotalsPreviewLineDto {
   @ValidateIf((_o, v) => v !== undefined) @IsString() discountAmount?: string;
   @ValidateIf((_o, v) => v !== undefined) @IsString() vatRate?: string;
   @ValidateIf((_o, v) => v !== undefined) @IsString() whtRate?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() whtCategoryCode?: string;
   @ValidateIf((_o, v) => v !== undefined) @IsString() expenseCategoryId?: string;
   @ValidateIf((_o, v) => v !== undefined) @IsString() accountHintKey?: string;
   @ValidateIf((_o, v) => v !== undefined) @IsString() taxCategory?: string;
@@ -101,6 +102,22 @@ export class ReceiptUploadIntentDto extends UploadIntentDto {
 export class UploadCompletionDto {
   @IsString() @IsOptional() @MaxLength(128) checksumSha256?: string;
   @Type(() => Number) @IsInt() @Min(0) @IsOptional() byteSize?: number;
+}
+
+/** The two kinds of file a person preparing a ใบรับรองแทนใบเสร็จ may attach to their own expense. */
+const SUBSTITUTE_PREPARATION_UPLOAD_PURPOSES = ['expense.receipt.supporting', 'expense.payment.evidence'] as const;
+
+export class SubstitutePreparationUploadIntentDto extends UploadIntentDto {
+  @IsIn(SUBSTITUTE_PREPARATION_UPLOAD_PURPOSES) purpose!: typeof SUBSTITUTE_PREPARATION_UPLOAD_PURPOSES[number];
+}
+
+export class SubstitutePreparationUploadCompletionDto extends UploadCompletionDto {
+  @IsIn(SUBSTITUTE_PREPARATION_UPLOAD_PURPOSES) purpose!: typeof SUBSTITUTE_PREPARATION_UPLOAD_PURPOSES[number];
+}
+
+/** Sending an expense for checking may name the person asked; a caller that names nobody sends no body. */
+export class MarkExpenseReadyDto {
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(64) requestedReviewerUserId?: string;
 }
 
 /**
@@ -199,6 +216,7 @@ export class ConfirmExpenseDto {
 }
 
 export class RecordExpensePaymentDto implements RecordExpensePaymentInput {
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(64) slipAttachmentId?: string;
   @ValidateIf((_object, value) => value !== undefined)
   @Matches(PAYMENT_IDEMPOTENCY_KEY_PATTERN) idempotencyKey?: string;
   // Same money pattern the accounting documents use — one definition of what a payable amount
@@ -236,4 +254,47 @@ export class RemoveExpenseReceiptDto {
   purpose?: 'expense.receipt.primary' | 'expense.receipt.supporting' | 'expense.payment.evidence' | 'expense.review.evidence';
   @IsISO8601()
   expectedUpdatedAt!: string;
+}
+
+/** Same expense selection as the accounting sheet; bytes still pass the attachment read gate. */
+export class AccountantEvidenceBundleDto {
+  @IsOptional() @IsArray() @ArrayMaxSize(10000) @IsString({ each: true }) @IsNotEmpty({ each: true }) @MaxLength(200, { each: true })
+  expenseIds?: string[];
+  @IsOptional() @IsIn(['uploadedAt', 'expenseDate'])
+  dateField?: 'uploadedAt' | 'expenseDate';
+  @IsOptional() @IsString() @Matches(/^\d{4}-(0[1-9]|1[0-2])$/)
+  yearMonth?: string;
+  @IsOptional() @IsISO8601() fromDate?: string;
+  @IsOptional() @IsISO8601() toDate?: string;
+  @IsOptional() @IsString() @MaxLength(255) branchId?: string;
+  @IsOptional() @IsString() @MaxLength(255) expenseCategoryId?: string;
+  @IsOptional() @IsString() @MaxLength(255) createdByUserId?: string;
+  @IsOptional() @IsIn(EXPENSE_STATUSES) status?: SharedEvidenceFilter['status'];
+  @IsOptional() @IsIn(Object.keys(SOURCE_DOCUMENT_TYPE_LABELS)) sourceDocumentType?: SharedEvidenceFilter['sourceDocumentType'];
+  @IsOptional() @IsIn(Object.keys(TAX_EVIDENCE_STATUS_LABELS)) taxEvidenceStatus?: SharedEvidenceFilter['taxEvidenceStatus'];
+  @IsOptional() @IsIn(EXPENSE_PAYMENT_STATUSES) paymentStatus?: SharedEvidenceFilter['paymentStatus'];
+  @IsOptional() @IsIn(['not_required', 'pending', 'posted', 'posting_error', 'reversed']) postingStatus?: SharedEvidenceFilter['postingStatus'];
+}
+
+
+export class DecideExpenseInputVatDto {
+  @IsIn(['CLAIMABLE', 'NON_CLAIMABLE']) toStatus!: 'CLAIMABLE' | 'NON_CLAIMABLE';
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsIn(INPUT_VAT_REVIEWER_CONDITIONS.map(condition => condition.code), { each: true }) reviewerConditions?: string[];
+  @IsOptional() @IsBoolean() buyerConfirmed?: boolean;
+}
+
+export class ConfirmExpensePaymentDateDto {
+  @Matches(CIVIL_DATE_PATTERN) paidAt!: string;
+}
+
+/** List paging and filters; the use case still enforces scope and normalizes page size. */
+export class SubstituteReceiptListQueryDto {
+  @IsOptional() @IsIn(['PREPARED', 'PAYER_CERTIFIED', 'ISSUED', 'SUPERSEDED'])
+  status?: import('@watchdog-bms/contracts').SubstituteReceiptEvidenceStatus;
+  @IsOptional() @Matches(/^\d{4}-(0[1-9]|1[0-2])$/) yearMonth?: string;
+  @IsOptional() @IsString() payerUserId?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) pageSize?: number;
+  @IsOptional() @IsIn(['newest', 'oldest']) order?: 'newest' | 'oldest';
 }

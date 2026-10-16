@@ -95,7 +95,7 @@ describe('whtLinkErrorOutcome', () => {
   it('hides an unreviewed server diagnostic, then keeps a usable default', () => {
     assert.equal(
       whtLinkErrorOutcome(authedApiFetchError(500, { message: 'boom' })).message,
-      'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง',
+      'ระบบขัดข้องชั่วคราว ลองอีกครั้ง',
     );
     assert.equal(whtLinkErrorOutcome(null).message, 'ไม่สามารถแนบหนังสือรับรองได้');
     assert.equal(whtLinkErrorOutcome({}).reload, false);

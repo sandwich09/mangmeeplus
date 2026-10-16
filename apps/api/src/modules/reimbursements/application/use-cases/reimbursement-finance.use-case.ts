@@ -63,11 +63,12 @@ export class ListFinanceQueueUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
 
   async execute(ctx: RequestContext): Promise<ReimbursementFinanceQueueItem[]> {
-    if (!ctx.permissions.includes('reimbursement.finance_review')) throw new ForbiddenException('Missing permission: reimbursement.finance_review');
+    const canReview = ctx.permissions.includes('reimbursement.finance_review');
+    if (!canReview && !ctx.permissions.includes('reimbursement.payment.record')) throw new ForbiddenException('Missing permission: reimbursement.finance_review');
     const [rows, currentPolicy] = await Promise.all([
       this.repo.listRequests({
         companyId: ctx.companyId,
-        statuses: ['FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'],
+        statuses: canReview ? ['FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'] : ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'],
         scopes: ctx.scopes ?? {},
         withDuplicateCandidates: true,
       }),
@@ -281,8 +282,8 @@ export class FinanceReviewReimbursementUseCase {
     const refusal = confirmedDuplicateRefusal(req, mayCancelReimbursement(ctx, req));
     if (refusal) throw new UnprocessableEntityException(refusal);
 
-    let reconcileExpenses = false;
-    const resolved = await this.repo.resolvePaymentDuplicatesAtomic({
+    const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
+    await this.repo.resolvePaymentDuplicatesAtomic({
       companyId: ctx.companyId,
       requestId: id,
       expectedUpdatedAt: req.updatedAt,
@@ -291,7 +292,11 @@ export class FinanceReviewReimbursementUseCase {
       resolvedAt: new Date(),
       reason: duplicateResolutionReason,
       onResolvedPersisted: async (tx) => {
-        reconcileExpenses = (await this.expenseDuplicates.executeForReimbursement(ctx, id, req.branchId, duplicateResolutionReason, tx)) > 0;
+        const reconcileExpenses = (await this.expenseDuplicates.executeForReimbursement(ctx, id, req.branchId, duplicateResolutionReason, tx)) > 0;
+        if (reconcileExpenses) {
+          await this.projections.reconcileExisting(ctx, req, policy.allowMissingReceiptWithReason, tx);
+          await this.repo.refreshClaimProjectionState(ctx.companyId, id, ctx.scopes ?? {}, tx);
+        }
         await this.audit.log({
           companyId: ctx.companyId,
           actorUserId: ctx.userId,
@@ -306,11 +311,6 @@ export class FinanceReviewReimbursementUseCase {
       },
     });
 
-    if (reconcileExpenses) {
-      const policy = effectivePolicyForRequest(resolved, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
-      await this.projections.reconcileExisting(ctx, resolved, policy.allowMissingReceiptWithReason);
-      await this.repo.refreshClaimProjectionState(ctx.companyId, id, ctx.scopes ?? {});
-    }
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
     return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }

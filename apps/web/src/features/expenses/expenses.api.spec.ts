@@ -7,6 +7,7 @@ import {
   UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE,
 } from '@/common/files/upload-file.logic';
 import {
+  planAccountantEvidenceBundle, fetchAccountantEvidenceBundle,
   confirmDuplicate,
   getSharedEvidence,
   generateSubstituteReceipt,
@@ -185,7 +186,7 @@ describe('expenses.api URL helpers', () => {
       try {
         await assert.rejects(() => generateSubstituteReceipt('co-1', 'exp-1', input, locale), (error: unknown) => {
           const message = apiErrorMessage(error, locale);
-          assert.match(message, locale === 'th' ? /เงินจริง.*เงินสด.*รายการเดิม/ : /actual payment.*cash.*same expense/);
+          assert.match(message, locale === 'th' ? /จ่ายจริง.*เงินสด.*รายการเดิม/ : /actual payment.*cash.*same expense/);
           assert.deepEqual(toasts, [message], 'toast and persistent inline error agree, with no generic duplicate');
           return true;
         });
@@ -498,4 +499,29 @@ it('certificate dialog, correction and issue refusals do not emit an automatic e
     if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
     else delete (globalThis as Record<string, unknown>)['window'];
   }
+});
+
+
+it('plans and fetches actual ZIP bytes under one evidence selection with the server filename', async () => {
+  const requests: any[] = [];
+  const body = { yearMonth: '2026-10', dateField: 'uploadedAt', branchId: 'b1', expenseIds: ['e1'] };
+  globalThis.fetch = (async (input, init) => {
+    requests.push({ path: String(input), method: init?.method, body: JSON.parse(String(init?.body)) });
+    if (String(input).endsWith('bundle-plan')) return new Response(JSON.stringify({ fileCount: 1, partCount: 1 }), { headers: { 'content-type': 'application/json' } });
+    return new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), { headers: { 'content-type': 'application/zip', 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent('หลักฐาน-2026-10.zip')}` } });
+  }) as typeof fetch;
+  assert.deepEqual(await planAccountantEvidenceBundle('co', body), { fileCount: 1, partCount: 1 });
+  const archive = await fetchAccountantEvidenceBundle('co', body, 1);
+  assert.equal(archive.fileName, 'หลักฐาน-2026-10.zip'); assert.equal(archive.blob.type, 'application/zip');
+  assert.deepEqual([...new Uint8Array(await archive.blob.arrayBuffer())], [0x50, 0x4b, 0x03, 0x04]);
+  assert.deepEqual(requests, [
+    { path: '/api/v1/companies/co/expenses/accountant-package/bundle-plan', method: 'POST', body },
+    { path: '/api/v1/companies/co/expenses/accountant-package/bundle/1', method: 'POST', body },
+  ]);
+});
+
+
+it('an expired bundle part uses the shared not-found sentence, with no file returned', async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ message: 'Not Found', statusCode: 404 }), { status: 404, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  await assert.rejects(() => fetchAccountantEvidenceBundle('co', {}, 99), error => apiErrorMessage(error) === 'ไม่พบข้อมูลที่ต้องการ');
 });

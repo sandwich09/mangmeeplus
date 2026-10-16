@@ -1,15 +1,15 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, reimbursementDuplicateWait, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateReasonText, reimbursementDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
+  REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, reimbursementDuplicateWait, reimbursementDuplicateReasonText as sharedDuplicateReasonText, reimbursementDuplicateBlockNotice as sharedDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
   reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE,
-  reimbursementPaymentReferenceRequired as paymentReferenceRequired, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, REIMBURSEMENT_PAYMENT_STEP_NOTE,
+  reimbursementPaymentReferenceRequired as paymentReferenceRequired, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
-import { apiErrorCode, apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
+import { apiErrorCode, apiErrorMessage, translateApiError as sharedTranslateApiError } from '@/common/api/api-error-message';
 import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import {
-  CLAIM_SIGN_LABEL, CLAIM_SIGNATURE_ROLE_LABELS, claimSignAction, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
+  claimStatusBadge, claimReturnedText, CLAIM_SIGN_LABEL, CLAIM_SIGNATURE_ROLE_LABELS, claimSignAction, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, claimIsBeingCancelled, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
   POLICY_TAB_LABEL, SELF_APPROVAL_SWITCH_LABEL,
   type ClaimSignatureRole,
@@ -62,7 +62,7 @@ export function cancellationBlockerText(blocker: { code?: unknown; periodKey?: u
     case 'tax_period_locked':
       return `งวดภาษี${periodText(blocker.periodKey)}ยื่นแบบหรือปิดแล้ว ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ ต้องให้ผู้ดูแลบัญชีปรับปรุงรายการแทน`;
     case 'posting_unresolved': return 'รายการบัญชีของค่าใช้จ่ายในใบนี้ยังลงบัญชีไม่เรียบร้อย ต้องให้ผู้ดูแลบัญชีตรวจการลงบัญชีก่อน';
-    case 'expense_not_voidable': return 'รายการค่าใช้จ่ายของใบนี้อยู่ในสถานะที่ระบบยกเลิกให้ไม่ได้ กรุณาติดต่อผู้ดูแลระบบ';
+    case 'expense_not_voidable': return 'รายการค่าใช้จ่ายของใบนี้อยู่ในสถานะที่ระบบยกเลิกให้ไม่ได้ ติดต่อผู้ดูแลระบบ';
     default: return null;
   }
 }
@@ -71,7 +71,7 @@ export function cancellationBlockerText(blocker: { code?: unknown; periodKey?: u
 function cancellationRefusalText(code: string): string | null {
   const match = /^reimbursement_cancellation_(accounting_period_locked|tax_period_locked|posting_unresolved|expense_not_voidable)(?::(.+))?$/.exec(code);
   const text = match && cancellationBlockerText({ code: match[1], periodKey: match[2] });
-  return text ? `ยังยกเลิกคำขอนี้ไม่ได้ เพราะ${text}` : null;
+  return text ? `ยังยกเลิกใบเบิกนี้ไม่ได้ เพราะ${text}` : null;
 }
 
 /**
@@ -80,29 +80,29 @@ function cancellationRefusalText(code: string): string | null {
  * (the same words as its "อยู่ที่" line and the LINE backlog), and the API takes no other decision on it.
  */
 export function pendingCancellationNote(pending: any, refusal?: string): string {
-  const started = [pending?.startedByName, 'เริ่มยกเลิกคำขอนี้', pending?.startedAt && `เมื่อ ${formatThaiDateTime(pending.startedAt)}`].filter(Boolean).join(' ');
+  const started = [pending?.startedByName, 'เริ่มยกเลิกใบเบิกนี้', pending?.startedAt && `เมื่อ ${formatThaiDateTime(pending.startedAt)}`].filter(Boolean).join(' ');
   const attestationRequired = pending?.blocker?.code === 'certificate_attestation_required';
   const blocker = refusal ?? (attestationRequired ? pending.blocker.message ?? REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.attestationRequired : cancellationBlockerText(pending?.blocker));
   const reasonBlocks = pending?.blocker?.code === 'reason_too_short';
   // A closed period or an unposted journal can be put right; a filed tax period or an unvoidable record cannot.
   const fixable = ['accounting_period_locked', 'posting_unresolved'].includes(pending?.blocker?.code);
-  const next = pending?.canResume !== true ? 'ผู้ที่ดำเนินการต่อได้คือผู้เบิกหรือผู้มีสิทธิ์ตรวจการเงิน'
-    : reasonBlocks ? `กดดำเนินการยกเลิกต่อ แล้วระบุเหตุผลใหม่อย่างน้อย ${EXPENSE_VOID_REASON_MIN_LENGTH} ตัวอักษร`
-      : !blocker ? 'ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที หรือกดดำเนินการยกเลิกต่อได้เลย'
-        : fixable ? 'เมื่อแก้ไขแล้ว กดดำเนินการยกเลิกต่อ' : null;
+  const next = pending?.canResume !== true ? 'ผู้ที่ทำต่อได้คือผู้เบิกหรือผู้มีสิทธิ์ตรวจการเงิน'
+    : reasonBlocks ? `กดทำต่อเพื่อยกเลิก แล้วระบุเหตุผลใหม่อย่างน้อย ${EXPENSE_VOID_REASON_MIN_LENGTH} ตัวอักษร`
+      : !blocker ? 'ระบบจะทำต่อให้เองภายในไม่กี่นาที หรือกดทำต่อเพื่อยกเลิกได้เลย'
+        : fixable ? 'เมื่อแก้ไขแล้ว กดทำต่อเพื่อยกเลิก' : null;
   const takeBack = pending?.canWithdraw === true ? 'ถ้าไม่ต้องการยกเลิกแล้ว กดถอนการยกเลิก ใบจะกลับไปเดินต่อตามเดิม'
     : pending?.canResume === true ? 'ระบบยกเลิกรายการค่าใช้จ่ายไปบางส่วนแล้ว จึงถอนการยกเลิกไม่ได้' : null;
   return [
-    `กำลังยกเลิกคำขอ ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`,
+    `กำลังยกเลิกใบเบิก ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`,
     `${started} แต่ยังยกเลิกไม่เสร็จ${blocker ? attestationRequired ? ` · ${blocker}` : ` เพราะ${blocker}` : ''}`,
     next, takeBack,
-    'ระหว่างนี้ยังอนุมัติ ปฏิเสธ แก้ไข หรือบันทึกจ่ายใบนี้ไม่ได้',
+    'ระหว่างนี้ยังอนุมัติ ส่งกลับให้แก้ แก้ไข หรือบันทึกจ่ายใบนี้ไม่ได้',
   ].filter(Boolean).join(' · ');
 }
 
 // ---- A claim that was decided and has not moved on (audit B4) ----
 
-const SYSTEM_WILL_CARRY_ON = 'ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที';
+const SYSTEM_WILL_CARRY_ON = 'ระบบจะทำต่อให้เองภายในไม่กี่นาที';
 
 /**
  * The step note of a claim whose decision is on record and waits for the system to carry it out: what
@@ -117,13 +117,13 @@ export function awaitingSystemNote(detail: any, approvedBy?: string): string {
     const payers = paymentDeskText(detail?.paymentDesk) ?? CURRENT_DESK_LABELS.PAYMENT;
     return [
       'ใบนี้ไม่ต้องอนุมัติตามนโยบาย', notReady,
-      waiting.canResume === true ? `${SYSTEM_WILL_CARRY_ON} หรือกดดำเนินการต่อได้เลย` : `${SYSTEM_WILL_CARRY_ON} ถ้ายังค้างอยู่ ${payers} กดดำเนินการต่อได้`,
+      waiting.canResume === true ? `${SYSTEM_WILL_CARRY_ON} หรือกดทำต่อได้เลย` : `${SYSTEM_WILL_CARRY_ON} ถ้ายังค้างอยู่ ${payers} กดทำต่อได้`,
     ].join(' · ');
   }
   return [
     `${approvedBy ? `${approvedBy} อนุมัติแล้ว` : 'อนุมัติแล้ว'} ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`, notReady,
-    waiting?.canResume === true ? `${SYSTEM_WILL_CARRY_ON} หรือกดดำเนินการต่อได้เลย ไม่ต้องอนุมัติซ้ำ`
-      : `${SYSTEM_WILL_CARRY_ON} ไม่ต้องอนุมัติซ้ำ ถ้ายังค้างอยู่ ผู้อนุมัติใบนี้กดดำเนินการต่อได้`,
+    waiting?.canResume === true ? `${SYSTEM_WILL_CARRY_ON} หรือกดทำต่อได้เลย ไม่ต้องอนุมัติซ้ำ`
+      : `${SYSTEM_WILL_CARRY_ON} ไม่ต้องอนุมัติซ้ำ ถ้ายังค้างอยู่ ผู้อนุมัติใบนี้กดทำต่อได้`,
   ].join(' · ');
 }
 
@@ -232,30 +232,42 @@ export function validatePaymentForm(input: {
   /** What the claim asks of this payment (the API's own rule) and what the payer gave. Omitted: nothing is asked. */
   payout?: { rule: ReimbursementPaymentRule; confirmed: boolean; mismatchReason: string };
 }): string | null {
-  if (!input.paymentMethod) return 'กรุณาเลือกวิธีจ่าย';
-  if (input.paidAt && isFuturePaymentDate(input.paidAt)) return translateApiError(PAYMENT_DATE_IN_FUTURE.code);
+  return paymentFormProblem(input)?.text || null;
+}
+
+/** A field of the payment form a person can put right; `null` for a refusal no field of the form answers (the amount is not typed). */
+export type PaymentFormField = 'method' | 'date' | 'reference' | 'slip' | 'confirmation' | 'mismatch';
+
+/**
+ * The first thing wrong with the payment form, as `validatePaymentForm` says it, with the field it is about: the form
+ * says the sentence at that field, where it is put right, and not in a box above the buttons.
+ */
+export function paymentFormProblem(input: Parameters<typeof validatePaymentForm>[0]): { field: PaymentFormField | null; text: string } | null {
+  const at = (field: PaymentFormField | null, text: string | null) => ({ field, text: text ?? '' });
+  if (!input.paymentMethod) return at('method', 'เลือกวิธีจ่าย');
+  if (input.paidAt && isFuturePaymentDate(input.paidAt)) return at('date', translateApiError(PAYMENT_DATE_IN_FUTURE.code));
   const paid = Number(input.paidAmount);
   const outstanding = Number(input.outstandingAmount);
-  if (!(paid > 0)) return 'จำนวนเงินต้องมากกว่า 0';
-  if (paid > outstanding) return 'จำนวนเงินเกินยอดที่อนุมัติ';
-  if (paid !== outstanding) return 'ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น';
+  if (!(paid > 0)) return at(null, 'จำนวนเงินต้องมากกว่า 0');
+  if (paid > outstanding) return at(null, 'จำนวนเงินเกินยอดที่อนุมัติ');
+  if (paid !== outstanding) return at(null, 'ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น');
   if (paymentReferenceRequired(input.paymentMethod, input.hasSlip) && (!input.paymentReference || input.paymentReference.trim() === '')) {
-    return REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.requiredMessage;
+    return at('reference', REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.requiredMessage);
   }
   // The API's own words for the same refusal, so the form and the server say one thing.
-  if (reimbursementPaymentSlipRequired(input.paymentMethod) && !input.hasSlip) return translateApiError('payment_slip_required');
+  if (reimbursementPaymentSlipRequired(input.paymentMethod) && !input.hasSlip) return at('slip', translateApiError('payment_slip_required'));
   // Spec §12.4, asked in the API's order: the confirmation of the account, then the reason for
   // another method than the one asked for. The reason is shown on the payment row, so it takes the
   // API's own guard against an account number.
-  if (input.payout?.rule.payoutConfirmation === 'required' && !input.payout.confirmed) return PAYER_CONFIRMATION_REQUIRED;
+  if (input.payout?.rule.payoutConfirmation === 'required' && !input.payout.confirmed) return at('confirmation', PAYER_CONFIRMATION_REQUIRED);
   if (input.payout?.rule.mismatchReasonRequired) {
-    if (!input.payout.mismatchReason.trim()) return MISMATCH_REASON_REQUIRED;
-    if (looksLikeAccountNumber(input.payout.mismatchReason)) return MISMATCH_REASON_HAS_ACCOUNT_NUMBER;
+    if (!input.payout.mismatchReason.trim()) return at('mismatch', MISMATCH_REASON_REQUIRED);
+    if (looksLikeAccountNumber(input.payout.mismatchReason)) return at('mismatch', MISMATCH_REASON_HAS_ACCOUNT_NUMBER);
   }
   return null;
 }
 
-// ---- Payment slips (สลิปการจ่ายเงินคืน) ----
+// ---- Payment slips (หลักฐานการจ่ายเงินคืน) ----
 
 /** "ไฟล์ PDF" or "ไฟล์รูปภาพ", from the name a file was attached under: what a person sees before opening it. */
 export function attachedFileKindText(fileName: unknown): string {
@@ -296,8 +308,8 @@ export function paymentSlipChoices(detail: any): PaymentSlipChoice[] {
     const slips: any[] = payment.slips ?? [];
     slips.forEach((slip, index) => add({
       attachmentId: slip.attachmentId, kind: 'previous-slip', paymentId: payment.id,
-      label: `สลิปของการจ่ายที่ยกเลิกแล้ว ${payment.paymentNo ?? ''}`.trim() + (slips.length > 1 ? ` (ไฟล์ที่ ${index + 1})` : ''),
-      what: 'เคยเป็นสลิปของการจ่ายที่ยกเลิกไปแล้ว ใช้กับการจ่ายครั้งนี้ได้ถ้าเป็นการโอนรายการเดียวกัน',
+      label: `หลักฐานการจ่ายที่ยกเลิกแล้ว ${payment.paymentNo ?? ''}`.trim() + (slips.length > 1 ? ` (ไฟล์ที่ ${index + 1})` : ''),
+      what: 'เคยเป็นหลักฐานการจ่ายที่ยกเลิกไปแล้ว ใช้กับการจ่ายครั้งนี้ได้ถ้าเป็นการโอนรายการเดียวกัน',
     }));
   }
   const copies: any[] = [...(detail?.signedCopies ?? [])];
@@ -305,7 +317,7 @@ export function paymentSlipChoices(detail: any): PaymentSlipChoice[] {
   for (const copy of [...copies.filter((row) => !isPdf(row)), ...copies.filter(isPdf)]) {
     add({
       attachmentId: copy.attachmentId, kind: 'signed-copy', fileName: copy.fileName, label: copy.fileName,
-      what: `${attachedFileKindText(copy.fileName)} · ${copy.acknowledgedAt ? 'แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'
+      what: `${attachedFileKindText(copy.fileName)} · ${copy.acknowledgedAt ? 'แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่เซ็นครบ'
         : copy.beforePayoutCorrection ? `แนบไว้ที่ใบเบิกที่เซ็นแล้ว เป็น${SIGNED_COPY_BEFORE_CORRECTION_LABEL}` : 'แนบไว้ที่ใบเบิกที่เซ็นแล้ว เป็นไฟล์แนบทั่วไป'}`,
     });
   }
@@ -343,7 +355,7 @@ export function slipTargetPayment(detail: any, permissions: readonly string[]): 
  * Before the payment it is chosen as the slip in the payment form. Once the payment has a slip, no file moves any
  * more, and the page cannot know which file is which: the sentence is true either way. Nothing more is needed when the
  * slip on the payment is the real one; when it is not (the signed form was picked as the slip, and the real slip is
- * the file left on this row), the real one is attached at the payment row, which says "แนบสลิปเพิ่ม" for as long as the
+ * the file left on this row), the real one is attached at the payment row, which says "แนบหลักฐานการจ่ายเพิ่ม" for as long as the
  * payment takes another slip. Null where the row has its own button (a recorded payment with no slip), for a viewer
  * who records no payments, and for a claim that is at neither point.
  */
@@ -353,7 +365,7 @@ export function signedCopyMisfiledHint(detail: any, permissions: readonly string
   if (standing) {
     const settled = 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง และสลิปที่แนบกับการจ่ายถูกต้องแล้ว ไม่ต้องทำอะไรเพิ่ม';
     // The second sentence names a control: it is said only while the payment row shows that control.
-    return canAttachPaymentSlip(standing, permissions) ? `${settled} ถ้าสลิปที่แนบกับการจ่ายไม่ใช่สลิปจริง ให้กดแนบสลิปเพิ่มที่แถวการจ่าย แล้วแนบสลิปจริง` : settled;
+    return canAttachPaymentSlip(standing, permissions) ? `${settled} ถ้าสลิปที่แนบกับการจ่ายไม่ใช่สลิปจริง ให้กดเพิ่มเติมที่แถวการจ่าย แล้วเลือกแนบหลักฐานการจ่ายเพิ่ม แล้วแนบหลักฐานการจ่ายจริง` : settled;
   }
   return detail?.status === 'READY_FOR_PAYMENT' ? 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องแนบใหม่ ตอนบันทึกจ่ายเลือกไฟล์นี้เป็นสลิปได้' : null;
 }
@@ -365,8 +377,8 @@ export function signedCopyMisfiledHint(detail: any, permissions: readonly string
  */
 export function signedCopyMoveConfirmText(copy: { fileName?: string; acknowledgedAt?: string }, payment: { paymentNo?: string }): string {
   return [
-    `ไฟล์ ${copy.fileName ?? 'นี้'} จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นสลิปของการจ่าย${payment.paymentNo ? ` ${payment.paymentNo}` : 'นี้'} โดยไม่ต้องอัปโหลดใหม่ และย้ายกลับไม่ได้`,
-    ...(copy.acknowledgedAt ? ['ไฟล์นี้เคยถูกยืนยันว่าเป็นใบเบิกที่ลงนามครบ ระบบจะถอนการยืนยันนั้น ใบเบิกจะไม่นับว่าลงนามบนกระดาษจากไฟล์นี้อีก'] : []),
+    `ไฟล์ ${copy.fileName ?? 'นี้'} จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นหลักฐานการจ่าย${payment.paymentNo ? ` ${payment.paymentNo}` : 'นี้'} โดยไม่ต้องอัปโหลดใหม่ และย้ายกลับไม่ได้`,
+    ...(copy.acknowledgedAt ? ['ไฟล์นี้เคยถูกยืนยันว่าเป็นใบเบิกที่เซ็นครบ ระบบจะถอนการยืนยันนั้น ใบเบิกจะไม่นับว่าเซ็นบนกระดาษจากไฟล์นี้อีก'] : []),
     'หลังย้ายแล้ว ไฟล์นี้เปิดดูได้เฉพาะผู้เบิก ผู้อนุมัติของใบนี้ ผู้ที่บันทึกจ่ายได้ และผู้ตรวจการเงิน',
   ].join(' ');
 }
@@ -389,13 +401,13 @@ export function isLostPaymentRace(e: unknown): boolean {
  *  - everything else (a field to fix, a failed connection): check and press save again.
  */
 export function paymentSaveErrorMessage(stage: 'slip-upload' | 'record', error: unknown, slipKept: boolean): string {
-  if (stage === 'slip-upload') return `อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ${errorText(error)}`;
-  if (isLostPaymentRace(error)) return 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่';
+  if (stage === 'slip-upload') return `อัปโหลดหลักฐานการจ่ายไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ${errorText(error)}`;
+  if (isLostPaymentRace(error)) return 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบหลักฐานการจ่ายหรือโอนเงินใหม่';
   const reason = errorText(error);
   if ((error as { code?: unknown } | null)?.code === 'duplicate_confirmed') return reason;
   if ((error as { status?: unknown } | null)?.status === 409) return `ยังบันทึกจ่ายไม่สำเร็จ · ${reason}`;
   return slipKept
-    ? `แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ${reason} · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่`
+    ? `แนบหลักฐานการจ่ายแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ${reason} · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบหลักฐานการจ่ายหรือโอนเงินใหม่`
     : `ยังบันทึกจ่ายไม่สำเร็จ · ${reason}`;
 }
 
@@ -539,7 +551,7 @@ export function queueRowOffersPayment(
  * `onClaimPage`: the decision is made on the claim's own page, never from the row. A claim paid by transfer is
  * approved there, where its account is shown and attested. So is a claim in a payout account correction round
  * (payout spec §14.6), whatever its new receiving method: what is approved is the change of account, which a row
- * does not show. Such a row offers one way in for whoever decides the waiting step, and no "ปฏิเสธ": a round's
+ * does not show. Such a row offers one way in for whoever decides the waiting step, and no "ส่งกลับให้แก้": a round's
  * new account is sent back to its requester, never rejected.
  */
 export function approvalRowOffers(row: {
@@ -562,6 +574,17 @@ export function queueRowOffersFinanceReview(row: { status?: string; cancellation
 }
 
 /**
+ * A pay-queue row held as a possible duplicate: it waits for its payment and takes none until someone who may clear the
+ * hold has compared the receipts, which is done on the claim's own page. A confirmed duplicate is never cleared, and a
+ * claim being cancelled is not checked any more.
+ */
+export function queueRowAwaitsDuplicateCheck(
+  row: { status?: string; cancellationPending?: boolean; hasDuplicateBlocker?: boolean; duplicateBlocksPayment?: boolean; duplicateReasons?: readonly string[] } | null | undefined,
+): boolean {
+  return row?.status === 'READY_FOR_PAYMENT' && !claimIsBeingCancelled(row) && duplicateCanBeCleared(row);
+}
+
+/**
  * What the quick-pay dialog says instead of a payment form for a claim it has just read, or null when it
  * may show the form. The queue row the press came from can be older than the claim: cancelled meanwhile,
  * paid by someone else, or no longer at its payment step. The dialog asks the claim's own page rule, so it
@@ -581,7 +604,23 @@ export function opensPaymentFormOnArrival(requested: boolean, activeStep: { acti
 
 export const MAX_CLAIM_LINES = 50;
 
-export type ClaimFormLine = { incurredDate: string; description: string; purpose?: string; categoryKey: string; amount: string; hasReceipt?: boolean };
+// Only obvious words on this line: one category or no suggestion, never a fallback to "other".
+const DESCRIPTION_CATEGORY_WORDS = {
+  travel: ['แท็กซี่', 'grab', 'bolt', 'bts', 'mrt', 'รถไฟฟ้า', 'ทางด่วน', 'น้ำมัน', 'ค่าจอด', 'วิน', 'ตั๋ว', 'taxi', 'fuel', 'parking', 'ticket'],
+  meals: ['ข้าว', 'อาหาร', 'กาแฟ', 'เครื่องดื่ม', 'น้ำดื่ม', 'coffee', 'cafe', 'café', 'food', 'meal', 'water'],
+  accommodation: ['โรงแรม', 'ที่พัก', 'ห้องพัก', 'agoda', 'booking', 'hotel'],
+  supplies: ['กระดาษ', 'ปากกา', 'หมึก', 'อุปกรณ์', 'ถุง', 'เครื่องเขียน', 'paper', 'pen', 'ink', 'stationery', 'supplies', 'bag'],
+} as const;
+
+export function suggestReimbursementCategory(description: string): string {
+  const text = description.normalize('NFC').trim().toLowerCase();
+  const matches = Object.entries(DESCRIPTION_CATEGORY_WORDS).filter(([, words]) => words.some(word =>
+    // Latin words must stand alone: GrabFood is not enough to infer a taxi ride.
+    /^[a-z]/.test(word) ? new RegExp(`(^|[^a-z])${word}([^a-z]|$)`, 'u').test(text) : text.includes(word)));
+  return matches.length === 1 ? matches[0]![0] : '';
+}
+
+export type ClaimFormLine = { incurredDate: string; description: string; purpose?: string; categoryKey: string; categoryLabel?: string; amount: string; hasReceipt?: boolean };
 
 export function collectReceiptUploadResults(results: readonly PromiseSettledResult<string | null>[]): {
   attachmentIds: Array<string | null>;
@@ -650,27 +689,61 @@ export function matchesSearch(parts: readonly unknown[], query: string): boolean
 
 export { DEFAULT_PAGE_SIZE as QUEUE_PAGE_SIZE, pageBounds } from '@/common/table/paging.logic';
 
-/** Client-side validation of the multi-line claim form. Returns a message or null. */
-export function validateRequestForm(input: { reason: string; missingReceiptReason?: string; lines: readonly ClaimFormLine[] }, today = todayCivilDate()): string | null {
-  if (!input.reason || input.reason.trim() === '') return 'กรุณาระบุเหตุผล';
-  if (!input.lines || input.lines.length === 0) return 'ต้องมีอย่างน้อย 1 รายการ';
-  if (input.lines.length > MAX_CLAIM_LINES) return `ใบเบิกหนึ่งใบมีได้ไม่เกิน ${MAX_CLAIM_LINES} รายการ`;
-  for (const [index, line] of input.lines.entries()) {
-    const no = index + 1;
-    if (!line.description || line.description.trim() === '') return `รายการที่ ${no}: กรุณาระบุรายการ`;
-    if (!line.categoryKey || line.categoryKey.trim() === '') return `รายการที่ ${no}: กรุณาเลือกหมวด`;
-    if (!line.incurredDate) return `รายการที่ ${no}: กรุณาระบุวันที่`;
-    const dateError = reimbursementIncurredDateError(line.incurredDate, today);
-    if (dateError) return errorMessage(`${dateError}:${no}`);
-    if (!(Number(line.amount) > 0)) return `รายการที่ ${no}: จำนวนเงินต้องมากกว่า 0`;
+/** What is wrong on one line of the claim form, each said under its own field in the words of that field's label. */
+export type ClaimFormLineProblems = { description?: string; categoryKey?: string; categoryLabel?: string; incurredDate?: string; amount?: string; receipt?: string };
+/**
+ * Everything that keeps the claim form from being saved, at once and by field: the form marks each field and says
+ * its problem under it. Before, one sentence at a time was shown in the summary card at the far end of the form.
+ * `count` is the number of fields to fix.
+ */
+export type ClaimFormProblems = { reason?: string; lines: ClaimFormLineProblems[]; missingReceiptReason?: string; form?: string; count: number };
+
+/** An amount as a person types it: "1,200.50" and "1 200" are 1200.50 and 1200. What is sent and summed has no separators. */
+export function typedAmount(text: string | null | undefined): string {
+  return String(text ?? '').replace(/[,\s]/g, '');
+}
+
+export function requestFormProblems(input: { intent?: 'draft' | 'send'; reason: string; missingReceiptReason?: string; receiptPolicy?: { requireReceipt: boolean; allowMissingReceiptWithReason: boolean }; lines: readonly ClaimFormLine[] }, today = todayCivilDate()): ClaimFormProblems {
+  const lines = input.lines ?? [];
+  const problems: ClaimFormProblems = { lines: [], count: 0 };
+  if (!input.reason || input.reason.trim() === '') problems.reason = 'กรอกเหตุผล';
+  if (lines.length === 0) problems.form = 'ต้องมีอย่างน้อย 1 รายการ';
+  else if (lines.length > MAX_CLAIM_LINES) problems.form = `ใบเบิกหนึ่งใบมีได้ไม่เกิน ${MAX_CLAIM_LINES} รายการ`;
+  for (const [index, line] of lines.entries()) {
+    const found: ClaimFormLineProblems = {};
+    if (!line.description || line.description.trim() === '') found.description = 'กรอกรายการ';
+    if (!line.categoryKey || line.categoryKey.trim() === '') found.categoryKey = 'เลือกหมวด';
+    // "อื่น ๆ" says what it is (owner 2026-10-16): the typed words are the line's category on the claim and its print.
+    else if (line.categoryKey === 'other' && !line.categoryLabel?.trim()) found.categoryLabel = 'ระบุหมวดอื่น';
+    const dateError = line.incurredDate ? reimbursementIncurredDateError(line.incurredDate, today) : null;
+    if (!line.incurredDate) found.incurredDate = 'เลือกวันที่';
+    // The shared sentence names its line for a banner; under the line's own field the line is not said again.
+    else if (dateError) found.incurredDate = errorMessage(`${dateError}:${index + 1}`).replace(/^รายการที่ \d+: /u, '');
+    if (!(Number(line.amount) > 0)) found.amount = 'ยอดเงินต้องมากกว่า 0';
+    if (input.intent !== 'draft' && !line.hasReceipt && input.receiptPolicy?.requireReceipt && !input.receiptPolicy.allowMissingReceiptWithReason) found.receipt = 'ร้านนี้ต้องแนบใบเสร็จทุกรายการก่อนส่งอนุมัติ';
+    problems.lines.push(found);
   }
-  if (!(sumLineAmounts(input.lines) > 0)) return 'ยอดรวมต้องมากกว่า 0';
   // Mirrors the server guard (`missing_receipt_reason_required`): a row with no receipt becomes
   // an expense at ตรวจสอบการเงิน that cannot be confirmed without this reason.
-  if (input.lines.some((line) => !line.hasReceipt) && !input.missingReceiptReason?.trim()) {
-    return 'มีรายการที่ยังไม่แนบใบเสร็จ กรุณาระบุ "เหตุผลที่ไม่มีใบเสร็จ" หรือแนบใบเสร็จให้ครบทุกรายการ';
+  if (input.intent !== 'draft' && (!input.receiptPolicy || input.receiptPolicy.allowMissingReceiptWithReason) && lines.some((line) => !line.hasReceipt) && !input.missingReceiptReason?.trim()) {
+    const missing = lines.map((line, index) => (line.hasReceipt ? 0 : index + 1)).filter(Boolean);
+    problems.missingReceiptReason = `รายการที่ ${missing.join(', ')} ยังไม่มีใบเสร็จ แนบใบเสร็จ หรือกรอกเหตุผลที่ไม่มีใบเสร็จ (ถ้าร้านรับเหตุผลแทนใบเสร็จ)`;
   }
-  return null;
+  problems.count = (problems.reason ? 1 : 0) + (problems.form ? 1 : 0) + (problems.missingReceiptReason ? 1 : 0)
+    + problems.lines.reduce((sum, line) => sum + Object.keys(line).length, 0);
+  return problems;
+}
+
+/** The first thing that keeps the claim form from being saved, as one sentence, or null. A line's problem names its line. */
+export function validateRequestForm(input: { intent?: 'draft' | 'send'; reason: string; missingReceiptReason?: string; receiptPolicy?: { requireReceipt: boolean; allowMissingReceiptWithReason: boolean }; lines: readonly ClaimFormLine[] }, today = todayCivilDate()): string | null {
+  const problems = requestFormProblems(input, today);
+  if (problems.reason) return problems.reason;
+  if (problems.form) return problems.form;
+  for (const [index, line] of problems.lines.entries()) {
+    const first = line.description ?? line.categoryKey ?? line.categoryLabel ?? line.incurredDate ?? line.amount ?? line.receipt;
+    if (first) return `รายการที่ ${index + 1}: ${first}`;
+  }
+  return problems.missingReceiptReason ?? null;
 }
 
 /**
@@ -681,10 +754,10 @@ export function validateRequestForm(input: { reason: string; missingReceiptReaso
  */
 export function financeQueueWords(financeStep: boolean): { tab: string; description: string; waiting: string; emptyTitle: string; emptyDescription: string } {
   return financeStep
-    ? { tab: 'คิวการเงิน', description: 'ตรวจสอบคำขอที่อนุมัติแล้ว และบันทึกการจ่ายเงิน', waiting: 'รอตรวจ/รอจ่าย',
-      emptyTitle: 'ไม่มีรายการรอการเงิน', emptyDescription: 'คำขอที่ผ่านการอนุมัติแล้วจะแสดงที่นี่' }
-    : { tab: 'คิวรอจ่าย', description: 'บันทึกการจ่ายเงินของคำขอที่อนุมัติแล้ว', waiting: 'รอจ่าย',
-      emptyTitle: 'ไม่มีใบรอจ่าย', emptyDescription: 'คำขอที่อนุมัติแล้วและรอจ่ายเงินคืนจะแสดงที่นี่' };
+    ? { tab: 'รอการเงิน', description: 'ตรวจใบเบิกที่อนุมัติแล้ว และบันทึกการจ่ายเงิน', waiting: 'รอตรวจหรือรอจ่าย',
+      emptyTitle: 'ไม่มีใบเบิกรอการเงิน', emptyDescription: 'ใบเบิกที่อนุมัติแล้วจะอยู่ที่นี่' }
+    : { tab: 'รอจ่าย', description: 'บันทึกการจ่ายเงินของใบเบิกที่อนุมัติแล้ว', waiting: 'รอจ่าย',
+      emptyTitle: 'ไม่มีใบเบิกรอจ่าย', emptyDescription: 'ใบเบิกที่อนุมัติแล้วและรอจ่ายเงินคืนจะอยู่ที่นี่' };
 }
 
 /**
@@ -714,7 +787,7 @@ export type HubTab = (typeof HUB_TABS)[number];
 const HUB_TAB_PERMISSIONS: Record<HubTab, readonly string[]> = {
   mine: ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own'],
   approvals: ['reimbursement.approve', 'reimbursement.reject'],
-  finance: ['reimbursement.finance_review'],
+  finance: ['reimbursement.finance_review', 'reimbursement.payment.record'],
   policy: ['reimbursement.policy.manage'],
 };
 
@@ -744,6 +817,13 @@ export function parseHubTab(value: string | null | undefined, visible: readonly 
   return visible.includes(value as HubTab) ? (value as HubTab) : (visible[0] ?? 'mine');
 }
 
+export function initialHubTab(requested: string | null, visible: readonly HubTab[], counts: { approvals: number; finance?: number }): HubTab {
+  if (requested) return parseHubTab(requested, visible);
+  if (visible.includes('approvals') && counts.approvals > 0) return 'approvals';
+  if (visible.includes('finance') && (counts.finance ?? 0) > 0) return 'finance';
+  return parseHubTab('mine', visible);
+}
+
 // ---- หน้ารวม: summary cards, filter chips and the list they filter (spec §18.1) ----
 
 /**
@@ -751,6 +831,19 @@ export function parseHubTab(value: string | null | undefined, visible: readonly 
  * the buckets and filters the list by the same rule, so a card's number is the rows its filter shows.
  */
 export type HubFilter = 'all' | ReimbursementHubBucket;
+
+/** Work-list context travels with the claim link; menu entry and policy never restore a previous visit. */
+export function claimHubFilter(value: string | null): HubFilter {
+  return ['draft', 'correction', 'review', 'payment', 'duplicate_blocked', 'paid', 'closed'].includes(value ?? '') ? value as HubFilter : 'all';
+}
+
+export function claimHubQuery(tab: string | null, filter: string | null): string {
+  if (!['mine', 'approvals', 'finance'].includes(tab ?? '')) return '';
+  const query = new URLSearchParams({ tab: tab! });
+  const group = claimHubFilter(filter);
+  if (tab === 'mine' && group !== 'all') query.set('filter', group);
+  return `?${query}`;
+}
 
 /** A card is the same filter as its chip; tapping the card that is already open goes back to ทั้งหมด. */
 export function hubCardFilter(open: HubFilter, tapped: HubFilter): HubFilter {
@@ -785,7 +878,7 @@ export const HUB_SEARCH_DELAY_MS = 300;
  */
 export function hubListStatusText(shown: number, all: number, filter: HubFilter, searching: boolean): string {
   if (searching) {
-    return `${filter === 'all' ? `พบ ${shown} รายการ` : `พบ ${shown} จาก ${all} รายการ`}ที่ตรงกับคำค้น · ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น`;
+    return `${filter === 'all' ? `พบ ${shown} รายการ` : `พบ ${shown} จาก ${all} รายการ`}ที่ตรงกับคำค้น · ตัวเลขบนตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น`;
   }
   return filter === 'all' ? `ทั้งหมด ${all} รายการ` : `พบ ${shown} จาก ${all} รายการ`;
 }
@@ -867,7 +960,7 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   const rows: ClaimTimelineRow[] = [];
   rows.push(detail?.submittedAt
     ? { key: 'submit', state: 'done', label: 'ยื่นใบ', date: detail.submittedAt }
-    : { key: 'submit', state: 'current', label: 'รอผู้เบิกส่งคำขอ' });
+    : { key: 'submit', state: 'current', label: 'รอผู้เบิกส่งอนุมัติ' });
 
   // A cancellation that was started and has not completed (audit B3): nobody is waited for but the system.
   const cancelling = status !== 'CANCELLED' && status !== 'VOIDED' ? detail?.pendingCancellation : undefined;
@@ -893,7 +986,7 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
       : step.decisionByUserId && step.decisionByUserId === detail?.requesterUserId ? `อนุมัติโดย ${decidedBy} · ${REQUESTER_SELF_ATTESTED}`
         : `อนุมัติและตรวจบัญชีรับเงินโดย ${decidedBy}`;
     if (step.status === 'APPROVED') rows.push({ key, state: 'done', label: approvedLabel, date: step.decidedAt });
-    else if (step.status === 'REJECTED') rows.push({ key, state: 'done', label: `ปฏิเสธโดย ${decidedBy}`, date: step.decidedAt });
+    else if (step.status === 'REJECTED') rows.push({ key, state: 'done', label: claimReturnedText({ approvalSteps: [step] }), date: step.decidedAt });
     // The step a round waits on is told after the round's own rows, as what the claim waits for now.
     else if (step.status === 'PENDING' && !cancelling && !round) rows.push({ key, state: 'current', label: `กำลังรอ ${waitingFor} อนุมัติ` });
   }
@@ -915,12 +1008,13 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   const history = [...voided, ...corrections.map((event, index) => ({ at: event.at, rows: payoutCorrectionTimelineRows(event, index, detail?.payoutHistory) }))]
     .sort((left, right) => moment(left.at) - moment(right.at)).flatMap((entry) => entry.rows);
   if (status === 'CANCELLED' || status === 'VOIDED') {
-    return [...rows, ...history, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
+    // A closed claim waits for nobody: a draft cancelled before it was sent still read "รอผู้เบิกส่งอนุมัติ" as its current row.
+    return [...rows.filter((row) => row.state !== 'current'), ...history, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกใบเบิก' : 'เพิกถอนรายการ' }];
   }
   // Being cancelled: the journey stops here until the cancellation is finished or withdrawn.
   if (cancelling) {
     return [...rows.map((row) => (row.state === 'current' ? { ...row, state: 'done' as const } : row)), ...history,
-      { key: 'cancel-started', state: 'done', label: `เริ่มยกเลิกคำขอ${cancelling.startedByName ? ` โดย ${cancelling.startedByName}` : ''}`, date: cancelling.startedAt },
+      { key: 'cancel-started', state: 'done', label: `เริ่มยกเลิกใบเบิก${cancelling.startedByName ? ` โดย ${cancelling.startedByName}` : ''}`, date: cancelling.startedAt },
       { key: 'system', state: 'current', label: `กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}` }];
   }
 
@@ -928,7 +1022,7 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   // approved claim is with the system; one nobody had to approve is with whoever may record its payment.
   if (detail?.awaitingSystem) {
     rows.push({ key: 'system', state: 'current', label: detail.awaitingSystem.kind === 'NO_APPROVAL_NEEDED'
-      ? `กำลังรอ ${paymentDeskText(detail?.paymentDesk) ?? CURRENT_DESK_LABELS.PAYMENT} ดำเนินการต่อ`
+      ? `กำลังรอ ${paymentDeskText(detail?.paymentDesk) ?? CURRENT_DESK_LABELS.PAYMENT} ทำต่อ`
       : `กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}` });
   }
 
@@ -1028,7 +1122,7 @@ function payoutCorrectionTimelineRows(event: any, index: number, payoutHistory?:
 export function paymentFactsText(payment: any): string {
   return [
     reimbursementPaymentHowText({ paymentMethod: payment?.paymentMethod, payoutDestination: payment?.payoutDestination }),
-    paymentSlipCount(payment) > 0 && 'มีสลิป',
+    paymentSlipCount(payment) > 0 && 'มีหลักฐานการจ่าย',
     payment?.methodMismatchReason && PAID_DIFFERENTLY_LABEL,
   ].filter(Boolean).join(' · ');
 }
@@ -1055,7 +1149,7 @@ function waitingForPayer(detail: any): string {
   return payers ? `รอ ${payers} บันทึกจ่าย` : `รอ${CURRENT_DESK_LABELS.PAYMENT}`;
 }
 
-// ---- Journey steps (หน้า journey ต่อคำขอเบิกหนึ่งใบ — spec §5, §6) ----
+// ---- Journey steps (หน้า journey ต่อใบเบิกหนึ่งใบ — spec §5, §6) ----
 
 export type JourneyStepKey = 'items' | 'approval' | 'finance' | 'payment' | 'document';
 /** needs-fix = refused, waiting for the requester; ended = cancelled/voided here, nothing follows. */
@@ -1080,6 +1174,9 @@ export type JourneyStep = {
 export const JOURNEY_STEP_LABELS: Record<JourneyStepKey, string> = {
   items: 'รายการที่จ่ายไป', approval: 'อนุมัติ', finance: 'ตรวจการเงิน', payment: 'จ่ายเงินคืน', document: 'เอกสาร',
 };
+
+/** Why a requester who could approve this claim is not offered to: said of the claim and of the shop's setting, in one sentence. */
+export const SELF_APPROVAL_STEP_NOTE = 'ใบนี้เป็นของคุณเอง ร้านตั้งค่าไว้ไม่ให้อนุมัติใบของตัวเอง';
 
 /** The policy switch, quoted as the settings page labels it so it can be found there. */
 const SELF_APPROVAL_BLOCK_NOTE = `ใบนี้เป็นของคุณเอง และนโยบายที่ใบนี้ใช้ปิด "${SELF_APPROVAL_SWITCH_LABEL}"`;
@@ -1181,7 +1278,8 @@ function payoutCorrectionStepNote(
 
 export function duplicateNoticeForViewer(detail: any, permissions: readonly string[], userId: string): string {
   return reimbursementDuplicateBlockNotice(detail?.duplicateReasons, detail?.status === 'FINANCE_REVIEW', {
-    status: detail?.status,
+    // Not-approved claims now use the draft's cancellation route; keep the shared LINE copy unchanged.
+    status: detail?.status === 'REJECTED' ? 'DRAFT' : detail?.status,
     canCancel: reimbursementOwnActions(detail, userId, permissions).canCancel,
     cancellationPending: claimIsBeingCancelled(detail),
     canResumeCancellation: detail?.pendingCancellation?.canResume === true,
@@ -1191,8 +1289,18 @@ export function duplicateNoticeForViewer(detail: any, permissions: readonly stri
 export function paymentVoidedMessage(detail: any, permissions: readonly string[], userId: string): string {
   if (detail?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE')) return `${PAYMENT_VOIDED_LABEL} ${duplicateNoticeForViewer(detail, permissions, userId)}`;
   const actions = activeJourneyStep(buildJourneySteps(detail, permissions, userId))?.actions ?? [];
-  const next = [actions.includes('pay') && 'บันทึกจ่ายใหม่', reimbursementOwnActions(detail, userId, permissions).canCancel && 'ยกเลิกคำขอต่อ'].filter(Boolean);
+  const next = [actions.includes('pay') && 'บันทึกจ่ายใหม่', reimbursementOwnActions(detail, userId, permissions).canCancel && 'ยกเลิกใบเบิกต่อ'].filter(Boolean);
   return `${PAYMENT_VOIDED_LABEL}${next.length ? ` คุณสามารถ${next.join('หรือ')}ได้` : ''}`;
+}
+
+/**
+ * What whoever records the payment does at the pay step, in one line. The rule of each method (a slip for a transfer,
+ * a number for a cheque, the tick for the account) is said in the form, at the field it is about: before, the step
+ * printed all five as one paragraph above its button, most of them for methods the payer had not chosen.
+ */
+export function payStepInstruction(detail: { payout?: { payoutMethod?: string | null } | null } | null | undefined): string {
+  const method = detail?.payout?.payoutMethod;
+  return method === 'BANK_TRANSFER' ? 'โอนตามบัญชีรับเงินในใบนี้ แล้วบันทึกจ่าย' : method === 'CASH' ? 'จ่ายเงินสดให้ผู้เบิก แล้วบันทึกจ่าย' : 'จ่ายเงินคืนให้ผู้เบิก แล้วบันทึกจ่าย';
 }
 
 export function duplicateCanBeCleared(claim: { duplicateBlocksPayment?: boolean; hasDuplicateBlocker?: boolean; duplicateReasons?: readonly string[] }): boolean {
@@ -1241,19 +1349,19 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       return { note: pendingCancellationNote(detail.pendingCancellation, detail.certificateCancelBlocker?.message), actions };
     }
     if (ended) {
-      note = status === 'CANCELLED' ? `ยกเลิกคำขอแล้ว${detail?.rejectionReason ? `: ${detail.rejectionReason}` : ''}` : 'เพิกถอนรายการแล้ว';
+      note = status === 'CANCELLED' ? `ยกเลิกใบเบิกแล้ว${detail?.rejectionReason ? `: ${detail.rejectionReason}` : ''}` : 'เพิกถอนรายการแล้ว';
     } else if (key === 'items') {
       if (review === 'NEEDS_INFO') {
         note = financeStepActNote('ส่งกลับให้แก้ไข', detail);
         if (own.canEditDraft) actions.push('edit');
         if (own.canSubmit) actions.push('submit');
       } else {
-        note = own.canSubmit || own.canEditDraft ? 'ตรวจรายการและหลักฐานให้ครบ แล้วกดส่งอนุมัติ' : 'รอผู้เบิกส่งคำขอ';
+        note = own.canSubmit || own.canEditDraft ? 'ตรวจรายการและหลักฐานให้ครบ แล้วกดส่งอนุมัติ' : 'รอผู้เบิกส่งอนุมัติ';
         if (own.canSubmit) actions.push('submit');
         if (own.canEditDraft) actions.push('edit');
       }
     } else if (key === 'approval' && status === 'REJECTED') {
-      note = `ปฏิเสธ${detail?.rejectionReason ? `: ${detail.rejectionReason}` : ''}`;
+      note = claimReturnedText(detail);
       if (own.canReopen) actions.push('reopen');
     } else if (key === 'approval' && detail?.awaitingSystem) {
       // Audit B4: the decision is on record and the system has not carried it out. Nothing is decided again:
@@ -1274,12 +1382,15 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       if (detail?.approvalActions?.canApprove === true) actions.push('approve');
       if (detail?.approvalActions?.canReject === true) actions.push('reject');
       const waiting = `รอ ${currentDeskText(detail?.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER} อนุมัติ`;
-      note = actions.length > 0 ? 'รอคุณตัดสิน ตรวจรายการและใบเสร็จด้านล่างก่อนอนุมัติ' : waiting;
+      // The header already says whose turn it is; the note says what to look at. Not "ด้านล่าง": the lines and receipts are above the step on a phone and beside it on a wide screen.
+      note = actions.length > 0 ? 'ตรวจรายการและใบเสร็จก่อนอนุมัติ' : waiting;
       // spec §15: the requester would decide this claim but for the self-approval switch. The claim
       // froze the switch at submit, so turning it on helps only once the claim is sent again.
       if (detail?.approvalActions?.selfApprovalBlocked === true) {
         const canManagePolicy = permissions.includes('reimbursement.policy.manage');
-        note = `${waiting} · ${REIMBURSEMENT_SELF_APPROVAL_DENIED}`;
+        // True wherever the server sends the flag, and nothing more: the long sentence of the refusal sent an owner to
+        // a switch that alone did not let them approve (their role was not among the approvers), walked 2026-10-13.
+        note = `${waiting} · ${SELF_APPROVAL_STEP_NOTE}`;
         if (canManagePolicy) actions.push('policy-settings');
       }
       // spec §6: the requester takes back a claim nobody has decided yet — the same reopen as a refusal.
@@ -1320,17 +1431,17 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         // Spec §18.3 and §13.4: whoever cannot pay reads who can, and the approver of this claim is told so plainly.
         const payers = paymentDeskText(detail?.paymentDesk);
         const waiting = noBranch
-          ? 'ใบนี้ไม่ได้ระบุสาขา ระบบจึงยังบันทึกจ่ายไม่ได้ กรุณาติดต่อผู้ดูแลระบบ'
+          ? 'ใบนี้ไม่ได้ระบุสาขา ระบบจึงยังบันทึกจ่ายไม่ได้ ติดต่อผู้ดูแลระบบ'
           : detail?.paymentDesk && !payers
           ? 'ยังไม่มีผู้ที่บันทึกจ่ายใบของสาขานี้ได้ ขอให้เจ้าของกิจการบันทึกจ่ายหรือเพิ่มสิทธิ์'
           : !canPay && approval?.decisionByUserId === userId
             ? `คุณอนุมัติใบนี้แล้ว แต่บัญชีของคุณยังไม่มีสิทธิ์บันทึกจ่าย ${payers ? `ผู้ที่บันทึกจ่ายได้: ${payers} ` : ''}ถ้าต้องการจ่ายเอง ขอให้เจ้าของกิจการเพิ่มสิทธิ์บันทึกจ่ายให้บทบาทของคุณ`
             : waitingForPayer(detail);
-        note = [actions.length > 0 ? REIMBURSEMENT_PAYMENT_STEP_NOTE : waiting, duplicate].filter(Boolean).join(' · ');
+        note = [actions.length > 0 ? payStepInstruction(detail) : waiting, duplicate].filter(Boolean).join(' · ');
       }
     } else if (key === 'document' && detail?.documentSignedVia) {
       // Done in the system or on paper (A4); the latest declared scan names who attached it and when.
-      note = detail.documentSignedVia === 'DIGITAL' ? 'ลงนามในระบบครบแล้ว'
+      note = detail.documentSignedVia === 'DIGITAL' ? 'เซ็นในระบบครบแล้ว'
         : paperSignedLine((detail.signedCopies ?? []).find((copy: any) => copy.acknowledgedAt));
     } else if (key === 'document') {
       const signAction = claimSignAction(detail, userId);
@@ -1346,11 +1457,11 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       const blockLabel = (role: ClaimSignatureRole) => (role === 'PAYER' && !withFinance ? PAYER : CLAIM_SIGNATURE_ROLE_LABELS[role]);
       const unsigned = claimSignatureSlots(detail)
         .filter((role) => !signed.has(role) && (role !== 'APPROVER' || humanApproved) && (role !== 'FINANCE_REVIEW' || review !== 'NOT_REQUIRED'))
-        .map((role) => `${blockLabel(role)}${signers[role] ? ` (${signers[role]})` : ''}`);
+        .map((role) => `รอ${blockLabel(role)}เซ็น${signers[role] ? ` (${signers[role]})` : ''}`);
       note = [
-        unsigned.length > 0 ? `จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ${unsigned.join(' และ')}` : 'จ่ายเงินคืนแล้ว พิมพ์ใบเบิกเก็บไว้ได้',
+        unsigned.length > 0 ? unsigned.join(' และ') : 'แนบใบเบิกที่เซ็นแล้ว',
         actions.includes('sign') && (signAction?.label === CLAIM_SIGN_LABEL
-          ? `คุณยังไม่ได้ลงนาม กด${CLAIM_SIGN_LABEL}` : `คุณยังลงนามไม่ครบ กด${signAction?.label}เพื่อเติมลายเซ็น`),
+          ? `คุณยังไม่ได้เซ็น กด${CLAIM_SIGN_LABEL}` : `คุณยังเซ็นไม่ครบ กด${signAction?.label}เพื่อเติมลายเซ็น`),
       ].filter(Boolean).join(' · ');
     }
     // Spec §14.3: a claim that waits for its payment is sent back for its account by whoever the server says may:
@@ -1410,12 +1521,12 @@ export function draftSentBackNote(detail: any): string | null {
   // The step the claim was last put before: rejected means its approver sent it back; cancelled means the requester withdrew it.
   const moment = (step: any) => Date.parse(String(step?.assignedAt ?? step?.decidedAt ?? '')) || 0;
   const last = [...(detail?.approvalSteps ?? [])].sort((left, right) => moment(left) - moment(right)).at(-1);
-  return last?.status === 'REJECTED' ? `ผู้อนุมัติปฏิเสธคำขอนี้${last.rejectionReason ? `: ${last.rejectionReason}` : ''}` : null;
+  return last?.status === 'REJECTED' ? claimReturnedText({ approvalSteps: [last] }) : null;
 }
 
-/** "ลงนามบนกระดาษ · แนบเมื่อ … โดย …" for a scan attached with the A4 declaration; parts the detail lacks are left out. */
+/** "เซ็นบนกระดาษ · แนบเมื่อ … โดย …" for a scan attached with the A4 declaration; parts the detail lacks are left out. */
 export function paperSignedLine(copy?: { acknowledgedAt?: string; acknowledgedByName?: string }): string {
-  return `ลงนามบนกระดาษ${copy?.acknowledgedAt ? ` · แนบเมื่อ ${formatThaiDate(copy.acknowledgedAt)}` : ''}${copy?.acknowledgedByName ? ` โดย ${copy.acknowledgedByName}` : ''}`;
+  return `เซ็นบนกระดาษ${copy?.acknowledgedAt ? ` · แนบเมื่อ ${formatThaiDate(copy.acknowledgedAt)}` : ''}${copy?.acknowledgedByName ? ` โดย ${copy.acknowledgedByName}` : ''}`;
 }
 
 // ---- A payout account correction round (payout spec §14) ----
@@ -1493,8 +1604,8 @@ export function policyDecisionPreview(input: {
   const payout = input.financeReviewRequired ? 'ฝ่ายการเงินตรวจ → จ่ายเงินคืน' : 'จ่ายเงินคืน';
   const approver = input.approverLabel || 'บทบาทที่เลือก';
   return [
-    { title: `ยอดตั้งแต่ ${amount} บาท`, path: `${input.ownerRoute ? approver : `${approver} (ถ้าไม่มี เจ้าของกิจการ)`} → ${payout}` },
-    { title: `ยอดต่ำกว่า ${amount} บาท`, path: `ไม่ต้องรอผู้อนุมัติ → ${payout}` },
+    { title: `ยอดตั้งแต่ ${amount}`, path: `${input.ownerRoute ? approver : `${approver} (ถ้าไม่มี เจ้าของกิจการ)`} → ${payout}` },
+    { title: `ยอดต่ำกว่า ${amount}`, path: `ไม่ต้องรอผู้อนุมัติ → ${payout}` },
   ];
 }
 
@@ -1516,7 +1627,7 @@ export function approverPaymentWarning(
 
 export function formatMoney(v: unknown, currency?: string): string {
   const amount = Number(v ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return currency ? `${amount} ${currency === 'THB' ? 'บาท' : currency}` : amount;
+  return !currency || currency === 'THB' ? `฿${amount}` : currency ? `${amount} ${currency}` : amount;
 }
 
 /* Owner rule 2026-09-27/29: plain Thai, no id, enum key, code or ISO date on screen, and the same words as
@@ -1527,7 +1638,47 @@ const currencyWord = (currency: unknown) => (!currency || currency === 'THB' ? '
 /** "1,234.50 บาท", like formatMoney, but the decimal string is formatted as is (no float) and rounds half up like the API. */
 export function money(value: unknown, currency?: unknown) {
   if (typeof value !== 'string' || !/^\d+(?:\.\d{1,4})?$/.test(value)) return 'ยังตรวจสอบจำนวนเงินไม่ได้';
-  return `${satang.format(value as `${number}`)} ${currencyWord(currency)}`;
+  return !currency || currency === 'THB' ? `฿${satang.format(value as `${number}`)}` : `${satang.format(value as `${number}`)} ${currencyWord(currency)}`;
 }
 /** A category by its Thai label; a missing label never falls back to the key. */
 export const categoryText = (label: unknown) => (typeof label === 'string' && label.trim()) || 'ยังไม่ได้เลือกหมวด';
+
+function reimbursementDuplicateReasonText(reasons: readonly string[]) {
+  return sharedDuplicateReasonText(reasons).replaceAll('คำขอเบิก', 'ใบเบิก');
+}
+function reimbursementDuplicateBlockNotice(...args: Parameters<typeof sharedDuplicateBlockNotice>) {
+  return sharedDuplicateBlockNotice(...args)?.replaceAll('คำขอเบิก', 'ใบเบิก').replace('ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล เพื่อปลดและยืนยันเอกสารก่อนบันทึกจ่าย ถ้าการยืนยันยังไม่เสร็จ กดปลดรายการซ้ำอีกครั้ง', 'ตรวจเอกสารที่อาจซ้ำ แล้วเลือกไม่ซ้ำพร้อมเหตุผลก่อนจ่าย');
+}
+
+function translateApiError(...args: Parameters<typeof sharedTranslateApiError>) {
+ return sharedTranslateApiError(...args)?.replaceAll('ไม่อนุมัติ', 'ส่งกลับให้แก้').replaceAll('แนบสลิป', 'แนบหลักฐานการจ่าย').replaceAll('ดูสลิป', 'ดูหลักฐานการจ่าย') ?? null;
+}
+
+
+/** One list badge: stale receipt/signature gaps must never overrule a terminal state. */
+export function claimListBadge(claim: any): ReturnType<typeof claimStatusBadge> {
+  const base = claimStatusBadge(claim);
+  if (claim.status === 'PAID' && claim.documentSignedVia === null) return { label: 'รอเซ็นใบเบิก', tone: 'amber' };
+  if (['PAID', 'CANCELLED', 'VOIDED'].includes(claim.status)) return base;
+  if (claim.cancellationPending) return { label: 'รอยกเลิก', tone: 'amber' };
+  if (claim.currentDesk?.kind === 'SYSTEM' || reimbursementDuplicateWait(claim)?.status || reimbursementPayoutRoundStatus(claim)) return base;
+  if (claim.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE')) return { label: 'ยืนยันว่าใบเสร็จซ้ำ', tone: 'amber' };
+  if ((claim.status === 'FINANCE_REVIEW' && claim.hasDuplicateBlocker) || ['POSSIBLE_DUPLICATE', 'CONFIRMED_DUPLICATE'].includes(claim.duplicateStatus)) return { label: 'อาจซ้ำ', tone: 'amber' };
+  if (claim.financeReviewStatus === 'BLOCKED') return { label: 'ระงับการจ่าย', tone: 'danger' };
+  if (claim.status === 'DRAFT' && claim.receiptRequirementStatus === 'REQUIRED') return { label: 'ยังไม่มีใบเสร็จ', tone: 'amber' };
+  if (claim.status === 'REJECTED' || claim.needsCorrection) return { label: 'ส่งกลับให้แก้', tone: 'amber' };
+  if (claim.status === 'READY_FOR_PAYMENT') return { label: 'รอจ่าย', tone: 'teal' };
+  return base;
+}
+
+export function sortClaimRows<T extends { id: string; incurredDate?: string; createdAt?: string }>(rows: readonly T[], order: 'newest' | 'oldest'): T[] {
+  return [...rows].sort((a, b) => ((a.incurredDate ?? '').localeCompare(b.incurredDate ?? '')
+    || (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.id.localeCompare(b.id)) * (order === 'oldest' ? 1 : -1));
+}
+
+/** Queues are already fully read and permission scoped by their existing endpoint. */
+export function claimQueueMetrics(rows: readonly any[]) {
+  const group = (items: readonly any[]) => ({ count: items.length, amount: String(items.reduce((sum, row) => sum + Number(row.amount || 0), 0)) });
+  return { all: group(rows), pendingApproval: group(rows.filter(row => row.status === 'PENDING_APPROVAL' && row.currentDesk?.kind !== 'REQUESTER')),
+    pendingPayment: group(rows.filter(row => ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'].includes(row.status) || (row.status === 'APPROVED' && row.currentDesk?.kind === 'PAYMENT'))) };
+}

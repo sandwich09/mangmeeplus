@@ -230,11 +230,12 @@ describe('the header mark on an expense whose lines carry a Tax Code', () => {
         id: 'exp-1', companyId: 'company-1', branchId: null, createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
         sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', vatMode: 'VAT_EXCLUDED', inputVatClaimStatus: 'CLAIMABLE',
         currency: 'THB', expenseDate: new Date('2026-09-04T00:00:00.000Z'), vendorNameSnapshot: 'ร้านวัสดุ',
-        aiVerificationSummaryJson: null, aiVerifiedFieldsJson: null, buyerAsPrintedJson: null,
+        aiVerificationSummaryJson: null, aiVerifiedFieldsJson: null, buyerAsPrintedJson: { taxId: '0105512345678', matchStatus: 'MISMATCH', reasons: ['TAX_ID'], differences: [], checkedAt: '2026-09-20T00:00:00Z' },
         lines: [{ id: 'line-1', taxCodeDefinitionId: 'def-v7', externalTaxCode: 'V7', claimability: 'CLAIMABLE' }],
       }),
       findByIdWithRelations: async () => ({ lines: [] }),
       updateExpense: async (input: any) => { updates.push(input); return input; },
+      getSubstituteCompanyContext: async () => ({ taxId: '0994000163011' }),
       listLineChargeKinds: async () => new Map(),
       upsertLines: async () => { upsertCalls += 1; },
     } as any;
@@ -311,4 +312,10 @@ describe('buyer mark → undo restores the original claim status', () => {
     assert.equal(row.inputVatClaimStatus, 'NON_CLAIMABLE');
     assert.equal(row.buyerAsPrintedJson.claimStatusBeforeMark, undefined);
   });
+});
+
+for (const permissions of [['expense.review'], ['expense.update']]) it(`rejects a direct input VAT write by ${permissions[0]}`, async () => {
+  const { useCase, updates } = makeUseCase();
+  await assert.rejects(() => useCase.execute({ ...ctx, permissions }, 'exp-1', { inputVatClaimStatus: 'NEEDS_REVIEW' }), (error: any) => error.getStatus() === 403);
+  assert.equal(updates.length, 0);
 });

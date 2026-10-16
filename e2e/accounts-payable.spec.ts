@@ -154,7 +154,7 @@ test.describe('AP — accounts payable', () => {
         submit.click(),
       ]);
       expect(duplicateResponse.status()).toBe(409);
-      await expect(alert).toHaveText('เลขที่เอกสารผู้ขายนี้ถูกบันทึกสำหรับผู้ขายรายนี้แล้ว กรุณาตรวจสอบบิลเดิมก่อนสร้างซ้ำ');
+      await expect(alert).toHaveText('เลขที่เอกสารผู้ขายนี้ถูกบันทึกสำหรับผู้ขายรายนี้แล้ว ตรวจสอบบิลเดิมก่อนสร้างซ้ำ');
       await expect(alert).toBeFocused();
       const header = await companyBanner.boundingBox();
       expect(header, 'the actual company banner must have a layout box').not.toBeNull();
@@ -194,7 +194,7 @@ test.describe('AP — accounts payable', () => {
     await expect(form.getByRole('combobox', { name: 'ผู้ขาย', exact: true })).toHaveAttribute('aria-disabled', 'false');
     // The form takes the header's branch only once the branch list has loaded; a save before that is
     // refused on the page with "กรุณาเลือกสาขาของรายการ" and sends nothing.
-    await expect(form.getByRole('combobox', { name: 'สาขาของรายการ', exact: true })).toHaveText(branchOptionName(branch));
+    await expect(form.getByRole('combobox', { name: 'สาขา', exact: true })).toHaveText(branchOptionName(branch));
     await expect(submit).toBeEnabled();
     const createdIds: string[] = [];
 
@@ -228,7 +228,7 @@ test.describe('AP — accounts payable', () => {
     await gotoCompany(authedPage, companyId, '/accounts-payable');
     await expect(authedPage.getByRole('button', { name: 'เลือกสาขา' })).toHaveText('ทุกสาขา (รวม)');
     const form = authedPage.locator('form').filter({ has: authedPage.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }) });
-    const branchField = form.getByRole('combobox', { name: 'สาขาของรายการ', exact: true });
+    const branchField = form.getByRole('combobox', { name: 'สาขา', exact: true });
     // The company's own branch, not the supplier's branch printed on the bill.
     await expect(branchField).toHaveAccessibleDescription(/ไม่ใช่สาขาของผู้ขาย/);
     await expect(branchField).toHaveAttribute('aria-invalid', 'true');
@@ -281,7 +281,7 @@ test.describe('AP — accounts payable', () => {
     }
     const alert = form.locator('..').locator(':scope > [role="alert"]');
     // A 403 reads the shared permission text (api-error-message.ts insufficient_permissions, since f98946566).
-    await expect(alert).toHaveText('คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อผู้ดูแลสิทธิ์ของบริษัท');
+    await expect(alert).toHaveText('คุณไม่มีสิทธิ์ทำรายการนี้ ขอสิทธิ์จากเจ้าของกิจการหรือผู้ดูแลสิทธิ์');
     // Let the committed error's passive effects run before asserting no focus/scroll change.
     await authedPage.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await expect(activeControl).toBeFocused();

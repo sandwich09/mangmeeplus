@@ -15,20 +15,23 @@ describe('ChangePasswordPage exits', () => {
   // hatch is the only way off the page for someone who changed their mind. Losing it re-creates
   // the UAT trap where neither the URL bar nor the back button could leave.
   it('always offers a way off the page', async () => {
-    assert.match(await render(), /ยกเลิกและออกจากระบบ/);
+    // One way out per variant (thai-ux-standard §2.6): a blocked session signs out, a free one cancels.
+    assert.match(await render(), />ออกจากระบบ</);
+    assert.match(await render({ homePath: '/companies/c1/dashboard' }), />ยกเลิก</);
   });
 
   it('offers the home link only when the session may navigate away', async () => {
     const free = await render({ homePath: '/companies/c1/dashboard' });
-    assert.match(free, /กลับหน้าหลัก/);
-    assert.match(free, /href="\/companies\/c1\/dashboard"/);
+    assert.match(free, /<a[^>]*href="\/companies\/c1\/dashboard"[^>]*>ยกเลิก<\/a>/);
+    // A session that may leave is not offered sign-out in place of cancelling.
+    assert.doesNotMatch(free, />ออกจากระบบ</);
 
     // Blocked session: a home link would just bounce back here, so it is not offered.
-    assert.doesNotMatch(await render({ homePath: null }), /กลับหน้าหลัก/);
+    assert.doesNotMatch(await render({ homePath: null }), />ยกเลิก</);
   });
 
   it('distinguishes a voluntary change from the forced temporary-password journey', async () => {
-    assert.match(await render({ homePath: '/companies/c1/dashboard' }), /ตั้งรหัสผ่านใหม่เพื่อความปลอดภัยของบัญชี/);
+    assert.match(await render({ homePath: '/companies/c1/dashboard' }), /เปลี่ยนแล้วต้องเข้าสู่ระบบใหม่ด้วยรหัสผ่านใหม่/);
     assert.doesNotMatch(await render({ homePath: '/companies/c1/dashboard' }), /ต้องเปลี่ยนรหัสผ่านชั่วคราว/);
     assert.match(await render({ homePath: null, isForcedPasswordChange: true }), /ต้องเปลี่ยนรหัสผ่านชั่วคราว/);
   });
@@ -62,7 +65,7 @@ describe('ChangePasswordPage new-password rules', () => {
     const wrongPassword = { statusCode: 400, code: 'current_password_incorrect' };
     assert.equal(localizedErrorMessage(wrongPassword, 'th', overrides), 'รหัสผ่านปัจจุบันไม่ถูกต้อง');
     assert.equal(localizedErrorMessage(wrongPassword, 'en', overrides), 'Current password is incorrect.');
-    assert.equal(localizedErrorMessage({ statusCode: 401 }, 'th', overrides), 'การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+    assert.equal(localizedErrorMessage({ statusCode: 401 }, 'th', overrides), 'การเข้าสู่ระบบหมดอายุ เข้าสู่ระบบใหม่');
   });
 
   it('names the reuse rule in both locales', async () => {

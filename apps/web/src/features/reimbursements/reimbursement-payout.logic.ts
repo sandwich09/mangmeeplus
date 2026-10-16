@@ -58,7 +58,7 @@ export const PAYER_IS_VERIFIER_NOTE = 'ยังไม่มีผู้ตร�
  * "what the requester asked for": whoever prepared the claim, or answered a round for the requester, may have chosen it.
  */
 export const PAID_DIFFERENTLY_LABEL = 'จ่ายต่างจากที่ระบุในใบ';
-export const MISMATCH_REASON_REQUIRED = 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล';
+export const MISMATCH_REASON_REQUIRED = 'วิธีจ่ายต่างจากที่ระบุในใบ ระบุเหตุผล';
 export const MISMATCH_REASON_HAS_ACCOUNT_NUMBER = 'อย่าพิมพ์เลขบัญชีในช่องเหตุผล เพราะเหตุผลนี้แสดงในประวัติการจ่ายให้ทุกคนที่เปิดใบเบิกเห็น';
 /** Spec §10.2: a requester who approved their own claim gave their own word for the account. It is never called a check. */
 export const REQUESTER_SELF_ATTESTED = 'ผู้เบิกยืนยันบัญชีของตนเอง';
@@ -80,6 +80,24 @@ export function emptyPayoutAccountForm(): PayoutAccountForm {
   return { payoutKind: 'BANK_ACCOUNT', bankChoice: '', bankOther: '', accountName: '', accountNumber: '' };
 }
 
+/**
+ * The form that changes a saved account: what every screen already shows of it is filled in (its kind, its bank and its
+ * name), so a person who only moves to another number does not type the rest again. The number is never filled in: no
+ * screen is given a saved number to put into a field, and the server stores only what is typed here.
+ */
+export function payoutAccountFormOf(account?: { payoutMethod?: string | null; payoutKind?: string | null; bankName?: string | null; accountName?: string | null } | null): PayoutAccountForm {
+  if (account?.payoutMethod !== 'BANK_TRANSFER') return emptyPayoutAccountForm();
+  const bank = (account.bankName ?? '').trim();
+  const listed = (THAI_BANK_NAMES as readonly string[]).includes(bank);
+  return {
+    payoutKind: account.payoutKind === 'PROMPTPAY_PHONE' ? 'PROMPTPAY_PHONE' : 'BANK_ACCOUNT',
+    bankChoice: listed ? bank : bank ? OTHER_BANK : '',
+    bankOther: listed ? '' : bank,
+    accountName: account.accountName ?? '',
+    accountNumber: '',
+  };
+}
+
 /** The account as typed, in the one inbound shape that carries a full number. */
 export function payoutDestinationInput(form: PayoutAccountForm): PayoutDestinationInput {
   return {
@@ -91,9 +109,9 @@ export function payoutDestinationInput(form: PayoutAccountForm): PayoutDestinati
 }
 
 const FIELD_MESSAGES: Record<PayoutDestinationField, (form: PayoutAccountForm) => string> = {
-  payoutKind: () => 'กรุณาเลือกประเภทบัญชี',
-  bankName: (form) => (form.bankChoice === OTHER_BANK ? 'กรุณาระบุชื่อธนาคาร ไม่เกิน 80 ตัวอักษร และไม่ใส่เลขบัญชีในช่องนี้' : 'กรุณาเลือกธนาคาร'),
-  accountName: () => 'กรุณาระบุชื่อบัญชีตามที่ธนาคารแสดง 2 ถึง 140 ตัวอักษร ไม่ใช่ตัวเลขล้วน และไม่ใส่เลขบัญชีในช่องนี้',
+  payoutKind: () => 'เลือกประเภทบัญชี',
+  bankName: (form) => (form.bankChoice === OTHER_BANK ? 'ระบุชื่อธนาคาร ไม่เกิน 80 ตัวอักษร และไม่ใส่เลขบัญชีในช่องนี้' : 'เลือกธนาคาร'),
+  accountName: () => 'ระบุชื่อบัญชีตามที่ธนาคารแสดง 2 ถึง 140 ตัวอักษร ไม่ใช่ตัวเลขล้วน และไม่ใส่เลขบัญชีในช่องนี้',
   accountNumber: (form) => (form.payoutKind === 'PROMPTPAY_PHONE'
     ? 'เบอร์พร้อมเพย์ต้องเป็นเบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0'
     : 'เลขบัญชีต้องเป็นตัวเลข 6 ถึง 20 หลัก'),
@@ -226,11 +244,11 @@ type PayoutNumberWords = Record<'show' | 'full' | 'copy' | 'copied' | 'hide' | '
 const PAYOUT_NUMBER_WORDS: Record<'BANK_ACCOUNT' | 'PROMPTPAY_PHONE', PayoutNumberWords> = {
   BANK_ACCOUNT: {
     show: 'แสดงเลขบัญชี', full: 'เลขบัญชีเต็ม', copy: 'คัดลอกเลขบัญชี', copied: 'คัดลอกเลขบัญชีแล้ว', hide: 'ซ่อนเลขบัญชี',
-    check: 'ดูชื่อบัญชี เลขบัญชี และธนาคารในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ',
+    check: 'ดูชื่อบัญชี เลขบัญชี และธนาคารในการ์ดการรับเงินคืนของใบนี้ ระบบบันทึกชื่อคุณและเวลาที่ตรวจ',
   },
   PROMPTPAY_PHONE: {
     show: 'แสดงเบอร์พร้อมเพย์', full: 'เบอร์พร้อมเพย์เต็ม', copy: 'คัดลอกเบอร์พร้อมเพย์', copied: 'คัดลอกเบอร์พร้อมเพย์แล้ว', hide: 'ซ่อนเบอร์พร้อมเพย์',
-    check: 'ดูชื่อบัญชีและเบอร์พร้อมเพย์ในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ',
+    check: 'ดูชื่อบัญชีและเบอร์พร้อมเพย์ในการ์ดการรับเงินคืนของใบนี้ ระบบบันทึกชื่อคุณและเวลาที่ตรวจ',
     denied: 'คุณไม่มีสิทธิ์ดูเบอร์พร้อมเพย์เต็มของใบนี้',
   },
 };
@@ -267,11 +285,13 @@ export type ClaimPayoutView = {
  * What the claim page says about where the money goes back to. Everything here is masked; the full
  * number is only ever fetched by the reveal button, which the page offers when `canRevealAccountNumber`.
  */
-export function claimPayoutView(detail: { status?: string; requesterUserId?: string; payout?: ReimbursementPayoutSummary | null } & PayoutRoundFacts): ClaimPayoutView {
+export function claimPayoutView(detail: { status?: string; requesterUserId?: string; submittedAt?: string | null; requestNo?: string | null; payout?: ReimbursementPayoutSummary | null } & PayoutRoundFacts): ClaimPayoutView {
   const payout = detail.payout;
   const draft = detail.status === 'DRAFT';
+  // A cancellation response may omit the account. Its absence on a closed claim does not prove it was a legacy submission.
+  const closed = detail.status === 'CANCELLED' || detail.status === 'VOIDED';
   // Only the detail read carries a draft's payout; an action response without it says nothing either way.
-  if (!payout) return draft ? { state: 'unknown', line: '', notes: [] } : { state: 'legacy', line: LEGACY_PAYOUT_NOTE, notes: [] };
+  if (!payout) return draft || closed ? { state: 'unknown', line: '', notes: [] } : { state: 'legacy', line: LEGACY_PAYOUT_NOTE, notes: [] };
   if (payout.notReadyReason || !payout.payoutMethod) {
     return {
       state: 'missing',
@@ -421,7 +441,7 @@ export function payoutDefaultChangedHint(
   if (detail.payout?.defaultAccountChanged !== true) return null;
   // After approval the requester no longer takes the claim back to a draft. Where the server lets them, the way to
   // the new account is the correction round (spec §14.3): give the account now, or send the claim back for it.
-  const how = canWithdraw ? 'ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดปุ่มแก้ไข (เปิดกลับเป็นร่าง) ในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง'
+  const how = canWithdraw ? 'ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดแก้ไขใบเบิกในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง'
     // The button and the line named are the claim's own, as they read: those of a claim that holds an account (it copied
     // the default, which is why it is told this), for its requester, who alone is told.
     : detail.payoutCorrectionActions?.canSubmit === true
@@ -738,7 +758,7 @@ export function payoutCorrectionSendBackNotes(detail: {
   const words = payoutRoundTexts(detail);
   // From the round's waiting step: the claim goes back to its requester once more, for what was just given: an account
   // to correct, or cash to choose again. Nothing is signed in a round.
-  if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') return [words.given.sendBackAgainLine1];
+  if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') return [words.given.sendBackAgainLine1.replace('ใบไม่ถูกปฏิเสธ', 'ใบยังรออนุมัติ')];
   return [
     words.sendBackLine1,
     // What comes after names no "new account": the requester may keep the account, or take cash.
@@ -746,9 +766,9 @@ export function payoutCorrectionSendBackNotes(detail: {
     // A claim sent before claims carried an account gets one through this same path (spec §15): it has none to correct.
     ...(words.held === 'NOTHING' ? [`${LEGACY_PAYOUT_NOTE} หลังส่งกลับ ผู้เบิกจะระบุบัญชีรับเงินของใบนี้ได้`] : []),
     // What is lost comes back when the claim is at its pay step again, whatever was answered in between.
-    ...((detail.signatures ?? []).length > 0 ? ['ลายเซ็นในระบบที่ลงไว้ในใบนี้จะถูกลบ ต้องลงนามใหม่เมื่อใบกลับมารอจ่าย'] : []),
+    ...((detail.signatures ?? []).length > 0 ? ['ลายเซ็นในระบบที่ลงไว้ในใบนี้จะถูกลบ ต้องเซ็นใหม่เมื่อใบกลับมารอจ่าย'] : []),
     ...((detail.signedCopies ?? []).some((copy) => copy.acknowledgedAt)
-      ? ['สำเนาใบเบิกที่ลงนามบนกระดาษยังเปิดดูได้ แต่จะไม่นับว่าลงนามแล้ว ต้องแนบสำเนาใหม่เมื่อใบกลับมารอจ่าย'] : []),
+      ? ['สำเนาใบเบิกที่เซ็นบนกระดาษยังเปิดดูได้ แต่จะไม่นับว่าเซ็นแล้ว ต้องแนบสำเนาใหม่เมื่อใบกลับมารอจ่าย'] : []),
   ];
 }
 
@@ -809,7 +829,7 @@ export function emptyPayoutCorrectionForm(): PayoutCorrectionForm {
 
 /** Why the account form cannot be sent yet, with the field to mark; null when it can. The account rule is the API's own. */
 export function payoutCorrectionFormError(form: PayoutCorrectionForm): { text: string; field?: string } | null {
-  if (!form.mode) return { text: 'กรุณาเลือกวิธีรับเงินคืนของใบนี้' };
+  if (!form.mode) return { text: 'เลือกวิธีรับเงินคืนของใบนี้' };
   return form.mode === 'SPECIFIED' ? payoutAccountFormError(form.account) ?? payoutHolderFormError(form.holder ?? { holderType: 'SELF' })
     : form.mode === 'SAVED' && !form.savedAccountId ? { text: SAVED_PAYOUT_WORDS.choose, field: 'savedAccountId' } : null;
 }

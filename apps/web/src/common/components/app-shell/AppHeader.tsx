@@ -33,7 +33,7 @@ const AppHeader: React.FC<Props> = ({
 
   return (
     /* Shell stack: header z-30 < backdrop z-40 < drawer z-50 < modal/popover portals z-[99999]+. */
-    <header className="sticky top-0 z-30 flex h-[var(--app-header-h)] w-full shrink-0 border-b border-gray-200 bg-white">
+    <header data-app-top-bar className="sticky top-0 z-30 flex h-[var(--app-header-h)] w-full shrink-0 border-b border-gray-200 bg-white">
       <div className="flex w-full items-center justify-between gap-3 px-4 lg:px-7">
         {/* Left: hamburger + company name */}
         <div className="flex min-w-0 flex-1 items-center gap-3">

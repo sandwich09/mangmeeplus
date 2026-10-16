@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Optional, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { DISBURSEMENT_VOUCHER_STATUSES, DISBURSEMENT_VOUCHER_WORDS, EXPENSE_PAYMENT_METHODS, civilDateToUtcDate, coerceCivilDate, isCivilDate,
-  DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES,
+  DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_PURPOSE, DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES,
   disbursementExpenseReasonMessage, disbursementVoucherError,
   type RequestContext, type CreateDisbursementVoucherDraftInput, type UpdateDisbursementVoucherDraftInput, type DisbursementVoucherHeader,
   type DisbursementVoucherListQuery, type DisbursementVoucherListPage, type DisbursementVoucherDetail, type DisbursementVoucherErrorCode, type DisbursementVoucherRevisionDecision,
@@ -11,7 +12,7 @@ import { DISBURSEMENT_VOUCHER_STATUSES, DISBURSEMENT_VOUCHER_WORDS, EXPENSE_PAYM
 import { PrismaExpenseRepository, assertActiveExpenseBranch, assertExpensePaymentSource, type ExpensePaymentResult } from '../../infrastructure/prisma-expense.repository';
 import { PrismaDisbursementVoucherRepository, type DisbursementReadScope, type DisbursementDraftData, type DisbursementLifecycleVoucher, disbursementVoucherReadWhere } from '../../infrastructure/prisma-disbursement-voucher.repository';
 import { disbursementExpenseSelectionReason } from '../../infrastructure/expense-void-blocker';
-import { disbursementVoucherActions, disbursementVoucherHeader, disbursementVoucherPrimaryAction, disbursementVoucherSourceHash } from '../../domain/logic/disbursement-voucher.logic';
+import { disbursementPayeeIdentity, disbursementVoucherActions, disbursementVoucherHeader, disbursementVoucherPrimaryAction, disbursementVoucherSourceHash } from '../../domain/logic/disbursement-voucher.logic';
 import { ListExpensesUseCase, recordExpensePaymentEffects } from './expense-draft.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
 import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
@@ -23,7 +24,7 @@ import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.lo
 
 import { DisbursementVoucherNoticeService } from '../services/disbursement-voucher-notice.service';
 import { DisbursementVoucherFileService } from '../services/disbursement-voucher-file.service';
-import { renderDisbursementVoucherSvg, type DisbursementVoucherPrintSnapshot } from '../../domain/logic/disbursement-voucher-pdf.logic';
+import { renderDisbursementVoucherSvg, type DisbursementVoucherPrintSnapshot, type DisbursementSignatureSnapshot } from '../../domain/logic/disbursement-voucher-pdf.logic';
 import { renderSubstituteReceiptPdf } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
@@ -32,6 +33,8 @@ import { CreateUploadIntentUseCase } from '../../../data-model-core/application/
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES } from '../../../reimbursements/domain/reimbursement.constants';
+import { SIGNATURE_MAX_BYTES } from '../../domain/logic/signature-image.logic';
+import { detectAttachmentMimeType } from '../../../data-model-core/domain/logic/attachment.logic';
 import { withAttachmentCreate } from '../../../reimbursements/application/use-cases/reimbursement-claim-signature.use-case';
 
 type Source = Awaited<ReturnType<PrismaExpenseRepository['readDisbursementExpenseSources']>>[number];
@@ -39,7 +42,7 @@ type Source = Awaited<ReturnType<PrismaExpenseRepository['readDisbursementExpens
 function invalid() { return new BadRequestException(disbursementVoucherError('disbursement_invalid_input')); }
 
 function validateInput(body: CreateDisbursementVoucherDraftInput, update: boolean): void {
-  const allowed = ['commandId', 'lines', 'payeeName', 'payeeBankName', 'payeeAccountName', 'payeeAccountNumber', 'payeeConfirmed', 'plannedPayDate', 'plannedMethod', 'note', ...(update ? ['expectedVersion'] : [])];
+  const allowed = ['commandId', 'lines', 'payeeName', 'payeeBankName', 'payeeAccountName', 'payeeAccountNumber', 'payeeAccountFromVoucherId', 'payeeConfirmed', 'plannedPayDate', 'plannedMethod', 'note', ...(update ? ['expectedVersion'] : [])];
   if (!body || typeof body !== 'object' || Object.keys(body).some(key => !allowed.includes(key))
     || typeof body.commandId !== 'string' || !body.commandId.trim() || body.commandId.length > 128) throw invalid();
   if (!Array.isArray(body.lines)) throw invalid();
@@ -48,7 +51,7 @@ function validateInput(body: CreateDisbursementVoucherDraftInput, update: boolea
   for (const line of body.lines) if (!line || typeof line !== 'object' || typeof line.expenseId !== 'string' || !line.expenseId.trim()
     || Object.keys(line).some(key => !['expenseId', 'amount'].includes(key))) throw invalid();
   if (new Set(body.lines.map(l => l.expenseId)).size !== body.lines.length) throw new BadRequestException(disbursementVoucherError('disbursement_duplicate_expense'));
-  for (const field of ['payeeName', 'note', 'payeeBankName', 'payeeAccountName', 'payeeAccountNumber'] as const) if (body[field] !== undefined && typeof body[field] !== 'string') throw invalid();
+  for (const field of ['payeeName', 'note', 'payeeBankName', 'payeeAccountName', 'payeeAccountNumber', 'payeeAccountFromVoucherId'] as const) if (body[field] !== undefined && typeof body[field] !== 'string') throw invalid();
   if (body.payeeConfirmed !== undefined && typeof body.payeeConfirmed !== 'boolean'
     || body.plannedPayDate !== undefined && (typeof body.plannedPayDate !== 'string' || !isCivilDate(body.plannedPayDate))
     || body.plannedMethod !== undefined && !EXPENSE_PAYMENT_METHODS.includes(body.plannedMethod)) throw invalid();
@@ -122,14 +125,24 @@ export class DisbursementVoucherUseCase {
       payeeAccountLast4: number.slice(-4), payeeAccountCiphertext: encryptCredential(number, this.config!.credentialEncryptionKey) };
   }
 
-  async revealAccount(ctx: RequestContext, id: string) {
-    this.authorize(ctx, ['approve', 'pay']);
+  async payeeAccount(ctx: RequestContext, payeeKey: string, branchId?: string) {
+    const scope = this.scope(ctx, 'prepare', branchId);
+    if (typeof payeeKey !== 'string' || !payeeKey.trim()) throw invalid();
+    return this.repo.payeeAccount(scope, payeeKey, branchId);
+  }
+
+  async revealAccount(ctx: RequestContext, id: string, purpose?: 'prefill') {
+    this.authorize(ctx, purpose === 'prefill' ? ['prepare'] : ['prepare', 'approve', 'pay']);
     const read = this.expenses.readScope(ctx);
     const voucher = await this.repo.findVisible({ companyId: ctx.companyId, ...read.filter, scopes: ctx.scopes, relatedUserId: read.scope.relatedUserId }, id);
     if (!voucher) throw new NotFoundException(disbursementVoucherError('disbursement_not_found'));
+    if (purpose !== 'prefill' && !disbursementVoucherActions(voucher, ctx.permissions, ctx.userId).edit
+      && !['expense.disbursement.approve', 'expense.disbursement.pay'].some(p => ctx.permissions.includes(p)))
+      throw new ForbiddenException(disbursementVoucherError('disbursement_permission_denied'));
     if (!voucher.payeeAccountCiphertext) throw new BadRequestException(disbursementVoucherError('disbursement_account_missing'));
     await this.retryable(() => this.audit.logOrThrow({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.disbursement.payee_account.reveal',
-      targetType: 'disbursement_voucher', targetId: id, requestId: ctx.requestId, riskLevel: 'HIGH', result: 'SUCCESS' }));
+      targetType: 'disbursement_voucher', targetId: id, requestId: ctx.requestId, riskLevel: 'HIGH', result: 'SUCCESS',
+      ...(purpose ? { metadataJson: { purpose } } : {}) }));
     return { accountNumber: openPayoutAccountNumber(voucher.payeeAccountCiphertext, this.config!.credentialEncryptionKey) };
   }
 
@@ -137,10 +150,11 @@ export class DisbursementVoucherUseCase {
     const scope = this.scope(ctx, 'prepare');
     validateInput(body, Boolean(id));
     const account = this.account(body);
-    const accountIntent = body.payeeAccountNumber !== undefined || body.payeeBankName !== undefined || body.payeeAccountName !== undefined;
+    const accountIntent = body.payeeAccountNumber !== undefined || body.payeeBankName !== undefined || body.payeeAccountName !== undefined || body.payeeAccountFromVoucherId !== undefined;
     const payloadFingerprint = canonicalFingerprint({ version: accountIntent ? 2 : 1, operation: id ? 'update' : 'create', id: id ?? null,
       ...(accountIntent ? { payeeBankName: body.payeeBankName ?? null, payeeAccountName: body.payeeAccountName ?? null,
       accountFingerprint: body.payeeAccountNumber === undefined ? null : body.payeeAccountNumber.replace(/[\s-]/g, '') ? payoutFingerprint({ payoutKind: 'BANK_ACCOUNT', bankName: account.payeeBankName ?? null, accountName: account.payeeAccountName ?? '', accountNumber: body.payeeAccountNumber.replace(/[\s-]/g, '') }, this.config!.credentialEncryptionKey) : 'cleared' } : {}),
+      ...(body.payeeAccountFromVoucherId ? { payeeAccountFromVoucherId: body.payeeAccountFromVoucherId } : {}),
       lines: body.lines, payeeName: body.payeeName ?? null, payeeConfirmed: body.payeeConfirmed ?? null,
       plannedPayDate: body.plannedPayDate ?? null, plannedMethod: body.plannedMethod ?? null, note: body.note ?? null,
       expectedVersion: id ? (body as UpdateDisbursementVoucherDraftInput).expectedVersion : null,
@@ -152,10 +166,23 @@ export class DisbursementVoucherUseCase {
           const current = await tx.disbursementVoucher.findFirst({ where: { companyId: ctx.companyId, id } });
           if (current?.payeeAccountCiphertext) throw new BadRequestException(disbursementVoucherError('disbursement_account_bank_required'));
         }
-        return { ...await this.prepare(ctx, body, scope, tx), ...account };
+        const draft = await this.prepare(ctx, body, scope, tx);
+        if (body.payeeAccountFromVoucherId && !body.payeeAccountNumber?.trim()) {
+          const source = await tx.disbursementVoucher.findFirst({ where: { ...disbursementVoucherReadWhere(scope), id: body.payeeAccountFromVoucherId },
+            include: { lines: { orderBy: { position: 'asc' }, take: 1, include: { expense: true } } } });
+          if (!source) throw new ForbiddenException(disbursementVoucherError('disbursement_account_source_denied'));
+          const expenses = await this.expenseRepo.readDisbursementExpenseSources({ companyId: ctx.companyId, createdByUserId: scope.createdByUserId, expenseIds: body.lines.map(l => l.expenseId) }, scope.scopes, scope.relatedUserId, tx);
+          const key = source.lines[0] && disbursementPayeeIdentity(source.lines[0].expense).payeeKey;
+          const payee = expenses.find(e => e.id === body.lines[0]!.expenseId);
+          if (!key || !payee || disbursementPayeeIdentity(payee).payeeKey !== key || !source.payeeAccountCiphertext || !source.payeeAccountLast4)
+            throw new ConflictException(disbursementVoucherError('disbursement_account_source_mismatch'));
+          return { ...draft, payeeBankName: source.payeeBankName, payeeAccountName: source.payeeAccountName,
+            payeeAccountLast4: source.payeeAccountLast4, payeeAccountCiphertext: source.payeeAccountCiphertext };
+        }
+        return { ...draft, ...account };
       }, (tx, header) => this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId,
         action: id ? 'expense.disbursement.draft_updated' : 'expense.disbursement.draft_created', targetType: 'disbursement_voucher', targetId: header.id,
-        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { commandId: body.commandId, version: header.version, lineCount: body.lines.length } }, tx)));
+        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { commandId: body.commandId, version: header.version, lineCount: body.lines.length, ...(body.payeeAccountFromVoucherId && !body.payeeAccountNumber?.trim() ? { payeeAccountFromVoucherId: body.payeeAccountFromVoucherId } : {}) } }, tx)));
   }
 
   create(ctx: RequestContext, body: CreateDisbursementVoucherDraftInput) { return this.save(ctx, body); }
@@ -169,20 +196,21 @@ export class DisbursementVoucherUseCase {
 
   async list(ctx: RequestContext, query: DisbursementVoucherListQuery): Promise<DisbursementVoucherListPage> {
     const scope = this.scope(ctx, 'read', query.branchId);
-    if (query.q !== undefined && typeof query.q !== 'string' || query.branchId !== undefined && typeof query.branchId !== 'string' || query.status !== undefined && !DISBURSEMENT_VOUCHER_STATUSES.includes(query.status)) throw invalid();
+    if (query.q !== undefined && typeof query.q !== 'string' || query.branchId !== undefined && typeof query.branchId !== 'string' || query.status !== undefined && !DISBURSEMENT_VOUCHER_STATUSES.includes(query.status) || query.order !== undefined && query.order !== 'newest' && query.order !== 'oldest') throw invalid();
     const page = Number.isFinite(query.page) ? Math.max(1, Math.floor(query.page!)) : 1;
     const pageSize = Number.isFinite(query.pageSize) ? Math.min(200, Math.max(1, Math.floor(query.pageSize!))) : 20;
-    const result = await this.repo.list(scope, { ...query, page, pageSize });
-    return { counts: result.counts, total: result.total, page, pageSize, data: result.rows.map(v => {
+    const result = await this.repo.list(scope, { ...query, order: query.order ?? 'newest', page, pageSize });
+    return { counts: result.counts, sums: result.sums, total: result.total, page, pageSize, data: result.rows.map(v => {
       const header = disbursementVoucherHeader(v);
       return { id: v.id, documentNumber: v.documentNumber, status: header.status, origin: header.origin, payeeName: v.payeeName,
         plannedPayDate: header.plannedPayDate, paidDate: header.paidDate, totalAmount: header.totalAmount, amountInEffect: result.amountsInEffect.get(v.id) ?? null,
-        lineCount: v._count.lines, preparerName: result.names.get(v.preparedByUserId) ?? null, primaryAction: disbursementVoucherPrimaryAction(header.status, ctx.permissions) };
+        createdAt: header.createdAt, canDelete: disbursementVoucherActions(v, ctx.permissions, ctx.userId).delete,
+        lineCount: v._count.lines, primaryAction: disbursementVoucherPrimaryAction(header.status, ctx.permissions) };
     }) };
   }
 
   async get(ctx: RequestContext, id: string): Promise<DisbursementVoucherDetail> {
-    const voucher = await this.repo.findVisible(this.scope(ctx, 'read'), id);
+    const voucher = await this.repo.findVisible(this.scope(ctx, 'read'), id, true);
     if (!voucher) throw new NotFoundException(disbursementVoucherError('disbursement_not_found'));
     const snapshot = voucher.paidSnapshotJson as unknown as { lines?: { expenseId: string; sourceHashAfterPaid?: string; vendorName: string | null; vendorTaxId?: string | null; netPayable: string; outstandingAfter: string }[] } | null;
     const related = (v: typeof voucher.related[number] | undefined) => v?.documentNumber ? { id: voucher.visibleRelated.has(v.id) ? v.id : null, documentNumber: v.documentNumber } : null;
@@ -199,17 +227,23 @@ export class DisbursementVoucherUseCase {
     });
     const printSnapshot = (voucher.paidSnapshotJson ?? voucher.revisions.find(r => r.revision === voucher.revision)?.snapshotJson) as unknown as DisbursementVoucherPrintSnapshot | undefined;
     const name = (id: string | null | undefined) => voucher.names.get(id ?? '') ?? null;
-    return { header: { ...disbursementVoucherHeader(voucher), returnedByName: name(voucher.returnedByUserId), cancelledByName: name(voucher.cancelledByUserId) }, sourceChangedAfterPaid,
+    const activeAuthors = await this.repo.activeMemberIds(ctx.companyId, [voucher.preparedByUserId, ...(voucher.submittedByUserId ? [voucher.submittedByUserId] : [])]);
+    const preparerActive = activeAuthors.includes(voucher.preparedByUserId), senderActive = Boolean(voucher.submittedByUserId && activeAuthors.includes(voucher.submittedByUserId));
+    const preparersInactive = !preparerActive && !senderActive;
+    return { hasOwnSignature: Boolean(await this.expenseRepo.findReusableSignatureAsset(ctx.companyId, ctx.userId)), header: { ...disbursementVoucherHeader(voucher), returnedByName: name(voucher.returnedByUserId), cancelledByName: name(voucher.cancelledByUserId) }, sourceChangedAfterPaid,
       canReissue: voucher.status === 'CANCELLED' && voucher.cancelledAfterPaid && ctx.permissions.includes('expense.disbursement.issue') && !replacement && voucher.uncoveredLivePayments.size > 0,
       reissuedVoucher: related(replacement), replacesVoucher: related(voucher.related.find(v => v.id === voucher.replacesVoucherId)), payeeConfirmerName: voucher.payeeConfirmerName,
       lastReminderToName: name(voucher.lastReminderToUserId), nextReminderAt: voucher.lastReminderAt ? new Date(voucher.lastReminderAt.getTime() + 3600000).toISOString() : null,
       returnedByName: name(voucher.returnedByUserId), cancelledByName: name(voucher.cancelledByUserId),
+      preparerActive, senderActive,
       preparerName: name(voucher.preparedByUserId), submittedByName: name(voucher.submittedByUserId), requestedApproverName: name(voucher.requestedApproverUserId), approvedByName: name(voucher.approvedByUserId), paidByName: name(voucher.paidByUserId),
-      actions: disbursementVoucherActions(voucher, ctx.permissions),
+      actions: disbursementVoucherActions(voucher, ctx.permissions, ctx.userId, ctx.roles.includes('OWNER') && preparersInactive, preparersInactive),
       slip: voucher.slip ? { attachmentId: voucher.slip.attachmentId, attachedByUserId: voucher.slip.linkedByUserId,
         attachedByName: name(voucher.slip.linkedByUserId), attachedAt: voucher.slip.createdAt.toISOString() } : null,
+      supportingFiles: await this.readSupportingFiles(ctx, id),
       canAttachSlip: (voucher.status === 'APPROVED' || voucher.status === 'PAID') && ctx.permissions.includes('expense.disbursement.pay'),
       lines: voucher.lines.map(line => ({ expenseId: line.expenseId, expenseNumber: line.expense.expenseNumber, expenseDate: coerceCivilDate(line.expense.expenseDate),
+        vendorInvoiceNumber: line.expense.vendorDocumentNumber ?? null,
         vendorName: line.expense.vendorNameSnapshot, vendorTaxId: line.expense.vendorTaxIdSnapshot, branchId: line.expense.branchId,
         grandTotalAmount: new Decimal(String(line.expense.grandTotalAmount)).toFixed(4), whtAmount: new Decimal(String(line.expense.whtAmount)).toFixed(4),
         netPayableAmount: new Decimal(String(line.expense.netPayableAmount)).toFixed(4), outstandingAmount: new Decimal(String(line.expense.outstandingAmount)).toFixed(4),
@@ -250,6 +284,7 @@ export class DisbursementVoucherUseCase {
     const approver = revision?.decision === 'APPROVED' || revision?.postApprovalAction ? {
       name: voucher.names.get(revision.decidedByUserId ?? '') ?? null, at: revision.decidedAt?.toISOString() ?? null,
       selfApproved: revision.decidedByUserId === revision.submittedByUserId,
+      signature: voucher.approverSignatureJson as DisbursementSignatureSnapshot | null,
     } : {};
     const cancellation = voucher.status === 'CANCELLED' ? {
       at: voucher.cancelledAt?.toISOString() ?? null, reason: paid ? voucher.cancelSourceReason : voucher.cancelReason,
@@ -259,10 +294,29 @@ export class DisbursementVoucherUseCase {
       reissuedDocumentNumber: voucher.related.find(v => v.replacesVoucherId === voucher.id)?.documentNumber,
     } : undefined;
     // The stored paid file remains evidence. Only this served copy carries the current cancellation.
-    const print = { ...snapshot, documentNumber: voucher.documentNumber, revision: voucher.revision,
+    // Older snapshots lack these print-only facts. Read them through the same visible expenses;
+    // never rewrite a revision, a paid snapshot or the stored PDF.
+    const company = snapshot.company?.phone === undefined ? await this.repo.companyForPrint(ctx.companyId) : null;
+    const print: DisbursementVoucherPrintSnapshot = { ...snapshot, documentNumber: voucher.documentNumber, revision: voucher.revision,
+      company: { ...company, ...snapshot.company }, documentDate: snapshot.documentDate ?? voucher.createdAt.toISOString(),
+      plannedPayDate: snapshot.plannedPayDate === undefined ? (voucher.plannedPayDate ? coerceCivilDate(voucher.plannedPayDate) : null) : snapshot.plannedPayDate,
+      lines: snapshot.lines.map(line => {
+        const expense = voucher.lines.find(l => l.expenseId === line.expenseId)?.expense;
+        return { ...line,
+          vendorDocumentNumber: line.vendorDocumentNumber === undefined ? expense?.vendorDocumentNumber ?? null : line.vendorDocumentNumber,
+          vendorAddress: line.vendorAddress === undefined ? expense?.vendorAddressSnapshot ?? null : line.vendorAddress,
+          vendorBranchCode: line.vendorBranchCode === undefined ? expense?.vendorBranchCodeSnapshot ?? null : line.vendorBranchCode,
+          vendorTaxId: line.vendorTaxId === undefined ? expense?.vendorTaxIdSnapshot ?? null : line.vendorTaxId };
+      }),
       snapshotHash: (paid ? voucher.paidSnapshotHash : revision?.snapshotHash) ?? undefined,
-      actors: paid ? snapshot.actors : { ...snapshot.actors, approver }, cancellation };
-    return { data: await renderSubstituteReceiptPdf(renderDisbursementVoucherSvg(print, paid), voucher.documentNumber ?? undefined, { omitPageFooter: true }), fileName: `${voucher.documentNumber}.pdf` };
+      actors: paid ? snapshot.actors : { ...snapshot.actors, preparer: { ...snapshot.actors?.preparer, signature: voucher.preparerSignatureJson as DisbursementSignatureSnapshot | null }, approver }, cancellation };
+    if (print.payeeAccount && voucher.payeeAccountCiphertext
+      && print.payeeAccount.last4 === voucher.payeeAccountLast4
+      && print.payeeAccount.bankName === voucher.payeeBankName && print.payeeAccount.accountName === voucher.payeeAccountName
+      && ['expense.disbursement.approve', 'expense.disbursement.pay'].some(p => ctx.permissions.includes(p))) {
+      print.payeeAccount = { ...print.payeeAccount, ...(await this.revealAccount(ctx, id)) };
+    }
+    return { data: await renderSubstituteReceiptPdf(renderDisbursementVoucherSvg(this.files ? await this.files.withSignatures(ctx.companyId, print) : print, paid), voucher.documentNumber ?? undefined, { omitPageFooter: true }), fileName: `${voucher.documentNumber}.pdf` };
   }
 
   private async finishPaid(header: DisbursementVoucherHeader): Promise<DisbursementVoucherHeader> {
@@ -270,6 +324,70 @@ export class DisbursementVoucherUseCase {
     if (header.documentFileReady) return header;
     try { await this.files!.ensure(header.companyId, header.id); return { ...header, documentFileReady: true }; }
     catch { return { ...header, documentFileReady: false }; }
+  }
+
+  private async supportingDraft(ctx: RequestContext, id: string) {
+    const scope = this.scope(ctx, 'prepare');
+    const voucher = await this.repo.findVisible(scope, id);
+    if (!voucher) throw new NotFoundException(disbursementVoucherError('disbursement_not_found'));
+    if (voucher.status !== 'DRAFT') throw new ConflictException(disbursementVoucherError('disbursement_supporting_frozen'));
+    return { scope, voucher };
+  }
+
+  async startSupportingUpload(ctx: RequestContext, id: string, input: { originalFileName: string; mimeType: string; byteSize: number }) {
+    const { voucher } = await this.supportingDraft(ctx, id);
+    if (!REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES.includes(input.mimeType) || !Number.isInteger(input.byteSize) || input.byteSize <= 0 || input.byteSize > REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES)
+      throw new BadRequestException(disbursementVoucherError('disbursement_supporting_invalid'));
+    return this.retryable(() => this.createUpload!.execute(withAttachmentCreate(ctx), { originalFileName: input.originalFileName, mimeType: input.mimeType, byteSize: input.byteSize, visibility: 'INTERNAL', branchId: voucher.branchId,
+      metadataJson: { generatedFor: DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG, voucherId: id } }));
+  }
+
+  async completeSupportingUpload(ctx: RequestContext, id: string, attachmentId: string, input: { checksumSha256?: string; byteSize?: number }) {
+    await this.supportingDraft(ctx, id);
+    const file = await this.repo.findSupportingUpload(ctx.companyId, id, attachmentId, ctx.userId);
+    if (!file) throw new BadRequestException(disbursementVoucherError('disbursement_supporting_not_owned'));
+    if (file.status !== 'ACTIVE') await this.retryable(() => this.completeUpload!.execute(withAttachmentCreate(ctx), { attachmentId, ...input }));
+    return { attachmentId };
+  }
+
+  async changeSupportingFile(ctx: RequestContext, id: string, attachmentId: string, remove: boolean) {
+    const { scope } = await this.supportingDraft(ctx, id);
+    await this.retryable(() => this.repo.changeSupportingFileAtomic(scope, id, attachmentId, ctx.userId, remove, tx => this.audit.log({
+      companyId: ctx.companyId, actorUserId: ctx.userId, action: `expense.disbursement.supporting.${remove ? 'remove' : 'attach'}`,
+      targetType: 'disbursement_voucher', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { attachmentId } }, tx)));
+    return this.readSupportingFiles(ctx, id);
+  }
+
+  async supportingFiles(ctx: RequestContext, id: string) {
+    await this.visibleFileDocument(ctx, id);
+    return this.readSupportingFiles(ctx, id);
+  }
+
+  private async readSupportingFiles(ctx: RequestContext, id: string) {
+    const links = (await this.repo.supportingFiles(ctx.companyId, id)).filter(l => isBranchInScope(ctx.scopes, l.attachment.branchId));
+    const names = await this.repo.memberNames(ctx.companyId, links.map(l => l.attachment.uploadedByUserId), undefined, true);
+    return links.map(({ attachment: a, createdAt }) => ({ id: a.id, name: a.originalFileName, mimeType: a.mimeType, byteSize: a.byteSize,
+      uploadedByUserId: a.uploadedByUserId, uploadedByName: names.get(a.uploadedByUserId) ?? null, uploadedAt: (a.uploadedAt ?? createdAt).toISOString() }));
+  }
+
+  private async supportingFile(ctx: RequestContext, id: string, attachmentId: string) {
+    await this.visibleFileDocument(ctx, id);
+    const file = (await this.repo.supportingFiles(ctx.companyId, id)).find(l => l.attachmentId === attachmentId)?.attachment;
+    if (!file || !isBranchInScope(ctx.scopes, file.branchId)) throw new NotFoundException(disbursementVoucherError('disbursement_supporting_missing'));
+    return file;
+  }
+
+  async openSupportingFile(ctx: RequestContext, id: string, attachmentId: string) {
+    const file = await this.supportingFile(ctx, id, attachmentId);
+    const signed = await this.storage!.createDownloadUrl({ bucket: file.bucket, objectKey: file.objectKey, objectVersionId: file.objectVersionId ?? undefined, mimeType: file.mimeType, fileName: file.originalFileName });
+    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.disbursement.supporting.open', targetType: 'disbursement_voucher', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { attachmentId } });
+    return { downloadUrl: signed.url, expiresAt: signed.expiresAt };
+  }
+
+  async supportingFileBytes(ctx: RequestContext, id: string, attachmentId: string) {
+    const file = await this.supportingFile(ctx, id, attachmentId);
+    const object = await this.storage!.getObject({ bucket: file.bucket, objectKey: file.objectKey, objectVersionId: file.objectVersionId ?? undefined });
+    return { data: object.bytes, mimeType: file.mimeType };
   }
 
   private async slipForPayer(ctx: RequestContext, id: string) {
@@ -323,6 +441,15 @@ export class DisbursementVoucherUseCase {
     return { downloadUrl: signed.url, expiresAt: signed.expiresAt };
   }
 
+  /** Bundle downloads use the same private-file boundary as opening a voucher's slip. */
+  async slipBytes(ctx: RequestContext, id: string) {
+    const voucher = await this.visibleFileDocument(ctx, id);
+    const file = voucher.slipAttachmentId ? await this.repo.findSlipFile(ctx.companyId, id, voucher.slipAttachmentId) : null;
+    if (!file) throw new NotFoundException(disbursementVoucherError('disbursement_slip_missing'));
+    const object = await this.storage!.getObject({ bucket: file.bucket, objectKey: file.objectKey, objectVersionId: file.objectVersionId ?? undefined });
+    return { data: object.bytes, fileName: file.originalFileName, mimeType: file.mimeType };
+  }
+
   async approvers(ctx: RequestContext, branchId: string | undefined) {
     this.authorize(ctx, ['prepare']);
     if (typeof branchId !== 'string' || !branchId.trim()) throw invalid();
@@ -334,27 +461,41 @@ export class DisbursementVoucherUseCase {
     return this.expenseRepo.readDisbursementExpenseSources({ companyId: scope.companyId, createdByUserId: scope.createdByUserId, expenseIds: voucher.lines.map(l => l.expenseId) }, scope.scopes, scope.relatedUserId, tx);
   }
 
-  private changed(number: string | null, paying = false, permissions: string[] = []) { return new ConflictException(disbursementVoucherError(paying ? 'disbursement_payment_source_changed' : 'disbursement_source_changed', { number: number || 'ที่เลือก', mayWithdraw: String(permissions.some(p => ['expense.disbursement.prepare', 'expense.disbursement.approve'].includes(p))) })); }
+  private changed(number: string | null, paying: boolean, voucher: DisbursementLifecycleVoucher, ctx: RequestContext, canOwnerRecover = false) { return new ConflictException(disbursementVoucherError(paying ? 'disbursement_payment_source_changed' : 'disbursement_source_changed', { number: number || 'ที่เลือก', mayWithdraw: String(disbursementVoucherActions(voucher, ctx.permissions, ctx.userId, canOwnerRecover).withdraw) })); }
 
-  private async verifiedSources(tx: Prisma.TransactionClient, scope: DisbursementReadScope, voucher: DisbursementLifecycleVoucher, paying = false, permissions: string[] = []) {
+  private async verifiedSources(tx: Prisma.TransactionClient, scope: DisbursementReadScope, voucher: DisbursementLifecycleVoucher, ctx: RequestContext, paying = false) {
     const sources = new Map((await this.sources(tx, scope, voucher)).map(e => [e.id, e]));
     for (const line of voucher.lines) {
       const source = sources.get(line.expenseId);
       if (!source || source.status !== 'CONFIRMED' || source.reservedByDisbursementVoucherId !== voucher.id
         || new Decimal(String(source.outstandingAmount)).lt(String(line.amount)) || disbursementVoucherSourceHash(source) !== line.sourceHashAtSubmit
-        || disbursementExpenseSelectionReason({ ...source, reservedByDisbursementVoucherId: null })) throw this.changed(source?.expenseNumber ?? line.expense.expenseNumber, paying, permissions);
+        || disbursementExpenseSelectionReason({ ...source, reservedByDisbursementVoucherId: null })) throw this.changed(source?.expenseNumber ?? line.expense.expenseNumber, paying, voucher, ctx, await this.repo.canOwnerRecover(voucher, ctx.roles.includes('OWNER'), tx));
     }
     return sources;
   }
 
+  private async ownSignature(tx: Prisma.TransactionClient, ctx: RequestContext): Promise<DisbursementSignatureSnapshot | null> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:${ctx.userId}:signature-asset`}))`;
+    const attachment = await this.expenseRepo.findReusableSignatureAsset(ctx.companyId, ctx.userId);
+    if (!attachment) return null;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:${attachment.id}:attachment-retention`}))`;
+    if (!await tx.attachmentObject.findFirst({ where: { companyId: ctx.companyId, id: attachment.id, status: 'ACTIVE' }, select: { id: true } })) throw new ConflictException(disbursementVoucherError('disbursement_signature_unavailable'));
+    const object = await this.storage!.getObject({ bucket: attachment.bucket, objectKey: attachment.objectKey, objectVersionId: attachment.objectVersionId })
+      .catch(() => { throw new ConflictException(disbursementVoucherError('disbursement_signature_unavailable')); });
+    const checksumSha256 = createHash('sha256').update(object.bytes).digest('hex');
+    if (attachment.byteSize > SIGNATURE_MAX_BYTES || object.bytes.length > SIGNATURE_MAX_BYTES || detectAttachmentMimeType(object.bytes) !== attachment.mimeType
+      || attachment.checksumSha256 && attachment.checksumSha256 !== checksumSha256) throw new ConflictException(disbursementVoucherError('disbursement_signature_unavailable'));
+    return { attachmentId: attachment.id, userId: ctx.userId, checksumSha256 };
+  }
+
   private async approveRevision(tx: Prisma.TransactionClient, ctx: RequestContext, scope: DisbursementReadScope, voucher: DisbursementLifecycleVoucher) {
-    await this.verifiedSources(tx, scope, voucher);
+    await this.verifiedSources(tx, scope, voucher, ctx);
     const now = new Date();
     const revision = voucher.revisions.find(r => r.revision === voucher.revision);
     if (!revision || revision.decision !== null) throw new ConflictException(disbursementVoucherError('disbursement_status_changed'));
     await tx.disbursementVoucherRevision.updateMany({ where: { voucherId: voucher.id, revision: voucher.revision, decision: null },
       data: { decision: 'APPROVED', decidedByUserId: ctx.userId, decidedAt: now } });
-    return { status: 'APPROVED' as const, approvedByUserId: ctx.userId, approvedAt: now, selfApproved: revision.submittedByUserId === ctx.userId };
+    return { approverSignatureJson: await this.ownSignature(tx, ctx) ?? Prisma.DbNull, status: 'APPROVED' as const, approvedByUserId: ctx.userId, approvedAt: now, selfApproved: revision.submittedByUserId === ctx.userId };
   }
 
   private async retryable<T>(work: () => Promise<T>, paying = false): Promise<T> {
@@ -369,6 +510,7 @@ export class DisbursementVoucherUseCase {
   }
 
   private async command(ctx: RequestContext, id: string, action: Exclude<DisbursementVoucherLifecycleAction, 'pay' | 'remind'>, body: SubmitDisbursementVoucherInput | EndDisbursementVoucherInput) {
+    if (action === 'return' && ctx.authProvider !== 'line' && !ctx.permissions.includes('expense.disbursement.approve')) throw new ForbiddenException({ ...disbursementVoucherError('disbursement_permission_denied'), message: DISBURSEMENT_VOUCHER_WORDS.returnPermissionRequired });
     const scope = this.scope(ctx, action === 'submit' ? 'prepare' : action === 'approve' || action === 'return' ? 'approve' : 'manage');
     const allowed = ['commandId', 'expectedVersion', ...(action === 'submit' ? ['requestedApproverUserId', 'approveNow'] : action === 'approve' ? [] : ['reason'])];
     if (!body || typeof body !== 'object' || Object.keys(body).some(k => !allowed.includes(k)) || typeof body.commandId !== 'string' || !body.commandId.trim() || body.commandId.length > 128
@@ -383,16 +525,22 @@ export class DisbursementVoucherUseCase {
     const payloadFingerprint = canonicalFingerprint({ version: 1, operation: action, id, expectedVersion: body.expectedVersion,
       requestedApproverUserId: submit.requestedApproverUserId ?? null, approveNow: submit.approveNow ?? false, reason });
     let changed = false;
+    const signatureChecksums: Record<string, string> = {};
     const header = await this.retryable(() => this.repo.lifecycleAtomic({ ...scope, id, action, commandId: body.commandId, expectedVersion: body.expectedVersion, payloadFingerprint,
-      permissions: ctx.permissions, approveNow: submit.approveNow }, async (tx, voucher) => {
+      permissions: ctx.permissions, actorUserId: ctx.userId, isOwner: ctx.roles.includes('OWNER'), approveNow: submit.approveNow }, async (tx, voucher) => {
+      const canRecover = await this.repo.canOwnerRecover(voucher, ctx.roles.includes('OWNER'), tx);
       await this.repo.lockSources(tx, voucher, (error, line) => {
         const code = (error as { getResponse?: () => { code?: string } }).getResponse?.().code;
-        if (action === 'approve' && code) throw this.changed(line.expense.expenseNumber);
+        if (action === 'approve' && code) throw this.changed(line.expense.expenseNumber, false, voucher, ctx, canRecover);
         const reason = code === 'substitute_source_has_live_claim' ? 'claim' : code === 'substitute_personal_settles_via_reimbursement' ? 'personal_advance' : null;
         if (!reason) throw error;
         throw new UnprocessableEntityException({ code: `disbursement_expense_${reason}`, message: `รายการ ${line.expense.expenseNumber || 'ที่เลือก'}: ${disbursementExpenseReasonMessage(reason)}` });
       }, action === 'submit' || action === 'approve');
-      if (action === 'approve') return this.approveRevision(tx, ctx, scope, voucher);
+      if (action === 'approve') {
+        const approval = await this.approveRevision(tx, ctx, scope, voucher);
+        if ('checksumSha256' in approval.approverSignatureJson) signatureChecksums.approver = approval.approverSignatureJson.checksumSha256;
+        return approval;
+      }
       const now = new Date();
       if (action === 'submit') {
         const sources = await this.sources(tx, scope, voucher);
@@ -409,17 +557,19 @@ export class DisbursementVoucherUseCase {
           const e = sourceById.get(line.expenseId)!;
           return { expenseId: line.expenseId, position: line.position, expenseNumber: e.expenseNumber, expenseDate: coerceCivilDate(e.expenseDate),
             description: Array.from(e.lines?.[0]?.description?.trim() || '').slice(0, 80).join('') || null,
-            vendorName: e.vendorNameSnapshot, vendorTaxId: e.vendorTaxIdSnapshot, grandTotal: new Decimal(String(e.grandTotalAmount)).toFixed(4), wht: new Decimal(String(e.whtAmount)).toFixed(4),
+            vendorName: e.vendorNameSnapshot, vendorTaxId: e.vendorTaxIdSnapshot, vendorBranchCode: e.vendorBranchCodeSnapshot ?? null, vendorAddress: e.vendorAddressSnapshot ?? null, vendorDocumentNumber: e.vendorDocumentNumber ?? null, grandTotal: new Decimal(String(e.grandTotalAmount)).toFixed(4), wht: new Decimal(String(e.whtAmount)).toFixed(4),
             netPayable: new Decimal(String(e.netPayableAmount)).toFixed(4), outstanding: new Decimal(String(e.outstandingAmount)).toFixed(4), amount: new Decimal(String(line.amount)).toFixed(4) };
         });
         const [company, branch] = await Promise.all([
-          tx.company.findFirst({ where: { id: ctx.companyId }, select: { id: true, name: true, registeredName: true, brandName: true, taxId: true, addressJson: true } }),
+          tx.company.findFirst({ where: { id: ctx.companyId }, select: { id: true, name: true, registeredName: true, brandName: true, taxId: true, addressJson: true, phone: true } }),
           tx.branch.findFirst({ where: { companyId: ctx.companyId, id: voucher.branchId }, select: { id: true, name: true, code: true, taxBranchCode: true, addressJson: true } }),
         ]);
         if (!company || !branch) throw new NotFoundException(disbursementVoucherError('disbursement_not_found'));
-        const snapshot = { company, branch,
+        const preparerSignature = ctx.userId === voucher.preparedByUserId ? await this.ownSignature(tx, ctx) : null;
+        if (preparerSignature) signatureChecksums.preparer = preparerSignature.checksumSha256;
+        const snapshot = { company, branch, documentDate: voucher.createdAt.toISOString(),
           payeeAccount: voucher.payeeAccountLast4 ? { bankName: voucher.payeeBankName, accountName: voucher.payeeAccountName, last4: voucher.payeeAccountLast4 } : null,
-          actors: { preparer: { name: names.get(voucher.preparedByUserId) ?? null, at: voucher.createdAt.toISOString() } },
+          actors: { preparer: { name: names.get(voucher.preparedByUserId) ?? null, at: voucher.createdAt.toISOString(), signature: preparerSignature } },
           companyId: voucher.companyId, branchId: voucher.branchId, templateVersion: voucher.templateVersion, currency: voucher.currency,
           payee: { name: voucher.payeeName, taxId: data.payeeTaxId, branchCode: data.payeeBranchCode, basis: data.payeeBasis,
             confirmedByUserId: voucher.payeeConfirmedByUserId, confirmerName: names.get(voucher.payeeConfirmedByUserId ?? '') ?? null },
@@ -436,9 +586,10 @@ export class DisbursementVoucherUseCase {
           if (changed.count !== 1) throw new ConflictException(disbursementVoucherError('disbursement_status_changed'));
           lines.push({ ...line, sourceHashAtSubmit });
         }
-        const approval = submit.approveNow ? await this.approveRevision(tx, ctx, scope, { ...voucher, revision, lines, revisions: [...voucher.revisions, created] }) : {};
+        const approval = submit.approveNow ? await this.approveRevision(tx, ctx, scope, { ...voucher, revision, lines, revisions: [...voucher.revisions, created] }) : null;
+        if (approval && 'checksumSha256' in approval.approverSignatureJson) signatureChecksums.approver = approval.approverSignatureJson.checksumSha256;
         const documentNumber = await this.repo.numberAtSubmit(tx, voucher, ctx.userId, civilPeriodKey(todayCivilDate()));
-        return { status: 'PENDING_APPROVAL', revision, documentNumber, submittedByUserId: ctx.userId, submittedAt: now, requestedApproverUserId: submit.requestedApproverUserId ?? null,
+        return { preparerSignatureJson: preparerSignature ?? Prisma.DbNull, approverSignatureJson: Prisma.DbNull, payerSignatureJson: Prisma.DbNull, status: 'PENDING_APPROVAL', revision, documentNumber, submittedByUserId: ctx.userId, submittedAt: now, requestedApproverUserId: submit.requestedApproverUserId ?? null,
           payeeTaxId: data.payeeTaxId, payeeBranchCode: data.payeeBranchCode, totalAmount: data.totalAmount,
           lastReminderToUserId: null, lastReminderAt: null, approvedAt: null, approvedByUserId: null, selfApproved: false, returnedAt: null, returnedByUserId: null, returnReason: null, ...approval };
       }
@@ -451,13 +602,13 @@ export class DisbursementVoucherUseCase {
           data: { postApprovalAction: decision, postApprovalByUserId: ctx.userId, postApprovalAt: now, postApprovalReason: reason } });
       }
       if (action === 'cancel') return { status: 'CANCELLED', cancelledByUserId: ctx.userId, cancelledAt: now, cancelReason: reason, cancelledAfterPaid: false };
-      return { status: 'DRAFT', approvedAt: null, approvedByUserId: null, selfApproved: false,
+      return { preparerSignatureJson: Prisma.DbNull, approverSignatureJson: Prisma.DbNull, payerSignatureJson: Prisma.DbNull, status: 'DRAFT', approvedAt: null, approvedByUserId: null, selfApproved: false,
         ...(action === 'return' ? { returnedByUserId: ctx.userId, returnedAt: now, returnReason: reason } : {}) };
     }, async (tx, header) => {
       changed = true;
       for (const event of submit.approveNow ? ['submit', 'approve'] : [action]) await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId,
         action: `expense.disbursement.${event}`, targetType: 'disbursement_voucher', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
-        metadataJson: { commandId: body.commandId, revision: header.revision, selfApproved: header.selfApproved, reason } }, tx);
+        metadataJson: { commandId: body.commandId, revision: header.revision, selfApproved: header.selfApproved, reason, signatureChecksums } }, tx);
     }));
     if (changed) await this.notices?.send(ctx, header, action === 'submit' && header.status === 'APPROVED' ? 'approve' : action, { reason });
     return header;
@@ -471,7 +622,7 @@ export class DisbursementVoucherUseCase {
       || typeof body.approverUserId !== 'string' || !body.approverUserId.trim()) throw invalid();
     const payloadFingerprint = canonicalFingerprint({ version: 1, operation: 'remind', id, expectedVersion: body.expectedVersion, approverUserId: body.approverUserId });
     let changed = false;
-    const header = await this.retryable(() => this.repo.lifecycleAtomic({ ...scope, id, action: 'remind', ...body, payloadFingerprint, permissions: ctx.permissions }, async (tx, voucher) => {
+    const header = await this.retryable(() => this.repo.lifecycleAtomic({ ...scope, id, action: 'remind', ...body, payloadFingerprint, permissions: ctx.permissions, actorUserId: ctx.userId }, async (tx, voucher) => {
       const approver = (await this.repo.approvers(ctx.companyId, voucher.branchId, tx)).find(m => m.userId === body.approverUserId);
       if (!approver) throw new UnprocessableEntityException(disbursementVoucherError('disbursement_approver_ineligible'));
       const now = new Date(), last = await this.repo.lastReminder(tx, ctx.companyId, id, body.approverUserId);
@@ -500,7 +651,7 @@ export class DisbursementVoucherUseCase {
   private async paidSnapshot(tx: Prisma.TransactionClient, ctx: RequestContext, voucher: DisbursementLifecycleVoucher, sources: Map<string, Source>, payments: { payment: { id: string; amount: string }; expense: { outstandingAmount: string } }[], paidDate: string, paidMethod: DisbursementVoucherHeader['paidMethod'], paidFromRef: string | null, paidRecordedAt: Date, paidByUserId: string) {
     const slip = voucher.slipAttachmentId ? await tx.attachmentLink.findFirst({ where: { companyId: ctx.companyId, attachmentId: voucher.slipAttachmentId, targetType: DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, targetId: voucher.id, purpose: DISBURSEMENT_VOUCHER_SLIP_PURPOSE }, select: { linkedByUserId: true, createdAt: true } }) : null;
     const [company, branch, names] = await Promise.all([
-      tx.company.findFirst({ where: { id: ctx.companyId }, select: { id: true, name: true, registeredName: true, brandName: true, taxId: true, addressJson: true } }),
+      tx.company.findFirst({ where: { id: ctx.companyId }, select: { id: true, name: true, registeredName: true, brandName: true, taxId: true, addressJson: true, phone: true } }),
       tx.branch.findFirst({ where: { companyId: ctx.companyId, id: voucher.branchId }, select: { id: true, name: true, code: true, taxBranchCode: true, addressJson: true } }),
       this.repo.memberNames(ctx.companyId, [voucher.preparedByUserId, voucher.approvedByUserId, paidByUserId, voucher.payeeConfirmedByUserId, slip?.linkedByUserId], tx),
     ]);
@@ -509,23 +660,23 @@ export class DisbursementVoucherUseCase {
     const lines = voucher.lines.map((line, i) => {
       const created = payments[i]!;
       const e = sources.get(line.expenseId)!;
-      return { expenseId: e.id, expenseNumber: e.expenseNumber, expenseDate: coerceCivilDate(e.expenseDate), vendorName: e.vendorNameSnapshot, vendorTaxId: e.vendorTaxIdSnapshot, sourceHashAfterPaid: disbursementVoucherSourceHash({ ...e, outstandingAmount: created.expense.outstandingAmount }),
+      return { expenseId: e.id, expenseNumber: e.expenseNumber, expenseDate: coerceCivilDate(e.expenseDate), vendorName: e.vendorNameSnapshot, vendorTaxId: e.vendorTaxIdSnapshot, vendorBranchCode: e.vendorBranchCodeSnapshot ?? null, vendorAddress: e.vendorAddressSnapshot ?? null, vendorDocumentNumber: e.vendorDocumentNumber ?? null, sourceHashAfterPaid: disbursementVoucherSourceHash({ ...e, outstandingAmount: created.expense.outstandingAmount }),
         description: voucher.origin === 'DIRECT_PAYMENT' ? Array.from(e.lines?.[0]?.description?.trim() || '').slice(0, 80).join('') || null
           : submittedSnapshot?.lines?.find(l => l.expenseId === e.id)?.description ?? null,
         grandTotal: new Decimal(String(e.grandTotalAmount)).toFixed(4), wht: new Decimal(String(e.whtAmount)).toFixed(4), netPayable: new Decimal(String(e.netPayableAmount)).toFixed(4),
         paidThisTime: new Decimal(created.payment.amount).toFixed(4), outstandingAfter: new Decimal(created.expense.outstandingAmount).toFixed(4), expensePaymentId: created.payment.id, position: line.position };
     });
     const sum = (field: 'grandTotal' | 'wht' | 'netPayable' | 'paidThisTime' | 'outstandingAfter') => lines.reduce((total, l) => total.plus(l[field]), new Decimal(0)).toFixed(4);
-    return { company, branch, documentNumber: voucher.documentNumber, revision: voucher.revision, templateVersion: voucher.templateVersion, currency: voucher.currency,
+    return { company, branch, documentDate: voucher.createdAt.toISOString(), plannedPayDate: voucher.plannedPayDate ? coerceCivilDate(voucher.plannedPayDate) : null, documentNumber: voucher.documentNumber, revision: voucher.revision, templateVersion: voucher.templateVersion, currency: voucher.currency,
       payee: { name: voucher.payeeName, taxId: voucher.payeeTaxId, branchCode: voucher.payeeBranchCode, basis: voucher.payeeBasis,
         confirmedByUserId: voucher.payeeConfirmedByUserId, confirmerName: names.get(voucher.payeeConfirmedByUserId ?? '') ?? null },
       payeeAccount: voucher.payeeAccountLast4 ? { bankName: voucher.payeeBankName, accountName: voucher.payeeAccountName, last4: voucher.payeeAccountLast4 } : null,
       note: voucher.note, directPayment: !voucher.approvedByUserId, lines, totals: { grandTotal: sum('grandTotal'), wht: sum('wht'), netPayable: sum('netPayable'), paidThisTime: sum('paidThisTime'), outstandingAfter: sum('outstandingAfter') },
       paymentEvidence: slip ? { attachedByName: names.get(slip.linkedByUserId) ?? null, attachedAt: slip.createdAt.toISOString() } : null,
       paidDate, paidRecordedAt: paidRecordedAt.toISOString(), paymentMethod: paidMethod, paidFromRef,
-      actors: { preparer: { userId: voucher.preparedByUserId, name: names.get(voucher.preparedByUserId) ?? null, at: voucher.createdAt.toISOString() },
-        approver: { userId: voucher.approvedByUserId ?? null, name: names.get(voucher.approvedByUserId ?? '') ?? null, at: voucher.approvedAt?.toISOString() ?? null, selfApproved: voucher.selfApproved },
-        payer: { userId: paidByUserId, name: names.get(paidByUserId) ?? null, at: paidRecordedAt.toISOString() } } };
+      actors: { preparer: { userId: voucher.preparedByUserId, name: names.get(voucher.preparedByUserId) ?? null, at: voucher.createdAt.toISOString(), signature: voucher.preparerSignatureJson as DisbursementSignatureSnapshot | null },
+        approver: { userId: voucher.approvedByUserId ?? null, name: names.get(voucher.approvedByUserId ?? '') ?? null, at: voucher.approvedAt?.toISOString() ?? null, selfApproved: voucher.selfApproved, signature: voucher.approverSignatureJson as DisbursementSignatureSnapshot | null },
+        payer: { userId: paidByUserId, name: names.get(paidByUserId) ?? null, at: paidRecordedAt.toISOString(), signature: voucher.payerSignatureJson as DisbursementSignatureSnapshot | null } } };
   }
 
   async pay(ctx: RequestContext, id: string, body: PayDisbursementVoucherInput): Promise<DisbursementVoucherHeader> {
@@ -542,14 +693,16 @@ export class DisbursementVoucherUseCase {
       paidDate: body.paidDate ?? null, paymentMethod: body.paymentMethod ?? null, paidFromRef: body.paidFromRef ?? null,
       ...(body.slipAttachmentId !== undefined ? { slipAttachmentId: body.slipAttachmentId } : {}) });
     const payments: ExpensePaymentResult[] = [];
+    let payerSignature: DisbursementSignatureSnapshot | null = null;
     const header = await this.retryable(() => this.repo.lifecycleAtomic({ ...scope, id, action: 'pay', commandId: body.commandId, expectedVersion: body.expectedVersion,
-      payloadFingerprint, permissions: ctx.permissions }, async (tx, voucher) => {
+      payloadFingerprint, permissions: ctx.permissions, actorUserId: ctx.userId }, async (tx, voucher) => {
       await this.repo.lockPaymentKeys(tx, voucher);
+      const canRecover = await this.repo.canOwnerRecover(voucher, ctx.roles.includes('OWNER'), tx);
       await this.repo.lockSources(tx, voucher, (error, line) => {
-        if ((error as { getResponse?: () => { code?: string } }).getResponse?.().code) throw this.changed(line.expense.expenseNumber, true, ctx.permissions);
+        if ((error as { getResponse?: () => { code?: string } }).getResponse?.().code) throw this.changed(line.expense.expenseNumber, true, voucher, ctx, canRecover);
         throw error;
       });
-      const sources = await this.verifiedSources(tx, scope, voucher, true, ctx.permissions);
+      const sources = await this.verifiedSources(tx, scope, voucher, ctx, true);
       if (body.slipAttachmentId !== undefined) await this.repo.assertPaymentSlip(tx, voucher, body.slipAttachmentId);
       const paidDate = body.paidDate ?? todayCivilDate('Asia/Bangkok'), paidMethod = body.paymentMethod ?? voucher.plannedMethod;
       if (!paidMethod) throw new BadRequestException(disbursementVoucherError('disbursement_payment_method_required'));
@@ -561,7 +714,7 @@ export class DisbursementVoucherUseCase {
       for (const line of voucher.lines) {
         const created = await this.expenseRepo.recordPaymentInTransaction(tx, { companyId: ctx.companyId, expenseId: line.expenseId, actorUserId: ctx.userId,
           scopes: ctx.scopes, idempotencyKey: `dv:${voucher.id}:${line.id}`, amount: new Decimal(String(line.amount)).toString(),
-          paidAt: paidDate, paymentMethod: paidMethod ?? undefined, bankAccountRef: paidFromRef ?? undefined, payingThroughDisbursementVoucherId: voucher.id });
+          paidAt: paidDate, paidAtConfirmed: Boolean(body.paidDate), paymentMethod: paidMethod ?? undefined, bankAccountRef: paidFromRef ?? undefined, payingThroughDisbursementVoucherId: voucher.id });
         if (created.replayed) throw new ConflictException(disbursementVoucherError('disbursement_payment_key_conflict'));
         const changed = await tx.disbursementVoucherLine.updateMany({ where: { companyId: ctx.companyId, voucherId: voucher.id, id: line.id, expensePaymentId: null, coversPaymentId: null },
           data: { expensePaymentId: created.payment.id, coversPaymentId: created.payment.id } });
@@ -569,12 +722,13 @@ export class DisbursementVoucherUseCase {
         payments.push(created);
       }
       await this.repo.clearSources(tx, voucher);
-      const snapshot = await this.paidSnapshot(tx, ctx, voucher, sources, payments, paidDate, paidMethod, paidFromRef, paidRecordedAt, ctx.userId);
-      return { status: 'PAID', paidDate: civilDateToUtcDate(paidDate), paidRecordedAt, paidByUserId: ctx.userId, paidMethod, paidFromRef,
+      payerSignature = await this.ownSignature(tx, ctx);
+      const snapshot = await this.paidSnapshot(tx, ctx, { ...voucher, payerSignatureJson: payerSignature }, sources, payments, paidDate, paidMethod, paidFromRef, paidRecordedAt, ctx.userId);
+      return { payerSignatureJson: payerSignature ?? Prisma.DbNull, status: 'PAID', paidDate: civilDateToUtcDate(paidDate), paidRecordedAt, paidByUserId: ctx.userId, paidMethod, paidFromRef,
         paidSnapshotJson: snapshot, paidSnapshotHash: canonicalFingerprint(snapshot) };
     }, async (tx, header) => {
       await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.disbursement.pay', targetType: 'disbursement_voucher', targetId: id,
-        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { commandId: body.commandId, revision: header.revision, totalAmount: header.totalAmount, lineCount: payments.length } }, tx);
+        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { commandId: body.commandId, revision: header.revision, totalAmount: header.totalAmount, lineCount: payments.length, signatureChecksumSha256: payerSignature?.checksumSha256 ?? null } }, tx);
       for (const created of payments) await recordExpensePaymentEffects(this.audit, ctx, created.expense.id, tx, created);
     }), true);
     if (payments.length) await this.notices?.send(ctx, header, 'pay');

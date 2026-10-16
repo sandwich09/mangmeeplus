@@ -55,6 +55,22 @@
   --color-blue-light-500: var(--color-blue-light-500);
   --color-surface-base: var(--color-surface);
   --color-surface-muted: var(--color-neutral-surface);
+
+  /* Thai is a tall script: with this font stack the marks above and below a line take 1.43 em
+     (1.51 em in bold), so Tailwind's default line-heights (text-xs 1.33, text-sm 1.43, text-xl 1.4,
+     text-2xl 1.33, text-3xl 1.2) let two wrapped lines touch. Body sizes get 1.6 because they are
+     the ones set in bold and wrapped; headings 1.5; the 30 px display size a little tighter.
+     Measurements: docs/research/thai-ux-guideline-research-2026-10-13.md, section M3. */
+  --text-xs--line-height: 1.5;
+  --text-sm--line-height: 1.6;
+  --text-base--line-height: 1.6;
+  --text-lg--line-height: 1.6;
+  --text-xl--line-height: 1.5;
+  --text-2xl--line-height: 1.5;
+  --text-3xl--line-height: 1.4;
+  /* The heaviest face shipped is 700 (fonts.css). 800 and 900 made the browser smear a fake bold. */
+  --font-weight-extrabold: 700;
+  --font-weight-black: 700;
 }
 
 /* Base shell styles using มั่งมี tokens */
@@ -172,6 +188,72 @@ body {
   }
 }
 
+/* Every page fills the content area (owner 2026-10-13: "ทำไมไม่ทำเต็มจอ"): the frame has no narrow or
+   centred variant. A page uses the width with its own layout (field columns, a table), never with a cap. */
+
+/* Set by `<FormActionBar>` while its bar is pinned: anything scrolled into view stops above the bar. */
+html {
+  scroll-padding-bottom: calc(var(--mangmee-form-bar-height, 0px) + 0.5rem);
+}
+
+/* `<FormActionBar>`: a form's action row. It ends the form and stays at the bottom of the window while the
+   form is taller than the screen. The negative margins are the content area's own padding, so the bar runs
+   from edge to edge of the content area like the pinned bars of the document pages. */
+.mangmee-form-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  margin: auto -1rem -1rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--color-gray-200);
+  background: #fff;
+}
+.mangmee-form-bar-summary {
+  min-width: 0;
+}
+@media (min-width: 640px) {
+  .mangmee-form-bar {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  /* The buttons take the room the summary leaves, so the group can lay itself out (side by side, at the right). */
+  .mangmee-form-bar-actions {
+    flex: 1 1 16rem;
+    min-width: 0;
+  }
+}
+@media (min-width: 768px) {
+  .mangmee-form-bar {
+    margin: auto -1.75rem -1.75rem;
+    padding-inline: 1.75rem;
+  }
+}
+@media (min-width: 1024px) {
+  .mangmee-form-bar {
+    margin-bottom: -2rem;
+  }
+}
+/* Inside a card the bar is the card's footer: it ends the form where the card's content ends and
+   keeps the card's edges, instead of reaching for the page's edges and sticking to the window. */
+.mangmee-card .mangmee-form-bar {
+  position: static;
+  margin: 0;
+  padding: 0.75rem 0 0;
+  background: transparent;
+}
+
+/* `<MangmeePage back>`: the way back sits above the title, on its own line. */
+.mangmee-page-back {
+  display: flex;
+  margin-bottom: 0.5rem;
+}
+
 .mangmee-eyebrow {
   margin-bottom: 0.5rem;
   display: inline-flex;
@@ -186,12 +268,14 @@ body {
   font-weight: 700;
 }
 
+/* 1.4, not 1.25: a long title wraps on a phone, and at 1.25 the marks of the second line ran into
+   the first. */
 .mangmee-page-title {
   color: var(--color-gray-900);
   font-size: clamp(1.5rem, 1.35rem + 0.45vw, 1.875rem);
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0;
-  line-height: 1.25;
+  line-height: 1.4;
 }
 
 .mangmee-page-description {
@@ -207,6 +291,62 @@ body {
   border-radius: var(--radius-2xl);
   background: #fff;
   box-shadow: var(--shadow-theme-sm);
+}
+
+/* Owner 2026-10-15 (home page, Figma HOME-01): the content area is white; the cards' shadows draw their edges. */
+#workspace-main:has(.mangmee-home) {
+  flex: 1 1 auto;
+  background: #fff;
+}
+
+.mangmee-home-tab {
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  padding: 0 0.5rem;
+  color: var(--color-gray-800);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.mangmee-home-tab:not([aria-pressed='true']) {
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(16 24 40 / 14%), 0 2px 8px rgb(16 24 40 / 8%);
+}
+
+.mangmee-home-tab:hover:not([aria-pressed='true']) {
+  background: var(--color-gray-50);
+}
+
+@media (min-width: 640px) {
+  .mangmee-home-tab {
+    padding: 0 0.875rem;
+  }
+}
+
+/* Owner 2026-10-15: a raised control has a shadow, never a frame line. */
+.mangmee-home-tab[aria-pressed='true'] {
+  background: #5aa95c;
+  color: #fff;
+  box-shadow: 0 1px 3px rgb(16 24 40 / 18%), 0 2px 8px rgb(16 24 40 / 12%);
+}
+
+.mangmee-input.mangmee-home-select {
+  min-height: 2.25rem;
+  height: 2.25rem;
+  border-color: transparent;
+  font-size: 0.875rem;
+  box-shadow: 0 1px 3px rgb(16 24 40 / 14%), 0 2px 8px rgb(16 24 40 / 8%);
+}
+
+/* Owner 2026-10-14 (home page): a white card drawn by its shadow alone, no frame line. */
+.mangmee-card-shadow {
+  /* No frame at all (border-width 0): a transparent 1 px frame let the white card show round a coloured header band. */
+  border: 0;
+  border-radius: 0.625rem;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 4px 14px rgb(16 24 40 / 7%);
 }
 
 .mangmee-card-muted {
@@ -239,8 +379,8 @@ body {
   margin-top: 0.125rem;
   color: var(--color-gray-900);
   font-size: 1.5rem;
-  font-weight: 800;
-  line-height: 1.2;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .mangmee-stat-sub {
@@ -274,10 +414,12 @@ body {
   align-items: center;
   gap: 0.375rem;
   border-radius: 999px;
-  padding: 0.25rem 0.625rem;
+  /* 22px tall. At line-height 1 (20px) the marks of ผู้ / น้ำ reached the rim of the pill, and a
+     long status that wrapped had its two lines on top of each other. */
+  padding: 0.125rem 0.625rem;
   font-size: 0.75rem;
   font-weight: 700;
-  line-height: 1;
+  line-height: 1.5;
 }
 
 .mangmee-icon-tone-brand,
@@ -364,11 +506,27 @@ body {
   color: var(--color-error-700);
 }
 
-/* 2.75rem is the 44px touch minimum. This is plain CSS, so it outranks a `min-h-11` utility
-   written at a call site — several buttons carried one and still rendered 40px tall. Restored
-   to the original 2.5rem from 40rem up, so nothing on a desktop moves. */
+/* ── The one look of button (thai-ux-standard §2) ─────────────────────────────────────────────
+   Four variants: primary, secondary, quiet, danger. The `Button` component renders these same
+   classes (common/components/button), so a dialog button and a page button are one button.
+   The class strings live in common/components/button/button-classes.ts.
+
+   2.75rem is the 44px touch minimum. This is plain CSS, so it outranks a `min-h-11` utility
+   written at a call site — several buttons carried one and still rendered 40px tall. 2.5rem
+   from 40rem up. The line-height is stated here for the same reason: an inherited 1.6 made a
+   one-line button 40.4px tall beside a 40px one. A name that wraps takes two lines and grows.
+
+   Only the `display` sits in a layer below Tailwind's utilities, so `hidden`, `sm:hidden` and
+   `hidden sm:inline-flex` written beside a shared button work (a plain `display` here outranked
+   them, and a button meant for wide screens only stayed on the phone too). Height, padding,
+   weight and colours stay plain CSS and keep winning. */
+@layer components {
+  .mangmee-btn {
+    display: inline-flex;
+  }
+}
+
 .mangmee-btn {
-  display: inline-flex;
   min-height: 2.75rem;
   align-items: center;
   justify-content: center;
@@ -377,6 +535,10 @@ body {
   padding: 0.5rem 1rem;
   font-size: 0.875rem;
   font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
   transition:
     background-color 0.2s ease,
     border-color 0.2s ease,
@@ -391,32 +553,190 @@ body {
   box-shadow: 0 10px 20px rgb(21 128 61 / 22%);
 }
 
+/* The home page's "what is still owed" button (owner's design 2026-10-14): amber, for money that waits. */
+.mangmee-btn-warning {
+  border: 1px solid var(--color-warning-600);
+  background: var(--color-warning-600);
+  color: #fff;
+}
+
+.mangmee-btn-warning:hover:not(:disabled, [aria-disabled='true']) {
+  filter: brightness(0.95);
+}
+
 .mangmee-btn-secondary {
   border: 1px solid var(--color-gray-200);
   background: #fff;
   color: var(--color-gray-700);
 }
 
-/* `:hover` still matches a disabled button, so without the guard a locked secondary
-   button lit up brand-green under the cursor and read as clickable. */
-.mangmee-btn-secondary:hover:not(:disabled) {
+/* No frame until the cursor or the keyboard reaches it. The transparent border keeps it the
+   same size as its framed neighbours. */
+.mangmee-btn-quiet {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-gray-700);
+}
+
+/* Destructive is pale red everywhere, in dialogs too: beside an equal-weight "do not" button it
+   is read before it is pressed, where a solid red block pulls the eye to the dangerous action. */
+.mangmee-btn-danger {
+  border: 1px solid #fecdca;
+  background: var(--color-error-50);
+  color: var(--color-error-700);
+}
+
+/* `:hover` still matches a disabled button, so without the guards a locked button lit up
+   under the cursor and read as clickable. `aria-disabled` is how a link (and the `Button`
+   component) says it is locked. */
+.mangmee-btn-primary:hover:not(:disabled, [aria-disabled='true']) {
+  border-color: var(--color-brand-800);
+  background: linear-gradient(150deg, var(--color-brand-800), var(--color-brand-900));
+}
+
+.mangmee-btn-secondary:hover:not(:disabled, [aria-disabled='true']) {
   border-color: var(--color-brand-200);
   background: var(--color-brand-25);
   color: var(--color-brand-700);
 }
 
+.mangmee-btn-quiet:hover:not(:disabled, [aria-disabled='true']) {
+  background: var(--color-gray-100);
+  color: var(--color-gray-900);
+}
+
+.mangmee-btn-danger:hover:not(:disabled, [aria-disabled='true']) {
+  border-color: #fda29b;
+  background: #fee4e2;
+}
+
+.mangmee-btn:focus-visible {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: 2px;
+}
+
+.mangmee-btn-danger:focus-visible {
+  outline-color: var(--color-error-500);
+}
+
 /* Same reason as the input rule below: the button primitive states its own colours,
    and every caller had to remember to append `disabled:opacity-50` for a locked
    button to look locked. Carry it on the primitive instead. */
-.mangmee-btn:disabled {
+.mangmee-btn:disabled,
+.mangmee-btn[aria-disabled='true'] {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.mangmee-btn-danger {
-  border: 1px solid #fecdca;
-  background: var(--color-error-50);
-  color: var(--color-error-700);
+.mangmee-btn-primary:disabled,
+.mangmee-btn-primary[aria-disabled='true'] {
+  box-shadow: none;
+}
+
+.mangmee-btn[aria-busy='true'] {
+  cursor: progress;
+}
+
+/* `<Button size>`: `lg` is the full-width submit of the sign-in family, level with its 48px
+   fields. `sm` keeps the standard height (a phone needs 44px) and only tightens the sides. */
+.mangmee-btn[data-size='lg'] {
+  min-height: 3rem;
+  padding-inline: 1.5rem;
+  font-size: 1rem;
+}
+
+.mangmee-btn[data-size='sm'] {
+  padding-inline: 0.75rem;
+}
+
+/* ── A group of buttons (thai-ux-standard §2.3, §2.4) ─────────────────────────────────────────
+   One height, one width. Children stay in DOM order: the button that backs out first, the
+   button that acts last. `ActionGroup` (common/components/actions) measures the names and sets
+   data-layout:
+     row   — side by side in equal columns as wide as the longest name. A phone fills the width;
+             from 40rem the group is compact and sits at the right.
+     stack — the names do not fit side by side: one per line at one width, drawn in reverse so
+             the acting button is on top.
+   With no data-layout (server render, tests) it stacks on a phone and makes equal columns from
+   40rem. A lone button keeps an 8rem minimum and does not stretch on a wide screen. */
+.mangmee-actions {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.mangmee-actions > * {
+  min-width: 0;
+}
+
+/* A hand-styled button that was sized by its name is now as wide as its neighbour: keep the
+   name in the middle until the screen's lane gives it a shared class. */
+.mangmee-actions > :is(button, a) {
+  justify-content: center;
+  text-align: center;
+}
+
+.mangmee-actions[data-layout='row'] {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 40rem) {
+  .mangmee-actions {
+    width: max-content;
+    max-width: 100%;
+    margin-inline-start: auto;
+  }
+
+  .mangmee-actions:not([data-layout='stack']) {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(8rem, 1fr);
+  }
+
+  /* Stacked on a wide screen: as wide as the longest name, never a thin column. */
+  .mangmee-actions[data-layout='stack'] {
+    min-width: min(100%, 26rem);
+  }
+
+  .mangmee-actions[data-align='start'] {
+    margin-inline-start: 0;
+  }
+
+  .mangmee-actions[data-align='center'] {
+    margin-inline: auto;
+  }
+}
+
+/* What the hook reads: the room there is (the group as a full-width line) and each name on one
+   line at its own width. Set and removed inside one layout pass, never painted. */
+[data-action-measure] {
+  display: flex !important;
+  flex-flow: row nowrap !important;
+  gap: 0.5rem !important;
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  margin-inline: 0 !important;
+}
+
+[data-action-measure] > * {
+  flex: none !important;
+  width: max-content !important;
+  max-width: none !important;
+}
+
+/* ── Things read as one unit (thai-ux-standard §5.3) ──────────────────────────────────────────
+   A document number, an amount with ฿ or บาท, a date, a phone or tax number: never split across
+   lines, digits of equal width. Wrap the unit, not the sentence:
+   <span class="mangmee-unit">PV-202610-00045</span>. There is no global word-break or
+   overflow-wrap rule on purpose: each one breaks Thai words or splits amounts. */
+.mangmee-unit {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .mangmee-input {
@@ -428,6 +748,10 @@ body {
   padding: 0.5rem 0.75rem;
   color: var(--color-gray-800);
   font-size: 1rem;
+  /* Stated, not inherited: 1.5 is the least that shows the marks of a clipped one-line value
+     (the select and date controls truncate), and an inherited 1.6 pushed the field past its
+     40px / 44px height. */
+  line-height: 1.5;
   outline: none;
   transition:
     border-color 0.2s ease,
@@ -460,14 +784,8 @@ input[type='number']::-webkit-outer-spin-button {
 }
 
 @media (min-width: 40rem) {
-  .mangmee-btn,
-  .mangmee-tab {
+  .mangmee-btn {
     min-height: 2.5rem;
-  }
-
-  .mangmee-tab {
-    display: revert;
-    align-items: revert;
   }
 
   .mangmee-input {
@@ -616,6 +934,12 @@ select {
   scrollbar-width: none;
 }
 
+/* The home page's period tabs (owner's design 2026-10-14): the chosen period filled green. */
+.mangmee-segmented-solid .mangmee-tab[data-active='true'] {
+  background: var(--color-brand-700);
+  color: #fff;
+}
+
 .mangmee-segmented::-webkit-scrollbar {
   display: none;
 }
@@ -635,6 +959,205 @@ select {
   background: #fff;
   color: var(--color-brand-700);
   box-shadow: var(--shadow-theme-sm);
+}
+
+/* 40px from 40rem, like every other control. This has to come after the tab's own rule: it used
+   to sit in the 40rem block further up, lost to the 44px above by order, and tabs stayed 44px on
+   wide screens (with a `display: revert` that never applied either, now gone). */
+@media (min-width: 40rem) {
+  .mangmee-tab {
+    min-height: 2.5rem;
+  }
+}
+
+/* ── Filter tabs of a list (`FilterTabs`, common/components/tabs) ─────────────────────────────
+   The segmented look above, for "ทั้งหมด 53 · ฉบับร่าง 1 · รอจ่าย 4 …". Every name stays on one
+   line at its own width with its count beside it.
+   Phone: one row that scrolls sideways inside the track (never the page), with a fade at an edge
+   that hides more; the component brings the chosen tab into view. Three equal columns were tried
+   on paper and lose: "รออนุมัติ/ตรวจสอบ 0" does not fit a 103px cell and wraps inside its tab.
+   From 40rem: compact tabs that wrap onto a second line when there are many; nothing scrolls. */
+.mangmee-filter-tabs > .mangmee-tab {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.375rem;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.mangmee-filter-tabs > .mangmee-tab:not(.mangmee-tab-active):hover {
+  color: var(--color-gray-800);
+}
+
+.mangmee-filter-tabs > .mangmee-tab:focus-visible {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: -2px;
+}
+
+.mangmee-filter-tabs > .mangmee-tab:disabled,
+.mangmee-filter-tabs > .mangmee-tab[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mangmee-tab-count {
+  min-width: 1.5rem;
+  border-radius: 999px;
+  background: var(--color-gray-200);
+  padding: 0 0.375rem;
+  color: var(--color-gray-600);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.mangmee-tab-active > .mangmee-tab-count {
+  background: var(--color-brand-100);
+  color: var(--color-brand-800);
+}
+
+.mangmee-filter-tabs[data-more='end'] {
+  mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+}
+
+.mangmee-filter-tabs[data-more='start'] {
+  mask-image: linear-gradient(to left, #000 calc(100% - 2rem), transparent);
+}
+
+.mangmee-filter-tabs[data-more='both'] {
+  mask-image: linear-gradient(to right, transparent, #000 2rem, #000 calc(100% - 2rem), transparent);
+}
+
+@media (min-width: 40rem) {
+  .mangmee-filter-tabs {
+    flex-wrap: wrap;
+    overflow: visible;
+    mask-image: none;
+  }
+
+  .mangmee-filter-tabs > .mangmee-tab {
+    min-height: 2.5rem;
+  }
+}
+
+/* ── A choice: radio or tick (`ChoiceRow`, common/components/field) ───────────────────────────
+   The control is the real <input>, redrawn in the brand look (20px; the browser's own is 13px),
+   so forms, labels and the keyboard keep working. `.mangmee-choice-input` alone also works on a
+   bare input (a table cell, a tick beside a row). The row is the whole 44px target. */
+.mangmee-choice-input {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
+  border: 1.5px solid var(--color-gray-500);
+  background: #fff center / 100% 100% no-repeat;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.mangmee-choice-input[type='radio'] {
+  border-radius: 50%;
+}
+
+.mangmee-choice-input[type='checkbox'] {
+  border-radius: 0.375rem;
+}
+
+.mangmee-choice-input:checked {
+  border-color: var(--color-brand-700);
+  background-color: var(--color-brand-700);
+}
+
+.mangmee-choice-input[type='radio']:checked {
+  background-image: radial-gradient(circle, #fff 0, #fff 0.21875rem, transparent 0.25rem);
+}
+
+.mangmee-choice-input[type='checkbox']:checked {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='m5.5 10.5 3 3 6-7' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.mangmee-choice-input:focus-visible {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: 2px;
+}
+
+.mangmee-choice-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mangmee-choice {
+  display: flex;
+  min-height: 2.75rem;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding-block: 0.6875rem;
+  cursor: pointer;
+}
+
+/* Level with the first line of the label (22.4px). */
+.mangmee-choice > .mangmee-choice-input {
+  margin-top: 0.075rem;
+}
+
+.mangmee-choice-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.mangmee-choice-label {
+  color: var(--color-gray-800);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.mangmee-choice-description {
+  color: var(--color-gray-500);
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.mangmee-choice:has(> .mangmee-choice-input:disabled) {
+  cursor: not-allowed;
+}
+
+.mangmee-choice:has(> .mangmee-choice-input:disabled) .mangmee-choice-label {
+  color: var(--color-gray-500);
+}
+
+/* `framed`: each choice in its own box; the chosen one is marked by the box too, not only by the dot. */
+.mangmee-choice[data-framed] {
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-xl);
+  background: #fff;
+  padding-inline: 0.875rem;
+}
+
+.mangmee-choice[data-framed]:has(> .mangmee-choice-input:checked) {
+  border-color: var(--color-brand-600);
+  background: var(--color-brand-25);
+}
+
+.mangmee-choice[data-framed]:has(> .mangmee-choice-input:focus-visible) {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: 2px;
+}
+
+.mangmee-choice[data-framed] > .mangmee-choice-input:focus-visible {
+  outline: none;
 }
 
 @utility no-scrollbar {
@@ -848,7 +1371,7 @@ select {
   flex: 1;
   font-size: 0.94rem;
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.5;
 }
 
 .menu-dropdown-item {
@@ -859,7 +1382,7 @@ select {
   padding: 0.45rem 0.75rem;
   font-size: 0.875rem;
   font-weight: 700;
-  line-height: 1.25rem;
+  line-height: 1.5;
   text-decoration: none;
   transition:
     background-color 0.2s ease,
@@ -901,8 +1424,10 @@ select {
 }
 
 /* Native action controls keep their existing variants; only actual pending state spins.
-   Permission/validation disabled controls never get aria-busy. Shared buttons own their spinner. */
-button[aria-busy='true']:not([data-loading-indicator])::before {
+   Permission/validation disabled controls never get aria-busy. Shared buttons own their spinner.
+   A link styled as a button spins the same way. */
+button[aria-busy='true']:not([data-loading-indicator])::before,
+a.mangmee-btn[aria-busy='true']:not([data-loading-indicator])::before {
   content: '';
   display: inline-block;
   flex-shrink: 0;
@@ -914,12 +1439,14 @@ button[aria-busy='true']:not([data-loading-indicator])::before {
   border-top-color: transparent;
   border-radius: 50%;
 }
-button[aria-busy='true']:not([data-loading-indicator]) > svg { display: none; }
+button[aria-busy='true']:not([data-loading-indicator]) > svg,
+a.mangmee-btn[aria-busy='true']:not([data-loading-indicator]) > svg { display: none; }
 
 @media (prefers-reduced-motion: no-preference) {
   @keyframes action-loading-spin { to { transform: rotate(360deg); } }
   .action-loading-spinner,
-  button[aria-busy='true']:not([data-loading-indicator])::before {
+  button[aria-busy='true']:not([data-loading-indicator])::before,
+  a.mangmee-btn[aria-busy='true']:not([data-loading-indicator])::before {
     animation: action-loading-spin 750ms linear infinite;
   }
   @keyframes toast-in {
@@ -1001,4 +1528,53 @@ button[aria-busy='true']:not([data-loading-indicator]) > svg { display: none; }
     border-radius: 0 !important;
     box-shadow: none !important;
   }
+}
+
+/* Owner 2026-10-15: everything on the home page one step smaller, for balance. */
+.mangmee-home .mangmee-page-title {
+  font-size: 1.5rem;
+}
+
+.mangmee-home .mangmee-page-description {
+  font-size: 0.8125rem;
+}
+
+/* Owner 2026-10-15, the home page's concept on other pages (class mangmee-flat on the page): a white page; cards and raised
+   controls drawn by their shadow, never a frame line; everything one step smaller. */
+#workspace-main:has(.mangmee-flat) {
+  flex: 1 1 auto;
+  background: #fff;
+}
+
+.mangmee-flat .mangmee-page-title {
+  font-size: 1.5rem;
+}
+
+.mangmee-flat .mangmee-card {
+  border: 0;
+  border-radius: 0.625rem;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 4px 14px rgb(16 24 40 / 7%);
+}
+
+.mangmee-flat .mangmee-btn-secondary,
+.mangmee-flat .mangmee-input {
+  border-color: transparent;
+  box-shadow: 0 1px 3px rgb(16 24 40 / 14%), 0 2px 8px rgb(16 24 40 / 8%);
+}
+
+.mangmee-flat .mangmee-segmented {
+  gap: 0.5rem;
+  background: transparent;
+  padding: 0.25rem;
+}
+
+.mangmee-flat .mangmee-segmented .mangmee-tab {
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(16 24 40 / 14%), 0 2px 8px rgb(16 24 40 / 8%);
+}
+
+.mangmee-flat .mangmee-segmented .mangmee-tab-active,
+.mangmee-flat .mangmee-segmented .mangmee-tab[aria-pressed='true'] {
+  background: #5aa95c;
+  color: #fff;
 }

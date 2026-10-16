@@ -1,3 +1,4 @@
+import { SetMyDisplayNameDto } from './auth.dtos';
 import { ConflictException } from '@nestjs/common';
 import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import {
@@ -1050,6 +1051,7 @@ export class AuthController {
       membershipId,
       roles,
       // Display-only metadata for the caller's held roles; role keys still decide authorization.
+      availablePermissions: req.context.availablePermissions,
       roleNames: Object.fromEntries((membership?.roles ?? []).map(({ role }) => [role.key, role.name])),
       permissions,
       scopes,
@@ -1070,9 +1072,21 @@ export class AuthController {
     };
   }
 
-  // P10-L §15.4 "บัญชีของฉัน". Both act on the caller's own row only — the userId comes from the
-  // verified session — so `account.password.change`, the key the sibling self-service writes
-  // already use, is the whole gate.
+  // Every member can correct their own name; reading another person's history also checks the
+  // employee-management grant and company membership inside the use case.
+  @Get('account/display-name')
+  @RequirePermissions('account.session.read')
+  async displayNameHistory(@Query('companyId') companyId: string, @Query('userId') userId: string | undefined, @Req() req: Request & { context: RequestContext }) {
+    return this.accountProfile.displayNameHistory(req.context, companyId, userId);
+  }
+
+  @Patch('account/display-name')
+  @RequirePermissions('account.session.read')
+  async setMyDisplayName(@Body() dto: SetMyDisplayNameDto, @Req() req: Request & { context: RequestContext }) {
+    await this.authRateLimit.assertAccountProfileWriteAllowed(req.context.userId);
+    return this.accountProfile.setDisplayName(req.context, dto.companyId, req.context.userId, dto.displayName);
+  }
+
   @Patch('me/contact')
   @HttpCode(200)
   @RequirePermissions('account.password.change')

@@ -6,6 +6,8 @@ export type WebSession = {
   membershipId: string;
   roles: string[];
   roleNames?: Record<string, string>;
+  /** Display-only package availability; never grants the reader a permission. */
+  availablePermissions?: string[];
   permissions: string[];
   scopes?: { branchIds?: string[] };
   authProvider: 'watchdog' | 'line' | 'dev';

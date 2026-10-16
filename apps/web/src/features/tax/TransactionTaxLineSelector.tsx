@@ -41,6 +41,11 @@ type Props = {
    * chose (spec AC5).
    */
   suggestedTaxCode?: string | null;
+  /**
+   * Draw nothing when the list has no choice to offer, nothing is saved and the reader cannot set tax up.
+   * A box that can only say "contact whoever looks after tax settings" is a dead end for a shop that has no such page.
+   */
+  hideWhenNothingToChoose?: boolean;
 };
 
 // Most display names already carry the rate ("ภาษีซื้อขอคืนได้ 7%"), so appending
@@ -55,7 +60,7 @@ export function TransactionTaxLineSelector({
   companyId, sourceType, sourceId, sourceLineId, transactionContext, direction,
   documentDate, currency = 'THB', netAmount, grossAmount, enteredTaxAmount, branchId, value = '',
   onChange, disabled = false, allowNoTax = true,
-  labelAddon, canConfigureTax = false, suggestedTaxCode = null,
+  labelAddon, canConfigureTax = false, suggestedTaxCode = null, hideWhenNothingToChoose = false,
 }: Props) {
   const [definitions, setDefinitions] = useState<TaxCodeDefinitionDto[]>([]);
   const [preview, setPreview] = useState<ResolveTransactionTaxPreviewDto | null>(null);
@@ -118,6 +123,8 @@ export function TransactionTaxLineSelector({
     return () => { cancelled = true; };
   }, [branchId, choices, companyId, currency, direction, disabled, documentDate, enteredTaxAmount, grossAmount, netAmount, sourceId, sourceLineId, sourceType, transactionContext, effectiveValue]);
 
+  if (hideWhenNothingToChoose && !loading && !error && choices.length === 0 && !value && !setupHref) return null;
+
   return (
     <div className="space-y-2" data-testid="transaction-tax-selector">
       <div className="flex items-center gap-1.5 text-xs font-bold text-gray-600">ประเภทภาษีของรายการ {labelAddon}</div>
@@ -151,7 +158,7 @@ export function TransactionTaxLineSelector({
           ยังไม่มีประเภทภาษีที่ใช้ได้กับรายการและวันที่นี้
           {setupHref
             ? <> · <Link className="font-bold underline" href={setupHref}>ตั้งค่าภาษี</Link></>
-            : ' กรุณาติดต่อผู้ดูแลการตั้งค่าภาษีของบริษัท'}
+            : ' ให้ผู้ดูแลการตั้งค่าภาษีของร้านเพิ่มให้'}
         </p>
       )}
       {error && <p role="alert" className="text-xs text-red-700">{error}</p>}

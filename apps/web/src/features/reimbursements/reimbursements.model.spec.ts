@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 import {
   APPROVAL_STEP_STATUS_LABELS,
-  claimDeskText,
+  claimReturnedText, claimDeskText, claimWaitingText,
   claimStatusBadge,
   CURRENT_DESK_LABELS,
   currentDeskText,
@@ -24,7 +24,7 @@ import {
   REQUEST_STATUS_TONES,
 } from './reimbursements.model';
 
-// Lane F: the drawer offers "ลงนาม" only where the session user really is the
+// Lane F: the drawer offers "เซ็น" only where the session user really is the
 // actor of that step. The server re-checks; this keeps the UI from lying.
 
 const detail = (overrides: Record<string, unknown> = {}) => ({
@@ -131,7 +131,7 @@ describe('eligibleSignatureRoles around a payout account correction round', () =
   });
 });
 
-describe('claimSignAction (one ลงนาม button)', () => {
+describe('claimSignAction (one เซ็น button)', () => {
   const solo = detail({
     requesterUserId: 'owner-1', financeReviewedByUserId: 'owner-1',
     approvalSteps: [{ status: 'APPROVED', decisionByUserId: 'owner-1', decidedAt: '2026-07-21T00:00:00.000Z' }],
@@ -139,7 +139,7 @@ describe('claimSignAction (one ลงนาม button)', () => {
   });
 
   it('signs both blocks from one tap when the requester approved their own claim (AC06)', () => {
-    assert.deepEqual(claimSignAction(solo, 'owner-1'), { roles: ['REQUESTER', 'APPROVER'], label: 'ลงนามในใบเบิก' });
+    assert.deepEqual(claimSignAction(solo, 'owner-1'), { roles: ['REQUESTER', 'APPROVER'], label: 'เซ็นใบเบิก' });
     assert.equal(claimSelfApproved(solo), true);
     assert.equal(claimSelfApproved(detail()), false);
     // A legacy claim keeps every block that person really signed for.
@@ -148,17 +148,17 @@ describe('claimSignAction (one ลงนาม button)', () => {
 
   for (const [userId, role] of [['staff-1', 'REQUESTER'], ['mgr-1', 'APPROVER']]) {
     it(`${role}: first signing differs from replacing the viewer's own signature`, () => {
-      assert.equal(claimSignAction(detail({ signatures: [] }), userId!)?.label, 'ลงนามในใบเบิก');
-      assert.equal(claimSignAction(detail({ signatures: [{ role, signedByUserId: userId }] }), userId!)?.label, 'ลงนามใหม่');
-      assert.equal(claimSignAction(detail({ signatures: [{ role, signedByUserId: 'previous-actor' }] }), userId!)?.label, 'ลงนามในใบเบิก');
+      assert.equal(claimSignAction(detail({ signatures: [] }), userId!)?.label, 'เซ็นใบเบิก');
+      assert.equal(claimSignAction(detail({ signatures: [{ role, signedByUserId: userId }] }), userId!)?.label, 'เซ็นใหม่');
+      assert.equal(claimSignAction(detail({ signatures: [{ role, signedByUserId: 'previous-actor' }] }), userId!)?.label, 'เซ็นใบเบิก');
     });
   }
 
-  it('offers ลงนามใหม่ to a requester who signed before approving, now filling the approver block too (§15)', () => {
+  it('offers เซ็นใหม่ to a requester who signed before approving, now filling the approver block too (§15)', () => {
     const signedEarly = { ...solo, signatures: [{ role: 'REQUESTER', signedByUserId: 'owner-1' }] };
-    assert.deepEqual(claimSignAction(signedEarly, 'owner-1'), { roles: ['REQUESTER', 'APPROVER'], label: 'ลงนามใหม่' });
+    assert.deepEqual(claimSignAction(signedEarly, 'owner-1'), { roles: ['REQUESTER', 'APPROVER'], label: 'เซ็นใหม่' });
     // Before the approval existed, only the requester block was open to them.
-    assert.deepEqual(claimSignAction({ ...signedEarly, approvalSteps: [{ status: 'PENDING' }] }, 'owner-1'), { roles: ['REQUESTER'], label: 'ลงนามใหม่' });
+    assert.deepEqual(claimSignAction({ ...signedEarly, approvalSteps: [{ status: 'PENDING' }] }, 'owner-1'), { roles: ['REQUESTER'], label: 'เซ็นใหม่' });
   });
 
   it('offers no button to someone who signs no block', () => {
@@ -262,13 +262,17 @@ describe('reimbursementSubmitReadiness', () => {
       status: 'DRAFT', receiptRequirementStatus: 'REQUIRED', allowMissingReceiptWithReason: false,
     }));
     assert.equal(strict.blocked, true);
-    assert.match(strict.message ?? '', /ต้องแนบใบเสร็จ/);
-    assert.match(strict.message ?? '', /ไม่สามารถใช้แทน/);
+    assert.match(strict.message ?? '', /ยังไม่มีใบเสร็จ ร้านกำหนดให้แนบใบเสร็จทุกรายการ/);
+    assert.doesNotMatch(strict.message ?? '', /กรอกเหตุผล|นโยบาย/);
 
     const reasonAllowed = reimbursementSubmitReadiness(detail({
       status: 'DRAFT', receiptRequirementStatus: 'REQUIRED', allowMissingReceiptWithReason: true,
     }));
-    assert.match(reasonAllowed.message ?? '', /ระบุเหตุผล/);
+    assert.match(reasonAllowed.message ?? '', /กรอกเหตุผลที่ไม่มีใบเสร็จ/);
+    // Where the claim's lines are known, the line that lacks its receipt is named: the person is told where to attach.
+    const named = reimbursementSubmitReadiness(detail({ status: 'DRAFT', receiptRequirementStatus: 'REQUIRED', allowMissingReceiptWithReason: false,
+      lines: [{ lineNo: 1, incurredDate: '2026-09-01', attachmentId: 'a' }, { lineNo: 2, incurredDate: '2026-09-01' }, { lineNo: 3, incurredDate: '2026-09-01', linkedExpenseId: 'e' }] }));
+    assert.match(named.message ?? '', /^รายการที่ 2 ยังไม่มีใบเสร็จ /);
   });
 
   it('does not block an evidenced draft or a request that already left draft', () => {
@@ -422,4 +426,44 @@ it('W4 held possible duplicates use the same status and desk on lists and detail
   }
   assert.equal(claimStatusBadge({ status: 'READY_FOR_PAYMENT', duplicateReasons: ['MANUAL'] }).label, 'พร้อมจ่าย');
   assert.equal(claimStatusBadge({ status: 'PAID', hasDuplicateBlocker: true } as any).label, 'จ่ายแล้ว');
+});
+
+
+it('paid list and claim badges say paid regardless of document completion', () => {
+  assert.deepEqual(claimStatusBadge({ status: 'PAID', documentSignedVia: null }), { label: 'จ่ายแล้ว', tone: 'brand' });
+  for (const documentSignedVia of ['DIGITAL', 'PAPER', 'BOTH']) {
+    assert.deepEqual(claimStatusBadge({ status: 'PAID', documentSignedVia }), { label: 'จ่ายแล้ว', tone: 'brand' });
+    assert.equal(claimStatusBadge({ status: 'READY_FOR_PAYMENT', documentSignedVia }).label, 'พร้อมจ่าย');
+  }
+});
+
+it('finished claims offer no signing after either paper or digital completion', () => {
+ for (const documentSignedVia of ['PAPER', 'DIGITAL', 'BOTH']) {
+  assert.equal(claimSignAction(detail({ status: 'PAID', documentSignedVia }), 'staff-1'), null);
+ }
+});
+
+it('the list and detail share the reader approval sentence', () => {
+ assert.equal(claimWaitingText({ approvalActions: { canApprove: true }, currentDesk: { kind: 'APPROVER', names: ['สมศรี', 'ไนซ์'] } }), 'รอคุณอนุมัติ');
+ assert.equal(claimWaitingText({ approvalActions: { canApprove: false }, currentDesk: { kind: 'APPROVER', names: ['สมศรี'] } }), 'อยู่ที่ สมศรี');
+});
+
+it('a returned claim keeps the correction state words distinct from the completed approval action', () => {
+  assert.equal(REQUEST_STATUS_LABELS.REJECTED, 'ถูกส่งกลับให้แก้');
+  assert.equal(APPROVAL_STEP_STATUS_LABELS.REJECTED, 'ส่งกลับให้แก้แล้ว');
+});
+
+it('the return sentence names the decision maker and reason on the page, row and history', () => {
+  assert.equal(claimReturnedText({ rejectionReason: 'ใบเสร็จซ้ำ', approvalSteps: [{ status: 'REJECTED', decidedByName: 'สมศรี' }] }), 'สมศรี ส่งกลับให้แก้: ใบเสร็จซ้ำ');
+  assert.equal(claimReturnedText({ approvalSteps: [{ status: 'REJECTED', approverName: 'สมชาย', rejectionReason: 'ยอดไม่ตรง' }] }), 'สมชาย ส่งกลับให้แก้: ยอดไม่ตรง');
+  assert.equal(claimReturnedText({}), 'ผู้อนุมัติ ส่งกลับให้แก้แล้ว');
+});
+it('paid rows quietly name incomplete forms, never a presumed signing route', () => {
+  for (const [name, documentSignedVia, expected] of [
+    ['digital signatures complete', 'DIGITAL', undefined], ['accepted signed form', 'PAPER', undefined],
+    ['neither', null, 'ยังไม่ได้เซ็นใบเบิก'], ['half signed', null, 'ยังไม่ได้เซ็นใบเบิก'], ['both', 'BOTH', undefined],
+  ] as const) {
+    assert.equal(claimWaitingText({ status: 'PAID', documentSignedVia }), expected, name);
+    assert.equal(claimStatusBadge({ status: 'PAID', documentSignedVia }).label, 'จ่ายแล้ว', name);
+  }
 });

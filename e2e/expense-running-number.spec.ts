@@ -39,7 +39,7 @@ test('Proof: linked source reject/reopen, finance return, payout retry/void and 
     expect(current.requestNo).toBe(requestNo);
     if (process.env['EXP_PROOF_UI'] === '1') {
     await page.goto(`/companies/${companyId}/reimbursements/${draft.id}`);
-    await page.getByRole('link',{name:'แก้ไขคำขอ',exact:true}).click();
+    await page.getByRole('link',{name:'แก้ไขใบเบิก',exact:true}).click();
     await expect(page.getByRole('button',{name:'โหลดข้อมูลต้นทางล่าสุดและตรวจใหม่',exact:true})).toBeVisible();
     await page.screenshot({path:'/tmp/expense-number-impl-reopen.png',fullPage:true});
     }
@@ -51,7 +51,7 @@ test('Proof: linked source reject/reopen, finance return, payout retry/void and 
     expect(current.requestNo).toBe(requestNo);
     if (process.env['EXP_PROOF_UI'] === '1') {
     await page.goto(`/companies/${companyId}/reimbursements/${draft.id}`);
-    await expect(page.getByRole('link',{name:'แก้ไขตามคำขอ',exact:true})).toBeVisible();
+    await expect(page.getByRole('link',{name:'แก้ไขใบเบิก',exact:true})).toBeVisible();
     await page.setViewportSize({width:390,height:900});
     await page.screenshot({path:'/tmp/expense-number-impl-finance-return-mobile.png',fullPage:true});
     }

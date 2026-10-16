@@ -28,11 +28,14 @@ test('history is a closed disclosure grouped by Bangkok day with Thai dates, tim
   const rows = [row({ eventType: 'CORRECTED', certificateNumber: 'WHT-2', relatedCertificateNumber: 'WHT-3', reason: 'แก้ชื่อ', occurredAt: '2026-10-11T18:00:00Z' }),
     row({ eventType: 'EXTERNAL_RECORD_REMOVED', isExternal: true, certificateNumber: null, actorDisplayName: null, occurredAt: '2026-10-11T16:00:00Z' }), row()];
   const html = setup(rows).render();
-  assert.match(html, /ประวัติหนังสือรับรองหัก ณ ที่จ่าย \(3 รายการ\)/);
-  assert.match(html, /<details>/); assert.doesNotMatch(html, /<details open/);
+  assert.match(html, /ประวัติหนังสือรับรอง 50 ทวิ \(3 รายการ\)/);
+  // A closed line with its own chevron, never the browser's triangle.
+  assert.match(html, /<details class="group">/); assert.doesNotMatch(html, /<details[^>]* open/); assert.match(html, /<summary class="[^"]*list-none/);
   assert.ok(html.includes(formatThaiDate(rows[0]!.occurredAt))); assert.ok(html.includes(formatThaiTime(rows[0]!.occurredAt)));
   assert.equal((html.match(/<h3/g) ?? []).length, 2);
-  assert.ok(text(html).includes(`เจ้าของกิจการ · ${WHT_CERTIFICATE_HISTORY_EVENT_LABELS.CORRECTED} · เลขที่ WHT-2 · ใบใหม่เลขที่ WHT-3 · เหตุผล: แก้ชื่อ`));
+  // Who and when on one line, what happened on the next, the typed reason on its own line.
+  assert.ok(html.includes(`</span> · เจ้าของกิจการ</p><p>${WHT_CERTIFICATE_HISTORY_EVENT_LABELS.CORRECTED} `));
+  assert.ok(text(html).includes(`${WHT_CERTIFICATE_HISTORY_EVENT_LABELS.CORRECTED} เลขที่ WHT-2 ใบใหม่เลขที่ WHT-3`)); assert.ok(html.includes('>เหตุผล: แก้ชื่อ</p>'));
   assert.match(html, /<span class="whitespace-nowrap">WHT-2<\/span>/); assert.match(html, /<span class="whitespace-nowrap">WHT-3<\/span>/);
   assert.ok(html.includes(WHT_CERTIFICATE_HISTORY_EVENT_LABELS.EXTERNAL_RECORD_REMOVED));
   assert.doesNotMatch(html, /EXTERNAL_RECORD_REMOVED|CORRECTED|undefined|null/);
@@ -77,10 +80,10 @@ test('empty renders nothing; a safe error offers retry and successful retry repl
   const view = setup([], { loading: true });
   try {
     view.render(true); await view.settle();
-    const html = view.render(); assert.match(html, /ลองโหลดอีกครั้ง/); assert.doesNotMatch(html, /insufficient_permissions|secret-request/);
+    const html = view.render(); assert.match(html, />ลองอีกครั้ง<\/button>/); assert.doesNotMatch(html, /insufficient_permissions|secret-request/);
     view.find('button').onClick(); assert.equal(view.state[1], 1);
     view.render(true); await view.settle();
-    assert.match(view.render(), /ประวัติหนังสือรับรองหัก ณ ที่จ่าย \(1 รายการ\)/); assert.equal(calls, 2);
+    assert.match(view.render(), /ประวัติหนังสือรับรอง 50 ทวิ \(1 รายการ\)/); assert.equal(calls, 2);
   } finally { request.mock.restore(); view.cleanup(); }
 });
 
@@ -117,14 +120,14 @@ test('self-issued history retains wrapped evidence and note as plain text, never
 test('external record changes show the new number and only old values that existed; card history has no padded box', () => {
   const previousExternalRecord = { number: 'EXT-OLD', issuedDate: '2026-10-09', externalEvidenceRef: 'ตู้เดิม', note: 'ส่งแล้ว' };
   const html = setup([row({ eventType: 'EXTERNAL_RECORD_CHANGED', isExternal: true, certificateNumber: 'EXT-NEW', previousExternalRecord })]).render();
-  assert.ok(text(html).includes('แก้ไขการบันทึกหนังสือรับรองที่ออกเอง · เลขที่ EXT-NEW'));
+  assert.ok(text(html).includes('แก้ไขการบันทึกหนังสือรับรองที่ออกเอง เลขที่ EXT-NEW'));
   assert.ok(text(html).includes(`เดิม: เลขที่ EXT-OLD · วันที่ ${formatThaiDate('2026-10-09')} · เลขอ้างอิง ตู้เดิม · หมายเหตุ ส่งแล้ว`));
   const sparse = setup([row({ eventType: 'EXTERNAL_RECORD_CHANGED', previousExternalRecord: { number: null, issuedDate: null, externalEvidenceRef: null, note: 'เฉพาะหมายเหตุ' } })]).render();
   assert.ok(text(sparse).includes('เดิม: หมายเหตุ เฉพาะหมายเหตุ'));
   assert.ok(!text(sparse).includes('เดิม: เลขที่'));
   const props = { companyId: 'co', expenseId: 'expense', revision: 'v1', canRead: true, confirmed: true };
-  const view = certificateHarness(() => h(ExpenseCertificateHistory, props, h(ExpenseCertificateHistoryDisclosure, { plain: true, label: 'ดูประวัติหนังสือรับรอง' })), [{ rows: [row()], loading: false, error: null }, 0]);
-  assert.ok(!view.render().includes('mangmee-card')); assert.match(view.render(), /<details>/);
+  const view = certificateHarness(() => h(ExpenseCertificateHistory, props, h(ExpenseCertificateHistoryDisclosure, { plain: true, label: 'ประวัติหนังสือรับรอง' })), [{ rows: [row()], loading: false, error: null }, 0]);
+  assert.ok(!view.render().includes('mangmee-card')); assert.match(view.render(), /<details class="group">/);
 });
 
 
@@ -169,7 +172,7 @@ test('R4 cancellation banner uses loaded system-certificate history and omits un
 
 test('C15 manual removal keeps number, actor and reason and differs from expense-driven removal', () => {
   const manual = text(setup([row({ eventType: 'EXTERNAL_RECORD_REMOVED', isExternal: true, removedManually: true, certificateNumber: 'EXT-1', reason: 'บันทึกผิด' })]).render());
-  assert.match(manual, /เจ้าของกิจการ · ลบการบันทึกว่าออกเอง · เลขที่ EXT-1 · เหตุผล: บันทึกผิด/);
+  assert.match(manual, /เจ้าของกิจการลบการบันทึกว่าออกเอง เลขที่ EXT-1เหตุผล: บันทึกผิด/);
   assert.doesNotMatch(manual, /เพราะเอกสารถูกแก้ไขหรือยกเลิก/);
   const automatic = text(setup([row({ eventType: 'EXTERNAL_RECORD_REMOVED', isExternal: true })]).render());
   assert.match(automatic, /เพราะเอกสารถูกแก้ไขหรือยกเลิก/);

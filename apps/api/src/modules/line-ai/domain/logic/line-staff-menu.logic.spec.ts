@@ -1083,3 +1083,11 @@ describe('capability question (Owner 2026-08-27: only real features)', () => {
     }
   });
 });
+
+
+it('the public package answer names the home menu as หน้าแรก', () => {
+  const answer = resolvePublicPolicyAnswer('แพ็กเกจไหนได้เมนูอะไรบ้าง');
+  assert.equal(answer?.topic, 'trial_limits');
+  assert.match(answer!.text, /ผู้ช่วย AI ทาง LINE หน้าแรก ค่าใช้จ่ายและใบเสร็จ/);
+  assert.doesNotMatch(answer!.text, /แดชบอร์ด/);
+});

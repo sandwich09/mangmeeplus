@@ -22,7 +22,7 @@ export function ForeignCurrencyNotice({ summary }: { summary: Record<string, unk
   const currencyName = currencyNames.of(code) ?? 'ต่างประเทศ';
   return (
     <div role="alert" className="rounded-xl border border-warning-100 bg-warning-50 px-4 py-3 text-sm font-medium text-warning-700">
-      ⚠ เอกสารนี้เป็นสกุลเงิน {currencyName} ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท กรุณาตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก
+      ⚠ เอกสารนี้เป็นสกุลเงิน {currencyName} ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท ตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก
     </div>
   );
 }

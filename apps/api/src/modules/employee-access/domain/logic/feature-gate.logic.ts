@@ -145,5 +145,5 @@ export function entitledRoleMenus(entitled: ReadonlySet<string> | null) {
     if (entitled === null) return true;
     const binding = MENU_ENTITLEMENT_BINDINGS.find(binding => binding.navKey === menu.id);
     return binding?.status === 'ready' && binding.entitlementKeys.every(key => entitled.has(key));
-  });
+  }).map(menu => menu.id === 'dashboard' ? { ...menu, labelTh: MENU_ENTITLEMENT_BINDINGS.find(binding => binding.navKey === menu.id)?.labelTh ?? menu.labelTh } : menu);
 }

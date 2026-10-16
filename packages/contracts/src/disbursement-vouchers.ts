@@ -11,6 +11,8 @@ export type DisbursementVoucherRevisionDecision = (typeof DISBURSEMENT_VOUCHER_R
 
 /** A sentence template with facts to fill in; kept out of the plain words below, which hold no placeholders. */
 const DISBURSEMENT_REMINDER_COOLDOWN_TEMPLATE = 'เพิ่งส่งเตือน {name} ไปเมื่อ {minutes} นาทีที่แล้ว ส่งได้อีกครั้งหลัง {time} น. หรือเลือกผู้อนุมัติคนอื่น';
+const DISBURSEMENT_SOURCE_CHANGED_SELF_TEMPLATE = 'รายการ {number} ถูกเปลี่ยนแปลงหลังส่งอนุมัติ ใบนี้จึงอนุมัติไม่ได้ กด "กลับไปแก้" เพื่อตรวจรายการใหม่ หรือยกเลิกใบนี้';
+const DISBURSEMENT_SOURCE_CHANGED_RETURN_TEMPLATE = 'รายการ {number} ถูกเปลี่ยนแปลงหลังส่งอนุมัติ ใบนี้จึงอนุมัติไม่ได้ กด "ส่งกลับให้แก้" พร้อมเหตุผลให้ผู้เตรียมตรวจรายการใหม่';
 
 export const DISBURSEMENT_VOUCHER_WORDS = {
   title: 'ใบเตรียมจ่าย/ใบสำคัญจ่าย',
@@ -19,8 +21,13 @@ export const DISBURSEMENT_VOUCHER_WORDS = {
   description: 'ใบเดียว เลขเดียว: ก่อนจ่ายคือรายการที่จะจ่ายให้ผู้รับเงินรายหนึ่งและรออนุมัติ จ่ายแล้วคือใบสรุปว่าจ่ายเงินครั้งนี้เพื่อชำระอะไร',
   directPayment: 'บันทึกจ่ายโดยตรง',
   paymentSourceChangedSelf: 'รายการในใบนี้ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ กด "กลับไปแก้" เพื่อตรวจรายการใหม่ หรือยกเลิกใบนี้',
-  paymentSourceChangedAskEditor: 'รายการในใบนี้ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ ให้ผู้จัดทำหรือผู้อนุมัติของใบนี้กด "กลับไปแก้" เพื่อตรวจรายการใหม่ แล้วส่งอนุมัติอีกครั้ง',
-  unnamedPayee: 'ไม่ระบุชื่อผู้ขาย',
+  paymentSourceChangedAskEditor: 'รายการในใบนี้ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ ให้ผู้เตรียมหรือผู้ส่งใบนี้กด "กลับไปแก้" เพื่อตรวจรายการใหม่ แล้วส่งอนุมัติอีกครั้ง',
+  returnPermissionRequired: 'เฉพาะผู้มีสิทธิ์อนุมัติที่ไม่ได้เตรียมหรือส่งใบนี้เท่านั้นที่ส่งกลับให้แก้ได้ ให้ผู้เตรียมหรือผู้ส่งกด "กลับไปแก้" แทน',
+  returnOwnDenied: 'ผู้อนุมัติที่ไม่ได้เตรียมหรือส่งใบนี้เท่านั้นที่ส่งกลับให้แก้ได้ กด "กลับไปแก้" แทน',
+  recoveryOwnerRequired: 'ผู้เตรียมและผู้ส่งไม่ได้ใช้งานร้านนี้แล้ว เฉพาะเจ้าของกิจการที่กลับไปแก้หรือยกเลิกใบได้ ให้เจ้าของกิจการเปิดใบนี้',
+  withdrawOthersDenied: 'เฉพาะผู้เตรียมหรือผู้ส่งใบนี้เท่านั้นที่กลับไปแก้ได้ ให้คนนั้นกลับไปแก้ใบนี้',
+  cancelOthersDenied: 'เฉพาะผู้เตรียมหรือผู้ส่งใบนี้เท่านั้นที่ยกเลิกใบได้ ให้คนนั้นยกเลิกใบนี้',
+  unnamedPayee: 'ไม่มีชื่อผู้รับเงิน',
   webSignInRequired: 'การเตรียมจ่ายใช้บัญชีที่เข้าผ่านไลน์ไม่ได้ ให้เข้าสู่ระบบด้วยบัญชีบนเว็บแล้วลองอีกครั้ง',
   preparePermissionRequired: 'คุณยังไม่มีสิทธิ์เตรียมจ่าย ให้ผู้ดูแลร้านเพิ่มสิทธิ์ก่อนแล้วลองอีกครั้ง',
   sourceQueryInvalid: 'ข้อมูลค้นหารายจ่ายไม่ถูกต้อง ให้เลือกผู้รับเงินหรือสาขา แล้วพิมพ์คำค้นใหม่',
@@ -38,7 +45,7 @@ export const DISBURSEMENT_VOUCHER_PAYEE_BASIS_WORDS = {
 } as const;
 
 export const DISBURSEMENT_VOUCHER_STATUS_LABELS: Record<DisbursementVoucherStatus, string> = {
-  DRAFT: 'ฉบับร่าง', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'อนุมัติแล้ว รอจ่าย', PAID: 'จ่ายแล้ว', CANCELLED: 'ยกเลิก',
+  DRAFT: 'ร่าง', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'อนุมัติแล้ว รอจ่าย', PAID: 'จ่ายแล้ว', CANCELLED: 'ยกเลิกแล้ว',
 };
 export const DISBURSEMENT_VOUCHER_STATUS_TONES: Record<DisbursementVoucherStatus, 'grey' | 'yellow' | 'blue' | 'green' | 'soft_red'> = {
   DRAFT: 'grey', PENDING_APPROVAL: 'yellow', APPROVED: 'blue', PAID: 'green', CANCELLED: 'soft_red',
@@ -47,8 +54,8 @@ export type DisbursementExpenseReason = 'reserved' | 'claim' | 'personal_advance
 export const DISBURSEMENT_EXPENSE_REASON_WORDS = {
   reserved: 'อยู่ในใบเตรียมจ่ายเลขที่ {number} แล้ว',
   reservedWithoutNumber: 'อยู่ในใบเตรียมจ่ายอีกใบที่รออนุมัติ',
-  claim: 'รายการนี้อยู่ในคำขอเบิก ให้จ่ายผ่านคำขอเบิก',
-  personal_advance: 'พนักงานจ่ายร้านไปแล้ว ให้คืนเงินพนักงานผ่านคำขอเบิก',
+  claim: 'รายการนี้อยู่ในใบเบิก ให้จ่ายผ่านใบเบิก',
+  personal_advance: 'พนักงานจ่ายร้านไปแล้ว ให้คืนเงินพนักงานผ่านใบเบิก',
   missing_branch: 'รายการนี้ยังไม่มีสาขา เปิดรายจ่ายเพื่อระบุสาขาก่อน',
   foreign_currency: 'รายการนี้ไม่ใช่เงินบาท ยังรวมในใบเตรียมจ่ายไม่ได้',
   not_confirmed: 'รายการนี้ยังไม่ยืนยัน เปิดรายจ่ายและยืนยันก่อน',
@@ -60,6 +67,7 @@ export function disbursementExpenseReasonMessage(reason: DisbursementExpenseReas
 }
 
 export type DisbursementPayee = {
+  allReserved?: boolean;
   payeeKey: string;
   displayName: string;
   taxId: string | null;
@@ -69,31 +77,41 @@ export type DisbursementPayee = {
 };
 
 export const DISBURSEMENT_VOUCHER_PDF_PURPOSE = 'expense.disbursement_voucher.pdf';
+export const DISBURSEMENT_VOUCHER_SUPPORTING_PURPOSE = 'expense.disbursement_voucher.supporting';
+export const DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG = 'disbursement_voucher_supporting';
+export type DisbursementVoucherSupportingFile = { id: string; name: string; mimeType: string; byteSize: number; uploadedByUserId: string; uploadedByName: string | null; uploadedAt: string };
 export const DISBURSEMENT_VOUCHER_SLIP_PURPOSE = 'expense.disbursement_voucher.slip';
 export const DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE = 'disbursement_voucher';
 export const DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG = 'disbursement_voucher_slip';
 
 export const DISBURSEMENT_VOUCHER_ERROR_WORDS = {
-  disbursement_reminder_cooldown: 'เพิ่งส่งเตือนผู้อนุมัติคนนี้ไป ยังส่งซ้ำไม่ได้ กรุณารอให้ครบหนึ่งชั่วโมงหรือเลือกผู้อนุมัติคนอื่น',
-  disbursement_slip_missing: 'ใบนี้ยังไม่มีสลิป',
-  disbursement_slip_invalid: 'สลิปต้องเป็นรูปภาพหรือไฟล์ PDF ขนาดไม่เกิน 10 เมกะไบต์ กรุณาเลือกไฟล์ใหม่',
-  disbursement_slip_not_owned: 'สลิปนี้ไม่ได้อัปโหลดสำหรับใบนี้ หรือยังอัปโหลดไม่เสร็จ กรุณาอัปโหลดสลิปของใบนี้ใหม่',
-  disbursement_slip_status: 'สถานะของใบนี้ยังแนบสลิปไม่ได้ แนบได้เมื่ออนุมัติแล้ว รอจ่าย หรือจ่ายแล้ว กรุณาเปิดใบตรวจสถานะอีกครั้ง',
-  disbursement_file_link_outside: 'ไฟล์ของใบเตรียมจ่าย/ใบสำคัญจ่ายใช้กับเอกสารอื่นไม่ได้ กรุณาอัปโหลดไฟล์ใหม่สำหรับเอกสารนั้น',
-  disbursement_slip_link_conflict: 'ไฟล์นี้ใช้กับเอกสารอื่นอยู่แล้ว จึงใช้เป็นสลิปของใบนี้ไม่ได้ กรุณาอัปโหลดสลิปใหม่',
-  disbursement_file_general_download_denied: 'ไฟล์ของใบเตรียมจ่าย/ใบสำคัญจ่ายต้องเปิดจากใบที่มีไฟล์นี้ กรุณาเปิดใบแล้วดูไฟล์จากที่นั่น',
-  disbursement_file_retained: 'ไฟล์ของใบเตรียมจ่าย/ใบสำคัญจ่ายลบจากหน้านี้ไม่ได้ กรุณาตรวจไฟล์จากใบที่เกี่ยวข้อง',
-  disbursement_changed_retry: 'มีการทำรายการกับใบนี้หรือรายจ่ายในใบพร้อมกัน ระบบยังไม่ได้บันทึกสิ่งที่คุณเพิ่งทำ กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
-  disbursement_payment_retry: 'บันทึกไม่สำเร็จ ยังไม่มีการบันทึกจ่ายรายการใด กรุณาลองอีกครั้ง',
-  disbursement_account_number_invalid: 'เลขบัญชีผู้รับเงินต้องเป็นตัวเลข 6 ถึง 20 หลัก',
-  disbursement_account_bank_required: 'กรุณาระบุธนาคารของบัญชีผู้รับเงิน',
-  disbursement_account_missing: 'ใบนี้ไม่ได้ระบุบัญชีผู้รับเงิน',
+  disbursement_reminder_cooldown: 'เพิ่งส่งเตือนผู้อนุมัติคนนี้ไป ยังส่งซ้ำไม่ได้ รอให้ครบหนึ่งชั่วโมงหรือเลือกผู้อนุมัติคนอื่น',
+  disbursement_supporting_frozen: 'ใบนี้แก้ไฟล์ประกอบไม่ได้แล้ว เปิดใบนี้ใหม่เพื่อตรวจสถานะ',
+  disbursement_supporting_missing: 'ไม่พบไฟล์ประกอบของใบนี้ เปิดใบนี้ใหม่เพื่อตรวจไฟล์',
+  disbursement_supporting_invalid: 'เอกสารประกอบการจ่ายต้องเป็นรูปภาพหรือไฟล์พีดีเอฟขนาดไม่เกิน 10 เมกะไบต์ เลือกไฟล์ใหม่',
+  disbursement_supporting_not_owned: 'ไฟล์นี้ยังแนบกับใบนี้ไม่ได้ เลือกไฟล์แล้วอัปโหลดใหม่',
+  disbursement_slip_missing: 'ใบนี้ยังไม่มีหลักฐานการจ่าย เปิดใบนี้เพื่อตรวจไฟล์ที่แนบ',
+  disbursement_slip_invalid: 'หลักฐานการจ่ายต้องเป็นรูปภาพหรือไฟล์ PDF ขนาดไม่เกิน 10 เมกะไบต์ เลือกไฟล์ใหม่',
+  disbursement_slip_not_owned: 'หลักฐานการจ่ายนี้ไม่ได้อัปโหลดสำหรับใบนี้ หรือยังอัปโหลดไม่เสร็จ อัปโหลดหลักฐานการจ่ายของใบนี้ใหม่',
+  disbursement_slip_status: 'สถานะของใบนี้ยังแนบหลักฐานการจ่ายไม่ได้ แนบได้เมื่ออนุมัติแล้ว รอจ่าย หรือจ่ายแล้ว เปิดใบตรวจสถานะอีกครั้ง',
+  disbursement_file_link_outside: 'ไฟล์ของใบเตรียมจ่าย/ใบสำคัญจ่ายใช้กับเอกสารอื่นไม่ได้ อัปโหลดไฟล์ใหม่สำหรับเอกสารนั้น',
+  disbursement_slip_link_conflict: 'ไฟล์นี้ใช้กับเอกสารอื่นอยู่แล้ว จึงใช้เป็นหลักฐานการจ่ายของใบนี้ไม่ได้ อัปโหลดหลักฐานการจ่ายใหม่',
+  disbursement_file_general_download_denied: 'ไฟล์ของใบเตรียมจ่าย/ใบสำคัญจ่ายต้องเปิดจากใบที่มีไฟล์นี้ เปิดใบแล้วดูไฟล์จากที่นั่น',
+  disbursement_file_retained: 'ไฟล์ของใบเตรียมจ่าย/ใบสำคัญจ่ายลบจากหน้านี้ไม่ได้ ตรวจไฟล์จากใบที่เกี่ยวข้อง',
+  disbursement_changed_retry: 'มีการทำรายการกับใบนี้หรือรายจ่ายในใบพร้อมกัน ระบบยังไม่ได้บันทึกสิ่งที่คุณเพิ่งทำ เปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
+  disbursement_payment_retry: 'บันทึกไม่สำเร็จ ยังไม่มีการบันทึกจ่ายรายการใด ลองอีกครั้ง',
+  disbursement_account_number_invalid: 'เลขบัญชีผู้รับเงินต้องเป็นตัวเลข 6 ถึง 20 หลัก แก้เลขบัญชีแล้วลองอีกครั้ง',
+  disbursement_account_bank_required: 'ยังไม่ได้ระบุธนาคารของบัญชีผู้รับเงิน เลือกธนาคารก่อนบันทึก',
+  disbursement_account_source_denied: 'เปิดบัญชีจากใบเดิมไม่ได้ เลือกใช้บัญชีอื่นแล้วกรอกใหม่',
+  disbursement_account_source_mismatch: 'บัญชีจากใบเดิมไม่ตรงกับผู้รับเงินนี้ เลือกใช้บัญชีอื่นแล้วกรอกใหม่',
+  disbursement_account_missing: 'ใบนี้ไม่ได้ระบุบัญชีผู้รับเงิน เปิดใบนี้เพื่อตรวจวิธีจ่าย',
   disbursement_print_unsubmitted: 'ใบนี้ยังไม่ได้ส่งอนุมัติ จึงยังพิมพ์ไม่ได้ บันทึกแล้วส่งอนุมัติก่อน',
   disbursement_file_pending: 'บันทึกจ่ายแล้ว เอกสารกำลังจัดทำ',
-  disbursement_file_unavailable: 'ยังจัดทำไฟล์ใบสำคัญจ่ายไม่สำเร็จ การจ่ายและเลขใบยังอยู่ กรุณาลองดาวน์โหลดอีกครั้ง',
+  disbursement_signature_unavailable: 'อ่านลายเซ็นของคุณไม่ได้ ลองอีกครั้ง',
+  disbursement_file_unavailable: 'ยังจัดทำไฟล์ใบสำคัญจ่ายไม่สำเร็จ การจ่ายและเลขใบยังอยู่ ลองดาวน์โหลดอีกครั้ง',
   expense_payment_cancelled_replay: EXPENSE_CORRECTION_WORDS.paymentReplayCancelled,
-  disbursement_issue_claim: 'รายการนี้จ่ายผ่านคำขอเบิก จึงออกใบสำคัญจ่ายจากหน้านี้ไม่ได้ ดูหลักฐานการจ่ายได้ที่คำขอเบิก',
-  disbursement_issue_payment_cancelled: 'การจ่ายรายการนี้ถูกยกเลิกแล้ว จึงออกใบสำคัญจ่ายไม่ได้',
+  disbursement_issue_claim: 'รายการนี้จ่ายผ่านใบเบิก จึงออกใบสำคัญจ่ายจากหน้านี้ไม่ได้ ดูหลักฐานการจ่ายได้ที่ใบเบิก',
+  disbursement_issue_payment_cancelled: 'การจ่ายรายการนี้ถูกยกเลิกแล้ว จึงออกใบสำคัญจ่ายไม่ได้ เปิดรายจ่ายแล้วเลือกการจ่ายที่ยังมีผล',
   disbursement_issue_payment_not_found: 'ไม่พบการจ่ายที่เลือก ให้เปิดรายจ่ายใหม่และเลือกการจ่ายที่ยังมีผล',
   disbursement_reissue_empty: 'ไม่มีการจ่ายที่ยังมีผลเหลืออยู่ในใบนี้ จึงไม่ต้องออกใบใหม่',
   disbursement_invalid_input: 'ข้อมูลใบเตรียมจ่ายไม่ถูกต้อง ให้ตรวจรายการ วันที่และวิธีจ่าย แล้วลองบันทึกใหม่',
@@ -101,25 +119,25 @@ export const DISBURSEMENT_VOUCHER_ERROR_WORDS = {
   disbursement_too_many_lines: 'ใบเตรียมจ่ายหนึ่งใบรวมได้ไม่เกิน 20 รายการ แบ่งรายการที่เหลือไปทำอีกใบ',
   disbursement_duplicate_expense: 'เลือกรายจ่ายรายการเดิมซ้ำในใบเดียวกันไม่ได้ ให้เอารายการที่ซ้ำออกก่อน',
   disbursement_expense_unreadable: 'ไม่พบรายจ่ายที่เลือกหรือคุณไม่มีสิทธิ์อ่าน ให้เลือกรายจ่ายที่เปิดดูได้แล้วลองอีกครั้ง',
-  disbursement_branch_mismatch: 'รายการที่เลือกอยู่คนละสาขา หนึ่งใบรวมได้เฉพาะรายการของสาขาเดียว',
+  disbursement_branch_mismatch: 'รายการที่เลือกอยู่คนละสาขา หนึ่งใบรวมได้เฉพาะรายการของสาขาเดียว ให้เลือกรายการจากสาขาเดียวกัน',
   disbursement_payee_confirmation_required: 'รายการที่เลือกมีชื่อหรือเลขผู้เสียภาษีของผู้ขายไม่ตรงกัน ถ้าเป็นผู้รับเงินรายเดียวกัน ให้ติ๊กยืนยันก่อน',
-  disbursement_amount_invalid: 'ยอดของรายการ {number} ต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย {outstanding}',
+  disbursement_amount_invalid: 'ยอดของรายการ {number} ต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย {outstanding} แก้ยอดแล้วบันทึกอีกครั้ง',
   disbursement_total_overflow: 'ยอดรวมของใบเตรียมจ่ายสูงเกินกว่าที่บันทึกได้ ให้แบ่งรายการไปทำอีกใบ',
-  disbursement_version_conflict: 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาเปิดใหม่ก่อนบันทึก',
-  disbursement_not_draft: 'ใบนี้ไม่ใช่ฉบับร่าง จึงแก้ไขหรือลบไม่ได้ ให้เปิดใบเพื่อตรวจสถานะก่อน',
+  disbursement_version_conflict: 'ใบนี้ถูกแก้ไขจากที่อื่นแล้ว เปิดหน้านี้ใหม่ก่อนบันทึก',
+  disbursement_not_draft: 'ใบนี้ไม่ใช่ร่าง จึงแก้ไขหรือลบไม่ได้ ให้เปิดใบเพื่อตรวจสถานะก่อน',
   disbursement_numbered_delete: 'ใบที่มีเลขแล้วลบไม่ได้ ให้ใช้ยกเลิกแทน',
   disbursement_command_conflict: 'ข้อมูลไม่ตรงกับคำสั่งที่บันทึกไว้ ให้เปิดใบตรวจข้อมูล แล้วใช้คำสั่งใหม่ถ้าต้องการแก้ไข',
   disbursement_permission_denied: 'คุณยังไม่มีสิทธิ์ทำรายการนี้ ให้ผู้ดูแลร้านเพิ่มสิทธิ์ก่อนแล้วลองอีกครั้ง',
   disbursement_line_session_denied: DISBURSEMENT_VOUCHER_WORDS.webSignInRequired,
   disbursement_not_found: 'ไม่พบใบเตรียมจ่ายที่เปิดดูได้ ให้กลับไปหน้ารายการแล้วเลือกใบใหม่',
-  disbursement_status_changed: 'สถานะของใบนี้เปลี่ยนไปแล้ว กรุณาเปิดใหม่เพื่อดูสถานะล่าสุด',
-  disbursement_approver_ineligible: 'ผู้อนุมัติที่เลือกไม่มีสิทธิ์อนุมัติใบของสาขานี้แล้ว กรุณาเลือกใหม่',
-  disbursement_return_reason_required: 'กรุณาระบุเหตุผลที่ตีกลับ อย่างน้อย 3 ตัวอักษร',
-  disbursement_cancel_reason_required: 'กรุณาระบุเหตุผลที่ยกเลิก อย่างน้อย 3 ตัวอักษร',
-  disbursement_source_changed: 'รายการ {number} ถูกเปลี่ยนแปลงหลังส่งอนุมัติ ใบนี้จึงอนุมัติไม่ได้ กด "กลับไปแก้" เพื่อตรวจรายการใหม่ หรือยกเลิกใบนี้',
+  disbursement_status_changed: 'สถานะของใบนี้เปลี่ยนไปแล้ว เปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด',
+  disbursement_approver_ineligible: 'ผู้อนุมัติที่เลือกไม่มีสิทธิ์อนุมัติใบของสาขานี้แล้ว เลือกใหม่',
+  disbursement_return_reason_required: 'เหตุผลที่ส่งกลับให้แก้สั้นเกินไป กรอกอย่างน้อย 3 ตัวอักษร',
+  disbursement_cancel_reason_required: 'เหตุผลที่ยกเลิกสั้นเกินไป กรอกอย่างน้อย 3 ตัวอักษร',
+  disbursement_source_changed: DISBURSEMENT_SOURCE_CHANGED_RETURN_TEMPLATE,
   disbursement_payment_source_changed: DISBURSEMENT_VOUCHER_WORDS.paymentSourceChangedAskEditor,
-  disbursement_payment_key_conflict: 'พบรายการจ่ายของใบนี้อยู่แล้ว แต่ใบยังไม่แสดงว่าจ่ายแล้ว กรุณาเปิดใบนี้ใหม่และตรวจประวัติการจ่ายก่อนลองอีกครั้ง',
-  disbursement_payment_method_required: 'กรุณาเลือกวิธีจ่ายก่อนบันทึก',
+  disbursement_payment_key_conflict: 'พบรายการจ่ายของใบนี้อยู่แล้ว แต่ใบยังไม่แสดงว่าจ่ายแล้ว เปิดใบนี้ใหม่และตรวจประวัติการจ่ายก่อนลองอีกครั้ง',
+  disbursement_payment_method_required: 'เลือกวิธีจ่ายก่อนบันทึก',
   disbursement_payment_total_changed: 'ยอดรวมของใบไม่ตรงกับรายการที่อนุมัติ จึงบันทึกจ่ายไม่ได้ ให้ผู้จัดทำหรือผู้อนุมัติตรวจยอดก่อนส่งอนุมัติอีกครั้ง',
   disbursement_payee_changed: 'ข้อมูลผู้รับเงินของรายการเปลี่ยนไป ให้กลับไปแก้ใบและตรวจผู้รับเงินก่อนส่งอนุมัติ',
   disbursement_branch_changed: 'สาขาของรายจ่ายเปลี่ยนไป ให้กลับไปแก้ใบและตรวจสาขาของรายการก่อนส่งอนุมัติ',
@@ -134,7 +152,7 @@ export const DISBURSEMENT_VOUCHER_ERROR_WORDS = {
 } as const;
 export type DisbursementVoucherErrorCode = keyof typeof DISBURSEMENT_VOUCHER_ERROR_WORDS;
 export function disbursementVoucherError(code: DisbursementVoucherErrorCode, facts: Record<string, string> = {}) {
-  const template = code === 'disbursement_reminder_cooldown' && facts.name ? (facts.minutes === '0' ? DISBURSEMENT_REMINDER_COOLDOWN_TEMPLATE.replace('เมื่อ {minutes} นาทีที่แล้ว', 'เมื่อสักครู่') : DISBURSEMENT_REMINDER_COOLDOWN_TEMPLATE) : code === 'disbursement_payment_source_changed' && facts.mayWithdraw === 'true' ? DISBURSEMENT_VOUCHER_WORDS.paymentSourceChangedSelf : DISBURSEMENT_VOUCHER_ERROR_WORDS[code];
+  const template = code === 'disbursement_reminder_cooldown' && facts.name ? (facts.minutes === '0' ? DISBURSEMENT_REMINDER_COOLDOWN_TEMPLATE.replace('เมื่อ {minutes} นาทีที่แล้ว', 'เมื่อสักครู่') : DISBURSEMENT_REMINDER_COOLDOWN_TEMPLATE) : code === 'disbursement_payment_source_changed' && facts.mayWithdraw === 'true' ? DISBURSEMENT_VOUCHER_WORDS.paymentSourceChangedSelf : code === 'disbursement_source_changed' && facts.mayWithdraw === 'true' ? DISBURSEMENT_SOURCE_CHANGED_SELF_TEMPLATE : DISBURSEMENT_VOUCHER_ERROR_WORDS[code];
   const message = template.replace(/\{(\w+)\}/g, (_, key: string) => facts[key] ?? '');
   // Bare-code readers use the generic sentence; the command names the affected expense.
   return { code, message: code === 'disbursement_payment_source_changed' && facts.number ? message.replace('รายการในใบนี้', `รายการ ${facts.number} `) : message };
@@ -144,7 +162,7 @@ export type CreateDisbursementVoucherDraftInput = {
   commandId: string;
   lines: { expenseId: string; amount: string }[];
   payeeName?: string;
-  payeeBankName?: string; payeeAccountName?: string; payeeAccountNumber?: string;
+  payeeBankName?: string; payeeAccountName?: string; payeeAccountNumber?: string; payeeAccountFromVoucherId?: string;
   payeeConfirmed?: boolean;
   plannedPayDate?: string;
   plannedMethod?: ExpensePaymentMethod;
@@ -177,12 +195,14 @@ export type DisbursementVoucherHeader = {
   cancelledAfterPaid: boolean; cancelledByUserId: string | null; cancelledAt: string | null; cancelReason: string | null; cancelSourceReason: string | null;
   paidRecordedAt: string | null; paidByUserId: string | null; paidMethod: ExpensePaymentMethod | null; paidFromRef: string | null;
 };
-export type DisbursementVoucherListQuery = { q?: string; status?: DisbursementVoucherStatus; branchId?: string; page?: number; pageSize?: number };
-export type DisbursementVoucherListRow = Pick<DisbursementVoucherHeader, 'id' | 'documentNumber' | 'status' | 'origin' | 'payeeName' | 'plannedPayDate' | 'paidDate' | 'totalAmount'> & {
-  amountInEffect?: string | null; lineCount: number; preparerName: string | null; primaryAction: DisbursementVoucherPrimaryAction;
+export type DisbursementVoucherListQuery = { order?: 'newest' | 'oldest'; q?: string; status?: DisbursementVoucherStatus; branchId?: string; page?: number; pageSize?: number };
+export type DisbursementVoucherListRow = Pick<DisbursementVoucherHeader, 'id' | 'documentNumber' | 'status' | 'origin' | 'payeeName' | 'plannedPayDate' | 'paidDate' | 'totalAmount' | 'createdAt'> & {
+  canDelete: boolean; amountInEffect?: string | null; lineCount: number; primaryAction: DisbursementVoucherPrimaryAction;
 };
-export type DisbursementVoucherListPage = { data: DisbursementVoucherListRow[]; counts: Record<DisbursementVoucherStatus, number>; total: number; page: number; pageSize: number };
+export type DisbursementVoucherListPage = { data: DisbursementVoucherListRow[]; counts: Record<DisbursementVoucherStatus, number>; sums: Record<DisbursementVoucherStatus, string>; total: number; page: number; pageSize: number };
 export type DisbursementVoucherDetail = {
+  hasOwnSignature?: boolean;
+  supportingFiles?: DisbursementVoucherSupportingFile[];
   header: DisbursementVoucherHeader;
   slip: { attachmentId: string; attachedByUserId: string; attachedByName: string | null; attachedAt: string } | null;
   canAttachSlip: boolean;
@@ -191,8 +211,9 @@ export type DisbursementVoucherDetail = {
   reissuedVoucher: { id: string | null; documentNumber: string } | null; replacesVoucher: { id: string | null; documentNumber: string } | null;
   payeeConfirmerName: string | null;
   returnedByName: string | null; cancelledByName: string | null;
+  preparerActive?: boolean; senderActive?: boolean;
   preparerName: string | null; submittedByName: string | null; requestedApproverName: string | null; approvedByName: string | null; paidByName: string | null;
-  lines: (Pick<DisbursementPayableExpense, 'expenseId' | 'expenseNumber' | 'expenseDate' | 'vendorName' | 'vendorTaxId' | 'branchId' | 'grandTotalAmount' | 'whtAmount' | 'netPayableAmount' | 'outstandingAmount'> & { amount: string; position: number; expensePaymentId: string | null; paymentInEffect: boolean; description?: string | null;
+  lines: (Pick<DisbursementPayableExpense, 'expenseId' | 'expenseNumber' | 'expenseDate' | 'vendorName' | 'vendorTaxId' | 'branchId' | 'grandTotalAmount' | 'whtAmount' | 'netPayableAmount' | 'outstandingAmount'> & { amount: string; position: number; expensePaymentId: string | null; paymentInEffect: boolean; description?: string | null; vendorInvoiceNumber?: string | null;
     withholdingCertificate: { state: 'NONE' | 'PENDING' | 'SYSTEM_ISSUED' | 'EXTERNAL_LINKED'; number: string | null } })[];
   revisions: { revision: number; snapshotJson: unknown; snapshotHash: string; requestedApproverUserId: string | null; requestedApproverName: string | null; submittedByUserId: string; submittedByName: string | null; submittedAt: string; decision: DisbursementVoucherRevisionDecision | null; decidedByUserId: string | null; decidedByName: string | null; decidedAt: string | null; decisionReason: string | null;
     postApprovalAction: 'WITHDRAWN' | 'CANCELLED' | null; postApprovalByUserId: string | null; postApprovalByName: string | null; postApprovalAt: string | null; postApprovalReason: string | null }[];
@@ -201,7 +222,7 @@ export type DisbursementVoucherDetail = {
 export type DisbursementPayeeQuery = { search?: string; branchId?: string; page?: number; pageSize?: number };
 export type DisbursementPayeePage = { data: DisbursementPayee[]; total: number; page: number; pageSize: number };
 export type DisbursementPayableExpenseQuery = { payeeKey?: string; search?: string; branchId?: string };
-export type DisbursementExpenseReservation = { documentNumber: string | null; preparerName: string | null };
+export type DisbursementExpenseReservation = { voucherId?: string | null; documentNumber: string | null; preparerName: string | null };
 export type DisbursementPayableExpense = {
   payeeKey: string;
   payeeKeyKind: 'TAX_ID' | 'NAME' | null;
@@ -233,8 +254,8 @@ export const DISBURSEMENT_VOUCHER_NOTICE_WORDS = {
   payerBody: 'จ่ายเงินให้ {payee} ยอด {total} บาท แล้วบันทึกว่าจ่ายแล้วที่ใบนี้',
   approvedTitle: 'อนุมัติแล้ว รอจ่าย: ใบเตรียมจ่ายเลขที่ {number}',
   approvedBody: '{approver} อนุมัติแล้ว จ่ายเงินให้ {payee} ยอด {total} บาท แล้วบันทึกว่าจ่ายแล้วที่ใบนี้',
-  returnedTitle: 'ตีกลับ: ใบเตรียมจ่ายเลขที่ {number}',
-  returnedBody: '{approver} ตีกลับให้แก้ไข เหตุผล: {reason} แก้แล้วส่งใหม่ได้ด้วยเลขที่เดิม',
+  returnedTitle: 'ส่งกลับให้แก้: ใบเตรียมจ่ายเลขที่ {number}',
+  returnedBody: '{approver} ส่งกลับให้แก้ เหตุผล: {reason} แก้แล้วส่งใหม่ได้ด้วยเลขที่เดิม',
   withdrawnBody: '{actor} นำใบกลับไปแก้{reasonSuffix} แก้แล้วส่งใหม่ได้ด้วยเลขที่เดิม',
   paidTitle: 'จ่ายแล้ว: ใบสำคัญจ่ายเลขที่ {number}',
   paidBody: '{payer} บันทึกว่าจ่ายให้ {payee} ยอด {total} บาท เมื่อ {date} ใบนี้เป็นใบสำคัญจ่ายแล้ว',
@@ -255,3 +276,5 @@ export function disbursementVoucherPaymentAmount(original: string, lines: readon
   const total = lines.filter(line => line.paymentInEffect).reduce((sum, line) => sum + scaled(line.amount), 0n);
   return { amount: `${total / 10000n}.${String(total % 10000n).padStart(4, '0')}`, excludesCancelled: total !== scaled(original) };
 }
+
+export type DisbursementPayeeAccount = { bankName: string | null; accountName: string | null; last4: string; sourceVoucherId: string };

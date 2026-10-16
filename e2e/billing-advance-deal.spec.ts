@@ -88,7 +88,7 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
     });
 
     await page.goto(`/companies/${companyId}/billing`);
-    await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toContainText('เติบโต (BASIC)');
+    await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toContainText('เติบโต');
     await page.getByRole('button', { name: 'ดูข้อเสนอพิเศษสำหรับร้านคุณ', exact: true }).click();
     const dealCard = page.getByRole('region', { name: 'ข้อเสนอพิเศษสำหรับร้านคุณ', exact: true });
     await expect(dealCard).toBeVisible();
@@ -101,20 +101,20 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
     await expect(review.getByRole('region', { name: 'กำหนดการเริ่มดีลล่วงหน้า', exact: true })).toBeVisible();
     // R-A11: the quote names the address the documents already go to.
     await expect(review.getByLabel('ข้อมูลออกเอกสาร')).toContainText('owner@example.test');
-    const shownStart = await page.evaluate(value => new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }), startsAt);
-    const shownEnd = await page.evaluate(value => new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }), firstCycleEndsAt);
+    const shownStart = await page.evaluate(value => new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }), startsAt);
+    const shownEnd = await page.evaluate(value => new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }), firstCycleEndsAt);
     await expect(review).toContainText(`สิทธิ์ดีลตั้งแต่ ${shownStart}`);
     await expect(review).toContainText(shownEnd);
     await expect(review).toContainText(purchaseMode === 'PROMPTPAY_RENEW' ? 'ออกบิล QR รอบถัดไป' : 'เก็บเงินรอบถัดไป');
-    await expect(review).toContainText('สิทธิ์และโควตาของดีลจะเริ่มในวันเริ่มสิทธิ์ดีล');
-    await expect(review).not.toContainText('สิทธิ์หลังชำระสำเร็จ');
+    await expect(review).toContainText('สิทธิ์และจำนวนใบเสร็จของดีลจะเริ่มในวันเริ่มสิทธิ์ดีล');
+    await expect(review).not.toContainText('สิทธิ์หลังจ่ายสำเร็จ');
     expect(quotes).toEqual([
       { dealId: 'deal-advance-1', purchaseMode },
       { dealId: 'deal-advance-1', purchaseMode },
     ]);
 
-    await page.getByLabel('ฉันตรวจสอบข้อมูลและยืนยันเงื่อนไข', { exact: false }).check();
-    const checkout = page.getByRole('button', { name: 'ยืนยันและไปหน้าชำระเงิน', exact: true });
+    await page.getByRole('checkbox', { name: purchaseMode === 'CARD_AUTO' ? 'ยอมรับการตัดบัตรอัตโนมัติทุกเดือน' : 'ยอมรับการออกบิลพร้อมเพย์ทุกเดือน', exact: true }).check();
+    const checkout = page.getByRole('button', { name: 'ยืนยันซื้อและไปจ่ายเงิน', exact: true });
     await checkout.click();
     await expect(page.getByRole('alert').filter({ hasText: 'บริการที่จำเป็นยังไม่พร้อมใช้งาน' })).toBeVisible();
     await expect(checkout).toBeEnabled();
@@ -122,12 +122,12 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
 
     const pendingDeal = page.getByRole('status', { name: 'สถานะดีลล่วงหน้า', exact: true });
     await expect(pendingDeal).toBeVisible();
-    await expect(pendingDeal).toContainText('ชำระดีลแล้ว รอเริ่มสิทธิ์');
+    await expect(pendingDeal).toContainText('จ่ายดีลแล้ว รอเริ่มสิทธิ์');
     await expect(pendingDeal).toContainText(`สิทธิ์แพ็กเกจปัจจุบันยังใช้ได้ถึง ${shownStart}`);
     await expect(pendingDeal).toContainText(`งวดแรกสิ้นสุด ${shownEnd}`);
     await expect(pendingDeal).toContainText(purchaseMode === 'PROMPTPAY_RENEW' ? 'ออกบิล QR รอบถัดไป' : 'ตัดบัตรรอบถัดไป');
     let current = page.getByRole('region', { name: 'สถานะแพ็กเกจ', exact: true });
-    await expect(current).toContainText('เติบโต (BASIC)');
+    await expect(current).toContainText('เติบโต');
     await expect(current).toContainText(shownStart);
 
     expect(checkoutKeys).toHaveLength(2);
@@ -139,12 +139,12 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
     await page.reload();
     await expect(page.getByRole('status', { name: 'สถานะดีลล่วงหน้า', exact: true })).toContainText('กำลังยืนยันการต่ออายุ');
     current = page.getByRole('region', { name: 'สถานะแพ็กเกจ', exact: true });
-    await expect(current).toContainText('เติบโต (BASIC)');
+    await expect(current).toContainText('เติบโต');
     await expect(current).toContainText(shownStart);
 
     stage = 'active';
     await page.reload();
-    await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ', exact: true })).toContainText('มืออาชีพ (PRO)');
+    await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ', exact: true })).toContainText('มืออาชีพ');
     await expect(page.getByRole('status', { name: 'สถานะดีลล่วงหน้า', exact: true })).toHaveCount(0);
     await expect(page.getByText(purchaseMode === 'PROMPTPAY_RENEW' ? `ระบบจะออกบิล QR วันที่ ${shownEnd}` : `ต่ออายุอัตโนมัติวันที่ ${shownEnd}`, { exact: true })).toHaveCount(1);
     expect(checkoutKeys).toHaveLength(2); // page refreshes only read the paid attempt; they never submit it again

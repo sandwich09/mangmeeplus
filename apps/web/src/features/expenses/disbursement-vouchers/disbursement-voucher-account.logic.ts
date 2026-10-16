@@ -1,6 +1,6 @@
 import { DISBURSEMENT_VOUCHER_ERROR_WORDS } from '@watchdog-bms/contracts';
 import type { DisbursementVoucherHeader } from './disbursement-vouchers.model';
-export type DisbursementPayeeAccountFields = { payeeBankName: string; payeeAccountName: string; payeeAccountNumber: string; payeeAccountLast4: string | null; payeeAccountCleared: boolean };
+export type DisbursementPayeeAccountFields = { payeeBankName: string; payeeAccountName: string; payeeAccountNumber: string; payeeAccountLast4: string | null; payeeAccountCleared: boolean; payeeAccountFromVoucherId?: string };
 export const emptyDisbursementAccount: DisbursementPayeeAccountFields = { payeeBankName: '', payeeAccountName: '', payeeAccountNumber: '', payeeAccountLast4: null, payeeAccountCleared: false };
 const digits = (number: string) => number.replace(/[\s-]/g, '');
 export function initialDisbursementAccount(header: DisbursementVoucherHeader): DisbursementPayeeAccountFields {
@@ -11,12 +11,15 @@ export function disbursementAccountError(fields: DisbursementPayeeAccountFields)
   if (number && !/^\d{6,20}$/.test(number)) return DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_account_number_invalid;
   return (number || fields.payeeAccountLast4) && !fields.payeeBankName.trim() ? DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_account_bank_required : null;
 }
-export function disbursementAccountBody(fields: DisbursementPayeeAccountFields): { payeeBankName?: string; payeeAccountName?: string; payeeAccountNumber?: string } {
+export function disbursementAccountBody(fields: DisbursementPayeeAccountFields & { plannedMethod?: string }): { payeeBankName?: string; payeeAccountName?: string; payeeAccountNumber?: string; payeeAccountFromVoucherId?: string } {
+  if (fields.plannedMethod && fields.plannedMethod !== 'BANK_TRANSFER') return {};
   const number = digits(fields.payeeAccountNumber);
   if (!number && fields.payeeAccountCleared) return { payeeBankName: '', payeeAccountName: '', payeeAccountNumber: '' };
   if (!number && !fields.payeeBankName && !fields.payeeAccountName && !fields.payeeAccountLast4) return {};
-  return { payeeBankName: fields.payeeBankName.trim(), payeeAccountName: fields.payeeAccountName.trim(), ...(number ? { payeeAccountNumber: number } : {}) };
+  return { payeeBankName: fields.payeeBankName.trim(), payeeAccountName: fields.payeeAccountName.trim(), ...(number ? { payeeAccountNumber: number } : fields.payeeAccountFromVoucherId ? { payeeAccountFromVoucherId: fields.payeeAccountFromVoucherId } : {}) };
 }
-export function canRevealDisbursementAccount(permissions: readonly string[]): boolean {
-  return permissions.includes('expense.disbursement.approve') || permissions.includes('expense.disbursement.pay');
+export function canRevealDisbursementAccount(permissions: readonly string[], status?: string, prefill = false): boolean {
+  return prefill ? permissions.includes('expense.disbursement.prepare')
+    : permissions.includes('expense.disbursement.approve') || permissions.includes('expense.disbursement.pay')
+      || status === 'DRAFT' && permissions.includes('expense.disbursement.prepare');
 }
