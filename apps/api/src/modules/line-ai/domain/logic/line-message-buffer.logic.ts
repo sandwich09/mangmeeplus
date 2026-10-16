@@ -15,7 +15,12 @@ export type LineBufferTextItem = {
   replyToken: string;
   text: string;
   /** Exact draft preview targeted by a validated LINE postback. */
+  quotedMessageId?: string;
+  counterpartyControl?: import('../../application/line-counterparty.service').CounterpartyControl;
+  packagePurchaseControl?: import('../../application/line-package-purchase.service').PackagePurchaseControl;
+  expenseActionControl?: import('../../application/line-expense-action.service').ExpenseActionControl;
   draftUpdatePreviewId?: string;
+  reimbursementChoiceControl?: import('../../application/line-reimbursement-draft.service').LineReimbursementChoiceControl;
   reimbursementDraftControl?: import('../../application/line-reimbursement-draft.service').LineReimbursementDraftControl;
   answerDeliveryControl?: import('./line-delivery-plan.logic').LineAnswerDeliveryControl;
   /** Frozen, API-owned coalesced input restored only by durable recovery. */

@@ -638,6 +638,7 @@ function makePolicyPrisma(input: {
 } = {}) {
   let row: any = input.row === undefined || input.row === null ? null : { ...BASE_ROW, ...input.row };
   const audits: any[] = [];
+  const bucketQueries: any[] = [];
   const lockOrder: string[] = [];
   const tx = {
     $executeRaw: async (_sql: TemplateStringsArray, key: string) => { lockOrder.push(key); },
@@ -645,7 +646,7 @@ function makePolicyPrisma(input: {
     company: { findUnique: async () => ({ id: 'co-1', status: input.status ?? 'ACTIVE' }) },
     platformAiBudgetConfig: { findUnique: async () => input.platform ?? null },
     companyAiMonthlyUsage: { findUnique: async () => input.monthUsage ?? null },
-    aiUsageEvent: { groupBy: async () => input.bucketSpend ?? [] },
+    aiUsageEvent: { groupBy: async (args: any) => { bucketQueries.push(args); return input.bucketSpend ?? []; } },
     companyAiConfiguration: {
       findUnique: async () => row,
       update: async ({ data }: any) => { row = applyData(row, data); return row; },
@@ -657,7 +658,7 @@ function makePolicyPrisma(input: {
     auditLog: { create: async ({ data }: any) => { audits.push(data); return data; } },
   };
   return {
-    audits, lockOrder,
+    audits, lockOrder, bucketQueries,
     row: () => row,
     prisma: {
       client: {
@@ -850,6 +851,8 @@ describe('SetPartnerAiModelUseCase — split budget policy', () => {
     const raised = makePolicyPrisma({ row: splitRow, bucketSpend: spend });
     await run(raised, { budgetPolicy: split({ chatMonthlyBudgetSatang: 25, ocrMonthlyBudgetSatang: 75, effectiveMonthKey: THIS_MONTH }), expectedBudgetRevision: revision });
     assert.deepEqual([raised.row().chatMonthlyBudgetSatang, raised.row().ocrMonthlyBudgetSatang], [25, 75]);
+    assert.deepEqual(raised.bucketQueries[0].where.OR, [{ usageBasis: null }, { usageBasis: { not: 'COMPANY_ABSORBED' } }],
+      'company-only cost must never prevent a customer cap change');
   });
 
   it('writes the whole policy before/after into the CRITICAL audit row, and the history renders it', async () => {

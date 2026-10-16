@@ -14,7 +14,16 @@
 // storage must agree with the vendor matcher on what a branch code is, or the same shop matches
 // under one path and misses under the other. (Cross-module domain import, same direction the
 // expenses DTOs already take.)
+import { mapThaiDigits } from '@watchdog-bms/contracts';
 import { normalizeBranchCode } from '../../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
+
+/** Printed branch designations share the stored five-digit code; absent evidence stays absent. */
+export function expenseVendorBranchCodeFromPrint(value: string | null | undefined): string | null {
+  const printed = mapThaiDigits(value ?? '').trim();
+  if (/^(?:สำนักงานใหญ่|สนญ\.?|H\.?O\.?|HQ|head\s*office)$/i.test(printed)) return normalizeBranchCode('00000');
+  const digits = printed.match(/^(?:(?:สาขา(?:ที่)?|branch)\s*)?(\d{1,5})$/i)?.[1];
+  return digits ? normalizeBranchCode(digits.padStart(5, '0')) : null;
+}
 
 /** Vendor address spec §6: the column is VARCHAR(500). §8 says an over-long address is refused with
  *  a way forward ("ตัดให้สั้นลง"), never silently truncated — the tail of an address is evidence. */

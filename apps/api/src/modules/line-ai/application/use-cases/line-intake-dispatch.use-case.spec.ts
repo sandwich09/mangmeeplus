@@ -11,7 +11,7 @@ import { resolveTransactionBranchId } from '../../../data-model-core/application
 import { chatKeyHashOf, lineClarificationContentHash, lineIntakeRouterReason, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting, isUtilityBillSaveRequest } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { receiptStatusQuestion, receiptProgressLabel } from '../../domain/logic/line-receipt-status.logic';
-import { createLineAiInputEvidence, type BusinessDocumentClassification, type LineIntakeRoutePlan } from '@watchdog-bms/contracts';
+import { createLineAiInputEvidence, parseLineAiSemanticSubrequests, type BusinessDocumentClassification, type LineIntakeRoutePlan } from '@watchdog-bms/contracts';
 import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 
@@ -744,7 +744,8 @@ function makeHarness(opts: {
     } as any,
   );
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
-  if (opts.boundV2) (useCase as any).contextV2 = { admit: async () => ({ id: 'line-v2:conversation-1', lifecycleEpoch: 0 }) };
+  if (opts.boundV2) (useCase as any).contextV2 = { admit: async () => ({ id: 'line-v2:conversation-1', lifecycleEpoch: 0 }),
+    projection: async () => ({ version: 2, stateVersion: 0, lifecycleEpoch: 0, expiresAtMs: Date.now() + 60_000, tasks: [] }) };
   // Historical unit scenarios seed an original question at harness construction. Actual two-turn
   // tests carry the producer's exact sourceContext and must never mint a replacement on read.
   const waitingFixture = (opts.openWaiting ?? []).map(item => ({ ...item, entry: { ...item.entry } }));
@@ -884,7 +885,7 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
 
     await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ยอดผิด' });
 
-    assert.match(h.replies[0] ?? '', /ส่งต่อผู้มีสิทธิ์แก้ไข/);
+    assert.match(h.replies[0] ?? '', /เจ้าของกิจการหรือผู้มีสิทธิ์แก้ไขรายจ่าย/);
     assert.equal(/เปิดแก้ไขในเว็บแอป/.test(h.replies[0] ?? ''), false);
   });
 
@@ -1025,7 +1026,7 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
     assert.equal(evidence[1].todayIso, '2026-08-03');
   });
 
-  it('refuses the correction route without capture permission', async () => {
+  it('names who can edit when the caller has no edit permission', async () => {
     const h = makeHarness({
       permissions: ['line.ai.query'],
       routePlan: CORRECTION_PLAN,
@@ -1035,7 +1036,7 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
     await h.useCase.execute({ ...TEXT_EVENT, messageText: 'แก้ยอด' });
 
     assert.equal(h.captured.length, 0);
-    assert.match(h.replies[0] ?? '', /ไม่มีสิทธิ์อัปโหลด/);
+    assert.match(h.replies[0] ?? '', /เจ้าของกิจการหรือผู้มีสิทธิ์แก้ไขรายจ่าย/);
   });
 });
 
@@ -1057,7 +1058,7 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(h.routeRequests.length, 0);
     assert.match(h.replies[0] ?? '', /ยอดขายวันนี้เท่าไหร่/);
     assert.match(h.replies[0] ?? '', /ส่งรูปใบเสร็จ/);
-    assert.match(h.replies[0] ?? '', /ขั้นสุดท้ายยังทำในเว็บ/);
+    assert.match(h.replies[0] ?? '', /เตรียมการ์ดให้กดยืนยันเองค่ะ/);
   });
 
   it('follow-up examples name only what this caller can reach', async () => {
@@ -1159,7 +1160,10 @@ describe('LINE intake dispatch – text path', () => {
 
     assert.equal(h.routeRequests.length, 0);
     assert.match(h.replies[0] ?? '', /มากกว่า 1 รายการ/);
-    assert.match(h.replies[0] ?? '', /1\).*100\.00[\s\S]*2\).*100\.00/);
+    assert.doesNotMatch(h.replies[0] ?? '', /[12]\)/);
+    const choices = (h.sentMessages[0]?.[0] as any)?.quickReply?.items;
+    assert.equal(choices.length, 2);
+    assert.ok(choices.every((item: any) => item.action.text.includes('100.00')));
   });
 
   it('a concurrent duplicate event-log claim processes exactly one turn', async () => {
@@ -1592,7 +1596,7 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(captureLedger[0]?.items?.[0]?.clarifyQuestion, h.replies[0]);
   });
 
-  it('unlocks businessPurpose completeness only behind the semantic primary guard', async () => {
+  it('confirms a business-expense route independently of reimbursement rollout mode', async () => {
     const routePlan: LineIntakeRoutePlan = {
       status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97,
       captureHints: { amount: '60', businessPurpose: 'ไปพบลูกค้า' },
@@ -1606,10 +1610,10 @@ describe('LINE intake dispatch – text path', () => {
     await guarded.useCase.execute(message);
     assert.equal(guarded.captured[0]?.semanticBusinessExpenseConfirmed, true);
 
-    // Same plan, semantic mode off: the completeness expansion can never ship on its own.
+    // A verified route remains authoritative when reimbursement semantic routing is off.
     const ungated = makeHarness({ permissions: ['expense.receipt.line_upload'], routePlan });
     await ungated.useCase.execute(message);
-    assert.equal(ungated.captured[0]?.semanticBusinessExpenseConfirmed, false);
+    assert.equal(ungated.captured[0]?.semanticBusinessExpenseConfirmed, true);
   });
 
   it('handles a substitute-receipt request through typed preflight before any model or final mutation', async () => {
@@ -1915,7 +1919,7 @@ describe('LINE intake dispatch – text path', () => {
 
     assert.match(h.replies[0] ?? '', /turn-answer/);
     assert.match(h.replies[0] ?? '', /รูปที่รอจำแนกยังเก็บไว้อยู่/);
-    assert.match(h.replies[0] ?? '', /3\) สรุปหลายรายการ/);
+    assert.match(h.replies[0] ?? '', /สรุปหลายรายการ/);
     assert.equal(pendingMediaRows[0].status, 'PENDING');
     assert.equal(h.routeRequests[0].openClarifications, undefined, 'the side-question model never receives pending media as an instruction');
   });
@@ -2463,7 +2467,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.completeCalls.length, 0);
     assert.equal(recordUpdates.length, 0);
     assert.equal(pendingMediaRows.length, 1);
-    assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
+    assert.match(h.replies[0] ?? '', /ใบเสร็จ[\s\S]*ภาพประกอบ/);
   });
 
   it('leaves a transient media-download failure reclaimable instead of terminal', async () => {
@@ -2595,7 +2599,7 @@ describe('LINE intake dispatch – media path', () => {
       assert.equal(h.captureState.groups.length, 0, 'the group lane is withdrawn');
       assert.match(h.replies[0] ?? '', scenario.expected);
       if (preservesMultiple) {
-        assert.match(h.replies[0] ?? '', /ตอบ 3 .*ส่งเอกสารแยกทีละภาพ/);
+        assert.match(h.replies[0] ?? '', /เลือกเก็บรูป.*ส่งเอกสารแยกทีละภาพ/);
         assert.doesNotMatch(h.replies[0] ?? '', /รูปนี้เป็นอะไร/);
         assert.equal(pendingMediaRows[0].askedQuestionJson.detectedMultiDocument, true);
       }
@@ -2864,7 +2868,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.completeCalls.length, 0);
     assert.equal(recordUpdates.length, 0);
     assert.equal(pendingMediaRows.length, 1);
-    assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
+    assert.match(h.replies[0] ?? '', /ใบเสร็จ[\s\S]*ภาพประกอบ/);
   });
 
   it('mutation request with media is refused with web guidance and remembered as refused', async () => {
@@ -3079,8 +3083,9 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
     const card = readLineSystemCard(reply);
     assert.deepEqual(card.header, ['ข้อมูลใบเสร็จ', 'รอตรวจสอบ']);
     assert.ok(card.texts.every((text) => !/https?:\/\//u.test(text)), 'no raw link in any text of the card');
-    assert.equal(card.actions.length, 1);
-    assert.match(card.actions[0]!.uri ?? '', /expense-1/u, 'the draft link rides on the button');
+    assert.equal(card.actions.length, 2);
+    assert.deepEqual(card.actions[0], { type: 'message', label: 'ยืนยันรายการ', text: 'ยืนยันรายการนี้' });
+    assert.match(card.actions[1]!.uri ?? '', /expense-1/u, 'the draft link remains secondary to chat confirmation');
     assert.match(reply.canonicalText, /^🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว \(รอตรวจสอบ\)[\s\S]*\/companies\/company-1\/expenses\/expense-1$/u,
       'the reply that was sent before is the card\'s canonical text and its fallback');
   });
@@ -3098,7 +3103,7 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
       evidenceRoles: [], amountSignals: [], settlementSignals: [] } as any);
     const open = { handled: true, status: 'OPEN', expenseId: 'expense-1', acceptedFields: [], blockers: [], replyText: '' } as const;
     for (const [name, opts, outcome, sentence, quick] of [
-      ['several documents in one picture', { permissions: CAPTURE, receiptOcrResult: UNCLEAR_READ }, 'ขอข้อมูลเพิ่ม', /รูปนี้เป็นอะไรคะ|มากกว่า 1/u, false],
+      ['several documents in one picture', { permissions: CAPTURE, receiptOcrResult: UNCLEAR_READ }, 'ขอข้อมูลเพิ่ม', /รูปนี้เป็นอะไรคะ|มากกว่า 1/u, true],
       ['a check bill', { permissions: CAPTURE, routePlan: RECEIPT_ROUTE, substituteResult: open,
         receiptOcrResult: { status: 'ok', classification: checkBill, fields: { grandTotalAmount: '1,712.54' } } }, 'ขอข้อมูลเพิ่ม', /จ่ายเงินแล้วหรือยังคะ/u, true],
       ['an order with no amount', { permissions: CAPTURE, routePlan: RECEIPT_ROUTE, substituteResult: open,
@@ -3169,6 +3174,7 @@ describe('LINE intake dispatch – a bound (v2) chat answers open work in produc
     flow.contextV2 = {
       admit: async () => ({ id: 'line-v2:conversation-1', lifecycleEpoch: 0 }),
       projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 0, expiresAtMs: Date.now() + 60_000, tasks }),
+      createTurn: async (_owner: unknown, _epoch: number, data: any) => flow.prisma.client.aiTurn.create({ data }),
       save: async (_owner: unknown, _version: number, _epoch: number, state: unknown) => { saved.push(state); return true; },
     };
     flow.prepareTextGrantV2 = async (accepted: object) => { flow.budgetGrantsV2.set(accepted, GRANT); return GRANT; };
@@ -3180,6 +3186,54 @@ describe('LINE intake dispatch – a bound (v2) chat answers open work in produc
     await h.useCase.execute(event);
     return { event, saved };
   }
+
+  it('X2: a discarded draft continuation keeps evidenceRefs valid for the real turn contract', async () => {
+    const h = makeHarness({ permissions: CAPTURE, boundV2: true, expenseDraftConversation: {
+      routeContexts: async () => [ACTIVE_DRAFT], answersOpenDraft: async () => false,
+    } });
+    const flow = h.useCase as any;
+    flow.aiGateway.requestLineIntakeRoute = async (req: any) => {
+      const part = req.inputEvidence.parts[0];
+      return { status: 'ROUTED', intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.82,
+        semanticSubrequests: [{ index: 0, kind: 'write', writeIntent: 'EXPENSE_DRAFT_CONTINUATION', goal: req.messageText,
+          requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [{ partId: part.partId,
+            rawSha256: part.rawSha256, startUtf16: 0, endUtf16: part.rawText.length }] }] };
+    };
+    await boundText(h, 'จ่ายแล้วนะ', 'fx5-contract-payment');
+    assert.equal(h.turnRequests.length, 1);
+    const request = h.turnRequests[0];
+    assert.equal(request.semanticSubrequests[0].kind, 'general');
+    assert.equal(request.semanticSubrequests[0].writeIntent, undefined);
+    assert.ok(request.semanticSubrequests[0].evidenceRefs.length);
+    assert.ok(parseLineAiSemanticSubrequests(request.semanticSubrequests, request.messageText, request.inputEvidence));
+  });
+
+  it('X2: explicit payment messages prepare an expense action before the router or evidence-link lane', async () => {
+    for (const messageText of ['จ่ายแล้ว', 'โอนแล้ว', 'บันทึกจ่าย']) {
+      const h = makeHarness({ permissions: [...CAPTURE, 'expense.payment.record'], boundV2: true,
+        recentCaptures: [{ id: 'receipt-1', sourceDocumentType: 'ABBREVIATED_TAX_INVOICE', expenseDate: new Date(), grandTotalAmount: '500.80', createdAt: new Date() },
+          { id: 'slip-1', sourceDocumentType: 'TRANSFER_SLIP', expenseDate: new Date(), grandTotalAmount: '500.80', createdAt: new Date() }] });
+      const flow = h.useCase as any, calls: any[] = [], messages: any[] = [];
+      flow.expenseActions = { preview: async (ctx: any, chat: string, input: any) => { calls.push({ ctx, chat, input }); return { reply: 'เตรียมบัตรบันทึกจ่ายค่ะ' }; },
+        repairChoices: async () => null };
+      flow.deliverRequiredMessages = async (_event: any, sent: any[]) => { messages.push(...sent); };
+      await boundText(h, messageText, `fx5-payment-${messageText.length}`);
+      assert.equal(calls.length, 1); assert.deepEqual(calls[0].input, { action: 'RECORD_PAYMENT', expenseId: 'receipt-1' });
+      assert.equal(calls[0].ctx.authProvider, 'line'); assert.equal(calls[0].ctx.companyId, 'company-1');
+      assert.equal(calls[0].chat, chatKeyHashOf(TEXT_EVENT));
+      assert.equal(h.routeRequests.length, 0); assert.equal(h.turnRequests.length, 0); assert.equal(h.correctionCalls.length, 0);
+      assert.match(JSON.stringify(messages), /เตรียมบัตรบันทึกจ่ายค่ะ/u);
+    }
+  });
+
+  it('X2: correction labels use Thai document types and never echo an unknown enum', async () => {
+    for (const [kind, label] of [['ABBREVIATED_TAX_INVOICE', 'ใบกำกับภาษีอย่างย่อ'], ['FUTURE_INTERNAL_KIND', 'เอกสารค่าใช้จ่าย']]) {
+      const h = makeHarness({ permissions: CAPTURE, recentCaptures: [{ id: 'receipt-1', sourceDocumentType: kind!, expenseDate: new Date(), grandTotalAmount: '500.80', createdAt: new Date() }] });
+      const candidates = await (h.useCase as any).loadCorrectionCandidates('company-1', 'user-1', chatKeyHashOf(TEXT_EVENT), {});
+      assert.match(candidates[0].label, new RegExp(label!, 'u'));
+      assert.equal(candidates[0].label.includes(kind), false);
+    }
+  });
 
   for (const answer of ['1', 'ใบเสร็จค่ะ']) {
     it(`"${answer}" answering the photo question drafts the stored photo before any route (RECEIPT-05)`, async () => {
@@ -3283,7 +3337,8 @@ describe('LINE intake dispatch – a bound (v2) chat answers open work in produc
     const [choices] = await flow.remainingTaskChoiceMessages(offered);
     const items = choices.quickReply.items;
     assert.equal(items.length, 1);
-    assert.equal(items[0].action.text, items[0].action.label, 'a tap sends exactly the words on the button');
+    assert.equal(items[0].action.label, 'บันทึกค่าแท็กซี่', 'the button names the work');
+    assert.equal(items[0].action.text, 'ทำรายการ 1 ต่อ', 'the tap selects that exact retained clause');
     assert.doesNotMatch(JSON.stringify(choices), /task-7f3a9c|\/task/u);
 
     // Tapping it maps the words back to that clause's retained source.
@@ -3352,7 +3407,7 @@ describe('LINE intake dispatch – buffered caption (message buffering spec §8)
     assert.equal(pendingMediaRows[0].lineMessageId, 'msg-media-1');
     assert.equal(recordUpdates.length, 0, 'no expense draft created');
     assert.equal(h.createExpenseCalls.length, 0);
-    assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
+    assert.match(h.replies[0] ?? '', /ใบเสร็จ[\s\S]*ภาพประกอบ/);
     const statuses = updates.map((u: any) => u.data?.status);
     assert.ok(statuses.includes('clarification_required'),
       `expected clarification_required, got ${statuses.join(',')}`);
@@ -3473,7 +3528,7 @@ describe('LINE intake dispatch – RECEIPT-05 media-clarify follow-up', () => {
         handled: true, status: 'BLOCKED', workflowId: 'workflow-1', expenseId: 'expense-clarified-1',
         acceptedFields: [], blockers: [{ code: 'supporting_evidence_required' }],
         pendingQuestion: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?',
-        replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nLINE ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร\nเปิดตรวจสอบในเว็บ: /opaque-workflow',
+        replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nลงนามและอนุมัติทำในเว็บค่ะ เตรียมใบรับรองเสร็จแล้วน้องจะส่งลิงก์ให้\nเปิดตรวจสอบในเว็บ: /opaque-workflow',
       },
     });
 
@@ -3489,7 +3544,7 @@ describe('LINE intake dispatch – RECEIPT-05 media-clarify follow-up', () => {
     assert.equal(h.substituteCalls[0].recentCandidates[0].id, 'expense-clarified-1');
     assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
     assert.match(h.replies[0] ?? '', /ใบรับรองแทนใบเสร็จรับเงิน/);
-    assert.match(h.replies[0] ?? '', /ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร/);
+    assert.match(h.replies[0] ?? '', /ลงนามและอนุมัติทำในเว็บค่ะ เตรียมใบรับรองเสร็จแล้วน้องจะส่งลิงก์ให้/);
     assert.equal(captureLedger.length, 1, 'only the unresolved substitute question remains in the ledger');
   });
 
@@ -6090,7 +6145,22 @@ describe('LINE capture answers and §17.5 status questions', () => {
     } finally { restore(); }
     await h.useCase.execute({ ...answer('ไฟล์เมื่อกี้ส่งไม่ได้'), webhookEventId: 'evt-status-many' });
     assert.match(h.replies.at(-1) ?? '', /หมายถึงไฟล์ไหนคะ/);
-    assert.match(h.replies.at(-1) ?? '', /1\) ไฟล์ /);
-    assert.match(h.replies.at(-1) ?? '', /2\) ไฟล์ /);
+    assert.match(h.replies.at(-1) ?? '', /• ไฟล์ /);
+    assert.match(h.replies.at(-1) ?? '', /• ไฟล์ /);
   });
+});
+
+it('7B W2: explicit no-more-evidence bypasses semantic-task persistence for one authoritative open substitute', async () => {
+  const h = makeHarness({ permissions: ['expense.review', 'line.ai.query'], substituteResult: {
+    handled: true, status: 'BLOCKED', expenseId: 'expense-1', acceptedFields: ['evidenceNone'],
+    blockers: [{ code: 'payment_evidence_required', collectableInLine: false }], pendingQuestion: 'ส่งรูปสลิปเข้ามาได้เลยค่ะ',
+    replyText: 'รับทราบว่าไม่มีหลักฐานอื่นค่ะ ยังรอสลิปของรายการนี้',
+  } });
+  const flow = h.useCase as any;
+  flow.config.lineAiSubstituteSemanticRoutingMode = 'primary';
+  flow.substituteReceiptContinuation.substituteContext = async () => ({ workflowState: 'open', hasPendingQuestion: true, preparedState: 'in_progress', recentCandidateCount: 0 });
+  flow.preserveSemanticTask = async () => assert.fail('a direct evidence answer does not need a model-owned task');
+  await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ไม่มีหลักฐานอื่น' });
+  assert.equal(h.routeRequests.length, 0); assert.equal(h.substituteCalls.length, 1);
+  assert.equal(h.substituteCalls[0].messageText, 'ไม่มีหลักฐานอื่น'); assert.match(h.replies.join('\n'), /รับทราบว่าไม่มีหลักฐานอื่น/);
 });

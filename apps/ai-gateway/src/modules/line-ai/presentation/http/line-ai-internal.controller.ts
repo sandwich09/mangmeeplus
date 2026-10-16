@@ -5,6 +5,9 @@
 import { Controller, Get, Post, Body, Headers, BadRequestException, HttpCode, Inject, Logger, UseInterceptors } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import sharp from 'sharp';
+import { extractJson } from '../../../../common/ai/extract-json';
+export { receiptIssuerText } from '../../domain/logic/expense-capture-read.logic';
+import { prepareDocumentImage, isLandscapeDocument, readWithTimeoutRetry } from '../../domain/logic/document-media.logic';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
 import { providerErrorEnvelope } from '../../../../common/usage/ai-budget-provider';
 import { currentBudgetState } from '../../../../common/usage/usage-context';
@@ -22,11 +25,11 @@ import {
   MAX_CAPTURE_PAGE_TEXT_CHARS,
   captureReadPrompt,
   parseCaptureNaturalText,
-  parseCaptureObservationsJson,
+  receiptIssuerText, parseCaptureObservationsJson,
   parseCaptureReadPages,
   parseCategorySuggestion,
 } from '../../domain/logic/expense-capture-read.logic';
-import { AI_DOCUMENT_OCR_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, lineAiRetainedTaskSourceMatchesProjection, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, parseAiBudgetGrantV2, parseLineAiTaskProjection, parseLineAiPublicGeneralRequest, verifyLineAiInputEvidence, verifyLineAiRetainedTaskSource, verifyLineAiValueCandidatesV2, type AiBudgetScope, type AiModelLineage, type BusinessDocumentClassification, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiPublicGeneralRequest, type LineAiPublicGeneralResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeOnePassReceipt, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrFallbackReason, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
+import { AI_DOCUMENT_OCR_TIMEOUT_MS, AI_DOCUMENT_PAGE_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, lineAiRetainedTaskSourceMatchesProjection, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, parseAiBudgetGrantV2, parseLineAiTaskProjection, parseLineAiPublicGeneralRequest, verifyLineAiInputEvidence, verifyLineAiRetainedTaskSource, verifyLineAiValueCandidatesV2, type AiBudgetScope, type AiModelLineage, type BusinessDocumentClassification, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiPublicGeneralRequest, type LineAiPublicGeneralResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeOnePassReceipt, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrFallbackReason, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
 // JSON bodies on these routes carry base64 media and need main.ts's 16mb parser
 // (UPLOAD_MAX_BYTES 10MB inflates to ~13.7MB in base64); every other route stays at
@@ -53,11 +56,11 @@ const LINE_TEXT_INTAKE_TIMEOUT_MS = 25_000;
 /** A forwarded intake read must look like a page, not a caption; and must fit the same budget a
  *  fresh read would produce. Outside this band the route reads the image itself. */
 const MIN_FORWARDED_DOCUMENT_TEXT_CHARS = 24;
-const MAX_FORWARDED_DOCUMENT_TEXT_CHARS = 12_000;
+const MAX_FORWARDED_DOCUMENT_TEXT_CHARS = 20_000;
 const MAX_RECEIPT_CATEGORY_CATALOGUE = 100;
-// Long enough for a full restaurant or grocery bill; past this the item block is a catalogue, not
-// an expense document, and the summary line is the honest answer.
-const MAX_RECEIPT_OCR_LINES = 40;
+// Admission ceiling, not a promise that every 200-row response fits the token budget below.
+// max_tokens remains an explicit failure; never silently accept a truncated item block.
+const MAX_RECEIPT_OCR_LINES = 200;
 const RECEIPT_EXTRACTION_MAX_TOKENS = 8192;
 const ONE_PASS_MIN_CONFIDENCE = 0.9;
 const ONE_PASS_MAX_LINES = 20;
@@ -269,22 +272,10 @@ function moneyMinorUnits(value: string | undefined): bigint | null {
 }
 
 function sameUsableTotal(first: ReceiptUnderstanding, second: ReceiptUnderstanding): boolean {
-  if (!first.ok || !second.ok || !hasUsableTotal(first) || !hasUsableTotal(second)) return false;
+  if (!first.ok || !second.ok || !hasUsableTotal(second)) return false;
   const firstTotal = moneyMinorUnits(first.fields?.grandTotalAmount);
   const secondTotal = moneyMinorUnits(second.fields?.grandTotalAmount);
   return firstTotal !== null && secondTotal === firstTotal;
-}
-
-function withRecoveredPrintedVat(
-  first: Extract<ReceiptUnderstanding, { ok: true }>,
-  second: Extract<ReceiptUnderstanding, { ok: true }>,
-): Extract<ReceiptUnderstanding, { ok: true }> {
-  const fields = { ...first.fields, vatAmount: second.fields!.vatAmount! };
-  if (fields.missingFields) {
-    fields.missingFields = fields.missingFields.filter((field) => field !== 'vatAmount');
-    if (fields.missingFields.length === 0) delete fields.missingFields;
-  }
-  return { ...first, fields };
 }
 
 /** A model candidate never earns trust by naming itself high-confidence. Re-run the existing
@@ -551,8 +542,15 @@ export class LineAiInternalController {
     // document budget every other reader in this file uses; text-only intake has its own budget
     // (LINE_TEXT_INTAKE_TIMEOUT_MS, UAT 2026-09-29).
     const hasAttachment = (body.attachments?.length ?? 0) > 0;
+    let intakeTimeoutMs = hasAttachment ? DOCUMENT_OCR_TIMEOUT_MS : LINE_TEXT_INTAKE_TIMEOUT_MS;
+    body.attachments = await Promise.all((body.attachments ?? []).map(async attachment => {
+      if (!attachment.contentBase64 || (attachment.mimeType !== 'image/jpeg' && attachment.mimeType !== 'image/png')) return attachment;
+      const image = await prepareDocumentImage({ mimeType: attachment.mimeType, contentBase64: attachment.contentBase64 });
+      intakeTimeoutMs = Math.max(intakeTimeoutMs, image.timeoutMs);
+      return { ...attachment, mimeType: image.mimeType, contentBase64: image.contentBase64 };
+    }));
     const router = new IntentRouterAgent(
-      createProvider(this.config, { timeoutMs: hasAttachment ? DOCUMENT_OCR_TIMEOUT_MS : LINE_TEXT_INTAKE_TIMEOUT_MS }),
+      createProvider(this.config, { timeoutMs: intakeTimeoutMs }),
       // Owner 2026-09-29: draft edit, approved knowledge and the approved prepared families are always on —
       // no environment value can switch or narrow them (a stale AgentCore env did, UAT 2026-09-29).
       true,
@@ -561,7 +559,8 @@ export class LineAiInternalController {
       [...APPROVED_PREPARED_FAMILY_KEYS],
     );
     const routeStartedAt = Date.now();
-    const routed = await router.routeIntake(body);
+    let routed = await router.routeIntake(body);
+    if (hasAttachment && routed.errorCode === 'PROVIDER_TIMEOUT') routed = await router.routeIntake(body);
     const routeMs = Date.now() - routeStartedAt;
     const { receiptCandidate, ...plan } = routed;
     const onePassDecision = assessIntakeOnePassReceipt(
@@ -609,29 +608,33 @@ export class LineAiInternalController {
     if (!body?.requestId || !body.companyId || !body.userId || !body.attachment?.contentBase64) {
       throw new BadRequestException('Invalid receipt OCR payload.');
     }
-    const mimeType = body.attachment.mimeType;
+    let mimeType = body.attachment.mimeType;
     if (mimeType !== 'image/jpeg' && mimeType !== 'image/png' && mimeType !== 'application/pdf') {
       return { status: 'failed', errorCode: 'UNSUPPORTED_MIME_TYPE' };
     }
 
     // Stage 1 (reading): emit the verbatim document markdown that stage 2 must select its
     // values from — the §13 cross-check below is only meaningful against real read text.
-    const isPdf = mimeType === 'application/pdf';
+    if (mimeType === 'application/pdf') return { status: 'failed', errorCode: 'PDF_CAPTURE_REQUIRED' };
+    const isPdf = false;
+    const image = await prepareDocumentImage({ mimeType, contentBase64: body.attachment.contentBase64 });
+    mimeType = image.mimeType;
+    body.attachment = { ...body.attachment, mimeType, contentBase64: image.contentBase64 };
     const readerModelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
     // The intake router reads the very same photo to classify it, so when it hands that read back
     // this route skips its own (UAT 2026-08-28: 12.8s of intake followed by a 16.6s re-read of the
     // identical image). Stage 2 and the §13 cross-check are unchanged — they simply run against a
     // read that already happened. Anything missing or too short to be a page falls back.
     const forwardedText = typeof body.documentText === 'string' ? body.documentText.trim() : '';
-    const alternate = isPdf ? null : await receiptRereadImage(mimeType, body.attachment.contentBase64);
+    const alternate = isPdf ? null : await receiptRereadImage(mimeType, image.contentBase64);
     const hasAlternateView = alternate?.contentBase64 !== undefined && alternate.contentBase64 !== body.attachment.contentBase64;
     const reusedRead = forwardedText.length >= MIN_FORWARDED_DOCUMENT_TEXT_CHARS
-      && forwardedText.length <= MAX_FORWARDED_DOCUMENT_TEXT_CHARS && !hasAlternateView;
+      && forwardedText.length <= MAX_FORWARDED_DOCUMENT_TEXT_CHARS;
     let stageOneText: string;
     if (reusedRead) {
       stageOneText = JSON.stringify({ natural_text: forwardedText });
     } else {
-      const stageOne = await this.readDocumentText(mimeType, body.attachment.contentBase64, readerModelId, 'receipt', hasAlternateView ? alternate! : undefined);
+      const stageOne = await this.readDocumentText(mimeType, image.contentBase64, readerModelId, 'receipt', hasAlternateView ? alternate! : undefined);
       if (!stageOne.ok) {
         return { status: stageOne.status, errorCode: stageOne.errorCode, ...(stageOne.budgetScope ? { budgetScope: stageOne.budgetScope } : {}) };
       }
@@ -644,7 +647,7 @@ export class LineAiInternalController {
     // Stage 2 (understanding): the configured chat provider maps the OCR markdown to
     // bounded draft fields. Provider-off fails typed and manual review stays available.
     const extractionModelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
-    const provider = createProvider(this.config, { modelId: extractionModelId, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
+    const provider = createProvider(this.config, { modelId: extractionModelId, timeoutMs: image.timeoutMs });
     const activeCategories = boundedReceiptCategories(body.activeCategories);
     const fallbackReasons = new Set<ReceiptOcrFallbackReason>();
     let attemptedUtilityParts = false;
@@ -661,7 +664,7 @@ export class LineAiInternalController {
     };
     let understood = await this.understandReceiptText(provider, documentText, activeCategories, false);
     // Spend the recovery budget on structure OR on vision, never both: the shared caller timeout
-    // still covers at most four provider calls. A bad JSON response is not an unreadable image.
+    // covers the bounded chain, including vision timeout retries. Bad JSON is not an unreadable image.
     const repairedStructure = !understood.ok && ['OCR_OUTPUT_TRUNCATED', 'OCR_JSON_PARSE_FAILED', 'OCR_SCHEMA_INVALID'].includes(understood.errorCode);
     if (repairedStructure) {
       fallbackReasons.add('JSON_INCOMPLETE_OR_INVALID');
@@ -702,49 +705,22 @@ export class LineAiInternalController {
       }
     }
 
-    // A warped or low-resolution photo can cost the stage-one read either the printed total or an explicitly
-    // signalled VAT amount. Run at most one vision re-read. A replacement total must clear the full
-    // gate; recovered VAT must be source-checked by that reading and carry the same exact-cent total.
-    // A multi-entry page is intentionally not one expense. Re-reading it to recover a single total
-    // can only weaken the classification, so keep the first MULTI_DOCUMENT decision authoritative.
-    const needsTotalReread = understood.classification?.contentKind !== 'MULTI_DOCUMENT' && !hasUsableTotal(understood);
-    const needsVatReread = needsPrintedVatReread(understood);
-    const needsItemReread = understood.classification?.contentKind !== 'MULTI_DOCUMENT' && receiptItemsMismatch(understood.fields);
-    if (!repairedStructure && !isPdf && this.config.modelProvider === 'bedrock' && (needsTotalReread || needsVatReread || needsItemReread)) {
-      if (needsTotalReread) fallbackReasons.add('TOTAL_MISSING');
-      if (needsVatReread) fallbackReasons.add('VAT_MISSING');
-      if (needsItemReread) fallbackReasons.add('ITEMS_INCOMPLETE');
+    // One recovery call returns both a fresh visual transcription and fields. All existing
+    // evidence checks run against that transcription before a reconciled block may replace the first.
+    if (!repairedStructure && !isPdf && this.config.modelProvider === 'bedrock' && shouldRereadReceiptImage(understood)) {
+      fallbackReasons.add('ITEMS_INCOMPLETE');
       this.logger.warn({
         msg: 'receipt.ocr.fallback', requestId: body.requestId, fallback: 'image-reread',
         reasons: [...fallbackReasons],
       });
-      const reread = await provider.generateText({
-        systemPrompt: bedrockOcrPrompt('image'),
-        messages: [{ role: 'user', text: 'Transcribe the attached document.' }],
-        images: [await receiptRereadImage(mimeType, body.attachment.contentBase64)],
-        maxTokens: 4096,
-        usageTag: 'ocr.receipt.image-reread',
-      });
-      const rereadText = reread.ok && reread.stopReason !== 'max_tokens' ? parseStageOneNaturalText(reread.text) : null;
-      if (rereadText) {
-        const second = await this.understandReceiptText(provider, rereadText, activeCategories, false);
-        if (second.ok && needsTotalReread && hasUsableTotal(second)) {
-          understood = second;
-          stageOneLineage = modelLineage(this.config, 'receipt_ocr_read', extractionModelId);
-        } else if (second.ok && needsItemReread && second.fields?.lines?.length
-          && !receiptItemsMismatch(second.fields) && sameUsableTotal(understood, second)
-          && (!understood.fields?.documentNumber || !second.fields.documentNumber
-            || understood.fields.documentNumber === second.fields.documentNumber)) {
-          understood = second;
-          stageOneLineage = modelLineage(this.config, 'receipt_ocr_read', extractionModelId);
-        } else if (
-          second.ok
-          && needsVatReread
-          && !!second.fields?.vatAmount
-          && sameUsableTotal(understood, second)
-        ) {
-          understood = withRecoveredPrintedVat(understood, second);
-        }
+      const second = await this.understandReceiptText(provider, documentText, activeCategories, false,
+        await receiptRereadImage(mimeType, image.contentBase64));
+      if (second.ok && second.fields?.lines?.length
+        && !receiptItemsMismatch(second.fields) && sameUsableTotal(understood, second)
+        && (!understood.fields?.documentNumber || !second.fields.documentNumber
+          || understood.fields.documentNumber === second.fields.documentNumber)) {
+        understood = second;
+        stageOneLineage = modelLineage(this.config, 'receipt_ocr_read', extractionModelId);
       }
     }
 
@@ -786,16 +762,17 @@ export class LineAiInternalController {
     if (isPdf && this.config.modelProvider !== 'bedrock') {
       return { ok: false, status: 'not_configured', errorCode: 'PDF_PROVIDER_UNSUPPORTED' };
     }
-    const reader = createProvider(this.config, { modelId, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
-    const read = await reader.generateText({
+    const image = isPdf ? undefined : await prepareDocumentImage({ mimeType: mimeType as 'image/jpeg' | 'image/png', contentBase64 });
+    const reader = createProvider(this.config, { modelId, timeoutMs: image?.timeoutMs ?? AI_DOCUMENT_PAGE_TIMEOUT_MS });
+    const read = await readWithTimeoutRetry(reader, {
       systemPrompt: bedrockOcrPrompt(isPdf ? 'PDF' : 'image'),
       messages: [{ role: 'user', text: alternate
         ? 'Both images are different orientations of the SAME page. Read the clearest upright view once; they are not two documents. Transcribe only printed facts, with no translated or calculated additions.'
         : 'Transcribe the attached document.' }],
       ...(isPdf
         ? { documents: [{ mimeType: 'application/pdf' as const, contentBase64 }] }
-        : { images: [...(alternate ? [alternate] : []), { mimeType: mimeType as 'image/jpeg' | 'image/png', contentBase64 }] }),
-      maxTokens: 4096,
+        : { images: [...(alternate ? [alternate] : []), { mimeType: image!.mimeType, contentBase64: image!.contentBase64 }] }),
+      maxTokens: label === 'receipt' ? RECEIPT_EXTRACTION_MAX_TOKENS : 4096,
       usageTag: `ocr.${label === 'receipt' ? 'receipt' : 'bank-statement'}.${isPdf ? 'pdf' : 'image'}-read`,
     });
     if (!read.ok) return { ok: false, status: 'failed', ...providerErrorEnvelope(read.error) };
@@ -808,11 +785,12 @@ export class LineAiInternalController {
     documentText: string,
     activeCategories: Array<{ id: string; name: string }>,
     repair = false,
+    image?: { mimeType: 'image/jpeg' | 'image/png'; contentBase64: string },
   ): Promise<ReceiptUnderstanding> {
-    const extraction = await provider.generateText({
-      systemPrompt: RECEIPT_OCR_PROMPT,
+    const request = {
+      systemPrompt: RECEIPT_OCR_PROMPT + (image ? '\nRe-read the attached image, correcting missing or misaligned item rows. Return natural_text with a fresh complete transcription, together with fields and classification in the SAME JSON object. Use the image as evidence; the earlier OCR text may be wrong. Do not invent unreadable values.' : ''),
       messages: [{
-        role: 'user',
+        role: 'user' as const,
         text: [
           'ACTIVE_CATEGORY_CATALOG_START',
           JSON.stringify(activeCategories),
@@ -824,17 +802,28 @@ export class LineAiInternalController {
         ].join('\n'),
       }],
       maxTokens: RECEIPT_EXTRACTION_MAX_TOKENS,
-      usageTag: repair ? 'ocr.receipt.extract-repair' : 'ocr.receipt.extract',
-    });
+      ...(image ? { images: [image] } : {}),
+      usageTag: image ? 'ocr.receipt.image-reread' : repair ? 'ocr.receipt.extract-repair' : 'ocr.receipt.extract',
+    };
+    const extraction = await (image ? provider.generateText(request) : readWithTimeoutRetry(provider, request));
     if (!extraction.ok) return { ok: false, ...providerErrorEnvelope(extraction.error) };
     if (extraction.stopReason === 'max_tokens') return { ok: false, errorCode: 'OCR_OUTPUT_TRUNCATED' };
 
+    if (image) {
+      try {
+        const fresh = JSON.parse(extractJson(extraction.text))['natural_text'];
+        if (typeof fresh !== 'string' || !fresh.trim() || fresh.length > MAX_OCR_TEXT_CHARS) {
+          return { ok: false, errorCode: 'OCR_SCHEMA_INVALID' };
+        }
+        documentText = fresh;
+      } catch { return { ok: false, errorCode: 'OCR_JSON_PARSE_FAILED' }; }
+    }
     const parsed = parseReceiptOcrJson(extraction.text, documentText, new Set(activeCategories.map((category) => category.id)), 2);
     // The extraction contract always requires classification. A fields-only object is valid for
     // low-level parser callers but incomplete for this route; repair its JSON/schema once instead
     // of misclassifying it as a missing-total image problem and spending a vision re-read.
     if (!parsed || !parsed.classification) {
-      try { JSON.parse(extraction.text.match(/\{[\s\S]*\}/)?.[0] ?? extraction.text); }
+      try { JSON.parse(extractJson(extraction.text)); }
       catch { return { ok: false, errorCode: 'OCR_JSON_PARSE_FAILED' }; }
       return { ok: false, errorCode: 'OCR_SCHEMA_INVALID' };
     }
@@ -885,7 +874,7 @@ export class LineAiInternalController {
     if (isPdf && this.config.modelProvider !== 'bedrock') {
       return { status: 'not_configured', contractVersion, errorCode: 'PDF_PROVIDER_UNSUPPORTED' };
     }
-    const images = captureChunkImages(chunk);
+    const images = await Promise.all(captureChunkImages(chunk).map(prepareDocumentImage));
     if (isPdf ? !chunk.contentBase64 : images.length === 0) {
       return { status: 'failed', contractVersion, errorCode: 'CAPTURE_CHUNK_EMPTY' };
     }
@@ -894,7 +883,8 @@ export class LineAiInternalController {
     }
 
     const modelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
-    const reader = createProvider(this.config, { modelId, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
+    const reader = createProvider(this.config, { modelId, timeoutMs: isPdf || chunk.sourceMimeType === 'application/pdf' || chunk.kind === 'tiles'
+      ? AI_DOCUMENT_PAGE_TIMEOUT_MS : Math.max(...images.map(image => image.timeoutMs)) });
     const read = await reader.generateText({
       systemPrompt: captureReadPrompt(bedrockOcrPrompt(isPdf ? 'PDF' : 'image'), chunk.pageIndexes.length, chunk.kind),
       messages: [{ role: 'user', text: captureReadUserText(chunk) }],
@@ -909,11 +899,11 @@ export class LineAiInternalController {
     if (!transcription) return { status: 'failed', contractVersion, errorCode: 'OCR_EMPTY_OUTPUT' };
     // `max_tokens` does NOT lose the chunk: the pages that completed keep their text and only the
     // last one is reported truncated, so the API re-splits that page instead of re-reading all.
-    // W10 D3: a transcription the model itself declared incomplete (a totals block too small to
-    // read) is reported the same way — the API's answer to both is identical, and a page nobody
-    // could fully read must not end the job DONE with an item and no total (§17.6).
+    // A narrative partial reason is not a provider limit: intermediate PDF pages normally have
+    // no totals. Only actual output loss warrants the runner's truncation/resplit retry.
     const pages = parseCaptureReadPages(transcription.text, chunk.pageIndexes,
-      read.stopReason === 'max_tokens' || transcription.partialReason !== undefined);
+      read.stopReason === 'max_tokens' || read.completion === 'output_limit'
+        || transcription.truncated === true);
     if (pages.length === 0) return { status: 'failed', contractVersion, errorCode: 'OCR_EMPTY_OUTPUT' };
     this.logger.log({
       msg: 'capture chunk read', requestId: body.requestId, chunkId: chunk.id, kind: chunk.kind,
@@ -962,7 +952,7 @@ export class LineAiInternalController {
     }
 
     const modelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
-    const provider = createProvider(this.config, { modelId, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
+    const provider = createProvider(this.config, { modelId, timeoutMs: AI_DOCUMENT_PAGE_TIMEOUT_MS });
     const activeCategories = boundedReceiptCategories(body.activeCategories);
     let observations = await this.extractCaptureWindow(provider, windowText, window, activeCategories);
     if (!observations.ok && (observations.errorCode === 'OCR_JSON_PARSE_FAILED' || observations.errorCode === 'OCR_SCHEMA_INVALID')) {
@@ -1164,7 +1154,8 @@ Keep every priced row on one line with its own description, quantity, unit price
 - every date printed on the document
 - every purchased line item with its quantity, unit price and amount, and any per-line tax marker or symbol
 - EVERY money subtotal, including the pre-tax subtotal even when it is unlabelled
-- every discount, service charge, tip, rounding, tax line, withholding line and grand total
+- every line discount AND bill-level discount, service charge, tip, signed rounding (สตางค์ปัดเศษ / ปัดเศษ / Rounding), tax line, withholding line and grand total
+- on transfer and bill-payment slips (ชำระบิล, Ref.1/Ref.2), the paid amount beside จำนวนเงิน / ยอดชำระ / Amount, and any separately printed fees
 - every tax rate or percentage as printed
 - the payment method, card mask and reference
 
@@ -1180,9 +1171,9 @@ export async function receiptRereadImage(mimeType: 'image/jpeg' | 'image/png', c
   try {
     const bytes = Buffer.from(contentBase64, 'base64');
     const meta = await sharp(bytes, { limitInputPixels: 40_000_000 }).metadata();
-    if (meta.width && meta.height && meta.width > meta.height) {
+    if (meta.width && meta.height && isLandscapeDocument(meta.width, meta.height)) {
       const rotated = await sharp(bytes, { limitInputPixels: 40_000_000 }).rotate(270)
-        .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+        .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
       return { mimeType: 'image/jpeg' as const, contentBase64: rotated.toString('base64') };
     }
   } catch { /* An unsupported image keeps its original recovery path. */ }
@@ -1198,6 +1189,24 @@ export function receiptItemsMismatch(fields: ReceiptOcrResponse['fields'], minim
     + (fields.additionalCharges ?? []).reduce((sum, row) => sum + money(row.amount), 0)
     + (fields.vatMode === 'VAT_EXCLUDED' ? money(fields.vatAmount) : 0);
   return Number.isFinite(total) && Math.abs(total - money(fields.grandTotalAmount)) > 0.05;
+}
+
+export function shouldRereadReceiptImage(understanding: ReceiptUnderstanding): boolean {
+  if (!understanding.ok || !understanding.fields?.grandTotalAmount
+    || (understanding.classification?.requiresClarification && !understanding.fields.missingFields?.includes('lines'))
+    || understanding.classification?.contentKind !== 'DOCUMENT'
+    || understanding.fields?.vatMode === 'NEEDS_REVIEW'
+    || needsPrintedVatReread(understanding)
+    || understanding.fields?.missingFields?.some((field) => ['additionalCharges', 'vatAmount', 'vatMode'].includes(field))
+    || !understanding.fields?.lines?.length
+    || !receiptItemsMismatch(understanding.fields, 1)) return false;
+  // A block that reconciles under the other VAT mode needs interpretation, not another image.
+  const fields = understanding.fields!;
+  if (fields.vatAmount && (fields.vatMode === 'VAT_INCLUDED' || fields.vatMode === 'VAT_EXCLUDED')) {
+    const otherMode = fields.vatMode === 'VAT_INCLUDED' ? 'VAT_EXCLUDED' : 'VAT_INCLUDED';
+    if (!receiptItemsMismatch({ ...fields, vatMode: otherMode })) return false;
+  }
+  return true;
 }
 
 /** Typhoon replies {"natural_text": md}; tolerate plain markdown, bound length, never return empty. */
@@ -1246,7 +1255,7 @@ Evidence, amount, and settlement signals must be short exact spans copied from O
 Receipt requires a positive transaction-specific total, explicit receipt/paid/settlement evidence, and issuer/date/reference anchor. Item names or quantities without a transaction total are ORDER_OR_CHECK_BILL, never RECEIPT. A total without settlement evidence is a bill/order, not RECEIPT. Quotations, appointments, bookings, reservations, signatures, and non-financial images are never expense receipts even when an amount is visible.
 A water/electricity document titled ใบแจ้งค่าน้ำประปา, ใบแจ้งค่าไฟฟ้า, utility invoice or equivalent, with a provider and a positive payable total is SUPPLIER_INVOICE_OR_BILL in state DUE, not ORDER_OR_CHECK_BILL. A printed "ไม่ใช่ใบเสร็จรับเงิน" confirms it is not paid; it does not make the invoice a mere order. Usage-history rows, a payment coupon, barcode and repeated payable total belong to that same invoice.
 A ledger, notebook page, phone screenshot, or handwritten summary containing multiple independent expense transactions or per-row totals is MULTI_DOCUMENT with MULTIPLE_DOCUMENTS even when it is physically one page. Never collapse its grand total into one expense and do not extract a single expense draft from it.
-Settlement evidence INCLUDES the document's own title. ใบเสร็จรับเงิน / ใบรับเงิน / ใบเสร็จ / RECEIPT and บิลเงินสด / CASH SALE / CASH BILL are issued only when money is received (Thai Revenue Code s.105): such a title plus a positive total IS settlement evidence even without a separate paid stamp. A document titled plainly BILL / บิล is settlement evidence on the same footing (owner decision 2026-08-15): Thai POS systems print the customer's paid copy under that heading, so a bare BILL title plus a positive total is settled — copy the title span into settlementSignals and set transactionState PAID. That covers the bare word only. ใบวางบิล, เช็คบิล, and ใบแจ้งหนี้ each contain it yet stay the unpaid anti-signals listed below, and a printed credit term or due date always outranks the title. ใบกำกับภาษีอย่างย่อ is a retail point-of-sale document — treat it as settled, and as definitively settled when its title is combined with ใบเสร็จรับเงิน. A standalone full ใบกำกับภาษี for goods is NOT settlement evidence by itself. Body settlement signals: ได้รับเงิน/รับเงินแล้ว, ชำระแล้ว, จ่ายแล้ว, PAID, ชำระเงินสด, payment method เงินสด/โอน/บัตร, เงินทอน (change), ผู้รับเงิน signature. Anti-signals (unpaid document): ใบแจ้งหนี้, ใบวางบิล, ใบเสนอราคา, ใบส่งของ, ใบสั่งซื้อ, เช็คบิล, กำหนดชำระ / credit terms / due date.
+Settlement evidence INCLUDES the document's own title. ใบเสร็จรับเงิน / ใบรับเงิน / ใบเสร็จ / RECEIPT and บิลเงินสด / CASH SALE / CASH BILL are issued only when money is received (Thai Revenue Code s.105): such a title plus a positive total IS settlement evidence even without a separate paid stamp. A document titled plainly BILL / บิล is settlement evidence on the same footing (owner decision 2026-08-15): Thai POS systems print the customer's paid copy under that heading, so a bare BILL title plus a positive total is settled — copy the title span into settlementSignals and set transactionState PAID. That covers the bare word only. ใบวางบิล, เช็คบิล, and ใบแจ้งหนี้ each contain it yet stay the unpaid anti-signals listed below, and an explicit unpaid status outranks a bare BILL title. A due-date field (ครบกำหนด / Due Date) on a combined ใบกำกับภาษี / ใบเสร็จรับเงิน (TAX INVOICE / RECEIPT) is ordinary invoice metadata, not a contradiction: do not add it to contradictionSignals or require clarification. ใบกำกับภาษีอย่างย่อ is a retail point-of-sale document — treat it as settled, and as definitively settled when its title is combined with ใบเสร็จรับเงิน. A standalone full ใบกำกับภาษี for goods is NOT settlement evidence by itself. Body settlement signals: ได้รับเงิน/รับเงินแล้ว, ชำระแล้ว, จ่ายแล้ว, PAID, ชำระเงินสด, payment method เงินสด/โอน/บัตร, เงินทอน (change), ผู้รับเงิน signature. Anti-signals (unpaid document): ใบแจ้งหนี้, ใบวางบิล, ใบเสนอราคา, ใบส่งของ, ใบสั่งซื้อ, เช็คบิล, or an explicit unpaid balance. A due date alone does not contradict receipt settlement evidence.
 When a settlement title or signal is present, set transactionState to PAID and copy the exact span (e.g. the title) into settlementSignals.
 ABBREVIATED_TAX_INVOICE vs TAX_INVOICE: use ABBREVIATED_TAX_INVOICE whenever the document titles itself ใบกำกับภาษีอย่างย่อ / TAX INVOICE (ABB) / TAX INV (ABB) / ABB, or is a retail point-of-sale slip that shows the seller's tax id and a VAT amount but identifies NO buyer. Use TAX_INVOICE only for the full form, which names the BUYER (ชื่อ/ที่อยู่ผู้ซื้อ) as well as the seller. Buyer identification is the discriminator, and the printed title decides on its own when present. This is a form distinction, not a completeness gap: a missing buyer name on an abbreviated invoice is not a missing field and never a reason code.
 Always keep the most specific documentKind that matches the document's form (e.g. a handwritten cash-sale bill is HANDWRITTEN_CASH_BILL even when the bill number or the vendor tax id is blank). Completeness gaps are reason codes in missingRequiredSignals and names in missingFields — they never change documentKind, and NEEDS_REVIEW as a kind is only for documents no specific kind fits. Set requiresClarification true only for content-level problems (unreadable, cropped, multiple documents, contradictory signals, or no transaction total anywhere) — a missing tax id, bill number, or buyer name alone does not require clarification.
@@ -1255,27 +1264,30 @@ Never report MISSING_TRANSACTION_TOTAL or MISSING_MONETARY_AMOUNT when you fille
 Whenever grandTotalAmount is filled, amountSignals MUST include the total NUMBER itself as one span, copied verbatim from the OCR text (e.g. "11,875.00" — the bare number, not a combined phrase; validation drops any span that does not appear character-for-character in the OCR text, and a total with no surviving amount signal is rejected).
 businessDirection is judged from the perspective of the business UPLOADING this document, never from the document's own voice — a receipt always speaks as the seller. The issuer/header block identifies the seller; the buyer appears only in a customer field (ลูกค้า, นาม, ผู้ซื้อ, ได้รับเงินจาก, Bill to, Customer). Supplier-issued settled evidence submitted for expense capture is PURCHASE_EXPENSE even when the buyer field is blank or absent (abbreviated tax invoices legally omit the buyer). Use SALES_RECEIVABLE only when the document is evidently issued BY the uploading business itself. If genuinely unresolvable, use UNKNOWN with AMBIGUOUS_BUSINESS_DIRECTION — never default to SALES_RECEIVABLE.
 Fields (omit irrelevant or unknown fields): vendorName, vendorIdentityEvidence, vendorEntityKind, vendorTaxId, vendorBranchCode, vendorAddress, buyerAsPrinted, documentNumber, expenseDate YYYY-MM-DD, description, quantity, unitPrice, vatRate, subtotalAmount, discountAmount, taxableAmount, vatAmount, whtRate, whtAmount, whtBaseAmount, grandTotalAmount, currency, vatMode, lines, additionalCharges, categorySuggestion, confidence, missingFields.
-description, quantity, and unitPrice describe the document AS A WHOLE — they are the one-line summary used when the item block cannot be split. lines is where each printed item row goes.
+description, quantity, and unitPrice describe the document AS A WHOLE — they are the one-line summary used when the item block cannot be split. lines is where each printed item row goes. At either level, include unitPrice ONLY when that per-unit value is itself printed; never divide amount by quantity to derive it.
 vendorName is the exact legal issuer/payee name from the SELLER block; do not append a branch description or a patient name. Never expand a brand into a legal company name from memory, including when the header is cropped. vendorIdentityEvidence is one exact issuer-name span (up to 320 characters). vendorEntityKind is JURISTIC only for explicit issuer company/registered partnership wording, INDIVIDUAL only for an explicit personal issuer/payee name, otherwise omit it. A buyer/patient/cashier/contact is never the payee. Use an ordinary transaction description without personal patient identifiers.
 vendorTaxId is the SELLER's Thai 13-digit เลขประจำตัวผู้เสียภาษี (labels: เลขประจำตัวผู้เสียภาษี / เลขประจำตัวผู้เสียภาษีอากร / เลขผู้เสียภาษี / TAX ID / TIN / เลขทะเบียนนิติบุคคล / ทะเบียนเลขที่). It may be printed with dashes or spaces (0-9940-0016-30-11) — return digits only. Look in the header AND the footer: hospitals and POS slips often print it in small type at the bottom. A full tax invoice prints seller AND buyer tax ids — return the seller's (issuer header side), never the buyer's. Never use a phone number.
-documentNumber is the document's own printed running number (labels: เลขที่ / เลขที่ใบเสร็จ / เลขที่เอกสาร / เลขที่ใบกำกับภาษี / No. / Receipt No. / Invoice No. / Bill No.). When the document uses a carbon-book pair, combine เล่มที่ X เลขที่ Y as "X/Y". documentNumber is NEVER the date, and never HN/AN/VN (hospital patient/visit numbers), queue or table numbers, POS terminal/merchant ids (TID/MID), card approval codes, the tax id, or a phone number. If only a date appears where the number should be, omit documentNumber.
+documentNumber is the document's own printed running number (labels: เลขที่ / เลขที่ใบเสร็จ / เลขที่เอกสาร / เลขที่ใบกำกับภาษี / No. / Receipt No. / Invoice No. / Bill No.). When the document uses a carbon-book pair, combine เล่มที่ X เลขที่ Y as "X/Y". On a TRANSFER_SLIP, documentNumber is the printed bank transaction/reference number (รหัสอ้างอิง / เลขที่รายการ / Reference No.); remove all spaces and zero-width characters without changing its letters or digits. documentNumber is NEVER the date, and never HN/AN/VN (hospital patient/visit numbers), queue or table numbers, POS terminal/merchant ids (TID/MID), card approval codes, the tax id, or a phone number. If only a date appears where the number should be, omit documentNumber.
 vendorBranchCode is the seller's issuing-branch designation printed next to the tax id: สำนักงานใหญ่ / สนญ / HO / HQ / Head Office → "00000"; สาขาที่ N / Branch N → the branch number as printed.
 vendorAddress is the SELLER's own printed street address, copied as one exact span from the issuer/header block (labels: ที่อยู่ / ที่ตั้ง / สำนักงาน / Address, or the unlabelled lines printed directly under the issuer name). Join the printed lines with single spaces and copy them verbatim; omit vendorAddress entirely when the page prints no seller address, and omit it when the span would exceed 500 characters. A full tax invoice prints BOTH parties' addresses, exactly as it prints both tax ids — return the SELLER's (issuer header side) and NEVER the buyer's. The buyer block (ลูกค้า / ชื่อลูกค้า / นาม / ผู้ซื้อ / ได้รับเงินจาก / Bill to / Ship to / Customer) is the business that sent you this document; its address filed as the seller's is saved against that shop and reused on every later document, so when you cannot tell which party an address belongs to, omit vendorAddress and add "vendorAddress" to missingFields. Never reconstruct an address from memory of the brand or chain, and never complete a cropped one.
 buyerAsPrinted is that buyer block itself, returned separately, and ONLY when the document identifies a buyer (full tax invoices do; abbreviated tax invoices, receipts and cash bills legally need not, and there you omit buyerAsPrinted). It has exactly this shape: {"name":"printed buyer name","taxId":"the buyer's 13-digit tax id, digits only","branchCode":"00000 for สำนักงานใหญ่, otherwise the printed branch number of สาขาที่ N","addressText":"the printed buyer address as one exact span"}. Every property is optional and each value is copied verbatim from the buyer block. These values are evidence for a human reviewer only: none of them may ever also appear in vendorName, vendorTaxId, vendorBranchCode or vendorAddress.
+On RECEIPT, HANDWRITTEN_CASH_BILL and TRANSFER_SLIP, an absent seller tax ID is not a completeness gap: omit vendorTaxId and never report vendorTaxId in missingFields or MISSING_VENDOR_TAX_ID in missingRequiredSignals.
 Report "vendorAddress" in missingFields ONLY when documentKind is TAX_INVOICE, the full form that must carry the seller's address. On an ABBREVIATED_TAX_INVOICE, a RECEIPT, a HANDWRITTEN_CASH_BILL or any other kind, an absent seller address is not a gap: omit the field and report nothing about it.
-lines is optional and contains at most 40 printed item rows in document order. Each entry is {"description":"printed item name","quantity":"printed quantity, \"1\" when the row prints none","amount":"the row's own printed money amount","unitPrice":"the printed per-unit price, only when the row prints one","vatRate":"this row's own VAT rate as a decimal, ONLY when the page marks tax per row","vatTreatment":"ZERO_RATED|EXEMPT|NON_VAT, only together with vatRate \"0\"","evidenceSignal":"one short exact OCR span","confidence":0.0}.
-Per-row VAT (vatRate/vatTreatment) exists ONLY when the page itself marks individual rows, and Thai receipts do this with a one-letter code printed against the row amount: V (or a VAT column tick) means that row is taxed, while N, P, or an explicit ยกเว้นภาษี/ไม่คิด VAT note means it is not. Give vatRate for a row ONLY when such a marker is printed on that row, and quote the marker inside that row's evidenceSignal. A row marked untaxed takes vatRate "0" plus vatTreatment (EXEMPT for ยกเว้น items such as fresh food, ZERO_RATED for 0% supplies, NON_VAT for a non-registered supply). OMIT both fields on every row when the page states VAT once for the whole bill (a header "VAT Included", a single VAT TTL line, or a tax summary at the bottom) — that is the normal case and the document-level rate already covers it. Never infer from the item name that something is exempt: no printed marker means no per-row field. Return EVERY item row the item block prints: a bill listing two products must return two entries, never one merged entry and never only the first row. amount is the row's money column as printed, which on Thai bills is the extended amount for the whole row, not the per-unit price — พิซซ่า 1 524.00 is quantity "1" and amount "524.00", ปีกไก่ 2 298.00 is quantity "2" and amount "298.00" with unitPrice omitted because 149.00 is nowhere on the bill. Give unitPrice only when that per-unit number is itself printed. The row amounts must add up to the printed subtotal (or the printed total when no subtotal is printed); re-read the item block when they do not. Never put a service charge, delivery fee, VAT, discount, payment, change, or the total row into lines — those belong to additionalCharges, discountAmount, vatAmount, and grandTotalAmount. Omit lines entirely when the item block is unreadable or its rows cannot be told apart.
-additionalCharges is optional and contains at most 10 printed charges (only ROUNDING may be negative). Each entry is {"kind":"SERVICE_CHARGE"|"DELIVERY"|"PACKAGING"|"PLATFORM_FEE"|"TIP"|"ROUNDING"|"OTHER","description":"printed label","amount":"signed printed amount for ROUNDING; positive otherwise","vatRate":"optional decimal fraction including 0","evidenceSignal":"one short exact OCR span","confidence":0.0}. Put discounts, coupons and promotions only in discountAmount. Put signed settlement rounding only in additionalCharges with kind ROUNDING and vatRate "0"; it has no VAT/WHT of its own and is never also a discount. subtotalAmount is the merchandise/service subtotal BEFORE additionalCharges. For VAT_EXCLUDED documents, charge amount is its pre-VAT amount; for VAT_INCLUDED documents, it is its printed VAT-inclusive amount. Include vatRate only when the document explicitly prints or its complete VAT arithmetic proves the rate applies to that charge; use "0" only when the charge is explicitly/provably outside VAT. If charge tax treatment is unclear, omit its vatRate and let ERP reconciliation require review.
+lines is optional and contains at most 200 printed item rows in document order. Each entry is {"description":"printed item name","quantity":"printed quantity, \"1\" when the row prints none","amount":"the row's own printed money amount","unitPrice":"the printed per-unit price, only when the row prints one","vatRate":"this row's own VAT rate as a decimal, ONLY when the page marks tax per row","vatTreatment":"ZERO_RATED|EXEMPT|NON_VAT, only together with vatRate \"0\"","evidenceSignal":"one short exact OCR span","confidence":0.0}.
+Per-row VAT (vatRate/vatTreatment) exists ONLY when the page itself marks individual rows, and Thai receipts do this with a one-letter code printed against the row amount: V (or a VAT column tick) means that row is taxed, while N, P, or an explicit ยกเว้นภาษี/ไม่คิด VAT note means it is not. Give vatRate for a row ONLY when such a marker is printed on that row, and quote the marker inside that row's evidenceSignal. A row marked untaxed takes vatRate "0" plus vatTreatment (EXEMPT for ยกเว้น items such as fresh food, ZERO_RATED for 0% supplies, NON_VAT for a non-registered supply). OMIT both fields on every row when the page states VAT once for the whole bill (a header "VAT Included", a single VAT TTL line, or a tax summary at the bottom) — that is the normal case and the document-level rate already covers it. Never infer from the item name that something is exempt: no printed marker means no per-row field. Return EVERY item row the item block prints: a bill listing two products must return two entries, never one merged entry and never only the first row. amount is the row's money column as printed, which on Thai bills is the extended amount for the whole row, not the per-unit price — พิซซ่า 1 524.00 is quantity "1" and amount "524.00", ปีกไก่ 2 298.00 is quantity "2" and amount "298.00" with unitPrice omitted because 149.00 is nowhere on the bill. Give unitPrice only when that per-unit number is itself printed. The row amounts must add up to the printed subtotal (or the printed total when no subtotal is printed); re-read the item block when they do not. Only a restaurant-style percentage surcharge (ค่าบริการ 10% / Service Charge 10%) is SERVICE_CHARGE. Purchased invoice rows such as ค่าขนส่ง and ค่าบริการติดตั้งระบบ stay in lines with their printed quantity/unit price/amount, even though they describe services or delivery. Put separately printed summary surcharges, VAT, discount, payment, change, and total rows into additionalCharges, discountAmount, vatAmount, and grandTotalAmount rather than lines. Omit lines entirely when the item block is unreadable or its rows cannot be told apart.
+additionalCharges is optional and contains at most 10 printed charges (only ROUNDING may be negative). Each entry is {"kind":"SERVICE_CHARGE"|"DELIVERY"|"PACKAGING"|"PLATFORM_FEE"|"TIP"|"ROUNDING"|"OTHER","description":"printed label","amount":"signed printed amount for ROUNDING; positive otherwise","vatRate":"optional decimal fraction including 0","evidenceSignal":"one short exact OCR span","confidence":0.0}. Put discounts, coupons and promotions only in discountAmount. Read EVERY printed สตางค์ปัดเศษ / ปัดเศษ / Rounding line even when a service charge is already present. Put signed settlement rounding only in additionalCharges with kind ROUNDING and vatRate "0"; it has no VAT/WHT of its own and is never also a discount. subtotalAmount is the merchandise/service subtotal BEFORE additionalCharges. For VAT_EXCLUDED documents, charge amount is its pre-VAT amount; for VAT_INCLUDED documents, it is its printed VAT-inclusive amount. Include vatRate only when the document explicitly prints or its complete VAT arithmetic proves the rate applies to that charge; use "0" only when the charge is explicitly/provably outside VAT. If charge tax treatment is unclear, omit its vatRate and let ERP reconciliation require review.
 categorySuggestion is optional and has exactly this shape: {"expenseCategoryId":"an id from the active catalogue","confidence":0.0,"evidenceSignals":["short exact OCR span"]}.
 Choose at most one category for the whole document. Use only an expenseCategoryId present in the active catalogue. Base the choice on the document's vendor, business purpose, and purchased items, never on catalogue text alone. evidenceSignals must contain 1-5 short exact spans copied from OCR text, not category names copied from the catalogue. Omit categorySuggestion and add "category" to missingFields when the catalogue is empty or no category is clearly supported. A category is only a reporting dimension: never use it to infer or alter VAT, Tax Code, GL account, payment, or document classification.
-discountAmount is ONLY a printed reduction of what the buyer paid: a line labelled ส่วนลด / ลด / DISCOUNT / TOTAL DISCOUNT / PROMOTION / COUPON / VOUCHER / REDEEM, or a labelled discount amount printed with a minus sign or in parentheses (-15.00, (15.00), 15.00-). A labelled ROUNDING / ปัดเศษ is a signed settlement charge, never discountAmount. A POSITIVE item, option, modifier, or add-on line — extra shot, upsize, topping, side order, an indented sub-item under a product — is merchandise the buyer paid for: it belongs in subtotalAmount and is NEVER a discount, no matter where it sits in the item block. When the document prints a pre-discount subtotal (Sub Total / ยอดรวม / รวมเงิน before the discount line), always copy it into subtotalAmount; a discount without that subtotal cannot be proven and is dropped downstream. subtotalAmount minus discountAmount plus additionalCharges must equal the printed total (for VAT_EXCLUDED, the ex-VAT base) — when your own figures fail that check, re-read the item block before answering. Omit discountAmount entirely when no reduction is printed.
-Use strings for all money and quantity fields with 2 decimals where visible.
+When line discounts AND a bill-level discount are printed, discountAmount is their combined magnitude. Count a line-discount summary once, not again for each repeated item discount; never omit ส่วนลดท้ายบิล because item discounts exist. This aggregation of printed discounts is the only exception to copying a single printed money value.
+discountAmount is ONLY a printed reduction of what the buyer paid: a line labelled ส่วนลด / ลด / DISCOUNT / TOTAL DISCOUNT / PROMOTION / COUPON / VOUCHER / REDEEM, or a labelled discount amount printed with a minus sign or in parentheses (-15.00, (15.00), 15.00-). A labelled ROUNDING / ปัดเศษ is a signed settlement charge, never discountAmount. A POSITIVE item, option, modifier, or add-on line — extra shot, upsize, topping, side order, an indented sub-item under a product — is merchandise the buyer paid for: it belongs in subtotalAmount and is NEVER a discount, no matter where it sits in the item block. Whenever the document prints a subtotal (Sub Total / ยอดรวม / รวมเงิน, including POS labels such as ยอดรวม (8 รายการ)), always copy it into subtotalAmount even when there is no discount. Use the pre-discount subtotal when a discount follows; a discount without that subtotal cannot be proven and is dropped downstream. subtotalAmount minus discountAmount plus non-rounding additionalCharges plus VAT (only for VAT_EXCLUDED) plus signed ROUNDING must equal grandTotalAmount. ROUNDING adjusts the final settlement AFTER VAT; it never changes taxableAmount — when your own figures fail that check, re-read the item block before answering. Omit discountAmount entirely when no reduction is printed.
+Use strings for all money and quantity fields with 2 decimals where visible. Normalize whole-baht shorthand such as "168.-" to "168.00"; this changes only the notation, not the value. Keep output compact and omit optional per-row confidence rather than omitting printed rows to fit the output budget.
 Payment composition (cash/POD plus voucher/coupon, deposits already paid, change) is not an additional discount. When payment parts add up to the printed final total, retain that final total without subtracting a tender again. A multi-page invoice is one business document, not multiple independent transactions; never use the last row, a page subtotal or the sum of visible rows as its final total. On a page without a final total, leave grandTotalAmount absent. Preserve fractional printed quantity and unit price even when rounded unit prices differ by a satang from the final total; do not convert a printed VAT-inclusive unit price to a calculated pre-VAT price.
-Copy every money value exactly as printed in the OCR text (Thai digits ๐-๙ read as 0-9; Thai number words read as their numeric value). Never compute, convert, or round a value that is not printed.
+Except for the combined discountAmount defined above, copy every money value exactly as printed in the OCR text (Thai digits ๐-๙ read as 0-9; Thai number words read as their numeric value). Never compute, convert, or round any other value that is not printed.
 currency is the ISO 4217 code of the money the document ITSELF prints, as exactly three uppercase letters: THB for บาท/฿/THB or any plainly Thai-baht document, USD for $/US$/USD, EUR for €/EUR, GBP for £/GBP, JPY for ¥/JPY/円, CNY for RMB/CNY/人民币, and otherwise the three-letter code printed on the page. A printed code always outranks a symbol. Read it only from the currency mark or wording printed beside the amounts — never from the vendor's country, address, or language. Omit currency entirely when the page prints no currency mark and is not plainly Thai baht; never write "UNKNOWN" and never guess THB to fill the gap. Whatever the currency, still copy every amount exactly as printed: never convert a foreign amount into baht.
+On TRANSFER_SLIP, including bill-payment slips (ชำระบิล with Ref.1/Ref.2), grandTotalAmount is the printed paid amount (จำนวนเงิน / ยอดชำระ / ยอดชำระบิล / Amount / Paid amount), never a reference number or fee. Extract it even without a TOTAL box.
 grandTotalAmount is the transaction total from the รวมเงิน/รวมทั้งสิ้น/TOTAL box; handwritten values count as printed — copy the total exactly as written and do not leave grandTotalAmount empty when a total is visible in the OCR text.
 expenseDate: accept numeric dates plus full or abbreviated Thai/English month names in either day-first or month-first order. OCR may drop punctuation, so ก.ค./กค and ส.ค./สค are the same month evidence, as are Aug./Aug. Thai named months anchor a 2-digit year to พ.ศ. 25xx (23 สค 69 → 2026-08-23); English named months anchor it to ค.ศ. 20xx (Aug 23 26 → 2026-08-23). Thai Buddhist Era 4-digit years (พ.ศ., e.g. 2569) must be converted by subtracting 543. When a POS receipt prints both เวลาขาย/SALE DATE/TRANSACTION DATE and a later เวลาออก/ISSUE DATE/print timestamp, use the sale/transaction date. Return ISO YYYY-MM-DD.
-vatMode must be one of NO_VAT, VAT_INCLUDED, VAT_EXCLUDED, EXEMPT, NEEDS_REVIEW.
+vatMode must be one of NO_VAT, VAT_INCLUDED, VAT_EXCLUDED, EXEMPT, NEEDS_REVIEW. Printed "VAT INCLUDED" or "รวมภาษีมูลค่าเพิ่มแล้ว" means VAT_INCLUDED, never VAT_EXCLUDED; a separately printed pre-tax base does not change the mode of the printed item prices.
 vatAmount is the printed VAT/TAX MONEY AMOUNT, independent of vatRate. Amount labels may precede or follow it: VAT/TAX AMT, AMOUNT, TTL, TOTAL, TOTAL VAT/TAX, ยอดภาษี, ภาษีมูลค่าเพิ่ม (VAT AMT 21.79 / 21.79 VAT TTL → vatAmount "21.79"). Extract the printed amount even when no percentage is printed; never interpret a baht amount as a percent and never compute an unprinted amount.
 vatRate is only the printed VAT percentage as a decimal fraction string (TAX RATE 7% / VAT 7% → "0.07"). vatAmount may exist while vatRate is omitted. Retail slips and card sale slips often print a tax block (e.g. TAX RATE / TAX AMT / TAX Exclude, or VAT TTL / Net TTL): map the ex-VAT base to taxableAmount, the printed VAT money to vatAmount, and grandTotalAmount to the amount actually paid including VAT; use vatMode VAT_EXCLUDED when extracted prices are the ex-VAT base, VAT_INCLUDED when they already include VAT.
 Never treat มูลค่าก่อนภาษี / มูลค่าไม่มีหรือยกเว้นภาษี / withholding / WHT as VAT. If the VAT column says ไม่มี, do not calculate VAT from gross or relabel the WHT amount as VAT. Unknown VAT is different from a printed zero. E/T or other unexplained item markers have no established tax meaning.
@@ -1361,6 +1373,32 @@ function flattenSpan(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function normalizeReceiptMoney(value: string): string {
+  return mapThaiDigits(value).trim().replace(/^(\d[\d,]*)\s*\.\s*[-−–]$/, '$1.00');
+}
+
+function normalizeReceiptRowQuote(value: string): string {
+  return flattenSpan(value.replace(/\|/g, ' '));
+}
+
+/** Bind rounding to its own printed row; an unrelated number elsewhere is not evidence. */
+function printedRoundingRow(documentText: string, amount: string): string | undefined {
+  const magnitude = Math.abs(Number(amount.replace(/,/g, '')));
+  const rows = documentText.split('\n').filter((line) => line.length <= 120
+    && /ปัดเศษ|\brounding\b/i.test(line)
+    && [...mapThaiDigits(line).matchAll(/\d[\d,]*(?:\.\d+)?/g)]
+      .some((match) => Number(match[0].replace(/,/g, '')) === magnitude));
+  return rows.length === 1 ? rows[0]!.trim() : undefined;
+}
+
+function singlePrintedSubtotalAmount(documentText: string): string | undefined {
+  const amounts = new Set(mapThaiDigits(documentText).split('\n').flatMap((line) => {
+    const match = /^[\s|#*_]*(?:sub[ -]*total|ยอดรวม|รวมเงิน)\s*(?:\([^\n)]*\))?[\s:|=*_]*(\d[\d,]*\.\d{2})[\s|*_]*(?:บาท|THB)?[\s|*_]*$/i.exec(line);
+    return match ? [Number(match[1]!.replace(/,/g, '')).toFixed(2)] : [];
+  }));
+  return amounts.size === 1 ? [...amounts][0] : undefined;
+}
+
 /** §19k: recover only one decimal money amount adjacent to an explicit VAT/tax label.
  *  Rates, unlabeled figures, multiple tax components, and computed values stay review-only. */
 function singlePrintedVatAmount(documentText: string): string | null {
@@ -1382,18 +1420,6 @@ function singlePrintedVatAmount(documentText: string): string | null {
   return values.size === 1 ? [...values][0]! : null;
 }
 
-/** Identity candidates belong to an issuer block, never to a lone number elsewhere on the page. */
-export function receiptIssuerText(documentText: string): string {
-  const marked = [...documentText.matchAll(/\[SELLER\]([\s\S]*?)\[\/SELLER\]/gi)].map((match) => match[1]);
-  return (marked.length ? marked : [documentText]).map((block) => {
-    let otherParty = false;
-    return block!.split('\n').filter((line) => {
-      if (/^\s*(?:[#*|]+\s*)?(?:\[BUYER\]|buyer\b|customer\b|patient\b|bill\s+to\b|ship\s+to\b|cashier\b|(?:ชื่อลูกค้า|ลูกค้า|ผู้ซื้อ|ผู้ป่วย|ผู้รับสินค้า)(?:\s|[:：])|ชื่อ\s*\/\s*Patient)/i.test(line)) otherParty = true;
-      if (/^\s*(?:[#*|]+\s*)?(?:seller\b|issuer\b|(?:ผู้ขาย|ผู้ออกเอกสาร)(?:\s|[:：]))/i.test(line)) otherParty = false;
-      return !otherParty;
-    }).join('\n');
-  }).join('\n');
-}
 
 function printedWhtRate(documentText: string, rate: string): boolean {
   const percent = Number(rate) * 100;
@@ -1474,25 +1500,39 @@ export function applyOcrValueCrossCheck(
   for (const key of OCR_NUMERIC_FIELDS) {
     const raw = out[key];
     if (!raw) continue;
-    const value = Number.parseFloat(String(raw).replace(/,/g, ''));
+    const normalized = normalizeReceiptMoney(raw);
+    const value = Number.parseFloat(normalized.replace(/,/g, ''));
     if (!Number.isFinite(value) || !allowedNumbers.has(value)) {
       delete out[key];
       missing.add(key);
+    } else out[key] = normalized;
+  }
+  if (!out.subtotalAmount) {
+    const subtotal = singlePrintedSubtotalAmount(documentText);
+    if (subtotal) {
+      out.subtotalAmount = subtotal;
+      missing.delete('subtotalAmount');
     }
   }
 
-  // A split item block is all-or-nothing: one row priced at a number the document never printed
-  // makes the whole breakdown untrustworthy, so it drops back to the single summary line rather
-  // than seeding a draft with an invented row. Quantities are exempt — the row often prints none,
-  // and a misread one moves only the reviewer-visible split, never the recorded total.
+  // Keep source-backed siblings; an optional derived unit price does not invalidate its row.
+  // Partial rows remain explicitly incomplete until a validated visual recovery succeeds.
   const printedMoney = (value: string): boolean => {
     const amount = Number.parseFloat(value.replace(/,/g, ''));
     return Number.isFinite(amount) && allowedNumbers.has(amount);
   };
-  if (out.lines?.some((line) => !printedMoney(line.amount)
-    || (line.unitPrice !== undefined && !printedMoney(line.unitPrice)))) {
-    delete out.lines;
-    missing.add('lines');
+  if (out.lines) {
+    const validLines = out.lines.filter((line) => printedMoney(line.amount)).map((line) => {
+      const normalized = { ...line, amount: normalizeReceiptMoney(line.amount) };
+      if (line.unitPrice !== undefined) {
+        if (printedMoney(line.unitPrice)) normalized.unitPrice = normalizeReceiptMoney(line.unitPrice);
+        else delete normalized.unitPrice;
+      }
+      return normalized;
+    });
+    if (validLines.length !== out.lines.length) missing.add('lines');
+    if (validLines.length) out.lines = validLines;
+    else delete out.lines;
   }
 
   if (!out.vatAmount) {
@@ -1504,12 +1544,30 @@ export function applyOcrValueCrossCheck(
   }
 
   if (out.additionalCharges) {
-    const validCharges = out.additionalCharges.filter((charge) => {
+    const money = (value?: string) => Number((value ?? 'NaN').replace(/,/g, ''));
+    const otherCharges = out.additionalCharges.filter((charge) => charge.kind !== 'ROUNDING')
+      .filter((charge) => money(charge.amount) > 0 && allowedNumbers.has(money(charge.amount)));
+    const roundingCount = out.additionalCharges.filter((charge) => charge.kind === 'ROUNDING').length;
+    const validCharges = out.additionalCharges.map((charge) => ({ ...charge, amount: normalizeReceiptMoney(charge.amount) })).filter((charge) => {
       const amount = Number.parseFloat(String(charge.amount).replace(/,/g, ''));
-      if (charge.kind === 'ROUNDING' && amount < 0) {
-        const negativeAmounts = [...charge.evidenceSignal.matchAll(/[-−]\s*(\d[\d,]*(?:\.\d+)?)|\(\s*(\d[\d,]*(?:\.\d+)?)\s*\)/g)];
-        return allowedNumbers.has(Math.abs(amount)) && negativeAmounts.some((match) =>
-          Number((match[1] ?? match[2])!.replace(/,/g, '')) === Math.abs(amount));
+      if (charge.kind === 'ROUNDING') {
+        const row = printedRoundingRow(documentText, charge.amount);
+        if (!row || !Number.isFinite(amount) || amount === 0 || roundingCount !== 1) return false;
+        const discount = fields.discountAmount ? Math.abs(money(fields.discountAmount)) : 0;
+        const settlement = money(out.grandTotalAmount) - (money(out.subtotalAmount) - discount
+          + otherCharges.reduce((sum, item) => sum + money(item.amount), 0)
+          + (out.vatMode === 'VAT_EXCLUDED' ? money(out.vatAmount) : 0));
+        if (Number.isFinite(settlement)) {
+          if (Math.abs(Math.abs(settlement) - Math.abs(amount)) > 0.005) return false;
+          charge.amount = (settlement < 0 ? -Math.abs(amount) : Math.abs(amount)).toFixed(2);
+        } else {
+          // Incomplete settlement: only an explicit printed sign can preserve a negative value.
+          const negative = [...mapThaiDigits(row).matchAll(/[-−]\s*(\d[\d,]*(?:\.\d+)?)|\(\s*(\d[\d,]*(?:\.\d+)?)\s*\)|(\d[\d,]*(?:\.\d+)?)\s*[-−]/g)]
+            .some((match) => Number((match[1] ?? match[2] ?? match[3])!.replace(/,/g, '')) === Math.abs(amount));
+          if (amount < 0 && !negative) return false;
+        }
+        charge.evidenceSignal = row;
+        return true;
       }
       return Number.isFinite(amount) && amount > 0 && allowedNumbers.has(amount);
     });
@@ -1518,12 +1576,29 @@ export function applyOcrValueCrossCheck(
     else delete out.additionalCharges;
   }
 
+  // The legacy contract has one discount slot. A combined line + bill discount need not be
+  // printed as one number; require the printed bases AND settlement to prove the aggregate.
+  if (!out.discountAmount && fields.discountAmount && /ส่วนลด|discount|coupon|voucher/i.test(mappedText)) {
+    const money = (value?: string) => Number((value ?? 'NaN').replace(/,/g, ''));
+    const discount = Math.abs(money(fields.discountAmount));
+    const charges = (out.additionalCharges ?? []).reduce((sum, charge) => sum + money(charge.amount), 0);
+    const base = money(out.subtotalAmount) - discount + charges;
+    const vat = out.vatMode === 'VAT_EXCLUDED' ? money(out.vatAmount) : 0;
+    if (discount > 0 && discount <= money(out.subtotalAmount)
+      && Math.abs(base + vat - money(out.grandTotalAmount)) <= 0.05) {
+      out.discountAmount = discount.toFixed(2);
+      missing.delete('discountAmount');
+    }
+  }
+
   // A no-VAT label cannot be made taxable by a derived amount elsewhere in the transcription.
   // Conflicting labels stay an explicit review state; they never authorize the invented tax.
   const noVatLabel = /(?:\bVAT\b|ภาษีมูลค่าเพิ่ม)[^\n]{0,35}(?:ไม่มี|NO\s+VAT)/i.test(mappedText)
     || ((out.vatMode === 'NO_VAT' || out.vatMode === 'EXEMPT') && /ไม่มี|NO\s+VAT/i.test(mappedText));
   const mixedTaxRows = out.lines?.some((line) => line.vatRate === '0')
     && out.lines.some((line) => Number(line.vatRate ?? out.vatRate) > 0);
+  if (mappedText.split('\n').some((line) => /\bVAT\s+INCLUDED\b|รวมภาษีมูลค่าเพิ่มแล้ว/i.test(line)
+    && !/\bNOT\s+VAT\s+INCLUDED\b|ไม่รวมภาษีมูลค่าเพิ่ม/i.test(line))) out.vatMode = 'VAT_INCLUDED';
   if (noVatLabel && !mixedTaxRows) {
     const conflict = !!singlePrintedVatAmount(mappedText);
     delete out.vatAmount;
@@ -1615,11 +1690,15 @@ export function applyOcrValueCrossCheck(
   if (entityKind) { out.vendorEntityKind = entityKind; out.vendorIdentityEvidence = evidence; }
   else { delete out.vendorEntityKind; delete out.vendorIdentityEvidence; }
   if (out.documentNumber) {
-    const value = mapThaiDigits(out.documentNumber).trim();
+    const compactReference = (value: string) => value.replace(/[\s\u200B-\u200D\u2060\uFEFF]/g, '');
+    const value = documentKind === 'TRANSFER_SLIP'
+      ? compactReference(mapThaiDigits(out.documentNumber)) : mapThaiDigits(out.documentNumber).trim();
     const digitRuns = value.match(/\d+/g) ?? [];
     const invalid = value.length > MAX_DOCUMENT_NUMBER_CHARS
       || isFullSpanDate(value)
-      || !digitRuns.every((run) => collapsedText.includes(run));
+      || (documentKind === 'TRANSFER_SLIP'
+        ? !compactReference(mappedText).includes(value)
+        : !digitRuns.every((run) => collapsedText.includes(run)));
     if (invalid) {
       delete out.documentNumber;
       missing.add('documentNumber');
@@ -1655,8 +1734,12 @@ export function applyOcrValueCrossCheck(
   // legally complete without one, so the name is reported there and removed everywhere else.
   if (documentKind === 'TAX_INVOICE' && !out.vendorAddress) missing.add('vendorAddress');
   else missing.delete('vendorAddress');
+  if (['RECEIPT', 'HANDWRITTEN_CASH_BILL', 'TRANSFER_SLIP'].includes(documentKind ?? '')) missing.delete('vendorTaxId');
 
-  if (missing.size > 0) out.missingFields = [...missing].slice(0, 20);
+  if (missing.has('lines')) {
+    missing.delete('lines');
+    out.missingFields = ['lines', ...missing].slice(0, 20);
+  } else if (missing.size > 0) out.missingFields = [...missing].slice(0, 20);
   // Recovery can empty a non-empty model report; [] must survive as [] (a reported empty
   // list means "nothing missing" downstream, while undefined falls back to the full default).
   else if (out.missingFields?.length) out.missingFields = [];
@@ -1747,7 +1830,7 @@ export function parseReceiptOcrJson(
   activeCategoryIds: ReadonlySet<string>,
   minimumLineCount: 1 | 2 = 2,
 ): Pick<ReceiptOcrResponse, 'fields' | 'classification'> | null {
-  const json = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
+  const json = extractJson(text);
   try {
     const raw = JSON.parse(json) as Record<string, unknown>;
     const rawFields = raw['fields'] && typeof raw['fields'] === 'object'
@@ -1820,11 +1903,21 @@ export function parseReceiptOcrJson(
         if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
         const line = item as Record<string, unknown>;
         const description = typeof line['description'] === 'string' ? line['description'].trim() : '';
-        const amount = typeof line['amount'] === 'string' ? line['amount'].trim() : '';
+        const amount = typeof line['amount'] === 'string' ? normalizeReceiptMoney(line['amount']) : '';
         const rawQuantity = typeof line['quantity'] === 'string' ? line['quantity'].trim() : '1';
         const quantity = rawQuantity || '1';
-        const rawUnitPrice = typeof line['unitPrice'] === 'string' ? line['unitPrice'].trim() : undefined;
+        const rawUnitPrice = typeof line['unitPrice'] === 'string' ? normalizeReceiptMoney(line['unitPrice']) : undefined;
+        const unitPrice = rawUnitPrice && rawUnitPrice.length <= 32
+          && Number.isFinite(Number(rawUnitPrice.replace(/,/g, ''))) && Number(rawUnitPrice.replace(/,/g, '')) >= 0
+          ? rawUnitPrice : undefined;
         let evidenceSignal = typeof line['evidenceSignal'] === 'string' ? line['evidenceSignal'].trim() : '';
+        if (evidenceSignal && !documentText.includes(evidenceSignal)) {
+          const quote = normalizeReceiptRowQuote(evidenceSignal);
+          const pattern = quote.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '[ \\t|]+');
+          const sourceSpan = quote ? new RegExp(pattern).exec(documentText)?.[0] : undefined;
+          // Return the source's own span so downstream consumers retain exact evidence.
+          if (sourceSpan && sourceSpan.length <= 120) evidenceSignal = sourceSpan;
+        }
         const confidence = line['confidence'];
         // Per-row VAT is tax data, so it is admitted only when the model both states it AND the
         // row's own evidence span carries the printed marker it claims to have read. A rate with
@@ -1860,7 +1953,6 @@ export function parseReceiptOcrJson(
           // "AI สรุปยอดรวม" line. additionalCharges below stays positive-only: a zero charge is noise.
           || !amount || amount.length > 32 || !(Number.parseFloat(amount.replace(/,/g, '')) >= 0)
           || quantity.length > 16 || !(Number.parseFloat(quantity.replace(/,/g, '')) > 0)
-          || (rawUnitPrice !== undefined && (rawUnitPrice.length > 32 || !(Number.parseFloat(rawUnitPrice.replace(/,/g, '')) >= 0)))
           || !evidenceSignal || evidenceSignal.length > 120 || !documentText.includes(evidenceSignal)
           || (confidence !== undefined && !(typeof confidence === 'number' && Number.isFinite(confidence) && confidence >= 0 && confidence <= 1))
         ) continue;
@@ -1868,18 +1960,14 @@ export function parseReceiptOcrJson(
           description,
           quantity,
           amount,
-          ...(rawUnitPrice !== undefined ? { unitPrice: rawUnitPrice } : {}),
+          ...(unitPrice !== undefined ? { unitPrice } : {}),
           ...(acceptLineVat ? { vatRate: rawLineVatRate } : {}),
           ...(acceptLineVat && lineVatTreatmentValid ? { vatTreatment: rawLineVatTreatment as 'ZERO_RATED' | 'EXEMPT' | 'NON_VAT' } : {}),
           evidenceSignal,
           ...(typeof confidence === 'number' ? { confidence } : {}),
         });
       }
-      // The legacy/full-OCR default still drops one surviving row because it says nothing the
-      // summary does not. One-pass asks for minimumLineCount=1 only so it can prove the candidate's
-      // sole row survived evidence checks before arithmetic reconciliation. A partially dropped set
-      // never represents the document in either mode.
-      if (lines.length >= minimumLineCount && lines.length === rawFields['lines'].length) out.lines = lines;
+      if (lines.length >= minimumLineCount || (lines.length > 0 && lines.length < rawFields['lines'].length)) out.lines = lines;
     }
     if (Array.isArray(rawFields['additionalCharges']) && rawFields['additionalCharges'].length <= 10) {
       const charges: NonNullable<typeof out.additionalCharges> = [];
@@ -1888,8 +1976,9 @@ export function parseReceiptOcrJson(
         const charge = item as Record<string, unknown>;
         const kind = charge['kind'];
         const description = typeof charge['description'] === 'string' ? charge['description'].trim() : '';
-        const amount = typeof charge['amount'] === 'string' ? charge['amount'].trim() : '';
-        const evidenceSignal = typeof charge['evidenceSignal'] === 'string' ? charge['evidenceSignal'].trim() : '';
+        const amount = typeof charge['amount'] === 'string' ? normalizeReceiptMoney(charge['amount']) : '';
+        const evidenceSignal = kind === 'ROUNDING' ? printedRoundingRow(documentText, amount)
+          ?? '' : typeof charge['evidenceSignal'] === 'string' ? charge['evidenceSignal'].trim() : '';
         const rawRate = typeof charge['vatRate'] === 'string' ? charge['vatRate'].trim() : undefined;
         const rate = rawRate === undefined ? undefined : Number.parseFloat(rawRate);
         const amountValid = Number.isFinite(Number(amount.replace(/,/g, ''))) && (kind === 'ROUNDING' ? Number(amount.replace(/,/g, '')) !== 0 : Number(amount.replace(/,/g, '')) > 0);
@@ -1924,8 +2013,8 @@ export function parseReceiptOcrJson(
         .map((v) => v.slice(0, 80))
         .slice(0, 20);
     }
-    if (Array.isArray(rawFields['lines']) && rawFields['lines'].length >= 2 && !out.lines) {
-      out.missingFields = [...new Set([...(out.missingFields ?? []), 'lines'])].slice(0, 20);
+    if (Array.isArray(rawFields['lines']) && rawFields['lines'].length >= 2 && out.lines?.length !== rawFields['lines'].length) {
+      out.missingFields = [...new Set(['lines', ...(out.missingFields ?? [])])].slice(0, 20);
     }
     const fields = Object.keys(out).length > 0 ? out : undefined;
     const classification = raw['classification'] === undefined

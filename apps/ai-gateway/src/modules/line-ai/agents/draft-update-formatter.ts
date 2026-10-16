@@ -82,7 +82,7 @@ export function formatDraftUpdateReply(data: unknown): string | undefined {
       + ` — พิมพ์ "ย้ายบรรทัด ${line} เป็นช่องค่าบริการ" ถ้าต้องการย้ายเป็นช่องค่าใช้จ่ายเพิ่มค่ะ`;
   }
 
-  if (typeof payload['blocked'] === 'string') return blockedLine(payload['blocked']);
+  if (typeof payload['blocked'] === 'string') return blockedLine(payload['blocked'], payload['detail']);
 
   const preview = record(payload['preview']);
   const totalsAfter = record(preview?.['totalsAfter']);
@@ -133,9 +133,11 @@ export function draftUpdateCardLayout(data: unknown): LineAiAnswerCardLayout | u
 }
 
 /** One honest sentence per refusal. Nothing here invents a number or a record name. */
-function blockedLine(reason: string): string | undefined {
+function blockedLine(reason: string, detail?: unknown): string | undefined {
   switch (reason) {
-    case 'mutation_blocked': return 'รายการนี้ยืนยันไปแล้ว แก้ผ่าน LINE ไม่ได้ค่ะ ต้องไปแก้หรือยกเลิกในเว็บนะคะ';
+    case 'mutation_blocked': return detail === 'VOIDED' ? 'รายการนี้ยกเลิกแล้ว จึงแก้ไขไม่ได้ค่ะ เปิดเว็บเพื่อบันทึกรายการใหม่ได้'
+      : detail !== undefined && detail !== 'CONFIRMED' ? 'รายการนี้ยังแก้ไขไม่ได้ค่ะ เปิดเว็บเพื่อตรวจสถานะก่อน'
+      : 'รายการนี้ยืนยันไปแล้ว แก้ผ่าน LINE ไม่ได้ค่ะ ต้องไปแก้หรือยกเลิกในเว็บนะคะ';
     case 'ambiguous_line': return 'บิลนี้มีหลายบรรทัดค่ะ ขอทราบว่าต้องการแก้บรรทัดไหนนะคะ (เช่น "บรรทัด 2 เป็น 500")';
     case 'ambiguous_record': return 'มีหลายรายการล่าสุดในแชทนี้ ขอให้ระบุรายการก่อนนะคะ';
     case 'no_recent_record': return 'ยังไม่พบรายการที่บันทึกไว้ล่าสุดในแชทนี้ที่แก้ไขได้ค่ะ';

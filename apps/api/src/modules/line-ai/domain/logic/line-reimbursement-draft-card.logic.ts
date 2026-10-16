@@ -2,6 +2,7 @@ import type { ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
 import type { LineReimbursementDraftResult, LineReimbursementDraftPreview, LineReimbursementDraftSnapshot } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
 import { normalizeReimbursementAmount } from '../../../reimbursements/domain/logic/reimbursement.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import { lineChoiceQuickReply } from './line-business-card.logic';
 import { splitLineDeliveryText } from './line-delivery-plan.logic';
 import { formatThaiDate } from './line-draft-update-card.logic';
 
@@ -127,7 +128,7 @@ function blockedText(result: Extract<LineReimbursementDraftResult, { status: 'bl
   return BLOCKED_TEXT[result.errorCode] ?? 'ยังทำรายการใบเบิกนี้ไม่ได้ กรุณาลองใหม่อีกครั้ง หรือทำรายการในเว็บค่ะ';
 }
 
-export function buildReimbursementDraftMessages(result: LineReimbursementDraftResult, webBaseUrl: string, companyId: string): LineReplyMessage[] {
+export function buildReimbursementDraftMessages(result: LineReimbursementDraftResult, webBaseUrl: string, companyId: string, permissions: readonly string[] = [], submitToken?: string): LineReplyMessage[] {
   if (result.status === 'preview') {
     const preview = result.preview, text = reimbursementPreviewText(preview);
     const parts = splitLineDeliveryText(text, 4500);
@@ -148,7 +149,9 @@ export function buildReimbursementDraftMessages(result: LineReimbursementDraftRe
     return [{ type: 'text', text: ['บันทึกร่างใบเบิกแล้ว', ...(requestNo ? [`เลขที่ใบเบิก: ${requestNo}`] : []),
       `ยอด: ${formatClaimMoney(r.amount, r.currency)}`,
       `สถานะปัจจุบัน: ${CLAIM_STATE_TEXT[String(r.currentState ?? r.committedState ?? 'DRAFT')] ?? 'ตรวจสถานะล่าสุดได้ในเว็บ'}`,
-      'ยังไม่ได้ยื่น อนุมัติ หรือจ่ายเงินโดยคำสั่งนี้'].join('\n') }];
+      'ยังไม่ได้ยื่น อนุมัติ หรือจ่ายเงินโดยคำสั่งนี้'].join('\n'),
+      ...(submitToken && permissions.includes('reimbursement.submit') && String(r.currentState ?? r.committedState ?? 'DRAFT') === 'DRAFT' ? { quickReply: { items: [{ type: 'action' as const,
+        action: { type: 'postback' as const, label: 'ส่งอนุมัติ', data: new URLSearchParams({ action: 'expense_action_submit', token: submitToken }).toString() } }] } } : {}) }];
   }
   const text = result.status === 'needs_fields' ? reimbursementMissingText(result.fieldPaths)
     : result.status === 'needs_target' ? 'กรุณาเลือกใบเบิกที่ต้องการแก้ ระบบยังไม่ได้เลือกใบล่าสุดให้อัตโนมัติ'
@@ -176,23 +179,50 @@ function reimbursementMissingText(fieldPaths: string[]): string {
 
 /** Bounded server choices keep labels visible without turning them into final-mutation controls. A family the
  *  server already chose is not asked again, and bills are shown only when they can actually be claimed. */
-export function buildReimbursementOptionsMessages(options: { choices: Array<{ kind: string; label: string; details?: Record<string, string | number | boolean | null> }>;
-  pages: Partial<Record<string, { hasMore: boolean }>>; selected?: { branchChoiceId?: string; requesterChoiceId?: string } }): LineReplyMessage[] {
-  const names: Record<string, string> = { BRANCH: 'สาขา', REQUESTER: 'ผู้ขอเบิก', CATEGORY: 'หมวดค่าใช้จ่าย', SOURCE: 'บิลที่เบิกได้', ATTACHMENT: 'ไฟล์หลักฐาน', TARGET: 'ใบเบิกที่แก้ไขได้', LINE: 'รายการในใบเบิก' };
-  const bills = options.choices.filter(choice => choice.kind === 'SOURCE' && choice.details?.['eligible'] !== false);
-  const skipped = new Set([...(options.selected?.branchChoiceId ? ['BRANCH'] : []), ...(options.selected?.requesterChoiceId ? ['REQUESTER'] : []),
-    // A linked bill brings its own category and receipt.
-    ...(bills.length ? ['CATEGORY', 'ATTACHMENT'] : [])]);
-  const lines = [bills.length ? 'เลือกบิลที่จะเบิกได้เลยค่ะ พิมพ์ลำดับหรือชื่อร้าน พร้อมเหตุผลการเบิก' : 'ตัวเลือกที่ตรวจสิทธิ์แล้ว กรุณาระบุชื่อที่ต้องการ หากชื่อซ้ำให้ระบุรายละเอียดเพิ่ม'];
-  for (const [kind, name] of Object.entries(names)) {
-    if (skipped.has(kind)) continue;
-    const choices = kind === 'SOURCE' ? bills.map(choice => ({ ...choice, label: [choice.label,
-      typeof choice.details?.['incurredDate'] === 'string' ? formatThaiDate(choice.details['incurredDate']) : undefined,
-      choice.details?.['amount'] ? formatClaimMoney(choice.details['amount'], choice.details['currency']) : undefined].filter(Boolean).join(' · ') }))
-      : options.choices.filter(choice => choice.kind === kind);
-    if (!choices.length) continue;
-    lines.push(`${name}:`, ...choices.map((choice, index) => `${index + 1}) ${choice.label}`));
-    if (options.pages[kind.toLowerCase()]?.hasMore) lines.push('ยังมีตัวเลือกเพิ่มเติม กรุณาระบุคำค้นหรือขอหน้าถัดไป');
+export function buildReimbursementOptionsMessages(options: { choices: Array<{ choiceId?: string; kind: string; label: string; details?: Record<string, string | number | boolean | null> }>;
+  pages: Partial<Record<string, { hasMore: boolean }>>; selected?: { branchChoiceId?: string; requesterChoiceId?: string; targetRef?: string };
+  control?: { actionId: string; revision: string }; awaitingPhoto?: boolean;
+  nonEditableTargets?: Array<{ label: string; webPath: string; canReopen: boolean; pending: boolean }>; reasonQuestion?: string; receiptNotice?: string; collection?: { lineChosen: boolean; receiptChosen: boolean; categoryChosen: boolean } }, webBaseUrl = ''): LineReplyMessage[] {
+  if (options.nonEditableTargets?.length) return options.nonEditableTargets.slice(0, 5).map(target => ({ type: 'text',
+    text: target.canReopen ? target.pending
+      ? 'ใบเบิกส่งอนุมัติแล้ว จึงต้องถอนกลับเป็นร่างในเว็บก่อนแก้ยอดค่ะ'
+      : 'ใบเบิกถูกส่งกลับแล้ว จึงต้องเปิดเป็นร่างในเว็บก่อนแก้ยอดค่ะ'
+      : 'ใบเบิกพ้นสถานะร่างแล้ว เปิดดูวิธีดำเนินการต่อในเว็บได้ค่ะ',
+    quickReply: { items: [{ type: 'action', action: { type: 'uri', label: options.nonEditableTargets!.length > 1 ? Array.from(target.label).slice(0, 20).join('') : target.canReopen ? target.pending ? 'ถอนกลับเป็นร่าง' : 'เปิดเป็นร่าง' : 'เปิดใบเบิก',
+      uri: `${webBaseUrl.replace(/\/$/u, '')}${target.webPath}` } }] },
+  }));
+  const choiceAction = (label: string, choice: string, text: string) => options.control
+    ? { type: 'postback' as const, label: Array.from(label).slice(0, 20).join(''), displayText: text, data: new URLSearchParams({ action: 'reimbursement_choice', ...options.control, choice }).toString() }
+    : { type: 'message' as const, label, text };
+  const buttons = (text: string, choices: Array<{ label: string; text: string }>): LineReplyMessage[] => [{ type: 'text', text,
+    quickReply: lineChoiceQuickReply(choices) }];
+  for (const [kind, chosen, name] of [['BRANCH', options.selected?.branchChoiceId, 'สาขา'],
+    ['REQUESTER', options.selected?.requesterChoiceId, 'ผู้ขอเบิก'], ['TARGET', options.selected?.targetRef, 'ใบเบิกที่จะแก้']] as const) {
+    const choices = options.choices.filter(choice => choice.kind === kind);
+    if (!chosen && choices.length) return buttons(`เลือก${name}ได้เลยค่ะ`, choices.slice(0, 12).map(choice => ({ label: choice.label, text: `เลือก${name} ${choice.label}` }))
+      .concat(choices.length > 12 || options.pages[kind.toLowerCase()]?.hasMore ? [{ label: 'ค้นหาเพิ่มเติม', text: `ขอค้นหา${name}เพิ่มเติม` }] : []));
   }
-  return splitLineDeliveryText(lines.join('\n'), 4500).map(part => ({ type: 'text', text: part.text }));
+  const bills = options.choices.filter(choice => choice.kind === 'SOURCE' && choice.details?.['eligible'] !== false);
+  if (!options.collection?.lineChosen && bills.length) return buttons('เลือกบิลที่จะเบิก หรือเริ่มรายการใหม่ได้เลยค่ะ', [
+    ...bills.slice(0, 4).map(choice => {
+      const detail = [choice.label, typeof choice.details?.['incurredDate'] === 'string' ? formatThaiDate(choice.details['incurredDate']) : undefined,
+        choice.details?.['amount'] ? formatClaimMoney(choice.details['amount'], choice.details['currency']) : undefined].filter(Boolean).join(' · ');
+      const label = choice.details?.['description'] && choice.details?.['amount']
+        ? `${Array.from(String(choice.details['description'])).slice(0, 9).join('')} ${formatClaimAmount(choice.details['amount'])}` : detail;
+      return { label, text: `เบิกบิล ${detail}` };
+    }), { label: 'รายการใหม่', text: 'ขอเบิกรายการใหม่ ไม่มีบิลในระบบ' },
+  ]);
+  if (!options.collection?.lineChosen) return [{ type: 'text', text: 'ขอรายละเอียดรายการ จำนวนเงิน และวันที่สำรองจ่ายเพื่อทำใบเบิกต่อค่ะ' }];
+  if (options.awaitingPhoto) return [{ type: 'text', text: 'ส่งรูปใบเสร็จมาได้เลยค่ะ น้องจะแนบกับใบเบิกนี้',
+    quickReply: { items: [{ type: 'action', action: { type: 'cameraRoll', label: 'ส่งรูปใบเสร็จ' } }] } }];
+  if (!options.collection?.receiptChosen) return [{ type: 'text', text: 'ส่งรูปใบเสร็จ หรือเลือกไม่มีใบเสร็จเพื่อทำรายการต่อได้ค่ะ',
+    quickReply: { items: [{ type: 'action', action: choiceAction('ส่งรูปใบเสร็จ', 'photo', 'ส่งรูปใบเสร็จสำหรับใบเบิกนี้') },
+      { type: 'action', action: choiceAction('ไม่มีใบเสร็จ', 'no-receipt', 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้') }] } }];
+  if (!options.collection?.categoryChosen) {
+    const categories = options.choices.filter(choice => choice.kind === 'CATEGORY');
+    if (categories.length) return [{ type: 'text', text: [options.receiptNotice, 'เลือกหมวดค่าใช้จ่ายได้เลยค่ะ'].filter(Boolean).join('\n'), quickReply: { items: categories.slice(0, 12).map(choice => ({ type: 'action' as const,
+      action: choiceAction(choice.label, choice.choiceId ?? '', `เลือกหมวดค่าใช้จ่าย ${choice.label}`) })).concat(
+        categories.length > 12 || options.pages.category?.hasMore ? [{ type: 'action', action: { type: 'message', label: 'ค้นหาหมวดเพิ่มเติม', text: 'ขอค้นหาหมวดค่าใช้จ่ายเพิ่มเติม' } }] : []) } }];
+  }
+  return options.reasonQuestion ? [{ type: 'text', text: options.reasonQuestion }] : [];
 }

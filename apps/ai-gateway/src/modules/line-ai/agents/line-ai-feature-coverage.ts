@@ -44,6 +44,11 @@ function tools(...names: string[]): LineAiCoverageTool[] {
  * the API controller tests and must not be inferred here.
  */
 export const LINE_AI_FEATURE_COVERAGE: readonly LineAiFeatureCoverageRow[] = [
+  { id: 'counterparties', feature: 'Counterparty search/detail and human-confirmed create/update', status: 'covered', questionKinds: ['search', 'detail'], tools: tools('counterparty.search', 'counterparty.get_detail', 'counterparty.action.preview'), requiredPermissions: ['accounting.counterparty.read', 'accounting.counterparty.manage'], sourceModule: 'accounting-documents' },
+  { id: 'voucher_reads', feature: 'Payment voucher list and detail', status: 'covered', questionKinds: ['list', 'detail'],
+    tools: tools('voucher.list_recent', 'voucher.get_detail'), requiredPermissions: ['expense.disbursement.read'], sourceModule: 'expenses' },
+  { id: 'sold_wht_reads', feature: 'Sold-pack WHT month summary and catalog calculation', status: 'covered', questionKinds: ['summary', 'explain'],
+    tools: tools('wht.get_month_summary', 'wht.calculate_withholding'), requiredPermissions: ['wht.certificate.read', 'wht.pnd53.read', 'expense.create', 'procurement.supplier_payment.read'], sourceModule: 'tax' },
   {
     id: 'public_lookup_v2', feature: 'Policy-bounded public lookup', status: 'feature_gated',
     questionKinds: ['explain'], tools: tools('public.lookup'), requiredPermissions: ['ai.tool.invoke'],
@@ -188,6 +193,8 @@ export const LINE_AI_FEATURE_COVERAGE: readonly LineAiFeatureCoverageRow[] = [
   // manifest asserts; whether the five tools are OFFERED on a given deployment is
   // `LINE_AI_DRAFT_EDIT_ENABLED`, enforced in the router catalog and the API executor.
   { id: 'expense_draft_edit', feature: 'Edit a captured expense draft over LINE (preview then confirm)', status: 'covered', questionKinds: ['detail'], tools: tools('expense.draft.set_header', 'expense.draft.set_line', 'expense.draft.add_charge', 'expense.draft.remove_line', 'expense.draft.set_vat_mode'), requiredPermissions: ['expense.update'], sourceModule: 'expenses' },
+  // Advisor rounds 2–3 (2026-10-15): final actions are prepared as a signed LINE card; the API applies them on the user's press.
+  { id: 'record_action_confirm_card', feature: 'Expense, reimbursement, voucher and 50 ทวิ actions through a LINE confirm card', status: 'covered', questionKinds: ['detail'], tools: tools('expense.action.preview'), requiredPermissions: ['expense.update', 'expense.review', 'expense.confirm', 'expense.delete', 'expense.void', 'expense.payment.record', 'reimbursement.submit', 'reimbursement.cancel_own', 'reimbursement.finance_review', 'reimbursement.approve', 'reimbursement.reject', 'reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own', 'expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.disbursement.pay', 'wht.certificate.issue'], sourceModule: 'expenses' },
   // Advisor S2a (spec §5.1): offered to every assistant user; the tool answers only whoever manages the package.
   { id: 'package_usage', feature: 'Package and receipt quota status', status: 'covered', questionKinds: ['summary'], tools: tools('billing.get_package_usage'), requiredPermissions: ['company.plan.manage'], sourceModule: 'billing' },
   // Owner 2026-09-30 (spec §5.1a): the packages on sale, their selling prices and contents, for anyone who asks.
@@ -197,7 +204,9 @@ export const LINE_AI_FEATURE_COVERAGE: readonly LineAiFeatureCoverageRow[] = [
   { id: 'procurement_operations', feature: 'Suppliers and purchase orders', status: 'covered', questionKinds: ['summary', 'search', 'detail'], tools: tools('procurement.get_summary', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail'), requiredPermissions: ['procurement.supplier.read', 'procurement.purchase_order.read'], sourceModule: 'procurement' },
   { id: 'ledger_journal', feature: 'Journal entries', status: 'web_only', questionKinds: ['list', 'detail'], tools: [], requiredPermissions: ['ledger.journal.read'], sourceModule: 'ledger', navigationMenuIds: ['journal'], reason: 'Financial summary does not expose journal entries.' },
   { id: 'ledger_periods', feature: 'Ledger period status and canonical reports', status: 'covered', questionKinds: ['summary', 'detail', 'report'], tools: tools('ledger.get_period_status', 'ledger.get_report_summary'), requiredPermissions: ['ledger.period.read', 'ledger.report.read'], sourceModule: 'ledger', navigationMenuIds: ['closing'] },
-  { id: 'role_read', feature: 'Role and permission read', status: 'web_only', questionKinds: ['list', 'detail'], tools: [], requiredPermissions: ['access.role.read'], sourceModule: 'employee-access', navigationMenuIds: ['roles'], reason: 'No LINE role read tool is registered; mutations remain blocked.' },
+  { id: 'role_read', feature: 'Role and permission read', status: 'covered', questionKinds: ['list', 'detail'], tools: tools('company.get_roles'), requiredPermissions: ['access.role.read'], sourceModule: 'employee-access', navigationMenuIds: ['roles'] },
+
+  { id: 'team_branch_action_confirm_card', feature: 'Employee and branch changes through a LINE confirm card', status: 'covered', questionKinds: ['detail'], tools: tools('company.action.preview'), requiredPermissions: ['access.employee.create', 'access.employee.update', 'access.employee.disable', 'company.branch.manage'], sourceModule: 'employee-access' },
 
   // Navigation placeholders or owning features not production-ready for LINE reads.
   { id: 'sales_navigation', feature: 'POS sales navigation', status: 'feature_gated', questionKinds: ['summary', 'list', 'detail'], tools: [], requiredPermissions: [], sourceModule: 'sales', navigationMenuIds: ['sales'], owningItem: 'owning feature', reason: 'The menu has no grantable view permission yet.' },

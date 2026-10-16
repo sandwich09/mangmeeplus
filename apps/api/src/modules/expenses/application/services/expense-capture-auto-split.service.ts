@@ -25,7 +25,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { safeLineErrorDetails } from '../../../line-ai/infrastructure/line-reply.adapter';
 import { captureFieldsFromObservations } from '../../domain/logic/expense-capture-fields.logic';
-import { isExpenseExtractionEligible } from '../../domain/logic/expense-document.logic';
+import { isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import { PrismaExpenseCaptureRepository } from '../../infrastructure/prisma-expense-capture.repository';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { isStaleOcrApply, ReceiptOcrApplyService } from './receipt-ocr-apply.service';
@@ -160,7 +160,8 @@ export class ExpenseCaptureAutoSplitService {
       { companyId: job.companyId, userId: 'system' },
       expenseId,
       mapped.fields,
-      { ...options, sourceAttachmentId: job.attachmentId },
+      { ...options, sourceAttachmentId: job.attachmentId,
+        ocrDocumentType: toSourceDocumentType(sourceDocumentTypeFromClassification(mapped.classification)) },
     ).catch((error) => {
       this.logger.warn({ msg: 'capture.auto_split.apply_failed', jobId: job.id, expenseId, ...safeLineErrorDetails(error) });
       return null;

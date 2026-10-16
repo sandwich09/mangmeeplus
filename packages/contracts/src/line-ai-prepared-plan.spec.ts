@@ -544,8 +544,8 @@ describe('parseAiBudgetEnvelope (E1c receiver boundary)', () => {
       bucket: 'OCR',
       monthKey: '2026-09',
       modelId: 'apac.anthropic.claude-sonnet-4-5',
-      bounds: { maxInputTokens: 30_000, maxOutputTokens: 8_192, maxCalls: 4 },
-      maxCalls: 4,
+      bounds: { maxInputTokens: 30_000, maxOutputTokens: 8_192, maxCalls: 8 },
+      maxCalls: 8,
     });
     // The returned bounds are a COPY of the table, so a caller cannot mutate the shared row.
     parsed!.bounds.maxInputTokens = 1;

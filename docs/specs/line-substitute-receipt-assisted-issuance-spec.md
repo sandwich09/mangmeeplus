@@ -1,5 +1,23 @@
 # LINE Substitute-Receipt Assisted Issuance Spec
 
+## Fix-up 9 regression acceptance (2026-10-16)
+
+- Every server-built LINE control card covers its canonical answer once through the real delivery-plan builder and validator. Completion menus cannot replace the signed actions in its text fallback; this includes expense/evidence/payment, substitute prepare/sign/approve, counterparty, team, package, voucher and 50 ทวิ cards. Evidence association/undo and PDF-purpose choices keep their actions too.
+- Sequence: an open substitute asks for evidence and the human certifier; the sender attaches a slip; the same expense's obsolete clarification is retired and replaced by a question sourced from the post-attachment state; pressing `ฉันเป็นผู้จ่าย` continues that expense without `LINE_DELIVERY_SOURCE_CHANGED`. Other work stays open, and unrelated source, permission, policy or branch changes still fail closed.
+- `ผู้จ่าย บริษัท` selects company funding only. The facts card itself offers `ฉันเป็นผู้จ่าย` and `เลือกสมาชิกคนอื่น`; the latter opens the existing authenticated web member selector. The selected person must certify using their own account. No separate typed payer step or automatic signer selection is required.
+- `จ่ายแล้ว` while the substitute is OPEN/PAUSED or PREPARED/PAYER_CERTIFIED reports that the certificate is in progress and offers `ทำใบรับรองต่อ`; it cannot restart the evidence-choice menu. Persisted full payment keeps the existing paid receipt response.
+- PDF assembly derives physical coverage and page order from the runner's known extraction-window plan, including resumed checkpoints. Model labels such as page 0 on both physical pages cannot make an otherwise reconciled complete document require human review. The 40/70-row regression must pass real assembly, eligibility and OCR apply, retaining rows, total and vendor. Truncation, unreadable rows, missing printed pages and inconsistent totals remain blocking evidence.
+
+## Fix-up 8A acceptance (2026-10-16)
+
+- The live facts answer `ผู้จ่าย บริษัท ผู้รับเงิน คุณเอ อินฟลู เหตุผล ผู้รับเงินไม่ออกใบเสร็จ วัตถุประสงค์ ค่าโปรโมทร้าน จ่ายโอน วันที่ 10 ต.ค. 2569` collects company funding, payee `คุณเอ อินฟลู`, reason `ผู้รับเงินไม่ออกใบเสร็จ`, purpose `ค่าโปรโมทร้าน`, bank transfer and payment date `2026-10-10`. Company funding alone never invents the human certifier: ask only for that unresolved field when the remaining facts/evidence are present.
+- Equivalent colon form: `ผู้จ่าย: บริษัท ผู้รับเงิน: คุณเอ อินฟลู เหตุผล: ผู้รับเงินไม่ออกใบเสร็จ วัตถุประสงค์: ค่าโปรโมทร้าน วิธีจ่าย: โอน วันที่จ่าย: 10 ต.ค. 2569`.
+- Equivalent newline form: `ผู้จ่าย บริษัท\nผู้รับเงิน คุณเอ อินฟลู\nเหตุผล ผู้รับเงินไม่ออกใบเสร็จ\nวัตถุประสงค์ ค่าโปรโมทร้าน\nจ่ายโอน\nวันที่ 10 ต.ค. 2569`.
+- Equivalent mixed form: `ผู้จ่าย: บริษัท ผู้รับเงิน คุณเอ อินฟลู\nเหตุผล: ผู้รับเงินไม่ออกใบเสร็จ วัตถุประสงค์ ค่าโปรโมทร้าน โอน 10 ต.ค. 2569`.
+- Labels delimit fields with or without `:`. A noun inside continuous Thai prose (e.g. `ผู้รับเงินไม่ออกใบเสร็จ`) is not a new label. Date/amount candidates and method/funding tokens cannot become free-text facts. Conflicting or unresolved fields remain questions; never guess legal content. Parsed facts are shown on the review/preparation card and the persisted document facts on the signing card.
+- Confirmation of an expense already paid in this chain says `ยืนยันและบันทึกจ่ายแล้วค่ะ` and offers no payment action. Later `จ่ายแล้ว` / `บันทึกจ่าย` (or a bare amount in that paid context) reports `รายการนี้บันทึกจ่ายครบแล้วค่ะ` with persisted amount/date; a bare amount cannot become a correction.
+- Attachment replies describe the state after attaching. When an action button is offered, its reply contains no stale resume instructions, numbered decision menu or `พิมพ์/ตอบ <n>` instruction. Existing tenant, branch, actor, status, source revision and signature guards still apply.
+
 2026-09-09 follow-up implemented and locally verified: [[specs/substitute-receipt-company-payer-spec|Company versus personal funding, signer identity and snapshot correctness]]. Its LINE scope adds explicit funding source to continuation/provenance and web handoff while retaining this spec's authenticated-web signing boundary.
 
 ## 1. Status
@@ -445,3 +463,13 @@ Settled at implementation (2026-08-20):
 - Delivery temp copy: **separate prefix on the existing bucket** (§12.3, updated in place).
 - R15 `ใบสำคัญรับเงิน` wording: drafted and shipped, marked OWNER-REVIEW-PENDING in a code comment —
   review it against a real conversation before calling it final.
+
+## Owner decision: Fix-up 11 (2026-10-16)
+
+Owner (verbatim): “ให้การลงนามและอนุมัติใบรับรองแทนใบเสร็จทำบนเว็บเหมือนเดิม น้องเตรียมให้แล้วส่งลิงก์”. This supersedes Fix-up 7B's LINE signing, approval and issuance cards. Preview, certification, approval and downloads remain authenticated web operations with `assertWeb(ctx)`; prepare continues to accept the real LINE context and its existing permission, tenant, branch, source-state and financial guards.
+
+LINE collects all missing facts in one ask, records payer choice, accepts “ไม่มีหลักฐานอื่น” without bypassing required payment proof, and attaches a requested slip/photo to the open substitute. The explicit PREPARE action remains. After preparation, send one card with the parsed facts and a primary URI button “เปิดลงนามในเว็บ”, or “เปิดอนุมัติในเว็บ” for the eligible approver, to the existing authenticated substitute receipt page. No LINE certify/approve/issue postback may mutate; old cards return the web destination (the authenticated hub when their expired source is unavailable).
+
+Keep only the personal signature-asset and paper-scan behaviour that existed before 7B; do not request or capture a new signature for a LINE signing action. Web issuance keeps existing notifications. Expense confirmation and subsequent บันทึกจ่าย remain LINE expense actions under the existing use cases and final-mutation policy.
+
+Acceptance evidence: registered use-case specs reject LINE Preview/Certify/Approve before repository access; real PREPARE produces one validated URI card; stale signing/approval cards navigate without mutations; facts/payer/slip/prepare and round-6 expense confirmation/payment regressions stay green. Table-driven delivery-plan coverage and real-module DI must pass.

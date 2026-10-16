@@ -22,13 +22,14 @@ const NAME_FILTER_GROUNDING_FIELDS = new Set(['categoryName', 'vendorName']);
 
 const DECISION_KEYS = new Set(['subrequests', 'simpleRead']);
 const SUBREQUEST_KEYS = new Set([
-  'kind', 'goal', 'sources', 'filters', 'requiredEvidence', 'dependsOn', 'entity', 'taskRef', 'writeIntent', 'tool',
+  'kind', 'goal', 'sources', 'filters', 'requiredEvidence', 'dependsOn', 'entity', 'taskRef', 'writeIntent', 'tool', 'index',
 ]);
 const SOURCE_KEYS = new Set(['part', 'whole', 'quote']);
 const SIMPLE_READ_KEYS = new Set(['subrequest', 'tool', 'subject', 'agent', 'answerShape', 'confidence']);
 const TASK_REF_KEYS = new Set(['taskId', 'taskRevision', 'subrequestIndex']);
 const SEMANTIC_KINDS = new Set<LineAiSemanticSubrequestV2['kind']>(['read', 'general', 'write', 'help', 'public', 'file']);
 const WRITE_INTENTS = new Set<NonNullable<LineAiSemanticSubrequestV2['writeIntent']>>([
+  'EXPENSE_PAYMENT_EVIDENCE_LINK',
   'EXPENSE_DOCUMENT_CAPTURE', 'EXPENSE_DRAFT_CONTINUATION', 'EXPENSE_CAPTURE_CORRECTION',
   'SUBSTITUTE_RECEIPT_CONTINUATION', 'REIMBURSEMENT_REQUEST_START',
 ]);
@@ -71,7 +72,7 @@ const FILE_CLAUSE_FILTER_KEYS: ReadonlySet<string> = new Set(['attachmentId', 'p
 export const INTAKE_REPAIR_HINTS = {
   "decision_keys_invalid": "decisionV1 must be an object containing only subrequests and optional simpleRead.",
   "decision_subrequests_invalid": "decisionV1.subrequests must contain 1 to 8 clauses.",
-  "clause_keys_invalid": "Each clause must be an object using only the documented clause keys.",
+  "clause_keys_invalid": "Each clause uses only kind, goal, sources, filters, requiredEvidence, dependsOn, entity, taskRef, writeIntent and tool. Put captureHints, documentClassification and resolvedClarificationIds on the outer route, never inside a clause. For an answer to an open question use sources:[{part:0,whole:true}] and that question's clarifyForIntent.",
   "clause_kind_invalid": "Use kind read, general, help, write, file or public.",
   "clause_goal_invalid": "Use a nonempty goal of at most 800 characters.",
   "sources_invalid": "Use 1 to 8 sources per clause.",
@@ -103,7 +104,7 @@ export const INTAKE_REPAIR_HINTS = {
   "route_capture_hint_too_long": "Shorten captureHints strings to their documented bounds.",
   "route_capture_items_too_many": "Use at most 20 captureHints items.",
   "route_capture_item_too_long": "Use at most 200 characters per captureHints item string.",
-  "route_document_invalid": "Return a valid documentClassification or omit it when not required.",
+  "route_document_invalid": "Omit documentClassification for a text answer to an open question. Otherwise return the complete documented classification object, never a document-kind string or partial object.",
   "route_document_missing": "BUSINESS_DOCUMENT_REFERENCE requires documentClassification.",
   "route_parse_exception": "Return a complete route with the documented JSON types."
 } as const;
@@ -465,6 +466,7 @@ export function parseLineIntakeCompactDecision(input: {
   for (let index = 0; index < raw['subrequests'].length; index += 1) {
     const item = raw['subrequests'][index];
     if (!plainObject(item) || !exactKeys(item, SUBREQUEST_KEYS)) return reject('clause_keys_invalid');
+    if (item['index'] !== undefined && item['index'] !== index) return reject('clause_keys_invalid');
     if (!SEMANTIC_KINDS.has(item['kind'] as LineAiSemanticSubrequestV2['kind'])) return reject('clause_kind_invalid');
     if (typeof item['goal'] !== 'string' || !item['goal'].trim() || item['goal'].length > 800) return reject('clause_goal_invalid');
     const originals = ['read', 'general', 'help'].includes(String(item['kind'])) ? input.originalClarifications ?? [] : [];

@@ -10,7 +10,7 @@ import type { AgentIntentPlan, SpecialistOutput, SourceRef, LineAiWebLink, LineA
 import { LINE_CAPABILITY_NO_ACCESS_TH, LINE_FEATURE_DISABLED_HELP_TH, LINE_CAPABILITY_GROUPS, LINE_TOOL_REGISTRY, canAdvertiseReceiptCapture, hasToolFeature, hasToolPermissions, usableCapabilityGroupIds } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
-import { MANGMEE_PERSONA_PROMPT } from './mangmee-persona';
+import { MANGMEE_PERSONA_PROMPT, sanitizeMangmeeComposedText } from './mangmee-persona';
 import { formatExpenseSummary } from './prepared-simple-read-formatter';
 
 export const RESPONSE_COMPOSER_SYSTEM_PROMPT = `
@@ -126,7 +126,7 @@ const CAPABILITY_COPY = {
   th: {
     intro: 'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ เช่น',
     receipt: 'ส่งรูปใบเสร็จหรือสลิปเพื่อสร้างร่างค่าใช้จ่ายได้ด้วยนะคะ',
-    closing: 'ความสามารถที่ใช้ได้ขึ้นกับสิทธิ์และฟีเจอร์ของบริษัท ส่วนการอนุมัติ จ่ายเงิน และลงบัญชีขั้นสุดท้ายต้องทำบนเว็บค่ะ',
+    closing: 'อนุมัติใบเบิกหรือบันทึกจ่าย น้องจะเตรียมการ์ดให้กดยืนยันเองค่ะ',
     example: (question: string) => `ลองถามตรงๆ เช่น “${question}” ได้เลยค่ะ`,
     // Nothing usable at all: honest, no capability list, and it does not blame the company's plan —
     // the caller cannot tell a missing permission from a switched-off feature, and neither should
@@ -142,13 +142,17 @@ const CAPABILITY_COPY = {
       bookings: { line: '• นัดหมายและคิว', example: 'คิววันนี้มีอะไรบ้าง' },
       procurement: { line: '• จัดซื้อและผู้ขาย', example: 'ใบสั่งซื้อที่ค้างอยู่มีอะไรบ้าง' },
       alerts: { line: '• งานค้างและการแจ้งเตือน', example: 'มีงานค้างอะไรบ้าง' },
-      package: { line: '• แพ็กเกจและใบเสร็จคงเหลือ', example: 'แพ็กเกจนี้พอไหม' },
+      counterparties: { line: '• คู่ค้าและผู้รับเงิน', example: 'ดูข้อมูลคู่ค้าให้หน่อย' },
+      company_management: { line: '• จัดการทีมงานหรือสาขาตามสิทธิ์ผ่านการ์ดยืนยัน', example: 'ช่วยจัดการทีมงานหรือสาขาตามสิทธิ์ให้หน่อยค่ะ' },
+      team: { line: '• ทีมงาน', example: 'ทีมงานมีกี่คน' },
+      tax_documents: { line: '• ใบสำคัญจ่ายและ 50 ทวิ', example: 'ขอดูใบสำคัญจ่ายหรือ 50 ทวิที่มีสิทธิ์ดู' },
+      package: { line: '• แพ็กเกจและใบเสร็จคงเหลือ รวมถึงซื้อแพ็กเกจ', example: 'แพ็กเกจนี้พอไหม' },
     },
   },
   en: {
     intro: 'Nong Mangmee can find and summarize work data allowed by your permissions, including:',
     receipt: 'You can also send a receipt or payment slip to create an expense draft.',
-    closing: 'Available capabilities depend on company features and your permissions. Final approvals, payments, and posting stay in the web app.',
+    closing: 'For claim approval or recording payment, I prepare a card for you to confirm.',
     example: (question: string) => `Try asking “${question}”`,
     none: 'Right now there is no data Nong Mangmee can pull for your account through LINE. Please ask your company admin to check your access.',
     groups: {
@@ -161,7 +165,11 @@ const CAPABILITY_COPY = {
       bookings: { line: '• bookings and queues', example: 'What is on today’s schedule?' },
       procurement: { line: '• procurement and suppliers', example: 'Which purchase orders are still open?' },
       alerts: { line: '• pending work and alerts', example: 'What is pending for me?' },
-      package: { line: '• your package and receipts left', example: 'Is my package enough?' },
+      counterparties: { line: '• counterparties and payees', example: 'Show me a counterparty’s details' },
+      company_management: { line: '• manage team members or branches within your permissions through confirmation cards', example: 'Help manage team members or branches within my permissions' },
+      team: { line: '• team members', example: 'How many team members are there?' },
+      tax_documents: { line: '• payment vouchers and withholding certificates', example: 'Show payment vouchers or withholding certificates I can access' },
+      package: { line: '• your package, receipts left, and package purchases', example: 'Is my package enough?' },
     },
   },
 } as const satisfies Record<'th' | 'en', {
@@ -195,9 +203,13 @@ const TEACHING_COPY = {
       bookings: 'อยากดูคิวหรือนัด',
       procurement: 'อยากดูของที่สั่งซื้อ',
       alerts: 'อยากรู้ว่ามีงานค้างไหม',
+      counterparties: 'อยากดูข้อมูลคู่ค้า',
+      company_management: 'อยากจัดการทีมงานหรือสาขาตามสิทธิ์',
+      team: 'อยากดูทีมงาน',
+      tax_documents: 'อยากดูใบสำคัญจ่ายหรือ 50 ทวิ',
       package: 'อยากรู้ว่าแพ็กเกจพอไหม',
     },
-    approvals: 'ถ้ามีรายการรอคุณอนุมัติ พิมพ์ว่า “รายการรออนุมัติ” น้องมั่งมีจะสรุปให้ก่อน ส่วนการกดอนุมัติจริงทำในเว็บค่ะ',
+    approvals: 'ถ้ามีรายการรอคุณอนุมัติ พิมพ์ว่า “รายการรออนุมัติ” น้องจะสรุปและเตรียมการ์ดให้กดยืนยันค่ะ',
     menu: 'อยากเห็นเมนูทั้งหมด กดปุ่ม “เมนูหลัก” ด้านล่างได้เลยค่ะ',
   },
   en: {
@@ -217,9 +229,13 @@ const TEACHING_COPY = {
       bookings: 'To see bookings',
       procurement: 'To see purchase orders',
       alerts: 'To see pending work',
+      counterparties: 'To see counterparty details',
+      company_management: 'To manage team members or branches within your permissions',
+      team: 'To see team members',
+      tax_documents: 'To see payment vouchers or withholding certificates',
       package: 'To check your package',
     },
-    approvals: 'If claims are waiting for you, type “pending approvals” and Nong Mangmee summarizes them first; the approval itself happens in the web app.',
+    approvals: 'If claims are waiting for you, type “pending approvals” and I summarize them and prepare a card for you to confirm.',
     menu: 'To see the full menu, tap the “เมนูหลัก” (main menu) button below.',
   },
 } as const satisfies Record<'th' | 'en', {
@@ -263,14 +279,14 @@ function usableAccess(access?: CapabilityAccess): { groups: LineCapabilityGroupI
   const permissions = access ? access.permissions ?? [] : undefined;
   const groups = permissions
     ? usableCapabilityGroupIds(permissions, entitled)
-    : LINE_CAPABILITY_GROUPS.filter((group) => !('requiredPermissions' in group)).map((group) => group.id);
+    : LINE_CAPABILITY_GROUPS.filter((group) => !('requiredPermissions' in group) && !('toolNames' in group)).map((group) => group.id);
   const receipt = permissions ? canAdvertiseReceiptCapture(permissions, entitled) : true;
   // The one role-scoped claim (spec T3): derived from the registry tool that would answer it, never
   // from a role name. A no-context caller never sees it — the old copy never claimed it either.
   const approvalsTool = LINE_TOOL_REGISTRY.find((tool) => tool.name === 'reimbursement.list_pending_approvals');
   const approvals = !!permissions && !!approvalsTool
     && hasToolPermissions(approvalsTool, permissions) && hasToolFeature(approvalsTool, entitled);
-  return { groups, receipt, approvals };
+  return { groups: groups.filter(id => id !== 'team' || !groups.includes('company_management')), receipt, approvals };
 }
 
 export function buildCapabilityHelp(language: 'th' | 'en', access?: CapabilityAccess): string {
@@ -360,6 +376,9 @@ function capabilityLabel(toolName: string, language: 'th' | 'en'): string {
 
 export function featureDisabledReply(toolNames: readonly string[], language: string): string {
   const lang: 'th' | 'en' = language.toLowerCase().startsWith('en') ? 'en' : 'th';
+  if (toolNames.length && toolNames.every(name => name.startsWith('wht.'))) return lang === 'th'
+    ? 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องนี้ค่ะ 50 ทวิและ ภงด.53 อยู่ในแพ็กธุรกิจค่ะ'
+    : 'Your current package does not include this. Withholding certificates and PND53 are included in the Business package.';
   const labels = [...new Set(toolNames.map((name) => capabilityLabel(name, lang)))].slice(0, 3);
   if (labels.length === 0) return COPY[lang].disabled;
   const joined = labels.join(lang === 'th' ? ' และ ' : ' and ');
@@ -446,7 +465,7 @@ export class ResponseComposerAgent {
       usageTag: 'line.casual',
     });
     if (!result.ok) return fallback;
-    const reply = stripReplyWrapping(result.text);
+    const reply = safeModelLineText(stripReplyWrapping(result.text), language === 'en', opts.conversationContext);
     return reply && !looksLikeJson(reply) ? boundCasualReply(reply, fallback, result.stopReason === 'max_tokens', opts.v2 ? (effectiveResponsePreferences(opts.responsePreferences, messageText)?.detail === 'detailed' ? 12_000 : 5_000) : 280) : fallback;
   }
 
@@ -628,7 +647,7 @@ export class ResponseComposerAgent {
       if (![...requestedCounts].some((count) => answerNumbers.has(count))) return fallback;
     }
     if (!preservesSemanticGrounding([question, fallback, ...scalarTexts(toolData)], answer)) return fallback;
-    return answer;
+    return safeModelLineText(answer, language === 'en', opts.conversationContext);
   }
 
   /**
@@ -655,7 +674,7 @@ export class ResponseComposerAgent {
     if (!result.ok) return groundedText;
     const polished = stripReplyWrapping(result.text);
     return preservesGrounding(grounded, polished) && preservesSemanticGrounding([grounded], polished)
-      ? polished
+      ? safeModelLineText(polished, language === 'en')
       : groundedText;
   }
 }
@@ -839,6 +858,7 @@ const NEGATED_PAYMENT = /\b(?:unpaid|not[\s_-]+paid)\b|ยังไม่(?:ไ�
 const NEGATED_APPROVAL = /\b(?:not[\s_-]+approved|approval[\s_-]+denied)\b|ไม่(?:ได้รับ)?อนุมัติ/giu;
 
 const STATUS_PATTERNS: Array<[RegExp, string]> = [
+  [/(?:บันทึก|สร้าง|เก็บ)[^\n]{0,500}(?:แล้ว|เรียบร้อย|สำเร็จ|ไปเมื่อกี้)|\b(?:saved|created|stored|submitted)\b/iu, 'WRITE_COMPLETED'],
   [/\bpaid\b|(?:จ่าย|ชำระ)แล้ว/iu, 'PAID'],
   [/\bapproved\b|อนุมัติแล้ว/iu, 'APPROVED'],
   [/\b(?:rejected|declined)\b|ปฏิเสธแล้ว/iu, 'REJECTED'],
@@ -881,12 +901,39 @@ function semanticStatuses(text: string): Set<string> {
   return statuses;
 }
 
+/** Draft references with a past marker describe existing work, not a commit in this turn. */
+function withoutPriorDraftReferences(text: string): string {
+  return text.split(/(?<=ค่ะ|คะ|[!?\n])\s*|(?<=\.)\s+(?=[A-Z])/u).map(part =>
+    part.replace(/(?:บันทึก|สร้าง|เก็บ)(?:(?!(?:บันทึก|สร้าง|เก็บ|ยืนยัน|อนุมัติ|ลงบัญชี))[^\n]){0,500}/gu, (claim, offset: number) =>
+      /ร่าง/u.test(claim) && /เพิ่ง|ไว้|ก่อนหน้านี้|ก่อนแล้ว/u.test(part.slice(Math.max(0, offset - 24), offset) + claim)
+        && !/ในครั้งนี้|ในข้อความนี้/u.test(claim)
+        ? claim.replace(/^(?:บันทึก|สร้าง|เก็บ)/u, '') : claim)).join(' ');
+}
+
+/** Model prose has no commit authority; deterministic API acknowledgements never pass here. */
+export function claimsCompletedWrite(text: string): boolean {
+  const affirmative = withoutPriorDraftReferences(sanitizeMangmeeComposedText(text)).replace(/(?:ยัง)?ไม่(?:ได้|ต้อง|สามารถ)?(?:บันทึก|สร้าง|เก็บ)|\b(?:not|never)(?:\s+(?:yet|been))*\s+(?:saved|created|stored|submitted)\b/giu, '');
+  return /^(?:✅\s*)?(?:(?:น้องมั่งมี|มั่งมี)(?:ได้)?)?(?:ยืนยัน|อนุมัติ|ลงบัญชี|บันทึกจ่าย)[^\n]{0,100}(?:แล้ว|เรียบร้อย)(?:ค่ะ|นะคะ)/u.test(affirmative.trim())
+    || semanticStatuses(affirmative).has('WRITE_COMPLETED')
+    || /^(?:✅\s*)?(?:(?:น้องมั่งมี|มั่งมี)(?:ได้)?)?(?:บันทึก|สร้าง|เก็บ)(?:ค่าใช้จ่าย|รายการ|ข้อมูล|ร่าง|ใบเบิก|ใบเสร็จ|รูป|เอกสาร)(?![^\n—]*ได้(?:ที่|ไหม|หรือ))/u.test(affirmative.trim());
+}
+
+export function safeModelLineText(text: string, english = !/[ก-๙]/u.test(text), context?: LineAiConversationContext): string {
+  if (!claimsCompletedWrite(text)) return sanitizeMangmeeComposedText(text);
+  const remaining = text.split(/(?<=ค่ะ|คะ|[!?\n])\s*|(?<=\.)\s+(?=[A-Z])|\s*—\s*/u).filter(part => !claimsCompletedWrite(part)).join(' ').trim();
+  const next = context?.activeExpenseDrafts?.length
+    ? english ? 'The expense is still a draft. Please review it before confirming.' : 'รายการนี้ยังเป็นร่างค่ะ ตรวจรายละเอียดก่อนกดยืนยันได้เลยค่ะ'
+    : english ? 'Please review the draft, or tell me which details to change.' : 'ตรวจร่างหรือบอกข้อมูลที่ต้องการแก้ไขได้เลยค่ะ';
+  return sanitizeMangmeeComposedText([remaining, next].filter(Boolean).join(' '));
+}
+
 /**
  * M-04: conservative semantic mutation guard. Unknown words and high-impact status/outcome
  * aliases must be present in the deterministic/source text. False positives fall back to the
  * deterministic card; false negatives would expose invented business facts.
  */
 function preservesSemanticGrounding(sourceTexts: string[], answer: string): boolean {
+  if (claimsCompletedWrite(answer)) return false;
   const source = sourceTexts.join('\n');
   const allowedWords = new Set(wordTokens(source));
   const allowedStatuses = semanticStatuses(source);

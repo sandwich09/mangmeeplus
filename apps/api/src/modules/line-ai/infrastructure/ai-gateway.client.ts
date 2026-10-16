@@ -6,7 +6,7 @@ import { HttpException, HttpStatus, Inject, Injectable, Logger, Optional } from 
 import { createHash } from 'node:crypto';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import {
-  AI_DOCUMENT_OCR_TIMEOUT_MS, AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS,
+  AI_DOCUMENT_OCR_TIMEOUT_MS, AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS, aiGatewayClientTimeoutMs,
   AI_BUDGET_ESTIMATOR_VERSION_V2, AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
   type AiBudgetGrantV2, type AiBudgetProfileIdV2,
   LINE_TOOL_REGISTRY,
@@ -73,10 +73,8 @@ import { type AiModelPrices, type AiTariffV2 } from '../application/ai-model-pri
 
 const LINE_TURN_TIMEOUT_MS = 120_000;
 const LINE_INTAKE_TIMEOUT_MS = 30_000;
-/** An intake carrying an image runs the gateway's DOCUMENT reader (45s budget there), so this
- *  caller must outlast it — otherwise the HTTP client aborts first and the provider-side fix is
- *  invisible. Kept strictly above the gateway budget plus request overhead (UAT 2026-08-27). */
-const LINE_INTAKE_MEDIA_TIMEOUT_MS = 55_000;
+/** Outlast a 90s page read and its one timeout retry, retaining both usage entries. */
+const LINE_INTAKE_MEDIA_TIMEOUT_MS = aiGatewayClientTimeoutMs(2);
 // Same endpoint/provider chain as web. Outlast it to retain the usage response: an early transport
 // abort has unknown provider cost even when its failed customer admission is released.
 const RECEIPT_OCR_TIMEOUT_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS;

@@ -67,13 +67,11 @@ const plan = (bytes: Buffer, mimeType = 'application/pdf', maxPages = 60, limits
 describe('capture preprocessing — declared bounds', () => {
   it('states the §4.1 ceilings the whole pipeline is measured against', () => {
     assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxPdfChunkBytes, 4_000_000);
-    assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxPdfChunkPages, 3);
+    assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxPdfChunkPages, 1);
     assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxImageBytes, 3_500_000);
-    assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxImageEdgePx, 8_000);
-    // W10 D3: the legibility FLOOR, documented beside the ceilings it must never cross.
-    assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.minImageEdgePx, 1_600);
-    assert.ok(EXPENSE_CAPTURE_PREPROCESS_LIMITS.minImageEdgePx < EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxImageEdgePx);
-    assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.renderLongEdgePx, 4_000);
+    assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxImageEdgePx, 2_400);
+    assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxPdfPages, 20);
+    assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.renderLongEdgePx, 2_400);
     assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxRasterPixels, 32_000_000);
     assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxTextLayerCharsPerPage, 20_000);
   });
@@ -87,17 +85,21 @@ describe('capture preprocessing — multi-page PDFs', () => {
   });
 
   for (const pages of [2, 5, 10, 20]) {
-    it(`covers every page of a ${pages}-page file in runs of at most three`, async () => {
+    it(`covers every page of a ${pages}-page file one page per call`, async () => {
       const result = await plan(pdfs.get(pages)!);
       assert.equal(result.failure, undefined);
       assert.equal(result.pageCount, pages);
       assert.deepEqual(result.pagesBeyondLimit, []);
       const covered = result.chunks.flatMap((chunk) => chunk.pageIndexes);
       assert.deepEqual(covered, Array.from({ length: pages }, (_, index) => index), 'no page is skipped or repeated');
-      assert.ok(result.chunks.every((chunk) => chunk.pageIndexes.length <= 3), 'never more than three pages per call');
+      assert.ok(result.chunks.every((chunk) => chunk.pageIndexes.length === 1), 'exactly one page per call');
       assert.ok(result.chunks.every((chunk) => chunk.byteLength <= EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxPdfChunkBytes),
         'chunk size is MEASURED, not estimated from the page count');
-      assert.equal(result.chunks.length, Math.ceil(pages / 3));
+      assert.equal(result.chunks.length, pages);
+      for (const chunk of result.chunks) {
+        assert.equal((await PDFDocument.load(chunk.bytes!)).getPageCount(), 1);
+        assert.match(chunk.bytes!.toString('latin1'), /\/Count\s+1\b/, 'the budget guard can prove this is one page');
+      }
       assert.equal(new Set(result.chunks.map((chunk) => chunk.id)).size, result.chunks.length, 'chunk ids are unique');
     });
   }
@@ -118,18 +120,10 @@ describe('capture preprocessing — multi-page PDFs', () => {
     assert.equal(result.textLayer.length, 20, 'no work is done on a page nobody will read');
   });
 
-  it('shrinks a run by MEASURING the copy, not by dividing the file size', async () => {
-    // The ceiling is set one byte under this file's own three-page copy, which is the whole point
-    // of §4.1: copying three pages does not promise a third of the file, so the planner has to
-    // measure and step down rather than assume.
-    const wide = await plan(pdfs.get(5)!);
-    const threePageBytes = wide.chunks[0]!.byteLength;
-    assert.equal(wide.chunks[0]!.pageIndexes.length, 3);
-    const tighter = { ...EXPENSE_CAPTURE_PREPROCESS_LIMITS, maxPdfChunkBytes: threePageBytes - 1 };
-    const result = await plan(pdfs.get(5)!, 'application/pdf', 60, tighter);
-    assert.ok(result.chunks.every((chunk) => chunk.pageIndexes.length < 3), 'the run stepped down');
-    assert.ok(result.chunks.every((chunk) => chunk.byteLength <= tighter.maxPdfChunkBytes));
-    assert.deepEqual(result.chunks.flatMap((chunk) => chunk.pageIndexes), [0, 1, 2, 3, 4]);
+  it('applies the hard page ceiling even when configured higher', async () => {
+    const result = await plan(pdfs.get(21)!, 'application/pdf', 60);
+    assert.equal(result.chunks.length, 20);
+    assert.deepEqual(result.pagesBeyondLimit, [20]);
   });
 
   it('re-plans one page on its own for the truncation re-split', async () => {
@@ -253,16 +247,25 @@ describe('capture preprocessing — image attachments', () => {
    * item row and no totals block at all: ~8 px printing, and `truncated: false`. The fix is upstream
    * of the model — give it pixels to read.
    */
-  it('upscales a screenshot below the legibility floor to that floor', async () => {
+  it('never upscales a small screenshot', async () => {
     const jpeg = await sharp({ create: { width: 896, height: 533, channels: 3, background: '#ffffff' } })
       .jpeg({ quality: 85 }).toBuffer();
     const result = await plan(jpeg, 'image/jpeg');
     assert.equal(result.chunks[0]!.kind, 'image');
     assert.equal(result.chunks[0]!.mimeType, 'image/jpeg');
-    assert.ok(await edgeOf(result.chunks[0]!.bytes!) >= EXPENSE_CAPTURE_PREPROCESS_LIMITS.minImageEdgePx,
-      'the long edge must reach the floor the reader needs');
+    assert.equal(await edgeOf(result.chunks[0]!.bytes!), 896);
+    assert.deepEqual(result.chunks[0]!.bytes, jpeg, 'original input is unchanged');
     assert.ok(result.chunks[0]!.byteLength <= EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxImageBytes,
       'and it still fits the provider image bound');
+  });
+
+  it('shrinks a large photo to 2400px while preserving its aspect ratio and original bytes', async () => {
+    const jpeg = await sharp({ create: { width: 4000, height: 3000, channels: 3, background: '#f0eedd' } }).jpeg().toBuffer();
+    const original = Buffer.from(jpeg);
+    const result = await plan(jpeg, 'image/jpeg');
+    const meta = await sharp(result.chunks[0]!.bytes!).metadata();
+    assert.equal(meta.width, 2400); assert.equal(meta.height, 1800);
+    assert.deepEqual(jpeg, original);
   });
 
   it('never enlarges past the byte ceiling: a dense small scan keeps whatever fits', async () => {

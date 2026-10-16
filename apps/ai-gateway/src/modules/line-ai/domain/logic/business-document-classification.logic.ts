@@ -91,8 +91,26 @@ export function parseBusinessDocumentClassification(
   // model (e.g. "RECEIPT" for a receipt) is dropped, never allowed to void the classification —
   // rejecting the whole turn over a synonym stranded real receipts (UAT 2026-08-27).
   const evidenceRoles = parseFilteredKnownArray(raw['evidenceRoles'], BUSINESS_DOCUMENT_EVIDENCE_ROLES);
-  const missing = parseReasonCodes(raw['missingRequiredSignals']);
-  const contradiction = parseReasonCodes(raw['contradictionSignals']);
+  const taxIdOptional = ['RECEIPT', 'HANDWRITTEN_CASH_BILL', 'TRANSFER_SLIP'].includes(raw['documentKind']);
+  const rawMissing = raw['missingRequiredSignals'];
+  const missing = parseReasonCodes(taxIdOptional && Array.isArray(rawMissing)
+    ? rawMissing.filter((reason) => reason !== 'MISSING_VENDOR_TAX_ID') : rawMissing);
+  // A combined tax invoice/receipt may retain the invoice's due-date field. That exact printed
+  // date is not a conflicting payment state; all other unknown contradictions still need review.
+  const settledReceipt = raw['transactionState'] === 'PAID'
+    && ['TAX_INVOICE', 'ABBREVIATED_TAX_INVOICE', 'RECEIPT'].includes(raw['documentKind'])
+    && /ใบเสร็จรับเงิน|\bRECEIPT\b/i.test(documentText)
+    && !/ไม่ใช่\s*ใบเสร็จ|not\s+(?:a\s+)?receipt/i.test(documentText);
+  const isPrintedDueDate = (value: unknown): boolean => {
+    if (!settledReceipt || typeof value !== 'string' || !documentText.includes(value)) return false;
+    const date = value.trim().replace(/^(?:ครบกำหนด|due\s+date)\s*[:：]?\s*/i, '');
+    return date !== value.trim() && extractValueCandidates(date).dates.some((candidate) => candidate.span.trim() === date);
+  };
+  const rawContradictions = raw['contradictionSignals'];
+  const onlyDueDateContradiction = Array.isArray(rawContradictions) && rawContradictions.length > 0
+    && rawContradictions.every(isPrintedDueDate);
+  const contradiction = parseReasonCodes(Array.isArray(rawContradictions)
+    ? rawContradictions.filter((reason) => !isPrintedDueDate(reason)) : rawContradictions);
   const evidenceSignals = parseExactSpans(raw['evidenceSignals'], documentText);
   const amountSignals = parseExactSpans(raw['amountSignals'], documentText);
   const settlementSignals = parseExactSpans(raw['settlementSignals'], documentText);
@@ -129,7 +147,7 @@ export function parseBusinessDocumentClassification(
       contradictionSignals,
       ...(hasContradiction ? ['CONTRADICTORY_SIGNALS' as const] : []),
     ),
-    requiresClarification: raw['requiresClarification']
+    requiresClarification: (raw['requiresClarification'] && !(onlyDueDateContradiction && missingRequiredSignals.length === 0))
       || needsConfidenceReview
       || hasContradiction
       || droppedUnknownReason

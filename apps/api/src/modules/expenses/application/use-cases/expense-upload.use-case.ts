@@ -5,6 +5,7 @@ import { Injectable, ForbiddenException, NotFoundException, BadRequestException,
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import type { Prisma } from '../../../../generated/prisma/client';
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -241,6 +242,60 @@ export function receiptFileOperationReplay(
   return previous.attachmentId === cmd.attachmentId && previous.intent === cmd.intent && sameBytes ? 'replay' : 'conflict';
 }
 
+/** Shared by web append/replace and LINE evidence association, on the caller's transaction. */
+export async function assertExpenseReceiptFileStateAllowed(
+  ctx: RequestContext,
+  expense: { id: string; status: string; paymentStatus: string; paidAmount: unknown; postingStatus: string },
+  intent: ExpenseReceiptUploadIntent,
+  db: Prisma.TransactionClient,
+): Promise<void> {
+  const conflict = (code: string, message: string) => new ConflictException({ code, message });
+  const locked = (message: string) => conflict('expense_receipt_replace_locked', message);
+    if (!FILE_INTENT_OPEN_STATUSES.has(expense.status)) {
+      throw locked(expense.status === 'CONFIRMED'
+        ? 'รายจ่ายนี้ยืนยันแล้ว กดแก้ไขเอกสารก่อนแนบหลักฐานเพิ่ม'
+        : 'รายจ่ายนี้ปิดแล้ว แนบหลักฐานให้รายจ่ายที่ยังเปิดตรวจอยู่หรือสร้างรายจ่ายใหม่');
+    }
+    if (intent === 'replace' && expense.status === 'READY_FOR_CONFIRMATION' && !ctx.permissions.includes('expense.review')) {
+      throw locked('รายจ่ายนี้ส่งให้ตรวจแล้ว ให้คนที่มีสิทธิ์ตรวจรายจ่ายเปลี่ยนไฟล์ใบเสร็จให้');
+    }
+    if (expense.postingStatus !== 'not_required') {
+      throw locked('รายจ่ายนี้บันทึกบัญชีแล้ว ให้คนที่ดูแลบัญชีแก้รายการบัญชีก่อนแนบหรือเปลี่ยนไฟล์');
+    }
+    if (intent === 'replace' && (expense.paymentStatus !== 'UNPAID' || Number(expense.paidAmount ?? 0) > 0)) {
+      throw locked('รายจ่ายนี้บันทึกจ่ายแล้ว เปลี่ยนใบเสร็จหลักไม่ได้ ให้แนบเป็นหลักฐานเพิ่ม');
+    }
+
+    // A PREPARED certificate still accepts supporting evidence that changes no fact (§16.4 row 3);
+    // a signed one accepts nothing here at all.
+    const certificate = await db.expenseSubstituteReceiptEvidence.findFirst({
+      where: {
+        companyId: ctx.companyId, expenseId: expense.id,
+        status: { in: intent === 'append' ? ['PAYER_CERTIFIED', 'ISSUED'] : ['PREPARED', 'PAYER_CERTIFIED', 'ISSUED'] },
+      },
+      select: { id: true },
+    });
+    if (certificate) {
+      throw conflict(
+        'substitute_evidence_locks_expense',
+        'รายการนี้มีใบรับรองแทนใบเสร็จแล้ว การเปลี่ยนหลักฐานต้องทำผ่านการแก้ไขใบรับรองเดิม',
+      );
+    }
+    const claim = await db.reimbursementLine.findFirst({
+      where: {
+        companyId: ctx.companyId, linkedExpenseId: expense.id,
+        request: { status: { notIn: [...TERMINAL_CLAIM_STATUSES] } },
+      },
+      select: { id: true },
+    });
+    if (claim) {
+      throw conflict(
+        'substitute_source_has_live_claim',
+        'หลักฐานนี้อยู่ในคำขอเบิกที่ยังดำเนินการอยู่ กรุณาดำเนินการผ่านคำขอเบิกเดิม',
+      );
+    }
+}
+
 @Injectable()
 export class CompleteReceiptUploadUseCase {
   constructor(
@@ -405,7 +460,6 @@ export class CompleteReceiptUploadUseCase {
     intent: ExpenseReceiptUploadIntent,
   ): Promise<ExpenseRecord | null> {
     const conflict = (code: string, message: string) => new ConflictException({ code, message });
-    const locked = (message: string) => conflict('expense_receipt_replace_locked', message);
 
     // Identity first: a retry carries the revision the user saw BEFORE the first attempt landed, so
     // checking the revision before the operation would turn every recovered response into a conflict.
@@ -434,50 +488,7 @@ export class CompleteReceiptUploadUseCase {
       );
     }
 
-    if (!FILE_INTENT_OPEN_STATUSES.has(expense.status)) {
-      throw locked(expense.status === 'CONFIRMED'
-        ? 'รายจ่ายนี้ยืนยันแล้ว กดแก้ไขเอกสารก่อนแนบหลักฐานเพิ่ม'
-        : 'รายจ่ายนี้ปิดแล้ว แนบหลักฐานให้รายจ่ายที่ยังเปิดตรวจอยู่หรือสร้างรายจ่ายใหม่');
-    }
-    if (intent === 'replace' && expense.status === 'READY_FOR_CONFIRMATION' && !ctx.permissions.includes('expense.review')) {
-      throw locked('รายจ่ายนี้ส่งให้ตรวจแล้ว ให้คนที่มีสิทธิ์ตรวจรายจ่ายเปลี่ยนไฟล์ใบเสร็จให้');
-    }
-    if (expense.postingStatus !== 'not_required') {
-      throw locked('รายจ่ายนี้บันทึกบัญชีแล้ว ให้คนที่ดูแลบัญชีแก้รายการบัญชีก่อนแนบหรือเปลี่ยนไฟล์');
-    }
-    if (intent === 'replace' && (expense.paymentStatus !== 'UNPAID' || Number(expense.paidAmount ?? 0) > 0)) {
-      throw locked('รายจ่ายนี้บันทึกจ่ายแล้ว เปลี่ยนใบเสร็จหลักไม่ได้ ให้แนบเป็นหลักฐานเพิ่ม');
-    }
-
-    const db = this.prisma.client;
-    // A PREPARED certificate still accepts supporting evidence that changes no fact (§16.4 row 3);
-    // a signed one accepts nothing here at all.
-    const certificate = await db.expenseSubstituteReceiptEvidence.findFirst({
-      where: {
-        companyId: ctx.companyId, expenseId: cmd.expenseId,
-        status: { in: intent === 'append' ? ['PAYER_CERTIFIED', 'ISSUED'] : ['PREPARED', 'PAYER_CERTIFIED', 'ISSUED'] },
-      },
-      select: { id: true },
-    });
-    if (certificate) {
-      throw conflict(
-        'substitute_evidence_locks_expense',
-        'รายการนี้มีใบรับรองแทนใบเสร็จแล้ว การเปลี่ยนหลักฐานต้องทำผ่านการแก้ไขใบรับรองเดิม',
-      );
-    }
-    const claim = await db.reimbursementLine.findFirst({
-      where: {
-        companyId: ctx.companyId, linkedExpenseId: cmd.expenseId,
-        request: { status: { notIn: [...TERMINAL_CLAIM_STATUSES] } },
-      },
-      select: { id: true },
-    });
-    if (claim) {
-      throw conflict(
-        'substitute_source_has_live_claim',
-        'หลักฐานนี้อยู่ในคำขอเบิกที่ยังดำเนินการอยู่ กรุณาดำเนินการผ่านคำขอเบิกเดิม',
-      );
-    }
+    await assertExpenseReceiptFileStateAllowed(ctx, expense, intent, this.prisma.client);
     return null;
   }
 

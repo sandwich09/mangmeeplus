@@ -147,16 +147,18 @@ describe('reimbursement choices speak to the customer (NAT04 2026-09-29)', () =>
   });
 
   it('offers only claimable bills once branch and requester are chosen, without category or file noise', () => {
-    const text = (buildReimbursementOptionsMessages({ selected: { branchChoiceId: 'b', requesterChoiceId: 'r' }, pages: {}, choices: [
+    const message = buildReimbursementOptionsMessages({ selected: { branchChoiceId: 'b', requesterChoiceId: 'r' }, pages: {}, choices: [
       { kind: 'BRANCH', label: 'สำนักงานใหญ่ (BKK)' }, { kind: 'REQUESTER', label: 'คุณเอ' }, { kind: 'CATEGORY', label: 'อาหาร' },
       { kind: 'ATTACHMENT', label: 'receipt.png' },
       { kind: 'SOURCE', label: 'NAT-STN-002 · ร้านเครื่องเขียนบ้านกระดาษ', details: { eligible: true, incurredDate: '2026-09-26', amount: '380' } },
       { kind: 'SOURCE', label: 'EXP-1 · ปั๊มน้ำมัน', details: { eligible: false } },
       { kind: 'SOURCE', label: 'NAT-STN-001 · ร้านเครื่องเขียนสมใจ', details: { eligible: true, incurredDate: '2026-09-24', amount: '1245.5', currency: 'THB' } },
-    ] })[0] as any).text as string;
-    assert.match(text, /^เลือกบิลที่จะเบิก/u);
-    assert.match(text, /1\) NAT-STN-002 · ร้านเครื่องเขียนบ้านกระดาษ · 26 ก\.ย\. 2569 · 380\.00 บาท\n2\) NAT-STN-001 · ร้านเครื่องเขียนสมใจ · 24 ก\.ย\. 2569 · 1,245\.50 บาท/u);
-    assert.doesNotMatch(text, /ปั๊มน้ำมัน|สำนักงานใหญ่|คุณเอ|อาหาร|receipt\.png/u);
+    ] })[0] as any;
+    assert.match(message.text, /^เลือกบิลที่จะเบิก/u);
+    assert.deepEqual(message.quickReply.items.map((item: any) => item.action.text), [
+      'เบิกบิล NAT-STN-002 · ร้านเครื่องเขียนบ้านกระดาษ · 26 ก.ย. 2569 · 380.00 บาท',
+      'เบิกบิล NAT-STN-001 · ร้านเครื่องเขียนสมใจ · 24 ก.ย. 2569 · 1,245.50 บาท', 'ขอเบิกรายการใหม่ ไม่มีบิลในระบบ']);
+    assert.doesNotMatch(JSON.stringify(message), /ปั๊มน้ำมัน|สำนักงานใหญ่|คุณเอ|อาหาร|receipt\.png/u);
   });
 });
 

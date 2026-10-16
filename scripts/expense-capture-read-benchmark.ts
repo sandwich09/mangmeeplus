@@ -45,7 +45,6 @@ import {
   type FixtureScore, type FixtureSpec, type PlannedDocument,
 } from './expense-capture-read.fixtures';
 import { LineAiInternalController } from '../apps/ai-gateway/src/modules/line-ai/presentation/http/line-ai-internal.controller';
-import { BedrockProvider } from '../apps/ai-gateway/src/modules/line-ai/infrastructure/provider/bedrock.provider';
 import { drainUsage, runWithUsageContext } from '../apps/ai-gateway/src/common/usage/usage-context';
 import { computeCostSatang } from '../apps/api/src/modules/line-ai/application/ai-model-pricing';
 import {
@@ -187,6 +186,8 @@ const ENV = {
 };
 const INTERNAL_SECRET = 'capture-read-benchmark-secret';
 const config = {
+  appEnv: process.env['APP_ENV'],
+  anthropicApiKey: process.env['ANTHROPIC_API_KEY'],
   modelProvider: ENV.modelProvider,
   bedrockRegion: ENV.bedrockRegion,
   bedrockModelId: ENV.bedrockModelId,
@@ -411,8 +412,6 @@ async function main(): Promise<void> {
 
   if (ENV.modelProvider !== 'bedrock') throw new Error('set MODEL_PROVIDER=bedrock for a real measurement run');
   if (!ENV.bedrockRegion || !ENV.bedrockModelId) throw new Error('BEDROCK_REGION and BEDROCK_MODEL_ID are required');
-  // Touch the provider constructor once so a credential problem fails before any fixture is built.
-  void new BedrockProvider({ region: ENV.bedrockRegion, modelId: ENV.bedrockModelId, timeoutMs: 10_000 });
 
   // Two ceilings, because they answer different questions. The TASK ceiling is the authorisation
   // (appendix §15 item 5) and counts every run this task has already paid for; the RUN ceiling is

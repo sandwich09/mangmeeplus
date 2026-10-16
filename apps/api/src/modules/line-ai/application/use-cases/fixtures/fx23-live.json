@@ -1,0 +1,227 @@
+[
+  {
+    "source": "after-fx21/J7",
+    "route": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.91,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "reimbursementHints": {
+        "description": "ค่าน้ำมัน",
+        "amount": "350",
+        "confidence": 0.88,
+        "missingFields": [
+          "fundingSource",
+          "purpose",
+          "incurredDate"
+        ]
+      },
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "REIMBURSEMENT_REQUEST_START",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 39,
+              "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3184,
+          "outputTokens": 186,
+          "cacheReadInputTokens": 21954,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 5147,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#7c441a9c0a356cf22d1bceeef9916dc4251276e80e25a236a2cebb28c305c49b#provider-v2#0"
+        }
+      ]
+    },
+    "message": "เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย",
+    "acceptedAtMs": 1792144374293
+  },
+  {
+    "source": "after-fx22/J7",
+    "route": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "reimbursementHints": {
+        "description": "ค่าน้ำมัน",
+        "amount": "350",
+        "confidence": 0.88,
+        "missingFields": [
+          "fundingSource",
+          "purpose",
+          "incurredDate"
+        ]
+      },
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "REIMBURSEMENT_REQUEST_START",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 39,
+              "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3184,
+          "outputTokens": 186,
+          "cacheReadInputTokens": 21954,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 4996,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#a6c542ab9e7a6c61dde64586041074fdf2fa1d43c73b0fff25c281c02e00f463#provider-v2#0"
+        }
+      ]
+    },
+    "message": "เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย",
+    "acceptedAtMs": 1792151642774
+  },
+  {
+    "source": "after-fx22/E03",
+    "message": "เบิกค่าแท็กซี่ 350 บาท เมื่อวาน ไปส่งของให้ลูกค้า",
+    "acceptedAtMs": 1792152305568,
+    "route": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "reimbursementHints": {
+        "description": "ค่าแท็กซี่",
+        "businessPurpose": "ไปส่งของให้ลูกค้า",
+        "amount": "350",
+        "confidence": 0.88,
+        "missingFields": [
+          "fundingSource",
+          "incurredDate"
+        ]
+      },
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบเบิกค่าแท็กซี่ 350 บาท เมื่อวาน ไปส่งของให้ลูกค้า",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 49,
+              "rawSha256": "3a289d1bbb919fc80281f73f04fcd856a127e5c9f791655911796d1495dfbd42"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3159,
+          "outputTokens": 210,
+          "cacheReadInputTokens": 21954,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 5553,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#f92a0663b2718456223ba7cbf4fab8961c95de9369a3d10830233790ec1b19f3#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "source": "after-fx22/E02",
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.82,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "sourceDocumentLanguage": "th",
+        "vendorName": "ปั๊มสยาม",
+        "description": "ค่าน้ำมัน",
+        "expenseDate": "2026-10-16",
+        "amount": "900",
+        "expenseCategoryId": "category-a-fuel",
+        "vatMode": "NEEDS_REVIEW",
+        "confidence": 0.85,
+        "missingFields": []
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าน้ำมัน 900 บาท ปั๊มสยาม วันนี้ พร้อมยืนยัน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 64,
+              "rawSha256": "143e7efd4325388df266f8ae144d9d6405ce8a71fbbd49a8dcc0de1cd4af6a9d"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3941,
+          "outputTokens": 250,
+          "cacheReadInputTokens": 23232,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 9446,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#9e3304334a1a3c6bb00bf457a9f5e0aabe28771d91b9389f8db9bb0e6ffc73a7#provider-v2#0"
+        }
+      ]
+    },
+    "message": "รอใบเสร็จ",
+    "acceptedAtMs": 1792152277106
+  }
+]

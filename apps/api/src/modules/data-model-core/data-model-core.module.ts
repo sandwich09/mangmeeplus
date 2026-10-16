@@ -81,6 +81,9 @@ import { AttachmentMalwareScanner } from './infrastructure/attachment-malware-sc
     VoidDocumentNumberUseCase,
   ],
   exports: [
+    CreateBranchUseCase,
+    UpdateBranchUseCase,
+    LinkAttachmentUseCase,
     ATTACHMENT_STORAGE,
     AttachmentMalwareScanner,
     ReserveDocumentNumberUseCase,

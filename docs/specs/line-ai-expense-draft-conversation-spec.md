@@ -127,7 +127,7 @@ The durable source of truth is the API database, not model chat history, `AiTurn
 
 Phase 1 reuses the proven continuation pattern in `ExpenseRecord.sourceChannelMetadataJson` under a new key, `lineExpenseDraftContinuation`. No schema migration or new dependency is planned unless implementation proves that metadata size, queryability, or retention is inadequate.
 
-`ExpenseRecord` stores valid materialized header values and totals. `ExpenseLine` stores a line only after its required numeric invariants are valid. Incomplete item candidates remain bounded staged values in continuation metadata. Unknown quantity or price is `null`/absent, never a fabricated zero or one.
+`ExpenseRecord` stores valid materialized header values and totals. `ExpenseLine` stores a line only after its required numeric invariants are valid. Incomplete item candidates remain bounded staged values in continuation metadata. Unknown quantity or price is `null`/absent. Owner decision 2026-10-15: a grounded total-only item with no stated quantity uses quantity `1` and unit price equal to the total, without asking quantity/unit; an item without a grounded price/total still retains missing numeric facts.
 
 Because `expenseDate` is required by the current schema, a new text-only draft initially uses the webhook occurrence time as a clearly marked provisional source date until the user or source evidence supplies the transaction date.
 
@@ -303,6 +303,8 @@ Every successful answer-collection response contains, in this order:
 4. **State and instruction** — for example, “ตอบได้หลายข้อในข้อความเดียว”, “พิมพ์ พัก”, or “พิมพ์ หมด”.
 5. **Review boundary** — concise reminder that this is a draft when accounting/tax suggestions are shown.
 
+Real-model regression rule (2026-10-15): only a successful write in the current turn permits a save/create/store acknowledgement. Model-written answers and clarification questions cannot supply that acknowledgement; both pass the same claim guard and LINE Markdown cleanup. An explained draft-tool failure with no preview can deliver its truthful answer without preview proof; an alleged successful preview still requires current preview proof. A paired record shown after linking uses Thai dates, two-decimal money and Thai status labels in its card and altText.
+
 Illustrative reply:
 
 ```text
@@ -334,6 +336,7 @@ The renderer must measure the actual Messaging API limit and split deterministic
 ## 12. Draft materialization rules
 
 - A high-confidence expense statement with at least one grounded purpose or item may create an `ExpenseRecord` in `DRAFT`, even when amount/category is not yet known.
+- A verified BUSINESS_EXPENSE/COMPANY_PAID capture with a grounded amount also starts collection, independently of reimbursement routing mode. Text hints may omit intervening words only when every normalized whitespace-separated token occurs in source order; numbers and dates retain their existing separate value-grounding checks.
 - This is a deliberate narrow change from the current LINE text capture, which rejects incomplete amount/purpose/category input.
 - The draft uses zero aggregate totals only as schema-safe aggregate defaults while no valid financial line exists. The reply must display unknown item values as `?`, never as zero.
 - Create or update `ExpenseLine` only when description, positive quantity, and a valid unit/total amount can satisfy current line invariants.
@@ -403,7 +406,7 @@ When the user answers only paper quantity, that fact appears in the next full dr
 
 ### AC-04 — Unknown is not fabricated
 
-Missing numeric values are stored as absent staged values and displayed as `?`; they are never silently coerced to `0` or `1` as an item fact.
+Missing numeric values are stored as absent staged values and displayed as `?`. The owner-approved total-only convention in §7.1 uses quantity `1` only when a total is grounded; it never fabricates a price or overrides a stated quantity.
 
 ### AC-05 — Category axes remain separate
 
@@ -501,5 +504,11 @@ The UAT script must capture provider event IDs, internal workflow/draft IDs, rev
 14. A clearly non-expense transaction that is not forced into `ExpenseRecord`.
 
 ## 19. Release decision
+
+### Owner live-run corrections (2026-10-15, Fix-up 2)
+
+- A total-only text expense with a grounded payee defaults its one item to the grounded purpose/description, otherwise `<active category name> <payee>` or `ค่าใช้จ่าย <payee>`. Quantity defaults to 1; persist the financial line immediately, even while category is missing, and state the item, quantity and amount in chat. Never invent an item from unsupported model words.
+- Final-action refusals name the actual missing fields in Thai (deduplicated), including category, vendor, date, amount, evidence review and VAT rate. Missing category offers up to four active company categories (draft suggestions first) plus อื่นๆ. Choosing a category uses existing `expense.draft.set_header`/`set_line` preview and confirm postbacks; after that edit, re-offer the original round-2 final-action confirm card. No text answer executes a final action.
+- `EXPENSE_DRAFT_CONTINUATION` candidates must be grounded in the current message. Unsupported hints alone do not write, re-show the draft or consume the conversation; the original message falls through to conversational handling. Registered regressions embed the exact turn-0 and turn-3 router results from `.live-r2/trace-t2-run2.jsonl`.
 
 The implementation is ready for code review behind its default-off flag. This is not a release authorization. “Works in production” may be stated only when the proof matrix contains recorded artifacts for every P-F gate, the flag/canary result is accepted, and no acceptance criterion remains inferred solely from AI behavior.

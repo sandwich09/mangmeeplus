@@ -98,6 +98,7 @@ import { GetSalesDocumentRootAvailabilityUseCase } from './application/sales-doc
     GetSalesDocumentRootAvailabilityUseCase,
   ],
   exports: [
+    CreateCounterpartyUseCase, UpdateCounterpartyUseCase, GetCounterpartyUseCase, ListCounterpartiesUseCase,
     PrismaAccountingRepository,
     GetDocumentPostingSourceUseCase,
     // Item 15 CRM links quotation drafts through these permission-checked use cases.

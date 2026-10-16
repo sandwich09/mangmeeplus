@@ -299,7 +299,7 @@ test('bound path, context 3: capability, small talk and an explained bill are ea
   assertCardIsPrimary(gatewayAnswer(explain, undefined, { label: 'BHC', path: '/companies/company/expenses/e1' }, 'ทำไม service charge คิดแยกเป็นอีกรายการนึง ทำไมไม่รวมกัน ?', 'BHC'), ['ทำไม', 'service charge…'], 'explain');
 });
 
-test('bound path, context 4: the proposal is the plan\'s control after its canonical text; applied, cancelled and needs-more are primaries', () => {
+test('bound path, context 4: the proposal covers its canonical diff once; applied, cancelled and needs-more are primaries', () => {
   const preview = { previewId: 'preview-1', recordType: 'expense' as const, expenseId: 'exp-1', record: { vendorName: 'BHC', expenseDate: '2026-09-03', statusLabel: 'รอตรวจสอบ' },
     tool: 'expense.draft.add_charge' as const, diff: [{ field: 'charge.SERVICE_CHARGE', label: 'ค่าบริการ', kind: 'money' as const, before: null, after: '152.00' }],
     totalsBefore: { subtotalAmount: '1520', discountAmount: '0', chargesAmount: '0.00', taxableAmount: '1520', vatAmount: '106.40', grandTotalAmount: '1626.40' },
@@ -307,21 +307,20 @@ test('bound path, context 4: the proposal is the plan\'s control after its canon
     warnings: [], expiresAt };
   const card = buildDraftUpdatePreviewCard(preview, WEB);
   assert.equal(isLineSystemCard(card), true);
-  // A card with postbacks is never the presentation of an answer item: the plan sends the canonical
-  // diff first and the card as its control, and refuses a control that is not this exact preview.
+  // The signed control presents the full diff itself; LINE rejection uses the exact text and actions.
   const planId = deliveryHash(['line-delivery-v2', 'WEBHOOK', 'event-1']);
   const items = [{ kind: 'answer' as const, text: draftUpdateCanonicalDiff(preview), sourceProofIds: [], required: true }];
   const build = (previewId: string) => buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'event-1', createdAt, expiresAt, readyAt: createdAt,
     firstDispatchDeadlineAt: '2026-09-27T00:00:40.000Z', authorization: privateAuthorization, businessResult: null, answer: { status: 'COMPLETE', pendingSubrequestIds: [], items },
     control: { kind: 'EXPENSE_EDIT_CONFIRM', previewId, previewRevision: 'revision', expiresAt, requiredItemIds: [`${planId}:item:0`] }, preferredMessages: [null], controlMessage: card });
   const p = build('preview-1');
-  assert.deepEqual(p.batches[0]!.primary.messages.map(m => m.type), ['text', 'flex']);
-  assert.equal((p.batches[0]!.primary.messages[0] as any).text, draftUpdateCanonicalDiff(preview), 'every changed value is read before the buttons');
-  const control = readLineSystemBubble((p.batches[0]!.primary.messages[1] as any).contents);
+  assert.deepEqual(p.batches[0]!.primary.messages.map(m => m.type), ['flex']);
+  assert.equal((p.batches[0]!.fallback!.messages[0] as any).text, draftUpdateCanonicalDiff(preview));
+  const control = readLineSystemBubble((p.batches[0]!.primary.messages[0] as any).contents);
   assert.deepEqual(control.header, ['แก้ไขค่าใช้จ่าย', 'รอยืนยัน']);
   assert.deepEqual(control.actions.map(action => action.data), ['action=draft-update-confirm&previewId=preview-1', 'action=draft-update-cancel&previewId=preview-1']);
   // If LINE refuses the card, the same two postbacks ride the fallback's quick reply.
-  assert.deepEqual(p.batches[0]!.fallback!.messages[1]!.quickReply!.items.map(item => (item.action as any).data), ['action=draft-update-confirm&previewId=preview-1', 'action=draft-update-cancel&previewId=preview-1']);
+  assert.deepEqual(p.batches[0]!.fallback!.messages[0]!.quickReply!.items.map(item => (item.action as any).data), ['action=draft-update-confirm&previewId=preview-1', 'action=draft-update-cancel&previewId=preview-1']);
   assert.throws(() => build('another-preview'), /PLAN_INVALID_CONTROL/);
   assert.ok(parseLineDeliveryPlan(JSON.parse(JSON.stringify(p))));
   // What became of the edit.
@@ -360,4 +359,61 @@ test('bound path, context 6: the receipt review card is the plan primary and its
   // A copy that changed the card after it was built has no proof: the plan sends its text, never a card nobody vouched for.
   const edited = inheritCompleteLineBusinessAnswerPresentation(card, { ...card, altText: 'อื่น' });
   assert.equal(boundPlan([edited]).batches[0]!.primary.messages[0]!.type, 'text');
+});
+
+import { buildCounterpartyCard } from '../../application/line-counterparty.service';
+test('Round 7A counterparty control preserves the diff before its signed confirm button', () => {
+  const view = { token: '12345678-1234-1234-1234-123456789abc.' + 'a'.repeat(43), expiresAt,
+    lines: ['ตรวจข้อมูลแล้วกดยืนยันค่ะ', 'ที่อยู่: ที่อยู่เดิม → ที่อยู่ใหม่'] };
+  const message = buildCounterpartyCard(view);
+  const p = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'counterparty-event', createdAt, readyAt: createdAt, expiresAt,
+    firstDispatchDeadlineAt: '2026-09-27T00:00:40.000Z', authorization: privateAuthorization,
+    answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'decision_diff', text: view.lines.join('\n'), sourceProofIds: [], required: true }] },
+    businessResult: null, control: { kind: 'COUNTERPARTY_CONFIRM', token: view.token, expiresAt, requiredItemIds: [deliveryHash(['line-delivery-v2', 'WEBHOOK', 'counterparty-event']) + ':item:0'] }, controlMessage: message });
+  assert.ok(parseLineDeliveryPlan(p)); assert.match(JSON.stringify(p.batches), /counterparty_confirm/u);
+  const states = initialDeliveryBatchStates(p); states[0]!.sentMessageIds = ['bot-message'];
+  assert.ok(parseDeliveryBatchStates(states, p)); states[0]!.sentMessageIds = ['bad id']; assert.equal(parseDeliveryBatchStates(states, p), null);
+});
+
+test('Fix-up 20A: claim choices survive only with their exact revalidated options proof', async () => {
+  const { buildReimbursementOptionsMessages } = await import('./line-reimbursement-draft-card.logic');
+  const actionId = '550e8400-e29b-41d4-a716-446655440000', revision = 'a'.repeat(64);
+  for (const collection of [{ lineChosen: true, receiptChosen: false, categoryChosen: false },
+    { lineChosen: true, receiptChosen: true, categoryChosen: false }]) {
+    const message = buildReimbursementOptionsMessages({ control: { actionId, revision }, collection,
+      choices: [{ choiceId: 'b'.repeat(64), kind: 'CATEGORY', label: 'ค่าเดินทาง' }], pages: {} })[0]!;
+    assert.equal(message.type, 'text'); if (message.type !== 'text') throw new Error('expected question');
+    for (const [name, proof] of [['current', { actionId, controlRevision: revision }], ['missing', null],
+      ['other-action', { actionId: 'other', controlRevision: revision }], ['old-revision', { actionId, controlRevision: 'c'.repeat(64) }]] as const) {
+      const auth = { ...privateAuthorization, proofs: proof ? [{ id: 'options', kind: 'REIMBURSEMENT_OPTIONS', ...proof }] : [] };
+      const p = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'claim-options', createdAt, expiresAt, readyAt: createdAt,
+        firstDispatchDeadlineAt: expiresAt, authorization: auth, businessResult: null, control: null,
+        answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'limitation', text: message.text, required: true, sourceProofIds: [] }] }, preferredMessages: [message] });
+      assert.ok(parseLineDeliveryPlan(p));
+      const sent = p.batches[0]!.primary.messages[0]!;
+      assert.equal(!!sent.quickReply, name === 'current', name);
+      if (name === 'current') {
+        assert.deepEqual(sent.quickReply!.items.map(item => (item.action as any).data), message.quickReply!.items.map(item => (item.action as any).data));
+        const tampered = structuredClone(p);
+        tampered.authorization = { ...privateAuthorization, proofs: [] };
+        assert.equal(parseLineDeliveryPlan(tampered), null, 'validator also rejects a frozen choice without its options proof');
+      }
+    }
+  }
+});
+
+test('Fix-up 24: lifecycle next buttons survive primary and fallback only with the applied signed-action proof', async () => {
+  const { buildExpenseActionCard } = await import('./line-expense-action-card.logic');
+  const token = 'voucher-preview.' + 'a'.repeat(43);
+  for (const [offerNext, applied] of [['VOUCHER_SUBMIT', true], ['VOUCHER_APPROVE', true], ['VOUCHER_PAY', true], ['VOUCHER_SUBMIT', false]] as const) {
+    const message = buildExpenseActionCard({ token, previewId: 'voucher-preview', action: 'VOUCHER_CREATE', offerNext, summary: 'ตรวจใบเตรียมจ่ายค่ะ', expiresAt,
+      record: { vendorName: 'Grab', amount: '350', currency: 'THB', date: '2026-09-27', status: 'ร่าง', nextStatus: 'รออนุมัติ' } }, 'สร้างใบเตรียมจ่ายแล้วค่ะ');
+    const auth: DeliveryAuthorizationV2 = { ...privateAuthorization, proofs: [{ id: 'action', kind: 'EXPENSE_ACTION_PREVIEW', requestId: 'request', previewHash: 'a'.repeat(64), applied, token }] };
+    const p = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: `next-${offerNext}-${applied}`, createdAt, expiresAt, readyAt: createdAt,
+      firstDispatchDeadlineAt: expiresAt, authorization: auth, businessResult: null, control: null,
+      answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: message.type === 'flex' ? message.canonicalText! : '', required: true, sourceProofIds: [] }] }, preferredMessages: [message] });
+    assert.ok(parseLineDeliveryPlan(p));
+    for (const frozen of [p.batches[0]!.primary, p.batches[0]!.fallback]) if (frozen)
+      assert.equal(JSON.stringify(frozen.messages).includes('expense_action_next'), applied);
+  }
 });

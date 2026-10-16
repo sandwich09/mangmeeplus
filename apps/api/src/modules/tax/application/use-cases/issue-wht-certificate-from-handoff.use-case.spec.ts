@@ -546,3 +546,45 @@ it('handoff issue refuses a missing registered name and replaces an unproven dis
   const result = await uc.execute(ctx, 'handoff-1');
   assert.equal(result.payerSnapshot.companyName, 'ชื่อจดทะเบียนจริง');
 });
+
+describe('Round 5 LINE certificate preview and revision fence', () => {
+  it('previews the actual payment share and date, refusing unpaid or unknown-date sources without writes', async () => {
+    const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1' } });
+    const uc = h.execute(guard({ state: 'OPEN' }));
+    h.client.expensePayment.findMany = async () => [];
+    await assert.rejects(() => uc.previewLineAction(ctx, 'handoff-1'), (e: any) => e.getResponse().code === 'wht_certificate_payment_required');
+    const payment = { id: 'p1', amount: '475', status: 'RECORDED', paidAtConfirmed: false, paidAt: new Date('2026-10-04T18:00:00Z'), createdAt: new Date() };
+    h.client.expensePayment.findMany = async () => [payment];
+    await assert.rejects(() => uc.previewLineAction(ctx, 'handoff-1'), (e: any) => e.getResponse().code === 'wht_certificate_payment_date_required');
+    payment.paidAtConfirmed = true;
+    const preview = await uc.previewLineAction(ctx, 'handoff-1');
+    assert.equal(preview.prefill.grossAmount, '500'); assert.equal(preview.prefill.withheldAmount, '25');
+    assert.equal(preview.prefill.paymentDate, '2026-10-05');
+    assert.deepEqual([h.periods.length, h.reservations.length, h.certificates.length, h.audits.length, h.renders.length], [0, 0, 0, 0, 0]);
+  });
+  it('reuses all issue preconditions without creating periods, numbers, documents or audit entries', async () => {
+    for (const variant of ['valid', 'address', 'closed', 'status', 'income', 'payer']) {
+      const h = harness({ handoff: { updatedAt: new Date('2026-10-15T01:00:00Z') } });
+      if (variant === 'address') h.handoff.prefillSnapshotJson.payeeSnapshot.address = null;
+      if (variant === 'status') h.handoff.status = 'EXTERNAL_LINKED';
+      if (variant === 'income') h.handoff.prefillSnapshotJson.incomeCategoryCode = null;
+      if (variant === 'payer') h.handoff.prefillSnapshotJson.payerSnapshot.taxId = null;
+      const useCase = h.execute(guard({ state: variant === 'closed' ? 'CLOSED' : 'OPEN' }));
+      if (variant === 'valid') await useCase.previewLineAction(ctx, 'handoff-1');
+      else await assert.rejects(() => useCase.previewLineAction(ctx, 'handoff-1'));
+      assert.deepEqual([h.periods.length, h.reservations.length, h.certificates.length, h.audits.length, h.renders.length], [0,0,0,0,0], variant);
+      if (variant === 'address') { await useCase.previewLineAction(ctx, 'handoff-1', 'ที่อยู่ที่ผู้ใช้กำลังจะยืนยัน'); assert.equal(h.handoff.payeeAddress, undefined); }
+    }
+  });
+  it('rejects an old card before reservation and checks revision again under the issue transaction lock', async () => {
+    const revision = '2026-10-15T01:00:00.000Z';
+    const stale = harness({ handoff: { updatedAt: new Date('2026-10-15T02:00:00Z') } });
+    await assert.rejects(() => stale.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', undefined, revision), (error: any) => error.getResponse().code === 'wht_handoff_changed');
+    assert.equal(stale.reservations.length, 0); assert.equal(stale.certificates.length, 0);
+    const race = harness({ handoff: { updatedAt: new Date(revision) } });
+    const reserve = race.reserveNumber.execute;
+    race.reserveNumber.execute = async (input: any) => { const result = await reserve(input); race.handoff.updatedAt = new Date('2026-10-15T02:00:00Z'); return result; };
+    await assert.rejects(() => race.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', undefined, revision), (error: any) => error.getResponse().code === 'wht_handoff_not_issuable');
+    assert.equal(race.certificates.length, 0); assert.equal(race.commits.length, 0);
+  });
+});

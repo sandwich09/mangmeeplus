@@ -1,5 +1,6 @@
 import { resetInputVatDecisionForType } from '../../infrastructure/expense-input-vat-decision';
 import { applyExpenseInputVatPreset } from '../../infrastructure/expense-input-vat';
+import { toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
@@ -132,8 +133,8 @@ const MAX_OCR_ADDITIONAL_CHARGES = 10;
  *  Nothing is accepted by this — the record keeps the computed VAT and stays a MISMATCH — it only
  *  decides whether the reviewer sees the document's real rows or a single folded summary line. */
 const MAX_WHOLE_BAHT_VAT_ROUNDING = 1;
-// Mirrors the gateway prompt bound; past this the item block is a catalogue, not an expense.
-const MAX_OCR_ITEM_LINES = 40;
+// Mirrors the gateway's bounded receipt item admission.
+const MAX_OCR_ITEM_LINES = 200;
 
 /** A printed money figure that may legitimately be zero: a free or included item row. The expense
  *  model already allows a zero unit price ("the general expense flow supports free-of-charge lines"),
@@ -214,10 +215,13 @@ export function verifyDiscountAmount(fields: ReceiptOcrFieldResult): ReceiptOcrF
     && Math.abs(subtotal + vat - grand) <= VAT_TOLERANCE) {
     return { ...fields, discountAmount: discount.toFixed(2) };
   }
+  const rounding = ocrCharges(fields).filter(charge => charge.kind === 'ROUNDING')
+    .reduce((sum, charge) => sum + (ocrChargeAmount(charge) ?? 0), 0);
   const base = fields.vatMode === 'VAT_EXCLUDED'
-    ? positiveMoney(fields.taxableAmount) ?? (grand !== undefined && vat !== undefined ? grand - vat : undefined)
-    : grand;
-  const charges = ocrCharges(fields).reduce((sum, charge) => sum + (ocrChargeAmount(charge) ?? 0), 0);
+    ? positiveMoney(fields.taxableAmount) ?? (grand !== undefined && vat !== undefined ? grand - vat - rounding : undefined)
+    : grand !== undefined ? grand - rounding : undefined;
+  const charges = ocrCharges(fields).filter(charge => charge.kind !== 'ROUNDING')
+    .reduce((sum, charge) => sum + (ocrChargeAmount(charge) ?? 0), 0);
   const implied = subtotal !== undefined && base !== undefined ? subtotal + charges - base : undefined;
   if (implied !== undefined && Math.abs(implied - discount) <= VAT_TOLERANCE) {
     return printed > 0 ? fields : { ...fields, discountAmount: discount.toFixed(2) };
@@ -283,19 +287,21 @@ export function completeVatFields(fields: ReceiptOcrFieldResult): ReceiptOcrFiel
   let taxable = positiveMoney(fields.taxableAmount);
   let vat = positiveMoney(fields.vatAmount);
   let grand = positiveMoney(fields.grandTotalAmount);
+  const rounding = ocrCharges(fields).filter(charge => charge.kind === 'ROUNDING')
+    .reduce((sum, charge) => sum + (ocrChargeAmount(charge) ?? 0), 0);
   const hasPerChargeVatTreatment = ocrCharges(fields).some((charge) => charge.vatRate !== undefined);
   const hasPerLineVatTreatment = usableItemLines(fields).some((line) => line.vatRate !== undefined);
-  if (taxable && vat && grand && Math.abs(taxable + vat - grand) > VAT_TOLERANCE
+  if (taxable && vat && grand && Math.abs(taxable + vat + rounding - grand) > VAT_TOLERANCE
     && !hasPerChargeVatTreatment && !hasPerLineVatTreatment) return out;
 
-  if (taxable && grand && !vat && saneVat(grand - taxable, taxable)) {
-    vat = grand - taxable;
+  if (taxable && grand && !vat && saneVat(grand - taxable - rounding, taxable)) {
+    vat = grand - taxable - rounding;
     out.vatAmount = vat.toFixed(2);
-  } else if (vat && grand && !taxable && saneVat(vat, grand - vat)) {
-    taxable = grand - vat;
+  } else if (vat && grand && !taxable && saneVat(vat, grand - vat - rounding)) {
+    taxable = grand - vat - rounding;
     out.taxableAmount = taxable.toFixed(2);
   } else if (taxable && vat && !grand && saneVat(vat, taxable)) {
-    grand = taxable + vat;
+    grand = taxable + vat + rounding;
     out.grandTotalAmount = grand.toFixed(2);
   }
 
@@ -313,7 +319,7 @@ export function completeVatFields(fields: ReceiptOcrFieldResult): ReceiptOcrFiel
   if (rate === undefined) delete out.vatRate;
   else out.vatRate = (Math.abs(rate - 0.07) <= 0.002 ? 0.07 : rate).toFixed(4);
 
-  const provenVat = Boolean(taxable && vat && grand && Math.abs(taxable + vat - grand) <= VAT_TOLERANCE);
+  const provenVat = Boolean(taxable && vat && grand && Math.abs(taxable + vat + rounding - grand) <= VAT_TOLERANCE);
   if (provenVat && (!validVatMode(out.vatMode) || out.vatMode === 'NO_VAT')) out.vatMode = 'VAT_EXCLUDED';
   // The printed arithmetic outranks a mode the extractor GUESSED — VAT_INCLUDED, VAT_EXCLUDED,
   // NO_VAT, or a word that is not a mode at all. It does not outrank EXEMPT or NEEDS_REVIEW: those
@@ -566,7 +572,13 @@ function reconciledTotals(
   candidate: PreparedOcrLine[],
   fields: ReceiptOcrFieldResult,
 ): ReturnType<typeof calcDocumentTotals> | null {
-  const totals = calcDocumentTotals({ lines: candidate.map((line) => ({ ...line.totals, chargeKind: line.chargeKind ?? null })) });
+  const vat = reconcileExpenseVat({ vatMode: documentVatMode(fields),
+    lines: candidate.map((line, index) => ({ lineNumber: index + 1, chargeKind: line.chargeKind,
+      quantity: line.quantity, unitPrice: line.unitPrice, discountAmount: line.totals.discountAmount,
+      vatRate: line.vatRate, whtRate: line.whtRate })), source: ocrVatSource(fields),
+    sourceTaxableAmount: fields.taxableAmount ?? fields.subtotalAmount, sourceGrossAmount: fields.grandTotalAmount });
+  const totals = vat.snapshot.reconciliation.status === 'MATCHED' ? vat.totals
+    : calcDocumentTotals({ lines: candidate.map((line) => ({ ...line.totals, chargeKind: line.chargeKind ?? null })) });
   const wholeBaht = printedVatIsWholeBaht(fields, totals);
   const taxTolerance = wholeBaht ? MAX_WHOLE_BAHT_VAT_ROUNDING : VAT_TOLERANCE;
   // Mixed per-line VAT rates make the document's single printed taxable base incomparable.
@@ -596,7 +608,7 @@ function vatRoundingReasons(
  *  and its output is a suggestion, never a trusted contract. */
 export function usableItemLines(fields: ReceiptOcrFieldResult): NonNullable<ReceiptOcrFieldResult['lines']> {
   const lines = fields.lines;
-  if (!Array.isArray(lines) || lines.length < 2 || lines.length > MAX_OCR_ITEM_LINES) return [];
+  if (fields.missingFields?.includes('lines') || !Array.isArray(lines) || lines.length < 2 || lines.length > MAX_OCR_ITEM_LINES) return [];
   const usable = lines.filter((line) => Boolean(
     line
     && typeof line.description === 'string' && line.description.trim() && line.description.length <= 200
@@ -980,6 +992,10 @@ export class ReceiptOcrApplyService {
       fallbackCategorySuggestion?: ReceiptCategoryFallback; expectedUpdatedAt?: Date; todayIso?: string;
       /** The attachment these fields were read FROM (§16.4); see the `sourceStale` clear below. */
       sourceAttachmentId?: string;
+      /** Classification of this same successfully applied read, fenced with its facts. */
+      sourceDocumentType?: ReturnType<typeof toSourceDocumentType>;
+      /** This read's classification, independent of the reviewer's chosen document type. */
+      ocrDocumentType?: ReturnType<typeof toSourceDocumentType>;
     } = {},
   ): Promise<ReceiptOcrApplyOutcome> {
     const completed = completeVatFields(verifyDiscountAmount(fields));
@@ -998,6 +1014,7 @@ export class ReceiptOcrApplyService {
     const data: Record<string, unknown> = {
       // Spec §5.2: an unread date is not a partial read, it is a value nobody has confirmed. Leaving
       // this at PARTIAL let a draft carrying the upload day pass as if the page had been read.
+      ...(options.sourceDocumentType ? { sourceDocumentType: options.sourceDocumentType } : {}),
       aiVerificationStatus: reviewReasons.length > 0 ? 'NEEDS_REVIEW' : 'PARTIAL',
       aiVerifiedFieldsJson: fields, // provenance: the original AI output, never the completed one
       aiVerificationConfidence: fields.confidence,
@@ -1116,11 +1133,20 @@ export class ReceiptOcrApplyService {
        * later rollback here leaves a counterparty row behind — harmless, since the next save links
        * to it instead of making another.
        */
-      const receiptUploaderUserId = this.ensureVendorCounterparty && currentExpense.primaryAttachmentId
+      // Payment evidence identifies the payee, not a supplier purchase for the registry.
+      const savedDocumentKind = (summary?.['classification'] as { documentKind?: string } | undefined)?.documentKind;
+      const vendorRegistry = [options.ocrDocumentType, options.sourceDocumentType, currentExpense.sourceDocumentType, savedDocumentKind].includes('TRANSFER_SLIP') ? undefined : this.ensureVendorCounterparty;
+      const receiptUploaderUserId = vendorRegistry && currentExpense.primaryAttachmentId
         ? await this.expenses.findPrimaryReceiptUploader(ctx.companyId, expenseId, currentExpense.primaryAttachmentId)
         : null;
-      const autoSave = await this.ensureVendorCounterparty?.execute(ctx, {
+      if (!currentExpense.reviewedAt && completed.vendorTaxId) {
+        const registeredName = await vendorRegistry?.resolveOcrVendorName(ctx, completed.vendorTaxId);
+        if (registeredName) data['vendorNameSnapshot'] = registeredName;
+      }
+      const autoSave = await vendorRegistry?.execute(ctx, {
         expenseId,
+        sourceDocumentType: options.sourceDocumentType ?? currentExpense.sourceDocumentType,
+        ocrDocumentType: options.ocrDocumentType ?? savedDocumentKind,
         ...(receiptUploaderUserId ? { receiptUploaderUserId } : {}),
         captureSource: currentExpense.captureSource,
         sourceReimbursementRequestId: currentExpense.sourceReimbursementRequestId,
@@ -1171,7 +1197,7 @@ export class ReceiptOcrApplyService {
           })),
           source,
           sourceOrigin: keepReviewerSource ? 'REVIEWER' : 'OCR',
-          sourceTaxableAmount: keepReviewerSource ? prior.source.taxableAmount : fields.taxableAmount ?? null,
+          sourceTaxableAmount: keepReviewerSource ? prior.source.taxableAmount : fields.taxableAmount ?? fields.subtotalAmount ?? null,
           sourceGrossAmount: keepReviewerSource ? prior.source.grossAmount : fields.grandTotalAmount ?? null,
           sourceEvidenceRefs: keepReviewerSource ? prior.source.evidenceRefs : undefined,
           capturedAt: keepReviewerSource ? prior.source.capturedAt : undefined,
@@ -1263,6 +1289,17 @@ export class ReceiptOcrApplyService {
             }
           }
         }
+      }
+      // Durable PDF reads have no later synchronous summary write. Persist their date provenance
+      // with the same fenced apply, so neither LINE nor source-draft review sees the upload day.
+      if (options.sourceAttachmentId && options.sourceDocumentType && currentExpense.primaryAttachmentId === options.sourceAttachmentId && !currentExpense.reviewedAt) {
+        const { expenseDate: _rawDate, ...recognized } = fields;
+        const acceptedDate = dateReview.verified ? ((data['expenseDate'] as Date | undefined) ?? currentExpense.expenseDate)?.toISOString().slice(0, 10) : undefined;
+        const missing = new Set(fields.missingFields ?? []);
+        if (acceptedDate) missing.delete('expenseDate'); else missing.add('expenseDate');
+        data['aiVerificationSummaryJson'] = { ...((data['aiVerificationSummaryJson'] ?? summary ?? {}) as Record<string, unknown>),
+          dateStatus: dateReview.status, missingFields: [...missing],
+          recognizedFields: { ...recognized, ...(acceptedDate ? { expenseDate: acceptedDate } : {}) } };
       }
       if (effectiveCategory) data['expenseCategoryId'] = effectiveCategory.id;
       const nextVatFacts = { ...currentExpense, ...data };

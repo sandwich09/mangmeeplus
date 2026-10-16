@@ -1,0 +1,522 @@
+[
+  {
+    "journey": "C04",
+    "turn": 0,
+    "messageText": "ทำใบสำคัญจ่ายทำยังไง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.93,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "อธิบายวิธีทำใบสำคัญจ่ายในระบบ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 20,
+              "rawSha256": "c85a1ec264bf72aaddd1f06c3e9386e1661fda79720e80ce1bb7bb36f301d849"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C04",
+    "turn": 1,
+    "messageText": "ทำให้หน่อย ทำใบสำคัญจ่ายจากค่าใช้จ่ายที่ยืนยันแล้วรายการล่าสุด",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบสำคัญจ่ายจากค่าใช้จ่ายที่ยืนยันแล้วรายการล่าสุด",
+          "requiredEvidence": [],
+          "requestedFilters": {
+            "action": "VOUCHER_CREATE",
+            "documentStatus": "CONFIRMED"
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 62,
+              "rawSha256": "7968fb92aae88c886ab40999d7141569f7963489ee866d694be0848efbfd3193"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C05",
+    "turn": 0,
+    "messageText": "ออกหนังสือรับรองหัก ณ ที่จ่าย 50 ทวิ ทำยังไง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "ออกหนังสือรับรองหัก ณ ที่จ่าย 50 ทวิ ทำยังไง",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 44,
+              "rawSha256": "d38b51c0ec6c3df99174d66321b1f9aebaa3d7a14647d2f03ee163d1869c7fa4"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C05",
+    "turn": 1,
+    "messageText": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.82,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าจ้างป้ายหน้าร้าน 10,000 บาท และออก 50 ทวิ หัก ณ ที่จ่าย 3% พร้อมบันทึกข้อมูลผู้รับเงิน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "บันทึกการจ่ายโอนค่าจ้างวันนี้ และเตรียมออกใบ 50 ทวิ บริษัท ป้ายสวย จำกัด",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "write",
+          "goal": "บันทึกหรืออัปเดตข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C05",
+    "turn": 2,
+    "messageText": "บันทึกค่าใช้จ่ายค่าทำป้ายก่อน แล้วค่อยออก 50 ทวิ",
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.82,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "sourceDocumentLanguage": "th",
+        "vendorName": "บริษัท ป้ายสวย จำกัด",
+        "description": "ค่าทำป้ายหน้าร้าน",
+        "confidence": 0.75,
+        "missingFields": [
+          "amount",
+          "expenseDate",
+          "documentNumber"
+        ]
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าใช้จ่ายค่าทำป้ายก่อน จากบริษัท ป้ายสวย จำกัด",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "taskRef": {
+            "taskId": "ce7048f460bf7f4cc25398e10528697afc786c2e52e466da09d623d9343462dd",
+            "taskRevision": 1,
+            "subrequestIndex": 0
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 48,
+              "rawSha256": "08913a65636e8acfe932680ae5de4f57b91b83ec33a50226f1eff4bd75deb8b7"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "ออก 50 ทวิ หลังบันทึกค่าใช้จ่ายเสร็จ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 30,
+              "endUtf16": 48,
+              "rawSha256": "08913a65636e8acfe932680ae5de4f57b91b83ec33a50226f1eff4bd75deb8b7"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C06",
+    "turn": 0,
+    "messageText": "ดูสรุป ภ.ง.ด.53 ทำยังไง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "ดูสรุป ภ.ง.ด.53 ทำยังไง",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 23,
+              "rawSha256": "ec49c122c97d7f97e907fab52ffd9f94fc7b4f77f9a8b2a229136ff7c804bf9f"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C06",
+    "turn": 1,
+    "messageText": "ทำให้หน่อย สรุป ภ.ง.ด.53 เดือนนี้",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.82,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "read",
+          "goal": "สรุป ภ.ง.ด.53 เดือนนี้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "toolHint": "wht.get_month_summary",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 33,
+              "rawSha256": "998a890c75f1b35f68559ff4427164a3aa78f1c0263bf5620cd1fe58cd2f9d09"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C07",
+    "turn": 0,
+    "messageText": "เพิ่มคู่ค้าทำยังไง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีเพิ่มคู่ค้าในระบบ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 18,
+              "rawSha256": "7c7802ad6bf10230709ceb3e52503d7cd9c8a8831f708f2437e72987e524c4db"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C07",
+    "turn": 1,
+    "messageText": "ทำให้หน่อย เพิ่มผู้ขาย บริษัท ผักสดดี จำกัด เลขผู้เสียภาษี 0105560000018 สำนักงานใหญ่ ที่อยู่ 99 ถนนงามวงศ์วาน ตำบลบางกระสอ อำเภอเมืองนนทบุรี นนทบุรี 11000",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.97,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "เพิ่มคู่ค้า บริษัท ผักสดดี จำกัด พร้อมข้อมูลครบ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 155,
+              "rawSha256": "a350ff418d204b0ccfdfc258df6a4f8939f928601d58936dee43aa2d9d3afb3b"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C07",
+    "turn": 3,
+    "messageText": "แก้ที่อยู่ บริษัท ผักสดดี จำกัด เป็น 101 ถนนงามวงศ์วาน ตำบลบางกระสอ อำเภอเมืองนนทบุรี นนทบุรี 11000",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.97,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "แก้ที่อยู่คู่ค้า บริษัท ผักสดดี จำกัด เป็นที่อยู่ใหม่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "taskRef": {
+            "taskId": "8fb7da7537b54a8d817db1531486d3c26aa7ccd0b4b19b938968bfec3c036ede",
+            "taskRevision": 1,
+            "subrequestIndex": 0
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 99,
+              "rawSha256": "7db7e16b37e4ffab4699ce9c1eb8884c731c45a39e1a4cf3b33488c4e62a590f"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C10",
+    "turn": 0,
+    "messageText": "ซื้อแพ็กเกจหรืออัปเกรดแพ็กเกจทำยังไง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีซื้อหรืออัปเกรดแพ็กเกจบนระบบ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "toolHint": "billing.get_package_usage",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 36,
+              "rawSha256": "56fad05b1c3ad4b11ae782104123f947611fce5e3053356ec744a31dbdc83f4b"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C11",
+    "turn": 0,
+    "messageText": "เพิ่มบัญชีรับเงินคืนของฉันทำยังไง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.82,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีเพิ่มบัญชีรับเงินคืนของผู้ใช้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 33,
+              "rawSha256": "6700eaba37b914d82c3d53da6a9f1f1459f6dff7087a36fc503dc44c5108781a"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C11",
+    "turn": 1,
+    "messageText": "ทำให้หน่อย ธนาคารกสิกรไทย เลขบัญชี 123-4-56789-0 ชื่อบัญชีเป็นชื่อฉันเอง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "CLARIFY",
+      "language": "th",
+      "confidence": 0.55,
+      "clarifyQuestion": "ต้องการเพิ่มบัญชีธนาคารไว้รับเงินเบิกคืนส่วนตัว หรือต้องการเพิ่มข้อมูลคู่ค้า/ผู้รับเงินในระบบบัญชีคะ?",
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "general",
+          "goal": "ระบุเจตนาเพิ่มบัญชีธนาคาร: บัญชีรับเงินเบิกส่วนตัว หรือคู่ค้า/ผู้รับเงินในระบบ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 72,
+              "rawSha256": "833a33e535249f6abd62683e595a70e8c01a5d8d9b8112266d2030249a9aceff"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C11",
+    "turn": 2,
+    "messageText": "ไว้รับเงินคืนจากใบเบิกค่ะ",
+    "route": {
+      "status": "ROUTED",
+      "intent": "ADVISOR_CONVERSATION",
+      "language": "th",
+      "confidence": 0.72,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "general",
+          "goal": "อธิบายว่า 'บัญชีรับเงินคืนจากใบเบิก' ในระบบ MangmeePlus ทำงานอย่างไร",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 25,
+              "rawSha256": "d1fae2e911fa86ae117a62c3da8180f281178fddbf2561fbfca8b5f17d66dbda"
+            }
+          ]
+        }
+      ],
+      "advisorAnswer": {
+        "version": 1,
+        "mode": "SOCIAL_CHAT",
+        "confidence": 0.68,
+        "needsTools": false,
+        "knowledgeCardIds": [],
+        "companyProfileFieldsUsed": [],
+        "answerText": "การรับเงินคืนจากใบเบิกจะผ่านกระบวนการอนุมัติและจ่ายเงินในระบบค่ะ ข้อมูลบัญชีธนาคารสำหรับรับเงินจะต้องตั้งค่าในโปรไฟล์ผ่านเว็บไซต์โดยตรงนะคะ ไม่สามารถเพิ่มผ่านแชทนี้ได้ค่ะ"
+      }
+    }
+  }
+]

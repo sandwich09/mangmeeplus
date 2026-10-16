@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   AI_BUDGET_PROFILE_TABLE_DIGEST_V2, AI_BUDGET_PROFILES_V2, AI_BUDGET_ESTIMATOR_VERSION_V2,
-  aiBudgetV2CallAllowed, aiBudgetV2OrdinalCeiling,
+  aiBudgetV2CallAllowed, aiBudgetV2OrdinalCeiling, aiGatewayClientTimeoutMs,
   parseAiBudgetGrantV2, parseAiBudgetEnvelopeV2, lineDocumentQaInputEvidenceText, parseLineDocumentQaQuestions,
   type LineDocumentQaAttachment,
   type AiBudgetGrantV2, type AiBudgetInvocationV2, type AiBudgetEnvelopeV2, type AiBudgetProfileIdV2,
@@ -136,7 +136,9 @@ export class LineAiBudgetAuthorityService {
       && input.allowedProfileIds.some(id => id !== 'line-intake-text/2' && id !== 'line-intake-image/2')) return null;
     if (input.owner.kind === 'PUBLIC_GENERAL'
       && input.allowedProfileIds.some(id => id !== 'line-answer/2' && id !== 'public-lookup/2')) return null;
-    const finalDeadlineAtMs = input.admittedAtMs + baseCeilings[input.lane] + input.coalescingExtraMs;
+    const ceiling = input.requestKind === 'IMAGE' && input.allowedProfileIds.includes('line-intake-image/2')
+      ? Math.max(baseCeilings[input.lane], aiGatewayClientTimeoutMs(2)) : baseCeilings[input.lane];
+    const finalDeadlineAtMs = input.admittedAtMs + ceiling + input.coalescingExtraMs;
     const unsigned: Omit<AiBudgetGrantV2, 'signature'> = {
       version: 2, turnKey: input.turnKey, authorityKind: input.authorityKind, authorityId: input.authorityId,
       channelOwnerDigest: digest(input.owner), attemptKey: input.attemptKey,

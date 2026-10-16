@@ -20,8 +20,10 @@ import type {
   ReceiptOcrLineItem,
 } from '@watchdog-bms/contracts';
 
-/** The legacy item block ceiling; past it the draft keeps the summary line (§4.3 of the OCR spec). */
-const MAX_LEGACY_LINES = 40;
+import { expenseVendorBranchCodeFromPrint } from './expense-vendor-identity.logic';
+
+/** Match the existing ReceiptOcrApplyService 200-row bound for assembled multi-page documents. */
+const MAX_LEGACY_LINES = 200;
 const MAX_LEGACY_CHARGES = 10;
 const MAX_EVIDENCE_SIGNAL_CHARS = 120;
 
@@ -65,7 +67,9 @@ export function captureFieldsFromObservations(
   if (document.issuer?.taxId && /^\d{13}$/.test(document.issuer.taxId.replace(/[- ]/g, ''))) {
     fields.vendorTaxId = document.issuer.taxId.replace(/[- ]/g, '');
   } else missing.add('vendorTaxId');
-  if (document.issuer?.branchCode) fields.vendorBranchCode = document.issuer.branchCode;
+  const branchCode = expenseVendorBranchCodeFromPrint(document.issuer?.branchCode);
+  if (branchCode) fields.vendorBranchCode = branchCode;
+  if (document.issuer?.address) fields.vendorAddress = document.issuer.address;
   if (document.documentNumber) fields.documentNumber = document.documentNumber; else missing.add('documentNumber');
   if (document.documentDate) fields.expenseDate = document.documentDate; else missing.add('expenseDate');
   if (document.currency) fields.currency = document.currency;
@@ -165,7 +169,7 @@ function legacyLines(items: ExpenseCaptureAssembledObservations['items']): Recei
   return lines;
 }
 
-/** Printed charges only, positive only, at most the legacy ceiling. */
+/** Printed charges only, signed settlement rounding, at most the legacy ceiling. */
 function legacyCharges(
   components: readonly ExpenseCaptureComponentObservation[],
 ): NonNullable<ReceiptOcrFieldResult['additionalCharges']> {
@@ -174,9 +178,11 @@ function legacyCharges(
     if (out.length >= MAX_LEGACY_CHARGES) break;
     if (component.role !== 'charge' || component.scope === 'item' || !component.amount) continue;
     const amount = Number.parseFloat(component.amount.replace(/,/g, ''));
-    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const kind = CHARGE_KIND_BY_LABEL.find(([pattern]) => pattern.test(component.label))?.[1] ?? 'OTHER';
+    if (!Number.isFinite(amount) || amount === 0 || (amount < 0 && kind !== 'ROUNDING')) continue;
     out.push({
-      kind: CHARGE_KIND_BY_LABEL.find(([pattern]) => pattern.test(component.label))?.[1] ?? 'OTHER',
+      kind,
+      ...(kind === 'ROUNDING' ? { vatRate: '0' } : {}),
       description: component.label.slice(0, 120),
       amount: component.amount,
       evidenceSignal: component.evidenceSpan.slice(0, MAX_EVIDENCE_SIGNAL_CHARS),

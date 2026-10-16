@@ -18,6 +18,8 @@ const messageText = process.argv[2] ?? 'ช่วยสรุปสินค้�
 
 // createProvider + OrchestratorAgent read only these config getters.
 const config = {
+  appEnv: process.env['APP_ENV'],
+  anthropicApiKey: process.env['ANTHROPIC_API_KEY'],
   modelProvider: process.env['MODEL_PROVIDER'] ?? 'bedrock',
   bedrockRegion: process.env['BEDROCK_REGION'],
   bedrockModelId: process.env['BEDROCK_MODEL_ID'],

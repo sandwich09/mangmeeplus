@@ -461,7 +461,7 @@ export class WhtCertificateHandoffUseCase {
    * that is still waiting: the same text again has nothing left to do, so a retry returns the
    * stored row — no second column write, no second audit entry, no second registry write.
    */
-  async setPayeeAddress(ctx: RequestContext, handoffId: string, dto: SetWhtHandoffPayeeAddressDto): Promise<WhtCertificateHandoffDto> {
+  async setPayeeAddress(ctx: RequestContext, handoffId: string, dto: SetWhtHandoffPayeeAddressDto, expectedUpdatedAt?: string): Promise<WhtCertificateHandoffDto> {
     const payeeAddress = String(dto?.payeeAddress ?? '').trim();
     if (!payeeAddress) {
       throw new BadRequestException({ code: 'wht_handoff_payee_address_required', message: 'ยังไม่มีที่อยู่ผู้รับเงิน พิมพ์ที่อยู่ตามที่จะพิมพ์ลงหนังสือรับรอง 50 ทวิ' });
@@ -474,12 +474,13 @@ export class WhtCertificateHandoffUseCase {
     // The refusal: once the certificate exists, an address typed here reaches no document. Saying
     // so beats accepting the text and letting the operator believe the paper changed.
     if (row.status !== 'REQUIRED') throw payeeAddressNotEditable(row.status);
+    if (expectedUpdatedAt && row.updatedAt.toISOString() !== expectedUpdatedAt) throw new ConflictException({ code: 'wht_handoff_changed' });
     if ((row.payeeAddress ?? '') === payeeAddress) return toDto(row, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
 
     // Same conditional-write shape as the link, for the same reason: a colleague who links between
     // the read above and this write must not end up with an address landing on a finished job.
     const outcome = await this.table.updateMany({
-      where: { id: handoffId, companyId: ctx.companyId, status: 'REQUIRED' },
+      where: { id: handoffId, companyId: ctx.companyId, status: 'REQUIRED', ...(expectedUpdatedAt ? { updatedAt: new Date(expectedUpdatedAt) } : {}) },
       data: { payeeAddress, payeeAddressByUserId: ctx.userId, payeeAddressAt: new Date() },
     });
     if (outcome.count === 0) {

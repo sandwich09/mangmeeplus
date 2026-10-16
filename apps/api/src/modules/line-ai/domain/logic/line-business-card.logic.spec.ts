@@ -1031,7 +1031,7 @@ describe('expense draft card (§10.1) — the locked review card', () => {
     assert.equal(card.mascot, `${WEB}/assets/line/system-card-mascot-review-20261005.png`);
     assert.deepEqual(card.rows, FULL.rows.map((row) => [row.label, ':', row.value]));
     assert.deepEqual(card.notes, FULL.notes);
-    assert.deepEqual(card.actions, [{ type: 'uri', label: 'ตรวจสอบและยืนยันในเว็บ', uri: 'https://app.example.com/companies/c1/expenses/exp-1' }]);
+    assert.deepEqual(card.actions, [{ type: 'message', label: 'ยืนยันรายการ', text: 'ยืนยันรายการนี้' }, { type: 'uri', label: 'เปิดดูในเว็บ', uri: 'https://app.example.com/companies/c1/expenses/exp-1' }]);
     // The owner cut the yellow "รอตรวจสอบ" strip: the header and the status row already say it.
     assert.equal(card.banner, undefined);
     assert.equal(isCompleteLineBusinessAnswerPresentation(message), true, 'so a bound chat is sent the card itself');
@@ -1071,7 +1071,7 @@ describe('expense draft card (§10.1) — the locked review card', () => {
   });
 
   it('opens exactly the tenant expense record — no query, no hash, no financial parameter', () => {
-    const [action] = readSystemCard(buildExpenseDraftCardMessage(CANONICAL, FULL, WEB, 'c1')).actions;
+    const [, action] = readSystemCard(buildExpenseDraftCardMessage(CANONICAL, FULL, WEB, 'c1')).actions;
     assert.equal(action!.uri, 'https://app.example.com/companies/c1/expenses/exp-1');
     assert.equal(new URL(action!.uri!).search, '');
     assert.equal(new URL(action!.uri!).hash, '');
@@ -1459,4 +1459,13 @@ describe('delivery plan guard: every card carries its text, or says why it never
     // the internal field. This card must stay without one for as long as the outbox is its sender.
     assert.equal('canonicalText' in cardBuilders.buildProfileGuardNudgeCard(), false);
   });
+});
+
+it('Fix-up 22B: quick choices preserve API-built web links alongside message buttons', () => {
+  const choices = cardBuilders.lineChoiceQuickReply([
+    { label: 'ตั้งค่าประเภทเงินได้', text: 'ตั้งค่าประเภทเงินได้', uri: 'https://app.example.com/system/wht-income-categories?openExternalBrowser=1' },
+    { label: 'บริษัท ป้ายสวย จำกัด', text: 'บริษัท ป้ายสวย จำกัด' },
+  ]);
+  assert.deepEqual(choices.items.map(item => item.action.type), ['uri', 'message']);
+  assert.equal((choices.items[0]!.action as any).uri, 'https://app.example.com/system/wht-income-categories?openExternalBrowser=1');
 });

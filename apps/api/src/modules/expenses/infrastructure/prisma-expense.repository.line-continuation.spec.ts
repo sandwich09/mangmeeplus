@@ -3,7 +3,7 @@ import { describe, it, mock } from 'node:test';
 import { PrismaExpenseRepository } from './prisma-expense.repository';
 
 describe('PrismaExpenseRepository delivered LINE receipt continuation', () => {
-  it('stores only bounded references and advances an active substitute workflow in one revision', async () => {
+  it('stores bounded delivery references without changing the content revision or active workflow revisions', async () => {
     const updatedAt = new Date('2026-08-16T01:00:00.000Z');
     const tx: any = {
       $executeRaw: mock.fn(async () => undefined),
@@ -45,9 +45,11 @@ describe('PrismaExpenseRepository delivered LINE receipt continuation', () => {
     assert.deepEqual(metadata.lineReceiptContinuation, {
       kind: 'CAPTURED_EXPENSE', expenseId: 'expense-1', userId: 'user-1', chatKeyHash: 'chat-hash',
       deliveredOutcomeId: 'hashed-outcome', sourceRevision: updatedAt.toISOString(),
-      lastActivityAt: update.data.updatedAt.toISOString(), verificationSummaryPresent: true,
+      lastActivityAt: metadata.lineReceiptContinuation.lastActivityAt, verificationSummaryPresent: true,
     });
     assert.equal(JSON.stringify(metadata).includes('must-not-copy'), false);
+    assert.equal(update.data.updatedAt.toISOString(), updatedAt.toISOString(), 'delivery bookkeeping must not stale an in-flight PDF apply');
+    assert.ok(Date.parse(metadata.lineReceiptContinuation.lastActivityAt) > updatedAt.getTime());
     assert.equal(metadata.lineSubstituteReceiptContinuation.targetRevision, update.data.updatedAt.toISOString());
     assert.equal(metadata.lineExpenseDraftContinuation.targetRevision, update.data.updatedAt.toISOString());
 

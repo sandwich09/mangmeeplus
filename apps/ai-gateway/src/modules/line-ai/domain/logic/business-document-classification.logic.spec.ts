@@ -2,6 +2,45 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from './business-document-classification.logic';
 
+describe('OCR-A due-date and optional tax ID gaps', () => {
+  const base = {
+    contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'TAX_INVOICE',
+    businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', confidence: 0.91,
+    evidenceRoles: ['EXPENSE_SUPPORT', 'TAX_EVIDENCE_CANDIDATE'], evidenceSignals: [],
+    amountSignals: ['514,158.81'], settlementSignals: ['ใบเสร็จรับเงิน'],
+    missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
+  };
+  const text = 'ใบกำกับภาษี / ใบเสร็จรับเงิน\nTAX INVOICE / RECEIPT\nวันที่ 20/09/2026\nครบกำหนด 25/09/2026\nจำนวนเงินรวมทั้งสิ้น 514,158.81';
+
+  it('does not escalate the exact printed due date on a combined invoice/receipt', () => {
+    for (const requiresClarification of [false, true]) {
+      const parsed = parseBusinessDocumentClassification({ ...base, requiresClarification, contradictionSignals: ['ครบกำหนด 25/09/2026'] }, text)!;
+      assert.deepEqual(parsed.contradictionSignals, []);
+      assert.deepEqual(parsed.missingRequiredSignals, []);
+      assert.equal(parsed.requiresClarification, false);
+      assert.equal(parsed.transactionState, 'PAID');
+    }
+  });
+
+  it('keeps unknown contradictions, missing totals, unpaid invoices and multi-document gates', () => {
+    for (const changes of [
+      { contradictionSignals: ['ครบกำหนด 25/09/2026', 'ยังไม่ได้รับเงิน'] },
+      { transactionState: 'DUE', contradictionSignals: ['ครบกำหนด 25/09/2026'] },
+      { contentKind: 'MULTI_DOCUMENT', contradictionSignals: ['ครบกำหนด 25/09/2026'] },
+      { missingRequiredSignals: ['MISSING_TRANSACTION_TOTAL'], requiresClarification: true, contradictionSignals: ['ครบกำหนด 25/09/2026'] },
+    ]) assert.equal(parseBusinessDocumentClassification({ ...base, ...changes }, text)?.requiresClarification, true);
+    assert.equal(parseBusinessDocumentClassification({ ...base, contradictionSignals: ['ครบกำหนด 25/09/2026'] }, text.replace(/ใบเสร็จรับเงิน|RECEIPT/g, 'ใบแจ้งหนี้'))?.requiresClarification, true);
+  });
+
+  it('does not report a missing tax ID for cash bills, receipts or transfer slips', () => {
+    for (const documentKind of ['RECEIPT', 'HANDWRITTEN_CASH_BILL', 'TRANSFER_SLIP']) {
+      const parsed = parseBusinessDocumentClassification({ ...base, documentKind, missingRequiredSignals: ['PAYMENT_EVIDENCE_ONLY', 'MISSING_VENDOR_TAX_ID'] }, text)!;
+      assert.deepEqual(parsed.missingRequiredSignals, ['PAYMENT_EVIDENCE_ONLY']);
+    }
+    assert.deepEqual(parseBusinessDocumentClassification({ ...base, missingRequiredSignals: ['MISSING_VENDOR_TAX_ID'] }, text)?.missingRequiredSignals, ['MISSING_VENDOR_TAX_ID']);
+  });
+});
+
 /** UAT 2026-08-27: Sonnet 4.6 labelled a clear receipt's evidenceRoles with document-kind
  *  synonyms ("RECEIPT", "TAX_INVOICE"); the all-or-nothing enum check voided the whole
  *  classification, which voided the whole intake plan, which stranded the media turn. The

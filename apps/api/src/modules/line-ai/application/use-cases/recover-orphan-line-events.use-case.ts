@@ -1,3 +1,5 @@
+import { parsePackagePurchaseControl } from '../line-package-purchase.service';
+import { parseExpenseActionControl } from '../line-expense-action.service';
 import { LineDocumentQaWorker } from '../line-document-qa.worker';
 import { LineDocumentQaService } from '../line-document-qa.service';
 import { parseLineReimbursementDraftControl } from '../line-reimbursement-draft.service';
@@ -75,6 +77,8 @@ export function parseBufferEnvelope(value: unknown): LineBufferEnvelope | null {
   if (item.kind === 'text') {
     if (typeof item.text !== 'string') return null;
     if ('inputEvidence' in item && !parseLineAiInputEvidence(item.inputEvidence, item.text)) return null;
+    if ('packagePurchaseControl' in item && !parsePackagePurchaseControl(item.packagePurchaseControl)) return null;
+    if ('expenseActionControl' in item && !parseExpenseActionControl(item.expenseActionControl)) return null;
     if ('reimbursementDraftControl' in item && !parseLineReimbursementDraftControl(item.reimbursementDraftControl)) return null;
     if ('answerDeliveryControl' in item) {
       const control = item.answerDeliveryControl;

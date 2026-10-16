@@ -1,5 +1,6 @@
-import { AI_BUDGET_REFUSAL_CODES, parseLineAiAnswerCardLayout, type AiBudgetScope, type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, canUseLineChatAction, lineChatAction, parseLineAiAnswerCardLayout, type AiBudgetScope, type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import type { ExpenseActionPreview } from '../../application/line-expense-action.service';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
 import { lineSystemCardAvailable, type LineSystemCard, type LineSystemCardIcon, type LineSystemCardRow } from './line-system-card.logic';
 import { drawLineSystemCard, LINE_SYSTEM_CARD_BUTTONS_MAX, lineSystemCardPillHolds } from './line-system-card-limits.logic';
@@ -35,6 +36,19 @@ const ANSWER_CARD_BADGE_LIMIT = 40;
 const ANSWER_CARD_SOURCE_LIMIT = 5;
 const ANSWER_CARD_SOURCE_LABEL_LIMIT = 60;
 const completeBusinessAnswerPresentations = new WeakMap<object, string>();
+
+export function lineChoiceQuickReply(choices: readonly { label: string; text: string; uri?: string }[]): NonNullable<LineReplyMessage['quickReply']> {
+  return { items: choices.slice(0, 13).map(choice => ({ type: 'action', action: choice.uri
+    ? { type: 'uri', label: Array.from(choice.label).slice(0, 20).join(''), uri: choice.uri }
+    : { type: 'message', label: Array.from(choice.label).slice(0, 20).join(''), text: choice.text } })) };
+}
+
+/** Recheck current access; a gateway-selected action is navigation advice, never authority. */
+export function productHelpQuickReply(response: LineAiTurnResponse, permissions: readonly string[], entitled: ReadonlySet<string> | null): LineReplyMessage['quickReply'] | undefined {
+  const action = response.presentation?.cards.map(card => lineChatAction(card.chatActionId)).find(Boolean);
+  if (response.refused || !action || 'webPath' in action || !canUseLineChatAction(action.id, permissions, entitled)) return undefined;
+  return lineChoiceQuickReply([{ label: 'ให้น้องทำให้', text: action.command }]);
+}
 
 function businessAnswerPresentationFingerprint(message: LineReplyMessage): string | null {
   return message.type === 'flex'
@@ -535,20 +549,26 @@ export function buildExpenseDraftReviewCard(
   facts: LineExpenseDraftCardFacts,
   webBaseUrl: string | undefined,
   companyId: string,
+  confirmation?: ExpenseActionPreview,
+  nextAction?: { label: string; text: string },
 ): LineReplyMessage | undefined {
   const actionUrl = safeTenantLink(webBaseUrl, companyId, `/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(facts.expenseId)}`);
   const rows = facts.rows.filter((row) => row.value.trim());
-  const notes = facts.notes.filter((note) => note.trim());
+  const notes = [...facts.notes, ...(confirmation ? [[confirmation.summary, ...(confirmation.details ?? [])].join('\n')] : [])].filter((note) => note.trim());
   if (!actionUrl || rows.length === 0 || !systemCardHolds(rows, notes)) return undefined;
   const contents = drawLineSystemCard({
     mascot: 'review', header: { lines: [facts.subject, 'รอตรวจสอบ'] }, rows, notes,
-    button: { action: { type: 'uri', label: 'ตรวจสอบและยืนยันในเว็บ', uri: actionUrl }, icon: 'clipboard', primary: true },
+    choice: [nextAction ? { type: 'message', ...nextAction } : confirmation ? { type: 'postback', label: confirmation.evidenceReview ? 'ตรวจแล้ว ยืนยัน' : 'ยืนยันรายการ',
+      data: new URLSearchParams({ action: 'expense_action_confirm', token: confirmation.token }).toString() }
+      : { type: 'message', label: 'ยืนยันรายการ', text: 'ยืนยันรายการนี้' },
+      { type: 'uri', label: 'เปิดดูในเว็บ', uri: actionUrl }],
   }, webBaseUrl);
   return contents && asCompleteLineCard({
     type: 'flex',
     altText: preview(canonicalText, 400) || 'ร่างค่าใช้จ่าย',
     // The button as a line too: a text delivery still carries the way in.
-    canonicalText: canonicalText.includes(actionUrl) ? canonicalText : `${canonicalText}\nเปิดดูรายการ: ${actionUrl}`,
+    canonicalText: [canonicalText.includes(actionUrl) ? canonicalText : `${canonicalText}\nเปิดดูรายการ: ${actionUrl}`,
+      ...(confirmation ? [confirmation.summary, ...(confirmation.details ?? [])] : [])].join('\n'),
     contents,
   });
 }

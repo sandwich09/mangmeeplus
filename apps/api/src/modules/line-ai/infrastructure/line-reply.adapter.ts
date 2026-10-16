@@ -12,7 +12,7 @@ import { LINE_FLEX_PREVIEW_LIMIT, lineMessagePreview } from '../domain/logic/lin
 type LineMessageAction = { type: 'message'; label: string; text: string };
 type LinePostbackAction = { type: 'postback'; label: string; data: string; displayText?: string };
 type LineCameraAction = { type: 'camera' | 'cameraRoll'; label: string };
-export type LineQuickReplyItem = { type: 'action'; action: LineMessageAction | LineCameraAction | LinePostbackAction };
+export type LineQuickReplyItem = { type: 'action'; action: LineMessageAction | LineCameraAction | LinePostbackAction | { type: 'uri'; label: string; uri: string } };
 export type LineReplyMessage = {
   quickReply?: { items: LineQuickReplyItem[] };
 } & (
@@ -42,7 +42,7 @@ function providerMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
  *  `failed_token` for replies and `failed_permanent` for pushes. A caller may
  *  resend the card's canonical text once; callers without that fallback must
  *  retain the corresponding old failure behavior. */
-export type LineDeliveryResultV2 = { kind: 'accepted' | 'rejected' | 'unknown'; code: string; requestId?: string; rejection?: 'TOKEN' | 'FLEX' | 'PERMANENT' };
+export type LineDeliveryResultV2 = { kind: 'accepted' | 'rejected' | 'unknown'; code: string; requestId?: string; sentMessageIds?: string[]; rejection?: 'TOKEN' | 'FLEX' | 'PERMANENT' };
 
 export type LineDeliveryResult = 'ok' | 'failed_token' | 'failed_flex' | 'failed_other' | 'failed_permanent' | 'skipped';
 
@@ -116,6 +116,14 @@ export function safeLineErrorDetails(error: unknown): Record<string, string | nu
   };
 }
 
+/** Keep only provider message IDs; quote tokens and response text are never retained. */
+export async function lineSentMessageIds(response: Response): Promise<string[]> {
+  try {
+    const body = await response.json() as { sentMessages?: Array<{ id?: unknown }> };
+    return Array.isArray(body?.sentMessages) ? body.sentMessages.slice(0, 5).flatMap(row =>
+      typeof row?.id === 'string' && /^[A-Za-z0-9_-]{1,200}$/u.test(row.id) ? [row.id] : []) : [];
+  } catch { return []; } // Successful transport remains accepted even if its optional ID response is lost.
+}
 const LINE_MESSAGE_TIMEOUT_MS = 5_000;
 
 /** LINE reports message-body validation errors with a JSON-pointer `property` into the request:
@@ -134,14 +142,14 @@ export class LineReplyAdapter {
 
   constructor(private readonly lineCredentials: LineMessagingCredentialsService, private readonly config: AppConfigService) {}
 
-  async sendReply(replyToken: string, messages: LineReplyMessage[]): Promise<LineDeliveryResult> {
-    return this.postMessage(this.LINE_REPLY_URL, { replyToken, messages: providerMessages(messages) }, 'reply', messages);
+  async sendReply(replyToken: string, messages: LineReplyMessage[], onSent?: (ids: string[]) => Promise<void>): Promise<LineDeliveryResult> {
+    return this.postMessage(this.LINE_REPLY_URL, { replyToken, messages: providerMessages(messages) }, 'reply', messages, undefined, onSent);
   }
 
   /** Push delivery consumes the OA monthly message quota (replies are free).
    *  Used for expired-token fallback, slow-turn feedback, and receipt acknowledgement (spec §10). */
-  async sendPush(to: string, messages: LineReplyMessage[], operationId: string = randomUUID()): Promise<LineDeliveryResult> {
-    return this.postMessage(this.LINE_PUSH_URL, { to, messages: providerMessages(messages) }, 'push', messages, linePushRetryKey(operationId, to, messages));
+  async sendPush(to: string, messages: LineReplyMessage[], operationId: string = randomUUID(), onSent?: (ids: string[]) => Promise<void>): Promise<LineDeliveryResult> {
+    return this.postMessage(this.LINE_PUSH_URL, { to, messages: providerMessages(messages) }, 'push', messages, linePushRetryKey(operationId, to, messages), onSent);
   }
 
   /** Exact frozen v2 wire. A thrown request/body read is uncertainty, never a token rejection. */
@@ -161,7 +169,10 @@ export class LineReplyAdapter {
         signal: AbortSignal.timeout(Math.min(5_000, Math.trunc(input.timeoutMs))),
       });
       const requestId = (response.headers.get('x-line-accepted-request-id') ?? response.headers.get('x-line-request-id'))?.slice(0, 200);
-      if (response.ok || (push && response.status === 409 && response.headers.get('x-line-accepted-request-id'))) return { kind: 'accepted', code: 'API_ACCEPTED', ...(requestId ? { requestId } : {}) };
+      if (response.ok || (push && response.status === 409 && response.headers.get('x-line-accepted-request-id'))) {
+        const sentMessageIds = await lineSentMessageIds(response);
+        return { kind: 'accepted', code: 'API_ACCEPTED', ...(requestId ? { requestId } : {}), ...(sentMessageIds.length ? { sentMessageIds } : {}) };
+      }
       // Reading the response shares the abort signal from fetch. A lost body cannot prove rejection.
       const body = await response.text();
       if (!push && response.status === 400 && /invalid reply token/i.test(body)) return { kind: 'rejected', code: 'REPLY_TOKEN_REJECTED', rejection: 'TOKEN' };
@@ -206,6 +217,7 @@ export class LineReplyAdapter {
     kind: 'reply' | 'push',
     messages?: LineReplyMessage[],
     retryKey?: string,
+    onSent?: (ids: string[]) => Promise<void>,
   ): Promise<LineDeliveryResult> {
     let accessToken: string | undefined;
     try { accessToken = (await this.lineCredentials.get()).accessToken; } catch { return 'failed_other'; }
@@ -246,6 +258,7 @@ export class LineReplyAdapter {
       }
       return 'failed_token';
     }
+    if (onSent) await onSent(await lineSentMessageIds(response)).catch(() => undefined);
     return 'ok';
   }
 

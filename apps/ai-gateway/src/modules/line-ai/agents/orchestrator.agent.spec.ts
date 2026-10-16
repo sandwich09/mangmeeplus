@@ -1,7 +1,10 @@
+import '../domain/logic/line-ai-scope-policy.logic.spec';
+import type { ProviderInput } from '../infrastructure/provider/provider.port';
+import { scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { branchInputMatchesMessage, buildAnswerPresentation, expenseBranchScopeRequested, expenseCriterionOnlyMessage, ORCHESTRATOR_TOOL_LOOP_PROMPT, OrchestratorAgent, uncertainExpenseFilter, unsupportedExpenseFilter, validExpensePeriodSelection, withoutRefusedCoverage } from './orchestrator.agent';
-import { ResponseComposerAgent } from './response-composer.agent';
+import { ResponseComposerAgent, claimsCompletedWrite } from './response-composer.agent';
 import { extractValueCandidates, parseLineAiAnswerCardLayout, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { LineAiPreparedPlan, LineAiTurnRequest } from '@watchdog-bms/contracts';
 
@@ -297,7 +300,7 @@ describe('OrchestratorAgent', () => {
     assert.match(result.replyText, /สินค้าและสต็อก/);
     assert.match(result.replyText, /การเงิน บัญชี และรายงาน/);
     assert.doesNotMatch(result.replyText, /ยอดขาย/);
-    assert.match(result.replyText, /ขึ้นกับสิทธิ์และฟีเจอร์/);
+    assert.match(result.replyText, /เตรียมการ์ดให้กดยืนยันเองค่ะ/);
   });
 
   // UAT 2026-09-06: "สอนฉันใช้งานเบื้องต้น…" got the capability card, which lists WHAT and never HOW.
@@ -313,7 +316,7 @@ describe('OrchestratorAgent', () => {
     assert.match(result.replyText, /ขอสรุปการเงินเดือนนี้/, 'ledger read permission → a finance step');
     assert.doesNotMatch(result.replyText, /ยอดขายวันนี้เท่าไหร่/, 'no sales permission → no sales step');
     assert.match(result.replyText, /เมนูหลัก/);
-    assert.match(result.replyText, /ต้องทำบนเว็บค่ะ$/u, 'the same closing sentence as the card');
+    assert.match(result.replyText, /เตรียมการ์ดให้กดยืนยันเองค่ะ$/u, 'the same closing sentence as the card');
   });
 
   it('lets Nong Mangmee handle pure casual conversation without ERP tools', async () => {
@@ -1652,6 +1655,20 @@ describe('run-level expense follow-up execution', () => {
     guessed.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads };
     await new OrchestratorAgent(erp, makeConfig()).run(guessed);
     assert.deepEqual(inputs, [{ tool: 'expense.get_detail' }], 'e2 was never shown this chat, so expenseId is dropped from the call like any other ungrounded field — the API itself then fails the now-missing-required-field call');
+    for (const captureContext of [ { recentCapturedExpenses: [{ id: 'captured' }] }, { activeExpenseDrafts: [{ expenseId: 'captured' }] } ]) {
+      inputs.length = 0;
+      configureLoopProvider(text => detailPlan(text), [{ callTool: 'expense.get_detail', input: { expenseId: 'captured' } }]);
+      const captured = makeReq('แสดงรายการนั้นให้ดูหน่อย');
+      captured.userContext.permissions.push('expense.read');
+      captured.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], ...captureContext };
+      await new OrchestratorAgent(erp, makeConfig()).run(captured);
+      assert.deepEqual(inputs, [{ tool: 'expense.get_detail', expenseId: 'captured' }], 'a server-issued capture/draft reference grounds the exact id');
+      inputs.length = 0;
+      configureLoopProvider(text => detailPlan(text), [{ callTool: 'expense.get_detail', input: { expenseId: 'other-chat-id' } }]);
+      await new OrchestratorAgent(erp, makeConfig()).run(captured);
+      assert.deepEqual(inputs, [{ tool: 'expense.get_detail' }], 'capture context cannot authorize another id');
+    }
+
   });
 
   it('does not present an August-only result as complete when a misspelled July was also requested', async () => {
@@ -1922,4 +1939,623 @@ describe('item 3 (R-M4): the classic tool-loop prompt names recentReads inherita
     assert.match(ORCHESTRATOR_TOOL_LOOP_PROMPT, /resolves to the id at that ordinal/);
     assert.match(ORCHESTRATOR_TOOL_LOOP_PROMPT, /A clear change of subject inherits nothing from recentReads/);
   });
+});
+
+// Round 2 A: validate the current semantic path too (kept in a registered spec).
+import { runSemanticTurnV2 } from './semantic-turn-v2';
+import { LINE_TOOL_REGISTRY, createLineAiInputEvidence, extractValueCandidatesV2 } from '@watchdog-bms/contracts';
+
+it('Round 2 A: semantic planner can only preview proven expense IDs; always on and no mutation claim', async () => {
+  const messageText = 'ยกเลิกรายการนี้ เพราะซ้ำ';
+  const built = await createLineAiInputEvidence({ turnKey: 'action-turn', parts: [{ partId: 'p0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] });
+  assert.ok(built);
+  const valueCandidates = await extractValueCandidatesV2(built.inputEvidence, '2026-10-15');
+  assert.ok(valueCandidates);
+  const tool = LINE_TOOL_REGISTRY.find(t => t.name === 'expense.action.preview')!;
+  for (const source of ['shown', 'capture', 'draft', 'invented', 'category', 'other-module']) {
+    const req = makeReq(messageText);
+    req.userContext.permissions = ['expense.void'];
+    req.valueCandidates = valueCandidates;
+    req.inputEvidence = built.inputEvidence;
+    req.semanticSubrequests = [{ index: 0, kind: 'write', goal: messageText, dependsOn: [], requiredEvidence: [], evidenceRefs: [], requestedFilters: {} }];
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [],
+      ...(source === 'shown' ? { recentReads: [{ tool: 'expense.get_detail', answerShape: 'single_metric' as const, asOf: new Date().toISOString(), shownItems: [{ ordinal: 1, id: 'expense-action-id', label: 'ร้านทดสอบ' }] }] } : {}),
+      ...(source === 'category' ? { recentReads: [{ tool: 'expense.get_breakdown', answerShape: 'list' as const, asOf: new Date().toISOString(), shownItems: [{ ordinal: 1, id: 'expense-action-id', label: 'หมวด', kind: 'category' as const }] }] } : {}),
+      ...(source === 'other-module' ? { recentReads: [{ tool: 'reimbursement.get_detail', answerShape: 'single_metric' as const, asOf: new Date().toISOString(), shownItems: [{ ordinal: 1, id: 'expense-action-id', label: 'ใบเบิก' }] }] } : {}),
+      ...(source === 'capture' ? { recentCapturedExpenses: [{ id: 'expense-action-id' }] } : {}),
+      ...(source === 'draft' ? { activeExpenseDrafts: [{ expenseId: 'expense-action-id' } as any] } : {}),
+    };
+    const calls: any[] = [], providerCalls: string[] = [];
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async (input: any) => {
+        providerCalls.push(input.usageTag);
+        if (input.usageTag === 'line.loop') {
+          assert.match(JSON.stringify(input.messages), /expense.action.preview/u, 'preview is offered even when old draft flag is off');
+          return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: tool.name, input: { expenseId: 'expense-action-id', action: 'VOID', reason: 'รายการซ้ำ' } }] }) };
+        }
+        return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'ยกเลิกแล้วค่ะ', sourceRefIds: [] }] }) };
+      } } as any,
+      invoke: async (meta, ctx, input) => { calls.push({ meta, ctx, input }); return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(),
+        sourceRefs: [{ module: 'expenses', entityType: 'expense_action_preview', label: 'คำขอค่าใช้จ่าย', permissionChecked: true }],
+        data: { reply: 'กดยกเลิกรายการเพื่อดำเนินการค่ะ', preview: { action: 'VOID' } } }; },
+    });
+    const allowed = ['shown', 'capture', 'draft'].includes(source);
+    assert.equal(calls.length, allowed ? 1 : 0, source);
+    if (allowed) {
+      assert.equal(result.replyText, 'กดยกเลิกรายการเพื่อดำเนินการค่ะ');
+      assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
+      assert.equal(calls[0].input.action, 'VOID');
+      assert.equal(providerCalls.includes('line.compose'), false, 'the preview reply is deterministic');
+    }
+  }
+});
+
+it('Round 3: reimbursement actions require shown reimbursement IDs; payment reuses grounded expense IDs with old switches off', async () => {
+  const messageText = 'อนุมัติใบเบิกนี้';
+  const built = await createLineAiInputEvidence({ turnKey: 'r3-action-turn', parts: [{ partId: 'p0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] }); assert.ok(built);
+  const valueCandidates = await extractValueCandidatesV2(built.inputEvidence, '2026-10-15'); assert.ok(valueCandidates);
+  for (const source of ['reimbursement.get_summary', 'reimbursement.get_detail', 'reimbursement.list_pending_approvals', 'expense.get_detail', 'expense.get_breakdown', 'capture', 'invented']) {
+    const req = makeReq(messageText); req.userContext.permissions = ['reimbursement.approve']; req.inputEvidence = built.inputEvidence; req.valueCandidates = valueCandidates;
+    req.semanticSubrequests = [{ index: 0, kind: 'write', goal: messageText, dependsOn: [], requiredEvidence: [], evidenceRefs: [], requestedFilters: {} }];
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [],
+      ...(source === 'capture' ? { recentCapturedExpenses: [{ id: 'claim-action-id' }] } : source === 'invented' ? {} : { recentReads: [{ tool: source, answerShape: 'list' as const, asOf: new Date().toISOString(), shownItems: [{ ordinal: 1, id: 'claim-action-id', label: 'ใบเบิก' }] }] }),
+    };
+    const calls: any[] = [];
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async (input: any) => input.usageTag === 'line.loop'
+        ? { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'expense.action.preview', input: { reimbursementId: 'claim-action-id', action: 'REIMBURSEMENT_APPROVE' } }] }) }
+        : { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'อนุมัติแล้วค่ะ', sourceRefIds: [] }] }) } } as any,
+      invoke: async (meta, ctx, input) => { calls.push({ ctx, input }); return { toolName: meta.name, status: 'ok', sourceRefs: [], asOf: new Date().toISOString(), data: { reply: 'กรุณาตรวจรายละเอียดแล้วกดอนุมัติค่ะ' } }; },
+    });
+    assert.equal(calls.length, source.startsWith('reimbursement.') ? 1 : 0, source);
+    if (calls.length) { assert.equal(result.replyText, 'กรุณาตรวจรายละเอียดแล้วกดอนุมัติค่ะ'); assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user'); }
+  }
+});
+it('Fix-up 19: fresh claim reads bind approve/reject previews only with checked evidence on the same subrequest', async () => {
+  const { runWithUsageContext } = await import('../../../common/usage/usage-context');
+  for (const action of ['REIMBURSEMENT_APPROVE', 'REIMBURSEMENT_REJECT']) {
+    for (const source of ['checked', 'unchecked', 'no-source', 'wrong-id', 'other-subrequest']) {
+      const req = makeReq('อนุมัติใบเบิกนี้ หรือปฏิเสธเพราะไม่มีใบเสร็จ');
+      req.userContext.permissions = ['reimbursement.read_related', 'reimbursement.approve', 'reimbursement.reject'];
+      req.semanticSubrequests = [{ index: 0, kind: 'write', goal: req.messageText, dependsOn: [], requiredEvidence: [], evidenceRefs: [], requestedFilters: {} },
+        { index: 1, kind: 'read', goal: 'ดูใบเบิก', dependsOn: [], requiredEvidence: [], evidenceRefs: [], requestedFilters: {} }];
+      const calls: string[] = [];
+      const budget: any = { status: 'active-v2', calls: 0, repairCount: 0, grant: { maxTurnSlots: 4 } };
+      let round = 0;
+      await runWithUsageContext({ budget }, () => runSemanticTurnV2({ req,
+        draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        provider: { generateText: async input => {
+          budget.calls++;
+          if (input.usageTag !== 'line.loop') return { ok: true, text: JSON.stringify({ answers: [0, 1].map(index => ({ index, status: 'needs_user', text: 'ตรวจรายละเอียดแล้วกดยืนยันค่ะ' })) }) };
+          return { ok: true, text: JSON.stringify({ calls: [round++ === 0
+            ? { index: source === 'other-subrequest' ? 1 : 0, toolName: 'reimbursement.list_pending_approvals', input: {} }
+            : { index: 0, toolName: 'expense.action.preview', input: { action, reimbursementId: source === 'wrong-id' ? 'invented-claim' : 'shown-claim',
+                ...(action === 'REIMBURSEMENT_REJECT' ? { reason: 'ไม่มีใบเสร็จ' } : {}) } }], questions: [] }) };
+        } }, invoke: async (meta): Promise<any> => {
+          calls.push(meta.name);
+          return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(),
+            sourceRefs: source === 'no-source' ? [] : [{ module: 'reimbursements', entityType: 'reimbursement_approval_queue', label: 'ใบเบิกรออนุมัติ', permissionChecked: source !== 'unchecked' }],
+            data: meta.name === 'expense.action.preview' ? { reply: 'ตรวจรายละเอียดแล้วกดยืนยันค่ะ', preview: { action } } : { items: [{ id: 'shown-claim' }] } };
+        } }));
+      assert.deepEqual(calls, source === 'checked' ? ['reimbursement.list_pending_approvals', 'expense.action.preview'] : ['reimbursement.list_pending_approvals'], `${action}/${source}`);
+    }
+  }
+});
+
+it('F3: both planner questions and free compose reject uncommitted write claims', async () => {
+  const liveClaim = 'บันทึกค่าใช้จ่ายอินฟลู 500 บาท วันที่ 10 ตุลาคม 2569 จำนวน 1 คน — ช่วยบอกด้วยนะคะ ว่าจ่ายที่สาขาไหน และหมวดหมู่ค่าใช้จ่ายคืออะไรคะ (เช่น ค่าการตลาด, ค่าโฆษณา ฯลฯ)';
+  for (const path of ['planner', 'compose']) {
+    for (const text of [liveClaim, `**${liveClaim}**`, 'สร้างร่างแล้วค่ะ', 'เก็บข้อมูลเรียบร้อยค่ะ', 'บันทึกค่าใช้จ่ายให้แล้วค่ะ', 'รับทราบค่ะ บันทึกค่าใช้จ่าย 500.80 บาท วันที่ 13 ต.ค. 2569 แล้วค่ะ', 'Saved the expense.']) {
+      const req = makeReq('เป็นค่าบริการ');
+      req.semanticSubrequests = [{ index: 0, kind: 'write', writeIntent: 'EXPENSE_DRAFT_CONTINUATION', goal: 'แก้หมวดค่าใช้จ่าย',
+        requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }];
+      const result = await runSemanticTurnV2({ req, draftEditEnabled: true, reimbursementDraftEnabled: false,
+        publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        provider: { generateText: async (input: any) => {
+          if (input.usageTag === 'line.loop') return { ok: true, text: JSON.stringify({ calls: [], questions: path === 'planner' ? [{ index: 0, text }] : [] }) };
+          assert.match(input.systemPrompt, /Only the server may acknowledge a successful write in this turn/u);
+          return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'needs_user', text, question: text }] }) };
+        } } as any,
+        invoke: async () => assert.fail('no tool call or write succeeded'),
+      });
+      assert.match(result.replyText, /ตรวจร่างหรือบอกข้อมูลที่ต้องการแก้ไขได้เลยค่ะ/u, `${path}: ${text}`);
+      assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'WRITE_NOT_COMMITTED');
+      assert.equal(result.semanticCoverage?.[0]?.question, result.replyText);
+      if (text.includes('—')) assert.match(result.replyText, /ช่วยบอกด้วยนะคะ/);
+      assert.deepEqual(result.outputs, []);
+    }
+  }
+  for (const text of ['ยังไม่ได้บันทึกรายการค่ะ', 'ยังไม่สร้างรายการค่ะ', 'บันทึกค่าใช้จ่ายได้ที่เว็บค่ะ', 'ต้องการสร้างร่างไหมคะ', 'The expense has not been saved.']) {
+    assert.equal(claimsCompletedWrite(text), false, text);
+  }
+});
+
+it('F5: planner questions pass the existing LINE sanitizer before reply and coverage', async () => {
+  const req = makeReq('เป็นค่าบริการ');
+  req.semanticSubrequests = [{ index: 0, kind: 'write', writeIntent: 'EXPENSE_DRAFT_CONTINUATION', goal: 'แก้หมวดค่าใช้จ่าย',
+    requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }];
+  const question = '  ## ข้อมูลเพิ่มเติม\n**หมวดหมู่ค่าใช้จ่าย** — อินฟลูจัดอยู่ในหมวดไหนคะ\n*ชื่อสาขา* และ _วิธีชำระเงิน_ คะ';
+  const result = await runSemanticTurnV2({ req, draftEditEnabled: true, reimbursementDraftEnabled: false,
+    publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+    provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ calls: [], questions: [{ index: 0, text: question }] }) }) } as any,
+    invoke: async () => assert.fail('a question must not call tools'),
+  });
+  assert.equal(result.replyText, 'ข้อมูลเพิ่มเติม\nหมวดหมู่ค่าใช้จ่าย — อินฟลูจัดอยู่ในหมวดไหนคะ\nชื่อสาขา และ วิธีชำระเงิน คะ');
+  assert.equal(result.semanticCoverage?.[0]?.question, result.replyText);
+});
+
+it('G2: a final-action missing-field answer remains exact and needs input without a confirm card or model paraphrase', async () => {
+  const messageText = 'ยืนยันรายการนี้ให้หน่อย';
+  const req = makeReq(messageText);
+  const built = await createLineAiInputEvidence({ turnKey: 'g2-confirm', parts: [{ partId: 'p0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] }); assert.ok(built);
+  req.inputEvidence = built.inputEvidence;
+  req.valueCandidates = (await extractValueCandidatesV2(built.inputEvidence, '2026-10-15'))!;
+  req.userContext.permissions = ['expense.confirm', 'expense.update'];
+  req.semanticSubrequests = [{ index: 0, kind: 'write', goal: messageText, dependsOn: [], requiredEvidence: [], evidenceRefs: [], requestedFilters: {} }];
+  req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentCapturedExpenses: [{ id: 'g2-expense' }] };
+  const reply = 'ยังขาดหมวดค่าใช้จ่าย เลือกหมวดด้านล่างหรือพิมพ์ชื่อหมวดได้เลยค่ะ';
+  const providerCalls: string[] = [];
+  const result = await runSemanticTurnV2({ req, draftEditEnabled: true, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+    provider: { generateText: async (input: any) => {
+      providerCalls.push(input.usageTag);
+      return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'expense.action.preview', input: { expenseId: 'g2-expense', action: 'CONFIRM' } }] }) };
+    } } as any,
+    invoke: async meta => ({ toolName: meta.name, status: 'ok', asOf: new Date().toISOString(), data: { reply },
+      sourceRefs: [{ module: 'expenses', entityType: 'expense_action_preview', label: 'คำขอยืนยันรายการ', permissionChecked: true }] }),
+  });
+  assert.equal(result.replyText, reply);
+  assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
+  assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'DRAFT_INPUT_REQUIRED');
+  assert.equal(providerCalls.includes('line.compose'), false);
+});
+it('Round 5: every voucher/certificate action reaches the existing preview tool only with shown voucher IDs', async () => {
+  for (const action of ['VOUCHER_SUBMIT','VOUCHER_APPROVE','VOUCHER_RETURN','VOUCHER_PAY','VOUCHER_CANCEL','WHT_CERTIFICATE_ISSUE']) {
+    for (const source of ['voucher.get_detail','voucher.future_read','expense.get_detail','reimbursement.get_detail','invented']) {
+      const messageText = 'ทำใบสำคัญจ่ายรายการนี้';
+      const built = await createLineAiInputEvidence({ turnKey: 'r5-action-turn', parts: [{ partId: 'p0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] }); assert.ok(built);
+      const req = makeReq(messageText); req.inputEvidence = built.inputEvidence; req.valueCandidates = await extractValueCandidatesV2(built.inputEvidence, '2026-10-15') ?? undefined;
+      req.userContext.permissions = ['expense.disbursement.prepare','expense.disbursement.approve','expense.disbursement.pay','wht.certificate.issue'];
+      req.semanticSubrequests = [{ index: 0, kind: 'write', goal: messageText, dependsOn: [], requiredEvidence: [], evidenceRefs: [], requestedFilters: {} }];
+      req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: source === 'invented' ? [] : [{ tool: source, answerShape: 'list', asOf: new Date().toISOString(), shownItems: [{ ordinal: 1, id: 'voucher-action', label: 'ใบเตรียมจ่าย' }] }] };
+      const calls: any[] = [];
+      const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        provider: { generateText: async (input: any) => input.usageTag === 'line.loop' ? { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'expense.action.preview', input: { voucherId: 'voucher-action', action, ...(['VOUCHER_RETURN','VOUCHER_CANCEL'].includes(action) ? { reason: 'ข้อมูลผิด' } : {}) } }] }) } : { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'needs_user', text: 'ต้องการทำรายการไหนคะ', question: 'ต้องการทำรายการไหนคะ' }] }) } } as any,
+        invoke: async (meta, ctx, input) => { calls.push({ input, ctx }); return { toolName: meta.name, status: 'ok', sourceRefs: [], asOf: new Date().toISOString(), data: { reply: 'กรุณาตรวจและกดยืนยันค่ะ' } }; },
+      });
+      assert.equal(calls.length, source.startsWith('voucher.') ? 1 : 0, `${action}/${source}`);
+      if (calls.length) { assert.equal(calls[0].input.action, action); assert.equal(result.replyText, 'กรุณาตรวจและกดยืนยันค่ะ'); assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user'); }
+    }
+  }
+});
+it('Round 5: multi-expense voucher create grounds every selected expense and rejects a single invented or wrong-kind source', async () => {
+  for (const source of ['expense.list_recent','voucher.get_detail','invented']) {
+    const messageText = 'สร้างใบเตรียมจ่ายจากสองรายการนี้';
+    const built = await createLineAiInputEvidence({ turnKey: 'r5-create-turn', parts: [{ partId: 'p0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] }); assert.ok(built);
+    const req = makeReq(messageText); req.inputEvidence = built.inputEvidence; req.valueCandidates = await extractValueCandidatesV2(built.inputEvidence, '2026-10-15') ?? undefined;
+    req.userContext.permissions = ['expense.disbursement.prepare']; req.semanticSubrequests = [{ index: 0, kind: 'write', goal: messageText, dependsOn: [], requiredEvidence: [], evidenceRefs: [], requestedFilters: {} }];
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: [{ tool: source === 'invented' ? 'expense.list_recent' : source, answerShape: 'list', asOf: new Date().toISOString(), shownItems: [{ ordinal: 1, id: 'expense-a', label: 'ร้าน ก' }, ...(source !== 'invented' ? [{ ordinal: 2, id: 'expense-b', label: 'ร้าน ก' }] : [])] }] };
+    let calls = 0;
+    await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async (input: any) => input.usageTag === 'line.loop' ? { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'expense.action.preview', input: { expenseIds: 'expense-a,expense-b', action: 'VOUCHER_CREATE' } }] }) } : { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'needs_user', text: 'ต้องการเลือกรายการไหนคะ', question: 'ต้องการเลือกรายการไหนคะ' }] }) } } as any,
+      invoke: async (meta) => { calls++; return { toolName: meta.name, status: 'ok', sourceRefs: [], asOf: new Date().toISOString(), data: { reply: 'กรุณาตรวจและกดยืนยันค่ะ' } }; },
+    });
+    assert.equal(calls, source === 'expense.list_recent' ? 1 : 0, source);
+  }
+});
+
+describe('round 5A document advisor orchestrator', () => {
+  it('preserves a catalog calculation ask-back verbatim through the full accounting read path', async () => {
+    const plan = { status: 'ROUTABLE', language: 'th', refusals: [], requiresHumanReview: false,
+      intents: [{ intent: 'read_summary', subject: 'tax', agent: 'tax', priority: 1, requiredTools: ['wht.calculate_withholding'], missingContext: [] }] };
+    globalThis.fetch = async () => new Response(JSON.stringify({ status: 'completed', output_text: JSON.stringify(plan) }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const message = 'เป็นเงินได้ประเภทใดคะ เลือกจากปุ่มประเภทเงินได้ได้เลยค่ะ';
+    let calls = 0;
+    const orchestrator = new OrchestratorAgent({ invoke: async (tool: any, ctx: any) => {
+      calls++; assert.equal(tool.name, 'wht.calculate_withholding'); assert.equal(ctx.companyId, 'company-1');
+      return { toolName: tool.name, status: 'ok', data: { needsIncomeType: true, message },
+        sourceRefs: [{ label: 'ประเภทเงินได้ที่เปิดใช้', module: 'tax', entityType: 'advisor_document_read', permissionChecked: true }], asOf: '2026-10-15T00:00:00Z' };
+    } } as any, makeConfig());
+    const req = makeReq('จ่ายค่าจ้าง 1000 บาท ต้องหักเท่าไหร่');
+    req.userContext.permissions = ['expense.create']; req.userContext.entitledFeatureKeys = ['wht_50bis'];
+    const r = await orchestrator.run(req); assert.equal(calls, 1); assert.equal(r.replyText, message);
+    assert.doesNotMatch(r.replyText, /3%|30 บาท|CAT_/);
+  });
+  it('U2 Starter explains 50 ทวิ through the general composer without reading shop data', async () => {
+    let calls = 0, modelCalls = 0;
+    const explanation = '50 ทวิคือหนังสือรับรองยอดเงินที่จ่ายและภาษีที่หักไว้ ให้ผู้รับเงินใช้เป็นหลักฐานภาษีค่ะ';
+    globalThis.fetch = async () => { modelCalls++; return new Response(JSON.stringify({ status: 'completed', output_text: JSON.stringify({ answers: [{ index: 0, status: 'handled', topic: 'business', text: explanation }] }) }), { status: 200, headers: { 'content-type': 'application/json' } }); };
+    const req = makeReq('50 ทวิ คืออะไร'); req.userContext.entitledFeatureKeys = ['expenses'];
+    req.userContext.permissions = ['company.plan.manage'];
+    req.semanticSubrequests = [{ index: 0, kind: 'help', goal: req.messageText, evidenceRefs: [], requiredEvidence: [], requestedFilters: {}, dependsOn: [] }];
+    req.inputEvidence = (await createLineAiInputEvidence({ turnKey: 'u2', parts: [{ partId: 'text', rawText: req.messageText, eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now() }] }))!.inputEvidence;
+    req.budgetGrantV2 = {} as any;
+    const result = await new OrchestratorAgent({ invoke: async () => { calls++; throw new Error('must not read'); } } as any, makeConfig()).run(req);
+    assert.equal(calls, 0); assert.equal(modelCalls, 1);
+    assert.equal(result.replyText, `${explanation}\n50 ทวิ อยู่ในแพ็กธุรกิจ 1,999 บาทค่ะ`);
+    assert.deepEqual(result.webLinks, [{ label: 'ดูแพ็กเกจ', path: '/companies/company-1/billing?channel=line' }]);
+  });
+});
+
+it('Round 7A prepares counterparty cards with old draft switches off and forwards quoted expense IDs to tools', async () => {
+  for (const variant of ['counterparty', 'quoted-draft']) {
+    const messageText = variant === 'counterparty' ? 'แก้ที่อยู่ร้าน X เป็น 123 ถนนสุขุมวิท' : 'ลบร่างของอันนี้';
+    const built = await createLineAiInputEvidence({ turnKey: `r7a-${variant}`, parts: [{ partId: 'p0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] }); assert.ok(built);
+    const candidates = await extractValueCandidatesV2(built.inputEvidence, '2026-10-15'); assert.ok(candidates);
+    const req = makeReq(messageText); req.userContext.permissions = variant === 'counterparty' ? ['accounting.counterparty.manage'] : ['expense.update'];
+    req.userContext.entitledFeatureKeys = ['expenses']; req.entitledFeatureKeys = ['expenses']; req.inputEvidence = built.inputEvidence; req.valueCandidates = candidates;
+    req.semanticSubrequests = [{ index: 0, kind: 'write', goal: messageText, dependsOn: [], requiredEvidence: [], evidenceRefs: [], requestedFilters: {} }];
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [],
+      quotedRecords: variant === 'quoted-draft' ? [{ tool: 'expense.get_detail', id: 'quoted-draft-id' }] : [],
+      recentReads: [{ tool: variant === 'counterparty' ? 'counterparty.search' : 'expense.get_detail', answerShape: 'list', asOf: new Date().toISOString(),
+        shownItems: [{ id: variant === 'counterparty' ? 'counterparty-id' : 'quoted-draft-id', ordinal: 1, label: 'รายการที่อ้างตอบ' }] }] };
+    const calls: any[] = [];
+    const toolName = variant === 'counterparty' ? 'counterparty.action.preview' : 'expense.action.preview';
+    const input = variant === 'counterparty' ? { action: 'UPDATE', counterpartyId: 'counterparty-id', addressText: '123 ถนนสุขุมวิท' } : { action: 'DELETE_DRAFT', expenseId: 'quoted-draft-id' };
+    const response = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async (request: any) => {
+        assert.equal(request.usageTag, 'line.loop', 'confirm preview needs no composer'); assert.match(JSON.stringify(request.messages), new RegExp(toolName.replaceAll('.', '\\.')));
+        return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName, input }] }) };
+      } } as any,
+      invoke: async (meta, _ctx, input) => { calls.push({ name: meta.name, input }); return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(),
+        sourceRefs: [], data: { reply: 'ตรวจข้อมูลแล้วกดยืนยันค่ะ', preview: { token: 'server-token' } } }; },
+    });
+    assert.equal(calls.length, 1, variant); assert.deepEqual(calls[0], { name: toolName, input }); assert.equal(response.semanticCoverage?.[0]?.status, 'needs_user');
+  }
+});
+it('H4: exact live conversational save claim is rewritten as a draft on planner and compose replies', async () => {
+  const live = 'ไม่ได้เงียบนะคะ มั่งมีอยู่ตรงนี้เสมอเลย 😊 เพิ่งช่วยบันทึกค่าใช้จ่ายอินฟลู 500 บาท วันที่ 10 ต.ค. 2569 ไปเมื่อกี้ค่ะ มีอะไรให้ช่วยต่อไหมคะ?';
+  assert.equal(claimsCompletedWrite(live), true);
+  assert.equal(claimsCompletedWrite('บันทึกค่าใช้จ่ายอินฟลู 500 บาทแล้วค่ะ'), true);
+  const casual = await new ResponseComposerAgent().composeCasual('เงียบเลย', { generateText: async () => ({ ok: true, text: live }) } as any,
+    { conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [], activeExpenseDrafts: [{ expenseId: 'draft-influencer' }] } });
+  assert.match(casual, /ยังเป็นร่างค่ะ/u);
+  for (const path of ['planner', 'compose']) {
+    const req = makeReq('เงียบเลย');
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], activeExpenseDrafts: [{ expenseId: 'draft-influencer' }] };
+    req.semanticSubrequests = [{ index: 0, kind: 'general', goal: 'เงียบเลย', dependsOn: [], requiredEvidence: [], requestedFilters: {}, evidenceRefs: [] }];
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: true, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async (input: any) => {
+        if (input.usageTag === 'line.loop') return { ok: true, text: JSON.stringify({ calls: [], questions: path === 'planner' ? [{ index: 0, text: live }] : [] }) };
+        assert.match(input.systemPrompt, /unconfirmed expense.*ร่าง/u);
+        return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', text: live, sourceRefIds: [] }] }) };
+      } } as any, invoke: async () => assert.fail('no write is authorized by a conversational reply') });
+    assert.match(result.replyText, /ยังเป็นร่างค่ะ/u, path);
+    assert.doesNotMatch(result.replyText, /เพิ่งช่วยบันทึกค่าใช้จ่าย|บันทึกค่าใช้จ่าย.*แล้ว|ยังไม่ได้บันทึกรายการ/u, path);
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'WRITE_NOT_COMMITTED', path);
+  }
+});
+
+it('Round 7 B: team/branch writes always prepare human cards and role reads remain permission-filtered', async () => {
+  for (const action of ['EMPLOYEE_CREATE', 'EMPLOYEE_UPDATE', 'EMPLOYEE_DISABLE', 'EMPLOYEE_ENABLE', 'BRANCH_CREATE', 'BRANCH_UPDATE']) {
+    const messageText = 'จัดการพนักงานสมใจและสาขาลาดพร้าว';
+    const built = await createLineAiInputEvidence({ turnKey: `r7-${action}`, parts: [{ partId: 'p0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] }); assert.ok(built);
+    const req = makeReq(messageText); req.inputEvidence = built.inputEvidence; req.valueCandidates = (await extractValueCandidatesV2(built.inputEvidence, '2026-10-15'))!;
+    req.userContext.permissions = ['access.employee.create', 'access.employee.update', 'access.employee.disable', 'company.branch.manage']; req.userContext.entitledFeatureKeys = [];
+    req.semanticSubrequests = [{ index: 0, kind: 'write', goal: messageText, dependsOn: [], requiredEvidence: [], evidenceRefs: [], requestedFilters: {} }];
+    let calls = 0, composed = false;
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async (input: any) => {
+        if (input.usageTag === 'line.loop') { assert.match(JSON.stringify(input.messages), /company.action.preview/u); return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'company.action.preview', input: { action, employeeName: 'สมใจ', branchName: 'ลาดพร้าว' } }] }) }; }
+        composed = true; return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'บันทึกแล้วค่ะ' }] }) };
+      } } as any,
+      invoke: async (meta, _ctx, input) => { calls++; assert.equal(meta.name, 'company.action.preview'); assert.equal(input.action, action); return { toolName: meta.name, status: 'ok', data: { reply: 'กรุณาตรวจรายละเอียดแล้วกดยืนยันค่ะ', preview: { action } }, sourceRefs: [{ module: 'employee-access', entityType: 'company_action_preview', label: 'คำขอ', permissionChecked: true, sourceType: 'ACTION' }], asOf: new Date().toISOString() }; },
+    });
+    assert.equal(calls, 1, action); assert.equal(composed, false, action); assert.equal(result.replyText, 'กรุณาตรวจรายละเอียดแล้วกดยืนยันค่ะ'); assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
+  }
+  const read = LINE_TOOL_REGISTRY.find(t => t.name === 'company.get_roles')!;
+  assert.ok(read.anyOfPermissions?.includes('access.role.read')); assert.equal(read.category, 'read_detail');
+});
+
+it('R10 Q4: social replies can refer to an earlier draft and keep useful text when a new save claim is blocked', async () => {
+  const live = 'ไม่ได้เงียบเลยค่ะ มั่งมีอยู่ตรงนี้ตลอด 😊 เพิ่งช่วยสร้างร่างค่าอินฟลู 500 บาท วันที่ 10 ต.ค. 2569 ไว้ค่ะ มีอะไรให้ช่วยต่อไหมคะ?';
+  for (const text of [live, 'ไม่ได้เงียบเลยค่ะ ตอนนี้บันทึกร่างค่าอินฟลู 500 บาท วันที่ 10 ต.ค. ไว้แล้วนะคะ มีอะไรให้ช่วยต่อไหมคะ?']) {
+    assert.equal(claimsCompletedWrite(text), false);
+    const req = makeReq('อ่าว ทำไมเงียบ');
+    req.semanticSubrequests = [{ index: 0, kind: 'general', goal: req.messageText, dependsOn: [], requiredEvidence: [], requestedFilters: {}, evidenceRefs: [] }];
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: true, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async (input: any) => ({ ok: true, text: JSON.stringify(input.usageTag === 'line.loop'
+        ? { calls: [], questions: [] } : { answers: [{ index: 0, status: 'handled', text, sourceRefIds: [] }] }) }) } as any,
+      invoke: async () => assert.fail('social recall cannot write') });
+    assert.match(result.replyText, /ไม่ได้เงียบเลยค่ะ/); assert.match(result.replyText, /ร่าง/);
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'WRITE_NOT_COMMITTED');
+  }
+  for (const text of ['สร้างร่างแล้วค่ะ', 'ยืนยันรายการแล้วค่ะ', 'สร้างร่างไว้และบันทึกจ่ายแล้วค่ะ', 'สร้างร่างไว้ก่อนหน้านี้ และบันทึกค่าใช้จ่ายใหม่แล้วค่ะ', 'บันทึกค่าใช้จ่าย 500 บาทแล้วค่ะ']) assert.equal(claimsCompletedWrite(text), true, text);
+});
+
+
+describe('U2 document explanations precede a package limit and keep the general composer', () => {
+  for (const [question, explanation] of [
+    ['50 ทวิ คืออะไร', '50 ทวิคือหนังสือรับรองยอดเงินที่จ่ายและภาษีที่หักไว้ ให้ผู้รับเงินใช้เป็นหลักฐานภาษีค่ะ'],
+    ['ภงด.53 คืออะไร', 'ภงด.53 คือแบบนำส่งภาษีหัก ณ ที่จ่ายสำหรับการจ่ายเงินให้นิติบุคคลค่ะ'],
+    ['ใบสำคัญจ่ายคืออะไร', 'ใบสำคัญจ่ายคือเอกสารบันทึกการจ่ายเงินพร้อมหลักฐาน เพื่อให้ตรวจสอบรายจ่ายได้ค่ะ'],
+  ]) for (const kind of ['help', 'general', 'read'] as const) it(`${question} routed ${kind}`, async () => {
+    const calls: ProviderInput[] = [];
+    const result = await runSemanticTurnV2({
+      req: { requestId: 'u2', webhookEventId: 'u2', messageText: question, messagePreviewHash: 'a'.repeat(16),
+        entitledFeatureKeys: [], intakeIntent: 'BUSINESS_READ_QUESTION',
+        userContext: { ...makeReq(question).userContext, permissions: ['company.plan.manage'] },
+        semanticSubrequests: [{ index: 0, kind, goal: question, evidenceRefs: [], requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] },
+      provider: { generateText: async (input: ProviderInput) => { calls.push(input); return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', topic: 'business', text: explanation }] }) }; } },
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      invoke: async () => { throw new Error('general explanation must not read shop documents'); },
+    });
+    assert.deepEqual(calls.map(call => call.usageTag), ['line.compose']);
+    assert.match(JSON.stringify(calls[0]), /one or two sentences of general knowledge/);
+    assert.equal(result.replyText.split('\n')[0], explanation);
+    assert.match(result.replyText, /แพ็กธุรกิจ 1,999 บาทค่ะ$/);
+    assert.deepEqual(result.sourceRefs, []);
+    assert.deepEqual(result.webLinks, [{ label: 'ดูแพ็กเกจ', path: '/companies/company-1/billing?channel=line' }]);
+    assert.equal(result.semanticCoverage?.[0].status, 'handled');
+  });
+});
+
+
+it('U2 definitions are general knowledge, while Starter shop reads and issuance remain gated', () => {
+  for (const question of ['50 ทวิ คืออะไร', 'ภงด.53 คืออะไร', 'ใบสำคัญจ่ายคืออะไร'])
+    assert.equal(scopePolicyOverride(question, 'help', [], [], 'th'), undefined);
+  for (const question of ['ออก 50 ทวิให้หน่อย', '50 ทวิของร้านเรามีกี่ใบ', 'ภงด.53 ของร้านเราเดือนนี้', '50 ทวิ คืออะไร แล้วของร้านเรามีกี่ใบ', '50 ทวิ คืออะไร ช่วยออกให้ด้วย', 'ช่วยออก 50 ทวิแล้วอธิบายว่าคืออะไร'])
+    assert.equal(scopePolicyOverride(question, 'read', [], ['expenses'], 'th')?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED', question);
+});
+
+import { LINE_CAPABILITY_GROUPS, LINE_CHAT_ACTIONS, parseLineReimbursementDraftProposalV1 } from '@watchdog-bms/contracts';
+import { productHelpAction } from './approved-product-help';
+import { completeReimbursementDraftInput } from './reimbursement-draft-input';
+import { readFileSync } from 'node:fs';
+const fx17bRoutes = JSON.parse(readFileSync(require.resolve('../../../../../../docs/evidence/mangmee-advisor-fx17b-router-replays.json'), 'utf8')) as Array<{
+  journey: string; turn: number; messageText: string; route: { semanticSubrequests: NonNullable<LineAiTurnRequest['semanticSubrequests']> };
+}>;
+
+describe('Fix-up 17B: uncovered how-to answers select a checked action in the existing answer call', () => {
+  const recordedActions: Record<string, string> = { payment_voucher: 'C04', wht_certificate: 'C05', pnd53: 'C06', counterparty: 'C07', package_purchase: 'C10', payout_account: 'C11' };
+  for (const action of LINE_CHAT_ACTIONS) for (const access of ['allowed', 'permission-denied', 'feature-denied'] as const) {
+    it(`${action.group}/${action.id}/${access} without an approved help card or router action ID`, async () => {
+      const recorded = fx17bRoutes.find(row => row.journey === recordedActions[action.id] && row.turn === 0);
+      const messageText = recorded?.messageText ?? `${action.title}ทำยังไง`;
+      const req = makeReq(messageText);
+      req.semanticSubrequests = recorded?.route.semanticSubrequests ?? [{ index: 0, kind: 'help', goal: messageText, requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }];
+      req.userContext.permissions = ['ai.tool.invoke', ...(access === 'permission-denied' ? [] : [action.permission])];
+      req.entitledFeatureKeys = access === 'feature-denied' ? [] : [...LINE_CAPABILITY_GROUPS.flatMap(group => [...group.featureKeys]), 'expenses.upload'];
+      req.userContext.entitledFeatureKeys = ['expenses']; // top-level entitlement is authoritative
+      let calls = 0;
+      const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+        provider: { generateText: async input => {
+          calls++; assert.equal(input.usageTag, 'line.compose');
+          assert.match(input.systemPrompt!, /helpActions/);
+          const payload = JSON.parse(input.messages[0]!.text);
+          assert.equal(payload.approvedHelp, undefined);
+          assert.ok(payload.chatActions.some((entry: any) => entry.id === action.id));
+          return { ok: true, text: JSON.stringify({ helpActions: [{ index: 0, actionId: action.id }] }) };
+        } }, invoke: async () => assert.fail('help navigation never reads or mutates ERP') });
+      // Feature-denied WHT is answered by the existing entitlement guard before composition.
+      assert.equal(calls, 1);
+      const allowed = access !== 'permission-denied' && (access !== 'feature-denied' || ['reimbursement_claim', 'payout_account', 'team_member', 'branch', 'branch_edit', 'package_purchase', 'approvals', 'team'].includes(action.id));
+      assert.equal(result.semanticCoverage?.[0]?.status, allowed ? 'handled' : 'denied');
+      assert.doesNotMatch(result.replyText, /ยังไม่มีคู่มือ|ความสามารถปัจจุบัน|\n|^\d[.)]/);
+      assert.match(result.replyText, /ค่ะ$/);
+      if (allowed && 'webPath' in action) {
+        assert.equal(result.presentation?.cards[0]?.chatActionId, undefined);
+        assert.equal(result.presentation?.cards[0]?.webLink?.path, '/companies/company-1/reimbursements/payout-account');
+      } else assert.equal(result.presentation?.cards[0]?.chatActionId, allowed ? action.id : undefined);
+      if (!allowed) assert.match(result.replyText, /ผู้มีสิทธิ์|ผู้อนุมัติ|แพ็กเกจ/);
+      if (!allowed && access === 'feature-denied') assert.match(result.replyText, /แพ็กเกจ/);
+    });
+  }
+  it('C11 bank details continuing personal payout setup go straight to the web page without asking purpose', async () => {
+    const recorded = fx17bRoutes.find(row => row.journey === 'C11' && row.turn === 1)!;
+    const req = makeReq(recorded.messageText); req.semanticSubrequests = recorded.route.semanticSubrequests;
+    req.userContext.permissions = ['reimbursement.create'];
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [{ userMessage: 'เพิ่มบัญชีรับเงินคืนของฉันทำยังไง', replyPreview: 'เพิ่มบัญชีรับเงินคืนบนเว็บได้ค่ะ' } as any] };
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      provider: { generateText: async input => {
+        assert.match(input.systemPrompt!, /never ask its purpose/);
+        return { ok: true, text: JSON.stringify({ helpActions: [{ index: 0, actionId: 'payout_account' }] }) };
+      } }, invoke: async () => assert.fail('bank details stay on the web') });
+    assert.equal(result.replyText, 'เพิ่มบัญชีรับเงินคืนของคุณที่หน้าบัญชีรับเงินคืนบนเว็บได้เลยค่ะ');
+    assert.match(result.presentation!.cards[0]!.webLink!.path, /reimbursements\/payout-account$/);
+  });
+});
+
+describe('Fix-up 17B: real router inventories reach voucher, counterparty and 50 ทวิ previews after lookup', () => {
+  for (const [journey, turn, readTool, previewTool, action, idField] of [
+    ['C04', 1, 'expense.list_recent', 'expense.action.preview', 'VOUCHER_CREATE', 'expenseId'],
+    ['C07', 3, 'counterparty.search', 'counterparty.action.preview', 'UPDATE', 'counterpartyId'],
+    ['C05', 0, 'voucher.list_recent', 'expense.action.preview', 'WHT_CERTIFICATE_ISSUE', 'voucherId'],
+  ] as const) for (const invalidId of [false, true]) it(`${journey}/${action}: read then preview, inventedId=${invalidId}`, async () => {
+    const { runWithUsageContext } = await import('../../../common/usage/usage-context');
+    const recorded = fx17bRoutes.find(row => row.journey === journey && row.turn === turn)!;
+    const req = makeReq(journey === 'C05' ? 'ช่วยออก 50 ทวิให้หน่อย' : recorded.messageText);
+    req.semanticSubrequests = journey === 'C05' ? [{ ...recorded.route.semanticSubrequests[0]!, kind: 'write', goal: 'ออก 50 ทวิ', evidenceRefs: [] }] : recorded.route.semanticSubrequests;
+    req.userContext.permissions = ['ai.tool.invoke', 'expense.read', 'expense.disbursement.prepare', 'expense.disbursement.read', 'wht.certificate.issue', 'accounting.counterparty.read', 'accounting.counterparty.manage'];
+    req.entitledFeatureKeys = ['expenses', 'wht_50bis']; req.userContext.entitledFeatureKeys = ['expenses'];
+    const state: any = { status: 'active-v2', calls: 1, repairCount: 0, grant: { maxTurnSlots: 4 } };
+    let round = 0; const invoked: any[] = [];
+    const result = await runWithUsageContext({ budget: state }, () => runSemanticTurnV2({ req,
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async input => {
+        state.calls++;
+        if (input.usageTag === 'line.compose') return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'needs_user', text: 'เลือกรายการค่ะ', question: 'เลือกรายการค่ะ' }] }) };
+        const second = round++ > 0;
+        if (second) assert.equal(JSON.parse(input.messages[0]!.text).previousToolResults[0].result.toolName, readTool);
+        return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: second ? previewTool : readTool,
+          input: second ? { action, [idField]: invalidId ? 'invented' : 'read-record', ...(action === 'UPDATE' ? { addressText: '101 ถนนงามวงศ์วาน ตำบลบางกระสอ อำเภอเมืองนนทบุรี นนทบุรี 11000' } : {}) } : {} }] }) };
+      } }, invoke: async (meta, ctx, input) => {
+        invoked.push({ name: meta.name, input }); assert.equal(ctx.companyId, 'company-1');
+        return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(),
+          data: meta.name === readTool ? { items: [{ id: 'read-record', displayName: 'บริษัท ผักสดดี จำกัด' }] } : { reply: 'ตรวจรายละเอียดแล้วกดยืนยันค่ะ', preview: { token: 'server-owned' } },
+          sourceRefs: [{ module: 'expenses', entityType: 'record', label: 'รายการที่ตรวจสิทธิ์แล้ว', permissionChecked: true }] };
+      } }));
+    assert.equal(round, 2);
+    assert.deepEqual(invoked.map(call => call.name), invalidId ? [readTool] : [readTool, previewTool]);
+    if (!invalidId) { assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'CONFIRMATION_REQUIRED'); assert.equal(result.replyText, 'ตรวจรายละเอียดแล้วกดยืนยันค่ะ'); }
+  });
+  it('C06 เดือนนี้ uses the current deterministic month with no month question', async () => {
+    const recorded = fx17bRoutes.find(row => row.journey === 'C06' && row.turn === 1)!;
+    const req = makeReq(recorded.messageText); req.semanticSubrequests = recorded.route.semanticSubrequests;
+    const built = (await createLineAiInputEvidence({ turnKey: 'fx17b-month', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: req.messageText }] }))!;
+    req.inputEvidence = built.inputEvidence; req.valueCandidates = (await extractValueCandidatesV2(built.inputEvidence, '2026-10-16'))!;
+    req.userContext.permissions = ['wht.pnd53.read']; req.entitledFeatureKeys = ['wht_pnd53'];
+    let calls = 0;
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async input => { assert.equal(input.usageTag, 'line.compose'); return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'needs_user', text: 'เดือนไหนคะ', question: 'เดือนไหนคะ' }] }) }; } },
+      invoke: async (meta, _ctx, input) => { calls++; assert.equal(meta.name, 'wht.get_month_summary'); assert.equal(input.periodKey, '2026-10');
+        return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(), data: { message: 'สรุปภาษีหัก ณ ที่จ่ายเดือนตุลาคมค่ะ' }, sourceRefs: [{ module: 'tax', entityType: 'period', label: 'สรุปภาษี', permissionChecked: true }] }; } });
+    assert.equal(calls, 1); assert.equal(result.replyText, 'สรุปภาษีหัก ณ ที่จ่ายเดือนตุลาคมค่ะ');
+  });
+});
+describe('Fix-up 15: one-sentence how-to action bridge', () => {
+  for (const action of LINE_CHAT_ACTIONS) for (const permitted of [true, false]) it(`${action.group}/${action.id}, permitted=${permitted}`, async () => {
+    const request = { ...makeReq(`ทำ${action.title}ยังไง`), howToActionId: action.id,
+      entitledFeatureKeys: [...LINE_CAPABILITY_GROUPS.flatMap(group => [...group.featureKeys]), 'expenses.upload'],
+      userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', ...(permitted ? [action.permission] : [])] },
+      semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: action.title, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }] };
+    const result = await runSemanticTurnV2({ req: request, provider: { generateText: async () => { throw new Error('help must not plan a mutation'); } },
+      draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      invoke: async () => { throw new Error('how-to offers navigation only'); } });
+    assert.equal(result.replyText.split('\n').length, 1);
+    assert.match(result.replyText, /ค่ะ$/);
+    assert.equal(result.semanticCoverage?.[0]?.status, permitted ? 'handled' : 'denied');
+    assert.equal(result.presentation?.cards[0]?.chatActionId, permitted && !('webPath' in action) ? action.id : undefined);
+    if (!permitted) assert.ok(result.replyText.includes(action.responsible));
+  });
+  it('bridges the exact J7 approved-help selection and preserves reviewed secondary links', async () => {
+    const req = { ...makeReq('สร้างใบเบิกยังไง'), approvedKnowledge: true, selectedKnowledgeCardIds: ['reimbursement.meaning', 'reimbursement.roles'],
+      userContext: { ...makeReq('').userContext, permissions: ['reimbursement.create', 'reimbursement.read_own'] },
+      semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: 'สร้างใบเบิก', requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }] };
+    const result = await runSemanticTurnV2({ req, provider: { generateText: async () => { throw new Error('no extra model call'); } },
+      draftEditEnabled: false, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      invoke: async () => { throw new Error('no financial tool'); } });
+    assert.equal(result.replyText, productHelpAction({ selectedKnowledgeCardIds: req.selectedKnowledgeCardIds, permissions: req.userContext.permissions, featureKeys: null })!.replyText);
+    assert.equal(result.presentation?.cards[0]?.chatActionId, 'reimbursement_claim');
+    assert.ok(result.webLinks.some(link => link.path.includes('/user-guide/reimbursements')));
+  });
+  it('binds the J7 amount and yesterday to deterministic evidence, never model offsets', async () => {
+    const text = 'เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย';
+    const built = await createLineAiInputEvidence({ turnKey: 'fx15', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] });
+    assert.ok(built);
+    const candidates = await extractValueCandidatesV2(built.inputEvidence, '2026-10-16'); assert.ok(candidates);
+    const id = '018fbad0-4d4e-7cc7-8e43-0123456789ac';
+    const req = { ...makeReq(text), inputEvidence: built.inputEvidence, valueCandidates: candidates };
+    const next: any = completeReimbursementDraftInput('reimbursement.draft.preview_create', { action: {}, proposal: { fields: {},
+      lineChanges: [{ operation: 'ADD', values: { description: 'ค่าน้ำมัน', amount: candidates.amounts[0]!.value, incurredDate: '2026-10-15' } }] } },
+    [{ result: { toolName: 'reimbursement.draft.get_options', status: 'ok', sourceRefs: [], asOf: new Date().toISOString(),
+      data: { actionLocator: { taskId: id, actionId: id, operation: 'CREATE' }, options: { taskRevision: 1 } } } }], req);
+    const values = Object.fromEntries([...candidates.amounts.map(item => [item.candidateId, item.value]), ...candidates.dates.map(item => [item.candidateId, item.isoDate]), ...candidates.periods.filter(item => item.fromDate === item.toDate).map(item => [item.candidateId, item.fromDate])]);
+    const sources = Object.fromEntries([...candidates.amounts, ...candidates.dates, ...candidates.periods].map(item => [item.candidateId, item.source]));
+    assert.ok(parseLineReimbursementDraftProposalV1(next.proposal, { evidence: built.inputEvidence, candidateValues: values, candidateSources: sources }));
+    assert.equal(next.proposal.lineChanges[0].values.amount.value, candidates.amounts[0]!.value);
+    assert.equal(next.proposal.lineChanges[0].values.incurredDate.value, '2026-10-15');
+  });
+});
+
+it('Fix-up 15: the existing two-round planner retains J7 text facts without requiring a stored bill', async () => {
+  const { runWithUsageContext } = await import('../../../common/usage/usage-context');
+  const text = 'เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย';
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'fx15-planner', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+  const candidates = (await extractValueCandidatesV2(evidence, '2026-10-16'))!;
+  const actionId = '018fbad0-4d4e-7cc7-8e43-0123456789ac';
+  const req = { ...makeReq(text), inputEvidence: evidence, valueCandidates: candidates,
+    userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', 'reimbursement.create'] },
+    semanticSubrequests: [{ index: 0, kind: 'write' as const, writeIntent: 'REIMBURSEMENT_REQUEST_START' as const, goal: text, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }] };
+  const calls: any[] = [];
+  let round = 0;
+  const state: any = { status: 'active-v2', calls: 0, repairCount: 0, grant: { maxTurnSlots: 4 } };
+  const result = await runWithUsageContext({ budget: state }, () => runSemanticTurnV2({ req,
+    draftEditEnabled: false, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+    provider: { generateText: async input => {
+      assert.equal(input.usageTag, 'line.loop'); state.calls++;
+      assert.match(input.systemPrompt!, /Never require an existing bill/);
+      return { ok: true, text: JSON.stringify({ calls: [round++ === 0
+        ? { index: 0, toolName: 'reimbursement.draft.get_options', input: { operation: 'CREATE', subrequestIndex: 0 } }
+        : { index: 0, toolName: 'reimbursement.draft.preview_create', input: { action: {}, proposal: { fields: {}, lineChanges: [{ operation: 'ADD', values: { description: 'ค่าน้ำมัน', amount: '350', incurredDate: '2026-10-15' } }] } } }], questions: [] }) };
+    } }, invoke: async (meta, _ctx, input: any) => {
+      calls.push({ name: meta.name, input });
+      return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(), sourceRefs: [{ module: 'reimbursements', entityType: 'reimbursement_draft_action', entityId: actionId, label: 'ร่างใบเบิก', permissionChecked: true }],
+        data: { actionLocator: { taskId: actionId, actionId, operation: 'CREATE' }, options: { taskRevision: 1, choices: [] }, reimbursementDraft: { status: 'needs_fields' } } };
+    } }));
+  assert.deepEqual(calls.map(call => call.name), ['reimbursement.draft.get_options', 'reimbursement.draft.preview_create']);
+  assert.equal(calls[1]!.input.proposal.lineChanges[0].values.amount.value, '350');
+  assert.equal(calls[1]!.input.proposal.lineChanges[0].values.incurredDate.value, '2026-10-15');
+  assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
+  assert.doesNotMatch(result.replyText, /จากรายการด้านล่าง|1\)/);
+});
+
+it('Fix-up 17A C12: exact live settings-router JSON links approval settings and never prepares a claim approval', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { resolve } = await import('node:path');
+  const fixture = JSON.parse(readFileSync(resolve(__dirname, '../../../../../api/src/modules/line-ai/application/use-cases/fixtures/fx17a-live-routes.json'), 'utf8'));
+  for (const live of fixture.C12) {
+    let invoked = false;
+    const req = makeReq(live.text); req.semanticSubrequests = live.route.semanticSubrequests;
+    req.userContext.permissions = ['reimbursement.policy.manage', 'reimbursement.approve'];
+    const agent = new OrchestratorAgent({ invoke: async () => { invoked = true; throw new Error('settings must not approve a claim'); } } as any, {} as any);
+    const result = await agent.run(req);
+    assert.equal(invoked, false); assert.match(result.replyText, /ตั้งค่าการอนุมัติ/); assert.doesNotMatch(result.replyText, /อนุมัติใบเบิกทำผ่าน LINE ไม่ได้/);
+    assert.deepEqual(result.webLinks, [{ label: 'ตั้งค่าการอนุมัติ', path: '/companies/company-1/reimbursements?tab=policy' }]);
+  }
+});
+
+const fx20bRoutes = JSON.parse(readFileSync(require.resolve('../../../../../../docs/evidence/mangmee-advisor-fx20b-router-replays.json'), 'utf8')) as any[];
+describe('Fix-up 20B: real router help omissions recover inside the existing composer budget', () => {
+  for (const [journey, actionId] of [['C04', 'payment_voucher'], ['C08', 'team_member'], ['C09', 'branch'], ['E05', 'branch_edit'], ['C11', 'payout_account']] as const) {
+    it(`${journey}: exact router JSON without howToActionId resolves its permitted action`, async () => {
+      const { runWithUsageContext } = await import('../../../common/usage/usage-context');
+      const replay = fx20bRoutes.find(row => row.journey === journey && row.turn === 0)!;
+      assert.equal(replay.route.howToActionId, undefined, 'the live defect is a missing selector, before permission lookup');
+      const action = LINE_CHAT_ACTIONS.find(row => row.id === actionId)!;
+      const state: any = { status: 'active-v2', calls: 1, repairCount: 0, grant: { maxTurnSlots: 4, maxRepairs: 1 } };
+      const req = { ...makeReq(replay.messageText), semanticSubrequests: replay.route.semanticSubrequests,
+        userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', action.permission], roles: [journey === 'C11' ? 'STAFF' : 'OWNER'] } };
+      let calls = 0;
+      const result = await runWithUsageContext({ budget: state }, () => runSemanticTurnV2({ req,
+        draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        provider: { generateText: async input => {
+          assert.equal(input.usageTag, 'line.compose'); state.calls++; calls++;
+          assert.match(input.systemPrompt!, /"helpActions":\[/);
+          if (calls === 2) assert.match(JSON.parse(input.messages[0]!.text).repair, /helpActions/);
+          return { ok: true, text: JSON.stringify({ ...(calls === 2 ? { helpActions: [{ index: 0, actionId }] } : {}),
+            answers: [{ index: 0, status: 'handled', text: 'ให้ผู้ดูแลบริษัทช่วยตรวจการตั้งค่าส่วนนี้บนเว็บได้ค่ะ', sourceRefIds: [] }] }) };
+        } }, invoke: async () => assert.fail('help never executes a business mutation') }));
+      assert.equal(calls, 2, 'one existing compose call plus its allowed repair');
+      assert.equal(result.replyText, action.sentence); assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+      if ('webPath' in action) assert.equal(result.presentation?.cards[0]?.webLink?.path, '/companies/company-1/reimbursements/payout-account');
+      else assert.equal(result.presentation?.cards[0]?.chatActionId, actionId);
+    });
+  }
+  it('a definition can explicitly decline action selection without consuming a repair', async () => {
+    const result = await runSemanticTurnV2({ req: { ...makeReq('ฉบับร่างคืออะไร'), semanticSubrequests: [{ index: 0, kind: 'help', goal: 'definition', requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }] },
+      draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ helpActions: [{ index: 0, actionId: null }], answers: [{ index: 0, status: 'unsupported', text: 'คำอธิบายค่ะ' }] }) }) }, invoke: async () => assert.fail('no reads') });
+    assert.equal(result.presentation?.cards[0]?.chatActionId, undefined);
+  });
+});
+
+describe('Fix-up 20B: every missing-router action × allowed/denied composer selection', () => {
+  for (const action of LINE_CHAT_ACTIONS) for (const allowed of [true, false]) it(`${action.id}/allowed=${allowed}`, async () => {
+    const req = { ...makeReq(`ทำ${action.title}ยังไง`),
+      entitledFeatureKeys: [...LINE_CAPABILITY_GROUPS.flatMap(group => [...group.featureKeys]), 'expenses.upload'],
+      userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', ...(allowed ? [action.permission] : [])] },
+      semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: action.title, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }] };
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ helpActions: [{ index: 0, actionId: action.id }] }) }) },
+      invoke: async () => assert.fail('navigation never calls a mutation') });
+    assert.equal(result.semanticCoverage?.[0]?.status, allowed ? 'handled' : 'denied');
+    assert.equal(result.presentation?.cards[0]?.chatActionId, allowed && !('webPath' in action) ? action.id : undefined);
+    assert.equal(Boolean(result.presentation?.cards[0]?.webLink), allowed && 'webPath' in action);
+    assert.equal(result.replyText.split('\n').length, 1);
+  });
+});
+
+it('Fix-up 21A E03: split descriptions retain exact ordered source spans and invented/reordered words remain unproved', async () => {
+  const text = 'เบิกค่าแท็กซี่ 350 บาท เมื่อวาน ไปส่งของให้ลูกค้า';
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'fx21-e03', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+  const id = '018fbad0-4d4e-7cc7-8e43-0123456789ac';
+  const results: any = [{ result: { toolName: 'reimbursement.draft.get_options', status: 'ok', data: { actionLocator: { taskId: id, actionId: id, operation: 'CREATE' }, options: { taskRevision: 0 } } } }];
+  const complete = (description: string) => completeReimbursementDraftInput('reimbursement.draft.preview_create', { action: {}, proposal: { fields: {}, lineChanges: [{ operation: 'ADD', values: { description } }] } }, results, { ...makeReq(text), inputEvidence: evidence }) as any;
+  const valid = complete('ค่าแท็กซี่ ไปส่งของให้ลูกค้า');
+  assert.equal(valid.proposal.lineChanges[0].values.description.value, 'ค่าแท็กซี่\nไปส่งของให้ลูกค้า');
+  assert.equal(valid.proposal.lineChanges[0].values.description.proof.refs.length, 2);
+  assert.ok(parseLineReimbursementDraftProposalV1(valid.proposal, { evidence }));
+  for (const description of ['ไปส่งของให้ลูกค้า ค่าแท็กซี่', 'ค่าแท็กซี่ ไปเที่ยว', 'ค่าแท็กซี่ ค่าแท็กซี่']) {
+    assert.equal(parseLineReimbursementDraftProposalV1(complete(description).proposal, { evidence }), undefined);
+  }
 });

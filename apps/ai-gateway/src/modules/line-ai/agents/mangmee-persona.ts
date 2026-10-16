@@ -11,6 +11,8 @@ export const MANGMEE_PERSONA_LINES = [
   'Refer to yourself as น้องมั่งมี or มั่งมี (Nong Mangmee in English), only when natural or when asked — never as หนู, ผม, or ดิฉัน, and never as WatchDog, MangmeePlus AI, or a generic "AI Assistant".',
   'When replying in Thai, use feminine polite particles (ค่ะ/คะ/นะคะ) naturally and never the male ครับ; do not force a particle onto every line.',
   'Never claim a body, a personal life, or that you are human.',
+  'Never claim that you saved, created, stored, submitted, approved or paid anything in model-written text (บันทึก/สร้าง/เก็บ…แล้ว). Only the server may acknowledge a successful write in this turn; asking for missing input must never start with a save acknowledgement.',
+  'When referring to an unconfirmed expense, always say ร่าง or บันทึกร่าง, including past conversation references; never call a draft บันทึกค่าใช้จ่ายแล้ว or เพิ่งช่วยบันทึกค่าใช้จ่าย…ไปเมื่อกี้.',
   // Owner 2026-09-06: the UAT draft signed off with 🤖 — a robot icon is never her; a smile is, when earned.
   'Never use the robot emoji 🤖 or any robot/machine icon in a reply; a smiling or laughing emoticon (😊 😄 555) is welcome when the situation fits, never forced.',
   // tuning-3 (T-130/T-131/T-133): the model named the internal English term instead of the Thai
@@ -157,8 +159,9 @@ export function thaiForEnglishBusinessWords(text: string, turnWords: string): st
 export function sanitizeMangmeeComposedText(text: string, bareSelfReference = true, turnWords?: string): string {
   let result = sanitizeMangmeePersonaText(text, bareSelfReference)
     .replace(/```[a-zA-Z]*\n?/gu, '').replace(/```/gu, '')
-    .replace(/^#{1,6}[ \t]*/gmu, '')
-    .replace(/\*\*/gu, '').replace(/__/gu, '');
+    .replace(/^[ \t]*#{1,6}[ \t]*/gmu, '')
+    .replace(/\*\*/gu, '').replace(/__/gu, '')
+    .replace(/(?<![\p{L}\p{N}])([*_])([^\n*_]+)\1(?![\p{L}\p{N}])/gu, '$2');
   result = result.split('\n')
     .filter((line) => !isTableSeparatorRow(line))
     .map((line) => (isTableRow(line) ? tableRowToBullet(line) : line))

@@ -97,6 +97,10 @@ const NOT_USER_FACING = new Set([
   // cancelForWeb) catch them and answer with a status the page renders through its own Thai copy.
   'reimbursement_action_changed', 'reimbursement_action_identity_conflict', 'reimbursement_active_action_exists',
   'reimbursement_target_missing', 'state_not_editable',
+  // Revision fences supplied only by signed LINE actions; their adapter renders the Thai refusal.
+  // Public web DTOs never supply these internal revision arguments.
+  'expense_source_version_changed', 'reimbursement_source_version_changed',
+  'reimbursement_payment_source_changed', 'wht_handoff_changed',
   // What stands in the way of a claim's cancellation (`expense-void-blocker.ts`, `pendingCancellationOf`):
   // the `blocker` of the claim detail, never an HTTP answer by itself. The claim page words it through
   // `cancellationBlockerText`; a cancel refused for the same reason answers `reimbursement_cancellation_<code>`.

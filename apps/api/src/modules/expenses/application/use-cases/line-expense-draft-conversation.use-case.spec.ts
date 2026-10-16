@@ -49,6 +49,22 @@ function harness(count = 1, expenseNote?: string, passive = false) {
 }
 
 describe('LineExpenseDraftConversationUseCase', () => {
+  it('matches grounded answers only for a unique open questionnaire, preserving ambiguity and unrelated requests (A4)', async () => {
+    const h = harness();
+    const rows = await (h.useCase as any).repo.listLineExpenseDraftContinuationRows();
+    const state = rows[0].sourceChannelMetadataJson.lineExpenseDraftContinuation;
+    state.items = state.items.slice(0, 1);
+    state.unresolvedQuestions = state.unresolvedQuestions.filter((question: any) => !question.id.startsWith('I02-'));
+    for (const text of ['วันที่ 10 ตุลา 2569 จำนวน 1 คน ราคา 500', 'อุปกรณ์สำนักงาน', 'ร้าน ABC', '500 บาท']) {
+      assert.equal(await h.useCase.answersOpenDraft(ctx, 'chat', text), true, text);
+    }
+    for (const text of ['อ่าว ทำไมเงียบ', 'ยอดขายวันที่ 10 ตุลา 2569 เท่าไร', 'สร้างค่าใช้จ่ายใหม่ 500 บาท วันที่ 10 ตุลา 2569', 'รายรับอุปกรณ์สำนักงาน']) {
+      assert.equal(await h.useCase.answersOpenDraft(ctx, 'chat', text), false, text);
+    }
+    assert.equal(await harness(2).useCase.answersOpenDraft(ctx, 'chat', 'อุปกรณ์สำนักงาน'), false);
+    assert.equal(await harness(1, undefined, true).useCase.answersOpenDraft(ctx, 'chat', 'อุปกรณ์สำนักงาน'), false);
+    assert.equal(h.updates.length, 0, 'matching is read only');
+  });
   it('returns the exact committed revision and only referenced category identities with its reply', async () => {
     const h = harness();
     const result = await h.useCase.execute(ctx, { chatKeyHash: 'chat', messageText: 'I01-QTY 5', webhookEventId: 'source-proof' });
@@ -335,4 +351,13 @@ it('rejects an appended purpose exceeding note storage before any draft update, 
   const h = harness(1, 'x'.repeat(490));
   const result = await h.useCase.execute(ctx, { chatKeyHash: 'chat', messageText: 'D-PURPOSE ใช้เดินทางพบลูกค้า', webhookEventId: 'long-purpose' });
   assert.equal(h.updates.length, 0); assert.match(result.replyTexts.join('\n'), /500/); assert.deepEqual(result.acceptedFields, []);
+});
+
+it('Fix-up 17A C01: วันนี้ remains the grounded document date even when the router omitted its date hint', () => {
+  const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'fx17-date', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',
+    targetRevision: '2026-10-16T03:00:00Z', provisionalExpenseDate: '2026-10-16', now: '2026-10-16T03:00:00Z', categories,
+    messageText: 'ทำให้หน่อย ค่าซ่อมแอร์หน้าร้าน 1,800 บาท ร้านเย็นฉ่ำแอร์ วันนี้ จ่ายเงินสดไปแล้ว',
+    hints: { confidence: 0.9, description: 'ค่าซ่อมแอร์หน้าร้าน', amount: '1800', vendorName: 'ร้านเย็นฉ่ำแอร์' } });
+  assert.equal(state.header.expenseDate, '2026-10-16');
+  assert.ok(!state.unresolvedQuestions.some(question => question.id === 'D-DATE'));
 });

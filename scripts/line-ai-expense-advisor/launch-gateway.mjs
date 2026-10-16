@@ -10,9 +10,9 @@
  * values beyond passing `gatewaySecret`/`delegationSigningKey` straight into the child's env.
  *
  * Usage: node scripts/line-ai-expense-advisor/launch-gateway.mjs
- * Requires AWS_PROFILE to already be set in the environment (hard failure otherwise — this talks
- * to real Bedrock once a real conversation reaches it).
+ * Requires AWS_PROFILE or a local Anthropic key file (real model calls once a conversation reaches it).
  * Optional env:
+ *   MANGMEE_EVAL_ANTHROPIC_KEY_FILE      default ~/.config/mangmee/anthropic-api-key (takes precedence over AWS_PROFILE)
  *   MANGMEE_EVAL_SECRETS_PATH            default /tmp/mangmee-latency-pilot-20260927/runtime-secrets.json
  *   MANGMEE_EVAL_GATEWAY_PORT            default 19205
  *   MANGMEE_EVAL_API_PORT                default 19291 (must match run-real.ts's MANGMEE_EVAL_API_PORT)
@@ -23,6 +23,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const SECRETS_PATH = process.env.MANGMEE_EVAL_SECRETS_PATH ?? '/tmp/mangmee-latency-pilot-20260927/runtime-secrets.json';
@@ -33,8 +34,18 @@ const REDIS_URL = process.env.MANGMEE_EVAL_REDIS_URL ?? 'redis://127.0.0.1:16389
 const DETERMINISTIC_FAMILIES = process.env.MANGMEE_EVAL_DETERMINISTIC_RESPONSE_FAMILIES
   ?? 'expense.list_recent::single_metric,expense.list_recent::list,expense.get_breakdown::list,expense.get_daily_closing::single_metric,reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric';
 
-if (!process.env.AWS_PROFILE) {
-  console.error(JSON.stringify({ event: 'gateway_launch_refused', reason: 'AWS_PROFILE_REQUIRED' }));
+const keyFile = (process.env.MANGMEE_EVAL_ANTHROPIC_KEY_FILE ?? '~/.config/mangmee/anthropic-api-key').replace(/^~\//, `${homedir()}/`);
+let anthropicApiKey;
+try {
+  anthropicApiKey = readFileSync(keyFile, 'utf8').trim() || undefined;
+} catch (err) {
+  if (err.code !== 'ENOENT' && !process.env.AWS_PROFILE) {
+    console.error(JSON.stringify({ event: 'gateway_launch_refused', reason: 'ANTHROPIC_KEY_FILE_UNREADABLE', keyFile }));
+    process.exit(1);
+  }
+}
+if (!process.env.AWS_PROFILE && !anthropicApiKey) {
+  console.error(JSON.stringify({ event: 'gateway_launch_refused', reason: 'AWS_PROFILE_OR_ANTHROPIC_KEY_FILE_REQUIRED', keyFile }));
   process.exit(1);
 }
 
@@ -45,6 +56,7 @@ databaseUrl.searchParams.set('schema', 'public');
 
 const env = {
   ...process.env,
+  ANTHROPIC_API_KEY: anthropicApiKey,
   APP_ENV: 'local', NODE_ENV: 'test', SERVICE_NAME: 'line-ai-expense-advisor-eval-gateway',
   PORT, HOST: '127.0.0.1',
   AWS_SDK_LOAD_CONFIG: 'true', AWS_REGION: 'ap-southeast-1', AWS_EC2_METADATA_DISABLED: 'true',
@@ -78,6 +90,7 @@ const env = {
 const entry = resolve(REPO_ROOT, 'apps/ai-gateway/dist/apps/ai-gateway/src/main.js');
 console.log(JSON.stringify({
   event: 'gateway_launch', port: PORT, url: env.AI_GATEWAY_INTERNAL_URL, apiUrl: env.ERP_CORE_INTERNAL_URL, entry,
+  transport: anthropicApiKey ? 'anthropic-api' : 'bedrock',
 }));
 const child = spawn(process.execPath, [entry], { env, stdio: 'inherit' });
 child.on('exit', (code) => process.exit(code ?? 1));

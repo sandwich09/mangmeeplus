@@ -90,6 +90,7 @@ describe('LineReimbursementDraftAdapterService staged LINE photos', () => {
         : where.OR.some((item: any) => item.branchId === null ? photo.branchId === null : photo.branchId !== null && photo.branchId !== item.branchId.not));
     const writes: any[] = [], moved: string[] = [];
     const client = {
+      expenseCategory: { findMany: async () => [] },
       branch: { findMany: async () => branches, findFirst: async ({ where }: any) => branches.find(row => row.id === where.id.equals) },
       companyMembership: { findUnique: async () => ({ defaultBranchId: 'branch-a' }) },
       attachmentObject: {

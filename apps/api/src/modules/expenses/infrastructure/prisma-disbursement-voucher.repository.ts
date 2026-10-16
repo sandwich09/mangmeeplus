@@ -1,7 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { DISBURSEMENT_VOUCHER_STATUSES, disbursementVoucherPaymentAmount, disbursementVoucherError, disbursementExpenseReasonMessage,
   DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_PURPOSE, REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES,
-  type DisbursementVoucherHeader, type DisbursementVoucherDetail, type DisbursementVoucherStatus, type DisbursementVoucherPayeeBasis, type ExpensePaymentMethod,
+  type RequestContext, type DisbursementVoucherHeader, type DisbursementVoucherDetail, type DisbursementVoucherStatus, type DisbursementVoucherPayeeBasis, type ExpensePaymentMethod,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
@@ -181,9 +181,24 @@ export class PrismaDisbursementVoucherRepository {
     }, { isolationLevel: 'ReadCommitted', timeout: 20000, maxWait: 5000 });
   }
 
+  readTransaction<T>(read: (tx: Prisma.TransactionClient) => Promise<T>) { return this.prisma.client.$transaction(read); }
+
+  async lineSlipSource(ctx: RequestContext, evidence: { id: string; revision: string; attachmentId: string; chat: string }, branchId: string) {
+    const source = await this.prisma.client.expenseRecord.findFirst({ where: { companyId: ctx.companyId, id: evidence.id,
+      createdByUserId: ctx.userId, captureSource: 'LINE_UPLOAD', sourceDocumentType: 'TRANSFER_SLIP', branchId,
+      primaryAttachmentId: evidence.attachmentId, updatedAt: new Date(evidence.revision) } });
+    const metadata = source?.sourceChannelMetadataJson as Record<string, any> | null;
+    if (!source || !['DRAFT', 'NEEDS_REVIEW'].includes(source.status) || metadata?.chatKeyHash !== evidence.chat
+      || metadata?.linePaymentEvidence?.state === 'LINKED' || metadata?.linePaymentEvidenceSeparate) throw new ConflictException(disbursementVoucherError('disbursement_source_changed', { number: 'ที่เลือก' }));
+    const file = await this.prisma.client.attachmentObject.findFirst({ where: { id: evidence.attachmentId, companyId: ctx.companyId,
+      uploadedByUserId: ctx.userId, status: 'ACTIVE', branchId, mimeType: { in: REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES }, byteSize: { lte: REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES } } });
+    if (!file) throw new UnprocessableEntityException(disbursementVoucherError('disbursement_slip_not_owned'));
+    return file;
+  }
+
   async findSlipUpload(companyId: string, voucherId: string, attachmentId: string, userId: string) {
     return this.prisma.client.attachmentObject.findFirst({ where: { id: attachmentId, companyId, uploadedByUserId: userId,
-      metadataJson: { equals: { generatedFor: DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, voucherId } } }, select: { id: true, status: true } });
+      metadataJson: { equals: { generatedFor: DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, voucherId } } } });
   }
 
   async findSlipFile(companyId: string, voucherId: string, attachmentId: string, tx: Prisma.TransactionClient = this.prisma.client) {
@@ -201,13 +216,14 @@ export class PrismaDisbursementVoucherRepository {
   }
 
   async attachSlipAtomic(scope: DisbursementReadScope, id: string, attachmentId: string, userId: string,
-    audit: (tx: Prisma.TransactionClient) => Promise<void>) {
+    audit: (tx: Prisma.TransactionClient) => Promise<void>, expectedVersion?: number) {
     return this.prisma.client.$transaction(async tx => {
       await tx.$executeRaw`SET LOCAL lock_timeout = '10s'`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${scope.companyId}:${id}:disbursement-voucher-lifecycle`}))`;
       const voucher = await tx.disbursementVoucher.findFirst({ where: { ...disbursementVoucherReadWhere(scope), id } });
       if (!voucher) throw new NotFoundException(disbursementVoucherError('disbursement_not_found'));
       if (voucher.status !== 'APPROVED' && voucher.status !== 'PAID') throw new ConflictException(disbursementVoucherError('disbursement_slip_status'));
+      if (expectedVersion !== undefined && voucher.version !== expectedVersion) throw new ConflictException(disbursementVoucherError('disbursement_version_conflict'));
       // The same retention lock as generic deletion: a live pointer can never refer to a deleted file.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${scope.companyId}:${attachmentId}:attachment-retention`}))`;
       await tx.$executeRaw`SELECT 1 FROM "AttachmentObject" WHERE "id" = ${attachmentId} AND "companyId" = ${scope.companyId} FOR UPDATE`;

@@ -498,6 +498,7 @@ export const apiConfigSchema = baseConfigSchema.extend({
 
 export const aiGatewayConfigSchema = baseConfigSchema.extend({
   ...lineAiReliabilityConfigShape,
+  ANTHROPIC_API_KEY: z.string().trim().min(1).optional(),
   APPROVED_AI_MODEL_IDS: z.string().default(DEFAULT_APPROVED_AI_MODEL_IDS),
   APPROVED_AI_PROVIDERS: z.string().default('bedrock,openai'),
   APPROVED_AI_REGIONS: z.string().default('ap-southeast-1'),
@@ -596,6 +597,10 @@ export const aiGatewayConfigSchema = baseConfigSchema.extend({
   AI_GATEWAY_INTERNAL_SECRET: z.string().optional(),
   // ERP core URL (AI Gateway calls back to API for tool execution)
   ERP_CORE_INTERNAL_URL: z.string().url().default('http://localhost:3001/v1'),
+}).superRefine((config, ctx) => {
+  if (config.ANTHROPIC_API_KEY !== undefined && config.APP_ENV !== 'local') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ANTHROPIC_API_KEY'], message: 'ANTHROPIC_API_KEY is local only (APP_ENV must be local).' });
+  }
 });
 
 // ─── Web (Next.js) service ────────────────────────────────────────────────────

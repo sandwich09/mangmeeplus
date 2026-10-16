@@ -5,9 +5,50 @@ import { hashMessagePreview } from '../../domain/logic/line-ai-classifier.logic'
 import { buildExpenseDraftReviewCard, isCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
 import { linePushRetryKey } from '../../infrastructure/line-reply.adapter';
 import { ExpenseCaptureLineUseCase } from '../../../expenses/application/use-cases/expense-capture-line.use-case';
+import { parseLineDeliveryPlan } from '../../domain/logic/line-delivery-plan.logic';
+import type { ExpenseActionPreview } from '../line-expense-action.service';
+import { readLineSystemCard } from '../../domain/logic/line-system-card.fixture';
 
 const LINE_USER = 'Ufake-line-user';
 const CHAT_HASH = hashMessagePreview(LINE_USER);
+
+it('Fix-up 10 P5: the capture notifier offers the signed chat confirmation first, with exact fallback and fresh preview guards', async () => {
+  const payload = { ownerType: 'EXPENSE', expenseId: 'expense-1', status: 'DONE', jobId: 'job-1' }, h = makeNotifier({ payload }), notifier = h.notifier as any;
+  const now = new Date(), record = { id: 'expense-1', createdAt: now, updatedAt: now };
+  const preview: ExpenseActionPreview = { previewId: 'preview', token: '2191d48d-704a-4b1e-a800-6b02661001bb.' + 'a'.repeat(43),
+    action: 'CONFIRM', evidenceReview: true, summary: 'ตรวจข้อมูลแล้วกดยืนยันค่ะ', expiresAt: new Date(now.getTime() + 600_000).toISOString(),
+    record: { vendorName: 'ร้านค้าดี', amount: '250.00', currency: 'THB', date: '2026-07-25', status: 'รอตรวจ', nextStatus: 'ยืนยันแล้ว' } };
+  const ctx = { requestId: 'outbox-1', authSubject: 'user-1', authProvider: 'line', userId: 'user-1', companyId: 'company-1',
+    membershipId: 'm1', roles: ['OWNER'], permissions: ['expense.receipt.line_upload', 'expense.review', 'expense.confirm'], scopes: {} };
+  notifier.prepared.set(payload, { event: { id: 'outbox-1', claimToken: 'token-1', createdAt: now },
+    owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'm1', messagingChannelId: 'channel-1', chatKeyHash: CHAT_HASH },
+    epoch: 1, accessFingerprint: 'access', lineUserId: LINE_USER, context: ctx });
+  notifier.captureLine.readFinishedDeliveryProof = async () => ({ records: [record] });
+  notifier.contexts = { load: async () => ({ row: { id: 'line-v2:conversation-1', lifecycleEpoch: 1 } }) };
+  let plan: any, previewCalls = 0, current: ExpenseActionPreview | null = preview;
+  notifier.expenseActions = { preview: async (actor: unknown, chat: string, input: unknown, opened: boolean) => {
+    assert.equal(actor, ctx); assert.equal(chat, CHAT_HASH); assert.equal(opened, true);
+    assert.deepEqual(input, { action: 'CONFIRM', expenseId: 'expense-1' }); previewCalls++; return { preview };
+  }, pending: async () => current };
+  notifier.plans = { savePlan: async (_producer: unknown, value: unknown) => { plan = value; return { id: 'plan-1' }; } };
+  notifier.replayCapturePlan = async () => ({ kind: 'accepted' });
+  assert.deepEqual(await notifier.notifyExpense('company-1', payload), { kind: 'accepted' });
+  assert.equal(previewCalls, 1); assert.ok(parseLineDeliveryPlan(JSON.parse(JSON.stringify(plan))));
+  assert.equal(plan.control.kind, 'EXPENSE_ACTION_CONFIRM');
+  const messages = plan.batches.flatMap((batch: any) => batch.primary.messages);
+  assert.equal(messages.length, 1); assert.equal(messages[0].type, 'flex');
+  const buttons = readLineSystemCard(messages[0]).actions;
+  assert.equal(buttons[0]!.type, 'postback'); assert.equal(buttons[0]!.label, 'ตรวจแล้ว ยืนยัน');
+  assert.match(buttons[0]!.data!, /expense_action_confirm/);
+  assert.equal(buttons[1]!.type, 'uri'); assert.equal(new URL(buttons[1]!.uri!).pathname, '/companies/company-1/expenses/expense-1');
+  assert.ok(plan.batches[0].fallback.messages[0].quickReply.items.some((item: any) => item.action.data?.includes(preview.token)));
+  assert.equal(plan.batches[0].fallback.messages[0].text, plan.answer.items[0].text);
+  notifier.captureLine.readLineDeliveryOwner = async () => ({ createdByUserId: 'user-1', ownerBinding: {
+    conversationId: 'line-v2:conversation-1', ownerEpoch: 1, channelId: 'channel-1', membershipId: 'm1' } });
+  notifier.resolveRecipient = async () => ({ ...ctx, fingerprint: 'access', entitledFeatureKeys: null, lineUserId: LINE_USER, pushTargetId: LINE_USER });
+  assert.ok(await notifier.verifyCaptureDeliveryPlan(plan));
+  current = null; assert.equal(await notifier.verifyCaptureDeliveryPlan(plan), null, 'a stale or revoked preview refuses result delivery');
+});
 
 type Scenario = {
   jobs?: Array<{ id: string; status: string; pausedReason?: string | null }>;
@@ -149,6 +190,24 @@ const pushedText = (h: ReturnType<typeof makeNotifier>): string => h.pushes[0]?.
 
 const EXPENSE_LINK = 'https://app.example.com/companies/company-1/expenses/expense-1';
 const RECEIPT_TEXT = `🧾 อ่านเอกสารแล้ว บันทึกเป็นร่างรายการให้แล้วค่ะ\nร้าน: ร้านค้าดี\nยอดในใบเสร็จ: 250.00 บาท\nประเภทเอกสาร: ใบเสร็จรับเงิน\nวันที่: 25 ก.ค. 2569\nยังไม่ยืนยันรายการ\n\n✅ ตรวจสอบและยืนยันในเว็บแอป:\n${EXPENSE_LINK}`;
+
+it('Z3: a failed LINE PDF sends one notice with a web button, with stable retries and distinct result identities', async () => {
+  const partial = makeNotifier({ payload: { ownerType: 'EXPENSE', expenseId: 'expense-1', requestId: 'job-1:1', jobId: 'job-1', status: 'PARTIAL' } });
+  await partial.notifier.execute();
+  const failed = makeNotifier({ events: 2, jobs: [{ id: 'job-1', status: 'FAILED' }],
+    payload: { ownerType: 'EXPENSE', expenseId: 'expense-1', requestId: 'job-1:6', jobId: 'job-1', status: 'FAILED', errorCode: 'attempts_exhausted' } });
+  assert.deepEqual(await failed.notifier.execute(), { claimed: 2, pushed: 2, skipped: 0, parked: 0 });
+  const message = failed.pushes[0]!.messages[0]!;
+  assert.equal(failed.pushes[0]!.messages.length, 1);
+  assert.equal(message.type, 'flex');
+  assert.ok(message.altText.includes('อ่านข้อมูลไม่สำเร็จค่ะ'));
+  assert.match(JSON.stringify(message.contents), /เปิดดูในเว็บแอป/);
+  assert.ok(JSON.stringify(message.contents).includes(EXPENSE_LINK));
+  assert.doesNotMatch(JSON.stringify(message.contents.body), /job-1|attempts_exhausted/);
+  assert.equal(failed.pushes[0]!.key, failed.pushes[1]!.key, 'one event retry keeps its provider retry identity');
+  assert.notEqual(failed.pushes[0]!.key, partial.pushes[0]!.key, 'a PARTIAL notice cannot dedupe the failure');
+  assert.ok(failed.attemptUpdates.every(update => update.outcome === 'STORED_READ_FAILED' && update.reasonCode === 'result_delivered'));
+});
 
 /** The retired AI-money wording, assembled at runtime: spelled out here it would trip the repo-wide
  *  guard that exists to keep it out of source (spec §3, W-01). */
@@ -348,6 +407,18 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
     ownerType: 'EXPENSE', expenseId: 'expense-1', status: 'DONE', ...over,
   });
 
+  it('OCR-C sends the ordinary photo review card for a completed LINE PDF benchmark invoice', async () => {
+    const h = makeNotifier({ payload: expensePayload({ jobId: 'pdf-job', applied: true }), expenseFacts: {
+      vendorNameSnapshot: 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด', grandTotalAmount: '599586.00',
+      vendorDocumentNumber: 'INV202609-0819', vatAmount: '39225.25', vatMode: 'VAT_EXCLUDED', sourceDocumentType: 'TAX_INVOICE',
+    } });
+    const result = await h.notifier.execute();
+    assert.equal(result.pushed, 1); const card = h.pushes[0]!.messages[0]!;
+    assert.equal(card.type, 'flex'); assert.ok(isCompleteLineBusinessAnswerPresentation(card));
+    assert.match(card.canonicalText, /599,586\.00/); assert.match(card.canonicalText, /ออฟฟิศซัพพลายจำลอง/);
+    assert.match(JSON.stringify(card.contents), /39,225\.25/);
+  });
+
   it('pins the existing receipt fallback bytes', async () => {
     const h = makeNotifier({ payload: expensePayload() });
     await h.notifier.execute();
@@ -385,9 +456,9 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
     const message = h.pushes[0].messages[0];
     assert.equal(message.type, 'flex');
     const body = JSON.stringify(message.contents);
-    for (const label of ['ผู้ขาย / ร้านค้า', 'วันที่เอกสาร', 'เลขเอกสาร', 'ประเภทเอกสาร', 'หมวดค่าใช้จ่าย', 'ยอดรวม', 'ภาษีมูลค่าเพิ่ม']) assert.ok(!body.includes(label), label);
+    for (const label of ['ผู้ขาย / ร้านค้า', 'เลขเอกสาร', 'ประเภทเอกสาร', 'หมวดค่าใช้จ่าย', 'ยอดรวม', 'ภาษีมูลค่าเพิ่ม']) assert.ok(!body.includes(label), label);
     assert.ok(body.includes('สถานะเอกสาร'));
-    assert.equal(pushedText(h), `🧾 อ่านเอกสารแล้ว บันทึกเป็นร่างรายการให้แล้วค่ะ\nยอดในใบเสร็จ: ยังอ่านยอดไม่ได้\nยังไม่ยืนยันรายการ\n\n✅ ตรวจสอบและยืนยันในเว็บแอป:\n${EXPENSE_LINK}`);
+    assert.equal(pushedText(h), `🧾 อ่านเอกสารแล้ว บันทึกเป็นร่างรายการให้แล้วค่ะ\nยอดในใบเสร็จ: ยังอ่านยอดไม่ได้\nวันที่: ยังไม่มีวันที่ กรุณาระบุวันที่เอกสารค่ะ\nยังไม่ยืนยันรายการ\n\n✅ ตรวจสอบและยืนยันในเว็บแอป:\n${EXPENSE_LINK}`);
   });
 
   it('keeps the proved review card and its exact text fallback in the v2 delivery plan', async () => {
@@ -498,7 +569,7 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
       const h = makeNotifier({ payload: expensePayload(payload) });
       await h.notifier.execute();
       assert.equal(h.pushes.length, 1);
-      assert.equal(h.pushes[0].messages[0].type, 'text');
+      assert.equal(h.pushes[0].messages[0].type, name === 'failed' ? 'flex' : 'text');
       assert.equal(pushedText(h), text);
     });
   }
@@ -627,4 +698,72 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
     assert.equal(h.pushes.length, 0);
     assert.equal(h.attemptUpdates.length, 0, 'no private snapshot is loaded after unlink');
   });
+});
+
+
+describe('file read result payment evidence pairing', () => {
+  it('replaces the second-slip draft reply with attached plus undo and preserves the action through the completion menu', async () => {
+    const h = makeNotifier({ payload: { ownerType: 'EXPENSE', expenseId: 'slip', status: 'DONE', applied: true,
+      classification: { contentKind: 'DOCUMENT', documentKind: 'TRANSFER_SLIP' } }, expenseFacts: { sourceDocumentType: 'TRANSFER_SLIP' } });
+    let calls = 0;
+    (h.notifier as any).paymentEvidence = { forCapture: async (ctx: any, chat: string, id: string) => {
+      assert.equal(ctx.userId, 'user-1'); assert.equal(chat, CHAT_HASH); assert.equal(id, 'slip'); calls += 1;
+      return { kind: 'LINKED', slipId: 'slip', receiptId: 'receipt', operationId: 'file-pair' };
+    } };
+    const result = await h.notifier.execute();
+    assert.equal(calls, 1); assert.equal(result.pushed, 1);
+    assert.equal(pushedText(h), 'แนบสลิปเป็นหลักฐานการจ่ายของใบเสร็จแล้วค่ะ');
+    const action = h.pushes[0]!.messages[0].quickReply.items[0].action;
+    assert.equal(action.type, 'postback'); assert.match(action.data, /operation=undo/);
+  });
+  it('does not pair a failed or stale OCR result', async () => {
+    for (const payload of [{ status: 'FAILED' }, { status: 'DONE', applied: false }]) {
+      const h = makeNotifier({ payload: { ownerType: 'EXPENSE', expenseId: 'slip', ...payload } });
+      (h.notifier as any).paymentEvidence = { forCapture: async () => assert.fail('not a successful, applied read') };
+      await h.notifier.execute();
+    }
+  });
+});
+
+it('R10 Q2: capture snapshot hides the storage placeholder and the result asks for the document date', async () => {
+  const reader = new ExpenseCaptureLineUseCase({} as any, { client: { expenseRecord: { findFirst: async () => ({
+    id: 'expense-1', status: 'DRAFT', captureSource: 'LINE_UPLOAD', createdByUserId: 'user-1',
+    sourceChannelMetadataJson: {}, expenseDate: new Date('2026-10-16'), aiVerificationSummaryJson: { dateStatus: 'unverified', missingFields: ['expenseDate'] },
+  }) }, expenseCaptureReadJob: { findMany: async () => [] } } } as any, {} as any);
+  const snapshot = await reader.readFinishedExpenseSnapshot('company-1', 'expense-1');
+  assert.equal(snapshot!.expense.expenseDate, null);
+  const h = makeNotifier({ payload: { ownerType: 'EXPENSE', expenseId: 'expense-1', status: 'DONE', documentCount: 1, applied: true }, expenseFacts: { expenseDate: snapshot!.expense.expenseDate } });
+  await h.notifier.execute();
+  assert.match(pushedText(h), /ยังไม่มีวันที่/); assert.match(JSON.stringify(h.pushes), /กรุณาระบุวันที่เอกสารค่ะ/);
+  assert.doesNotMatch(pushedText(h), /16 ต\.ค\. 2569/);
+});
+
+it('R11 T1: every preview exception still freezes and delivers the capture result without action controls', async () => {
+  for (const error of [new RangeError('Expense source draft supports at most 40 items.'), new Error('preview unavailable')]) {
+    const payload = { ownerType: 'EXPENSE', expenseId: 'expense-1', status: 'DONE', jobId: 'job-1' };
+    const h = makeNotifier({ payload }), notifier = h.notifier as any, now = new Date();
+    const original = notifier.notifyExpense.bind(notifier);
+    notifier.notifyExpense = async (companyId: string, actualPayload: object) => {
+      notifier.prepared.set(actualPayload, { event: { id: 'outbox-1', claimToken: 'token-1', createdAt: now },
+        owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'm1', messagingChannelId: 'channel-1', chatKeyHash: CHAT_HASH },
+        epoch: 1, accessFingerprint: 'access', lineUserId: LINE_USER,
+        context: { companyId: 'company-1', userId: 'user-1', requestId: 'outbox-1' } });
+      return original(companyId, actualPayload);
+    };
+    notifier.captureLine.readFinishedDeliveryProof = async () => ({ records: [{ id: 'expense-1', createdAt: now, updatedAt: now }] });
+    notifier.contexts = { load: async () => ({ row: { id: 'line-v2:conversation-1', lifecycleEpoch: 1 } }) };
+    notifier.expenseActions = { preview: async () => { throw error; } };
+    let plan: any;
+    notifier.plans = { savePlan: async (_producer: unknown, value: unknown) => { plan = value; return { id: 'plan-1' }; } };
+    notifier.replayCapturePlan = async () => {
+      const batch = plan.batches[0];
+      const delivered = await notifier.pushResult(LINE_USER, batch.primary.messages, 'preview-fallback');
+      return delivered === 'ok' ? { kind: 'accepted' } : { kind: 'retryable', code: 'LINE_DELIVERY_NOT_ACCEPTED' };
+    };
+    assert.deepEqual(await notifier.execute(), { claimed: 1, pushed: 1, skipped: 0, parked: 0 });
+    assert.deepEqual(h.failed, []); assert.deepEqual(h.published, ['outbox-1']); assert.equal(h.pushes.length, 1);
+    assert.ok(parseLineDeliveryPlan(JSON.parse(JSON.stringify(plan)))); assert.equal(plan.control, null);
+    assert.match(pushedText(h), /250\.00/); assert.ok(pushedText(h).includes(EXPENSE_LINK));
+    assert.ok(!JSON.stringify(plan).includes('expense_action_confirm'));
+  }
 });

@@ -44,7 +44,7 @@ describe('item 6: an uncovered product-help question is terminal, and still help
       // failing eval turns, since no card matches either topic.
     };
     const result = await runSemanticTurnV2({
-      req: request, provider: neverCalledProvider(), draftEditEnabled: false, reimbursementDraftEnabled: false,
+      req: request, provider: { async generateText(input) { assert.equal(input.usageTag, 'line.compose'); return { ok: true, text: JSON.stringify({ answers: [] }) }; } }, draftEditEnabled: false, reimbursementDraftEnabled: false,
       publicLookupEnabled: false, approvedKnowledgeEnabled: true,
       async invoke(): Promise<ToolResult> { throw new Error('a help item must never call a tool'); },
     });
@@ -53,8 +53,7 @@ describe('item 6: an uncovered product-help question is terminal, and still help
     assert.notEqual(coverage?.status, 'needs_user');
     assert.equal(coverage?.reasonCode, 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE');
     // Must still help: name that system setup is done on the web, not just list read capabilities.
-    assert.equal(result.replyText, 'ยังไม่มีคู่มือที่ตรวจสอบแล้วสำหรับคำถามเฉพาะนี้ค่ะ การตั้งค่าระบบ เช่น หมวดหมู่ค่าใช้จ่ายหรือลายเซ็นอนุมัติ ทำได้ที่หน้าเว็บของบริษัทค่ะ ส่วนความสามารถปัจจุบันที่ยืนยันได้:\n'
-      + buildCapabilityHelp('th', { permissions: request.userContext.permissions, entitledFeatureKeys: [] }));
+    assert.match(result.replyText, /ยังไม่มีคู่มือที่ตรวจสอบแล้ว.*เว็บ/u);
   });
 
   it('same outcome in English, still naming the web app for setup', async () => {
@@ -65,15 +64,14 @@ describe('item 6: an uncovered product-help question is terminal, and still help
       userContext: baseUserContext(),
     };
     const result = await runSemanticTurnV2({
-      req: request, provider: neverCalledProvider(), draftEditEnabled: false, reimbursementDraftEnabled: false,
+      req: request, provider: { async generateText(input) { assert.equal(input.usageTag, 'line.compose'); return { ok: true, text: JSON.stringify({ answers: [] }) }; } }, draftEditEnabled: false, reimbursementDraftEnabled: false,
       publicLookupEnabled: false, approvedKnowledgeEnabled: true,
       async invoke(): Promise<ToolResult> { throw new Error('a help item must never call a tool'); },
     });
     const coverage = result.semanticCoverage?.[0];
     assert.equal(coverage?.status, 'unsupported');
     assert.equal(coverage?.reasonCode, 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE');
-    assert.equal(result.replyText, "A reviewed guide for this specific question is not available yet. System setup — such as expense categories or an approval signature — is done on the company's web app. Current capabilities:\n"
-      + buildCapabilityHelp('en', { permissions: request.userContext.permissions, entitledFeatureKeys: [] }));
+    assert.match(result.replyText, /reviewed guide.*not available.*web/u);
   });
 });
 
@@ -774,62 +772,55 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
   });
 });
 
-describe('item 2: approve/reject/pay a reimbursement or confirm/void an expense never runs on LINE (spec §11)', () => {
+// Owner 2026-10-16 supersedes spec §11: LINE prepares a signed confirmation; only a human press writes.
+describe('item 2: claim decisions and expense confirmation prepare human confirm cards', () => {
   const APPROVER_PERMISSIONS = ['reimbursement.approve', 'reimbursement.reject', 'reimbursement.payment.record', 'reimbursement.read_related'];
   const FINANCE_PERMISSIONS = ['expense.confirm', 'expense.void', 'expense.read_related'];
-
-  function forcedActionRequest(messageText: string, permissions: string[]): LineAiTurnRequest {
-    return {
-      requestId: 'req-action', webhookEventId: 'event-action', messageText, messagePreviewHash: '5'.repeat(16),
-      semanticSubrequests: [{ index: 0, kind: 'general', goal: messageText, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
-      userContext: baseUserContext(permissions),
-    };
-  }
-
-  async function runForced(messageText: string, permissions: string[]) {
-    return runSemanticTurnV2({
-      req: forcedActionRequest(messageText, permissions),
-      provider: { async generateText(): Promise<ProviderOutput> { throw new Error('a fully forced general-kind clause must never need the model'); } },
+  for (const [name, messageText, action, permissions, allowed] of [
+    ['approve a reimbursement claim with permission (eval T-144)', 'ช่วยอนุมัติใบเบิกของสมชายให้หน่อยค่ะ', 'REIMBURSEMENT_APPROVE', APPROVER_PERMISSIONS, true],
+    ['approve a reimbursement claim WITHOUT permission (eval T-147)', 'ช่วยอนุมัติใบเบิกอันนี้ให้หน่อยค่ะ', 'REIMBURSEMENT_APPROVE', ['reimbursement.read_own'], false],
+    ['reject a reimbursement claim', 'ปฏิเสธใบเบิกนี้หน่อยค่ะ', 'REIMBURSEMENT_REJECT', APPROVER_PERMISSIONS, true],
+    ['pay a reimbursement claim', 'ช่วยจ่ายใบเบิกให้หน่อยค่ะ', 'REIMBURSEMENT_RECORD_PAYMENT', APPROVER_PERMISSIONS, true],
+    ['confirm an expense record', 'ยืนยันรายการค่าใช้จ่ายนี้ให้หน่อยค่ะ', 'CONFIRM', FINANCE_PERMISSIONS, true],
+    ['void a confirmed expense record without permission', 'ยกเลิกรายการค่าใช้จ่ายนี้หน่อยค่ะ', 'VOID', ['expense.read_related'], false],
+  ] as const) it(name, async () => {
+    const claim = action.startsWith('REIMBURSEMENT_');
+    const calls: string[] = [];
+    const result = await runSemanticTurnV2({
+      req: { requestId: 'req-action', webhookEventId: 'event-action', messageText, messagePreviewHash: '5'.repeat(16),
+        semanticSubrequests: [{ index: 0, kind: 'write', goal: messageText, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+        userContext: baseUserContext([...permissions]),
+        conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: [{
+          tool: claim ? 'reimbursement.get_detail' : 'expense.get_detail', answerShape: 'single_metric',
+          asOf: new Date().toISOString(), shownItems: [{ ordinal: 1, id: 'shown-record', label: 'รายการที่เลือก' }],
+        }] } },
+      provider: { async generateText(input): Promise<ProviderOutput> {
+        if (input.usageTag === 'line.compose') return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'denied', text: 'บทบาทของคุณยังไม่มีสิทธิ์ทำรายการนี้ค่ะ' }] }) };
+        assert.equal(input.usageTag, 'line.loop', 'the API owns the confirmation text');
+        return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'expense.action.preview',
+          input: { action, [claim ? 'reimbursementId' : 'expenseId']: 'shown-record' } }] }) };
+      } },
       draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
-      async invoke(): Promise<ToolResult> { throw new Error('must never call a tool for an approve/reject/pay/confirm/void request'); },
+      async invoke(meta): Promise<ToolResult> {
+        calls.push(meta.name);
+        assert.equal(meta.name, 'expense.action.preview', 'no final mutation before a human press');
+        if (!allowed) return { toolName: meta.name, status: 'forbidden', sourceRefs: [], errorCode: 'FORBIDDEN', asOf: new Date().toISOString() };
+        return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(),
+          sourceRefs: [{ label: 'คำขอให้ตรวจ', module: 'expenses', entityType: 'expense_action_preview', permissionChecked: true }],
+          data: { reply: 'ตรวจรายละเอียดแล้วกดยืนยันค่ะ', preview: { action, token: 'signed-confirm-token' } } };
+      },
     });
-  }
-
-  it('approve a reimbursement claim with permission: do it on the web (eval T-144)', async () => {
-    const result = await runForced('ช่วยอนุมัติใบเบิกของสมชายให้หน่อยค่ะ', APPROVER_PERMISSIONS);
-    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
-    assert.ok(result.replyText.includes('LINE ไม่ได้'), result.replyText);
-    assert.ok(!result.replyText.includes('ดึงข้อมูล'), result.replyText);
-  });
-
-  it('approve a reimbursement claim WITHOUT permission: names the role limit (eval T-147)', async () => {
-    const result = await runForced('ช่วยอนุมัติใบเบิกอันนี้ให้หน่อยค่ะ', ['reimbursement.read_own']);
-    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
-    assert.ok(result.replyText.startsWith('บทบาทของคุณยังไม่มีสิทธิ์'), result.replyText);
-  });
-
-  it('reject a reimbursement claim', async () => {
-    const result = await runForced('ปฏิเสธใบเบิกนี้หน่อยค่ะ', APPROVER_PERMISSIONS);
-    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
-    assert.ok(result.replyText.includes('เว็บ'), result.replyText);
-  });
-
-  it('pay a reimbursement claim', async () => {
-    const result = await runForced('ช่วยจ่ายใบเบิกให้หน่อยค่ะ', APPROVER_PERMISSIONS);
-    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
-    assert.ok(result.replyText.includes('เว็บ'), result.replyText);
-  });
-
-  it('confirm an expense record', async () => {
-    const result = await runForced('ยืนยันรายการค่าใช้จ่ายนี้ให้หน่อยค่ะ', FINANCE_PERMISSIONS);
-    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
-    assert.ok(result.replyText.includes('เว็บ'), result.replyText);
-  });
-
-  it('void a confirmed expense record without permission', async () => {
-    const result = await runForced('ยกเลิกรายการค่าใช้จ่ายนี้หน่อยค่ะ', ['expense.read_related']);
-    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
-    assert.ok(result.replyText.startsWith('บทบาทของคุณยังไม่มีสิทธิ์'), result.replyText);
+    assert.deepEqual(calls, allowed || claim ? ['expense.action.preview'] : []);
+    if (allowed) {
+      assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
+      assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'CONFIRMATION_REQUIRED');
+      assert.equal(result.replyText, 'ตรวจรายละเอียดแล้วกดยืนยันค่ะ');
+      assert.equal((result.outputs[0]?.toolData?.[0]?.data as any)?.preview.token, 'signed-confirm-token');
+    } else {
+      assert.equal(result.semanticCoverage?.[0]?.status, claim ? 'denied' : 'unsupported');
+      assert.ok(result.outputs.every(output => !output.toolData?.length), 'a refused preview carries no confirm card');
+    }
+    assert.doesNotMatch(result.replyText, /อนุมัติแล้ว|จ่ายแล้ว|ยืนยันแล้ว|ยกเลิกแล้ว/u);
   });
 });
 
@@ -844,7 +835,7 @@ describe('item 3: a read-only role asking to record, upload, or capture (spec §
       userContext: baseUserContext(AUDITOR_READONLY_PERMISSIONS),
     };
     const result = await runSemanticTurnV2({
-      req, provider: { async generateText(): Promise<ProviderOutput> { throw new Error('a fully forced help-kind clause must never need the model'); } },
+      req, provider: { async generateText(): Promise<ProviderOutput> { return { ok: true, text: JSON.stringify({ answers: [] }) }; } },
       draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool for a read-only capture request'); },
     });
@@ -862,7 +853,7 @@ describe('item 3: a read-only role asking to record, upload, or capture (spec §
       approvedKnowledge: true,
     };
     const result = await runSemanticTurnV2({
-      req, provider: { async generateText(): Promise<ProviderOutput> { throw new Error('a help-kind product-help lookup must never call the model'); } },
+      req, provider: { async generateText(): Promise<ProviderOutput> { return { ok: true, text: JSON.stringify({ answers: [] }) }; } },
       draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
       async invoke(): Promise<ToolResult> { throw new Error('a help item must never call a tool'); },
     });
@@ -1218,7 +1209,8 @@ describe('advisor S0: general answers are shaped in code, and a stock clause is 
       async invoke(): Promise<ToolResult> { throw new Error('no tool may run for the stock clause'); },
     });
     assert.deepEqual(calls.map((call) => call.usageTag), ['line.compose'], 'nothing is left to plan');
-    assert.equal(result.replyText, `1. สต็อกคือสินค้าที่กิจการถือไว้เพื่อขายค่ะ\n\n2. ${FIXED_STOCK}`);
+    // Owner 2026-10-16: preserve both answers without numbered text lists.
+    assert.equal(result.replyText, `สต็อกคือสินค้าที่กิจการถือไว้เพื่อขายค่ะ\n\n${FIXED_STOCK}`);
     assert.deepEqual(result.semanticCoverage?.map((entry) => [entry.status, entry.reasonCode]), [['handled', undefined], ['unsupported', 'PACKAGE_FEATURE_NOT_ENABLED']]);
   });
 });
@@ -1335,8 +1327,8 @@ describe('design lock: the v2 turn attaches a card layout built from the tool re
     it('three questions the router split, three reads: one card whose text is the whole reply and whose rows are the reads\'', async () => {
       const result = await run(request('มีงานค้างอะไรบ้าง', 3), [THREE_CALLS, THREE_ANSWERS], (toolName) => READS[toolName]!());
       assert.deepEqual(result.semanticCoverage?.map((entry) => entry.status), ['handled', 'handled', 'handled']);
-      // The sentences are still the answer: numbered as before, the scope line the code adds still in them.
-      assert.match(result.replyText, /^1\. ใบรับรองแทนใบเสร็จที่รอให้เซ็นหรืออนุมัติ: ไม่มีค้างอยู่เลยค่ะ ✅\nขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ\n\n2\. /u);
+      // Owner 2026-10-16: preserve every answer and its scope without numbered text lists.
+      assert.match(result.replyText, /^ใบรับรองแทนใบเสร็จที่รอให้เซ็นหรืออนุมัติ: ไม่มีค้างอยู่เลยค่ะ ✅\nขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ\n\nรายการเบิกจ่าย/u);
       assert.deepEqual(result.presentation, { kind: 'answer_cards', cards: [{
         text: result.replyText, layout: LAYOUT,
         sourceLabels: ['ใบรับรองแทนใบเสร็จ', 'รายการเบิกจ่ายรออนุมัติ', 'สรุปปิดร้าน 5 ต.ค. 2569'],

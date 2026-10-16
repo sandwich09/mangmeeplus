@@ -16,6 +16,21 @@ const OTHER_ADDRESS = '99 หมู่ 2 ตำบลบางโฉลง อ�
 
 type Counterparty = Record<string, any>;
 
+it('OCR-C resolves only a valid tax ID through the unique active company lookup', async () => {
+  const lookups: unknown[] = [];
+  let match: any = { legalName: 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด', displayName: 'ชื่อหน้าร้าน' };
+  const useCase = new EnsureVendorCounterpartyFromExpenseUseCase({
+    findUniqueActiveCounterpartyByTaxId: async (...args: unknown[]) => { lookups.push(args); return match; },
+  } as any, {} as any);
+  assert.equal(await useCase.resolveOcrVendorName(ctx, '0-1054-73325-38-5'), 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด');
+  assert.deepEqual(lookups, [['co-1', '0105473325385']]);
+  for (const invalid of ['', '123']) assert.equal(await useCase.resolveOcrVendorName(ctx, invalid), undefined);
+  assert.equal(lookups.length, 1);
+  match = null; assert.equal(await useCase.resolveOcrVendorName(ctx, '0105473325385'), undefined);
+  match = { displayName: 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด' };
+  assert.equal(await useCase.resolveOcrVendorName(ctx, '0105473325385'), match.displayName);
+});
+
 /**
  * `saveResults` drives the §11.1/§15 CAS return value one call at a time — `true` (the default once
  * the list runs out) is "won the race", `false` is "lost it, retry". `refetched` counts the re-reads
@@ -398,4 +413,12 @@ describe('the rules that keep this from hurting anything else', () => {
 
     assert.equal((key() as any).kind, 'NAME');
   });
+});
+
+for (const marker of ['sourceDocumentType', 'ocrDocumentType'] as const) it(`U1 shared guard skips ${marker} TRANSFER_SLIP before any registry effect`, async () => {
+  const h = harness();
+  const outcome = await h.useCase.execute(ctx, { ...vendor, vendorName: 'TEST FOODS CO', [marker]: 'TRANSFER_SLIP' });
+  assert.deepEqual(outcome, { result: { case: 'SKIPPED' } });
+  assert.equal(h.key(), null);
+  assert.deepEqual([h.created, h.saved, h.audits], [[], [], []]);
 });

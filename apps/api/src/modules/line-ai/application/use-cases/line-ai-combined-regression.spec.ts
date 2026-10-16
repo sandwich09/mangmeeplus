@@ -967,8 +967,8 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
   });
 
   it('every declared bound the combined lanes rely on is the reviewed one (guard)', () => {
-    assert.equal(AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxCalls, 4, 'the receipt chain must admit a read AND an extract');
-    assert.equal(AI_BUDGET_STEP_BOUNDS['line-intake-image'].maxCalls, 1);
+    assert.equal(AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxCalls, 8, 'read, extract, reread and extract, with one timeout retry per read and extraction');
+    assert.equal(AI_BUDGET_STEP_BOUNDS['line-intake-image'].maxCalls, 2);
     assert.equal(AI_BUDGET_STEP_BOUNDS['line-intake-text'].maxCalls, 1);
     assert.ok(AI_BUDGET_STEP_BOUNDS['line-turn'].maxCalls > 1);
     assert.equal(chatKeyHashOf(TEXT_EVENT).length > 0, true);

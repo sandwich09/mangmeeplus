@@ -59,6 +59,12 @@ commit this file ships with.
 
 ## Running real mode (real model calls — NOT run by this delivery)
 
+For local Anthropic API evals, save your key in `~/.config/mangmee/anthropic-api-key` (whitespace is trimmed).
+Override that path with `MANGMEE_EVAL_ANTHROPIC_KEY_FILE`; then run the launcher below without `AWS_PROFILE`.
+A nonempty key file takes precedence over `AWS_PROFILE`; otherwise the launcher uses Bedrock and requires that profile.
+The launcher logs `transport` and passes the key only to the child as `ANTHROPIC_API_KEY`, never to logs.
+This transport requires `APP_ENV=local` (set by the launcher); UAT/Production reject the key and stay on Bedrock.
+
 ```bash
 # 1. terminal A — leave running
 AWS_PROFILE=<your profile> node scripts/line-ai-expense-advisor/launch-gateway.mjs

@@ -25,7 +25,7 @@ import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.c
 import { admitCompanyOcr, companyOcrErrorCode, isSinglePageReceiptImage, releaseCompanyOcrAdmission, settleCompanyOcrAdmission, type CompanyOcrSourceRoute } from '../../../line-ai/application/company-ocr-governance';
 import { safeLineErrorDetails } from '../../../line-ai/infrastructure/line-reply.adapter';
 import { assembleCaptureObservations, planWindows, priorDocuments } from '../../domain/logic/expense-capture-assembly.logic';
-import { isExpenseExtractionEligible } from '../../domain/logic/expense-document.logic';
+import { isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import { captureFieldsFromObservations } from '../../domain/logic/expense-capture-fields.logic';
 import { planCaptureSinglePageChunk, planCapturePreprocessing, type CaptureChunkPlan } from '../../domain/logic/expense-capture-preprocess.logic';
 import { PrismaExpenseCaptureRepository, type CaptureReadJobRow } from '../../infrastructure/prisma-expense-capture.repository';
@@ -36,7 +36,7 @@ import { aiSelectableExpenseCategories } from './expense-category-bootstrap.serv
 import { isStaleOcrApply, ReceiptOcrApplyService } from './receipt-ocr-apply.service';
 
 /** Appendix §4.5: the lease one chunk must comfortably fit inside, renewed after every chunk. */
-export const EXPENSE_CAPTURE_LEASE_MS = 120_000;
+export const EXPENSE_CAPTURE_LEASE_MS = 210_000;
 /** Per-job ceilings of §4.6. Reaching one PAUSEs with the reason, keeping everything read so far. */
 export const EXPENSE_CAPTURE_MAX_PROVIDER_CALLS = 40;
 /** §4.6 "เวลา ≤ 15 นาที" — of the JOB, summed over every resume, not of one lucky attempt. */
@@ -48,7 +48,7 @@ export const EXPENSE_CAPTURE_MAX_ATTEMPTS = 5;
 export const EXPENSE_CAPTURE_READ_FINISHED_EVENT: typeof EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE = EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE;
 
 type CaptureCheckpoint = {
-  windowPlanVersion?: 2;
+  windowPlanVersion?: 2 | 3;
   version: 1;
   /** Page index → what stage 1 read. Bounded per page by the gateway's own page cap. */
   pages: Record<string, { text: string; truncated?: boolean; blank?: boolean }>;
@@ -235,7 +235,16 @@ export class ExpenseCaptureReadRunnerService {
       return { status: 'FAILED', errorCode: plan.failure };
     }
 
-    let manifest = buildManifest(plan);
+    let manifest = markPages(buildManifest(plan), Object.entries(checkpoint.pages).map(([index, page]) => ({
+      index: Number(index), state: page.blank ? 'blank'
+        : page.truncated || (plan.pageCount === 1 && transcriptionStopsBeforeTotals(page.text)) ? 'partial' : 'read',
+    })));
+    for (const chunk of plan.chunks) {
+      if (chunk.pageIndexes.every(page => checkpoint.pages[String(page)] && !checkpoint.pages[String(page)]!.truncated)) {
+        manifest = markChunk(manifest, chunk.id, 'done');
+        checkpoint = { ...checkpoint, chunks: { ...checkpoint.chunks, [chunk.id]: 'done' } };
+      }
+    }
     // The manifest is durable BEFORE the first provider call, so a crash mid-read still tells the
     // reviewer how many pages the file has and which of them nobody has read yet.
     if (!await this.capture.updateJobFenced({ jobId: job.id, leaseOwner: owner, data: { manifestJson: manifest as never } })) {
@@ -264,7 +273,7 @@ export class ExpenseCaptureReadRunnerService {
 
     for (let index = 0; index < queue.length; index += 1) {
       const chunk = queue[index]!;
-      if (checkpoint.chunks[chunk.id] === 'done') continue;
+      if (chunk.pageIndexes.every(page => checkpoint.pages[String(page)] && !checkpoint.pages[String(page)]!.truncated)) continue;
       if (calls >= EXPENSE_CAPTURE_MAX_PROVIDER_CALLS) { pausedReason = 'call_budget'; break; }
       if (spentMs() > EXPENSE_CAPTURE_MAX_RUN_MS) { pausedReason = 'time_budget'; break; }
       // Measured BEFORE the call: the chunk is already in memory, and the point of the ceiling is
@@ -277,10 +286,10 @@ export class ExpenseCaptureReadRunnerService {
 
       let result = await this.readChunk(job, chunk);
       calls += 1;
-      // One retry for a provider hiccup; a money refusal is NOT retried — it would refuse again
+      // One retry for a timeout; a money refusal is NOT retried — it would refuse again
       // and each attempt is a fresh hold.
-      if (result.status !== 'ok' && !isBudgetRefusal(result.errorCode) && calls < EXPENSE_CAPTURE_MAX_PROVIDER_CALLS) {
-        result = await this.readChunk(job, chunk);
+      if (result.status !== 'ok' && result.errorCode === 'PROVIDER_TIMEOUT' && calls < EXPENSE_CAPTURE_MAX_PROVIDER_CALLS) {
+        result = await this.readChunk(job, chunk, true);
         calls += 1;
       }
       if (result.status !== 'ok') {
@@ -299,7 +308,15 @@ export class ExpenseCaptureReadRunnerService {
           ...(page.blank ? { blank: true } : {}),
         };
       }
-      checkpoint = { ...checkpoint, pages, chunks: { ...checkpoint.chunks, [chunk.id]: 'done' }, derivativeBytes };
+      // Later windows consume priorDocuments: replacing a partial page invalidates that window
+      // and its dependants, even if their own text is unchanged. Complete earlier pages stay paid.
+      const oldWindows = new Map(planWindows(checkpoint.pages).map(window => [window.id, window.pages]));
+      const newWindows = planWindows(pages);
+      const changedIndex = newWindows.findIndex(window => JSON.stringify(oldWindows.get(window.id)) !== JSON.stringify(window.pages));
+      const reusable = new Set(newWindows.slice(0, changedIndex < 0 ? newWindows.length : changedIndex).map(window => window.id));
+      const windows = checkpoint.windowPlanVersion === 3 ? Object.fromEntries(Object.entries(checkpoint.windows)
+        .filter(([id]) => reusable.has(id))) : checkpoint.windows;
+      checkpoint = { ...checkpoint, pages, windows, chunks: { ...checkpoint.chunks, [chunk.id]: 'done' }, derivativeBytes };
       if (result.modelLineage) lineage.push(result.modelLineage);
       checkpoint = { ...checkpoint, lineage: lineage.slice(0, 8) };
       manifest = markChunk(manifest, chunk.id, 'done');
@@ -332,14 +349,13 @@ export class ExpenseCaptureReadRunnerService {
     // pages that WERE read are worth more to the reviewer than a job that reports only a pause.
     if (!pausedReason) {
       const savedWindows = Object.values(checkpoint.windows);
-      // Old long-page checkpoints indexed windows after silently clipping page tails. Their wN
-      // identities cannot be applied to the complete window plan, nor upgraded by inference.
-      if (savedWindows.length && checkpoint.windowPlanVersion !== 2 && Object.values(checkpoint.pages).some(page => (page.text?.length ?? 0) > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars)) {
+      // Earlier window ids could cover several pages. Never apply one to a new single-page window.
+      if (savedWindows.length && checkpoint.windowPlanVersion !== 3) {
         return { status: 'FAILED', errorCode: 'CAPTURE_WINDOW_EVIDENCE_VERSION_CHANGED' };
       }
-      checkpoint = { ...checkpoint, windowPlanVersion: 2 };
+      checkpoint = { ...checkpoint, windowPlanVersion: 3 };
       const windows = planWindows(checkpoint.pages);
-      manifest = { ...manifest, windows: windows.map((window) => ({ id: window.id, pageIndexes: window.pageIndexes, state: 'pending' as const })) };
+      manifest = { ...manifest, windows: windows.map((window) => ({ id: window.id, pageIndexes: window.pageIndexes, state: checkpoint.windows[window.id] ? 'done' as const : 'pending' as const })) };
       // The shop's active categories minus the catch-all, so each document can name one the apply
       // below writes when it clearly fits, by the photo reader's rule (Owner 2026-09-29).
       const activeCategories = aiSelectableExpenseCategories(await this.expenses.listCategories(job.companyId))
@@ -351,10 +367,10 @@ export class ExpenseCaptureReadRunnerService {
         if (!await this.capture.renewJobLease({ jobId: job.id, leaseOwner: owner, leaseMs: EXPENSE_CAPTURE_LEASE_MS })) {
           return { status: 'CANCELLED' };
         }
-        const result = await this.client.extractWindow({
+        const extract = (retry = false) => this.client.extractWindow({
           companyId: job.companyId,
           userId: 'system',
-          requestId: `${job.id}:${window.id}`,
+          requestId: `${job.id}:${window.id}${retry ? ':timeout-retry' : ''}`,
           jobId: job.id,
           windowId: window.id,
           window: {
@@ -365,7 +381,14 @@ export class ExpenseCaptureReadRunnerService {
           },
           activeCategories,
         });
+        let result = await extract();
         calls += 1;
+        if (result.status !== 'ok' && result.errorCode === 'PROVIDER_TIMEOUT'
+          && calls < EXPENSE_CAPTURE_MAX_PROVIDER_CALLS && spentMs() <= EXPENSE_CAPTURE_MAX_RUN_MS) {
+          if (!await this.capture.renewJobLease({ jobId: job.id, leaseOwner: owner, leaseMs: EXPENSE_CAPTURE_LEASE_MS })) return { status: 'CANCELLED' };
+          result = await extract(true);
+          calls += 1;
+        }
         if (result.status !== 'ok') {
           if (isBudgetRefusal(result.errorCode)) { pausedReason = 'ai_credit'; break; }
           manifest = markWindow(manifest, window.id, 'failed');
@@ -382,7 +405,8 @@ export class ExpenseCaptureReadRunnerService {
     }
 
     const assembled = assembleCaptureObservations(
-      Object.entries(checkpoint.windows).map(([id, observations]) => ({ id, observations })),
+      planWindows(checkpoint.pages).flatMap(window => checkpoint.windows[window.id]
+        ? [{ id: window.id, pageIndexes: window.pageIndexes, observations: checkpoint.windows[window.id]! }] : []),
       { pageCount: plan.pageCount },
     );
     const hasFacts = assembled.documents.length > 0;
@@ -414,15 +438,16 @@ export class ExpenseCaptureReadRunnerService {
       // Never a silent cut: the declared page scope was read, the rest stay `pending` (§4.1).
       return { status: 'PAUSED', pausedReason: 'page_limit', ...common(assembled, write.applied, splitIds) };
     }
-    if (failedChunks > 0 || unreadPages > 0 || !hasFacts) {
+    if (failedChunks > 0 || unreadPages > 0 || manifest.windows.some(window => window.state !== 'done') || !hasFacts) {
       return { status: 'PARTIAL', ...common(assembled, write.applied, splitIds) };
     }
     return { status: 'DONE', ...common(assembled, write.applied, splitIds) };
   }
 
-  private async readChunk(job: CaptureReadJobRow, chunk: CaptureChunkPlan) {
+  private async readChunk(job: CaptureReadJobRow, chunk: CaptureChunkPlan, retry = false) {
     const wire: ExpenseCaptureReadChunk = {
       id: chunk.id,
+      ...(chunk.sourceMimeType ? { sourceMimeType: chunk.sourceMimeType } : {}),
       kind: chunk.kind,
       mimeType: chunk.mimeType,
       pageIndexes: chunk.pageIndexes,
@@ -436,7 +461,7 @@ export class ExpenseCaptureReadRunnerService {
       } : {}),
     };
     return this.client.readChunk({
-      companyId: job.companyId, userId: 'system', requestId: `${job.id}:${chunk.id}`,
+      companyId: job.companyId, userId: 'system', requestId: `${job.id}:${chunk.id}${retry ? ':timeout-retry' : ''}`,
       jobId: job.id, fileLabel: wire.fileLabel, chunk: wire,
     });
   }
@@ -549,6 +574,8 @@ export class ExpenseCaptureReadRunnerService {
         // §16.4: the file this read is OF, so the apply can retire a `sourceStale` warning that
         // was raised about the file this one replaced.
         sourceAttachmentId: job.attachmentId,
+        ocrDocumentType: toSourceDocumentType(sourceDocumentTypeFromClassification(mapped.classification ?? null)),
+        sourceDocumentType: toSourceDocumentType(sourceDocumentTypeFromClassification(mapped.classification ?? null)),
       },
     );
     if (isStaleOcrApply(outcome) || !outcome.committedUpdatedAt) {
@@ -651,7 +678,7 @@ export class ExpenseCaptureReadRunnerService {
       {
         schemaVersion: 1,
         companyId: job.companyId,
-        requestId: job.id,
+        requestId: `${job.id}:${job.attempts}`,
         jobId: job.id,
         ownerType: job.ownerType,
         groupId: job.groupId,
@@ -711,7 +738,7 @@ function readCheckpoint(value: unknown): CaptureCheckpoint {
     pages: raw.pages && typeof raw.pages === 'object' ? raw.pages : {},
     chunks: raw.chunks && typeof raw.chunks === 'object' ? raw.chunks : {},
     windows: raw.windows && typeof raw.windows === 'object' ? raw.windows : {},
-    ...(raw.windowPlanVersion === 2 ? { windowPlanVersion: 2 as const } : {}),
+    ...([2, 3].includes(raw.windowPlanVersion ?? 0) ? { windowPlanVersion: raw.windowPlanVersion } : {}),
     ...(raw.ocrEventId ? { ocrEventId: raw.ocrEventId } : {}),
     // The two per-JOB meters. A stored value that is not a finite number is treated as no value
     // rather than as zero of a budget — a corrupted checkpoint must not hand out a fresh run.

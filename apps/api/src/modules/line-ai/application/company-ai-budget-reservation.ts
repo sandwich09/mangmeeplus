@@ -867,9 +867,10 @@ export async function settleAiBudgetStep(
       if (!Number.isFinite(thbPerUsd) || thbPerUsd <= 0) return 'invalid-state' as const;
       // The operator charged the DECLARED bound, which is the number this hold has been holding all
       // along — never a price recomputed from the zero counters the decision carries.
+      const absorbed = !operator && input.entry.ok === false;
       const isV2 = (reservation.pricingSnapshot as { contractVersion?: number }).contractVersion === 2;
-      const pinned = isV2 && !operator ? computePinnedAiCostV2(reservation.pricingSnapshot as AiRenderedPricingSnapshotV2, input.entry, input.externalUnits) : null;
-      if (isV2 && !operator && !pinned) {
+      const pinned = isV2 && !operator ? computePinnedAiCostV2(reservation.pricingSnapshot as AiRenderedPricingSnapshotV2, input.entry, absorbed ? input.externalUnits ?? (reservation.pricingSnapshot as AiRenderedPricingSnapshotV2).externalUnitBound : input.externalUnits) : null;
+      if (isV2 && !operator && !absorbed && !pinned) {
         // Preserve the paid evidence while the hosted-unit/tariff discrepancy is reconciled.
         await tx.aiBudgetReservation.update({ where: { id: reservation.id }, data: { status: 'UNRESOLVED', evidenceJson: {
           reason: 'TARIFF_OR_EXTERNAL_USAGE_UNRESOLVED', entry: { modelId: input.entry.modelId, tag: input.entry.tag, ok: input.entry.ok,
@@ -887,7 +888,7 @@ export async function settleAiBudgetStep(
       const callCount = operator ? 0 : 1;
       const usageBasis = operator
         ? 'OPERATOR_CHARGED_AT_BOUND'
-        : normalizeUsageBasis((input.entry as { usageBasis?: unknown }).usageBasis);
+        : absorbed ? 'COMPANY_ABSORBED' : normalizeUsageBasis((input.entry as { usageBasis?: unknown }).usageBasis);
 
       await tx.aiUsageEvent.create({
         data: {
@@ -906,39 +907,44 @@ export async function settleAiBudgetStep(
           invocationKey: input.invocationKey,
         },
       });
-      const delta = {
-        costSatang, inputTokens: input.entry.inputTokens, outputTokens: input.entry.outputTokens,
-        cacheReadInputTokens: input.entry.cacheReadInputTokens, cacheWriteInputTokens: input.entry.cacheWriteInputTokens,
-      };
-      // Row order is FIXED across every writer of these two tables (`recordCompanyAiUsage`, this
-      // function and `recordCompanyAiCostAdjustment`): month aggregate FIRST, then the bucket rows
-      // in CHAT-before-OCR order. Two transactions taking them in opposite orders is a textbook
-      // deadlock, and the victim's usage would be LOST, not retried.
-      //
-      // The PINNED month, never the clock's: a chain that crosses Bangkok midnight still lands here.
-      await tx.companyAiMonthlyUsage.upsert({
-        where: { companyId_monthKey: { companyId: reservation.companyId, monthKey: reservation.monthKey } },
-        create: { companyId: reservation.companyId, monthKey: reservation.monthKey, callCount, ...delta },
-        update: {
-          costSatang: { increment: delta.costSatang }, callCount: { increment: callCount },
-          inputTokens: { increment: delta.inputTokens }, outputTokens: { increment: delta.outputTokens },
-          cacheReadInputTokens: { increment: delta.cacheReadInputTokens },
-          cacheWriteInputTokens: { increment: delta.cacheWriteInputTokens },
-        },
-      });
-      await upsertBucketUsage(tx, reservation.companyId, reservation.monthKey, reservation.bucket, costSatang, callCount);
+      if (!absorbed) {
+        const delta = {
+          costSatang, inputTokens: input.entry.inputTokens, outputTokens: input.entry.outputTokens,
+          cacheReadInputTokens: input.entry.cacheReadInputTokens, cacheWriteInputTokens: input.entry.cacheWriteInputTokens,
+        };
+        // Row order is FIXED across every writer of these two tables (`recordCompanyAiUsage`, this
+        // function and `recordCompanyAiCostAdjustment`): month aggregate FIRST, then the bucket rows
+        // in CHAT-before-OCR order. Two transactions taking them in opposite orders is a textbook
+        // deadlock, and the victim's usage would be LOST, not retried.
+        //
+        // The PINNED month, never the clock's: a chain that crosses Bangkok midnight still lands here.
+        await tx.companyAiMonthlyUsage.upsert({
+          where: { companyId_monthKey: { companyId: reservation.companyId, monthKey: reservation.monthKey } },
+          create: { companyId: reservation.companyId, monthKey: reservation.monthKey, callCount, ...delta },
+          update: {
+            costSatang: { increment: delta.costSatang }, callCount: { increment: callCount },
+            inputTokens: { increment: delta.inputTokens }, outputTokens: { increment: delta.outputTokens },
+            cacheReadInputTokens: { increment: delta.cacheReadInputTokens },
+            cacheWriteInputTokens: { increment: delta.cacheWriteInputTokens },
+          },
+        });
+        await upsertBucketUsage(tx, reservation.companyId, reservation.monthKey, reservation.bucket, costSatang, callCount);
+      }
 
       // No clamp, ever. The FULL actual is already recorded above; this only closes the scope.
       // An operator charge lands exactly ON the bound, so this decision can never open a breach.
-      const breached = costSatang > reservation.upperBoundSatang
+      const breached = !absorbed && (costSatang > reservation.upperBoundSatang
         || isV2 && !operator && typeof input.externalUnits === 'number'
-          && input.externalUnits > (reservation.pricingSnapshot as AiRenderedPricingSnapshotV2).externalUnitBound;
+          && input.externalUnits > (reservation.pricingSnapshot as AiRenderedPricingSnapshotV2).externalUnitBound);
       await tx.aiBudgetReservation.update({
         where: { id: reservation.id },
         data: {
-          status: 'SETTLED', settledCostSatang: costSatang, settledAt: now, breach: breached,
+          status: absorbed ? 'CANCELLED' : 'SETTLED', settledCostSatang: absorbed ? 0 : costSatang, settledAt: now, breach: breached,
           usageBasis,
           evidenceJson: { tag: input.entry.tag, modelId: input.entry.modelId, ok: input.entry.ok,
+            ...(absorbed ? { reason: 'COMPANY_ABSORBED', absorbedCostSatang: costSatang, cancelledAt: now.toISOString(),
+              providerUsageBasis: normalizeUsageBasis(input.entry.usageBasis),
+              ...(typeof input.entry.errorCode === 'string' ? { errorCode: input.entry.errorCode.slice(0, 64) } : {}) } : {}),
             inputTokens: input.entry.inputTokens, outputTokens: input.entry.outputTokens,
             cacheReadInputTokens: input.entry.cacheReadInputTokens, cacheWriteInputTokens: input.entry.cacheWriteInputTokens,
             ...(isV2 ? { externalUnits: input.externalUnits ?? null, contractVersion: 2 } : {}),
@@ -951,7 +957,7 @@ export async function settleAiBudgetStep(
       // Add-on spec §5.3: a funded hold becomes use on the lots it held (charge-at-bound included).
       // After an operator released it (CANCELLED) that credit may already fund other work, so the
       // late cost is the provider's, never a second debit (spec §15.2).
-      if ((reservation.pricingSnapshot as { aiCredit?: unknown } | null)?.aiCredit && reservation.status !== 'CANCELLED') {
+      if (!absorbed && (reservation.pricingSnapshot as { aiCredit?: unknown } | null)?.aiCredit && reservation.status !== 'CANCELLED') {
         await consumeAiCreditHold(tx, { companyId: reservation.companyId, reservationId: reservation.id, costSatang });
       }
       // In the SAME transaction as the money: an operator's money decision may never commit

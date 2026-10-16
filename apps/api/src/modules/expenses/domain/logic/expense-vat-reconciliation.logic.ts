@@ -445,7 +445,15 @@ export function reconcileExpenseVat(input: {
       status = 'NEEDS_REVIEW';
     } else if (distinctRates.size > 1 && !difference.eq(0) && !singleRateMixedDocument) {
       status = 'NEEDS_REVIEW';
-    } else if (difference.abs().gt(TOLERANCE)) {
+    } else if (difference.abs().gt(TOLERANCE)
+      // A complete single-rate bill can round VAT once for the document rather than per row.
+      // Prove both printed amounts from the unchanged base; never widen a mismatch tolerance.
+      && !(distinctRates.size === 1 && calculated.every(line => line.vatRate !== null)
+        && input.vatMode === 'VAT_EXCLUDED' && input.sourceTaxableAmount != null && input.sourceGrossAmount != null
+        && decimal(input.sourceTaxableAmount).eq(calculatedTotals.taxableAmount)
+        && decimal(calculatedTotals.taxableAmount).mul(decimal(calculated[0]?.vatRate))
+          .toDecimalPlaces(2, Decimal.ROUND_HALF_UP).eq(decimal(source.vatAmount))
+        && decimal(input.sourceGrossAmount).eq(decimal(calculatedTotals.taxableAmount).plus(decimal(source.vatAmount))))) {
       status = 'MISMATCH';
     } else {
       status = 'MATCHED';

@@ -91,7 +91,7 @@ test('selected mixed action restores only its original clause across restart wit
     assert.equal(await flow.preserveSemanticTask(next, selected), true);
     assert.equal((await context.projection(owner))!.tasks[0]!.subrequests[1]!.status, 'needs_user');
     const remaining = await flow.remainingTaskChoiceMessages(next);
-    assert.equal(remaining.length, 1); assert.match(remaining[0].text, /950/);
+    assert.equal(remaining.length, 1); assert.equal(remaining[0].text.split('\n').length, 1); assert.equal(remaining[0].quickReply.items.length, 1);
     await flow.settleSemanticTask(next, [{ index: 0, status: 'needs_user', question: 'confirm preview' }], ['selected-reimbursement-action']);
     const previewTask = (await context.projection(owner))!.tasks[0]!;
     assert.equal(previewTask.sourceRevisionLocators!.length, 2, 'preview keeps both immutable original source locators');

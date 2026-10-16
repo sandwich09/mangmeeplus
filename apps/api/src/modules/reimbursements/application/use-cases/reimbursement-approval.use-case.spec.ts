@@ -115,6 +115,7 @@ function fakeRepo(req: any, policy: any = FINANCE_REVIEW_ON, events: any[] = [],
     findClaimPayoutHolderType: async (claim: any) => claim.payoutSnapshot?.holderType,
     beginApprovalDecisionAtomic: async (data: any) => {
       const step = req.approvalSteps[0];
+      if (data.previewOnly) return { request: req, resumed: false, approvalStepId: step.id };
       step.status = 'APPROVED'; step.decisionByUserId = data.actorUserId; step.decidedAt = data.decidedAt;
       if (data.financeReviewRequired) Object.assign(req, data.financeRequestPatch);
       req.updatedAt = new Date(req.updatedAt.getTime() + 1);
@@ -305,7 +306,7 @@ describe('ApproveReimbursementUseCase', () => {
 
   it('projects only at final manager approval when finance review is not required', async () => {
     const lines = [
-      lineRecord({ id: 'rbl-1', amount: '500.0000' }),
+      lineRecord({ id: 'rbl-1', amount: '500.0000', attachmentId: 'receipt-1' }),
       lineRecord({ id: 'rbl-2', lineNo: 2, amount: '250.0000', description: 'Hotel', purpose: 'Client visit', attachmentId: 'att-9' }),
     ];
     const req = baseRequest({ lines });
@@ -341,7 +342,7 @@ describe('ApproveReimbursementUseCase', () => {
   });
 
   it('keeps the request pending and emits no approved event when projection fails', async () => {
-    const req = baseRequest({ lines: [lineRecord({ id: 'rbl-1', amount: '500.0000' })] });
+    const req = baseRequest({ lines: [lineRecord({ id: 'rbl-1', amount: '500.0000', attachmentId: 'receipt-1' })] });
     const policy = { financeReviewRequired: false, allowSelfApproval: false, allowMissingReceiptWithReason: false } as any;
     const events: any[] = [];
     const projections = { execute: async () => { throw new Error('projection failed'); } };
@@ -914,10 +915,10 @@ describe('solo requester on a custom role (owner order 2026-09-21)', () => {
   const soloSnapshot = {
     schemaVersion: 1, policyId: 'policy-1', policyVersion: '2026-01-01T00:00:00.000Z', approvalRequiredFromAmount: '1.00', requiresApproval: true,
     route: { mode: 'CUSTOM_ROLE', roleKey: 'CUSTOM_SOLO', effectiveTaskRole: 'CUSTOM_SOLO', ownerFallbackUsedAtSubmission: false, soloSelfApprovalAtSubmission: true },
-    allowSelfApproval: false, requireReceipt: false, allowMissingReceiptWithReason: false, duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: false,
+    allowSelfApproval: false, requireReceipt: false, allowMissingReceiptWithReason: true, duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: false,
   };
   const soloClaim = () => baseRequest({
-    requesterUserId: 'solo-1', approvalPolicySnapshotJson: soloSnapshot, lines: [lineRecord()],
+    requesterUserId: 'solo-1', approvalPolicySnapshotJson: soloSnapshot, missingReceiptReason: 'ใบเสร็จหาย', lines: [lineRecord()],
     approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'CUSTOM_SOLO', assignedApproverUserIds: ['solo-1'] }],
   });
   const soloPermissions = compileRole({ capabilityPackKeys: ['pack.reimbursement.approve'], entitledFeatureKeys: null }).permissionKeys;
@@ -956,7 +957,7 @@ describe('solo requester on a custom role (owner order 2026-09-21)', () => {
     const policy = {
       id: 'policy-1', updatedAt: new Date('2026-01-01T00:00:00.000Z'), currency: 'THB', approvalRequiredFromAmount: '1.00',
       approverMode: 'CUSTOM_ROLE', defaultApproverRole: 'CUSTOM_SOLO', allowSelfApproval: false, requireReceipt: false,
-      allowMissingReceiptWithReason: false, duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: false, status: 'ACTIVE',
+      allowMissingReceiptWithReason: true, duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: false, status: 'ACTIVE',
     } as any;
     const state = requestRepo();
     state.repo.findPolicy = async () => policy;
@@ -1487,4 +1488,125 @@ describe('multi payout 2a acceptance', () => {
       assert.equal(audits.find((row) => row.action === 'reimbursement.payout.verify').metadataJson.byRequester, own);
     }
   });
+});
+
+// Round 3: preview traverses the real decision guards and stops before audit/outbox/projection writes.
+describe('LINE reimbursement approval read-only preview', () => {
+  for (const decision of ['approve', 'reject'] as const) {
+    it(`${decision}: respects frozen multi-role recipients, rejects outsiders, permission/status changes and stale revision`, async () => {
+      const req = baseRequest({ approvalSnapshotHash: SEEN_HASH });
+      req.approvalSteps[0].assignedApproverUserIds = ['manager-2', 'accountant-2'];
+      const events: any[] = [], repo = fakeRepo(req, FINANCE_REVIEW_ON, events);
+      const audit: any = { log: async () => assert.fail('preview must not audit a mutation') };
+      repo.beginApprovalDecisionAtomic = async (input: any) => { assert.equal(input.previewOnly, true); return { request: req, approvalStepId: 'step-1' }; };
+      repo.rejectRequestAtomic = async () => assert.fail('preview must not write');
+      const approve = new ApproveReimbursementUseCase(repo, audit, { execute: async () => assert.fail('preview must not project') } as any, fakeDetailEvidence as any);
+      const reject = new RejectReimbursementUseCase(repo, audit, fakeDetailEvidence as any);
+      const run = (actor: any, revision = req.updatedAt) => decision === 'approve'
+        ? approve.execute(actor, req.id, undefined, SEEN_HASH, undefined, undefined, { previewOnly: true, expectedUpdatedAt: revision })
+        : reject.execute(actor, req.id, 'หลักฐานไม่ครบ', undefined, { previewOnly: true, expectedUpdatedAt: revision });
+      for (const userId of ['manager-2', 'accountant-2']) {
+        const result = await run(ctx({ userId, roles: ['CUSTOM_ROLE'], permissions: ['reimbursement.read'], authProvider: 'line' }));
+        assert.equal(result.status, 'PENDING_APPROVAL');
+      }
+      await assert.rejects(() => run(ctx({ userId: 'unassigned', roles: ['MANAGER'] })), /not_eligible_approver/);
+      await assert.rejects(() => run(ctx({ userId: 'unassigned', permissions: ['reimbursement.read'] })), /Missing permission/);
+      await assert.rejects(() => run(ctx(), new Date(0)), /version_changed/);
+      req.status = 'PAID'; await assert.rejects(() => run(ctx()), /not_awaiting_approval/);
+      assert.equal(events.length, 0);
+    });
+  }
+  it('reject needs a reason and approval needs the exact displayed payout version/third-party consent', async () => {
+    const req = baseRequest({ approvalSnapshotHash: SEEN_HASH, payoutFingerprint: 'frozen-account', payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2,
+      payoutSnapshot: { holderType: 'THIRD_PARTY' }, payoutDestinationSnapshotJson: { accountLast4: '1234' } });
+    const repo = fakeRepo(req);
+    const reject = new RejectReimbursementUseCase(repo, noopAudit, fakeDetailEvidence as any);
+    await assert.rejects(() => reject.execute(ctx(), req.id, '', undefined, { previewOnly: true }), /rejection_reason_required/);
+    const approve = new ApproveReimbursementUseCase(repo, noopAudit, {} as any, fakeDetailEvidence as any);
+    await assert.rejects(() => approve.execute(ctx(), req.id, undefined, SEEN_HASH, 1, true, { previewOnly: true }), /payout/);
+  });
+});
+
+it('Fix-up 20A C03: seeded claim uses a real snapshot and reaches approve preview then signed approval', async () => {
+  const { buildCompanySeed } = await import('../../../../../../../scripts/line-ai-expense-advisor/seed');
+  const { claimSnapshotFields, computeSnapshotHash } = await import('../../domain/logic/reimbursement.logic');
+  const { toRequestDetail } = await import('../dto/reimbursement.mapper');
+  const { LineExpenseActionService } = await import('../../../line-ai/application/line-expense-action.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const seeded = buildCompanySeed('A', new Date('2026-10-16T07:58:00.000Z'));
+  const data: any = seeded.rows.find(row => row.model === 'reimbursementRequest' && row.data.id === 'reimbursement-company-a-5')!.data;
+  const step: any = seeded.rows.find(row => row.model === 'reimbursementApprovalStep' && row.data.reimbursementRequestId === data.id)!.data;
+  const req = baseRequest({ ...data, currency: 'THB', updatedAt: new Date('2026-10-16T07:58:00.123Z'),
+    approvalSteps: [{ ...step, assignedAt: data.submittedAt }],
+    lines: [{ id: `rbl_${data.id}`, companyId: data.companyId, reimbursementRequestId: data.id, lineNo: 1,
+      incurredDate: data.incurredDate, description: data.reason, categoryKey: data.categoryKey, amount: data.amount }] });
+  assert.equal(req.approvalSnapshotHash, computeSnapshotHash(claimSnapshotFields(req)));
+  assert.equal(step.requestSnapshotHash, req.approvalSnapshotHash);
+  const { PrismaReimbursementRepository } = await import('../../infrastructure/prisma-reimbursement.repository');
+  const guardedRepository = new PrismaReimbursementRepository({} as any, {} as any);
+  const repo = fakeRepo(req), begin = repo.beginApprovalDecisionAtomic; let decisions = 0;
+  repo.beginApprovalDecisionAtomic = async (input: any) => {
+    assert.equal(input.expectedUpdatedAt.getTime(), req.updatedAt.getTime());
+    assert.equal((guardedRepository as any).assertApprovalSnapshot(req, input.expectedApprovalSnapshotHash), req.approvalSnapshotHash);
+    if (!input.previewOnly) decisions++; return begin(input);
+  };
+  const actor = ctx({ companyId: seeded.companyId, userId: seeded.users.MANAGER.userId, authProvider: 'line', scopes: { branchIds: seeded.branchIds } });
+  const service = new LineExpenseActionService({ client: { aiConversation: { findFirst: async () => ({ id: 'line-v2:c03', lifecycleEpoch: 1 }) } } } as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, new LineDraftPreviewStore<any>(), { aiGatewayInternalSecret: 'c03-secret' } as any,
+    { execute: async () => toRequestDetail(req) } as any, undefined, undefined, approveUC(repo).useCase);
+  const preview = await service.preview(actor, 'c03-chat', { action: 'REIMBURSEMENT_APPROVE', reimbursementId: req.id }, true);
+  assert.ok(preview.preview, preview.reply); assert.equal(decisions, 0);
+  const result = await service.apply(actor, 'c03-chat', { action: 'expense_action_confirm', token: preview.preview.token });
+  assert.equal(result.status, 'applied', result.reply); assert.equal(decisions, 1);
+  assert.equal(req.status, 'FINANCE_REVIEW');
+});
+
+it('Fix-up 21A: approve preview and apply share projection confirmation guards before any decision; reject remains available', async () => {
+  for (const previewOnly of [true, false]) for (const [name, line, reason, allowed, error] of [
+    ['no receipt', {}, undefined, true, /receipt attachment/],
+    ['policy disallows missing receipt', {}, 'ร้านไม่ออกใบเสร็จ', false, /Finance permission/],
+    ['zero total', { attachmentId: 'receipt', amount: '0.0000' }, undefined, true, /greater than zero/],
+    ['receipt attached', { attachmentId: 'receipt' }, undefined, true, undefined],
+    ['missing receipt reason allowed', {}, 'ร้านไม่ออกใบเสร็จ', true, undefined],
+  ] as const) {
+    const req = baseRequest({ approvalSnapshotHash: SEEN_HASH, branchId: 'branch-1', missingReceiptReason: reason,
+      lines: [{ id: 'line-1', lineNo: 1, incurredDate: new Date('2026-01-01'), description: 'ค่าแท็กซี่', categoryKey: 'travel', amount: '500.0000', ...line }] });
+    const repo = fakeRepo(req, { ...REIMBURSEMENT_POLICY_DEFAULTS, financeReviewRequired: false, allowMissingReceiptWithReason: allowed });
+    let decisions = 0; const begin = repo.beginApprovalDecisionAtomic;
+    repo.beginApprovalDecisionAtomic = async (input: any) => { if (!input.previewOnly) decisions++; return begin(input); };
+    const approve = approveUC(repo).useCase;
+    const run = () => approve.execute(ctx(), req.id, undefined, SEEN_HASH, undefined, undefined, { previewOnly, expectedUpdatedAt: req.updatedAt });
+    if (error) await assert.rejects(run, error, name);
+    else await run();
+    assert.equal(decisions, error || previewOnly ? 0 : 1, name);
+    if (error) {
+      const reject = new RejectReimbursementUseCase(repo, noopAudit, fakeDetailEvidence as any);
+      await reject.execute(ctx(), req.id, 'หลักฐานไม่ครบ', undefined, { previewOnly: true });
+      assert.equal(req.status, 'PENDING_APPROVAL');
+    }
+  }
+});
+
+it('Fix-up 21A: real repository preview traverses locked branch/source/snapshot/assignment guards and performs no decision writes', async () => {
+  const { PrismaReimbursementRepository } = await import('../../infrastructure/prisma-reimbursement.repository');
+  const { claimSnapshotFields, computeSnapshotHash } = await import('../../domain/logic/reimbursement.logic');
+  const req = baseRequest({ branchId: 'branch-1', missingReceiptReason: 'ใบเสร็จหาย', lines: [lineRecord()] });
+  req.approvalSnapshotHash = computeSnapshotHash(claimSnapshotFields(req));
+  const step = { ...req.approvalSteps[0], requestSnapshotHash: req.approvalSnapshotHash };
+  let locks = 0;
+  const tx: any = { $executeRaw: async () => { locks++; },
+    reimbursementRequest: { findFirst: async () => req, updateMany: async () => assert.fail('preview cannot update a claim') },
+    reimbursementApprovalStep: { findFirst: async () => step, updateMany: async () => assert.fail('preview cannot decide a step') } };
+  const repo = new PrismaReimbursementRepository({ client: { $transaction: async (work: any) => work(tx) } } as any, {} as any);
+  const input: any = { previewOnly: true, companyId: req.companyId, requestId: req.id, expectedUpdatedAt: req.updatedAt,
+    expectedApprovalSnapshotHash: req.approvalSnapshotHash, actorUserId: 'approver-1', actorRoles: ['MANAGER'], scopes: { branchIds: ['branch-1'] },
+    allowSelfApproval: false, financeReviewRequired: false, decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => assert.fail('preview cannot audit/outbox a decision') };
+  const result = await repo.beginApprovalDecisionAtomic(input);
+  assert.equal(result.approvalStepId, step.id); assert.ok(locks > 0);
+  assert.equal(step.status, 'PENDING'); assert.equal(req.status, 'PENDING_APPROVAL');
+  await assert.rejects(() => repo.beginApprovalDecisionAtomic({ ...input, scopes: { branchIds: ['other'] } }), /branch/i);
+  await assert.rejects(() => repo.beginApprovalDecisionAtomic({ ...input, expectedApprovalSnapshotHash: 'stale' }), /stale_approval_snapshot/);
+  await assert.rejects(() => repo.beginApprovalDecisionAtomic({ ...input, actorRoles: ['STAFF'] }), /not_eligible_approver/);
+  req.lines[0].amount = '501.0000';
+  await assert.rejects(() => repo.beginApprovalDecisionAtomic(input), /stale_approval_snapshot/);
 });

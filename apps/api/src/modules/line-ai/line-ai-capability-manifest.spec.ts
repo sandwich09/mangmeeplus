@@ -144,12 +144,30 @@ describe('W00 executable capability manifest', () => {
     for (const name of ['reimbursement.draft.get_options', 'reimbursement.draft.preview_create', 'reimbursement.draft.preview_update']) {
       assert.equal(defaultNames.has(name), false, `${name} must stay hidden while the draft flag is off`);
     }
-    for (const meta of LINE_TOOL_REGISTRY.filter(tool => tool.category === 'draft_update')) assert.equal(defaultNames.has(meta.name), false);
+    for (const meta of LINE_TOOL_REGISTRY.filter(tool => tool.category === 'draft_update')) assert.equal(defaultNames.has(meta.name), ['expense.action.preview', 'counterparty.action.preview', 'company.action.preview'].includes(meta.name));
 
     const enabledNames = new Set(lineToolRegistryFor({ draftEditEnabled: true, publicLookupEnabled: true, reimbursementDraftWriteEnabled: true }).map(meta => meta.name));
     assert.equal(enabledNames.has('public.lookup'), true);
     assert.equal(enabledNames.has('reimbursement.draft.get_options'), true);
     assert.ok(LINE_TOOL_REGISTRY.filter(tool => tool.category === 'draft_update').every(meta => enabledNames.has(meta.name)));
+  });
+
+  it('always offers the expense-action preview without enabling gateway mutation or old draft switches', async () => {
+    const controller = makeController();
+    let seen: any;
+    controller.toolMap.set('expense.action.preview', { execute: async (ctx: any, input: any) => {
+      seen = { ctx, input };
+      return { toolName: 'expense.action.preview', status: 'ok', data: { reply: 'กรุณาตรวจและกดยืนยันค่ะ' }, sourceRefs: [], asOf: new Date().toISOString() };
+    } });
+    const result = await controller.invoke('test-secret', 'signed-delegation', {
+      toolName: 'expense.action.preview', context: { requestId: 'action-preview-request', companyId: 'company-1', userId: 'user-1', locale: 'th', chatKeyHash: 'private-chat' },
+      input: { expenseId: 'expense-1', action: 'CONFIRM' },
+    });
+    assert.equal(result.status, 'ok');
+    assert.equal(seen.ctx.membershipId, 'membership-1');
+    assert.deepEqual(seen.input, { expenseId: 'expense-1', action: 'CONFIRM' });
+    assert.equal(OFF_FLAGS.aiFinalMutationEnabled, false);
+    assert.equal(OFF_FLAGS.lineAiDraftEditEnabled, false);
   });
 
   it('rejects undeclared tool input at the actual InternalToolsController boundary', async () => {

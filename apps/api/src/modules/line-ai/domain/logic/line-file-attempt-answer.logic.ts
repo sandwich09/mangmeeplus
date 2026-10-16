@@ -60,8 +60,8 @@ const timeLabel = (at: Date): string =>
 export function fileAttemptChoiceList(attempts: readonly LineFileAttemptFacts[]): string {
   return [
     FILE_ATTEMPT_AMBIGUOUS_LEAD,
-    ...attempts.map((attempt, index) =>
-      `${index + 1}) ${named(attempt)} · ${timeLabel(attempt.createdAt)} · ${shortStateTh(attempt)}`),
+    ...attempts.map(attempt =>
+      `• ${named(attempt)} · ${timeLabel(attempt.createdAt)} · ${shortStateTh(attempt)}`),
   ].join('\n');
 }
 

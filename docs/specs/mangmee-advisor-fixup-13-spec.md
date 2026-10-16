@@ -1,0 +1,10 @@
+# Fix-up 13: remaining round-11 findings
+
+Scope: one lane, regression-safe fixes to existing capture, evidence, payment and signature paths.
+
+- T1: capture rows use the existing 200-row OCR/web bound, independent of the 40-row typed-text collection bound. All 70 recorded rows of the three-page PDF survive OCR apply, source projection, reload and confirmation preview. Printed subtotal 1,050,447.00, document VAT 73,531.29 and total 1,123,978.29 reconcile by document arithmetic; per-row rounding must not fold the rows into one summary. Accept a rounding residual only when the single known rate applied to the complete base proves the printed VAT and gross; real mismatches remain reviewable. Any confirmation-preview exception still persists/delivers a result without mutation controls and with its web link, through the normal authorized delivery plan.
+- T2: OCR classification TRANSFER_SLIP independently suppresses counterparty lookup/autosave, including when the expense already says RECEIPT. Preserve a reviewer's chosen document type. Receipt autosave and explicit counterparty commands retain their existing guards.
+- T3: payment preview defaults to the attached/eligible slip's known readable date, otherwise today in Bangkok. An explicitly supplied date wins and remains editable. Existing slip tenant, user, branch, conversation, revision and attachment guards remain authoritative.
+- T4: after saving a signature for a pending substitute receipt, offer the existing signed prepare action and say “กดเตรียมใบรับรอง แล้วน้องจะส่งลิงก์ลงนามในเว็บค่ะ”. Signing/approval/issuing remain web-only. No typed-number instruction.
+
+Plan: add regressions to registered specs; fix shared roots using existing helpers/use-cases; run contracts build, API/gateway typechecks, complete declared package test lists and API importers, real-module DI and table-driven delivery plans. Compare any environmental/baseline failures on exact starting commit. No package.json, dependencies, flags, budget/final-mutation policy changes, commits or cloud actions.
