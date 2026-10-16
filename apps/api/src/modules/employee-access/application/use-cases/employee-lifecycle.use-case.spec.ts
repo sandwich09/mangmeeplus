@@ -277,3 +277,19 @@ describe('IssueEmployeeLineLinkTokenUseCase', () => {
     assert.equal(revoked.length, 1);
   });
 });
+
+
+it('employee list reads the current account name while preserving the shop profile name', async () => {
+  const { ListEmployeesUseCase } = await import('./list-employees.use-case');
+  const profile = { ...PROFILE, displayName: 'ชื่อในร้าน', identityLast4: '1234', createdAt: new Date(), updatedAt: new Date(),
+    user: { displayName: 'ชื่อใหม่ในบัญชี', credential: null, externalIdentities: [] }, membership: { roles: [] } };
+  const useCase = new ListEmployeesUseCase({ client: { employeeAccessProfile: { findMany: async (query: any) => {
+    assert.equal(query.include.user.select.displayName, true);
+    return [profile];
+  } } } } as any);
+  const [employee] = await useCase.execute(COMPANY_ID);
+  assert.equal(employee!.displayName, 'ชื่อในร้าน');
+  assert.equal(employee!.accountDisplayName, 'ชื่อใหม่ในบัญชี');
+  profile.user.displayName = 'ชื่อใหม่อีกครั้ง';
+  assert.equal((await useCase.execute(COMPANY_ID))[0]!.accountDisplayName, 'ชื่อใหม่อีกครั้ง');
+});

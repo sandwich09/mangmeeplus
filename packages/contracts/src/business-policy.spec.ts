@@ -90,7 +90,8 @@ test('confirmed receipt guidance gives the actual cancellation or payment-void p
     assert.match(notice({ status, canVoidPayment: false }), /ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้/);
   }
   assert.match(notice({ status: 'READY_FOR_PAYMENT', cancellationPending: true, canResumeCancellation: true }), /ดำเนินการยกเลิกต่อ/);
-  assert.match(notice({ status: 'REJECTED' }), /ถูกปฏิเสธแล้ว/);
+  assert.match(notice({ status: 'REJECTED' }), /ใบนี้ถูกส่งกลับให้แก้ ให้ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ$/);
+  assert.doesNotMatch(notice({ status: 'REJECTED' }), /ยกเลิกคำขอในสถานะนี้ไม่ได้/);
   for (const context of [{ status: 'CANCELLED' }, { status: 'VOIDED' }, {}, { status: 'DRAFT', canCancel: true }, { status: 'PENDING_APPROVAL', canCancel: false }]) {
     const text = notice(context);
     assert.match(text, /ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ/);
@@ -212,4 +213,10 @@ test('W4 third-party send-back reasons exclude name mismatch, including PromptPa
     assert.deepEqual((payout.reimbursementPayoutCorrectionReasons as any)('ACCOUNT', kind, 'THIRD_PARTY'), own.filter(code => code !== 'ACCOUNT_NAME_MISMATCH'));
     assert.deepEqual((payout.reimbursementPayoutCorrectionReasons as any)('ACCOUNT', kind, 'SELF'), own);
   }
+});
+
+test('confirmed-duplicate guidance calls a rejected claim returned for correction', () => {
+  const note = reimbursementDuplicateBlockNotice(['EXPENSE_CONFIRMED_DUPLICATE'], false, { status: 'REJECTED' });
+  assert.match(note, /ใบนี้ถูกส่งกลับให้แก้/u);
+  assert.doesNotMatch(note, /ไม่อนุมัติ|ปฏิเสธ/u);
 });

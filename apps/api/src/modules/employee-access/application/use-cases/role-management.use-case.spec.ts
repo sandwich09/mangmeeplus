@@ -629,7 +629,7 @@ describe('CreateRoleUseCase', () => {
     });
     const reserved = (error: unknown) => {
       assert.ok(error instanceof ConflictException);
-      assert.deepEqual(error.getResponse(), { code: 'role_name_reserved', message: 'ชื่อนี้ซ้ำกับบทบาทมาตรฐานของระบบ กรุณาใช้ชื่ออื่น' });
+      assert.deepEqual(error.getResponse(), { code: 'role_name_reserved', message: 'ชื่อนี้ซ้ำกับบทบาทมาตรฐานของระบบ ใช้ชื่ออื่น' });
       return true;
     };
     // Every system role, spelled the way a person would type it, plus the reported cases.
@@ -707,7 +707,7 @@ describe('CreateRoleUseCase', () => {
       assert.ok(error instanceof ConflictException);
       assert.deepEqual(error.getResponse(), {
         code: 'role_key_allocation_failed',
-        message: 'ยังไม่ได้สร้างบทบาทนี้ เพราะมีการบันทึกบทบาทอื่นในเวลาเดียวกัน กรุณากดบันทึกอีกครั้ง',
+        message: 'ยังไม่ได้สร้างบทบาทนี้ เพราะมีการบันทึกบทบาทอื่นในเวลาเดียวกัน กดบันทึกอีกครั้ง',
       });
       return true;
     });

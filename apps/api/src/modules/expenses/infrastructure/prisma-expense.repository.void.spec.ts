@@ -380,13 +380,18 @@ describe('voidExpenseTrueReversal (H-04)', () => {
     );
   });
 
-  it('still locks on PP30 via the claim-status fallback when lines carry no tax components', async () => {
+  for (const inputVatClaimStatus of ['NEEDS_REVIEW', 'NON_CLAIMABLE']) it(`does not infer a filed tax record from the right ${inputVatClaimStatus}`, async () => {
+    client.state.expenseLines[0].taxComponentsJson = null;
+    client.state.expenses[0].inputVatClaimStatus = inputVatClaimStatus;
+    client.state.taxPeriods.push({ id: 'tp_1', companyId: CO, formType: 'PP30', periodKey: '2026-07', status: 'FILED' });
+    const result = await repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'เหตุผล', 'JV-REV-1');
+    assert.ok(result.reversalEntryId);
+  });
+
+  it('fails closed for CLAIMABLE VAT without components in a filed PP30 month', async () => {
     client.state.expenseLines[0].taxComponentsJson = null;
     client.state.taxPeriods.push({ id: 'tp_1', companyId: CO, formType: 'PP30', periodKey: '2026-07', status: 'FILED' });
-    await assert.rejects(
-      () => repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'เหตุผล', 'JV-REV-1'),
-      ConflictException,
-    );
+    await assert.rejects(() => repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'เหตุผล', 'JV-REV-1'), ConflictException);
   });
 
   it('ignores filed tax periods for a non-claimable, no-VAT expense', async () => {
@@ -617,29 +622,27 @@ describe('expense void certificate cascade (A3)', () => {
       const h = setup(kind);
       await assert.rejects(h.run({ permissions: ['expense.void'] }), (error: any) => {
         assert.equal(error.getResponse().message, kind === 'SYSTEM'
-          ? 'เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว (เลขที่ WHT-1) การยกเลิกเอกสารจะยกเลิกหนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย ให้เจ้าของกิจการหรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก'
-          : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว (เลขที่ PAPER-1) การยกเลิกเอกสารจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก');
+          ? 'เอกสารนี้ออกหนังสือรับรอง 50 ทวิแล้ว (เลขที่ WHT-1) การยกเลิกเอกสารจะยกเลิกหนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรอง 50 ทวิ ให้เจ้าของกิจการหรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก'
+          : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวิเองแล้ว (เลขที่ PAPER-1) การยกเลิกเอกสารจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก');
         return true;
       });
     });
-    for (const status of ['FILED', 'PAID', 'CLOSED']) it(`refuses ${kind} in a ${status} withholding period with its month and guidance`, async () => {
+    for (const status of ['FILED', 'PAID', 'CLOSED']) it(`cancels ${kind} in a ${status} withholding month and records certificate history`, async () => {
       const h = setup(kind); h.client.state.taxPeriods.push({ companyId: CO, formType: 'PND53', periodKey: '2026-07', status });
-      await assert.rejects(h.run(), (error: any) => {
-        assert.equal(error.getResponse().code, 'tax_period_locked');
-        assert.equal(error.getResponse().message, kind === 'SYSTEM'
-          ? 'ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ก.ค. 2569 ยื่นไปแล้ว จึงยกเลิกเอกสารนี้ไม่ได้ ถ้าผิดเฉพาะตัวสะกดชื่อหรือที่อยู่บนหนังสือรับรอง ใช้ปุ่ม "แก้ไขหนังสือรับรอง" ได้ ถ้ายอดเงิน อัตรา หรือเลขผู้เสียภาษีผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ'
-          : 'ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ก.ค. 2569 ยื่นไปแล้ว จึงยกเลิกเอกสารนี้ไม่ได้ ถ้าข้อมูลผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ');
-        return true;
-      });
-      assert.equal(h.client.state.expenses[0].status, 'CONFIRMED');
+      await h.run();
+      assert.equal(h.client.state.expenses[0].status, 'VOIDED');
+      assert.equal(h.client.state.history.length, 1);
+      assert.equal(h.client.state.history[0].actorUserId, 'u2');
+      assert.equal(h.client.state.taxPeriods[0].status, status);
     });
   }
-  it('checks the active event withholding period even when its month differs from the source date', async () => {
+  it('cancels when the filed event month differs from the source date', async () => {
     const h = setup('EXTERNAL');
     h.client.state.taxEvents.push({ companyId: CO, sourceType: 'expense.record', sourceId: 'exp_1', status: 'ACTIVE', taxPeriodId: 'old-period' });
     h.client.state.taxPeriods.push({ id: 'old-period', companyId: CO, formType: 'PND3', periodKey: '2026-06', status: 'FILED' });
-    await assert.rejects(h.run(), (error: any) => error.getResponse().code === 'tax_period_locked' && error.getResponse().message === 'ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.3) ของเดือน มิ.ย. 2569 ยื่นไปแล้ว จึงยกเลิกเอกสารนี้ไม่ได้ ถ้าข้อมูลผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ');
-    assert.equal(h.client.state.expenses[0].status, 'CONFIRMED');
+    await h.run();
+    assert.equal(h.client.state.expenses[0].status, 'VOIDED');
+    assert.equal(h.client.state.taxEvents[0].status, 'ACTIVE');
   });
   it('cancels a REQUIRED handoff without history or attestation and leaves confirmed tax events alone', async () => {
     const h = setup('REQUIRED');
@@ -660,7 +663,7 @@ describe('expense void certificate cascade (A3)', () => {
       certificateId: match === 'certificate pointer' ? 'tax-cert' : null, externalIssuedDate: match === 'external date' ? NOW : null });
     await assert.rejects(h.run(), (error: any) => {
       assert.equal(error.getResponse().code, 'certificate_issued');
-      assert.equal(error.getResponse().message, 'รายจ่ายนี้มีหนังสือรับรองหัก ณ ที่จ่ายที่ออกจากหน้าภาษี จึงยกเลิกเอกสารจากหน้านี้ไม่ได้ กรุณาแจ้งทีมมั่งมีพลัสเพื่อช่วยตรวจสอบ');
+      assert.equal(error.getResponse().message, 'รายจ่ายนี้มีหนังสือรับรอง 50 ทวิที่ออกจากหน้าภาษี จึงยกเลิกเอกสารจากหน้านี้ไม่ได้ แจ้งทีมงานมั่งมีเพื่อช่วยตรวจสอบ');
       return true;
     });
     assert.equal(h.client.state.expenses[0].status, 'CONFIRMED');
@@ -675,6 +678,15 @@ describe('expense void certificate cascade (A3)', () => {
     await h.run();
     assert.equal(h.client.state.expenses[0].status, 'VOIDED');
   });
+  it('legacy month allows cancellation and claim preflight while retaining its filed state', async () => {
+    for (const kind of ['SYSTEM', 'EXTERNAL'] as const) for (const formType of ['PND3', 'PND53']) {
+      const h = setup(kind);
+      h.client.taxPeriod.findMany = async ({ where }: any) => where.whtFilings ? [] : [{ formType, periodKey: '2026-07', status: 'FILED', whtFilings: [] }];
+      assert.equal(await findClaimExpenseVoidBlocker(h.client, CO, 'exp_1'), null);
+      await h.run();
+      assert.equal(h.client.state.expenses[0].status, 'VOIDED');
+    }
+  });
   it('allows claim cancellation preflight with an own certificate in an open period', async () => {
     const h = setup('SYSTEM');
     assert.equal(await findClaimExpenseVoidBlocker(h.client, CO, 'exp_1'), null);
@@ -686,13 +698,14 @@ describe('expense void certificate cascade (A3)', () => {
     assert.equal(h.client.state.history.length, 1);
     assert.equal(h.client.state.history[0].taxFilingAttested, true);
   });
-  it('checks claim certificate period locks before tax-workspace blockers and ignores cancelled certificates', async () => {
+  it('keeps tax-workspace certificate blockers and ignores cancelled certificates', async () => {
     const h = setup('EXTERNAL');
     h.client.state.taxEvents.push({ id: 'event-1', companyId: CO, sourceType: 'expense.record', sourceId: 'exp_1', status: 'ACTIVE', taxPeriodId: 'locked' });
     h.client.state.certificates.push({ id: 'tax-cert', companyId: CO, status: 'ISSUED', taxEventIdsJson: ['event-1'] });
     h.client.state.taxPeriods.push({ id: 'locked', companyId: CO, formType: 'PND53', periodKey: '2026-06', status: 'FILED' });
-    assert.deepEqual(await findClaimExpenseVoidBlocker(h.client, CO, 'exp_1'), { code: 'tax_period_locked', formType: 'PND53', periodKey: '2026-06', certificateKind: 'EXTERNAL' });
-    h.client.state.taxPeriods[0].status = 'OPEN';
+    assert.deepEqual(await findClaimExpenseVoidBlocker(h.client, CO, 'exp_1'), { code: 'certificate_issued' });
+    const readPeriods = h.client.taxPeriod.findMany;
+    h.client.taxPeriod.findMany = async (query: any) => query.where.whtFilings ? [] : readPeriods(query);
     assert.deepEqual(await findClaimExpenseVoidBlocker(h.client, CO, 'exp_1'), { code: 'certificate_issued' });
     h.client.state.certificates[0].status = 'VOIDED';
     assert.equal(await findClaimExpenseVoidBlocker(h.client, CO, 'exp_1'), null);
@@ -903,7 +916,7 @@ describe('disbursement expense reservation boundaries (real PostgreSQL, B5b)', (
     try {
       await assert.rejects(useCase.execute({ companyId, userId, scopes: {}, permissions: ['expense.void'] } as any, expense.id, 'ข้อมูลผิด'), (error: any) => {
         assert.equal(error.getResponse().code, 'expense_changed_retry');
-        assert.equal(error.getResponse().message, 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้ยกเลิกเอกสาร กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง'); return true;
+        assert.equal(error.getResponse().message, 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้บันทึกการยกเลิก เปิดหน้านี้ใหม่แล้วลองอีกครั้ง'); return true;
       });
       assert.equal(rawError?.code, 'P2034'); assert.equal(attempts, 1);
       const current = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });

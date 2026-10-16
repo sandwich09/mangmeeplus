@@ -226,6 +226,17 @@ export class UpdateEmployeeUseCase {
 
     await this.prisma.client.$transaction(async (tx) => {
       await lockPlanTermCompany(tx, cmd.companyId);
+      let oldDisplayName: string | undefined;
+      if (cmd.displayName) {
+        // Use the same user lock as self-service; a shared login keeps its company-local name.
+        if (sharedUser) {
+          await tx.$queryRaw`SELECT "id" FROM "EmployeeAccessProfile" WHERE "id" = ${cmd.employeeId} FOR UPDATE`;
+          oldDisplayName = (await tx.employeeAccessProfile.findUniqueOrThrow({ where: { id: cmd.employeeId }, select: { displayName: true } })).displayName;
+        } else {
+          await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${existing.userId} FOR UPDATE`;
+          oldDisplayName = (await tx.user.findUniqueOrThrow({ where: { id: existing.userId }, select: { displayName: true } })).displayName;
+        }
+      }
       await tx.employeeAccessProfile.update({
         where: { id: cmd.employeeId },
         data: {
@@ -262,6 +273,14 @@ export class UpdateEmployeeUseCase {
       // account name, same rule as email above.
       if (cmd.displayName && !sharedUser) {
         await tx.user.update({ where: { id: existing.userId }, data: { displayName: cmd.displayName } });
+      }
+
+      if (cmd.displayName && cmd.displayName !== oldDisplayName) {
+        await tx.auditLog.create({ data: {
+          companyId: cmd.companyId, actorUserId: cmd.requestingUserId, action: 'account.display_name.update',
+          targetType: 'User', targetId: existing.userId, requestId: cmd.requestId, result: 'SUCCESS', riskLevel: 'LOW',
+          metadataJson: { oldName: oldDisplayName!, newName: cmd.displayName, source: sharedUser ? 'employee_profile' : 'user' },
+        } });
       }
 
       if (roles) {

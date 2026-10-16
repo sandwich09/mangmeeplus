@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import { Allow, IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsString, Matches, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
-import { EXPENSE_PAYMENT_METHODS, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_STATUSES, type DisbursementVoucherStatus, EXPENSE_PAYMENT_METHODS, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
 
 class DisbursementVoucherDraftLineDto {
   @IsString() @IsNotEmpty() expenseId!: string;
@@ -16,6 +16,7 @@ export class CreateDisbursementVoucherDraftDto {
   @ValidateIf((_, v) => v !== undefined) @IsString() payeeBankName?: string;
   @ValidateIf((_, v) => v !== undefined) @IsString() payeeAccountName?: string;
   @ValidateIf((_, v) => v !== undefined) @IsString() payeeAccountNumber?: string;
+  @ValidateIf((_, v) => v !== undefined) @IsString() @IsNotEmpty() @MaxLength(128) payeeAccountFromVoucherId?: string;
   @ValidateIf((_, v) => v !== undefined) @IsBoolean() payeeConfirmed?: boolean;
   @ValidateIf((_, v) => v !== undefined) @IsString() plannedPayDate?: string;
   @ValidateIf((_, v) => v !== undefined) @IsIn(EXPENSE_PAYMENT_METHODS) plannedMethod?: ExpensePaymentMethod;
@@ -73,4 +74,18 @@ export class IssueDisbursementVoucherDto extends ReissueDisbursementVoucherDto {
 
 export class RemindDisbursementVoucherDto extends DisbursementVoucherCommandDto {
   @IsString() @IsNotEmpty() approverUserId!: string;
+}
+
+export class DisbursementVoucherListQueryDto {
+  @ValidateIf((_, v) => v !== undefined) @IsString() q?: string;
+  @ValidateIf((_, v) => v !== undefined) @IsIn(DISBURSEMENT_VOUCHER_STATUSES) status?: DisbursementVoucherStatus;
+  @ValidateIf((_, v) => v !== undefined) @IsString() branchId?: string;
+  // Preserve the list use case's existing page normalization and size cap.
+  @Allow() page?: string;
+  @Allow() pageSize?: string;
+  @IsIn(['newest', 'oldest']) order?: 'newest' | 'oldest' = 'newest';
+}
+
+export class RevealDisbursementVoucherAccountQueryDto {
+  @ValidateIf((_, v) => v !== undefined) @IsIn(['prefill']) purpose?: 'prefill';
 }

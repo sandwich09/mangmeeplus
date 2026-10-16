@@ -10,6 +10,20 @@ import { renderSubstituteReceiptPdf } from '../../domain/logic/substitute-receip
 export class DisbursementVoucherFileService {
   constructor(private readonly prisma: PrismaService, @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort) {}
 
+  async withSignatures(companyId: string, snapshot: DisbursementVoucherPrintSnapshot): Promise<DisbursementVoucherPrintSnapshot> {
+    const actors = { ...snapshot.actors };
+    for (const role of ['preparer', 'approver', 'payer'] as const) {
+      const actor = actors[role], signature = actor?.signature;
+      if (!signature) continue;
+      const attachment = await this.prisma.client.attachmentObject.findFirst({ where: { companyId, id: signature.attachmentId, status: 'ACTIVE', mimeType: { in: ['image/png', 'image/jpeg'] } } });
+      if (!attachment) throw new Error('Recorded voucher signature is unavailable');
+      const object = await this.storage.getObject({ bucket: attachment.bucket, objectKey: attachment.objectKey, objectVersionId: attachment.objectVersionId ?? undefined });
+      if (createHash('sha256').update(object.bytes).digest('hex') !== signature.checksumSha256) throw new Error('Recorded voucher signature checksum mismatch');
+      actors[role] = { ...actor, signatureDataUrl: `data:${attachment.mimeType};base64,${object.bytes.toString('base64')}` };
+    }
+    return { ...snapshot, actors };
+  }
+
   async render(snapshot: DisbursementVoucherPrintSnapshot) {
     return renderSubstituteReceiptPdf(renderDisbursementVoucherSvg(snapshot, true), snapshot.documentNumber ?? undefined, { omitPageFooter: true });
   }
@@ -30,7 +44,7 @@ export class DisbursementVoucherFileService {
           if (createHash('sha256').update(object.bytes).digest('hex') !== attachment.checksumSha256) throw new Error('Disbursement voucher file checksum mismatch');
           return { data: object.bytes, fileName };
         }
-        const data = await this.render({ ...(voucher.paidSnapshotJson as unknown as DisbursementVoucherPrintSnapshot), snapshotHash: voucher.paidSnapshotHash ?? undefined });
+        const data = await this.render(await this.withSignatures(companyId, { ...(voucher.paidSnapshotJson as unknown as DisbursementVoucherPrintSnapshot), snapshotHash: voucher.paidSnapshotHash ?? undefined }));
         stored = await this.storage.putObject({ objectKey: `${companyId}/disbursement-vouchers/${id}/${randomUUID()}.pdf`, mimeType: 'application/pdf', bytes: data });
         const attachment = await tx.attachmentObject.create({ data: {
           companyId, branchId: voucher.branchId, storageProvider: stored.storageProvider, bucket: stored.bucket, objectKey: stored.objectKey, objectVersionId: stored.objectVersionId,

@@ -14,24 +14,22 @@ export function ReimbursementPayoutAccountPage({ companyId, canManage }: { compa
   const [defaultReload, setDefaultReload] = useState(0);
   const hubHref = `/companies/${companyId}/reimbursements`;
   return (
+    // One short form: it keeps a reading width on a wide screen instead of stretching a phone layout across it.
     <MangmeePage
-      eyebrow={<BackToClaimsLink href={hubHref} />}
+      back={<BackToClaimsLink href={hubHref} />}
       title="บัญชีรับเงินคืนของฉัน"
-      description="ตั้งครั้งเดียว ใบเบิกใหม่จะใช้บัญชีนี้เอง ใบที่ส่งไปแล้วใช้บัญชีที่บันทึกไว้กับใบนั้น ไม่เปลี่ยนตาม"
+      description="ใบเบิกใหม่ใช้บัญชีนี้เอง"
     >
       {canManage ? (
         <>
-          <MemberPayoutAccountCard key={defaultReload}
-            companyId={companyId}
-            canEdit
-            title="บัญชีรับเงินคืนประจำ"
-            description="ผู้อนุมัติจะเห็นชื่อบัญชี ธนาคาร และ 4 ตัวท้าย เลขเต็มเปิดดูได้เฉพาะคุณ ผู้อนุมัติของใบนั้น และผู้ที่บันทึกจ่าย"
-          />
+          {/* Who sees the number and what a change leaves alone are said in the card, where each applies (the form, the message after a save). */}
+          <MemberPayoutAccountCard key={defaultReload} companyId={companyId} canEdit title="บัญชีรับเงินคืนประจำ" />
           <SavedPayoutAccountsCard companyId={companyId} onDefaultChanged={() => setDefaultReload(value => value + 1)} />
         </>
       ) : (
+        // The way out of this refusal is the back link above it.
         <MangmeeCard className="p-6">
-          <EmptyState title="ยังตั้งบัญชีรับเงินคืนไม่ได้" description={`บัญชีนี้ยังไม่มีสิทธิ์สร้างคำขอเบิก กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`} />
+          <EmptyState title="ยังตั้งบัญชีรับเงินคืนไม่ได้" description={`บัญชีนี้ยังไม่มีสิทธิ์สร้างใบเบิก ติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`} />
         </MangmeeCard>
       )}
     </MangmeePage>

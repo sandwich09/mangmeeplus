@@ -1,4 +1,4 @@
-import { cardCollapsed, warningBucket, warningProgressPercent } from './plan-term.logic';
+import { planTermReminderText, cardRenewalRunning } from './plan-term.logic';
 import { describe, it } from 'node:test';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
@@ -63,27 +63,26 @@ describe('renewal path', () => {
   });
 });
 
-describe('sidebar warning card', () => {
-  it('maps days left onto the 7/3/1 ladder', () => {
-    assert.equal(warningBucket(7), '7');
-    assert.equal(warningBucket(4), '7');
-    assert.equal(warningBucket(3), '3');
-    assert.equal(warningBucket(2), '3');
-    assert.equal(warningBucket(1), '1');
-    assert.equal(warningBucket(0), '1');
+describe('one-row reminder', () => {
+  it('names days, today and expiry without zero or negative days', () => {
+    assert.equal(planTermReminderText(7), 'เหลืออีก 7 วัน');
+    assert.equal(planTermReminderText(1), 'เหลืออีก 1 วัน');
+    assert.equal(planTermReminderText(0), 'แพ็กเกจหมดอายุวันนี้');
+    assert.equal(planTermReminderText(-1), 'แพ็กเกจหมดอายุแล้ว');
   });
-
-  it('stays collapsed only within the same ladder step, so each new step re-opens the card', () => {
-    assert.equal(cardCollapsed('7', '7'), true);
-    assert.equal(cardCollapsed('7', '3'), false);
-    assert.equal(cardCollapsed(null, '7'), false);
-    assert.equal(cardCollapsed('3', '1'), false);
+  it('suppresses only active card renewal that has not been stopped', () => {
+    assert.equal(cardRenewalRunning({ renewalMode: 'CARD_AUTO', subscriptionState: 'active', cancelAtPeriodEnd: false }), true);
+    for (const value of [{ renewalMode: 'PROMPTPAY_RENEW' }, { subscriptionState: 'past_due' }, { cancelAtPeriodEnd: true }])
+      assert.equal(cardRenewalRunning({ renewalMode: 'CARD_AUTO', subscriptionState: 'active', cancelAtPeriodEnd: false, ...value } as any), false);
   });
-
-  it('keeps the time-left bar visible even on the last day', () => {
-    assert.equal(warningProgressPercent(7), 100);
-    assert.equal(warningProgressPercent(3), 43);
-    assert.ok(warningProgressPercent(0) >= 6);
+  it('has one quiet action, no collapse, progress or contact links, and directs an issued bill to payment', () => {
+    const source = readFileSync(new URL('./PlanTermSidebarCard.tsx', import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /localStorage|aria-expanded|warningProgressPercent|tel:|mailto:/);
+    assert.match(source, /mangmee-btn-quiet/);
+    assert.match(source, /#billing-payment/); assert.match(source, /\?purchase=repeat/);
+    assert.match(source, /มีบิลรอจ่าย/);
+    assert.match(source, /loaded\?\.invoice \? 'ดูการจ่ายเงิน'/);
+    assert.match(source, /whitespace-nowrap/);
   });
 });
 
@@ -96,6 +95,7 @@ describe('locked shell paths', () => {
     for (const path of [
       '/companies/co-1/settings',
       '/companies/co-1/settings/profile',
+      '/companies/co-1/account',
       '/companies/co-1/billing',
       '/companies/co-1/billing/return',
       '/companies/co-1/billing/invoices/inv-1',
@@ -162,8 +162,10 @@ describe('lock reason', () => {
     const page = readFileSync(new URL('./CompanyTermExpiredPage.tsx', import.meta.url), 'utf8');
     const banner = readFileSync(new URL('./PlanTermBanner.tsx', import.meta.url), 'utf8');
     assert.doesNotMatch(page, /พักการใช้งาน/);
-    assert.match(page, /\{copy\.staff\} ข้อมูลทั้งหมดยังอยู่ครบ/);
-    assert.match(banner, /canManagePlan \? bannerSentence\(copy\.banner, place\) : copy\.staff/);
+    // The renewal page says who can act once, in its card: the title above it has said what is the matter.
+    assert.match(page, /\{copy\.staffNext\} ข้อมูลทั้งหมดยังอยู่ครบ/);
+    for (const copy of Object.values(PLAN_LOCK_COPY)) assert.ok(copy.staff.endsWith(copy.staffNext), copy.staff);
+    assert.match(banner, /canManagePlan \|\| place === 'renewal' \? bannerSentence\(copy\.banner, place\) : copy\.staff/);
   });
 });
 
@@ -177,7 +179,10 @@ describe('the locked banner on the billing pages', () => {
     for (const billing of [base, `${base}/`, `${base}?interval=year`, `${base}/#billing-history`, `${base}?collection=op-1`, `${base}/return`, `${base}/return/`, `${base}/return?attempt=a1&checkout=canceled`,
       `${base}/return?attempt=a1#top`, `${base}/invoices/inv-1`, `${base}/invoices/inv-1/`, `${base}/preview`])
       assert.equal(bannerPlace(billing, ID), 'billing', billing);
-    for (const elsewhere of [`/companies/${ID}/dashboard`, `/companies/${ID}/settings`, `/companies/${ID}/settings/billing`, `/companies/${ID}/renew`, `${base}-other`, `/companies/${ID}/billing2`, `/companies/${ID}/billing2/return`, '/billing', '/', ''])
+    // the renewal page carries the button and the who-can-act line in its own card
+    for (const renewal of [`/companies/${ID}/renew`, `/companies/${ID}/renew/`, `/companies/${ID}/renew?from=menu`]) assert.equal(bannerPlace(renewal, ID), 'renewal', renewal);
+    assert.equal(bannerPlace('/companies/company-2/renew', ID), 'elsewhere');
+    for (const elsewhere of [`/companies/${ID}/dashboard`, `/companies/${ID}/settings`, `/companies/${ID}/settings/billing`, `/companies/${ID}/renewal`, `${base}-other`, `/companies/${ID}/billing2`, `/companies/${ID}/billing2/return`, '/billing', '/', ''])
       assert.equal(bannerPlace(elsewhere, ID), 'elsewhere', elsewhere);
     // another company's billing area is not this company's
     assert.equal(bannerPlace('/companies/company-2/billing', ID), 'elsewhere');
@@ -194,6 +199,7 @@ describe('the locked banner on the billing pages', () => {
       assert.equal(bannerSentence(copy.banner, bannerPlace(`${base}/return?attempt=a1`, ID)), matter, `${reason}: return page`);
       assert.equal(bannerSentence(copy.banner, bannerPlace(`${base}/invoices/inv-1`, ID)), matter, `${reason}: invoice page`);
       assert.doesNotMatch(bannerSentence(copy.banner, 'billing'), /เลือกแพ็กเกจ|เพื่อ/);
+      assert.equal(bannerSentence(copy.banner, bannerPlace(`/companies/${ID}/renew`, ID)), matter, `${reason}: renewal page`);
       assert.equal(bannerSentence(copy.banner, bannerPlace(`/companies/${ID}/dashboard`, ID)), copy.banner, `${reason}: everywhere else`);
       assert.equal(bannerSentence(copy.banner, 'elsewhere'), copy.banner);
     }
@@ -203,7 +209,7 @@ describe('the locked banner on the billing pages', () => {
     const banner = readFileSync(new URL('./PlanTermBanner.tsx', import.meta.url), 'utf8');
     assert.match(banner, /\{canManagePlan && place === 'elsewhere' && \(\s*<Link className="mangmee-btn mangmee-btn-primary w-full sm:w-auto" href=\{`\/companies\/\$\{companyId\}\/billing`\}>\s*\{PLAN_LOCK_CTA\}/);
     assert.equal(banner.split('PLAN_LOCK_CTA').length - 1, 2, 'imported once, drawn once');
-    assert.match(banner, /canManagePlan \? bannerSentence\(copy\.banner, place\) : copy\.staff/);
+    assert.match(banner, /canManagePlan \|\| place === 'renewal' \? bannerSentence\(copy\.banner, place\) : copy\.staff/);
   });
 });
 
@@ -228,4 +234,33 @@ describe('unlock reload fallback', () => {
     assert.equal(claimUnlockReload(() => { throw new Error('SecurityError'); }, 'attempt-1'), false);
     assert.equal(claimUnlockReload(() => ({ getItem: () => null, setItem: () => { throw new Error('QuotaExceededError'); } }), 'attempt-1'), false);
   });
+});
+
+// Render the mounted sidebar row after its read has settled; permission/window rules stay in planTermView.
+import * as React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { PlanTermSidebarCard } from './PlanTermSidebarCard';
+
+it('renders one reminder row for one day/today and the issued bill, and none outside its audience/window', () => {
+  (globalThis as any).React = React;
+  const runtime = require('react') as typeof React, original = runtime.useState;
+  const render = (value: PlanTermNotice | null, invoice = false) => {
+    Reflect.set(runtime, 'useState', () => original({ companyId: 'shop', notice: value, invoice }));
+    return renderToStaticMarkup(React.createElement(PlanTermSidebarCard, { companyId: 'shop' }));
+  };
+  try {
+    for (const [daysLeft, text] of [[7, 'เหลืออีก 7 วัน'], [1, 'เหลืออีก 1 วัน'], [0, 'แพ็กเกจหมดอายุวันนี้']] as const) {
+      const html = render(notice({ derivedState: 'WARNING', daysLeft }));
+      assert.ok(html.includes(text)); assert.match(html, /mangmee-btn-quiet/);
+      assert.equal((html.match(/<a /g) ?? []).length, 1); assert.match(html, /purchase=repeat/);
+    }
+    const bill = render(notice({ derivedState: 'WARNING' }), true);
+    assert.match(bill, /มีบิลรอจ่าย/); assert.match(bill, /ดูการจ่ายเงิน/); assert.match(bill, /#billing-payment/);
+    assert.doesNotMatch(bill, /purchase=repeat/);
+    for (const value of [null, notice({ derivedState: 'ACTIVE' }), notice({ derivedState: 'EXPIRED', daysLeft: -1 }), notice({ derivedState: 'WARNING', isOwner: false })]) assert.equal(render(value), '');
+    assert.match(render(notice({ derivedState: 'WARNING', isOwner: false, canManagePlan: true })), /ต่ออายุ/);
+    assert.equal(render(notice({ derivedState: 'WARNING', isOwner: true, canManagePlan: false })), '');
+    const recovery = readFileSync(new URL('./CompanyTermExpiredPage.tsx', import.meta.url), 'utf8');
+    assert.doesNotMatch(recovery, /max-w-/); assert.match(recovery, /copy\.staffNext/); assert.match(recovery, /PLAN_LOCK_CTA/);
+  } finally { Reflect.set(runtime, 'useState', original); }
 });

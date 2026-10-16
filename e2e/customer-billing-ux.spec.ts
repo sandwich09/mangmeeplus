@@ -10,32 +10,32 @@ for (const width of [1280, 390]) {
     await gotoCompany(page, companyId, '/settings/branches');
     if (width < 768) await page.getByRole('button', { name: 'สลับเมนู', exact: true }).click();
     await page.locator('aside a[href$="/billing"]').click();
-    const title = page.getByRole('heading', { name: 'แพ็กเกจและการชำระเงิน', exact: true });
+    const title = page.getByRole('heading', { name: 'แพ็กเกจและการจ่ายเงิน', exact: true });
     await expect(title).toBeVisible();
     await expect(page.locator('aside')).toHaveCount(1);
-    await expect(page.getByRole('link', { name: /กลับแดชบอร์ด|กลับไปใช้งาน/ })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /กลับไปหน้าแรก|กลับไปใช้งาน/ })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'เลือกบริษัทอื่น', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงิน' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'ตรวจผลการจ่ายเงิน' })).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toContainText('ใบเสร็จคงเหลือ');
     const emailPanel = page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true });
     await expect(emailPanel).toHaveCount(0);
     await expect(emailPanel.locator('.mangmee-card')).toHaveCount(0);
-    await expect(page.getByText('ยืนยันอีเมลก่อนชำระเงิน', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('ยืนยันอีเมลก่อนจ่ายเงิน', { exact: true })).toHaveCount(0);
     await expect(emailPanel.getByText('ไม่ได้รับรหัสยืนยันทางอีเมล', { exact: true })).toHaveCount(0);
     await page.reload();
     await expect(title).toBeVisible();
     await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toBeVisible();
     await expect(emailPanel).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'สลับบริษัท', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'เปลี่ยนร้าน', exact: true })).toBeVisible();
     await expect(page.locator('aside')).toHaveCount(1);
-    await expect(page.getByRole('link', { name: /กลับแดชบอร์ด|กลับไปใช้งาน/ })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /กลับไปหน้าแรก|กลับไปใช้งาน/ })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await page.screenshot({ path: info.outputPath(`billing-overview-${width}.png`), fullPage: true });
 
     const companies = await (await page.request.get('/api/v1/auth/me/companies')).json();
     const other = companies.data.find((item: { companyId: string; roles: string[]; expired?: boolean }) => item.companyId !== companyId && item.roles.includes('OWNER') && !item.expired);
     expect(other, 'local fixture has another owned company').toBeTruthy();
-    await page.getByRole('button', { name: 'สลับบริษัท', exact: true }).click();
+    await page.getByRole('button', { name: 'เปลี่ยนร้าน', exact: true }).click();
     await page.getByRole('button', { name: new RegExp(other.companyName) }).click();
     await expect(page).toHaveURL(new RegExp(`/companies/${other.companyId}/billing$`));
     await expect(title).toBeVisible();
@@ -43,8 +43,8 @@ for (const width of [1280, 390]) {
 
     // Standalone recovery picker remains available from its existing deep link.
     await page.goto(`/billing/companies?fromCompany=${companyId}`);
-    await expect(page.getByRole('heading', { name: 'เลือกบริษัทที่จะจัดการแพ็กเกจ' })).toBeVisible();
-    const back = page.getByRole('link', { name: /^กลับแพ็กเกจของ / });
+    await expect(page.getByRole('heading', { name: 'เลือกร้าน', exact: true })).toBeVisible();
+    const back = page.getByRole('link', { name: /^กลับไปแพ็กเกจของ / });
     await expect(back).toHaveAttribute('href', `/companies/${companyId}/billing`);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await page.screenshot({ path: info.outputPath(`billing-picker-${width}.png`), fullPage: true });
@@ -75,7 +75,7 @@ test('BILLING-UX recipient panel offers the verified account email only when it 
   await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toBeVisible();
   // RV05: buying never waits on the account email, so the package page does not read it.
   expect(accountReads).toBe(0);
-  await page.getByRole('button', { name: 'การต่ออายุและชำระเงิน', exact: true }).click();
+  await page.getByRole('button', { name: 'การต่ออายุและจ่ายเงิน', exact: true }).click();
   const recipient = page.getByRole('region', { name: 'ผู้รับเอกสารของร้าน', exact: true });
   await expect(recipient).toContainText('accounts@example.com');
   await recipient.getByRole('button', { name: 'แก้อีเมลรับเอกสาร', exact: true }).click();
@@ -110,11 +110,11 @@ test('BILLING-UX payment recheck tells the truth and documents return to history
     await route.fulfill({ status: fail ? 503 : 200, json: fail ? { message: 'Temporary test outage' } : { queued: true } });
   });
   await page.goto(`/companies/${companyId}/billing`);
-  const check = page.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true });
+  const check = page.getByRole('button', { name: 'ตรวจผลการจ่ายเงิน', exact: true });
   await expect(check).toBeVisible();
   expect(refreshes).toBe(0);
   await check.click();
-  await expect(page.getByRole('status').filter({ hasText: 'ส่งคำขอตรวจสอบแล้ว' })).toContainText('ยังไม่ใช่ผลยืนยันการชำระเงิน');
+  await expect(page.getByRole('status').filter({ hasText: 'ส่งคำขอตรวจสอบแล้ว' })).toContainText('ส่งคำขอตรวจสอบแล้ว กดอัปเดตข้อมูลเพื่อดูผลล่าสุด');
   expect(refreshes).toBe(1);
   await page.getByRole('button', { name: 'อัปเดตข้อมูล', exact: true }).click();
   expect(refreshes).toBe(1);
@@ -129,10 +129,10 @@ test('BILLING-UX payment recheck tells the truth and documents return to history
     mode: 'TEST', invoiceNumber: 'TEST-INVOICE', canOpenDocuments: false, observedAt: new Date().toISOString(), kind: 'refunds', items: [], nextCursor: null,
   } }));
   await page.goto(`/companies/${companyId}/billing/invoices/${invoiceId}`);
-  await expect(page.getByRole('heading', { name: 'เอกสารการชำระเงิน', exact: true })).toBeVisible();
-  await page.getByRole('link', { name: 'กลับไปประวัติการชำระเงิน', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'เอกสารการจ่ายเงิน', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'กลับไปประวัติการจ่ายเงิน', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/billing#billing-history$`));
-  await expect(page.getByRole('region', { name: 'ประวัติการชำระเงิน', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'ประวัติการจ่ายเงิน', exact: true })).toBeVisible();
 });
 
 test('BILLING-UX recovery never mounts business reads and picker rejects an unowned return company', async ({ authedPage: page, companyId }) => {
@@ -152,7 +152,7 @@ test('BILLING-UX recovery never mounts business reads and picker rejects an unow
   // pr-d §3.11: the account email is for sign-in and notices; buying never waits on it (RV05).
   await expect(page.getByText('ไม่ต้องยืนยันก่อนซื้อแพ็กเกจ')).toBeVisible();
   await expect(page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true })).toBeVisible();
-  const back = page.getByRole('link', { name: 'กลับไปเลือกแพ็กเกจ', exact: true });
+  const back = page.getByRole('link', { name: 'กลับไปหน้าแพ็กเกจ', exact: true });
   await expect(back).toHaveAttribute('href', `/companies/${companyId}/billing?interval=year`);
   await back.click();
   await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
@@ -162,7 +162,7 @@ test('BILLING-UX recovery never mounts business reads and picker rejects an unow
   await page.goto(`/account/email?company=${companyId}&channel=line`);
   await expect(page).toHaveURL(/channel=line/);
   await page.goto('/billing/companies?fromCompany=not-an-owned-company');
-  await expect(page.getByRole('heading', { name: 'เลือกบริษัทที่จะจัดการแพ็กเกจ' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'กลับหน้าหลัก', exact: true })).toHaveAttribute('href', '/');
+  await expect(page.getByRole('heading', { name: 'เลือกร้าน', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'กลับไปหน้าแรก', exact: true })).toHaveAttribute('href', '/');
   await expect(page.locator('a[href*="not-an-owned-company"]')).toHaveCount(0);
 });

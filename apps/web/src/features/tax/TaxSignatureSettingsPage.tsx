@@ -2,15 +2,21 @@
 
 import { SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { BackLink } from '@/common/components/app-shell/BackLink';
+import { primaryButtonClass } from '@/common/components/button/button-classes';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { FormActionBar } from '@/common/components/actions/FormActionBar';
+import { ChoiceRow } from '@/common/components/field/ChoiceRow';
+import { ThemedFile } from '@/common/components/field/ThemedFile';
+import { Notice } from '@/common/components/notice';
 import { ErrorState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
 import { apiErrorMessage } from '@/common/api/api-error-message';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { getTaxSignature, updateTaxSignature, uploadCompanyTaxSignatureAttachment, type CompanyTaxSignature } from './tax.api';
 
-const field = 'mangmee-input w-full';
-const button = 'rounded-lg bg-brand-600 px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50';
 
 /**
  * WHT certificate system issuance plan §3.3 (Decision B): the company's authorized-signatory
@@ -28,35 +34,38 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [pickedName, setPickedName] = useState<string | null>(null);
+  const [imageFailed, setImageFailed] = useState(false);
+  const loadRequest = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (reset = true) => {
+    const request = ++loadRequest.current;
     setLoading(true); setProfile(null); setError('');
     try {
       const next = await getTaxSignature(companyId);
+      if (request !== loadRequest.current) return;
       setProfile(next);
-      setMode(next.signatureMode);
-      setPendingAttachmentId(null);
-    } catch (cause) { setError(apiErrorMessage(cause)); } finally { setLoading(false); }
+      setImageFailed(false);
+      if (reset) { setMode(next.signatureMode); setPendingAttachmentId(null); setPickedName(null); }
+    } catch (cause) { if (request === loadRequest.current) setError(apiErrorMessage(cause)); } finally { if (request === loadRequest.current) setLoading(false); }
   }, [companyId]);
-  useEffect(() => { if (canManage) void load(); }, [load, canManage]);
+  useEffect(() => { if (canManage) void load(); return () => { loadRequest.current++; }; }, [load, canManage]);
 
   if (!canManage) {
     return (
-      <MangmeePage title="ลายเซ็นผู้จ่ายเงินสำหรับ 50 ทวิ">
-        <MangmeeCard className="p-4 sm:p-5"><p className="text-sm text-gray-600">คุณยังไม่มีสิทธิ์จัดการลายเซ็นผู้จ่ายเงินของบริษัท</p></MangmeeCard>
+      <MangmeePage title="ลายเซ็นบน 50 ทวิ">
+        <MangmeeCard className="p-4 sm:p-5"><p className="text-sm text-gray-600">คุณยังไม่มีสิทธิ์ตั้งลายเซ็นผู้จ่ายเงินของร้าน</p></MangmeeCard>
       </MangmeePage>
     );
   }
 
-  async function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  async function onFile(file: File | null) {
     if (!file) return;
     setBusy(true); setError('');
     try {
       const attachmentId = await uploadCompanyTaxSignatureAttachment(companyId, file);
-      setPendingAttachmentId(attachmentId);
-      toast.success('อัปโหลดรูปลายเซ็นแล้ว — กด “บันทึก” เพื่อยืนยัน');
+      setPendingAttachmentId(attachmentId); setPickedName(file.name);
+      toast.success('เลือกรูปแล้ว กด “บันทึก” เพื่อใช้รูปนี้');
     } catch (cause) { setError(apiErrorMessage(cause)); } finally { setBusy(false); }
   }
 
@@ -65,45 +74,45 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
     try {
       const signatureAttachmentId = pendingAttachmentId ?? profile?.signatureImageAttachmentId ?? undefined;
       if (mode === 'AUTO_STAMP' && !signatureAttachmentId) {
-        setError('กรุณาอัปโหลดรูปลายเซ็นก่อนเปิดใช้การประทับอัตโนมัติ');
+        setError('เลือกรูปลายเซ็นก่อนบันทึก');
         return;
       }
       await updateTaxSignature(companyId, { signatureMode: mode, ...(mode === 'AUTO_STAMP' ? { signatureAttachmentId } : {}) });
-      toast.success('บันทึกการตั้งค่าลายเซ็นเรียบร้อยแล้ว');
+      toast.success('บันทึกแล้ว');
       await load();
     } catch (cause) { setError(apiErrorMessage(cause)); } finally { setBusy(false); }
   }
 
-  const hasStoredSignature = Boolean(pendingAttachmentId || profile?.signatureImageAttachmentId);
-
   return (
-    <MangmeePage
-      title="ลายเซ็นผู้จ่ายเงินสำหรับ 50 ทวิ"
-      description="เลือกว่าจะให้ระบบประทับรูปลายเซ็นลงหนังสือรับรองหัก ณ ที่จ่ายที่ออกในระบบโดยอัตโนมัติ หรือเว้นว่างไว้ให้พิมพ์แล้วเซ็นเอง"
+    <MangmeePage back={<BackLink href={`/companies/${companyId}/settings`} label="กลับไปตั้งค่า" />}
+      title="ลายเซ็นบน 50 ทวิ"
+      description="เลือกว่าจะให้ระบบใส่รูปลายเซ็นลงหนังสือรับรอง 50 ทวิ ให้ หรือพิมพ์แล้วเซ็นเอง"
     >
       <MangmeeCard className="p-4 sm:p-5">
         {loading ? <p className="text-sm text-gray-500">กำลังโหลด...</p> : !profile ? (
           <ErrorState description={error} onRetry={() => void load()} />
         ) : (
-          <div className="grid gap-4 sm:max-w-md">
-            <label className="flex items-center gap-2 text-sm">
-              <input type="radio" name="signatureMode" checked={mode === 'BLANK'} onChange={() => setMode('BLANK')} disabled={busy} />
-              เว้นว่างไว้ให้พิมพ์แล้วเซ็นเอง
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="radio" name="signatureMode" checked={mode === 'AUTO_STAMP'} onChange={() => setMode('AUTO_STAMP')} disabled={busy} />
-              ประทับรูปลายเซ็นที่อัปโหลดไว้อัตโนมัติ
-            </label>
+          <form className="grid gap-4" onSubmit={event => { event.preventDefault(); void save(); }}>
+            <fieldset className="grid gap-1" disabled={busy}>
+              <ChoiceRow name="signatureMode" label="พิมพ์แล้วเซ็นเอง" checked={mode === 'BLANK'} onChange={() => setMode('BLANK')} />
+              <ChoiceRow name="signatureMode" label="ใส่รูปลายเซ็นให้อัตโนมัติ" checked={mode === 'AUTO_STAMP'} onChange={() => setMode('AUTO_STAMP')} />
+            </fieldset>
+            {mode === 'BLANK' && profile.signatureImageAttachmentId && <p className="text-sm text-gray-600">บันทึกแล้วรูปลายเซ็นที่เก็บไว้จะถูกลบ</p>}
+            {profile.signatureImageUrl && <figure className="grid gap-2">
+              {imageFailed ? <ErrorState description="เปิดรูปลายเซ็นไม่ได้ ลองอีกครั้ง" onRetry={() => void load(false)} />
+                : <img src={profile.signatureImageUrl} alt="รูปลายเซ็นที่บันทึกไว้" className="h-32 w-full object-contain object-left" onError={() => setImageFailed(true)} />}
+              {profile.signatureStoredAt && <figcaption className="text-sm text-gray-500">เก็บรูปไว้เมื่อ {formatThaiDateTime(profile.signatureStoredAt)}</figcaption>}
+            </figure>}
             {mode === 'AUTO_STAMP' && (
               <div className="grid gap-2">
                 <span className="text-xs font-medium text-gray-600">รูปลายเซ็น · {SIGNATURE_FILE_TYPES_LABEL}</span>
-                <input className={field} type="file" accept="image/png,image/jpeg" onChange={onFileChange} disabled={busy} />
-                {hasStoredSignature && <p className="text-xs text-gray-500">มีรูปลายเซ็นที่บันทึกไว้แล้ว — อัปโหลดใหม่เพื่อเปลี่ยน</p>}
+                <ThemedFile file={pickedName} accept="image/png,image/jpeg" disabled={busy} loading={busy} onChange={(file) => void onFile(file)} />
+                {!profile.signatureImageUrl && !pickedName && <p className="text-sm text-gray-500">ยังไม่มีรูปลายเซ็น</p>}
               </div>
             )}
-            {error && <p className="text-sm font-bold text-error-600">{error}</p>}
-            <button type="button" className={button} onClick={() => void save()} disabled={busy} aria-busy={busy}>บันทึก</button>
-          </div>
+            {error && <Notice tone="error">{error}</Notice>}
+            <FormActionBar><ActionGroup><button type="submit" className={primaryButtonClass} disabled={busy} aria-busy={busy}>บันทึก</button></ActionGroup></FormActionBar>
+          </form>
         )}
       </MangmeeCard>
     </MangmeePage>

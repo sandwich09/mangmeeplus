@@ -29,6 +29,7 @@ import { assertRouteCompany } from './assert-route-company';
 class PatchCompanyIdentityBodyDto {
   @Type(() => Number) @IsInt() @Min(0) expectedLegalIdentityVersion!: number;
   @IsIn(USER_LEGAL_IDENTITY_CHANGE_KINDS) changeKind!: UserLegalIdentityChangeKind;
+  @IsString() @IsOptional() displayName?: string;
   @IsString() @IsOptional() @MaxLength(32) taxId?: string;
   @IsString() @IsOptional() @MaxLength(255) registeredName?: string;
   // Shape is checked in the use case against the closed key set: the pipe would only tell us it

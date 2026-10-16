@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_CAPABILITY_REPLY_PREFIXES } from '@watchdog-bms/contracts';
-import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent, isExplicitJokeAsk, isJokeRequest, isTeachingRequest } from './response-composer.agent';
+import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent, featureDisabledReply, isExplicitJokeAsk, isJokeRequest, isTeachingRequest } from './response-composer.agent';
 import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
 import type { IModelProvider, ProviderOutput } from '../infrastructure/provider/provider.port';
 
@@ -1040,4 +1040,11 @@ it('the shared specialist fallback describes unavailable data without guessing a
   const source = readFileSync(resolve(__dirname, 'accounting-summary.agent.ts'), 'utf8');
   assert.doesNotMatch(source, /ไม่พบข้อมูลบัญชี \(endpoint ยังไม่พร้อม\)/);
   assert.match(source, /ยังไม่มีข้อมูลที่พร้อมแสดงในขณะนี้/);
+});
+
+
+it('disabled dashboard guidance names หน้าแรก while English capability terminology stays intact', () => {
+  assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'th'), /หน้าแรกและแจ้งเตือน/);
+  assert.doesNotMatch(featureDisabledReply(['dashboard.get_business_health_summary'], 'th'), /แดชบอร์ด/);
+  assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'en'), /dashboard and notifications/);
 });

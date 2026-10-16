@@ -16,7 +16,7 @@ test('inside the LINE browser, reauth offers a reopen instead of a dead-end redi
   // browser and lands empty — the fix is to leave that browser first.
   assert.match(source, /const lineReauthButton =[\s\S]*?\{inLineBrowser\s*\n\s*\? </);
   assert.match(source, /เปิดหน้านี้ในเบราว์เซอร์ภายนอก/);
-  assert.match(source, /ทำในเบราว์เซอร์ของ LINE ไม่ได้ กรุณาเปิดหน้านี้ในเบราว์เซอร์ภายนอกก่อน/);
+  assert.match(source, /ทำในเบราว์เซอร์ของ LINE ไม่ได้ เปิดหน้านี้ในเบราว์เซอร์ภายนอกก่อน/);
   assert.match(source, /onClick=\{reopenOutsideLine\}/);
 });
 

@@ -1,3 +1,6 @@
+import { asLedgerSource, buildJournalLines } from '../../ledger/application/use-cases/journal.use-case';
+import { PrismaLedgerRepository } from '../../ledger/infrastructure/prisma-ledger.repository';
+import { CompanyVatRegistrationUseCase } from '../../data-model-core/application/use-cases/company-vat-registration.use-case';
 import { lockExpenseCorrection } from './expense-void-blocker';
 import { isSerializationFailure } from '../../../common/database/prisma-error';
 import { after, before, describe, it } from 'node:test';
@@ -7,12 +10,19 @@ import assert from 'node:assert/strict';
 import Decimal from 'decimal.js';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ValidationPipe } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '../../../generated/prisma/client';
+import { PrismaClient, Prisma } from '../../../generated/prisma/client';
 import { pgSpecUnreachableReason } from '../../../common/database/pg-spec-guard';
-import { RecordExpensePaymentUseCase, VoidExpenseUseCase } from '../application/use-cases/expense-draft.use-case';
+import { RecordExpensePaymentUseCase, VoidExpenseUseCase, MarkExpenseReadyUseCase } from '../application/use-cases/expense-draft.use-case';
 import { AuditService } from '../../audit/application/audit.service';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { PrismaExpenseRepository } from './prisma-expense.repository';
+import { seedExpenses, seedExpenseRows } from '../../../../prisma/seed-expenses';
+import { expenseEvidenceConfirmationError } from '@watchdog-bms/contracts';
+import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
+import { SyncTaxEventsUseCase } from '../../tax/application/use-cases/sync-tax-events.use-case';
+import { ExpenseSourceAdapter } from '../../tax/infrastructure/adapters/expense-source.adapter';
+import { AccountingDocumentSourceAdapter } from '../../tax/infrastructure/adapters/accounting-document-source.adapter';
+import { SupplierPaymentSourceAdapter } from '../../tax/infrastructure/adapters/supplier-payment-source.adapter';
 import { ListExpensesUseCase } from '../application/use-cases/expense-draft.use-case';
 import { DisbursementVoucherUseCase } from '../application/use-cases/disbursement-voucher.use-case';
 import { PrismaDisbursementVoucherRepository } from './prisma-disbursement-voucher.repository';
@@ -45,7 +55,7 @@ function expense(overrides: Record<string, unknown> = {}) {
 }
 
 function harness(overrides: Record<string, unknown> = {}) {
-  const state = { vouchers: [] as any[], voucherLines: [] as any[], expense: expense(overrides), payments: [] as any[], journals: [] as any[], handoffs: [] as any[], taxEvents: [] as any[], certificates: [] as any[], taxPeriods: [] as any[], accountingPeriod: null as any, claim: null as any, certificateHistory: [] as any[], audits: [] as any[], events: [] as any[] };
+  const state = { filedSourceIds: ['expense-1'], files: [] as any[], links: [] as any[], vouchers: [] as any[], voucherLines: [] as any[], expense: expense(overrides), payments: [] as any[], journals: [] as any[], handoffs: [] as any[], taxEvents: [] as any[], certificates: [] as any[], taxPeriods: [] as any[], accountingPeriod: null as any, claim: null as any, certificateHistory: [] as any[], audits: [] as any[], events: [] as any[] };
   let forceCasFailure = false;
   let failingWrite: 'audit' | 'outbox' | undefined;
   const client: any = {
@@ -84,17 +94,19 @@ function harness(overrides: Record<string, unknown> = {}) {
           draft.certificateHistory.push(data); return data;
         } },
         company: { findUnique: async () => ({ name: 'ร้านทดสอบ', taxId: '1234567890123' }) },
-        branch: { findUnique: async () => ({ taxBranchCode: '00000' }) },
+        branch: { findUnique: async () => ({ taxBranchCode: '00000' }), findMany: async () => [] },
+        whtPayerModeFact: { findMany: async () => [] },
         whtIncomeCategory: { findUnique: async () => ({ nameTh: 'ค่าบริการ' }) },
         documentNumber: { findFirst: async () => null },
         accountingPeriod: { findUnique: async () => draft.accountingPeriod },
         taxPeriod: { findMany: async ({ where }: any) => draft.taxPeriods.filter(row => {
           const matches = (part: any): boolean => (!part.formType || (typeof part.formType === 'string' ? row.formType === part.formType : part.formType.in.includes(row.formType)))
             && (!part.periodKey || row.periodKey === part.periodKey) && (!part.id || part.id.in.includes(row.id));
-          return matches(where) && (!where.OR || where.OR.some(matches));
+          return matches(where) && (!where.whtFilings || draft.filedSourceIds.includes(where.whtFilings.some.lines.some.sourceId)) && (!where.OR || where.OR.some(matches));
         }) },
         reimbursementRequest: { findFirst: async () => draft.claim },
-        attachmentLink: { findMany: async () => [] },
+        attachmentObject: { findFirst: async ({ where }: any) => draft.files.find(f => f.id === where.id && f.companyId === where.companyId && f.branchId === where.branchId && f.uploadedByUserId === where.uploadedByUserId && f.status === where.status) ?? null },
+        attachmentLink: { findMany: async () => [], findFirst: async () => null, create: async ({ data }: any) => { draft.links.push(data); return data; } },
         expenseSubstituteReceiptEvidence: { findFirst: async () => null },
         reimbursementLine: { findFirst: async () => null },
         $executeRaw: async () => 0,
@@ -135,7 +147,7 @@ function harness(overrides: Record<string, unknown> = {}) {
         } },
       };
       const result = await work(tx);
-      state.vouchers = draft.vouchers; state.voucherLines = draft.voucherLines;
+      state.links = draft.links; state.vouchers = draft.vouchers; state.voucherLines = draft.voucherLines;
       state.expense = draft.expense;
       state.payments = draft.payments;
       state.audits = draft.audits;
@@ -164,6 +176,13 @@ function paymentInput(amount: string, overrides: Record<string, unknown> = {}) {
 function pay(repo: PrismaExpenseRepository, amount: string, overrides: Record<string, unknown> = {}) {
   return repo.recordPaymentAtomic(paymentInput(amount, overrides));
 }
+
+for (const inputVatClaimStatus of ['NON_CLAIMABLE', 'NEEDS_REVIEW', 'CLAIMABLE']) it(`payment never waits for the input VAT right ${inputVatClaimStatus}`, async () => {
+  const h = harness({ inputVatClaimStatus, postingStatus: 'not_required' });
+  await pay(h.repo, '100');
+  assert.equal(h.state.payments.length, 1);
+  assert.equal(h.state.expense.paidAmount, '100.0000');
+});
 
 describe('PrismaExpenseRepository partial payment history', () => {
   it('applies branch and Bangkok future-date guards inside the shared payment transaction', async t => {
@@ -415,7 +434,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
       'EXPENSE_PAYMENT_REQUIRE_POSTGRES',
     );
     if (unreachable) return;
-    await clients[0]!.company.create({ data: { id: companyId, name: 'Synthetic expense intent tests' } });
+    await clients[0]!.company.create({ data: { id: companyId, name: 'Synthetic expense intent tests', registeredName: 'บริษัทผู้จ่ายทดสอบ จำกัด' } });
     fixtureCreated = true;
     await clients[0]!.user.create({ data: { id: userId, displayName: 'Synthetic payment tester' } });
     await clients[0]!.branch.create({ data: { id: branchId, companyId, code: 'HO', name: 'Source branch', type: 'HEAD_OFFICE', createdByUserId: userId } });
@@ -444,10 +463,326 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     new PrismaExpenseRepository({ client } as any),
     audit ?? new AuditService(new PrismaAuditRepository({ client } as any), { error: () => undefined } as any),
   );
+
+  async function vatDraftFixture() {
+    const client = clients[0]!;
+    const co = await client.company.create({ data: { name: 'VAT decision ledger test' } });
+    const branch = await client.branch.create({ data: { companyId: co.id, code: 'HO', name: 'สำนักงานใหญ่' } });
+    const s = { companyId: co.id, branchId: branch.id, userId };
+    const ledger = new PrismaLedgerRepository({ client } as any);
+    const expenses = new PrismaExpenseRepository({ client } as any);
+    const incurred = new Date('2026-09-15');
+    const accountant = () => ({ ...context(), companyId: co.id, permissions: ['expense.review'] });
+    await client.chartOfAccount.create({ data: { companyId: co.id, code: '5310-01', nameTh: 'ค่าใช้จ่าย', accountClass: 'EXPENSE', normalBalance: 'DEBIT' } });
+    await client.company.update({ where: { id: s.companyId }, data: { taxId: '0100000000002', registeredName: 'ร้านทดสอบ' } });
+    await client.companyVatRegistrationFact.create({ data: { companyId: s.companyId, status: 'REGISTERED', effectiveFrom: new Date('2020-01-01'), source: 'USER_ANSWER' } });
+    const inputAccount = await client.chartOfAccount.create({ data: { companyId: s.companyId, code: '1280-00', nameTh: 'ภาษีซื้อ', accountClass: 'ASSET', normalBalance: 'DEBIT' } });
+    await client.chartOfAccount.create({ data: { companyId: s.companyId, code: '2120-01', nameTh: 'เจ้าหนี้', accountClass: 'LIABILITY', normalBalance: 'CREDIT' } });
+    const paper = await client.attachmentObject.create({ data: { companyId: s.companyId, storageProvider: 'local', bucket: 'test', objectKey: randomUUID(), originalFileName: 'receipt.pdf', mimeType: 'application/pdf', byteSize: 1, status: 'ACTIVE', uploadedByUserId: s.userId } });
+    const component = { componentKey: 'VAT', snapshot: { externalTaxCode: 'I1', taxRegime: 'VAT', taxDirection: 'INPUT', taxTreatment: 'STANDARD', taxContext: 'DOMESTIC_PURCHASE',
+      taxCurrency: 'THB', sourceCurrency: 'THB', exchangeRate: '1', taxAmount: '7', taxBaseAmount: '100', taxRate: '7', claimability: 'CLAIMABLE', evidenceStatus: 'VERIFIED' },
+      accountAssignments: [{ accountId: inputAccount.id, accountRole: 'INPUT_VAT_CLAIMABLE', postingSide: 'DEBIT', ruleVersion: 1 }], reportContributions: [] };
+    // Confirmation is fixture setup here, as in the existing posting tests above.
+    const expense = await client.expenseRecord.create({ data: { companyId: s.companyId, branchId: s.branchId, createdByUserId: s.userId, status: 'CONFIRMED', confirmedAt: new Date(),
+      expenseDate: incurred, sourceDocumentType: 'TAX_INVOICE', vatMode: 'VAT_EXCLUDED', vatAmount: '7', grandTotalAmount: '107', netPayableAmount: '107',
+      inputVatClaimStatus: 'NEEDS_REVIEW', taxEvidenceStatus: 'USABLE_FOR_TAX', vendorTaxIdSnapshot: '0100000000001', vendorDocumentNumber: 'INV-1', primaryAttachmentId: paper.id,
+      buyerAsPrintedJson: { name: 'ร้านทดสอบ', taxId: '0100000000002' }, lines: { create: [{ companyId: s.companyId, lineNumber: 1, description: 'ซื้อของ', quantity: '1', unitPrice: '100', taxableAmount: '100', vatAmount: '7', taxComponentsJson: [component] }] } } });
+    const period = await ledger.upsertPeriod(s.companyId, '2026-09', incurred, new Date('2026-09-30'));
+    const source = asLedgerSource({ ...(await expenses.findByIdWithRelations(s.companyId, expense.id)), sourceType: 'expense.record', sourceId: expense.id });
+    const { resolvedLines } = await buildJournalLines(accountant(), source, await client.company.findUniqueOrThrow({ where: { id: s.companyId } }), ledger, client);
+    const draft = await ledger.createJournalEntry({ companyId: s.companyId, periodId: period.id, entryNumber: `JV-${randomUUID()}`, entryType: 'GENERATED',
+      sourceType: 'expense.record', sourceId: expense.id, entryDate: incurred, createdByUserId: s.userId, lines: resolvedLines });
+    const input = { toStatus: 'CLAIMABLE' as const, reviewerConditions: ['BUSINESS_USE', 'NOT_PROHIBITED', 'ISSUER_ENTITLED'] };
+    const ctx = { ...accountant(), permissions: ['expense.review'] };
+    const read = () => client.journalEntry.findUniqueOrThrow({ where: { id: draft.id }, include: { lines: true } });
+    const check = async (claimable: boolean) => {
+      const row = await read();
+      assert.equal(row.lines.some(l => l.accountId === inputAccount.id), claimable);
+      assert.equal(row.lines.reduce((sum, l) => sum.add(l.debitAmount.toString()).sub(l.creditAmount.toString()), new Decimal(0)).toString(), '0');
+    };
+    const cleanup = async () => { await client.auditLog.deleteMany({ where: { companyId: co.id } }); await client.company.delete({ where: { id: co.id } }); };
+    return { s, expense, draft, input, ctx, read, check, client, ledger, expenses, cleanup };
+  }
+
+  it('VAT decisions rebuild a real draft atomically, and a failed transaction restores its right, audit and lines', async (t) => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const h = await vatDraftFixture();
+    const { client, expenses, ledger } = h;
+    try {
+      await h.check(false);
+      const failing = new PrismaExpenseRepository({ client: { $transaction: (fn: any) => client.$transaction(async tx => { await fn(tx); throw new Error('rollback decision'); }) } } as any);
+      await assert.rejects(() => failing.decideInputVat(h.ctx, h.expense.id, h.input), /rollback decision/);
+      await h.check(false);
+      assert.equal(await client.expenseInputVatDecision.count({ where: { expenseId: h.expense.id } }), 0);
+      assert.equal(await client.auditLog.count({ where: { companyId: h.s.companyId, action: 'expense.input_vat.decide' } }), 0);
+      assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id: h.expense.id } })).inputVatClaimStatus, 'NEEDS_REVIEW');
+      await expenses.decideInputVat(h.ctx, h.expense.id, h.input); await h.check(true);
+      await expenses.decideInputVat(h.ctx, h.expense.id, { toStatus: 'NON_CLAIMABLE', reason: 'ใช้ส่วนตัว' }); await h.check(false);
+      assert.equal((await h.read()).status, 'DRAFT');
+    } finally { await h.cleanup(); }
+  });
+
+  it('posting and deciding concurrently leave a posted journal matching the committed VAT right', async (t) => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const h = await vatDraftFixture();
+    const { client, expenses, ledger } = h;
+    try {
+      const [decision, posted] = await Promise.allSettled([expenses.decideInputVat(h.ctx, h.expense.id, h.input), ledger.postJournalEntry(h.draft.id, h.s.userId)]);
+      assert.equal(posted.status, 'fulfilled');
+      if (decision.status === 'rejected') assert.equal(decision.reason.getResponse().code, 'input_vat_posted_journal_immutable');
+      const expense = await client.expenseRecord.findUniqueOrThrow({ where: { id: h.expense.id } });
+      await h.check(expense.inputVatClaimStatus === 'CLAIMABLE');
+      assert.equal((await h.read()).status, 'POSTED');
+    } finally { await h.cleanup(); }
+  });
+
+
+  it('migrates only undecided open VAT invoices and abbreviated evidence, without inventing decisions', async (t) => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const rollback = new Error('rollback migration fixtures');
+    await assert.rejects(() => clients[0]!.$transaction(async (tx) => {
+      const co = `vat-migration-${randomUUID()}`;
+      await tx.company.create({ data: { id: co, name: 'ทดสอบย้ายสิทธิภาษีซื้อ' } });
+      await tx.companyVatRegistrationFact.createMany({ data: [
+        { companyId: co, status: 'NOT_REGISTERED', effectiveFrom: new Date('2020-01-01'), effectiveTo: new Date('2025-01-01'), source: 'USER_ANSWER' },
+        { companyId: co, status: 'REGISTERED', effectiveFrom: new Date('2025-01-01'), source: 'USER_ANSWER' },
+      ] });
+      const make = (overrides: any = {}) => tx.expenseRecord.create({ data: { companyId: co, createdByUserId: userId, status: 'NEEDS_REVIEW',
+        expenseDate: new Date('2026-10-14'), sourceDocumentType: 'TAX_INVOICE', vatMode: 'VAT_EXCLUDED', vatAmount: '7', inputVatClaimStatus: 'NON_CLAIMABLE', ...overrides } });
+      const open = await Promise.all(['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].map(status => make({ status })));
+      const unchanged = await Promise.all([
+        ...['CONFIRMED', 'VOIDED', 'REJECTED'].map(status => make({ status })),
+        make({ vatAmount: '0' }), make({ vatMode: 'NO_VAT' }), make({ expenseDate: new Date('2024-10-01') }),
+        make({ buyerAsPrintedJson: { claimStatusBeforeMark: 'NEEDS_REVIEW' } }),
+        make({ aiVerificationSummaryJson: { documentEvidenceDraft: { route: 'SUBSTITUTE_RECEIPT' } } }),
+      ]);
+      const claimed = await make(); unchanged.push(claimed);
+      const request = await tx.reimbursementRequest.create({ data: { companyId: co, requesterUserId: userId,
+        requesterDisplayNameSnapshot: 'ผู้เบิก', reason: 'ทดสอบ', categoryKey: 'OTHER', amount: '107', incurredDate: new Date('2026-10-14'), createdByUserId: userId } });
+      // The table's trigger already wrote the request's fallback line 1: point it at the expense.
+      await tx.reimbursementLine.updateMany({ where: { reimbursementRequestId: request.id, lineNo: 1 }, data: { linkedExpenseId: claimed.id } });
+      const abbreviated = await make({ sourceDocumentType: 'ABBREVIATED_TAX_INVOICE', taxEvidenceStatus: 'SUPPORTING_ONLY', taxEvidenceReasonCode: 'ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE' });
+      const sql = readFileSync('prisma/migrations/20261014120100_migrate_open_input_vat_rights/migration.sql', 'utf8');
+      await tx.$executeRawUnsafe(sql);
+      for (const row of open) assert.equal((await tx.expenseRecord.findUniqueOrThrow({ where: { id: row.id } })).inputVatClaimStatus, 'NEEDS_REVIEW');
+      for (const row of unchanged) assert.equal((await tx.expenseRecord.findUniqueOrThrow({ where: { id: row.id } })).inputVatClaimStatus, 'NON_CLAIMABLE');
+      const after = await tx.expenseRecord.findUniqueOrThrow({ where: { id: abbreviated.id } });
+      assert.equal(after.taxEvidenceStatus, 'USABLE_FOR_TAX'); assert.equal(after.taxEvidenceReasonCode, 'VALID_RECEIPT_FIELDS');
+      assert.equal(await tx.expenseInputVatDecision.count({ where: { companyId: co } }), 0);
+      await tx.$executeRawUnsafe(sql); // Idempotent: already moved rows and retained records stay put.
+      assert.equal(await tx.expenseRecord.count({ where: { companyId: co, inputVatClaimStatus: 'NEEDS_REVIEW' } }), open.length);
+      throw rollback;
+    }), (error: unknown) => error === rollback);
+  });
+
+  it('stores both additive VAT document enums and recomputes open expenses in the shop-answer transaction', async (t) => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const client = clients[0]!;
+    const companyId = `input-vat-${randomUUID()}`;
+    await client.company.create({ data: { id: companyId, name: 'Input VAT transaction test' } });
+    const branchId = `${companyId}-branch`;
+    await client.branch.create({ data: { id: branchId, companyId, code: 'HO', name: 'สำนักงานใหญ่' } });
+    const ctx = () => ({ ...context(), companyId });
+    const TODAY = '2026-10-14';
+    const draft = async () => (await client.expenseRecord.create({ data: { companyId, createdByUserId: userId, status: 'NEEDS_REVIEW', expenseDate: new Date(TODAY) } })).id;
+    const audit = () => new AuditService(new PrismaAuditRepository({ client } as any), { error: () => undefined } as any);
+    try {
+    const ids: string[] = [];
+    for (const sourceDocumentType of ['CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT'] as const) {
+      const id = await draft(); ids.push(id);
+      await client.expenseRecord.update({ where: { id }, data: { sourceDocumentType, vatMode: 'VAT_INCLUDED', vatAmount: '7' } });
+    }
+    const confirmed = await draft();
+    await client.expenseRecord.update({ where: { id: confirmed }, data: { status: 'CONFIRMED', sourceDocumentType: 'TAX_INVOICE', vatMode: 'VAT_INCLUDED', vatAmount: '7', inputVatClaimStatus: 'CLAIMABLE' } });
+    const useCase = new CompanyVatRegistrationUseCase({ client } as any, audit());
+    const answer = (status: 'REGISTERED' | 'NOT_REGISTERED', expectedVersion: number) => ({ commandId: randomUUID(), expectedVersion,
+      command: { kind: 'UPSERT_FACT' as const, status, effectiveFrom: '2020-01-01' } });
+    await useCase.put(ctx(), companyId, answer('REGISTERED', 0));
+    for (const id of ids) assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id } })).inputVatClaimStatus, 'NEEDS_REVIEW');
+    const rollback = new CompanyVatRegistrationUseCase({ client } as any, { log: async () => { throw new Error('audit rollback'); } } as any);
+    await assert.rejects(() => rollback.put(ctx(), companyId, answer('NOT_REGISTERED', 1)), /audit rollback/);
+    assert.equal((await useCase.get(companyId, TODAY)).status, 'REGISTERED');
+    for (const id of ids) assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id } })).inputVatClaimStatus, 'NEEDS_REVIEW');
+    const [, concurrent] = await Promise.all([
+      useCase.put(ctx(), companyId, answer('NOT_REGISTERED', 1)),
+      new PrismaExpenseRepository({ client } as any).createExpense({ companyId, branchId, createdByUserId: userId, captureSource: 'WEB_UPLOAD', expenseDate: new Date(TODAY), sourceDocumentType: 'TAX_INVOICE', vatMode: 'VAT_INCLUDED', vatAmount: '7', inputVatClaimStatus: 'NEEDS_REVIEW', subtotalAmount: '100', discountAmount: '0', taxableAmount: '100', whtAmount: '0', grandTotalAmount: '107', netPayableAmount: '107', outstandingAmount: '107' }),
+    ]);
+    ids.push(concurrent.id);
+    for (const id of ids) assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id } })).inputVatClaimStatus, 'NON_CLAIMABLE');
+    assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id: confirmed } })).inputVatClaimStatus, 'CLAIMABLE');
+    } finally {
+      await client.auditLog.deleteMany({ where: { companyId } });
+      await client.company.delete({ where: { id: companyId } });
+    }
+  });
+
+  it('S1 seed rent is paid, tax-ready, idempotent and can be reopened and confirmed again', async t => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const client = clients[0]!;
+    const owner = { companyId, branchId, ownerUserId: userId };
+    const categoryId = `${companyId}-seed-rent-category`;
+    await client.expenseCategory.create({ data: { id: categoryId, companyId, name: 'ค่าเช่า', accountHintKey: 'expense.rent' } });
+    await client.whtIncomeCategory.upsert({ where: { code: 'WHT_RENT_JUR' }, update: {},
+      create: { code: 'WHT_RENT_JUR', nameTh: 'ค่าเช่า (นิติบุคคล)', formType: 'PND53', defaultRate: '5', status: 'ACTIVE' } });
+    const rent = seedExpenseRows((offset, hour) => new Date(Date.UTC(2026, 9, 13 + offset, hour)))
+      .find(row => row.id === 'seed-expense-record-rent')!;
+    // Isolated identities; the fixture's money, payee and source-document facts stay unchanged.
+    const row = { ...rent, id: `${companyId}-seed-expense-record-rent`, lineId: `${companyId}-seed-rent-line`, categoryId } as any;
+    await seedExpenses(client, owner, [row]);
+    const snapshot = () => client.expenseRecord.findUniqueOrThrow({ where: { id: row.id }, include: { lines: true, payments: true } });
+    const first = await snapshot();
+    assert.equal(first.status, 'CONFIRMED');
+    assert.equal(first.paymentStatus, 'PAID');
+    assert.equal(first.paidAmount.toFixed(2), '28500.00');
+    assert.equal(first.outstandingAmount.toFixed(2), '0.00');
+    assert.equal(first.payments.length, 1);
+    assert.equal(first.payments[0]!.amount.toFixed(2), '28500.00');
+    assert.equal(first.lines[0]!.whtRate!.toFixed(4), '0.0500');
+    const handoff = await client.whtCertificateHandoff.findFirstOrThrow({ where: { companyId, sourcePaymentId: row.id } });
+    assert.equal(handoff.status, 'REQUIRED');
+    const prefill = handoff.prefillSnapshotJson as any;
+    assert.equal(prefill.formType, 'PND53');
+    assert.equal(prefill.incomeCategoryCode, 'WHT_RENT_JUR');
+    assert.equal(Number(prefill.whtRate), 5);
+    assert.equal(Number(prefill.grossAmount), 30000);
+    assert.equal(Number(prefill.withheldAmount), 1500);
+    assert.equal(prefill.payeeSnapshot.taxId, rent.vendorTaxIdSnapshot);
+    assert.equal(prefill.payeeSnapshot.address, rent.vendorAddressSnapshot);
+    const service = { client } as any;
+    const repo = new PrismaExpenseRepository(service);
+    assert.equal(expenseEvidenceConfirmationError((await repo.findByIdWithRelations(companyId, row.id))!), null);
+    const file = await client.attachmentObject.findUniqueOrThrow({ where: { id: first.primaryAttachmentId! } });
+    assert.equal(file.status, 'ACTIVE');
+    assert.ok(file.objectVersionId);
+    assert.match(file.checksumSha256!, /^[0-9a-f]{64}$/);
+    assert.ok(file.byteSize > 0);
+    const sync = new SyncTaxEventsUseCase(new PrismaTaxRepository(service), new AccountingDocumentSourceAdapter(service),
+      new ExpenseSourceAdapter(service), new SupplierPaymentSourceAdapter(service));
+    // Slice 5 W4: the seed writer copied the document date, so its payment stays off every paper until a real date is given.
+    assert.equal(first.payments[0]!.paidAtConfirmed, false);
+    await sync.execute(companyId, undefined, 'WHT');
+    assert.equal(await client.taxEvent.count({ where: { companyId, sourceId: row.id, status: 'ACTIVE' } }), 0);
+    await repo.confirmPaymentDateAtomic({ companyId, expenseId: row.id, paymentId: first.payments[0]!.id,
+      paidAt: rent.date.toISOString().slice(0, 10), actorUserId: userId, scopes: {} }, async () => undefined);
+    const dated = await snapshot();
+    assert.equal(dated.payments[0]!.paidAtConfirmed, true);
+    await sync.execute(companyId, undefined, 'WHT');
+    const event = await client.taxEvent.findFirstOrThrow({ where: { companyId, sourceId: row.id, status: 'ACTIVE' } });
+    assert.equal(event.eventType, 'WHT_PND53');
+    assert.equal(event.sourceLineKey, `payment:${first.payments[0]!.id}`);
+    assert.equal(event.taxableBase.toFixed(2), '30000.00');
+    assert.equal(event.taxAmount.toFixed(2), '1500.00');
+    assert.equal(await client.taxReviewIssue.count({ where: { companyId, sourceId: row.id, status: 'OPEN' } }), 0);
+
+    await seedExpenses(client, owner, [{ ...row, date: new Date('2026-11-01') }]);
+    await sync.execute(companyId, undefined, 'WHT');
+    assert.deepEqual(await snapshot(), dated);
+    assert.equal(await client.whtCertificateHandoff.count({ where: { companyId, sourcePaymentId: row.id } }), 1);
+    assert.equal(await client.taxEvent.count({ where: { companyId, sourceId: row.id } }), 1);
+    assert.equal(await client.auditLog.count({ where: { companyId, action: 'expense.confirm', targetId: row.id } }), 1);
+    assert.equal(await client.auditLog.count({ where: { companyId, action: 'expense.payment.record', targetId: first.payments[0]!.id } }), 1);
+    assert.equal(await client.outboxEvent.count({ where: { companyId, aggregateId: { in: [row.id, first.payments[0]!.id] } } }), 2);
+
+    await repo.reopenExpenseAtomic({ companyId, expenseId: row.id, actorUserId: userId, scopes: {}, reason: 'ตรวจเอกสารอีกครั้ง', permissions: ['expense.confirm'] });
+    await new MarkExpenseReadyUseCase(repo).execute({ ...context(), permissions: ['expense.review'] }, row.id);
+    const source = (await repo.findByIdWithRelations(companyId, row.id))!;
+    assert.equal(expenseEvidenceConfirmationError(source), null);
+    await repo.finalizeAndConfirmExpenseCas({ companyId, id: row.id, actorUserId: userId,
+      expectedUpdatedAt: source.updatedAt, expectedSourceChecksum: expenseTaxSourceChecksum(source),
+      postingStatus: 'pending', vendorSnapshotJson: null, confirmationAudit: { requestId: 'seed-reconfirm' },
+      outboxEvent: { eventKey: `${row.id}:reconfirm`, payloadJson: {} },
+    }, async () => []);
+    const reconfirmed = await snapshot();
+    assert.equal(reconfirmed.status, 'CONFIRMED');
+    assert.equal(reconfirmed.primaryAttachmentId, first.primaryAttachmentId);
+    assert.equal(reconfirmed.payments.length, 1);
+    assert.equal(await client.whtCertificateHandoff.count({ where: { companyId, sourcePaymentId: row.id, status: 'REQUIRED' } }), 1);
+  });
+
+  it('uses the same document month and missing-date upload fallback for list, evidence and folders', async t => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const client = clients[0]!;
+    const repo = new PrismaExpenseRepository({ client } as any);
+    const cases = [
+      { summary: Prisma.DbNull, expected: '2026-09' },
+      { summary: { dateStatus: 'verified', missingFields: ['expenseDate'] }, expected: '2026-09' },
+      { summary: { dateStatus: 'assumed', missingFields: ['expenseDate'] }, expected: '2026-09' },
+      { summary: { dateStatus: 'unverified' }, expected: '2026-10' },
+      { summary: { dateStatus: 'implausible' }, expected: '2026-10' },
+      { summary: { missingFields: ['expenseDate'] }, expected: '2026-10' },
+      { summary: { missingFields: [] }, expected: '2026-09' },
+    ];
+    const rows = [];
+    for (const item of cases) rows.push(await client.expenseRecord.create({ data: {
+      companyId, branchId, createdByUserId: userId, captureSource: 'WEB_UPLOAD', status: 'CONFIRMED',
+      expenseDate: new Date('2026-09-30'), uploadedAt: new Date('2026-10-01T17:30:00Z'), aiVerificationSummaryJson: item.summary,
+    } }));
+    const ids = rows.map(row => row.id);
+    for (const month of ['2026-09', '2026-10']) {
+      const expected = rows.filter((_row, index) => cases[index]!.expected === month).map(row => row.id).sort();
+      const evidence = await repo.listSharedEvidence(companyId, { expenseIds: ids, yearMonth: month });
+      const list = await repo.listExpenses({ companyId, fromDate: `${month}-01`, toDate: `${month}-${month.endsWith('09') ? '30' : '31'}`, pageSize: 100 }, { branchIds: [branchId] });
+      assert.deepEqual(evidence.rows.map(row => row.id).sort(), expected);
+      assert.deepEqual(list.data.filter(row => ids.includes(row.id)).map(row => row.id).sort(), expected);
+    }
+    const folders = await repo.summarizeSharedEvidenceFolders(companyId, { expenseIds: ids });
+    assert.deepEqual(folders.map(folder => [folder.yearMonth, folder.expenseCount]), [['2026-10', 3], ['2026-09', 4]]);
+    const uploaded = await repo.listSharedEvidence(companyId, { expenseIds: ids, yearMonth: '2026-10', dateField: 'uploadedAt' });
+    assert.equal(uploaded.total, cases.length);
+  });
+
+  it('commits one reviewer request and notice when two submissions race, and rolls back a failed notice', async t => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const client = clients[0]!;
+    const repo = new PrismaExpenseRepository({ client } as any);
+    const row = await client.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId, captureSource: 'WEB_UPLOAD', status: 'NEEDS_REVIEW', expenseDate: new Date('2026-10-13') } });
+    const people: any = { membersWithPermission: async () => [{ userId: 'checker', displayName: 'ผู้ตรวจ' }], memberNames: async () => new Map([[userId, 'ผู้ส่ง']]) };
+    let notices = 0;
+    const notify: any = { executeInTransaction: async () => { notices++; } };
+    const requestReview = new MarkExpenseReadyUseCase(repo, people, notify);
+    const results = await Promise.allSettled([requestReview.execute({ ...context(), permissions: ['expense.review'] }, row.id, 'checker'), requestReview.execute({ ...context(), permissions: ['expense.review'] }, row.id, 'checker')]);
+    assert.ok(results.some(result => result.status === 'fulfilled'));
+    assert.equal(notices, 1);
+    const sent = await client.expenseRecord.findUniqueOrThrow({ where: { id: row.id } });
+    assert.equal(sent.requestedReviewerUserId, 'checker'); assert.equal(sent.submittedByUserId, userId); assert.ok(sent.submittedAt);
+    const retryRow = await client.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId, captureSource: 'WEB_UPLOAD', status: 'NEEDS_REVIEW', expenseDate: new Date('2026-10-13') } });
+    const failing = new MarkExpenseReadyUseCase(repo, people, { executeInTransaction: async () => { throw Error('notice failed'); } } as any);
+    await assert.rejects(() => failing.execute({ ...context(), permissions: ['expense.review'] }, retryRow.id, 'checker'), /notice failed/);
+    const unchanged = await client.expenseRecord.findUniqueOrThrow({ where: { id: retryRow.id } });
+    assert.equal(unchanged.status, 'NEEDS_REVIEW'); assert.equal(unchanged.requestedReviewerUserId, null); assert.equal(unchanged.submittedAt, null);
+  });
+
   const createExpense = () => clients[0]!.expenseRecord.create({ data: {
     companyId, branchId, createdByUserId: userId, status: 'CONFIRMED', expenseDate: new Date('2026-07-31T00:00:00Z'),
     netPayableAmount: '100', outstandingAmount: '100', postingStatus: 'posted',
   } });
+  // Slice 5: a 50 ทวิ is issued for a recorded payment with a known date (a Bangkok day stored as its local midnight).
+  const recordDatedPayment = (expenseId: string, day = '2026-07-31', company = companyId, amount = '100') => clients[0]!.expensePayment.create({ data: {
+    companyId: company, expenseId, amount, paidAt: new Date(`${day}T00:00:00+07:00`), paidAtConfirmed: true, createdByUserId: userId,
+  } });
+
+  it('keeps one payment-slip pair under concurrent retries and exposes it in detail and accountant evidence', async t => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const client = clients[0]!;
+    const row = await createExpense();
+    const file = await client.attachmentObject.create({ data: { companyId, branchId, uploadedByUserId: userId,
+      storageProvider: 'local', bucket: 'test', objectKey: randomUUID(), originalFileName: 'slip.png', mimeType: 'image/png', byteSize: 100, status: 'ACTIVE',
+      metadataJson: { generatedFor: 'expense.payment.slip', expenseId: row.id } } });
+    const input = { paidAmount: '40', idempotencyKey: randomUUID(), slipAttachmentId: file.id };
+    await Promise.all(clients.map(db => useCase(db).execute(context(), row.id, input)));
+    const payment = await client.expensePayment.findFirstOrThrow({ where: { expenseId: row.id } });
+    const links = await client.attachmentLink.findMany({ where: { companyId, attachmentId: file.id } });
+    assert.equal(links.length, 2);
+    assert.ok(links.some(link => link.targetType === 'expense.payment' && link.targetId === payment.id));
+    const repo = new PrismaExpenseRepository({ client } as any);
+    const detail = await repo.findByIdWithRelations(companyId, row.id);
+    assert.equal(detail!.payments[0]!.slipAttachmentId, file.id);
+    assert.ok(detail!.attachments.some(attachment => attachment.id === file.id && attachment.purpose === 'expense.payment.evidence'));
+    const evidence = await repo.listSharedEvidence(companyId, { expenseIds: [row.id] });
+    assert.ok(evidence.rows[0]!.attachments.some(attachment => attachment.id === file.id));
+    const audit = await client.auditLog.findFirstOrThrow({ where: { companyId, action: 'expense.payment.record', targetId: payment.id } });
+    assert.equal((audit.metadataJson as any).slipAttachmentId, file.id);
+  });
 
   async function assertPaymentEffects(expenseId: string, count: number, paidAmount: string) {
     const client = clients[0]!;
@@ -521,7 +856,8 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     assert.equal(new Decimal(second.paidAmount).toFixed(4), '40.0000');
     await assertPaymentEffects(expense.id, 1, '40.0000');
     const payment = await clients[0]!.expensePayment.findFirstOrThrow({ where: { companyId, expenseId: expense.id } });
-    assert.equal(payment.paidAt.toISOString(), '2026-07-31T00:00:00.000Z');
+    // Slice 5: the chosen Bangkok civil day is stored as that day's local midnight.
+    assert.equal(payment.paidAt.toISOString(), '2026-07-30T17:00:00.000Z');
     await useCase(clients[1]!).execute(context(), expense.id, { ...input, paidAmount: '40' });
     await assertPaymentEffects(expense.id, 1, '40.0000');
     await assert.rejects(() => useCase(clients[1]!).execute(context(), expense.id, { ...input, paidAmount: '40.01' }),
@@ -607,7 +943,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
   async function withYearlyWhtFixture(work: (fixture: any) => Promise<void>) {
     const client = clients[0]!;
     const tenant = `a9-wht-${randomUUID()}`;
-    await client.company.create({ data: { id: tenant, name: 'Synthetic yearly WHT tests' } });
+    await client.company.create({ data: { id: tenant, name: 'Synthetic yearly WHT tests', registeredName: 'บริษัทผู้จ่ายทดสอบ จำกัด' } });
     const branch = await client.branch.create({ data: { companyId: tenant, code: 'HO', name: 'Test branch', type: 'HEAD_OFFICE', createdByUserId: userId } });
     // Issuing and correcting need the source expense to be readable by the actor (scoped certificate reads).
     const actor = { ...context(), companyId: tenant, permissions: ['expense.read', 'wht.certificate.issue', 'wht.certificate.correct'] };
@@ -622,6 +958,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     const issue = async (day: string) => {
       const expense = await client.expenseRecord.create({ data: { companyId: tenant, branchId: branch.id, createdByUserId: userId,
         status: 'CONFIRMED', expenseDate: new Date(day), netPayableAmount: '100', outstandingAmount: '100', postingStatus: 'not_required' } });
+      await recordDatedPayment(expense.id, day, tenant);
       const prefill = { payerSnapshot: { companyName: 'บริษัทผู้จ่าย', taxId: '1234567890123', branchCode: '00000', address: 'ที่อยู่กิจการ' },
         payeeSnapshot: { name: 'ผู้รับเงิน', taxId: '1111111111111', branchCode: '00003', address: 'ที่อยู่เดิม' },
         formType: 'PND53', incomeCategoryCode: 'WHT_SERVICE_JUR', incomeCategoryName: 'ค่าบริการ', whtRate: '3', grossAmount: '100', withheldAmount: '3', paymentDate: day };
@@ -633,6 +970,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     };
     try { await work({ client, tenant, actor, sequences, issue, correction }); }
     finally {
+      await client.expensePayment.deleteMany({ where: { companyId: tenant } });
       await client.expenseRecord.deleteMany({ where: { companyId: tenant } });
       await client.company.delete({ where: { id: tenant } });
     }
@@ -697,6 +1035,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
     const client = clients[0]!;
     const expense = await createExpense();
+    await recordDatedPayment(expense.id);
     const prefill = {
       payerSnapshot: { companyName: 'บริษัทผู้จ่าย', taxId: '1234567890123', branchCode: '00002', address: 'ที่อยู่ผู้จ่าย' },
       payeeSnapshot: { name: 'ผู้รับเงินเดิม', taxId: '1111111111111', branchCode: '00003', address: 'ที่อยู่เดิม' },
@@ -728,7 +1067,8 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
       { type: 'body', metatype: CorrectWhtCertificateDto });
     const third = await correct.execute(actor, handoff.id, address.corrected, address.reason);
     assert.deepEqual(third.payeeSnapshot, { ...prefill.payeeSnapshot, name: 'ชื่อที่แก้ไข', address: 'ที่อยู่ที่แก้ไข' });
-    assert.deepEqual(third.payerSnapshot, prefill.payerSnapshot);
+    // The tax id and branch code stay as issued; the name is the shop's registered name (owner 2026-10-14: never a display name).
+    assert.deepEqual(third.payerSnapshot, { ...prefill.payerSnapshot, companyName: 'บริษัทผู้จ่ายทดสอบ จำกัด' });
     assert.ok(third.pdfArtifact.byteLength > 0);
     const stored = await client.whtCertificate.findUniqueOrThrow({ where: { id: third.id } });
     assert.deepEqual(stored.payeeSnapshotJson, third.payeeSnapshot);
@@ -880,7 +1220,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     const originals = events.filter(event => (event.detailsJson as any).previousRecord.number === 'EXT-OLD');
     assert.equal(originals.length, 1);
     assert.deepEqual((originals[0]!.detailsJson as any).previousRecord,
-      { number: 'EXT-OLD', issuedDate: '2026-07-20T00:00:00.000Z', externalEvidenceRef: 'old-ref', note: 'เดิม' });
+      { paymentDate: null, number: 'EXT-OLD', issuedDate: '2026-07-20T00:00:00.000Z', externalEvidenceRef: 'old-ref', note: 'เดิม' });
     if (events.length === 2) {
       const second = events.find(event => event.id !== originals[0]!.id)!;
       assert.equal((second.detailsJson as any).previousRecord.number, originals[0]!.certificateNumber);
@@ -938,6 +1278,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
       if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
       const client = clients[0]!;
       const source = await createExpense();
+      await recordDatedPayment(source.id);
       const expense = await client.expenseRecord.update({ where: { id: source.id }, data: { postingStatus: 'pending', whtAmount: '3' } });
       const period = await client.taxPeriod.upsert({ where: { companyId_formType_periodKey: { companyId, formType: 'PND53', periodKey: '2026-07' } },
         create: { companyId, taxType: 'WHT', formType: 'PND53', periodKey: '2026-07' }, update: {} });
@@ -1000,7 +1341,8 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
             : new WhtCertificateHandoffUseCase(taxRepo, audit, gate, {} as any).linkExternal(actor, handoff.id,
               { commandId: randomUUID(), externalCertificateNumber: 'EXT-1', externalEvidenceRef: 'synthetic-file', issuedDate: '2026-07-31' });
       const certificateOutcome = operation.then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
-      await paused;
+      // A command that fails before its transaction must fail this test, not leave the file waiting forever.
+      await Promise.race([paused, certificateOutcome.then(outcome => { if (!outcome.ok) throw outcome.error; })]);
       const voidUseCase = new VoidExpenseUseCase(new PrismaExpenseRepository({ client: voidClient } as any), audit,
         { append: async () => undefined } as any, {} as any, {} as any, {} as any);
       const voidOutcome = voidUseCase.execute(actor, expense.id, 'รายจ่ายผิด', true)
@@ -1011,7 +1353,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
       assert.equal(issued.ok, winner === 'certificate'); assert.equal(voided.ok, winner === 'void');
       if (!voided.ok) {
         assert.equal(voided.error.getResponse().code, 'expense_changed_retry');
-        assert.equal(voided.error.getResponse().message, 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้ยกเลิกเอกสาร กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง');
+        assert.equal(voided.error.getResponse().message, 'มีคนทำรายการกับเอกสารนี้พร้อมกัน ระบบยังไม่ได้บันทึกการยกเลิก เปิดหน้านี้ใหม่แล้วลองอีกครั้ง');
         const unchanged = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
         assert.equal(unchanged.updatedAt.toISOString(), expense.updatedAt.toISOString(), 'certificate commands preserve the expense revision');
         assert.equal(unchanged.updatedByUserId, expense.updatedByUserId);
@@ -1114,7 +1456,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
 
     before(async () => {
       if (!ready) return;
-      await db().company.create({ data: { id: readCompanyId, name: 'Synthetic C1 certificate read tests' } });
+      await db().company.create({ data: { id: readCompanyId, name: 'Synthetic C1 certificate read tests', registeredName: 'บริษัทผู้จ่ายทดสอบ จำกัด' } });
       created = true;
       await db().user.createMany({ data: [{ id: actorId, displayName: 'Synthetic C1 reader' }, { id: otherId, displayName: 'Synthetic other creator' }] });
       await db().branch.createMany({ data: [
@@ -1138,6 +1480,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
       await db().whtCertificate.deleteMany({ where: { companyId: readCompanyId } });
       await db().taxPeriod.deleteMany({ where: { companyId: readCompanyId } });
       await db().documentNumber.deleteMany({ where: { companyId: readCompanyId } });
+      await db().expensePayment.deleteMany({ where: { companyId: readCompanyId } });
       await db().expenseRecord.deleteMany({ where: { companyId: readCompanyId } });
       await db().company.deleteMany({ where: { id: readCompanyId } });
       await db().user.deleteMany({ where: { id: { in: [actorId, otherId] } } });
@@ -1171,6 +1514,33 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
       assert.deepEqual(await handoffs.list(branchActor(), { branchId: branchB }), []);
       const required = catalog.find(row => row.label === 'A-REQUIRED')!;
       assert.deepEqual((await handoffs.list(ctx, { sourcePaymentId: required.source!.id })).map(row => row.id), [required.handoff.id]);
+    });
+
+    it('WHT-LIST PostgreSQL sums share tab, month, form, branch and search filters across pages', async (t) => {
+      if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+      const handoffs = useCases().handoffs;
+      for (const status of statuses) {
+        const query = { status, periodKey: '2026-07', formType: 'PND53', search: 'ผู้รับเงิน', pageSize: 1 };
+        const first = await handoffs.listPaged(branchActor(), query);
+        const second = await handoffs.listPaged(branchActor(), { ...query, page: 2 });
+        const expected = catalog.filter(row => !row.label.startsWith('B-') && row.label !== 'STALE-VOID' && row.handoff.status === status);
+        assert.deepEqual(first.sums, { withheld: new Decimal(expected.length).mul(3).toFixed(2) });
+        assert.deepEqual(second.sums, first.sums);
+        assert.equal(first.rows.length, 1);
+        assert.notEqual(first.rows[0].id, second.rows[0].id);
+      }
+      for (const query of [{ periodKey: '2026-08' }, { formType: 'PND3' }, { branchId: branchB }, { search: 'not-present' }]) {
+        assert.deepEqual((await handoffs.listPaged(branchActor(), query)).sums, { withheld: '0.00' });
+      }
+      const system = catalog.find(row => row.label === 'A-SYSTEM_ISSUED')!;
+      try {
+        await db().whtCertificate.update({ where: { id: system.certificate!.id }, data: { withheldAmount: '7.25' } });
+        const result = await handoffs.listPaged(branchActor(), { status: 'SYSTEM_ISSUED', search: system.certificateNumber! });
+        assert.deepEqual(result.sums, { withheld: '7.25' });
+        assert.equal(result.total, 1);
+      } finally {
+        await db().whtCertificate.update({ where: { id: system.certificate!.id }, data: { withheldAmount: '3' } });
+      }
     });
 
     it('C1 PostgreSQL search resolves payee JSON, tax digits, system/external/cancelled certificate and expense numbers with matching scoped counts', async (t) => {
@@ -1249,6 +1619,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
         numbers: await db().documentNumber.count({ where: { companyId: readCompanyId } }),
         audits: await db().auditLog.count({ where: { companyId: readCompanyId } }),
         history: await db().whtCertificateHistory.count({ where: { companyId: readCompanyId } }) }, before);
+      if (entry === 'system issue' || entry === 'self-issued record') await recordDatedPayment(allowed.source!.id, '2026-07-31', readCompanyId, '97');
       const result = await call({ ...ownActor(), scopes: { branchIds: [branchA] } }, allowed.handoff.id);
       const saved = await db().whtCertificateHandoff.findUniqueOrThrow({ where: { id: allowed.handoff.id } });
       if (entry === 'get') assert.equal(result.id, allowed.handoff.id);
@@ -1445,6 +1816,24 @@ it('keeps the latest cancelled coverage for cancelled and surviving payments, pr
   assert.deepEqual(issued.get(ids[0])?.cancelledDisbursementVoucher, { id: 'latest', documentNumber: 'PV-LATEST' });
 });
 
+it('renders only the exact recorded signature attachment and checksum, never the current personal asset', async () => {
+  const bytes = Buffer.from('original signature bytes'), checksumSha256 = createHash('sha256').update(bytes).digest('hex');
+  const queries: any[] = [];
+  const client: any = { attachmentObject: { findFirst: async (q: any) => { queries.push(q); return { id: q.where.id, bucket: 'private', objectKey: q.where.id, mimeType: 'image/png' }; } } };
+  let stored = bytes;
+  const files = new DisbursementVoucherFileService({ client } as any, { getObject: async ({ objectKey }: any) => { assert.equal(objectKey, 'old-signature'); return { bytes: stored }; } } as any);
+  const snapshot: any = { actors: { preparer: { name: 'สมใจ', signature: { userId: 'actor', attachmentId: 'old-signature', checksumSha256 } }, approver: { name: 'สมชาย' } } };
+  const rendered = await files.withSignatures('company', snapshot);
+  assert.equal(rendered.actors?.preparer?.signatureDataUrl, `data:image/png;base64,${bytes.toString('base64')}`);
+  assert.equal(rendered.actors?.approver?.signatureDataUrl, undefined);
+  assert.equal(snapshot.actors.preparer.signatureDataUrl, undefined);
+  assert.equal(queries[0].where.companyId, 'company'); assert.equal(queries[0].where.id, 'old-signature');
+  stored = Buffer.from('changed bytes');
+  await assert.rejects(() => files.withSignatures('company', snapshot), /checksum mismatch/);
+  client.attachmentObject.findFirst = async () => null;
+  await assert.rejects(() => files.withSignatures('company', snapshot), /unavailable/);
+});
+
 it('stores one immutable disbursement PDF after a failed storage attempt and verifies its checksum on later reads', async () => {
   const voucher: any = { id: 'dv-file', companyId: 'co', branchId: 'branch', documentNumber: 'PV-1', status: 'PAID', paidSnapshotJson: { original: true }, paidSnapshotHash: 'hash', pdfAttachmentId: null, paidByUserId: 'payer', templateVersion: 1 };
   const attachments: any[] = [], links: any[] = [];
@@ -1475,6 +1864,57 @@ it('stores one immutable disbursement PDF after a failed storage attempt and ver
   await assert.rejects(() => files.ensure('co', 'dv-file'), /checksum mismatch/);
 });
 
+it('orders scoped list IDs in SQL before paging and restores SQL order after hydration', async () => {
+  const counts = { DRAFT: 3, PENDING_APPROVAL: 1, APPROVED: 1, PAID: 2, CANCELLED: 2 };
+  const fixtures = Object.entries(counts).flatMap(([status, count]) => Array.from({ length: count }, (_, i) => ({ id: `${status}-${i}`, status, cancelledAfterPaid: false })));
+  const checkScope = (where: any) => {
+    assert.equal(where.companyId, 'company');
+    assert.deepEqual(where.branchId, { in: ['branch'] });
+    assert.match(JSON.stringify(where.lines), /reader/);
+  };
+  let sqlCalls = 0;
+  const tx: any = {
+    disbursementVoucher: {
+      groupBy: async (query: any) => {
+        assert.deepEqual(query._sum, { totalAmount: true }); checkScope(query.where);
+        return Object.entries(counts).map(([status, count]) => ({ status, _count: { _all: count }, _sum: { totalAmount: '99999999999999.9950' } }));
+      },
+      findMany: async (query: any) => {
+        checkScope(query.where);
+        const rows = fixtures.filter(row => !query.where.status || row.status === query.where.status);
+        return query.select ? rows.map(({ id }) => ({ id })) : rows.filter(row => query.where.id.in.includes(row.id)).reverse();
+      },
+    },
+    $queryRaw: async (query: Prisma.Sql) => {
+      sqlCalls++;
+      const [company, ids, limit, offset] = query.values as [string, string[], number, number];
+      assert.equal(company, 'company');
+      const direction = query.sql.includes(' ASC') ? 'ASC' : 'DESC';
+      assert.ok(query.sql.includes(`ORDER BY COALESCE("paidDate", "plannedPayDate", "createdAt"::date) ${direction}, "createdAt" ${direction}, "id" ${direction}`));
+      assert.match(query.sql, /LIMIT \? OFFSET \?/);
+      const rows = fixtures.filter(row => ids.includes(row.id));
+      return (direction === 'ASC' ? rows.reverse() : rows).slice(offset, offset + limit).map(({ id }) => ({ id }));
+    },
+  };
+  const repo = new PrismaDisbursementVoucherRepository({ client: { $transaction: async (run: any, options: any) => {
+    assert.equal(options.isolationLevel, 'RepeatableRead'); return run(tx);
+  } } } as any);
+  const scope = { companyId: 'company', scopes: { branchIds: ['branch'] }, relatedUserId: 'reader' };
+  for (const order of ['newest', 'oldest'] as const) {
+    const result = await repo.list(scope, { order, page: 2, pageSize: 4 });
+    const expected = order === 'newest' ? fixtures : [...fixtures].reverse();
+    assert.deepEqual(result.rows.map(row => row.id), expected.slice(4, 8).map(row => row.id));
+    assert.equal(result.sums.APPROVED, '100000000000000.00');
+    assert.deepEqual(result.counts, counts); assert.equal(result.total, 9);
+  }
+  for (const status of Object.keys(counts)) {
+    const result = await repo.list(scope, { status: status as any, page: 2, pageSize: 1 });
+    assert.deepEqual(result.rows.map(row => row.id), fixtures.filter(row => row.status === status).slice(1, 2).map(row => row.id));
+    assert.equal(result.total, counts[status as keyof typeof counts]);
+  }
+  assert.equal(sqlCalls, 7);
+});
+
 describe('Disbursement voucher draft command integrity (real PostgreSQL)', () => {
   const required = process.env.EXPENSE_PAYMENT_REQUIRE_POSTGRES === 'true';
   const companyId = `disbursement-draft-pg-${randomUUID()}`;
@@ -1495,6 +1935,8 @@ describe('Disbursement voucher draft command integrity (real PostgreSQL)', () =>
     fixtureCreated = true;
     await clients[0]!.user.create({ data: { id: userId, displayName: 'Synthetic draft preparer' } });
     await clients[0]!.user.create({ data: { id: secondUserId, displayName: 'Synthetic second issuer' } });
+    // The preparer is a member of the shop, as a real preparer is: an approver may not send a document back to people who are no longer members.
+    await clients[0]!.companyMembership.create({ data: { companyId, userId } });
     await clients[0]!.branch.create({ data: { id: branchId, companyId, code: 'HO', name: 'Source branch', type: 'HEAD_OFFICE', createdByUserId: userId } });
     ready = true;
   });
@@ -1513,7 +1955,7 @@ describe('Disbursement voucher draft command integrity (real PostgreSQL)', () =>
       }
     } finally { await Promise.all(clients.map(c => c.$disconnect())); }
   });
-  const context = () => ({ companyId, userId, requestId: randomUUID(), permissions: ['expense.disbursement.prepare', 'expense.read'], scopes: {} } as any);
+  const context = () => ({ companyId, userId, requestId: randomUUID(), roles: [], permissions: ['expense.disbursement.prepare', 'expense.read'], scopes: {} } as any);
   const useCase = (client: PrismaClient, audit?: AuditService, files?: DisbursementVoucherFileService) => {
     const prisma = { client } as any, expenses = new PrismaExpenseRepository(prisma);
     return new DisbursementVoucherUseCase(new PrismaDisbursementVoucherRepository(prisma), expenses, new ListExpensesUseCase(expenses),
@@ -1523,6 +1965,59 @@ describe('Disbursement voucher draft command integrity (real PostgreSQL)', () =>
     expenseNumber: `EXP-${randomUUID()}`,
     status: 'CONFIRMED', expenseDate: new Date('2026-10-01'), vendorNameSnapshot: 'ร้านทดสอบ',
     grandTotalAmount: '107', whtAmount: '3', netPayableAmount: '104', outstandingAmount: '104' } });
+
+  it('supporting-file links are idempotent, roll back with audit failure and serialize against submission', async t => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const expense = await createExpense();
+    const draft = await useCase(clients[0]!).create(context(), { commandId: randomUUID(), lines: [{ expenseId: expense.id, amount: '104' }] });
+    const file = await clients[0]!.attachmentObject.create({ data: { companyId, branchId, storageProvider: 'db', bucket: 'db', objectKey: randomUUID(), originalFileName: 'bank.png', mimeType: 'image/png', byteSize: 10, status: 'ACTIVE', uploadedByUserId: userId,
+      metadataJson: { generatedFor: 'disbursement_voucher_supporting', voucherId: draft.id } } });
+    const scope = { companyId, scopes: {} };
+    const repo = (i: number) => new PrismaDisbursementVoucherRepository({ client: clients[i] } as any);
+    await assert.rejects(() => repo(0).changeSupportingFileAtomic(scope, draft.id, file.id, userId, false, async () => { throw new Error('audit failed'); }), /audit failed/);
+    assert.equal(await clients[0]!.attachmentLink.count({ where: { attachmentId: file.id } }), 0);
+    await Promise.all([0, 1].map(i => repo(i).changeSupportingFileAtomic(scope, draft.id, file.id, userId, false, async () => {})));
+    assert.equal(await clients[0]!.attachmentLink.count({ where: { attachmentId: file.id } }), 1);
+    let locked!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { locked = resolve; });
+    const continueSubmission = new Promise<void>(resolve => { release = resolve; });
+    const submit = clients[0]!.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${draft.id}:disbursement-voucher-lifecycle`}))`;
+      locked(); await continueSubmission;
+      await tx.disbursementVoucher.update({ where: { id: draft.id }, data: { status: 'PENDING_APPROVAL' } });
+    });
+    await entered;
+    const removal = assert.rejects(() => repo(1).changeSupportingFileAtomic(scope, draft.id, file.id, userId, true, async () => {}), (error: any) => error.getResponse().code === 'disbursement_supporting_frozen');
+    release(); await Promise.all([submit, removal]);
+    assert.equal(await clients[0]!.attachmentLink.count({ where: { attachmentId: file.id } }), 1);
+  });
+
+  it('orders paid, planned and created dates with stable ties and paging in both directions in PostgreSQL', async t => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const q = `order-${randomUUID()}`;
+    const fixtures = [
+      ['cancelled', 'CANCELLED', 9, null, null], ['paid-old', 'PAID', 8, 1, 10], ['approved', 'APPROVED', 7, null, 11],
+      ['pending', 'PENDING_APPROVAL', 6, null, 11], ['draft', 'DRAFT', 4, null, null], ['sent-back', 'DRAFT', 5, null, null], ['paid-new', 'PAID', 2, 3, null],
+      ['tie-a', 'DRAFT', 5, null, 11], ['tie-b', 'DRAFT', 5, null, 11],
+    ] as const;
+    for (const [name, status, created, paid, planned] of fixtures) await clients[0]!.disbursementVoucher.create({ data: {
+      id: `${q}-${name}`, companyId, branchId, preparedByUserId: userId, origin: 'PREPARED', payeeName: q,
+      payeeBasis: 'SINGLE', totalAmount: '10', status, createdAt: new Date(`2026-10-${String(created).padStart(2, '0')}T00:00:00Z`),
+      ...(name === 'sent-back' ? { returnedAt: new Date('2026-10-05'), returnReason: 'ตรวจใหม่' } : {}),
+      ...(paid ? { paidDate: new Date(`2026-10-${String(paid).padStart(2, '0')}`) } : {}),
+      ...(planned ? { plannedPayDate: new Date(`2026-10-${String(planned).padStart(2, '0')}`) } : {}),
+    } });
+    const repo = new PrismaDisbursementVoucherRepository({ client: clients[0]! } as any), scope = { companyId, scopes: {} };
+    const expected = ['approved', 'pending', 'tie-b', 'tie-a', 'cancelled', 'sent-back', 'draft', 'paid-new', 'paid-old'].map(name => `${q}-${name}`);
+    for (const order of ['newest', 'oldest'] as const) {
+      const pages = await Promise.all([1, 2, 3].map(page => repo.list(scope, { q, order, page, pageSize: 3 })));
+      assert.deepEqual(pages.flatMap(page => page.rows.map(row => row.id)), order === 'newest' ? expected : [...expected].reverse());
+      assert.ok(pages.every(page => page.total === 9));
+      assert.ok(pages.every(page => page.counts.DRAFT === 4 && page.sums.DRAFT === '40.00' && page.sums.PAID === '20.00'));
+    }
+    const paid = await repo.list(scope, { q, status: 'PAID', page: 1, pageSize: 3 });
+    assert.deepEqual(paid.rows.map(row => row.id), ['paid-new', 'paid-old'].map(name => `${q}-${name}`));
+  });
 
   it('concurrent same-command creates yield one draft, line, journal and audit with no reservation or number', async t => {
     if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
@@ -1618,7 +2113,7 @@ describe('Disbursement voucher draft command integrity (real PostgreSQL)', () =>
     const expense = await createExpense();
     const draft = await useCase(clients[0]!).create(context(), { commandId: randomUUID(), lines: [{ expenseId: expense.id, amount: '10' }] });
     const voucher = await useCase(clients[0]!).submit(lifecycleContext(), draft.id, { ...lifecycleCommand(0), approveNow: true });
-    await assert.rejects(() => useCase(clients[0]!).pay(paymentContext(), voucher.id, lifecycleCommand(1)), (e: any) => e.getResponse().code === 'disbursement_payment_method_required' && e.getResponse().message === 'กรุณาเลือกวิธีจ่ายก่อนบันทึก');
+    await assert.rejects(() => useCase(clients[0]!).pay(paymentContext(), voucher.id, lifecycleCommand(1)), (e: any) => e.getResponse().code === 'disbursement_payment_method_required' && e.getResponse().message === 'เลือกวิธีจ่ายก่อนบันทึก');
     assert.equal(await clients[0]!.expensePayment.count({ where: { companyId, expenseId: { in: (await clients[0]!.disbursementVoucherLine.findMany({ where: { voucherId: voucher.id } })).map(l => l.expenseId) } } }), 0);
     assert.equal((await clients[0]!.disbursementVoucher.findUniqueOrThrow({ where: { id: voucher.id } })).status, 'APPROVED');
   });
@@ -1741,7 +2236,7 @@ describe('Disbursement voucher draft command integrity (real PostgreSQL)', () =>
       const row = await clients[0]!.expenseRecord.findUniqueOrThrow({ where: { id: e.id } });
       assert.equal(row.paidAmount.toFixed(4), amounts[i]); assert.equal(row.outstandingAmount.toFixed(4), outstanding[i]); assert.equal(row.reservedByDisbursementVoucherId, null);
       const payment = await clients[0]!.expensePayment.findUniqueOrThrow({ where: { id: lines[i]!.expensePaymentId! } });
-      assert.equal(payment.amount.toFixed(4), amounts[i]); assert.equal(payment.bankAccountRef, 'เงินสดหน้าร้าน'); assert.equal(payment.paidAt.toISOString(), '2026-10-01T00:00:00.000Z');
+      assert.equal(payment.amount.toFixed(4), amounts[i]); assert.equal(payment.bankAccountRef, 'เงินสดหน้าร้าน'); assert.equal(payment.paidAt.toISOString(), '2026-09-30T17:00:00.000Z');
       assert.equal(lines[i]!.coversPaymentId, payment.id);
       assert.equal(await clients[0]!.outboxEvent.count({ where: { companyId, aggregateId: payment.id, eventType: 'expense.payment_recorded' } }), 1);
       assert.equal(await clients[0]!.auditLog.count({ where: { companyId, targetId: payment.id, action: 'expense.payment.record' } }), 1);
@@ -1868,6 +2363,23 @@ describe('Disbursement voucher draft command integrity (real PostgreSQL)', () =>
     assert.equal(payer, 1);
   });
 
+  it('commits the payer signature with payment and rolls its snapshot back when the audit fails', async t => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const { voucher } = await approvedForPayment(['104']);
+    const signature = { attachmentId: 'personal-signature-fixture', userId, checksumSha256: 'a'.repeat(64) };
+    const failing = useCase(clients[0]!, { log: async () => { throw new Error('signature audit failure'); } } as any);
+    (failing as any).ownSignature = async () => signature;
+    await assert.rejects(() => failing.pay(paymentContext(), voucher.id, lifecycleCommand(1)), /signature audit failure/);
+    const unchanged = await clients[0]!.disbursementVoucher.findUniqueOrThrow({ where: { id: voucher.id } });
+    assert.equal(unchanged.status, 'APPROVED'); assert.equal(unchanged.payerSignatureJson, null); assert.equal(unchanged.paidSnapshotJson, null);
+    const signing = useCase(clients[0]!); (signing as any).ownSignature = async () => signature;
+    await signing.pay(paymentContext(), voucher.id, lifecycleCommand(1));
+    const paid = await clients[0]!.disbursementVoucher.findUniqueOrThrow({ where: { id: voucher.id } });
+    assert.deepEqual(paid.payerSignatureJson, signature);
+    assert.deepEqual((paid.paidSnapshotJson as any).actors.payer.signature, signature);
+    assert.equal(paid.status, 'PAID');
+  });
+
   it('a document payment audit failure rolls back payments, line coverage, reservations and command completion', async t => {
     if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
     const { expenses, voucher } = await approvedForPayment(['104', '104']); const command = lifecycleCommand(1);
@@ -1904,7 +2416,7 @@ describe('Disbursement voucher draft command integrity (real PostgreSQL)', () =>
       assert.deepEqual((await clients[0]!.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } })).updatedAt, expense.updatedAt);
       if (approved) await service.approve(lifecycleContext(), draft.id, lifecycleCommand(1));
       const before = await clients[0]!.disbursementVoucherRevision.findFirstOrThrow({ where: { voucherId: draft.id, revision: 1 } });
-      const ended = await service[action](lifecycleContext(), draft.id, { ...lifecycleCommand(approved ? 2 : 1), reason: 'ตรวจรายการใหม่' });
+      const ended = await service[action](action === 'return' ? { ...lifecycleContext(), userId: secondUserId } : lifecycleContext(), draft.id, { ...lifecycleCommand(approved ? 2 : 1), reason: 'ตรวจรายการใหม่' });
       assert.equal(ended.documentNumber, pending.documentNumber);
       const source = await clients[0]!.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
       assert.equal(source.reservedByDisbursementVoucherId, null); assert.deepEqual(source.updatedAt, expense.updatedAt);
@@ -2078,6 +2590,24 @@ describe('expense correction before posting (owner 2026-10-04)', () => {
 
 describe('controller correction boundaries 2026-10-04', () => {
   const command = { companyId: 'company-1', expenseId: 'expense-1', actorUserId: 'finance-1', scopes: {}, reason: 'แก้ข้อมูลเอกสาร' };
+  it('legacy filed withholding forms keep expense capabilities and reopening locked', async () => {
+    for (const formType of ['PND3', 'PND53']) {
+      const h = harness({ whtAmount: '30', vendorEntityKindSnapshot: formType === 'PND3' ? 'INDIVIDUAL' : 'JURISTIC' });
+      h.state.filedSourceIds = [];
+      h.state.taxPeriods = [{ id: 'old', formType, periodKey: '2026-08', status: 'FILED', whtFilings: [] }];
+      assert.equal((await h.repo.expenseCorrectionCapabilities(command.companyId, command.expenseId, ['expense.confirm'])).canReopen, false);
+      await assert.rejects(h.repo.reopenExpenseAtomic(command), (e: any) => e.getResponse?.().blockers?.includes('tax_period_filed'));
+      assert.equal(h.state.expense.status, 'CONFIRMED');
+    }
+  });
+  it('another establishment filing never locks reopening this expense', async () => {
+    const h = harness({ postingStatus: 'pending', whtAmount: '3', vendorEntityKindSnapshot: 'INDIVIDUAL' });
+    h.state.filedSourceIds = ['another-expense'];
+    h.state.taxPeriods.push({ id: 'p', formType: 'PND3', periodKey: '2026-08', status: 'FILED' });
+    assert.equal((await h.repo.expenseCorrectionCapabilities(command.companyId, command.expenseId, ['expense.confirm'])).canReopen, true);
+    await h.repo.reopenExpenseAtomic(command);
+    assert.equal(h.state.expense.status, 'NEEDS_REVIEW');
+  });
   for (const status of ['CLOSED', 'LOCKED']) it(`reports and refuses accounting month ${status}`, async () => {
     const h = harness({ postingStatus: 'pending' });
     h.state.accountingPeriod = { status };
@@ -2202,10 +2732,10 @@ describe('A2 reopen cancels the expense certificate', () => {
     const h = harness({ status: 'NEEDS_REVIEW', postingStatus: 'pending' });
     const caps = await h.repo.expenseCorrectionCapabilities('company-1', 'expense-1', ['expense.confirm']);
     const { expenseReopenBlockerMessages } = await import('@watchdog-bms/contracts');
-    assert.ok(expenseReopenBlockerMessages(caps).some(message => message.includes('กรุณากลับไปหน้ารายจ่าย')));
+    assert.ok(expenseReopenBlockerMessages(caps).some(message => message.includes('กลับไปหน้ารายจ่าย')));
     await assert.rejects(h.repo.reopenExpenseAtomic({ companyId: 'company-1', expenseId: 'expense-1', actorUserId: 'u1', scopes: {}, permissions: ['expense.confirm'], reason: 'ข้อมูลผิด' }), (error: any) => {
       assert.equal(error.getResponse().code, 'expense_correction_blocked');
-      assert.equal(error.getResponse().message, 'เอกสารนี้ถูกเปลี่ยนสถานะไปแล้ว กรุณาเปิดหน้านี้ใหม่'); return true;
+      assert.equal(error.getResponse().message, 'สถานะเอกสารนี้ยังแก้ไขไม่ได้ เปิดหน้านี้ใหม่เพื่อตรวจสถานะ'); return true;
     });
   });
   const command = { companyId: 'company-1', expenseId: 'expense-1', actorUserId: 'finance-1', scopes: {},
@@ -2312,7 +2842,7 @@ describe('A2 reopen cancels the expense certificate', () => {
         assert.ok(messages[index].startsWith(`ภาษีหัก ณ ที่จ่าย (${formName}) ของเดือน ส.ค. 2569 ยื่นไปแล้ว จึงแก้ไขเอกสารนี้ไม่ได้ `));
         assert.equal(expenseCorrectionBlockerMessage('tax_period_filed', 'reopen', { ...facts, lockedTaxPeriods: [{ formType, periodKey: '2026-08' }] }), messages[index]);
         assert.ok(EXPENSE_VOID_CERTIFICATE_WORDS.periodLocked(kind, '2026-08', formType).startsWith(`ภาษีหัก ณ ที่จ่าย (${formName}) ของเดือน ส.ค. 2569 ยื่นไปแล้ว จึงยกเลิกเอกสารนี้ไม่ได้ `));
-        assert.ok(REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.periodLocked(kind, '2026-08', formType).startsWith(`ภาษีหัก ณ ที่จ่าย (${formName}) ของเดือน ส.ค. 2569 ยื่นไปแล้ว จึงยกเลิกคำขอเบิกไม่ได้ `));
+        assert.ok(REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.periodLocked(kind, '2026-08', formType).startsWith(`ภาษีหัก ณ ที่จ่าย (${formName}) ของเดือน ส.ค. 2569 ยื่นไปแล้ว จึงยกเลิกใบเบิกไม่ได้ `));
       }
     }
   });
@@ -2326,10 +2856,10 @@ describe('A2 reopen cancels the expense certificate', () => {
       assert.deepEqual(error.getResponse().certificateOnExpense, caps.certificateOnExpense);
       assert.ok(error.getResponse().message.includes(guidance)); return true;
     });
-    assert.equal(expenseReopenBlockerMessages(caps)[0], `ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ส.ค. 2569 ยื่นไปแล้ว จึงแก้ไขเอกสารนี้ไม่ได้ ${guidance} ถ้ายอดเงิน อัตรา หรือเลขผู้เสียภาษีผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ`);
-    assert.equal(expenseCorrectionBlockerMessage('tax_period_filed', 'reopen', caps), `ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ส.ค. 2569 ยื่นไปแล้ว จึงแก้ไขเอกสารนี้ไม่ได้ ${guidance} ถ้ายอดเงิน อัตรา หรือเลขผู้เสียภาษีผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ`);
+    assert.equal(expenseReopenBlockerMessages(caps)[0], `ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ส.ค. 2569 ยื่นไปแล้ว จึงแก้ไขเอกสารนี้ไม่ได้ ${guidance} ถ้าข้อเท็จจริงผิด ให้ยกเลิกเอกสารแล้วบันทึกใหม่ ให้ผู้ทำบัญชีแจ้งกรมสรรพากรเรื่องแบบเดิม`);
+    assert.equal(expenseCorrectionBlockerMessage('tax_period_filed', 'reopen', caps), `ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ส.ค. 2569 ยื่นไปแล้ว จึงแก้ไขเอกสารนี้ไม่ได้ ${guidance} ถ้าข้อเท็จจริงผิด ให้ยกเลิกเอกสารแล้วบันทึกใหม่ ให้ผู้ทำบัญชีแจ้งกรมสรรพากรเรื่องแบบเดิม`);
     const external = { ...caps, certificateOnExpense: { kind: 'EXTERNAL' as const, number: null, date: null, canCancel: false } };
-    assert.deepEqual(expenseReopenBlockerMessages(external), ['ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ส.ค. 2569 ยื่นไปแล้ว จึงแก้ไขเอกสารนี้ไม่ได้ ถ้าข้อมูลผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ']);
+    assert.deepEqual(expenseReopenBlockerMessages(external), ['ภาษีหัก ณ ที่จ่าย (ภ.ง.ด.53) ของเดือน ส.ค. 2569 ยื่นไปแล้ว จึงแก้ไขเอกสารนี้ไม่ได้ ให้ยกเลิกเอกสารแล้วบันทึกใหม่ ให้ผู้ทำบัญชีแจ้งกรมสรรพากรเรื่องแบบเดิม']);
     assert.equal(expenseCorrectionBlockerMessage('certificate_permission_missing', 'reopen', caps), 'เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว (เลขที่ WT-1) การแก้ไขจะยกเลิกหนังสือรับรองใบเดิมด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย ให้เจ้าของกิจการหรือผู้ที่มีสิทธิ์นั้นเป็นผู้แก้ไข');
     assert.equal(expenseCorrectionBlockerMessage('certificate_permission_missing'), 'เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว การแก้ไขจะยกเลิกหนังสือรับรองใบเดิมด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย ให้เจ้าของกิจการหรือผู้ที่มีสิทธิ์นั้นเป็นผู้แก้ไข');
     assert.equal(expenseCorrectionBlockerMessage('certificate_permission_missing', 'reopen', external), 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว การแก้ไขจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้แก้ไข');
@@ -2343,7 +2873,279 @@ describe('A2 reopen cancels the expense certificate', () => {
   });
   it('refuses a changed system certificate without committing the reopen', async () => {
     const h = issued('SYSTEM'); h.state.certificates[0].status = 'VOIDED';
-    await assert.rejects(h.repo.reopenExpenseAtomic(command), (error: any) => error.getResponse?.().code === 'expense_correction_source_changed' && error.getResponse().message === 'ข้อมูลเอกสารเปลี่ยนแล้ว กรุณาโหลดหน้าใหม่และตรวจข้อมูลก่อนดำเนินการ');
+    await assert.rejects(h.repo.reopenExpenseAtomic(command), (error: any) => error.getResponse?.().code === 'expense_correction_source_changed' && error.getResponse().message === 'ข้อมูลเอกสารเปลี่ยนแล้ว เปิดหน้านี้ใหม่และตรวจข้อมูลก่อนทำรายการ');
     assert.equal(h.state.expense.status, 'CONFIRMED'); assert.equal(h.state.certificateHistory.length, 0);
   });
+});
+
+describe('frozen withholding papers (real PostgreSQL)', () => {
+  const required = process.env.EXPENSE_PAYMENT_REQUIRE_POSTGRES === 'true';
+  const companyId = `wht-filing-pg-${randomUUID()}`;
+  let client: PrismaClient | undefined;
+  let ready = false;
+  let period: any;
+  before(async () => {
+    if (!process.env.DATABASE_URL) { assert.equal(required, false, 'PostgreSQL required'); return; }
+    client = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+    const unavailable = await pgSpecUnreachableReason(() => client!.$queryRaw`SELECT "rowsCertain" FROM "WhtFiling" LIMIT 0`, 'EXPENSE_PAYMENT_REQUIRE_POSTGRES');
+    if (unavailable) return;
+    await client.company.create({ data: { id: companyId, name: 'Synthetic frozen paper' } });
+    period = await client.taxPeriod.create({ data: { companyId, taxType: 'WHT', formType: 'PND3', periodKey: '2026-09' } });
+    ready = true;
+  });
+  after(async () => {
+    if (!client) return;
+    try {
+      if (ready) {
+        // Fixture cleanup only: break the latest-package cycle before removing this synthetic tenant.
+        const filings = await client.whtFiling.findMany({ where: { companyId } });
+        await client.whtFiling.updateMany({ where: { companyId }, data: { filingPackageId: null } });
+        await client.whtFilingLine.deleteMany({ where: { whtFilingId: { in: filings.map(row => row.id) } } });
+        await client.taxFilingPackage.deleteMany({ where: { companyId } });
+        await client.whtFiling.deleteMany({ where: { companyId } });
+        await client.attachmentLink.deleteMany({ where: { companyId } });
+        await client.attachmentObject.deleteMany({ where: { companyId } });
+        await client.company.delete({ where: { id: companyId } });
+      }
+    } finally { await client.$disconnect(); }
+  });
+  it('W1 concurrent certificate payment handoffs have one identity and roll back with the transaction', async t => {
+    if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
+    const { paymentHandoff } = await import('../../tax/application/services/wht-certificate-payment');
+    const expense = await client!.expenseRecord.create({ data: { companyId, createdByUserId: 'synthetic-actor', captureSource: 'WEB_UPLOAD', status: 'CONFIRMED', expenseDate: new Date('2026-10-28'), netPayableAmount: '970', whtAmount: '30' } });
+    try {
+      const payment = await client!.expensePayment.create({ data: { companyId, expenseId: expense.id, amount: '970', paidAt: new Date('2026-11-05'), paidAtConfirmed: true, createdByUserId: 'synthetic-actor' } });
+      const root = { id: 'draft', sourcePaymentType: 'expense.record', sourcePaymentId: expense.id, sourceFeatureKey: 'expenses',
+        prefillSnapshotJson: { payerSnapshot: { companyName: 'ร้าน', taxId: '0105569135722', address: 'กรุงเทพมหานคร', branchCode: '00000' }, payeeSnapshot: { name: 'ผู้รับเงิน', taxId: '1234567890123', address: 'กรุงเทพมหานคร' }, grossAmount: '1000', withheldAmount: '30', paymentDate: '2026-10-28' } };
+      const results = await Promise.all([paymentHandoff(client, companyId, root, payment.id), paymentHandoff(client, companyId, root, payment.id)]);
+      assert.equal(results[0].id, results[1].id);
+      assert.equal(await client!.whtCertificateHandoff.count({ where: { companyId, sourcePaymentId: expense.id } }), 1);
+      await client!.whtCertificateHandoff.deleteMany({ where: { companyId, sourcePaymentId: expense.id } });
+      await assert.rejects(client!.$transaction(async tx => { await paymentHandoff(tx, companyId, root, payment.id); throw new Error('rollback'); }), /rollback/);
+      assert.equal(await client!.whtCertificateHandoff.count({ where: { companyId, sourcePaymentId: expense.id } }), 0);
+    } finally {
+      await client!.whtCertificateHandoff.deleteMany({ where: { companyId, sourcePaymentId: expense.id } });
+      await client!.expensePayment.deleteMany({ where: { companyId, expenseId: expense.id } });
+      await client!.expenseRecord.delete({ where: { id: expense.id } });
+    }
+  });
+  it('W4 payment date certainty defaults false and duplicate payment rollback leaves no second source', async t => {
+    if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
+    const expense = await client!.expenseRecord.create({ data: { companyId, createdByUserId: 'synthetic-actor', captureSource: 'WEB_UPLOAD', status: 'CONFIRMED', expenseDate: new Date('2026-10-28') } });
+    try {
+      const data = { companyId, expenseId: expense.id, amount: '97', paidAt: new Date('2026-11-04T17:00:00Z'), createdByUserId: 'synthetic-actor', idempotencyKey: 'payment-date-test', payloadFingerprint: 'a'.repeat(64) };
+      const unknown = await client!.expensePayment.create({ data });
+      assert.equal(unknown.paidAtConfirmed, false);
+      await assert.rejects(client!.$transaction(async tx => {
+        await tx.expensePayment.update({ where: { id: unknown.id }, data: { paidAtConfirmed: true } });
+        await tx.expensePayment.create({ data });
+      }), (error: any) => error.code === 'P2002');
+      assert.equal((await client!.expensePayment.findUniqueOrThrow({ where: { id: unknown.id } })).paidAtConfirmed, false);
+      assert.equal(await client!.expensePayment.count({ where: { companyId, expenseId: expense.id } }), 1);
+    } finally {
+      await client!.expensePayment.deleteMany({ where: { companyId, expenseId: expense.id } });
+      await client!.expenseRecord.delete({ where: { id: expense.id } });
+    }
+  });
+  it('W4 migration preserves entered historical dates and excludes seed dates only', async t => {
+    if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
+    const sql = readFileSync('prisma/migrations/20261014140000_preserve_entered_payment_dates/migration.sql', 'utf8');
+    await client!.$transaction(async tx => {
+      await tx.$executeRawUnsafe('CREATE TEMP TABLE "ExpensePayment" ("idempotencyKey" TEXT, "paidAtConfirmed" BOOLEAN NOT NULL DEFAULT false) ON COMMIT DROP');
+      await tx.$executeRawUnsafe(`INSERT INTO "ExpensePayment" ("idempotencyKey") VALUES (NULL), ('client:human'), ('dv:v:l'), ('substitute-receipt:e'), ('client:seed-payment-rent')`);
+      await tx.$executeRawUnsafe(sql);
+      const rows = await tx.$queryRawUnsafe<Array<{ idempotencyKey: string | null; paidAtConfirmed: boolean }>>('SELECT * FROM "ExpensePayment"');
+      assert.equal(rows.length, 5);
+      for (const row of rows) assert.equal(row.paidAtConfirmed, row.idempotencyKey !== 'client:seed-payment-rent');
+    });
+  });
+  it('payer mode admits one live answer per shop/month and retains superseded history', async t => {
+    if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
+    const data = { companyId, mode: 'HEAD_OFFICE_PAYS_ALL', effectiveFromPeriodKey: '2026-09', answeredByUserId: 'synthetic-actor' };
+    const attempts = await Promise.allSettled([client!.whtPayerModeFact.create({ data }), client!.whtPayerModeFact.create({ data })]);
+    assert.equal(attempts.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal((attempts.find(result => result.status === 'rejected') as PromiseRejectedResult).reason.code, 'P2002');
+    await client!.$transaction(async tx => {
+      await tx.whtPayerModeFact.updateMany({ where: { companyId, effectiveFromPeriodKey: data.effectiveFromPeriodKey, supersededAt: null }, data: { supersededAt: new Date() } });
+      await tx.whtPayerModeFact.create({ data: { ...data, mode: 'EACH_BRANCH_PAYS' } });
+    });
+    assert.equal(await client!.whtPayerModeFact.count({ where: { companyId, supersededAt: null } }), 1);
+    assert.equal(await client!.whtPayerModeFact.count({ where: { companyId } }), 2);
+    await client!.whtPayerModeFact.create({ data: { ...data, effectiveFromPeriodKey: '2026-10' } });
+    await assert.rejects(client!.whtPayerModeFact.create({ data: { ...data, mode: 'UNKNOWN', effectiveFromPeriodKey: '2026-11' } }));
+    await assert.rejects(client!.whtPayerModeFact.create({ data: { ...data, effectiveFromPeriodKey: '2026-13' } }));
+  });
+  it('the establishment/form/month/sequence key admits only one concurrent paper', async t => {
+    if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
+    const data = { companyId, taxPeriodId: period.id, formType: 'PND3' as const, periodKey: period.periodKey,
+      establishmentCode: '00001', sequence: 0, preparedBy: 'SYSTEM', payerSnapshotJson: {}, rowsChecksum: 'test' };
+    const results = await Promise.allSettled([client!.whtFiling.create({ data }), client!.whtFiling.create({ data })]);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal((results.find(result => result.status === 'rejected') as PromiseRejectedResult).reason.code, 'P2002');
+  });
+  it('a filed establishment locks only its lines, and the roll-up waits for the other paper', async t => {
+    if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
+    const { filedWithholdingPaymentPeriods } = await import('../../tax/application/services/filed-withholding-payment');
+    const { rollUpWithholdingPeriod } = await import('../../tax/application/services/withholding-establishments');
+    const p = await client!.taxPeriod.create({ data: { companyId, taxType: 'WHT', formType: 'PND53', periodKey: '2026-10' } });
+    for (const [code, source, status] of [['00000', 'one', 'FILED'], ['00002', 'two', 'EXPORTED']] as const) {
+      await client!.whtFiling.create({ data: { companyId, taxPeriodId: p.id, formType: 'PND53', periodKey: p.periodKey, establishmentCode: code, sequence: 0,
+        status, preparedBy: 'SYSTEM', payerSnapshotJson: {}, rowsChecksum: 'test', lines: { create: { taxEventId: `event-${source}`, sourceType: 'expense.record', sourceId: source, rowNumber: 1, lineJson: {} } } } });
+    }
+    assert.equal((await filedWithholdingPaymentPeriods(client!, companyId, 'expense.record', 'one')).length, 1);
+    assert.equal((await filedWithholdingPaymentPeriods(client!, companyId, 'expense.record', 'two')).length, 0);
+    assert.equal(await client!.$transaction(tx => rollUpWithholdingPeriod(tx, companyId, p.id)), 'EXPORTED');
+    await client!.whtFiling.updateMany({ where: { companyId, taxPeriodId: p.id, establishmentCode: '00002', status: 'EXPORTED' }, data: { status: 'FILED' } });
+    assert.equal(await client!.$transaction(tx => rollUpWithholdingPeriod(tx, companyId, p.id)), 'FILED');
+  });
+  it('package, file reference and frozen lines commit together, roll back together, and refuse replacement after filing', async t => {
+    if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
+    const { PrismaTaxRepository } = await import('../../tax/infrastructure/repositories/prisma-tax.repository');
+    const repo = new PrismaTaxRepository({ client } as any);
+    const input: any = { ctx: { companyId, userId: 'synthetic-actor' }, period, exportFormat: 'PDF', exportNumber: 'TEST-1',
+      artifact: { fileName: 'test.pdf', mimeType: 'application/pdf', checksum: 'file', byteLength: 5, contentBase64: 'JVBERi0=' },
+      stored: { bucket: 'synthetic', objectKey: `${companyId}/first`, storageProvider: 'local', objectVersionId: 'v1', byteSize: 5, checksumSha256: 'file' },
+      establishmentCode: '00000', establishmentBranchId: null, preparedBy: 'SYSTEM', payerSnapshotJson: { payerName: 'ร้านทดสอบ' }, rowsChecksum: 'rows', rowsCertain: true,
+      lines: [{ taxEventId: 'synthetic-event', sourceType: 'expense.record', sourceId: 'synthetic-expense', lineJson: { income: 1000, withheld: 30 } }] };
+    const pkg = await repo.recordWithholdingDownload(input);
+    const filing = await client!.whtFiling.findFirstOrThrow({ where: { companyId, filingPackageId: pkg.id }, include: { lines: true } });
+    assert.equal(filing.lines.length, 1);
+    assert.ok(await client!.attachmentObject.findUnique({ where: { id: pkg.attachmentId! } }));
+    await assert.rejects(repo.recordWithholdingDownload({ ...input, stored: { ...input.stored, objectKey: `${companyId}/rolled-back` }, lines: [{ ...input.lines[0], taxEventId: null }] }));
+    assert.equal(await client!.taxFilingPackage.count({ where: { companyId } }), 1);
+    assert.equal(await client!.attachmentObject.count({ where: { companyId } }), 1);
+    assert.deepEqual((await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id }, include: { lines: true } })).lines, filing.lines);
+    await client!.$transaction(async tx => {
+      await repo.markWithholdingFilingFiled(tx, companyId, pkg.id, 'synthetic-actor', new Date(), 'ยื่นแล้ว');
+      await tx.taxPeriod.update({ where: { id: period.id }, data: { status: 'FILED' } });
+    });
+    await assert.rejects(repo.recordWithholdingDownload(input), (error: any) => error.getResponse().code === 'WHT_FILING_ALREADY_FILED');
+    assert.equal(await client!.taxFilingPackage.count({ where: { companyId } }), 1);
+    assert.equal((await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id } })).filedByUserId, 'synthetic-actor');
+    const kept = await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id }, include: { lines: true, latestPackage: true } });
+    const additional = { ...input, sequence: 1, exportNumber: 'TEST-ADDITIONAL-1', stored: { ...input.stored, objectKey: `${companyId}/additional-1` },
+      lines: [{ ...input.lines[0], taxEventId: 'late-event', sourceId: 'late-expense' }] };
+    await assert.rejects(repo.recordWithholdingDownload({ ...additional, lines: input.lines }), (e: any) => e.getResponse().code === 'WHT_FILING_CHANGED_AFTER_DOWNLOAD');
+    await assert.rejects(repo.recordWithholdingDownload({ ...additional, lines: [{ ...additional.lines[0], taxEventId: null }] }));
+    assert.equal(await client!.whtFiling.count({ where: { companyId, establishmentCode: '00000', sequence: 1 } }), 0, 'failed line write rolls back the additional paper and package');
+    const extra = await repo.recordWithholdingDownload(additional);
+    assert.equal(await client!.whtFiling.count({ where: { companyId, establishmentCode: '00000', sequence: 1 } }), 1);
+    await assert.rejects(repo.recordWithholdingDownload({ ...additional, sequence: 2 }), (e: any) => e.getResponse().code === 'WHT_FILING_SEQUENCE_INVALID');
+    await client!.$transaction(tx => repo.markWithholdingFilingFiled(tx, companyId, extra.id, 'synthetic-actor', new Date()));
+    await assert.rejects(repo.recordWithholdingDownload(additional), (e: any) => e.getResponse().code === 'WHT_FILING_ALREADY_FILED');
+    assert.deepEqual(await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id }, include: { lines: true, latestPackage: true } }), kept);
+
+  });
+  it('legacy restoration is idempotent and confirmation commits file, certainty and audit together', async t => {
+    if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
+    const { restoreLegacyWithholdingPeriod, confirmWithholdingRows } = await import('../../tax/application/services/legacy-withholding-filing');
+    const actorId = `wht-confirm-${randomUUID()}`;
+    await client!.user.create({ data: { id: actorId, displayName: 'Synthetic accountant' } });
+    const legacy = await client!.taxPeriod.create({ data: { companyId, taxType: 'WHT', formType: 'PND3', periodKey: '2025-01', status: 'FILED', filedAt: new Date('2025-02-01') } });
+    const objects = new Map<string, Buffer>();
+    const storage: any = { putObject: async ({ objectKey, bytes }: any) => { objects.set(objectKey, bytes); return { objectKey, bucket: 'test', storageProvider: 'local', byteSize: bytes.length, checksumSha256: 'hash' }; },
+      deleteObject: async ({ objectKey }: any) => { objects.delete(objectKey); } };
+    const render: any = async () => ({ fileName: 'แบบ.pdf', mimeType: 'application/pdf', contentBase64: Buffer.from('restored').toString('base64'), checksum: 'hash', byteLength: 8 });
+    try {
+      const others = await client!.whtFiling.findMany({ where: { companyId }, include: { lines: true, latestPackage: true } });
+      assert.equal(await restoreLegacyWithholdingPeriod(client!, storage, legacy, render), 'uncertain');
+      assert.equal(await restoreLegacyWithholdingPeriod(client!, storage, legacy, render), 'skipped');
+      const paper = await client!.whtFiling.findFirstOrThrow({ where: { taxPeriodId: legacy.id }, include: { lines: true } });
+      const command: any = { companyId, userId: 'missing-user', permissions: ['wht.pnd53.prepare'], scopes: {}, requestId: randomUUID() };
+      await assert.rejects(confirmWithholdingRows(client!, storage, command, paper.id, render));
+      assert.equal(objects.size, 0, 'failed audit removes only this attempted new object');
+      assert.equal((await client!.whtFiling.findUniqueOrThrow({ where: { id: paper.id } })).rowsCertain, false);
+      assert.equal(await client!.taxFilingPackage.count({ where: { whtFilingId: paper.id } }), 0);
+      command.userId = actorId;
+      await confirmWithholdingRows(client!, storage, command, paper.id, render);
+      await confirmWithholdingRows(client!, storage, command, paper.id, render);
+      const confirmed = await client!.whtFiling.findUniqueOrThrow({ where: { id: paper.id }, include: { lines: true, latestPackage: true } });
+      assert.equal(confirmed.rowsCertain, true); assert.deepEqual(confirmed.lines, paper.lines);
+      assert.equal(objects.size, 1); assert.ok(confirmed.latestPackage?.attachmentId);
+      const { filedWithholdingPaymentPeriods } = await import('../../tax/application/services/filed-withholding-payment');
+      assert.deepEqual(await filedWithholdingPaymentPeriods(client!, companyId, 'expense.record', 'late', { formType: 'PND3', periodKey: legacy.periodKey }), [], 'confirmed empty reconstructed month admits late payments');
+      assert.equal(await client!.auditLog.count({ where: { targetId: paper.id, action: 'tax.wht_filing.confirm_rows' } }), 1);
+      assert.deepEqual(await client!.whtFiling.findMany({ where: { companyId, id: { in: others.map(p => p.id) } }, include: { lines: true, latestPackage: true } }), others);
+    } finally {
+      await client!.auditLog.deleteMany({ where: { actorUserId: actorId } });
+      await client!.user.delete({ where: { id: actorId } });
+    }
+  });
+
+  it('legacy and frozen forms in the same month retain independent locks', async t => {
+    if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
+    const { filedWithholdingPaymentPeriods } = await import('../../tax/application/services/filed-withholding-payment');
+    const old = await client!.taxPeriod.create({ data: { companyId, taxType: 'WHT', formType: 'PND3', periodKey: '2026-11', status: 'FILED' } });
+    await client!.whtFiling.create({ data: { companyId, taxPeriodId: old.id, formType: 'PND3', periodKey: old.periodKey, establishmentCode: '00000', sequence: 0,
+      status: 'EXPORTED', rowsCertain: false, preparedBy: 'SYSTEM', payerSnapshotJson: {}, rowsChecksum: 'uncertain', lines: { create: { taxEventId: 'old-snapshot', sourceType: 'expense.record', sourceId: 'old-snapshot', rowNumber: 1, lineJson: {} } } } });
+    const fresh = await client!.taxPeriod.create({ data: { companyId, taxType: 'WHT', formType: 'PND53', periodKey: '2026-11', status: 'FILED' } });
+    await client!.whtFiling.create({ data: { companyId, taxPeriodId: fresh.id, formType: 'PND53', periodKey: fresh.periodKey, establishmentCode: '00000', sequence: 0,
+      status: 'FILED', preparedBy: 'SYSTEM', payerSnapshotJson: {}, rowsChecksum: 'kept', lines: { create: { taxEventId: 'kept', sourceType: 'expense.record', sourceId: 'kept', rowNumber: 1, lineJson: {} } } } });
+    assert.equal((await filedWithholdingPaymentPeriods(client!, companyId, 'expense.record', 'late', { formType: 'PND3', periodKey: '2026-11' })).length, 1);
+    assert.equal((await filedWithholdingPaymentPeriods(client!, companyId, 'expense.record', 'late', { formType: 'PND53', periodKey: '2026-11' })).length, 0);
+    assert.equal((await filedWithholdingPaymentPeriods(client!, companyId, 'expense.record', 'kept', { formType: 'PND53', periodKey: '2026-11' })).length, 1);
+  });
+
+});
+
+describe('expense payment slip', () => {
+  const slip = { id: 'slip-1', companyId: 'company-1', branchId: 'branch-1', uploadedByUserId: 'finance-1', status: 'ACTIVE', mimeType: 'image/png', byteSize: 100, metadataJson: { generatedFor: 'expense.payment.slip', expenseId: 'expense-1' } };
+  it('links the scoped slip to that payment and expense evidence atomically; retries keep one pair', async () => {
+    const h = harness(); h.state.files.push(slip);
+    const input = paymentInput('100', { slipAttachmentId: slip.id });
+    const result = await h.repo.recordPaymentAtomic(input);
+    assert.deepEqual(h.state.links.map(l => [l.targetType, l.targetId, l.purpose]), [
+      ['expense.payment', result.payment!.id, 'expense.payment.evidence'], ['expense.record', 'expense-1', 'expense.payment.evidence'],
+    ]);
+    assert.ok(h.state.links.every(l => l.companyId === 'company-1' && l.attachmentId === slip.id && l.linkedByUserId === 'finance-1'));
+    await h.repo.recordPaymentAtomic(input); assert.equal(h.state.links.length, 2);
+    await assert.rejects(h.repo.recordPaymentAtomic({ ...input, slipAttachmentId: 'other' }), (e: any) => e.getResponse().code === 'expense_payment_idempotency_conflict');
+  });
+  for (const patch of [{ mimeType: 'text/plain' }, { byteSize: 10485761 }, { companyId: 'other' }, { branchId: 'other' }, { uploadedByUserId: 'other' }, { status: 'PENDING_UPLOAD' }, { metadataJson: { generatedFor: 'expense.payment.slip', expenseId: 'other' } }]) {
+    it(`refuses a slip outside this payment scope: ${JSON.stringify(patch)}`, async () => {
+      const h = harness(); h.state.files.push({ ...slip, ...patch });
+      await assert.rejects(h.repo.recordPaymentAtomic(paymentInput('100', { slipAttachmentId: slip.id })), (e: any) => e.getResponse().code === 'expense_payment_slip_invalid');
+      assert.equal(h.state.payments.length, 0); assert.equal(h.state.links.length, 0);
+    });
+  }
+});
+
+it('W4 distinguishes an explicitly dated payment from an automatic recording timestamp', async () => {
+  const dated = harness(); await pay(dated.repo, '40');
+  assert.equal(dated.state.payments[0].paidAtConfirmed, true);
+  const unknown = harness(); await pay(unknown.repo, '40', { paidAt: undefined });
+  assert.equal(unknown.state.payments[0].paidAtConfirmed, false);
+  assert.ok(unknown.state.payments[0].paidAt instanceof Date);
+  assert.equal(unknown.state.expense.paidAmount, '40.0000');
+});
+it('W2 persists a selected Bangkok payment day as a local-midnight instant, not the recording time', async () => {
+  const h = harness(); await pay(h.repo, '40', { paidAt: '2026-08-10' });
+  assert.equal(h.state.payments[0].paidAt.toISOString(), '2026-08-09T17:00:00.000Z');
+});
+it('W4 seed and default-date voucher writers can supply an operational date without certifying it', async () => {
+  const h = harness(); await pay(h.repo, '40', { paidAt: '2026-08-10', paidAtConfirmed: false });
+  assert.equal(h.state.payments[0].paidAtConfirmed, false);
+});
+
+it('W4 historical dates are trusted except the seed writer that copies the document date', async () => {
+  const { historicalExpensePaymentDateConfirmed } = await import('../domain/logic/expense-payment-date.logic');
+  for (const key of [null, 'client:human-payment', 'dv:voucher:line', 'substitute-receipt:evidence']) assert.equal(historicalExpensePaymentDateConfirmed(key), true);
+  assert.equal(historicalExpensePaymentDateConfirmed('client:seed-payment-expense-rent'), false);
+  assert.equal(historicalExpensePaymentDateConfirmed('client:seed-paymentish'), true);
+});
+
+it('W4 confirms only an unknown active payment in its tenant and branch, without touching frozen papers or entry history', async () => {
+  const original = { id: 'p', companyId: 'co', expenseId: 'e', paidAtConfirmed: false, status: 'RECORDED', paidAt: new Date('2026-10-01'), createdAt: new Date('2026-10-02'), createdByUserId: 'original' };
+  const before = { ...original }; let audited = 0;
+  const db: any = { attachmentLink: { findMany: async () => [] }, $executeRaw: async () => 1, $queryRaw: async () => [],
+    company: { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) },
+    expenseRecord: { findFirst: async () => ({ id: 'e', branchId: 'b' }), update: async () => ({}) },
+    expensePayment: { updateMany: async ({ where, data }: any) => { assert.equal(where.companyId, 'co'); assert.equal(where.expenseId, 'e'); assert.equal(where.id, 'p'); assert.equal(where.status, 'RECORDED'); assert.equal(where.paidAtConfirmed, false); if (original.paidAtConfirmed) return { count: 0 }; Object.assign(original, data); return { count: 1 }; } },
+  };
+  db.$transaction = (fn: any) => fn(db);
+  const repo = new PrismaExpenseRepository({ client: db } as any);
+  const input = { companyId: 'co', expenseId: 'e', paymentId: 'p', paidAt: '2026-09-05', actorUserId: 'actor', scopes: {} };
+  await repo.confirmPaymentDateAtomic(input, async () => { audited++; });
+  assert.equal(original.paidAt.toISOString(), '2026-09-04T17:00:00.000Z'); assert.equal(original.createdAt, before.createdAt); assert.equal(original.createdByUserId, 'original'); assert.equal(audited, 1);
+  await assert.rejects(repo.confirmPaymentDateAtomic(input, async () => {}), (e: any) => e.getResponse().code === 'expense_payment_date_already_confirmed');
 });

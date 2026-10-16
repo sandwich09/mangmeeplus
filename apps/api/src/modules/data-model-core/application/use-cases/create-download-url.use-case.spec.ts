@@ -196,3 +196,25 @@ describe('CreateDownloadUrlUseCase', () => {
     assert.equal((storage.createDownloadUrl.mock.calls as any[])[0]?.arguments[0].disposition, 'inline');
   });
 });
+
+describe('attachment bytes for evidence bundles', () => {
+  it('uses the single-download permission, tenant, branch, privacy and clean-state checks without minting a URL', async () => {
+    const repo = makeRepo();
+    const storage = { ...makeStorage(), getObject: mock.fn(async () => ({ bytes: Buffer.from('file') })) };
+    const useCase = new CreateDownloadUrlUseCase(repo as any, storage as any, makeAudit() as any);
+    const reader = makeCtx(['attachment.read']);
+    assert.equal((await useCase.readBytes(reader, { attachmentId: 'att-1' })).toString(), 'file');
+    assert.deepEqual(repo.findById.mock.calls[0]!.arguments, [{ id: 'att-1', companyId: 'co-1' }]);
+    assert.deepEqual(storage.getObject.mock.calls[0]!.arguments, [{ bucket: 'local-attachments', objectKey: 'co-1/123_file.pdf', objectVersionId: 'version-1' }]);
+    assert.equal(storage.createDownloadUrl.mock.callCount(), 0);
+    await assert.rejects(() => useCase.readBytes(makeCtx(), { attachmentId: 'att-1' }), ForbiddenException);
+    for (const status of ['PENDING_UPLOAD', 'QUARANTINED', 'DELETED'] as const) {
+      await assert.rejects(() => new CreateDownloadUrlUseCase(makeRepo(makeAttachment(status)) as any, storage as any, makeAudit() as any).readBytes(reader, { attachmentId: 'att-1' }), ForbiddenException);
+    }
+    await assert.rejects(() => new CreateDownloadUrlUseCase(makeRepo(null) as any, storage as any, makeAudit() as any).readBytes(reader, { attachmentId: 'missing' }), NotFoundException);
+    await assert.rejects(() => new CreateDownloadUrlUseCase(makeRepo({ ...makeAttachment(), branchId: 'other' }) as any, storage as any, makeAudit() as any).readBytes({ ...reader, scopes: { branchIds: ['mine'] } }, { attachmentId: 'att-1' }), ForbiddenException);
+    repo.isSubstituteRawSignature.mock.mockImplementation(async () => true);
+    await assert.rejects(() => useCase.readBytes(reader, { attachmentId: 'att-1' }), ForbiddenException);
+    assert.equal(storage.getObject.mock.callCount(), 1, 'every refusal occurs before object storage');
+  });
+});

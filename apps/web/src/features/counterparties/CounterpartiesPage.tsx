@@ -1,11 +1,16 @@
 'use client';
 
-import Link from 'next/link';
+import type { AccountingCounterpartyListCounts } from '@watchdog-bms/contracts';
+import { FilterTabs } from '@/common/components/tabs/FilterTabs';
+import listStyles from '@/features/expenses/WhtCertificatesPage.module.css';
+import styles from './CounterpartiesPage.module.css';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { CoverLoader, EmptyState, ErrorState, ForbiddenState, LoadingState } from '@/common/components/state';
-import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
+import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { Modal } from '@/common/components/modal';
+import { Notice } from '@/common/components/notice';
+import { Pagination } from '@/common/components/data-table/Pagination';
 import { useToast } from '@/common/components/toast';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
@@ -19,7 +24,6 @@ import {
   counterpartyFormValues,
   counterpartyHref,
   counterpartyPayload,
-  counterpartyUsageBadges,
 } from './counterparties.logic';
 import {
   COUNTERPARTY_MANAGE_PERMISSION,
@@ -55,6 +59,7 @@ export function CounterpartiesPage({ companyId, permissions }: { companyId: stri
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState<CounterpartySummary[] | null>(null);
   const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState<AccountingCounterpartyListCounts | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
@@ -71,7 +76,7 @@ export function CounterpartiesPage({ companyId, permissions }: { companyId: stri
     setRows(null);
     setError(null);
     listCounterparties(companyId, { page, search, filter })
-      .then((result) => { if (active) { setRows(result.data ?? []); setTotal(result.total ?? 0); } })
+      .then((result) => { if (active) { setRows(result.data ?? []); setTotal(result.total ?? 0); setCounts(result.counts); } })
       .catch((cause) => { if (active) { setRows([]); setError(err(cause, locale)); } });
     return () => { active = false; };
   }, [companyId, page, search, filter, retry, locale]);
@@ -80,7 +85,7 @@ export function CounterpartiesPage({ companyId, permissions }: { companyId: stri
 
   if (!canRead) {
     return (
-      <MangmeePage title={t('counterparties.title', locale)}>
+      <MangmeePage className="mangmee-flat" title={t('counterparties.title', locale)}>
         <MangmeeCard className="p-4">
           <ForbiddenState
             title={t('counterparties.forbidden', locale)}
@@ -95,8 +100,8 @@ export function CounterpartiesPage({ companyId, permissions }: { companyId: stri
 
   return (
     <MangmeePage
+      className="mangmee-flat"
       title={t('counterparties.title', locale)}
-      description={t('counterparties.description', locale)}
       actions={canManage && (
         <button type="button" className={btnClass} onClick={() => setCreateOpen(true)}>
           {t('counterparties.add', locale)}
@@ -117,50 +122,36 @@ export function CounterpartiesPage({ companyId, permissions }: { companyId: stri
             {ICON.search}
           </span>
         </div>
-        <div className="mangmee-segmented w-full" role="group" aria-label={t('counterparties.title', locale)}>
-          {FILTERS.map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              aria-pressed={filter === option.key}
-              className={cx('mangmee-tab shrink-0 whitespace-nowrap', filter === option.key && 'mangmee-tab-active')}
-              onClick={() => { setFilter(option.key); setPage(1); }}
-            >
-              {t(option.labelKey, locale)}
-            </button>
-          ))}
-        </div>
+        <FilterTabs aria-label={t('counterparties.title', locale)} value={filter}
+          onChange={(next) => { setFilter(next); setPage(1); }}
+          tabs={FILTERS.map(option => ({ key: option.key, label: t(option.labelKey, locale), count: counts?.[option.key] }))} />
 
         {rows === null ? <LoadingState label={t('counterparties.loading', locale)} />
           : error ? <ErrorState title={t('counterparties.load_failed', locale)} description={error} onRetry={() => setRetry((value) => value + 1)} locale={locale} />
             : rows.length === 0 ? (
+              // An empty search is not an empty book: it says so and offers the way out.
               <EmptyState
-                title={t('counterparties.empty_title', locale)}
+                title={t(search || filter !== 'all' ? 'counterparties.empty_search_title' : 'counterparties.empty_title', locale)}
                 description={search || filter !== 'all' ? t('counterparties.empty_filtered', locale) : t('counterparties.empty_description', locale)}
                 locale={locale}
-                action={canManage && filter === 'all' && !search
-                  ? <button type="button" className={btnClass} onClick={() => setCreateOpen(true)}>{t('counterparties.add', locale)}</button>
+                action={search || filter !== 'all'
+                  ? <button type="button" className={ghostClass} onClick={() => { setQuery(''); setFilter('all'); setPage(1); }}>{t('counterparties.clear_search', locale)}</button>
+                  : canManage ? <button type="button" className={btnClass} onClick={() => setCreateOpen(true)}>{t('counterparties.add', locale)}</button>
                   : undefined}
               />
             ) : (
-              <ul className="flex flex-col gap-2">
-                {rows.map((row) => <CounterpartyRow key={row.id} companyId={companyId} row={row} />)}
-              </ul>
+              <>
+                <table className={`${listStyles.table} ${styles.table}`}>
+                  <colgroup><col style={{ width: '44%' }} /><col style={{ width: '53%' }} /><col style={{ width: '3%' }} /></colgroup>
+                  <thead><tr><th>คู่ค้า</th><th>ที่อยู่</th><th aria-hidden="true" /></tr></thead>
+                  <tbody>{rows.map(row => <CounterpartyRow key={row.id} companyId={companyId} row={row} />)}</tbody>
+                </table>
+                <div className="sm:hidden">{rows.map(row => <CounterpartyRow key={row.id} companyId={companyId} row={row} phone />)}</div>
+              </>
             )}
 
         {rows !== null && rows.length > 0 && (
-          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-gray-500">
-            <span>{withParams(t('counterparties.total', locale), { count: String(total) })}</span>
-            <div className="flex items-center gap-2">
-              <button type="button" className={ghostClass} disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-                {t('counterparties.prev_page', locale)}
-              </button>
-              <span>{withParams(t('counterparties.page_of', locale), { page: String(page), pages: String(pages) })}</span>
-              <button type="button" className={ghostClass} disabled={page >= pages} onClick={() => setPage((value) => Math.min(pages, value + 1))}>
-                {t('counterparties.next_page', locale)}
-              </button>
-            </div>
-          </div>
+          <div>{pages > 1 && <Pagination prominent page={page} totalPages={pages} locale={locale} onPageChange={setPage} />}</div>
         )}
       </MangmeeCard>
 
@@ -177,39 +168,47 @@ export function CounterpartiesPage({ companyId, permissions }: { companyId: stri
   );
 }
 
-function CounterpartyRow({ companyId, row }: { companyId: string; row: CounterpartySummary }) {
-  const locale = useWorkspaceLocale();
-  const address = counterpartyAddressLine(row.billingAddressJson);
-  const branchCode = (row.branchCode ?? '').trim();
-  const branchLabel = branchCode && branchCode !== '00000'
-    ? withParams(t('counterparties.branch_with_code', locale), { code: branchCode })
-    : t('counterparties.head_office', locale);
+// The kind of counterparty at a glance (owner 2026-10-16): a building for a company, a person for an individual,
+// a plain shop front when the kind is not known yet.
+const KIND_ICON: Record<string, string> = {
+  JURISTIC: 'M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16|M15 9h4a1 1 0 0 1 1 1v11|M3 21h18|M8 8h3M8 12h3M8 16h3',
+  INDIVIDUAL: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z|M4 21a8 8 0 0 1 16 0',
+  UNKNOWN: 'M4 10v10h16V10|M3 10l2-6h14l2 6Z|M10 20v-5h4v5',
+};
+function KindAvatar({ kind }: { kind?: string | null }) {
+  const juristic = kind === 'JURISTIC';
+  return <span aria-hidden="true" className={cx(styles.avatar, juristic && styles.avatarCompany)}>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      {KIND_ICON[kind === 'JURISTIC' || kind === 'INDIVIDUAL' ? kind : 'UNKNOWN'].split('|').map(d => <path key={d} d={d} />)}
+    </svg>
+  </span>;
+}
 
-  return (
-    <li>
-      <Link
-        href={counterpartyHref(companyId, row.id)}
-        className="mangmee-card-muted flex min-h-11 flex-col gap-1 rounded-xl p-3 transition-colors hover:border-brand-200"
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="min-w-0 break-words font-semibold text-gray-800">{row.displayName}</span>
-          {counterpartyUsageBadges(row).map((badge) => (
-            <MangmeeBadge key={badge.messageKey} tone={badge.tone}>{withParams(t(badge.messageKey, locale), badge.params)}</MangmeeBadge>
-          ))}
-          {counterpartyAddressMissing(row) && (
-            <MangmeeBadge tone="amber">{t('counterparties.badge_address_missing', locale)}</MangmeeBadge>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-          {row.taxId && <span>{row.taxId}</span>}
-          <span>{branchLabel}</span>
-        </div>
-        <p className="line-clamp-2 break-words text-xs text-gray-500">
-          {address || t('counterparties.no_address', locale)}
-        </p>
-      </Link>
-    </li>
-  );
+export function CounterpartyRow({ companyId, row, phone = false }: { companyId: string; row: CounterpartySummary; phone?: boolean }) {
+  const locale = useWorkspaceLocale();
+  const router = useRouter();
+  const address = counterpartyAddressLine(row.billingAddressJson);
+  const href = counterpartyHref(companyId, row.id);
+  const press = { role: 'link', tabIndex: 0, 'aria-label': `เปิดคู่ค้า ${row.displayName}`, onClick: () => router.push(href),
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); router.push(href); } } };
+  // Under the name, one grey line: the registered name when it differs, then the tax id (or, without one, the kind).
+  const kind = row.entityKind === 'JURISTIC' ? t('counterparties.entity_kind_juristic', locale) : row.entityKind === 'INDIVIDUAL' ? t('counterparties.entity_kind_individual', locale) : '';
+  const legal = row.legalName?.trim() && row.legalName.trim() !== row.displayName.trim() ? row.legalName.trim() : '';
+  const sub = [legal, row.taxId || kind].filter(Boolean).join(' · ');
+  const who = <div className={styles.who}>
+    <KindAvatar kind={row.entityKind} />
+    <div className="min-w-0"><div className={listStyles.name}>{row.displayName}</div>{sub && <div className={listStyles.number}>{sub}</div>}</div>
+  </div>;
+  // What is missing is said where it would be: no status column, no badge on most of the rows.
+  const where = counterpartyAddressMissing(row) || !address
+    ? <span className={styles.missing}>{t('counterparties.badge_address_missing', locale)}</span>
+    : <span className={styles.address} title={address}>{address}</span>;
+  const chevron = <span aria-hidden="true" className={styles.chevron}>›</span>;
+  return phone ? <article {...press} className={styles.card}>
+    {who}{chevron}<div className={styles.cardWhere}>{where}</div>
+  </article> : <tr {...press}>
+    <td>{who}</td><td>{where}</td><td className={styles.chevronCell}>{chevron}</td>
+  </tr>;
 }
 
 /**
@@ -262,16 +261,20 @@ function CreateCounterpartyModal({ open, companyId, onClose, onCreated }: {
       onClose={busy ? () => undefined : onClose}
       title={t('counterparties.create_title', locale)}
       size="md"
+      dirty={JSON.stringify(values) !== JSON.stringify(counterpartyFormValues(null))}
       footer={(
-        <button type="button" className={btnClass} disabled={busy} aria-busy={busy} onClick={() => void submit()}>
-          {busy ? t('counterparties.saving', locale) : t('counterparties.create_submit', locale)}
-        </button>
+        // The two outcomes, the one that backs out first.
+        <>
+          <button type="button" className={ghostClass} disabled={busy} onClick={onClose}>{t('common.cancel', locale)}</button>
+          <button type="button" className={btnClass} disabled={busy} aria-busy={busy} onClick={() => void submit()}>
+            {busy ? t('counterparties.saving', locale) : t('counterparties.create_submit', locale)}
+          </button>
+        </>
       )}
     >
       <CoverLoader active={busy} scope="modal" label={t('counterparties.saving', locale)}>
         <div className="space-y-4">
-          <p className="text-sm text-gray-500">{t('counterparties.create_hint', locale)}</p>
-          {error && <p role="alert" className="rounded-xl border border-error-500/20 bg-error-50 p-3 text-sm font-semibold text-error-700">{error}</p>}
+          {error && <Notice tone="error">{error}</Notice>}
           <CounterpartyIdentityFields values={values} onChange={change} disabled={busy} issue={issue} allowUnspecifiedEntityKind />
           <CounterpartyAddressFields values={values} onChange={change} disabled={busy} issue={issue} />
         </div>

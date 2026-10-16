@@ -1,3 +1,4 @@
+import { PERMISSIONS } from '../../auth/permission-registry';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveBranchIds } from '../../data-model-core/domain/logic/branch.logic';
@@ -54,6 +55,8 @@ export class PrismaPermissionResolverRepository implements IPermissionResolverPo
         }) : null);
 
     if (!membership) {
+      const disabledMembership = companyId && await this.prisma.client.companyMembership.findFirst({ where: { userId, companyId, status: { in: ['DISABLED', 'SUSPENDED'] } }, select: { id: true } });
+      if (disabledMembership) throw new ForbiddenException({ code: 'company_membership_disabled', message: 'Shop membership is disabled.' });
       throw new ForbiddenException('No active company membership.');
     }
 
@@ -123,6 +126,7 @@ export class PrismaPermissionResolverRepository implements IPermissionResolverPo
       roles,
       permissions,
       entitlementDeniedPermissions,
+      availablePermissions: filterPermissionsByEntitlement(PERMISSIONS.map(permission => permission.key), entitled),
       entitledFeatureKeys: entitled === null ? null : [...entitled],
       scopes: branchIds === undefined ? {} : { branchIds },
     };

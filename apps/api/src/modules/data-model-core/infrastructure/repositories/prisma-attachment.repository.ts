@@ -45,7 +45,13 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
 
   async isDisbursementVoucherFile(input: FindAttachmentInput, tx?: Prisma.TransactionClient): Promise<boolean> {
     const db = tx ?? this.prisma.client;
-    if (await db.disbursementVoucher.findFirst({ where: { companyId: input.companyId, OR: [{ pdfAttachmentId: input.id }, { slipAttachmentId: input.id }] }, select: { id: true } })) return true;
+    if (await db.disbursementVoucher.findFirst({ where: { companyId: input.companyId, OR: [{ pdfAttachmentId: input.id }, { slipAttachmentId: input.id },
+      ...(['preparer', 'approver', 'payer'] as const).flatMap(role => [
+        { [`${role}SignatureJson`]: { path: ['attachmentId'], equals: input.id } },
+        { paidSnapshotJson: { path: ['actors', role, 'signature', 'attachmentId'], equals: input.id } },
+      ]),
+      { revisions: { some: { snapshotJson: { path: ['actors', 'preparer', 'signature', 'attachmentId'], equals: input.id } } } },
+    ] }, select: { id: true } })) return true;
     return isDisbursementVoucherFile(db, { companyId: input.companyId, attachmentId: input.id });
   }
 
@@ -246,6 +252,11 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
   async markDeleted(input: MarkAttachmentDeletedInput, tx?: Prisma.TransactionClient): Promise<AttachmentRecord> {
     const client = this.prisma.client as any;
     const mark = async (db: Prisma.TransactionClient) => {
+      // Frozen package files are retained from download onward, including old unfiled versions.
+      // Linking the newly created attachment and package is atomic, so no public delete can race it.
+      if (await db.taxFilingPackage.findFirst({ where: { companyId: input.companyId, attachmentId: input.id, whtFilingId: { not: null } }, select: { id: true } })) {
+        throw new ConflictException({ code: 'WHT_FILING_FILE_RETAINED', message: 'ไฟล์นี้เป็นแบบภาษีที่เก็บไว้ ลบไม่ได้ เปิดหน้าภาษีหัก ณ ที่จ่ายเพื่อดาวน์โหลด' });
+      }
       const evidence = { attachmentIds: [input.id], expenseIds: [] as string[] };
       await lockFundingEvidence(db, input.companyId, evidence);
       const claim = await db.reimbursementLine.findFirst({ where: { companyId: input.companyId, request: { status: { notIn: ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'] } },

@@ -1,4 +1,5 @@
-import { Injectable, UnprocessableEntityException } from '@nestjs/common';
+import { GetExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
+import { Injectable, UnprocessableEntityException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
@@ -63,9 +64,14 @@ export class ReimbursementEvidenceService {
     if (branchId !== sourceBranchId) {
       throw new UnprocessableEntityException({
         code: 'REIMBURSEMENT_EVIDENCE_BRANCH_MISMATCH',
-        message: 'ใบเสร็จหรือค่าใช้จ่ายต้องระบุสาขาเดียวกับคำขอเบิก',
+        message: 'ใบเสร็จหรือค่าใช้จ่ายต้องระบุสาขาเดียวกับใบเบิก',
       });
     }
+  }
+
+  async canReadExpense(ctx: RequestContext, expenseId: string): Promise<boolean> {
+    try { await new GetExpenseUseCase(this.expenses).execute(ctx, expenseId); return true; }
+    catch (error) { if (error instanceof ForbiddenException || error instanceof NotFoundException) return false; throw error; }
   }
 
   async getAttachmentFileName(companyId: string, attachmentId?: string): Promise<string | undefined> {

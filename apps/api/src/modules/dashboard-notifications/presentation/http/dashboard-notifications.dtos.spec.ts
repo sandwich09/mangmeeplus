@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
-  DailyOwnerSummaryDto, GenerateDashboardSnapshotDto,
+  DailyOwnerSummaryDto, GenerateDashboardSnapshotDto, ExpenseMonthsQueryDto,
   UpdateNotificationPreferenceDto, UpdateNotificationRuleDto,
 } from './dashboard-notifications.dtos';
 import { IMPLEMENTED_TRIGGER_KEYS, notificationRuleDisplayName } from '../../domain/models/notification.model';
@@ -112,4 +112,32 @@ describe('internal worker bodies', () => {
     await rejects(DailyOwnerSummaryDto, { periodKey: '29/07/2026' });
     await rejects(DailyOwnerSummaryDto, { periodKey: '2026-07-29', companyId: 'other' });
   });
+});
+
+
+describe('HOME-1 ExpenseMonthsQueryDto', () => {
+  it('transforms Gregorian years and rejects missing, fractional, out-of-range or unknown query values', async () => {
+    for (const year of ['2000', '2026', '2100']) {
+      const out = await pipe.transform({ year, branchId: 'b1' }, { type: 'query', metatype: ExpenseMonthsQueryDto });
+      assert.equal(out.year, Number(year)); assert.equal(out.branchId, 'b1');
+    }
+    for (const query of [{}, { year: '2569' }, { year: '1999' }, { year: '2101' }, { year: '2026.5' }, { year: '' }, { year: 'oops' }, { year: ['2026'] }, { year: '2026', branchId: ['b1'] }, { year: '2026', companyId: 'other' }]) {
+      await assert.rejects(() => pipe.transform(query, { type: 'query', metatype: ExpenseMonthsQueryDto }), BadRequestException);
+    }
+  });
+});
+
+it('HOME-1 routes the validated query through the dashboard guard and tenant check', async () => {
+  const { DashboardController } = await import('./dashboard.controller');
+  const { REQUIRED_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+  assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, DashboardController.prototype.getExpenseMonths), ['dashboard.read']);
+  assert.equal(Reflect.getMetadata('path', DashboardController.prototype.getExpenseMonths), 'expense-months');
+  const calls: any[] = [];
+  const controller = new DashboardController({ getExpenseMonths: async (...args: any[]) => { calls.push(args); return { year: 2026, months: [], years: [2026] }; } } as any);
+  const ctx = { companyId: 'c1' } as any;
+  const query = await pipe.transform({ year: '2026', branchId: 'b1' }, { type: 'query', metatype: ExpenseMonthsQueryDto });
+  await controller.getExpenseMonths(ctx, 'c1', query);
+  assert.deepEqual(calls, [[ctx, 'c1', query]]);
+  await assert.rejects(() => controller.getExpenseMonths(ctx, 'other', query), (error: any) => error.getStatus() === 403);
+  assert.equal(calls.length, 1);
 });

@@ -58,6 +58,7 @@ function harness(options: { handoff?: Record<string, unknown>; certificates?: an
         return { ...row };
       },
     },
+    company: { findUnique: async () => ({ registeredName: 'ชื่อจดทะเบียนปัจจุบัน', addressJson: { line1: 'ที่อยู่ปัจจุบัน' } }) },
     companyTaxProfile: { findUnique: async () => null },
   };
   client.$transaction = async (work: any) => work(client);
@@ -68,7 +69,7 @@ function harness(options: { handoff?: Record<string, unknown>; certificates?: an
   const audit: any = { log: async (entry: any) => { audits.push(entry); } };
   const renderer: any = {
     renderWhtCertificate: async (fields: any, _payer: any, _payee: any, _signature: any, replacementCopy: any) => {
-      renders.push({ fields, replacementCopy });
+      renders.push({ fields, replacementCopy, payer: _payer });
       return { mimeType: 'application/pdf', fileName: `wht-certificate-${fields.certificateNumber}`, contentBase64: '', checksum: 'sum', byteLength: 0 };
     },
   };
@@ -93,6 +94,8 @@ describe('IssueWhtReplacementCopyUseCase', () => {
     // Content fields carried over verbatim, never re-derived.
     assert.equal(h.renders[0].fields.incomeCategoryCode, 'CAT1');
     assert.equal(h.renders[0].fields.grossAmount, '1000.0000');
+    assert.equal(h.renders[0].fields.paymentDate, '2026-09-12T00:00:00.000Z');
+    assert.equal(h.renders[0].fields.issuedAt, '2026-09-12T01:00:00.000Z');
     assert.ok(h.audits.some((entry) => entry.action === 'tax.wht_certificate.replacement_copy' && entry.metadataJson.copySeq === 1));
   });
 
@@ -137,7 +140,7 @@ describe('issue-wht-replacement-copy source guards (A3)', () => {
   for (const status of ['NEEDS_REVIEW', 'VOIDED']) it(`refuses an expense source in ${status} without writing`, async () => {
     const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' } });
     h.expense.status = status;
-    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (error: any) => error.getResponse?.().code === 'expense_wht_source_changed' && error.getResponse().message === 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว กรุณาเปิดหน้ารายจ่ายใหม่');
+    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (error: any) => error.getResponse?.().code === 'expense_wht_source_changed' && error.getResponse().message === 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว เปิดหน้ารายจ่ายใหม่');
     assert.equal(h.certificates.length, 1); assert.equal(h.certificates[0].replacementCopyCount, 0);
   });
   it('preserves the expense revision and last editor when issuing a certificate artifact', async () => {
@@ -149,7 +152,7 @@ describe('issue-wht-replacement-copy source guards (A3)', () => {
     const h = harness();
     const transact = h.client.$transaction;
     h.client.$transaction = async (work: any) => { h.certificates[0].status = 'VOIDED'; return transact(work); };
-    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (error: any) => error.getResponse?.().message === 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว กรุณาเปิดหน้ารายจ่ายใหม่');
+    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (error: any) => error.getResponse?.().message === 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว เปิดหน้ารายจ่ายใหม่');
     assert.equal(h.certificates.length, 1); assert.equal(h.certificates[0].replacementCopyCount, 0);
   });
 });
@@ -171,4 +174,13 @@ describe('C1 handoff scope boundary', () => {
     assert.deepEqual([h.audits.length, h.renders.length, h.certificates.length], before);
     assert.ok(await call(ctx, 'handoff-1'));
   });
+});
+
+it('replacement copy prints the issued payer text and does not depend on the shop details today', async () => {
+  const h = harness();
+  const original = structuredClone(h.certificates[0].payerSnapshotJson);
+  h.client.company.findUnique = async () => ({ registeredName: null, addressJson: null });
+  await h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1');
+  assert.deepEqual(h.renders[0].payer, original);
+  assert.deepEqual(h.certificates[0].payerSnapshotJson, original);
 });

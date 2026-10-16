@@ -53,7 +53,7 @@ test.describe('ACCT — accounting documents', () => {
     await gotoCompany(authedPage, companyId, '/accounting');
     // The draft form carries TransactionBranchField; with no branch chosen it refuses client-side
     // ('กรุณาเลือกสาขาของรายการ') and never reaches the API.
-    await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }), branchOptionName(branch));
+    await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'สาขา', exact: true }), branchOptionName(branch));
     await authedPage.getByRole('textbox', { name: 'รายละเอียดรายการ', exact: true }).fill(line);
     await authedPage.getByRole('spinbutton', { name: 'จำนวน', exact: true }).fill('2');
     await authedPage.getByRole('spinbutton', { name: 'ราคาต่อหน่วย', exact: true }).fill('125');
@@ -144,7 +144,7 @@ test.describe('ACCT — accounting documents', () => {
       });
 
       await submit.click();
-      const networkError = panel.getByText('เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่', { exact: true });
+      const networkError = panel.getByText('เชื่อมต่อไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองอีกครั้ง', { exact: true });
       await expect(networkError).toBeVisible();
       expect(requestBodies).toHaveLength(1);
       const firstBody = JSON.parse(requestBodies[0]);
@@ -193,7 +193,7 @@ test.describe('ACCT — accounting documents', () => {
       expect(pageErrors).toEqual([]);
       // The earlier transport-error toast expires independently of the inline form error.
       // Capture the settled successful UI, not the transient stack containing both notices.
-      await expect(page.getByText('เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่', { exact: true })).toHaveCount(0);
+      await expect(page.getByText('เชื่อมต่อไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองอีกครั้ง', { exact: true })).toHaveCount(0);
       await testInfo.attach('replayed-payment-mobile', { body: await panel.screenshot(), contentType: 'image/png' });
       await testInfo.attach('payment-retry-readback', {
         body: Buffer.from(JSON.stringify({ documentId, customerId: customer.id, requestBodies, beforeRetry, afterRetry, payment, paidBeforeRetry, paidAfterRetry }, null, 2)),

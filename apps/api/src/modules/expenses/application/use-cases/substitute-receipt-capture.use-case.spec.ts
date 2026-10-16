@@ -273,7 +273,7 @@ describe('substitute receipt on a derived capture source', () => {
     } as any).execute({ ...ctx('payer-1'), userId: 'payer-1' }, 'exp-a', 'sub-a', {});
     const svg = Buffer.from(preview.svgDataUrl.split('base64,')[1]!, 'base64').toString('utf8');
 
-    const expected = 'ใบรับรองนี้รับรองส่วนของบริษัท 810.00 บาท จากยอดที่จ่ายจริง 1,290.00 บาท'
+    const expected = 'ใบรับรองนี้รับรองส่วนของกิจการ 810.00 บาท จากยอดที่จ่ายจริง 1,290.00 บาท'
       + ' ตามการจัดส่วนที่ตรวจแล้ว (กลุ่มหลักฐาน g11112222 ครั้งที่ 4)';
     assert.equal(svg.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').includes(expected.replace(/\s+/g, ' ')), true, svg.slice(0, 400));
 

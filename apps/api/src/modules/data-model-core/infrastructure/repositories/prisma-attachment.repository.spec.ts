@@ -140,14 +140,16 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
     for (const field of ['pdfAttachmentId', 'slipAttachmentId']) {
       const locks: string[] = [];
       let queried: any;
-      const tx = { $executeRaw: async (_parts: any, ...values: any[]) => { locks.push(...values.filter(v => typeof v === 'string')); return 1; },
+      const tx = { taxFilingPackage: { findFirst: async () => null }, $executeRaw: async (_parts: any, ...values: any[]) => { locks.push(...values.filter(v => typeof v === 'string')); return 1; },
         attachmentLink: { findMany: async () => [] }, reimbursementLine: { findFirst: async () => null },
         disbursementVoucher: { findFirst: async ({ where }: any) => { queried = where; return { id: 'dv', [field]: 'att' }; } },
         attachmentObject: { updateMany: mock.fn(async () => ({ count: 1 })) } };
       const repo = new PrismaAttachmentRepository({ client: { $transaction: () => { throw new Error('nested transaction'); } } } as any);
       await assert.rejects(() => repo.markDeleted({ companyId: 'co-1', id: 'att' }, tx as any), (e: any) => e.getResponse().code === 'disbursement_file_retained');
       assert.equal(queried.companyId, 'co-1');
-      assert.deepEqual(queried.OR, [{ pdfAttachmentId: 'att' }, { slipAttachmentId: 'att' }]);
+      assert.deepEqual(queried.OR.slice(0, 2), [{ pdfAttachmentId: 'att' }, { slipAttachmentId: 'att' }]);
+      for (const role of ['preparer', 'approver', 'payer']) assert.ok(queried.OR.some((condition: any) => condition[`${role}SignatureJson`]?.equals === 'att'));
+      assert.ok(queried.OR.some((condition: any) => condition.paidSnapshotJson?.path.join('.') === 'actors.payer.signature.attachmentId'));
       assert.ok(locks.includes('co-1:att:attachment-retention'));
       assert.equal(tx.attachmentObject.updateMany.mock.callCount(), 0);
     }
@@ -155,7 +157,7 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
 
   it('uses the caller transaction for retention checks and soft-delete', async () => {
     const now = new Date('2026-07-29T00:00:00Z');
-    const tx = {
+    const tx = { taxFilingPackage: { findFirst: async () => null },
       $executeRaw: mock.fn(async () => 1),
       expenseSubstituteReceiptEvidence: { findFirst: mock.fn(async () => null) },
       attachmentLink: { findMany: mock.fn(async () => []), findFirst: mock.fn(async () => null) },
@@ -190,7 +192,7 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
     assert.equal(tx.expenseSubstituteReceiptEvidence.findFirst.mock.callCount(), 3);
     assert.equal(tx.attachmentLink.findMany.mock.callCount(), 2);
     // The payment-slip hold is checked on the same transaction, after the retention lock is taken.
-    assert.equal(tx.attachmentLink.findFirst.mock.callCount(), 3);
+    assert.equal(tx.attachmentLink.findFirst.mock.callCount(), 4); // voucher PDF, slip, supporting file, then reimbursement slip
     assert.deepEqual((tx.attachmentObject.updateMany.mock.calls as any[])[0]?.arguments[0].where, {
       id: 'att-1',
       companyId: 'co-1',
@@ -232,7 +234,7 @@ describe('PrismaAttachmentRepository reimbursement payment slips', () => {
   });
 
   it('refuses to delete a slip inside the delete transaction, before anything is written', async () => {
-    const tx = {
+    const tx = { taxFilingPackage: { findFirst: async () => null },
       $executeRaw: mock.fn(async () => 1),
       reimbursementLine: { findFirst: mock.fn(async () => null) },
       disbursementVoucher: { findFirst: mock.fn(async () => null) },
@@ -262,7 +264,7 @@ describe('PrismaAttachmentRepository.linkToTarget', () => {
       findFirst: mock.fn(async ({ where }: any) => input.conflictingLink && (typeof where.targetType === 'string' ? (input.conflictingLink as any).targetType === where.targetType : (input.conflictingLink as any).targetType !== where.targetType.not) ? input.conflictingLink : null),
       create: mock.fn(async ({ data }: any) => ({ id: 'link-1', ...data, createdAt: new Date('2026-07-28T00:00:00Z') })),
     };
-    const tx = { attachmentObject, expenseRecord, accountingDocument, attachmentLink, $executeRaw: async () => 1,
+    const tx = { taxFilingPackage: { findFirst: async () => null }, attachmentObject, expenseRecord, accountingDocument, attachmentLink, $executeRaw: async () => 1,
       reimbursementLine: { findFirst: async () => null }, expenseSubstituteReceiptEvidence: { findFirst: async () => null } };
     const client = { $transaction: (fn: (value: typeof tx) => unknown) => fn(tx) };
     return { repo: new PrismaAttachmentRepository({ client } as any), attachmentObject, expenseRecord, accountingDocument, attachmentLink };
@@ -408,4 +410,19 @@ describe('PrismaAttachmentRepository wet-signed scan retention (R11)', () => {
     const { repo } = makeRepo({ wetSignedScan: null });
     assert.equal(await repo.findSubstituteEvidenceRetentionHold({ companyId: 'co-1', id: 'att-other' }), null);
   });
+});
+
+it('retains a frozen withholding package file through the generic delete path', async () => {
+  let writes = 0;
+  const tx: any = {
+    $executeRaw: async () => 1,
+    taxFilingPackage: { findFirst: async ({ where }: any) => { assert.deepEqual(where, { companyId: 'co', attachmentId: 'file', whtFilingId: { not: null } }); return { id: 'pkg' }; } },
+    attachmentLink: { findMany: async () => [], findFirst: async () => null },
+    reimbursementLine: { findFirst: async () => null }, disbursementVoucher: { findFirst: async () => null },
+    expenseSubstituteReceiptEvidence: { findFirst: async () => null }, expenseRecord: { findFirst: async () => null },
+    attachmentObject: { findFirst: async () => null, updateMany: async () => { writes++; return { count: 1 }; }, findFirstOrThrow: async () => ({ id: 'file', companyId: 'co', createdAt: new Date(), updatedAt: new Date() }) },
+  };
+  const repo = new PrismaAttachmentRepository({ client: tx } as any);
+  await assert.rejects(repo.markDeleted({ companyId: 'co', id: 'file' }, tx), (error: any) => error.getResponse().code === 'WHT_FILING_FILE_RETAINED');
+  assert.equal(writes, 0);
 });

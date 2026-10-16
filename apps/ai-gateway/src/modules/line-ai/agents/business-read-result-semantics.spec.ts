@@ -161,3 +161,11 @@ describe('business-read result semantics', () => {
     assert.equal(answer, fallback);
   });
 });
+
+
+it('dashboard facts name หน้าแรก without changing the tool or its data', async () => {
+  const tool = 'dashboard.get_business_health_summary';
+  const output = await specialist(tool, { status: 'ok', data: { widgets: [] } }).run(ctx, intent(tool), 1);
+  assert.ok(output.facts.some(fact => fact.label === 'หน้าแรก' && fact.value === '0 ตัวชี้วัด'));
+  assert.doesNotMatch(output.summary, /แดชบอร์ด/);
+});

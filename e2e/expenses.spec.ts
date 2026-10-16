@@ -124,7 +124,7 @@ test.describe('EXP — expenses + receipts', () => {
     for (const path of ['/expenses/manual', `/expenses/${created.id}`]) {
       await gotoCompany(page, companyId, path);
       // Source branch is a ThemedSelect now, not a native <select> — open, then click the option.
-      if (path === '/expenses/manual') await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }), branchOptionName(branches[0]!));
+      if (path === '/expenses/manual') await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขา', exact: true }), branchOptionName(branches[0]!));
       const price = page.getByRole('spinbutton', { name: /^ราคาต่อหน่วย/ });
       const discount = page.getByRole('spinbutton', { name: /^ส่วนลด/ });
       for (const field of [price, discount]) {
@@ -155,26 +155,42 @@ test.describe('EXP — expenses + receipts', () => {
     await gotoCompany(authedPage, companyId, '/expenses');
     await expect(authedPage.getByRole('heading', { name: /ค่าใช้จ่าย|Expenses/i })).toBeVisible();
     await expect(authedPage.getByRole('button', { name: /ทั้งหมด/ })).toBeVisible();
-    await expect(authedPage.getByRole('button', { name: /ฉบับร่าง/ })).toBeVisible();
-    await expect(authedPage.getByRole('button', { name: /รอตรวจสอบ/ })).toBeVisible();
-    // The chip is named with its count ("ยืนยันแล้ว 0"); the export button "ส่งออกเอกสารยืนยันแล้ว"
+    // 2026-10-13: four groups whose names do not overlap (drafts are inside "ยังไม่ยืนยัน", which always counted them).
+    await expect(authedPage.getByRole('button', { name: /^ยังไม่ยืนยัน/ })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: /^ยกเลิก\/ปฏิเสธ/ })).toBeVisible();
+    // The chip is named with its count ("ยืนยันแล้ว 0"); the export button "ส่งออก Excel ให้สำนักงานบัญชี" (it was "ส่งออกเอกสารยืนยันแล้ว")
     // carries the same word, so the chip is matched from the start of its name.
     await expect(authedPage.getByRole('button', { name: /^ยืนยันแล้ว/ })).toBeVisible();
+    for (const name of ['รายวัน', 'รายเดือน']) await expect(authedPage.locator('main').getByRole('button', { name, exact: true })).toHaveCount(0);
+    await expect(authedPage.locator('main').getByRole('combobox', { name: 'สิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
+  });
+
+  test('EXP-LIST-1 a legacy day URL opens the month with no day toggle', async ({ authedPage, companyId }) => {
+    const request = authedPage.waitForRequest(request => {
+      const url = new URL(request.url());
+      return request.method() === 'GET' && url.pathname.endsWith(`/companies/${companyId}/expenses`)
+        && url.searchParams.get('fromDate') === '2026-09-01' && url.searchParams.get('toDate') === '2026-09-30';
+    });
+    await gotoCompany(authedPage, companyId, '/expenses?view=day&day=2026-09-14');
+    await request;
+    await expect(authedPage.locator('main').getByRole('combobox', { name: 'วันที่เอกสาร', exact: true })).toHaveText('ก.ย. 2569');
+    for (const name of ['รายวัน', 'รายเดือน']) await expect(authedPage.locator('main').getByRole('button', { name, exact: true })).toHaveCount(0);
   });
 
   test('EXP-02 @p1 summary tiles render numeric values', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/expenses');
-    // The cards render twice: in the grid, and again inside the phone-only "ดูสรุปยอด" fold-out.
-    for (const label of ['ยอดค่าใช้จ่ายตามวันที่เอกสาร', 'VAT ตามเอกสาร', 'ค้างจ่ายที่ยืนยันแล้ว', 'เกินกำหนดชำระ']) {
+    // One card of numbers above the list (owner 2026-10-15).
+    for (const label of ['ยอดค่าใช้จ่ายตามวันที่เอกสาร', 'ค้างจ่าย', 'VAT ตามเอกสาร']) {
       await expect(authedPage.getByText(label, { exact: true }).filter({ visible: true })).toBeVisible();
     }
+    for (const removed of ['ยังไม่ยืนยัน', 'เกินกำหนดจ่าย', 'ค้างจ่ายที่ยืนยันแล้ว']) await expect(authedPage.getByTestId('expenses-summary').getByText(removed, { exact: true })).toHaveCount(0);
     await expect(authedPage.locator('main, #workspace-main').getByText(/฿|0|1|2|3|4|5|6|7|8|9/).first()).toBeVisible();
   });
 
   test('EXP-03 @smoke creates draft expense via API and verifies list truth', async ({ authedPage, api, companyId }) => {
     const created = await createExpense(api, companyId);
     await gotoCompany(authedPage, companyId, `/expenses?expenseId=${created.id}`);
-    await expect(authedPage.getByText(/ฉบับร่าง|DRAFT/i).first()).toBeVisible();
+    await expect(authedPage.getByText(/ร่าง|DRAFT/i).first()).toBeVisible();
 
     const body = await json<ExpenseList>(await api.get(`companies/${companyId}/expenses?pageSize=100`));
     expect(body.data.some((expense) => expense.id === created.id && expense.status === 'DRAFT')).toBe(true);
@@ -187,48 +203,55 @@ test.describe('EXP — expenses + receipts', () => {
     // "ยังแสดงยอดล่าสุดไม่ได้: กรุณากรอกชื่อผู้ขาย" in place of the totals, and ถัดไป stays disabled.
     await authedPage.getByRole('textbox', { name: /ชื่อผู้ขาย/ }).first().fill('E2E Vendor');
     // guided stepper opens on the vendor+items step, where the money summary lives
-    await expect(authedPage.getByText('ยอดก่อนหักส่วนลด', { exact: true })).toBeVisible();
+    // The starting row (ยอดก่อนหักส่วนลด) shows only when a discount, a charge or VAT changes it on the way to the total.
+    await expect(authedPage.getByTestId('expense-review-totals').getByText('ยอดรวม', { exact: true })).toBeVisible();
+    await expect(authedPage.getByText('ยอดก่อนหักส่วนลด', { exact: true })).toHaveCount(0);
     // This fixture carries no VAT (NO_VAT, nothing charged). Since 4361ed0b7 the tax-base and VAT rows
     // show only for money that carries VAT, whatever the company's capture mode (FULL or SIMPLE).
     await expect(authedPage.getByText('ฐานภาษี (ยอดก่อน VAT)', { exact: true })).toHaveCount(0);
-    await expect(authedPage.getByText('ยอดรวมทั้งสิ้น', { exact: true })).toBeVisible();
+    await expect(authedPage.getByTestId('expense-review-totals').getByText('ยอดรวม', { exact: true })).toBeVisible();
     // The stepper is display-only: reach the final step through ถัดไป.
     await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     // Step 2 lets ถัดไป through only after a saved document review (0283a3d0b). With no file attached
     // the one complete review is "ไม่มีใบเสร็จ" with a substitute receipt (expenseEvidenceInputError).
     await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'ประเภทเอกสาร', exact: true }), 'เอกสารค่าใช้จ่ายอื่น');
-    await authedPage.getByRole('button', { name: 'เอกสารมีปัญหา / เลือกหลักฐาน', exact: true }).click();
-    await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'ปัญหาของเอกสาร', exact: true }), 'ไม่มีใบเสร็จ');
-    await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'ทางใช้หลักฐาน', exact: true }), 'จัดทำใบรับรองแทนใบเสร็จ');
-    await authedPage.getByRole('button', { name: 'บันทึกการตรวจ', exact: true }).click();
+    await authedPage.getByRole('button', { name: 'ไม่มีใบเสร็จ หรือใบเสร็จมีปัญหา', exact: true }).click();
+    await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'มีใบเสร็จของรายการนี้ไหม', exact: true }), 'ไม่มีใบเสร็จ');
+    await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'จะใช้อะไรแทน', exact: true }), 'ทำใบรับรองแทนใบเสร็จ');
+    await expect(authedPage.getByRole('button', { name: 'บันทึกการตรวจ', exact: true })).toHaveCount(0);
+    const reviewSaved = authedPage.waitForResponse(response => response.request().method() === 'PATCH' && response.url().includes('/review-fields'));
     await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
-    await expect(authedPage.getByRole('button', { name: 'ส่งให้คนอื่นตรวจ', exact: true })).toBeVisible();
+    expect((await reviewSaved).ok()).toBe(true);
+    await expect(authedPage.getByRole('button', { name: 'ส่งให้ตรวจ', exact: true })).toBeVisible();
   });
 
-  // EXP-UX-01 / plan 13.11.A: ส่งตรวจสอบ has to END on the list. The old behaviour reloaded the
-  // detail page in place, so the user could not tell the submit from a no-op.
-  test('EXP-04B @smoke ส่งตรวจสอบ lands on the list with the row highlighted and its status shown', async ({ authedPage, api, request, companyId }) => {
+  // Sending for review names the checker and leaves the stored request visible on the expense.
+  test('EXP-04B @smoke sending for review chooses a checker and shows the stored request on the expense', async ({ authedPage, api, request, companyId }) => {
     test.skip(process.env['S3_E2E'] !== '1' && process.env['S3_E2E_ACTIVE'] !== '1', 'This submit journey requires an attached and reviewed receipt; run with local MinIO and S3_E2E=1.');
     const created = await createExpenseWithReceipt(api, request, companyId);
     await gotoCompany(authedPage, companyId, `/expenses/${created.id}`);
     await authedPage.getByRole('textbox', { name: /ชื่อผู้ขาย/ }).first().fill('E2E Vendor');
     await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
-    await expect(authedPage.getByRole('heading', { name: 'ตรวจสอบเอกสารและหลักฐานภาษี', exact: true })).toBeVisible();
-    await authedPage.getByRole('button', { name: 'บันทึกการตรวจ', exact: true }).click();
+    await expect(authedPage.getByRole('heading', { name: 'ประเภทเอกสารและหมวดหมู่', exact: true })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'บันทึกการตรวจ', exact: true })).toHaveCount(0);
+    const reviewSaved = authedPage.waitForResponse(response => response.request().method() === 'PATCH' && response.url().includes('/review-fields'));
     await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    expect((await reviewSaved).ok()).toBe(true);
 
-    const submit = authedPage.getByRole('button', { name: 'ส่งให้คนอื่นตรวจ', exact: true });
-    await expect(submit).toBeEnabled();
-    await submit.click();
-
-    // `replace`, so Back must not return to the pre-submit detail view either.
-    await expect(authedPage).toHaveURL(new RegExp(`/companies/${companyId}/expenses\\?highlight=${created.id}$`));
-
-    // The row is found by id, never "the newest one" — and its status is the permanent evidence
-    // the toast is not. READY_FOR_CONFIRMATION renders as "พร้อมยืนยัน" (EXPENSE_STATUS_LABELS).
-    const highlighted = authedPage.locator('[data-testid="expenses-row"][data-highlighted="true"]');
-    await expect(highlighted).toBeVisible();
-    await expect(highlighted).toContainText('พร้อมยืนยัน');
+    const people = await json<Array<{ userId: string; displayName: string }>>(await api.get(`companies/${companyId}/expenses/${created.id}/reviewers`));
+    expect(people.length, 'the review fixture needs another member with expense.confirm in this branch').toBeGreaterThan(0);
+    const checker = people[0]!;
+    const submit = authedPage.getByRole('button', { name: 'ส่งให้ตรวจ', exact: true });
+    await expect(submit).toBeEnabled(); await submit.click();
+    const dialog = authedPage.getByRole('dialog', { name: 'ส่งให้ใครตรวจ', exact: true });
+    await expect(dialog).toBeVisible();
+    if (people.length > 1) await dialog.getByRole('radio', { name: checker.displayName, exact: true }).check();
+    await dialog.getByRole('button', { name: 'ส่งให้ตรวจ', exact: true }).click();
+    await expect(dialog).not.toBeVisible();
+    await expect(authedPage).toHaveURL(new RegExp(`/companies/${companyId}/expenses/${created.id}$`));
+    await expect(authedPage.getByText(new RegExp(`ส่งให้ ${checker.displayName} ตรวจแล้ว เมื่อ`))).toBeVisible();
+    const stored = await json<FullExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`));
+    expect(stored.reviewRequest?.requestedReviewerUserId).toBe(checker.userId);
 
     expect((await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`))).status)
       .toBe('READY_FOR_CONFIRMATION');
@@ -241,24 +264,27 @@ test.describe('EXP — expenses + receipts', () => {
     // Invalid drafts remain cancellable directly from the first step, with one click to the dialog.
     await expect(authedPage.getByRole('button', { name: 'ถัดไป', exact: true })).toBeDisabled();
     await expect(authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true })).toBeVisible();
-    const deleteButton = authedPage.locator('button').filter({ hasText: /^ลบ$/ });
+    const deleteButton = authedPage.locator('button').filter({ hasText: /^ลบรายจ่าย$/ });
     await expect(deleteButton).toHaveCount(0);
     await expect(authedPage.locator('summary').filter({ hasText: /^เพิ่มเติม$/ })).toHaveCount(0);
     await authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true }).click();
 
-    const dialog = authedPage.getByRole('dialog', { name: 'ยืนยันการยกเลิกรายการ' });
-    const reason = dialog.getByRole('textbox', { name: 'เหตุผลการยกเลิกรายการ' });
-    const confirm = dialog.getByRole('button', { name: 'ยืนยัน', exact: true });
+    const dialog = authedPage.getByRole('dialog', { name: /^ยกเลิกรายการ/ });
+    const reason = dialog.getByRole('textbox', { name: 'เหตุผลที่ยกเลิก' });
+    const confirm = dialog.getByRole('button', { name: 'ยกเลิกรายการ', exact: true });
     await expect(dialog).toBeVisible();
-    await expect(confirm).toBeDisabled();
+    // The action stays pressable and says what is missing (thai-ux-standard §2.9).
+    await confirm.click();
+    await expect(dialog.getByText('ใส่เหตุผลที่ยกเลิกก่อน')).toBeVisible();
     await reason.fill('ยังไม่ยกเลิกในรอบแรก');
     await expect(confirm).toBeEnabled();
-    await dialog.getByRole('button', { name: 'ยังไม่ยกเลิก', exact: true }).click();
+    await dialog.getByRole('button', { name: 'ไม่ยกเลิก', exact: true }).click();
     await expect(dialog).toBeHidden();
     expect((await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`))).status).toBe('DRAFT');
 
     await authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true }).click();
-    await expect(reason).toHaveValue('');
+    // A typed reason survives closing the window (thai-ux-standard §4.3).
+    await expect(reason).toHaveValue('ยังไม่ยกเลิกในรอบแรก');
     await reason.fill('บันทึกรายการผิด');
     let releaseReject!: () => void;
     let rejectGate = new Promise<void>((resolve) => { releaseReject = resolve; });
@@ -293,9 +319,10 @@ test.describe('EXP — expenses + receipts', () => {
     await expect(authedPage.getByRole('button', { name: 'เริ่มตรวจใหม่', exact: true })).toBeVisible();
     await authedPage.screenshot({ path: info.outputPath('cancelled-delete-390.png') });
     await deleteButton.click();
-    await expect(authedPage.getByRole('button', { name: 'ลบถาวร', exact: true })).toBeVisible();
-    await authedPage.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
-    await expect(authedPage.getByRole('button', { name: 'ลบถาวร', exact: true })).toBeHidden();
+    const deleteDialog = authedPage.getByRole('dialog', { name: /^ลบรายจ่าย/ });
+    await expect(deleteDialog.getByRole('button', { name: 'ลบรายจ่าย', exact: true })).toBeVisible();
+    await deleteDialog.getByRole('button', { name: 'ไม่ลบ', exact: true }).click();
+    await expect(deleteDialog).toBeHidden();
     expect((await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`))).status).toBe('REJECTED');
   });
 
@@ -520,7 +547,7 @@ test.describe('EXP — expenses + receipts', () => {
     await api.post(`companies/${companyId}/expenses/${created.id}/mark-ready`, { data: {} });
     await api.post(`companies/${companyId}/expenses/${created.id}/confirm`, { data: {} });
     await gotoCompany(authedPage, companyId, '/expenses');
-    // The chip, not the export button "ส่งออกเอกสารยืนยันแล้ว" (see EXP-01).
+    // The chip, not the export button "ส่งออก Excel ให้สำนักงานบัญชี" (it was "ส่งออกเอกสารยืนยันแล้ว") (see EXP-01).
     await authedPage.getByRole('button', { name: /^ยืนยันแล้ว/ }).click();
     await expect(authedPage.getByText(/ยืนยันแล้ว/).first()).toBeVisible();
   });
@@ -621,7 +648,8 @@ test('EXP-26 @p1 groups a backdated document by document month and labels both d
       && url.pathname.endsWith(`/companies/${companyId}/expenses`)
       && url.searchParams.get('fromDate') === `${documentMonth}-01`;
   });
-  await authedPage.locator('.mangmee-segmented + div button[role="combobox"]').click();
+  await expect(authedPage.locator('main').getByRole('button', { name: 'รายวัน', exact: true })).toHaveCount(0);
+  await authedPage.locator('main').getByRole('combobox', { name: 'วันที่เอกสาร', exact: true }).click();
   if (documentYear !== year) await authedPage.getByRole('button', { name: 'ปีก่อนหน้า' }).click();
   await authedPage.getByRole('button', {
     name: ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'][documentMonthNumber! - 1],
@@ -630,7 +658,10 @@ test('EXP-26 @p1 groups a backdated document by document month and labels both d
   const documentListUrl = new URL((await documentListRequestPromise).url());
   expect(documentListUrl.searchParams.get('toDate')).toBe(`${documentMonth}-${String(documentLastDay).padStart(2, '0')}`);
   await expect(row).toBeVisible();
-  await expect(row).toContainText('วันที่เอกสาร');
+  await expect(row).not.toContainText('วันที่เอกสาร');
+  await expect(row).toContainText(new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }).format(new Date(documentDate)));
+  await expect(row).toContainText('รอตรวจ');
+  await expect(row).not.toContainText('อัปโหลดเว็บ');
   await expect(row).toContainText('ส่งเข้าระบบ');
   await expect(row).toContainText('เอกสารย้อนหลัง 51 วัน');
   await expect(authedPage.getByTestId('expenses-row').filter({ hasText: sameMonthVendor })).toHaveCount(0);
@@ -638,8 +669,8 @@ test('EXP-26 @p1 groups a backdated document by document month and labels both d
   const exportRequestPromise = authedPage.waitForRequest((request) => (
     request.method() === 'POST' && new URL(request.url()).pathname.endsWith(`/companies/${companyId}/expenses/accountant-package`)
   ));
-  await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
-  await authedPage.getByRole('button', { name: 'ส่งออก Excel' }).click();
+  await authedPage.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
+  await authedPage.getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true }).click();
   const exportPayload = (await exportRequestPromise).postDataJSON();
   expect(exportPayload.dateField).toBe('expenseDate');
   expect(exportPayload.fromDate).toBe(`${documentMonth}-01`);
@@ -648,11 +679,14 @@ test('EXP-26 @p1 groups a backdated document by document month and labels both d
   await authedPage.setViewportSize({ width: 390, height: 844 });
   const card = authedPage.getByTestId('expenses-card').filter({ hasText: vendor });
   await expect(card).toBeVisible();
-  await expect(card).toContainText('วันที่เอกสาร');
+  await expect(card).not.toContainText('วันที่เอกสาร');
+  await expect(card).toContainText(new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }).format(new Date(documentDate)));
+  await expect(card).toContainText('รอตรวจ');
+  await expect(card).not.toContainText('อัปโหลดเว็บ');
   await expect(card).toContainText('ส่งเข้าระบบ');
   await expect(card).toContainText('เอกสารย้อนหลัง 51 วัน');
 
-  // ส่งตรวจ and batch upload return with ?highlight=id. A backdated row must open its
+  // ส่งให้ตรวจ and batch upload return with ?highlight=id. A backdated row must open its
   // document month automatically, including after a fresh navigation with no saved filter.
   const highlightedRequestPromise = authedPage.waitForRequest((request) => {
     const url = new URL(request.url());
@@ -728,12 +762,14 @@ test('EXP-27 @smoke retries a real backdated partial expense payment on mobile w
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await gotoCompany(page, companyId, `/expenses/${created.id}`);
-    const card = page.getByRole('heading', { name: 'การชำระเงิน', exact: true }).locator('..');
-    const amount = card.getByRole('spinbutton', { name: 'ยอดชำระ', exact: true });
+    const card = page.getByRole('heading', { name: 'การจ่ายเงิน', exact: true }).locator('..');
+    const amount = card.getByRole('textbox', { name: 'ยอดที่จ่าย', exact: true });
     const method = card.locator('label').filter({ hasText: 'วิธีจ่ายเงิน' }).getByRole('combobox');
     const paidAt = card.getByRole('combobox', { name: 'วันที่จ่ายเงินจริง', exact: true });
     await expect(card).toContainText('เลือกวันที่จ่ายเงินจริง แม้จะนำมาบันทึกภายหลัง');
-    await expect(card).toContainText('ยอดค้างจ่าย ฿100.00');
+    // What is owed is said once, in the box above the card.
+    await expect(page.getByTestId('expense-detail-totals')).toContainText(/ค้างจ่าย\s*100\.00/);
+    await expect(page.getByText(/^ต้องจ่าย ฿/)).toHaveCount(0);
     await expect(amount).toHaveValue('100.00');
     await amount.fill('40');
     await method.click();
@@ -824,11 +860,12 @@ test('EXP-27 @smoke retries a real backdated partial expense payment on mobile w
     await expect(history.locator(':scope > div')).toHaveCount(1);
     await expect(history).toContainText(`${paidDateLabel} · เงินสด`);
     await expect(history).toContainText('฿40.00');
-    await expect(card).toContainText('ยอดค้างจ่าย ฿60.00');
+    await expect(page.getByTestId('expense-detail-totals')).toContainText(/ค้างจ่าย\s*60\.00/);
+    await expect(page.getByText(/^ต้องจ่าย ฿/)).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const mobilePath = testInfo.outputPath('expense-payment-replayed-mobile.png');
     // Let the deliberately induced transport-error toast expire before capturing success.
-    await expect(page.getByText('เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('เชื่อมต่อไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองอีกครั้ง', { exact: true })).toHaveCount(0);
     await history.scrollIntoViewIfNeeded();
     await page.screenshot({ path: mobilePath, fullPage: false });
     await testInfo.attach('expense-payment-replayed-mobile', { path: mobilePath, contentType: 'image/png' });
@@ -895,8 +932,8 @@ test('EXP-28 @p1 distinguishes rejected, uncertain, and conflicting expense paym
       return route.fulfill({ status: response.status, contentType: 'application/json', body: JSON.stringify(response.body) });
     });
     await gotoCompany(page, companyId, `/expenses/${created.id}`);
-    const card = page.getByRole('heading', { name: 'การชำระเงิน', exact: true }).locator('..');
-    const amount = card.getByRole('spinbutton', { name: 'ยอดชำระ', exact: true });
+    const card = page.getByRole('heading', { name: 'การจ่ายเงิน', exact: true }).locator('..');
+    const amount = card.getByRole('textbox', { name: 'ยอดที่จ่าย', exact: true });
     const method = card.getByRole('combobox', { name: 'วิธีจ่ายเงิน', exact: true });
     const submit = card.getByRole('button', { name: /^บันทึกจ่าย(?:ส่วนที่เหลือ)? ฿/ });
     const retry = card.getByRole('button', { name: 'ลองบันทึกรายการเดิมอีกครั้ง', exact: true });
@@ -912,7 +949,7 @@ test('EXP-28 @p1 distinguishes rejected, uncertain, and conflicting expense paym
     await expect(notice).toHaveCount(0); // a rejected first attempt must not warn about duplicate payment on edit
     await submit.click();
     // A 403 reads the shared permission text (api-error-message.ts insufficient_permissions, since f98946566).
-    await expect(page.getByRole('alert').filter({ hasText: 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อผู้ดูแลสิทธิ์ของบริษัท' }).first()).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'คุณไม่มีสิทธิ์ทำรายการนี้ ขอสิทธิ์จากเจ้าของกิจการหรือผู้ดูแลสิทธิ์' }).first()).toBeVisible();
     await expect(submit).toBeEnabled();
     await expect(notice).toHaveCount(0);
     await expect(retry).toHaveCount(0);
@@ -928,7 +965,7 @@ test('EXP-28 @p1 distinguishes rejected, uncertain, and conflicting expense paym
     await expect(notice).toContainText('ยังยืนยันผลการบันทึกไม่ได้');
     expect(attempts[3]).toBe(attempts[2]);
     await retry.click();
-    await expect(card.getByRole('button', { name: 'กรุณาตรวจประวัติการจ่าย', exact: true })).toBeDisabled();
+    await expect(card.getByRole('button', { name: 'ตรวจประวัติการจ่าย', exact: true })).toBeDisabled();
     await expect(notice).toContainText('ข้อมูลรายการนี้ไม่ตรงกับการจ่ายที่บันทึกไว้');
     await expect(retry).toHaveCount(0);
     expect(attempts).toHaveLength(5);
@@ -936,7 +973,7 @@ test('EXP-28 @p1 distinguishes rejected, uncertain, and conflicting expense paym
     await amount.fill('42');
     await expect(submit).toBeEnabled();
     await expect(notice).toContainText('การบันทึกครั้งถัดไปเป็นรายการจ่ายใหม่');
-    await expect(notice).toContainText('กรุณาตรวจประวัติการจ่ายก่อนเพื่อไม่ให้จ่ายซ้ำ');
+    await expect(notice).toContainText('ตรวจประวัติการจ่ายก่อนเพื่อไม่ให้จ่ายซ้ำ');
     await expect(retry).toHaveCount(0);
     expect(attempts).toHaveLength(5); // editing never silently submits the new intent
     await amount.press('ArrowUp');
@@ -997,8 +1034,8 @@ test('EXP-29 @p1 retains a committed payment intent until its detail refresh suc
     expect((await json<ExpenseSummary>(await api.post(`${expensePath}/confirm`, { data: {} }))).status).toBe('CONFIRMED');
     await page.setViewportSize({ width: 1280, height: 900 });
     await gotoCompany(page, companyId, `/expenses/${created.id}`);
-    const card = page.getByRole('heading', { name: 'การชำระเงิน', exact: true }).locator('..');
-    const amount = card.getByRole('spinbutton', { name: 'ยอดชำระ', exact: true });
+    const card = page.getByRole('heading', { name: 'การจ่ายเงิน', exact: true }).locator('..');
+    const amount = card.getByRole('textbox', { name: 'ยอดที่จ่าย', exact: true });
     const submit = card.getByRole('button', { name: /^บันทึกจ่าย(?:ส่วนที่เหลือ)? ฿/ });
     const retry = card.getByRole('button', { name: 'ลองบันทึกรายการเดิมอีกครั้ง', exact: true });
     const notice = card.getByRole('status');
@@ -1044,7 +1081,8 @@ test('EXP-29 @p1 retains a committed payment intent until its detail refresh suc
     await expect(notice).toHaveCount(0);
     await expect(retry).toHaveCount(0);
     await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);
-    await expect(card).toContainText('ยอดค้างจ่าย ฿60.00');
+    await expect(page.getByTestId('expense-detail-totals')).toContainText(/ค้างจ่าย\s*60\.00/);
+    await expect(page.getByText(/^ต้องจ่าย ฿/)).toHaveCount(0);
     expect(attempts).toHaveLength(2);
     expect(attempts[1]!.status).toBe(201);
     expect(attempts[1]!.body).toBe(attempts[0]!.body);
@@ -1095,17 +1133,17 @@ test('EXP-29 @p1 retains a committed payment intent until its detail refresh suc
 // the period, chip and search it does not filter the list, so a row stays clickable for the
 // round trip. All six retained values share one mechanism, so proving one proves it.
 test.describe('expense list filter retention', () => {
-  const SUMMARY = 'แบบย่อ (อ่านง่าย)';
-  const FULL = 'แบบเต็ม (สำนักงานบัญชี)';
-  const columns = (page: any) => page.getByRole('combobox', { name: 'คอลัมน์ที่ส่งออก' });
+  const SUMMARY = 'แบบย่อ';
+  const FULL = 'แบบเต็มสำหรับสำนักงานบัญชี';
+  const columns = (page: any) => page.getByRole('combobox', { name: 'รายละเอียดในไฟล์' });
 
   async function chooseFullColumns(page: any) {
-    await page.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
+    await page.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
     await expect(columns(page)).toHaveText(SUMMARY);
     await columns(page).click();
     await page.getByRole('option', { name: FULL, exact: true }).click();
     await expect(columns(page)).toHaveText(FULL);
-    await page.getByRole('dialog', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).getByRole('button', { name: 'ปิด', exact: true }).click();
+    await page.getByRole('dialog', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).getByRole('button', { name: 'ปิด', exact: true }).click();
   }
 
   /** Navigate the way a user does — the sidebar — so Next routes on the client. */
@@ -1122,13 +1160,17 @@ test.describe('expense list filter retention', () => {
       await gotoCompany(authedPage, companyId, '/expenses');
       await chooseFullColumns(authedPage);
 
+      const listQuery = new URL(authedPage.url()).searchParams;
       // Into the detail route by clicking a row, and back out via the กลับ link — both client-side.
       await authedPage.getByTestId('expenses-row').first().click();
-      await authedPage.waitForURL(/\/expenses\/[^/]+$/);
-      await authedPage.getByRole('link', { name: /กลับไปรายการค่าใช้จ่าย|Back to expenses/ }).click();
-      await authedPage.waitForURL(/\/expenses$/);
+      await authedPage.waitForURL(/\/expenses\/[^/?]+\?back=/);
+      await authedPage.getByRole('link', { name: 'กลับไปรายการ', exact: true }).click();
+      await authedPage.waitForURL(/\/expenses\?.*highlight=/);
+      const returned = new URL(authedPage.url()).searchParams;
+      for (const key of ['month', 'chip', 'query', 'dateOrder', 'page']) expect(returned.get(key)).toBe(listQuery.get(key));
+      await expect(authedPage.locator('[data-testid="expenses-row"][data-highlighted]')).toBeVisible();
 
-      await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
+      await authedPage.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
       await expect(columns(authedPage)).toHaveText(FULL);
     } finally {
       expect((await api.delete(`companies/${companyId}/expenses/${ownDraft.id}`)).status()).toBe(204);
@@ -1139,7 +1181,7 @@ test.describe('expense list filter retention', () => {
     await gotoCompany(authedPage, companyId, '/expenses');
     await chooseFullColumns(authedPage);
     await authedPage.reload();
-    await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
+    await authedPage.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
     await expect(columns(authedPage)).toHaveText(SUMMARY);
   });
 
@@ -1148,7 +1190,7 @@ test.describe('expense list filter retention', () => {
     await chooseFullColumns(authedPage);
     await clickSidebar(authedPage, '/dashboard');
     await clickSidebar(authedPage, '/expenses');
-    await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
+    await authedPage.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
     await expect(columns(authedPage)).toHaveText(SUMMARY);
   });
 
@@ -1159,7 +1201,7 @@ test.describe('expense list filter retention', () => {
     await chooseFullColumns(authedPage);
     await clickSidebar(authedPage, '/expenses/evidence');
     await clickSidebar(authedPage, '/expenses');
-    await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
+    await authedPage.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
     await expect(columns(authedPage)).toHaveText(SUMMARY);
   });
 });
@@ -1173,10 +1215,10 @@ test('EXP-EVIDENCE @p1 pending evidence saves and reopens without enabling Next 
   await gotoCompany(page, companyId, `/expenses/${created.id}`);
   const next = page.getByRole('button', { name: 'ถัดไป', exact: true });
   await next.click();
-  const card = page.getByRole('heading', { name: 'ตรวจสอบเอกสารและหลักฐานภาษี', exact: true }).locator('..');
+  const card = page.getByRole('heading', { name: 'ประเภทเอกสารและหมวดหมู่', exact: true }).locator('..');
   await expect(next).toBeDisabled();
   await chooseThemedOption(page, page.getByRole('combobox', { name: 'ประเภทเอกสาร', exact: true }), 'สลิปโอนเงิน');
-  await card.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
+  await card.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
   await expect.poll(async () => (await json<FullExpenseDetail>(await api.get(path))).sourceDocumentType).toBe('TRANSFER_SLIP');
   await page.reload();
   await next.click();
@@ -1198,22 +1240,22 @@ for (const width of [1280, 390]) {
       await route.fulfill({ status: 503, json: { message: 'ทดสอบส่งออกไม่สำเร็จ กรุณาลองอีกครั้ง' } });
     });
     await gotoCompany(page, companyId, '/expenses');
-    const trigger = page.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true });
-    const listSearch = page.getByPlaceholder('ค้นหาผู้ขาย / เลขที่เอกสาร', { exact: true });
+    const trigger = page.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true });
+    const listSearch = page.getByPlaceholder('ค้นหาผู้ขายหรือเลขที่', { exact: true });
     await trigger.scrollIntoViewIfNeeded();
     // The brand fonts swap in once loaded (font-display: swap) and widen the Thai label by ~5 px, so
     // measure after they have loaded: only the dialog may move things in this test.
     await page.evaluate(async () => { await document.fonts.ready; });
     const before = { trigger: await trigger.boundingBox(), list: await listSearch.boundingBox() };
     await trigger.click();
-    const dialog = page.getByRole('dialog', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true });
+    const dialog = page.getByRole('dialog', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true });
     await expect(dialog).toBeVisible();
     expect(await trigger.boundingBox()).toEqual(before.trigger);
     expect(await listSearch.boundingBox()).toEqual(before.list);
     expect(requests).toHaveLength(0);
-    await dialog.getByRole('combobox', { name: 'คอลัมน์ที่ส่งออก', exact: true }).click();
-    await page.getByRole('option', { name: 'แบบเต็ม (สำนักงานบัญชี)', exact: true }).click();
-    await dialog.getByRole('button', { name: 'ส่งออก Excel', exact: true }).click();
+    await dialog.getByRole('combobox', { name: 'รายละเอียดในไฟล์', exact: true }).click();
+    await page.getByRole('option', { name: 'แบบเต็มสำหรับสำนักงานบัญชี', exact: true }).click();
+    await dialog.getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true }).click();
     await expect(dialog.getByRole('alert')).toBeVisible();
     expect(requests).toHaveLength(1);
     expect(requests[0].columnSet).toBe('full');
@@ -1222,7 +1264,7 @@ for (const width of [1280, 390]) {
     await expect(trigger).toBeFocused();
     expect(await trigger.boundingBox()).toEqual(before.trigger);
     await trigger.click();
-    await expect(dialog.getByRole('combobox', { name: 'คอลัมน์ที่ส่งออก', exact: true })).toHaveText('แบบเต็ม (สำนักงานบัญชี)');
+    await expect(dialog.getByRole('combobox', { name: 'รายละเอียดในไฟล์', exact: true })).toHaveText('แบบเต็มสำหรับสำนักงานบัญชี');
     await dialog.getByRole('button', { name: 'ปิด', exact: true }).click();
     expect(await listSearch.boundingBox()).toEqual(before.list);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
@@ -1237,32 +1279,28 @@ test('EXP-DATE upload leaves receipt date to AI or review and omits it from the 
   });
   await gotoCompany(page, companyId, '/expenses/upload');
   const { items: branches } = await json<{ items: Array<{ id: string; name: string; type: string }> }>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
-  await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }), branchOptionName(branches[0]!));
+  await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขา', exact: true }), branchOptionName(branches[0]!));
   await expect(page.getByRole('combobox', { name: 'วันที่ในใบเสร็จ', exact: true })).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('receipt-upload-steps.png'), fullPage: true });
   await page.locator('input[type=file].hidden').setInputFiles({ name: 'synthetic-receipt.png', mimeType: 'image/png', buffer: uniqueReceiptPng() });
-  await page.getByRole('button', { name: 'ให้ AI อ่านใบเสร็จ', exact: true }).click();
+  await page.getByRole('button', { name: /^ส่งใบเสร็จ(?: \d+ ใบ)?$/ }).click();
   await expect.poll(() => bodies.length).toBe(1);
   expect(bodies[0]).not.toHaveProperty('expenseDate');
   await expect(page.getByRole('combobox', { name: 'วันที่ในใบเสร็จ', exact: true })).toHaveCount(0);
 });
 
 for (const width of [1280, 390]) {
-  test(`EXP-STEPS signature instructions stay in order at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+  // 2026-10-13: the three-step explainer box of this page was removed (thai-ux-standard §1.3, §3.1: the page title and
+  // the one button say it). What this test keeps protecting at both widths: the page fits the screen and offers its
+  // one action without a second heading that repeats the title.
+  test(`EXP-STEPS signature page offers its one action at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     await page.setViewportSize({ width, height: 900 });
     await gotoCompany(page, companyId, '/expenses/signatures');
-    const steps = page.getByRole('heading', { name: 'ลายเซ็นของฉันทำงานอย่างไร', exact: true }).locator('..').locator('ol > li');
-    await expect(steps).toHaveCount(3);
-    const boxes = await steps.evaluateAll(items => items.map(item => { const r = item.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height }; }));
-    if (width >= 1024) {
-      expect(boxes[0].y).toBe(boxes[1].y); expect(boxes[1].y).toBe(boxes[2].y);
-      expect(Math.abs(boxes[0].width - boxes[2].width)).toBeLessThan(1);
-    } else {
-      expect(boxes[1].y).toBeGreaterThan(boxes[0].y + boxes[0].height);
-      expect(boxes[2].y).toBeGreaterThan(boxes[1].y + boxes[1].height);
-    }
+    await expect(page.getByRole('heading', { name: 'ลายเซ็นของฉันทำงานอย่างไร', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'ลายเซ็นของฉัน', exact: true })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: /^(เพิ่มลายเซ็น|เปลี่ยนลายเซ็น)$/ })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await page.screenshot({ path: info.outputPath(`signature-steps-${width}.png`), fullPage: true });
+    await page.screenshot({ path: info.outputPath(`signature-page-${width}.png`), fullPage: true });
   });
 }
 

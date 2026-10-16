@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Button } from '@/common/components/button';
-import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { Button, quietButtonClass, secondaryButtonClass } from '@/common/components/button';
+import { AuthFrame, authTitleClass } from './AuthFrame';
 import { withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic';
 import { lineStartUrl } from './auth.logic';
 
-type ApproveState = 'idle' | 'approving' | 'approved' | 'declined' | 'failed' | 'need_login' | 'forbidden';
+type ApproveState = 'idle' | 'approving' | 'approved' | 'declined' | 'expired' | 'failed' | 'need_login' | 'forbidden';
 
 const passwordLoginHref = (code: string) => `/login?line=qr-approve&next=${encodeURIComponent(`/line-qr/${code}`)}`;
 
@@ -19,22 +20,23 @@ const passwordLoginHref = (code: string) => `/login?line=qr-approve&next=${encod
  */
 export function LineQrNeedLogin({ code, lineLoginAvailable }: { code: string; lineLoginAvailable: boolean }) {
   return (
-    <div role="alert" className="mt-6">
-      <h1 className="text-xl font-bold text-gray-900">การเข้าสู่ระบบหมดอายุ</h1>
+    <div role="alert">
+      <h1 className={authTitleClass}>ต้องเข้าสู่ระบบอีกครั้ง</h1>
       <p className="mt-2 text-[15px] leading-7 text-gray-600">
-        การเข้าสู่ระบบบนเบราว์เซอร์นี้หมดอายุแล้ว เข้าสู่ระบบอีกครั้ง แล้วระบบจะพากลับมาที่หน้านี้เพื่อกดยืนยัน QR เดิมยังใช้ได้ถ้ายังไม่หมดเวลา
+        เข้าสู่ระบบแล้วระบบจะพากลับมาหน้านี้เพื่อกดยืนยัน QR เดิมยังใช้ได้ถ้ายังไม่หมดเวลา
       </p>
       {lineLoginAvailable ? (
         <button
           type="button"
+          data-size="lg"
           onClick={() => window.location.assign(withLineExternalBrowser(lineStartUrl(`/line-qr/${encodeURIComponent(code)}`), navigator.userAgent))}
-          className="mt-6 flex h-12 w-full items-center justify-center gap-2.5 rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 transition hover:border-[#06C755]"
+          className={`${secondaryButtonClass} mt-6 w-full`}
         >
-          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#06C755] text-sm font-extrabold text-white">L</span>
+          <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-md bg-[#06C755] text-sm font-bold text-white">L</span>
           เข้าสู่ระบบด้วย LINE
         </button>
       ) : null}
-      <a href={passwordLoginHref(code)} className="mt-4 block text-center text-[14.5px] font-semibold text-brand-700 underline">
+      <a href={passwordLoginHref(code)} className={`${quietButtonClass} mt-2 w-full`}>
         เข้าสู่ระบบด้วยรหัสผ่าน
       </a>
     </div>
@@ -79,6 +81,7 @@ export default function LineQrApprovePage({ code }: { code: string }) {
       if (response.ok) setState('approved');
       else if (response.status === 401) setState('need_login');
       else if (response.status === 403) setState('forbidden');
+      else if (response.status === 404) setState('expired');
       else setState('failed');
     } catch {
       setState('failed');
@@ -86,71 +89,56 @@ export default function LineQrApprovePage({ code }: { code: string }) {
   };
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-gray-50 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-brand-500 to-brand-900">
-            <MangmeeLogo size={24} />
-          </span>
-          <span className="text-xl font-extrabold text-gray-900">
-            มั่ง<span className="text-gold-500">มี</span>
-          </span>
+    <AuthFrame>
+      {state === 'approved' ? (
+        <div role="status" className="space-y-2">
+          <h1 className={authTitleClass}>ยืนยันแล้ว</h1>
+          <p className="text-[15px] leading-7 text-gray-600">กลับไปที่หน้าจอคอมพิวเตอร์ได้เลย</p>
         </div>
-
-        {state === 'approved' ? (
-          <div role="status" className="mt-6 space-y-2">
-            <h1 className="text-xl font-bold text-gray-900">อนุมัติแล้ว ✓</h1>
-            <p className="text-[15px] leading-7 text-gray-600">กลับไปที่หน้าจอคอมพิวเตอร์ได้เลย</p>
-          </div>
-        ) : state === 'declined' ? (
-          <div role="status" className="mt-6 space-y-2">
-            <h1 className="text-xl font-bold text-gray-900">ยกเลิกแล้ว</h1>
-            <p className="text-[15px] leading-7 text-gray-600">ปิดหน้านี้ได้เลย ระบบไม่ได้อนุมัติอะไร</p>
-          </div>
-        ) : state === 'need_login' ? (
-          <LineQrNeedLogin code={code} lineLoginAvailable={lineLoginAvailable} />
-        ) : state === 'forbidden' ? (
-          <div role="alert" className="mt-6 space-y-2">
-            <h1 className="text-xl font-bold text-gray-900">บัญชีนี้ยืนยันการเข้าสู่ระบบให้ไม่ได้</h1>
-            <p className="text-[15px] leading-7 text-gray-600">
-              บัญชีบนมือถือยังทำขั้นตอนในระบบไม่ครบ หรือถูกจำกัดสิทธิ์อยู่ เปิดเว็บมั่งมีพลัสบนมือถือเพื่อทำขั้นตอนที่ค้างให้เสร็จก่อน หรือติดต่อ 098-256-5628
-            </p>
-          </div>
-        ) : state === 'failed' ? (
-          <div role="alert" className="mt-6 space-y-2">
-            <h1 className="text-xl font-bold text-gray-900">QR หมดอายุแล้ว</h1>
-            <p className="text-[15px] leading-7 text-gray-600">กลับไปที่คอมพิวเตอร์แล้วกดสร้าง QR ใหม่</p>
-          </div>
-        ) : (
-          <>
-            <h1 className="mt-6 text-xl font-bold text-gray-900">ยืนยันการเข้าสู่ระบบบนคอมพิวเตอร์</h1>
-            <p className="mt-2 text-[15px] leading-7 text-gray-600">
-              มีการขอเข้าสู่ระบบ มั่งมี จากเบราว์เซอร์บนคอมพิวเตอร์ ถ้าไม่ใช่คุณ อย่ากดยืนยัน
-            </p>
-            <div className="mt-6 space-y-3">
-              <Button
-                type="button"
-                size="lg"
-                className="w-full !rounded-xl"
-                loading={state === 'approving'}
-                onClick={approve}
-              >
-                ยืนยันการเข้าสู่ระบบ
-              </Button>
-              <Button
-                type="button"
-                size="lg"
-                variant="secondary"
-                className="w-full !rounded-xl"
-                disabled={state === 'approving'}
-                onClick={() => setState('declined')}
-              >
-                ไม่ใช่ฉัน / ยกเลิก
-              </Button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+      ) : state === 'declined' ? (
+        <div role="status" className="space-y-2">
+          <h1 className={authTitleClass}>ไม่ได้ยืนยัน</h1>
+          <p className="text-[15px] leading-7 text-gray-600">ไม่มีการเข้าสู่ระบบบนคอมพิวเตอร์ ปิดหน้านี้ได้เลย</p>
+        </div>
+      ) : state === 'need_login' ? (
+        <LineQrNeedLogin code={code} lineLoginAvailable={lineLoginAvailable} />
+      ) : state === 'forbidden' ? (
+        <div role="alert" className="space-y-2">
+          <h1 className={authTitleClass}>บัญชีนี้ยืนยันการเข้าสู่ระบบให้ไม่ได้</h1>
+          <p className="text-[15px] leading-7 text-gray-600">
+            บัญชีบนมือถือยังทำขั้นตอนในระบบไม่ครบ หรือถูกจำกัดสิทธิ์อยู่ เปิดเว็บมั่งมีพลัสบนมือถือเพื่อทำขั้นตอนที่ค้างให้เสร็จก่อน หรือติดต่อทีมงานมั่งมี <span className="mangmee-unit">098-256-5628</span>
+          </p>
+        </div>
+      ) : state === 'expired' ? (
+        <div role="alert" className="space-y-2">
+          <h1 className={authTitleClass}>QR หมดอายุแล้ว</h1>
+          <p className="text-[15px] leading-7 text-gray-600">กลับไปที่คอมพิวเตอร์แล้วกดสร้าง QR ใหม่</p>
+        </div>
+      ) : state === 'failed' ? (
+        // Not the QR's fault and not the person's: our side did not answer. The same QR can be tried again.
+        <div role="alert">
+          <h1 className={authTitleClass}>ยืนยันไม่สำเร็จ</h1>
+          <p className="mt-2 text-[15px] leading-7 text-gray-600">ระบบขัดข้องชั่วคราว ยังไม่ได้ยืนยันให้</p>
+          <ActionGroup className="mt-6">
+            <Button type="button" variant="secondary" onClick={() => setState('idle')}>ลองอีกครั้ง</Button>
+          </ActionGroup>
+        </div>
+      ) : (
+        <>
+          <h1 className={authTitleClass}>ยืนยันการเข้าสู่ระบบบนคอมพิวเตอร์</h1>
+          <p className="mt-2 text-[15px] leading-7 text-gray-600">
+            มีการขอเข้าสู่ระบบ มั่งมี จากเบราว์เซอร์บนคอมพิวเตอร์ ถ้าไม่ใช่คุณ อย่ากดยืนยัน
+          </p>
+          <ActionGroup className="mt-6">
+            <Button type="button" variant="secondary" disabled={state === 'approving'} onClick={() => setState('declined')}>
+              ไม่ใช่ฉัน
+            </Button>
+            <Button type="button" loading={state === 'approving'} onClick={approve}>
+              ยืนยันการเข้าสู่ระบบ
+            </Button>
+          </ActionGroup>
+        </>
+      )}
+    </AuthFrame>
   );
 }

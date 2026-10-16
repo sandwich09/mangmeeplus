@@ -226,3 +226,36 @@ describe('GenerateSnapshotUseCase branch dimension', () => {
       'the guard never compares scope itself; it only ever sees rows findLatest already keyed');
   });
 });
+
+describe('HOME-1 expense months access', () => {
+  function monthly(entitlements: Record<string, boolean> = { expenses: true }) {
+    const prisma = makePrisma(entitlements, []);
+    prisma.client.company = { findUniqueOrThrow: async (query: any) => { assert.deepEqual(query, { where: { id: COMPANY }, select: { timezone: true } }); return { timezone: 'Asia/Bangkok' }; } };
+    const calls: any[] = [];
+    const expense = new ExpenseSummaryProvider(prisma);
+    expense.collectMonths = async input => { calls.push(input); return { year: input.year, months: [], years: [] }; };
+    return { calls, sut: new GenerateSnapshotUseCase(prisma, makeSnapshots(), new InventoryHealthProvider(prisma), expense) };
+  }
+  it('refuses missing dashboard or full expense permission, tenant mismatch and disabled Expenses before totals', async () => {
+    for (const permissions of [['dashboard.read'], ['dashboard.read', 'expense.read_own'], ['expense.read'], ['dashboard.snapshot.generate', 'expense.read']]) {
+      const { sut, calls } = monthly();
+      await assert.rejects(() => sut.getExpenseMonths(ctxWith(permissions), COMPANY, { year: 2026 }), (e: any) => e.getStatus() === 403);
+      assert.equal(calls.length, 0);
+    }
+    for (const [company, entitlements] of [['other', { expenses: true }], [COMPANY, { expenses: false }]] as const) {
+      const { sut, calls } = monthly(entitlements);
+      await assert.rejects(() => sut.getExpenseMonths(ctxWith(['dashboard.read', 'expense.read']), company, { year: 2026 }), (e: any) => e.getStatus() === 403);
+      assert.equal(calls.length, 0);
+    }
+  });
+  it('uses the same explicit, restricted, unrestricted and empty branch scopes as the dashboard', async () => {
+    const { sut, calls } = monthly();
+    const permissions = ['dashboard.read', 'expense.read'];
+    await assert.rejects(() => sut.getExpenseMonths(ctxWith(permissions, ['b1']), COMPANY, { year: 2026, branchId: 'b2' }), (e: any) => e.getStatus() === 403);
+    assert.equal(calls.length, 0);
+    for (const [scope, selected, expected] of [[undefined, undefined, undefined], [['b1', 'b2'], undefined, ['b1', 'b2']], [['b1', 'b2'], 'b1', ['b1']], [[], undefined, []]] as [string[] | undefined, string | undefined, string[] | undefined][]) {
+      await sut.getExpenseMonths(ctxWith(permissions, scope), COMPANY, { year: 2026, branchId: selected });
+      assert.deepEqual(calls.at(-1), { companyId: COMPANY, year: 2026, branchIds: expected, timezone: 'Asia/Bangkok' });
+    }
+  });
+});

@@ -1,0 +1,13 @@
+.table.table { display: none; }
+@media (min-width: 40rem) { .table.table { display: table; } }
+.who { display: flex; align-items: center; gap: calc(var(--spacing) * 3); min-width: 0; }
+.avatar { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 999px; background: var(--color-gray-100); color: var(--color-gray-500); }
+.avatar svg { width: 18px; height: 18px; }
+.avatarCompany { background: var(--color-brand-50); color: var(--color-brand-700); }
+.address { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--color-gray-500); font-size: 14px; }
+.missing { color: var(--color-warning-700); font-size: 14px; }
+.chevron { color: var(--color-gray-400); font-size: 20px; line-height: 1; }
+.chevronCell { text-align: right; }
+.card { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: calc(var(--spacing) * 1) calc(var(--spacing) * 2); padding: calc(var(--spacing) * 3) calc(var(--spacing) * 2); border-bottom: 1px solid var(--color-gray-100); cursor: pointer; }
+.card:hover { background: var(--color-gray-50); }
+.cardWhere { grid-column: 1 / -1; min-width: 0; padding-left: calc(36px + var(--spacing) * 3); }

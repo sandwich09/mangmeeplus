@@ -1,3 +1,4 @@
+import { reimbursementNeedsCorrection } from '@watchdog-bms/contracts';
 import { withholdingPeriodLockedMessage, REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, reimbursementCertificateCancellationMessage, expenseDisbursementReservationMessage } from '@watchdog-bms/contracts';
 import { reimbursementDuplicateSubmitNotice, REIMBURSEMENT_DUPLICATE_REASON_TEXT } from '@watchdog-bms/contracts';
 import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
@@ -459,22 +460,26 @@ export class ReimbursementInternalNotesUseCase {
 
 /** The scope's groups folded into what the hub's cards and chips print. Every claim is counted in exactly one bucket. */
 export function hubSummary(groups: readonly ReimbursementRequestGroup[], duplicateBlockedCount = 0): ReimbursementHubSummary {
-  const counts = { all: 0, draft: 0, review: 0, payment: 0, duplicate_blocked: duplicateBlockedCount, paid: 0, closed: 0 };
+  const counts = { all: 0, draft: 0, correction: 0, review: 0, payment: 0, duplicate_blocked: duplicateBlockedCount, paid: 0, closed: 0 };
   let totalAmount = d('0');
+  const metrics = { pendingApproval: { count: 0, amount: '0.0000' }, pendingPayment: { count: 0, amount: '0.0000' } };
   let blockedDraftCount = 0;
   for (const group of groups) {
+    const metric = group.status === 'PENDING_APPROVAL' && !group.needsCorrection ? metrics.pendingApproval
+      : hubBucketOfStatus(group.status, group.financeReviewStatus) === 'payment' ? metrics.pendingPayment : undefined;
+    if (metric) { metric.count += group.count; metric.amount = decStr(d(metric.amount).add(d(group.amount))); }
     counts.all += group.count;
-    counts[hubBucketOfStatus(group.status, group.financeReviewStatus)] += group.count;
+    counts[group.needsCorrection ? 'correction' : hubBucketOfStatus(group.status, group.financeReviewStatus)] += group.count;
     totalAmount = totalAmount.add(d(group.amount));
     // The gate a list row shows on its ส่งอนุมัติ button: a draft that still owes its receipt.
     if (group.status === 'DRAFT' && group.receiptRequirementStatus === 'REQUIRED') blockedDraftCount += group.count;
   }
   counts.payment -= duplicateBlockedCount;
-  return { counts, totalAmount: decStr(totalAmount), blockedDraftCount };
+  return { counts, totalAmount: decStr(totalAmount), blockedDraftCount, metrics };
 }
 
 /** The hub's buckets by name. Typed over every bucket, so one added later has to be named here to be asked for. */
-const HUB_BUCKETS: readonly string[] = Object.keys({ draft: true, review: true, payment: true, duplicate_blocked: true, paid: true, closed: true } satisfies Record<ReimbursementHubBucket, true>);
+const HUB_BUCKETS: readonly string[] = Object.keys({ draft: true, correction: true, review: true, payment: true, duplicate_blocked: true, paid: true, closed: true } satisfies Record<ReimbursementHubBucket, true>);
 
 /** A page number or size from the query string: a whole number from 1 up, and small enough to be an OFFSET. */
 const wholeFrom1 = (value: number | undefined, fallback: number) =>
@@ -483,6 +488,11 @@ const wholeFrom1 = (value: number | undefined, fallback: number) =>
 @Injectable()
 export class ListReimbursementsUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
+
+  async hubPolicy(ctx: RequestContext): Promise<{ financeReviewRequired: boolean }> {
+    const policy = await loadReimbursementPolicy(this.repo, ctx.companyId);
+    return { financeReviewRequired: policy.financeReviewRequired };
+  }
 
   async execute(ctx: RequestContext, filter: ListReimbursementsFilter): Promise<PaginatedReimbursements> {
     const canReadAll = ctx.permissions.includes('reimbursement.read');
@@ -515,6 +525,8 @@ export class ListReimbursementsUseCase {
     // list of N claims read N rows per page: N²/100 rows for all of it.
     const policy = await loadReimbursementPolicy(this.repo, ctx.companyId);
     const { rows: items, groups, duplicateBlockedCount } = await this.repo.listRequestPage({
+      order: filter.order,
+      correctionUserId: ctx.userId,
       companyId: ctx.companyId,
       requesterUserId,
       relatedUserId,
@@ -540,11 +552,16 @@ export class ListReimbursementsUseCase {
       ctx.companyId,
       pendingSteps.flatMap((step) => [...(step.assignedApproverUserIds ?? []), ...(step.approverUserId ? [step.approverUserId] : [])]),
     );
+    const paidRequestIds = items.filter((row) => row.status === 'PAID').map((row) => row.id);
+    const paperSignedRequestIds = paidRequestIds.length
+      ? await this.repo.findAcknowledgedSignedCopyRequestIds(ctx.companyId, paidRequestIds) : new Set<string>();
     return {
-      items: items.map((row) => toRequestSummary(
+      items: await Promise.all(items.map(async (row) => ({
+        approvalActions: await approvalDecisionActions(ctx, { ...row, approvalSteps: pendingSteps.filter(step => step.reimbursementRequestId === row.id) }, this.repo),
+        needsCorrection: reimbursementNeedsCorrection(row, ctx.userId), ...toRequestSummary(
         { ...row, approvalSteps: pendingSteps.filter((step) => step.reimbursementRequestId === row.id) },
-        { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames, currentPolicy: policy },
-      )),
+        { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames, currentPolicy: policy, hasAcknowledgedPaperCopy: paperSignedRequestIds.has(row.id) },
+      ) }))),
       total: hub.counts[filter.bucket ?? 'all'],
       page,
       pageSize,
@@ -599,15 +616,6 @@ export class SubmitReimbursementUseCase {
       missingReceiptReason: req.missingReceiptReason,
     });
     if (receipt.error) throw new UnprocessableEntityException(receipt.error);
-    // A receipt-less line is materialized into an employee-payable expense at อนุมัติจ่าย, and
-    // that expense confirms only with an attachment or a missing-receipt reason. The claim's
-    // waive policy does not travel to the expense, so a claim submitted with neither strands the
-    // finance saga after its decision is already durable (BUG-7). Ask for the reason here, where
-    // the claim is still a draft the requester can fix.
-    if (!req.missingReceiptReason?.trim() && lines.some((line) => !isLineEvidenced(line))) {
-      throw new BadRequestException('missing_receipt_reason_required');
-    }
-
     // Double-claim guard: no receipt/expense may be claimed on two live claims.
     await this.assertEvidenceNotClaimedElsewhere(ctx.companyId, id, lines);
 
@@ -938,6 +946,13 @@ function holdsCancelRight(ctx: RequestContext, req: Pick<ReimbursementRequestRec
     || ctx.permissions.includes('reimbursement.finance_review');
 }
 
+export function mayDeleteReimbursementDraft(ctx: RequestContext, req: ReimbursementRequestRecord): boolean {
+  return req.status === 'DRAFT' && !req.requestNo && !req.submittedAt && !req.approvalSteps?.length
+    && isBranchInScope(ctx.scopes ?? {}, req.branchId)
+    && (ctx.permissions.includes('reimbursement.finance_review')
+      || req.requesterUserId === ctx.userId);
+}
+
 /**
  * Whether the cancel endpoints take this viewer for this claim. The claim detail reads the same
  * answer for its "ดำเนินการยกเลิกต่อ" and withdraw buttons, so a button is never offered to someone
@@ -978,7 +993,7 @@ function cancellationBlockedError(blocker: ExpenseVoidBlocker): ConflictExceptio
   });
   const message = blocker.code === 'accounting_period_locked' ? REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.accountingPeriodLocked(blocker.periodKey)
     : blocker.code === 'tax_period_locked' ? (blocker.formType === 'PND3' || blocker.formType === 'PND53'
-      ? withholdingPeriodLockedMessage(blocker.periodKey, 'ยกเลิกคำขอเบิก', blocker.formType) : REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.taxPeriodLocked(blocker.periodKey))
+      ? withholdingPeriodLockedMessage(blocker.periodKey, 'ยกเลิกใบเบิก', blocker.formType) : REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.taxPeriodLocked(blocker.periodKey))
     : blocker.code === 'posting_unresolved' ? REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.postingUnresolved
     : blocker.code === 'expense_not_voidable' ? REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.expenseNotVoidable
     // A claim's own expense cannot be chosen for a payment document; the branch keeps the union complete.
@@ -1043,6 +1058,26 @@ export class CancelReimbursementUseCase {
     private readonly audit: AuditService,
     private readonly voidExpense: VoidExpenseUseCase,
   ) {}
+
+  async deleteDraft(ctx: RequestContext, id: string): Promise<void> {
+    const req = await this.repo.findRequestById(ctx.companyId, id, true);
+    if (!req) throw new NotFoundException('Reimbursement request not found');
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
+    const canPrepareOthers = ctx.permissions.includes('reimbursement.finance_review');
+    if (!canPrepareOthers && req.requesterUserId !== ctx.userId) {
+      throw new ForbiddenException('Cannot cancel this reimbursement');
+    }
+    if (req.status !== 'DRAFT' || req.requestNo || req.submittedAt || req.approvalSteps?.length || req.cancellationPendingAt) throw new ConflictException('reimbursement_draft_changed');
+    await this.repo.deleteNeverSentDraftAtomic({
+      companyId: ctx.companyId, requestId: id, expectedUpdatedAt: req.updatedAt,
+      actorUserId: ctx.userId, canPrepareOthers, scopes: ctx.scopes ?? {},
+      onDeleted: (tx) => this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.delete_draft',
+        targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId,
+        result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { amount: req.amount, reason: req.reason },
+      }, tx),
+    });
+  }
 
   /**
    * Cancels a claim, or continues a cancellation that was started and has not completed
@@ -1474,7 +1509,9 @@ export class ListReimbursementSourcesUseCase {
     assertReimbursementBranchInScope(ctx, branchId);
     const resolvedBranch = await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, branchId);
     await this.repo.assertReimbursementRequester(ctx.companyId, resolvedBranch, requesterUserId);
+    const policy = await loadReimbursementPolicy(this.repo, ctx.companyId);
     return {
+      receiptPolicy: { requireReceipt: policy.requireReceipt, allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason },
       requesters: await this.repo.listReimbursementRequesters(ctx.companyId, resolvedBranch, ctx.permissions.includes('reimbursement.finance_review') ? undefined : ctx.userId),
       items: await this.repo.listReimbursementSources(ctx.companyId, resolvedBranch, requesterUserId, search.trim().slice(0, 100), expenseId),
     };

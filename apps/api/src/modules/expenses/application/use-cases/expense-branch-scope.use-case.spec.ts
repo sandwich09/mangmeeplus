@@ -38,9 +38,8 @@ const numberServices = [
   { execute: async () => ({ id: 'number-1', documentNumber: 'EXP-202607-00001' }) } as any,
   { execute: async () => undefined } as any,
   { execute: async () => undefined } as any,
-  // 4th slot: VAT registration read. Only consulted for a CLAIMABLE expense, which none of
-  // these fixtures is, so an UNKNOWN stub keeps the confirm path unchanged.
-  { get: async () => ({ status: 'UNKNOWN' }) } as any,
+  // Claimable tax-invoice fixtures belong to a registered shop.
+  { get: async () => ({ status: 'REGISTERED' }) } as any,
 ] as const;
 
 function ctx(branchIds?: string[], permissions: string[] = ['expense.read', 'expense.create', 'expense.review']): RequestContext {
@@ -106,7 +105,7 @@ describe('CreateExpenseDraftUseCase branch tagging', () => {
       } as any,
     };
   }
-  const input = { captureSource: 'WEB_MANUAL', expenseDate: '2026-07-03', vatMode: 'NO_VAT', inputVatClaimStatus: 'NOT_CLAIMABLE' } as any;
+  const input = { captureSource: 'WEB_MANUAL', expenseDate: '2026-07-03', vatMode: 'NO_VAT' } as any;
 
   it('defaults the only available scoped branch', async () => {
     const { repo, created } = makeRepo();
@@ -306,6 +305,42 @@ describe('expense Tax Code confirmation guard', () => {
     },
   };
 
+  for (const inputVatClaimStatus of ['NEEDS_REVIEW', 'NON_CLAIMABLE']) it(`confirms at ${inputVatClaimStatus} without requiring a shop VAT answer`, async () => {
+    const row = { ...readyRecord, vendorTaxIdSnapshot: null, inputVatClaimStatus, lines: readyRecord.lines.map(line => ({ ...line, taxSnapshot: null })) };
+    let confirmed = false;
+    const repo = { findByIdWithRelations: async () => row,
+      finalizeAndConfirmExpenseCas: async (input: any, finalize: any) => {
+        confirmed = true;
+        return { expense: { ...row, status: 'CONFIRMED', expenseNumber: 'EXP-1' }, finalized: await finalize({ db: {}, expense: row }) };
+      } } as any;
+    await new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, { get: async () => { throw Error('the VAT question cannot gate confirmation'); } } as any)
+      .execute(ctx(undefined, ['expense.confirm']), 'exp-1');
+    assert.equal(confirmed, true);
+  });
+
+  it('refuses the same waiting expense at CLAIMABLE without the seller tax number', async () => {
+    const row = { ...readyRecord, vendorTaxIdSnapshot: null, lines: readyRecord.lines.map(line => ({ ...line, taxSnapshot: null })) };
+    const repo = { findByIdWithRelations: async () => row } as any;
+    await assert.rejects(() => new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, numberServices[3])
+      .execute(ctx(undefined, ['expense.confirm']), 'exp-1'), /tax ID/);
+  });
+
+  it('refuses CLAIMABLE confirmation when the dated shop VAT answer is unknown', async () => {
+    const repo = { findByIdWithRelations: async () => readyRecord } as any;
+    await assert.rejects(() => new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, { get: async () => ({ status: 'UNKNOWN' }) } as any)
+      .execute(ctx(undefined, ['expense.confirm']), 'exp-1'), /input_vat_company_registration_unanswered/);
+  });
+  it('requires a VAT Tax Code snapshot only when the right is CLAIMABLE', async () => {
+    const row = { ...readyRecord, lines: readyRecord.lines.map(line => ({ ...line, taxSnapshot: null })) };
+    await assert.rejects(() => new ConfirmExpenseUseCase(reviewedRepo({ findByIdWithRelations: async () => row } as any), audit, transactionTax, numberServices[3])
+      .execute(ctx(undefined, ['expense.confirm']), 'exp-1'), /server-resolved Tax Code snapshot/);
+  });
+  it('never confirms a CLAIMABLE substitute certificate even with supporting-only evidence', async () => {
+    const row = { ...readyRecord, taxEvidenceStatus: 'SUPPORTING_ONLY', substituteReceiptEvidence: { status: 'ISSUED' }, lines: [] };
+    await assert.rejects(() => new ConfirmExpenseUseCase(reviewedRepo({ findByIdWithRelations: async () => row } as any), audit, transactionTax, numberServices[3])
+      .execute(ctx(undefined, ['expense.confirm']), 'exp-1'), /supporting-only and non-claimable/);
+  });
+
   it('blocks confirmation while VAT source reconciliation needs review, naming the line to check', async () => {
     const repo = { findByIdWithRelations: async () => mismatchedVatRecord } as any;
 
@@ -315,7 +350,7 @@ describe('expense Tax Code confirmation guard', () => {
         const body = error?.getResponse?.();
         assert.equal(body.code, 'EXPENSE_VAT_RECONCILIATION_REQUIRED');
         assert.match(body.message, /VAT จากเอกสาร 8\.00 บาท/);
-        assert.match(body.message, /กรุณาตรวจรายการที่ 1/);
+        assert.match(body.message, /ตรวจรายการที่ 1/);
         assert.deepEqual(body.attentionLines, [{ lineNumber: 1, description: 'สินค้า' }]);
         return true;
       },
@@ -741,9 +776,8 @@ describe('manual web upload non-expense workflow guard', () => {
       { execute: async (input: any) => { numberCalls.push(['reserve', input]); return { id: 'number-1', documentNumber: 'EXP-202607-00001' }; } } as any,
       { execute: async (input: any) => { numberCalls.push(['commit', input]); } } as any,
       { execute: async (input: any) => { numberCalls.push(['void', input]); } } as any,
-      // 4th slot: VAT registration read. Only consulted for a CLAIMABLE expense, which none of
-  // these fixtures is, so an UNKNOWN stub keeps the confirm path unchanged.
-  { get: async () => ({ status: 'UNKNOWN' }) } as any,
+      // Claimable tax-invoice fixtures belong to a registered shop.
+  { get: async () => ({ status: 'REGISTERED' }) } as any,
 ] as const;
     const repo = {
       findByIdWithRelations: async () => ({
@@ -828,6 +862,17 @@ describe('explicit document review acknowledgement', () => {
     assert(hasCurrentExpenseEvidenceReview(get()));
   });
 
+  for (const receiptProblem of ['NOT_AVAILABLE', 'LOST'] as const) {
+    it(`saves ${receiptProblem} without a document type and fixes supporting-only tax evidence`, async () => {
+      const { usecase, get } = setup({ sourceDocumentType: 'NEEDS_REVIEW', taxEvidenceStatus: 'NEEDS_REVIEW', inputVatClaimStatus: 'NON_CLAIMABLE' });
+      await usecase.execute(ctx(), 'exp-1', { expectedUpdatedAt: get().updatedAt.toISOString(), documentReviewAcknowledged: true,
+        evidenceAssessment: { route: 'ALTERNATIVE_EVIDENCE', receiptProblem, attachmentIds: ['receipt-1'], reason: 'หลักฐานโอนจ่ายค่าน้ำแข็ง' } });
+      assert.equal(get().sourceDocumentType, 'EXPENSE_NOTE_TEXT');
+      assert.equal(get().taxEvidenceStatus, 'SUPPORTING_ONLY');
+      assert(hasCurrentExpenseEvidenceReview(get()));
+    });
+  }
+
   it('persists a pending draft without approving it, and permits review after completing its facts', async () => {
     const { usecase, get } = setup({ sourceDocumentType: 'NEEDS_REVIEW', taxEvidenceStatus: 'NEEDS_REVIEW' });
     const assessment = { route: 'ALTERNATIVE_EVIDENCE' as const, receiptProblem: 'NOT_AVAILABLE' as const, attachmentIds: ['receipt-1'], reason: '' };
@@ -865,5 +910,35 @@ describe('explicit document review acknowledgement', () => {
     await assert.rejects(() => usecase.execute(ctx(), 'exp-1', { ...input, expectedUpdatedAt: '2026-09-10T00:00:00Z' }), /stale revision/);
     assert.equal(updates.length, 0);
     assert.equal(get().aiVerificationSummaryJson.documentReview, undefined);
+  });
+});
+
+describe('expense reviewer requests', () => {
+  const expense = { id: 'exp-1', companyId: 'company-1', branchId: 'b1', createdByUserId: 'user-1', status: 'NEEDS_REVIEW', captureSource: 'WEB_UPLOAD', updatedAt: new Date('2026-10-13T00:00:00Z'), expenseNumber: 'EX-01' };
+  function requestSetup() {
+    let row: any = { ...expense }; const notices: any[] = []; const candidateCalls: any[] = [];
+    const repo: any = { findById: async () => row, updateExpense: async (patch: any, effect?: (tx: any) => Promise<void>) => { if (effect) await effect({}); row = { ...row, ...patch }; return row; } };
+    const people: any = { membersWithPermission: async (...args: any[]) => { candidateCalls.push(args); return [{ userId: 'user-1', displayName: 'ผู้ส่ง' }, { userId: 'checker', displayName: 'ผู้ตรวจ' }]; }, memberNames: async () => new Map([['user-1', 'ผู้ส่ง']]) };
+    const notify: any = { executeInTransaction: async (notice: any) => { notices.push(notice); } };
+    const useCase = new MarkExpenseReadyUseCase(repo, people, notify);
+    return { useCase, notices, candidateCalls, row: () => row };
+  }
+  it('reuses effective confirm permission and expense branch candidates, excluding the sender', async () => {
+    const s = requestSetup(); const candidates = await s.useCase.reviewers(ctx(['b1'], ['expense.review']), 'exp-1');
+    assert.deepEqual(candidates, [{ userId: 'checker', displayName: 'ผู้ตรวจ' }]);
+    assert.equal(s.candidateCalls[0][1], 'b1'); assert.equal(s.candidateCalls[0][2], 'expense.confirm');
+  });
+  it('stores the selected person, sender and time and sends exactly one web notice to that person', async () => {
+    const s = requestSetup(); await s.useCase.execute(ctx(['b1'], ['expense.review']), 'exp-1', 'checker');
+    assert.equal(s.row().requestedReviewerUserId, 'checker'); assert.equal(s.row().submittedByUserId, 'user-1'); assert.ok(s.row().submittedAt instanceof Date);
+    assert.equal(s.notices.length, 1); assert.deepEqual(s.notices[0].recipientUserIds, ['checker']); assert.deepEqual(s.notices[0].webOnlyRecipientUserIds, ['checker']);
+    assert.equal(s.notices[0].body, 'ผู้ส่ง ส่งรายจ่าย EX-01 ให้คุณตรวจ');
+    await s.useCase.execute(ctx(['b1'], ['expense.review']), 'exp-1', 'checker'); assert.equal(s.notices.length, 1, 'replay creates no second notice');
+  });
+  it('refuses an ineligible recipient or the sender before storing or notifying', async () => {
+    for (const recipient of ['outsider', 'user-1']) {
+      const s = requestSetup(); await assert.rejects(() => s.useCase.execute(ctx(['b1'], ['expense.review']), 'exp-1', recipient), /คนนี้ยืนยันรายจ่ายของสาขานี้ไม่ได้ เลือกคนอื่น/);
+      assert.equal(s.row().status, 'NEEDS_REVIEW'); assert.equal(s.notices.length, 0);
+    }
   });
 });

@@ -3,6 +3,8 @@
 import type { AccountingOutputTaxCode, BuyerEntityKind, TransactionTaxComponentPreview } from '@watchdog-bms/contracts';
 
 export type TransactionTaxSourceLineRow = {
+  inputVatClaimStatus?: string;
+  taxEvidenceStatus?: string;
   sourceType: 'accounting.document' | 'expense.record' | 'procurement.vendor_bill';
   sourceId: string;
   sourceLineId: string;
@@ -64,6 +66,11 @@ export type ExpenseSourceRow = {
 
 // WHT events are derived from confirmed expenses with whtAmount > 0
 export type ExpenseWhtSourceRow = {
+  paymentId?: string;
+  sourceLineKey?: string;
+  paymentAmount?: string;
+  documentDate?: Date;
+  branchId?: string | null;
   id: string;
   companyId: string;
   expenseDate: Date;

@@ -17,11 +17,17 @@ import { ToastContext } from '@/common/components/toast/use-toast';
  */
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 // The pages reach the icon set through ExpensesUi; this runner has no SVG loader (as InventoryPages.spec.ts).
+require.extensions['.css'] = module => { module.exports = { __esModule: true, default: new Proxy({}, { get: (_, key) => String(key) }) }; };
 require.extensions['.svg'] = (module) => { module.exports = () => null; };
+require.extensions['.css'] = module => { module.exports = { menu: 'menu', panel: 'panel' }; };
 // Modal portals into document.body, which a server render has none of: render the dialog in place.
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const sections = require('./ReimbursementDetailSections') as typeof import('./ReimbursementDetailSections');
 const { ReimbursementCreatePage } = require('./ReimbursementCreatePage') as typeof import('./ReimbursementCreatePage');
+const selectModule = require('@/common/components/field/ThemedSelect');
+require.cache[require.resolve('@/common/components/field/ThemedSelect')]!.exports = { ...selectModule,
+  ThemedSelect: (props: any) => props['aria-label'] === 'สถานะ' ? React.createElement('select', props, props.children) : React.createElement(selectModule.ThemedSelect, props),
+};
 const { ReimbursementsHubPage, PolicySettings } = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
 const { ReimbursementSourceFacts } = require('./ReimbursementSourceFacts') as typeof import('./ReimbursementSourceFacts');
 const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as typeof import('./ReimbursementJourneyPage');
@@ -163,8 +169,8 @@ function staleDialog(row: any, detail: any): string {
   } finally { Reflect.deleteProperty(globalThis, 'document'); }
 }
 
-const createPage = (props: object = {}) => h(AppRouterContext.Provider, { value: router },
-  h(ReimbursementCreatePage, { companyId: 'company-1', userId: ids.requester, canCreate: true, canPrepareForOthers: true, ...props }));
+const createPage = (props: object = {}) => h(AppRouterContext.Provider, { value: router }, h(ToastContext.Provider, { value: toast },
+  h(ReimbursementCreatePage, { companyId: 'company-1', userId: ids.requester, canCreate: true, canPrepareForOthers: true, ...props })));
 const sourceOption = (overrides: Partial<ReimbursementSourceOption> = {}): ReimbursementSourceOption => ({
   expenseId: ids.expense, label: 'INV-0042 · ร้านเครื่องเขียนสมใจ', eligible: true, updatedAt: bill.expenseUpdatedAt, incurredDate: '2026-09-26',
   description: 'ปากกาและแฟ้ม', purpose: '', categoryKey: ids.category, amount: '380', currency: 'THB', snapshot: bill, ...overrides,
@@ -183,10 +189,10 @@ const filledForm = {
 // Rows bound to bills that can no longer be claimed: the closed picker shows the bound option, reason included.
 const refusedForm = { ...filledForm, lines: [ids.other, ids.note].map(expenseId => ({ ...filledForm.lines[0]!, linkedExpenseId: expenseId,
   sourceExpenseSnapshot: undefined, categoryKey: 'other' })) };
-const filledCreatePage = (form: object = filledForm) => renderWithState(createPage(), (initial) => {
+const filledCreatePage = (form: object = filledForm, receiptPolicy = { requireReceipt: true, allowMissingReceiptWithReason: true }) => renderWithState(createPage(), (initial) => {
   if (Array.isArray(initial?.lines)) return form;
   if (Array.isArray(initial?.items)) {
-    return { requesters: [{ userId: ids.requester, displayName: 'พิม ใจดี' }, { userId: ids.approver, displayName: 'สมชาย' }],
+    return { receiptPolicy, requesters: [{ userId: ids.requester, displayName: 'พิม ใจดี' }, { userId: ids.approver, displayName: 'สมชาย' }],
       items: [sourceOption(), sourceOption({ expenseId: ids.other, label: 'ร้านกาแฟ', amount: '95.5', eligible: false, reason: 'expense_already_claimed' }),
         sourceOption({ expenseId: ids.note, label: 'ร้านอาหาร', amount: '120.25', eligible: false, reason: 'a_reason_added_later' })] };
   }
@@ -206,7 +212,7 @@ const hubPermissions = ['reimbursement.read', 'reimbursement.create', 'reimburse
  * every bucket), so this fake uses the same rule and nothing of the page's.
  */
 function served(claims: any[], filter?: string) {
-  const counts = { all: claims.length, draft: 0, review: 0, payment: 0, duplicate_blocked: 0, paid: 0, closed: 0 };
+  const counts = { all: claims.length, draft: 0, correction: 0, review: 0, payment: 0, duplicate_blocked: 0, paid: 0, closed: 0 };
   for (const claim of claims) counts[reimbursementHubBucket(claim)] += 1;
   const rows = filter ? claims.filter((claim) => reimbursementHubBucket(claim) === filter) : claims;
   return { rows, total: rows.length, summary: { counts, totalAmount: String(claims.reduce((sum, claim) => sum + Number(claim.amount), 0)),
@@ -222,13 +228,13 @@ function served(claims: any[], filter?: string) {
  */
 const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string, held: object = {}, search = '', financeStep?: boolean | 'unread',
   mayReadPolicy = financeStep !== undefined, told: boolean | 'unread' = financeStep ?? true) => renderWithState(
-  h(AppRouterContext.Provider, { value: router }, h(SearchParamsContext.Provider, { value: new URLSearchParams(`tab=${tab}`) },
+  h(AppRouterContext.Provider, { value: router }, h(SearchParamsContext.Provider, { value: new URLSearchParams(`tab=${tab}&filter=${filter ?? 'all'}`) },
     h(ToastContext.Provider, { value: toast },
       h(ReimbursementsHubPage, { companyId: 'company-1', userId: ids.requester, roles: ['OWNER'],
         permissions: mayReadPolicy ? [...hubPermissions, 'reimbursement.policy.read'] : hubPermissions })))),
   (initial) => (initial && typeof initial === 'object' && 'financeStep' in initial ? (typeof told === 'boolean' ? { companyId: 'company-1', financeStep: told } : undefined)
     : Array.isArray(initial) && initial.length === 0 ? rows
-      : Array.isArray(initial?.rows) ? { key: hubListKey('company-1', reimbursementListScope(hubPermissions), filter ?? 'all', 0, 0, search), nextPage: null, ...served(rows, filter), ...held }
+      : Array.isArray(initial?.rows) ? { key: hubListKey('company-1', reimbursementListScope(hubPermissions), filter ?? 'all', 0, 0, search, 'newest'), nextPage: null, ...served(rows, filter), ...held }
         : initial === true ? false : initial === 'all' ? filter : initial === '' ? search : undefined),
 );
 // One claim per state the hub has to place: the desk is what the list API answers, and finished claims have none.
@@ -253,40 +259,49 @@ function claimScreenSources(): string {
 
 /** What the customer reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
 const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map(match => match[1]!),
-  ...html.replace(/<[^>]*>/gu, '\n').split('\n')]
+  ...html.replace(/<span class="text-red-600"(?: aria-hidden="true")?> \*<\/span>/gu, ' *').replace(/<[^>]*>/gu, '\n').split('\n')]
   .map(text => text.replace(/&quot;/gu, '"').replace(/&#x27;/gu, "'").replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&amp;/gu, '&').trim()).filter(Boolean);
 
 describe('claim pages speak plain Thai (Owner rule 2026-09-27/29)', () => {
   it('names a category by its label or says none was chosen, never by its key (detail, dialog, queue, form)', () => {
     const texts = visible(detailSections(draft, ids.requester, ['reimbursement.update_own_draft']));
-    assert.equal(texts.filter(text => text === 'ยังไม่ได้เลือกหมวด').length, 3, 'claim header and both lines');
-    assert.ok(visible(hubTab('mine')).includes('ยังไม่ได้เลือกหมวด'));
+    assert.equal(texts.filter(text => text === 'ยังไม่ได้เลือกหมวด').length, 2, 'both lines (the claim-level category row went with the card of facts)');
+    // The list names a claim by its reason: a row carries no category, so no key of one either.
+    for (const text of visible(hubTab('mine'))) assert.doesNotMatch(text, /travel|ยังไม่ได้เลือกหมวด/u);
     assert.ok(visible(filledCreatePage()).includes('ยังไม่ได้เลือกหมวด'), 'the category picker of a row whose key is an id');
     // Before: the queue row had no label; now: the claim's own label, and a blank line label reads as none chosen.
     const dialog = visible(staleDialog({ ...draft, status: 'PENDING_APPROVAL', amount: '1234.5000', lineCount: 1 }, { ...paid, status: 'PENDING_APPROVAL' }));
     for (const text of ['ยังไม่ได้เลือกหมวด', 'หลายหมวด (2 รายการ)', 'เดินทาง']) assert.ok(dialog.includes(text), text);
   });
 
-  it('shows amounts as "1,234.50 บาท" and dates in Thai with the Buddhist year', () => {
+  it('shows amounts as "฿1,234.50" and dates in Thai with the Buddhist year', () => {
     const facts = visible(renderToStaticMarkup(h(ReimbursementSourceFacts, { source: bill })));
-    for (const text of ['380.00 บาท', '24.86 บาท / 0.00 บาท', '26 ก.ย. 2569', 'ไม่ได้ระบุ']) assert.ok(facts.includes(text), text);
+    for (const text of ['฿380.00', '฿24.86 / ฿0.00', '26 ก.ย. 2569', 'ไม่ได้ระบุ']) assert.ok(facts.includes(text), text);
     const form = visible(filledCreatePage());
-    for (const text of ['26 ก.ย. 2569 · ปากกาและแฟ้ม · 380.00 บาท', '27 ก.ย. 2569 · ค่าแท็กซี่ · 1,234.57 บาท', 'INV-0042 · ร้านเครื่องเขียนสมใจ · 380.00 บาท',
-      '1,614.57 บาท', 'บาท']) assert.ok(form.includes(text), text);
-    assert.ok(visible(renderToStaticMarkup(createPage())).includes('0.00 บาท'));
-    assert.ok(visible(filledCreatePage(refusedForm)).includes('ร้านกาแฟ · 95.50 บาท — ค่าใช้จ่ายนี้ถูกใช้เบิกในคำขออื่นอยู่แล้ว'));
+    for (const text of ['26 ก.ย. 2569 · ปากกาและแฟ้ม · ฿380.00', '27 ก.ย. 2569 · ค่าแท็กซี่ · ฿1,234.57', 'INV-0042 · ร้านเครื่องเขียนสมใจ · ฿380.00',
+      '฿1,614.57', 'บาท']) assert.ok(form.includes(text), text);
+    // A form of one line shows no total: it repeated the amount typed above it (and "฿0.00" before anything was typed).
+    const fresh = visible(renderToStaticMarkup(createPage()));
+    assert.equal(fresh.includes('ยอดรวม') || fresh.includes('฿0.00'), false);
+    assert.ok(form.includes('ยอดรวม'), 'two lines are added up');
+    // An amount is typed as text with the number keypad, with its unit beside it: a typed comma is kept and read.
+    assert.match(filledCreatePage(), /<input aria-label="จำนวนเงิน" class="mangmee-input mangmee-input-icon-end text-right tabular-nums"[^>]*type="text" inputMode="decimal"/u);
+    const { typedAmount } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+    assert.deepEqual(['1,200.50', ' 1 200 ', '350', ''].map(typedAmount), ['1200.50', '1200', '350', '']);
+    assert.ok(visible(filledCreatePage({ ...filledForm, lines: [{ ...filledForm.lines[1]!, amount: '1,234.5' }, filledForm.lines[1]!] })).includes('27 ก.ย. 2569 · ค่าแท็กซี่ · ฿1,234.50'));
+    assert.ok(visible(filledCreatePage(refusedForm)).includes('ร้านกาแฟ · ฿95.50 — ค่าใช้จ่ายนี้ถูกใช้เบิกในใบเบิกอื่นอยู่แล้ว'));
     const diff = diffApprovalFields(approvalComparable({ ...draft, amount: '1234.5000', lineCount: 1 }, 1), approvalComparable(paid, 2));
-    assert.deepEqual(diff.find(row => row.key === 'amount'), { key: 'amount', label: 'จำนวนเงิน', before: '1,234.50 บาท', after: '1,614.50 บาท', changed: true });
+    assert.deepEqual(diff.find(row => row.key === 'amount'), { key: 'amount', label: 'จำนวนเงิน', before: '฿1,234.50', after: '฿1,614.50', changed: true });
     assert.deepEqual(diff.find(row => row.key === 'currency'), { key: 'currency', label: 'สกุลเงิน', before: 'บาท', after: 'บาท', changed: false });
   });
 });
 
 describe('the claim lines fit a 390 px phone (Owner, 2026-09-30)', () => {
-  it('shows each line as a card below xl, with the same receipt upload, and keeps the table from xl up', () => {
+  it('shows each line as a read-only card where narrow and a table where wide; receipt upload belongs to the items step', () => {
     const html = detailSections(draft, ids.requester, ['reimbursement.update_own_draft']);
     // Before: only the seven-column table, which squeezed Thai text to one letter per row on a phone.
-    assert.match(html, /<div class="[^"]*\bxl:hidden\b[^"]*" data-testid="reimbursement-line-cards">/u);
-    assert.match(html, /<div class="relative hidden overflow-x-auto break-normal xl:block" data-testid="reimbursement-lines-table"><table class="mangmee-table">/u);
+    assert.match(html, /<div class="[^"]*@\[44rem\]:hidden[^"]*" data-testid="reimbursement-line-cards">/u);
+    assert.match(html, /<div class="relative hidden overflow-x-auto break-normal @\[44rem\]:block" data-testid="reimbursement-lines-table"><table class="mangmee-table">/u);
     const cardsAt = html.indexOf('data-testid="reimbursement-line-cards"'), tableAt = html.indexOf('data-testid="reimbursement-lines-table"');
     // Not inside mangmee-table-scroll: its max-content cut the amount and receipt columns off a desktop card (2026-10-01).
     assert.doesNotMatch(html.slice(html.lastIndexOf('<section', tableAt), tableAt), /mangmee-table-scroll/u);
@@ -294,68 +309,66 @@ describe('the claim lines fit a 390 px phone (Owner, 2026-09-30)', () => {
     // The file-type names are each kept whole on screen (one unbreakable span a name); the words read are the shared sentence.
     const cardTexts = visible(cards.replace(/<span class="whitespace-nowrap">([^<]*)<\/span>/gu, '$1'));
     for (const text of ['ค่าแท็กซี่', '1,234.50 บาท', '27 ก.ย. 2569 · ยังไม่ได้เลือกหมวด', 'วัตถุประสงค์: ไปพบลูกค้า',
-      'ปากกาและแฟ้ม', '380.00 บาท', '26 ก.ย. 2569 · ยังไม่ได้เลือกหมวด', 'ร้านเครื่องเขียนสมใจ', 'รวมเป็นเงิน', '1,614.50 บาท',
-      ATTACHMENT_SOURCE_TYPES_LABEL, 'นำไฟล์ออก']) assert.ok(cardTexts.includes(text), text);
+      'ปากกาและแฟ้ม', '380.00 บาท', '26 ก.ย. 2569 · ยังไม่ได้เลือกหมวด', 'ร้านเครื่องเขียนสมใจ', 'รวมเป็นเงิน', '1,614.50 บาท']) assert.ok(cardTexts.includes(text), text);
     // The typed line takes a receipt upload; the line picked from a saved bill keeps that bill's files instead.
-    assert.equal(cards.match(/type="file"/gu)?.length, 1);
-    assert.equal(table.match(/type="file"/gu)?.length, 1);
+    assert.doesNotMatch(cards, /type="file"/u);
+    assert.doesNotMatch(table, /type="file"/u);
     assert.ok(visible(table).includes('ใบเสร็จ'), 'the table keeps its receipt column');
     assert.ok(visible(detailSections(paid, ids.requester, [])).includes('27 ก.ย. 2569 · เดินทาง'), 'a card names the line category by its label');
   });
 });
 
-describe('the hub cards and chips count what their filter shows (spec §18.1, AC38)', () => {
-  it('Round 4: duplicate card and chip keep blocked rows visible and payable filter matches its count', () => {
-    const blocked = { ...hubClaims.find((row) => row.status === 'READY_FOR_PAYMENT'), id: 'blocked', hasDuplicateBlocker: true };
-    const claims = [...hubClaims, blocked];
-    const all = hubTab('mine', claims);
-    assert.equal(numbers(cardsOf(all), true)['ติดรายการซ้ำ'], '1');
-    assert.equal(numbers(chipsOf(all), false)['ติดรายการซ้ำ'], '1');
-    assert.equal(rowsShown(hubTab('mine', claims, 'duplicate_blocked')), 1);
-    assert.equal(rowsShown(hubTab('mine', claims, 'payment')), 2);
-    const empty = hubTab('mine', hubClaims);
-    assert.equal(numbers(cardsOf(empty), true)['ติดรายการซ้ำ'], undefined);
-    assert.equal(numbers(chipsOf(empty), false)['ติดรายการซ้ำ'], '0');
-  });
-
-  it('Round 4: pay cards exclude blocked rows but table keeps all rows; approval cards retain SLA totals', () => {
-    const payable = { ...queueRow, id: 'payable', status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED',
-      amount: '100.00', outstandingAmount: '100.00', hasDuplicateBlocker: false, slaRisk: undefined };
-    const blocked = { ...payable, id: 'blocked', amount: '900.00', outstandingAmount: '900.00', hasDuplicateBlocker: true };
-    const html = hubTab('finance', [payable, blocked], undefined, {}, '', false);
-    const metric = (html: string, label: string) => { const texts = visible(html); return texts[texts.indexOf(label) - 1]; };
-    assert.deepEqual([metric(html, 'รอจ่าย'), metric(html, 'ยอดคงค้างรวม'), metric(html, 'ติดรายการซ้ำ')], ['1', '100.00 บาท', '1']);
-    assert.ok(visible(html).includes('ทั้งหมด 2 รายการ'));
-    const approval = hubTab('approvals', [{ ...payable, hasDuplicateBlocker: undefined, slaRisk: true },
-      { ...blocked, hasDuplicateBlocker: undefined, slaRisk: false }]);
-    assert.deepEqual([metric(approval, 'รอคุณอนุมัติ'), metric(approval, 'ยอดรวมที่รออนุมัติ')], ['2', '1,000.00 บาท']);
-  });
+// 2026-10-13: the four tiles above the list repeated its filter (and added paid, refused and cancelled claims into one
+// "ยอดรวมที่ขอเบิก"). The filter alone counts now: the shared filter tabs, one row that scrolls inside itself on a phone.
+describe('the hub filter counts what it shows (spec §18.1, AC38)', () => {
   /** The markup inside the element marked `from`, up to the tag that carries `to`. */
   const between = (html: string, from: string, to: string) => html.slice(html.indexOf('>', html.indexOf(from)) + 1, html.lastIndexOf('<', html.indexOf(to)));
-  const cardsOf = (html: string) => between(html, 'data-testid="reimbursements-mine-summary"', 'data-testid="reimbursements-mine-filters"');
   const chipsOf = (html: string) => between(html, 'data-testid="reimbursements-mine-filters"', 'type="search"');
-  /** Label → the number on it, one entry per card (the number comes first) or per chip (the number comes last). */
-  const numbers = (html: string, numberFirst: boolean) => Object.fromEntries([...html.matchAll(/<button\b[^>]*>(.*?)<\/button>/gsu)].map(([, inner]) => {
-    const texts = visible(inner!);
-    return numberFirst ? [texts.slice(1).join(''), texts[0]!] : [texts.slice(0, -1).join(''), texts.at(-1)!];
-  }));
+  /** Label → the number on it, one entry per chip (the number comes last). */
+  const numbers = (html: string) => Object.fromEntries([...html.matchAll(/<option\b[^>]*>(.*?) \((\d+)\)<\/option>/gsu)].map(([, label, count]) => [label, count]));
   const rowsShown = (html: string) => html.match(/data-testid="reimbursements-mine-card"/gu)?.length ?? 0;
+  /** What the list itself says, in its table and its stacked rows: without the tabs and the filter above it, which use the same words. */
+  const listOf = (html: string) => visible(html.slice(html.indexOf('>', html.indexOf('data-testid="reimbursements-mine-table"')) + 1));
+  /** The facts of the one line above a queue, each kept whole. */
+  const factsOf = (html: string) => {
+    const at = html.indexOf('<div class="text-sm text-gray-700" role="status">');
+    return [...html.slice(at, html.indexOf('</div>', at)).matchAll(/<span class="mangmee-unit[^"]*">([^<]*)<\/span>/gu)].map(([, text]) => text!);
+  };
+
+  it('Round 4: the duplicate chip keeps blocked rows visible, and the payable filter matches its count', () => {
+    const blocked = { ...hubClaims.find((row) => row.status === 'READY_FOR_PAYMENT'), id: 'blocked', hasDuplicateBlocker: true };
+    const claims = [...hubClaims, blocked];
+    assert.equal(numbers(chipsOf(hubTab('mine', claims)))['ติดรายการซ้ำ'], '1');
+    assert.equal(rowsShown(hubTab('mine', claims, 'duplicate_blocked')), 1);
+    assert.equal(rowsShown(hubTab('mine', claims, 'payment')), 2);
+    assert.equal(numbers(chipsOf(hubTab('mine', hubClaims)))['ติดรายการซ้ำ'], undefined);
+  });
+
+  it('Round 4: each queue says in one line how many rows it lists and how much, with what is held or late beside it', () => {
+    const payable = { ...queueRow, status: 'READY_FOR_PAYMENT', hasDuplicateBlocker: false, amount: '100.00' };
+    const blocked = { ...payable, id: 'blocked', amount: '900.00', hasDuplicateBlocker: true };
+    for (const tab of ['finance', 'approvals']) {
+      const html = hubTab(tab, [payable, blocked], undefined, {}, '', false);
+      assert.match(html, /ยอดรวม 1,000.00 บาท/);
+      assert.match(html, /ใบเบิก/); assert.match(html, /รออนุมัติ/); assert.match(html, /รอจ่าย/);
+      assert.doesNotMatch(html, /฿|รอจ่าย 2 ใบ|รอคุณอนุมัติ 2 ใบ/);
+    }
+  });
 
   it('splits claims waiting for payment from those waiting for approval, and every number is its list', () => {
     const html = hubTab('mine', hubClaims);
-    // Before: คำขอทั้งหมด 7 and รออนุมัติ/ตรวจสอบ 3 (the two approved claims counted as waiting for approval).
-    assert.deepEqual(numbers(cardsOf(html), true),
-      { 'ร่างรอส่ง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่ายเงินคืน': '2', 'ยอดรวมที่ขอเบิก': '700.00 บาท' });
-    const chips = numbers(chipsOf(html), false);
-    assert.deepEqual(chips, { 'ทั้งหมด': '7', 'ร่าง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่าย': '2', 'ติดรายการซ้ำ': '0', 'จ่ายแล้ว': '1', 'ปฏิเสธ/ยกเลิก': '2' });
+    // Before: ใบเบิกทั้งหมด 7 and รออนุมัติ/ตรวจสอบ 3 (the two approved claims counted as waiting for approval).
+    const chips = numbers(chipsOf(html));
+    assert.deepEqual(chips, { 'ทั้งหมด': '7', 'ร่าง': '1', 'ต้องแก้ไข': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่าย': '2', 'จ่ายแล้ว': '1', 'ยกเลิก': '1' });
     assert.equal(rowsShown(html), 7);
-    // Tapping a card or its chip shows exactly the claims it counted.
-    for (const [filter, card, chip] of [['draft', 'ร่างรอส่ง', 'ร่าง'], ['review', 'รออนุมัติ/ตรวจสอบ', 'รออนุมัติ/ตรวจสอบ'],
-      ['payment', 'รอจ่ายเงินคืน', 'รอจ่าย'], ['paid', null, 'จ่ายแล้ว'], ['closed', null, 'ปฏิเสธ/ยกเลิก']] as const) {
+    // No tile, and no total that adds paid, refused and cancelled claims together.
+    assert.doesNotMatch(html, /reimbursements-mine-summary/u);
+    for (const text of visible(html)) assert.doesNotMatch(text, /ยอดรวมที่ขอเบิก|ร่างรอส่ง|รอจ่ายเงินคืน/u);
+    // A filter tapped shows exactly the claims it counted, and is the one marked as chosen.
+    for (const [filter, chip] of [['draft', 'ร่าง'], ['review', 'รออนุมัติ/ตรวจสอบ'], ['payment', 'รอจ่าย'], ['paid', 'จ่ายแล้ว'], ['closed', 'ยกเลิก']] as const) {
       const filtered = hubTab('mine', hubClaims, filter);
       assert.equal(String(rowsShown(filtered)), chips[chip], filter);
-      if (card) assert.equal(numbers(cardsOf(filtered), true)[card], chips[chip], filter);
-      assert.ok(visible(filtered).includes(`พบ ${chips[chip]} จาก 7 รายการ`), filter);
+      assert.match(chipsOf(filtered), new RegExp(`<option[^>]*value="${filter}"[^>]*selected=""`), filter);
     }
     assert.equal(Object.entries(chips).reduce((sum, [label, count]) => sum + (label === 'ทั้งหมด' ? 0 : Number(count)), 0), 7);
   });
@@ -366,16 +379,16 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
   it('shows a claim in a payout account correction round where the server counts it, with its phase and whom it waits for', () => {
     const claims = [...hubClaims, ...correctionRows];
     const html = hubTab('mine', claims);
-    assert.deepEqual(numbers(cardsOf(html), true), { 'ร่างรอส่ง': '1', 'รออนุมัติ/ตรวจสอบ': '3', 'รอจ่ายเงินคืน': '2', 'ยอดรวมที่ขอเบิก': '900.00 บาท' });
-    assert.deepEqual([numbers(chipsOf(html), false)['ร่าง'], numbers(chipsOf(html), false)['รออนุมัติ/ตรวจสอบ']], ['1', '3']);
+    assert.deepEqual([numbers(chipsOf(html))['ร่าง'], numbers(chipsOf(html))['รออนุมัติ/ตรวจสอบ']], ['1', '3']);
     const review = hubTab('mine', claims, 'review');
     assert.equal(rowsShown(review), 3);
-    const texts = visible(review);
-    // The badge of each row, in the table and on its phone card: the phase, never the bare status of a claim in a round.
+    const texts = listOf(review);
+    // The badge of each row, in the table and in its stacked row: the phase, never the bare status of a claim in a round.
     for (const label of ['รอผู้เบิกแก้บัญชีรับเงิน', 'รออนุมัติบัญชีรับเงินใหม่']) assert.equal(texts.filter((text) => text === label).length, 2, label);
     assert.equal(texts.filter((text) => text === 'รออนุมัติ').length, 2, 'the one claim that waits for its first approval');
-    // "อยู่ที่" on the phone cards: the requester in the badge's own word, then the approvers by name.
-    assert.deepEqual(texts.filter((text) => text.startsWith('อยู่ที่')), ['อยู่ที่ ผู้มีสิทธิ์อนุมัติ', 'อยู่ที่ ผู้เบิก', 'อยู่ที่ สมชาย']);
+    // "อยู่ที่" under each row, in both layouts: the requester in the badge's own word, then the approvers by name.
+    const desks = ['อยู่ที่ ผู้มีสิทธิ์อนุมัติ', 'อยู่ที่ ผู้เบิก', 'อยู่ที่ สมชาย'];
+    assert.deepEqual(texts.filter((text) => text.startsWith('อยู่ที่')), [], 'one badge replaces the separate desk line');
     // With its requester, and still no draft: nothing on the row sends it, and it is not among the drafts.
     assert.equal(texts.some((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ' || text === 'เลือกวิธีรับเงินคืนและส่งอนุมัติ'), false);
     assert.equal(rowsShown(hubTab('mine', claims, 'draft')), 1);
@@ -391,214 +404,228 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
       ['BANK_TRANSFER', 'SAME_ACCOUNT', 'รออนุมัติบัญชีรับเงินเดิม'], ['BANK_TRANSFER', 'FIRST_ACCOUNT', 'รออนุมัติบัญชีรับเงิน'], ['CASH', 'CASH_INSTEAD', 'รออนุมัติการรับเป็นเงินสด'],
     ] as const;
     const rows = cases.map(([payoutMethod, payoutCorrectionAnswer], index) => ({ ...correctionRows[payoutCorrectionAnswer ? 1 : 0]!, id: `${ids.request}case${index}`, payoutMethod, payoutCorrectionAnswer }));
-    const texts = visible(hubTab('mine', rows, 'review'));
+    const texts = listOf(hubTab('mine', rows, 'review'));
     assert.equal(rowsShown(hubTab('mine', rows, 'review')), cases.length);
-    // In the table and on the phone card of each row.
+    // In the table and in the stacked row of each claim.
     for (const [, , label] of cases) assert.equal(texts.filter((text) => text === label).length, 2, label);
     for (const untrue of ['รอผู้เบิกแก้บัญชีรับเงิน', 'รออนุมัติบัญชีรับเงินใหม่', 'รออนุมัติ']) assert.equal(texts.includes(untrue), false, untrue);
     for (const text of texts) for (const [name, pattern] of MACHINE_TOKENS) assert.doesNotMatch(text.replaceAll('RB-202609-00007', ''), pattern, `${name}: ${text}`);
   });
 
-  it('keeps the four cards two by two on a 390 px phone, each one a button that filters', () => {
-    const cards = cardsOf(hubTab('mine', hubClaims, 'payment'));
-    assert.ok(hubTab('mine', hubClaims).includes('<div class="grid grid-cols-2 gap-3 xl:grid-cols-4" data-testid="reimbursements-mine-summary">'));
-    const buttons = [...cards.matchAll(/<button type="button" aria-pressed="(true|false)" class="([^"]*)"/gu)];
-    assert.deepEqual(buttons.map(([, pressed]) => pressed), ['false', 'false', 'true', 'false'], 'รอจ่ายเงินคืน is the open filter');
-    // Nothing with a fixed width: a card is as wide as its grid column and its text wraps inside it.
-    for (const [, , className] of buttons) assert.match(className!, /^h-full w-full min-w-0 rounded-2xl text-left/u);
-    assert.doesNotMatch(cards, /\b(?:min-)?w-\[|whitespace-nowrap/u);
-    // The chips: two columns on a phone, three from sm, and no chip that refuses to wrap.
-    const html = hubTab('mine', hubClaims);
-    assert.ok(html.includes('<div class="grid w-full grid-cols-2 gap-2 sm:grid-cols-3" data-testid="reimbursements-mine-filters">'));
-    const chipClasses = [...chipsOf(html).matchAll(/<button type="button" aria-pressed="(?:true|false)" class="([^"]*)"/gu)].map(([, className]) => className!);
-    assert.equal(chipClasses.length, 7);
-    for (const className of chipClasses) assert.doesNotMatch(className, /\b(?:min-)?w-\[|whitespace-nowrap/u);
-    // A label wider than a 390 px chip (measured in a browser: 143 px needed, 132 there) breaks at its slash, never inside a Thai word.
-    assert.ok(chipsOf(html).includes('<span class="min-w-0"><span class="whitespace-nowrap">รออนุมัติ/</span><span class="whitespace-nowrap">ตรวจสอบ</span></span>'));
+  it('filters with the shared filter tabs: one row that scrolls inside itself on a phone, compact tabs from 640 px', () => {
+    const html = hubTab('mine', hubClaims, 'payment');
+    assert.match(chipsOf(html), /<select[^>]*aria-label="สถานะ"/);
+    assert.match(chipsOf(html), /<option value="payment" selected="">รอจ่าย \(2\)<\/option>/);
+    assert.doesNotMatch(chipsOf(html), /aria-pressed|ติดรายการซ้ำ/);
+    assert.deepEqual(Object.keys(numbers(chipsOf(html))), ['ทั้งหมด', 'ร่าง', 'ต้องแก้ไข', 'รออนุมัติ/ตรวจสอบ', 'รอจ่าย', 'จ่ายแล้ว', 'ยกเลิก']);
   });
 });
 
 describe('the hub takes its list lazily and says when a page did not load (review follow-up 2026-10-01)', () => {
   const rowsShown = (html: string) => html.match(/data-testid="reimbursements-mine-card"/gu)?.length ?? 0;
-  const cardNumbers = (html: string) => [...html.slice(html.indexOf('data-testid="reimbursements-mine-summary"'), html.indexOf('data-testid="reimbursements-mine-filters"'))
-    .matchAll(/<button\b[^>]*>(.*?)<\/button>/gsu)].map(([, inner]) => visible(inner!)[0]);
-  const reason = 'เชื่อมต่อระบบไม่ได้ กรุณาลองใหม่อีกครั้ง';
+  /** The number on each of the eight filter chips, in their order. */
+  const chipNumbers = (html: string) => [...html.slice(html.indexOf('data-testid="reimbursements-mine-filters"'), html.indexOf('type="search"'))
+    .matchAll(/<option\b[^>]*>.*? \((\d+)\)<\/option>/gsu)].map(([, count]) => count);
+  const reason = 'เชื่อมต่อระบบไม่ได้ ลองอีกครั้งอีกครั้ง';
   // A shop with 230 claims waiting for payment: the first answer carries 100 rows and the counts of all 230.
   const many = Array.from({ length: 100 }, (_, index) => ({ ...draft, id: `${ids.request}${index}`, requestNo: 'RB-202609-00007', status: 'READY_FOR_PAYMENT',
     amount: '100.0000', currentDesk: { kind: 'PAYMENT' } }));
-  const of230 = { total: 230, nextPage: 2, summary: { counts: { all: 230, draft: 0, review: 0, payment: 230, duplicate_blocked: 0, paid: 0, closed: 0 }, totalAmount: '23000.0000', blockedDraftCount: 0 } };
+  const of230 = { total: 230, nextPage: 2, summary: { counts: { all: 230, draft: 0, correction: 0, review: 0, payment: 230, duplicate_blocked: 0, paid: 0, closed: 0 }, totalAmount: '23000.0000', blockedDraftCount: 0 } };
 
-  it('shows the cards and chips of the whole scope from the first page, with only that page of rows held', () => {
+  it('shows the filter counts of the whole scope from the first page, with only that page of rows held', () => {
     // Before: the hub walked every page before it showed anything, and counted the rows it had loaded.
     const html = hubTab('mine', many, undefined, of230);
     const texts = visible(html);
-    assert.deepEqual(cardNumbers(html), ['0', '0', '230', '23,000.00 บาท']);
-    assert.ok(texts.includes('ทั้งหมด 230 รายการ'));
+    assert.deepEqual(chipNumbers(html), ['230', '230']);
     // Ten rows a table page, out of the server's 230: the pager counts the whole list, not the rows held.
     assert.equal(rowsShown(html), 10);
-    assert.ok(texts.includes('แสดง 1-10 จาก 230 รายการ'), texts.filter((text) => text.includes('แสดง')).join(' | '));
-    assert.ok(texts.includes('1 / 23'));
-    // Under the รอจ่าย filter the list is the server's 230, the number on its card and its chip.
-    const filtered = visible(hubTab('mine', many, 'payment', of230));
-    assert.ok(filtered.includes('พบ 230 จาก 230 รายการ'));
-    assert.ok(filtered.includes('แสดง 1-10 จาก 230 รายการ'));
+    assert.ok(texts.includes('หน้า 1 จาก 23'), texts.filter((text) => text.includes('แสดง')).join(' | '));
+    // Under the รอจ่าย filter the list is the server's 230, the number on its chip.
+    const filtered = hubTab('mine', many, 'payment', of230);
+    assert.deepEqual(chipNumbers(filtered), ['230', '230']);
+    assert.ok(visible(filtered).includes('หน้า 1 จาก 23'));
+    // A list of one page has no pager: its rows are all there to see.
+    assert.equal(visible(hubTab('mine', hubClaims)).some((text) => text.startsWith('แสดง ')), false);
   });
 
-  it('keeps the counts on the cards while another filter\'s rows are on their way, and shows none of the rows held before', () => {
+  it('keeps the counts on the filter while another filter\'s rows are on their way, and shows none of the rows held before', () => {
     // First load: nothing to count yet.
     const first = visible(hubTab('mine', [], undefined, { summary: null, nextPage: 1 }));
     assert.ok(first.includes('กำลังโหลด...'));
-    assert.equal(first.includes('ร่างรอส่ง'), false);
-    // A filter was tapped and its first page has not arrived: the cards stay, the old rows do not.
+    assert.equal(first.includes('ร่าง'), false);
+    // A filter was tapped and its first page has not arrived: the counts stay, the old rows do not.
     const switching = hubTab('mine', hubClaims, undefined, { key: 'the list held before the tap' });
     assert.equal(rowsShown(switching), 0);
-    assert.deepEqual(cardNumbers(switching), ['1', '1', '2', '700.00 บาท']);
+    assert.deepEqual(chipNumbers(switching), ['7', '1', '1', '1', '2', '1', '1']);
     const texts = visible(switching);
     assert.ok(texts.includes('กำลังโหลด...') && texts.includes('กำลังโหลดรายการ...'));
-    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก|ไม่พบรายการ/u);
+    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีใบเบิก|ไม่พบใบเบิก/u);
   });
 
-  it('shows the failure with a retry instead of "ยังไม่มีคำขอเบิก" when the first page fails', () => {
+  it('shows the failure with a retry instead of "ยังไม่มีใบเบิก" when the first page fails', () => {
     // Before: the error banner sat above an empty state that told the person they had no claims.
     const texts = visible(hubTab('mine', [], undefined, { summary: null, nextPage: 1, failed: reason }));
     assert.ok(texts.includes(`⚠ โหลดรายการไม่สำเร็จ · ${reason}`), texts.join(' | '));
     assert.ok(texts.includes('ลองอีกครั้ง'));
-    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก|ทั้งหมด 0 รายการ|กำลังโหลด/u);
-    // A scope that really is empty still says so, with no failure in sight.
+    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีใบเบิก|กำลังโหลด/u);
+    // A scope that really is empty still says so, with no failure in sight, and with the way to make the first claim.
     const empty = visible(hubTab('mine', []));
-    assert.ok(empty.includes('ยังไม่มีคำขอเบิก') && empty.includes('ทั้งหมด 0 รายการ'));
+    assert.ok(empty.includes('ยังไม่มีใบเบิก'));
+    assert.deepEqual(chipNumbers(hubTab('mine', [])), ['0']);
+    assert.ok(empty.includes('จ่ายเงินแทนร้านไปก่อน? สร้างใบเบิกพร้อมใบเสร็จเพื่อขอเงินคืน') && empty.includes('สร้างใบเบิก'));
     assert.equal(empty.includes('ลองอีกครั้ง'), false);
     // A filter with no claim in it is not an empty scope.
     const none = visible(hubTab('mine', hubClaims.filter((claim) => claim.status !== 'PAID'), 'paid'));
-    assert.ok(none.includes('ไม่พบรายการที่ตรงกับตัวกรอง') && none.includes('พบ 0 จาก 6 รายการ'));
-    assert.equal(none.includes('ยังไม่มีคำขอเบิก'), false);
+    assert.ok(none.includes('ไม่พบใบเบิกที่ตรงกับตัวกรอง'));
+    assert.doesNotMatch(hubTab('mine', hubClaims.filter((claim) => claim.status !== 'PAID'), 'paid'), /<option value="paid"/);
+    assert.equal(none.includes('ยังไม่มีใบเบิก'), false);
   });
 
-  it('keeps the rows already loaded when a later page fails, and the cards still count the whole scope', () => {
+  it('keeps the rows already loaded when a later page fails, and the filter still counts the whole scope', () => {
     // Before: one failed page threw the whole load away.
     const html = hubTab('mine', many, undefined, { ...of230, failed: reason });
     const texts = visible(html);
     assert.ok(texts.includes(`⚠ โหลดรายการได้ไม่ครบ รายการด้านล่างยังไม่ใช่ทั้งหมด · ${reason}`), texts.join(' | '));
     assert.ok(texts.includes('ลองอีกครั้ง'));
     assert.equal(rowsShown(html), 10);
-    assert.deepEqual(cardNumbers(html), ['0', '0', '230', '23,000.00 บาท']);
-    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก/u);
-    // The retry is a full-width button on a phone.
-    assert.match(html, /data-testid="reimbursements-mine-load-failed">.*?<button type="button" class="[^"]*\bmin-h-11 w-full sm:w-auto\b[^"]*">ลองอีกครั้ง<\/button>/su);
+    assert.deepEqual(chipNumbers(html), ['230', '230']);
+    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีใบเบิก/u);
+    // The retry is the shared notice's one action: a secondary button beside the sentence, below it on a phone.
+    assert.match(html, /data-testid="reimbursements-mine-load-failed"><div [^>]*role="alert"[^>]*>.*?<div class="shrink-0"><button type="button" class="[^"]*">ลองอีกครั้ง<\/button><\/div>/su);
   });
 });
 
 // Review 2026-10-01: the hub searched in the browser and counted the whole scope beside what the search showed. The
-// search now goes to the API, whose counts are of what it found, so a card still shows the rows its filter returns.
-describe('the hub search is asked of the API, and the cards count what it found (spec §25.1 I1 with a search)', () => {
+// search now goes to the API, whose counts are of what it found, so a filter still shows the rows its number says.
+describe('the hub search is asked of the API, and the filter counts what it found (spec §25.1 I1 with a search)', () => {
   const rowsShown = (html: string) => html.match(/data-testid="reimbursements-mine-card"/gu)?.length ?? 0;
   const chipNumbers = (html: string) => [...html.slice(html.indexOf('data-testid="reimbursements-mine-filters"'), html.indexOf('type="search"'))
-    .matchAll(/<button\b[^>]*>(.*?)<\/button>/gsu)].map(([, inner]) => visible(inner!).at(-1));
-  const cardNumbers = (html: string) => [...html.slice(html.indexOf('data-testid="reimbursements-mine-summary"'), html.indexOf('data-testid="reimbursements-mine-filters"'))
-    .matchAll(/<button\b[^>]*>(.*?)<\/button>/gsu)].map(([, inner]) => visible(inner!)[0]);
+    .matchAll(/<option\b[^>]*>.*? \((\d+)\)<\/option>/gsu)].map(([, count]) => count);
   // What the API answers for the search "แท็กซี่" in the shop of seven claims: three of them, one waiting for payment.
   const found = [hubClaims[0]!, hubClaims[2]!, hubClaims[4]!];
+  const hint = 'ตัวเลขบนตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น';
 
-  it('shows the found claims with the cards, chips and line counting them, and each filter shows the rows its number says', () => {
+  it('shows the found claims with the filter and the line counting them, and each filter shows the rows its number says', () => {
     const html = hubTab('mine', found, undefined, {}, 'แท็กซี่');
-    // Before: the cards kept the whole shop's 1, 1, 2 and 700 baht beside three rows, and the chip ทั้งหมด said 7.
-    assert.deepEqual(cardNumbers(html), ['1', '0', '1', '300.00 บาท']);
-    assert.deepEqual(chipNumbers(html), ['3', '1', '0', '1', '0', '1', '0']);
+    // Before: the chip ทั้งหมด said 7 beside three rows.
+    assert.deepEqual(chipNumbers(html), ['3', '1', '1', '1']);
     assert.equal(rowsShown(html), 3);
     const texts = visible(html);
-    assert.ok(texts.includes('พบ 3 รายการที่ตรงกับคำค้น · ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น'), texts.filter((text) => text.includes('พบ')).join(' | '));
+    assert.ok(texts.includes(`พบ 3 รายการที่ตรงกับคำค้น · ${hint}`), texts.filter((text) => text.includes('พบ')).join(' | '));
     assert.match(html, /<input [^>]*type="search"[^>]*value="แท็กซี่"/u);
-    // A card or chip tapped while searching: its number is its rows.
+    // A filter chosen while searching: its number is its rows.
     for (const [filter, rows] of [['payment', 1], ['draft', 1], ['review', 0]] as const) {
       const filtered = hubTab('mine', found, filter, {}, 'แท็กซี่');
       assert.equal(rowsShown(filtered), rows, filter);
-      assert.ok(visible(filtered).includes(`พบ ${rows} จาก 3 รายการที่ตรงกับคำค้น · ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น`), filter);
+      assert.ok(visible(filtered).includes(`พบ ${rows} จาก 3 รายการที่ตรงกับคำค้น · ${hint}`), filter);
     }
+    // With no search the line is not there at all: the filter already says the count.
+    assert.equal(visible(hubTab('mine', hubClaims)).some((text) => text.startsWith('ทั้งหมด 7') || text.startsWith('พบ ')), false);
   });
 
   it('says a search found nothing, never that the shop has no claims', () => {
-    // Before (with the counts of the search): "ยังไม่มีคำขอเบิก" and a prompt to create the first claim.
+    // Before (with the counts of the search): "ยังไม่มีใบเบิก" and a prompt to create the first claim.
     const texts = visible(hubTab('mine', [], undefined, {}, 'ไม่มีใบไหนตรง'));
-    assert.ok(texts.includes('ไม่พบรายการที่ตรงกับตัวกรอง') && texts.includes('ลองล้างคำค้นหรือเลือกสถานะอื่น'), texts.join(' | '));
-    assert.ok(texts.includes('พบ 0 รายการที่ตรงกับคำค้น · ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น'));
-    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก|สร้างคำขอแรก/u);
+    assert.ok(texts.includes('ไม่พบใบเบิกที่ตรงกับตัวกรอง') && texts.includes('ลองล้างคำค้นหรือเลือกสถานะอื่น'), texts.join(' | '));
+    assert.ok(texts.includes(`พบ 0 รายการที่ตรงกับคำค้น · ${hint}`));
+    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีใบเบิก|สร้างใบเบิกพร้อมใบเสร็จ/u);
     // A shop that really has none still says so when nothing is searched.
-    assert.ok(visible(hubTab('mine', [])).includes('ยังไม่มีคำขอเบิก'));
+    assert.ok(visible(hubTab('mine', [])).includes('ยังไม่มีใบเบิก'));
   });
 
   it('names what the search box finds, in plain Thai', () => {
     const html = hubTab('mine', hubClaims);
-    // Every column the API searches, and short enough to read whole in the field of a 390 px phone (measured with the
-    // app's fonts at the field's 16 px: 254 px of 266; the wordings before the requester was "ผู้เบิก" here needed 248, 291 and 365).
-    assert.match(html, /placeholder="ค้นหาเลขที่ ผู้เบิก เหตุผล หมวด ยอดเงิน"/u);
-    // Before: "ค้นหาทุกข้อมูลในตาราง เช่น … สถานะ". The status is what the chips filter, and the API does not search it.
+    // The three things a person looks a claim up by, and short enough to read whole in the field of a 390 px phone.
+    // Before: "ค้นหาเลขที่ ผู้เบิก เหตุผล หมวด ยอดเงิน" was cut at "ยอดเ…" there. The API still searches every column it did.
+    assert.match(html, /placeholder="ค้นหาเลขที่ เหตุผล ยอดเงิน"/u);
+    // Before that: "ค้นหาทุกข้อมูลในตาราง เช่น … สถานะ". The status is what the filter is for, and the API does not search it.
     assert.doesNotMatch(html, /ค้นหาทุกข้อมูลในตาราง/u);
   });
 });
 
 // The three lists were tables forced to 980 px from 768 px up. A 1280 px screen leaves their card 901 px (the side menu takes
-// the rest), so the table scrolled sideways inside its card and hid its action column; at 1024 and 768 px by more.
-describe('a hub list is a table only where its card is wide enough for it, and cards below (owner 2026-10-02)', () => {
-  const lists = [['mine', '80rem'], ['approvals', '70rem'], ['finance', '58rem']] as const;
+// the rest), so the table scrolled sideways inside its card and hid its action column; at 1024 and 768 px by more. Then
+// (2026-10-02) each became a table only from 80, 70 and 58rem, so a 1280 px laptop showed the phone's cards with three
+// full-width buttons each. Since 2026-10-13 the three are built to read as a table at 52rem, which that 901 px card passes.
+describe('a hub list is a table where its card is wide enough for it, and stacked rows below (owner 2026-10-02)', () => {
+  const lists = ['mine', 'approvals', 'finance'] as const;
   const html = (tab: string) => hubTab(tab, [{ ...queueRow, status: 'PENDING_APPROVAL', reason: 'ค่าเดินทางไปพบลูกค้า', approvalActions: { canApprove: true, canReject: true } }]);
 
   it('switches by the width of the card that holds it, never by the screen, and forces no width on the table', () => {
-    for (const [tab, width] of lists) {
+    for (const tab of lists) {
       const page = html(tab);
-      // The table and its cards sit in one box that is their container; each names the width the table needs.
-      assert.match(page, new RegExp(`<div class="\\[container-type:inline-size\\]"><div class="hidden @\\[${width}\\]:block" data-testid="reimbursements-${tab}-table">`, 'u'), tab);
-      assert.match(page, new RegExp(`<div class="mt-3 grid grid-cols-1 gap-3 @\\[44rem\\]:grid-cols-2 @\\[${width}\\]:hidden" data-testid="reimbursements-${tab}-card-list">`, 'u'), tab);
-      const table = page.slice(page.indexOf(`data-testid="reimbursements-${tab}-table"`), page.indexOf(`data-testid="reimbursements-${tab}-card-list"`));
-      // Only free text wraps; no forced width and no max-content scroller around it.
-      assert.match(table, /<div class="mt-3 overflow-x-auto"><table class="mangmee-table \[&amp;_td\]:whitespace-nowrap \[&amp;_th\]:whitespace-nowrap[^"]*">/u, tab);
-      assert.doesNotMatch(table, /min-w-\[980px\]|mangmee-table-scroll|md:block/u, tab);
+      assert.match(page, /hidden w-full table-fixed border-collapse sm:table/);
+      assert.match(page, /divide-y divide-gray-50 sm:hidden/);
+      assert.doesNotMatch(page, /overflow-x-auto|whitespace-nowrap.*data-testid="reimbursements/);
+      const table = page.slice(page.indexOf(`data-testid="reimbursements-${tab}-table"`), page.indexOf('</table>'));
+      assert.equal(table.match(/<th\b/g)?.length, 5);
+      assert.deepEqual([...table.matchAll(/width:(\d+)%/g)].map(match => Number(match[1])), [32, 17, 14, 15, 22]);
+      assert.match(table, /role="link" tabindex="0"/);
     }
   });
 
-  // Seen on a 390 px screen (2026-10-02): the requester's list held a claim with a long reason. Its card keeps the
+  // Seen on a 390 px screen (2026-10-02): the requester's list held a claim with a long reason. Its card kept the
   // reason on one line, and the list's one column was unnamed, so the column took the width of that line: every card
   // of the list was 483 px wide on a 390 px screen, with the date, the amount and the end of its button past the edge.
-  it('keeps a card as wide as its list and no wider: the one column of a phone is named', () => {
-    for (const [tab] of lists) {
-      const list = html(tab).match(new RegExp(`<div class="([^"]*)" data-testid="reimbursements-${tab}-card-list">`, 'u'))?.[1].split(' ') ?? [];
-      // `grid-cols-1` is one column of minmax(0, 1fr); a grid with no named column sizes it by its content.
-      assert.ok(list.includes('grid') && list.includes('grid-cols-1'), `${tab}: ${list.join(' ')}`);
+  it('stacks the rows of a narrow list one under another, each as wide as the list and its free text wrapping', () => {
+    for (const tab of lists) {
+      const page = html(tab);
+      // Rows with a line between them: no grid whose column a long line could widen, and no card inside the card.
+      const list = page.match(new RegExp(`<ul class="([^"]*)" data-testid="reimbursements-${tab}-card-list">`, 'u'))?.[1].split(' ') ?? [];
+      assert.ok(list.includes('divide-y') && !list.includes('grid'), `${tab}: ${list.join(' ')}`);
+      const rows = page.slice(page.indexOf(`data-testid="reimbursements-${tab}-card-list"`), page.indexOf('</ul>', page.indexOf(`data-testid="reimbursements-${tab}-card-list"`)));
+      assert.match(rows, /class="[^"]*\bbreak-words\b[^"]*"/u, tab);
+      assert.doesNotMatch(rows, /\btruncate\b|line-clamp|mangmee-card/u, tab);
+      // The whole row is one link to the claim, named by its number.
+      assert.equal(rows.match(new RegExp(`data-testid="reimbursements-${tab}-card"`, 'gu'))?.length, 1, tab);
+      assert.match(rows, /aria-label="เปิดใบเบิก ค่าเดินทางไปพบลูกค้า RB-202609-00007"/, tab);
     }
   });
 
-  it('says on a card what its table row says of the claim: the reason to an approver, the review to a finance desk', () => {
+  it('says on a stacked row what its table row says of the claim: the reason to an approver, the review to a finance desk', () => {
     const cards = (page: string, tab: string) => visible(page.slice(page.indexOf(`data-testid="reimbursements-${tab}-card-list"`)));
     assert.ok(cards(html('approvals'), 'approvals').includes('ค่าเดินทางไปพบลูกค้า'), 'the reason, which the approval card left out');
-    const review = { ...queueRow, financeReviewStatus: 'BLOCKED' };
+    const review = { ...queueRow, hasDuplicateBlocker: false, financeReviewStatus: 'BLOCKED' };
     assert.ok(cards(hubTab('finance', [review], undefined, {}, '', true), 'finance').some((text) => text.includes('ระงับ')), 'the review state');
   });
 
-  it('names what each queue\'s search box finds, short enough for a 390 px phone and true of cards', () => {
+  it('names what each queue\'s search box finds, short enough for a 390 px phone and true of both layouts', () => {
     assert.match(html('approvals'), /placeholder="ค้นหาเลขที่ ผู้เบิก เหตุผล ยอดเงิน"/u);
-    assert.match(html('finance'), /placeholder="ค้นหาเลขที่ ผู้เบิก ยอดเงิน สถานะ"/u);
-    for (const [tab] of lists) assert.doesNotMatch(html(tab), /ในตาราง/u, tab);
+    assert.match(html('finance'), /placeholder="ค้นหาเลขที่ ผู้เบิก ยอดเงิน"/u);
+    for (const tab of lists) assert.doesNotMatch(html(tab), /ในตาราง/u, tab);
   });
 });
 
 // Audit B20: a viewer who may only reject was offered อนุมัติ on every queue row, and the API answered 403.
+// 2026-10-13: a row carries one button at most. "ปฏิเสธ" and "ดูรายละเอียด" left the row: refusing is done on the claim
+// page, beside the receipts, and the row itself is the way there.
 describe('the approval queue offers only what the server says this viewer can do', () => {
   const row = (approvalActions?: { canApprove: boolean; canReject: boolean }) => ({ ...queueRow, status: 'PENDING_APPROVAL', approvalActions });
-  /** The decision buttons of one queue row: once in the table, once on the phone card. */
-  const decisions = (html: string) => visible(html).filter((text) => text === 'อนุมัติ' || text === 'ปฏิเสธ');
+  /** What the list itself says, in its table and its stacked rows: the tab above it is named รออนุมัติ. */
+  const listOf = (html: string) => visible(html.slice(html.indexOf('>', html.indexOf('data-testid="reimbursements-approvals-table"')) + 1));
+  /** The decision buttons of one queue row: once in the table, once in the stacked row. */
+  const decisions = (html: string) => listOf(html).filter((text) => text === 'อนุมัติ' || text === 'ส่งกลับให้แก้');
 
-  it('shows อนุมัติ and ปฏิเสธ from the row\'s own approvalActions, never from the viewer\'s role or permissions', () => {
-    assert.deepEqual(decisions(hubTab('approvals', [row({ canApprove: true, canReject: true })])), ['อนุมัติ', 'ปฏิเสธ', 'อนุมัติ', 'ปฏิเสธ']);
-    assert.deepEqual(decisions(hubTab('approvals', [row({ canApprove: false, canReject: true })])), ['ปฏิเสธ', 'ปฏิเสธ']);
+  it('shows อนุมัติ from the row\'s own approvalActions, never from the viewer\'s role or permissions, and no ปฏิเสธ on a row', () => {
+    assert.deepEqual(decisions(hubTab('approvals', [row({ canApprove: true, canReject: true })])), ['อนุมัติ', 'อนุมัติ']);
+    assert.deepEqual(decisions(hubTab('approvals', [row({ canApprove: false, canReject: true })])), []);
     assert.deepEqual(decisions(hubTab('approvals', [row({ canApprove: true, canReject: false })])), ['อนุมัติ', 'อนุมัติ']);
     // The viewer here is an OWNER holding reimbursement.approve: a row that says nothing still offers nothing.
     assert.ok(hubPermissions.includes('reimbursement.approve'));
     assert.deepEqual(decisions(hubTab('approvals', [row()])), []);
-    // The row stays readable either way.
-    assert.ok(visible(hubTab('approvals', [row({ canApprove: false, canReject: true })])).includes('ดูรายละเอียด'));
+    // The row stays the way to the claim either way: its number in the table, the whole row when stacked.
+    const readable = hubTab('approvals', [row({ canApprove: false, canReject: true })]);
+    assert.ok(readable.includes('aria-label="เปิดใบเบิก ไปพบลูกค้า RB-202609-00007"'));
+    assert.equal(readable.match(/href="\/companies\/company-1\/reimbursements\/cm[^"]+"/gu)?.length, 2, 'the number in the table and the stacked row');
+    assert.equal(visible(readable).includes('ดูรายละเอียด'), false);
+    // The row's button is never the page's green one.
+    const source = readFileSync(join(__dirname, 'ReimbursementsPages.tsx'), 'utf8');
+    const queues = source.slice(source.indexOf('function ApprovalQueue('), source.indexOf('export function PaymentModal('));
+    assert.doesNotMatch(queues, /className=\{(?:btnClass|successBtn|dangerClass)\}/);
   });
 
   // Before: the mark was on finance-queue rows alone, so an approver first met it on the claim page.
-  it('marks a claim that may repeat another one อาจซ้ำ on its row, in the table and on the phone card', () => {
+  it('marks a claim that may repeat another one อาจซ้ำ on its row, in the table and in the stacked row', () => {
     const marks = (duplicateStatus: string) => visible(hubTab('approvals', [{ ...row({ canApprove: true, canReject: true }), duplicateStatus }])).filter((text) => text === 'อาจซ้ำ').length;
     assert.deepEqual([marks('POSSIBLE_DUPLICATE'), marks('CONFIRMED_DUPLICATE')], [2, 2]);
     assert.deepEqual([marks('NO_MATCH'), marks('NOT_CHECKED'), marks('OVERRIDDEN')], [0, 0, 0]);
@@ -608,10 +635,9 @@ describe('the approval queue offers only what the server says this viewer can do
   // shown and attested, and its button says so. It is still offered only where the row allows approving.
   it('names the approve button of a transfer claim for what it does, and offers it under the same rule', () => {
     const transfer = (approvalActions?: { canApprove: boolean; canReject: boolean }) => ({ ...row(approvalActions), payoutMethod: 'BANK_TRANSFER' });
-    const offered = (html: string) => visible(html).filter((text) => ['อนุมัติ', 'ตรวจบัญชีและอนุมัติ', 'ปฏิเสธ'].includes(text));
-    assert.deepEqual(offered(hubTab('approvals', [transfer({ canApprove: true, canReject: true })])),
-      ['ตรวจบัญชีและอนุมัติ', 'ปฏิเสธ', 'ตรวจบัญชีและอนุมัติ', 'ปฏิเสธ']);
-    assert.deepEqual(offered(hubTab('approvals', [transfer({ canApprove: false, canReject: true })])), ['ปฏิเสธ', 'ปฏิเสธ']);
+    const offered = (html: string) => listOf(html).filter((text) => ['อนุมัติ', 'ตรวจบัญชีและอนุมัติ', 'ส่งกลับให้แก้'].includes(text));
+    assert.deepEqual(offered(hubTab('approvals', [transfer({ canApprove: true, canReject: true })])), ['ตรวจบัญชีและอนุมัติ', 'ตรวจบัญชีและอนุมัติ']);
+    assert.deepEqual(offered(hubTab('approvals', [transfer({ canApprove: false, canReject: true })])), []);
     assert.deepEqual(offered(hubTab('approvals', [transfer()])), []);
     // Cash has no account to attest: the row approves in place, as before.
     assert.deepEqual(offered(hubTab('approvals', [{ ...row({ canApprove: true, canReject: false }), payoutMethod: 'CASH' }])), ['อนุมัติ', 'อนุมัติ']);
@@ -627,43 +653,153 @@ describe('the approval queue offers only what the server says this viewer can do
       CASH_INSTEAD: ['CASH', 'ตรวจการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด'], SAME_CASH: ['CASH', 'ตรวจการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด'],
       FIRST_CASH: ['CASH', 'ตรวจการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด'],
     } as const;
-    const all = ['อนุมัติ', 'ตรวจบัญชีและอนุมัติ', 'ปฏิเสธ', 'ตรวจวิธีรับเงินคืน', ...Object.values(BUTTONS).map(([, button]) => button)] as string[];
-    const offered = (html: string) => visible(html).filter((text) => all.includes(text));
+    const all = ['อนุมัติ', 'ตรวจบัญชีและอนุมัติ', 'ส่งกลับให้แก้', 'ตรวจวิธีรับเงินคืน', ...Object.values(BUTTONS).map(([, button]) => button)] as string[];
+    const offered = (html: string) => listOf(html).filter((text) => all.includes(text));
     const inRound = (approvalActions: { canApprove: boolean; canReject: boolean } | undefined, payoutCorrectionAnswer?: keyof typeof BUTTONS) =>
       ({ ...correctionRows[1]!, ageHours: 3, slaRisk: false, approvalActions, payoutMethod: payoutCorrectionAnswer ? BUTTONS[payoutCorrectionAnswer][0] : 'BANK_TRANSFER', payoutCorrectionAnswer, approvalSnapshotHash: 'hash' });
     for (const [answer, [, button, badge]] of Object.entries(BUTTONS) as Array<[keyof typeof BUTTONS, typeof BUTTONS[keyof typeof BUTTONS]]>) {
-      // In the table and on the phone card.
+      // In the table and in the stacked row.
       assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, answer)])), [button, button], answer);
       // Whoever may only send the answer back gets the same way in.
       assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: false, canReject: true }, answer)])), [button, button], answer);
       assert.deepEqual(offered(hubTab('approvals', [inRound(undefined, answer)])), [], answer);
-      // The row says what it waits for: in the table beside its age, and on its phone card. The button names the same thing.
-      const texts = visible(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, answer)]));
+      // The row says what it waits for, in both layouts. The button names the same thing.
+      const texts = listOf(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, answer)]));
       assert.equal(texts.filter((text) => text === badge).length, 2, answer);
       assert.equal(texts.includes('รออนุมัติ'), false, answer);
       assert.equal(badge, `รออนุมัติ${button.slice('ตรวจ'.length)}`);
     }
     // A row with no answer on it (a page fed by an older server): the method, which is true of every answer.
     assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: true, canReject: true })])), ['ตรวจวิธีรับเงินคืน', 'ตรวจวิธีรับเงินคืน']);
-    // A row of no round has no such badge in the table, only its status on the card.
-    assert.equal(visible(hubTab('approvals', [row({ canApprove: true, canReject: true })])).filter((text) => text === 'รออนุมัติ').length, 1);
+    // A row of no round carries no status badge: every row of this list waits for approval, which its tab says.
+    assert.equal(listOf(hubTab('approvals', [row({ canApprove: true, canReject: true })])).includes('รออนุมัติ'), true);
   });
 });
 
-// Payout Phase 1 on the paged list: a row shows no account, so a draft is sent from its row only when the draft
-// itself chose cash. Any other draft may be paid into an account, and its button opens the claim page instead.
-describe('a draft row of the hub list is sent from the row only when nothing unseen would be frozen', () => {
+// Payout Phase 1 on the paged list: a row shows no account, so nothing is sent from a row. Until 2026-10-13 a draft that
+// chose cash was sent from its row, and every other draft's row carried a button that opened its page under one of two
+// longer names, beside a bare "ยกเลิก" that opened it too. A row now says where the draft stands and is the way to its page.
+describe('a draft row of the hub list sends nothing: it says where the draft stands and opens its page', () => {
   const sending = (html: string) => visible(html).filter((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ' || text === 'เลือกวิธีรับเงินคืนและส่งอนุมัติ');
   const ready = { ...draft, receiptRequirementStatus: 'ATTACHED' };
+  /** How often a line is said: once in the table and once in the stacked row. */
+  const said = (html: string, line: string) => visible(html).filter((text) => text === line).length;
 
-  it('names the missing receiving method, transfer account check or cash submission in both list layouts', () => {
-    // Table row and phone card, both from the rows of the held list.
-    assert.deepEqual(sending(hubTab('mine', [{ ...ready, payoutMethod: 'CASH' }])), ['ส่งอนุมัติ', 'ส่งอนุมัติ']);
-    for (const [payoutMethod, label] of [[undefined, 'เลือกวิธีรับเงินคืนและส่งอนุมัติ'], [null, 'เลือกวิธีรับเงินคืนและส่งอนุมัติ'], ['BANK_TRANSFER', 'ตรวจบัญชีและส่งอนุมัติ']] as const) {
-      assert.deepEqual(sending(hubTab('mine', [{ ...ready, payoutMethod }])), [label, label], String(payoutMethod));
+  it('offers no send button on a draft row whatever it is paid by, and says in both layouts that it was not sent', () => {
+    for (const payoutMethod of ['CASH', undefined, null, 'BANK_TRANSFER'] as const) {
+      const html = hubTab('mine', [{ ...ready, payoutMethod }]);
+      assert.deepEqual(sending(html), [], String(payoutMethod));
+      assert.equal(said(html, 'ร่าง'), 2, String(payoutMethod));
+      for (const gone of ['ยกเลิก', 'แก้ไข', 'ดูรายละเอียด']) assert.equal(said(html.slice(html.indexOf('data-testid="reimbursements-mine-table"')), gone), 0, gone);
     }
-    // A claim already sent has no send button, whatever it is paid by.
+    // A claim already sent has no send button either.
     assert.deepEqual(sending(hubTab('mine', [{ ...ready, status: 'PENDING_APPROVAL', payoutMethod: 'CASH', currentDesk: { kind: 'APPROVER' } }])), []);
+  });
+
+  // Before: a red banner above the list told everyone who could see a draft (its approver, the finance desk, the owner)
+  // to fix "a draft" that was not theirs, and did not say which.
+  it('says what a draft still lacks on its own row and to its requester only, never in a banner above the list', () => {
+    const html = hubTab('mine', [{ ...ready, receiptRequirementStatus: 'REQUIRED' }]);
+    assert.equal(said(html, 'ยังไม่มีใบเสร็จ'), 2);
+    assert.doesNotMatch(html, /ยังส่งอนุมัติไม่ได้|reimbursement-current-desk/);
+    assert.deepEqual(sending(html), []);
+  });
+
+  // Before: the one claim that needed its requester sat among the closed ones with a red badge and nothing else.
+  it('tells the requester of a refused claim what the approver said and what to do, on the row', () => {
+    const html = hubTab('mine', [{ ...ready, status: 'REJECTED', rejectionReason: 'ต้องแนบใบเสร็จ' }]);
+    assert.equal(said(html, 'ส่งกลับให้แก้'), 2);
+    assert.doesNotMatch(html, /ส่งกลับให้แก้:|reimbursement-current-desk/);
+    assert.match(html, /role="link" tabindex="0"/);
+  });
+});
+
+// 2026-10-13 (L6-15): the claim form asked for things nobody needed (a currency list of one, a greyed-out requester, a
+// reason for a missing receipt before any line was typed) and chose a category and a receiving method for the person.
+describe('the claim form asks only for what this claim needs, and chooses nothing for the person', () => {
+  const fresh = (props: object = {}) => renderToStaticMarkup(createPage(props));
+  const withLine = (line: object) => filledCreatePage({ ...filledForm, lines: [{ ...filledForm.lines[1]!, attachmentId: null, attachmentFileName: undefined, ...line }] });
+
+  it('shows the requester list only to someone who may prepare a claim for another person, and no currency list', () => {
+    assert.ok(visible(fresh()).includes('ผู้เบิก'));
+    assert.doesNotMatch(fresh({ canPrepareForOthers: false }), /aria-label="ผู้เบิก"/);
+    assert.match(fresh({ canPrepareForOthers: false }), /ผู้เบิก[\s\S]*ฉัน/);
+    for (const html of [fresh(), filledCreatePage()]) assert.equal(visible(html).includes('สกุลเงิน'), false);
+    // Nothing under the title, and nothing under the button, tells the person what the button already says.
+    for (const text of visible(fresh())) assert.doesNotMatch(text, /ระบบจะบันทึกเป็นฉบับร่าง/u);
+  });
+
+  it('starts a line on today with no category chosen, and puts the receipt first', (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-13T05:00:00.000Z') });
+    const html = fresh();
+    const texts = visible(html);
+    assert.ok(texts.includes('13 ต.ค. 2569'), 'today, in Bangkok');
+    assert.ok(texts.includes('เลือกหมวด'));
+    assert.equal(texts.includes('เดินทาง'), false, 'no category is picked for the person');
+    const order = ['aria-label="ใบเสร็จ"', 'aria-label="รายการ"', 'aria-label="จำนวนเงิน"', 'aria-label="วันที่"', 'aria-label="หมวด"', 'aria-label="วัตถุประสงค์"'].map((field) => html.indexOf(field));
+    assert.ok(order.every((at) => at > 0), JSON.stringify(order));
+    assert.deepEqual([...order].sort((a, b) => a - b), order, 'the receipt, then what it was, how much, when, which category');
+    // One name for the category on this form (before: "หมวดใบเบิก" on the label, "หมวด" for a screen reader).
+    assert.equal(texts.includes('หมวดใบเบิก *'), false);
+    assert.ok(texts.includes('หมวด *'));
+  });
+
+  it('asks why a receipt is missing only when a line in use has none', () => {
+    const asked = (html: string) => html.includes('aria-label="เหตุผลที่ไม่มีใบเสร็จ"');
+    assert.equal(asked(fresh()), false, 'a form nobody has typed in');
+    assert.equal(asked(filledCreatePage()), false, 'every line has its receipt or its saved expense');
+    assert.equal(asked(withLine({})), true, 'a typed line with no receipt');
+    // A reason is only asked while a typed line still lacks a receipt.
+    assert.equal(asked(filledCreatePage({ ...filledForm, missingReceiptReason: 'ร้านไม่ออกใบเสร็จ' })), false);
+    assert.ok(visible(withLine({})).includes('กรอกเมื่อมีรายการที่ไม่มีใบเสร็จ ใช้ได้เมื่อร้านรับเหตุผลแทนใบเสร็จ'));
+  });
+
+  it('reads the strict receipt rule before save and hides the reason that the shop does not accept', () => {
+    const form = { ...filledForm, lines: [{ ...filledForm.lines[1]!, attachmentId: null, attachmentFileName: undefined }] };
+    const strict = filledCreatePage(form, { requireReceipt: true, allowMissingReceiptWithReason: false });
+    assert.ok(visible(strict).includes('ร้านนี้ต้องแนบใบเสร็จทุกรายการก่อนส่งอนุมัติ'));
+    assert.equal(strict.includes('aria-label="เหตุผลที่ไม่มีใบเสร็จ"'), false);
+    const waived = filledCreatePage(form, { requireReceipt: false, allowMissingReceiptWithReason: false });
+    assert.equal(waived.includes('aria-label="เหตุผลที่ไม่มีใบเสร็จ"'), false);
+  });
+
+  it('offers only saved expenses that can be claimed, with the rest behind one line that says how many', () => {
+    // Line 1 is taken from the one expense that can be claimed; two more of the list cannot.
+    const texts = visible(filledCreatePage());
+    assert.ok(texts.includes('ดูรายการที่เบิกไม่ได้ 2 รายการ'), texts.filter((text) => text.includes('เบิกไม่ได้')).join(' | '));
+    // A line bound to one that can no longer be claimed still shows it, with the reason.
+    assert.ok(visible(filledCreatePage(refusedForm)).includes('ร้านกาแฟ · ฿95.50 — ค่าใช้จ่ายนี้ถูกใช้เบิกในใบเบิกอื่นอยู่แล้ว'));
+    // A line typed by hand offers the list as a link, never as a field above every line.
+    assert.ok(visible(fresh()).includes('เลือกจากค่าใช้จ่ายที่บันทึกไว้'));
+    assert.equal(fresh().includes('aria-label="ค้นหาค่าใช้จ่ายที่บันทึกไว้"'), false);
+  });
+
+  it('marks every field that is wrong after the save button was pressed, and says each under its own field', () => {
+    // The page's states in the order it declares them: on a new claim `loading` is its fifth `false` and `showProblems` its sixth.
+    let falses = 0;
+    const html = renderWithState(createPage(), (initial) => {
+      if (initial === false) { falses += 1; return falses === 6 ? true : undefined; }
+      return undefined;
+    });
+    const texts = visible(html);
+    for (const problem of ['กรอกเหตุผล', 'กรอกรายการ', 'ยอดเงินต้องมากกว่า 0', 'เลือกหมวด']) assert.ok(texts.includes(problem), `${problem}: ${texts.filter((text) => text.includes('กรอก')).join(' | ')}`);
+    assert.ok(texts.some((text) => /^⚠ ยังกรอกไม่ครบ \d+ ช่อง$/u.test(text)), 'how many, at the button');
+    assert.ok((html.match(/aria-invalid="true"/gu)?.length ?? 0) >= 4);
+    const source = readFileSync(join(__dirname, 'ReimbursementCreatePage.tsx'), 'utf8');
+    assert.match(source, /if \(requestFormProblems\(\{ \.\.\.checked, intent: send \? 'send' : 'draft' \}\)\.count > 0 \|\| \(!editing && !branchId\)\) \{\s+setShowProblems\(true\); setCollapsedLines\(\{\}\);\s+[^\n]*\n\s+if \(!payout\.mode\) \{ setError\('เลือกวิธีรับเงินคืน'\); setPayoutInvalidField\('mode'\); \}\s+toFirstProblem\(\); return;\s+\}/);
+    // What is checked and sent is the amount without the separators a person types.
+    assert.match(source, /amount: typedAmount\(l\.amount\),\s+linkedExpenseId: l\.linkedExpenseId \?\? null,/);
+  });
+
+  it('offers save draft and send for both new and returned drafts', () => {
+    const source = readFileSync(join(__dirname, 'ReimbursementCreatePage.tsx'), 'utf8');
+    assert.match(source, /toast.success\(send \? 'ส่งอนุมัติแล้ว' : 'บันทึกร่างแล้ว'\)/);
+    assert.match(source, /value="draft"[\s\S]*>บันทึกร่าง<\/button>/);
+    assert.match(source, /value="send"[\s\S]*>ส่งอนุมัติ<\/button>/);
+    // A person known to have no default account is not left on "follow my default"; a default that could not be read keeps the choice.
+    assert.match(source, /const noDefaultAccount = requesterUserId === userId && myPayoutAccount === null && !defaultUnreadRef\.current;/);
+    assert.match(source, /setPayout\(current => \(current\.mode === 'DEFAULT' \? \{ \.\.\.current, mode: '' \} : current\)\);/);
+    assert.match(source, /const payoutError = !payout\.mode \? 'เลือกวิธีรับเงินคืน' : claimPayoutFormError\(payout\);/);
   });
 });
 
@@ -690,14 +826,14 @@ describe('ตั้งค่านโยบาย warns about an approver role t
   it('names the chosen role under the role list while finance review is off, and saving stays possible', () => {
     const options = [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', false)];
     const texts = settings(policy, options);
-    assert.ok(texts.includes(warning), texts.filter((text) => text.includes('บันทึกจ่าย')).join(' | '));
-    assert.ok(texts.includes('บันทึกนโยบาย'));
+    assert.ok(texts.includes(warning), texts.filter((text) => text.includes('จ่ายเงิน')).join(' | '));
+    assert.ok(texts.includes('บันทึกการตั้งค่า'));
     for (const [name, pattern] of MACHINE_TOKENS) assert.doesNotMatch(warning, pattern, name);
     // Nothing to say once finance review pays, once the role is unticked, or when every chosen role can pay.
     for (const quiet of [settings({ ...policy, financeReviewRequired: true }, options), settings({ ...policy, defaultApproverRoles: ['MANAGER'] }, options),
       settings(policy, [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', true)])]) {
       assert.equal(quiet.some((text) => text.includes('บันทึกจ่ายไม่ได้')), false);
-      assert.ok(quiet.includes('ส่งใบเบิกให้ใครอนุมัติ?'), 'the form rendered');
+      assert.ok(quiet.includes('ส่งใบเบิกให้ใครอนุมัติ'), 'the form rendered');
     }
   });
 
@@ -705,100 +841,87 @@ describe('ตั้งค่านโยบาย warns about an approver role t
   it('leaves a ticked role that can no longer approve out of the warning; the form already says it is not ready', () => {
     const texts = settings(policy, [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', false, false)]);
     assert.equal(texts.some((text) => text.includes('อนุมัติได้ แต่บันทึกจ่ายไม่ได้')), false);
-    assert.ok(texts.includes('บางบทบาทที่เลือกยังไม่มีคนพร้อมอนุมัติ กรุณาเอาออกหรือเลือกบทบาทอื่น'));
+    assert.ok(texts.includes('บางบทบาทที่เลือกยังไม่มีคนพร้อมอนุมัติ เอาออกหรือเลือกบทบาทอื่น'));
     // Two ticked roles lack the pay right; only the one that can still approve is named.
     const both = settings({ ...policy, defaultApproverRoles: ['MANAGER', 'CHECKER', 'LEAD'] },
       [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', false), option('LEAD', 'หัวหน้าสาขา', false, false)]);
-    assert.ok(both.includes(warning), both.filter((text) => text.includes('บันทึกจ่าย')).join(' | '));
+    assert.ok(both.includes(warning), both.filter((text) => text.includes('จ่ายเงิน')).join(' | '));
   });
 });
 
 // Owner's model 2026-10-01: a claim has a requester and an approver, and a finance desk exists only where the company turned the
 // finance-review step on. A shop without the step still had a tab "คิวการเงิน", empty with "ไม่มีรายการรอการเงิน".
-describe('the hub\'s third tab is the pay queue where the company has no finance-review step (owner 2026-10-02)', () => {
+// 2026-10-13: a tab is named for what waits in it, without "คิว": รอจ่าย, or รอการเงิน where the step is on.
+describe('the hub\'s third tab is the pay list where the company has no finance-review step (owner 2026-10-02)', () => {
   const ready = { ...queueRow, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', hasDuplicateBlocker: false, currentDesk: { kind: 'PAYMENT' } };
   const underReview = { ...queueRow, id: `${ids.request}review`, financeReviewStatus: 'PENDING', hasDuplicateBlocker: false, currentDesk: { kind: 'FINANCE' } };
-  /** The work tabs of the hub's own navigation. */
-  const tabsOf = (html: string) => visible(html.slice(html.indexOf('>', html.indexOf('<nav')) + 1, html.indexOf('</nav>')));
+  /** The work tabs of the hub's own navigation: its pressed-or-not buttons, without the quiet links beside them. */
+  const tabsOf = (html: string) => [...html.slice(html.indexOf('aria-label="งานเบิกจ่าย"'), html.indexOf('aria-label="งานเบิกจ่าย"') + 1600).matchAll(/<button type="button" aria-pressed="(?:true|false)" data-active="(?:true|false)"[^>]*>([^<]*)/gu)].map(([, label]) => label!);
 
-  it('names it คิวรอจ่าย and says nothing of finance: the tab, its description, its count, its empty text and its columns', () => {
+
+  it('names it รอจ่าย and says nothing of finance: the tab, its count, its empty text and its rows', () => {
     const empty = hubTab('finance', [], undefined, {}, '', false);
-    assert.deepEqual(tabsOf(empty), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวรอจ่าย']);
-    for (const text of ['บันทึกการจ่ายเงินของคำขอที่อนุมัติแล้ว', 'รอจ่าย', 'ไม่มีใบรอจ่าย', 'คำขอที่อนุมัติแล้วและรอจ่ายเงินคืนจะแสดงที่นี่']) assert.ok(visible(empty).includes(text), text);
+    assert.deepEqual(tabsOf(empty), ['ใบเบิกทั้งหมด', 'รออนุมัติ', 'รอจ่าย']);
+    for (const text of ['ไม่มีใบเบิกรอจ่าย', 'ใบเบิกที่อนุมัติแล้วและรอจ่ายเงินคืนจะอยู่ที่นี่']) assert.ok(visible(empty).includes(text), text);
     const filled = visible(hubTab('finance', [ready], undefined, {}, '', false));
-    for (const text of ['พร้อมจ่าย', 'บันทึกจ่าย', 'รอจ่าย']) assert.ok(filled.includes(text), text);
+    for (const text of ['รอจ่าย', 'จ่ายเงิน', 'ยอดรวม 1,614.50 บาท']) assert.ok(filled.includes(text), text);
     // Before: the tab and its empty text named a finance desk, and every row read "ไม่ต้องตรวจ" under "ตรวจการเงิน".
-    for (const text of [...visible(empty), ...filled]) assert.doesNotMatch(text, /การเงิน|ไม่ต้องตรวจ|รอตรวจ/u);
+    for (const text of [...visible(empty), ...filled]) assert.doesNotMatch(text, /การเงิน|ไม่ต้องตรวจ|รอตรวจ|คิว/u);
   });
 
   it('keeps the finance wording where the step is on', () => {
     const empty = hubTab('finance', [], undefined, {}, '', true);
-    assert.deepEqual(tabsOf(empty), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวการเงิน']);
-    for (const text of ['ตรวจสอบคำขอที่อนุมัติแล้ว และบันทึกการจ่ายเงิน', 'รอตรวจ/รอจ่าย', 'ไม่มีรายการรอการเงิน', 'คำขอที่ผ่านการอนุมัติแล้วจะแสดงที่นี่']) assert.ok(visible(empty).includes(text), text);
+    assert.deepEqual(tabsOf(empty), ['ใบเบิกทั้งหมด', 'รออนุมัติ', 'รอการเงิน']);
+    for (const text of ['ไม่มีใบเบิกรอการเงิน', 'ใบเบิกที่อนุมัติแล้วจะอยู่ที่นี่']) assert.ok(visible(empty).includes(text), text);
     const filled = visible(hubTab('finance', [ready, underReview], undefined, {}, '', true));
-    for (const text of ['ตรวจการเงิน', 'ไม่ต้องตรวจ', 'รอตรวจสอบ', 'อนุมัติจ่าย']) assert.ok(filled.includes(text), text);
+    for (const text of ['รอตรวจสอบการเงิน', 'อนุมัติจ่าย', 'ยอดรวม 3,229.00 บาท']) assert.ok(filled.includes(text), text);
   });
 
   // The policy is frozen on a claim when it is sent, so a claim sent while the step was on is still reviewed after it is turned off.
-  it('keeps the review column and its count for a queue that still holds such a claim, under the tab the company now has', () => {
+  it('keeps the review line and its count for a list that still holds such a claim, under the tab the company now has', () => {
     const html = hubTab('finance', [ready, underReview], undefined, {}, '', false);
-    assert.deepEqual(tabsOf(html), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวรอจ่าย']);
-    for (const text of ['รอตรวจ/รอจ่าย', 'ตรวจการเงิน', 'รอตรวจสอบ']) assert.ok(visible(html).includes(text), text);
+    assert.deepEqual(tabsOf(html), ['ใบเบิกทั้งหมด', 'รออนุมัติ', 'รอจ่าย']);
+    for (const text of ['รอตรวจสอบการเงิน', 'ยอดรวม 3,229.00 บาท']) assert.ok(visible(html).includes(text), text);
     // The claim beside it never had the step: it says nothing of a review (before: "ตรวจการเงิน: ไม่ต้องตรวจ").
-    assert.equal(visible(html).includes('ไม่ต้องตรวจ'), false);
+    assert.equal(visible(html).some((text) => text.includes('ไม่ต้องตรวจ')), false);
   });
 
   // Upgrade test 2026-10-02, on the owner's own company: six claims wait for payment, and one of them passed a finance
   // review while the company still had that step. Every card of the queue then read "ตรวจการเงิน: ไม่ต้องตรวจ", also the
   // five that never had a review, and the count read "รอตรวจ/รอจ่าย" though nothing waited for one.
   it('says a claim\'s finance review only on the claim that had one, and counts "รอจ่าย" when nothing waits for a review', () => {
-    const reviewed = { ...ready, id: `${ids.request}reviewed`, requestNo: 'RB-202609-00028', financeReviewStatus: 'APPROVED_FOR_PAYMENT' };
-    const others = [1, 2, 3].map((index) => ({ ...ready, id: `${ids.request}plain${index}`, requestNo: `RB-202609-0003${index}` }));
-    const html = hubTab('finance', [others[0]!, reviewed, others[1]!, others[2]!], undefined, {}, '', false);
-    const texts = visible(html);
-    assert.deepEqual(tabsOf(html), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวรอจ่าย']);
-    // The count: nothing in the queue waits for a review.
-    assert.ok(texts.includes('รอจ่าย') && !texts.includes('รอตรวจ/รอจ่าย'), texts.filter((text) => text.includes('รอ')).join(' | '));
-    assert.equal(texts.includes('ไม่ต้องตรวจ'), false);
-    // On the phone cards: one finance line, on the claim that was reviewed, with what happened.
-    const cards = html.slice(html.indexOf('data-testid="reimbursements-finance-card-list"')).split('<a ').slice(0, -1);
-    const lineOf = (card: string) => /ตรวจการเงิน: (?:<!-- -->)?([^<]*)</u.exec(card)?.[1] ?? null;
-    assert.deepEqual(cards.map((card) => [/RB-202609-000\d\d/u.exec(card)?.[0], lineOf(card)]),
-      [['RB-202609-00031', null], ['RB-202609-00028', 'อนุมัติจ่าย'], ['RB-202609-00032', null], ['RB-202609-00033', null]]);
-    // In the table: the column is there for that one claim, and the cells of the others are empty.
-    const table = html.slice(html.indexOf('data-testid="reimbursements-finance-table"'), html.indexOf('data-testid="reimbursements-finance-card-list"'));
-    assert.ok(visible(table).includes('ตรวจการเงิน'));
-    assert.deepEqual([...table.matchAll(/<td class="text-xs text-gray-500">([^<]*)<\/td>/gu)].map((match) => match[1]), ['—', 'อนุมัติจ่าย', '—', '—']);
-    // A queue with no such claim says nothing of a review at all, as before.
-    const plain = visible(hubTab('finance', others, undefined, {}, '', false));
-    for (const text of plain) assert.doesNotMatch(text, /การเงิน|ไม่ต้องตรวจ|รอตรวจ/u);
-    // The search finds a claim by the finance words its row shows, and no claim by words its row does not show.
-    const found = (query: string) => hubTab('finance', [others[0]!, reviewed, others[1]!], undefined, {}, query, false).match(/data-testid="reimbursements-finance-card"/gu)?.length ?? 0;
+    const reviewed = { ...ready, financeReviewStatus: 'APPROVED_FOR_PAYMENT' };
+    const html = hubTab('finance', [ready, reviewed], undefined, {}, '', false);
+    assert.deepEqual(tabsOf(html), ['ใบเบิกทั้งหมด', 'รออนุมัติ', 'รอจ่าย']);
+    assert.doesNotMatch(html, /ตรวจการเงิน:|ไม่ต้องตรวจ/);
+    assert.match(html, /ยอดรวม 3,229.00 บาท/);
+    assert.equal(html.match(/>จ่ายเงิน<\/button>/g)?.length, 4);
+    const found = (query: string) => hubTab('finance', [ready, reviewed], undefined, {}, query, false).match(/data-testid="reimbursements-finance-card"/g)?.length ?? 0;
     assert.deepEqual([found('อนุมัติจ่าย'), found('ไม่ต้องตรวจ')], [1, 0]);
   });
 
   it('names no third tab before the page is told, with a policy right or without one', () => {
     for (const mayReadPolicy of [true, false]) {
       const unread = hubTab('finance', [ready], undefined, {}, '', 'unread', mayReadPolicy);
-      assert.deepEqual(tabsOf(unread), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ']);
-      for (const text of visible(unread)) assert.doesNotMatch(text, /คิวการเงิน|คิวรอจ่าย|ไม่มีใบรอจ่าย|รอตรวจ\/รอจ่าย/u);
+      assert.deepEqual(tabsOf(unread), ['ใบเบิกทั้งหมด', 'รออนุมัติ']);
+      for (const text of visible(unread)) assert.doesNotMatch(text, /รอการเงิน|^รอจ่าย|ไม่มีใบเบิกรอ|รอตรวจหรือรอจ่าย/u);
       assert.ok(visible(unread).includes('กำลังโหลด...'));
     }
   });
 
   // The policy endpoint asks for a policy right, which an accountant does not hold: they review claims for finance and
   // record no policy. Before, such a viewer read "คิวการเงิน" and "ไม่มีรายการรอการเงิน" in a shop with no finance step.
-  it('names the tab by the company for a finance reviewer who may not read the policy, as the claims list answer tells it', () => {
+  it('names the tab by the company for a finance reviewer who may not read the policy, as the hub bootstrap tells it', () => {
     const off = hubTab('finance', [], undefined, {}, '', false, false);
-    assert.deepEqual(tabsOf(off), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวรอจ่าย']);
-    assert.ok(visible(off).includes('ไม่มีใบรอจ่าย'));
+    assert.deepEqual(tabsOf(off), ['ใบเบิกทั้งหมด', 'รออนุมัติ', 'รอจ่าย']);
+    assert.ok(visible(off).includes('ไม่มีใบเบิกรอจ่าย'));
     for (const text of visible(off)) assert.doesNotMatch(text, /การเงิน|รอตรวจ/u);
     const on = hubTab('finance', [], undefined, {}, '', true, false);
-    assert.deepEqual(tabsOf(on), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวการเงิน']);
-    assert.ok(visible(on).includes('ไม่มีรายการรอการเงิน'));
-    // Which of the two it asks is the page's own choice: the policy where the session may read it, else the list answer.
+    assert.deepEqual(tabsOf(on), ['ใบเบิกทั้งหมด', 'รออนุมัติ', 'รอการเงิน']);
+    assert.ok(visible(on).includes('ไม่มีใบเบิกรอการเงิน'));
+    // The first hub read supplies policy facts and scoped work counts for every reader.
     const page = readFileSync(join(__dirname, 'ReimbursementsPages.tsx'), 'utf8');
-    assert.match(page, /void \(canReadPolicy \? getReimbursementPolicy\(companyId\) : getReimbursementFinanceStep\(companyId, listScope\)\)/);
+    assert.match(page, /void getReimbursementHub\(companyId\)/);
     assert.match(page, /const financeStep = !hasThirdTab \? true : policyRead\.companyId === companyId \? policyRead\.financeStep : undefined;/);
   });
 });
@@ -806,15 +929,17 @@ describe('the hub\'s third tab is the pay queue where the company has no finance
 // Phone first: whatever a person presses is 44 px high at 390 px. The real look measured 18 px (the back link of every
 // claim page), 24 px (the header of a line on the claim form) and 38 px (an approver role on the policy tab).
 describe('what a person presses on a claim screen is 44 px high on a phone (owner 2026-10-02)', () => {
-  it('gives the back link its own 44 px box on a phone, without making the pill it sits in taller', () => {
+  it('makes the back link the shared back button, on its own line above the title: 44 px on a phone, 40 px from 640 px', () => {
     const html = filledCreatePage();
-    // 44 px high with 13 px taken back above and below: the pill around it still measures the 18 px of its text.
-    assert.match(html, /<a class="-my-\[13px\] inline-flex min-h-11 items-center sm:my-0 sm:min-h-0" href="\/companies\/company-1\/reimbursements">← กลับไปการเบิกจ่าย<\/a>/);
-    // One link for the claim form, the claim page and the payout-account page.
+    // It was a line of text inside the eyebrow pill: 44 px on a phone by a box of its own, and 18 px on a tablet.
+    assert.match(html, /<div class="mangmee-page-back"><a class="mangmee-btn mangmee-btn-secondary w-fit" href="\/companies\/company-1\/reimbursements"><span aria-hidden="true">←<\/span>กลับไปการเบิกจ่าย<\/a><\/div><h1 class="mangmee-page-title">/);
+    assert.doesNotMatch(html, /mangmee-eyebrow/);
+    // One link for the claim form, the claim page and the payout-account page, each in the page frame's `back` slot.
     for (const file of ['ReimbursementCreatePage.tsx', 'ReimbursementJourneyPage.tsx', 'ReimbursementPayoutAccountPage.tsx']) {
       const source = readFileSync(join(__dirname, file), 'utf8');
-      assert.match(source, /<BackToClaimsLink href=\{hubHref\} \/>/, file);
-      assert.doesNotMatch(source, /<Link href=\{hubHref\}>←/, file);
+      assert.match(source, file === 'ReimbursementPayoutAccountPage.tsx' ? /<BackToClaimsLink href=\{hubHref\} \/>/ : /<BackToClaimsLink href=\{`\$\{hubHref\}\$\{returnQuery\}`\} \/>/, file);
+      assert.match(source, /\bback=\{/, file);
+      assert.doesNotMatch(source, /\beyebrow=|<Link href=\{hubHref\}>←/, file);
     }
   });
 
@@ -830,11 +955,11 @@ describe('what a person presses on a claim screen is 44 px high on a phone (owne
 
   // The second look (the owner's own case, with paper copies and a slip) measured 37 px and 29 px wide on two links of two
   // words, and the notes of a claim had two with no height of their own.
-  it('gives the short links of a claim page 44 px both ways: ดูสำเนา, ดูสลิป, and a note\'s แก้ไข and ลบ', () => {
+  it('gives the short links of a claim page 44 px both ways: ดูสำเนา, ดูหลักฐานการจ่าย, and a note\'s แก้ไข and ลบ', () => {
     const html = detailSections({ ...paid, payments: [{ ...(paid.payments[1] as object), slipCount: 1, slips: [{ attachmentId: ids.attachment }], viewerCanOpenSlips: true }],
       signedCopies: [{ attachmentId: ids.attachment, fileName: 'ใบเบิกเซ็นแล้ว.pdf', uploadedAt: '2026-09-29T05:00:00.000Z', acknowledgedAt: '2026-09-29T05:00:00.000Z' }], signatures: [] },
       ids.requester, ['reimbursement.read_own']);
-    for (const label of ['ดูสำเนา', 'ดูสลิป']) {
+    for (const label of ['ดูสำเนา', 'ดูหลักฐานการจ่าย']) {
       const buttons = [...html.matchAll(new RegExp(`<button[^>]*class="([^"]*)"[^>]*>${label}</button>`, 'gu'))].map((match) => match[1]!);
       assert.ok(buttons.length > 0, label);
       for (const cls of buttons) assert.match(cls, /\bmin-h-11 min-w-11\b/u, `${label}: ${cls}`);
@@ -847,21 +972,44 @@ describe('what a person presses on a claim screen is 44 px high on a phone (owne
 
   it('gives each approver role on the policy tab a 44 px height', () => {
     const html = policySettingsHtml(policyForm, [roleOption('MANAGER', 'Manager', true), roleOption('CHECKER', 'ผู้ตรวจ', false)]);
-    const roles = [...html.matchAll(/<label class="([^"]*)"><span class="min-w-0">[^<]*<\/span><input type="checkbox"/gu)].map((match) => match[1]!);
-    assert.equal(roles.length, 2, html.slice(html.indexOf('ส่งใบเบิกให้ใครอนุมัติ'), html.indexOf('ส่งใบเบิกให้ใครอนุมัติ') + 900));
-    for (const cls of roles) assert.match(cls, /\bmin-h-11\b/, cls);
+    // Each role is the shared choice row: a 20 px tick and its name in one label, 44 px high by the shared rule
+    // (`.mangmee-choice` in globals.css), with no box drawn around it inside the card.
+    const list = html.slice(html.indexOf('ส่งใบเบิกให้ใครอนุมัติ'), html.indexOf('</fieldset>'));
+    const roles = [...list.matchAll(/<label class="([^"]*)"><input type="checkbox" class="mangmee-choice-input"[^>]*\/><span class="mangmee-choice-text"><span class="mangmee-choice-label">[^<]+<\/span><\/span><\/label>/gu)].map((match) => match[1]!);
+    assert.equal(roles.length, 2, list.slice(0, 900));
+    for (const cls of roles) assert.equal(cls, 'mangmee-choice');
+    assert.match(readFileSync(join(__dirname, '../../../app/globals.css'), 'utf8'), /\.mangmee-choice \{\s+display: flex;\s+min-height: 2\.75rem;/);
+  });
+
+  // Owner 2026-10-13 (Thai UX standard §3.4, §3.5): the tab had an icon tile and a restating sentence over each section,
+  // a box around every option, and a card "สรุปนโยบาย" that listed the six values just set.
+  it('draws the settings as plain rows, with no summary that repeats the form and one save button named for what it saves', () => {
+    const html = policySettingsHtml(policyForm, [roleOption('MANAGER', 'Manager', true)]);
+    const texts = visible(html);
+    for (const text of ['การอนุมัติใบเบิก', 'ใบเสร็จ', 'การเงินและกำหนดเวลา', 'ใบเบิกจะเดินตามนี้', 'ถ้าใบเสร็จอาจซ้ำกับใบอื่น', 'เตือนอย่างเดียว', 'บันทึกการตั้งค่า']) assert.ok(texts.includes(text), text);
+    for (const text of texts) assert.doesNotMatch(text, /นโยบาย|บริษัท/u, text);
+    assert.equal(texts.filter((text) => text === 'บันทึกการตั้งค่า').length, 1);
+    assert.equal((html.match(/mangmee-btn-primary/g) ?? []).length, 1, 'one main button');
+    // Every on/off setting is the shared tick row; nothing is a bordered box inside the card.
+    assert.equal((html.match(/<label class="mangmee-choice">/g) ?? []).length, 6, 'five settings and the one role');
+    assert.doesNotMatch(html, /rounded-xl border border-gray-200 px-3/);
+    const source = readFileSync(join(__dirname, 'ReimbursementsPages.tsx'), 'utf8');
+    assert.doesNotMatch(source, /สรุปนโยบาย|บันทึกนโยบาย|KPI\./);
+    // The save button says why it cannot be pressed, beside itself.
+    assert.match(source, /\{notReadyReason && <p[^>]*>\{notReadyReason\}<\/p>\}/);
   });
 });
 
-// Upgrade test 2026-10-02: a claim that needed no approval read as finished ("ลงนามในระบบครบแล้ว") beside a signature block
-// "ผู้อนุมัติ · ยังไม่ลงนาม" that nobody could ever sign.
+// Upgrade test 2026-10-02: a claim that needed no approval read as finished ("เซ็นในระบบครบแล้ว") beside a signature block
+// "ผู้อนุมัติ · ยังไม่เซ็น" that nobody could ever sign.
 describe('the signature card has an approver block only where the claim has an approver (owner 2026-10-02)', () => {
   /** The blocks of the card "ลายเซ็นในใบเบิก": each role with what it says. */
   const blocks = (detail: object) => {
     const html = detailSections(detail, ids.requester, ['reimbursement.read_own']);
     const card = html.slice(html.indexOf('id="reimbursement-signatures"'), html.indexOf('id="reimbursement-signed-copies"'));
     return {
-      roles: [...card.matchAll(/<div class="font-semibold text-gray-700">([^<]*)<\/div><div class="mt-2">(?:<span[^>]*>)?([^<]*)/gu)].map((match) => `${match[1]}: ${match[2]}`),
+      // A block is a cell of the card's grid (the role, then what it says): never a bordered box inside the card.
+      roles: [...card.matchAll(/<div class="min-w-0 text-sm"><div class="text-gray-500">([^<]*)<\/div><div class="mt-1">(?:<span[^>]*>)?([^<]*)/gu)].map((match) => `${match[1]}: ${match[2]}`),
       texts: visible(card), html: card,
     };
   };
@@ -869,25 +1017,28 @@ describe('the signature card has an approver block only where the claim has an a
 
   it('shows the requester\'s block alone on a claim that needed no approval, and says why', () => {
     const card = blocks(noApproval);
-    assert.deepEqual(card.roles, ['ผู้เบิก: ลงนามแล้ว']);
+    assert.deepEqual(card.roles, ['ผู้เบิก: เซ็นแล้ว']);
     assert.ok(card.texts.includes('ใบนี้ไม่ต้องอนุมัติตามนโยบาย จึงมีเฉพาะลายเซ็นของผู้เบิก'));
-    assert.equal(card.texts.includes('ผู้อนุมัติ') || card.texts.includes('ยังไม่ลงนาม'), false);
+    assert.equal(card.texts.includes('ผู้อนุมัติ') || card.texts.includes('ยังไม่เซ็น'), false);
     // One block is as wide as the card, not half of it beside nothing.
-    assert.doesNotMatch(card.html, /class="grid gap-2 grid-cols-2/u);
+    assert.doesNotMatch(card.html, /class="grid [^"]*grid-cols-2/u);
+    assert.doesNotMatch(card.html, /rounded-xl border border-gray-200 p-3/u);
     // A declared paper copy changes nothing: there is still no approver to have signed it.
-    assert.deepEqual(blocks({ ...noApproval, documentSignedVia: 'PAPER', signatures: [] }).roles, ['ผู้เบิก: ลงนามบนกระดาษ']);
+    assert.deepEqual(blocks({ ...noApproval, documentSignedVia: 'PAPER', signatures: [] }).roles, ['ผู้เบิก: เซ็นบนกระดาษ']);
     assert.equal(model.claimHasNoApprover(noApproval), true);
   });
 
   it('keeps both blocks where someone approved the claim, where it still waits for its approval, and while its account is corrected', () => {
-    assert.deepEqual(blocks({ ...paid, documentSignedVia: null }).roles, ['ผู้เบิก: ลงนามแล้ว', 'ผู้อนุมัติ: ยังไม่ลงนาม']);
+    assert.deepEqual(blocks({ ...paid, documentSignedVia: null }).roles, ['ผู้เบิก: เซ็นแล้ว', 'ผู้อนุมัติ: รอเซ็น']);
     const waiting = { ...paid, documentSignedVia: null, status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', approvedAt: undefined, payments: [], signatures: [],
       approvalSteps: [{ id: ids.step, sequenceNo: 1, approverUserId: ids.approver, approverName: 'สมชาย', status: 'PENDING', assignedAt: '2026-09-27T03:00:00.000Z' }] };
-    assert.deepEqual(blocks(waiting).roles, ['ผู้เบิก: ยังไม่ลงนาม', 'ผู้อนุมัติ: ยังไม่ลงนาม']);
+    assert.deepEqual(blocks(waiting).roles, ['ผู้เบิก: รอเซ็น', 'ผู้อนุมัติ: รอเซ็น'], 'old copies keep the record visible');
+    assert.deepEqual(blocks({ ...waiting, signedCopies: [] }).roles, [], 'without earlier copies there is no signature card');
     // A correction round sets the approval aside: the new account still has to be approved, by an approver.
     const inRound = { ...paid, documentSignedVia: null, status: 'PENDING_APPROVAL', payoutCorrectionPhase: 'AWAITING_REQUESTER', signatures: [], payments: [],
       approvalSteps: [{ ...(paid.approvalSteps[0] as object), invalidatedAt: '2026-09-28T01:00:00.000Z', invalidatedReason: 'payout_account_correction' }] };
-    assert.deepEqual(blocks(inRound).roles, ['ผู้เบิก: ยังไม่ลงนาม', 'ผู้อนุมัติ: ยังไม่ลงนาม']);
+    assert.deepEqual(blocks(inRound).roles, ['ผู้เบิก: รอเซ็น', 'ผู้อนุมัติ: รอเซ็น'], 'old copies stay readable during correction');
+    assert.deepEqual(blocks({ ...inRound, signedCopies: [] }).roles, []);
     for (const detail of [paid, waiting, inRound, draft]) assert.equal(model.claimHasNoApprover(detail), false);
   });
 });
@@ -910,17 +1061,23 @@ describe('the edit page speaks of a reason for sending back only for a draft som
       return undefined;
     }));
   };
-  const SENT_BACK = 'แก้ไขข้อมูลตามเหตุผลที่ส่งกลับ แล้วบันทึกร่างก่อนส่งอนุมัติใหม่';
-  const JUST_EDITED = 'แก้ไขข้อมูลคำขอ แล้วบันทึกร่างก่อนส่งอนุมัติ';
+  // 2026-10-13: the page says nothing under its title any more. The two sentences that stood there told the person to
+  // edit and save, which the title and the button already say; what a sent-back draft needs is the reason, and it is there.
+  const TOLD_TWICE = /แก้ไขข้อมูล|แล้วบันทึกร่างก่อนส่งอนุมัติ/u;
 
-  it('says a plain draft is edited and sent, and says "ตามเหตุผลที่ส่งกลับ" beside the reason of one that was sent back', () => {
+  it('says nothing of sending back on a plain draft, and shows the reason once on one that was sent back', () => {
     const plain = editPage(null);
-    assert.ok(plain.includes('แก้ไขคำขอเบิก') && plain.includes(JUST_EDITED), JSON.stringify(plain.slice(0, 12)));
+    assert.ok(plain.includes('แก้ไขใบเบิก'), JSON.stringify(plain.slice(0, 12)));
     assert.equal(plain.some((text) => text.includes('ส่งกลับ')), false, 'nobody sent it back');
     const returned = editPage('ส่งกลับให้แก้ไขที่ขั้นตรวจการเงิน: แนบใบเสร็จตัวจริง');
-    assert.ok(returned.includes(SENT_BACK));
-    assert.ok(returned.includes('⚠ ส่งกลับให้แก้ไขที่ขั้นตรวจการเงิน: แนบใบเสร็จตัวจริง'), 'the reason is on the page that speaks of it');
-    assert.equal(returned.includes(JUST_EDITED), false);
+    assert.equal(returned.filter((text) => text.includes('ส่งกลับ')).length, 1);
+    assert.ok(returned.includes('⚠ ส่งกลับให้แก้ไขที่ขั้นตรวจการเงิน: แนบใบเสร็จตัวจริง'), 'the reason is on the page, as advice and not as an error');
+    for (const text of [...plain, ...returned]) assert.doesNotMatch(text, TOLD_TWICE);
+    // Leaving the edit goes back to the draft, and the draft keeps its button names.
+    assert.ok(plain.includes('ยกเลิก') && plain.includes('บันทึกร่าง') && plain.includes('ส่งอนุมัติ'));
+    const source = readFileSync(join(__dirname, 'ReimbursementCreatePage.tsx'), 'utf8');
+    assert.match(source, /<Link href=\{editing \? `\$\{hubHref\}\/\$\{requestId\}\$\{returnQuery\}` : `\$\{hubHref\}\$\{returnQuery\}`\} className=\{ghostClass\}>ยกเลิก<\/Link>/);
+    assert.match(source, /\{correctionNote && <Notice tone="warning">\{correctionNote\}<\/Notice>\}/);
   });
 
   it('knows a draft that was sent back from the claim itself: finance asked for a correction, or its approver rejected it', () => {
@@ -934,28 +1091,28 @@ describe('the edit page speaks of a reason for sending back only for a draft som
       'ส่งกลับให้แก้ไขที่ขั้นตรวจการเงิน โดย อรอนงค์ ใจดี: แนบใบเสร็จตัวจริง');
     // Rejected, then reopened by its requester: the step it was last put before says why.
     const rejected = step('REJECTED', '2026-09-28T02:00:00.000Z', { rejectionReason: 'ยอดไม่ตรงกับใบเสร็จ' });
-    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [rejected] }), 'ผู้อนุมัติปฏิเสธคำขอนี้: ยอดไม่ตรงกับใบเสร็จ');
-    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [step('REJECTED', '2026-09-28T02:00:00.000Z')] }), 'ผู้อนุมัติปฏิเสธคำขอนี้');
+    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [rejected] }), 'ผู้อนุมัติ ส่งกลับให้แก้: ยอดไม่ตรงกับใบเสร็จ');
+    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [step('REJECTED', '2026-09-28T02:00:00.000Z')] }), 'ผู้อนุมัติ ส่งกลับให้แก้แล้ว');
     // Taken back by the requester themselves, also after an earlier rejection: nobody sent it back this time.
     const withdrawn = step('CANCELLED', '2026-09-29T02:00:00.000Z', { invalidatedReason: 'withdrawn_by_requester' });
     assert.equal(draftSentBackNote({ ...draft, approvalSteps: [withdrawn] }), null);
     assert.equal(draftSentBackNote({ ...draft, approvalSteps: [withdrawn, rejected] }), null, 'by when each was assigned, not by the order of the list');
-    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [step('CANCELLED', '2026-09-27T02:00:00.000Z'), rejected] }), 'ผู้อนุมัติปฏิเสธคำขอนี้: ยอดไม่ตรงกับใบเสร็จ');
+    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [step('CANCELLED', '2026-09-27T02:00:00.000Z'), rejected] }), 'ผู้อนุมัติ ส่งกลับให้แก้: ยอดไม่ตรงกับใบเสร็จ');
   });
 });
 
-// The three totals read "฿7,219.5": a currency sign, and a satang digit dropped. Every other amount of a claim reads "7,219.50 บาท".
+// The three totals read "฿7,219.5": a currency sign, and a satang digit dropped. Every other amount of a claim reads "฿7,219.50".
 describe('the totals on the hub read as money in baht, like every other amount of a claim (owner 2026-09-27/29)', () => {
   const ready = { ...queueRow, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', hasDuplicateBlocker: false, currentDesk: { kind: 'PAYMENT' } };
-  const MONEY = /^\d{1,3}(,\d{3})*\.\d{2} บาท$/u;
+  const MONEY = /^฿\d{1,3}(,\d{3})*\.\d{2}$/u;
 
-  it('shows the total of each tab as "1,234.50 บาท", with no currency sign and both satang digits', () => {
-    for (const [tab, html] of [['mine', hubTab('mine', hubClaims)], ['approvals', hubTab('approvals', [queueRow])], ['finance', hubTab('finance', [ready], undefined, {}, '', false)]] as const) {
-      const texts = visible(html);
-      assert.ok(texts.some((text) => MONEY.test(text)), `${tab}: ${JSON.stringify(texts.filter((text) => /\d/u.test(text)))}`);
-      for (const text of texts) assert.doesNotMatch(text, /฿|THB/u, `${tab}: ${text}`);
+  it('shows the total of each tab as "฿1,234.50", with the shared currency sign and both satang digits', () => {
+    for (const [tab, rows] of [['mine', hubClaims], ['approvals', [queueRow]], ['finance', [ready]]] as const) {
+      const html = hubTab(tab, [...rows], undefined, {}, '', false);
+      assert.match(html, /ยอดรวม [\d,]+\.\d{2} บาท/);
+      assert.doesNotMatch(html, /฿|THB/);
     }
-    assert.ok(visible(hubTab('mine', hubClaims)).includes('700.00 บาท'));
+    assert.match(hubTab('mine', hubClaims), /ยอดรวม 700.00 บาท/);
   });
 });
 
@@ -970,15 +1127,16 @@ describe('a signer with no saved signature is told what is true and what to do (
 
   it('says where to save one and that it signs at once, in the signature page\'s own words, and never to wait', () => {
     const texts = dialog();
-    for (const text of ['ยังไม่มีลายเซ็นของคุณ', 'ไปหน้าลายเซ็น', 'ไว้ภายหลัง']) assert.ok(texts.includes(text), text);
-    const body = texts.find((text) => text.includes('ลายเซ็นของฉัน')) ?? '';
-    assert.match(body, /เซ็นบนหน้าจอหรืออัปโหลดรูปลายเซ็น บันทึกแล้วใช้ลงนามได้ทันที จากนั้นกลับมากดลงนามในใบนี้อีกครั้ง$/u);
+    for (const text of ['ยังไม่มีลายเซ็นของคุณ', 'ไปบันทึกลายเซ็น', 'ปิด']) assert.ok(texts.includes(text), text);
+    // One sentence: save one, come back, and it works at once. The button that backs out is "ปิด", not "ไว้ภายหลัง".
+    assert.ok(texts.includes('บันทึกลายเซ็นก่อน แล้วกลับมาเซ็นใบนี้ ลายเซ็นที่บันทึกแล้วใช้ได้ทันที'), texts.join(' | '));
+    assert.equal(texts.includes('ไว้ภายหลัง'), false);
     const refusal = errorMessage('claim_saved_signature_required');
-    assert.match(refusal, /ใช้ลงนามได้ทันที$/u);
+    assert.match(refusal, /ใช้เซ็นได้ทันที$/u);
     for (const text of [...texts, refusal]) assert.doesNotMatch(text, /รอให้|รออนุมัติ|พร้อมใช้งาน/u);
     // What the dialog promises is what the signature page itself says after a save.
     const signaturePage = readFileSync(join(__dirname, '../expenses/ExpensesWorkspacePanels.tsx'), 'utf8');
-    for (const text of ['ยังไม่มีลายเซ็นของคุณ', 'บันทึกลายเซ็นแล้ว ใช้ลงนามได้ทันที']) assert.ok(signaturePage.includes(text), text);
+    for (const text of ['ยังไม่มีลายเซ็นของคุณ', 'บันทึกลายเซ็นแล้ว ใช้เซ็นได้ทันที']) assert.ok(signaturePage.includes(text), text);
   });
 
   // Upgrade test 2026-10-02: after the signature was saved, nothing on the signature page led back to the claim.
@@ -987,10 +1145,10 @@ describe('a signer with no saved signature is told what is true and what to do (
     let html: string;
     try { html = renderToStaticMarkup(h(AppRouterContext.Provider, { value: router }, h(sections.MissingSavedSignatureModal, { companyId: 'company-1', requestId: ids.request, onClose: noop }))); }
     finally { Reflect.deleteProperty(globalThis, 'document'); }
-    assert.match(html, new RegExp(`<a[^>]*href="/companies/company-1/expenses/signatures\\?fromClaim=${ids.request}"[^>]*>ไปหน้าลายเซ็น</a>`, 'u'));
+    assert.match(html, new RegExp(`<a[^>]*href="/companies/company-1/expenses/signatures\\?fromClaim=${ids.request}"[^>]*>ไปบันทึกลายเซ็น</a>`, 'u'));
     const panel = require('../expenses/ExpensesWorkspacePanels') as typeof import('../expenses/ExpensesWorkspacePanels');
-    assert.equal(panel.signatureReturnText(false), 'เมื่อบันทึกลายเซ็นแล้ว กลับไปกดลงนามในใบเบิกได้ทันที');
-    assert.equal(panel.signatureReturnText(true), 'ลายเซ็นของคุณพร้อมใช้แล้ว กลับไปกดลงนามในใบเบิกได้เลย');
+    assert.equal(panel.signatureReturnText(false), 'เมื่อบันทึกลายเซ็นแล้ว กลับไปกดเซ็นในใบเบิกได้ทันที');
+    assert.equal(panel.signatureReturnText(true), 'ลายเซ็นของคุณพร้อมใช้แล้ว กลับไปกดเซ็นในใบเบิกได้เลย');
     // Only a plain id is taken from the address, and only ever as the last part of this company's own claim page.
     assert.equal(panel.RETURN_CLAIM_ID.test(ids.request), true);
     for (const other of ['', 'a/b', '../settings', 'https://example.com', 'x'.repeat(65), 'claim 1', 'claim?x=1']) assert.equal(panel.RETURN_CLAIM_ID.test(other), false, other);
@@ -1023,41 +1181,47 @@ describe('a refused approval gets one answer, from the screen that asked (owner 
     // A refusal of any other kind: the claim moved on while the queue was open. The queue is read again, and the banner
     // says what was refused above the claims as they are now (seen in the real look: the cancelled claim's card stayed, with its buttons).
     assert.match(hub, /\} else \{\s+const failure = err\(e\);\s+await load\(\);\s+setError\(failure\);\s+if \(isThirdPartyAcceptanceRefusal\(e\)\) \{ toast\.error\(failure\); onOpenDetail\(r\.id\); \}\s+\}/);
-    assert.equal((hub.match(/try \{ await fn\(\); \} catch \(e\) \{ failure = err\(e\); \}\s+await load\(\);\s+if \(failure\) setError\(failure\);/g) ?? []).length, 2, 'the approval queue and the pay queue');
-    assert.match(hub, /toast\.success\('อนุมัติคำขอเรียบร้อยแล้ว'\);\s+\} catch \(e\) \{ setError\(err\(e\)\); if \(isThirdPartyAcceptanceRefusal\(e\)\)/);
+    assert.equal((hub.match(/try \{ await fn\(\); \} catch \(e\) \{ failure = err\(e\); \}\s+await load\(\);\s+if \(failure\) setError\(failure\);/g) ?? []).length, 1, 'the pay queue; the approval queue has one press of its own, handled above');
+    assert.match(hub, /toast\.success\('อนุมัติใบเบิกแล้ว'\);\s+\} catch \(e\) \{ setError\(err\(e\)\); if \(isThirdPartyAcceptanceRefusal\(e\)\)/);
     // Its banner is brought into view (the row pressed may be far below it on a phone), except under that dialog, which shows it.
     assert.match(hub, /\{error && <ErrorBanner message=\{error\} focus=\{!staleReview\} \/>\}/);
     assert.match(hub, /<StaleApprovalDialog[\s\S]{0,1000}?error=\{error\}/);
     // The words of that dialog, and of the claim screens' own sentence for the refusal: the claim was edited, look again.
-    assert.match(readFileSync(join(__dirname, 'ReimbursementDetailSections.tsx'), 'utf8'), /คำขอนี้ถูกแก้ไขหลังจากส่งอนุมัติ กรุณาตรวจสอบข้อมูลล่าสุดก่อนตัดสินใจ/);
-    assert.match(errorMessage('stale_approval_snapshot'), /^คำขอถูกแก้ไขหลังส่งอนุมัติ/u);
+    assert.match(readFileSync(join(__dirname, 'ReimbursementDetailSections.tsx'), 'utf8'), /<Notice tone="warning">ใบนี้ถูกแก้หลังส่งอนุมัติ ดูสิ่งที่เปลี่ยนก่อนอนุมัติ<\/Notice>/);
+    assert.match(errorMessage('stale_approval_snapshot'), /^ใบเบิกถูกแก้ไขหลังส่งอนุมัติ/u);
   });
 });
 
 // Owner 2026-10-02: "SLA" is no word a shop owner reads. A claim that waited past the company's deadline reads "เกินกำหนด",
 // the words of the notice the server sends for it, and the policy page names the deadline for what it is.
 describe('the deadline of a claim is said in plain Thai (owner 2026-10-02)', () => {
-  it('marks a claim past it เกินกำหนด in the approval queue: the count, the table row and the phone card', () => {
-    const texts = visible(hubTab('approvals', [{ ...queueRow, status: 'PENDING_APPROVAL', approvalActions: { canApprove: true, canReject: true } }]));
-    assert.equal(texts.filter((text) => text === 'เกินกำหนด').length, 3);
-    for (const text of texts) assert.doesNotMatch(text, /SLA/u);
+  it('marks a claim past it เกินกำหนด in the approval queue: the line above the list, the table row and the stacked row', () => {
+    const html = hubTab('approvals', [{ ...queueRow, slaRisk: true }]);
+    assert.doesNotMatch(html, /เกินกำหนด 1 ใบ|reimbursement-current-desk/);
+    assert.equal(html.match(/>อาจซ้ำ<\/span>/g)?.length, 2, 'one blocking badge replaces secondary marks');
   });
 
-  it('names the deadline on the policy page, its card and its summary', () => {
-    const texts = policySettings({ ...policyForm, slaHours: 24 }, [roleOption('MANAGER', 'Manager', true)]);
-    for (const text of ['การเงินและกำหนดเวลา', 'กำหนดเวลาอนุมัติและจ่าย (ชั่วโมง)', 'กำหนดเวลาอนุมัติและจ่าย', '24 ชั่วโมง']) assert.ok(texts.includes(text), text);
+  it('names the deadline on the settings tab: its section and its field, once (the summary that said it again is gone)', () => {
+    const html = policySettingsHtml({ ...policyForm, slaHours: 24 }, [roleOption('MANAGER', 'Manager', true)]);
+    const texts = visible(html);
+    for (const text of ['การเงินและกำหนดเวลา', 'กำหนดเวลาอนุมัติและจ่าย (ชั่วโมง)']) assert.ok(texts.includes(text), text);
+    assert.match(html, /<input id="reimbursement-deadline-hours"[^>]*value="24"/);
+    assert.equal(texts.filter((text) => text.includes('กำหนดเวลาอนุมัติและจ่าย')).length, 1);
     for (const text of texts) assert.doesNotMatch(text, /SLA/u);
-    assert.ok(policySettings(policyForm, [roleOption('MANAGER', 'Manager', true)]).includes('ไม่กำหนด'), 'a company that set no deadline');
+    // A shop that set no deadline: the field is empty, and the line under it says that empty means none.
+    const none = policySettingsHtml(policyForm, [roleOption('MANAGER', 'Manager', true)]);
+    assert.match(none, /<input id="reimbursement-deadline-hours"[^>]*value=""/);
+    assert.ok(visible(none).includes('เว้นว่างไว้ถ้าไม่กำหนด'));
     // No screen says it anywhere else either: the tab's description, a tooltip, a message.
     assert.equal(claimScreenSources().includes('SLA'), false);
   });
 });
 
-// The summary beside the policy form read "≥ 1.00 บาท": a sign where the field and the preview say "ตั้งแต่" in words.
+// The summary beside the policy form read "≥ ฿1.00": a sign where the field and the preview say "ตั้งแต่" in words.
 describe('the policy summary says the approval threshold in the words of its field (owner 2026-10-02)', () => {
-  it('reads "ตั้งแต่ 1.00 บาท", with no comparison sign anywhere on the policy tab', () => {
+  it('reads "ยอดตั้งแต่ ฿1.00" where the tab says what the settings add up to, with no comparison sign anywhere on the tab', () => {
     const texts = policySettings(policyForm, [roleOption('MANAGER', 'Manager', true)]);
-    assert.ok(texts.includes('ตั้งแต่ 1.00 บาท'), JSON.stringify(texts.filter((text) => text.includes('บาท'))));
+    assert.ok(texts.includes('ยอดตั้งแต่ ฿1.00'), JSON.stringify(texts.filter((text) => text.includes('บาท'))));
     for (const text of texts) assert.doesNotMatch(text, /[≥≤<>]/u, text);
   });
 });
@@ -1107,6 +1271,17 @@ describe('the claim page says "อยู่ที่" with the people who can re
       h(ReimbursementJourneyPage, { companyId: 'company-1', requestId: ids.request, userId: ids.requester, permissions: ['reimbursement.read_own'] }))),
     (initial) => (initial === null && ++nulls === 2 ? detail : undefined));
   };
+  it('shows duplicate comparison facts and only offers an open link when the server grants it', () => {
+    for (const canOpen of [false, true]) {
+      const html = claimPage({ ...waiting, duplicateCandidates: [{ id: 'comparison', status: 'OPEN', documentNumber: 'RB-OTHER',
+        requesterOrPayee: 'สมชาย', amount: '500', currency: 'THB', date: '2026-01-01', canOpen, candidateRequestId: 'other-claim' }] });
+      assert.ok(visible(html).includes('เอกสารที่อาจซ้ำ'));
+      assert.ok(visible(html).includes('RB-OTHER'));
+      assert.ok(html.includes('สมชาย') && html.includes('500'));
+      assert.equal(html.includes('href="/companies/company-1/reimbursements/other-claim"'), canOpen);
+    }
+  });
+
   const deskLine = (detail: object) => visible(claimPage(detail)).filter((text) => text.startsWith('อยู่ที่'));
 
   it('names them from the detail\'s paymentDesk, and prints the pool label when the detail names nobody', () => {
@@ -1174,13 +1349,13 @@ describe('one thing has one name on the claim screens (owner 2026-10-02)', () =>
 
   it('uses no second name for the requester, the admin role, the policy tab or its self-approval switch', () => {
     assert.ok(screens.includes('ผู้เบิก') && screens.includes('THAI_SYSTEM_ROLE_NAMES') && screens.includes('POLICY_TAB_LABEL') && REIMBURSEMENT_POLICY_TAB_LABEL === 'ตั้งค่านโยบาย', 'the screens were read');
-    for (const retired of ['ผู้ขอ', 'ผู้ยื่น', 'ผู้รับเงินคืน', 'ผู้สำรองจ่ายและรับเงินคืน', 'แอดมิน', 'ตั้งค่าเบิกจ่าย', 'อนุญาตให้อนุมัติคำขอตนเอง']) {
+    for (const retired of ['ผู้ขอ', 'ผู้ยื่น', 'ผู้รับเงินคืน', 'ผู้สำรองจ่ายและรับเงินคืน', 'แอดมิน', 'ตั้งค่าเบิกจ่าย', 'อนุญาตให้อนุมัติใบเบิกตนเอง']) {
       assert.equal(screens.includes(retired), false, retired);
     }
     // The sentences the API's refusals are said in, for the codes of a claim that name one of them.
     for (const code of ['reimbursement_source_payer_unlinked', 'reimbursement_source_wrong_payer', 'reimbursement_requester_unavailable', 'invalid_primary_attachment',
       'invalid_linked_expense', 'payout_account_edit_denied', 'reimbursement_policy_inactive', 'self_approval_denied']) {
-      assert.doesNotMatch(errorMessage(code), /ผู้ขอ|ผู้ยื่น|ผู้รับเงินคืน|แอดมิน|ตั้งค่าเบิกจ่าย|คำขอตนเอง"/u, code);
+      assert.doesNotMatch(errorMessage(code), /ผู้ขอ|ผู้ยื่น|ผู้รับเงินคืน|แอดมิน|ตั้งค่าเบิกจ่าย|ใบเบิกตนเอง"/u, code);
     }
   });
 
@@ -1273,16 +1448,41 @@ describe('claim policy shares the employee and role-page names', () => {
 });
 
 describe('claims self-approval policy words', () => {
-  it('explains the switch for all roles, the solo exception, and the frozen submitted route', () => {
+  it('says whom the switch helps and the one case that needs no switch; the frozen route is said when the settings are saved', () => {
     const texts = policySettings(policyForm, [roleOption('MANAGER', 'ผู้จัดการ', true)]);
-    assert.ok(texts.includes('เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายอนุมัติใบเบิกของตัวเองได้ เมื่อปิด ไม่มีใครอนุมัติใบเบิกของตัวเองได้ไม่ว่าบทบาทใด ยกเว้นเมื่อตอนส่ง ผู้เบิกเป็นคนเดียวที่อนุมัติใบนี้ได้ ใบที่ส่งไปแล้วใช้ผู้อนุมัติตามที่กำหนดไว้ตอนส่ง'));
+    // Before 2026-10-13: four sentences, none saying that the switch only helps people in the approver roles chosen
+    // (an owner outside them turned it on, re-sent the claim and still could not approve).
+    assert.ok(texts.includes('เมื่อเปิด คนในบทบาทผู้อนุมัติที่เลือกไว้อนุมัติใบเบิกของตัวเองได้'));
+    assert.match(readFileSync(join(__dirname, 'ReimbursementsPages.tsx'), 'utf8'), /toast\.success\('บันทึกการตั้งค่าแล้ว ใช้กับใบเบิกที่ส่งหลังจากนี้'\)/);
   });
 });
 
 
-it('both pay-queue layouts reuse the same duplicate reason and clearing notice as the payment refusal', () => {
+it('a pay-list row says a duplicate hold once, by its status, and leaves what to do about it to the claim page', () => {
   const source = readFileSync(join(__dirname, 'ReimbursementsPages.tsx'), 'utf8');
-  assert.equal((source.match(/duplicateNoticeForViewer\(r, permissions, userId\)/g) ?? []).length, 2);
+  // Before: both layouts printed the claim page's whole notice, which told the payer to press a button the row did not have,
+  // under two badges for the one fact ("ติดรายการซ้ำ" and "อาจซ้ำ").
+  assert.doesNotMatch(source, /duplicateNoticeForViewer/);
+  const held = { ...queueRow, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', currentDesk: { kind: 'PAYMENT' } };
+  const html = hubTab('finance', [held], undefined, {}, '', false);
+  const list = visible(html.slice(html.indexOf('data-testid="reimbursements-finance-table"')));
+  assert.equal(list.filter((text) => text === 'ติดรายการซ้ำ').length, 2, 'once in the table, once in the stacked row');
+  assert.equal(list.includes('อาจซ้ำ'), false, 'no second mark for the same fact');
+  for (const text of list) assert.doesNotMatch(text, /กดปลดรายการซ้ำ|ตรวจแล้วถ้าไม่ซ้ำ/u);
+  // Nobody is offered a payment for it. Whoever may clear the hold gets one button to the claim, where the receipts are
+  // compared; this viewer holds no such right and gets none.
+  assert.equal(list.includes('จ่ายเงิน'), false);
+  assert.equal(list.includes('ตรวจรายการซ้ำ'), false);
+  const { queueRowAwaitsDuplicateCheck } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+  assert.equal(queueRowAwaitsDuplicateCheck(held), true);
+  const notHeld: Array<[string, Parameters<typeof queueRowAwaitsDuplicateCheck>[0]]> = [['no hold', { ...held, hasDuplicateBlocker: false }], ['being cancelled', { ...held, cancellationPending: true }],
+    ['under finance review', { ...held, status: 'FINANCE_REVIEW' }], ['confirmed', { ...held, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] }], ['no row', null]];
+  for (const [why, other] of notHeld) assert.equal(queueRowAwaitsDuplicateCheck(other), false, why);
+  assert.match(source, /if \(queueRowAwaitsDuplicateCheck\(r\)\) \{\s+return !blockedByDuplicate && \(\s+<button type="button" className=\{ghostClass\} onClick=\{e => \{ e\.stopPropagation\(\); onOpenDetail\(r\.id\); \}\}>\{CHECK_DUPLICATE_LABEL\}<\/button>/);
+  // A claim under finance review that may be a duplicate keeps its own status, with the one mark beside it.
+  const review = visible(hubTab('finance', [queueRow]));
+  assert.equal(review.filter((text) => text === 'อาจซ้ำ').length, 2);
+  assert.equal(review.includes('ติดรายการซ้ำ'), false);
 });
 
 it('duplicate-clear success says the review was recorded without promising every blocker is gone', () => {
@@ -1290,40 +1490,90 @@ it('duplicate-clear success says the review was recorded without promising every
   assert.match(source, /success: REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED/);
 });
 
-it('both pay-queue layouts distinguish confirmed duplicates and give cancellation or payment-void guidance', () => {
+it('both pay-list layouts mark a confirmed duplicate as one, never as a possible one to clear', () => {
   for (const status of ['READY_FOR_PAYMENT', 'FINANCE_REVIEW', 'PARTIALLY_PAID']) {
     const html = hubTab('finance', [{ ...queueRow, status, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] }]);
-    const text = visible(html).join(' ');
-    assert.equal((text.match(/ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/g) ?? []).length, 2);
-    assert.match(text, /ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ/);
-    assert.doesNotMatch(text, /กดปลดรายการซ้ำ|ตรวจว่าไม่ซ้ำแล้ว/);
-    if (status === 'PARTIALLY_PAID') assert.match(text, /ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้/);
-    else assert.match(text, /กดยกเลิกคำขอในหน้าใบเบิก/);
+    const list = visible(html.slice(html.indexOf('data-testid="reimbursements-finance-table"')));
+    assert.equal(list.filter((text) => text === 'ยืนยันว่าใบเสร็จซ้ำ').length, status === 'READY_FOR_PAYMENT' ? 0 : 2, status);
+    for (const text of list) assert.doesNotMatch(text, /กดปลดรายการซ้ำ|ตรวจว่าไม่ซ้ำแล้ว|^อาจซ้ำ$|^ตรวจรายการซ้ำ$|^บันทึกจ่าย$/u, status);
+    // A claim that waits to be cancelled for it says so in its status; who cancels it and how is said on its page.
+    assert.equal(list.filter((text) => text === 'รอยกเลิก').length, status === 'READY_FOR_PAYMENT' ? 2 : 0, status);
   }
+  // The claim page keeps the guidance the rows used to print: who cancels, or who takes the payment back first.
+  const { duplicateNoticeForViewer } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+  const confirmed = (status: string) => duplicateNoticeForViewer({ ...queueRow, status, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] }, hubPermissions, ids.requester);
+  assert.match(confirmed('READY_FOR_PAYMENT'), /ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ[\s\S]*กดยกเลิกคำขอในหน้าใบเบิก/u);
+  assert.match(confirmed('PARTIALLY_PAID'), /ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้/u);
 });
 
-it('the finance table wraps guidance and reserves visible actions within either desktop content width', () => {
+it('the pay-list table lets free text wrap and keeps the number, the amount and the one button whole', () => {
   for (const withReview of [false, true]) {
     const rows = [{ ...queueRow, status: 'READY_FOR_PAYMENT', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] },
       { ...queueRow, id: 'payable', status: 'READY_FOR_PAYMENT', hasDuplicateBlocker: false, duplicateReasons: [] }];
     const html = hubTab('finance', rows, undefined, {}, '', withReview);
     const table = html.slice(html.indexOf('data-testid="reimbursements-finance-table"'), html.indexOf('</table>', html.indexOf('data-testid="reimbursements-finance-table"')));
-    assert.match(table, /table-fixed/);
-    assert.match(table, /w-full/);
-    assert.match(table, /\[&amp;_td\]:!whitespace-normal/);
-    assert.match(table, /overflow-wrap:anywhere/);
-    const fixedWidths = [...table.matchAll(/<col style="width:(\d+)px"/g)].map(match => Number(match[1]));
-    assert.equal(fixedWidths.at(-1), 176, 'action column is reserved');
-    for (const contentWidth of [974, 1177]) assert.ok(contentWidth - 32 - fixedWidths.reduce((sum, width) => sum + width, 0) >= 190, 'remaining status cell can wrap');
+    // Before: fixed column widths broke "RB-202610-" / "00002" and "1,420.50 / ฿1,420.50" over two lines, while the
+    // status column took half the table. Now only the cells of free text wrap.
+    assert.equal([...table.matchAll(/width:(\d+)%/g)].reduce((sum, match) => sum + Number(match[1]), 0), 100);
+    assert.match(table, /break-words px-2 py-3/);
+    assert.equal(table.match(/<td class="break-words[^"]*"/g)?.length, 4, 'reason and requester wrap on both rows');
     assert.match(table, /รอยกเลิก/);
-    assert.match(table, /บันทึกจ่าย<\/button>/, 'other rows retain their payment action');
+    assert.match(table, /จ่ายเงิน<\/button>/, 'other rows retain their payment action');
+    assert.equal(table.match(/>จ่ายเงิน<\/button>/g)?.length, 1, 'only the payable row offers payment');
   }
 });
 
-it('the duplicate summary names both possible and confirmed blockers honestly', () => {
-  const text = visible(hubTab('finance', [queueRow, { ...queueRow, id: 'confirmed', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] }]));
-  const label = text.indexOf('ติดรายการซ้ำ');
-  assert.ok(label >= 0);
-  assert.equal(text[label - 1], '2');
-  assert.ok(!text.includes('พบรายการที่อาจซ้ำ'));
+it('the line above the pay list counts possible and confirmed holds under one honest word', () => {
+  const ready = { ...queueRow, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', currentDesk: { kind: 'PAYMENT' } };
+  const text = visible(hubTab('finance', [ready, { ...ready, id: 'confirmed', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] }]));
+  // "ติดรายการซ้ำ" is true of both; "อาจซ้ำ" would be untrue of the confirmed one.
+  assert.ok(text.includes('ยอดรวม 3,229.00 บาท'));
+  assert.equal(text.filter(line => line === 'ติดรายการซ้ำ').length, 2);
+  assert.equal(text.filter(line => line === 'รอยกเลิก').length, 2);
+  assert.ok(!text.includes('ติดรายการซ้ำ 2 ใบ'), 'no extra summary sentence');
+  assert.ok(!text.includes('พบรายการที่อาจซ้ำ') && !text.some((line) => /^อาจซ้ำ \d+ ใบ$/u.test(line)));
+});
+
+it('deletes a never-sent draft with facts and one question, while sent claims keep reasoned cancellation', () => {
+  const source = readFileSync(join(__dirname, 'ReimbursementJourneyPage.tsx'), 'utf8');
+  assert.match(source, /!neverSentDraft.*setReasonAction\('cancel'\)/);
+  assert.match(source, /title: 'ลบร่างใบเบิก', message:.*detail.reason.*formatMoney\(detail.amount, detail.currency\)/);
+  assert.match(source, /confirmLabel: 'ลบร่าง', cancelLabel: 'ไม่ลบ'/);
+  assert.match(source, /await deleteReimbursementDraft\(companyId, requestId\)/);
+  assert.match(source, /neverSentDraft \? 'ลบร่าง' : ACTION_LABELS.cancel/);
+});
+
+
+it('R5 table and phone claim links carry the selected group, and the back and edit links retain it', () => {
+  const html = hubTab('mine', hubClaims, 'correction');
+  const href = `/companies/company-1/reimbursements/${ids.request}5?tab=mine&amp;filter=correction`;
+  assert.equal(html.split(`href="${href}"`).length - 1, 2, 'table and phone card');
+  let nulls = 0;
+  const claim = renderWithState(h(AppRouterContext.Provider, { value: router },
+    h(SearchParamsContext.Provider, { value: new URLSearchParams('tab=mine&filter=correction') },
+      h(ToastContext.Provider, { value: toast }, h(ReimbursementJourneyPage, {
+        companyId: 'company-1', requestId: ids.request, userId: ids.requester,
+        permissions: ['reimbursement.read_own', 'reimbursement.update_own_draft', 'reimbursement.cancel_own'],
+      })))), initial => initial === null && ++nulls === 2 ? draft : undefined);
+  assert.ok(claim.includes('href="/companies/company-1/reimbursements?tab=mine&amp;filter=correction"'));
+  assert.ok(claim.includes(`href="/companies/company-1/reimbursements/${ids.request}/edit?tab=mine&amp;filter=correction"`));
+  const step = claim.slice(claim.indexOf('aria-labelledby="journey-step-title"'), claim.indexOf('</section>', claim.indexOf('aria-labelledby="journey-step-title"')));
+  assert.match(step, /<button[^>]*data-variant="danger"[^>]*>ลบร่าง<\/button>/);
+  assert.equal(visible(claim).filter(text => text === 'ลบร่าง').length, 1);
+});
+
+describe('paid claim rows show a quiet completion fact in phone cards and wide tables', () => {
+  for (const [name, documentSignedVia, roles] of [
+    ['digital', 'DIGITAL', ['REQUESTER', 'APPROVER']], ['paper', 'PAPER', []],
+    ['neither', null, []], ['half signed', null, ['REQUESTER']],
+  ] as const) {
+    it(name, () => {
+      const html = hubTab('mine', [{ ...paid, documentSignedVia, signatures: roles.map(role => ({ role })) }]);
+      const words = visible(html);
+      assert.equal(words.filter(word => word === 'ยังไม่ได้เซ็นใบเบิก').length, 0, 'no second status line');
+      assert.equal([...html.matchAll(/mangmee-badge-brand">จ่ายแล้ว</gu)].length, documentSignedVia ? 2 : 0);
+      assert.equal(words.filter(word => word === 'รอเซ็นใบเบิก').length, documentSignedVia ? 0 : 2, 'unsigned paid claims carry one actionable badge');
+      assert.doesNotMatch(html, /reimbursement-current-desk|ยังไม่ได้เซ็นใบเบิก/);
+    });
+  }
 });

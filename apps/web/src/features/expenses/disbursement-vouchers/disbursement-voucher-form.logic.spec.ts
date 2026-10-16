@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { amountError, cleanAmountInput, initialAmount, lockOtherBranchRows, nextDraftCommand, payeeRule, selectionAllowed, selectedTotal } from './disbursement-voucher-form.logic';
+import { skipSingleExpenseSelection, amountError, cleanAmountInput, groupAmountInput, initialAmount, lockOtherBranchRows, nextDraftCommand, payeeRule, selectionAllowed, selectedTotal } from './disbursement-voucher-form.logic';
 import type { DisbursementPayableExpense } from '@watchdog-bms/contracts';
 const row = (key: string, kind: 'TAX_ID' | 'NAME' | null, tax: string | null = null) => ({ payeeKey: key, payeeKeyKind: kind, vendorTaxId: tax }) as DisbursementPayableExpense;
 test('payee mirror uses server keys: matching tax, matching names without tax, and explicit confirmation', () => {
@@ -36,6 +36,8 @@ test('an amount refusal says which of the two things is wrong, and typed separat
   for (const value of ['0', '4000.01']) assert.equal(amountError(value, '4000.0000'), 'ยอดต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย ฿4,000.00');
   assert.equal(cleanAmountInput(' ฿1,234.50 '), '1234.50');
   assert.equal(amountError(cleanAmountInput('1,000'), '4000.0000'), null);
+  // While its box is not being typed in, a stored amount reads with commas; what is not a plain number is shown as typed.
+  assert.deepEqual(['19400.00', '999', '1000', '1234567.5', '', 'abc', '12.'].map(groupAmountInput), ['19,400.00', '999', '1,000', '1,234,567.5', '', 'abc', '12.']);
 });
 test('once a line is chosen, unchosen lines of another branch are locked with the one-branch sentence', () => {
   const rows = [{ expenseId: 'a', branchId: 'ho', selectable: true }, { expenseId: 'b', branchId: 'siam', selectable: true }, { expenseId: 'c', branchId: null, selectable: true }] as DisbursementPayableExpense[];
@@ -44,4 +46,15 @@ test('once a line is chosen, unchosen lines of another branch are locked with th
   assert.deepEqual(locked.rows.map(row => row.selectable), [true, false, true]);
   assert.deepEqual(locked.reasons, { b: 'อยู่คนละสาขากับรายการที่เลือกไว้ หนึ่งใบรวมได้เฉพาะรายการของสาขาเดียว' });
   assert.deepEqual(lockOtherBranchRows(rows, { a: '1.00', b: '1.00' }, 'ho').reasons, {});
+});
+
+test('only an eligible source expense with one eligible candidate skips selection', () => {
+  const entry = { expenseId: 'a', payeeKey: 'payee', selectable: true } as DisbursementPayableExpense;
+  const second = { ...entry, expenseId: 'b' };
+  assert.equal(skipSingleExpenseSelection(entry, [entry]), true);
+  assert.equal(skipSingleExpenseSelection(entry, [entry, { ...second, selectable: false }]), true);
+  assert.equal(skipSingleExpenseSelection(entry, [entry, second]), false);
+  assert.equal(skipSingleExpenseSelection(entry, [entry, { ...second, payeeKey: 'another' }]), true);
+  assert.equal(skipSingleExpenseSelection(null, [entry]), false);
+  assert.equal(skipSingleExpenseSelection({ ...entry, selectable: false }, [{ ...entry, selectable: false }]), false);
 });

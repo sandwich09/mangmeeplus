@@ -107,13 +107,13 @@ describe('buildIdentityPatch', () => {
 
   it('refuses a half-typed tax id before the server has to', () => {
     const result = buildIdentityPatch(control, null, { registeredName: '', taxId: '12345', address: BLANK_ADDRESS });
-    assert.deepEqual(result, { error: 'เลขผู้เสียภาษีต้องเป็นตัวเลข 13 หลักค่ะ' });
+    assert.deepEqual(result, { error: 'เลขผู้เสียภาษีต้องมี 13 หลัก' });
   });
 
   it('refuses to send a no-op', () => {
     const current = { registeredName: 'ร้านมั่งมี', taxId: '0105558123456', addressJson: FULL_ADDRESS };
     const result = buildIdentityPatch(control, current, { registeredName: 'ร้านมั่งมี', taxId: '0105558123456', address: FULL_ADDRESS });
-    assert.deepEqual(result, { error: 'ยังไม่มีอะไรเปลี่ยนค่ะ' });
+    assert.deepEqual(result, { error: 'ยังไม่ได้แก้อะไร' });
   });
 
   it('carries the reason a closed-window correction needs, and the date a legal change needs', () => {
@@ -171,7 +171,7 @@ describe('the Stripe Checkout address offer (DQ5)', () => {
     const page = readFileSync(new URL('./CompanyProfilePage.tsx', import.meta.url), 'utf8');
     assert.match(page, /const checkoutFill = checkoutAddress && identity\?\.readiness\.identity\?\.reasons\.includes\('company_address_incomplete'\)/);
     assert.match(page, /checkoutFilled && !address\.subdistrict\?\.trim\(\) && \(/);
-    assert.match(page, /กรุณาเลือกตำบล\/แขวงอีกครั้ง/);
+    assert.match(page, /เลือกตำบล\/แขวงอีกครั้งก่อนบันทึก/);
   });
 });
 
@@ -179,7 +179,7 @@ describe('addressErrorMessages', () => {
   it('names the empty box in Thai instead of a generic reload', () => {
     assert.deepEqual(
       addressErrorMessages({ details: { details: ['addressJson.province is required', 'addressJson.postalCode must be 5 digits'] } }),
-      ['กรุณากรอก จังหวัด', 'รหัสไปรษณีย์ ต้องเป็นตัวเลข 5 หลัก'],
+      ['กรอกจังหวัด', 'รหัสไปรษณีย์ ต้องเป็นตัวเลข 5 หลัก'],
     );
   });
   // N2: only `is required` means "you left it blank" — telling an owner to fill in a box they
@@ -190,7 +190,7 @@ describe('addressErrorMessages', () => {
       ['จังหวัด ค่าไม่ถูกต้อง'],
       'an unknown key has no box to name, and a wrong-typed one is not a blank one',
     );
-    assert.deepEqual(addressErrorMessages({ details: { details: ['addressJson.district is required'] } }), ['กรุณากรอก อำเภอ / เขต']);
+    assert.deepEqual(addressErrorMessages({ details: { details: ['addressJson.district is required'] } }), ['กรอกอำเภอ / เขต']);
   });
 
   // The shape authedApiFetch really throws for this 422: `details` is the whole response body.
@@ -199,7 +199,7 @@ describe('addressErrorMessages', () => {
       status: 422,
       details: { message: 'invalid addressJson', details: ['addressJson.line1 is required', 'addressJson.postalCode must be 5 digits'], requestId: 'req-1' },
     });
-    assert.deepEqual(addressErrorMessages(error), ['กรุณากรอก ที่อยู่ (บ้านเลขที่ ถนน)', 'รหัสไปรษณีย์ ต้องเป็นตัวเลข 5 หลัก']);
+    assert.deepEqual(addressErrorMessages(error), ['กรอกที่อยู่ (บ้านเลขที่ ถนน)', 'รหัสไปรษณีย์ ต้องเป็นตัวเลข 5 หลัก']);
   });
 
   it('says nothing when the error is not about the address', () => {
@@ -453,7 +453,7 @@ describe('the profile route is reachable and dynamic', () => {
   it('is on the settings menu behind a registered permission rule', () => {
     const item = SETTINGS_MENU_ITEMS.find((entry) => entry.href === '/settings/profile');
     assert.ok(item, 'the settings menu must carry the profile card');
-    assert.equal(item.title, 'ข้อมูลร้านและบัญชีของฉัน');
+    assert.equal(item.title, 'ข้อมูลร้าน');
     assert.deepEqual(findRoutePermissionRule('/settings/profile')?.anyOf, ['company.setup.read']);
     assert.equal(canSeeRoute('/settings/profile', ['company.setup.read']), true);
     assert.equal(canSeeRoute('/settings/profile', ['expense.read']), false);
@@ -470,12 +470,10 @@ describe('the profile route is reachable and dynamic', () => {
     assert.match(page, /permissions=\{session\?\.permissions \?\? \[\]\}/);
   });
 
-  it('shows the dashboard card only to a holder of the identity authority', () => {
+  it('keeps the shop-details card off the home page', () => {
+    // Owner 2026-10-15, second look at the home page: "no shop-details card". What is missing is said on ข้อมูลร้าน.
     const dashboard = readFileSync(new URL('../dashboard-notifications/DashboardPages.tsx', import.meta.url), 'utf8');
-    assert.match(
-      dashboard,
-      /\{permissions\.includes\('company\.legal_identity\.manage'\) && <ProfileCompletenessCard companyId=\{companyId\} \/>\}/,
-    );
+    assert.doesNotMatch(dashboard, /ProfileCompletenessCard/);
   });
 
   it('places personal signature management in the account area without changing its route', () => {
@@ -515,7 +513,7 @@ describe('buildShopSave — one press, both halves, nothing lost', () => {
     });
     assert.deepEqual(buildShopSave({ ...OPEN, legalIdentityVersion: 0 }, { ...CURRENT, businessType: { code: 'OTHER', other: 'ธุรกิจทดสอบ', version: 1 } }, otherForm, vat), { error: NO_CHANGES_MESSAGE });
     const invalid = buildShopSave({ ...OPEN, legalIdentityVersion: 0 }, CURRENT, { ...otherForm, businessTypeOther: ' ' }, { current: 'UNKNOWN', chosen: 'REGISTERED' });
-    assert.deepEqual(invalid, { error: 'กรุณาระบุประเภทธุรกิจอื่น ๆ' });
+    assert.deepEqual(invalid, { error: 'ระบุประเภทธุรกิจอื่น ๆ' });
   });
 
   it('sends only the identity when the VAT answer is unchanged', () => {
@@ -564,7 +562,7 @@ describe('buildShopSave — one press, both halves, nothing lost', () => {
       { ...BLANK_FORM, taxId: '123' },
       { current: 'UNKNOWN', chosen: 'REGISTERED' },
     );
-    assert.deepEqual(result, { error: 'เลขผู้เสียภาษีต้องเป็นตัวเลข 13 หลักค่ะ' });
+    assert.deepEqual(result, { error: 'เลขผู้เสียภาษีต้องมี 13 หลัก' });
   });
 });
 
@@ -708,4 +706,34 @@ it('certificate return paths stay inside the same shop and retain the card ancho
     assert.equal(companyProfileReturnPath('co', search(path)), null, path);
   }
   assert.equal(companyProfileReturnPath('co', ''), null);
+});
+
+
+it('saves only the trimmed shop name without legal-change fields even after legal identity is locked', () => {
+  const result = buildIdentityPatch({ ...CLOSED, authoritativeLatched: true, legalIdentityVersion: 3 },
+    { displayName: 'เดิม', registeredName: null, taxId: null, addressJson: null },
+    { displayName: ' ร้านใหม่ ', registeredName: '', taxId: '', address: BLANK_ADDRESS });
+  assert.deepEqual(result, { body: { expectedLegalIdentityVersion: 3, changeKind: 'CORRECTION', displayName: 'ร้านใหม่', correctionReason: 'TYPO', note: 'แก้ไขจากหน้าข้อมูลร้าน' } });
+});
+it('shop name validation rejects blank and overlong names before any profile writes', () => {
+  for (const displayName of ['', ' ', 'ก'.repeat(201)]) {
+    const result = buildIdentityPatch({ ...OPEN, legalIdentityVersion: 0 }, null, { displayName, registeredName: '', taxId: '', address: BLANK_ADDRESS });
+    assert.deepEqual(result, { error: 'ชื่อร้านต้องมี 1 ถึง 200 ตัวอักษร แก้ชื่อร้านแล้วบันทึกอีกครั้ง' });
+  }
+});
+
+
+it('withholding return origin is one fixed value and never a caller-supplied URL', async () => {
+  const { withholdingProfileReturnPath } = await import('./company-profile.logic');
+  assert.equal(withholdingProfileReturnPath('co', '?from=withholding'), '/companies/co/tax/withholding');
+  for (const search of ['', '?from=https://evil.test', '?from=//evil.test', '?from=other', '?returnTo=/companies/co/tax/withholding']) assert.equal(withholdingProfileReturnPath('co', search), null);
+});
+
+it('UX8 shop settings keep the expense VAT anchor and name the return destination', async () => {
+  const { companyProfileReturnPath, companyProfileReturnLabel } = await import('./company-profile.logic');
+  const path = '/companies/co/expenses/e1#expense-input-vat-e1';
+  assert.equal(companyProfileReturnPath('co', `?${new URLSearchParams({ returnTo: path })}`), path);
+  assert.equal(companyProfileReturnLabel(path), 'กลับไปตรวจสิทธิภาษีซื้อ');
+  assert.equal(companyProfileReturnLabel('/companies/co/expenses/substitute-receipts/new'), 'กลับไปทำใบรับรอง');
+  assert.equal(companyProfileReturnLabel('/companies/co/expenses/e1#wht-certificate'), 'กลับไปออกหนังสือรับรอง');
 });

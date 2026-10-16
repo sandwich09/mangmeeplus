@@ -6,7 +6,7 @@ import {
 } from './substitute-receipt-policy.use-case';
 
 const ctx = {
-  companyId: 'co-1', userId: 'owner-1', requestId: 'req-1', permissions: ['company.setup.manage'],
+  companyId: 'co-1', userId: 'owner-1', requestId: 'req-1', roles: ['OWNER'], permissions: ['company.setup.manage'],
 } as any;
 
 /** F6: every preview mint writes an audit row; these cases only need it to exist. */
@@ -102,4 +102,19 @@ describe('substitute receipt company policy', () => {
     assert.equal(audited.riskLevel, 'HIGH');
     assert.equal(result.configured, true);
   });
+});
+
+
+it('combined signing is offered only to OWNER with confirm permission under OWNER_SELF', async () => {
+  let approvalMode = 'OWNER_SELF';
+  const repo = { getSubstituteReceiptPolicy: async () => ({ approvalMode, approverUserIds: [] }), findReusableSignatureAsset: async () => null,
+    getSignerJobTitle: async () => null, getSubstituteCompanyContext: async () => ({ name: 'ร้าน', nameSource: 'REGISTERED_NAME' }) } as any;
+  const useCase = new GetSubstituteReceiptPolicyUseCase(repo, audit);
+  for (const roles of [['OWNER'], ['ADMIN'], ['MANAGER'], []]) {
+    const result = await useCase.executeRuntime({ ...ctx, roles, permissions: ['expense.confirm'] });
+    assert.equal(result.canCertifyAndApprove, roles.includes('OWNER'));
+  }
+  assert.equal((await useCase.executeRuntime({ ...ctx, roles: ['OWNER'], permissions: [] })).canCertifyAndApprove, false);
+  approvalMode = 'DESIGNATED_APPROVERS';
+  assert.equal((await useCase.executeRuntime({ ...ctx, roles: ['OWNER'], permissions: ['expense.confirm'] })).canCertifyAndApprove, false);
 });

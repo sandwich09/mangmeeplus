@@ -12,7 +12,7 @@ import { lockPlanTermCompany } from '../../system-partner-management/application
 import { isDeepStrictEqual } from 'node:util';
 import { lockFundingEvidence } from '../../expenses/infrastructure/substitute-funding.guard';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { reimbursementDuplicateBlockNotice, reimbursementHubBucket, reimbursementPaymentVoidedNotice } from '@watchdog-bms/contracts';
+import { reimbursementDuplicateBlockNotice, reimbursementNeedsCorrection, reimbursementHubBucket, reimbursementPaymentVoidedNotice } from '@watchdog-bms/contracts';
 import type {
   ReimbursementClaimSignatureRole, ReimbursementHubBucket, ReimbursementPayoutCorrectionReason, ReimbursementPayoutRoundAnswer, ReimbursementRequestStatus,
 } from '@watchdog-bms/contracts';
@@ -72,6 +72,7 @@ import {
   isExactLegacyV1FallbackSnapshot,
   isSamePaymentRequest,
   isSelfApproval,
+  isOwnerSelfApproval,
   matchesApproverRole,
   frozenApprovalAuthority,
   pendingProjectionIntent,
@@ -202,6 +203,8 @@ function withPayoutCorrectionStep(row: { payoutCorrectionLogJson?: unknown }, en
 }
 
 export type ListRequestsWhere = {
+  order?: 'newest' | 'oldest';
+  correctionUserId?: string;
   companyId: string;
   requesterUserId?: string;
   relatedUserId?: string;
@@ -225,6 +228,7 @@ const LIVE_DUPLICATE_CANDIDATES = { where: { status: { in: ['OPEN', 'OVERRIDDEN'
 
 /** The claims of a list scope that share the fields the hub counts on. */
 export type ReimbursementRequestGroup = {
+  needsCorrection?: boolean;
   status: ReimbursementRequestStatus;
   financeReviewStatus: string;
   receiptRequirementStatus: string;
@@ -1143,6 +1147,30 @@ export class PrismaReimbursementRepository {
     });
   }
 
+  async deleteNeverSentDraftAtomic(data: {
+    companyId: string; requestId: string; expectedUpdatedAt: Date; actorUserId: string;
+    canPrepareOthers: boolean; scopes: { branchIds?: string[] }; onDeleted: (tx: any) => Promise<void>;
+  }): Promise<void> {
+    await this.prisma.client.$transaction(async (tx) => {
+      await this.lockRequest(tx, data.companyId, data.requestId);
+      const row = await tx.reimbursementRequest.findFirst({
+        where: { companyId: data.companyId, id: data.requestId }, include: { approvalSteps: true },
+      });
+      if (!row) throw new NotFoundException('Reimbursement request not found');
+      this.assertDecisionBranch(row.branchId ?? undefined, data.scopes);
+      if (!data.canPrepareOthers && row.requesterUserId !== data.actorUserId) throw new ForbiddenException('Cannot cancel this reimbursement');
+      if (row.status !== 'DRAFT' || row.requestNo || row.submittedAt || row.approvalSteps.length || row.cancellationPendingAt
+        || row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) throw this.draftChanged();
+      await tx.attachmentLink.deleteMany({ where: {
+        companyId: data.companyId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE, targetId: data.requestId,
+      } });
+      // Preserve the draft-action audit history while releasing its optional FK to this deleted draft.
+      await tx.reimbursementDraftAction.updateMany({ where: { companyId: data.companyId, requestId: data.requestId }, data: { requestId: null } });
+      await tx.reimbursementRequest.delete({ where: { id: data.requestId } });
+      await data.onDeleted(tx);
+    });
+  }
+
   async cancelRequestAtomic(
     companyId: string,
     requestId: string,
@@ -1664,7 +1692,9 @@ export class PrismaReimbursementRepository {
     actorUserId: string,
     actorRoles: string[],
     branchId?: string | null,
+    requesterUserId?: string,
   ): Promise<boolean> {
+    if (requesterUserId && isOwnerSelfApproval(requesterUserId, actorUserId, actorRoles)) return false;
     const frozenAssignees = stringArrayOpt(step.assignedApproverUserIdsJson);
     if (frozenAssignees) {
       const activeAssignees = await this.activeApproverUserIds(tx, companyId, frozenAssignees, branchId);
@@ -1892,8 +1922,8 @@ export class PrismaReimbursementRepository {
         },
       });
       if (!step || step.requestSnapshotHash !== storedHash) throw new ConflictException('stale_approval_snapshot');
-      const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId);
-      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval)) {
+      const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId, request.requesterUserId);
+      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
         throw new ForbiddenException('self_approval_denied');
       }
 
@@ -2041,7 +2071,7 @@ export class PrismaReimbursementRepository {
     onResolvedPersisted: (tx: any) => Promise<void>;
   }): Promise<ReimbursementRequestRecord> {
     const client = this.prisma.client as any;
-    return client.$transaction(async (tx: any) => {
+    return serializableTransaction(client, async (tx: any) => {
       await this.lockRequest(tx, data.companyId, data.requestId);
       const row = await tx.reimbursementRequest.findFirst({ where: { id: data.requestId, companyId: data.companyId }, include: { sourceExpenses: OWN_DUPLICATE_EXPENSES } });
       if (!row) throw new NotFoundException('Reimbursement request not found');
@@ -2068,8 +2098,8 @@ export class PrismaReimbursementRepository {
     });
   }
 
-  async refreshClaimProjectionState(companyId: string, requestId: string, scopes: { branchIds?: string[] }): Promise<void> {
-    await (this.prisma.client as any).$transaction(async (tx: any) => {
+  async refreshClaimProjectionState(companyId: string, requestId: string, scopes: { branchIds?: string[] }, db?: Prisma.TransactionClient): Promise<void> {
+    const refresh = async (tx: any) => {
       await this.lockRequest(tx, companyId, requestId);
       const row = await tx.reimbursementRequest.findFirst({ where: { companyId, id: requestId }, include: { lines: { orderBy: { lineNo: 'asc' } } } });
       if (!row || !['APPROVED', 'READY_FOR_PAYMENT'].includes(row.status)) throw new ConflictException('reimbursement_projection_decision_changed');
@@ -2077,7 +2107,9 @@ export class PrismaReimbursementRepository {
       this.assertDecisionBranch(row.branchId, scopes);
       const readiness = await this.assertClaimProjectionsReady(tx, this.toRequest(row));
       await tx.reimbursementRequest.update({ where: { id: requestId }, data: { duplicateStatus: readiness.duplicateStatus, postingStatus: readiness.postingStatus } });
-    });
+    };
+    if (db) await refresh(db);
+    else await (this.prisma.client as any).$transaction(refresh);
   }
 
   private async overrideOpenDuplicates(tx: any, companyId: string, requestId: string, actorUserId: string, resolvedAt: Date, reason?: string): Promise<void> {
@@ -2363,8 +2395,9 @@ export class PrismaReimbursementRepository {
   async listClaimProjections(
     companyId: string,
     requestId: string,
+    db: Prisma.TransactionClient | PrismaService['client'] = this.prisma.client,
   ): Promise<Array<{ id: string; expenseNumber?: string; sourceReimbursementLineId: string; status: string; duplicateStatus: string; postingStatus: string; branchId?: string }>> {
-    const rows = await (this.prisma.client as any).expenseRecord.findMany({
+    const rows = await (db as any).expenseRecord.findMany({
       where: { companyId, sourceReimbursementRequestId: requestId, sourceReimbursementLineId: { not: null } },
     });
     return rows.map((row: any) => ({
@@ -2745,8 +2778,8 @@ export class PrismaReimbursementRepository {
         },
       });
       if (!step) throw new ConflictException('stale_approval_snapshot');
-      const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId);
-      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval)) {
+      const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId, request.requesterUserId);
+      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
         throw new ForbiddenException('self_approval_denied');
       }
       const changedStep = await tx.reimbursementApprovalStep.updateMany({
@@ -2857,8 +2890,8 @@ export class PrismaReimbursementRepository {
         const step = row.currentApprovalStepId
           ? await tx.reimbursementApprovalStep.findFirst({ where: { ...where, id: row.currentApprovalStepId } }) : null;
         if (!step || step.status !== 'PENDING') throw this.requestChanged();
-        const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, row.branchId);
-        if (!assignedBySnapshot && isSelfApproval(row.requesterUserId, data.actorUserId, data.allowSelfApproval)) {
+        const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, row.branchId, row.requesterUserId);
+        if (!assignedBySnapshot && isSelfApproval(row.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
           throw new ForbiddenException('self_approval_denied');
         }
         const cancelled = await tx.reimbursementApprovalStep.updateMany({ where: { ...where, id: step.id, status: 'PENDING' }, data: { status: 'CANCELLED', ...setAside } });
@@ -3079,8 +3112,8 @@ export class PrismaReimbursementRepository {
       const step = request.currentApprovalStepId
         ? await tx.reimbursementApprovalStep.findFirst({ where: { ...where, id: request.currentApprovalStepId } }) : null;
       if (!step || step.status !== 'PENDING' || step.requestSnapshotHash !== storedHash) throw new ConflictException('stale_approval_snapshot');
-      const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId);
-      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval)) {
+      const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId, request.requesterUserId);
+      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
         throw new ForbiddenException('self_approval_denied');
       }
       await attestClaimPayout(tx, request, {
@@ -3153,6 +3186,26 @@ export class PrismaReimbursementRepository {
       linkedExpenseId: opt(row.linkedExpenseId),
       requestNo: opt(row.request?.requestNo),
     }));
+  }
+
+  /** Only comparison facts of candidates belonging to this claim, never arbitrary expense ids. */
+  async listClaimDuplicateExpenseTargets(companyId: string, requestId: string) {
+    const source = { companyId, sourceReimbursementRequestId: requestId, status: { not: 'VOIDED' as const } };
+    const fields = { id: true, sourceReimbursementRequestId: true, expenseNumber: true, vendorNameSnapshot: true, grandTotalAmount: true, currency: true, expenseDate: true } as const;
+    const rows = await this.prisma.client.expenseDuplicateCandidate.findMany({
+      where: { companyId, status: { in: ['OPEN', 'DISMISSED'] }, expense: { companyId }, candidateExpense: { companyId }, OR: [{ expense: source }, { candidateExpense: source }] },
+      select: { id: true, score: true, status: true, resolvedByUserId: true, resolvedAt: true,
+        expense: { select: fields }, candidateExpense: { select: fields } },
+      orderBy: { id: 'asc' },
+    });
+    const names = await this.getUserDisplayNames(companyId, rows.flatMap(row => row.resolvedByUserId ? [row.resolvedByUserId] : []));
+    return rows.map(row => {
+      const other = row.expense.sourceReimbursementRequestId === requestId ? row.candidateExpense : row.expense;
+      return { id: row.id, candidateType: 'MANUAL' as const, status: row.status === 'OPEN' ? 'OPEN' as const : 'DISMISSED' as const, score: row.score,
+        candidateExpenseId: other.id, documentNumber: other.expenseNumber ?? undefined,
+        requesterOrPayee: other.vendorNameSnapshot ?? undefined, amount: String(other.grandTotalAmount), currency: other.currency, date: other.expenseDate.toISOString(),
+        resolvedAt: row.resolvedAt?.toISOString(), resolvedByName: row.resolvedByUserId ? names[row.resolvedByUserId] : undefined };
+    });
   }
 
   async findRequestById(companyId: string, id: string, withRelations = false): Promise<ReimbursementRequestRecord | null> {
@@ -3250,21 +3303,27 @@ export class PrismaReimbursementRepository {
         _count: { select: { duplicateCandidates: { where: { status: 'OPEN' } } } }, sourceExpenses: OWN_DUPLICATE_EXPENSES },
     });
     const blockedIds = paymentClaims.filter((row) => claimDuplicateBlocksPayment(this.toRequest(row), policy, row._count.duplicateCandidates)).map((row) => row.id);
-    const bucketWhere = where.bucket === 'duplicate_blocked' ? { id: { in: blockedIds } }
+    const correction = { AND: [
+      { OR: [{ requesterUserId: where.correctionUserId ?? '' }, { createdByUserId: where.correctionUserId ?? '' }] },
+      { OR: [{ status: 'REJECTED' }, { status: 'DRAFT', financeReviewStatus: 'NEEDS_INFO' },
+        { status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: { not: null }, payoutCorrectionSubmittedAt: null }] },
+    ] } as Prisma.ReimbursementRequestWhereInput;
+    const normalBucket = where.bucket === 'duplicate_blocked' ? { id: { in: blockedIds } }
       : where.bucket === 'payment' ? { AND: [hubBucketWhere('payment'), { id: { notIn: blockedIds } }] }
       : where.bucket === undefined ? {} : hubBucketWhere(where.bucket);
+    const bucketWhere = where.bucket === 'correction' ? { OR: [{ status: 'REJECTED' as const }, correction] } : where.bucket ? { AND: [normalBucket, { NOT: correction }] } : {};
     const [rows, groups] = await Promise.all([
       this.prisma.client.reimbursementRequest.findMany({
         where: { ...scope, AND: [...scope.AND, bucketWhere] },
         // The page's rows report the same duplicate status as the claim's own page: one batched read for the page.
-        include: { _count: { select: { lines: true } }, duplicateCandidates: LIVE_DUPLICATE_CANDIDATES, sourceExpenses: OWN_DUPLICATE_EXPENSES },
+        include: { claimSignatures: true, _count: { select: { lines: true } }, duplicateCandidates: LIVE_DUPLICATE_CANDIDATES, sourceExpenses: OWN_DUPLICATE_EXPENSES },
         // The same stable order as `listRequests`: OFFSET pages need every row to keep its place.
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        orderBy: [{ incurredDate: where.order === 'oldest' ? 'asc' : 'desc' }, { createdAt: where.order === 'oldest' ? 'asc' : 'desc' }, { id: where.order === 'oldest' ? 'asc' : 'desc' }],
         skip: where.skip,
         take: where.take,
       }),
       this.prisma.client.reimbursementRequest.groupBy({
-        by: ['status', 'financeReviewStatus', 'receiptRequirementStatus'],
+        by: ['status', 'financeReviewStatus', 'receiptRequirementStatus', 'requesterUserId', 'createdByUserId', 'payoutCorrectionRequestedAt', 'payoutCorrectionSubmittedAt'],
         where: scope,
         _count: { _all: true },
         _sum: { amount: true },
@@ -3274,6 +3333,7 @@ export class PrismaReimbursementRepository {
       rows: rows.map((row) => this.toRequest(row)),
       duplicateBlockedCount: blockedIds.length,
       groups: groups.map((group) => ({
+        needsCorrection: reimbursementNeedsCorrection(group, where.correctionUserId ?? ''),
         status: group.status,
         financeReviewStatus: group.financeReviewStatus,
         receiptRequirementStatus: group.receiptRequirementStatus,
@@ -4365,6 +4425,14 @@ export class PrismaReimbursementRepository {
     return this.toDuplicate(row);
   }
 
+  async listClaimDuplicateComparisons(companyId: string, requestId: string): Promise<ReimbursementDuplicateCandidateRecord[]> {
+    const rows = await this.prisma.client.reimbursementDuplicateCandidate.findMany({
+      where: { companyId, OR: [{ reimbursementRequestId: requestId }, { candidateRequestId: requestId }], status: { in: ['OPEN', 'OVERRIDDEN', 'DISMISSED'] } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map(row => this.toDuplicate({ ...row, candidateRequestId: row.reimbursementRequestId === requestId ? row.candidateRequestId : row.reimbursementRequestId }));
+  }
+
   async listOpenDuplicateCandidates(companyId: string, reimbursementRequestId: string): Promise<ReimbursementDuplicateCandidateRecord[]> {
     const rows = await this.prisma.client.reimbursementDuplicateCandidate.findMany({
       where: { companyId, reimbursementRequestId, status: 'OPEN' as any },
@@ -4532,6 +4600,22 @@ export class PrismaReimbursementRepository {
    * Uploaded scans of the wet-ink signed form, newest first; `acknowledged` = attached with the A4 declaration,
    * whose maker and time ride along for the "ลงนามบนกระดาษ · แนบเมื่อ … โดย …" line.
    */
+  async findAcknowledgedSignedCopyRequestIds(companyId: string, requestIds: string[]): Promise<Set<string>> {
+    if (!requestIds.length) return new Set();
+    const rows = await this.prisma.client.attachmentLink.findMany({
+      where: { companyId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE, targetId: { in: requestIds },
+        purpose: REIMBURSEMENT_SIGNED_COPY_PURPOSE, attachment: { status: 'ACTIVE' } },
+      select: { id: true, targetId: true, attachment: { select: { metadataJson: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const seen = new Map<string, number>();
+    return new Set(rows.filter((row) => {
+      const count = (seen.get(row.targetId) ?? 0) + 1; seen.set(row.targetId, count);
+      const ack = (row.attachment.metadataJson as Record<string, Partial<ReimbursementSignedCopyAck> & { linkId?: unknown; supersededAt?: unknown }> | null)?.[REIMBURSEMENT_SIGNED_COPY_ACK_KEY];
+      return count <= 50 && ack?.linkId === row.id && !ack.supersededAt;
+    }).map((row) => row.targetId));
+  }
+
   async listSignedClaimFormCopies(companyId: string, requestId: string): Promise<{
     attachmentId: string; fileName: string; uploadedAt: Date; acknowledged: boolean; acknowledgedByUserId?: string; acknowledgedAt?: string;
     beforePayoutCorrection?: true;

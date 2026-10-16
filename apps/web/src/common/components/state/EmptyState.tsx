@@ -27,7 +27,7 @@ export function EmptyState({
       </span>
       <div className="flex flex-col gap-1">
         <p className="text-sm font-semibold text-gray-700">{title ?? t('state.empty.title', locale)}</p>
-        <p className="text-sm text-gray-400">{description ?? t('state.empty.description', locale)}</p>
+        <p className="text-sm text-gray-500">{description ?? t('state.empty.description', locale)}</p>
       </div>
       {action}
     </div>

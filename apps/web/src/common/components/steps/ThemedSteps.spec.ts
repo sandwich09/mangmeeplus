@@ -61,3 +61,21 @@ test('href renders a link, onSelect renders a button, neither renders a plain no
   assert.match(html, /<a[^>]*href="\/x"/);
   assert.match(html, /<button[^>]*type="button"/);
 });
+
+test('with onStepPress only the finished steps are buttons; without it nothing is pressable', async () => {
+  const { ThemedSteps } = await import('./ThemedSteps');
+  const plain = renderToStaticMarkup(React.createElement(ThemedSteps, { steps: STEPS }));
+  assert.doesNotMatch(plain, /<button|<a /);
+  const pressed: number[] = [];
+  const html = renderToStaticMarkup(React.createElement(ThemedSteps, { steps: STEPS, onStepPress: (index: number) => { pressed.push(index); } }));
+  // One button, holding the circle and the name of the finished step; 44 px target and a visible focus ring.
+  assert.equal(html.match(/<button/g)?.length, 1);
+  assert.match(html, /<button type="button" data-step-back="true"[^>]*class="[^"]*min-h-11 min-w-11[^"]*focus-visible:outline-2[^"]*">.*?>1<\/span>.*?ข้อมูลส่วนตัว.*?<\/button>/);
+  // The current and the coming step stay plain text, and the current one is still the only aria-current.
+  assert.match(html, /<span aria-current="step"[^>]*>.*?ช่องทางติดต่อ/);
+  assert.doesNotMatch(html, /<button[^>]*>(?:(?!<\/button>).)*เข้าใช้งาน/);
+  assert.equal(html.match(/aria-current="step"/g)?.length, 1);
+  // A step that brings its own link keeps it.
+  const own = renderToStaticMarkup(React.createElement(ThemedSteps, { steps: [{ ...STEPS[0]!, href: '/x' }, STEPS[1]!], onStepPress: () => {} }));
+  assert.match(own, /<a[^>]*href="\/x"/); assert.doesNotMatch(own, /data-step-back/);
+});

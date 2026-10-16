@@ -1,3 +1,4 @@
+import { CLAIMABLE_INPUT_VAT_DOCUMENT_TYPES } from './expense-document.logic';
 import {
   isNonExpenseClassificationBlocking,
   type ExpenseStatus,
@@ -59,6 +60,7 @@ export function expenseTaxSourceChecksum(expense: ExpenseRecordWithRelations): s
         vatRate: line.vatRate ?? null,
         vatTreatment: line.vatTreatment ?? null,
         vatAmount: line.vatAmount,
+        whtCategoryCode: line.whtCategoryCode ?? null,
         whtRate: line.whtRate,
         whtAmount: line.whtAmount,
         lineSubtotalAmount: line.lineSubtotalAmount,
@@ -200,15 +202,11 @@ export function validateDomesticInputVatEvidence(input: DomesticInputVatEvidence
   const taxLines = input.lines.filter(hasSelectedTaxCode);
   const domesticTaxSelected = input.lines.some(isDomesticInputTaxLine);
 
-  // A company that has told us it was not VAT-registered on this document's date cannot claim the
-  // input VAT, whatever its evidence looks like. Guarded here rather than on the draft write
-  // because every route — web, LINE, AI, reimbursement — converges on confirmation, and only a
-  // CLAIMABLE + CONFIRMED expense reaches tax sync.
-  //
-  // `UNKNOWN` deliberately does NOT reject: no UI writes a registration fact yet, so absence of a
-  // fact is not a fact, and treating it as one would block every company in production.
   if (input.vatStatus === 'NOT_REGISTERED' && input.inputVatClaimStatus === 'CLAIMABLE') {
     return 'input_vat_not_available_company_not_vat_registered';
+  }
+  if (input.vatStatus === 'UNKNOWN' && input.inputVatClaimStatus === 'CLAIMABLE') {
+    return 'input_vat_company_registration_unanswered';
   }
   // Spec §19h: ABBREVIATED_TAX_INVOICE joins the never-claimable list by document type rather than
   // by evidence status, so a reviewer moving taxEvidenceStatus cannot open the input-VAT path on a
@@ -222,7 +220,7 @@ export function validateDomesticInputVatEvidence(input: DomesticInputVatEvidence
   }
 
   if (!domesticTaxSelected && (taxLines.length > 0 || input.inputVatClaimStatus !== 'CLAIMABLE')) return null;
-  if (input.sourceDocumentType !== 'TAX_INVOICE' || input.taxEvidenceStatus !== 'USABLE_FOR_TAX') {
+  if (!CLAIMABLE_INPUT_VAT_DOCUMENT_TYPES.includes(input.sourceDocumentType) || input.taxEvidenceStatus !== 'USABLE_FOR_TAX') {
     return 'Domestic input VAT requires a reviewed TAX_INVOICE with usable tax evidence.';
   }
   if (!input.primaryAttachmentId || !input.vendorTaxIdSnapshot?.trim() || !input.vendorDocumentNumber?.trim()) {

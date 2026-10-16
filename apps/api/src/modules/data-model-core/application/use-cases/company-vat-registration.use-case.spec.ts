@@ -18,6 +18,7 @@ function makePrisma(seed: { facts?: Row[]; version?: number; commands?: Row[]; p
   let nextFactId = state.facts.length + 1;
 
   const tx: any = {
+    expenseRecord: { findMany: async () => [] },
     $executeRaw: async () => 1,
     company: {
       findUnique: async () => state.company,

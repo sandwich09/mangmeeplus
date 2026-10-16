@@ -100,3 +100,15 @@ test('a new OCR request invalidates review even when the recognized money and ve
   assert(!hasCurrentExpenseEvidenceReview(reread));
   assert.deepEqual(expenseEvidenceAssessment(reread), receipt);
 });
+
+test('a VAT decision does not invalidate document evidence review, including its legacy fingerprint', () => {
+  const value = reviewed({ ...source, sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', inputVatClaimStatus: 'NEEDS_REVIEW' });
+  assert(hasCurrentExpenseEvidenceReview({ ...value, inputVatClaimStatus: 'CLAIMABLE' }));
+  const review = value.aiVerificationSummaryJson!.documentReview as any;
+  const legacy = JSON.parse(review.fingerprint);
+  if (legacy.fields.at(-1) !== 'NEEDS_REVIEW') legacy.fields.push('NEEDS_REVIEW');
+  const old = { ...value, inputVatClaimStatus: 'CLAIMABLE' as const, aiVerificationSummaryJson: { ...value.aiVerificationSummaryJson,
+    documentReview: { ...review, fingerprint: JSON.stringify(legacy) } } };
+  assert(hasCurrentExpenseEvidenceReview(old));
+  assert(!hasCurrentExpenseEvidenceReview({ ...old, vendorNameSnapshot: 'ร้านอื่น' }));
+});

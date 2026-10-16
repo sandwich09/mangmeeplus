@@ -98,7 +98,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
         taxAmountTolerance: String(form.get('taxAmountTolerance')),
       });
       await load();
-      toast.success('สร้าง Tax Profile เรียบร้อยแล้ว');
+      toast.success('สร้าง Tax Profile แล้ว');
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); }
   }
 
@@ -123,7 +123,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
         effectiveTo: String(form.get('effectiveTo') || '') || null,
       });
       await load();
-      toast.success('เพิ่ม Tax Code เรียบร้อยแล้ว');
+      toast.success('เพิ่ม Tax Code แล้ว');
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); }
   }
 
@@ -132,7 +132,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
     try {
       await createTaxCodeProfileFromTemplate(companyId, templateKey, templateEffectiveFrom);
       await load();
-      toast.success('สร้างร่างจาก Template เรียบร้อยแล้ว');
+      toast.success('สร้างร่างจาก Template แล้ว');
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); }
   }
 
@@ -149,7 +149,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
     try {
       await applyTaxCodeImport(companyId, profileId, { format: importFormat, content: importContent, expectedChecksum: importPreview.checksum });
       setImportPreview(null); setImportContent(''); await load();
-      toast.success('นำเข้า Tax Code เรียบร้อยแล้ว');
+      toast.success('นำเข้า Tax Code แล้ว');
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); }
   }
 
@@ -158,7 +158,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
     try {
       await activateTaxCodeProfile(companyId, id);
       await load();
-      toast.success('เปิดใช้งาน Tax Profile เรียบร้อยแล้ว');
+      toast.success('เปิดใช้งาน Tax Profile แล้ว');
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setProfileBusy(null); setBusy(false); }
   }
 
@@ -171,7 +171,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
     try {
       await retireTaxCodeProfile(companyId, id);
       await load();
-      toast.success('ยกเลิกใช้งาน Tax Profile เรียบร้อยแล้ว');
+      toast.success('ยกเลิกใช้งาน Tax Profile แล้ว');
     } catch (cause) {
       setError(transactionTaxErrorMessage(cause));
     } finally {

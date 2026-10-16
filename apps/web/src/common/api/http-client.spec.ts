@@ -25,7 +25,7 @@ describe('HttpClient transport errors', () => {
         (error: ApiError) => {
           assert.equal(error.kind, 'network_error');
           assert.equal(error.cause, cause);
-          assert.equal(apiErrorMessage(error), 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
+          assert.equal(apiErrorMessage(error), 'เชื่อมต่อไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองอีกครั้ง');
           return true;
         },
       );
@@ -42,7 +42,7 @@ describe('HttpClient transport errors', () => {
           assert.equal(error.code, 'invalid_response');
           assert.equal(error.statusCode, 200);
           assert.ok(error.cause instanceof SyntaxError);
-          assert.equal(apiErrorMessage(error), 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง');
+          assert.equal(apiErrorMessage(error), 'ระบบขัดข้องชั่วคราว ลองอีกครั้ง');
           return true;
         },
       );

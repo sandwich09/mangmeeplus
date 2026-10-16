@@ -6,6 +6,8 @@ import { t } from '@/common/i18n/workspace-i18n.logic';
 export function dashboardMetricValueText(metric: DashboardMetricValue): string {
   if (metric.value === null || metric.value === undefined || metric.value === '') return '—';
   if (metric.key === 'last_movement_at') return formatThaiDateTime(String(metric.value));
+  // Money is written one way on screen: ฿1,200.00 (thai-ux-standard §1). It used to come out as "44,750.5 บาท".
+  if (typeof metric.value === 'number' && metric.unit === 'บาท') return `฿${metric.value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   if (typeof metric.value === 'number') return `${metric.value.toLocaleString('th-TH')}${metric.unit ? ` ${metric.unit}` : ''}`;
   return metric.unit ? `${metric.value} ${metric.unit}` : String(metric.value);
 }
@@ -40,8 +42,22 @@ export function notificationBodyText(item: Pick<NotificationItem, 'body' | 'stat
   return item.status === 'resolved' ? '' : item.body;
 }
 
-export function visibleNotifications(items: NotificationItem[], filter: 'all' | 'unread'): NotificationItem[] {
+export function visibleNotifications(items: NotificationItem[], filter: 'all' | 'unread' | 'waiting'): NotificationItem[] {
   return filter === 'unread' ? items.filter(isUnreadNotification) : items;
+}
+
+/**
+ * What the bell lists: the notices still waiting for the person first, then the newest others up to the limit.
+ * The newest eight of any state used to push a waiting notice out of the very list the red number points at.
+ */
+export function bellNotifications<T extends Pick<NotificationItem, 'id' | 'read' | 'status'>>(
+  unread: readonly T[],
+  latest: readonly T[],
+  limit = 8,
+): { waiting: T[]; earlier: T[] } {
+  const waiting = unread.filter(isUnreadNotification).slice(0, limit);
+  const listed = new Set(waiting.map((item) => item.id));
+  return { waiting, earlier: latest.filter((item) => !listed.has(item.id)).slice(0, limit - waiting.length) };
 }
 
 export function getWidgetMetricValue(widget: DashboardWidget, metricKey: string): number | string | null {
@@ -77,7 +93,7 @@ export function severityLabel(severity: NotificationSeverity): string {
 
 /** The tag in front of a notice: how urgent it is, or that it is done. A done notice is no longer urgent, so it loses the urgent colour. */
 export function notificationTag(item: Pick<NotificationItem, 'severity' | 'status'>): { label: string; tone: string } {
-  return item.status === 'resolved' ? { label: 'ดำเนินการแล้ว', tone: severityColor('info') } : { label: severityLabel(item.severity), tone: severityColor(item.severity) };
+  return item.status === 'resolved' ? { label: 'เสร็จแล้ว', tone: severityColor('info') } : { label: severityLabel(item.severity), tone: severityColor(item.severity) };
 }
 
 /** Header bell badge: hidden at 0, capped at 99+. */
@@ -89,7 +105,7 @@ export function notificationBadgeText(total: number): string | null {
 export function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return 'เมื่อกี้';
+  if (mins < 1) return 'เมื่อสักครู่';
   if (mins < 60) return `${mins} นาทีที่แล้ว`;
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours} ชั่วโมงที่แล้ว`;

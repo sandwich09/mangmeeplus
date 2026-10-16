@@ -1,8 +1,10 @@
 import { describe, it } from 'node:test';
+// Run the shared date/CSV contract alongside its registered accountant-export neighbours.
+import '../../../../common/export/thai-date.logic.spec';
 import assert from 'node:assert/strict';
 import { ACCOUNTANT_INDEX_COLUMNS, ACCOUNTANT_INDEX_SUMMARY_COLUMNS } from '@watchdog-bms/contracts';
 import type { ExpenseAttachmentPurpose } from '@watchdog-bms/contracts';
-import { buildAccountantIndexCsv, buildAccountantIndexRow, buildManifestEntry, evidenceRef, exportSourceChannel, WET_SIGNED_SCAN_EVIDENCE_ROLE } from './expense-export.logic';
+import { buildAccountantIndexXlsx, buildAccountantIndexCsv, buildAccountantIndexRow, buildManifestEntry, evidenceRef, exportSourceChannel, WET_SIGNED_SCAN_EVIDENCE_ROLE } from './expense-export.logic';
 
 // The accountant export must NOT follow the expense capture mode.
 //
@@ -65,7 +67,7 @@ describe('accountant index is independent of expense capture mode', () => {
     // `document_date_status` sorts after this one by name, so the pair sits at the tail in that
     // order and nothing before them moved. GAP-7's `vendor_address` appended after them for the
     // same reason, which is why these offsets shifted by one and nothing else did.
-    assert.deepEqual(ACCOUNTANT_INDEX_COLUMNS.slice(-6, -4), ['additional_charges_amount', 'document_date_status']);
+    assert.deepEqual(ACCOUNTANT_INDEX_COLUMNS.slice(43, 45), ['additional_charges_amount', 'document_date_status']);
   });
 
   /**
@@ -83,10 +85,10 @@ describe('accountant index is independent of expense capture mode', () => {
     assert.equal(withAddress.vendor_address, '123/4 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110');
     // §8/AC12: rows written before the column existed still export, as an empty cell.
     assert.equal(buildAccountantIndexRow(nonVatExpense).vendor_address, '');
-    assert.equal(ACCOUNTANT_INDEX_COLUMNS.at(-1), 'vendor_address');
+    assert.equal(ACCOUNTANT_INDEX_COLUMNS[48], 'vendor_address');
     const [header, body] = buildAccountantIndexCsv([withAddress]).split('\n');
-    assert.equal(header!.split(',').at(-1), 'vendor_address');
-    assert.ok(body!.endsWith('123/4 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110'));
+    assert.equal(header!.split(',')[48], 'vendor_address');
+    assert.equal(body!.split(',')[48], '123/4 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110');
   });
 
   it('writes the CSV in the full fixed column order, tax columns included', () => {
@@ -94,6 +96,16 @@ describe('accountant index is independent of expense capture mode', () => {
 
     assert.equal(header, ACCOUNTANT_INDEX_COLUMNS.join(','));
     assert.ok(ACCOUNTANT_INDEX_COLUMNS.includes('vat_amount'));
+  });
+
+  it('uses the sent month and a blank document date when the date was not read', () => {
+    for (const summary of [{ dateStatus: 'unverified' }, { dateStatus: 'implausible' }, { missingFields: ['expenseDate'] }]) {
+      const row = buildAccountantIndexRow({ ...nonVatExpense, expenseDate: '2026-09-30', uploadedAt: '2026-09-30T17:30:00Z', aiVerificationSummaryJson: summary });
+      assert.equal(row.accounting_period, '2026-10');
+      assert.equal(row.document_date, '');
+    }
+    const dated = buildAccountantIndexRow({ ...nonVatExpense, expenseDate: '2026-09-30', uploadedAt: '2026-10-02T03:00:00Z' });
+    assert.equal(dated.accounting_period, '2026-09');
   });
 
   it('keeps vat_amount in the summary column set the UI downloads by default', () => {
@@ -205,4 +217,54 @@ it('shared XLSX text cells remove invalid XML controls and flatten lines, and re
   assert.ok(xml);
   assert.ok(!xml.includes('\u0001')); assert.ok(xml.includes('=1   x')); assert.ok(xml.includes('<v>12.34</v>'));
   assert.throws(() => buildXlsx([[NaN]], 'รายงาน')); assert.throws(() => buildXlsx([[1]], 'invalid/name'));
+});
+
+
+it('labels the neutral no-receipt document in the sheet while preserving machine document types', () => {
+  for (const receiptProblem of ['NOT_AVAILABLE', 'LOST']) {
+    const row = buildAccountantIndexRow({ ...nonVatExpense, sourceDocumentType: 'EXPENSE_NOTE_TEXT',
+      aiVerificationSummaryJson: { documentReview: { assessment: { route: 'SUBSTITUTE_RECEIPT', receiptProblem, reason: 'ไม่มีใบเสร็จ', attachmentIds: [] } } } });
+    assert.equal(row.source_document_type, 'EXPENSE_NOTE_TEXT');
+    assert.equal(row.sourceDocumentTypeLabel, 'ไม่มีใบเสร็จ');
+    assert.match(buildAccountantIndexCsv([row]), /EXPENSE_NOTE_TEXT/);
+    assert.ok(buildAccountantIndexXlsx([row], 'full').length > 0);
+  }
+  assert.equal(buildAccountantIndexRow({ ...nonVatExpense, sourceDocumentType: 'EXPENSE_NOTE_TEXT' }).sourceDocumentTypeLabel, undefined);
+});
+
+import { inflateRawSync } from 'node:zlib';
+function exportedSheet(file: Buffer): string {
+  for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+    const size = file.readUInt32LE(offset + 18), nameLength = file.readUInt16LE(offset + 26), extraLength = file.readUInt16LE(offset + 28);
+    const start = offset + 30 + nameLength + extraLength;
+    if (file.subarray(offset + 30, offset + 30 + nameLength).toString() === 'xl/worksheets/sheet1.xml') {
+      const bytes = file.subarray(start, start + size); return (file.readUInt16LE(offset + 8) === 8 ? inflateRawSync(bytes) : bytes).toString();
+    }
+    offset = start + size;
+  }
+  throw new Error('Missing worksheet');
+}
+it('appends the input VAT decision without moving any accounting import column; CSV keeps codes and Excel uses screen words', () => {
+  const original = ["company_name", "company_tax_id", "branch_code", "accounting_period", "uploaded_at", "document_date", "expense_number", "expense_status", "source_channel", "source_document_type", "tax_evidence_status", "tax_evidence_reason", "posting_status", "posting_error", "journal_entry_number", "requester_name", "uploader_name", "reviewer_name", "vendor_name", "vendor_tax_id", "vendor_branch_code", "vendor_document_number", "category_name", "account_hint_key", "description", "quantity", "subtotal_amount", "discount_amount", "taxable_amount", "vat_amount", "wht_amount", "grand_total_amount", "net_payable_amount", "paid_amount", "outstanding_amount", "payment_method", "paid_at", "payment_reference", "substitute_receipt_ref", "primary_evidence_ref", "supporting_evidence_refs", "web_url", "notes", "additional_charges_amount", "document_date_status", "funding_source", "certifying_payer_name", "substitute_evidence_provenance", "vendor_address"];
+  assert.deepEqual(ACCOUNTANT_INDEX_COLUMNS.slice(0, original.length), original);
+  assert.deepEqual(ACCOUNTANT_INDEX_COLUMNS.slice(original.length), ['input_vat_right', 'input_vat_reason', 'input_vat_decided_by', 'input_vat_decided_at', 'voucher_numbers', 'wht_certificate_numbers', 'bundle_file_names']);
+  const row = buildAccountantIndexRow({ ...nonVatExpense, inputVatClaimStatus: 'CLAIMABLE', taxEvidenceStatus: 'USABLE_FOR_TAX', taxEvidenceReasonCode: 'VALID_TAX_INVOICE_FIELDS',
+    latestInputVatDecision: { reason: 'ใช้ในร้าน', decidedByName: 'ผู้ตรวจหนึ่ง', decidedAt: '2026-10-14T03:00:00.000Z' } } as any);
+  assert.equal(row.input_vat_right, 'CLAIMABLE'); assert.equal(row.input_vat_reason, 'ใช้ในร้าน');
+  assert.equal(row.input_vat_decided_by, 'ผู้ตรวจหนึ่ง'); assert.equal(row.input_vat_decided_at, '2026-10-14T03:00:00.000Z');
+  assert.match(buildAccountantIndexCsv([row]), /CLAIMABLE,ใช้ในร้าน,ผู้ตรวจหนึ่ง,2026-10-14T03:00:00.000Z/);
+  const xml = exportedSheet(buildAccountantIndexXlsx([row], 'full'));
+  for (const word of ['หลักฐานรายจ่าย', 'เหตุผลหลักฐานรายจ่าย', 'สิทธิภาษีซื้อ', 'ใช้ได้ตามเงื่อนไข', 'ผู้ตรวจหนึ่ง', '14 ต.ค. 2569']) assert.ok(xml.includes(word), word);
+  assert.match(buildAccountantIndexCsv([row]), /VALID_TAX_INVOICE_FIELDS/);
+  assert.match(xml, /ข้อมูลใบกำกับภาษีครบถ้วน/);
+  assert.doesNotMatch(xml, /CLAIMABLE|USABLE_FOR_TAX|VALID_TAX_INVOICE_FIELDS/);
+});
+it('exports waiting and fixed rights, and describes an old confirmed answer without inventing a reviewer', () => {
+  for (const status of ['NEEDS_REVIEW', 'NON_CLAIMABLE'] as const) {
+    const row = buildAccountantIndexRow({ ...nonVatExpense, inputVatClaimStatus: status } as any);
+    assert.equal(row.input_vat_right, status); assert.equal(row.input_vat_decided_by, ''); assert.equal(row.input_vat_reason, '');
+  }
+  const legacy = buildAccountantIndexRow({ ...nonVatExpense, sourceDocumentType: 'TAX_INVOICE', inputVatClaimStatus: 'NON_CLAIMABLE', inputVatRecordedBeforeReview: true } as any);
+  assert.equal(legacy.input_vat_right, 'NON_CLAIMABLE');
+  assert.match(exportedSheet(buildAccountantIndexXlsx([legacy], 'full')), /ไม่ได้ใช้ภาษีซื้อ \(บันทึกก่อนมีการตรวจสิทธิ\)/);
 });

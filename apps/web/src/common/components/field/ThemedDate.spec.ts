@@ -74,3 +74,12 @@ test('a list of selectable values disables the rest inside min and max (report m
   const source = readFileSync(new URL('./ThemedDate.tsx', import.meta.url), 'utf8');
   assert.equal((source.match(/outOfRange\(.*, selectable\)/g) ?? []).length, 4);
 });
+
+
+test('BEH-Q picking or escaping a date restores its trigger; scrolling it out closes the picker', () => {
+  const source = readFileSync(new URL('./ThemedDate.tsx', import.meta.url), 'utf8');
+  assert.match(source, /querySelector<HTMLButtonElement>\('\[role="combobox"\]'\)\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(source, /onChange\?\.\(\{ target: \{ value: next \} \}\);\s*closeCalendar\(\);/);
+  assert.match(source, /event.key === 'Escape'[^\n]*closeCalendar\(\)/);
+  assert.match(source, /<PopoverPanel\s+open=\{open\}\s+onClose=\{\(\) => setOpen\(false\)\}/);
+});

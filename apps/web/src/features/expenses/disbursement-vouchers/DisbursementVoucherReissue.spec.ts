@@ -104,5 +104,15 @@ test('a cancelled paid banner shows the typed source reason below its first sent
   assert.doesNotMatch(reissued, /ออกใบใหม่สำหรับการจ่ายที่เหลือได้/);
   const source = readFileSync(new URL('./DisbursementVoucherReissue.tsx', import.meta.url), 'utf8');
   assert.match(source, /closeOnBackdrop=\{false\}/); assert.match(source, /<CoverLoader active=\{busy\} scope="modal"/);
-  assert.equal((source.match(/w-full sm:w-auto/g) ?? []).length, 2); assert.match(source, /styles.modalFooter/);
+  // Plain buttons, the safe one first: the shared dialog footer gives them one size.
+  assert.doesNotMatch(source, /w-full sm:w-auto|styles.modalFooter/); assert.match(source, /footer=\{<>\s*<button type="button" className=\{ghostClass\}[\s\S]*?className=\{btnClass\}/);
+});
+
+
+test('ordinary cancellation has one notice with actor, time and reason without a next-step instruction', () => {
+  const html = render({ ...cancelled, canReissue: false, cancelledByName: 'สมใจ', header: { ...cancelled.header, cancelledAfterPaid: false, cancelledAt: '2026-10-15T03:00:00Z', cancelReason: 'ไม่ซื้อแล้ว' }, lines: [] });
+  assert.match(html, /ยกเลิกโดย สมใจ/); assert.match(html, /15 ต.ค. 2569 10:00 น./);
+  assert.equal(html.split('ไม่ซื้อแล้ว').length - 1, 1);
+  assert.equal(html.split('<section').length - 1, 1);
+  assert.doesNotMatch(html, /<button/);
 });

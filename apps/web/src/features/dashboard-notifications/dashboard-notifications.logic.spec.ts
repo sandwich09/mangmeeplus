@@ -52,6 +52,15 @@ describe('visibleNotifications', () => {
     assert.deepEqual(visibleNotifications([resolved, open], 'all').map((item) => item.id), ['resolved', 'open']);
   });
 
+  // Found 2026-10-13: the badge said 1 while the bell listed the newest eight notices, all finished; the waiting one was the ninth.
+  it('lists what waits first in the bell, then the newest others, never twice and never over the limit', () => {
+    const waitingOld = notification('waiting-old', false);
+    const done = (id: string) => ({ ...notification(id, false), status: 'resolved' as const });
+    const latest = [done('d1'), done('d2'), done('d3'), waitingOld];
+    assert.deepEqual(logic.bellNotifications([waitingOld, done('d1')], latest, 3), { waiting: [waitingOld], earlier: [latest[0], latest[1]] });
+    assert.deepEqual(logic.bellNotifications([], latest, 2), { waiting: [], earlier: [latest[0], latest[1]] });
+  });
+
   it('leaves the sentence written when the notice was raised out of a resolved notice: it can ask for what is already done', () => {
     const body = 'ยอด 680.00 บาท · รอคุณบันทึกการจ่ายเงิน';
     assert.equal(notificationBodyText({ status: 'resolved', body }), '');
@@ -60,7 +69,7 @@ describe('visibleNotifications', () => {
   });
 
   it('tags a resolved notice as done in the neutral colour, not in the colour that asks for action', () => {
-    assert.deepEqual(notificationTag({ status: 'resolved', severity: 'action' }), { label: 'ดำเนินการแล้ว', tone: severityColor('info') });
+    assert.deepEqual(notificationTag({ status: 'resolved', severity: 'action' }), { label: 'เสร็จแล้ว', tone: severityColor('info') });
     assert.deepEqual(notificationTag({ status: 'open', severity: 'action' }), { label: 'ต้องดำเนินการ', tone: severityColor('action') });
     for (const file of ['NotificationBell.tsx', 'NotificationPages.tsx']) assert.doesNotMatch(readFileSync(join(__dirname, file), 'utf8'), /ดำเนินการแล้ว|severityColor\(item/, file);
   });
@@ -74,7 +83,7 @@ describe('visibleNotifications', () => {
     const bell = readFileSync(join(__dirname, 'NotificationBell.tsx'), 'utf8'), centre = readFileSync(join(__dirname, 'NotificationPages.tsx'), 'utf8');
     assert.match(bell, /\{unread && <span aria-hidden className="ml-auto h-2 w-2 shrink-0 rounded-full bg-brand-500" \/>\}/); assert.match(bell, /\$\{unread \? 'bg-brand-25\/50' : ''\}/);
     assert.match(bell, /if \(!isUnreadNotification\(item\)\) return;/);
-    assert.match(centre, /\$\{isUnreadNotification\(item\) \? '' : 'opacity-60'\}/); assert.match(centre, /!items\.some\(isUnreadNotification\)/); assert.match(centre, /read=\{!isUnreadNotification\(item\)\}/);
+    /* 2026-10-13: unread is marked by the bell's own dot and a bold title, no longer by fading the read rows. */ assert.match(centre, /\{unread && <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-brand-500" \/>\}/); assert.doesNotMatch(centre, /opacity-60'\}/); assert.match(centre, /items\.some\(isUnreadNotification\)/); assert.match(centre, /read=\{!isUnreadNotification\(item\)\}/);
   });
 });
 

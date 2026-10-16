@@ -29,13 +29,13 @@ afterEach(() => {
 
 describe('reimbursement submit error notifications', () => {
   const cases = [
-    [422, 'missing_receipt', 'ยังส่งไม่ได้ตามนโยบายใบเสร็จของบริษัท กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ'],
-    [400, 'missing_receipt_reason_required', 'มีรายการที่ยังไม่แนบหลักฐาน กรุณาระบุเหตุผลที่ไม่มีใบเสร็จก่อนส่งใบเบิก'],
-    [400, 'line_incurred_date_in_future:2', 'รายการที่ 2: วันที่รายการเบิกต้องไม่เกินวันนี้ (เวลาไทย) กรุณาแก้ไขวันที่ก่อนส่งอนุมัติ'],
-    [422, 'line_incurred_date_in_future:2', 'รายการที่ 2: วันที่รายการเบิกต้องไม่เกินวันนี้ (เวลาไทย) กรุณาแก้ไขวันที่ก่อนส่งอนุมัติ'],
-    [422, 'line_incurred_date_invalid:1', 'รายการที่ 1: กรุณาระบุวันที่รายการเบิกให้ถูกต้อง'],
-    [400, 'unreviewed_internal_rule', 'ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง'],
-    [422, 'unreviewed_internal_rule', 'ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง'],
+    [422, 'missing_receipt', 'มีรายการที่ยังไม่มีใบเสร็จ แนบใบเสร็จให้ครบก่อนส่งใบเบิก'],
+    [400, 'missing_receipt_reason_required', 'มีรายการที่ยังไม่แนบหลักฐาน กรอกเหตุผลที่ไม่มีใบเสร็จก่อนส่งใบเบิก'],
+    [400, 'line_incurred_date_in_future:2', 'รายการที่ 2: วันที่รายการเบิกต้องไม่เกินวันนี้ (เวลาไทย) แก้วันที่ก่อนส่งอนุมัติ'],
+    [422, 'line_incurred_date_in_future:2', 'รายการที่ 2: วันที่รายการเบิกต้องไม่เกินวันนี้ (เวลาไทย) แก้วันที่ก่อนส่งอนุมัติ'],
+    [422, 'line_incurred_date_invalid:1', 'รายการที่ 1: เลือกวันที่รายการเบิกให้ถูกต้อง'],
+    [400, 'unreviewed_internal_rule', 'ทำรายการต่อไม่ได้ ตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง'],
+    [422, 'unreviewed_internal_rule', 'ทำรายการต่อไม่ได้ ตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง'],
   ] as const;
 
   for (const [status, code, expected] of cases) {
@@ -186,7 +186,7 @@ describe('reimbursement receipt upload', () => {
 // The hub's list is asked for a page at a time. What the hub holds is `HubList` (reimbursements.logic.ts); this is the
 // part that talks to the API, and the part that drops an answer nobody is waiting for any more.
 describe('loadHubPage and the hub list it fills', () => {
-  const hub = (all: number) => ({ counts: { all, draft: 0, review: 0, payment: all, duplicate_blocked: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
+  const hub = (all: number) => ({ counts: { all, draft: 0, correction: 0, review: 0, payment: all, duplicate_blocked: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
   /** A list endpoint over `rows`, answering `pageSize` rows a page whatever was asked; `failing` pages answer 500. */
   function server(rows: Array<{ id: string }>, pageSize = 100, failing: number[] = []) {
     const urls: string[] = [];
@@ -358,7 +358,7 @@ describe('loadHubPage and the hub list it fills', () => {
   it('keeps what was loaded when a later page fails, and a retry asks for that page again', async () => {
     const down = server(claims(230), 100, [2]);
     const failed = await fill(NO_HUB_LIST, 'list');
-    // Before: the whole load was thrown away and the hub said "ยังไม่มีคำขอเบิก".
+    // Before: the whole load was thrown away and the hub said "ยังไม่มีใบเบิก".
     assert.deepEqual([failed.rows.length, failed.total, failed.nextPage], [100, 230, 2]);
     assert.equal(typeof failed.failed, 'string');
     assert.doesNotMatch(failed.failed!, /500|Internal|error/i, 'the reason is said in Thai, never as a status code');
@@ -455,10 +455,10 @@ describe('the two calls of a payout account correction round', () => {
         [409, 'payout_correction_in_progress', 'ใบนี้ถูกส่งกลับเรื่องวิธีรับเงินคืน และยังไม่กลับมารอจ่าย จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'],
         [409, 'payout_correction_not_allowed', 'ใบนี้ส่งกลับไม่ได้ในตอนนี้ ส่งกลับได้เฉพาะใบที่รอจ่ายและยังไม่ได้บันทึกจ่าย ถ้าบันทึกจ่ายแล้วต้องยกเลิกการจ่ายก่อน'],
         [403, 'payout_correction_denied', 'คุณไม่มีสิทธิ์ส่งกลับหรือเลือกวิธีรับเงินคืนของใบนี้'],
-        [409, 'payout_correction_not_requested', 'ใบนี้ไม่ได้ถูกส่งกลับเรื่องวิธีรับเงินคืน กรุณาเปิดใบใหม่เพื่อดูสถานะล่าสุด'],
-        [400, 'payout_correction_reason_required', 'กรุณาเลือกเหตุผลที่ส่งกลับ'],
+        [409, 'payout_correction_not_requested', 'ใบนี้ไม่ได้ถูกส่งกลับเรื่องวิธีรับเงินคืน เปิดใบใหม่เพื่อดูสถานะล่าสุด'],
+        [400, 'payout_correction_reason_required', 'เลือกเหตุผลที่ส่งกลับ'],
         [400, 'payout_correction_note_too_long', 'หมายเหตุต้องไม่เกิน 500 ตัวอักษร'],
-        [409, 'reimbursement_changed', 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง'],
+        [409, 'reimbursement_changed', 'ใบเบิกถูกแก้ไขระหว่างทำรายการ เปิดรายการใหม่แล้วลองอีกครั้ง'],
       ] as const) {
         for (const call of [
           () => requestReimbursementPayoutCorrection('co-1', 'rb-1', { reasonCode: 'OTHER' }),
@@ -477,7 +477,7 @@ describe('the two calls of a payout account correction round', () => {
       for (const code of ['note_contains_account_number', 'reimbursement_cancellation_pending', 'payout_method_required', 'payout_destination_changed',
         'payout_destination_invalid', 'payout_account_member_not_active', 'self_approval_denied']) {
         const sentence = errorText(Object.assign(new Error(code), { status: 409 }));
-        assert.notEqual(sentence, 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง', code);
+        assert.notEqual(sentence, 'ทำรายการไม่สำเร็จ ลองอีกครั้ง', code);
         assert.doesNotMatch(sentence, /[a-z]_[a-z]/, code);
       }
       assert.deepEqual(events, []);
@@ -517,7 +517,7 @@ describe('adding a slip to a recorded payment', () => {
     await assert.rejects(() => attachReimbursementPaymentSlip('co-1', 'rb-1', 'pay-1', 'att-copy'), (error: Error & { status?: number }) => {
       assert.equal(error.status, 409);
       const sentence = errorText(error);
-      for (const part of ['ไฟล์นี้ถูกยืนยันไว้ว่าเป็นใบเบิกที่ลงนามครบ', 'จึงยังไม่ได้ใช้เป็นสลิป', 'โหลดหน้านี้ใหม่', 'ย้ายกลับไม่ได้']) assert.ok(sentence.includes(part), `${part} in ${sentence}`);
+      for (const part of ['ไฟล์นี้ถูกยืนยันไว้ว่าเป็นใบเบิกที่เซ็นครบ', 'จึงยังไม่ได้ใช้เป็นสลิป', 'เปิดหน้านี้ใหม่', 'ย้ายกลับไม่ได้']) assert.ok(sentence.includes(part), `${part} in ${sentence}`);
       assert.doesNotMatch(sentence, /[a-z]_[a-z]|[A-Za-z]{3,}/, sentence);
       return true;
     });

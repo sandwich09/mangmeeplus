@@ -5,13 +5,13 @@ import { SETTLE_EPSILON } from './expense-totals.logic';
 
 export function assertFullSubstitutePayment(source: string | null | undefined, paid: string, payable: string): void {
   if (source !== 'COMPANY' && source !== 'PERSONAL_ADVANCE') {
-    throw new ConflictException({ code: 'substitute_funding_source_required', message: 'เอกสารเดิมยังไม่ระบุแหล่งเงิน กรุณาสร้างเวอร์ชันใหม่และลงนามอีกครั้ง' });
+    throw new ConflictException({ code: 'substitute_funding_source_required', message: 'เอกสารเดิมยังไม่ระบุแหล่งเงิน จัดทำฉบับแก้ไขและเซ็นอีกครั้ง' });
   }
   const amount = new Decimal(paid);
   const total = new Decimal(payable);
   if (!total.gt(0) || amount.isNegative() || (source === 'PERSONAL_ADVANCE' && !amount.isZero())
     || (source === 'COMPANY' && !amount.isZero() && amount.minus(total).abs().gt(SETTLE_EPSILON))) {
-    throw new ConflictException({ code: 'substitute_full_payment_required', message: 'รองรับบริษัทจ่ายเต็มหรือพนักงานสำรองจ่ายเต็มเท่านั้น รายการนี้มีข้อมูลการจ่ายที่ต้องตรวจแก้ก่อน' });
+    throw new ConflictException({ code: 'substitute_full_payment_required', message: 'รองรับเฉพาะร้านจ่ายเต็มจำนวนหรือพนักงานสำรองจ่ายเต็มจำนวน รายการนี้มีข้อมูลการจ่ายที่ต้องตรวจแก้ก่อนทำต่อ' });
   }
 }
 
@@ -23,7 +23,7 @@ export function assertSubstitutePaymentDetails(source: string | null | undefined
   if ((expense.paymentMethod && expense.paymentMethod !== certificate.paymentMethod)
     || (expense.paidAt && (!certificate.paymentDate || civilDate(expense.paidAt) !== civilDate(certificate.paymentDate)))) {
     throw new ConflictException({ code: 'substitute_existing_payment_details_mismatch',
-      message: 'วันที่หรือวิธีจ่ายในใบแทนไม่ตรงกับการจ่ายที่บันทึกแล้ว กรุณาตรวจประวัติการจ่าย ยกเลิกใบแทนก่อนสร้างใหม่ หากรายการจ่ายเดิมผิด ให้ผู้มีสิทธิ์ยกเลิกรายจ่ายและกลับรายการที่เกี่ยวข้องก่อน' });
+      message: 'วันที่หรือวิธีจ่ายในใบรับรองไม่ตรงกับการจ่ายที่บันทึกแล้ว ตรวจประวัติการจ่าย ยกเลิกใบรับรองก่อนสร้างใหม่ หากรายการจ่ายเดิมผิด ให้ผู้มีสิทธิ์ยกเลิกรายจ่ายและกลับรายการที่เกี่ยวข้องก่อน' });
   }
 }
 
@@ -34,6 +34,6 @@ export function assertSubstituteFactsComplete(evidence: {
   if (!evidence.payeeName?.trim() || !evidence.missingReceiptReason.trim() || !evidence.businessPurpose.trim()
     || !evidence.paymentDate || !evidence.paymentMethod) {
     throw new ConflictException({ code: 'substitute_facts_incomplete',
-      message: 'ข้อมูลใบแทนยังไม่ครบ เลือกแก้ไขข้อมูลใบแทนเพื่อระบุผู้รับเงิน เหตุผล วัตถุประสงค์ และวันที่/วิธีจ่ายก่อนลงนาม ไม่ต้องยกเลิกเอกสาร' });
+      message: 'ข้อมูลใบรับรองยังไม่ครบ แก้ไขใบรับรองเพื่อระบุผู้รับเงิน เหตุผล วัตถุประสงค์ และวันที่หรือวิธีจ่ายก่อนเซ็น โดยไม่ต้องยกเลิกเอกสาร' });
   }
 }

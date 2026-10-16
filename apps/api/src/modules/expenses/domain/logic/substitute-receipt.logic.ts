@@ -113,12 +113,12 @@ export type SubstituteReceiptApprover = {
 export function captureAllocationStatement(snapshot: Pick<SubstituteReceiptSnapshot, 'captureAllocation'>): string | null {
   const capture = snapshot.captureAllocation;
   if (!capture || money(capture.companyAmount) === money(capture.paidTotal)) return null;
-  return `ใบรับรองนี้รับรองส่วนของบริษัท ${money(capture.companyAmount)} บาท จากยอดที่จ่ายจริง ${money(capture.paidTotal)} บาท`
+  return `ใบรับรองนี้รับรองส่วนของกิจการ ${money(capture.companyAmount)} บาท จากยอดที่จ่ายจริง ${money(capture.paidTotal)} บาท`
     + ` ตามการจัดส่วนที่ตรวจแล้ว (กลุ่มหลักฐาน ${capture.groupRef} ครั้งที่ ${capture.allocationRevision})`;
 }
 
 export function buildSubstituteCertificationText(name: string, position: string, literal = false): string {
-  return `ข้าพเจ้า ${name}${position.trim() ? ` ตำแหน่ง ${literal ? position : positionLabel(position)}` : ''} ขอรับรองว่ารายจ่ายข้างต้นนี้ไม่อาจเรียกเก็บใบเสร็จรับเงินจากผู้รับได้ และได้จ่ายไปในงานของบริษัทโดยแท้`;
+  return `ข้าพเจ้า ${name}${position.trim() ? ` ตำแหน่ง ${literal ? position : positionLabel(position)}` : ''} ขอรับรองว่ารายจ่ายข้างต้นนี้ไม่อาจเรียกเก็บใบเสร็จรับเงินจากผู้รับได้ และได้จ่ายไปในงานของกิจการโดยแท้`;
 }
 
 export function thaiBahtText(value: string): string {
@@ -216,7 +216,7 @@ export function renderSubstituteReceiptSvg(
   const tableBottom = rowY + 68;
   const reasonLines = wrapText(`เหตุผลที่ไม่สามารถเรียกใบเสร็จ: ${snapshot.missingReceiptReason}`, 735);
   const purposeLines = wrapText(`วัตถุประสงค์ทางธุรกิจ: ${snapshot.expense.businessPurpose}`, 735);
-  const fundingNote = snapshot.fundingSource ? `${snapshot.paymentStatement ?? `แหล่งเงิน: ${snapshot.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน (ยังไม่ใช่การจ่ายคืนจากบริษัท)'}`} · สุทธิจ่าย ${money(snapshot.expense.netPayableAmount ?? snapshot.expense.grandTotalAmount)} บาท · หัก ณ ที่จ่าย ${money(snapshot.expense.whtAmount ?? '0')} บาท` : '';
+  const fundingNote = snapshot.fundingSource ? `${(snapshot.fundingSource === 'COMPANY' && snapshot.paymentStatement ? `ชำระด้วยเงินของกิจการ ${snapshot.company.name} เต็มจำนวน` : snapshot.paymentStatement) ?? `แหล่งเงิน: ${snapshot.fundingSource === 'COMPANY' ? 'กิจการจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน (ยังไม่ใช่การจ่ายคืนจากกิจการ)'}`} · สุทธิจ่าย ${money(snapshot.expense.netPayableAmount ?? snapshot.expense.grandTotalAmount)} บาท · หัก ณ ที่จ่าย ${money(snapshot.expense.whtAmount ?? '0')} บาท` : '';
   const noteLines = [...wrapText(fundingNote, 735), ...(snapshot.correction ? wrapText(`แก้เฉพาะชื่อ/ตำแหน่งจาก ${snapshot.correction.evidenceId}: ${snapshot.correction.reason}`, 735) : []), ...(snapshot.note ? wrapText(`หมายเหตุ: ${snapshot.note}`, 735) : [])];
   const captureY = tableBottom + 30;
   const reasonY = tableBottom + 38 + (captureLines.length ? captureLines.length * 22 + 8 : 0);
@@ -227,7 +227,7 @@ export function renderSubstituteReceiptSvg(
     `ตำแหน่ง ${snapshot.payer.position}`,
     `ตำแหน่ง${options.paperForm ? ' (ถ้ามี)' : ''} ${(snapshot.schemaVersion === 2 ? snapshot.payer.position : positionLabel(snapshot.payer.position))}`,
   ) : snapshot.certificationText;
-  const certificationLines = wrapText(certificationText, 720);
+  const certificationLines = wrapText(certificationText.replace('และได้จ่ายไปในงานของบริษัทโดยแท้', 'และได้จ่ายไปในงานของกิจการโดยแท้'), 720);
   const certificationHeight = Math.max(62, certificationLines.length * 22 + 28);
   const evidenceTitleY = certificationTop + certificationHeight + 38;
   let evidenceY = evidenceTitleY + 30;
@@ -288,9 +288,9 @@ export function renderSubstituteReceiptSvg(
   <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
     <text x="425" y="46" text-anchor="middle" font-size="25" font-weight="700">${SUBSTITUTE_RECEIPT_TITLE}</text>
     <text x="425" y="80" text-anchor="middle"${fitToWidth(`เลขใบแทน: ${snapshot.documentNumber}`, 750)}>เลขใบแทน: ${xml(snapshot.documentNumber)}</text>
-    <text x="50" y="120"${fitToWidth(`บริษัท: ${snapshot.company.name}`, 410)}>บริษัท: ${xml(snapshot.company.name)}</text>
+    <text x="50" y="120"${fitToWidth(`กิจการ: ${snapshot.company.name}`, 410)}>กิจการ: ${xml(snapshot.company.name)}</text>
     <text x="470" y="120"${fitToWidth(`สาขา: ${snapshot.company.branchName ?? 'สำนักงานใหญ่'}`, 335)}>สาขา: ${xml(snapshot.company.branchName ?? 'สำนักงานใหญ่')}</text>
-    <text x="50" y="148">เลขประจำตัวผู้เสียภาษี: ${xml(snapshot.company.taxId ?? '-')}</text>
+    ${snapshot.company.taxId?.trim() ? `<text x="50" y="148">เลขประจำตัวผู้เสียภาษี: ${xml(snapshot.company.taxId)}</text>` : ''}
     <text x="470" y="148">วันที่รายจ่าย: ${xml(formatDate(snapshot.expense.expenseDate))}</text>
     <text x="50" y="176"${fitToWidth(`เลขรายจ่าย: ${snapshot.expense.expenseNumber ?? '-'}`, 400)}>เลขรายจ่าย: ${xml(snapshot.expense.expenseNumber ?? '-')}</text>
     <text x="470" y="176">วันที่จ่าย: ${xml(snapshot.expense.paymentDate ? formatDate(snapshot.expense.paymentDate) : '-')}</text>
@@ -354,10 +354,10 @@ export function renderSubstituteReceiptAttestationSvg(
   const title = snapshot.paperReview ? 'บันทึกตรวจรับฉบับลงนามบนกระดาษ' : SUBSTITUTE_RECEIPT_ATTESTATION_TITLE;
   const facts: Array<[string, string]> = [
     ['เลขที่เอกสาร', snapshot.documentNumber],
-    ['บริษัท', snapshot.company.name],
-    ...(snapshot.fundingSource ? [[snapshot.paymentStatement ? 'การชำระเงิน' : 'แหล่งเงิน', snapshot.paymentStatement ?? (snapshot.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน')] as [string, string]] : []),
+    ['กิจการ', snapshot.company.name],
+    ...(snapshot.fundingSource ? [[snapshot.paymentStatement ? 'การชำระเงิน' : 'แหล่งเงิน', (snapshot.fundingSource === 'COMPANY' && snapshot.paymentStatement ? `ชำระด้วยเงินของกิจการ ${snapshot.company.name} เต็มจำนวน` : snapshot.paymentStatement) ?? (snapshot.fundingSource === 'COMPANY' ? 'กิจการจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน')] as [string, string]] : []),
     ['สาขา', snapshot.company.branchName ?? 'สำนักงานใหญ่'],
-    ['เลขประจำตัวผู้เสียภาษี', snapshot.company.taxId ?? '-'],
+    ...(snapshot.company.taxId?.trim() ? [['เลขประจำตัวผู้เสียภาษี', snapshot.company.taxId] as [string, string]] : []),
     ['เลขรายจ่าย', snapshot.expense.expenseNumber ?? '-'],
     ['วันที่รายจ่าย', formatDate(snapshot.expense.expenseDate)],
     ['วันที่จ่าย', snapshot.expense.paymentDate ? formatDate(snapshot.expense.paymentDate) : '-'],
@@ -367,7 +367,7 @@ export function renderSubstituteReceiptAttestationSvg(
     ['จำนวนเงิน (ตัวอักษร)', thaiBahtText(snapshot.expense.grandTotalAmount)],
     // D04: the same sentence the online sheet prints under the amount — the paper route certifies
     // the same share, so it states the same relationship to the purchase that was actually paid.
-    ...(captureAllocationStatement(snapshot) ? [['ส่วนของบริษัทตามการจัดส่วน', captureAllocationStatement(snapshot)!] as [string, string]] : []),
+    ...(captureAllocationStatement(snapshot) ? [['ส่วนของกิจการตามการจัดส่วน', captureAllocationStatement(snapshot)!] as [string, string]] : []),
     ['วัตถุประสงค์ทางธุรกิจ', snapshot.expense.businessPurpose],
     ['เหตุผลที่ไม่มีใบเสร็จ', snapshot.missingReceiptReason],
     [snapshot.payer.roleLabel ?? 'ผู้จ่ายเงิน/ผู้รับรอง', signerNameWithPosition(snapshot.payer, snapshot.schemaVersion)],
@@ -378,7 +378,7 @@ export function renderSubstituteReceiptAttestationSvg(
       ['ผู้อัปโหลด', snapshot.paperReview.uploadedByName ?? '-'],
       ['อัปโหลดเมื่อ', snapshot.paperReview.uploadedAt],
       ['ผู้ตรวจรับ', snapshot.paperReview.reviewerName],
-      ['ลงนามสองฐานะโดยคนเดียว', snapshot.paperReview.samePerson ? 'ใช่ (ตามนโยบายบริษัท)' : 'ไม่ใช่'],
+      ['ลงนามสองฐานะโดยคนเดียว', snapshot.paperReview.samePerson ? 'ใช่ (ตามนโยบายกิจการ)' : 'ไม่ใช่'],
     ] as Array<[string, string]> : []),
   ];
   // A checksum is one token or it is not a checksum: these print on one line, condensed if need be,

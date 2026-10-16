@@ -117,7 +117,7 @@ describe('System WHT catalog routes', () => {
   });
 });
 
-it('the catalog migration only writes its global table and seed preserves saved statuses', () => {
+it('the catalog migration only writes its global table and seed opens only accountant-approved rates', () => {
   const prisma = join(__dirname, '../../../../../prisma');
   const sql = readFileSync(join(prisma, 'migrations/20261004120000_open_wht_income_categories/migration.sql'), 'utf8').replace(/--[^\n]*/g, '').trim();
   assert.match(sql, /^INSERT INTO "WhtIncomeCategory"/);
@@ -126,8 +126,27 @@ it('the catalog migration only writes its global table and seed preserves saved 
   assert.match(sql, /ON CONFLICT \("code"\) DO UPDATE/);
   const seed = readFileSync(join(prisma, 'seed.ts'), 'utf8');
   const section = seed.slice(seed.indexOf('const WHT_CATEGORIES ='), seed.indexOf('// ── Item 11: Company tax profile'));
-  assert.equal((section.match(/status: 'ACTIVE'/g) ?? []).length, 12);
-  assert.equal((section.match(/status: 'DRAFT'/g) ?? []).length, 3);
+  assert.equal((section.match(/status: 'ACTIVE'/g) ?? []).length, 13);
+  assert.equal((section.match(/status: 'DRAFT'/g) ?? []).length, 5);
   assert.match(section, /status: cat.status/);
-  assert.doesNotMatch(section.match(/update: \{[^}]*\}/)?.[0] ?? '', /status/);
+  assert.match(section, /'filingRoute' in cat/);
+  assert.match(section, /cat.code === 'WHT_PRIZE' \? \{ defaultRate: cat.defaultRate \}/);
+  const routes = readFileSync(join(prisma, 'migrations/20261013120100_wht_income_routes_catalog/migration.sql'), 'utf8');
+  assert.match(routes, /ON CONFLICT \("code"\) DO UPDATE/);
+  assert.match(routes, /WHT_PRIZE.*PND3.*SYSTEM_FILLS.*5.0000.*ACTIVE/);
+  assert.equal((routes.match(/'DRAFT'/g) ?? []).length, 5);
+});
+
+it('the expense catalogue exposes filing routes without changing its existing permission or active selection', async () => {
+  const { ExpenseController } = await import('../../../expenses/presentation/http/expense.controller');
+  const active = [{ code: 'WHT_PRIZE', nameTh: 'รางวัล', formType: 'PND3', defaultRate: '5' }, { code: 'WHT_OTHER_JUR', nameTh: 'อื่นๆ', formType: 'PND53', defaultRate: '3' }];
+  let query: any;
+  const controller = Object.assign(Object.create(ExpenseController.prototype), {
+    listWhtCategories: { execute: async () => active },
+    prisma: { client: { whtIncomeCategory: { findMany: async (input: any) => { query = input; return active.map(row => ({ code: row.code, filingRoute: row.code === 'WHT_PRIZE' ? 'SYSTEM_FILLS' : 'ACCOUNTANT_PREPARES' })); } } } },
+  });
+  const rows = await controller.whtIncomeCategories({ companyId: 'shop', permissions: ['expense.create'] });
+  assert.deepEqual(rows.map((row: any) => row.filingRoute), ['SYSTEM_FILLS', 'ACCOUNTANT_PREPARES']);
+  assert.deepEqual(query.where.code.in, active.map(row => row.code));
+  assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, ExpenseController.prototype.whtIncomeCategories), ['expense.create']);
 });

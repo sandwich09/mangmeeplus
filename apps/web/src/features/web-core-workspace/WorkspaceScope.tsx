@@ -10,8 +10,9 @@ import { AlertModal } from '@/common/components/modal';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { roleDisplayName } from '@/features/employee-access/role-picker.logic';
-import { branchDisplayName, branchScopeLabel } from './branch-scope-label.logic';
+import { branchDisplayName, branchScopeLabel, branchStorageKeys } from './branch-scope-label.logic';
 import {
+  COMPANY_PROFILE_CHANGED_EVENT,
   fetchActiveBranches,
   fetchMyCompanies,
   fetchMyContext,
@@ -39,6 +40,11 @@ type BranchFilterValue = {
   scopeFailed: boolean;
   /** Re-runs the scope lookup behind the retry affordance. */
   reloadScope: () => void;
+  /**
+   * The branch this person last chose on this device ('' = none yet). A new record offers it first while the filter
+   * says "all branches", so the branch is not asked again on every visit. Kept in browser storage per shop and person.
+   */
+  lastChosenBranchId: string;
 };
 
 const BranchFilterContext = createContext<BranchFilterValue | null>(null);
@@ -47,7 +53,6 @@ export function useBranchFilter(): BranchFilterValue | null {
   return useContext(BranchFilterContext);
 }
 
-const storageKey = (companyId: string) => `watchdog.branchFilter.${companyId}`;
 
 export function BranchFilterProvider({
   companyId,
@@ -65,13 +70,17 @@ export function BranchFilterProvider({
   const [forbidden, setForbidden] = useState(false);
   const [scopeFailed, setScopeFailed] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+  const [userId, setUserId] = useState('');
+  const [lastChosenBranchId, setLastChosenBranchId] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     setBranches([]);
     setLocked(false);
     setScopeFailed(false);
-    setBranchIdState(typeof window !== 'undefined' ? (window.localStorage.getItem(storageKey(companyId)) ?? '') : '');
+    setBranchIdState('');
+    setUserId('');
+    setLastChosenBranchId('');
     (async () => {
       try {
         const [all, me] = await Promise.all([fetchActiveBranches(companyId), fetchMyContext(companyId)]);
@@ -80,13 +89,19 @@ export function BranchFilterProvider({
         const scopeIds = me.scopes?.branchIds;
         const visible = scopeIds ? all.filter((b) => scopeIds.includes(b.id)) : all;
         setBranches(visible);
+        setUserId(me.userId);
+        // A remembered branch the person can no longer use is not offered.
+        const keys = branchStorageKeys(companyId, me.userId);
+        const remembered = window.localStorage.getItem(keys.lastChosen) ?? '';
+        const selected = window.localStorage.getItem(keys.filter) ?? '';
+        setLastChosenBranchId(visible.some((b) => b.id === remembered) ? remembered : '');
         if (scopeIds && visible.length === 1) {
           // Branch-restricted to one branch: lock the filter to it.
           setLocked(true);
           setBranchIdState(visible[0]!.id);
         } else {
           // Drop a stale saved selection that is no longer visible.
-          setBranchIdState((prev) => (prev && !visible.some((b) => b.id === prev) ? '' : prev));
+          setBranchIdState(visible.some((b) => b.id === selected) ? selected : '');
         }
       } catch (error) {
         // Not signed in / no branch.read permission — header simply shows no selector. Any other
@@ -101,24 +116,34 @@ export function BranchFilterProvider({
   const setBranchId = useCallback(
     (id: string) => {
       setBranchIdState(id);
-      if (typeof window !== 'undefined') window.localStorage.setItem(storageKey(companyId), id);
+      if (typeof window === 'undefined' || !userId) return;
+      const keys = branchStorageKeys(companyId, userId);
+      window.localStorage.setItem(keys.filter, id);
+      // A real branch (not "all") is also remembered as this person's last choice, for the next new record.
+      if (id && userId) {
+        setLastChosenBranchId(id);
+        window.localStorage.setItem(keys.lastChosen, id);
+      }
     },
-    [companyId],
+    [companyId, userId],
   );
 
   const reportBranchForbidden = useCallback(() => {
     // Drop the saved selection before the refetch: the effect re-reads localStorage on every run.
-    if (typeof window !== 'undefined') window.localStorage.removeItem(storageKey(companyId));
+    if (typeof window !== 'undefined' && userId) window.localStorage.removeItem(branchStorageKeys(companyId, userId).filter);
     setBranchIdState('');
     setForbidden(true);
     setReloadToken((n) => n + 1);
-  }, [companyId]);
+  }, [companyId, userId]);
 
   const reloadScope = useCallback(() => setReloadToken((n) => n + 1), []);
 
+  // A shop with one branch draws no picker (BranchSelector), so nothing on screen could turn a saved or deep-linked
+  // branch filter back to "all": its scope is always all branches.
+  const scopedBranchId = !locked && branches.length === 1 ? '' : branchId;
   const value = useMemo(
-    () => ({ branchId, setBranchId, branches, locked, reportBranchForbidden, scopeFailed, reloadScope }),
-    [branchId, setBranchId, branches, locked, reportBranchForbidden, scopeFailed, reloadScope],
+    () => ({ branchId: scopedBranchId, setBranchId, branches, locked, reportBranchForbidden, scopeFailed, reloadScope, lastChosenBranchId }),
+    [scopedBranchId, setBranchId, branches, locked, reportBranchForbidden, scopeFailed, reloadScope, lastChosenBranchId],
   );
   return (
     <BranchFilterContext.Provider value={value}>
@@ -169,6 +194,7 @@ export function BranchSelector() {
         onClick={filter.reloadScope}
         aria-label={t('shell.scope.load_failed', locale)}
         title={t('shell.scope.load_failed', locale)}
+        data-scope-retry=""
         className="flex min-h-11 min-w-11 flex-1 items-center gap-2 rounded-lg border border-warning-100 bg-warning-50 px-3 text-sm font-semibold text-warning-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:flex-none"
       >
         <span className="shrink-0"><BranchIcon /></span>
@@ -180,6 +206,10 @@ export function BranchSelector() {
 
   // Context unresolved, lookup failed, or no branch to name: render nothing (spec R3).
   if (!filter || !label) return null;
+
+  // A shop with one branch has nothing to choose: "all branches" and its one branch show the same data, so the
+  // picker is not drawn (the scope stays "all", exactly as before). A person restricted to one branch keeps the label below.
+  if (!filter.locked && filter.branches.length <= 1) return null;
 
   // Restricted to one branch: name that branch, non-interactive. No chevron — nothing opens.
   if (filter.locked) {
@@ -196,17 +226,23 @@ export function BranchSelector() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex h-11 w-full min-w-11 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-bold text-gray-700 hover:border-brand-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:w-auto sm:max-w-[240px]"
+        className="flex h-11 w-full min-w-11 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-bold text-gray-700 hover:border-brand-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:w-auto sm:max-w-[360px]"
         aria-label="เลือกสาขา"
       >
-        <span className="shrink-0"><BranchIcon /></span>
-        <span className="min-w-0 break-words text-left text-xs sm:text-sm" title={label}>{label}</span>
+        {/* No picture on a phone: its 24 px are what keeps "Room45 Eyes Lashes · สยาม" whole (the end of a branch
+            name is the part that tells two branches apart, and an ellipsis ate it). */}
+        <span className="shrink-0 max-sm:hidden"><BranchIcon /></span>
+        <span className="min-w-0 truncate text-left text-sm" title={label}>{label}</span>
         <svg className={`h-4 w-4 shrink-0 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
         </svg>
       </button>
       {open && (
-        <div className="fixed right-4 top-[var(--app-header-h)] z-50 mt-2 w-64 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-var(--app-header-h)-1rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-[var(--shadow-theme-md)] sm:absolute sm:top-auto sm:right-auto sm:left-0">
+        // A phone: a sheet across the screen right under the top bar (it used to hang from the right edge, away from its
+        // button). From 640 px: under the button.
+        <div className="fixed inset-x-4 top-[var(--app-header-h)] z-50 mt-2 max-h-[calc(100dvh-var(--app-header-h)-1rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-[var(--shadow-theme-md)] sm:absolute sm:inset-x-auto sm:top-auto sm:left-0 sm:w-64">
+          {/* What the choice does, said once: it filters what the pages show. */}
+          <p className="px-3 pb-1 pt-2 text-xs font-medium text-gray-500">แสดงข้อมูลของ</p>
           <button
             type="button"
             className={`block min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm break-words hover:bg-brand-25 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
@@ -256,6 +292,12 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
     return () => { cancelled = true; };
   }, [reloadToken]);
 
+  useEffect(() => {
+    const refresh = () => setReloadToken((value) => value + 1);
+    window.addEventListener(COMPANY_PROFILE_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(COMPANY_PROFILE_CHANGED_EVENT, refresh);
+  }, []);
+
   const current = companies.find((c) => c.companyId === companyId);
   const label = current?.companyName ?? fallbackName;
 
@@ -270,6 +312,7 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
         onClick={() => setReloadToken((n) => n + 1)}
         aria-label={t('shell.scope.load_failed', locale)}
         title={t('shell.scope.load_failed', locale)}
+        data-scope-retry=""
         className="block min-h-11 min-w-11 max-w-[44vw] flex-1 truncate rounded-lg px-1 text-sm font-semibold text-warning-700 underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:max-w-[240px] sm:flex-none"
       >
         <span className="sm:hidden">{t('client_notice.retry', locale)}</span>
@@ -281,18 +324,19 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
   if (companies.length <= 1) {
     // No company resolved yet: a pulsing placeholder, never a raw identifier.
     return (
-      <span className={`block max-w-[44vw] truncate text-sm font-semibold text-gray-700 sm:max-w-[240px] ${current ? '' : 'animate-pulse text-gray-400'}`}>
+      // A phone: a small caption over the branch picker (one 68 px top bar), the full line when it stands alone.
+      <span className={`block max-w-full truncate text-sm font-semibold text-gray-700 max-sm:[&:not(:only-child)]:text-xs max-sm:[&:not(:only-child)]:leading-4 sm:max-w-[240px] ${current ? '' : 'animate-pulse text-gray-400'}`}>
         {label}
       </span>
     );
   }
 
   return (
-    <div ref={rootRef} className="relative min-w-0 flex-1 sm:flex-none">
+    <div ref={rootRef} data-company-switch="" className="relative min-w-0 flex-1 sm:flex-none">
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex h-11 w-full min-w-11 items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700 hover:border-brand-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:w-auto sm:max-w-[240px]"
-        aria-label="สลับบริษัท"
+        aria-label="เปลี่ยนร้าน"
       >
         <span className="min-w-0 truncate">{label}</span>
         <svg className={`h-4 w-4 shrink-0 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
@@ -300,7 +344,7 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
         </svg>
       </button>
       {open && (
-        <div className="fixed right-4 top-[var(--app-header-h)] z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-var(--app-header-h)-1rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-[var(--shadow-theme-md)] sm:absolute sm:top-auto sm:right-auto sm:left-0">
+        <div className="fixed inset-x-4 top-[var(--app-header-h)] z-50 mt-2 max-h-[calc(100dvh-var(--app-header-h)-1rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-[var(--shadow-theme-md)] sm:absolute sm:inset-x-auto sm:top-auto sm:left-0 sm:w-72">
           {companies.map((c) => (
             <button
               key={c.companyId}

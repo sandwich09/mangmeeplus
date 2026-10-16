@@ -1,3 +1,4 @@
+import type { RequestContext } from '@watchdog-bms/contracts';
 import { accountEmailState, emailError, lockAccountEmail } from '../account-email-state';
 import { emailReauthBinding, EMAIL_REAUTH_TTL_MS } from '../../domain/logic/email-otp.logic';
 import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
@@ -35,6 +36,44 @@ export class AccountProfileUseCase {
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
     @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null,
   ) {}
+
+  private async assertNameMembership(ctx: RequestContext, companyId: string, userId: string, db = this.prisma.client) {
+    if (ctx.companyId !== companyId || !await db.companyMembership.findFirst({ where: { companyId, userId: ctx.userId, status: 'ACTIVE' } })) throw new ForbiddenException();
+    if (!await db.companyMembership.findFirst({ where: { companyId, userId } })) throw new NotFoundException();
+  }
+
+  async setDisplayName(ctx: RequestContext, companyId: string, userId: string, rawName: string) {
+    if (userId !== ctx.userId) throw new ForbiddenException();
+    const displayName = typeof rawName === 'string' ? rawName.trim() : '';
+    if (!displayName || displayName.length > 160) throw new BadRequestException({ code: 'account_display_name_invalid', message: 'ชื่อที่แสดงต้องมี 1–160 ตัว แก้ชื่อแล้วบันทึกอีกครั้ง' });
+    await this.prisma.client.$transaction(async tx => {
+      await this.assertNameMembership(ctx, companyId, userId, tx as typeof this.prisma.client);
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user || user.status !== 'ACTIVE') throw new ForbiddenException();
+      if (user.displayName === displayName) return;
+      if (!this.audit) throw new Error('Audit service is required for name changes');
+      const oldName = user.displayName;
+      await tx.user.update({ where: { id: userId }, data: { displayName } });
+      await this.audit.log({ companyId, actorUserId: ctx.userId, action: 'account.display_name.update', targetType: 'User', targetId: userId,
+        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { oldName, newName: displayName } }, tx);
+    });
+    return this.displayNameHistory(ctx, companyId, userId);
+  }
+
+  async displayNameHistory(ctx: RequestContext, companyId: string, userId = ctx.userId) {
+    if (userId !== ctx.userId && !ctx.permissions.includes('access.employee.update')) throw new ForbiddenException();
+    await this.assertNameMembership(ctx, companyId, userId);
+    const [user, rows] = await Promise.all([
+      this.prisma.client.user.findUnique({ where: { id: userId }, select: { displayName: true } }),
+      this.prisma.client.auditLog.findMany({ where: { companyId, targetType: 'User', targetId: userId, action: 'account.display_name.update', result: 'SUCCESS' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { id: true, createdAt: true, metadataJson: true, actor: { select: { displayName: true } } } }),
+    ]);
+    return { displayName: user?.displayName ?? '', history: rows.map(row => {
+      const metadata = row.metadataJson as { oldName: string; newName: string };
+      return { id: row.id, changedAt: row.createdAt.toISOString(), oldName: metadata.oldName, newName: metadata.newName, changedByName: row.actor?.displayName ?? null };
+    }) };
+  }
 
   /** Correct a LINE owner's unverified login address; mailbox verification stays a separate flow. */
   async setUnverifiedEmail(input: {

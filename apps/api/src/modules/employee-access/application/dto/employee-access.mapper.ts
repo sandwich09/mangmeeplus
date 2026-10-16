@@ -7,6 +7,7 @@ export const EMPLOYEE_PROFILE_INCLUDE = {
   user: {
     select: {
       email: true,
+      displayName: true,
       credential: { select: { mustChangePassword: true } },
       externalIdentities: { select: { status: true } },
     },
@@ -50,6 +51,7 @@ type EmployeeProfileRow = {
   createdAt: Date;
   updatedAt: Date;
   user: {
+    displayName?: string;
     email?: string | null;
     credential: { mustChangePassword: boolean } | null;
     externalIdentities: Array<{ status: string }>;
@@ -68,6 +70,7 @@ export function toEmployeeSummary(row: EmployeeProfileRow): EmployeeSummary {
     userId: row.userId,
     membershipId: row.membershipId,
     displayName: row.displayName,
+    accountDisplayName: row.user.displayName,
     // Null on rows written before the title was split out of displayName; those are never
     // backfilled, so the reader simply gets no title rather than a guessed one.
     titlePrefix: (row.titlePrefix ?? undefined) as EmployeeSummary['titlePrefix'],

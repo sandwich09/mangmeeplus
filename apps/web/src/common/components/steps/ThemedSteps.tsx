@@ -50,10 +50,16 @@ function StepNode({ state, number }: { state: ThemedStepState; number: number })
   );
 }
 
-export function ThemedSteps({ steps, className, 'aria-label': ariaLabel }: {
+export function ThemedSteps({ steps, className, 'aria-label': ariaLabel, onStepPress }: {
   steps: ThemedStep[];
   className?: string;
   'aria-label'?: string;
+  /**
+   * Going back a step: when given, every finished (`done`) step is one real button (circle and
+   * name together) that calls this with its position; the current and the coming steps stay plain.
+   * A step with its own `href` or `onSelect` keeps that. With no handler nothing changes.
+   */
+  onStepPress?: (index: number, step: ThemedStep) => void;
 }) {
   // Connector halves live per column so labels stay centered under their node; the
   // half AFTER a node keys off that node's state, the half BEFORE keys off the
@@ -70,14 +76,15 @@ export function ThemedSteps({ steps, className, 'aria-label': ariaLabel }: {
               <StepNode state={step.state} number={index + 1} />
               <span className="flex w-full min-w-0 flex-col items-center gap-0.5 px-1 text-center">
                 <span className={cx(
-                  'max-w-full text-[11px] font-bold leading-tight [overflow-wrap:anywhere] sm:text-xs',
+                  // 12px and room between lines: a step name wraps under a narrow circle, and at 11px / 1.25 its marks met.
+                  'max-w-full text-xs font-bold leading-[1.6] [overflow-wrap:anywhere]',
                   step.state === 'upcoming' ? 'text-gray-400'
                     : step.state === 'attention' ? 'text-warning-700'
                       : 'text-gray-900',
                 )}>
                   {step.label}
                 </span>
-                {step.description && <span className="max-w-full text-[10px] leading-tight text-gray-400 [overflow-wrap:anywhere] sm:text-[11px]">{step.description}</span>}
+                {step.description && <span className="max-w-full text-xs leading-normal text-gray-500 [overflow-wrap:anywhere]">{step.description}</span>}
               </span>
             </>
           );
@@ -95,6 +102,10 @@ export function ThemedSteps({ steps, className, 'aria-label': ariaLabel }: {
                 <Link href={step.href} aria-current={ariaCurrent} className={interactiveClass}>{body}</Link>
               ) : step.onSelect ? (
                 <button type="button" disabled={step.disabled} onClick={step.onSelect} aria-current={ariaCurrent} className={interactiveClass}>{body}</button>
+              ) : onStepPress && step.state === 'done' ? (
+                // The whole column is the target (never under 44 px), with a ring the keyboard can see; the name underlines under a cursor.
+                <button type="button" data-step-back disabled={step.disabled} onClick={() => onStepPress(index, step)}
+                  className={cx(interactiveClass, 'min-h-11 min-w-11 cursor-pointer rounded-lg hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600')}>{body}</button>
               ) : (
                 <span aria-current={ariaCurrent} className="relative z-10 flex w-full min-w-0 flex-col items-center gap-2">{body}</span>
               )}

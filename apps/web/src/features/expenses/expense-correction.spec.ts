@@ -89,7 +89,7 @@ test('a blocker appearing after page load keeps its factual Thai remedy in API e
   assert.match(apiErrorMessage({ code: 'expense_correction_blocked', details: { blockers: ['ledger_posted', 'certificate_issued'] } }), /ลงบัญชีแล้ว[\s\S]*50 ทวิ/);
   assert.match(apiErrorMessage({ code: 'expense_payment_correction_blocked', details: { blocker: 'ledger_posted' } }), /ลงบัญชีแล้ว/);
   assert.match(apiErrorMessage({ code: 'expense_paid_exceeds_payable' }), /ยอดที่จ่ายแล้วเกิน/);
-  for (const code of ['expense_wht_source_changed', 'expense_posting_source_changed', 'expense_correction_source_changed']) assert.match(apiErrorMessage({ code }), /ข้อมูล.*เปลี่ยน.*โหลด/);
+  for (const code of ['expense_wht_source_changed', 'expense_posting_source_changed', 'expense_correction_source_changed']) assert.match(apiErrorMessage({ code }), /ข้อมูล.*เปลี่ยน.*เปิดหน้านี้ใหม่/);
   assert.match(apiErrorMessage({ code: 'wht_certificate_download_unavailable' }), /ยังไม่มีหนังสือรับรอง.*ดาวน์โหลด/);
   assert.doesNotMatch(apiErrorMessage({ code: 'expense_correction_blocked', details: { blockers: ['secret-token'] } }), /secret-token/);
 });
@@ -115,10 +115,10 @@ test('the cancel-payment dialog has one button that begins ยกเลิก: t
 test('small controls on the expense screens keep 44 px of tappable height on a phone without looking different', () => {
   const ui = readFileSync(new URL('./ExpensesUi.tsx', import.meta.url), 'utf8');
   assert.match(ui, /export const tapTargetClass = "relative before:absolute[^"]*before:h-11[^"]*before:min-w-11[^"]*"/);
-  assert.match(page, /<Link className=\{tapTargetClass\} href=\{`\/companies\/\$\{companyId\}\/expenses`\}/, 'back to the list');
+  assert.match(page, /<Link className="mangmee-btn mangmee-btn-secondary !min-h-9 !py-1.5" href=\{backTarget\}/, 'DETAIL-2b: compact secondary back control preserves the list URL');
   assert.match(page, /cx\(tapTargetClass, 'mt-1 rounded font-semibold underline/, 'the footer pointer to the field');
-  assert.match(page, /navChips\.map[\s\S]{0,260}cx\(tapTargetClass,/, 'section chips on the confirmed view');
-  assert.match(page, /guided \? 'flex-wrap gap-y-1\.5' : 'flex-nowrap overflow-x-auto'/, 'section chips stay on one horizontally scrolling row');
+  assert.doesNotMatch(page, /navChips\.map/, 'DETAIL-1 removes section jump buttons');
+  assert.match(page, /\{guided && <><div id="expense-review-start" tabIndex=\{-1\} ref=\{reviewStartRef\}/, 'the review stepper remains on review-mode expenses only');
   const pages = readFileSync(new URL('./ExpensesPages.tsx', import.meta.url), 'utf8');
   assert.equal((pages.match(/cx\(tapTargetClass, 'flex h-8 w-8/g) ?? []).length, 2, 'remove-line on products and on charges');
 });

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { EXPENSE_PENDING_STATUSES, civilDate, civilDayRangeToUtc } from '@watchdog-bms/contracts';
-import type { DashboardWidget } from '@watchdog-bms/contracts';
+import type { DashboardWidget, DashboardExpenseMonthsDto } from '@watchdog-bms/contracts';
+import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 
 /**
@@ -17,6 +18,31 @@ export class ExpenseSummaryProvider {
   readonly readPermissions: readonly string[] = ['expense.read'];
 
   constructor(private readonly prisma: PrismaService) {}
+
+  async collectMonths(input: { companyId: string; year: number; branchIds?: string[]; timezone?: string }, now = new Date()): Promise<DashboardExpenseMonthsDto> {
+    const { companyId, year, branchIds } = input;
+    // expenseDate is a civil date stored at UTC midnight (the same convention as
+    // collectMetrics' civilDayRangeToUtc), not an instant to shift into another day.
+    // One monthly aggregation also supplies the scoped year chooser, without twelve reads.
+    const rows = await this.prisma.client.$queryRaw<Array<{ month: string; total: string; count: bigint }>>(Prisma.sql`
+      SELECT to_char("expenseDate", 'YYYY-MM') AS month,
+        ROUND(SUM("grandTotalAmount"), 2)::text AS total, COUNT(*) AS count
+      FROM "ExpenseRecord"
+      WHERE "companyId" = ${companyId} AND "status" = 'CONFIRMED'
+        ${branchIds === undefined ? Prisma.empty : branchIds.length ? Prisma.sql`AND "branchId" IN (${Prisma.join(branchIds)})` : Prisma.sql`AND FALSE`}
+      GROUP BY to_char("expenseDate", 'YYYY-MM')
+    `);
+    const byMonth = new Map(rows.map(row => [row.month, row]));
+    return {
+      year,
+      months: Array.from({ length: 12 }, (_, index) => {
+        const month = `${year}-${String(index + 1).padStart(2, '0')}`;
+        const row = byMonth.get(month);
+        return { month, total: row?.total ?? '0.00', count: Number(row?.count ?? 0) };
+      }),
+      years: [...new Set([...rows.map(row => Number(row.month.slice(0, 4))), Number(civilDate(now, input.timezone).slice(0, 4))])].sort((a, b) => a - b),
+    };
+  }
 
   async collectMetrics(input: {
     companyId: string;

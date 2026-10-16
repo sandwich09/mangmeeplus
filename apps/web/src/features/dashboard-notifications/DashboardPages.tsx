@@ -1,21 +1,26 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type SVGProps } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import type { CrmDailyBriefWidget } from '@watchdog-bms/contracts';
 import { getDashboard, generateSnapshot } from './dashboard-notifications.api';
-import { canForceGenerateSnapshot } from './dashboard-home.logic';
+import { canForceGenerateSnapshot, homeMetrics, homeStartLinks } from './dashboard-home.logic';
 import { dashboardMetricValueText } from './dashboard-notifications.logic';
 import { getCrmDailyBrief } from '@/features/crm-inbox/crm-inbox.api';
-import type { DashboardSnapshot, DashboardWidget, DashboardMetricValue, DashboardPeriodKind } from './dashboard-notifications.model';
+import type { DashboardSnapshot, DashboardMetricValue, DashboardPeriodKind } from './dashboard-notifications.model';
 import { t } from '@/common/i18n/workspace-i18n.logic';
-import { formatThaiTime } from '@/common/i18n/thai-date';
+import { formatThaiDate, formatThaiTime } from '@/common/i18n/thai-date';
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
-import { stripThaiTitlePrefix } from '@/common/components/mangmee';
-import { useBranchFilter, useBranchScopeLabel } from '@/features/web-core-workspace/WorkspaceScope';
+import { MangmeePage, MetricGrid, stripThaiTitlePrefix } from '@/common/components/mangmee';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { primaryButtonClass, quietButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
+import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { Notice } from '@/common/components/notice';
+import { FilterTabs } from '@/common/components/tabs';
+import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
 import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
-import { ProfileCompletenessCard } from '@/features/company-profile/ProfileCompletenessCard';
+import { ExpenseMonthsCard } from './ExpenseMonthsCard';
 
 type DashboardTabPeriodKind = Exclude<DashboardPeriodKind, 'last_month' | 'custom'>;
 
@@ -51,91 +56,67 @@ const CARD_LABEL_KEY: Record<string, DictionaryKey> = {
 // Widgets whose label carries a period suffix.
 const DATED_CARD_KEYS = new Set(['new_customers_today', 'appointments_today', 'average_first_response_today']);
 
+/** The first name to greet by, or nothing: a made-up name used to stand in when the session had none. */
 function firstName(displayName: string | null) {
-  const cleaned = stripThaiTitlePrefix(displayName ?? 'นภา').replace(/^คุณ\s*/, '').trim();
-  return cleaned.split(/\s+/)[0] || 'นภา';
+  return stripThaiTitlePrefix(displayName ?? '').replace(/^คุณ\s*/, '').trim().split(/\s+/)[0] ?? '';
 }
 
-function companyHref(companyId: string, path: string) {
-  return `/companies/${companyId}/${path}`;
-}
-
-function StoreIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
-      <path d="M4.75 10.25h14.5M6.25 10.25v8h11.5v-8M7.25 10.25V6.75h9.5v3.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M9 18.25v-4.5h6v4.5M9.5 6.75V5.5h5v1.25" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function RefreshIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
-      <path
-        d="M4.5 12a7.5 7.5 0 0 1 12.6-5.5M19.5 12a7.5 7.5 0 0 1-12.6 5.5M17.5 4.5v3.5H14M6.5 19.5V16H10"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function Card({ children, className = '' }: { children?: React.ReactNode; className?: string }) {
-  return <section className={`rounded-2xl border border-gray-200 bg-white shadow-[var(--shadow-theme-sm)] ${className}`}>{children}</section>;
-}
-
-function SectionTitle({ tone, title }: { tone: string; title: string }) {
-  return (
-    <div className="mb-3 mt-8 flex items-center gap-[11px]">
-      <span className="h-[22px] w-[5px] rounded-[3px]" style={{ backgroundColor: tone }} />
-      <span className="text-[19px] font-extrabold text-gray-900">{title}</span>
-      <span className="h-px flex-1 bg-gray-200" />
-    </div>
-  );
-}
-
-const SEVERITY_TONE: Record<NonNullable<DashboardMetricValue['severity']>, { text: string; bg: string }> = {
-  critical: { text: '#D92D20', bg: '#FEE4E2' },
-  warning: { text: '#B54708', bg: '#FEF3C7' },
-  info: { text: '#0E7090', bg: '#F0F9FF' },
-  normal: { text: '#027A48', bg: '#ECFDF3' },
-};
-
-function MetricRow({ metric }: { metric: DashboardMetricValue }) {
-  const tone = SEVERITY_TONE[metric.severity ?? 'normal'];
+/**
+ * One number of the home page. The label and the value are one row on a phone and stacked from 640 px; when the number
+ * has a list behind it the whole row is the link (one control per destination, thai-ux-standard §2.6).
+ */
+function MetricTile({ label, metric, children }: { label: string; metric: DashboardMetricValue; children?: ReactNode }) {
   const href = metric.sourceRefs?.[0]?.href;
-  const content = (
-    <div className="flex flex-wrap items-center justify-between gap-3 py-2.5">
-      <span className="text-[15px] font-medium text-gray-600">{metric.label}</span>
-      <span
-        className="tabular-nums rounded-full px-3 py-1 text-[15px] font-extrabold"
-        style={metric.freshness === 'unavailable' ? undefined : { color: tone.text, backgroundColor: tone.bg }}
-      >
-        {metric.freshness === 'unavailable' ? '—' : dashboardMetricValueText(metric)}
+  const row = (
+    <>
+      <span className="text-sm font-medium text-gray-600">{label}</span>
+      <span className="flex items-center gap-1 text-xl font-bold text-gray-900">
+        <span className="mangmee-unit">{metric.freshness === 'unavailable' ? '—' : dashboardMetricValueText(metric)}</span>
+        {href && <span aria-hidden="true" className="text-gray-400">›</span>}
       </span>
-    </div>
+    </>
   );
-  if (!href) return content;
+  const rowClass = 'flex min-h-11 items-center justify-between gap-3 sm:flex-col sm:items-start sm:justify-start sm:gap-1';
   return (
-    <Link href={href} className="-mx-2 block rounded-xl px-2 transition hover:bg-[var(--color-gray-25)]">
-      {content}
-    </Link>
+    <div className="mangmee-card mangmee-card-shadow grid content-start gap-2 p-4">
+      {href ? <Link href={href} className={`${rowClass} rounded-lg hover:text-brand-700`}>{row}</Link> : <div className={rowClass}>{row}</div>}
+      {children}
+    </div>
   );
 }
 
-function WidgetCard({ widget }: { widget: DashboardWidget }) {
+const money = (value: number | string | null) => Number(value ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/**
+ * The expense numbers of the home page, as the owner drew them (Figma HOME-01, 2026-10-14): one white card, the period
+ * tabs on top, then three columns — each a name, one big number, one line saying what it counts, and the one button to
+ * its list. The buttons are one size; the period changes the first number only.
+ */
+function ExpenseHomeCard({ metrics, periodKind, onPeriod, locale }: {
+  metrics: ReturnType<typeof homeMetrics<DashboardMetricValue>>; periodKind: DashboardTabPeriodKind; onPeriod: (kind: DashboardTabPeriodKind) => void;
+  locale: ReturnType<typeof useWorkspaceLocale>;
+}) {
+  const byKey = new Map(metrics.map((metric) => [metric.key, metric]));
+  const period = t(PERIOD_TABS.find((tab) => tab.kind === periodKind)!.labelKey, locale);
+  // Owner 2026-10-15: numbers only, no buttons under them (the menu leads to each list). The name is the quiet line, the
+  // number the loud one with its unit after it; a phone gives each number one row, name left and figure right.
+  const columns = [
+    { key: 'expense_total_in_period', label: `รายจ่าย${period}`, note: 'ยืนยันแล้ว', unit: 'บาท', dot: 'bg-[#5aa95c]', color: 'text-[#3e8a4f]' },
+    { key: 'expense_pending_review', label: 'ใบเสร็จรอตรวจ', note: 'ยังไม่ได้ตรวจ จากทุกช่วงเวลา', unit: 'ใบ', dot: 'bg-[#e9ad43]', color: 'text-[#1f3b2c]' },
+    { key: 'expense_unpaid_outstanding', label: 'ค้างจ่าย', note: 'ยืนยันแล้ว ยังไม่ได้จ่าย', unit: 'บาท', dot: 'bg-gray-400', color: 'text-[#1f3b2c]' },
+  ].flatMap((column) => { const metric = byKey.get(column.key); return metric ? [{ ...column, metric }] : []; });
   return (
-    <Card className="p-6">
-      <div className="text-lg font-bold text-gray-900">{widget.title}</div>
-      <div className="mt-1 divide-y divide-gray-100">
-        {widget.metrics.map((metric) => (
-          <MetricRow key={metric.key} metric={metric} />
+    <section aria-label="ตัวเลขรายจ่าย" className="mangmee-card mangmee-card-shadow p-4 sm:px-6 sm:pb-7 sm:pt-4">
+      <div role="group" aria-label="ช่วงเวลา" className="grid grid-cols-4 gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-2.5">
+        {PERIOD_TABS.map((tab) => (
+          <button key={tab.kind} type="button" className="mangmee-home-tab" aria-pressed={tab.kind === periodKind} onClick={() => onPeriod(tab.kind)}>
+            {t(tab.labelKey, locale)}
+          </button>
         ))}
       </div>
-    </Card>
+      <MetricGrid className="mt-5 sm:mt-7" items={columns.map(({ key, label, note, unit, dot, color, metric }) => ({ key, label, note, unit, dot, color,
+        value: metric.freshness === 'unavailable' ? '—' : metric.unit === 'บาท' ? money(metric.value) : Number(metric.value ?? 0).toLocaleString('th-TH') }))} />
+    </section>
   );
 }
 
@@ -201,21 +182,25 @@ export function CompanyDashboardPage({
   const locale = useWorkspaceLocale();
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId || undefined;
-  const scopeLabel = useBranchScopeLabel();
   const name = firstName(displayName);
-  const [periodKind, setPeriodKind] = useState<DashboardTabPeriodKind>('today');
+  // This month, not today: today's total is zero on most days, and the period changes one number only.
+  const [periodKind, setPeriodKind] = useState<DashboardTabPeriodKind>('month');
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const snapshotRequestRef = useRef(0);
+  const scopeRef = useRef('');
 
   const load = useCallback(async (kind: DashboardTabPeriodKind) => {
     const requestId = ++snapshotRequestRef.current;
     setLoading(true);
     setRefreshing(false);
-    setSnapshot(null);
+    // Another shop or branch: its numbers go at once. Another period of the same scope: the card stays while it loads,
+    // so its tabs do not jump away (a failed read clears it below).
+    const scope = `${companyId}|${branchId ?? ''}`;
+    if (scopeRef.current !== scope) { scopeRef.current = scope; setSnapshot(null); }
     setError(null);
     try {
       const data = await getDashboard(companyId, kind, branchId);
@@ -223,6 +208,7 @@ export function CompanyDashboardPage({
       setSnapshot(data);
     } catch (e) {
       if (requestId !== snapshotRequestRef.current) return;
+      setSnapshot(null);
       if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
       setError(t('dashboard.home.load_error', locale));
     } finally {
@@ -263,93 +249,87 @@ export function CompanyDashboardPage({
   // was stripped by the entitlement gate returns an unavailableReason instead of numbers.
   const availableWidgets = (snapshot?.widgets ?? []).filter((w) => !w.unavailableReason && w.metrics.length > 0);
 
+  const startLinks = homeStartLinks(companyId, permissions);
+  const greeting = `${t('dashboard.home.greeting', locale)}${name ? (locale === 'th' ? ` คุณ${name}` : ` ${name}`) : ''}`;
+  const expenseWidget = availableWidgets.find((widget) => widget.key === 'expense_summary');
+  const otherWidgets = availableWidgets.filter((widget) => widget !== expenseWidget);
+  const branchName = branchFilter?.branchId ? branchFilter.branches.find((branch) => branch.id === branchFilter.branchId)?.name
+    : branchFilter?.branches.length === 1 ? branchFilter.branches[0]!.name : 'ทุกสาขา';
+  // The owner's home (Figma HOME-01): the shop's spending is the page. A person without those numbers keeps the greeting
+  // and the two ways to start.
+  const expenseHome = Boolean(expenseWidget) || (loading && permissions.includes('expense.read'));
+  const updated = snapshot ? `อัปเดตล่าสุด ${formatThaiDate(snapshot.generatedAt)} เวลา ${formatThaiTime(snapshot.generatedAt)}` : null;
+
   return (
-    <div className="mangmee-page" style={{ gap: 0 }}>
-      <div className="mb-[18px] flex flex-wrap items-center justify-between gap-4">
-        <div className="text-[15px] text-gray-500">
-          <Link href={companyHref(companyId, 'dashboard')} className="hover:text-brand-700">{t('shell.workspace', locale)}</Link>
-          <span className="mx-1.5 text-gray-300">/</span>
-          <span className="font-medium text-gray-700">{t('dashboard.title', locale)}</span>
-        </div>
-        {/* No resolved branch context: claim no scope at all rather than a wrong one (spec R3). */}
-        {scopeLabel && (
-          <span className="inline-flex items-center gap-[7px] rounded-full border border-brand-100 bg-brand-25 px-3 py-[5px] text-sm font-semibold text-brand-600">
-            <StoreIcon className="h-4 w-4" />
-            {scopeLabel}
-          </span>
-        )}
-      </div>
-
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[30px] font-extrabold leading-tight tracking-normal text-gray-900">{t('dashboard.home.greeting', locale)} {locale === 'th' && 'คุณ '}{name}</h1>
-          <p className="mt-1 text-base text-gray-500">
-            {t('dashboard.home.business_overview', locale)}{scopeLabel && ` · ${scopeLabel}`}
-            {snapshot && ` · ${t('dashboard.home.updated_at', locale)} ${locale === 'th' ? formatThaiTime(snapshot.generatedAt) : new Date(snapshot.generatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' })}`}
-          </p>
-        </div>
-        <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
-          {PERIOD_TABS.map((tab) => (
-            <button
-              key={tab.kind}
-              type="button"
-              onClick={() => setPeriodKind(tab.kind)}
-              className={`shrink-0 whitespace-nowrap min-h-11 rounded-[10px] px-[17px] py-[9px] text-[15px] font-bold sm:min-h-0 shadow-[var(--shadow-theme-sm)] ${
-                tab.kind === periodKind
-                  ? 'bg-brand-700 text-white'
-                  : 'border border-gray-200 bg-white text-gray-600 shadow-none'
-              }`}
-            >
-              {t(tab.labelKey, locale)}
-            </button>
+    <MangmeePage title={expenseHome ? 'รายจ่ายของร้าน' : greeting} className={expenseHome ? 'mangmee-home' : undefined}
+      description={expenseHome ? <span className="flex flex-wrap gap-x-4">{[branchName, updated].filter(Boolean).map((part) => <span key={part}>{part}</span>)}</span> : undefined}>
+      {/* What the person came to do, before any number (thai-ux-standard §3.1). On the owner's home the buttons under the numbers do it. */}
+      {!expenseHome && startLinks.length > 0 && (
+        <ActionGroup align="start">
+          {startLinks.map((link, index) => (
+            <Link key={link.key} href={link.href} className={index === startLinks.length - 1 ? primaryButtonClass : secondaryButtonClass}>{link.label}</Link>
           ))}
-          <button
-            type="button"
-            onClick={handleRefresh}
-            disabled={refreshing} aria-busy={Boolean(refreshing)}
-            className="shrink-0 whitespace-nowrap flex min-h-11 items-center gap-2 rounded-[10px] border border-gray-200 bg-white px-[17px] py-[9px] sm:min-h-0 text-[15px] font-bold text-gray-600 shadow-[var(--shadow-theme-sm)] disabled:opacity-60" data-loading-indicator
-          >
-            <RefreshIcon className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            {t('dashboard.home.refresh', locale)}
-          </button>
-        </div>
-      </div>
+        </ActionGroup>
+      )}
 
+      {/* A failed read shows only itself and its retry, never the "nothing here" sentence under it. */}
+      {error && (
+        <Notice tone="error" action={<button type="button" className={secondaryButtonClass} onClick={() => void load(periodKind)} aria-busy={Boolean(loading)}>{t('state.error.retry', locale)}</button>}>
+          {error}
+        </Notice>
+      )}
+
+      {loading && !snapshot ? (
+        <div role="status" aria-busy="true" aria-label={t('common.loading', locale)} className="grid gap-3 sm:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="mangmee-card mangmee-card-shadow h-20 animate-pulse" />
+          ))}
+        </div>
+      ) : <>
+      {expenseWidget && <ExpenseHomeCard metrics={homeMetrics(expenseWidget.metrics)} periodKind={periodKind} onPeriod={setPeriodKind} locale={locale} />}
+      {expenseWidget && <ExpenseMonthsCard companyId={companyId} branchId={branchId} />}
+      {otherWidgets.map((widget) => (
+        // A person with no number to see (an employee) gets no section, no period and no "no data" sentence.
+        <section key={widget.key} aria-labelledby={`home-widget-${widget.key}`} className="grid gap-3">
+          <h2 id={`home-widget-${widget.key}`} className="text-base font-bold text-gray-900">{widget.title}</h2>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {homeMetrics(widget.metrics).map((metric) => (
+              <MetricTile key={metric.key} label={metric.homeLabel} metric={metric}>
+                {metric.periodScoped && (
+                  <ThemedSelect aria-label="ช่วงเวลา" value={periodKind} onChange={(event) => setPeriodKind(event.target.value as DashboardTabPeriodKind)}>
+                    {PERIOD_TABS.map((tab) => <option key={tab.kind} value={tab.kind}>{t(tab.labelKey, locale)}</option>)}
+                  </ThemedSelect>
+                )}
+              </MetricTile>
+            ))}
+          </div>
+        </section>
+      ))}
+      </>}
+
+      {/* Not part of the owner's drawing (Figma HOME-01): to-dos that still need a place, under the numbers. */}
       {/* P10-L §15.4: OWNER-only, and `company.legal_identity.manage` is exactly that today
           (permission-registry.spec.ts keeps it owner-only pending QP2) — so it gates on the
           authority to fix what the card asks for, not on a role name the dashboard never receives. */}
-      {permissions.includes('company.legal_identity.manage') && <ProfileCompletenessCard companyId={companyId} />}
+      {/* Owner 2026-10-15: the shop-details reminder is not on the home page. */}
 
-      {permissions.includes('crm.inbox.read') && <details className="rounded-xl border border-gray-200 bg-white p-4">
+      {permissions.includes('crm.inbox.read') && <details className="mangmee-card mangmee-card-shadow p-4">
         <summary className="min-h-11 cursor-pointer py-2 font-semibold">สรุปงานลูกค้าและการขาย</summary>
         <CrmDailyBriefCard companyId={companyId} periodKind={periodKind} refreshToken={refreshToken} />
       </details>}
 
 
-      {error && (
-        <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[15px] font-medium text-red-700">{error}</div>
-      )}
-
-      {loading && !snapshot ? (
-        <div role="status" aria-busy="true" aria-label={t('common.loading', locale)} className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <Card key={i} className="h-40 animate-pulse p-6" />
-          ))}
+      {snapshot && otherWidgets.length > 0 && !expenseWidget && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
+          <span>
+            {t('dashboard.home.updated_at', locale)}{' '}
+            <span className="mangmee-unit">{locale === 'th' ? formatThaiTime(snapshot.generatedAt) : new Date(snapshot.generatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' })}</span>
+          </span>
+          <button type="button" onClick={handleRefresh} disabled={refreshing} aria-busy={Boolean(refreshing)} className={quietButtonClass} data-loading-indicator>
+            {t('dashboard.home.refresh', locale)}
+          </button>
         </div>
-      ) : (
-        <>
-          <SectionTitle tone="var(--color-brand-500)" title={t('dashboard.home.overview', locale)} />
-          {availableWidgets.length === 0 ? (
-            <Card className="p-6 text-[15px] text-gray-500">{t('dashboard.home.no_data', locale)}</Card>
-          ) : (
-            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {availableWidgets.map((widget) => (
-                <WidgetCard key={widget.key} widget={widget} />
-              ))}
-            </div>
-          )}
-        </>
       )}
-    </div>
+    </MangmeePage>
   );
 }

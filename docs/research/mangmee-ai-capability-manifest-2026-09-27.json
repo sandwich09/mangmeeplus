@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "b1143124568ec9529866e62ceb3c529aa597afe6",
-  "checkoutBranch": "claude/line-approval-card-20261006",
-  "checkoutDirty": false,
+  "sourceRevision": "036295b59c0953e13b38f012d76e3832c61ec80e",
+  "checkoutBranch": "claude/ux-owner-r-20261013",
+  "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -61,7 +61,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-dashboard-tools.use-case.ts",
-      "sha256": "cd73ae3a504edab892e30173a2ecabd04e20bd2b9a3c51359e9c9e3d3fbacb7c"
+      "sha256": "1911e590ad656812f00b837ad3c2659d55ded41ea2172f7b41d31ff335a69bef"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-draft-update-tools.use-case.ts",
@@ -109,7 +109,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "458c49567b022b2af6fc9f2c296071105341abe0813a8d14602ed192c5ecfdc3"
+      "sha256": "ae032d77427080845637494bea881d4a27be0c06d11f24ec6cd7f44c26ec7cbd"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/reports/application/report-source-adapters.ts",
-      "sha256": "d6b6de0daca5387125a7c6efbd1527597b3f6150cd819886032f83ab44fee652"
+      "sha256": "0c751bda0a3380f4dc4eb439f170219c1c63969ab1ff0a67f4f1ac5d435dcf1b"
     },
     {
       "path": "apps/api/src/modules/reports/domain/report-query-validator.logic.ts",
@@ -161,7 +161,7 @@
     },
     {
       "path": "apps/web/src/features/reimbursements/ReimbursementDraftActionPage.tsx",
-      "sha256": "e8981413281ffde56804b74c915894bf128678966dfc63bddd3523e6c2e3cc65"
+      "sha256": "489ebfb3d742e098743372fb53f37cdb7ed8da27fbd335ff5442af072ba71e80"
     },
     {
       "path": "apps/web/src/features/reports/ReportsWorkspacePage.tsx",
@@ -185,7 +185,7 @@
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
-      "sha256": "af3c22342018e03669dbb657abe4b90ae47dff1954ceca997a4a31e737373983"
+      "sha256": "4b1717889af71d9eb284d28ffc525d81c6f0361cc790c70cb4db2411e2ca3da1"
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
@@ -193,7 +193,7 @@
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
-      "sha256": "6660278dc22fa1d00177f7b5c437957a5bbe10be030e2bdc7bf52f13b934bb60"
+      "sha256": "56cdb703990cf3e18c93e68fbb479f3f2d6ed3a0c4d2765b86ee6442f7698ab7"
     }
   ],
   "featureEntitlementKeys": [
@@ -7838,7 +7838,7 @@
     },
     {
       "featureKey": "wht_pnd53",
-      "description": "จัดทำและส่งออกแบบ ภ.ง.ด.53 พร้อมใบแนบสำหรับพิมพ์ยื่น",
+      "description": "จัดทำและดาวน์โหลดแบบ ภ.ง.ด.3 และ ภ.ง.ด.53 พร้อมใบแนบสำหรับพิมพ์ยื่น",
       "sellable": true,
       "entitlementKeys": [
         "wht_pnd53"
@@ -9016,6 +9016,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-05T17:51:28.098Z",
-  "manifestDigest": "35770a8e3bad5726eb68f8e6a67f49afeaf00bbbf0de479add3f602349717173"
+  "generatedAt": "2026-10-14T04:09:52.558Z",
+  "manifestDigest": "4332a2284f065e57702171edf1cfeb9b2c0affaf156f1eef07ce049e48435d1e"
 }

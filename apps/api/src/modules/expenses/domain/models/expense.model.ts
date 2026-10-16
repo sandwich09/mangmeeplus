@@ -11,6 +11,10 @@ import type {
 } from '@watchdog-bms/contracts';
 
 export type ExpenseRecord = {
+  latestInputVatDecision?: import('@watchdog-bms/contracts').ExpenseSummary['latestInputVatDecision'];
+  /** Whether the right is relevant for this document date and VAT amount; presentation only. */
+  inputVatRightVisible?: boolean;
+  inputVatRecordedBeforeReview?: boolean;
   cancelledCertificate?: import('@watchdog-bms/contracts').ExpenseSummary['cancelledCertificate'];
   /**
    * Spec §7/§8: not a column — the outcome of this save's counterparty auto-save, so the review
@@ -30,6 +34,9 @@ export type ExpenseRecord = {
   captureSource: ExpenseCaptureSource;
   vendorCounterpartyId: string | null;
   reservedByDisbursementVoucherId?: string | null;
+  requestedReviewerUserId?: string | null;
+  submittedByUserId?: string | null;
+  submittedAt?: Date | null;
   vendorSnapshotJson: Record<string, unknown> | null;
   vendorNameSnapshot: string | null;
   vendorTaxIdSnapshot: string | null;
@@ -118,6 +125,7 @@ export type ExpenseRecord = {
 };
 
 export type ExpensePaymentRecord = {
+  slipAttachmentId?: string | null;
   id: string;
   companyId: string;
   expenseId: string;
@@ -142,6 +150,9 @@ export type ExpensePaymentRecord = {
 };
 
 export type ExpenseRecordWithRelations = ExpenseRecord & {
+  /** Same resolved evidence facts as the accounting evidence list. */
+  sourceEvidenceUnavailable?: boolean;
+  categoryName?: string | null;
   lines: ExpenseLineSummary[];
   /** Spec §5.1: the `chargeKind != null` rows, derived by `expenseLineCharges` so the web, the LINE
    *  read tool and the API detail all describe an additional charge the same way. */
@@ -324,6 +335,9 @@ export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'c
   internalMemo?: string;
   // Nullable on update only: clearing the reason takes the expense back off the substitute path.
   missingReceiptReason?: string | null;
+  requestedReviewerUserId?: string;
+  submittedByUserId?: string;
+  submittedAt?: Date;
   reviewedByUserId?: string;
   reviewedAt?: Date;
   status?: ExpenseStatus;
@@ -378,6 +392,7 @@ export type ExpenseLineInput = {
   vatRate: string | null;
   vatTreatment?: import('@watchdog-bms/contracts').ExpenseLineVatTreatment | null;
   vatAmount: string;
+  whtCategoryCode?: string | null;
   whtRate: string | null;
   whtAmount: string;
   lineSubtotalAmount: string;

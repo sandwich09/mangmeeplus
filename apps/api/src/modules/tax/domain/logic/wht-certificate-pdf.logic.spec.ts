@@ -59,3 +59,27 @@ describe('certificate civil issue dates (E3)', () => {
     });
   }
 });
+
+
+it('certificate downloads have a Thai filename and unchanged PDF bytes', async () => {
+  const { TaxArtifactRendererService } = await import('../../application/services/tax-artifact-renderer.service');
+  const artifact = await new TaxArtifactRendererService().renderWhtCertificate(fields, payer, payee);
+  assert.equal(artifact.fileName, `หนังสือรับรอง-50-ทวิ-${fields.certificateNumber}.pdf`);
+  assert.equal(artifact.mimeType, 'application/pdf');
+  assert.equal(Buffer.from(artifact.contentBase64, 'base64').subarray(0, 5).toString(), '%PDF-');
+});
+
+it('W6 the measured master puts payment in the income row and issue date beside the signature, 35 days apart', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const master = await PDFDocument.load(await readFile(join(__dirname, '../../assets/rd-wht50bis.pdf')));
+  const rects = new Map(master.getForm().getFields().map(f => [f.getName(), f.acroField.getWidgets()[0]!.getRectangle()]));
+  assert.deepEqual([rects.get('date14.0')!.x, rects.get('date14.0')!.y], [326.503, 216.34]);
+  assert.deepEqual([rects.get('date_pay')!.x, rects.get('date_pay')!.y], [341.819, 72.1061]);
+  for (const [issuedAt, expected] of [['2026-10-05T03:00:00Z', ['05', '10', '2569']], ['2026-11-09T03:00:00Z', ['09', '11', '2569']]] as const) {
+    const marks = makeMarks({ ...fields, paymentDate: '2026-10-05', issuedAt }, payer, payee, rects);
+    const printed = (name: string) => marks.find(mark => mark.x === rects.get(name)!.x + 2)?.text;
+    assert.equal(printed('date14.0'), '05/10/2569');
+    assert.deepEqual(['date_pay', 'month_pay', 'year_pay'].map(printed), [...expected]);
+  }
+});

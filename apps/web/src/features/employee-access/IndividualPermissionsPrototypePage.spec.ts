@@ -51,7 +51,7 @@ test('wizard and legacy forms select one role and preserve protected profile-onl
 });
 
 test('employee detail empty state distinguishes company-empty from filter-empty', () => {
-  assert.match(source, /employees\.length === 0 \? 'ยังไม่มีพนักงานในบริษัทนี้' : 'ไม่พบพนักงานที่ตรงกับตัวกรอง กรุณาปรับตัวกรองหรือคำค้นหา'/);
+  assert.match(source, /employees\.length === 0 \? 'ยังไม่มีพนักงานในร้านนี้' : 'ไม่พบพนักงานที่ตรงกับตัวกรอง ลองเปลี่ยนตัวกรองหรือคำค้น'/);
 });
 
 test('menu projection count is not presented as the employee entire permission set', () => {
@@ -129,4 +129,47 @@ test('the add-employee wizard presents the account and birth-date instructions i
   const wizard = readFileSync(new URL('./AddEmployeePrototypePage.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(wizard, /(?:label=|>)(?:"|')?Username(?:"|')?|DDMMYYYY|DD\/MM\/YYYY|\bSMTP\b|\bDraft\b|\bOA\b|08xxxxxxxx|name@room45\.co|name@company\.com|a-z, A-Z, 0-9|กรุณากรอก Username|รูปแบบ เช่น/);
   assert.doesNotMatch(wizard, /กรุณากรอก Username|แก้ไข Username/);
+});
+
+
+test('one account switch disables with one named confirmation and restores inactive accounts', () => {
+  assert.match(source, /selectedActive \? 'DISABLED' : 'ACTIVE'/);
+  assert.match(source, /title: `ปิดใช้งาน \$\{name\}`/);
+  assert.match(source, /message: 'เข้าสู่ระบบของร้านนี้ไม่ได้และคืนที่นั่งให้ร้าน'/);
+  assert.match(source, /confirmLabel: 'ปิดใช้งาน', cancelLabel: 'ไม่ปิด'/);
+  assert.match(source, /label="ใช้งาน \/ ปิดใช้งาน"/);
+  assert.match(source, /canDisableEmployee && selectedIsDraft && <button/);
+  assert.doesNotMatch(source, /'SUSPENDED'|ปิดการใช้งานบัญชี|ระงับการใช้งาน/);
+});
+
+
+test('person cards issue LINE links only with the existing permission and show linked status, copy and expiry', () => {
+  assert.match(source, /viewerPermissions.includes\('access.employee.line_link.issue'\)/);
+  assert.match(source, /if \(!selectedEmployee \|\| !canIssueLineLink \|\| busy\) return/);
+  assert.match(source, /await issueEmployeeLineLinkToken\(companyId, selectedEmployee.id\)/);
+  assert.match(source, /employee.lineLinked \? 'เชื่อม LINE แล้ว' : 'ยังไม่ได้เชื่อม LINE'/);
+  assert.match(source, /canIssueLineLink && \(/);
+  assert.match(source, /ออกลิงก์เชื่อม LINE/);
+  assert.match(source, /คัดลอกลิงก์/);
+  assert.match(source, /ใช้ได้ 15 นาที/);
+  assert.match(source, /formatThaiDateTime\(lineLink.package.expiresAt\)/);
+  assert.match(source, /lineLink\?\.employeeId === selectedEmployee.id && lineLink.companyId === companyId/);
+});
+
+test('the list and card name the same person and every issued link replaces the whole package', () => {
+  assert.match(source, /<h2[^>]*>\{employeeShortName\(selectedEmployee\)\}<\/h2>/);
+  assert.match(source, /setLineLink\(\{ employeeId: selectedEmployee.id, companyId, package: result \}\)/);
+  const card = source.slice(source.indexOf('data-testid="employee-detail-card"'), source.indexOf('data-testid="access-permission-summary"'));
+  assert.equal((card.match(/<ActionGroup/g) ?? []).length, 1);
+  assert.match(card, /<ActionGroup[^>]*>[\s\S]*แก้ไขข้อมูล[\s\S]*ออกลิงก์เชื่อม LINE[\s\S]*คัดลอกลิงก์[\s\S]*<\/ActionGroup>/);
+});
+
+
+test('name history is mounted on the permission-checked person card, not in the unused detail panel', () => {
+  assert.match(source, /canEditEmployee && <DisplayNameHistoryDisclosure key=\{`\$\{companyId\}:\$\{selectedEmployee.userId\}`\} companyId=\{companyId\} userId=\{selectedEmployee.userId\}/);
+  const legacy = readFileSync(new URL('./EmployeeAccessPages.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(legacy, /AccountDisplayName|DisplayNameHistoryDisclosure|ชื่อที่ใช้แสดง/);
+  assert.match(legacy, /<FieldLabel>ชื่อที่แสดง<\/FieldLabel>/);
+  const editor = readFileSync(new URL('./AddEmployeePrototypePage.tsx', import.meta.url), 'utf8');
+  assert.match(editor, /<legend className=\{labelClass\}>ชื่อที่แสดง<\/legend>[\s\S]*employee-first-name[\s\S]*employee-last-name[\s\S]*<\/fieldset>/);
 });

@@ -1,4 +1,4 @@
-import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
+require.extensions['.css'] = module => { module.exports = { __esModule: true, default: new Proxy({}, { get: (_, key) => String(key) }) }; };
 import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,12 +8,13 @@ import { ToastContext } from '@/common/components/toast/use-toast';
 
 /*
  * The payment step as a payer and a reader see it (owner decisions 2026-10-01): no method is chosen for
- * the payer, a transfer needs its slip, the slip field takes a phone's camera or photo library, ดูสลิป is
+ * the payer, a transfer needs its slip, the slip field takes a phone's camera or photo library, ดูหลักฐานการจ่าย is
  * offered only to the people the slip endpoint serves, and every word on screen is plain Thai.
  */
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 // The pages reach the icon set through ExpensesUi; this runner has no SVG loader (as ReimbursementPages.plain-thai.qa.spec.ts).
 require.extensions['.svg'] = (module) => { module.exports = () => null; };
+require.extensions['.css'] = module => { module.exports = { menu: 'menu', panel: 'panel' }; };
 // Modal portals into document.body, which a server render has none of: render the dialog in place.
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const sections = require('./ReimbursementDetailSections') as typeof import('./ReimbursementDetailSections');
@@ -35,7 +36,7 @@ const toast = { success: noop, warning: noop, error: noop };
 
 /** What the customer reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
 const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map(match => match[1]!),
-  ...html.replace(/<[^>]*>/gu, '\n').split('\n')]
+  ...html.replace(/<span class="text-red-600"(?: aria-hidden="true")?> \*<\/span>/gu, ' *').replace(/<[^>]*>/gu, '\n').split('\n')]
   .map(text => text.replace(/&quot;/gu, '"').replace(/&#x27;/gu, "'").replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&amp;/gu, '&').trim()).filter(Boolean);
 
 // Ids shaped like the real ones (cuid), so a leak into visible text cannot hide.
@@ -113,7 +114,7 @@ describe('payment form: the payer chooses the method', () => {
       for (const hasSlip of [false, true]) {
         const html = paymentForm(base, { method, ...(hasSlip && { slip: { attachmentId: ids.slip, name: 'หลักฐาน.jpg' } }) });
         const required = method === 'CHEQUE' && !hasSlip;
-        const label = method === 'BANK_TRANSFER' ? 'เลขที่อ้างอิงการโอน (ไม่บังคับเมื่อแนบสลิป)'
+        const label = method === 'BANK_TRANSFER' ? 'เลขที่อ้างอิงการโอน (ไม่บังคับเมื่อแนบหลักฐานการจ่าย)'
           : method === 'CHEQUE' ? `เลขที่เช็ค${required ? ' *' : ' (ไม่บังคับเมื่อแนบหลักฐาน)'}` : 'เลขที่เอกสารการจ่าย (ไม่บังคับ)';
         assert.ok(visible(html).includes(label), label);
         assert.equal(/<input[^>]*aria-label="เลขที่เช็ค"[^>]*aria-required="true"/.test(html), required);
@@ -139,13 +140,15 @@ describe('payment form: the payer chooses the method', () => {
     // removed or chosen from the claim's own files, and the other fields alike. So the red box never contradicts the form in front of them.
     assert.match(form, /const edited = <T,>\(set: React\.Dispatch<React\.SetStateAction<T>>\): React\.Dispatch<React\.SetStateAction<T>> => \(next\) => \{ setError\(null\); set\(next\); \};/);
     assert.match(form, /const editForm = edited\(setForm\), editPayer = edited\(setPayer\), editSlip = edited\(setSlip\);/);
-    assert.equal((form.match(/=> edit(?:Form|Payer|Slip)\(/g) ?? []).length, 8);
+    assert.equal((form.match(/=> edit(?:Form|Payer|Slip)\(/g) ?? []).length, 7, 'the amount is said, not typed: it has no field any more');
     assert.doesNotMatch(form, /onChange=\{[^}]*=> set(?:Form|Payer|Slip)\(/);
     // The slip the form swaps in after its own upload is not the payer's change: a refusal said after that upload stays on screen.
     assert.match(form, /onSlipUploaded: setSlip,/);
-    assert.match(form, /\{validationError && <ErrorBanner message=\{validationError\} \/>\}/);
+    // A refusal of the form's own check is said at the field it is about; the box above the buttons is for the rest.
+    assert.match(form, /\{validationError && !errorAt && <ErrorBanner message=\{validationError\} \/>\}/);
+    assert.match(form, /const errorAt: PaymentFormField \| null = futurePaidAt \? 'date' : problem && problem\.text === error \? problem\.field : null;/);
     // Seen at 390 px: the cash hint ended with "หลัง" alone on its last line.
-    for (const method of ['BANK_TRANSFER', 'CHEQUE', 'CASH', 'OTHER']) assert.match(paymentForm(base, { method }), /<p id="[^"]*-hint" class="mt-1 text-pretty text-xs leading-5 text-gray-500">/);
+    for (const method of ['BANK_TRANSFER', 'CHEQUE', 'CASH', 'OTHER']) assert.match(paymentForm(base, { method }), /<p id="[^"]*-hint" class="mt-1 text-pretty text-sm text-gray-500">/);
   });
 
   it('opens with no method selected, never เงินสด', () => {
@@ -157,18 +160,31 @@ describe('payment form: the payer chooses the method', () => {
     assert.match(method[0], /aria-required="true"/);
     assert.ok(visible(html).includes('วิธีจ่าย *'));
     // Nothing about the slip is forced before a method is chosen.
-    assert.ok(visible(html).includes('สลิปหรือหลักฐานการจ่าย'));
+    assert.ok(visible(html).includes('หลักฐานการจ่าย'));
+  });
+
+  // 2026-10-13 (L6-11): the form asked for an amount that has one allowed value (an editable "1420.5" under a sentence that
+  // said the same), and nowhere said who the money goes to.
+  it('says who is paid and how much on its first line, and asks for no amount', () => {
+    const html = paymentForm({ ...base, requesterDisplayNameSnapshot: 'พิม ใจดี' }, { method: 'CASH' });
+    assert.match(html, /<form[^>]*><p class="text-base font-semibold text-gray-900" data-testid="reimbursement-payment-payee">จ่ายให้ พิม ใจดี <span class="mangmee-unit">[\d,]+\.\d{2} บาท<\/span><\/p>/u);
+    assert.doesNotMatch(html, /type="number"|จำนวนเงิน \*|จ่ายเต็มจำนวนคงค้าง/u);
+    // What is sent is still the claim's whole outstanding amount, from the form's own state.
+    const source = read('./ReimbursementDetailSections.tsx');
+    assert.match(source, /paidAmount: String\(request\.outstandingAmount\), paymentMethod: requestedPayout\(request\)\?\.payoutMethod \?\? ''/);
+    // The two buttons are one group: back out first, the save last, and the save keeps its name while it works.
+    assert.match(source, /<ActionGroup>\s+<button type="button" className=\{ghostClass\} onClick=\{onCancel\}>ยกเลิก<\/button>\s+<button type="submit" className=\{btnClass\} disabled=\{busy \|\| futurePaidAt\} aria-busy=\{Boolean\(busy\)\}>บันทึกจ่าย \{formatMoney\(request.outstandingAmount, request.currency\)\}<\/button>\s+<\/ActionGroup>/);
   });
 
   it('shows the chosen method, requires a transfer slip and explains its optional reference', () => {
     const transferForm = visible(paymentForm(base, { method: 'BANK_TRANSFER' }));
-    for (const text of ['โอนเงิน', 'เลขที่อ้างอิงการโอน (ไม่บังคับเมื่อแนบสลิป)', 'สลิปหรือหลักฐานการจ่าย *']) assert.ok(transferForm.includes(text), text);
-    assert.ok(transferForm.some((text) => text.startsWith('จ่ายด้วยการโอนต้องแนบสลิป')));
+    for (const text of ['โอนเงิน', 'เลขที่อ้างอิงการโอน (ไม่บังคับเมื่อแนบหลักฐานการจ่าย)', 'หลักฐานการจ่าย *']) assert.ok(transferForm.includes(text), text);
+    assert.ok(transferForm.some((text) => text.startsWith('โอนเงินต้องแนบหลักฐานการจ่าย')));
 
     const cashForm = visible(paymentForm(base, { method: 'CASH' }));
-    for (const text of ['เงินสด', 'เลขที่เอกสารการจ่าย (ไม่บังคับ)', 'สลิปหรือหลักฐานการจ่าย']) assert.ok(cashForm.includes(text), text);
-    assert.ok(cashForm.some((text) => text.startsWith('แนบได้ถ้ามี ไม่บังคับสำหรับวิธีจ่ายนี้')));
-    assert.equal(cashForm.includes('สลิปหรือหลักฐานการจ่าย *'), false);
+    for (const text of ['เงินสด', 'เลขที่เอกสารการจ่าย (ไม่บังคับ)', 'หลักฐานการจ่าย']) assert.ok(cashForm.includes(text), text);
+    assert.ok(cashForm.some((text) => text.startsWith('ไม่บังคับ ·')));
+    assert.equal(cashForm.includes('หลักฐานการจ่าย *'), false);
   });
 
   // Spec §12.2: the method starts from what the requester asked for. A claim sent before claims carried a
@@ -198,28 +214,43 @@ describe('payment form: the slip', () => {
     for (const type of ['application/pdf', 'image/png', 'image/jpeg', 'image/heic', 'image/heif', '.jpg', '.pdf']) assert.ok(input[0].includes(type), type);
     // `capture` would force the camera and hide the photo library, where a saved bank slip lives.
     assert.doesNotMatch(input[0], /capture/);
-    assert.match(input[0], /aria-label="สลิปหรือหลักฐานการจ่าย"/);
+    assert.match(input[0], /aria-label="หลักฐานการจ่าย"/);
     assert.match(input[0], /aria-required="true"/);
-    // The shared sentence, read whole; on screen every file-type name and the size are unbreakable, so a phone never cuts "ฮีอิก" in two.
-    const whole = (markup: string) => markup.replace(/<span class="whitespace-nowrap">([^<]*)<\/span>/gu, '$1');
-    assert.ok(visible(whole(html)).some((text) => text.includes(`${ATTACHMENT_SOURCE_TYPES_LABEL} ขนาดไม่เกิน 10 เมกะไบต์`)));
-    for (const name of [...ATTACHMENT_SOURCE_TYPES_LABEL.split(' '), '10 เมกะไบต์']) assert.ok(html.includes(`<span class="whitespace-nowrap">${name}</span>`), name);
+    // One line under the field: whether the method needs it, then what a file may be. The size is kept whole on a phone.
+    // (Before: five file types spelled out in Thai letters after it, which nobody chooses a file by.)
+    assert.ok(visible(html).some((text) => /^(โอนเงินต้องแนบหลักฐานการจ่าย|ไม่บังคับ) · PDF หรือรูปภาพ ไม่เกิน$/u.test(text)), visible(html).filter((text) => text.includes('PDF')).join(' | '));
+    assert.ok(html.includes('<span class="mangmee-unit">10 เมกะไบต์</span>'));
   });
 
   it('shows the file the payer picked, and the one already uploaded when saving failed', () => {
     const picked = visible(paymentForm(base, { method: 'BANK_TRANSFER', slip: { file: { name: 'สลิป-กสิกร.jpg' } } }));
     assert.ok(picked.includes('สลิป-กสิกร.jpg'));
-    const message = 'แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่';
+    const message = 'แนบหลักฐานการจ่ายแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ใบเบิกถูกแก้ไขระหว่างทำรายการ เปิดรายการใหม่แล้วลองอีกครั้ง · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบหลักฐานการจ่ายหรือโอนเงินใหม่';
     const failed = visible(paymentForm(base, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.slip, name: 'สลิป-กสิกร.jpg' }, error: message }));
     // Everything typed stays, the uploaded slip stays, and the banner says the payment is not recorded yet.
-    for (const text of ['สลิป-กสิกร.jpg', 'โอนเงิน', `⚠ ${message}`, 'บันทึกจ่าย']) assert.ok(failed.includes(text), text);
+    for (const text of ['สลิป-กสิกร.jpg', 'โอนเงิน', `⚠ ${message}`, 'บันทึกจ่าย 1,614.50 บาท']) assert.ok(failed.includes(text), text);
   });
 
-  it('says the slip is missing in the form\'s own banner', () => {
-    const html = paymentForm(base, { method: 'BANK_TRANSFER', error: 'จ่ายด้วยการโอนต้องแนบสลิป' });
-    assert.match(html, /<div[^>]*role="alert"[^>]*>⚠ จ่ายด้วยการโอนต้องแนบสลิป<\/div>/u);
+  it('says the slip is missing at the slip field, in place of its hint, and never in a second box', () => {
+    const html = paymentForm(base, { method: 'BANK_TRANSFER', error: 'จ่ายด้วยการโอนต้องแนบหลักฐานการจ่าย' });
+    const field = html.slice(html.indexOf('data-testid="reimbursement-payment-slip"'), html.indexOf('type="submit"'));
+    assert.match(field, /<p class="mt-1"><span role="alert" class="text-sm font-normal text-red-600">จ่ายด้วยการโอนต้องแนบหลักฐานการจ่าย<\/span><\/p>/u);
+    // One line under the field: the hint gives way to what is wrong, and the sentence is said once.
+    assert.equal(visible(html).filter((text) => text.includes('ต้องแนบหลักฐานการจ่าย')).length, 1);
+    assert.doesNotMatch(html, /⚠ จ่ายด้วยการโอนต้องแนบหลักฐานการจ่าย/u);
     // Above the buttons, inside the form: a payer on a phone sees it without leaving the card.
     assert.ok(html.indexOf('role="alert"') < html.indexOf('type="submit"'));
+    // A refusal that no field of the form answers (the API's) stays in the box above the buttons.
+    const other = paymentForm(base, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.slip, name: 'สลิป.jpg' }, error: 'ใบเบิกนี้บันทึกการจ่ายเงินไปแล้ว' });
+    assert.match(other, /<div[^>]*role="alert"[^>]*>⚠ ใบเบิกนี้บันทึกการจ่ายเงินไปแล้ว<\/div>/u);
+    // Each of the form's own refusals names its field.
+    const { paymentFormProblem } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+    const ask = { paidAmount: '100', outstandingAmount: '100', paidAt: '2026-10-01', paymentReference: '' };
+    assert.deepEqual(paymentFormProblem({ ...ask, paymentMethod: '' }), { field: 'method', text: 'เลือกวิธีจ่าย' });
+    assert.equal(paymentFormProblem({ ...ask, paymentMethod: 'BANK_TRANSFER', hasSlip: false })?.field, 'slip');
+    assert.equal(paymentFormProblem({ ...ask, paymentMethod: 'CHEQUE', hasSlip: false })?.field, 'reference');
+    assert.equal(paymentFormProblem({ ...ask, paymentMethod: 'CASH', paidAmount: '50' })?.field, null);
+    assert.equal(paymentFormProblem({ ...ask, paymentMethod: 'CASH' }), null);
   });
 
   it('offers the files already on the claim only when there are any', () => {
@@ -232,8 +263,8 @@ describe('payment form: the slip', () => {
     // Choosing the misfiled signed copy says what will happen to it, and names the file.
     const chosenHtml = paymentForm(withFiles, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.copy, name: 'สลิปโอนเงิน.jpg' } });
     const note = /data-testid="reimbursement-payment-slip-move-note">([\s\S]*?)<\/p>/u.exec(chosenHtml)?.[1]?.replace(/<[^>]+>/gu, '') ?? '';
-    assert.equal(note, 'เมื่อบันทึกจ่าย ไฟล์ สลิปโอนเงิน.jpg จะย้ายออกจากรายการใบเบิกที่เซ็นแล้วมาเป็นสลิปของการจ่ายนี้ และย้ายกลับไม่ได้ ถ้าเคยยืนยันว่าไฟล์นี้คือใบเบิกที่ลงนามครบ ระบบจะถอนการยืนยันนั้น');
-    const earlierSlip = paymentForm(withFiles, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.oldSlip, name: 'สลิปของการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00001' } });
+    assert.equal(note, 'เมื่อบันทึกจ่าย ไฟล์ สลิปโอนเงิน.jpg จะย้ายออกจากรายการใบเบิกที่เซ็นแล้วมาเป็นหลักฐานการจ่ายนี้ และย้ายกลับไม่ได้ ถ้าเคยยืนยันว่าไฟล์นี้คือใบเบิกที่เซ็นครบ ระบบจะถอนการยืนยันนั้น');
+    const earlierSlip = paymentForm(withFiles, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.oldSlip, name: 'หลักฐานการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00001' } });
     assert.doesNotMatch(earlierSlip, /reimbursement-payment-slip-move-note/);
   });
 
@@ -251,8 +282,8 @@ describe('payment form: the slip', () => {
     const rows = [...picker.matchAll(/<label class="([^"]*)"><input type="radio"[^>]*\/?>(?:<\/input>)?<span class="min-w-0"><span[^>]*>([^<]*)<\/span><span[^>]*>([^<]*)<\/span>/gu)]
       .map((match) => ({ cls: match[1]!, name: match[2]!, what: match[3]! }));
     assert.deepEqual(rows.map((row) => [row.name, row.what]), [
-      ['สลิปโอนเงิน.jpg', 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'],
-      ['signed-form-2.pdf', 'ไฟล์ PDF · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'],
+      ['สลิปโอนเงิน.jpg', 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่เซ็นครบ'],
+      ['signed-form-2.pdf', 'ไฟล์ PDF · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่เซ็นครบ'],
     ], picker.slice(0, 900));
     for (const row of rows) assert.match(row.cls, /\bmin-h-11\b/u);
     assert.doesNotMatch(picker, /<input type="radio"[^>]*checked=""/u, 'nothing is chosen for the payer');
@@ -266,27 +297,27 @@ describe('payment form: the slip', () => {
   });
 });
 
-describe('payment list: one record, the same facts, and ดูสลิป for its readers only', () => {
+describe('payment list: one record, the same facts, and ดูหลักฐานการจ่าย for its readers only', () => {
   it('shows method, date, reference, amount and the slip of each payment from that payment\'s own record', () => {
     const html = detailSections(paid, ids.payer, ['reimbursement.read', 'reimbursement.payment.record', 'reimbursement.payment.void']);
     const standing = visible(paymentRow(html, 'RBPAY-202609-00002'));
-    for (const text of ['RBPAY-202609-00002', '1,614.50 บาท', 'โอนเงิน · บันทึกแล้ว', 'วันที่จ่าย 29 ก.ย. 2569 · เลขอ้างอิง TXN-1002', 'จ่ายโดย สมศรี', 'มีสลิปแนบ 1 ไฟล์', 'ดูสลิป']) {
+    for (const text of ['RBPAY-202609-00002', '1,614.50 บาท', 'วิธีจ่าย', 'โอนเงิน', 'บันทึกแล้ว', 'วันที่จ่าย', '29 ก.ย. 2569', 'เลขอ้างอิง', 'TXN-1002', 'จ่ายโดย', 'สมศรี', 'มีหลักฐานการจ่ายแนบ 1 ไฟล์', 'ดูหลักฐานการจ่าย']) {
       assert.ok(standing.includes(text), `${text} in ${JSON.stringify(standing)}`);
     }
     // The voided record keeps its own slip, method and reference, and takes no new slip.
     const history = visible(paymentRow(html, 'RBPAY-202609-00001'));
-    for (const text of ['วันที่จ่าย 28 ก.ย. 2569 · เลขอ้างอิง TXN-1001', 'สลิปของการจ่ายที่ยกเลิกแล้ว 1 ไฟล์', 'ดูสลิป', 'เหตุผลที่ยกเลิก: บันทึกเลขอ้างอิงผิด']) {
+    for (const text of ['วันที่จ่าย', '28 ก.ย. 2569', 'เลขอ้างอิง', 'TXN-1001', 'หลักฐานการจ่ายที่ยกเลิกแล้ว 1 ไฟล์', 'ดูหลักฐานการจ่าย', 'เหตุผลที่ยกเลิก: บันทึกเลขอ้างอิงผิด']) {
       assert.ok(history.includes(text), `${text} in ${JSON.stringify(history)}`);
     }
-    assert.equal(history.includes('แนบสลิปเพิ่ม'), false);
+    assert.equal(history.includes('แนบหลักฐานการจ่ายเพิ่ม'), false);
     assert.equal(history.includes('ยกเลิกการจ่าย'), false);
-    assert.ok(standing.includes('แนบสลิปเพิ่ม'), 'a payer may add a slip to the standing payment');
+    assert.ok(standing.includes('แนบหลักฐานการจ่ายเพิ่ม'), 'a payer may add a slip to the standing payment');
   });
 
   // Who may open a slip is decided by the API, per claim, and reported on each payment of the detail
   // (the API spec "tells each viewer in the claim detail exactly what the slip endpoint will answer
   // them" pins the two together). The page follows that verdict and nothing else.
-  it('offers ดูสลิป exactly when the API says this viewer may open the slip, whatever the session\'s permissions', () => {
+  it('offers ดูหลักฐานการจ่าย exactly when the API says this viewer may open the slip, whatever the session\'s permissions', () => {
     const everyRight = ['reimbursement.read', 'reimbursement.payment.record', 'reimbursement.finance_review', 'reimbursement.approve'];
     const cases: [string, object, string, string[], boolean][] = [
       ['a reader the API serves', paid, ids.requester, ['reimbursement.read_own'], true],
@@ -300,35 +331,35 @@ describe('payment list: one record, the same facts, and ดูสลิป for i
     ];
     for (const [label, detail, userId, permissions, offered] of cases) {
       const row = visible(paymentRow(detailSections(detail, userId, permissions), 'RBPAY-202609-00002'));
-      assert.ok(row.includes('มีสลิปแนบ 1 ไฟล์'), `${label}: everyone who reads the claim sees that a slip exists`);
-      assert.equal(row.includes('ดูสลิป'), offered, label);
+      assert.ok(row.includes('มีหลักฐานการจ่ายแนบ 1 ไฟล์'), `${label}: everyone who reads the claim sees that a slip exists`);
+      assert.equal(row.includes('ดูหลักฐานการจ่าย'), offered, label);
     }
     // The count is the API's own, so it is right for a reader who is not given the files: two slips, none listed.
     const twoSlips = { ...paid, payments: [{ ...transfer, slipCount: 2, slips: [], viewerCanOpenSlips: false }] };
     const counted = visible(paymentRow(detailSections(twoSlips, ids.auditor, ['reimbursement.read']), 'RBPAY-202609-00002'));
-    assert.ok(counted.includes('มีสลิปแนบ 2 ไฟล์'));
-    assert.equal(counted.includes('ดูสลิป'), false);
-    assert.equal(counted.includes('ไม่มีสลิปแนบ'), false);
+    assert.ok(counted.includes('มีหลักฐานการจ่ายแนบ 2 ไฟล์'));
+    assert.equal(counted.includes('ดูหลักฐานการจ่าย'), false);
+    assert.equal(counted.includes('ไม่มีหลักฐานการจ่ายแนบ'), false);
   });
 
   it('says so when a payment has no slip, and lets only a payer attach one', () => {
     const legacy = { ...paid, payments: [{ ...transfer, slipCount: 0, slips: undefined }] };
     const payerRow = visible(paymentRow(detailSections(legacy, ids.payer, ['reimbursement.read', 'reimbursement.payment.record']), 'RBPAY-202609-00002'));
-    assert.ok(payerRow.includes('ไม่มีสลิปแนบ'));
-    assert.ok(payerRow.includes('แนบสลิป'));
-    assert.equal(payerRow.includes('ดูสลิป'), false);
+    assert.ok(payerRow.includes('ไม่มีหลักฐานการจ่ายแนบ'));
+    assert.ok(payerRow.includes('เพิ่มเติม') && payerRow.includes('แนบหลักฐานการจ่ายเพิ่ม'));
+    assert.equal(payerRow.includes('ดูหลักฐานการจ่าย'), false);
     const readerRow = visible(paymentRow(detailSections(legacy, ids.requester, ['reimbursement.read_own']), 'RBPAY-202609-00002'));
-    assert.ok(readerRow.includes('ไม่มีสลิปแนบ'));
-    assert.equal(readerRow.includes('แนบสลิป'), false);
+    assert.ok(readerRow.includes('ไม่มีหลักฐานการจ่ายแนบ'));
+    assert.equal(readerRow.includes('แนบหลักฐานการจ่าย'), false);
   });
 });
 
 describe('ใบเบิกที่เซ็นแล้ว is not where a slip goes', () => {
   const withCopy = { ...paid, payments: [{ ...transfer, slipCount: 0, slips: [] }], signedCopies: [misfiled], documentSignedVia: 'PAPER' };
-  const NOT_FOR_SLIPS = 'ช่องนี้สำหรับใบเบิกที่มีลายเซ็นเท่านั้น ไม่ใช่ที่แนบสลิปโอนเงิน สลิปโอนเงินแนบที่ขั้นจ่ายเงินคืน ตอนกดบันทึกจ่าย';
+  const NOT_FOR_SLIPS = 'ใบเบิกที่เซ็นแล้วเท่านั้น สลิปโอนเงินแนบที่เมนูเพิ่มเติมของรายการจ่าย';
 
   it('says so under the uploader and in its dialog', () => {
-    assert.ok(visible(detailSections(withCopy, ids.requester, ['reimbursement.read_own'])).includes(NOT_FOR_SLIPS));
+    assert.ok(visible(renderToStaticMarkup(h(sections.ClaimDocuments, { detail: withCopy, userId: ids.requester, permissions: ['reimbursement.read_own'], mode: 'step', busy: false, onOpenAttachment: noop, onSign: noop, onUseSignedCopyAsSlip: noop, onUploadSignedCopy: noop }))).includes(NOT_FOR_SLIPS));
     // The dialog opens once a file is picked: start it with one.
     const realUseState = reactRuntime.useState;
     Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
@@ -337,7 +368,7 @@ describe('ใบเบิกที่เซ็นแล้ว is not where a sli
     });
     Object.assign(globalThis, { document: { body: {} } }); // Modal's portal target; never touched by a server render
     let dialog: string[];
-    try { dialog = visible(detailSections(withCopy, ids.requester, ['reimbursement.read_own'])); } finally {
+    try { dialog = visible(renderToStaticMarkup(h(sections.ClaimDocuments, { detail: withCopy, userId: ids.requester, permissions: ['reimbursement.read_own'], mode: 'step', busy: false, onOpenAttachment: noop, onSign: noop, onUseSignedCopyAsSlip: noop, onUploadSignedCopy: noop }))); } finally {
       Reflect.set(reactRuntime, 'useState', realUseState);
       Reflect.deleteProperty(globalThis, 'document');
     }
@@ -348,18 +379,18 @@ describe('ใบเบิกที่เซ็นแล้ว is not where a sli
 
   it('lets a payer move a file from there to the standing payment, and nobody else', () => {
     const payer = visible(detailSections(withCopy, ids.payer, ['reimbursement.read', 'reimbursement.payment.record']));
-    assert.ok(payer.includes('ใช้ไฟล์นี้เป็นสลิปการจ่าย'));
+    assert.ok(payer.includes('ใช้ไฟล์นี้เป็นหลักฐานการจ่าย'));
     for (const [userId, permissions] of [
       [ids.requester, ['reimbursement.read_own']],
       [ids.approver, ['reimbursement.read_related', 'reimbursement.approve']],
       ['cmg7x2k9p0020useraccount', ['reimbursement.read', 'reimbursement.finance_review']],
     ] as const) {
-      assert.equal(visible(detailSections(withCopy, userId, [...permissions])).includes('ใช้ไฟล์นี้เป็นสลิปการจ่าย'), false);
+      assert.equal(visible(detailSections(withCopy, userId, [...permissions])).includes('ใช้ไฟล์นี้เป็นหลักฐานการจ่าย'), false);
     }
     // No standing payment yet (voided, not paid again): there is nothing to move the file to from here;
     // the payment form offers it instead.
     const unpaid = { ...withCopy, status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', payments: [voidedTransfer] };
-    assert.equal(visible(detailSections(unpaid, ids.payer, ['reimbursement.read', 'reimbursement.payment.record'])).includes('ใช้ไฟล์นี้เป็นสลิปการจ่าย'), false);
+    assert.equal(visible(detailSections(unpaid, ids.payer, ['reimbursement.read', 'reimbursement.payment.record'])).includes('ใช้ไฟล์นี้เป็นหลักฐานการจ่าย'), false);
   });
 
   // The move withdraws a "signed on paper" declaration. It is the fix for a payment that has no slip,
@@ -367,8 +398,8 @@ describe('ใบเบิกที่เซ็นแล้ว is not where a sli
   it('does not offer the move once the standing payment has a slip', () => {
     const paidWithSlip = { ...paid, signedCopies: [misfiled], documentSignedVia: 'PAPER' };
     const payer = visible(detailSections(paidWithSlip, ids.payer, ['reimbursement.read', 'reimbursement.payment.record']));
-    assert.equal(payer.includes('ใช้ไฟล์นี้เป็นสลิปการจ่าย'), false);
-    assert.ok(payer.includes('แนบสลิปเพิ่ม'), 'the payment row still takes another slip');
+    assert.equal(payer.includes('ใช้ไฟล์นี้เป็นหลักฐานการจ่าย'), false);
+    assert.ok(payer.includes('แนบหลักฐานการจ่ายเพิ่ม'), 'the payment row still takes another slip');
     assert.ok(payer.some((text) => text.includes('สลิปโอนเงิน.jpg')), 'the copy stays listed where it is');
   });
 
@@ -383,25 +414,25 @@ describe('ใบเบิกที่เซ็นแล้ว is not where a sli
     // as the slip and the real e-slip was the file left on this row. The page cannot know which file is which, so the
     // sentence is true either way, and names the control that puts the other case right.
     const SETTLED = 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง และสลิปที่แนบกับการจ่ายถูกต้องแล้ว ไม่ต้องทำอะไรเพิ่ม';
-    const AFTER = `${SETTLED} ถ้าสลิปที่แนบกับการจ่ายไม่ใช่สลิปจริง ให้กดแนบสลิปเพิ่มที่แถวการจ่าย แล้วแนบสลิปจริง`;
+    const AFTER = `${SETTLED} ถ้าสลิปที่แนบกับการจ่ายไม่ใช่สลิปจริง ให้กดเพิ่มเติมที่แถวการจ่าย แล้วเลือกแนบหลักฐานการจ่ายเพิ่ม แล้วแนบหลักฐานการจ่ายจริง`;
     const BEFORE = 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องแนบใหม่ ตอนบันทึกจ่ายเลือกไฟล์นี้เป็นสลิปได้';
     const hints = (texts: string[]) => texts.filter((text) => text.startsWith('ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง'));
 
     // Paid, and the payment carries a slip: every reader sees what each file is; whoever pays is told what holds in both cases.
     const paidWithSlip = { ...paid, ...copies };
     const payer = visible(detailSections(paidWithSlip, ids.payer, PAYER_RIGHTS));
-    for (const text of ['ไฟล์ PDF · ลงนามบนกระดาษ · แนบเมื่อ 30 ก.ย. 2569 โดย สมชาย', 'ไฟล์รูปภาพ · ลงนามบนกระดาษ · แนบเมื่อ 29 ก.ย. 2569 โดย สมชาย', 'ไฟล์รูปภาพ · ไฟล์แนบทั่วไป · แนบเมื่อ 28 ก.ย. 2569']) {
+    for (const text of ['ไฟล์ PDF · เซ็นบนกระดาษ · แนบเมื่อ 30 ก.ย. 2569 โดย สมชาย', 'ไฟล์รูปภาพ · เซ็นบนกระดาษ · แนบเมื่อ 29 ก.ย. 2569 โดย สมชาย', 'ไฟล์รูปภาพ · ไฟล์แนบทั่วไป · แนบเมื่อ 28 ก.ย. 2569']) {
       assert.ok(payer.includes(text), `${text}: ${JSON.stringify(payer.filter((shown) => shown.includes('แนบเมื่อ')))}`);
     }
     assert.deepEqual(hints(payer), [AFTER, AFTER, AFTER]);
     // The control the sentence names is on the page, by that name, and the move button is not: no file moves once a payment has a slip.
-    assert.deepEqual([payer.includes('แนบสลิปเพิ่ม'), payer.includes('ใช้ไฟล์นี้เป็นสลิปการจ่าย')], [true, false]);
+    assert.deepEqual([payer.includes('แนบหลักฐานการจ่ายเพิ่ม'), payer.includes('ใช้ไฟล์นี้เป็นหลักฐานการจ่าย')], [true, false]);
     // A payment that takes no more slips has no such control, and the sentence names none.
     const full = { ...paidWithSlip, payments: [voidedTransfer, { ...transfer, slipCount: 5, slips: [1, 2, 3, 4, 5].map((n) => slip(`${ids.slip}${n}`)) }] };
     const atLimit = visible(detailSections(full, ids.payer, PAYER_RIGHTS));
-    assert.deepEqual([hints(atLimit), atLimit.includes('แนบสลิปเพิ่ม')], [[SETTLED, SETTLED, SETTLED], false]);
+    assert.deepEqual([hints(atLimit), atLimit.includes('แนบหลักฐานการจ่ายเพิ่ม')], [[SETTLED, SETTLED, SETTLED], false]);
     const requester = visible(detailSections(paidWithSlip, ids.requester, ['reimbursement.read_own']));
-    assert.ok(requester.includes('ไฟล์รูปภาพ · ลงนามบนกระดาษ · แนบเมื่อ 29 ก.ย. 2569 โดย สมชาย'));
+    assert.ok(requester.includes('ไฟล์รูปภาพ · เซ็นบนกระดาษ · แนบเมื่อ 29 ก.ย. 2569 โดย สมชาย'));
     assert.deepEqual(hints(requester), [], 'someone who records no payment has nothing to do about it');
 
     // Waiting for its payment: the file is chosen as the slip in the payment form, not uploaded again.
@@ -411,7 +442,7 @@ describe('ใบเบิกที่เซ็นแล้ว is not where a sli
     const paidNoSlip = { ...paid, ...copies, payments: [{ ...transfer, slipCount: 0, slips: [] }] };
     const withButton = visible(detailSections(paidNoSlip, ids.payer, PAYER_RIGHTS));
     assert.deepEqual(hints(withButton), []);
-    assert.equal(withButton.filter((text) => text === 'ใช้ไฟล์นี้เป็นสลิปการจ่าย').length, 3);
+    assert.equal(withButton.filter((text) => text === 'ใช้ไฟล์นี้เป็นหลักฐานการจ่าย').length, 3);
     // Not at a point where a payment is recorded: nothing to say.
     assert.deepEqual(hints(visible(detailSections({ ...base, ...copies, status: 'PENDING_APPROVAL', payments: [] }, ids.payer, PAYER_RIGHTS))), []);
     assert.equal(logic.signedCopyMisfiledHint(paidWithSlip, PAYER_RIGHTS), AFTER);
@@ -436,7 +467,7 @@ describe('no payment-step text carries a machine token (Owner rule 2026-09-27/29
       ['form: cash', paymentForm(base, { method: 'CASH' })],
       ['form: a method the API may grow', paymentForm(base, { method: 'A_METHOD_ADDED_LATER' })],
       ['form: slip picked, save failed', paymentForm(base, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.slip, name: 'สลิป-กสิกร.jpg' },
-        error: 'แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · คำขอถูกแก้ไขระหว่างทำรายการ · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่' })],
+        error: 'แนบหลักฐานการจ่ายแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ใบเบิกถูกแก้ไขระหว่างทำรายการ · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบหลักฐานการจ่ายหรือโอนเงินใหม่' })],
       ['form: files on the claim', paymentForm(withFiles, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.copy, name: 'สลิปโอนเงิน.jpg · แนบไว้ที่ใบเบิกที่เซ็นแล้ว' } })],
       ['list: payer', detailSections(paid, ids.payer, ['reimbursement.read', 'reimbursement.payment.record', 'reimbursement.payment.void'])],
       ['list: ordinary reader', detailSections(refusedSlips(paid), ids.auditor, ['reimbursement.read'])],
@@ -519,7 +550,7 @@ describe('the pay queue\'s dialog: every listed file is opened before it is chos
     const list = html.slice(html.indexOf('data-testid="reimbursement-payment-slip-choices"'));
     const picker = list.slice(0, list.indexOf('</div></div></div>'));
     const names = [...picker.matchAll(/<span class="min-w-0"><span[^>]*>([^<]*)<\/span>/gu)].map((match) => match[1]!);
-    assert.deepEqual(names, ['สลิปของการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00001', 'สลิปโอนเงิน.jpg', 'signed-form-2.pdf']);
+    assert.deepEqual(names, ['หลักฐานการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00001', 'สลิปโอนเงิน.jpg', 'signed-form-2.pdf']);
     assert.equal((picker.match(/<button type="button" class="[^"]*\bmin-h-11\b[^"]*" aria-busy="false">เปิดดูไฟล์นี้<\/button>/gu) ?? []).length, 3);
     assert.ok(visible(picker).includes('ใช้แทนการแนบไฟล์ใหม่ได้ เลือกเฉพาะไฟล์ที่เป็นสลิปหรือหลักฐานการโอน เปิดดูก่อนเลือกได้'));
     assert.equal(openers.length, 3);

@@ -73,6 +73,21 @@ export function LegalToc({ items }: { items: ReadonlyArray<TocItem> }) {
   );
 }
 
+/**
+ * A way back for someone who came from the sign-up form or the acceptance page: the logo leads to /login and loses
+ * their place. Drawn only when this tab has a page behind it; a document opened in its own tab shows nothing.
+ */
+export function LegalBackLink() {
+  const [canGoBack, setCanGoBack] = useState(false);
+  useEffect(() => { setCanGoBack(window.history.length > 1); }, []);
+  if (!canGoBack) return null;
+  return (
+    <button type="button" className="doc-back" onClick={() => window.history.back()}>
+      <span aria-hidden>‹</span>กลับ
+    </button>
+  );
+}
+
 /** How much of the document is behind you. These are long enough that knowing costs
  *  nothing and helps; it renders as a hairline on the masthead's bottom edge. */
 export function LegalReadingProgress() {

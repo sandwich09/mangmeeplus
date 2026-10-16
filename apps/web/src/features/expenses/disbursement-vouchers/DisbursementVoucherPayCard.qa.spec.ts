@@ -9,14 +9,15 @@ const list = readFileSync(new URL('./DisbursementVoucherListPage.tsx', import.me
 const css = readFileSync(new URL('./disbursement-vouchers.module.css', import.meta.url), 'utf8');
 const word = (key: string) => workspaceDictionary.th[`expenses.disbursement.${key}` as keyof typeof workspaceDictionary.th];
 
-test('pay form opens inside the approved step only with the server right and focuses its heading', () => {
+test('pay form opens inside the approved step only with the server right and focuses nothing on arrival (a focused date field opened its calendar by itself)', () => {
   assert.match(page, /const canPay = canPayDisbursementVoucher\(detail\)/);
-  assert.match(page, /canPay && <DisbursementVoucherPayCard/);
-  assert.match(card, /id="disbursement-voucher-pay"[\s\S]*?<MangmeeCard/);
-  assert.match(card, /scrollIntoView\(\{ block: 'start' \}\)/);
-  assert.match(card, /heading.current\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(page, /canPay && <div className=\{styles.mainCardEnd\}><DisbursementVoucherPayCard/);
+  assert.match(card, /id="disbursement-voucher-pay"[\s\S]*?<form/);
+  assert.doesNotMatch(card, /MangmeeCard/);
+  assert.doesNotMatch(card.slice(card.indexOf('useEffect(() => {'), card.indexOf('}, []);')), /scrollIntoView|window.scrollTo/);
+  assert.doesNotMatch(card, /window.location.hash/);
   assert.match(card, /<h2 ref=\{heading\} tabIndex=\{-1\}/);
-  assert.doesNotMatch(card, /router\.|window.location/);
+  assert.doesNotMatch(card, /router\./);
   assert.match(card, /<Modal open=\{confirmOpen\}/);
 });
 test('payment fields prefill today and planned method and use shared themed controls with fixed copy', () => {
@@ -42,16 +43,17 @@ test('future-date refusal occurs before a request and is shown once under the da
   assert.match(card, /error !== null && !dateError/);
   assert.equal(word('future_paid_date'), 'วันที่จ่ายต้องไม่เกินวันนี้');
 });
-test('one full-width amount button stays fixed above the keyboard and the bottom safe area', () => {
+test('one amount button ends the form in the shared action bar above the keyboard and safe area', () => {
   assert.equal((card.match(/type="submit"/g) ?? []).length, 1);
-  assert.match(card, /className=\{cx\(btnClass, styles.action\)\}/);
-  assert.equal(word('pay_total'), 'บันทึกว่าจ่ายแล้ว {total}');
-  assert.match(card, /word\('pay_total'\).replace\('\{total\}', baht\(detail.header.totalAmount\)\)/);
+  assert.match(card, /<FormActionBar><ActionGroup>\s*<button type="submit" className=\{btnClass\}/);
+  assert.equal(word('pay'), 'บันทึกว่าจ่ายแล้ว');
+  assert.match(card, /needsRefresh \? word\('reload_latest'\) : word\('pay'\)/);
   assert.match(card, /viewport.height \+ viewport.offsetTop/);
   assert.match(card, /viewport\?\.addEventListener\('resize', place\)/);
   assert.match(card, /viewport\?\.addEventListener\('scroll', place\)/);
   assert.match(card, /viewport\?\.removeEventListener\('resize', place\)/);
-  assert.match(css, /\.journeyBar \{ position: fixed;[\s\S]*?safe-area-inset-bottom/);
+  assert.match(card, /actionBar.style.bottom/);
+  assert.match(card, /querySelector<HTMLElement>\('\[data-form-action-bar\]'\)/);
   assert.doesNotMatch(card + page + css, /h[-]screen|100v[h]/);
 });
 test('pay refusals stay once inside the card with fields retained and latest-data recovery', () => {
@@ -84,10 +86,11 @@ test('confirmed payment rereads detail in place and a failed read retries only t
 test('paid summary uses Thai dates, named payment method, payer and recorded time', () => {
   assert.match(page, /formatThaiDate\(header.paidDate\)/);
   assert.match(page, /PAYMENT_METHOD_LABELS\[header.paidMethod\]/);
-  assert.match(page, /header.paidFromRef &&/);
-  assert.match(page, /detail.paidByName/);
-  assert.match(page, /formatThaiDateTime\(header.paidRecordedAt\)/);
-  assert.match(page, /header\.paidRecordedAt \? 'expenses\.disbursement\.paid_amount'/);
+  assert.match(page, /header.paidFromRef\?\.trim\(\) &&/);
+  const history = readFileSync(new URL('./disbursement-voucher-journey.logic.ts', import.meta.url), 'utf8');
+  assert.match(history, /at: header.paidRecordedAt[\s\S]*?actor: person\(detail.paidByName\)/);
+  assert.doesNotMatch(page, /ผู้บันทึกจ่าย|บันทึกเมื่อ/);
+  assert.match(page, /paid \? 'ยอดที่จ่าย'/);
 });
 test('paid withholding wiring delegates per-line certificate facts and viewer issue rights', () => {
   assert.match(page, /<DisbursementVoucherWithholding companyId=\{companyId\} detail=\{detail\} line=\{line\} canIssue=\{permissions.includes\('wht.certificate.issue'\)\}/);
@@ -106,5 +109,26 @@ test('cancelled payment lines say which payments remain effective', () => {
   assert.equal(word('payment_cancelled'), 'ถูกยกเลิกแล้ว');
 });
 test('both card and table pay links point to the payment form', () => {
-  assert.equal((list.match(/href=\{disbursementVoucherDocumentHref\(companyId, row\)\}/g) ?? []).length, 2);
+  assert.match(list, /href=\{disbursementVoucherDocumentHref\(companyId, row\)\}/);
+  assert.equal((list.match(/router.push\(disbursementVoucherDocumentHref\(companyId, row\)\)/g) ?? []).length, 2);
+  assert.match(list, /role="link" tabIndex=\{0\}/);
+});
+
+test('the pay bar is a direct child of the tall form outside its card', () => {
+  assert.ok(card.indexOf('<form ref={bar}') < card.indexOf('<h2 ref={heading}'));
+  assert.ok(card.indexOf('</CoverLoader>') < card.indexOf('<FormActionBar>'));
+  assert.match(card, /<\/ActionGroup><\/FormActionBar>\s*<\/form>/);
+});
+
+
+test('payment correction advice uses the server action and the author names from the detail read', () => {
+  assert.match(card, /detail.actions.withdraw && onWithdraw/);
+  assert.match(card, /\{disbursementPaymentCorrectionHint\(detail, Boolean\(detail.actions.withdraw && onWithdraw\)\)\}/);
+  assert.doesNotMatch(card, /: word\('pay_amount_hint_ask'\)/);
+});
+
+test('four equal payment fields start two columns at 640px and the fixed bar retains its gutter', () => {
+  assert.match(css, /@media \(min-width: 640px\) \{ fieldset.payFields/);
+  assert.match(css, /\.payCard[^{}]*\[data-form-action-bar\][^{}]*\{[^}]*padding:/);
+  assert.match(css, /padding-inline: 1.75rem/);
 });

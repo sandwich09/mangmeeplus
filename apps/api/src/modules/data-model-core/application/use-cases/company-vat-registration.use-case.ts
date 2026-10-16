@@ -1,3 +1,4 @@
+import { recomputeCompanyExpenseInputVat } from '../../../expenses/infrastructure/expense-input-vat';
 import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
   civilDateToUtcDate,
@@ -167,6 +168,7 @@ export class CompanyVatRegistrationUseCase {
       // reader uses the accessor instead.
       const after = await this.loadFacts(tx, companyId);
       const statusNow = effectiveVatStatus(after, today);
+      await recomputeCompanyExpenseInputVat(tx, companyId, after);
       await tx.company.update({ where: { id: companyId }, data: { vatRegistered: statusNow === 'REGISTERED' } });
 
       await this.audit.log(

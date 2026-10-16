@@ -64,15 +64,15 @@ test('certificate payee address trims the typed value first, then the snapshot, 
 test('payer identity fills only printable blanks, preserves frozen values and reports both missing fields', async () => {
   const { whtPayerIdentity } = await import('./tax.js');
   const frozen = { companyName: 'กิจการเดิม', taxId: null, address: null, branchCode: '00002' };
-  const current = { taxId: '1234567890123', address: 'ที่อยู่ปัจจุบัน' };
-  assert.deepEqual(whtPayerIdentity(frozen, current), { payer: { ...frozen, ...current }, missing: [] });
+  const current = { registeredName: 'กิจการเดิม', taxId: '1234567890123', address: 'ที่อยู่ปัจจุบัน' };
+  assert.deepEqual(whtPayerIdentity(frozen, current), { payer: { ...frozen, taxId: current.taxId, address: current.address }, missing: [] });
   assert.deepEqual(frozen, { companyName: 'กิจการเดิม', taxId: null, address: null, branchCode: '00002' });
   const filled = { ...frozen, taxId: '9999999999999', address: 'ที่อยู่เดิม' };
   assert.deepEqual(whtPayerIdentity(filled, current), { payer: filled, missing: [] });
-  assert.deepEqual(whtPayerIdentity(frozen, { taxId: null, address: null }).missing, ['TAX_ID', 'ADDRESS']);
+  assert.deepEqual(whtPayerIdentity(frozen, { registeredName: 'กิจการเดิม', taxId: null, address: null }).missing, ['TAX_ID', 'ADDRESS']);
   // A frozen tax number that cannot be printed is replaced by the shop's current one, never left as a dead end.
   assert.deepEqual(whtPayerIdentity({ ...filled, taxId: '123' }, current), { payer: { ...filled, taxId: current.taxId }, missing: [] });
-  assert.deepEqual(whtPayerIdentity({ ...filled, taxId: '123' }, { taxId: null, address: null }).missing, ['TAX_ID']);
+  assert.deepEqual(whtPayerIdentity({ ...filled, taxId: '123' }, { registeredName: 'กิจการเดิม', taxId: null, address: null }).missing, ['TAX_ID']);
   assert.deepEqual(whtPayerIdentity({ ...filled, address: '{}' }, current).payer.address, current.address);
   const json = JSON.stringify({ line1: 'บ้านเลขที่ 1' });
   assert.equal(whtPayerIdentity({ ...filled, address: json }, current).payer.address, json);
@@ -117,7 +117,7 @@ test('payer refusals use the shop profile words for each missing detail', async 
   const { whtPayerMissingLabel, whtPayerIdentityMissingMessage } = await import('./tax.js');
   for (const [missing, words] of [[['TAX_ID'], 'เลขผู้เสียภาษีของร้าน'], [['ADDRESS'], 'ที่อยู่ของร้าน'], [['TAX_ID', 'ADDRESS'], 'เลขผู้เสียภาษีและที่อยู่ของร้าน']] as const) {
     assert.equal(whtPayerMissingLabel(missing), words);
-    assert.equal(whtPayerIdentityMissingMessage(missing), `ยังไม่มี${words} กรุณากรอกในหน้าข้อมูลร้านก่อน แล้วกด “ออกหนังสือรับรอง 50 ทวิ” อีกครั้ง`);
+    assert.equal(whtPayerIdentityMissingMessage(missing), `ยังไม่มี${words} กรอกในหน้าข้อมูลร้านก่อน แล้วกด “ออกหนังสือรับรอง 50 ทวิ” อีกครั้ง`);
   }
 });
 
@@ -125,4 +125,22 @@ test('payer refusals use the shop profile words for each missing detail', async 
 it('labels an address cleared for a changed payee tax number in certificate history', async () => {
   const { WHT_CERTIFICATE_HISTORY_EVENT_LABELS } = await import('./tax.js');
   assert.equal(WHT_CERTIFICATE_HISTORY_EVENT_LABELS.PAYEE_ADDRESS_CLEARED, 'ล้างที่อยู่ผู้รับเงิน เพราะเลขผู้เสียภาษีเปลี่ยน');
+});
+
+test('registered payer identity checks every missing combination and never trusts a frozen display name', async () => {
+  const { whtPayerIdentity, whtPayerMissingLabel } = await import('./tax.js');
+  const fields = ['REGISTERED_NAME', 'TAX_ID', 'ADDRESS'] as const;
+  const labels = ['ชื่อจดทะเบียน', 'เลขผู้เสียภาษี', 'ที่อยู่'];
+  for (let mask = 0; mask < 8; mask++) {
+    const current = { registeredName: mask & 1 ? null : ' ชื่อจดทะเบียนจริง ', taxId: mask & 2 ? null : '1234567890123', address: mask & 4 ? null : 'บ้านเลขที่ 1' };
+    const result = whtPayerIdentity({ companyName: 'Display name', taxId: null, address: null, branchCode: null }, current);
+    const missing = fields.filter((_, index) => mask & (1 << index));
+    assert.deepEqual(result.missing, missing);
+    assert.equal(result.payer.companyName, mask & 1 ? '' : 'ชื่อจดทะเบียนจริง');
+    if (missing.length) {
+      const words = labels.filter((_, index) => mask & (1 << index));
+      const expected = words.length === 3 ? `${words[0]} ${words[1]} และ${words[2]}` : words.join('และ');
+      assert.equal(whtPayerMissingLabel(missing), `${expected}ของร้าน`);
+    }
+  }
 });

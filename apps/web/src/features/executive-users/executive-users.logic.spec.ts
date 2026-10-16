@@ -92,7 +92,7 @@ test('pending expiry never claims a suspended or revoked account can sign in', a
 const codes = {
   ACCOUNT_ALREADY_EXISTS: 'ชื่อผู้ใช้หรืออีเมลนี้ถูกใช้แล้ว', ACCOUNT_REVOKED: 'บัญชีนี้ถูกปิดจากทางอื่นของระบบ หน้านี้เปิดคืนไม่ได้',
   ACCOUNT_PROTECTED: 'บัญชีผู้ดูแลระบบระงับหรือแก้สิทธิ์จากหน้านี้ไม่ได้', ACCOUNT_NOT_FOUND: 'ไม่พบบัญชีผู้บริหาร',
-  INVALID_INPUT: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่', EXECUTIVE_QUERY_INVALID: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่',
+  INVALID_INPUT: 'ข้อมูลไม่ถูกต้อง ตรวจสอบแล้วลองอีกครั้ง', EXECUTIVE_QUERY_INVALID: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่',
   EXECUTIVE_ACCESS_DENIED: 'คุณไม่มีสิทธิ์ใช้งานส่วนนี้', SOURCE_UNAVAILABLE: 'ระบบยังอ่านข้อมูลส่วนนี้ไม่ได้ กรุณาลองใหม่ภายหลัง',
 };
 for (const [code, words] of Object.entries(codes)) test(`maps ${code} without raw diagnostic text`, () => {

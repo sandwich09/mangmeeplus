@@ -85,7 +85,7 @@ export function TaxReconciliationPage({ companyId, permissions }: { companyId: s
   async function review() {
     if (!detail) return;
     setBusy(true); setError('');
-    try { await reviewTaxReconciliation(companyId, detail.id, note || undefined); setDetail(await getTaxReconciliation(companyId, detail.id, { page: 1, pageSize: 100 })); toast.success('ยืนยันการตรวจสอบเรียบร้อยแล้ว'); }
+    try { await reviewTaxReconciliation(companyId, detail.id, note || undefined); setDetail(await getTaxReconciliation(companyId, detail.id, { page: 1, pageSize: 100 })); toast.success('ยืนยันการตรวจสอบแล้ว'); }
     catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); }
   }
 
@@ -105,7 +105,7 @@ export function TaxReconciliationPage({ companyId, permissions }: { companyId: s
         <div className="border-b border-gray-100 p-4"><strong>ผล Reconciliation ล่าสุด</strong><p className="text-xs text-gray-500">ผู้มีสิทธิ์อ่านรายงานเปิดผลเดิมได้โดยไม่ต้อง recompute</p></div>
         {historyLoading ? <LoadingState label="กำลังโหลด..." /> : !history.length ? <div className="p-6 text-center text-sm text-gray-500">ยังไม่มีผลในตัวกรองนี้</div> : <div className="divide-y divide-gray-100">{history.map((run) => <button key={run.id} type="button" disabled={busy} aria-busy={openingRunId === run.id} onClick={() => void loadRun(run)} className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-gray-50 disabled:opacity-50"><span><strong>{run.formType} · {run.periodKey}</strong><span className="ml-2 text-xs text-gray-500">{formatThaiDateTime(run.createdAt)}</span></span><span className={`rounded-full px-2 py-1 text-xs font-bold ${run.blockingIssueCount ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>{run.status} · {run.blockingIssueCount}</span></button>)}</div>}
       </MangmeeCard>
-      {boxes && !pp30SalesSideRecorded(boxes) && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><strong>ระบบบันทึกเฉพาะฝั่งภาษีซื้อ (box 6–7)</strong> — งวดนี้ยังไม่มีเอกสารฝั่งขายในระบบ ยอด box 8/9 จึงยังไม่ใช่ยอดยื่นจริง กรุณารวมยอดขายจากระบบขายของกิจการก่อนยื่น ภ.พ.30</div>}
+      {boxes && !pp30SalesSideRecorded(boxes) && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><strong>ระบบบันทึกเฉพาะฝั่งภาษีซื้อ (box 6–7)</strong> — งวดนี้ยังไม่มีเอกสารฝั่งขายในระบบ ยอด box 8/9 จึงยังไม่ใช่ยอดยื่นจริง รวมยอดขายจากระบบขายของกิจการก่อนยื่น ภ.พ.30</div>}
       {boxes && <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{(Object.entries(boxes) as Array<[keyof Pp30BoxesDto, string]>).map(([key, value]) => <MangmeeCard key={key} className="p-4"><div className="text-xs font-bold text-gray-500">{boxLabels[key]}</div>{(key === 'box8TaxPayable' || key === 'box9TaxOverpaid') && !pp30SalesSideRecorded(boxes)
         ? <div className="mt-1 text-xl font-bold text-gray-400">—</div>
         : <div className="mt-1 text-xl font-bold text-gray-900">{Number(value).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</div>}</MangmeeCard>)}</div>}

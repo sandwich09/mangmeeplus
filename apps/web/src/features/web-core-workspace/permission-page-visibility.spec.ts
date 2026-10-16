@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import * as React from 'react';
 import { filterSettingsMenuItems } from './settings-menu.logic';
 import { WORKSPACE_MODULES } from './web-core-workspace.constants';
+import { t } from '@/common/i18n/workspace-i18n.logic';
 import {
   buildNavItems,
   canAccessWorkspacePath,
@@ -29,7 +30,8 @@ describe('permission page visibility regression', () => {
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['wht.certificate.read'], 'company-1', path), false);
     assert.equal(items(['expense.read']).some(item => item.key === 'expenses.wht_certificates'), false);
     const child = items(['expense.read', 'wht.certificate.issue']).find(item => item.key === 'expenses.wht_certificates');
-    assert.equal(child?.href, path); assert.equal(child?.label, 'หัก ณ ที่จ่าย (50 ทวิ)');
+    // The row says whatever the certificates page calls itself (one key, no second literal).
+    assert.equal(child?.href, path); assert.equal(child?.label, t('expenses.certificates.title', 'th'));
     assert.equal(items(['wht.certificate.issue']).length, 0);
     assert.ok(React.isValidElement(requireRoutePermission({ permissions: ['expense.read'] }, '/expenses/wht-certificates')));
     assert.equal(requireRoutePermission({ permissions: ['wht.certificate.issue'] }, '/expenses/wht-certificates'), null);
@@ -69,4 +71,15 @@ describe('permission page visibility regression', () => {
       null,
     );
   });
+});
+
+it('withholding menu and both addresses keep the existing narrow permissions', () => {
+  const module = WORKSPACE_MODULES.find(item => item.key === 'pnd53')!;
+  assert.equal(module.buildHref('co'), '/companies/co/tax/withholding');
+  assert.equal(module.labelKey, 'module.pnd53');
+  assert.equal(t('module.pnd53', 'th'), 'ภาษีหัก ณ ที่จ่าย');
+  for (const path of ['/tax/withholding', '/tax/pnd53']) {
+    assert.equal(requireRoutePermission({ permissions: ['wht.pnd53.read'] }, path), null);
+    assert.ok(React.isValidElement(requireRoutePermission({ permissions: ['tax.report.read'] }, path)));
+  }
 });

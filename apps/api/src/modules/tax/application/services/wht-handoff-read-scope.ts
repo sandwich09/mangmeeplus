@@ -55,7 +55,7 @@ export async function handoffReadBoundary(db: HandoffDb, ctx: RequestContext, wh
   const ids = [...new Set(sources.flatMap(row => row.sourcePaymentId ? [row.sourcePaymentId] : []))];
   const expenses = ids.length ? await db.expenseRecord.findMany({
     where: { AND: [expenseReadWhere(ctx), { id: { in: ids } }] },
-    select: { id: true, expenseNumber: true, expenseDate: true, status: true, lines: { orderBy: { lineNumber: 'asc' }, select: { description: true } } },
+    select: { id: true, expenseNumber: true, expenseDate: true, status: true, netPayableAmount: true, lines: { orderBy: { lineNumber: 'asc' }, select: { description: true } } },
   }) : [];
   return {
     expenses: new Map(expenses.map(expense => [expense.id, expense])),

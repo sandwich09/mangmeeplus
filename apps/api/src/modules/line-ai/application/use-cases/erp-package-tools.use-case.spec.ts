@@ -143,10 +143,10 @@ describe('billing.get_package_catalog (advisor spec §5.1a, owner 2026-09-30)', 
       name: 'เริ่มต้น (STARTER)', branches: 1, users: 2,
       monthly: { price: '249', payable: '249', receiptReads: 30 },
       yearly: { price: '2,490', payable: '2,490', receiptReads: 360, months: 12, averagePerMonth: '207.50', savingVersusMonthly: '498', pricedAsMonths: 10 },
-      menus: ['ผู้ช่วย AI ทาง LINE', 'แดชบอร์ด', 'ค่าใช้จ่ายและใบเสร็จ', 'การเบิกจ่าย', 'พนักงานและสิทธิ์', 'การแจ้งเตือน'],
+      menus: ['ผู้ช่วย AI ทาง LINE', 'หน้าแรก', 'ค่าใช้จ่ายและใบเสร็จ', 'การเบิกจ่าย', 'พนักงานและสิทธิ์', 'การแจ้งเตือน'],
     });
     const enterprise = data.packages[3];
-    assert.deepEqual(enterprise.menus.filter((menu: string) => !data.packages[0].menus.includes(menu)), ['ออก ภ.ง.ด.53 ในระบบ', 'ออกหนังสือรับรอง 50 ทวิในระบบ']);
+    assert.deepEqual(enterprise.menus.filter((menu: string) => !data.packages[0].menus.includes(menu)), ['ออก ภ.ง.ด.3 และ ภ.ง.ด.53 ในระบบ', 'ออกหนังสือรับรอง 50 ทวิในระบบ']);
     assert.equal(enterprise.monthly.notOnSale, 'เร็ว ๆ นี้ ยังไม่เปิดให้ซื้อ');
     assert.equal(data.vatNote, 'ราคานี้ไม่มี VAT บวกเพิ่ม ยอดที่ชำระเท่ากับราคา');
     assert.equal(data.aiCreditPerMonth, 80);

@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect } from 'react';
+import { primaryButtonClass } from '@/common/components/button';
+import { AuthFrame, authTitleClass } from './AuthFrame';
 
 /** Legacy account links are retired; web signup claim and password reset keep their own routes. */
 export default function VerifyEmailPage() {
@@ -12,12 +14,10 @@ export default function VerifyEmailPage() {
     fragment.delete('token'); url.hash = fragment.toString();
     window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
   }, []);
-  return <div className="flex min-h-dvh items-center justify-center bg-gray-50 p-4">
-    <main className="w-full max-w-md space-y-4 rounded-xl border border-gray-200 bg-white p-6 sm:p-8">
-      <h1 className="text-xl font-semibold">ยืนยันอีเมลด้วยรหัสยืนยัน</h1>
-      <p>ลิงก์ยืนยันอีเมลแบบเดิมใช้ไม่ได้แล้ว กรุณาเข้าสู่ระบบ เปิดหน้าบัญชีของฉัน แล้วขอรหัสยืนยันอีเมลใหม่</p>
-      <p>อีเมลเดิมและข้อมูลร้านยังคงอยู่ หากเปลี่ยนอีเมล ระบบจะใช้อีเมลใหม่เมื่อคุณกรอกรหัสยืนยันสำเร็จ</p>
-      <Link href="/login" className="inline-flex min-h-11 items-center rounded-xl bg-green-700 px-4 py-3 font-semibold text-white">เข้าสู่ระบบเพื่อขอรหัสยืนยัน</Link>
-    </main>
-  </div>;
+  // One sentence and the one next step. Nothing was lost by an old link, so nothing has to be reassured.
+  return <AuthFrame>
+    <h1 className={authTitleClass}>ลิงก์ยืนยันอีเมลแบบเดิมใช้ไม่ได้แล้ว</h1>
+    <p className="mt-2 text-[15px] leading-7 text-gray-600">เข้าสู่ระบบ แล้วขอรหัสยืนยันที่หน้าบัญชีของฉัน</p>
+    <Link href="/login" className={`${primaryButtonClass} mt-6 w-full`}>เข้าสู่ระบบ</Link>
+  </AuthFrame>;
 }

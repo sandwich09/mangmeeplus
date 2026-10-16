@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { assertPaymentNotCertified, certificatePayment, paymentHandoff } from '../services/wht-certificate-payment';
+import { whtCertificateUnsupportedReason } from '@watchdog-bms/contracts';
 import { currentWhtPayerDetails } from '../services/wht-payer-identity';
 import { whtPayerIdentity, whtPayerIdentityMissingMessage } from '@watchdog-bms/contracts';
 import { whtHandoffMissing } from '../../domain/logic/wht-handoff-missing.logic';
@@ -20,7 +23,7 @@ import type { WhtCertificateSignature } from '../../domain/logic/wht-certificate
 import { isLaunchRouteOpen } from './wht-certificate-handoff.use-case';
 import { appendWhtCertificateHistory } from '../services/wht-certificate-history';
 
-const HANDOFF_CHANGED_MESSAGE = 'สถานะของงานนี้เปลี่ยนไปแล้วระหว่างออกเอกสาร';
+const HANDOFF_CHANGED_MESSAGE = 'สถานะของงานนี้เปลี่ยนไปแล้วระหว่างออกเอกสาร เปิดหน้านี้ใหม่เพื่อตรวจสถานะ';
 
 /**
  * Mints a 50 ทวิ directly from an existing `WhtCertificateHandoff` — the AP/Expenses "ออกเอกสารใน
@@ -79,13 +82,15 @@ export class IssueWhtCertificateFromHandoffUseCase {
     };
   }
 
-  async execute(ctx: RequestContext, handoffId: string) {
-    const row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
+  async execute(ctx: RequestContext, handoffId: string, paymentId?: string) {
+    let row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
+    row = await paymentHandoff(this.taxRepo.prisma.client, ctx.companyId, row, paymentId);
+    handoffId = row.id;
     // Mutually exclusive with `linkExternal` (spec §4.1): the operator picks one path. Checked here
     // for a fast, clear answer; the transaction's own conditional `updateMany` below is the actual
     // race fence against a concurrent `linkExternal` or a second identical mint.
     if (row.status !== 'REQUIRED') {
-      throw new ConflictException({ code: 'wht_handoff_not_issuable', message: 'รายการนี้ไม่อยู่ในสถานะที่ออกเอกสารในระบบได้', status: row.status });
+      throw new ConflictException({ code: 'wht_handoff_not_issuable', message: 'รายการนี้ไม่อยู่ในสถานะที่ออกเอกสารในระบบได้ เปิดหน้านี้ใหม่เพื่อตรวจสถานะ', status: row.status });
     }
     // Defense-in-depth: permission + entitlement already gate the route/UI, but route-readiness is
     // a separate axis (spec §8) and must be re-checked here exactly like `CreateWhtCertificateUseCase`.
@@ -93,17 +98,19 @@ export class IssueWhtCertificateFromHandoffUseCase {
       throw new ConflictException({ code: 'wht_system_issuance_unavailable', message: 'ระบบยังไม่เปิดการออกหนังสือรับรองอัตโนมัติ' });
     }
 
-    const prefill = row.prefillSnapshotJson as WhtHandoffPrefillDto;
+    const prefill = await certificatePayment(this.taxRepo.prisma.client, ctx.companyId, row, paymentId);
+    const unsupported = whtCertificateUnsupportedReason(prefill.incomeCategoryCode, prefill.formType);
+    if (unsupported) throw new ConflictException({ code: 'wht_certificate_income_unsupported', message: unsupported });
     // AP's `createWhtHandoffForPayment` leaves `formType` null when the payee's taxpayer class maps
     // to neither ภ.ง.ด.3 nor ภ.ง.ด.53 (e.g. FOREIGN) — a real, if rare, state a REQUIRED handoff can
     // be in. `TaxPeriod`/`WhtCertificate` both require a resolved form, so this must refuse cleanly
     // rather than guess or hit the NOT NULL constraint raw.
     const missing = whtHandoffMissing(prefill);
     if (missing.includes('FORM_TYPE_UNRESOLVED') || !prefill.formType) {
-      throw new ConflictException({ code: 'wht_handoff_form_type_unresolved', message: 'ไม่สามารถระบุแบบ ภ.ง.ด. ได้ กรุณาตรวจสอบประเภทผู้รับเงินก่อนออกเอกสาร' });
+      throw new ConflictException({ code: 'wht_handoff_form_type_unresolved', message: 'ระบุแบบ ภ.ง.ด. ไม่ได้ ตรวจประเภทผู้รับเงินก่อนออกหนังสือรับรอง 50 ทวิ' });
     }
     if (missing.includes('INCOME_CATEGORY_OR_RATE_MISSING') || !prefill.incomeCategoryCode || !prefill.incomeCategoryName || !prefill.whtRate) {
-      throw new ConflictException({ code: 'wht_handoff_income_category_missing', message: 'ไม่มีข้อมูลประเภทเงินได้/อัตราหัก ณ ที่จ่ายในรายการนี้' });
+      throw new ConflictException({ code: 'wht_handoff_income_category_missing', message: 'รายการนี้ยังไม่มีประเภทเงินได้หรืออัตราหัก ณ ที่จ่าย กรอกให้ครบก่อนออกหนังสือรับรอง 50 ทวิ' });
     }
 
     const payer = whtPayerIdentity(prefill.payerSnapshot, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
@@ -161,6 +168,9 @@ export class IssueWhtCertificateFromHandoffUseCase {
         const expense = await tx.expenseRecord.findFirst({ where: { companyId: ctx.companyId, id: row.sourcePaymentId }, select: { status: true } });
         if (expense?.status !== 'CONFIRMED') throw new ConflictException({ code: 'expense_wht_source_changed', message: expenseCorrectionBlockerMessage('not_confirmed') });
       }
+      await assertPaymentNotCertified(tx, ctx.companyId, row, prefill);
+      const currentPayment = await certificatePayment(tx, ctx.companyId, row, prefill.expensePaymentId);
+      if (JSON.stringify(currentPayment) !== JSON.stringify(prefill)) throw new ConflictException({ code: 'expense_wht_source_changed', message: expenseCorrectionBlockerMessage('not_confirmed') });
       await tx.$executeRaw`SELECT id FROM "WhtCertificateHandoff" WHERE id = ${row.id} AND "companyId" = ${ctx.companyId} FOR UPDATE`;
       const current = await tx.whtCertificateHandoff.findUnique({ where: { id: row.id } });
       if (current?.status !== 'REQUIRED' || current.prefillSnapshotHash !== row.prefillSnapshotHash || (current.certificateRound ?? 0) !== (row.certificateRound ?? 0)) {
@@ -213,7 +223,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
       // shape) so exactly one of the two ever wins a given handoff.
       const handoffUpdated = await tx.whtCertificateHandoff.updateMany({
         where: { id: row.id, companyId: ctx.companyId, status: 'REQUIRED' },
-        data: { status: 'SYSTEM_ISSUED', certificateId: certificateRow.id },
+        data: { status: 'SYSTEM_ISSUED', certificateId: certificateRow.id, ...(prefill.expensePaymentId ? { prefillSnapshotJson: prefill, prefillSnapshotHash: createHash('sha256').update(JSON.stringify(prefill)).digest('hex') } : {}) },
       });
       if (handoffUpdated.count !== 1) throw new ConflictException({ code: 'wht_handoff_not_issuable', message: HANDOFF_CHANGED_MESSAGE });
       await appendWhtCertificateHistory(tx, row, {
@@ -284,7 +294,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
         return { ...this.toDto(cert), pdfArtifact: pdf };
       }
     }
-    throw new ConflictException({ code: 'wht_certificate_issue_in_progress', message: 'กำลังออกเอกสารนี้อยู่ กรุณาลองใหม่อีกครั้ง' });
+    throw new ConflictException({ code: 'wht_certificate_issue_in_progress', message: 'กำลังออกเอกสารนี้อยู่ ลองอีกครั้ง' });
   }
 
   /** The certificate row itself does not store `formType` (only its `TaxPeriod` does) — reload it

@@ -1,6 +1,7 @@
+import Decimal from 'decimal.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readReimbursementSource, resolveReimbursementSourceLines } from './reimbursement-source';
+import { readReimbursementSource, resolveReimbursementSourceLines, assertReimbursementSources } from './reimbursement-source';
 
 /**
  * The two capture-lineage rules of appendix §5 that this file owns:
@@ -131,4 +132,30 @@ describe('shared-file ambiguity with capture groups (§5)', () => {
       (error: any) => code(error) === 'reimbursement_source_unavailable',
     );
   });
+});
+
+for (const inputVatClaimStatus of ['NEEDS_REVIEW', 'CLAIMABLE']) it(`does not gate a claim on ${inputVatClaimStatus}`, async () => {
+ const tx = sourceTx(expenseRow({ inputVatClaimStatus }));
+ await assert.rejects(() => readReimbursementSource(tx as any, 'c1', 'uploader', 'b1', 'THB', 'e-1'), (error: any) => code(error) === 'missing_receipt');
+});
+
+
+it('takes a pending-right expense into a claim, ignores later right changes and still pins money', async () => {
+  const row: any = expenseRow({ inputVatClaimStatus: 'NEEDS_REVIEW', sourceDocumentType: 'TAX_INVOICE',
+    taxEvidenceStatus: 'USABLE_FOR_TAX', vatMode: 'VAT_EXCLUDED', expenseDate: new Date('2026-10-01'),
+    subtotalAmount: '100', discountAmount: '0', taxableAmount: '100', vatAmount: '7', grandTotalAmount: '107', netPayableAmount: '107',
+    lines: [{ lineNumber: 1, description: 'วัสดุ', quantity: new Decimal(1), unitPrice: new Decimal(100),
+      lineSubtotalAmount: new Decimal(100), discountAmount: new Decimal(0), taxableAmount: new Decimal(100),
+      vatAmount: new Decimal(7), vatRate: new Decimal('.07'), whtAmount: new Decimal(0), whtRate: new Decimal(0), lineTotalAmount: new Decimal(107) }] });
+  const tx: any = { ...sourceTx(row), $executeRaw: async () => 1 };
+  tx.attachmentObject.findMany = async () => [{ id: 'a1', branchId: 'b1', checksumSha256: 'abc', byteSize: 1 }];
+  const pinned = await readReimbursementSource(tx, 'c1', 'uploader', 'b1', 'THB', 'e-1');
+  assert.equal(pinned.totals.netPayableAmount, '107.0000');
+  assert.equal(pinned.inputVatClaimStatus, 'NEEDS_REVIEW');
+  const request: any = { companyId: 'c1', requesterUserId: 'uploader', branchId: 'b1', currency: 'THB',
+    lines: [{ linkedExpenseId: 'e-1', sourceExpenseSnapshot: pinned, incurredDate: '2026-10-01', amount: '107' }] };
+  row.inputVatClaimStatus = 'CLAIMABLE'; row.updatedAt = new Date();
+  await assertReimbursementSources(tx, request);
+  row.vendorNameSnapshot = 'ร้านอื่น';
+  await assert.rejects(() => assertReimbursementSources(tx, request), (error: any) => code(error) === 'reimbursement_source_changed');
 });

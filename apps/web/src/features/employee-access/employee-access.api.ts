@@ -24,9 +24,9 @@ const base = (companyId: string) => `/companies/${companyId}/settings`;
 export type CreateEmployeeResult = EmployeeCredentialHandoff & { employeeId: string };
 
 // ---- Employees ----
-// ชื่อที่ใช้แสดงบนหน้าจอ: ชื่อเล่นก่อน ถ้าไม่มีใช้ชื่อเต็ม
+// Use the same display name as the employee edit form.
 export const employeeShortName = (e: Pick<EmployeeSummary, 'nickname' | 'displayName'>) =>
-  e.nickname?.trim() || e.displayName;
+  e.displayName.trim() || e.nickname?.trim() || '';
 
 export const listEmployees = (c: string) => apiFetch<EmployeeSummary[]>(`${base(c)}/employees`);
 export const getEmployee = (c: string, id: string) => apiFetch<EmployeeSummary>(`${base(c)}/employees/${id}`);

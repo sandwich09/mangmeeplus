@@ -542,24 +542,43 @@ describe('receipt upload use cases', () => {
       assert.deepEqual(uploader.updates, []);
     });
 
-    it('refuses both intents once money, posting or a final status exists', async () => {
-      const locked = [
-        { paymentStatus: 'PARTIALLY_PAID', paidAmount: '50' },
-        { postingStatus: 'posted' },
-        { status: 'CONFIRMED' },
-        { status: 'VOIDED' },
+    it('file intent × state: paid open drafts allow append only; posting and final states refuse both', async () => {
+      const states = [
+        ...['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].flatMap(status => [
+          { state: { status, paymentStatus: 'UNPAID', paidAmount: '0' }, append: true, replace: true },
+          { state: { status, paymentStatus: 'PARTIALLY_PAID', paidAmount: '50' }, append: true, replace: false },
+          { state: { status, paymentStatus: 'PAID', paidAmount: '100' }, append: true, replace: false },
+          { state: { status, paymentStatus: 'UNPAID', paidAmount: '50' }, append: true, replace: false },
+          { state: { status, postingStatus: 'posted' }, append: false, replace: false },
+          { state: { status, postingStatus: 'posted', paymentStatus: 'PAID', paidAmount: '100' }, append: false, replace: false },
+        ]),
+        ...['CONFIRMED', 'REJECTED', 'VOIDED'].map(status => ({ state: { status }, append: false, replace: false })),
       ];
-      for (const state of locked) {
-        for (const intent of ['replace', 'append'] as const) {
-          const { run, updates } = intentHarness({ expense: state });
-          assert.equal(
-            await conflictCode(run({ intent, expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' })),
-            'expense_receipt_replace_locked',
-            `${intent} ${JSON.stringify(state)}`,
-          );
-          assert.deepEqual(updates, []);
+      for (const { state, ...allowed } of states) for (const intent of ['replace', 'append'] as const) {
+        const { run, updates, audits, retirement } = intentHarness({ expense: state, permissions: ['expense.receipt.upload', 'attachment.create', 'expense.review'] });
+        const outcome = await conflictCode(run({ intent, expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' }));
+        assert.equal(outcome, allowed[intent] ? 'no-conflict' : 'expense_receipt_replace_locked', `${intent} ${JSON.stringify(state)}`);
+        assert.equal(updates.length, allowed[intent] ? 1 : 0);
+        if (allowed[intent] && intent === 'append') {
+          assert.equal(updates[0].primaryAttachmentId, undefined);
+          assert.deepEqual(retirement.softDeleted, []);
+          const audit = audits.find(entry => entry.action === 'expense.upload.complete');
+          assert.equal(audit.actorUserId, ctx.userId);
+          assert.equal(audit.metadataJson.intent, 'append');
+          assert.equal(audit.metadataJson.attachmentId, 'att-new');
         }
       }
+    });
+
+    it('paid append still respects signed certificate and live claim locks', async () => {
+      for (const status of ['PAYER_CERTIFIED', 'ISSUED']) {
+        const h = intentHarness({ expense: { paymentStatus: 'PAID', paidAmount: '100' }, certificate: { status } });
+        assert.equal(await conflictCode(h.run({ intent: 'append', expectedUpdatedAt: NOW.toISOString() })), 'substitute_evidence_locks_expense');
+        assert.equal(h.updates.length, 0);
+      }
+      const h = intentHarness({ expense: { paymentStatus: 'PAID', paidAmount: '100' }, liveClaim: true });
+      assert.equal(await conflictCode(h.run({ intent: 'append', expectedUpdatedAt: NOW.toISOString() })), 'substitute_source_has_live_claim');
+      assert.equal(h.updates.length, 0);
     });
 
     it('a PREPARED certificate blocks the replace but still accepts supporting evidence', async () => {

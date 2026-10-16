@@ -157,9 +157,8 @@ describe('SyncTaxEventsUseCase transaction-tax components', () => {
 
 /**
  * Vendor-address Slice 2, controller review fix 1: the buyer-mismatch mark flips the expense HEADER to
- * NON_CLAIMABLE. Run through the real source adapter, that header decides ภ.พ.30 only for an expense
- * whose lines carry no Tax Code component; once a line has one, the input VAT is built from the line
- * and the header is never read. This is why the web offers the mark only on the header path.
+ * NON_CLAIMABLE. The current decision gates both the header and immutable component paths;
+ * components keep their original amounts, but waiting or refused VAT never enters ภ.พ.30.
  */
 describe('header NON_CLAIMABLE against the two input-VAT paths', () => {
   const v7Component = {
@@ -208,14 +207,13 @@ describe('header NON_CLAIMABLE against the two input-VAT paths', () => {
     return { result, events, issues };
   };
 
-  it('still claims the input VAT through a line Tax Code: the header mark changes nothing in ภ.พ.30', async () => {
-    const { result, events, issues } = await run(markedExpense([v7Component]));
-    assert.equal(result.vatInputCreated, 1);
-    assert.equal(events[0]?.eventType, 'VAT_INPUT');
-    assert.equal(events[0]?.sourceLineKey, 'line-1');
-    assert.deepEqual(events[0]?.reportContributions.map((c: any) => [c.boxKey, c.amount]),
+  for (const inputVatClaimStatus of ['NEEDS_REVIEW', 'NON_CLAIMABLE', 'CLAIMABLE']) it(`component VAT follows the expense decision ${inputVatClaimStatus}`, async () => {
+    const expense = { ...markedExpense([v7Component]), inputVatClaimStatus };
+    const { result, events } = await run(expense);
+    assert.equal(result.vatInputCreated, inputVatClaimStatus === 'CLAIMABLE' ? 1 : 0);
+    assert.equal(events.length, inputVatClaimStatus === 'CLAIMABLE' ? 1 : 0);
+    if (inputVatClaimStatus === 'CLAIMABLE') assert.deepEqual(events[0]?.reportContributions.map((c: any) => [c.boxKey, c.amount]),
       [['box_6_eligible_purchases', '100.00'], ['box_7_input_tax', '7.00']]);
-    assert.equal(issues.some((issue) => issue.issueCode === 'INPUT_VAT_NOT_CLAIMABLE'), false, 'the header is never consulted');
   });
 
   it('does honour the header when no line carries a Tax Code component', async () => {
@@ -232,7 +230,7 @@ it('passes the expense snapshot revision into tax persistence so a concurrent co
   const events: any[] = [];
   const taxRepo: any = { upsertPeriod: async () => ({ id: 'period', status: 'OPEN' }), findEventByIdempotencyKey: async () => null, upsertEvent: async (event: any) => events.push(event) };
   const expenseSource: any = { findConfirmedWithVatByCompany: async () => [], findConfirmedWithWhtByCompany: async () => [],
-    findFinalizedTransactionTaxLines: async () => [{ sourceType: 'expense.record', sourceId: 'e1', sourceLineId: 'l1', eventDate: version, confirmedAt: version, updatedAt: new Date(version.getTime() + 1000), currency: 'THB', taxComponents: [{ componentKey: 'VAT', snapshot: { ...snapshot('SELF_ASSESSED', '7'), recognitionDate: '2026-08-02' }, accountAssignments: [], reportContributions: [] }] }] };
+    findFinalizedTransactionTaxLines: async () => [{ sourceType: 'expense.record', inputVatClaimStatus: 'CLAIMABLE', taxEvidenceStatus: 'USABLE_FOR_TAX', sourceId: 'e1', sourceLineId: 'l1', eventDate: version, confirmedAt: version, updatedAt: new Date(version.getTime() + 1000), currency: 'THB', taxComponents: [{ componentKey: 'VAT', snapshot: { ...snapshot('SELF_ASSESSED', '7'), recognitionDate: '2026-08-02' }, accountAssignments: [], reportContributions: [] }] }] };
   await new SyncTaxEventsUseCase(taxRepo, { findIssuedWithVatByCompany: async () => [] } as any, expenseSource, noWhtPayments).execute('c1');
   assert.equal(events.length, 1); assert.equal(events[0].expectedExpenseConfirmedAt, version);
 });

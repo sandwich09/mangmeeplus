@@ -31,6 +31,8 @@ const ICONS: Record<string, IconEl[]> = {
   box: [['path', { d: 'M12 2 20 6.5v9L12 20 4 15.5v-9Z' }], ['path', { d: 'M4 6.5 12 11l8-4.5M12 11v9' }]],
   bolt: [['path', { d: 'M13 2 4 14h7l-2 8 9-12h-7l2-8Z' }]],
   dots: [['circle', { cx: 5, cy: 12, r: 1 }], ['circle', { cx: 12, cy: 12, r: 1 }], ['circle', { cx: 19, cy: 12, r: 1 }]],
+  // Settings: three sliders. The three dots above read as "more" and, on the icon-only rail, as a separator.
+  sliders: [['path', { d: 'M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1' }], ['circle', { cx: 15, cy: 6, r: 2 }], ['circle', { cx: 9, cy: 12, r: 2 }], ['circle', { cx: 17, cy: 18, r: 2 }]],
 };
 
 function makeIcon(name: string): React.FC<React.SVGProps<SVGSVGElement>> {
@@ -64,6 +66,7 @@ export const WORKSPACE_ICON_NODES: Record<string, React.ReactNode> = {
   PieChartIcon: <DesignIcons.chart />,
   BoltIcon: <DesignIcons.bolt />,
   HorizontalDotsIcon: <DesignIcons.dots />,
+  SettingsIcon: <DesignIcons.sliders />,
   ShoppingCartIcon: <DesignIcons.cart />,
   BankIcon: <DesignIcons.store />,
   SwapIcon: <DesignIcons.swap />,

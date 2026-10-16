@@ -98,3 +98,14 @@ describe('SupplierPaymentSourceAdapter payee address', () => {
     assert.equal(queries[0].include.supplier.select.addressJson, undefined);
   });
 });
+
+it('W2 supplier cash is read once and a paid expense projection without ExpensePayment contributes nothing', async () => {
+  const { ExpenseSourceAdapter } = await import('./expense-source.adapter');
+  const db = { supplierPayment: { findMany: async () => [row()] }, company: { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) },
+    expenseRecord: { findMany: async () => [{ id: 'projection', companyId: 'company-1', expenseDate: new Date('2026-08-05'),
+      paymentStatus: 'PAID', paidAmount: '1040', paidAt: new Date('2026-08-05'), netPayableAmount: '1040', whtAmount: '30',
+      taxableAmount: '1000', vendorEntityKindSnapshot: 'JURISTIC', lines: [], payments: [] }] },
+    whtFilingLine: { findMany: async () => [] } };
+  assert.equal((await new SupplierPaymentSourceAdapter({ client: db } as any).findRecordedWithWhtByCompany('company-1')).length, 1);
+  assert.deepEqual(await new ExpenseSourceAdapter({ client: db } as any).findConfirmedWithWhtByCompany('company-1'), []);
+});

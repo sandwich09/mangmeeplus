@@ -41,7 +41,7 @@ export class TaxArtifactRendererService {
   ): Promise<TaxExportArtifact> {
     const buffer = await renderWhtCertificatePdf(fields, payerSnapshot, payeeSnapshot, signature, replacementCopy, options);
     return {
-      fileName: `wht-certificate-${fields.certificateNumber}.pdf`,
+      fileName: `หนังสือรับรอง-50-ทวิ-${fields.certificateNumber}.pdf`,
       mimeType: 'application/pdf',
       contentBase64: buffer.toString('base64'),
       checksum: createHash('sha256').update(buffer).digest('hex'),

@@ -137,6 +137,21 @@ function fakeRepo(req: any, policy: any = FINANCE_REVIEW_ON, events: any[] = [],
 }
 
 describe('ApproveReimbursementUseCase', () => {
+  it('owner approves their own claim with the switch off and another approver role, with self-approval audit', async () => {
+    const req = baseRequest({ requesterUserId: 'approver-1', approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'ACCOUNTANT', assignedApproverUserIds: ['accountant-1'] }] });
+    const viewer = ctx({ roles: ['OWNER'] });
+    const entries: any[] = [];
+    const repo = fakeRepo(req, { ...FINANCE_REVIEW_ON, allowSelfApproval: false });
+    assert.deepEqual(await approvalDecisionActions(viewer, req, repo), { canApprove: true, canReject: true });
+    assert.equal((await approveUC(repo, undefined, { log: async (entry: any) => { entries.push(entry); } }).execute(viewer, 'rb-1')).status, 'FINANCE_REVIEW');
+    assert.equal(entries.find((entry) => entry.action === 'reimbursement.approval.approve')?.metadataJson.selfApproval.approvedOwnRequest, true);
+  });
+
+  it('manager still cannot approve their own claim with the switch off and another approver role', async () => {
+    const req = baseRequest({ requesterUserId: 'approver-1', approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'ACCOUNTANT' }] });
+    await assert.rejects(() => approveUC(fakeRepo(req)).execute(ctx(), 'rb-1'), /self_approval_denied/);
+  });
+
   // The company switch also guards custom-role requesters.
   it('blocks self-approval with self_approval_denied', async () => {
     const req = baseRequest({ requesterUserId: 'approver-1', approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'ACCOUNTANT' }] });
@@ -630,7 +645,7 @@ describe('Reimbursement request evidence validation', () => {
  * request that answers `self_approval_denied` — and the pending-approval notification pushed a deep
  * link straight at it. The invitation and the rule disagreed.
  */
-// Owner 2026-10-04: the switch applies to every role; submitted assignments stay frozen.
+// Owner 2026-10-13: OWNER is exempt; other roles and submitted assignments stay frozen.
 describe('claims self-approval switch for every role', () => {
   for (const role of ['OWNER', 'ADMIN', 'MANAGER']) {
     const mine = (assigned = false) => baseRequest({ requesterUserId: 'approver-1',
@@ -641,21 +656,21 @@ describe('claims self-approval switch for every role', () => {
       const policy = { ...FINANCE_REVIEW_ON, allowSelfApproval };
       const viewer = ctx({ roles: [role] });
       it(`${role}: detail with switch ${allowSelfApproval}`, async () => {
-        assert.deepEqual(await approvalDecisionActions(viewer, mine(), fakeRepo(null, policy)), allowSelfApproval
+        assert.deepEqual(await approvalDecisionActions(viewer, mine(), fakeRepo(null, policy)), (allowSelfApproval || role === 'OWNER')
           ? { canApprove: true, canReject: true }
           : { canApprove: false, canReject: false, selfApprovalBlocked: true });
       });
       it(`${role}: queue with switch ${allowSelfApproval}`, async () => {
-        assert.equal((await new ListApprovalQueueUseCase(queueRepo(mine(), policy)).execute(viewer)).length, allowSelfApproval ? 1 : 0);
+        assert.equal((await new ListApprovalQueueUseCase(queueRepo(mine(), policy)).execute(viewer)).length, allowSelfApproval || role === 'OWNER' ? 1 : 0);
       });
       it(`${role}: approve with switch ${allowSelfApproval}`, async () => {
         const approve = approveUC(fakeRepo(mine(), policy)).execute(viewer, 'rb-1');
-        if (allowSelfApproval) assert.equal((await approve).status, 'FINANCE_REVIEW');
+        if (allowSelfApproval || role === 'OWNER') assert.equal((await approve).status, 'FINANCE_REVIEW');
         else await assert.rejects(approve, /self_approval_denied/);
       });
       it(`${role}: reject with switch ${allowSelfApproval}`, async () => {
         const reject = new RejectReimbursementUseCase(fakeRepo(mine(), policy), noopAudit, fakeDetailEvidence as any).execute(viewer, 'rb-1', 'เอกสารไม่ครบ');
-        if (allowSelfApproval) assert.equal((await reject).status, 'REJECTED');
+        if (allowSelfApproval || role === 'OWNER') assert.equal((await reject).status, 'REJECTED');
         else await assert.rejects(reject, /self_approval_denied/);
       });
     }
@@ -799,11 +814,11 @@ describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
     assert.deepEqual(items, [], 'no button is offered for a decision that would be refused');
   });
 
-  it('hides an owner’s own unfrozen claim with the switch off', async () => {
+  it('lists an owner’s own unfrozen claim with the switch off', async () => {
     const mine = baseRequest({ requesterUserId: 'approver-1' });
     const items = await new ListApprovalQueueUseCase(queueRepo(mine)).execute(ctx({ roles: ['OWNER'] }));
 
-    assert.equal(items.length, 0);
+    assert.equal(items.length, 1);
   });
 
   it('still lists everyone else’s claims', async () => {

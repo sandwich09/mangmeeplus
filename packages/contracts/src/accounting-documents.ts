@@ -84,6 +84,9 @@ export type AccountingCounterpartySummary = {
   usageCounts?: { bought: number; sold: number };
 };
 
+export type AccountingCounterpartyListCounts = { all: number; bought: number; sold: number; addressMissing: number };
+export type AccountingCounterpartyListPage = { data: AccountingCounterpartySummary[]; total: number; counts?: AccountingCounterpartyListCounts };
+
 export type AccountingCounterpartyDetail = AccountingCounterpartySummary & {
   billingAddressJson?: Record<string, unknown>;
   shippingAddressJson?: Record<string, unknown>;
@@ -91,7 +94,7 @@ export type AccountingCounterpartyDetail = AccountingCounterpartySummary & {
    * Absent, like `usageCounts`, for a viewer who only added the row: both are company-wide expense
    * facts, and having added a counterparty opens that row, not other people's receipts.
    */
-  recentExpenses?: Array<{ id: string; expenseDate: string; vendorDocumentNumber?: string; grandTotalAmount: string }>;
+  recentExpenses?: Array<{ id: string; expenseNumber?: string; expenseDate: string; vendorDocumentNumber?: string; grandTotalAmount: string }>;
   /**
    * Owner 2026-09-25: THIS viewer may edit — they hold `accounting.counterparty.manage` or they added
    * the row. Decided by the server so the screen never re-derives the rule; optional so an older API

@@ -346,6 +346,7 @@ describe('claim approval tasks close when the claim moves on (audit B8)', () => 
       && where.workflowRun.rule.template.key.in.includes(row.templateKey);
     const prisma = {
       client: {
+        notificationEvent: { findMany: async () => [] },
         workflowEventInbox: {
           findUnique: async ({ where }: any) => inbox.get(`${where.companyId_eventId.companyId}:${where.companyId_eventId.eventId}`) ?? null,
           create: async ({ data }: any) => {

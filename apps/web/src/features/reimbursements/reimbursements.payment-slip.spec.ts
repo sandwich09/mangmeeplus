@@ -29,20 +29,20 @@ describe('payment form rules', () => {
     ] as const) assert.equal(validatePaymentForm({ ...ok, paymentMethod, hasSlip, paymentReference }), expected, `${paymentMethod} evidence=${hasSlip}`);
   });
   it('has no method to fall back on: the payer must choose one', () => {
-    assert.equal(validatePaymentForm({ ...ok, paymentMethod: '' }), 'กรุณาเลือกวิธีจ่าย');
+    assert.equal(validatePaymentForm({ ...ok, paymentMethod: '' }), 'เลือกวิธีจ่าย');
     // Asked first, so a form opened and submitted untouched says what is missing, not something about amounts.
-    assert.equal(validatePaymentForm({ paidAmount: '', outstandingAmount: '500', paymentMethod: '' }), 'กรุณาเลือกวิธีจ่าย');
+    assert.equal(validatePaymentForm({ paidAmount: '', outstandingAmount: '500', paymentMethod: '' }), 'เลือกวิธีจ่าย');
     for (const paymentMethod of ['CASH', 'OTHER']) assert.equal(validatePaymentForm({ ...ok, paymentMethod }), null, paymentMethod);
   });
 
   it('requires a slip for a transfer, in the same words the API answers with', () => {
     const transfer = { ...ok, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1' };
-    assert.equal(validatePaymentForm(transfer), 'จ่ายด้วยการโอนต้องแนบสลิป');
-    assert.equal(validatePaymentForm(transfer), translateApiError('payment_slip_required'));
-    assert.equal(validatePaymentForm({ ...transfer, hasSlip: false }), 'จ่ายด้วยการโอนต้องแนบสลิป');
+    assert.equal(validatePaymentForm(transfer), 'จ่ายด้วยการโอนต้องแนบหลักฐานการจ่าย');
+    assert.equal(validatePaymentForm(transfer), translateApiError('payment_slip_required')?.replace('แนบสลิป', 'แนบหลักฐานการจ่าย'));
+    assert.equal(validatePaymentForm({ ...transfer, hasSlip: false }), 'จ่ายด้วยการโอนต้องแนบหลักฐานการจ่าย');
     assert.equal(validatePaymentForm({ ...transfer, hasSlip: true }), null);
     // A transfer without evidence asks for its slip; a reference cannot replace it.
-    assert.equal(validatePaymentForm({ ...ok, paymentMethod: 'BANK_TRANSFER' }), 'จ่ายด้วยการโอนต้องแนบสลิป');
+    assert.equal(validatePaymentForm({ ...ok, paymentMethod: 'BANK_TRANSFER' }), 'จ่ายด้วยการโอนต้องแนบหลักฐานการจ่าย');
   });
 
   it('leaves the slip optional for every other method', () => {
@@ -69,13 +69,13 @@ describe('payment form rules', () => {
   it('never tells a payer who has transferred the money to transfer it again', () => {
     assert.equal(
       paymentSaveErrorMessage('slip-upload', refused('payment_slip_invalid', 422), false),
-      'อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ไฟล์สลิปใช้ไม่ได้ เลือกไฟล์ PDF หรือรูปภาพที่รองรับ ขนาดไม่เกิน 10 เมกะไบต์ แล้วลองใหม่',
+      'อัปโหลดหลักฐานการจ่ายไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ไฟล์สลิปใช้ไม่ได้ เลือกไฟล์ PDF หรือรูปภาพที่รองรับ ขนาดไม่เกิน 10 เมกะไบต์ แล้วลองอีกครั้ง',
     );
     const afterSlip = paymentSaveErrorMessage('record', refused('partial_payment_not_allowed', 422), true);
-    assert.equal(afterSlip, 'แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');
+    assert.equal(afterSlip, 'แนบหลักฐานการจ่ายแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบหลักฐานการจ่ายหรือโอนเงินใหม่');
     assert.equal(paymentSaveErrorMessage('record', refused('partial_payment_not_allowed', 422), false), 'ยังบันทึกจ่ายไม่สำเร็จ · ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น');
     // A connection that dropped: the slip is in, and the next press is the same payment.
-    assert.match(paymentSaveErrorMessage('record', new Error('Failed to fetch'), true), /^แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · .+ · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่$/);
+    assert.match(paymentSaveErrorMessage('record', new Error('Failed to fetch'), true), /^แนบหลักฐานการจ่ายแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · .+ · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบหลักฐานการจ่ายหรือโอนเงินใหม่$/);
     // "บันทึกจ่ายเรียบร้อย" is never part of a failure message.
     for (const text of [afterSlip, paymentSaveErrorMessage('slip-upload', new Error('x'), false)]) assert.doesNotMatch(text, /เรียบร้อย|สำเร็จแล้ว/);
   });
@@ -92,7 +92,7 @@ describe('payment form rules', () => {
     }
     for (const slipKept of [true, false]) {
       const text = paymentSaveErrorMessage('record', lostRace, slipKept);
-      assert.equal(text, 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');
+      assert.equal(text, 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบหลักฐานการจ่ายหรือโอนเงินใหม่');
       assert.doesNotMatch(text, /โหลด|เปิดใบใหม่|เรียบร้อย/);
     }
     // The page's own banner is the only message: the request raises no second, generic one beside it.
@@ -103,8 +103,8 @@ describe('payment form rules', () => {
   // claim again, and nothing beside it says to press save on this page.
   it('does not ask for another press when the claim itself changed', () => {
     for (const [code, said] of [
-      ['payout_destination_changed', 'บัญชีรับเงินของใบนี้เปลี่ยนไปจากที่แสดงไว้ กรุณาเปิดใบใหม่ ตรวจบัญชีที่แสดงล่าสุด แล้วทำรายการอีกครั้ง'],
-      ['reimbursement_payment_idempotency_conflict', 'มีการบันทึกการจ่ายด้วยข้อมูลอื่นไปแล้ว กรุณาโหลดรายการใหม่แล้วตรวจสอบ'],
+      ['payout_destination_changed', 'บัญชีรับเงินของใบนี้เปลี่ยนไปจากที่แสดงไว้ เปิดหน้านี้ใหม่ ตรวจบัญชีที่แสดงล่าสุด แล้วทำรายการอีกครั้ง'],
+      ['reimbursement_payment_idempotency_conflict', 'มีการบันทึกการจ่ายด้วยข้อมูลอื่นไปแล้ว เปิดหน้านี้ใหม่แล้วตรวจ'],
     ] as const) {
       for (const slipKept of [true, false]) {
         const text = paymentSaveErrorMessage('record', refused(code, 409), slipKept);
@@ -143,12 +143,12 @@ describe('files already on the claim that can be the slip', () => {
       payments: [voided(), voided({ id: 'pay-0', paymentNo: 'RBPAY-202609-00000', slips: [slip('att-slip-1'), slip('att-slip-0')] })],
       signedCopies: [declaredCopy],
     });
-    const WAS_A_SLIP = 'เคยเป็นสลิปของการจ่ายที่ยกเลิกไปแล้ว ใช้กับการจ่ายครั้งนี้ได้ถ้าเป็นการโอนรายการเดียวกัน';
+    const WAS_A_SLIP = 'เคยเป็นหลักฐานการจ่ายที่ยกเลิกไปแล้ว ใช้กับการจ่ายครั้งนี้ได้ถ้าเป็นการโอนรายการเดียวกัน';
     assert.deepEqual(paymentSlipChoices(detail), [
-      { attachmentId: 'att-slip-1', kind: 'previous-slip', paymentId: 'pay-1', label: 'สลิปของการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00001', what: WAS_A_SLIP },
-      { attachmentId: 'att-slip-0', kind: 'previous-slip', paymentId: 'pay-0', label: 'สลิปของการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00000 (ไฟล์ที่ 2)', what: WAS_A_SLIP },
+      { attachmentId: 'att-slip-1', kind: 'previous-slip', paymentId: 'pay-1', label: 'หลักฐานการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00001', what: WAS_A_SLIP },
+      { attachmentId: 'att-slip-0', kind: 'previous-slip', paymentId: 'pay-0', label: 'หลักฐานการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00000 (ไฟล์ที่ 2)', what: WAS_A_SLIP },
       { attachmentId: 'att-copy', kind: 'signed-copy', fileName: 'สลิปโอนเงิน.jpg', label: 'สลิปโอนเงิน.jpg',
-        what: 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ' },
+        what: 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่เซ็นครบ' },
     ]);
     // A standing payment's slip is not offered again, and a queue row (no attachments at all) offers nothing.
     assert.deepEqual(paymentSlipChoices(claim()), []);
@@ -164,9 +164,9 @@ describe('files already on the claim that can be the slip', () => {
     // The API lists them newest first: the signed form on top. The picker puts the pictures first, each group still newest first.
     const choices = paymentSlipChoices(claim({ status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', payments: [], signedCopies: [signedForm, eslip, plain, before] }));
     assert.deepEqual(choices.map((choice) => [choice.label, choice.what]), [
-      ['eslip-2.JPG', 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'],
+      ['eslip-2.JPG', 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่เซ็นครบ'],
       ['หลักฐาน.png', 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว เป็นไฟล์แนบทั่วไป'],
-      ['signed-form-2.pdf', 'ไฟล์ PDF · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'],
+      ['signed-form-2.pdf', 'ไฟล์ PDF · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่เซ็นครบ'],
       // Not "สำเนาก่อนแก้บัญชีรับเงิน": the claim may have been sent back with no account, or with cash.
       ['ใบเบิกเก่า.pdf', 'ไฟล์ PDF · แนบไว้ที่ใบเบิกที่เซ็นแล้ว เป็นสำเนาก่อนส่งกลับ'],
     ]);
@@ -220,8 +220,8 @@ describe('files already on the claim that can be the slip', () => {
 
   it('says what moving a file out of ใบเบิกที่เซ็นแล้ว will do, and mentions a declaration only when one was made', () => {
     const declared = signedCopyMoveConfirmText(declaredCopy, recorded());
-    assert.match(declared, /^ไฟล์ สลิปโอนเงิน\.jpg จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นสลิปของการจ่าย RBPAY-202609-00002 โดยไม่ต้องอัปโหลดใหม่ และย้ายกลับไม่ได้ /);
-    assert.match(declared, /ระบบจะถอนการยืนยันนั้น ใบเบิกจะไม่นับว่าลงนามบนกระดาษจากไฟล์นี้อีก/);
+    assert.match(declared, /^ไฟล์ สลิปโอนเงิน\.jpg จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นหลักฐานการจ่าย RBPAY-202609-00002 โดยไม่ต้องอัปโหลดใหม่ และย้ายกลับไม่ได้ /);
+    assert.match(declared, /ระบบจะถอนการยืนยันนั้น ใบเบิกจะไม่นับว่าเซ็นบนกระดาษจากไฟล์นี้อีก/);
     assert.match(declared, /เปิดดูได้เฉพาะผู้เบิก ผู้อนุมัติของใบนี้ ผู้ที่บันทึกจ่ายได้ และผู้ตรวจการเงิน$/);
     const archived = signedCopyMoveConfirmText({ fileName: 'scan.pdf' }, recorded());
     assert.doesNotMatch(archived, /ถอนการยืนยัน/);
@@ -243,13 +243,13 @@ describe('a misfiled slip moved to the payment: the page and the journey agree',
   it('a claim whose only paper proof was that file goes back to waiting for signatures', () => {
     const before = claim({ payments: [recorded({ slips: [] })], signedCopies: [declaredCopy], documentSignedVia: 'PAPER' });
     assert.equal(documentStep(before).document.state, 'done');
-    assert.match(documentStep(before).document.note ?? '', /^ลงนามบนกระดาษ/);
+    assert.match(documentStep(before).document.note ?? '', /^เซ็นบนกระดาษ/);
 
     const after = claim({ payments: [recorded({ slips: [slip('att-copy')] })], signedCopies: [], documentSignedVia: null });
     const { active, document } = documentStep(after);
     assert.equal(document.state, 'current');
     assert.equal(active?.key, 'document');
-    assert.doesNotMatch(document.note ?? '', /ลงนามบนกระดาษ|ลงนามในระบบครบแล้ว/);
+    assert.doesNotMatch(document.note ?? '', /เซ็นบนกระดาษ|เซ็นในระบบครบแล้ว/);
     assert.ok(document.actions.includes('sign'), 'the approver is asked to sign again, in the system or on paper');
     assert.ok(document.actions.includes('attach-signed-copy'));
     // Still paid: moving the file changes the document step and nothing about the money.
@@ -260,12 +260,12 @@ describe('a misfiled slip moved to the payment: the page and the journey agree',
   it('a claim that also had both digital signatures stays done, now signed in the system', () => {
     const signatures = [{ role: 'REQUESTER', signedByName: 'พิม' }, { role: 'APPROVER', signedByName: 'สมชาย' }];
     const before = claim({ payments: [recorded({ slips: [] })], signedCopies: [declaredCopy], signatures, documentSignedVia: 'BOTH' });
-    assert.match(documentStep(before).document.note ?? '', /^ลงนามบนกระดาษ/);
+    assert.match(documentStep(before).document.note ?? '', /^เซ็นบนกระดาษ/);
 
     const after = claim({ payments: [recorded({ slips: [slip('att-copy')] })], signedCopies: [], signatures, documentSignedVia: 'DIGITAL' });
     const { document } = documentStep(after);
     assert.equal(document.state, 'done');
-    assert.match(document.note ?? '', /^ลงนามในระบบ/);
+    assert.match(document.note ?? '', /^เซ็นในระบบ/);
     assert.doesNotMatch(document.note ?? '', /กระดาษ/);
   });
 });
@@ -282,7 +282,7 @@ describe('void, then pay again', () => {
     assert.deepEqual(afterVoid.payments[0]!.slips.map((row: any) => row.attachmentId), ['att-slip-1']);
     // The earlier slip is offered, but a transfer is refused until a slip is actually named.
     assert.deepEqual(paymentSlipChoices(afterVoid).map((choice) => choice.attachmentId), ['att-slip-1']);
-    assert.equal(validatePaymentForm({ paidAmount: '500', outstandingAmount: '500', paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-2' }), 'จ่ายด้วยการโอนต้องแนบสลิป');
+    assert.equal(validatePaymentForm({ paidAmount: '500', outstandingAmount: '500', paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-2' }), 'จ่ายด้วยการโอนต้องแนบหลักฐานการจ่าย');
   });
 
   it('shows the new payment on the timeline and the journey, and keeps both records apart', () => {
@@ -364,7 +364,7 @@ describe('saving the payment form', () => {
   });
 
   it('records with a file already on the claim, or with no slip for cash, without uploading anything', async () => {
-    const existing = form({ slip: { attachmentId: 'att-slip-1', name: 'สลิปของการจ่ายที่ยกเลิกแล้ว' } });
+    const existing = form({ slip: { attachmentId: 'att-slip-1', name: 'หลักฐานการจ่ายที่ยกเลิกแล้ว' } });
     assert.deepEqual(await existing.press(), { status: 'saved' });
     assert.deepEqual(existing.calls.map(([kind, body]: any[]) => [kind, body.slipAttachmentId]), [['record', 'att-slip-1']]);
 
@@ -388,7 +388,7 @@ describe('saving the payment form', () => {
     };
     assert.deepEqual(await sent({ attachmentId: 'att-copy', name: 'สลิปโอนเงิน.jpg' }), ['att-copy', true], 'a declared copy');
     assert.deepEqual(await sent({ attachmentId: 'att-scan', name: 'scan.pdf' }), ['att-scan', true], 'an archive copy: the same note was shown');
-    assert.deepEqual(await sent({ attachmentId: 'att-slip-1', name: 'สลิปของการจ่ายที่ยกเลิกแล้ว' }), ['att-slip-1', undefined], 'the slip of a voided payment moves nothing');
+    assert.deepEqual(await sent({ attachmentId: 'att-slip-1', name: 'หลักฐานการจ่ายที่ยกเลิกแล้ว' }), ['att-slip-1', undefined], 'the slip of a voided payment moves nothing');
     assert.deepEqual(await sent(picked()), ['att-uploaded', undefined], 'a new upload');
     assert.deepEqual(await sent({ attachmentId: 'att-uploaded', name: 'slip.jpg' }), ['att-uploaded', undefined], 'an upload kept after a failed save');
 
@@ -405,8 +405,8 @@ describe('saving the payment form', () => {
 
   it('sends nothing for a form that is not ready, and says what is missing', async () => {
     for (const [label, h, text] of [
-      ['no method chosen', form({ form: { ...transferForm, paymentMethod: '' } }), 'กรุณาเลือกวิธีจ่าย'],
-      ['a transfer without a slip', form({ slip: null }), 'จ่ายด้วยการโอนต้องแนบสลิป'],
+      ['no method chosen', form({ form: { ...transferForm, paymentMethod: '' } }), 'เลือกวิธีจ่าย'],
+      ['a transfer without a slip', form({ slip: null }), 'จ่ายด้วยการโอนต้องแนบหลักฐานการจ่าย'],
     ] as const) {
       assert.deepEqual(await h.press(), { status: 'refused', text }, label);
       assert.deepEqual(h.calls, [], label);
@@ -420,7 +420,7 @@ describe('saving the payment form', () => {
     const failed = await h.press();
     assert.equal(failed.status, 'refused');
     // The slip is in, the payment is not: the message says so and does not ask for a new slip or a new transfer.
-    assert.equal((failed as { text: string }).text, 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');
+    assert.equal((failed as { text: string }).text, 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบหลักฐานการจ่ายหรือโอนเงินใหม่');
     assert.deepEqual(h.slip(), { attachmentId: 'att-uploaded', name: 'slip.jpg' }, 'the form now holds the uploaded slip, not the file');
 
     assert.deepEqual(await h.press(), { status: 'saved' });
@@ -435,7 +435,7 @@ describe('saving the payment form', () => {
     const h = form({ uploadFails: true });
     const failed = await h.press();
     assert.equal(failed.status, 'refused');
-    assert.match((failed as { text: string }).text, /^อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · /);
+    assert.match((failed as { text: string }).text, /^อัปโหลดหลักฐานการจ่ายไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · /);
     assert.deepEqual(h.calls.map(([kind]) => kind), ['upload']);
     assert.equal(h.session.idempotencyKey, null, 'no payment was attempted, so no key is spent');
     assert.deepEqual(h.slip(), picked(), 'the picked file is still in the form to try again');
@@ -462,7 +462,8 @@ describe('saving the payment form', () => {
     // With the list the form shows: the save confirms the withdrawal for a signed copy chosen from it, and for nothing else.
     assert.match(source, /await savePaymentForm\(\{ form, outstandingAmount: String\(request\.outstandingAmount\), slip, slipChoices: attached, session: session\.current, payout, payer \}/);
     assert.match(source, /onSlipUploaded: setSlip/);
-    assert.match(source, /if \(result\.status === 'saved'\) \{ onDone\(\); toast\.success\('บันทึกจ่ายเรียบร้อยแล้ว'\); \}/);
+    // Done is said of the thing done: the claim's number and the amount.
+    assert.match(source, /if \(result\.status === 'saved'\) \{ onDone\(\); toast\.success\(`บันทึกจ่าย\$\{request\.requestNo \? ` \$\{request\.requestNo\}` : ''\} \$\{formatMoney\(request\.outstandingAmount, request\.currency\)\} แล้ว`\); \}/);
   });
 });
 
@@ -474,9 +475,12 @@ describe('quick pay from the finance queue', () => {
     assert.deepEqual(quickPayTarget('cards', 'co-1', 'rb-1'), { kind: 'page', href: '/companies/co-1/reimbursements/rb-1?pay=1' });
     assert.deepEqual(quickPayTarget('table', 'co-1', 'rb-1'), { kind: 'dialog' });
     const hub = sourceOf('ReimbursementsPages.tsx');
-    // The two layouts are the page's own: cards below md, the table from md. Each button names its own.
-    assert.match(hub, /data-testid="reimbursements-finance-table">[\s\S]*?onRecordPayment\(r, 'table'\)[\s\S]*?data-testid="reimbursements-finance-card-list">[\s\S]*?onRecordPayment\(r, 'cards'\)/);
-    assert.equal(hub.match(/onRecordPayment\(r, '(?:cards|table)'\)/g)?.length, 2);
+    // The two layouts are the page's own: stacked rows while the list is narrow, the table when it is wide. The one
+    // button a row is built once, and each layout says which it is.
+    assert.match(hub, /onClick=\{e => \{ e\.stopPropagation\(\); onRecordPayment\(r, layout\); \}\}>จ่ายเงิน<\/button>/);
+    assert.match(hub, /queue="finance"[^\n]*action=\{rowButton\}/);
+    assert.match(hub, /action\?\.\(row, 'table'\)[\s\S]*action\?\.\(row, 'cards'\)/);
+    assert.equal(hub.match(/onRecordPayment\(r, /g)?.length, 1);
     assert.doesNotMatch(hub, /matchMedia|innerWidth/, 'no second measurement of the screen');
   });
 
@@ -489,7 +493,7 @@ describe('quick pay from the finance queue', () => {
     for (const status of ['FINANCE_REVIEW', 'PAID', 'PENDING_APPROVAL', 'DRAFT']) assert.equal(queueRowOffersPayment({ ...row, status }, owner), false, status);
     assert.equal(queueRowOffersPayment(null, owner), false);
     const hub = sourceOf('ReimbursementsPages.tsx');
-    assert.equal(hub.match(/\{queueRowOffersPayment\(r, permissions\) && <button/g)?.length, 2, 'the table row and the card ask the same question');
+    assert.equal(hub.match(/return queueRowOffersPayment\(r, permissions\) && \(\s*<button/g)?.length, 1, 'the table row and the stacked row ask the same question, once');
     assert.doesNotMatch(hub, /r\.status === 'READY_FOR_PAYMENT' &&/);
 
     // The claim page: no button, and the step says why and what to do.
@@ -499,7 +503,7 @@ describe('quick pay from the finance queue', () => {
     for (const branchId of [null, undefined]) {
       const step = paymentStep({ ...payable, branchId });
       assert.ok(!step.actions.includes('pay'), String(branchId));
-      assert.equal(step.note, 'ใบนี้ไม่ได้ระบุสาขา ระบบจึงยังบันทึกจ่ายไม่ได้ กรุณาติดต่อผู้ดูแลระบบ');
+      assert.equal(step.note, 'ใบนี้ไม่ได้ระบุสาขา ระบบจึงยังบันทึกจ่ายไม่ได้ ติดต่อผู้ดูแลระบบ');
       assert.equal(opensPaymentFormOnArrival(true, activeJourneyStep(buildJourneySteps({ ...payable, branchId }, owner, 'user-payer'))), false, 'the ?pay=1 link opens no form either');
     }
   });
@@ -518,7 +522,7 @@ describe('quick pay from the finance queue', () => {
     const hub = sourceOf('ReimbursementsPages.tsx');
     // One handler for the table button and the card button; the dialog opens only through it.
     assert.match(hub, /const recordPayment = useCallback\(\(row: any, layout: 'cards' \| 'table'\) => \{\s+const target = quickPayTarget\(layout, companyId, row\.id\);/);
-    assert.match(hub, /if \(target\.kind === 'page'\) router\.push\(target\.href\);\s+else setPayFor\(row\);/);
+    assert.match(hub, /if \(target\.kind === 'page'\) router\.push\(`\$\{detailHref\(row\.id\)\}&pay=1`\);\s+else setPayFor\(row\);/);
     assert.match(hub, /<FinanceQueue \{\.\.\.queueProps\}[^\n>]* onRecordPayment=\{recordPayment\} \/>/);
     assert.equal((hub.match(/setPayFor\(/g) ?? []).length, 3, 'opened in one place, closed in two');
     // The form seeds its state when it mounts, so it mounts once, after the claim read settles, and

@@ -43,9 +43,13 @@ test.describe('CP — counterparty registry permissions', () => {
 
     await gotoCompany(financePage, companyId, '/counterparties');
     await expect(financePage.getByRole('button', { name: 'เพิ่มคู่ค้า', exact: true })).toBeVisible();
+    await expect(financePage.locator('.mangmee-page')).toHaveClass(/mangmee-flat/);
+    await expect(financePage.locator('.mangmee-page-description')).toHaveCount(0);
+    await expect(financePage.getByText(/^ทั้งหมด \d+ ราย$/)).toHaveCount(0);
+    await expect(financePage.getByRole('group', { name: 'คู่ค้า', exact: true }).getByRole('button', { name: /^ทั้งหมด/ })).toBeVisible();
     await financePage.getByRole('button', { name: 'เพิ่มคู่ค้า', exact: true }).click();
     const dialog = financePage.getByRole('dialog');
-    await dialog.getByRole('textbox', { name: 'ชื่อที่แสดง', exact: true }).fill(originalName);
+    await dialog.getByRole('textbox', { name: 'ชื่อ', exact: true }).fill(originalName);
     const createResponsePromise = financePage.waitForResponse((response) =>
       response.url().includes(`/companies/${companyId}/accounting/counterparties`)
       && response.request().method() === 'POST',
@@ -54,7 +58,7 @@ test.describe('CP — counterparty registry permissions', () => {
     const created = await json<Counterparty>(await createResponsePromise);
     await expect(financePage.getByRole('heading', { name: originalName, exact: true })).toBeVisible();
 
-    const displayName = financePage.getByRole('textbox', { name: 'ชื่อที่แสดง', exact: true });
+    const displayName = financePage.getByRole('textbox', { name: 'ชื่อ', exact: true });
     await expect(displayName).toBeEnabled();
     await displayName.fill(updatedName);
     await financePage.getByRole('textbox', { name: 'ที่อยู่ตามเอกสาร', exact: false }).fill('123 ถนนสุขุมวิท กรุงเทพฯ');
@@ -62,8 +66,10 @@ test.describe('CP — counterparty registry permissions', () => {
     await financePage.getByRole('textbox', { name: 'อีเมล', exact: true }).fill('counterparty@example.test');
     await financePage.getByRole('textbox', { name: 'เบอร์โทร', exact: true }).fill('0812345678');
     await financePage.getByRole('checkbox', { name: 'ล็อกที่อยู่หลัก', exact: false }).check();
-    await financePage.getByRole('button', { name: 'บันทึก', exact: true }).click();
-    await expect(financePage.locator('#workspace-main').getByText('บันทึกข้อมูลคู่ค้าแล้ว', { exact: true })).toBeVisible();
+    await expect(financePage.getByText('พิมพ์ตามที่ใบระบุ', { exact: true })).toHaveCount(1);
+    await expect(financePage.getByText('ที่อยู่นี้จะพิมพ์ลงเอกสาร พิมพ์ตามที่ใบระบุ', { exact: true })).toHaveCount(0);
+    await financePage.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึก', exact: true }).click();
+    await expect(financePage.getByText('บันทึกข้อมูลคู่ค้าแล้ว', { exact: true }).first()).toBeVisible();
 
     const saved = await json<Counterparty>(await financeApi.get(`companies/${companyId}/accounting/counterparties/${created.id}`));
     expect(saved.displayName).toBe(updatedName);
@@ -73,7 +79,7 @@ test.describe('CP — counterparty registry permissions', () => {
 
     await financePage.getByRole('textbox', { name: 'อีเมล', exact: true }).fill('');
     await financePage.getByRole('button', { name: 'บันทึก', exact: true }).click();
-    await expect(financePage.locator('#workspace-main').getByText('บันทึกข้อมูลคู่ค้าแล้ว', { exact: true })).toBeVisible();
+    await expect(financePage.getByText('บันทึกข้อมูลคู่ค้าแล้ว', { exact: true }).first()).toBeVisible();
     const cleared = await json<Counterparty>(await financeApi.get(`companies/${companyId}/accounting/counterparties/${created.id}`));
     expect(cleared.email ?? null).toBeNull();
 
@@ -81,7 +87,7 @@ test.describe('CP — counterparty registry permissions', () => {
     const accountantPage = await pageAs('ACCOUNTANT');
     await gotoCompany(accountantPage, companyId, `/counterparties/${created.id}`);
     await expect(accountantPage.getByText('ดูอย่างเดียว ขอสิทธิ์จัดการคู่ค้าจากเจ้าของกิจการหรือผู้มีสิทธิ์จัดการบทบาทจึงจะแก้ไขได้', { exact: true })).toBeVisible();
-    await expect(accountantPage.getByRole('textbox', { name: 'ชื่อที่แสดง', exact: true })).toBeDisabled();
+    await expect(accountantPage.getByRole('textbox', { name: 'ชื่อ', exact: true })).toBeDisabled();
     await expect(accountantPage.getByRole('button', { name: 'บันทึก', exact: true })).toHaveCount(0);
 
     const deniedUpdate = await accountantApi.patch(`companies/${companyId}/accounting/counterparties/${created.id}`, {
@@ -126,16 +132,16 @@ test.describe('CP — counterparty registry permissions', () => {
 
     await gotoCompany(staffPage, companyId, `/expenses/${expense.id}`);
     await expect(staffPage.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toHaveValue(vendor);
-    await staffPage.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
+    await staffPage.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
     const scopedLink = staffPage.getByRole('link', { name: 'ดู', exact: true });
     await expect(scopedLink).toHaveAttribute('href', new RegExp(`/counterparties/${counterpartyId}$`));
     await scopedLink.click();
-    const name = staffPage.getByRole('textbox', { name: 'ชื่อที่แสดง', exact: true });
+    const name = staffPage.getByRole('textbox', { name: 'ชื่อ', exact: true });
     await expect(name).toBeEnabled();
     await expect(staffPage.getByRole('button', { name: 'บันทึก', exact: true })).toBeVisible();
     await name.fill(`${vendor} แก้แล้ว`);
     await staffPage.getByRole('button', { name: 'บันทึก', exact: true }).click();
-    await expect(staffPage.locator('#workspace-main').getByText('บันทึกข้อมูลคู่ค้าแล้ว', { exact: true })).toBeVisible();
+    await expect(staffPage.getByText('บันทึกข้อมูลคู่ค้าแล้ว', { exact: true }).first()).toBeVisible();
 
     const accountantApi = await apiAs('ACCOUNTANT');
     const denied = await accountantApi.patch(`companies/${companyId}/accounting/counterparties/${counterpartyId}`, {

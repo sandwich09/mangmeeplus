@@ -10,7 +10,7 @@ import type { WebSession } from '../models/web-session.model';
 export type ServerSessionResult =
   | { status: 'signed_in'; session: WebSession }
   | { status: 'signed_out' }
-  | { status: 'forbidden'; companyName?: string }
+  | { status: 'forbidden'; companyName?: string; code?: string }
   | { status: 'platform_closed' }
   | { status: 'unavailable' };
 
@@ -38,8 +38,8 @@ export async function fetchServerSessionResult(companyId?: string): Promise<Serv
     : {};
   const outcome = mapAuthMeStatus(res.status, typeof errorBody.code === 'string' ? errorBody.code : undefined);
   if (outcome !== 'signed_in') {
-    return outcome === 'forbidden' && typeof errorBody.companyName === 'string'
-      ? { status: outcome, companyName: errorBody.companyName }
+    return outcome === 'forbidden'
+      ? { status: outcome, ...(typeof errorBody.companyName === 'string' ? { companyName: errorBody.companyName } : {}), ...(typeof errorBody.code === 'string' ? { code: errorBody.code } : {}) }
       : { status: outcome };
   }
 

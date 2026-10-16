@@ -10,7 +10,7 @@ import { PopoverPanel } from './PopoverPanel';
 // <option> children — so migrating is just renaming the tag. The open list is our
 // own themed menu (details/summary), matching the design's SelectField.
 
-type ThemedOption = { value: string; label: ReactNode; disabled: boolean };
+type ThemedOption = { value: string; label: ReactNode; disabled: boolean; hidden: boolean };
 
 export type ThemedSelectProps = {
   value?: string | number;
@@ -23,8 +23,17 @@ export type ThemedSelectProps = {
   children?: ReactNode;
   /** Filter plain-text options by label or value inside a large dropdown. */
   searchable?: boolean;
-  /** Keep long selected labels readable in narrow forms. */
+  /**
+   * Let a long chosen value take a second line instead of ending in "…": the control grows, it never
+   * clips. For values that are sentences ("ผู้รับเงินไม่สามารถออกใบเสร็จรับเงิน"), in a form column on a
+   * phone. Leave it off in a filter bar or a table row, where one line keeps the row level.
+   */
   wrapLabel?: boolean;
+  /**
+   * What the closed control says while nothing is chosen, when the options carry no empty-value
+   * prompt of their own. It is never a row of the list.
+   */
+  placeholder?: string;
   searchPlaceholder?: string;
   id?: string;
   'aria-label'?: string;
@@ -37,8 +46,8 @@ function collectOptions(children: ReactNode): ThemedOption[] {
   Children.forEach(children, (child) => {
     if (!isValidElement(child)) return;
     if (child.type === 'option') {
-      const props = child.props as { value?: string | number; children?: ReactNode; disabled?: boolean };
-      options.push({ value: String(props.value ?? ''), label: props.children ?? '', disabled: !!props.disabled });
+      const props = child.props as { value?: string | number; children?: ReactNode; disabled?: boolean; hidden?: boolean };
+      options.push({ value: String(props.value ?? ''), label: props.children ?? '', disabled: !!props.disabled, hidden: !!props.hidden });
     } else if (child.type === 'optgroup' || child.type === Fragment) {
       options.push(...collectOptions((child.props as { children?: ReactNode }).children));
     }
@@ -46,7 +55,19 @@ function collectOptions(children: ReactNode): ThemedOption[] {
   return options;
 }
 
-export function ThemedSelect({ value, defaultValue, onChange, disabled = false, required = false, name, className, children, id, searchable = false, wrapLabel = false, searchPlaceholder = 'ค้นหาตัวเลือก', 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid }: ThemedSelectProps) {
+/**
+ * The empty choice that only says "choose one" is a prompt, not an option, and is not listed
+ * (HTML calls it the placeholder label option). It is told apart from a real empty choice
+ * ("ทุกเดือน", "ไม่ระบุ": a filter's "all", a field's "none") by how the caller wrote it, never by its words:
+ *  - the first option, with an empty value, of a `required` select: empty cannot be an answer there;
+ *  - an empty-value option the caller made `disabled` or `hidden`: it could not be chosen anyway.
+ * Any other empty-value option is a real choice and stays in the list.
+ */
+function promptOption(options: ThemedOption[], required: boolean): ThemedOption | undefined {
+  return options.find((option, index) => option.value === '' && (option.disabled || option.hidden || (required && index === 0)));
+}
+
+export function ThemedSelect({ value, defaultValue, onChange, disabled = false, required = false, name, className, children, id, searchable = false, wrapLabel = false, placeholder, searchPlaceholder = 'ค้นหาตัวเลือก', 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid }: ThemedSelectProps) {
   const triggerId = useId();
   const listboxId = useId();
   const detailsRef = useRef<HTMLDetailsElement>(null);
@@ -72,11 +93,15 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
   }, [defaultValue, value]);
 
   const options = collectOptions(children);
+  const prompt = promptOption(options, required);
+  const choices = prompt ? options.filter((option) => option !== prompt) : options;
   const current = value === undefined ? (uncontrolledValue ?? options[0]?.value ?? '') : String(value);
-  const selected = options.find((option) => option.value === current) ?? options[0];
+  // With `placeholder`, a value that matches no option shows the placeholder; without it, the first option as before.
+  const selected = options.find((option) => option.value === current) ?? (placeholder === undefined ? options[0] : undefined);
+  const showsPrompt = selected === undefined || selected === prompt;
   const terms = query.trim().toLocaleLowerCase().split(/\s+/);
-  const visibleOptions = searchable ? options.filter((option) => terms.every((term) =>
-    `${option.value} ${typeof option.label === 'string' ? option.label : ''}`.toLocaleLowerCase().includes(term))) : options;
+  const visibleOptions = searchable ? choices.filter((option) => terms.every((term) =>
+    `${option.value} ${typeof option.label === 'string' ? option.label : ''}`.toLocaleLowerCase().includes(term))) : choices;
 
   function select(nextValue: string) {
     if (value === undefined) setUncontrolledValue(nextValue);
@@ -158,15 +183,18 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
           'mangmee-input flex list-none items-center justify-between gap-2 [&::-webkit-details-marker]:hidden',
           disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer group-open:border-brand-700',
           className,
+          // A wrapped value needs the control to grow; a caller's fixed height (the shared field's h-11) would let the second line spill out.
+          wrapLabel && '!h-auto',
         )}
       >
-        <span className={cx('min-w-0', wrapLabel ? 'whitespace-normal break-words' : 'truncate', selected?.label ? 'text-gray-800' : 'text-gray-400')}>{selected?.label ?? ''}</span>
+        <span data-prompt={showsPrompt || undefined} className={cx('min-w-0', wrapLabel ? 'whitespace-normal break-words' : 'truncate', showsPrompt ? 'text-gray-500' : selected?.label ? 'text-gray-800' : 'text-gray-400')}>{selected?.label ?? placeholder ?? ''}</span>
         <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-5 w-5 shrink-0 text-gray-500 transition group-open:rotate-180">
           <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </summary>
       <PopoverPanel
         open={open}
+        onClose={() => { detailsRef.current?.removeAttribute('open'); setOpen(false); }}
         anchorRef={summaryRef}
         panelRef={panelRef}
         height={240}

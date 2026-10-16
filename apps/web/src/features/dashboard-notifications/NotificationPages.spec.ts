@@ -37,8 +37,10 @@ describe('notification center header', () => {
       ['notification.read', 'notification.preference.manage', 'notification.rule.manage'],
     ]) {
       const html = renderCenter(permissions);
-      assert.match(html, /ศูนย์การแจ้งเตือน/);
-      assert.match(html, /อ่านทั้งหมด/);
+      // 2026-10-13: the page carries the bell's own name (thai-ux-standard §1.1), and "mark all" is drawn only while
+      // something is unread (§2.9), so the empty render has the heading and the source has the action.
+      assert.match(html, /<h1[^>]*>การแจ้งเตือน<\/h1>/);
+      assert.match(centerSource, /items\.some\(isUnreadNotification\) && \(\s*<button[\s\S]*?ทำเป็นอ่านแล้วทั้งหมด/);
       assert.match(html, /ยังไม่ได้อ่าน/);
       assert.match(html, />ทั้งหมด<\/button>/);
       assert.doesNotMatch(html, /href="[^"]*\/(?:settings\/notifications|notifications\/rules)"/);
@@ -48,7 +50,7 @@ describe('notification center header', () => {
 
   it('does not grant center access from management permissions alone', () => {
     const html = renderCenter(['notification.preference.manage', 'notification.rule.manage']);
-    assert.doesNotMatch(html, /ศูนย์การแจ้งเตือน|อ่านทั้งหมด|ยังไม่ได้อ่าน/);
+    assert.doesNotMatch(html, />การแจ้งเตือน<|ทำเป็นอ่านแล้วทั้งหมด|ยังไม่ได้อ่าน/);
     assert.match(html, /ไม่มีสิทธิ์/);
   });
 });
@@ -79,10 +81,11 @@ describe('notification rules wording', () => {
 });
 
 it('W4 every notification title wraps fully while the row keeps its minimum height and unread mark', () => {
-  const title = centerSource.match(/<p className="([^"]+)">\{item.title\}<\/p>/)![1]!;
+  // 2026-10-13: the title has the row's full width, is bold while unread and keeps document numbers whole (`withUnits`).
+  const title = centerSource.match(/<p className=\{`([^`]+)`\}>\{withUnits\(item\.title\)\}<\/p>/)![1]!;
   assert.doesNotMatch(title, /line-clamp|truncate/);
   assert.match(title, /break-words/);
-  assert.match(centerSource, /relative flex items-start gap-3 p-3/);
+  assert.match(centerSource, /relative flex items-start gap-2 p-3/);
   assert.doesNotMatch(centerSource.match(/<div key=\{item.id\}[^>]+>/)![0], /h-\[|max-h-|overflow-hidden/);
   assert.match(centerSource, /isUnreadNotification\(item\)/);
 });
@@ -90,4 +93,24 @@ it('W4 every notification title wraps fully while the row keeps its minimum heig
 it('bell titles have two lines so different document numbers remain distinguishable', () => {
   const title = bellSource.match(/<div className=\{`([^`]+)`\}>\{item.title\}<\/div>/)![1]!;
   assert.match(title, /line-clamp-2/); assert.doesNotMatch(title, /truncate/);
+});
+
+it('only the newest tab request fills the centre, so a slower earlier answer cannot replace the chosen list', () => {
+  assert.match(centerSource, /const request = \+\+latestRequest\.current;/);
+  assert.match(centerSource, /\.then\(\(res\) => \{ if \(request !== latestRequest\.current\) return; setItems\(res\.items\)/);
+  assert.match(centerSource, /\.catch\(\(err: unknown\) => \{ if \(request !== latestRequest\.current\) return;/);
+});
+
+it('offers server-filtered waiting, unread and all tabs in the centre and bell', () => {
+  const html = renderCenter(['notification.read']);
+  for (const label of ['ยังรออยู่', 'ยังไม่ได้อ่าน', 'ทั้งหมด']) {
+    assert.ok(html.includes(label)); assert.ok(bellSource.includes(label));
+  }
+  for (const source of [centerSource, bellSource]) {
+    assert.match(source, /waiting: filter === 'waiting' \? true : undefined/);
+    assert.match(source, /read: filter === 'unread' \? false : undefined/);
+  }
+  assert.match(bellSource, /waiting: result.items, earlier: \[\]/, 'retain read waiting work and resolved all-tab rows returned by the server');
+  assert.doesNotMatch(bellSource, /bellNotifications\(/);
+  assert.match(bellSource, /revision === loadRevision.current/, 'a slower response cannot replace a newer filter');
 });

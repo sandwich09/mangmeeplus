@@ -82,6 +82,15 @@
   padding: 0.875rem 1.25rem;
 }
 
+/* A phone: the bar is two rows (way back and logo, then the three documents) and it stays on screen, so it is kept
+   tight now that its targets are a thumb's height. */
+@media (max-width: 39.999rem) {
+  .doc-mast-inner {
+    gap: 0 1.5rem;
+    padding-block: 0.375rem 0;
+  }
+}
+
 @media (min-width: 40rem) {
   .doc-mast-inner {
     padding-inline: 2rem;
@@ -95,6 +104,40 @@
   border-radius: 0.625rem;
   color: var(--doc-ink);
   text-decoration: none;
+}
+
+/* "กลับ": shown only when this tab has somewhere to go back to (LegalBackLink). */
+.doc-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 2.75rem;
+  margin-inline-end: 0.75rem;
+  border: 0;
+  background: none;
+  padding: 0 0.25rem;
+  color: var(--doc-accent-deep);
+  font: inherit;
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.doc-back:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* From 640 px the bar is one row read with a pointer: the way back is as tall as the logo, so the bar keeps its height. */
+@media (min-width: 40rem) {
+  .doc-back {
+    min-height: 2rem;
+  }
+}
+
+.doc-mast-lead {
+  display: inline-flex;
+  align-items: center;
 }
 
 .doc-wordmark-glyph {
@@ -172,6 +215,12 @@
 
   .doc-switch-item + .doc-switch-item {
     margin-left: 0.5rem;
+  }
+
+  .doc-switch-item {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
   }
 }
 
@@ -262,7 +311,8 @@
   color: var(--color-brand-200);
   font-size: var(--doc-text-xs);
   font-weight: 600;
-  letter-spacing: 0.16em;
+  /* No tracking: the line carries Thai ("ฉบับที่ 1"), and spaced letters pull its vowels and tone marks apart. */
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -274,6 +324,16 @@
   letter-spacing: -0.02em;
   line-height: 1.22;
   text-wrap: balance;
+}
+
+/* A phone: one step down (a little more at 360 px), and lines filled in order rather than balanced. Balancing broke
+   "ความเป็นส่วน/ตัว" and "การใช้/งาน" in the middle to even the two lines out; filled in order, both titles break at
+   their space. */
+@media (max-width: 39.999rem) {
+  .doc-title {
+    font-size: clamp(1.5rem, 7.2vw, 1.75rem);
+    text-wrap: wrap;
+  }
 }
 
 @media (min-width: 40rem) {
@@ -464,7 +524,10 @@
 
   .doc-toc-item {
     grid-template-columns: auto auto;
+    align-items: center;
     gap: 0.5rem;
+    /* A thumb's target: the strip's items were 37 px tall. */
+    min-height: 2.75rem;
     padding: 0.4375rem 0.75rem 0.5625rem;
     font-size: var(--doc-text-sm);
     white-space: nowrap;
@@ -884,6 +947,20 @@
   color: var(--doc-soft);
   text-decoration: none;
   transition: color 0.16s ease;
+}
+
+/* Below 640 px each link is its own 44 px row: they were 21 px tall and the last one wrapped alone. */
+@media (max-width: 39.999rem) {
+  .doc-foot-links {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .doc-foot-links a {
+    display: flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
 }
 
 .doc-foot-links a:hover {

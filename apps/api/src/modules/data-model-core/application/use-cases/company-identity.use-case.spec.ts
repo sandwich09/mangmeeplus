@@ -221,6 +221,39 @@ describe('CompanyIdentityUseCase.get', () => {
 describe('CompanyIdentityUseCase.patch', () => {
   const capture = { expectedLegalIdentityVersion: 2, changeKind: 'INITIAL_CAPTURE' as const };
 
+  it('updates the trimmed shop display name through the existing versioned command without changing registered identity', async () => {
+    const { prisma, state } = makePrisma({ company: { legalIdentityCaptureCompletedAt: new Date('2026-08-01'), legalIdentityAuthoritativeAt: new Date('2026-08-01') } });
+    const service = new CompanyIdentityUseCase(prisma, audit, billingOff);
+    const result = await service.patch(ctx(FULL), 'co-1', { ...capture, changeKind: 'CORRECTION', displayName: '  ร้านใหม่  ' } as any);
+    assert.equal(state.company.name, 'ร้านใหม่');
+    assert.equal(state.company.registeredName, 'บริษัท ทดสอบ จำกัด');
+    assert.equal(state.company.taxId, '0105556000001');
+    assert.equal(state.company.tinExistsStatus, 'VERIFIED');
+    assert.equal(result.legalIdentityVersion, 3);
+    assert.equal((await service.get(ctx(FULL), 'co-1')).identity?.displayName, 'ร้านใหม่');
+  });
+
+  it('shop-name-only updates never move the legal effective date even when sent as LEGAL_CHANGE', async () => {
+    const { prisma, state } = makePrisma({ company: { lastLegalChangeEffectiveDate: new Date('2026-08-01') } });
+    await new CompanyIdentityUseCase(prisma, audit, billingOff).patch(ctx(FULL), 'co-1', { ...capture, changeKind: 'LEGAL_CHANGE', displayName: 'ร้านใหม่', effectiveFrom: '2026-10-13' });
+    assert.equal(state.company.lastLegalChangeEffectiveDate.toISOString(), '2026-08-01T00:00:00.000Z');
+    assert.equal(state.revisions[0].changeKind, 'CORRECTION');
+    assert.equal(state.revisions[0].effectiveFrom, null);
+  });
+
+  it('requires a non-empty shop name, trims before the signup limit of 200 and rejects malformed values before writing', async () => {
+    for (const displayName of ['', '   ', 'ก'.repeat(201), null, 42]) {
+      const { prisma, writes } = makePrisma({});
+      await assert.rejects(() => new CompanyIdentityUseCase(prisma, audit, billingOff).patch(ctx(FULL), 'co-1', { ...capture, displayName } as any), (error: any) => {
+        assert.equal(error.getStatus(), 422); assert.match(String(error.getResponse().message ?? error.getResponse()), /ชื่อร้าน/); return true;
+      });
+      assert.deepEqual(writes, []);
+    }
+    const { prisma, state } = makePrisma({});
+    await new CompanyIdentityUseCase(prisma, audit, billingOff).patch(ctx(FULL), 'co-1', { ...capture, displayName: ` ${'ก'.repeat(200)} ` } as any);
+    assert.equal(state.company.name.length, 200);
+  });
+
   it('writes the field, bumps the version, mirrors the profile and appends a revision', async () => {
     const { prisma, state, writes } = makePrisma({});
     const result = await new CompanyIdentityUseCase(prisma, audit, billingOff).patch(ctx(FULL), 'co-1', {

@@ -5,11 +5,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarContext';
 import { isActiveNavSubItem, isPointerArrival, lineLinkMenuRow, revealScrollDelta } from './app-sidebar.logic';
-import { ChevronDownIcon, HorizontalDotsIcon } from '@/common/icons';
+import { ChevronDownIcon } from '@/common/icons';
 import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
-import { Button } from '@/common/components/button';
 import { getInitials, getMangmeeMenuTone, type MangmeeTone } from '@/common/components/mangmee';
-import { AlertModal, Modal } from '@/common/components/modal';
+import { AlertModal } from '@/common/components/modal';
 import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { roleDisplayName } from '@/features/employee-access/role-picker.logic';
 import { t } from '@/common/i18n/workspace-i18n.logic';
@@ -23,12 +22,16 @@ export type NavItem = {
   label: string;
   icon: React.ReactNode;
   href?: string;
-  subItems?: { key: string; label: string; href: string; icon?: React.ReactNode; tone?: MangmeeTone; badgeCount?: number }[];
+  /** `badgeLabel`: a short word on the row that needs the person, e.g. "ยังไม่ครบ" on the shop details row. */
+  subItems?: { key: string; label: string; href: string; icon?: React.ReactNode; tone?: MangmeeTone; badgeCount?: number; badgeLabel?: string }[];
   disabled?: boolean;
   /** §15.4.1 E: an unfinished company setup, shown as one dot until the checklist is complete. */
   attention?: boolean;
   group: string;
 };
+
+/** A row of the user menu that leads to the person's own things (account, signature). */
+export type AccountLink = { key: string; label: string; href: string };
 
 type Props = {
   navItems: NavItem[];
@@ -39,6 +42,8 @@ type Props = {
   userRoles?: string[];
   userRoleNames?: Record<string, string>;
   showAccountSecurity?: boolean;
+  /** The person's own pages, listed first in the user menu: nobody should need a company setting to find their account. */
+  accountLinks?: AccountLink[];
   /** Bottom-of-sidebar slot above the user block (plan-term card). Hidden on the icon-only rail. */
   footerExtras?: React.ReactNode;
 };
@@ -73,13 +78,16 @@ function MenuIcon({ icon, tone, menuKey, active = false, variant = 'item' }: Men
   );
 }
 
-const groupLabelKey: Record<string, 'nav.group.operate' | 'nav.group.finance' | 'nav.group.growth' | 'nav.group.admin'> = {
+const groupLabelKey: Record<string, 'nav.group.operate' | 'nav.group.finance' | 'nav.group.growth' | 'nav.group.admin' | 'nav.group.help'> = {
   main: 'nav.group.operate',
   operate: 'nav.group.operate',
   finance: 'nav.group.finance',
   growth: 'nav.group.growth',
   admin: 'nav.group.admin',
+  help: 'nav.group.help',
 };
+
+const USER_MENU_ROW = 'flex min-h-11 w-full items-center justify-between gap-2 px-4 py-2 text-left text-sm font-medium';
 
 /**
  * One amber dot on a module row whose setup is unfinished (§15.4.1 E). Rendered right after the
@@ -92,12 +100,12 @@ function AttentionDot() {
       aria-label="ตั้งค่ายังไม่ครบ"
       title="ตั้งค่ายังไม่ครบ"
       data-testid="nav-attention-dot"
-      className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+      className="mr-1 h-2 w-2 shrink-0 rounded-full bg-amber-500"
     />
   );
 }
 
-const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRoles, userRoleNames, showAccountSecurity, footerExtras }) => {
+const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRoles, userRoleNames, showAccountSecurity, accountLinks = [], footerExtras }) => {
   const { isExpanded, isMobileOpen, isHovered, openSubmenu, setIsHovered, setOpenSubmenu, toggleSidebar, toggleSubmenu, closeMobileSidebar } =
     useSidebar();
   const pathname = usePathname();
@@ -123,7 +131,6 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
   }, [closeMobileSidebar, isMobileOpen]);
   const [subMenuHeight, setSubMenuHeight] = useState<Record<string, number>>({});
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [signOutOpen, setSignOutOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const [accountSecurity, setAccountSecurity] = useState<AccountSecurityState | null>(null);
@@ -148,20 +155,21 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
       return !name && label === role ? (locale === 'th' ? 'บทบาทกำหนดเอง' : 'Custom role') : label;
     }))].join(' · ')
     : null;
-  const displayUserName = userName === 'นภา' ? 'คุณนภา วงศ์ทอง' : userName;
+  const displayUserName = userName;
   const footerLabel = displayUserName ?? roleLabel;
-  const footerInitials = userName === 'นภา' ? 'นภ' : getInitials(footerLabel);
+  const footerInitials = getInitials(footerLabel);
   // The security page is parked; /change-password is the real form the menu label promises.
   const resetPasswordHref = '/change-password';
   useCloseOnOutsideClick(userMenuRef, useCallback(() => setUserMenuOpen(false), []));
 
+  // No question first: signing out loses nothing that signing in does not bring back (thai-ux-standard §4.1).
+  // The menu stays open while it works, so the row itself shows "กำลังออกจากระบบ...".
   const handleSignOut = async () => {
     if (signingOut) return;
-    setUserMenuOpen(false);
     setSigningOut(true);
     if (!(await logoutCurrentSession())) {
       setSigningOut(false);
-      setSignOutOpen(false);
+      setUserMenuOpen(false);
       // Themed dialog instead of window.alert(): the browser alert ignored the app theme.
       setSignOutFailed(true);
     }
@@ -193,7 +201,9 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
     Boolean(nav.subItems && (isActiveItem(nav) || nav.subItems.some((sub) =>
       isActiveNavSubItem(pathname, activeKey, sub, subItemCandidates))));
   const sidebarVisible = isExpanded || isHovered || isMobileOpen;
-  const getMenuTone = (nav: NavItem): MangmeeTone => getMangmeeMenuTone(nav.key, nav.group);
+  const getMenuTone = (nav: NavItem): MangmeeTone => getMangmeeMenuTone(nav.key, nav.group === 'help' ? 'admin' : nav.group);
+  /** On the icon-only rail a row has no words on screen, so its name goes to the tooltip and to assistive tech. */
+  const railName = (label: string) => (sidebarVisible ? {} : { title: label, 'aria-label': label });
   const setActiveAnchorRef = (node: HTMLAnchorElement | null) => {
     if (node) activeItemRef.current = node;
   };
@@ -222,8 +232,9 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
     }
     if (!initializedSubmenuRef.current) {
       initializedSubmenuRef.current = true;
-      if (navItems.some((nav) => nav.key === 'roles' && nav.subItems)) {
-        setOpenSubmenu('roles');
+      // The group a shop works in every day; it used to be พนักงานและสิทธิ์.
+      if (navItems.some((nav) => nav.key === 'expenses' && nav.subItems)) {
+        setOpenSubmenu('expenses');
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -302,14 +313,16 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
         if (supportsHover) setIsHovered(false);
       }}
     >
-      <div className={`py-6 flex items-center ${!isExpanded && !isHovered ? 'lg:justify-center' : 'justify-between'}`}>
+      <div className={`py-6 flex items-center ${!isExpanded && !isHovered ? 'lg:flex-col lg:justify-center lg:gap-3' : 'justify-between'}`}>
         <Link href="/" className="flex items-center gap-2.5">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-brand-500 to-brand-900">
             <MangmeeLogo size={24} />
           </span>
           {sidebarVisible && <span className="text-lg font-extrabold text-gray-900">มั่ง<span className="text-brand-700">มี</span></span>}
         </Link>
-        {sidebarVisible && (
+        {/* On the rail the button is kept only where hovering cannot open the menu: with a mouse the menu opens under
+            the pointer and the button would jump away from it. */}
+        {(sidebarVisible || !supportsHover) && (
           <button
             type="button"
             onClick={(event) => {
@@ -318,9 +331,11 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
               toggleSidebar();
             }}
             className="hidden h-11 w-11 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 lg:flex"
-            aria-label={t('shell.toggle_sidebar', locale)}
+            aria-label={t(isExpanded ? 'shell.collapse_sidebar' : 'shell.expand_sidebar', locale)}
+            title={t(isExpanded ? 'shell.collapse_sidebar' : 'shell.expand_sidebar', locale)}
+            aria-expanded={isExpanded}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className={isExpanded ? '' : 'rotate-180'}>
               <path d="M9 6l-6 6 6 6M3 12h18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
@@ -344,14 +359,14 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                       {showGroupHeading && nav.group !== 'main' && (
                         <li
                           aria-label={groupLabel}
-                          className={`px-3 text-[11px] font-medium tracking-[0.01em] flex leading-[20px] text-gray-400 ${
+                          className={`px-3 text-xs font-medium flex text-gray-500 ${
                             sidebarVisible ? 'justify-start' : 'lg:justify-center'
                           } ${idx > 0 ? 'pt-5' : ''}`}
                         >
                           {sidebarVisible ? groupLabel : (
                             <>
                               <span className="sr-only">{groupLabel}</span>
-                              <HorizontalDotsIcon />
+                              <span aria-hidden="true" className="my-2 block h-px w-6 bg-gray-200" />
                             </>
                           )}
                         </li>
@@ -371,6 +386,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                             ref={highlighted ? setActiveButtonRef : undefined}
                             disabled={nav.disabled}
                             aria-expanded={openSubmenu === nav.key}
+                            {...railName(nav.label)}
                             className={`menu-item group ${
                               highlighted ? 'menu-item-active' : 'menu-item-inactive'
                             } cursor-pointer ${!isExpanded && !isHovered ? 'lg:justify-center' : 'lg:justify-start'} ${nav.disabled ? 'cursor-not-allowed opacity-50' : ''}`}
@@ -379,7 +395,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                           >
                             <MenuIcon icon={nav.icon} tone={tone} menuKey={nav.key} active={highlighted} />
                             {sidebarVisible && <span className="menu-item-text">{nav.label}</span>}
-                            {nav.attention && <AttentionDot />}
+                            {nav.attention && !(sidebarVisible && openSubmenu === nav.key && nav.subItems?.some((sub) => sub.badgeLabel)) && <AttentionDot />}
                             {sidebarVisible && (
                               <ChevronDownIcon
                                 className={`ml-auto w-5 h-5 transition-transform duration-200 ${
@@ -402,6 +418,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                               href={nav.href}
                               ref={active ? setActiveAnchorRef : undefined}
                               aria-current={active ? 'page' : undefined}
+                              {...railName(nav.label)}
                               className={`menu-item group ${active ? 'menu-item-active' : 'menu-item-inactive'} ${!isExpanded && !isHovered ? 'lg:justify-center' : 'lg:justify-start'}`}
                               data-tone={tone}
                               data-active={active ? 'true' : 'false'}
@@ -431,8 +448,11 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                                   >
                                     {sub.icon && <MenuIcon icon={sub.icon} tone={subTone} menuKey={sub.key} active={subActive} variant="dropdown" />}
                                     {sub.label}
+                                    {sub.badgeLabel && (
+                                      <span className="ml-auto shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">{sub.badgeLabel}</span>
+                                    )}
                                     {sub.badgeCount ? (
-                                      <span className="ml-auto rounded-full bg-red-500 px-2 py-0.5 text-[11px] font-bold text-white">
+                                      <span className="ml-auto rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold text-white">
                                         {sub.badgeCount > 99 ? '99+' : sub.badgeCount}
                                       </span>
                                     ) : null}
@@ -462,10 +482,15 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
         <div ref={userMenuRef} className={`relative mt-6 shrink-0 border-t border-gray-200 px-1 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pb-4`}>
           {userMenuOpen && (
             <div id="sidebar-user-menu" className="absolute bottom-full left-0 z-10 mb-2 w-60 overflow-hidden rounded-xl border border-gray-200 bg-white py-2 shadow-[var(--shadow-theme-md)]">
+              {accountLinks.map((link) => (
+                <Link key={link.key} href={link.href} className={`${USER_MENU_ROW} text-gray-700 hover:bg-brand-25 hover:text-brand-700`} onClick={() => setUserMenuOpen(false)}>
+                  {link.label}
+                </Link>
+              ))}
               {showAccountSecurity && (
                 <Link
                   href={resetPasswordHref}
-                  className="block w-full px-4 py-3 text-left text-sm font-bold text-gray-800 hover:bg-brand-25 hover:text-brand-700"
+                  className={`${USER_MENU_ROW} text-gray-700 hover:bg-brand-25 hover:text-brand-700`}
                   onClick={() => setUserMenuOpen(false)}
                 >
                   {t('shell.reset_password', locale)}
@@ -486,7 +511,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                   setUserMenuOpen(false);
                   window.location.assign(withLineExternalBrowser(`/api/auth/line-login/start?returnTo=${encodeURIComponent('/signup/welcome')}`, navigator.userAgent));
                 }}
-                className={`flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium ${
+                className={`${USER_MENU_ROW} ${
                   lineLinkRow.disabled
                     ? 'cursor-not-allowed text-gray-400'
                     : 'text-gray-700 hover:bg-brand-25 hover:text-brand-700'
@@ -494,7 +519,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
               >
                 <span>{t(lineLinkRow.labelKey, locale)}</span>
                 {lineLinkRow.badgeKey && (
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
                     lineLinkRow.badgeKey === 'shell.line_link.badge_linked' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
                   }`}>
                     {t(lineLinkRow.badgeKey, locale)}
@@ -502,16 +527,13 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                 )}
               </button>
               {accountSecurity?.lineLinked && accountSecurity.lineMessagingReady === false && (
-                <p className="px-4 pb-3 text-xs text-amber-800">การรับข้อความ LINE ต้องตรวจการเชื่อมต่อ กรุณาติดต่อผู้ดูแลเพื่อออก QR ใหม่</p>
+                <p className="px-4 pb-3 text-sm text-amber-800">LINE ยังรับข้อความไม่ได้ แจ้งผู้ดูแลให้ออก QR ใหม่</p>
               )}
               <button
                 type="button"
-                className="w-full px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-700"
-                onClick={() => {
-                  setUserMenuOpen(false);
-                  setSignOutOpen(true);
-                }}
-                disabled={signingOut}
+                className={`${USER_MENU_ROW} text-gray-700 hover:bg-gray-50`}
+                onClick={() => void handleSignOut()}
+                disabled={signingOut} aria-busy={Boolean(signingOut)}
               >
                 {signingOut ? t('shell.signing_out', locale) : t('shell.signout', locale)}
               </button>
@@ -543,25 +565,6 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
           </button>
         </div>
       )}
-      <Modal
-        open={signOutOpen}
-        title={t('shell.signout', locale)}
-        size="sm"
-        closeLabel={t('common.close', locale)}
-        onClose={() => { if (!signingOut) setSignOutOpen(false); }}
-        footer={(
-          <>
-            <Button type="button" variant="secondary" onClick={() => setSignOutOpen(false)} disabled={signingOut}>
-              {t('common.cancel', locale)}
-            </Button>
-            <Button type="button" variant="danger" onClick={() => void handleSignOut()} loading={signingOut}>
-              {signingOut ? t('shell.signing_out', locale) : t('shell.signout', locale)}
-            </Button>
-          </>
-        )}
-      >
-        <p className="text-sm text-gray-600">{t('shell.signout_confirm', locale)}</p>
-      </Modal>
       <AlertModal
         open={signOutFailed}
         title={t('shell.signout', locale)}

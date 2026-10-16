@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties, type HTMLAttributes, type ReactNode, type RefObject } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type HTMLAttributes, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { anchorIsClipped, placeAnchoredPanel, readOverlayBounds } from '@/common/functions/overlay-geometry';
 
 // The open panel of a themed field (option list, date grid) renders through a portal
 // for the same reason the shared Modal does: an `overflow-*` scroll box clips BOTH
@@ -13,6 +14,7 @@ import { createPortal } from 'react-dom';
 
 type Props = {
   open: boolean;
+  onClose: () => void;
   /** Element the panel hangs off; its box decides position (and the width floor when matched). */
   anchorRef: RefObject<HTMLElement | null>;
   /** Exposed so the owner can treat the portaled panel as "inside" for outside-click. */
@@ -31,7 +33,9 @@ type Props = {
 // Measurable (laid out, capped like the placed panel) but not yet visible.
 const UNPLACED: CSSProperties = { position: 'fixed', top: 0, left: 0, maxWidth: 'calc(100vw - 16px)', visibility: 'hidden' };
 
-export function PopoverPanel({ open, anchorRef, panelRef, height, minAnchorWidth = false, matchAnchorWidth = false, className, children, ...rest }: Props) {
+export function PopoverPanel({ open, onClose, anchorRef, panelRef, height, minAnchorWidth = false, matchAnchorWidth = false, className, children, ...rest }: Props) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   const [style, setStyle] = useState<CSSProperties | null>(null);
 
   useEffect(() => {
@@ -42,44 +46,35 @@ export function PopoverPanel({ open, anchorRef, panelRef, height, minAnchorWidth
     const place = () => {
       const rect = anchorRef.current?.getBoundingClientRect();
       if (!rect) return;
-      // Trigger scrolled out of sight: drop the panel rather than leave it floating
-      // over unrelated content. Scrolling back fires `place` again and restores it.
-      if (rect.bottom < 0 || rect.top > window.innerHeight) {
-        setStyle(null);
-        return;
-      }
-      const below = window.innerHeight - rect.bottom - 8;
-      const above = rect.top - 8;
       const panelWidth = matchAnchorWidth ? rect.width : Math.max(panelRef.current?.getBoundingClientRect().width ?? 0, minAnchorWidth ? rect.width : 0);
-      const left = Math.min(Math.max(rect.left, 8), Math.max(8, window.innerWidth - panelWidth - 8));
-      // Fixed panels cannot be scrolled into view, so a panel that does not fit below
-      // hangs off the trigger's top edge instead (pinned by `bottom`, so a short panel
-      // still sits snug against the trigger).
-      const flip = below < height && above > below;
+      const placement = anchorRef.current && !anchorIsClipped(anchorRef.current) ? placeAnchoredPanel(rect, readOverlayBounds(anchorRef.current, panelRef.current), height, panelWidth) : null;
+      if (!placement) { setStyle(null); closeRef.current(); return; }
       setStyle({
         position: 'fixed',
-        left,
+        left: placement.left,
         maxWidth: 'calc(100vw - 16px)',
         // Never taller than the panel's own cap — an inline maxHeight would otherwise
         // override the component's max-h class and let a long list grow past it.
-        maxHeight: Math.max(Math.min(height, flip ? above : below), 96),
+        maxHeight: placement.maxHeight,
         ...(minAnchorWidth ? { minWidth: rect.width } : {}),
         ...(matchAnchorWidth ? { width: rect.width } : {}),
-        ...(flip ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
+        ...(placement.side === 'above' ? { bottom: window.innerHeight - placement.edge } : { top: placement.edge }),
       });
     };
     place();
-    const animationFrame = window.requestAnimationFrame(place);
-    window.addEventListener('scroll', place, true);
-    window.addEventListener('resize', place);
-    window.visualViewport?.addEventListener('resize', place);
-    window.visualViewport?.addEventListener('scroll', place);
+    let animationFrame = 0;
+    const schedule = () => { window.cancelAnimationFrame(animationFrame); animationFrame = window.requestAnimationFrame(place); };
+    schedule();
+    window.addEventListener('scroll', schedule, true);
+    window.addEventListener('resize', schedule);
+    window.visualViewport?.addEventListener('resize', schedule);
+    window.visualViewport?.addEventListener('scroll', schedule);
     return () => {
       window.cancelAnimationFrame(animationFrame);
-      window.removeEventListener('scroll', place, true);
-      window.removeEventListener('resize', place);
-      window.visualViewport?.removeEventListener('resize', place);
-      window.visualViewport?.removeEventListener('scroll', place);
+      window.removeEventListener('scroll', schedule, true);
+      window.removeEventListener('resize', schedule);
+      window.visualViewport?.removeEventListener('resize', schedule);
+      window.visualViewport?.removeEventListener('scroll', schedule);
     };
   }, [open, height, minAnchorWidth, matchAnchorWidth, anchorRef, panelRef]);
 

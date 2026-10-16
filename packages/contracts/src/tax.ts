@@ -4,22 +4,22 @@ import type { AccountingOutputTaxCode } from './accounting-documents.js';
 
 export const WHT_CERTIFICATE_CORRECTION_WORDS = {
   fieldLocked: 'ยอดเงิน อัตราภาษี แบบที่ยื่น ประเภทเงินได้ และเลขผู้เสียภาษีของผู้รับเงิน แก้ในหน้านี้ไม่ได้ เพราะต้องตรงกับรายจ่ายและแบบที่ยื่นภาษี ให้กด “แก้ไขเอกสาร” ที่รายจ่าย ระบบจะยกเลิกใบนี้และออกใบใหม่ได้หลังยืนยันอีกครั้ง',
-  numberDuplicate: 'ออกหนังสือรับรองไม่สำเร็จเพราะเลขที่เอกสารซ้ำ กรุณาลองอีกครั้ง ถ้ายังไม่สำเร็จ ให้แจ้งทีมมั่งมีพลัสพร้อมเลขที่เอกสารรายจ่ายนี้',
-  noChanges: 'ข้อมูลตรงกับหนังสือรับรองใบปัจจุบันอยู่แล้ว จึงไม่มีอะไรต้องแก้ไข ถ้าเพิ่งกดแก้ไขไป การแก้ไขครั้งนั้นสำเร็จแล้ว กรุณาเปิดหน้านี้ใหม่',
-  payeeAddressRequired: 'กรุณาพิมพ์ที่อยู่ผู้รับเงินในแบบฟอร์มนี้ก่อนบันทึก',
-  payeeNameRequired: 'ชื่อผู้รับเงินบนหนังสือรับรองว่างไม่ได้ กรุณาใส่ชื่อผู้รับเงิน',
+  numberDuplicate: 'ออกหนังสือรับรองไม่สำเร็จเพราะเลขที่เอกสารซ้ำ ลองอีกครั้ง ถ้ายังไม่สำเร็จ ให้แจ้งทีมงานมั่งมีพร้อมเลขที่เอกสารรายจ่ายนี้',
+  noChanges: 'ข้อมูลตรงกับหนังสือรับรองใบปัจจุบันอยู่แล้ว จึงไม่มีอะไรต้องแก้ไข ถ้าเพิ่งกดแก้ไขไป การแก้ไขครั้งนั้นอาจบันทึกแล้ว เปิดหน้านี้ใหม่',
+  payeeAddressRequired: 'ยังไม่มีที่อยู่ผู้รับเงิน พิมพ์ที่อยู่ในแบบฟอร์มนี้ก่อนบันทึก',
+  payeeNameRequired: 'ชื่อผู้รับเงินบนหนังสือรับรองว่างไม่ได้ ใส่ชื่อผู้รับเงิน',
 } as const;
 
 export const WHT_PRINT_CERTIFICATE_LABEL = 'ออกหนังสือรับรอง 50 ทวิ';
 export const WHT_PRINT_CERTIFICATE_BUSY_LABEL = 'กำลังออกหนังสือรับรอง…';
-export const WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE = `ยังไม่มีที่อยู่ผู้รับเงิน กรุณาเพิ่มที่อยู่ผู้รับเงินก่อน แล้วกด “${WHT_PRINT_CERTIFICATE_LABEL}” อีกครั้ง`;
+export const WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE = `ยังไม่มีที่อยู่ผู้รับเงิน เพิ่มที่อยู่ผู้รับเงินก่อน แล้วกด “${WHT_PRINT_CERTIFICATE_LABEL}” อีกครั้ง`;
 
 /** The address printed on a certificate: a typed override, then the frozen payee snapshot. */
 export function whtPayeeAddress(typedAddress: string | null | undefined, snapshotAddress: string | null | undefined): string | null {
   return typedAddress?.trim() || snapshotAddress?.trim() || null;
 }
 
-export type WhtPayerMissing = 'TAX_ID' | 'ADDRESS';
+export type WhtPayerMissing = 'REGISTERED_NAME' | 'TAX_ID' | 'ADDRESS';
 
 function printablePayerAddress(value: string | null | undefined): boolean {
   if (!value?.trim()) return false;
@@ -27,23 +27,24 @@ function printablePayerAddress(value: string | null | undefined): boolean {
   try { return Boolean(formatCompanyLegalAddress(JSON.parse(value) as CompanyLegalAddress)); } catch { return false; }
 }
 
-/** Preserve frozen facts; only a value that cannot be printed (blank, or a tax number that is not 13 digits) may use the shop's current identity. */
-export function whtPayerIdentity(frozen: PayerSnapshot, current: { taxId: string | null; address: string | null }): { payer: PayerSnapshot; missing: WhtPayerMissing[] } {
-  const payer = { ...frozen, taxId: /^\d{13}$/.test(frozen?.taxId?.trim() ?? '') ? frozen.taxId : current.taxId,
+/** Legacy snapshots cannot prove the origin of companyName: use the current registered name for issuance. Frozen tax/address facts remain authoritative. */
+export function whtPayerIdentity(frozen: PayerSnapshot, current: { registeredName: string | null; taxId: string | null; address: string | null }): { payer: PayerSnapshot; missing: WhtPayerMissing[] } {
+  const payer = { ...frozen, companyName: current.registeredName?.trim() || '', taxId: /^\d{13}$/.test(frozen?.taxId?.trim() ?? '') ? frozen.taxId : current.taxId,
     address: printablePayerAddress(frozen?.address) ? frozen.address : current.address };
   return { payer, missing: [
+    ...(!payer.companyName ? ['REGISTERED_NAME' as const] : []),
     ...(!/^\d{13}$/.test(payer.taxId?.trim() ?? '') ? ['TAX_ID' as const] : []),
     ...(!printablePayerAddress(payer.address) ? ['ADDRESS' as const] : []),
   ] };
 }
 
 export function whtPayerMissingLabel(missing: readonly WhtPayerMissing[]): string {
-  return missing.includes('TAX_ID') && missing.includes('ADDRESS') ? 'เลขผู้เสียภาษีและที่อยู่ของร้าน'
-    : missing.includes('TAX_ID') ? 'เลขผู้เสียภาษีของร้าน' : 'ที่อยู่ของร้าน';
+  const words = [missing.includes('REGISTERED_NAME') && 'ชื่อจดทะเบียน', missing.includes('TAX_ID') && 'เลขผู้เสียภาษี', missing.includes('ADDRESS') && 'ที่อยู่'].filter(Boolean);
+  return `${words.length === 3 ? `${words[0]} ${words[1]} และ${words[2]}` : words.join('และ')}ของร้าน`;
 }
 
 export function whtPayerIdentityMissingMessage(missing: readonly WhtPayerMissing[]): string {
-  return `ยังไม่มี${whtPayerMissingLabel(missing)} กรุณากรอกในหน้าข้อมูลร้านก่อน แล้วกด “${WHT_PRINT_CERTIFICATE_LABEL}” อีกครั้ง`;
+  return `ยังไม่มี${whtPayerMissingLabel(missing)} กรอกในหน้าข้อมูลร้านก่อน แล้วกด “${WHT_PRINT_CERTIFICATE_LABEL}” อีกครั้ง`;
 }
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
@@ -54,19 +55,22 @@ export type VatFormType = 'PP30' | 'PP36';
 export type WhtFormType = 'PND3' | 'PND53';
 export type CitFormType = 'PND50' | 'PND51';
 export type CustomsFormType = 'CUSTOMS_SUPPORT';
-export type TaxFormType = VatFormType | WhtFormType | CitFormType | CustomsFormType;
+export type TaxFormType = 'PND2' | VatFormType | WhtFormType | CitFormType | CustomsFormType;
 
 export type TaxPeriodType = 'MONTHLY' | 'ANNUAL' | 'HALF_YEAR';
 
 export const TAX_FORM_SHORT_NAMES: Partial<Record<string, string>> = {
-  PP30: 'ภ.พ.30', PP36: 'ภ.พ.36', PND3: 'ภ.ง.ด.3', PND53: 'ภ.ง.ด.53', CUSTOMS_SUPPORT: 'เอกสารประกอบภาษีนำเข้า',
+  PND2: 'ภ.ง.ด.2', PP30: 'ภ.พ.30', PP36: 'ภ.พ.36', PND3: 'ภ.ง.ด.3', PND53: 'ภ.ง.ด.53', CUSTOMS_SUPPORT: 'เอกสารประกอบภาษีนำเข้า',
 };
 
 /** Filed withholding periods cannot be reopened in the tax workspace. */
-export function withholdingPeriodLockedMessage(periodKey: string, action: 'แก้ไขเอกสารนี้' | 'ยกเลิกเอกสารนี้' | 'ยกเลิกคำขอเบิก', formType: string, kind?: 'SYSTEM' | 'EXTERNAL'): string {
+export function withholdingPeriodLockedMessage(periodKey: string, action: 'แก้ไขเอกสารนี้' | 'ยกเลิกเอกสารนี้' | 'ยกเลิกใบเบิก', formType: string, kind?: 'SYSTEM' | 'EXTERNAL'): string {
+  if (action === 'แก้ไขเอกสารนี้') return `ภาษีหัก ณ ที่จ่าย (${TAX_FORM_SHORT_NAMES[formType] ?? 'ภาษี'}) ของเดือน ${executiveMonthLabel(periodKey)} ยื่นไปแล้ว จึงแก้ไขเอกสารนี้ไม่ได้ ${kind === 'SYSTEM'
+    ? 'ถ้าผิดเฉพาะตัวสะกดชื่อหรือที่อยู่บนหนังสือรับรอง ใช้ปุ่ม "แก้ไขหนังสือรับรอง" ได้ ถ้าข้อเท็จจริงผิด ให้ยกเลิกเอกสารแล้วบันทึกใหม่ ให้ผู้ทำบัญชีแจ้งกรมสรรพากรเรื่องแบบเดิม'
+    : 'ให้ยกเลิกเอกสารแล้วบันทึกใหม่ ให้ผู้ทำบัญชีแจ้งกรมสรรพากรเรื่องแบบเดิม'}`;
   return `ภาษีหัก ณ ที่จ่าย (${TAX_FORM_SHORT_NAMES[formType] ?? 'ภาษี'}) ของเดือน ${executiveMonthLabel(periodKey)} ยื่นไปแล้ว จึง${action}ไม่ได้ ${kind === 'SYSTEM'
-    ? 'ถ้าผิดเฉพาะตัวสะกดชื่อหรือที่อยู่บนหนังสือรับรอง ใช้ปุ่ม "แก้ไขหนังสือรับรอง" ได้ ถ้ายอดเงิน อัตรา หรือเลขผู้เสียภาษีผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ'
-    : 'ถ้าข้อมูลผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านดำเนินการ'}`;
+    ? 'ถ้าผิดเฉพาะตัวสะกดชื่อหรือที่อยู่บนหนังสือรับรอง ใช้ปุ่ม "แก้ไขหนังสือรับรอง" ได้ ถ้ายอดเงิน อัตรา หรือเลขผู้เสียภาษีผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านยื่นแบบเพิ่มเติมให้'
+    : 'ถ้าข้อมูลผิด ต้องยื่นแบบเพิ่มเติมกับกรมสรรพากร ให้ผู้ทำบัญชีของร้านยื่นแบบเพิ่มเติมให้'}`;
 }
 
 export type TaxRuleStatus = 'DRAFT' | 'ACTIVE' | 'RETIRED';
@@ -83,6 +87,7 @@ export type TaxPeriodStatus =
   | 'AMENDED';
 
 export type TaxEventType =
+  | 'WHT_PND2'
   | 'VAT_OUTPUT'
   | 'VAT_INPUT'
   | 'VAT_EXEMPT'
@@ -238,7 +243,7 @@ export type TaxEventDto = {
   componentKey: import('./transaction-tax.js').TransactionTaxComponentPreview['componentKey'] | null;
   taxSnapshot: import('./transaction-tax.js').TransactionTaxSnapshot | null;
   reportContributions: import('./transaction-tax.js').TaxReportContribution[];
-  whtFormType: WhtFormType | null;
+  whtFormType: WhtFormType | 'PND2' | null;
   payeeSnapshot: PayeeSnapshot | null;
   incomeCategoryCode: string | null;
   whtRate: string | null;
@@ -259,12 +264,15 @@ export type PayeeSnapshot = {
 
 // ─── WHT Income Category ──────────────────────────────────────────────────────
 
+export type WhtFilingRoute = 'SYSTEM_FILLS' | 'ACCOUNTANT_PREPARES' | 'SEPARATE_PND2';
+
 export type WhtIncomeCategoryDto = {
+  filingRoute?: WhtFilingRoute;
   id: string;
   code: string;
   nameTh: string;
   nameEn: string | null;
-  formType: WhtFormType;
+  formType: WhtFormType | 'PND2';
   defaultRate: string;
   status: TaxRuleStatus;
   conditionNote: string | null;
@@ -458,6 +466,9 @@ export type WhtCertificateHistoryDto = {
  * a prefill is never fabricated (spec:208).
  */
 export type WhtHandoffPrefillDto = {
+  externalPaymentDate?: string;
+  expensePaymentId?: string;
+  expenseTotals?: { grossAmount: string; withheldAmount: string };
   payerSnapshot: PayerSnapshot;
   payeeSnapshot: PayeeSnapshot;
   formType: WhtFormType | null;
@@ -470,6 +481,7 @@ export type WhtHandoffPrefillDto = {
 };
 
 export type WhtCertificateHandoffDto = {
+  payments?: Array<{ id: string; paidAt: string; paidAtConfirmed: boolean; amount: string; grossAmount?: string; withheldAmount?: string }>;
   id: string;
   companyId: string;
   status: WhtHandoffStatus;
@@ -497,6 +509,7 @@ export type WhtCertificateHandoffDto = {
   payeeAddressByUserId: string | null;
   externalCertificateNumber: string | null;
   externalEvidenceRef: string | null;
+  externalPaymentDate?: string | null;
   externalIssuedDate: string | null;
   linkNote: string | null;
   linkedAt: string | null;
@@ -545,6 +558,7 @@ export const WHT_HANDOFF_MISSING_LABELS: Record<WhtHandoffMissingReason, string>
 };
 
 export type WhtCertificateHandoffListRowDto = WhtCertificateHandoffDto & {
+  formType: WhtFormType | null;
   matchedPreviousNumber: string | null;
   expenseDescription: string | null;
   payeeName: string;
@@ -558,9 +572,19 @@ export type WhtCertificateHandoffListRowDto = WhtCertificateHandoffDto & {
   cancellation?: { cancelledAt: string; eventType: WhtCertificateHistoryEventType; reason: string | null };
 };
 
+export type WhtCertificateHandoffListQuery = {
+  status?: string; branchId?: string; sourcePaymentId?: string;
+  periodKey?: string; formType?: string; search?: string;
+  page?: number; pageSize?: number; order?: 'newest' | 'oldest';
+};
+
 /** GET wht/payment-handoffs with page or pageSize; without either it remains an array. */
 export type WhtCertificateHandoffPageDto = {
+  /** Same filters and selected status as rows, across all pages. */
+  sums: { withheld: string };
   rows: WhtCertificateHandoffListRowDto[];
+  /** Readable payment months, newest first; independent of month, form, search, status and paging. */
+  months?: string[];
   total: number;
   page: number;
   pageSize: number;
@@ -575,6 +599,8 @@ export type SetWhtHandoffPayeeAddressDto = { payeeAddress: string };
 export const WHT_HANDOFF_PAYEE_ADDRESS_MAX = 500;
 
 export type LinkExternalWhtCertificateDto = {
+  paymentDate?: string;
+  paymentId?: string;
   commandId: string;
   externalCertificateNumber: string;
   externalEvidenceRef: string;
@@ -589,17 +615,17 @@ export type RemoveExternalWhtCertificateDto = { commandId: string; expectedUpdat
 
 export const WHT_EXTERNAL_RECORD_WORDS = {
   removePermissionDenied: 'คุณไม่มีสิทธิ์ลบการบันทึกนี้ ให้ผู้ที่บันทึกหนังสือรับรองที่ออกเองได้ลบให้',
-  removeInvalid: 'กรุณากรอกเหตุผล 3–500 ตัวอักษร แล้วลองลบการบันทึกอีกครั้ง',
-  removeRequestInvalid: 'ข้อมูลรายการเปลี่ยนแล้ว กรุณาเปิดหน้านี้ใหม่แล้วลองลบการบันทึกอีกครั้ง',
+  removeInvalid: 'กรอกเหตุผล 3–500 ตัวอักษร แล้วลองลบการบันทึกอีกครั้ง',
+  removeRequestInvalid: 'ข้อมูลรายการเปลี่ยนแล้ว เปิดหน้านี้ใหม่แล้วลองลบการบันทึกอีกครั้ง',
   removedManually: 'ลบการบันทึกว่าออกเอง',
 
-  notLinkable: 'บันทึกไม่ได้ เพราะมีผู้ออกหรือบันทึกหนังสือรับรองของรายจ่ายนี้ไปก่อนแล้ว หรือเอกสารถูกแก้ไขหรือยกเลิก กรุณาเปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด',
+  notLinkable: 'บันทึกไม่ได้ เพราะมีผู้ออกหรือบันทึกหนังสือรับรองของรายจ่ายนี้ไปก่อนแล้ว หรือเอกสารถูกแก้ไขหรือยกเลิก เปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด',
   alreadyLinked: 'รายจ่ายนี้บันทึกหนังสือรับรองที่ออกเองไว้แล้ว ถ้าข้อมูลผิด ให้ใช้ "แก้ไขการบันทึก"',
   noChanges: 'ข้อมูลตรงกับที่บันทึกไว้อยู่แล้ว จึงไม่มีอะไรต้องแก้ไข',
-  invalid: 'ข้อมูลที่บันทึกไม่ครบหรือไม่ถูกต้อง กรุณาตรวจเลขที่ วันที่ เลขอ้างอิง และหมายเหตุ แล้วบันทึกอีกครั้ง',
-  futureDate: 'วันที่ออกต้องไม่เกินวันนี้ กรุณาเลือกวันที่แล้วบันทึกอีกครั้ง',
+  invalid: 'ข้อมูลที่บันทึกไม่ครบหรือไม่ถูกต้อง ตรวจเลขที่ วันที่ เลขอ้างอิง และหมายเหตุ แล้วบันทึกอีกครั้ง',
+  futureDate: 'วันที่ออกต้องไม่เกินวันนี้ เลือกวันที่แล้วบันทึกอีกครั้ง',
   permissionDenied: 'คุณไม่มีสิทธิ์แก้ไขการบันทึกหนังสือรับรองนี้ ให้ผู้ที่มีสิทธิ์บันทึกหนังสือรับรองที่ออกเองแก้ไขให้',
-  commandReused: 'คำขอนี้ถูกใช้บันทึกข้อมูลอื่นไปแล้ว กรุณาเปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
+  commandReused: 'คำขอนี้ถูกใช้บันทึกข้อมูลอื่นไปแล้ว เปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
 } as const;
 
 /**
@@ -827,3 +853,110 @@ export type PaginatedReviewIssuesDto = {
   page: number;
   pageSize: number;
 };
+
+
+/** The combined withholding page reads one month, with one card for each supported form. */
+export type WithholdingMonthIssueDto = {
+  id: string;
+  issueCode: string;
+  description: string;
+  severity: ReviewIssueSeverity;
+  sourceType: string | null;
+  sourceId: string | null;
+  expenseId: string | null;
+  counterpartyId: string | null;
+};
+export type WithholdingCancellationDto = {
+  filingId: string; formType: WhtFormType; sourceType: string; sourceId: string;
+  payeeName: string; payeeTaxId: string | null; withheld: string;
+  cancelledAt: string; cancelledByUserId: string | null;
+};
+export type WithholdingPaperRef = { id: string | null; kind: 'NORMAL' | 'ADDITIONAL'; sequence: number; establishmentCode: string };
+export type WithholdingMonthPaperDto = Omit<WithholdingMonthFormDto, 'papers' | 'monthTotals'> & WithholdingPaperRef & {
+  downloadedAt: string | null;
+  filedAt: string | null;
+  noticeCode: 'WHT_ADDITIONAL_SURCHARGE_MANUAL' | null;
+};
+export type WithholdingMonthFormDto = {
+  paymentBasisChanged?: boolean;
+  papers?: WithholdingMonthPaperDto[];
+  cancellations?: WithholdingCancellationDto[];
+  cancelledPayeeNames?: string[];
+  canConfirmRows?: boolean;
+  rowsConfirmation?: { userId: string; at: string; displayName?: string | null } | null;
+  rowsUncertainNotice?: string | null;
+  monthTotals?: { paymentCount: number; totalPaid: string; totalWithheld: string };
+  unfiledPaymentCount?: number;
+  establishmentCode?: string;
+  canDownload?: boolean;
+  canMarkFiled?: boolean;
+  /** False for historical papers whose original rows were never stored. */
+  rowsCertain?: boolean;
+  accountantPrepared?: boolean;
+  accountantTypes?: { incomeType: string; payeeName: string }[];
+  formType: WhtFormType;
+  periodId: string | null;
+  status: TaxPeriodStatus | null;
+  paymentCount: number;
+  totalPaid: string;
+  totalWithheld: string;
+  dueDate: string;
+  issues: WithholdingMonthIssueDto[];
+};
+export type WhtPayerMode = 'HEAD_OFFICE_PAYS_ALL' | 'EACH_BRANCH_PAYS';
+export type AnswerWhtPayerModeRequest = { mode: WhtPayerMode; effectiveFromPeriodKey?: string };
+export type WhtPayerModeDto = {
+  periodKey: string;
+  mode: WhtPayerMode | null;
+  asked: boolean;
+  firstAllowedPeriodKey: string;
+};
+export type WhtEstablishment = { kind: 'ESTABLISHMENT'; code: string; branchId: string | null; name: string };
+export type WhtPaymentEstablishment = WhtEstablishment
+  | { kind: 'SHOP_HAS_NOT_ANSWERED' }
+  | { kind: 'BRANCH_HAS_NO_CODE'; branchId: string | null };
+
+export type WithholdingMonthPaymentDto = {
+  paymentId?: string | null;
+  paper?: WithholdingPaperRef | null;
+  establishment?: WhtPaymentEstablishment;
+  id: string;
+  paymentDate: string;
+  payeeName: string;
+  formType: WhtFormType | 'PND2';
+  incomeCategoryCode: string | null;
+  incomeCategoryLabel: string | null;
+  rate: string | null;
+  paid: string;
+  withheld: string;
+  sourceType: string;
+  sourceId: string;
+  expenseId: string | null;
+  certificate: { handoffId: string; state: WhtHandoffStatus; number: string | null; canDownload: boolean } | null;
+};
+export type WithholdingMonthDto = {
+  unpaidExpenses?: { expenseId: string; payeeName: string }[];
+  paidWithoutWithholding?: { expenseId: string; payeeName: string }[];
+  /** Payments without an attested payment date have no tax month yet. */
+  undatedPayments?: { paymentId: string; expenseId: string; payeeName: string; amount: string; recordedAt: string; recordedByUserId: string }[];
+  establishments?: (WhtEstablishment & { forms: WithholdingMonthFormDto[] })[];
+  establishmentIssues?: { issueCode: 'WHT_PAYER_MODE_REQUIRED' | 'WHT_BRANCH_HAS_NO_CODE'; branchId: string | null; branchName: string; description: string; paymentCount: number; totalPaid: string; totalWithheld: string }[];
+  separatePnd2?: WithholdingMonthPaymentDto[];
+  periodKey: string;
+  forms: WithholdingMonthFormDto[];
+  payments: WithholdingMonthPaymentDto[];
+};
+export type WithholdingMonthsDto = { months: string[] };
+
+/** No system certificate until these income types can be printed on their proper form. */
+export function whtCertificateUnsupportedReason(code?: string | null, formType?: string | null): string | null {
+  if (formType === 'PND2' || code === 'WHT_INTEREST' || code === 'WHT_DIVIDEND_IND') return 'ประเภทนี้ยื่น ภ.ง.ด.2 ระบบยังออกหนังสือรับรอง 50 ทวิให้ไม่ได้ ให้ผู้ทำบัญชีออกแล้วบันทึกว่าร้านออกเอง';
+  if (code === 'WHT_DIVIDEND') return 'ระบบยังออกหนังสือรับรอง 50 ทวิสำหรับเงินปันผลไม่ได้ ให้ผู้ทำบัญชีออกแล้วบันทึกว่าร้านออกเอง';
+  return null;
+}
+export function whtFilingRouteHint(category?: { code: string; formType: string; filingRoute?: string } | null): string | null {
+  if (category?.filingRoute === 'SEPARATE_PND2') return 'ประเภทนี้ยื่น ภ.ง.ด.2 แยก ไม่อยู่ใน ภ.ง.ด.3';
+  if (category?.filingRoute !== 'ACCOUNTANT_PREPARES') return null;
+  if (category.code === 'WHT_OTHER_IND' || category.code === 'WHT_OTHER_JUR') return 'บอกผู้ทำบัญชีว่าเป็นเงินได้อะไร ผู้ทำบัญชีต้องจัดทำแบบของเดือนนี้เอง';
+  return `ระบบยังกรอกประเภทนี้ลงแบบไม่ได้ ผู้ทำบัญชีต้องจัดทำ ${category.formType === 'PND3' ? 'ภ.ง.ด.3' : 'ภ.ง.ด.53'} ของเดือนนี้เอง`;
+}

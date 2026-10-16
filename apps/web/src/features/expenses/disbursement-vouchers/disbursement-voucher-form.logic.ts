@@ -20,6 +20,12 @@ export function amountError(amount: string, outstanding: string): string | null 
 }
 /** Thousands separators, spaces and the currency sign are accepted while typing and never stored. */
 export const cleanAmountInput = (value: string) => value.replace(/[,\s฿]/g, '');
+/** How a stored amount reads while its box is not being typed in: 19400.00 → 19,400.00. Anything that is not a plain number is shown as typed. */
+export function groupAmountInput(value: string): string {
+  if (!/^\d+(\.\d*)?$/.test(value)) return value;
+  const [whole, ...rest] = value.split('.');
+  return [whole!.replace(/\B(?=(\d{3})+$)/g, ','), ...rest].join('.');
+}
 /** One document holds one branch: once a line is chosen, lines of another branch are shown as not choosable, with the reason. */
 export function lockOtherBranchRows(rows: DisbursementPayableExpense[], amounts: Record<string, string>, branchId: string | null | undefined) {
   const locked = (row: DisbursementPayableExpense) => Boolean(branchId && row.branchId && row.branchId !== branchId && amounts[row.expenseId] === undefined);
@@ -40,3 +46,7 @@ export function payeeRule(rows: DisbursementPayableExpense[]): 'none' | 'warning
 }
 export const selectionAllowed = (count: number) => count < 20;
 export const nextDraftCommand = (current: string | null, changed: boolean, mint: () => string): string => changed || !current ? mint() : current;
+
+export function skipSingleExpenseSelection(entry: DisbursementPayableExpense | null | undefined, candidates: DisbursementPayableExpense[]): boolean {
+  return Boolean(entry?.selectable && candidates.filter(row => row.payeeKey === entry.payeeKey && row.selectable).length === 1);
+}

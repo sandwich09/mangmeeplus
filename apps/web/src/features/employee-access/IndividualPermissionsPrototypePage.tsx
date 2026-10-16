@@ -5,8 +5,8 @@ import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { ALL_BRANCH_ROLE_KEYS, type EmployeeCredentialHandoff, type EmployeeSummary, type MenuDefinition, type PermissionMatrix as PermissionMatrixDto, type RoleSummary } from '@watchdog-bms/contracts';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { ALL_BRANCH_ROLE_KEYS, type CapabilityPackView, type EmployeeCredentialHandoff, type EmployeeLineLinkPackage, type EmployeeSummary, type MenuDefinition, type PermissionMatrix as PermissionMatrixDto, type RoleSummary } from '@watchdog-bms/contracts';
 import {
   BellIcon,
   CalendarIcon,
@@ -26,14 +26,21 @@ import {
 import { MangmeeBadge, MangmeeCard, MangmeeIconFrame, MangmeePage, cx, getInitials } from '@/common/components/mangmee';
 import { LoadingState } from '@/common/components/state';
 import { Modal, useConfirm } from '@/common/components/modal';
+import { FilterTabs } from '@/common/components/tabs';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useToast } from '@/common/components/toast';
+import { Notice } from '@/common/components/notice';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { BackLink } from '@/common/components/app-shell/BackLink';
+import { dangerButtonClass, primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { listBranches as listCompanyBranches, type Branch } from '../branch-settings/branches.api';
 import {
   deleteEmployeeDraft,
+  issueEmployeeLineLinkToken,
   employeeShortName,
   getAccessMatrix,
+  listCapabilityPacks,
   listEmployees,
   listRoles,
   regenerateEmployeeCredential,
@@ -41,10 +48,12 @@ import {
   updateEmployee,
 } from './employee-access.api';
 import { DisbursementVoucherAccessHint } from './DisbursementVoucherAccessHint';
+import { RoleCanDoList } from './EmployeeAccessPages';
 import { accountAccessNotice, MENU_GROUP_LABEL_TH, projectGrantedMenus } from './access-overview.model';
-import { EMPLOYEE_BRANCH_SCOPE_HELP, assignableRoleOptions, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
+import { EMPLOYEE_BRANCH_SCOPE_HELP, assignableRoleOptions, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleCanDoPacks, roleDisplayName } from './role-picker.logic';
 import { localizedErrorMessage, statusOf } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { DisplayNameHistoryDisclosure } from '../company-profile/AccountDisplayName';
 import { MemberPayoutAccountLine } from '../reimbursements/ReimbursementPayout';
 
 type SvgProps = React.SVGProps<SVGSVGElement>;
@@ -124,7 +133,7 @@ function RoleBadge({ role, withCaret = false, className }: { role: DisplayRole; 
 }
 
 function DraftBadge() {
-  return <span className="inline-flex h-7 shrink-0 items-center rounded-full border border-gray-200 bg-gray-100 px-2.5 text-xs font-extrabold text-gray-600">แบบร่าง</span>;
+  return <span className="inline-flex h-7 shrink-0 items-center rounded-full border border-gray-200 bg-gray-100 px-2.5 text-xs font-extrabold text-gray-600">ร่าง</span>;
 }
 
 function MenuIconFrame({ menu, className }: { menu: MenuDefinition; className?: string }) {
@@ -136,16 +145,15 @@ function MenuIconFrame({ menu, className }: { menu: MenuDefinition; className?: 
 }
 
 function ToggleSwitch({ checked, disabled = false, onChange, label }: { checked: boolean; disabled?: boolean; onChange?: () => void; label: string }) {
+  // The button is the 44 px target (thai-ux-standard 6.4); the track inside keeps its size.
   return (
     <button
       type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={onChange}
-      className={cx(
-        'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition',
-        checked ? 'bg-brand-500' : 'bg-gray-300',
-        disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
-      )}
+      className={cx('inline-flex h-11 w-14 shrink-0 items-center justify-center rounded-full sm:h-10', disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer')}
     >
-      <span className={cx('absolute h-5 w-5 rounded-full bg-white shadow-sm transition', checked ? 'right-0.5' : 'left-0.5')} />
+      <span className={cx('relative inline-flex h-6 w-11 items-center rounded-full transition', checked ? 'bg-brand-500' : 'bg-gray-300')}>
+        <span className={cx('absolute h-5 w-5 rounded-full bg-white shadow-sm transition', checked ? 'right-0.5' : 'left-0.5')} />
+      </span>
     </button>
   );
 }
@@ -166,23 +174,27 @@ function EmployeeRow({ employee, roles, selected, onSelect }: { employee: Employ
       type="button" onClick={onSelect}
       className={cx(
         'grid min-h-[64px] w-full grid-cols-[38px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-[11px] border px-[11px] py-2.5 text-left transition',
-        selected ? 'border-brand-300 bg-brand-25 shadow-[inset_3px_0_0_var(--color-brand-500)]' : 'border-gray-200 bg-white hover:border-brand-100 hover:bg-gray-50',
+        // The highlight says "shown at the right": true only where the two columns stand side by side.
+        selected ? 'border-gray-200 bg-white lg:border-brand-300 lg:bg-brand-25 lg:shadow-[inset_3px_0_0_var(--color-brand-500)]' : 'border-gray-200 bg-white hover:border-brand-100 hover:bg-gray-50',
       )}
     >
       <EmployeeAvatar employee={employee} color={primaryRole ? colorForRole(primaryRole) : '#667085'} active={active} />
       <span className="min-w-0">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 [overflow-wrap:anywhere] text-[14px] font-extrabold text-gray-900">{employeeShortName(employee)}</span>
-          {employee.status === 'DRAFT' ? <DraftBadge /> : <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', active ? 'bg-brand-500' : 'bg-gray-300')} />}
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="min-w-0 [overflow-wrap:anywhere] text-sm font-semibold text-gray-900">{employeeShortName(employee)}</span>
+          {/* A state is said in a word, never by a coloured dot alone (thai-ux-standard 6.3). */}
+          {employee.status === 'DRAFT' ? <DraftBadge /> : !active && <MangmeeBadge tone="slate">ปิดใช้งาน</MangmeeBadge>}
         </span>
-        <span className="mt-1 block break-words text-[12px] font-semibold text-gray-500">{employee.jobTitle || 'ยังไม่ระบุตำแหน่งงาน'}</span>
-        <span className="mt-1 block truncate text-[11px] font-semibold text-gray-400">
+        {employee.accountDisplayName && employee.accountDisplayName !== employee.displayName && <span className="mt-0.5 block break-words text-sm text-gray-500">ชื่อที่แสดง: {employee.accountDisplayName}</span>}
+        <span className="mt-0.5 block text-sm text-gray-500">{employee.lineLinked ? 'เชื่อม LINE แล้ว' : 'ยังไม่ได้เชื่อม LINE'}</span>
+        <span className="mt-0.5 block break-words text-sm text-gray-600">{employee.jobTitle || 'ยังไม่ระบุตำแหน่งงาน'}</span>
+        <span className="mt-0.5 block text-xs text-gray-500">
           {employee.branchScopeMode === 'ALL_BRANCHES' ? 'ทุกสาขา' : `${employee.branchScopeBranchIds.length} สาขา`}
         </span>
       </span>
       {roles.length > 0 && (
         <span className="col-start-2 flex min-w-0 flex-wrap gap-1">
-          {roles.map((role) => <RoleBadge key={role.id} role={role} className="max-w-full whitespace-normal [overflow-wrap:anywhere] py-1 leading-tight" />)}
+          {roles.map((role) => <RoleBadge key={role.id} role={role} className="max-w-full whitespace-normal [overflow-wrap:anywhere] py-1" />)}
         </span>
       )}
     </button>
@@ -194,13 +206,13 @@ function BranchAccessChip({ label, selected, disabled, title, onToggle }: { labe
     <button
       type="button" disabled={disabled} title={title} onClick={onToggle}
       className={cx(
-        'inline-flex h-10 max-w-full items-center gap-2 rounded-full border px-4 text-sm font-extrabold transition',
-        selected ? 'border-brand-200 bg-brand-25 text-brand-700' : 'border-gray-200 bg-white text-gray-500 hover:border-brand-100 hover:bg-gray-50',
+        'inline-flex min-h-11 max-w-full items-center gap-2 rounded-full border px-4 py-1.5 text-left text-sm font-semibold transition sm:min-h-10',
+        selected ? 'border-brand-200 bg-brand-25 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-100 hover:bg-gray-50',
         disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer',
       )}
     >
       {selected ? <CheckLineIcon className="h-4 w-4 shrink-0" /> : <PlusIcon className="h-4 w-4 shrink-0" />}
-      <span className="min-w-0 truncate">{label}</span>
+      <span className="min-w-0 break-words">{label}</span>
     </button>
   );
 }
@@ -210,17 +222,24 @@ const MVP1_INDIVIDUAL_PERMISSION_MENU_IDS = new Set<MenuDefinition['id']>([
   'dashboard', 'inbox', 'customers', 'booking', 'crmreport', 'expenses', 'salesdoc',
 ]);
 
-type SaveKey = 'role' | 'branch' | 'status';
+type SaveKey = 'role' | 'branch' | 'status' | 'line';
 
 export function IndividualPermissionsPrototypePage({ companyId, viewerPermissions = [], viewerUserId, viewerBranchIds, disbursementEntryOpen = false }: { disbursementEntryOpen?: boolean; companyId: string; viewerPermissions?: string[]; viewerUserId?: string; viewerBranchIds?: string[] }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
+  const pathname = usePathname();
+  // The opened person is in the address (`?person=`), so the phone's back gesture returns to the list.
+  const personParam = useSearchParams().get('person');
   const toast = useToast();
   // Read-only viewers hold access.employee.read without the write keys; mutation controls stay hidden.
   const canEditEmployee = viewerPermissions.includes('access.employee.update');
   const canDisableEmployee = viewerPermissions.includes('access.employee.disable');
   const canManageRoles = viewerPermissions.includes('access.role.manage');
+  const canIssueLineLink = viewerPermissions.includes('access.employee.line_link.issue');
   const canIssueCredential = viewerPermissions.includes('access.employee.credential.issue');
+  // The choices catalogue has its own read right; a reader without it keeps the menu summary alone.
+  const canReadPacks = canManageRoles || viewerPermissions.includes('access.capability_pack.read');
+  const [packs, setPacks] = useState<CapabilityPackView[] | null>(null);
   const [employees, setEmployees] = useState<EmployeeSummary[]>([]);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [matrix, setMatrix] = useState<PermissionMatrixDto | null>(null);
@@ -230,12 +249,10 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [branchError, setBranchError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'ACTIVE' | 'DRAFT' | 'INACTIVE'>('all');
   const [query, setQuery] = useState('');
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
-  const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
   const [pendingKey, setPendingKey] = useState<SaveKey | null>(null);
   const [savedAt, setSavedAt] = useState<SaveKey | null>(null);
@@ -244,25 +261,26 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
   const [handoff, setHandoff] = useState<(EmployeeCredentialHandoff & { displayName: string }) | null>(null);
+  const [lineLink, setLineLink] = useState<{ employeeId: string; companyId: string; package: EmployeeLineLinkPackage } | null>(null);
+  const [handoffCopied, setHandoffCopied] = useState(false);
   const rolePickerRef = useRef<HTMLDivElement>(null);
-  const employeeMenuRef = useRef<HTMLDivElement>(null);
   useCloseOnOutsideClick(rolePickerRef, useCallback(() => setRolePickerOpen(false), []));
-  useCloseOnOutsideClick(employeeMenuRef, useCallback(() => setEmployeeMenuOpen(false), []));
   const { confirm, confirmDialog } = useConfirm();
 
   const reload = useCallback(async () => {
     setError(null);
     setPermissionError(null);
     setBranchError(null);
-    const [employeesR, rolesR, matrixR, branchesR] = await Promise.allSettled([
+    const [employeesR, rolesR, matrixR, branchesR, packsR] = await Promise.allSettled([
       listEmployees(companyId),
       listRoles(companyId),
       getAccessMatrix(companyId),
       listCompanyBranches(companyId),
+      canReadPacks ? listCapabilityPacks(companyId) : Promise.resolve(null),
     ]);
+    setPacks(packsR.status === 'fulfilled' && packsR.value ? packsR.value.modules.flatMap((module) => module.packs) : null);
     if (employeesR.status === 'fulfilled') {
       setEmployees(employeesR.value);
-      setSelectedUserId((prev) => prev ?? employeesR.value[0]?.id ?? null);
     } else {
       setError(localizedErrorMessage(employeesR.reason, locale, { fallback: 'error.load_failed' }));
     }
@@ -285,7 +303,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
       setBranchError(localizedErrorMessage(branchesR.reason, locale, { fallback: 'error.load_failed' }));
     }
     setLoading(false);
-  }, [companyId, locale]);
+  }, [canReadPacks, companyId, locale]);
 
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => {
@@ -303,6 +321,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
       const roleMatches = roleFilter === 'all' || employee.roles.some((r) => r.id === roleFilter);
       const queryMatches = !normalizedQuery
         || employee.displayName.toLowerCase().includes(normalizedQuery)
+        || (employee.accountDisplayName ?? '').toLowerCase().includes(normalizedQuery)
         || (employee.nickname ?? '').toLowerCase().includes(normalizedQuery)
         || (employee.jobTitle ?? '').toLowerCase().includes(normalizedQuery)
         || employee.phoneNumber.toLowerCase().includes(normalizedQuery);
@@ -313,11 +332,13 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
     });
   }, [employees, query, roleFilter, statusFilter]);
 
-  const activeUserId = filteredEmployees.some((e) => e.id === selectedUserId) ? selectedUserId : filteredEmployees[0]?.id ?? null;
+  // The person in the address stays on screen whatever the list's filter says; with nobody opened, a
+  // wide screen shows the first of the list.
+  const opened = employees.find((e) => e.id === personParam) ?? null;
+  const activeUserId = opened?.id ?? filteredEmployees[0]?.id ?? null;
   useEffect(() => {
     setBranchPickerOpen(false);
     setRolePickerOpen(false);
-    setEmployeeMenuOpen(false);
   }, [activeUserId]);
   const selectedEmployee = employees.find((e) => e.id === activeUserId) ?? null;
   const selectedRoles = selectedEmployee
@@ -361,9 +382,10 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   const branchCountLabel = selectedBranchIds.length === branches.length ? 'ทุกสาขา' : `${selectedBranchIds.length} สาขา`;
 
   function selectEmployee(userId: string) {
-    setSelectedUserId(userId);
     setRolePickerOpen(false);
-    setEmployeeMenuOpen(false);
+    const url = `${pathname}?person=${encodeURIComponent(userId)}`;
+    // Below the two-column width the person is their own view: a new entry, so "back" returns to the list.
+    if (window.innerWidth < 1024) { window.history.pushState(null, '', url); window.scrollTo({ top: 0 }); } else window.history.replaceState(null, '', url);
   }
 
   const withBusy = async (key: SaveKey, fn: () => Promise<void>, done?: string) => {
@@ -382,41 +404,51 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
 
   async function toggleSelectedActive() {
     if (!selectedEmployee || selectedIsOwner || selectedIsDraft || !canDisableEmployee) return;
+    const name = employeeShortName(selectedEmployee);
+    if (selectedActive && !await confirm({ title: `ปิดใช้งาน ${name}`, message: 'เข้าสู่ระบบของร้านนี้ไม่ได้และคืนที่นั่งให้ร้าน', confirmLabel: 'ปิดใช้งาน', cancelLabel: 'ไม่ปิด', variant: 'danger' })) return;
     await withBusy('status', async () => {
-      await setEmployeeStatus(companyId, selectedEmployee.id, selectedActive ? 'SUSPENDED' : 'ACTIVE');
+      await setEmployeeStatus(companyId, selectedEmployee.id, selectedActive ? 'DISABLED' : 'ACTIVE');
       await reload();
-    }, selectedActive ? 'ระงับการใช้งานพนักงานแล้ว' : 'เปิดใช้งานพนักงานแล้ว');
+    }, selectedActive ? `ปิดใช้งาน ${name} แล้ว` : `เปิดใช้งาน ${name} แล้ว`);
   }
 
   function editSelectedEmployee() {
     // The wizard always saves roleIds and the API rejects any role write on an OWNER target, so
     // an owner row has no non-403 edit path (spec R5) — same guard as deleteSelectedEmployee.
     if (!selectedEmployee || selectedIsOwner || !canEditEmployee) return;
-    setEmployeeMenuOpen(false);
     router.push(`/companies/${companyId}/settings/employees?edit=${encodeURIComponent(selectedEmployee.id)}`);
   }
 
   async function deleteSelectedEmployee() {
-    if (!selectedEmployee || selectedIsOwner || !canDisableEmployee || busy) return;
-    const isDraft = selectedEmployee.status === 'DRAFT';
-    const confirmation = isDraft
-      ? `ลบร่างพนักงาน ${employeeShortName(selectedEmployee)} ออกจากบริษัทนี้ใช่หรือไม่? บัญชีเข้าสู่ระบบเดิมและข้อมูลบริษัทอื่นจะไม่ถูกลบ`
-      : `ปิดการใช้งานบัญชีของ ${employeeShortName(selectedEmployee)} ใช่หรือไม่?`;
-    if (!(await confirm(confirmation))) return;
+    if (!selectedEmployee || selectedIsOwner || !selectedIsDraft || !canDisableEmployee || busy) return;
+    const name = employeeShortName(selectedEmployee);
+    if (!await confirm({ title: `ลบร่างพนักงาน ${name}?`, message: 'ร่างนี้จะหายจากร้านนี้ บัญชีเข้าสู่ระบบเดิมของเขายังอยู่', confirmLabel: 'ลบร่างพนักงาน', cancelLabel: 'ไม่ลบ', variant: 'danger' })) return;
     await withBusy('status', async () => {
-      try {
-        if (isDraft) await deleteEmployeeDraft(companyId, selectedEmployee.id);
-        else await setEmployeeStatus(companyId, selectedEmployee.id, 'DISABLED');
-      } catch (e) {
-        if (isDraft && (statusOf(e) === 404 || statusOf(e) === 409)) {
-          setEmployeeMenuOpen(false);
-          await reload();
-        }
+      try { await deleteEmployeeDraft(companyId, selectedEmployee.id); }
+      catch (e) {
+        if (statusOf(e) === 404 || statusOf(e) === 409) await reload();
         throw e;
       }
-      setEmployeeMenuOpen(false);
       await reload();
-    }, isDraft ? 'ลบร่างพนักงานเรียบร้อยแล้ว' : 'ปิดการใช้งานพนักงานเรียบร้อยแล้ว');
+    }, `ลบร่างพนักงาน ${name} แล้ว`);
+  }
+
+  async function issueSelectedLineLink() {
+    if (!selectedEmployee || !canIssueLineLink || busy) return;
+    await withBusy('line', async () => {
+      const result = await issueEmployeeLineLinkToken(companyId, selectedEmployee.id);
+      setLineLink({ employeeId: selectedEmployee.id, companyId, package: result });
+    }, 'ออกลิงก์เชื่อม LINE แล้ว');
+  }
+
+  async function copyLineLink() {
+    if (!lineLink || !canIssueLineLink) return;
+    try {
+      await navigator.clipboard.writeText(lineLink.package.linkUrl);
+      toast.success('คัดลอกลิงก์แล้ว');
+    } catch {
+      setError('คัดลอกลิงก์ไม่ได้ เลือกลิงก์แล้วคัดลอกอีกครั้ง');
+    }
   }
 
   async function confirmResetPassword() {
@@ -438,6 +470,9 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
       setRolePickerOpen(false);
       return;
     }
+    const roleName = (id: string | undefined) => { const role = roles.find((item) => item.id === id); return role ? roleDisplayName(role) : 'ไม่มีบทบาท'; };
+    const personName = employeeShortName(selectedEmployee);
+    if (!await confirm({ title: `เปลี่ยนบทบาทของ ${personName}?`, message: `จาก ${roleName(selectedRoleIds[0])} เป็น ${roleName(roleId)} มีผลทันที`, confirmLabel: 'เปลี่ยนบทบาท', cancelLabel: 'ไม่เปลี่ยน', variant: 'primary' })) return;
     await withBusy('role', async () => {
       try {
         const updated = await updateEmployee(companyId, selectedEmployee.id, { roleIds: [roleId] });
@@ -452,7 +487,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
         throw e;
       }
       await reload();
-    }, 'บันทึกบทบาทพนักงานแล้ว');
+    }, `เปลี่ยนบทบาทของ ${personName} เป็น ${roleName(roleId)} แล้ว`);
   }
 
   async function toggleBranch(branchId: string) {
@@ -486,82 +521,64 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
 
   if (loading) {
     return (
-      <div className="mangmee-page">
+      <MangmeePage title="รายชื่อพนักงาน">
         <LoadingState label="กำลังโหลด..." />
-      </div>
+      </MangmeePage>
     );
   }
 
   return (
     <MangmeePage
       title="รายชื่อพนักงาน"
-      description="ดูตำแหน่งงาน และจัดการบทบาท สิทธิ์ สาขา และสถานะบัญชีของพนักงานเป็นรายคน"
+      back={opened ? <div className="lg:hidden"><BackLink href={pathname} label="กลับไปรายชื่อพนักงาน" /></div> : undefined}
       actions={viewerPermissions.includes('access.employee.create') && (
-        <Link href={`/companies/${companyId}/settings/employees`} className="mangmee-btn mangmee-btn-primary">
+        <Link href={`/companies/${companyId}/settings/employees`} className={cx(primaryButtonClass, opened && 'hidden lg:inline-flex')}>
           <PlusIcon className="h-4 w-4" /> เพิ่มพนักงาน
         </Link>
       )}
     >
-      {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      {error && <Notice tone="error">{error}</Notice>}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {([
-          { value: 'all', label: 'พนักงานทั้งหมด', count: employees.length, tone: 'slate', icon: <UserIcon className="h-5 w-5" /> },
-          { value: 'ACTIVE', label: 'ใช้งาน', count: employees.filter((employee) => employee.status === 'ACTIVE').length, tone: 'brand', icon: <CheckLineIcon className="h-5 w-5" /> },
-          { value: 'DRAFT', label: 'แบบร่าง', count: employees.filter((employee) => employee.status === 'DRAFT').length, tone: 'amber', icon: <FileIcon className="h-5 w-5" /> },
-          { value: 'INACTIVE', label: 'ปิดใช้งาน', count: employees.filter((employee) => employee.status !== 'ACTIVE' && employee.status !== 'DRAFT').length, tone: 'danger', icon: <LockIcon className="h-5 w-5" /> },
-        ] as const).map((item) => (
-          <button
-            key={item.value}
-            type="button"
-            aria-pressed={statusFilter === item.value}
-            onClick={() => setStatusFilter((current) => current === item.value ? 'all' : item.value)}
-            className={cx(
-              'mangmee-card flex h-full min-w-0 items-center gap-3 p-4 text-left transition hover:!border-brand-200',
-              statusFilter === item.value && '!border-brand-300 !bg-brand-25',
-            )}
-          >
-            <MangmeeIconFrame tone={item.tone} className="h-10 w-10 rounded-lg">
-              {item.icon}
-            </MangmeeIconFrame>
-            <span className="min-w-0">
-              <span className="block truncate text-xs font-bold text-gray-500">{item.label}</span>
-              <span className="mt-1 block text-2xl font-extrabold tabular-nums text-gray-900">{item.count}</span>
-            </span>
-          </button>
-        ))}
-      </div>
-
+      {/* The four counter cards were filters drawn as cards; the filter is said as a filter, and only when
+          the shop has someone who is not active (most shops have none). */}
+      {employees.some((employee) => employee.status !== 'ACTIVE') && (
+        <div className={cx(opened && 'hidden lg:block')}>
+          <FilterTabs aria-label="สถานะบัญชีพนักงาน" value={statusFilter} onChange={setStatusFilter} tabs={[
+            { key: 'all', label: 'ทั้งหมด', count: employees.length },
+            { key: 'ACTIVE', label: 'ใช้งาน', count: employees.filter((employee) => employee.status === 'ACTIVE').length },
+            { key: 'DRAFT', label: 'ร่าง', count: employees.filter((employee) => employee.status === 'DRAFT').length },
+            { key: 'INACTIVE', label: 'ปิดใช้งาน', count: employees.filter((employee) => employee.status !== 'ACTIVE' && employee.status !== 'DRAFT').length },
+          ]} />
+        </div>
+      )}
+      {/* Below 1024 px the list is the page and a person is their own view (list → person → back); from
+          1024 px the two stand side by side. */}
       <div className="grid min-w-0 items-start gap-5 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)]">
-        <div className="min-w-0 xl:sticky xl:top-6">
+        <div className={cx('min-w-0 xl:sticky xl:top-6', opened && 'hidden lg:block')}>
           <MangmeeCard className="p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 px-2">
-              <h2 className="text-sm font-extrabold text-gray-400">พนักงานทั้งหมด</h2>
-              <span className="text-sm font-extrabold text-gray-400">{filteredEmployees.length} คน</span>
-            </div>
+            <h2 className="px-2 text-sm font-semibold text-gray-700">พนักงาน {filteredEmployees.length} คน</h2>
 
-            <label className="relative mt-4 block">
+            <label className="relative mt-3 block">
               <SearchIcon className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <input
                 type="search" value={query} onChange={(event) => setQuery(event.target.value)}
-                className="mangmee-input h-10 rounded-lg pr-10 text-sm" style={{ paddingRight: '2.5rem' }}
+                className="mangmee-input mangmee-input-icon-end"
                 placeholder="ค้นหาชื่อ ตำแหน่งงาน หรือเบอร์โทร..."
                 aria-label="ค้นหาพนักงาน"
               />
             </label>
 
-            <div className="mt-4">
+            <div className="mt-3">
               <ThemedSelect
                 value={roleFilter}
                 onChange={(event) => setRoleFilter(event.target.value)}
                 aria-label="เลือกบทบาท"
-                className="h-10 rounded-lg text-sm font-extrabold"
               >
                 {filters.map((filter) => <option key={filter.id} value={filter.id}>{filter.name}</option>)}
               </ThemedSelect>
             </div>
 
-            <div className="mt-5 grid max-h-[min(60vh,640px)] gap-2 overflow-y-auto pr-1 xl:max-h-[calc(100dvh-320px)]">
+            <div className="mt-4 grid gap-2 lg:max-h-[min(60vh,640px)] lg:overflow-y-auto lg:pr-1 xl:max-h-[calc(100dvh-320px)]">
               {filteredEmployees.map((employee) => (
                 <EmployeeRow
                   key={employee.id} employee={employee} roles={employee.roles.map((role) => roleById.get(role.id) ?? role)}
@@ -569,44 +586,44 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                 />
               ))}
               {filteredEmployees.length === 0 && (
-                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm font-semibold text-gray-400">
-                  ไม่พบพนักงานที่ตรงกับตัวกรอง
-                </div>
+                <p className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-600">
+                  {employees.length === 0 ? 'ยังไม่มีพนักงานในร้านนี้' : 'ไม่พบพนักงานที่ตรงกับตัวกรอง ลองเปลี่ยนตัวกรองหรือคำค้น'}
+                </p>
               )}
             </div>
           </MangmeeCard>
         </div>
 
-        {!selectedEmployee ? (
-          <MangmeeCard className="p-6 text-sm text-gray-400">{employees.length === 0 ? 'ยังไม่มีพนักงานในบริษัทนี้' : 'ไม่พบพนักงานที่ตรงกับตัวกรอง กรุณาปรับตัวกรองหรือคำค้นหา'}</MangmeeCard>
-        ) : (
-          <div className="grid min-w-0 gap-5">
-            <MangmeeCard className="relative p-5">
-              <div className="flex flex-wrap items-center justify-between gap-5" data-testid="employee-detail-card">
-                <div className="flex min-w-0 flex-1 basis-64 items-center gap-4">
+        {/* Nobody to show only when the list is empty, and the list says why. */}
+        {selectedEmployee && (
+          <div className={cx('min-w-0 gap-5', opened ? 'grid' : 'hidden lg:grid')}>
+            <MangmeeCard className="relative p-4 sm:p-5">
+              <div className="grid scroll-mt-24 gap-4" data-testid="employee-detail-card">
+                <div className="flex min-w-0 items-start gap-4">
                   <EmployeeAvatar employee={selectedEmployee} color={selectedRole ? colorForRole(selectedRole) : '#667085'} active={Boolean(selectedActive)} className="h-[52px] w-[52px] rounded-xl text-lg" />
                   <div className="min-w-0">
-                    <div className="flex min-w-0 flex-wrap items-center gap-3">
-                      <h2 className="truncate text-xl font-extrabold text-gray-900">{employeeShortName(selectedEmployee)}</h2>
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                      <h2 className="min-w-0 break-words text-xl font-bold text-gray-900">{employeeShortName(selectedEmployee)}</h2>
                       <span className="flex flex-wrap gap-1.5" aria-label="บทบาทปัจจุบัน" aria-live="polite">
                         {selectedEmployee.roles.map((role) => <RoleBadge key={role.id} role={roleById.get(role.id) ?? role} />)}
                       </span>
                       {selectedIsDraft && <DraftBadge />}
                     </div>
-                    <p className="mt-1 break-words text-sm font-semibold text-gray-600">ตำแหน่งงาน: {selectedEmployee.jobTitle || 'ยังไม่ระบุ'}</p>
-                    <p className="mt-0.5 truncate text-xs font-semibold text-gray-400">{selectedEmployee.phoneNumber}</p>
+                    {selectedEmployee.accountDisplayName && selectedEmployee.accountDisplayName !== selectedEmployee.displayName && <p className="mt-1 break-words text-sm text-gray-500">ชื่อที่แสดง: {selectedEmployee.accountDisplayName}</p>}
+                    <p className="mt-1 break-words text-sm text-gray-600">ตำแหน่งงาน: {selectedEmployee.jobTitle || 'ยังไม่ระบุ'}</p>
+                    {selectedEmployee.phoneNumber && <p className="mangmee-unit mt-0.5 text-sm text-gray-600">{selectedEmployee.phoneNumber}</p>}
                     {viewerPermissions.includes('reimbursement.create') && <MemberPayoutAccountLine companyId={companyId} memberUserId={selectedEmployee.userId} />}
                   </div>
                 </div>
 
-                <div className="flex min-w-0 flex-wrap items-end gap-5">
+                <div className="grid gap-4 sm:grid-cols-2">
                   {selectedRoles.length > 0 && (
                     <div className="min-w-0">
                       <div className="flex min-h-5 items-center gap-2">
-                        <span className="text-xs font-bold text-gray-400">บทบาทและสิทธิ์ระบบ</span>
+                        <span className="text-sm font-semibold text-gray-700">บทบาท</span>
                         <span
                           aria-live="polite"
-                          className={cx('text-xs font-bold', savedAt === 'role' ? 'text-brand-600' : 'text-gray-400')}
+                          className={cx('text-xs font-semibold', savedAt === 'role' ? 'text-brand-700' : 'text-gray-500')}
                         >
                           {busy && pendingKey === 'role' ? 'กำลังบันทึก...' : savedAt === 'role' ? 'บันทึกแล้ว' : null}
                         </span>
@@ -621,13 +638,13 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                             type="button"
                             disabled={busy}
                             onClick={() => setRolePickerOpen((open) => !open)}
-                            className="inline-flex min-h-9 max-w-full items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1 hover:border-brand-200 hover:bg-brand-25 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="inline-flex min-h-11 max-w-full items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1 hover:border-brand-200 hover:bg-brand-25 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10"
                             aria-haspopup="listbox"
                             aria-label="เปลี่ยนบทบาทพนักงาน"
                             aria-expanded={rolePickerOpen}
                           >
-                            <span className="max-w-52 text-left text-sm font-extrabold text-gray-700 [overflow-wrap:anywhere]">{selectedRoleNames}</span>
-                            <ChevronDownIcon className="h-4 w-4 shrink-0 text-gray-400" />
+                            <span className="max-w-52 text-left text-sm font-semibold text-gray-800 [overflow-wrap:anywhere]">{selectedRoleNames}</span>
+                            <ChevronDownIcon className="h-4 w-4 shrink-0 text-gray-500" />
                           </button>
                         )}
                         {rolePickerOpen && !rolePickerReadOnly && (
@@ -636,7 +653,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                               <button
                                 key={role.id} type="button" role="option" aria-selected={selectedRoleIds.length === 1 && selectedRoleIds[0] === role.id} disabled={busy} aria-busy={Boolean(busy)}
                                 onClick={() => void changeSelectedRole(role.id)}
-                                className={cx('flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-extrabold hover:bg-gray-50 disabled:opacity-60', selectedRoleIds.includes(role.id) ? 'text-brand-700' : 'text-gray-700')}
+                                className={cx('flex min-h-11 w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-semibold hover:bg-gray-50 disabled:opacity-60', selectedRoleIds.includes(role.id) ? 'text-brand-700' : 'text-gray-700')}
                               >
                                 <span className="min-w-0 [overflow-wrap:anywhere]">{roleDisplayName(role)}</span>
                                 {selectedRoleIds.includes(role.id) && <CheckLineIcon className="h-4 w-4 shrink-0" />}
@@ -646,150 +663,149 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                         )}
                       </div>
                       {selectedIsOwner
-                        ? <p className="mt-1 text-xs font-semibold text-gray-400">{`บทบาท${THAI_SYSTEM_ROLE_NAMES.OWNER}เปลี่ยนไม่ได้`}</p>
+                        ? <p className="mt-1 text-sm text-gray-500">{`บทบาท${THAI_SYSTEM_ROLE_NAMES.OWNER}เปลี่ยนไม่ได้`}</p>
                         : isSelfEmployee(selectedEmployee, viewerUserId)
-                          ? <p className="mt-1 text-xs font-semibold text-gray-400">บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</p>
-                          : <p className="mt-1 text-xs font-semibold text-gray-400">พนักงานมีได้ 1 บทบาท หากต้องการเพิ่มสิทธิ์ให้แก้ที่บทบาทและสิทธิ์</p>}
+                          ? <p className="mt-1 text-sm text-gray-500">บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</p>
+                          : <p className="mt-1 text-sm text-gray-500">1 คนมี 1 บทบาท</p>}
                       {selectedEmployee.roles.length > 1 && (
-                        <p role="status" className="mt-1 text-xs font-semibold text-warning-700">ข้อมูลเดิมมีหลายบทบาท ให้ผู้มีสิทธิ์เลือก 1 บทบาทเพื่อแทนที่ทั้งหมด</p>
+                        <p role="status" className="mt-1 text-sm text-warning-700">ข้อมูลเดิมมีหลายบทบาท ให้ผู้มีสิทธิ์เลือก 1 บทบาทเพื่อแทนที่ทั้งหมด</p>
                       )}
                     </div>
                   )}
 
-                  <div className="flex items-end gap-3">
-                    <span className="text-sm font-semibold text-gray-500">
-                      <span className="flex min-h-5 items-center gap-2">
-                        <span className="text-xs font-bold text-gray-400">สถานะบัญชี</span>
-                        <span
-                          aria-live="polite"
-                          className={cx('text-xs font-bold', savedAt === 'status' ? 'text-brand-600' : 'text-gray-400')}
-                        >
-                          {busy && pendingKey === 'status' ? 'กำลังบันทึก...' : savedAt === 'status' ? 'บันทึกแล้ว' : null}
-                        </span>
+                  <div className="min-w-0">
+                    <div className="flex min-h-5 items-center gap-2">
+                      <span className="text-sm font-semibold text-gray-700">สถานะบัญชี</span>
+                      <span
+                        aria-live="polite"
+                        className={cx('text-xs font-semibold', savedAt === 'status' ? 'text-brand-700' : 'text-gray-500')}
+                      >
+                        {busy && pendingKey === 'status' ? 'กำลังบันทึก...' : savedAt === 'status' ? 'บันทึกแล้ว' : null}
                       </span>
-                      <MangmeeBadge tone={selectedIsDraft ? 'amber' : selectedActive ? 'brand' : 'danger'} className="mt-1">
-                        {selectedIsDraft ? 'แบบร่าง' : selectedActive ? 'ใช้งาน' : 'ปิดใช้งาน'}
+                    </div>
+                    <div className="mt-1 flex min-h-11 items-center gap-3 sm:min-h-10">
+                      <MangmeeBadge tone={selectedIsDraft ? 'amber' : selectedActive ? 'brand' : 'danger'}>
+                        {selectedIsDraft ? 'ร่าง' : selectedActive ? 'ใช้งาน' : 'ปิดใช้งาน'}
                       </MangmeeBadge>
-                    </span>
-                    {canDisableEmployee && <ToggleSwitch checked={Boolean(selectedActive)} disabled={selectedIsOwner || selectedIsDraft || busy} onChange={() => void toggleSelectedActive()} label="เปิดปิดสถานะบัญชี" />}
-                    {!selectedIsOwner && (canEditEmployee || canDisableEmployee || canIssueCredential) && (
-                      <div className="relative" ref={employeeMenuRef}>
-                        <button
-                          type="button" onClick={() => setEmployeeMenuOpen((open) => !open)}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
-                          aria-label="เมนูพนักงาน"
-                          aria-haspopup="menu"
-                          aria-expanded={employeeMenuOpen}
-                        >
-                          <HorizontalDotsIcon className="h-5 w-5" />
-                        </button>
-                        {employeeMenuOpen && (
-                          <div role="menu" className="fixed inset-x-4 bottom-4 z-20 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 text-sm font-extrabold shadow-lg sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-10 sm:w-52">
-                            {canEditEmployee && <button type="button" role="menuitem" disabled={busy} aria-busy={Boolean(busy)} onClick={editSelectedEmployee} className="w-full px-3 py-2 text-left text-gray-700 hover:bg-gray-50 disabled:opacity-50">แก้ไขข้อมูลพนักงาน</button>}
-                            {canIssueCredential && <button type="button" role="menuitem" disabled={busy} onClick={() => { setEmployeeMenuOpen(false); setResetError(null); setResetTarget(selectedEmployee); }} className="w-full px-3 py-2 text-left text-gray-700 hover:bg-gray-50 disabled:opacity-50">รีเซ็ตรหัสผ่าน</button>}
-                            {canDisableEmployee && <button type="button" role="menuitem" disabled={busy} aria-busy={Boolean(busy)} onClick={() => void deleteSelectedEmployee()} className="w-full px-3 py-2 text-left text-error-700 hover:bg-error-50 disabled:opacity-50">{selectedIsDraft ? 'ลบร่างพนักงาน' : 'ลบพนักงาน'}</button>}
-                          </div>
-                        )}
+                      {canDisableEmployee && <ToggleSwitch checked={Boolean(selectedActive)} disabled={selectedIsOwner || selectedIsDraft || busy} onChange={() => void toggleSelectedActive()} label="ใช้งาน / ปิดใช้งาน" />}
+                    </div>
+                  </div>
+                </div>
+                {canEditEmployee && <DisplayNameHistoryDisclosure key={`${companyId}:${selectedEmployee.userId}`} companyId={companyId} userId={selectedEmployee.userId} />}
+                {(canIssueLineLink || !selectedIsOwner && (canEditEmployee || canDisableEmployee || canIssueCredential)) && (
+                  <ActionGroup align="start">
+                    {!selectedIsOwner && canDisableEmployee && selectedIsDraft && <button type="button" className={dangerButtonClass} disabled={busy} aria-busy={Boolean(busy && pendingKey === 'status')} onClick={() => void deleteSelectedEmployee()}>ลบร่างพนักงาน</button>}
+                    {!selectedIsOwner && canIssueCredential && <button type="button" className={secondaryButtonClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => { setResetError(null); setResetTarget(selectedEmployee); }}>รีเซ็ตรหัสผ่าน</button>}
+                    {!selectedIsOwner && canEditEmployee && <button type="button" className={secondaryButtonClass} disabled={busy} aria-busy={Boolean(busy)} onClick={editSelectedEmployee}>แก้ไขข้อมูล</button>}
+                    {canIssueLineLink && <button type="button" className={secondaryButtonClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void issueSelectedLineLink()}>ออกลิงก์เชื่อม LINE</button>}
+                    {canIssueLineLink && lineLink?.employeeId === selectedEmployee.id && lineLink.companyId === companyId && <button type="button" className={secondaryButtonClass} onClick={() => void copyLineLink()}>คัดลอกลิงก์</button>}
+                  </ActionGroup>
+                )}
+                {canIssueLineLink && (
+                  <div className="space-y-3">
+                    {lineLink?.employeeId === selectedEmployee.id && lineLink.companyId === companyId && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-900" htmlFor="employee-line-link">ลิงก์เชื่อม LINE</label>
+                        <input id="employee-line-link" className="mangmee-input mt-1 w-full" readOnly value={lineLink.package.linkUrl} onFocus={(event) => event.target.select()} />
+                        <p className="mt-1 text-sm text-gray-500">ใช้ได้ 15 นาที · หมดอายุ {formatThaiDateTime(lineLink.package.expiresAt)}</p>
                       </div>
                     )}
                   </div>
-                </div>
+                )}
               </div>
             </MangmeeCard>
 
-            <MangmeeCard className="p-5 sm:p-6">
+            <MangmeeCard className="p-4 sm:p-6">
               <div data-testid="access-permission-summary">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <h2 className="text-xl font-extrabold text-gray-900">สิทธิ์การใช้งานของ {employeeShortName(selectedEmployee)}</h2>
-                  {selectedIsOwner ? (
-                    <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-gray-500">
-                      {`สิทธิ์มาจากบทบาท${THAI_SYSTEM_ROLE_NAMES.OWNER} — ปรับสิทธิ์ไม่ได้`}
-                    </p>
-                  ) : (
-                    <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                      <p className="max-w-4xl text-sm font-semibold leading-6 text-gray-500">
-                        สิทธิ์มาจากบทบาท {selectedRoleNames || '—'}
-                        {selectedEmployee.roles.length > 1
-                          ? ' — ระบบรวมสิทธิ์จากทุกบทบาท'
-                          : ' — พนักงานทุกคนที่ใช้บทบาทนี้ได้สิทธิ์ชุดเดียวกัน'}
-                      </p>
-                      {canManageRoles && (
-                        <Link href={`/companies/${companyId}/settings/permissions`} className="text-sm font-extrabold text-brand-700 hover:underline">
-                          แก้สิทธิ์ของบทบาท →
-                        </Link>
-                      )}
-                    </div>
-                  )}
-                  <p className="mt-2 max-w-4xl text-xs font-semibold leading-5 text-gray-400">
-                    {accountAccessNotice(selectedEmployee.status)}
+                <h2 className="break-words text-lg font-bold text-gray-900">สิทธิ์ของ {employeeShortName(selectedEmployee)}</h2>
+                {selectedEmployee.accountDisplayName && selectedEmployee.accountDisplayName !== selectedEmployee.displayName && <p className="mt-1 break-words text-sm text-gray-500">ชื่อที่แสดง: {selectedEmployee.accountDisplayName}</p>}
+                <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                  <p className="min-w-0 text-sm text-gray-600">
+                    {selectedIsOwner
+                      ? `สิทธิ์มาจากบทบาท${THAI_SYSTEM_ROLE_NAMES.OWNER} ปรับไม่ได้`
+                      : `สิทธิ์มาจากบทบาท ${selectedRoleNames || 'ที่ยังไม่ได้กำหนด'}${selectedEmployee.roles.length > 1 ? ' ระบบรวมสิทธิ์จากทุกบทบาท' : ''}`}
                   </p>
-                  <p className="mt-1 max-w-4xl text-xs leading-5 text-gray-400">
+                  {!selectedIsOwner && canManageRoles && selectedRole && (
+                    <Link href={`/companies/${companyId}/settings/permissions?role=${encodeURIComponent(selectedRole.id)}`} className={secondaryButtonClass}>แก้สิทธิ์ของบทบาท</Link>
+                  )}
+                </div>
+                {selectedEmployee.status !== 'ACTIVE' && (
+                  <p className="mt-2 text-sm text-warning-700">{accountAccessNotice(selectedEmployee.status)}</p>
+                )}
+
+                {/* What the person can do, in plain sentences, limited to what the shop's package has. Shown
+                    to a reader who may open the choices; anyone else gets the menu summary alone, which
+                    says it is not the whole. */}
+                {packs && selectedRoles.length > 0 && (
+                  <div className="mt-4" data-testid="person-can-do">
+                    <h3 className="text-sm font-semibold text-gray-900">ทำอะไรได้</h3>
+                    <RoleCanDoList packs={roleCanDoPacks(selectedRoles.flatMap((role) => role.permissionKeys), packs)} corePacks={packs.filter((pack) => pack.isCore && !pack.locked)} />
+                  </div>
+                )}
+
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold text-gray-900">สิทธิ์เข้าถึงเมนู</h3>
+                  {!permissionError && accessProjection.complete && (
+                    <MangmeeBadge tone="brand" className="shrink-0 tabular-nums">
+                      แสดงสิทธิ์ {accessProjection.grantedCount} เมนู
+                    </MangmeeBadge>
+                  )}
+                </div>
+                {!packs && !permissionError && (
+                  <p className="mt-1 text-sm text-gray-500">
                     หน้านี้สรุปเฉพาะเมนูในตารางสิทธิ์ ไม่ใช่สิทธิ์ทั้งหมดของบทบาท
                   </p>
-                </div>
-                {!permissionError && accessProjection.complete && (
-                  <MangmeeBadge tone="brand" className="shrink-0 tabular-nums">
-                    แสดงสิทธิ์ {accessProjection.grantedCount} เมนู
-                  </MangmeeBadge>
                 )}
-              </div>
 
-              <div className="mt-5 grid gap-4">
+              <div className="mt-3 grid gap-4">
                 {permissionError ? (
-                  <div role="alert" data-testid="access-permission-error" className="rounded-xl border border-error-200 bg-error-50 p-4">
-                    <p className="text-sm font-extrabold text-error-700">โหลดข้อมูลสิทธิ์ไม่สำเร็จ จึงยังสรุปสิทธิ์ไม่ได้</p>
-                    <p className="mt-1 text-xs font-semibold text-error-600">{permissionError}</p>
-                    <button type="button" onClick={() => void reload()} className="mt-3 text-sm font-extrabold text-error-700 hover:underline">
-                      ลองโหลดใหม่
-                    </button>
+                  <div data-testid="access-permission-error">
+                    <Notice tone="error" action={<button type="button" className={secondaryButtonClass} onClick={() => void reload()}>ลองอีกครั้ง</button>}>
+                      โหลดข้อมูลสิทธิ์ไม่สำเร็จ จึงยังสรุปสิทธิ์ไม่ได้
+                    </Notice>
                   </div>
                 ) : selectedEmployee.roles.length === 0 ? (
-                  <p className="rounded-xl bg-gray-50 p-4 text-sm font-semibold text-gray-500">
+                  <p className="rounded-xl bg-gray-50 p-4 text-sm text-gray-600">
                     ยังไม่ได้กำหนดบทบาท จึงยังไม่มีข้อมูลสิทธิ์
                   </p>
                 ) : !accessProjection.complete ? (
-                  <div role="alert" data-testid="access-permission-error" className="rounded-xl border border-error-200 bg-error-50 p-4">
-                    <p className="text-sm font-extrabold text-error-700">ข้อมูลบทบาทกับสิทธิ์ไม่ตรงกัน กรุณาลองโหลดใหม่</p>
-                    <button type="button" onClick={() => void reload()} className="mt-3 text-sm font-extrabold text-error-700 hover:underline">
-                      ลองโหลดใหม่
-                    </button>
+                  <div data-testid="access-permission-error">
+                    <Notice tone="error" action={<button type="button" className={secondaryButtonClass} onClick={() => void reload()}>ลองอีกครั้ง</button>}>
+                      ข้อมูลบทบาทกับสิทธิ์ไม่ตรงกัน โหลดอีกครั้ง
+                    </Notice>
                   </div>
                 ) : accessProjection.groups.length === 0 ? (
-                  <p className="rounded-xl bg-gray-50 p-4 text-sm font-semibold text-gray-500">
+                  <p className="rounded-xl bg-gray-50 p-4 text-sm text-gray-600">
                     ไม่มีสิทธิ์ในเมนูที่สรุปในตารางนี้
                   </p>
                 ) : accessProjection.groups.map(({ group, menus: groupMenus }) => (
                   <div key={group} className="grid gap-1">
-                    <h3 className="px-3 text-xs font-extrabold uppercase tracking-wide text-gray-400">{MENU_GROUP_LABEL_TH[group]}</h3>
+                    <h4 className="text-sm font-semibold text-gray-500">{MENU_GROUP_LABEL_TH[group]}</h4>
                     {group === 'fin' && <DisbursementVoucherAccessHint entryOpen={disbursementEntryOpen} />}
                     {groupMenus.map(({ menu, labels }) => (
                       <div
                         key={menu.id}
                         data-testid="access-permission-row"
                         data-menu-id={menu.id}
-                        className="grid min-w-0 gap-3 rounded-xl bg-white px-3 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,auto)] sm:items-center"
+                        className="grid min-w-0 gap-2 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(220px,auto)] sm:items-center"
                       >
                         <div className="flex min-w-0 items-start gap-3">
                           <MenuIconFrame menu={menu} className="h-8 w-8" />
-                          <span data-testid="access-permission-menu-label" className="min-w-0 whitespace-normal break-words text-sm font-extrabold leading-6 text-gray-900">
+                          <span data-testid="access-permission-menu-label" className="min-w-0 whitespace-normal break-words text-sm font-semibold leading-6 text-gray-900">
                             {menu.labelTh}
                           </span>
                         </div>
-                        <div className="min-w-0 sm:text-right">
-                          <span className="block text-[11px] font-bold text-gray-400">สิทธิ์ที่มี</span>
-                          <div
-                            data-testid="access-permission-actions"
-                            aria-label={`สิทธิ์ที่มีสำหรับ ${menu.labelTh}`}
-                            className="mt-1 flex flex-wrap gap-x-3 gap-y-1 sm:justify-end"
-                          >
-                            {labels.map((label) => (
-                              <span key={label} className="inline-flex items-center gap-1 text-sm font-extrabold text-brand-700">
-                                <CheckLineIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                                {label}
-                              </span>
-                            ))}
-                          </div>
+                        <div
+                          data-testid="access-permission-actions"
+                          aria-label={`สิทธิ์ที่มีสำหรับ ${menu.labelTh}`}
+                          className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 pl-11 sm:justify-end sm:pl-0"
+                        >
+                          {labels.map((label) => (
+                            <span key={label} className="inline-flex items-center gap-1 text-sm font-semibold text-brand-700">
+                              <CheckLineIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                              {label}
+                            </span>
+                          ))}
                         </div>
                       </div>
                     ))}
@@ -800,37 +816,30 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
             </MangmeeCard>
 
             {branchError ? (
-              <MangmeeCard className="p-5 sm:p-6">
-                <div role="alert" data-testid="branch-access-error" className="rounded-xl border border-error-200 bg-error-50 p-4">
-                  <h2 className="text-xl font-extrabold text-gray-900">สาขาที่เข้าถึงได้</h2>
-                  <p className="mt-2 text-sm font-extrabold text-error-700">โหลดข้อมูลสาขาไม่สำเร็จ จึงยังสรุปขอบเขตสาขาไม่ได้</p>
-                  <p className="mt-1 text-xs font-semibold text-error-600">{branchError}</p>
-                  <button type="button" onClick={() => void reload()} className="mt-3 text-sm font-extrabold text-error-700 hover:underline">
-                    ลองโหลดใหม่
-                  </button>
+              <MangmeeCard className="p-4 sm:p-6">
+                <div data-testid="branch-access-error">
+                  <h2 className="text-lg font-bold text-gray-900">สาขาที่เข้าถึงได้</h2>
+                  <Notice tone="error" className="mt-3" action={<button type="button" className={secondaryButtonClass} onClick={() => void reload()}>ลองอีกครั้ง</button>}>
+                    โหลดข้อมูลสาขาไม่สำเร็จ จึงยังบอกสาขาไม่ได้
+                  </Notice>
                 </div>
               </MangmeeCard>
             ) : branches.length > 0 && (
-              <MangmeeCard className="p-5 sm:p-6">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <h2 className="text-xl font-extrabold text-gray-900">สาขาที่เข้าถึงได้</h2>
-                    <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-gray-500">
-                      {`${THAI_SYSTEM_ROLE_NAMES.OWNER}กำหนดสาขาที่พนักงานคนนี้เข้าถึง · เวลาเขาล็อกอินจะเห็นเฉพาะสาขาที่ได้รับมอบหมาย (อย่างน้อย 1 สาขา)`}
-                    </p>
-                  </div>
+              <MangmeeCard className="p-4 sm:p-6">
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                  <h2 className="text-lg font-bold text-gray-900">สาขาที่เข้าถึงได้</h2>
                   <div className="flex shrink-0 items-center gap-3">
                     {(busy && pendingKey === 'branch' || savedAt === 'branch') && <span
                       aria-live="polite"
-                      className={cx('text-xs font-bold', savedAt === 'branch' ? 'text-brand-600' : 'text-gray-400')}
+                      className={cx('text-xs font-semibold', savedAt === 'branch' ? 'text-brand-700' : 'text-gray-500')}
                     >
                       {busy && pendingKey === 'branch' ? 'กำลังบันทึก...' : 'บันทึกแล้ว'}
                     </span>}
-                    <span data-testid="employee-branch-count" className="rounded-full bg-blue-light-50 px-4 py-2 text-sm font-extrabold tabular-nums text-blue-light-500">{branchCountLabel}</span>
                   </div>
                 </div>
+                {canEditBranchScope && <p className="mt-1 text-sm text-gray-600">เขาเห็นข้อมูลเฉพาะสาขาที่เลือก ต้องมีอย่างน้อย 1 สาขา</p>}
 
-                {canEditBranchScope && <div className="mangmee-segmented mt-5">
+                {canEditBranchScope && <div className="mangmee-segmented mt-4">
                   <button
                     type="button"
                     disabled={busy || viewerBranchIds !== undefined} aria-busy={Boolean(busy)}
@@ -857,20 +866,24 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   </button>
                 </div>}
 
+                {/* "ทุกสาขา" is said as a word only here, where the branches themselves are folded away. */}
                 {!canEditBranchScope && selectedEmployee.branchScopeMode === 'ALL_BRANCHES' && (
-                  <button
-                    type="button"
-                    className="mangmee-btn mangmee-btn-secondary mt-5"
-                    aria-expanded={branchPickerOpen}
-                    aria-controls="employee-accessible-branches"
-                    onClick={() => setBranchPickerOpen((open) => !open)}
-                  >
-                    {branchPickerOpen ? 'ซ่อนรายชื่อสาขา' : 'ดูสาขาที่เข้าถึง'}
-                  </button>
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <span data-testid="employee-branch-count" className="rounded-full bg-blue-light-50 px-3 py-1 text-sm font-semibold tabular-nums text-blue-light-500">{branchCountLabel}</span>
+                    <button
+                      type="button"
+                      className="mangmee-btn mangmee-btn-secondary"
+                      aria-expanded={branchPickerOpen}
+                      aria-controls="employee-accessible-branches"
+                      onClick={() => setBranchPickerOpen((open) => !open)}
+                    >
+                      {branchPickerOpen ? 'ซ่อนรายชื่อสาขา' : 'ดูสาขาที่เข้าถึง'}
+                    </button>
+                  </div>
                 )}
 
                 {(selectedEmployee.branchScopeMode === 'SELECTED_BRANCHES' || branchPickerOpen) && (
-                  <div id="employee-accessible-branches" className="mt-5 flex min-w-0 flex-wrap gap-2">
+                  <div id="employee-accessible-branches" className="mt-4 flex min-w-0 flex-wrap gap-2">
                     {branches.filter((branch) => selectedBranchIds.includes(branch.id) || (canEditBranchScope && (viewerBranchIds === undefined || viewerBranchIds.includes(branch.id)))).map((branch) => {
                       const selected = selectedBranchIds.includes(branch.id);
                       const lastBranchLocked = selected && selectedBranchIds.length === 1;
@@ -883,21 +896,21 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                           onToggle={() => void toggleBranch(branch.id)}
                         />
                       ) : (
-                        <span key={branch.id} className="inline-flex h-10 max-w-full items-center gap-2 rounded-full border border-brand-200 bg-brand-25 px-4 text-sm font-extrabold text-brand-700">
+                        <span key={branch.id} className="inline-flex min-h-10 max-w-full items-center gap-2 rounded-full border border-brand-200 bg-brand-25 px-4 py-1.5 text-sm font-semibold text-brand-700">
                           <CheckLineIcon className="h-4 w-4 shrink-0" />
-                          <span className="min-w-0 truncate">{branch.name}</span>
+                          <span className="min-w-0 break-words">{branch.name}</span>
                         </span>
                       );
                     })}
                   </div>
                 )}
                 {branchPickerLocked && (
-                  <p className="mt-3 text-sm font-semibold text-gray-400">
+                  <p className="mt-3 text-sm text-gray-600">
                     บทบาท {allBranchRoles.map((role) => roleDisplayName(role)).join(', ')} ต้องเห็นข้อมูลทุกสาขา จึงจำกัดสาขาไม่ได้
                   </p>
                 )}
                 {viewerBranchIds !== undefined && (
-                  <p className="mt-3 text-sm font-semibold text-gray-500">
+                  <p className="mt-3 text-sm text-gray-600">
                     {EMPLOYEE_BRANCH_SCOPE_HELP}
                   </p>
                 )}
@@ -909,67 +922,54 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
 
       <Modal
         open={resetTarget !== null}
-        title="รีเซ็ตรหัสผ่านพนักงาน"
+        title={`รีเซ็ตรหัสผ่านของ ${resetTarget ? employeeShortName(resetTarget) : ''}?`}
         size="sm"
         onClose={() => { if (!resetting) { setResetTarget(null); setResetError(null); } }}
         footer={(
           <>
-            <button
-              type="button" disabled={resetting} onClick={() => setResetTarget(null)}
-              className="inline-flex h-10 items-center rounded-lg border border-gray-200 bg-white px-4 text-sm font-extrabold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            >
-              ยกเลิก
-            </button>
-            <button
-              type="button" disabled={resetting} aria-busy={Boolean(resetting)} onClick={() => void confirmResetPassword()}
-              className="inline-flex h-10 items-center rounded-lg bg-brand-600 px-4 text-sm font-extrabold text-white hover:bg-brand-700 disabled:opacity-50"
-            >
-              {resetting ? 'กำลังรีเซ็ต...' : 'ยืนยันรีเซ็ตรหัสผ่าน'}
-            </button>
+            <button type="button" disabled={resetting} onClick={() => setResetTarget(null)} className={secondaryButtonClass}>ไม่รีเซ็ต</button>
+            <button type="button" disabled={resetting} aria-busy={Boolean(resetting)} onClick={() => void confirmResetPassword()} className={primaryButtonClass}>รีเซ็ตรหัสผ่าน</button>
           </>
         )}
       >
         <div className="space-y-3">
-          {resetError && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{resetError}</div>}
-          <p className="text-sm font-semibold text-gray-700">
-            ยืนยันรีเซ็ตรหัสผ่านของ <span className="font-extrabold text-gray-900">{resetTarget ? employeeShortName(resetTarget) : ''}</span> ใช่หรือไม่
-          </p>
-          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-            รหัสผ่านเดิมจะใช้งานไม่ได้ทันที และพนักงานต้องตั้งรหัสผ่านใหม่เมื่อเข้าสู่ระบบครั้งถัดไป
-          </p>
+          {resetError && <Notice tone="error">{resetError}</Notice>}
+          <p className="text-sm text-gray-700">รหัสผ่านเดิมใช้ไม่ได้ทันที เขาต้องตั้งรหัสใหม่เมื่อเข้าสู่ระบบครั้งถัดไป</p>
         </div>
       </Modal>
 
+      {/* Shown once and never again: a tap outside must not lose it, and it can be copied in one press. */}
       <Modal
         open={handoff !== null}
-        title="รีเซ็ตรหัสผ่านสำเร็จ"
+        title={`รหัสผ่านชั่วคราวของ ${handoff?.displayName ?? ''}`}
         size="sm"
-        onClose={() => setHandoff(null)}
+        closeOnBackdrop={false}
+        onClose={() => { setHandoff(null); setHandoffCopied(false); }}
         footer={(
-          <button
-            type="button" onClick={() => setHandoff(null)}
-            className="inline-flex h-10 items-center rounded-lg bg-brand-600 px-4 text-sm font-extrabold text-white hover:bg-brand-700"
-          >
-            ปิด
-          </button>
+          <>
+            <button type="button" onClick={() => { setHandoff(null); setHandoffCopied(false); }} className={secondaryButtonClass}>ปิด</button>
+            <button type="button" className={primaryButtonClass} onClick={() => {
+              if (!handoff) return;
+              void navigator.clipboard?.writeText(`ชื่อผู้ใช้: ${handoff.username}\nรหัสผ่าน: ${handoff.temporaryPassword}`).then(() => setHandoffCopied(true)).catch(() => setHandoffCopied(false));
+            }}>{handoffCopied ? 'คัดลอกแล้ว' : 'คัดลอกชื่อผู้ใช้และรหัสผ่าน'}</button>
+          </>
         )}
       >
         {handoff && (
           <div className="space-y-3">
-            <p className="text-sm font-semibold text-gray-700">รหัสผ่านชั่วคราวของ {handoff.displayName} — แสดงครั้งเดียวเท่านั้น</p>
-            <div className="space-y-1 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
-              <p className="font-semibold text-gray-500">ชื่อผู้ใช้: <span className="font-mono font-extrabold text-gray-900">{handoff.username}</span></p>
-              <p className="font-semibold text-gray-500">รหัสผ่าน: <span className="font-mono font-extrabold text-gray-900">{handoff.temporaryPassword}</span></p>
+            <dl className="space-y-1 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm">
+              <div className="flex flex-wrap gap-x-2"><dt className="text-gray-500">ชื่อผู้ใช้</dt><dd className="font-mono font-bold text-gray-900 [overflow-wrap:anywhere]">{handoff.username}</dd></div>
+              <div className="flex flex-wrap gap-x-2"><dt className="text-gray-500">รหัสผ่าน</dt><dd className="font-mono font-bold text-gray-900 [overflow-wrap:anywhere]">{handoff.temporaryPassword}</dd></div>
               {handoff.expiresAt && (
-                <p className="font-semibold text-gray-500">ใช้ได้ถึง: <span className="font-extrabold text-gray-900">{formatThaiDateTime(handoff.expiresAt)}</span></p>
+                <div className="flex flex-wrap gap-x-2"><dt className="text-gray-500">ใช้ได้ถึง</dt><dd className="mangmee-unit font-bold text-gray-900">{formatThaiDateTime(handoff.expiresAt)}</dd></div>
               )}
-            </div>
+            </dl>
             {/* `lineNotified` is absent on older API builds — treat that as "not delivered". */}
-            <p className={cx('rounded-lg border px-3 py-2 text-sm font-semibold', handoff.lineNotified ? 'border-brand-200 bg-brand-25 text-brand-700' : 'border-amber-200 bg-amber-50 text-amber-800')}>
+            <Notice tone={handoff.lineNotified ? 'success' : 'warning'}>
               {handoff.lineNotified
-                ? 'ส่งรหัสผ่านชั่วคราวไปที่ LINE ของพนักงานแล้ว'
-                : 'พนักงานยังไม่ได้ผูก LINE กรุณาส่งรหัสผ่านให้พนักงานโดยตรง'}
-            </p>
+                ? 'ส่งรหัสผ่านนี้ไปที่ LINE ของเขาแล้ว'
+                : 'คัดลอกแล้วส่งให้เขาเอง ปิดแล้วจะไม่แสดงอีก'}
+            </Notice>
           </div>
         )}
       </Modal>

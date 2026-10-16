@@ -1,3 +1,4 @@
+import type { AccountingCounterpartyListCounts } from '@watchdog-bms/contracts';
 import { Injectable, ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { Prisma } from '../../../generated/prisma/client';
@@ -245,7 +246,7 @@ export class PrismaAccountingRepository {
     page = 1,
     pageSize = 20,
     filter: ListCounterpartiesFilter = {},
-  ): Promise<{ data: CounterpartyListItem[]; total: number }> {
+  ): Promise<{ data: CounterpartyListItem[]; total: number; counts: AccountingCounterpartyListCounts }> {
     const skip = (page - 1) * pageSize;
     const where: any = { companyId };
     if (filter.search) {
@@ -278,9 +279,20 @@ export class PrismaAccountingRepository {
       // left out rather than guessed at — `counterpartyAddressText` may still find text in it.
       where.AND = [...(where.AND ?? []), { OR: [{ billingAddressJson: { equals: Prisma.DbNull } }, { billingAddressJson: { path: ['addressText'], equals: '' } }] }];
     }
-    const [data, total] = await Promise.all([
+    const search = filter.search?.trim();
+    // Counts describe the search across all tabs, before paging; keep the existing filter definitions.
+    const countQuery = Prisma.sql`
+      SELECT COUNT(*)::int AS "all",
+        COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM "ExpenseRecord" e WHERE e."companyId" = c."companyId" AND e."vendorCounterpartyId" = c.id))::int AS bought,
+        COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM "AccountingDocument" d WHERE d."counterpartyId" = c.id)
+          OR EXISTS (SELECT 1 FROM "AccountingPayment" p WHERE p."counterpartyId" = c.id AND p.direction = 'RECEIVED'))::int AS sold,
+        COUNT(*) FILTER (WHERE c."billingAddressJson" IS NULL OR c."billingAddressJson"->'addressText' = '""'::jsonb)::int AS "addressMissing"
+      FROM "AccountingCounterparty" c WHERE c."companyId" = ${companyId}
+      ${search ? Prisma.sql`AND (c."displayName" ILIKE ${`%${search}%`} OR c."legalName" ILIKE ${`%${search}%`} OR c."taxId" LIKE ${`%${search}%`})` : Prisma.empty}`;
+    const [data, total, counts] = await Promise.all([
       this.prisma.client.accountingCounterparty.findMany({ where, skip, take: pageSize, orderBy: { displayName: 'asc' } }),
       this.prisma.client.accountingCounterparty.count({ where }),
+      this.prisma.client.$queryRaw<AccountingCounterpartyListCounts[]>(countQuery),
     ]);
     const usageById = await this.batchCounterpartyUsageCounts(companyId, data.map((row) => row.id));
     return {
@@ -289,6 +301,7 @@ export class PrismaAccountingRepository {
         usageCounts: usageById.get(row.id) ?? { bought: 0, sold: 0 },
       })),
       total,
+      counts: counts[0]!,
     };
   }
 
@@ -331,13 +344,14 @@ export class PrismaAccountingRepository {
         where: { companyId, vendorCounterpartyId: counterpartyId },
         orderBy: { expenseDate: 'desc' },
         take: 5,
-        select: { id: true, expenseDate: true, vendorDocumentNumber: true, grandTotalAmount: true },
+        select: { id: true, expenseNumber: true, expenseDate: true, vendorDocumentNumber: true, grandTotalAmount: true },
       }),
     ]);
     return {
       usageCounts: { bought, sold },
       recentExpenses: recent.map((row) => ({
         id: row.id,
+        ...(row.expenseNumber ? { expenseNumber: row.expenseNumber } : {}),
         expenseDate: civilDate(row.expenseDate),
         ...(row.vendorDocumentNumber ? { vendorDocumentNumber: row.vendorDocumentNumber } : {}),
         grandTotalAmount: row.grandTotalAmount.toString(),

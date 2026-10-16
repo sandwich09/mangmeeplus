@@ -1,22 +1,28 @@
 'use client';
 import Link from 'next/link';
+import { AccountNameScope, useAccountDisplayName } from '@/features/company-profile/AccountNameScope';
+import { ACCOUNT_NAME_CHANGED_EVENT } from '@/features/company-profile/company-profile.api';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { COMPANY_PROFILE_SETTINGS_PATH, isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
+import { COMPANY_PROFILE_SETTINGS_PATH, COMPANY_PROFILE_SHOP_HASH, isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
 import { billingApi } from '@/features/billing/billing.api';
 import { BillingWorkspaceContext } from '@/features/billing/BillingCustomerFrame';
 import { usePathname, useRouter } from 'next/navigation';
 import { WorkspaceShell } from '@/common/components/app-shell/WorkspaceShell';
 import { stripThaiTitlePrefix } from '@/common/components/mangmee';
+import { secondaryButtonClass } from '@/common/components/button/button-classes';
 import { ForbiddenState } from '@/common/components/state';
+import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { WORKSPACE_ICON_NODES as ICON_MAP } from './design-icons';
 import type { WebSession } from '@/common/models/web-session.model';
-import { WORKSPACE_MODULES, NAV_GROUP_ORDER } from './web-core-workspace.constants';
+import { WORKSPACE_MODULES, SIDEBAR_GROUP_ORDER } from './web-core-workspace.constants';
 import {
   filterModulesByPermissions,
+  buildAccountLinks,
   buildLockedNavItems,
   buildNavItems,
   collectMenuTargets,
+  employeePageMenuKey,
   getActiveModuleKey,
   groupNavItems,
   resolveMenuKey,
@@ -76,9 +82,19 @@ const DESIGN_HANDOFF_NAV_ORDER = [
 const DESIGN_HANDOFF_NAV_RANK = new Map<string, number>(DESIGN_HANDOFF_NAV_ORDER.map((key, index) => [key, index]));
 const ACCESS_CONTEXT_POLL_MS = 60_000;
 
-export default function WorkspaceLayoutClient({ children, companyId, session }: Props) {
+export default function WorkspaceLayoutClient(props: Props) {
+  return <AccountNameScope userId={props.session.userId} displayName={props.session.displayName ?? null}><WorkspaceLayoutContent {...props} /></AccountNameScope>;
+}
+
+function WorkspaceLayoutContent({ children, companyId, session }: Props) {
   const pathname = usePathname();
   const router = useRouter();
+  useEffect(() => {
+    const refresh = () => router.refresh();
+    const legacy = () => { if (window.location.pathname === `/companies/${companyId}/settings/profile` && window.location.hash === '#account') router.replace(`/companies/${companyId}/account`); };
+    legacy(); window.addEventListener('hashchange', legacy); window.addEventListener(ACCOUNT_NAME_CHANGED_EVENT, refresh);
+    return () => { window.removeEventListener('hashchange', legacy); window.removeEventListener(ACCOUNT_NAME_CHANGED_EVENT, refresh); };
+  }, [companyId, router]);
   // The shell's single plan-term read (spec §12): the locked two-menu sidebar, its banner and the
   // renewal redirect all answer from this one notice, so no page pays for a second call.
   const [loaded, setLoaded] = useState<{ companyId: string; notice: PlanTermNotice | null } | null>(null);
@@ -138,9 +154,11 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
   // Layouts survive client navigation; resolve billing access on both entry paths. The profile joins the recovery
   // frame only for someone who may open it: anyone else is refused in the business shell, like on any other page,
   // instead of falling into the shell-less recovery view when their billing read is refused.
-  if (isBillingCustomerRecoveryPath(pathname, companyId) || (pathname === `/companies/${encodeURIComponent(companyId)}/settings/profile`
-    && canSeeRoute(COMPANY_PROFILE_SETTINGS_PATH, session.permissions)))
-    return <BillingWorkspaceLayout companyId={companyId} session={session}>{children}</BillingWorkspaceLayout>;
+  const onOwnProfilePage = pathname === `/companies/${encodeURIComponent(companyId)}/settings/profile`
+    && canSeeRoute(COMPANY_PROFILE_SETTINGS_PATH, session.permissions);
+  if (isBillingCustomerRecoveryPath(pathname, companyId) || onOwnProfilePage)
+    return <BillingWorkspaceLayout companyId={companyId} session={session}
+      shellWhenBillingRefused={onOwnProfilePage && !session.permissions.includes('company.plan.manage')}>{children}</BillingWorkspaceLayout>;
   return <BusinessWorkspaceLayout companyId={companyId} session={session} notice={notice}>{children}</BusinessWorkspaceLayout>;
 }
 
@@ -152,6 +170,7 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
  * before `PlanTermBanner` redirects it.
  */
 function LockedWorkspaceLayout({ children, companyId, session, notice }: Props & { notice: PlanTermNotice }) {
+  const displayName = useAccountDisplayName(session.displayName ?? null);
   const pathname = usePathname() ?? '';
   const navItems = useMemo(
     () => buildLockedNavItems(companyId, ICON_MAP, session.permissions),
@@ -159,15 +178,16 @@ function LockedWorkspaceLayout({ children, companyId, session, notice }: Props &
   );
 
   return (
-    <div className="[--app-header-h:112px] sm:[--app-header-h:68px]">
+    <div className="[--app-header-h:68px]">
       <WorkspaceShell
         companyName={COMPANY_NAME_PLACEHOLDER}
         companyArea={<CompanySwitcher companyId={companyId} fallbackName={COMPANY_NAME_PLACEHOLDER} />}
         banner={<PlanTermBanner companyId={companyId} notice={notice} />}
-        userName={stripThaiTitlePrefix(session.displayName) || undefined}
+        userName={stripThaiTitlePrefix(displayName) || undefined}
         userRoles={session.roles}
         userRoleNames={session.roleNames}
         showAccountSecurity={ACCOUNT_SECURITY_PERMISSIONS.some((permission) => session.permissions.includes(permission))}
+        accountLinks={buildAccountLinks(companyId, session.permissions, true)}
         locale="th"
         navItems={navItems}
         activeKey={resolveMenuKey(pathname, collectMenuTargets(navItems)) ?? undefined}
@@ -176,7 +196,7 @@ function LockedWorkspaceLayout({ children, companyId, session, notice }: Props &
           {/* F22/F20: the billing pages render inside this shell's header and sidebar, not their own
               recovery header with a "กลับหน้าเลือกบริษัท" link that loops back to /renew. */}
           <BillingWorkspaceContext.Provider value={true}>
-            {isLockedShellPath(pathname, companyId) ? children : (
+            {(pathname === `/companies/${companyId}/account` || isLockedShellPath(pathname, companyId)) ? children : (
               <p role="status" aria-live="polite" className="p-8 text-gray-500">กำลังพาไปหน้าที่ใช้ได้…</p>
             )}
           </BillingWorkspaceContext.Provider>
@@ -186,7 +206,12 @@ function LockedWorkspaceLayout({ children, companyId, session, notice }: Props &
   );
 }
 
-function BillingWorkspaceLayout({ children, companyId, session }: Props) {
+/**
+ * `shellWhenBillingRefused` (the shop details page, for a member without the package right): their billing read is
+ * refused with 403 because of the missing right, not because the shop is locked. They get the business shell, as on
+ * every other page they open, instead of a page with no menu and no way back. Every other outcome is as before.
+ */
+function BillingWorkspaceLayout({ children, companyId, session, shellWhenBillingRefused = false }: Props & { shellWhenBillingRefused?: boolean }) {
   const [view, setView] = useState<'loading' | 'workspace' | 'recovery'>('loading');
   useEffect(() => {
     let active = true;
@@ -195,15 +220,19 @@ function BillingWorkspaceLayout({ children, companyId, session }: Props) {
     // navigation may mount. Expired/held/denied companies keep the minimal exits.
     void billingApi(companyId).status().then(status => {
       if (active) setView(status.accessState === 'ACTIVE' ? 'workspace' : 'recovery');
-    }).catch(() => { if (active) setView('recovery'); });
+    }).catch((error: unknown) => {
+      if (active) setView(shellWhenBillingRefused && (error as { status?: unknown })?.status === 403 ? 'workspace' : 'recovery');
+    });
     return () => { active = false; };
-  }, [companyId]);
-  if (view === 'loading') return <p role="status" className="p-8 text-gray-500">กำลังเปิดหน้าแพ็กเกจ…</p>;
+  }, [companyId, shellWhenBillingRefused]);
+  // The same line as the shell's first read: this layout also frames the shop details page, which is not the package page.
+  if (view === 'loading') return <p role="status" className="p-8 text-gray-500">กำลังเปิดหน้า…</p>;
   if (view === 'recovery') return <>{children}</>;
   return <BillingWorkspaceContext.Provider value={true}><BusinessWorkspaceLayout companyId={companyId} session={session}>{children}</BusinessWorkspaceLayout></BillingWorkspaceContext.Provider>;
 }
 
 function BusinessWorkspaceLayout({ children, companyId, session, notice = null }: Props & { notice?: PlanTermNotice | null }) {
+  const displayName = useAccountDisplayName(session.displayName ?? null);
   const locale: SupportedLocale = 'th';
   const pathname = usePathname();
   const router = useRouter();
@@ -267,14 +296,20 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null }
   const canManageLegalIdentity = session.permissions.includes('company.legal_identity.manage');
   const profileChecklistItems = useProfileChecklist(companyId, canManageLegalIdentity);
   const setupIncomplete = profileChecklistItems !== null && !checklistIsComplete(profileChecklistItems);
+  // The mark says its word on the row it means: the shop details row, when a shop fact is the missing one.
+  const shopDetailsIncomplete = profileChecklistItems?.some((entry) => !entry.done && entry.hash === COMPANY_PROFILE_SHOP_HASH) ?? false;
 
   const navItems = useMemo(
-    () => groupNavItems(allNavItems, NAV_GROUP_ORDER)
+    () => groupNavItems(allNavItems, SIDEBAR_GROUP_ORDER)
       .flatMap((g) => g.items)
       .filter((item) => DESIGN_HANDOFF_NAV_RANK.has(item.key))
       .sort((a, b) => DESIGN_HANDOFF_NAV_RANK.get(a.key)! - DESIGN_HANDOFF_NAV_RANK.get(b.key)!)
-      .map((item) => (item.key === 'settings' && setupIncomplete ? { ...item, attention: true } : item)),
-    [allNavItems, setupIncomplete],
+      .map((item) => (item.key === 'settings' && setupIncomplete ? {
+        ...item,
+        attention: true,
+        subItems: item.subItems?.map((sub) => (sub.key === 'settings.company-profile' && shopDetailsIncomplete ? { ...sub, badgeLabel: 'ยังไม่ครบ' } : sub)),
+      } : item)),
+    [allNavItems, setupIncomplete, shopDetailsIncomplete],
   );
 
   // Resolved from the full menu list, not the design-handoff subset above: a menu the sidebar
@@ -283,23 +318,25 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null }
 
   const canAccessCurrentPath = canAccessWorkspacePath(WORKSPACE_MODULES, session.permissions, companyId, pathname);
 
-  // Keep denied pages in the shell and offer a page this session can actually open.
-  const fallbackHref = useMemo(() => {
+  // Keep denied pages in the shell and offer a page this session can actually open, named after where it goes.
+  const fallback = useMemo(() => {
     const target = filteredModules.find((module) => canAccessWorkspacePath(
       WORKSPACE_MODULES, session.permissions, companyId, module.buildHref(companyId),
     ));
-    return target?.buildHref(companyId) ?? null;
-  }, [filteredModules, session.permissions, companyId]);
+    return target ? { href: target.buildHref(companyId), label: t(target.labelKey as Parameters<typeof t>[0], locale) } : null;
+  }, [filteredModules, session.permissions, companyId, locale]);
 
-  const activeKey = getActiveModuleKey(filteredModules, companyId, pathname);
+  const activeKey = getActiveModuleKey(filteredModules, companyId, pathname) ?? employeePageMenuKey(companyId, pathname, navItems);
 
   return (
     <BranchFilterProvider companyId={companyId} onContextLoaded={applyLatestAccessContext}>
-      <div className="[--app-header-h:112px] sm:[--app-header-h:68px]">
+      <div className="[--app-header-h:68px]">
       <WorkspaceShell
         companyName={companyName}
         companyArea={
-          <div className="flex min-w-0 flex-1 flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
+          // A phone: the shop name is a small caption over the branch picker, so the top bar is 68 px at every width
+          // (it was 112 px on phones). Two buttons (several shops, or the two retries) sit side by side instead.
+          <div className="flex min-w-0 flex-1 flex-col items-stretch gap-0.5 has-[[data-company-switch]]:flex-row has-[[data-company-switch]]:items-center has-[[data-company-switch]]:gap-2 has-[[data-scope-retry]]:flex-row has-[[data-scope-retry]]:items-center has-[[data-scope-retry]]:gap-2 sm:flex-row sm:items-center sm:gap-2">
             <CompanySwitcher companyId={companyId} fallbackName={companyName} />
             <BranchSelector />
           </div>
@@ -310,18 +347,26 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null }
         // Owner decision 2026-08-15: the shell shows the person, not their คำนำหน้า. Stripped at the
         // shell boundary so the sidebar name and both avatar initials agree — the session name is
         // the global User row, which a company-scoped rename does not always reach.
-        userName={stripThaiTitlePrefix(session.displayName) || undefined}
+        userName={stripThaiTitlePrefix(displayName) || undefined}
         userRoles={session.roles}
         userRoleNames={session.roleNames}
         showAccountSecurity={ACCOUNT_SECURITY_PERMISSIONS.some((permission) => session.permissions.includes(permission))}
+        accountLinks={buildAccountLinks(companyId, session.permissions)}
         locale={locale}
         navItems={navItems}
         activeKey={activeKey ?? undefined}
       >
         <MenuFilterProvider menuKey={menuKey}>{canAccessCurrentPath ? children : (
-          <div className="mangmee-page text-center">
-            <ForbiddenState />
-            {fallbackHref && <Link className="mangmee-btn mangmee-btn-secondary" href={fallbackHref}>กลับไปหน้าที่ใช้ได้</Link>}
+          // The whole page: its title is the page's one heading, one sentence says what to do, and the way out sits
+          // right under it, compact and named after its place (thai-ux-standard §1.6, §2.3, §3.1).
+          <div className="mangmee-page">
+            <ForbiddenState
+              titleAs="h1"
+              description=""
+              packageAvailable={session.availablePermissions ? canAccessWorkspacePath(WORKSPACE_MODULES, session.availablePermissions, companyId, pathname) : undefined}
+              isOwner={session.roles.includes('OWNER')}
+              action={fallback && <Link className={secondaryButtonClass} href={fallback.href}>{`กลับไป${fallback.label}`}</Link>}
+            />
           </div>
         )}</MenuFilterProvider>
       </WorkspaceShell>

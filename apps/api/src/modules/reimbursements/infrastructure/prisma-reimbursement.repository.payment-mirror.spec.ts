@@ -220,6 +220,14 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
     // The slip is evidence of the payout and nothing else: it reaches the payment, never the expense.
     assert.deepEqual(slipLinks.map((link) => [link.attachmentId, link.targetType, link.targetId, link.purpose]),
       [[SLIP, 'reimbursement_payment', 'pay-1', 'reimbursement.payment.slip']]);
+    const { ExpenseSourceAdapter } = await import('../../tax/infrastructure/adapters/expense-source.adapter');
+    const source = new ExpenseSourceAdapter({ client: {
+      company: { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) }, whtFilingLine: { findMany: async () => [] },
+      expenseRecord: { findMany: async () => [{ id: 'exp-2', companyId: 'co-1', ...expenseUpdates[0].data,
+        expenseDate: PAID_AT, sourceReimbursementRequestId: 'rb-1', whtAmount: '3', taxableAmount: '100', netPayableAmount: '97',
+        vendorEntityKindSnapshot: 'INDIVIDUAL', lines: [], payments: [] }] },
+    } } as any);
+    assert.deepEqual(await source.findConfirmedWithWhtByCompany('co-1'), [], 'claim payout repays the employee; it is not supplier cash');
     assert.equal(expenseUpdates.length, 1);
     assert.deepEqual(expenseUpdates[0].where, { id: 'exp-2' });
     assert.deepEqual(expenseUpdates[0].data, {

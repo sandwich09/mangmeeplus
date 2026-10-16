@@ -169,22 +169,24 @@ test.describe('REIMB — reimbursements', () => {
 
   test('REIMB-01 @smoke reimbursements list renders', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/reimbursements');
-    await expect(authedPage.getByRole('heading', { name: /การเบิกจ่ายและอนุมัติ|Reimbursements/i })).toBeVisible();
-    // The third tab is the finance queue or the pay queue by the company's policy (REIMB-13).
-    for (const tab of [/รายการที่เกี่ยวข้อง|Related/i, /คิวอนุมัติ|Approval/i, /คิวการเงิน|คิวรอจ่าย/]) {
-      await expect(authedPage.getByRole('button', { name: tab })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: /^การเบิกจ่าย$|Reimbursements/i })).toBeVisible();
+    // The third tab is the finance list or the pay list by the company's policy (REIMB-13). Read inside the tab bar:
+    // the status filter of the first list has chips named รออนุมัติ/ตรวจสอบ and รอจ่าย too.
+    const nav = authedPage.getByRole('navigation', { name: 'งานเบิกจ่าย' });
+    for (const tab of [/^ใบเบิกทั้งหมด\s*\d+$/, /^รออนุมัติ\s*\d+$/, /^(รอการเงิน|รอจ่าย)\s*\d+$/]) {
+      await expect(nav.getByRole('button', { name: tab })).toBeVisible();
     }
   });
 
   // Owner's model: a finance desk exists only where the company turned the finance-review step on. The tab that holds
   // the claims waiting for payment says so: the pay queue without the step, the finance queue with it.
   test('REIMB-13 @p1 the third tab is the pay queue without a finance-review step and the finance queue with one', async ({ authedPage, api, companyId }) => {
-    for (const [financeReviewRequired, name, other] of [[false, 'คิวรอจ่าย', 'คิวการเงิน'], [true, 'คิวการเงิน', 'คิวรอจ่าย']] as const) {
+    for (const [financeReviewRequired, name, other] of [[false, 'รอจ่าย', 'รอการเงิน'], [true, 'รอการเงิน', 'รอจ่าย']] as const) {
       await withPolicy(api, companyId, { financeReviewRequired }, async () => {
         await gotoCompany(authedPage, companyId, '/reimbursements');
         const nav = authedPage.getByRole('navigation', { name: 'งานเบิกจ่าย' });
-        await expect(nav.getByRole('button', { name, exact: true })).toBeVisible();
-        await expect(nav.getByRole('button', { name: other, exact: true })).toHaveCount(0);
+        await expect(nav.getByRole('button', { name: new RegExp(`^${name}\\s*\\d+$`) })).toBeVisible();
+        await expect(nav.getByRole('button', { name: new RegExp(`^${other}\\s*\\d+$`) })).toHaveCount(0);
       });
     }
   });
@@ -270,9 +272,9 @@ test.describe('REIMB — reimbursements', () => {
       // for (payout spec §12.2): this claim asked for cash, so the form opens on เงินสด. Only a
       // claim sent before claims carried a receiving method leaves the method for its payer to pick.
       await authedPage.getByRole('button', { name: 'อนุมัติ', exact: true }).click();
-      await expect(authedPage.getByText('จ่ายเต็มจำนวนคงค้าง')).toBeVisible();
+      await expect(authedPage.getByTestId('reimbursement-payment-payee')).toContainText('77.00 บาท');
       await expect(authedPage.getByRole('combobox', { name: 'วิธีจ่าย', exact: true })).toHaveText('เงินสด');
-      await authedPage.getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
+      await authedPage.getByRole('button', { name: 'บันทึกจ่าย 77.00 บาท', exact: true }).click();
 
       await expect(authedPage.getByText('จ่ายแล้ว').first()).toBeVisible();
       await expect(authedPage).toHaveURL(url);
@@ -287,12 +289,12 @@ test.describe('REIMB — reimbursements', () => {
       const claim = await payableClaim(api, manager, companyId, '64.00');
 
       await gotoCompany(authedPage, companyId, `/reimbursements/${claim.id}`);
-      await authedPage.getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
-      await expect(authedPage.getByText('จ่ายเต็มจำนวนคงค้าง')).toBeVisible();
+      await authedPage.getByRole('button', { name: 'จ่ายเงิน', exact: true }).click();
+      await expect(authedPage.getByTestId('reimbursement-payment-payee')).toContainText('64.00 บาท');
       await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'วิธีจ่าย', exact: true }), 'โอนเงิน');
       await authedPage.getByRole('textbox', { name: 'เลขอ้างอิง', exact: true }).fill('E2E-TXN-FORM');
-      await authedPage.getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
-      await expect(authedPage.getByRole('alert').filter({ hasText: 'จ่ายด้วยการโอนต้องแนบสลิป' })).toBeVisible();
+      await authedPage.getByRole('button', { name: 'บันทึกจ่าย 64.00 บาท', exact: true }).click();
+      await expect(authedPage.getByRole('alert').filter({ hasText: 'จ่ายด้วยการโอนต้องแนบหลักฐานการจ่าย' })).toBeVisible();
 
       const transfer = { paidAmount: '64.00', currency: 'THB', paymentMethod: 'BANK_TRANSFER', paymentReference: 'E2E-TXN-API', paidAt: new Date().toISOString() };
       const refused = await api.post(`${claimUrl(companyId, claim.id)}/payments`, { data: { ...transfer, idempotencyKey: `e2e-slipless-${claim.id}` } });
@@ -306,8 +308,8 @@ test.describe('REIMB — reimbursements', () => {
       expect([payment.paymentMethod, payment.slipCount, payment.viewerCanOpenSlips]).toEqual(['BANK_TRANSFER', 1, true]);
 
       await authedPage.reload();
-      await expect(authedPage.getByText('มีสลิปแนบ 1 ไฟล์')).toBeVisible();
-      await expect(authedPage.getByRole('button', { name: 'ดูสลิป', exact: true })).toBeVisible();
+      await expect(authedPage.getByText('มีหลักฐานการจ่ายแนบ 1 ไฟล์')).toBeVisible();
+      await expect(authedPage.getByRole('button', { name: 'ดูหลักฐานการจ่าย', exact: true })).toBeVisible();
     });
   });
 
@@ -329,7 +331,7 @@ test.describe('REIMB — reimbursements', () => {
       expect((await json<{ downloadUrl: string }>(await staff.get(slip))).downloadUrl).toBeTruthy();
       const staffPage = await pageAs('STAFF');
       await gotoCompany(staffPage, companyId, `/reimbursements/${claim.id}`);
-      await expect(staffPage.getByRole('button', { name: 'ดูสลิป', exact: true })).toBeVisible();
+      await expect(staffPage.getByRole('button', { name: 'ดูหลักฐานการจ่าย', exact: true })).toBeVisible();
 
       const seen = await json<Reimbursement>(await reader.get(claimUrl(companyId, claim.id)));
       expect(seen.payments?.[0]).toMatchObject({ slipCount: 1, viewerCanOpenSlips: false, slips: [] });
@@ -339,8 +341,8 @@ test.describe('REIMB — reimbursements', () => {
       expect(await refused.text()).toContain('payment_slip_access_denied');
       const readerPage = await pageAs('COMPANY_VIEW');
       await gotoCompany(readerPage, companyId, `/reimbursements/${claim.id}`);
-      await expect(readerPage.getByText('มีสลิปแนบ 1 ไฟล์')).toBeVisible();
-      await expect(readerPage.getByRole('button', { name: 'ดูสลิป', exact: true })).toHaveCount(0);
+      await expect(readerPage.getByText('มีหลักฐานการจ่ายแนบ 1 ไฟล์')).toBeVisible();
+      await expect(readerPage.getByRole('button', { name: 'ดูหลักฐานการจ่าย', exact: true })).toHaveCount(0);
     });
   });
 
@@ -472,11 +474,15 @@ test.describe('REIMB — reimbursements', () => {
       await expect(comparison).toContainText('สิ่งที่รออนุมัติ: บัญชีรับเงินใหม่');
       await expect(comparison).toContainText('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 1234');
       await expect(comparison).toContainText('ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 4449');
-      await expect(approverPage.getByRole('button', { name: 'ปฏิเสธ', exact: true })).toHaveCount(0);
+      await expect(approverPage.getByRole('button', { name: 'ส่งกลับให้แก้', exact: true })).toHaveCount(0);
       await expect(approverPage.getByRole('button', { name: 'ส่งกลับให้แก้อีกครั้ง', exact: true })).toBeVisible();
       const approve = approverPage.getByRole('button', { name: 'อนุมัติ', exact: true });
-      await expect(approve).toBeDisabled();
-      await approverPage.getByRole('checkbox', { name: /ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก/ }).check();
+      // The button is never greyed out for the missing tick: pressed without it, the tick takes the focus and nothing is approved.
+      const attest = approverPage.getByRole('checkbox', { name: /ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก/ });
+      await approve.click();
+      await expect(attest).toBeFocused();
+      await expect(approve).toBeVisible();
+      await attest.check();
       await approve.click();
       await expect(approverPage.getByText('พร้อมจ่าย').first()).toBeVisible();
 
@@ -522,20 +528,20 @@ test.describe('REIMB — reimbursements', () => {
       await gotoCompany(authedPage, companyId, `/reimbursements/${claim.id}`);
       // The send-back is a line of text in the account box, never a button of the pay step.
       const stepCard = authedPage.locator('section[aria-labelledby="journey-step-title"]');
-      await expect(stepCard.getByRole('button', { name: 'บันทึกจ่าย', exact: true })).toBeVisible();
+      await expect(stepCard.getByRole('button', { name: 'จ่ายเงิน', exact: true })).toBeVisible();
       await expect(stepCard.getByRole('button', { name: /ส่งกลับ/ })).toHaveCount(0);
       await expect(authedPage.getByTestId('reimbursement-payout-send-back').getByRole('button', { name: 'ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง', exact: true })).toBeVisible();
       // Whoever pays is told on the misfiled file what to do with it.
       await expect(authedPage.getByTestId('reimbursement-signed-copy-misfiled-hint')).toHaveText('ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องแนบใหม่ ตอนบันทึกจ่ายเลือกไฟล์นี้เป็นสลิปได้');
 
-      await stepCard.getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
+      await stepCard.getByRole('button', { name: 'จ่ายเงิน', exact: true }).click();
       await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'วิธีจ่าย', exact: true }), 'โอนเงิน');
       await authedPage.getByRole('textbox', { name: 'เลขอ้างอิง', exact: true }).fill('E2E-TXN-PICKED');
       // The claim asked for cash: paying by transfer says why.
       await authedPage.locator('#reimbursement-payment-mismatch-reason').fill('โอนตามที่ผู้เบิกขอเปลี่ยน');
 
       const choices = authedPage.getByTestId('reimbursement-payment-slip-choices');
-      await expect(choices).toContainText('ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ');
+      await expect(choices).toContainText('ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่เซ็นครบ');
       await expect(choices.getByRole('radio')).not.toBeChecked();
       await choices.getByRole('button', { name: 'เปิดดูไฟล์นี้', exact: true }).click();
       const viewer = authedPage.getByRole('dialog');
@@ -543,8 +549,8 @@ test.describe('REIMB — reimbursements', () => {
       await viewer.getByRole('button', { name: 'ปิด' }).first().click();
       await expect(viewer).toHaveCount(0);
       await choices.getByRole('radio').check();
-      await expect(authedPage.getByTestId('reimbursement-payment-slip-move-note')).toContainText('จะย้ายออกจากรายการใบเบิกที่เซ็นแล้วมาเป็นสลิปของการจ่ายนี้ และย้ายกลับไม่ได้');
-      await authedPage.locator('form').getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
+      await expect(authedPage.getByTestId('reimbursement-payment-slip-move-note')).toContainText('จะย้ายออกจากรายการใบเบิกที่เซ็นแล้วมาเป็นหลักฐานการจ่ายนี้ และย้ายกลับไม่ได้');
+      await authedPage.locator('form').getByRole('button', { name: /^บันทึกจ่าย [\d,]+\.\d{2} บาท$/ }).click();
       await expect(authedPage.getByText('จ่ายแล้ว').first()).toBeVisible();
 
       // The payment carries that file as its slip, and the file is no signed copy any more.
@@ -615,19 +621,47 @@ for (const width of [1280, 390]) {
   test(`REIMB-HEADER keeps the primary action separate from work navigation at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     await page.setViewportSize({ width, height: 900 });
     await gotoCompany(page, companyId, '/reimbursements');
-    const create = page.getByRole('link', { name: '+ สร้างคำขอเบิก', exact: true });
+    const create = page.getByRole('link', { name: '+ สร้างใบเบิก', exact: true });
     const nav = page.getByRole('navigation', { name: 'งานเบิกจ่าย' });
     await expect(create).toHaveCount(1);
     await expect(create).toBeVisible();
     await expect(nav).toBeVisible();
     const actionBox = await create.boundingBox(), navBox = await nav.boundingBox();
     expect(navBox!.y).toBeGreaterThanOrEqual(actionBox!.y + actionBox!.height);
-    await nav.getByRole('button', { name: 'คิวอนุมัติ', exact: true }).click();
+    await nav.getByRole('button', { name: /^รออนุมัติ\s*\d+$/ }).click();
     await expect(create).toBeHidden();
-    await expect(nav.getByRole('button', { name: 'คิวอนุมัติ', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    await nav.getByRole('button', { name: 'รายการที่เกี่ยวข้อง', exact: true }).click();
+    await expect(nav.getByRole('button', { name: /^รออนุมัติ\s*\d+$/ })).toHaveAttribute('aria-pressed', 'true');
+    await nav.getByRole('button', { name: /^ใบเบิกทั้งหมด\s*\d+$/ }).click();
     await expect(create).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`reimbursement-header-${width}.png`), fullPage: true });
+  });
+}
+
+// CLAIM-DETAIL: an incomplete draft leads to its receipt picker instead of a dead send button.
+for (const width of [390, 1280, 1556]) {
+  test(`REIMB-DETAIL send focuses the missing receipt at ${width}px`, async ({ authedPage: page, api, companyId }, info) => {
+    await withPolicy(api, companyId, { requireReceipt: true, allowMissingReceiptWithReason: false }, async () => {
+      const draft = await createReimbursement(api, companyId, ['650.00']);
+      await page.setViewportSize({ width, height: 900 });
+      await gotoCompany(page, companyId, `/reimbursements/${draft.id}`);
+      const main = page.locator('main');
+      const submit = main.getByRole('button', { name: 'ส่งอนุมัติ', exact: true });
+      await expect(submit).toBeEnabled();
+      await submit.click();
+      const work = main.locator('section[aria-labelledby="journey-step-title"]');
+      const missing = work.locator('[data-claim-missing-receipt]:visible').first();
+      await expect(main.getByTestId('reimbursement-line-cards').locator('input[type="file"]')).toHaveCount(0);
+      await expect(main.getByTestId('reimbursement-lines-table').locator('input[type="file"]')).toHaveCount(0);
+      await expect(missing.getByLabel('ใบเสร็จรายการที่ 1', { exact: true })).toBeFocused();
+      await expect(missing.getByRole('alert')).toContainText('รายการที่ 1 ยังไม่มีใบเสร็จ');
+      await expect(main).not.toContainText('฿');
+      const heading = await main.getByRole('heading', { level: 1 }).boundingBox();
+      const badge = await main.locator('.mangmee-page-description .mangmee-badge').boundingBox();
+      expect(badge!.y).toBeGreaterThanOrEqual(heading!.y + heading!.height);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      expect((await json<Reimbursement>(await api.get(claimUrl(companyId, draft.id)))).status).toBe('DRAFT');
+      await page.screenshot({ path: info.outputPath(`claim-detail-missing-${width}.png`), fullPage: true });
+    });
   });
 }

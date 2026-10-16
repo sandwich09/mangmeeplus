@@ -1,3 +1,5 @@
+import { resetInputVatDecisionForType } from '../../infrastructure/expense-input-vat-decision';
+import { applyExpenseInputVatPreset } from '../../infrastructure/expense-input-vat';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
@@ -1011,6 +1013,7 @@ export class ReceiptOcrApplyService {
     const vatMode = validVatMode(completed.vatMode);
     if (vatMode) data['vatMode'] = vatMode;
     const appliedCategory = await this.prisma.client.$transaction(async (tx): Promise<ReceiptOcrApplyOutcome | { stale: ExpenseChargeSummary[] }> => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtext(${`${ctx.companyId}:vat-registration`}))`;
       // Match correction/duplicate lock order before taking the record's write lock.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:duplicate-reconciliation`}))`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:${expenseId}:substitute-receipt`}))`;
@@ -1025,6 +1028,7 @@ export class ReceiptOcrApplyService {
       const currentExpense = await tx.expenseRecord.findFirst({
         where: { id: expenseId, companyId: ctx.companyId },
         select: {
+          id: true, inputVatClaimStatus: true, taxEvidenceStatus: true, companyId: true, status: true, sourceDocumentType: true, sourceChannelMetadataJson: true,
           expenseCategoryId: true,
           createdByUserId: true,
           reviewedAt: true,
@@ -1261,6 +1265,9 @@ export class ReceiptOcrApplyService {
         }
       }
       if (effectiveCategory) data['expenseCategoryId'] = effectiveCategory.id;
+      const nextVatFacts = { ...currentExpense, ...data };
+      Object.assign(data, await resetInputVatDecisionForType(tx, currentExpense, nextVatFacts, ctx)
+        ?? await applyExpenseInputVatPreset(tx, nextVatFacts));
       await tx.expenseRecord.update({ where: { id: expenseId, companyId: ctx.companyId, ...(options.expectedUpdatedAt && { updatedAt: options.expectedUpdatedAt }) }, data });
       const acceptedAmounts = Object.fromEntries(['grandTotalAmount', 'vatAmount', 'whtAmount', 'netPayableAmount', 'vatMode', 'discountAmount']
         .map((key) => [key, String(data[key] ?? currentExpense[key as keyof typeof currentExpense] ?? (key === 'vatMode' ? 'NO_VAT' : '0'))])) as NonNullable<AppliedReceiptResult['acceptedAmounts']>;

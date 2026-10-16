@@ -21,6 +21,7 @@ import { normalizeBranchCode } from '../../../accounting-documents/domain/logic/
 export const EXPENSE_VENDOR_ADDRESS_MAX_LENGTH = 500;
 
 export type ExpenseVendorIdentityInput = {
+  vendorNameSnapshot?: string;
   vendorBranchCodeSnapshot?: string | null;
   vendorAddressSnapshot?: string | null;
 };
@@ -33,6 +34,12 @@ export type ExpenseVendorIdentityResult = {
 
 export function expenseVendorIdentityFields(input: ExpenseVendorIdentityInput): ExpenseVendorIdentityResult {
   const fields: ExpenseVendorIdentityInput = {};
+  if (input.vendorNameSnapshot !== undefined) {
+    if (typeof input.vendorNameSnapshot !== 'string') return { fields, error: { code: 'EXPENSE_VENDOR_NAME_INVALID', message: 'ชื่อผู้ขายไม่ถูกต้อง กรอกชื่อใหม่' } };
+    const name = input.vendorNameSnapshot.trim();
+    if (name.length > 200) return { fields, error: { code: 'EXPENSE_VENDOR_NAME_TOO_LONG', message: 'ชื่อผู้ขายยาวเกิน 200 ตัวอักษร ตัดให้สั้นลงแล้วบันทึกอีกครั้ง' } };
+    fields.vendorNameSnapshot = name;
+  }
   if (input.vendorBranchCodeSnapshot !== undefined) {
     const branchCode = normalizeBranchCode(input.vendorBranchCodeSnapshot);
     // The matcher may normalize a malformed code to null silently; a form may not. D5: the one

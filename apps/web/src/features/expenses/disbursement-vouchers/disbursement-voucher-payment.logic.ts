@@ -1,6 +1,14 @@
-import { DISBURSEMENT_VOUCHER_ERROR_WORDS, todayCivilDate } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, DISBURSEMENT_VOUCHER_ERROR_WORDS, todayCivilDate } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import type { DisbursementPaymentFields, DisbursementVoucherCommandInput, DisbursementVoucherDetail, PayDisbursementVoucherInput } from './disbursement-vouchers.model';
+
+/** The read model owns the action; a reader who has "กลับไปแก้" is told to press it, another reader needs a person who can recover the document. */
+export function disbursementPaymentCorrectionHint(detail: DisbursementVoucherDetail, canTakeBack = false): string {
+  if (canTakeBack) return 'ยอดต้องเท่ายอดที่อนุมัติ ถ้าไม่เท่า กดกลับไปแก้';
+  const name = detail.preparerActive !== false ? detail.preparerName
+    : detail.senderActive !== false ? detail.submittedByName : THAI_SYSTEM_ROLE_NAMES.OWNER;
+  return `ยอดต้องเท่ายอดที่อนุมัติ ถ้าไม่เท่า ให้ ${name || 'ผู้เตรียมหรือผู้ส่งใบนี้'} แก้ใบก่อน`;
+}
 
 export function canPayDisbursementVoucher(detail: DisbursementVoucherDetail): boolean {
   return detail.header.status === 'APPROVED' && detail.actions.pay;
@@ -9,7 +17,7 @@ export function disbursementWithholdingLines(detail: DisbursementVoucherDetail):
   return detail.header.status === 'PAID' ? detail.lines.filter(line => Number(line.whtAmount) > 0) : [];
 }
 export function initialDisbursementPayment(header: Pick<DisbursementVoucherDetail['header'], 'plannedMethod'>, now = new Date()): DisbursementPaymentFields {
-  return { paidDate: todayCivilDate('Asia/Bangkok', now), paymentMethod: header.plannedMethod ?? '', paidFromRef: '' };
+  return { paidDate: todayCivilDate('Asia/Bangkok', now), paymentMethod: header.plannedMethod ?? 'BANK_TRANSFER', paidFromRef: '' };
 }
 export function disbursementPaymentDateError(date: string, now = new Date()): string | undefined {
   return date > todayCivilDate('Asia/Bangkok', now) ? workspaceDictionary.th['expenses.disbursement.future_paid_date'] : undefined;

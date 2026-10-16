@@ -33,11 +33,11 @@ function guard(row: { state: 'OPEN' | 'CLOSED' } | null) {
 
 function harness(options: { handoff?: Record<string, unknown>; onReserve?: () => void } = {}) {
   const handoff: any = {
-    id: 'handoff-1', companyId: 'company-1', status: 'REQUIRED', certificateId: null, certificateRound: 0,
+    sourcePaymentType: 'procurement.supplier_payment', sourcePaymentId: 'pay-1', id: 'handoff-1', companyId: 'company-1', status: 'REQUIRED', certificateId: null, certificateRound: 0,
     prefillSnapshotJson: prefill(),
     ...options.handoff,
   };
-  const expense = { status: 'CONFIRMED' };
+  const expense = { status: 'CONFIRMED', netPayableAmount: '950' };
   const certificates: any[] = [];
   const history: any[] = [];
   const reservations: any[] = [], periods: any[] = [];
@@ -48,7 +48,9 @@ function harness(options: { handoff?: Record<string, unknown>; onReserve?: () =>
     whtCertificateHistory: { create: async () => { throw new Error('history must use the transaction client'); } },
     $executeRaw: async () => 0,
     expenseRecord: { findFirst: async () => expense },
+    expensePayment: { findMany: async () => [{ id: 'p1', amount: '950', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-09-12'), createdAt: new Date('2026-09-12') }] },
     whtCertificateHandoff: {
+      findFirst: async () => null,
       findUnique: async ({ where }: any) => (where.id === handoff.id ? { ...handoff } : null),
       updateMany: async ({ where, data }: any) => {
         if (handoff.id === where.id && handoff.companyId === where.companyId && handoff.status === where.status) {
@@ -74,7 +76,8 @@ function harness(options: { handoff?: Record<string, unknown>; onReserve?: () =>
     },
     // §3.4: BLANK (no profile row) unless a test opts in — resolveSignature short-circuits before
     // ever touching attachments/storage, so those stay unused stubs in every case here.
-    company: { findUnique: async () => null },
+    company: { findUnique: async () => ({ registeredName: 'บริษัท ผู้จ่าย จำกัด' }) },
+    supplierPayment: { findFirst: async () => ({ status: 'RECORDED', paymentDate: new Date('2026-09-12') }) },
     companyTaxProfile: { findUnique: async () => null },
     $transaction: async (work: (tx: unknown) => Promise<unknown>) => work({
       ...client, whtCertificateHistory: {
@@ -322,7 +325,7 @@ describe('reissue after source cancellation (A4)', () => {
 describe('C1 handoff scope boundary', () => {
   it('execute hides branch and unreadable expense ids exactly like a missing handoff', async () => {
     const h = harness({ handoff: { sourceBranchId: 'branch-2', sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' } });
-    h.client.expenseRecord.findFirst = async ({ where }: any) => JSON.stringify(where).includes('createdByUserId') || JSON.stringify(where).includes('\"in\":[]') ? null : { status: 'CONFIRMED' };
+    h.client.expenseRecord.findFirst = async ({ where }: any) => JSON.stringify(where).includes('createdByUserId') || JSON.stringify(where).includes('\"in\":[]') ? null : { status: 'CONFIRMED', netPayableAmount: '950' };
     const useCase = h.execute(guard({ state: 'OPEN' }));
 
     const call = (actor: any, id: string) => useCase.execute(actor, id);
@@ -337,7 +340,7 @@ describe('C1 handoff scope boundary', () => {
   });
   it('download hides branch and unreadable expense ids exactly like a missing handoff', async () => {
     const h = harness({ handoff: { sourceBranchId: 'branch-2', sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' } });
-    h.client.expenseRecord.findFirst = async ({ where }: any) => JSON.stringify(where).includes('createdByUserId') || JSON.stringify(where).includes('\"in\":[]') ? null : { status: 'CONFIRMED' };
+    h.client.expenseRecord.findFirst = async ({ where }: any) => JSON.stringify(where).includes('createdByUserId') || JSON.stringify(where).includes('\"in\":[]') ? null : { status: 'CONFIRMED', netPayableAmount: '950' };
     const useCase = h.execute(guard({ state: 'OPEN' }));
     await useCase.execute(ctx, 'handoff-1');
     const call = (actor: any, id: string) => useCase.download(actor, id);
@@ -382,7 +385,7 @@ describe('A9 certificate number collisions', () => {
     else h.client.whtCertificate.create = async () => { throw collision; };
     await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, h.handoff.id), (error: any) => {
       assert.equal(error.getStatus(), 409); assert.equal(error.getResponse().code, 'wht_certificate_number_duplicate');
-      assert.equal(error.getResponse().message, 'ออกหนังสือรับรองไม่สำเร็จเพราะเลขที่เอกสารซ้ำ กรุณาลองอีกครั้ง ถ้ายังไม่สำเร็จ ให้แจ้งทีมมั่งมีพลัสพร้อมเลขที่เอกสารรายจ่ายนี้'); return true;
+      assert.equal(error.getResponse().message, 'ออกหนังสือรับรองไม่สำเร็จเพราะเลขที่เอกสารซ้ำ ลองอีกครั้ง ถ้ายังไม่สำเร็จ ให้แจ้งทีมงานมั่งมีพร้อมเลขที่เอกสารรายจ่ายนี้'); return true;
     });
     assert.equal(h.history.length, 0);
   });
@@ -395,7 +398,7 @@ describe('C7 payee address before new issuance', () => {
       const h = harness({ handoff: { payeeAddress: address, prefillSnapshotJson: prefill({ payeeSnapshot: { name: 'ผู้รับเงิน', taxId: '1111111111111', address, branchCode: null } }) } });
       await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, h.handoff.id), (error: any) => {
         assert.equal(error.getStatus(), 409);
-        assert.deepEqual(error.getResponse(), { code: 'wht_handoff_payee_address_missing', message: 'ยังไม่มีที่อยู่ผู้รับเงิน กรุณาเพิ่มที่อยู่ผู้รับเงินก่อน แล้วกด “ออกหนังสือรับรอง 50 ทวิ” อีกครั้ง' }); return true;
+        assert.deepEqual(error.getResponse(), { code: 'wht_handoff_payee_address_missing', message: 'ยังไม่มีที่อยู่ผู้รับเงิน เพิ่มที่อยู่ผู้รับเงินก่อน แล้วกด “ออกหนังสือรับรอง 50 ทวิ” อีกครั้ง' }); return true;
       });
       for (const rows of [h.periods, h.reservations, h.certificates, h.history, h.renders, h.audits]) assert.equal(rows.length, 0);
     }
@@ -419,7 +422,7 @@ describe('C9 payer identity before issue', () => {
       await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, h.handoff.id), (error: any) => {
         assert.equal(error.getStatus(), 409); assert.equal(error.getResponse().code, 'wht_payer_identity_missing');
         const words = missing.length === 2 ? 'เลขผู้เสียภาษีและที่อยู่ของร้าน' : missing[0] === 'TAX_ID' ? 'เลขผู้เสียภาษีของร้าน' : 'ที่อยู่ของร้าน';
-        assert.equal(error.getResponse().message, `ยังไม่มี${words} กรุณากรอกในหน้าข้อมูลร้านก่อน แล้วกด “ออกหนังสือรับรอง 50 ทวิ” อีกครั้ง`); return true;
+        assert.equal(error.getResponse().message, `ยังไม่มี${words} กรอกในหน้าข้อมูลร้านก่อน แล้วกด “ออกหนังสือรับรอง 50 ทวิ” อีกครั้ง`); return true;
       });
       for (const rows of [h.periods, h.reservations, h.certificates, h.history, h.renders, h.audits]) assert.equal(rows.length, 0);
     }
@@ -427,7 +430,7 @@ describe('C9 payer identity before issue', () => {
   it('fills a waiting frozen snapshot from current company and profile details without changing its hash', async () => {
     const facts = prefill(); facts.payerSnapshot.taxId = null as any; facts.payerSnapshot.address = null as any;
     const h = harness({ handoff: { prefillSnapshotJson: facts, prefillSnapshotHash: 'frozen' } });
-    let reads = 0; h.client.company.findUnique = async () => { reads++; return { taxId: '9999999999999', addressJson: { line1: 'ที่อยู่ปัจจุบัน' } }; };
+    let reads = 0; h.client.company.findUnique = async () => { reads++; return { registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '9999999999999', addressJson: { line1: 'ที่อยู่ปัจจุบัน' } }; };
     h.client.companyTaxProfile.findUnique = async () => ({ taxId: '1234567890123' });
     const result = await h.execute(guard({ state: 'OPEN' })).execute(ctx, h.handoff.id);
     assert.equal(result.payerSnapshot.taxId, '1234567890123'); assert.equal(result.payerSnapshot.address, 'ที่อยู่ปัจจุบัน');
@@ -436,9 +439,110 @@ describe('C9 payer identity before issue', () => {
   it('stores the shop address filled at issue time in its worded print form', async () => {
     const facts = prefill(); facts.payerSnapshot.address = null as any;
     const h = harness({ handoff: { prefillSnapshotJson: facts } });
-    h.client.company.findUnique = async () => ({ taxId: '1234567890123', addressJson: { line1: '88 ถนนพระราม 4', line2: null, subdistrict: 'คลองเตย', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' } });
+    h.client.company.findUnique = async () => ({ registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '1234567890123', addressJson: { line1: '88 ถนนพระราม 4', line2: null, subdistrict: 'คลองเตย', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' } });
     h.client.companyTaxProfile.findUnique = async () => null;
     const result = await h.execute(guard({ state: 'OPEN' })).execute(ctx, h.handoff.id);
     assert.equal(result.payerSnapshot.address, '88 ถนนพระราม 4 แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110');
   });
+});
+
+it('refuses PND2 and dividend system issuance before any number or certificate write', async () => {
+  for (const incomeCategoryCode of ['WHT_INTEREST', 'WHT_DIVIDEND_IND', 'WHT_DIVIDEND']) {
+    const h = harness({ handoff: { prefillSnapshotJson: prefill({ incomeCategoryCode }) } });
+    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (e: any) => e.getResponse().code === 'wht_certificate_income_unsupported');
+    assert.deepEqual(h.reservations, []); assert.deepEqual(h.certificates, []);
+  }
+});
+
+describe('W1 and W6 payment-backed certificates', () => {
+  it('keeps an unpaid confirmed expense as an unnumbered draft', async () => {
+    const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1' } });
+    h.client.expensePayment = { findMany: async () => [] };
+    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (e: any) => e.getResponse().code === 'wht_certificate_payment_required');
+    assert.equal(h.reservations.length, 0); assert.equal(h.renders.length, 0); assert.equal(h.handoff.status, 'REQUIRED');
+  });
+  it('refuses an invented payment date before reserving a number', async () => {
+    const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1' } });
+    h.client.expensePayment = { findMany: async () => [{ id: 'p1', amount: '950', status: 'RECORDED', paidAtConfirmed: false, paidAt: new Date(), createdAt: new Date() }] };
+    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (e: any) => e.getResponse().code === 'wht_certificate_payment_date_required');
+    assert.equal(h.reservations.length, 0);
+  });
+  it('uses the real payment month and preserves it when issued later', async () => {
+    const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1' } });
+    Object.assign(h.expense, { netPayableAmount: '950' });
+    h.client.expensePayment = { findMany: async () => [{ id: 'p1', amount: '950', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-10-04T18:00:00Z'), createdAt: new Date() }] };
+    const before = Date.now();
+    await h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1');
+    assert.equal(h.renders[0].paymentDate.slice(0, 10), '2026-10-05');
+    assert.equal(h.periods[0].periodKey, '2026-10');
+    assert.ok(new Date(h.renders[0].issuedAt).getTime() >= before);
+    assert.equal(h.certificates[0].paymentDate.toISOString().slice(0, 10), '2026-10-05');
+  });
+});
+
+it('W1 partial payments have their own date and exact shares, and require a choice', async () => {
+  const { certificatePayment } = await import('../services/wht-certificate-payment');
+  const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1' } });
+  h.client.expensePayment.findMany = async () => [
+    { id: 'p1', amount: '316.67', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-09-12'), createdAt: new Date('2026-09-12') },
+    { id: 'p2', amount: '633.33', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-10-05'), createdAt: new Date('2026-10-05') },
+  ];
+  await assert.rejects(certificatePayment(h.client, ctx.companyId, h.handoff), (e: any) => e.getResponse().code === 'wht_certificate_payment_selection_required');
+  const first = await certificatePayment(h.client, ctx.companyId, h.handoff, 'p1');
+  const last = await certificatePayment(h.client, ctx.companyId, h.handoff, 'p2');
+  assert.deepEqual([first.grossAmount, first.withheldAmount, first.paymentDate], ['333.34', '16.67', '2026-09-12']);
+  assert.deepEqual([last.grossAmount, last.withheldAmount, last.paymentDate], ['666.66', '33.33', '2026-10-05']);
+});
+
+it('W1 a second partial payment issues a separate certificate without replacing the first', async () => {
+  const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1' } });
+  const useCase = h.execute(guard({ state: 'OPEN' }));
+  h.client.expensePayment.findMany = async () => [{ id: 'p1', amount: '475', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-09-12'), createdAt: new Date('2026-09-12') }];
+  await useCase.execute(ctx, 'handoff-1');
+  const first = structuredClone(h.certificates[0]);
+  assert.equal(first.grossAmount, '500');
+  h.client.expensePayment.findMany = async () => [
+    { id: 'p1', amount: '475', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-09-12'), createdAt: new Date('2026-09-12') },
+    { id: 'p2', amount: '475', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-10-05'), createdAt: new Date('2026-10-05') },
+  ];
+  const rows = [h.handoff];
+  h.client.whtCertificateHandoff.createMany = async ({ data: [create] }: any) => {
+    if (!rows.some(r => r.creationCommandId === create.creationCommandId)) rows.push({ id: 'handoff-p2', ...create });
+  };
+  h.client.whtCertificateHandoff.findUniqueOrThrow = async ({ where }: any) => rows.find(r => r.creationCommandId === where.companyId_creationCommandId.creationCommandId);
+  h.client.whtCertificateHandoff.findUnique = async ({ where }: any) => rows.find(r => r.id === where.id);
+  h.client.whtCertificateHandoff.updateMany = async ({ where, data }: any) => { const row = rows.find(r => r.id === where.id && r.status === where.status); if (!row) return { count: 0 }; Object.assign(row, data); return { count: 1 }; };
+  await useCase.execute(ctx, 'handoff-1', 'p2');
+  assert.deepEqual(h.certificates[0], first);
+  assert.equal(h.certificates[1].paymentDate.toISOString().slice(0, 10), '2026-10-05');
+  assert.equal(h.certificates[1].grossAmount, '500');
+  await assert.rejects(useCase.execute(ctx, 'handoff-1', 'p2'), (e: any) => e.getResponse().code === 'wht_handoff_not_issuable');
+});
+
+it('W1 refuses a second handoff for a payment already certified while holding the expense lock', async () => {
+  const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1' } });
+  h.client.whtCertificateHandoff.findFirst = async () => ({ id: 'other', status: 'SYSTEM_ISSUED' });
+  await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (e: any) => e.getResponse().code === 'wht_certificate_payment_already_issued');
+  assert.equal(h.certificates.length, 0);
+});
+
+
+it('W6 issuing on the payment day prints the same civil day for both dates', async () => {
+  const { civilDate } = await import('@watchdog-bms/contracts');
+  const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1' } });
+  const now = new Date();
+  h.client.expensePayment.findMany = async () => [{ id: 'p1', amount: '950', status: 'RECORDED', paidAtConfirmed: true, paidAt: now, createdAt: now }];
+  await h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1');
+  assert.equal(h.renders[0].paymentDate, civilDate(new Date(h.renders[0].issuedAt)));
+});
+
+it('handoff issue refuses a missing registered name and replaces an unproven display-name snapshot', async () => {
+  const h = harness();
+  h.client.company.findUnique = async () => ({ registeredName: null });
+  const uc = h.execute(guard({ state: 'OPEN' }));
+  await assert.rejects(() => uc.execute(ctx, 'handoff-1'), (error: any) => error.getResponse().code === 'wht_payer_identity_missing' && error.getResponse().payerMissing.includes('REGISTERED_NAME'));
+  assert.equal(h.reservations.length, 0); assert.equal(h.certificates.length, 0);
+  h.client.company.findUnique = async () => ({ registeredName: 'ชื่อจดทะเบียนจริง' });
+  const result = await uc.execute(ctx, 'handoff-1');
+  assert.equal(result.payerSnapshot.companyName, 'ชื่อจดทะเบียนจริง');
 });

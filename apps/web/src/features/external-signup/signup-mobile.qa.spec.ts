@@ -79,8 +79,8 @@ describe('the closed and outage notices', () => {
       React.createElement(SignupUnavailableNotice, { onRetry: () => {} }),
     );
     for (const html of [closed, outage]) {
-      // h-12 is the 48px minimum tap target, and w-full keeps it inside the 390px column.
-      assert.match(html, /h-12 w-full/);
+      // The shared button is 44px tall on a phone, and w-full keeps it inside the 390px column.
+      assert.match(html, /class="mangmee-btn mangmee-btn-primary w-full"/);
       assert.doesNotMatch(html, /\+/);
     }
     // R11: two different situations, so they may not read as the same sentence.

@@ -1,3 +1,9 @@
+import { withholdingPayerPrefill } from '../../tax/application/services/withholding-establishments';
+import { REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES } from '../../reimbursements/domain/reimbursement.constants';
+import { inputVatRecordedBeforeReview, inputVatConditions, resetInputVatDecisionForType, appendInputVatDecision, inputVatDecisionFacts, inputVatFixedReason, validateInputVatDecision, assertInputVatDecisionPeriodOpen } from './expense-input-vat-decision';
+import type { DecideExpenseInputVatInput, ExpenseInputVatRightView, RequestContext } from '@watchdog-bms/contracts';
+import { applyExpenseInputVatPreset, assertInputVatRestoreAllowed, registrationOnDocumentDate } from './expense-input-vat';
 import { cancelDisbursementVouchersForPayments } from '../domain/logic/disbursement-voucher.logic';
 import { normalizeTaxId } from '../../data-model-core/domain/logic/company-legal-identity.logic';
 import { normalizeVendorName } from '../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
@@ -9,7 +15,8 @@ import { loadExpenseReimbursementProgress } from './expense-reimbursement-progre
 import { loadExpenseEvidenceSources } from './expense-evidence-sources';
 import { serializableTransaction } from '../../../common/database/serializable-transaction';
 import { canNumberReviewedDraft, expenseDraftNumberKey, expenseNumberInTransaction } from './expense-number';
-import { assertSubstituteEditAllowed, reviseSubstituteEvidence, syncSubstituteAfterExpenseEdit, substitutePurposeSourceNote, EXPENSE_EDIT_RESIGN_REASON } from './substitute-expense-edit';
+import { assertSubstituteEditAllowed, reviseSubstituteEvidence, syncSubstituteAfterExpenseEdit, substitutePurposeSourceNote, substitutePayeeExpenseFields, EXPENSE_EDIT_RESIGN_REASON } from './substitute-expense-edit';
+import { WHT_INCOME_CATEGORY_TWINS } from '../domain/logic/wht-income-category-twins';
 import { assertProjectionSource } from '../../reimbursements/infrastructure/reimbursement-source';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
@@ -22,9 +29,9 @@ import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { deriveWhtIncomeBase } from '../../tax/domain/logic/wht-report.logic';
 import { appendWhtCertificateHistory } from '../../tax/application/services/wht-certificate-history';
-import { expenseEvidenceConfirmationError, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
+import { expenseEvidenceConfirmationError, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview, expenseDateIsReadable } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
-import type { Prisma } from '../../../generated/prisma/client';
+import { Prisma } from '../../../generated/prisma/client';
 import { branchScopeWhere, isBranchInScope, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
 import { canonicalFingerprint } from '../../../common/security/canonical-fingerprint';
 import { POSITIVE_ACCOUNTING_MONEY_PATTERN } from '../../accounting-documents/domain/logic/accounting-money-validation.logic';
@@ -46,7 +53,7 @@ import type {
   ExpenseVatSourceOverrideInput,
   ExpenseLineChargeKind,
 } from '@watchdog-bms/contracts';
-import { canVoidExpenseFinancialState, civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilInstantDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseDocumentDateStatus, expenseLineCharges, isCivilDate, todayCivilDate, EXPENSE_PAYMENT_METHODS, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
+import { canVoidExpenseFinancialState, utcDateToCivilDate, civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilInstantDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseDocumentDateStatus, expenseLineCharges, isCivilDate, todayCivilDate, EXPENSE_PAYMENT_METHODS, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum, validateStatusTransition } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
@@ -347,6 +354,7 @@ function mapLine(l: any) {
     vatRate: l.vatRate?.toString() ?? null,
     vatTreatment: l.vatTreatment ?? null,
     vatAmount: l.vatAmount?.toString() ?? '0',
+    whtCategoryCode: l.whtCategoryCode ?? null,
     whtRate: l.whtRate?.toString() ?? null,
     whtAmount: l.whtAmount?.toString() ?? '0',
     lineSubtotalAmount: l.lineSubtotalAmount?.toString() ?? '0',
@@ -505,6 +513,7 @@ export type ExpenseCertificateCancellation = {
 };
 
 export type RecordExpensePaymentAtomicInput = {
+  slipAttachmentId?: string;
   companyId: string;
   expenseId: string;
   actorUserId: string;
@@ -513,6 +522,8 @@ export type RecordExpensePaymentAtomicInput = {
   amount: string;
   paymentMethod?: string;
   paidAt?: string;
+  /** Internal writers must distinguish a generated date from a supplied date. */
+  paidAtConfirmed?: boolean;
   bankAccountRef?: string;
   /** Internal settlement authority; the direct-payment use-case never forwards this. */
   payingThroughDisbursementVoucherId?: string;
@@ -530,6 +541,20 @@ export function assertExpensePaymentSource(expense: { branchId?: string | null; 
   if (paidAt && isCivilDate(paidAt) && paidAt > todayCivilDate('Asia/Bangkok')) throw new BadRequestException({ code: 'expense_payment_future_date', message: EXPENSE_CORRECTION_WORDS.futurePaymentDate });
 }
 
+function documentDateWhere(fromDate?: string, toDate?: string): Record<string, unknown> {
+  const status = (value: unknown) => ({ aiVerificationSummaryJson: { path: ['dateStatus'], equals: value } });
+  const legacyStatus = { OR: [status(Prisma.AnyNull), { NOT: { OR: ['verified', 'assumed', 'unverified', 'implausible'].map(status) } }] };
+  const missing = { aiVerificationSummaryJson: { path: ['missingFields'], array_contains: ['expenseDate'] } };
+  const readable = { OR: [status('verified'), status('assumed'), { AND: [legacyStatus, { OR: [
+    { aiVerificationSummaryJson: { path: ['missingFields'], equals: Prisma.AnyNull } }, { NOT: missing },
+  ] }] }] };
+  const unreadable = { OR: [status('unverified'), status('implausible'), { AND: [legacyStatus, missing] }] };
+  return { OR: [
+    { AND: [readable], expenseDate: civilDayRangeToUtc(fromDate, toDate) },
+    { AND: [unreadable], uploadedAt: bangkokCivilDayRangeToUtc(fromDate, toDate) },
+  ] };
+}
+
 @Injectable()
 export class PrismaExpenseRepository {
   private readonly reviewRefreshTransactions = new WeakSet<object>();
@@ -541,6 +566,55 @@ export class PrismaExpenseRepository {
     private readonly prisma: PrismaService,
     private readonly documentNumbers: PrismaDocumentSequenceRepository = new PrismaDocumentSequenceRepository(prisma),
   ) {}
+
+  async inputVatRight(companyId: string, expenseId: string, db: any = this.prisma.client): Promise<ExpenseInputVatRightView> {
+    const expense = await db.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId } });
+    const facts = await inputVatDecisionFacts(db, expense);
+    const fixedReason = inputVatFixedReason(expense, facts.vatStatus);
+    const latest = facts.latestDecision;
+    const actor = latest ? await db.user.findUnique({ where: { id: latest.decidedByUserId }, select: { displayName: true } }) : null;
+    const legacy = inputVatRecordedBeforeReview(expense, Boolean(latest));
+    const [features, posted, filed] = await Promise.all([
+      db.companyFeatureEntitlement.findMany({ where: { companyId, enabled: true }, select: { featureKey: true } }),
+      db.journalEntry.findFirst({ where: { companyId, sourceType: 'expense.record', sourceId: expenseId, status: 'POSTED' } }),
+      db.taxPeriod.findFirst({ where: { companyId, formType: 'PP30', periodKey: expense.expenseDate.toISOString().slice(0, 7), status: { in: ['FILED', 'PAID', 'CLOSED'] } } }),
+    ]);
+    return { vatStatus: facts.vatStatus, buyerMatchStatus: facts.buyer.matchStatus,
+      conditions: inputVatConditions(expense, facts, { toStatus: 'NON_CLAIMABLE' }, ''),
+      postsToLedger: ['expenses', 'double_entry_ledger', 'expense_auto_post'].every(key => features.some((row: any) => row.featureKey === key)),
+      decisionBlocker: posted ? 'input_vat_posted_journal_immutable' : filed ? 'tax_period_locked' : null,
+      status: expense.inputVatClaimStatus, fixed: Boolean(fixedReason), reasonCode: legacy ? 'RECORDED_BEFORE_INPUT_VAT_DECISION' : fixedReason,
+      latestDecision: latest ? { id: latest.id, fromStatus: latest.fromStatus, toStatus: latest.toStatus, reason: latest.reason,
+        conditions: latest.conditionsJson, evidenceAttachmentIds: latest.evidenceAttachmentIds, decidedByUserId: latest.decidedByUserId,
+        decidedByName: actor?.displayName ?? 'ผู้ตรวจ', decidedAt: latest.decidedAt.toISOString() } : null };
+  }
+
+  async decideInputVat(ctx: RequestContext, expenseId: string, input: DecideExpenseInputVatInput): Promise<ExpenseInputVatRightView> {
+    return this.prisma.client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtext(${`${ctx.companyId}:vat-registration`}))`;
+      await lockExpenseFunding(tx, ctx.companyId, expenseId);
+      await lockExpenseCorrection(tx, ctx.companyId, expenseId);
+      const expense = await tx.expenseRecord.findFirst({ where: { id: expenseId, companyId: ctx.companyId, ...branchScopeWhere(ctx.scopes ?? {}) }, include: { lines: true } });
+      if (!expense) throw new NotFoundException('Expense not found');
+      if (['VOIDED', 'REJECTED'].includes(expense.status)) throw new ConflictException({ code: 'input_vat_expense_closed', message: 'รายจ่ายนี้ปิดแล้ว เปิดรายจ่ายที่ยังใช้งานเพื่อเลือกสิทธิภาษีซื้อ' });
+      const facts = await inputVatDecisionFacts(tx, expense);
+      const conditions = validateInputVatDecision(expense, facts, input, ctx.userId);
+      await assertInputVatDecisionPeriodOpen(tx, expense);
+      const decision = await appendInputVatDecision(tx, expense, { toStatus: input.toStatus, reason: input.reason?.trim() || null,
+        conditions, attachmentIds: facts.attachmentIds, userId: ctx.userId, requestId: ctx.requestId });
+      await tx.expenseRecord.update({ where: { id: expenseId }, data: { inputVatClaimStatus: input.toStatus,
+        sourceChannelMetadataJson: { ...expense.sourceChannelMetadataJson, inputVatDecisionId: decision.id } } });
+      if (expense.status === 'CONFIRMED' && expense.inputVatClaimStatus !== input.toStatus) {
+        const draft = await tx.journalEntry.findFirst({ where: { companyId: ctx.companyId, sourceType: 'expense.record', sourceId: expenseId, entryType: 'GENERATED', status: 'DRAFT' } });
+        if (draft) {
+          // Defer the import: the ordinary journal generator also reads this repository.
+          const { rebuildExpenseDraftJournal } = await import('../../ledger/application/use-cases/journal.use-case');
+          await rebuildExpenseDraftJournal(tx, ctx, { ...mapExpense(expense), inputVatClaimStatus: input.toStatus, lines: (expense.lines ?? []).map(mapLine) }, draft);
+        }
+      }
+      return this.inputVatRight(ctx.companyId, expenseId, tx);
+    });
+  }
 
   async recordPaymentAtomic(input: RecordExpensePaymentAtomicInput, withinTx?: (tx: Prisma.TransactionClient, result: ExpensePaymentResult) => Promise<void>): Promise<ExpensePaymentResult> {
     return this.prisma.client.$transaction(async tx => {
@@ -585,6 +659,7 @@ export class PrismaExpenseRepository {
       version: 1, expenseId: input.expenseId, branchId: current.branchId ?? null,
       currency: current.currency, amount: amount.toFixed(4), paymentMethod: input.paymentMethod ?? null,
       paidAt: input.paidAt ?? null, bankAccountRef,
+      ...(input.slipAttachmentId ? { slipAttachmentId: input.slipAttachmentId } : {}),
     });
     const previous = await tx.expensePayment.findFirst({
       where: { companyId: input.companyId, idempotencyKey: input.idempotencyKey },
@@ -599,7 +674,8 @@ export class PrismaExpenseRepository {
     if (current.status !== 'CONFIRMED') {
       throw new BadRequestException({ code: 'expense_payment_not_confirmed', message: EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed });
     }
-    const paidAt = input.paidAt ? civilDateToUtcDate(coerceCivilDate(input.paidAt)) : new Date();
+    const paymentCompany = input.paidAt ? await tx.company?.findUnique?.({ where: { id: input.companyId }, select: { timezone: true } }) : null;
+    const paidAt = input.paidAt ? civilInstantDayRangeToUtc(input.paidAt, undefined, paymentCompany?.timezone ?? 'Asia/Bangkok').gte! : new Date();
     const paidBefore = new Decimal(current.paidAmount.toString());
     const payable = new Decimal(current.netPayableAmount.toString());
     const paidAfter = paidBefore.plus(amount);
@@ -618,6 +694,17 @@ export class PrismaExpenseRepository {
     const paidAfterText = paidAfter.toFixed(4);
     const { outstandingAmount } = calcPaymentAmounts(payableText, paidAfterText);
     const paymentStatus = derivePaymentStatus(payableText, paidAfterText);
+    if (input.slipAttachmentId) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.slipAttachmentId}:attachment-retention`}))`;
+      const file = await tx.attachmentObject.findFirst({ where: { id: input.slipAttachmentId, companyId: input.companyId,
+        branchId: current.branchId, uploadedByUserId: input.actorUserId, status: 'ACTIVE' } });
+      const metadata = file?.metadataJson as { generatedFor?: string; expenseId?: string } | null;
+      const linked = await tx.attachmentLink.findFirst({ where: { companyId: input.companyId, attachmentId: input.slipAttachmentId } });
+      if (!file || !REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES.includes(file.mimeType) || Number(file.byteSize) <= 0 || Number(file.byteSize) > REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES
+        || metadata?.generatedFor !== 'expense.payment.slip' || metadata.expenseId !== current.id || linked) {
+        throw new BadRequestException({ code: 'expense_payment_slip_invalid', message: 'ใช้ไฟล์นี้เป็นหลักฐานการจ่ายไม่ได้ แนบไฟล์ใหม่แล้วบันทึกจ่ายอีกครั้ง' });
+      }
+    }
     const payment = await tx.expensePayment.create({
       data: {
         companyId: input.companyId,
@@ -628,12 +715,19 @@ export class PrismaExpenseRepository {
         currency: current.currency,
         paymentMethod: paymentMethod ?? null,
         paidAt,
+        paidAtConfirmed: Boolean(input.paidAt) && input.paidAtConfirmed !== false,
         bankAccountRef,
         status: 'RECORDED',
         postingStatus: 'pending',
         createdByUserId: input.actorUserId,
       },
     });
+    if (input.slipAttachmentId) {
+      for (const [targetType, targetId] of [['expense.payment', payment.id], ['expense.record', input.expenseId]]) {
+        await tx.attachmentLink.create({ data: { companyId: input.companyId, attachmentId: input.slipAttachmentId,
+          targetType, targetId, purpose: 'expense.payment.evidence', linkedByUserId: input.actorUserId } });
+      }
+    }
     const changed = await tx.expenseRecord.updateMany({
       where: { id: input.expenseId, companyId: input.companyId, status: 'CONFIRMED', updatedAt: current.updatedAt },
       data: {
@@ -651,7 +745,7 @@ export class PrismaExpenseRepository {
     }
     const result = {
       expense: mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { id: input.expenseId, companyId: input.companyId } })),
-      payment: mapPayment(payment),
+      payment: mapPayment({ ...payment, ...(input.slipAttachmentId ? { slipAttachmentId: input.slipAttachmentId } : {}) }),
       replayed: false,
     };
     if (withinTx) await withinTx(tx, result);
@@ -662,7 +756,7 @@ export class PrismaExpenseRepository {
     return (this.prisma.client as any).$transaction(async (tx: any) => {
       const expense = await tx.expenseRecord.findFirst({ where: { companyId, id: expenseId }, include: { payments: true, lines: true } });
       if (!expense) throw new NotFoundException();
-      return readExpenseCorrectionCapabilities(tx, expense, permissions, false, caller);
+      return readExpenseCorrectionCapabilities(tx, expense, permissions, false, caller, Boolean(caller));
     }, { isolationLevel: 'RepeatableRead' });
   }
 
@@ -702,6 +796,25 @@ export class PrismaExpenseRepository {
       if (withinTx) await withinTx(tx);
       return { expense: mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { companyId: input.companyId, id: input.expenseId } })), cancelledCertificate };
     }, { isolationLevel: 'ReadCommitted' });
+  }
+
+  async confirmPaymentDateAtomic(input: { companyId: string; expenseId: string; paymentId: string; paidAt: string; actorUserId: string; scopes: BranchScopes }, audit: (tx: Prisma.TransactionClient) => Promise<unknown>) {
+    return this.prisma.client.$transaction(async tx => {
+      await lockExpenseFunding(tx, input.companyId, input.expenseId);
+      await lockExpenseCorrection(tx, input.companyId, input.expenseId);
+      const expense = await tx.expenseRecord.findFirst({ where: { companyId: input.companyId, id: input.expenseId } });
+      if (!expense) throw new NotFoundException();
+      if (!isBranchInScope(input.scopes, expense.branchId)) throw new ForbiddenException();
+      assertExpensePaymentSource(expense, input.paidAt, true);
+      if (!isCivilDate(input.paidAt)) throw new BadRequestException({ code: 'expense_payment_invalid_date', message: 'ระบุวันที่จ่ายเงินจริงจากหลักฐาน' });
+      const company = await tx.company.findUnique({ where: { id: input.companyId }, select: { timezone: true } });
+      const paidAt = civilInstantDayRangeToUtc(input.paidAt, undefined, company?.timezone ?? 'Asia/Bangkok').gte!;
+      const changed = await tx.expensePayment.updateMany({ where: { companyId: input.companyId, expenseId: input.expenseId, id: input.paymentId, status: 'RECORDED', paidAtConfirmed: false }, data: { paidAt, paidAtConfirmed: true } });
+      if (changed.count !== 1) throw new ConflictException({ code: 'expense_payment_date_already_confirmed', message: 'รายการจ่ายเปลี่ยนแล้ว เปิดรายการจ่ายใหม่เพื่อตรวจวันที่' });
+      await tx.expenseRecord.update({ where: { id: expense.id }, data: { updatedByUserId: input.actorUserId, updatedAt: new Date() } });
+      await audit(tx);
+      return { paymentId: input.paymentId, paidAt: input.paidAt, paidAtConfirmed: true };
+    });
   }
 
   async cancelPaymentAtomic(input: {
@@ -767,14 +880,16 @@ export class PrismaExpenseRepository {
             throw new ForbiddenException('Access denied');
           }
           if (existing.draftPayloadHash !== input.draftPayloadHash) {
-            throw new ConflictException({ code: 'EXPENSE_DRAFT_KEY_CONFLICT', message: 'รายการที่บันทึกด้วยคำสั่งนี้เปลี่ยนไป กรุณาเปิดรายการเดิมเพื่อตรวจสอบ' });
+            throw new ConflictException({ code: 'EXPENSE_DRAFT_KEY_CONFLICT', message: 'รายการที่บันทึกด้วยคำสั่งนี้เปลี่ยนไป เปิดรายการเดิมเพื่อตรวจสอบ' });
           }
           return mapExpense(existing);
         }
         const retired = await tx.documentNumber.findFirst({ where: { companyId: input.companyId, documentType: 'expense.record', idempotencyKey: expenseDraftNumberKey(input.draftIdempotencyKey) } });
-        if (retired) throw new ConflictException({ code: 'EXPENSE_DRAFT_DELETED', message: 'รายการที่บันทึกไว้ถูกลบแล้ว กรุณากลับไปหน้ารายการค่าใช้จ่าย' });
+        if (retired) throw new ConflictException({ code: 'EXPENSE_DRAFT_DELETED', message: 'รายการที่บันทึกไว้ถูกลบแล้ว กลับไปหน้ารายการค่าใช้จ่าย' });
       }
       await assertActiveExpenseBranch(tx, input.companyId, input.branchId);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtext(${`${input.companyId}:vat-registration`}))`;
+      const inputVatPreset = await applyExpenseInputVatPreset(tx, input);
       const r = await tx.expenseRecord.create({
         data: {
           companyId: input.companyId,
@@ -797,7 +912,7 @@ export class PrismaExpenseRepository {
           expenseDate: new Date(input.expenseDate),
           currency: input.currency ?? 'THB',
           vatMode: input.vatMode as any,
-          inputVatClaimStatus: input.inputVatClaimStatus as any,
+          inputVatClaimStatus: inputVatPreset.inputVatClaimStatus ?? input.inputVatClaimStatus,
           expenseCategoryId: input.expenseCategoryId,
           accountHintKey: input.accountHintKey,
           note: input.note,
@@ -810,7 +925,7 @@ export class PrismaExpenseRepository {
           sourceDocumentLanguage: input.sourceDocumentLanguage,
           taxEvidenceStatus: (input.taxEvidenceStatus ?? 'NEEDS_REVIEW') as any,
           taxEvidenceReasonCode: input.taxEvidenceReasonCode,
-          sourceChannelMetadataJson: input.sourceChannelMetadataJson as any,
+          sourceChannelMetadataJson: inputVatPreset.sourceChannelMetadataJson as any,
           aiVerificationSummaryJson: input.aiVerificationSummaryJson as any,
           vendorNameSnapshot: input.vendorNameSnapshot,
           vatCaptureSnapshotJson: input.vatCaptureSnapshotJson as any,
@@ -980,7 +1095,7 @@ export class PrismaExpenseRepository {
         payments: { orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }] },
         // The category's suggested Tax Code rides on the row already being joined — the line
         // picker needs it, and a second query for one string would be waste.
-        expenseCategory: { select: { defaultInputTaxCode: true } },
+        expenseCategory: { select: { defaultInputTaxCode: true, name: true } },
         duplicateCandidates: {
           where: {
             status: { not: 'DISMISSED' as any },
@@ -1023,15 +1138,21 @@ export class PrismaExpenseRepository {
       accrualPosted: Boolean(journal),
       pendingPaymentId: pendingPayment?.id,
     });
+    const paymentSlips = paymentRows.length ? await db.attachmentLink.findMany({ where: { companyId, targetType: 'expense.payment',
+      targetId: { in: paymentRows.map((payment: any) => payment.id) }, purpose: 'expense.payment.evidence',
+      attachment: { companyId, status: 'ACTIVE', ...branchScopeWhere(scopes) } }, select: { targetId: true, attachmentId: true } }) : [];
+    const evidence = (await loadExpenseEvidenceSources(db, companyId, [r], scopes)).get(id)!;
     const payments = paymentRows.map((payment: any) => {
       const paymentJournal = journals.find((entry) => entry.sourceType === 'expense.payment' && entry.sourceId === payment.id);
+      const certificateProofIds = evidence.certificates.find(certificate => payment.idempotencyKey === `substitute-receipt:${certificate.id}`)?.paymentEvidenceAttachmentIds;
       return mapPayment({
         ...payment,
+        slipAttachmentId: paymentSlips.find(link => link.targetId === payment.id)?.attachmentId
+          ?? (Array.isArray(certificateProofIds) ? certificateProofIds.find(attachmentId => typeof attachmentId === 'string' && evidence.attachments.some(file => file.id === attachmentId)) : null) ?? null,
         journalEntryId: paymentJournal?.id ?? payment.journalEntryId,
         journalEntryNumber: paymentJournal?.entryNumber ?? null,
       });
     });
-    const evidence = (await loadExpenseEvidenceSources(db, companyId, [r], scopes)).get(id)!;
     const attachments = evidence.attachments;
     const reimbursementProgress = (await loadExpenseReimbursementProgress(db, companyId, [r], scopes)).get(id);
     const duplicateCandidates: DuplicateCandidateSummary[] = (r as any).duplicateCandidates.map((d: any) => ({
@@ -1071,6 +1192,8 @@ export class PrismaExpenseRepository {
       charges: expenseLineCharges(mappedLines),
       totalsIdentity: expenseTotalsIdentity({ vatMode: base.vatMode, totals: base, lines: mappedLines }),
       attachments,
+      sourceEvidenceUnavailable: evidence.sourceEvidenceUnavailable,
+      categoryName: r.expenseCategory?.name ?? null,
       duplicateCandidates,
       substituteReceiptEvidence: substituteRow ? toSubstituteEvidenceSummary(mapSubstituteEvidence(substituteRow)) : null,
       payments,
@@ -1102,6 +1225,16 @@ export class PrismaExpenseRepository {
     return r ? mapExpense(r) : null;
   }
 
+  private async inputVatDecisionNames(records: Array<{ id: string; inputVatDecisions?: Array<{ reason: string | null; decidedByUserId: string; decidedAt: Date }> }>) {
+    const ids = [...new Set(records.flatMap(row => row.inputVatDecisions?.map(d => d.decidedByUserId) ?? []))];
+    const users = ids.length ? await this.prisma.client.user.findMany({ where: { id: { in: ids } }, select: { id: true, displayName: true } }) : [];
+    const names = new Map(users.map(user => [user.id, user.displayName]));
+    return new Map(records.flatMap(row => {
+      const latest = row.inputVatDecisions?.[0];
+      return latest ? [[row.id, { reason: latest.reason, decidedByName: names.get(latest.decidedByUserId) ?? 'ผู้ตรวจ', decidedAt: latest.decidedAt.toISOString() }] as const] : [];
+    }));
+  }
+
   async listExpenses(
     filter: ListExpensesFilter,
     scopes?: { branchIds?: string[] },
@@ -1115,15 +1248,23 @@ export class PrismaExpenseRepository {
     // GAP-11 `vendorAddressMissing` is one named filter, not two: it is spread after
     // `sourceDocumentType` so it pins TAX_INVOICE itself — only a full tax invoice has to carry a
     // seller address, so combining it with another document type would answer an empty question.
-    const where: any = { ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.vendorAddressMissing && { vendorAddressSnapshot: null, sourceDocumentType: 'TAX_INVOICE' }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.fromDate || rest.toDate ? { expenseDate: civilDayRangeToUtc(rest.fromDate, rest.toDate) } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: bangkokCivilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}) };
+    const where: any = { ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.vendorAddressMissing && { vendorAddressSnapshot: null, sourceDocumentType: 'TAX_INVOICE' }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.fromDate || rest.toDate ? { AND: [scopeWhere, documentDateWhere(rest.fromDate, rest.toDate)] } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: bangkokCivilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}) };
     const uploadDateLens = (rest.uploadedFromDate || rest.uploadedToDate) && !(rest.fromDate || rest.toDate);
     const orderBy = [uploadDateLens ? { uploadedAt: 'desc' as const } : { expenseDate: 'desc' as const }, { id: 'desc' as const }];
     const [data, total] = await Promise.all([
-      this.prisma.client.expenseRecord.findMany({ where, skip, take: pageSize, orderBy }),
+      this.prisma.client.expenseRecord.findMany({ where, skip, take: pageSize, orderBy, include: { inputVatDecisions: { take: 1, orderBy: { decidedAt: 'desc' }, select: { reason: true, decidedByUserId: true, decidedAt: true } } } }),
       this.prisma.client.expenseRecord.count({ where }),
     ]);
+    const decisionNames = await this.inputVatDecisionNames(data);
     const progress = await loadExpenseReimbursementProgress(this.prisma.client, companyId, data, scopes);
-    return { data: data.map(row => ({ ...mapExpense(row), reimbursementProgress: progress.get(row.id) })), total, page, pageSize };
+    const vatFacts = data.some(row => Number(row.vatAmount) > 0)
+      ? (await this.prisma.client.companyVatRegistrationFact.findMany({ where: { companyId }, orderBy: [{ effectiveFrom: 'asc' }, { answeredAt: 'asc' }] }))
+        .map(row => ({ ...row, effectiveFrom: utcDateToCivilDate(row.effectiveFrom), effectiveTo: row.effectiveTo ? utcDateToCivilDate(row.effectiveTo) : null }))
+      : [];
+    const visibleRights = new Map(await Promise.all(data.map(async row => [row.id,
+      Number(row.vatAmount) > 0 && await registrationOnDocumentDate(this.prisma.client, row, vatFacts) !== 'NOT_REGISTERED',
+    ] as const)));
+    return { data: data.map(row => ({ ...mapExpense(row), inputVatRightVisible: visibleRights.get(row.id), latestInputVatDecision: decisionNames.get(row.id) ?? null, inputVatRecordedBeforeReview: inputVatRecordedBeforeReview(row, Boolean(row.inputVatDecisions?.length)), reimbursementProgress: progress.get(row.id) })), total, page, pageSize };
   }
 
   /** No list-page cap: group every readable unpaid expense, loading only the facts these readers need. */
@@ -1136,7 +1277,7 @@ export class PrismaExpenseRepository {
       where: { ...expenseReadScopeWhere(filter, scopes, relatedUserId), ...(filter.expenseIds ? { id: { in: filter.expenseIds } } : {}), ...(filter.payableOnly ? { status: 'CONFIRMED', outstandingAmount: { gt: 0 } } : {}) },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: { id: true, branchId: true, expenseNumber: true, expenseDate: true, createdAt: true, status: true, currency: true,
-        vendorNameSnapshot: true, vendorTaxIdSnapshot: true, vendorBranchCodeSnapshot: true, grandTotalAmount: true, whtAmount: true, netPayableAmount: true,
+        vendorNameSnapshot: true, vendorTaxIdSnapshot: true, vendorBranchCodeSnapshot: true, vendorAddressSnapshot: true, grandTotalAmount: true, whtAmount: true, netPayableAmount: true,
         outstandingAmount: true, sourceReimbursementRequestId: true, reservedByDisbursementVoucherId: true,
         vendorDocumentNumber: true, lines: { orderBy: { lineNumber: 'asc' }, take: 1, select: { description: true } },
         substituteReceiptEvidences: { orderBy: { version: 'desc' }, take: 1, select: { fundingSource: true } },
@@ -1154,7 +1295,7 @@ export class PrismaExpenseRepository {
     const claimedExpenses = new Set([...claims.flatMap(c => c.linkedExpenseId ? [c.linkedExpenseId] : []), ...links.filter(l => claimedFiles.has(l.attachmentId)).map(l => l.targetId)]);
     return expenses.map(expense => ({ ...expense, branchName: branches.find(b => b.id === expense.branchId)?.name ?? null,
       recordPaymentBlocker: recordExpensePaymentBlocker(expense, claimedExpenses.has(expense.id), expense.substituteReceiptEvidences[0]?.fundingSource),
-      reservation: reservations.has(expense.id) ? { documentNumber: reservations.get(expense.id)!.documentNumber, preparerName: reservations.get(expense.id)!.preparerName } : null,
+      reservation: reservations.has(expense.id) ? { voucherId: reservations.get(expense.id)!.canOpen ? reservations.get(expense.id)!.voucherId : null, documentNumber: reservations.get(expense.id)!.documentNumber, preparerName: reservations.get(expense.id)!.preparerName } : null,
     }));
   }
 
@@ -1489,10 +1630,29 @@ export class PrismaExpenseRepository {
     }, { isolationLevel: 'RepeatableRead', maxWait: 1_000, timeout: 5_000 });
   }
 
+  async listSubstituteReceiptCandidateSources(scope: Prisma.ExpenseRecordWhereInput & { search?: string }, branches: BranchScopes) {
+    const { search, ...where } = scope;
+    const rows = await this.prisma.client.expenseRecord.findMany({
+      where: { status: { notIn: ['REJECTED', 'VOIDED'] }, AND: [where,
+        ...(search ? [{ OR: [{ expenseNumber: { contains: search, mode: 'insensitive' as const } },
+          { vendorNameSnapshot: { contains: search, mode: 'insensitive' as const } }, { lines: { some: { description: { contains: search, mode: 'insensitive' as const } } } }] }] : [])] },
+      include: { lines: { orderBy: { lineNumber: 'asc' } }, substituteReceiptEvidences: { where: { status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' }, take: 1 } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+    const evidence = await loadExpenseEvidenceSources(this.prisma.client, where.companyId as string, rows, branches);
+    return rows.map((row): ExpenseRecordWithRelations => {
+      const base = mapExpense(row);
+      const lines = row.lines.map(mapLine);
+      return { ...base, lines, charges: expenseLineCharges(lines), totalsIdentity: expenseTotalsIdentity({ vatMode: base.vatMode, totals: base, lines }),
+        attachments: evidence.get(row.id)?.attachments ?? [], payments: [], duplicateCandidates: [],
+        substituteReceiptEvidence: row.substituteReceiptEvidences[0] ? toSubstituteEvidenceSummary(mapSubstituteEvidence(row.substituteReceiptEvidences[0])) : null };
+    });
+  }
+
   async listCompanySubstituteReceipts(
     companyId: string,
     filter: SubstituteReceiptListFilter,
-    scope: { branchIds?: string[]; onlyPayerUserId: string | null; relatedUserId?: string | null },
+    scope: { branchIds?: string[]; onlyPayerUserId: string | null; relatedUserId?: string | null; createdByUserId?: string; userId?: string; canApprove?: boolean; canSelfApprove?: boolean },
   ) {
     const page = filter.page ?? 1;
     const pageSize = filter.pageSize ?? 50;
@@ -1509,6 +1669,7 @@ export class PrismaExpenseRepository {
     const predicates: Prisma.ExpenseSubstituteReceiptEvidenceWhereInput[] = [];
     const branchWhere = branchScopeWhere({ branchIds: scope.branchIds });
     if (Object.keys(branchWhere).length > 0) predicates.push(branchWhere);
+    if (scope.createdByUserId) predicates.push({ expense: { is: expenseReadScopeWhere({ companyId, createdByUserId: scope.createdByUserId }, { branchIds: scope.branchIds }) } });
     if (scope.relatedUserId) {
       predicates.push({
         OR: [
@@ -1536,9 +1697,55 @@ export class PrismaExpenseRepository {
       ...(filter.status ? { status: filter.status } : {}),
       ...(predicates.length > 0 ? { AND: predicates } : {}),
     };
-    const [rows, total] = await this.prisma.client.$transaction([
-      this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
-        where,
+    // One scoped population drives tab counts, exact money, attention and date paging.
+    const sqlPredicates = [Prisma.sql`r."companyId" = ${companyId}`, Prisma.sql`e."companyId" = ${companyId}`];
+    const branchSql = (column: Prisma.Sql) => scope.branchIds?.length
+      ? Prisma.sql`(${column} IS NULL OR ${column} IN (${Prisma.join(scope.branchIds)}))`
+      : Prisma.sql`${column} IS NULL`;
+    if (scope.branchIds) sqlPredicates.push(branchSql(Prisma.sql`r."branchId"`));
+    if (scope.createdByUserId) {
+      sqlPredicates.push(Prisma.sql`e."createdByUserId" = ${scope.createdByUserId}`);
+      if (scope.branchIds) sqlPredicates.push(branchSql(Prisma.sql`e."branchId"`));
+    }
+    const payerId = scope.onlyPayerUserId || filter.payerUserId;
+    if (payerId) sqlPredicates.push(Prisma.sql`r."payerUserId" = ${payerId}`);
+    if (monthRange) sqlPredicates.push(Prisma.sql`COALESCE(r."paymentDate", e."expenseDate") >= ${monthRange.gte}
+      AND COALESCE(r."paymentDate", e."expenseDate") < ${monthRange.lt}`);
+    const direction = filter.order === 'oldest' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
+    return this.prisma.client.$transaction(async tx => {
+      // Preserve the legacy optional related-reader predicate through its existing Prisma helper.
+      // The preparation hub normally supplies creator scope instead.
+      if (scope.relatedUserId) {
+        const related = await tx.expenseSubstituteReceiptEvidence.findMany({ where: { ...where, status: undefined }, select: { id: true } });
+        sqlPredicates.push(related.length ? Prisma.sql`r.id IN (${Prisma.join(related.map(row => row.id))})` : Prisma.sql`FALSE`);
+      }
+      const population = Prisma.sql`FROM "ExpenseSubstituteReceiptEvidence" r JOIN "ExpenseRecord" e ON e.id = r."expenseId"
+        WHERE ${Prisma.join(sqlPredicates, ' AND ')}`;
+      const signature = Prisma.sql`r.status = 'PREPARED' AND r."payerUserId" = ${scope.userId ?? null}`;
+      const approval = Prisma.sql`${scope.canApprove === true} AND (r.status = 'PAYER_CERTIFIED' OR (r.status = 'PREPARED'
+        AND r."paperSubmissionJson" IS NOT NULL AND r."paperSubmissionJson" <> 'null'::jsonb))
+        AND (${scope.canSelfApprove === true} OR r."payerUserId" IS DISTINCT FROM ${scope.userId ?? null})`;
+      const groups = await tx.$queryRaw<Array<{ status: 'PREPARED' | 'PAYER_CERTIFIED' | 'ISSUED' | 'SUPERSEDED'; count: number; total: string;
+        signatureCount: number; signatureId: string | null; approvalCount: number; approvalId: string | null }>>(Prisma.sql`
+        SELECT r.status, COUNT(*)::int AS count, SUM(e."grandTotalAmount")::text AS total,
+          COUNT(*) FILTER (WHERE ${signature})::int AS "signatureCount", MIN(r.id) FILTER (WHERE ${signature}) AS "signatureId",
+          COUNT(*) FILTER (WHERE ${approval})::int AS "approvalCount", MIN(r.id) FILTER (WHERE ${approval}) AS "approvalId"
+        ${population} GROUP BY r.status`);
+      const selected = groups.filter(group => !filter.status || group.status === filter.status);
+      const counts = { PREPARED: 0, PAYER_CERTIFIED: 0, ISSUED: 0, SUPERSEDED: 0 };
+      for (const group of groups) counts[group.status] = group.count;
+      const total = selected.reduce((sum, group) => sum + group.count, 0);
+      const sums = { total: selected.reduce((sum, group) => sum.plus(group.total), new Decimal(0)).toFixed(2) };
+      const attention = {
+        signature: { count: selected.reduce((sum, group) => sum + group.signatureCount, 0), evidenceId: selected.find(group => group.signatureId)?.signatureId ?? null },
+        approval: { count: selected.reduce((sum, group) => sum + group.approvalCount, 0), evidenceId: selected.find(group => group.approvalId)?.approvalId ?? null },
+      };
+      const ids = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`SELECT r.id ${population}
+        ${filter.status ? Prisma.sql`AND r.status = ${filter.status}::"SubstituteReceiptEvidenceStatus"` : Prisma.empty}
+        ORDER BY COALESCE(r."paymentDate", e."expenseDate") ${direction}, r."createdAt" ${direction}, r.id ${direction}
+        LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`);
+      const rows = await tx.expenseSubstituteReceiptEvidence.findMany({
+        where: { ...where, id: { in: ids.map(row => row.id) } },
         select: {
           id: true,
           expenseId: true,
@@ -1567,13 +1774,10 @@ export class PrismaExpenseRepository {
             },
           },
         },
-        orderBy: [{ updatedAt: 'desc' }, { version: 'desc' }],
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      this.prisma.client.expenseSubstituteReceiptEvidence.count({ where }),
-    ]);
-    return { rows, total };
+      });
+      const byId = new Map(rows.map(row => [row.id, row]));
+      return { rows: ids.flatMap(({ id }) => { const row = byId.get(id); return row ? [row] : []; }), total, counts, sums, attention };
+    });
   }
 
   /** Advisor S1 (spec §5.2): one step of the caller's OWN signature queue, counted in the database. PAYER is
@@ -1660,11 +1864,12 @@ export class PrismaExpenseRepository {
     }
     const data: any = {};
     const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorAddressSnapshot', 'buyerAsPrintedJson', 'vendorEntityKindSnapshot', 'whtCategoryCode', 'whtRate', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'vatCaptureSnapshotJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'updatedAt', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
-    fields.push('whtInputJson');
+    fields.push('whtInputJson', 'requestedReviewerUserId', 'submittedByUserId', 'submittedAt');
     for (const f of fields) {
       if (rest[f] !== undefined) data[f] = rest[f];
     }
     return this.runInTx(db, async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtext(${`${companyId}:vat-registration`}))`;
       await lockExpenseFunding(tx, companyId, id);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${id}:substitute-receipt`}))`;
       if (rest.status === 'REJECTED') {
@@ -1677,6 +1882,56 @@ export class PrismaExpenseRepository {
         if (!current || validateStatusTransition(current.status, 'REJECTED')) throw new ConflictException('expense_correction_source_changed');
       }
       const beforeReview = refreshSubstituteEvidence ? await tx.expenseRecord.findFirst({ where: { id, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } }) : null;
+      const evidenceRouteChanged = data.aiVerificationSummaryJson !== undefined && beforeReview
+        && expenseEvidenceAssessment(beforeReview)?.route !== expenseEvidenceAssessment({ ...beforeReview, ...data })?.route;
+      if (evidenceRouteChanged || ['sourceDocumentType', 'vatMode', 'vatAmount', 'expenseDate', 'inputVatClaimStatus'].some(field => data[field] !== undefined)) {
+        const vatSource = beforeReview ?? await tx.expenseRecord.findFirst({ where: { id, companyId } });
+        if (vatSource) {
+          const next = { ...vatSource, ...data, status: vatSource.status,
+            sourceChannelMetadataJson: { ...vatSource.sourceChannelMetadataJson, ...data.sourceChannelMetadataJson } };
+          const typeReset = await resetInputVatDecisionForType(tx, vatSource, next, { userId: rest.updatedByUserId ?? vatSource.createdByUserId, requestId: refreshSubstituteEvidence?.requestId });
+          const restoringClaim = data.inputVatClaimStatus === 'CLAIMABLE' && vatSource.buyerAsPrintedJson?.claimStatusBeforeMark === 'CLAIMABLE';
+          if (restoringClaim) await assertInputVatRestoreAllowed(tx, next);
+          const preset = await applyExpenseInputVatPreset(tx, next);
+          if (restoringClaim && preset.inputVatClaimStatus === 'NEEDS_REVIEW') preset.inputVatClaimStatus = 'CLAIMABLE';
+          Object.assign(data, typeReset ?? preset);
+          const buyerDecision = rest.inputVatClaimStatus !== undefined && rest.updatedByUserId
+            && (vatSource.buyerAsPrintedJson?.matchStatus === 'MISMATCH' || vatSource.buyerAsPrintedJson?.claimStatusBeforeMark);
+          if (buyerDecision && !typeReset) {
+            await assertInputVatDecisionPeriodOpen(tx, vatSource);
+            const toStatus = data.inputVatClaimStatus ?? next.inputVatClaimStatus;
+            const facts = await inputVatDecisionFacts(tx, next);
+            const previousClaim = buyerDecision && toStatus === 'CLAIMABLE'
+              ? await tx.expenseInputVatDecision.findFirst({ where: { companyId, expenseId: id, toStatus: 'CLAIMABLE' }, orderBy: [{ decidedAt: 'desc' }, { id: 'desc' }] }) : null;
+            const restoredConditions = Array.isArray(previousClaim?.conditionsJson) ? previousClaim.conditionsJson : [];
+            const conditions = toStatus === 'NEEDS_REVIEW' ? [{ code: 'BUYER_MARK_UNDONE', source: 'REVIEWER', answer: true, answeredByUserId: rest.updatedByUserId,
+                fact: { buyerAsPrinted: next.buyerAsPrintedJson } }]
+              : validateInputVatDecision(next, facts, { toStatus, reason: 'ชื่อหรือเลขผู้เสียภาษีของร้านบนใบไม่ตรง',
+                reviewerConditions: restoredConditions.filter((c: any) => c.source === 'REVIEWER' && c.answer).map((c: any) => c.code),
+                buyerConfirmed: restoredConditions.some((c: any) => c.code === 'BUYER_MATCH' && c.answer && c.source === 'REVIEWER') }, rest.updatedByUserId!);
+            if (buyerDecision && toStatus === 'NEEDS_REVIEW' && inputVatFixedReason(next, facts.vatStatus))
+              validateInputVatDecision(next, facts, { toStatus: 'NON_CLAIMABLE', reason: 'ชื่อหรือเลขผู้เสียภาษีของร้านบนใบไม่ตรง' }, rest.updatedByUserId!);
+            const decision = await appendInputVatDecision(tx, vatSource, { toStatus,
+              reason: 'ชื่อหรือเลขผู้เสียภาษีของร้านบนใบไม่ตรง', conditions,
+              attachmentIds: facts.attachmentIds, userId: rest.updatedByUserId!, requestId: refreshSubstituteEvidence?.requestId });
+            data.sourceChannelMetadataJson = { ...next.sourceChannelMetadataJson, ...data.sourceChannelMetadataJson, inputVatDecisionId: decision.id };
+            if (toStatus === 'NEEDS_REVIEW') delete data.sourceChannelMetadataJson.inputVatDecisionId;
+          }
+
+        }
+      }
+      const whtSource = beforeReview ?? (['whtCategoryCode', 'whtRate', 'vendorEntityKindSnapshot'].some(field => data[field] !== undefined)
+        ? await tx.expenseRecord.findFirst({ where: { id, companyId } }) : null);
+      if (whtSource) {
+        const whtCategoryCode = await matchingExpenseWhtCategory(tx, { ...whtSource, ...data });
+        if (whtCategoryCode !== (data.whtCategoryCode ?? whtSource.whtCategoryCode)) data.whtCategoryCode = whtCategoryCode;
+      }
+      const nameSource = beforeReview ?? whtSource ?? (data.vendorNameSnapshot !== undefined ? await tx.expenseRecord.findFirst({ where: { id, companyId } }) : null);
+      if (nameSource?.sourceChannelMetadataJson?.substituteReceiptPayeeName && data.vendorNameSnapshot !== undefined
+        && data.vendorNameSnapshot !== nameSource.vendorNameSnapshot) {
+        data.sourceChannelMetadataJson = { ...nameSource.sourceChannelMetadataJson, ...data.sourceChannelMetadataJson };
+        delete data.sourceChannelMetadataJson.substituteReceiptPayeeName;
+      }
       // `vendorEntityKindSnapshot` is deliberately NOT material. The payee taxpayer class is never
       // printed on the ใบรับรองแทนใบเสร็จ artifact (`substitute-receipt.logic.ts`), so locking it buys
       // no document integrity — and it deadlocks: confirming a substitute-reliant expense requires the
@@ -1764,6 +2019,11 @@ export class PrismaExpenseRepository {
       }
       return record;
     });
+  }
+
+  async findExpenseIdForSubstituteReceipt(companyId: string, evidenceId: string): Promise<string | null> {
+    const evidence = await this.prisma.client.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId, id: evidenceId }, select: { expenseId: true } });
+    return evidence?.expenseId ?? null;
   }
 
   async findSubstituteEvidence(companyId: string, expenseId: string, evidenceId?: string): Promise<SubstituteReceiptEvidenceRecord | null> {
@@ -1859,10 +2119,10 @@ export class PrismaExpenseRepository {
     return { userId, displayName: membership.user.displayName };
   }
 
-  async listActiveMemberIdentities(companyId: string, branchId: string | null): Promise<Array<{ userId: string; displayName: string }>> {
+  async listActiveMemberIdentities(companyId: string, branchId: string | null): Promise<Array<{ userId: string; displayName: string; isOwner: boolean }>> {
     const memberships = await (this.prisma.client as any).companyMembership.findMany({
       where: { companyId, status: 'ACTIVE', user: { status: 'ACTIVE' } },
-      include: { user: { select: { displayName: true } }, branchScopes: { select: { branchId: true } } },
+      include: { roles: { include: { role: { select: { key: true, status: true } } } }, user: { select: { displayName: true } }, branchScopes: { select: { branchId: true } } },
       orderBy: { user: { displayName: 'asc' } },
     });
     return memberships
@@ -1871,7 +2131,7 @@ export class PrismaExpenseRepository {
         || (membership.branchScopeMode === 'DEFAULT_BRANCH_ONLY'
           ? membership.defaultBranchId === branchId
           : membership.branchScopes.some((scope: { branchId: string }) => scope.branchId === branchId)))
-      .map((membership: any) => ({ userId: membership.userId, displayName: membership.user.displayName }));
+      .map((membership: any) => ({ userId: membership.userId, displayName: membership.user.displayName, isOwner: membership.roles.some((entry: any) => entry.role.key === 'OWNER' && entry.role.status === 'ACTIVE') }));
   }
 
   async getSubstituteReceiptPolicy(companyId: string): Promise<SubstituteReceiptPolicyWithApprovalMode | null> {
@@ -2171,6 +2431,11 @@ export class PrismaExpenseRepository {
     return row ? { id: row.id, bucket: row.bucket, objectKey: row.objectKey, objectVersionId: row.objectVersionId ?? undefined, mimeType: row.mimeType, byteSize: row.byteSize, checksumSha256: row.checksumSha256 } : null;
   }
 
+  async findSubstitutePreparationUpload(companyId: string, expenseId: string, attachmentId: string, actorUserId: string, purpose: string) {
+    return this.prisma.client.attachmentObject.findFirst({ where: { id: attachmentId, companyId, uploadedByUserId: actorUserId,
+      metadataJson: { equals: { generatedFor: 'substitute_receipt_preparation', expenseId, purpose } } }, select: { status: true } });
+  }
+
   async findPersonalSignatureUploadAttachment(
     companyId: string,
     attachmentId: string,
@@ -2343,31 +2608,32 @@ export class PrismaExpenseRepository {
           || !['PREPARED', 'PAYER_CERTIFIED'].includes(current.status) || current.correctionOfEvidenceId
           || !expense || expense.updatedAt.getTime() !== input.expectedExpenseUpdatedAt.getTime()
           || !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
-          throw new ConflictException('เอกสารเปลี่ยนแปลงหรือออกสมบูรณ์แล้ว กรุณาโหลดข้อมูลล่าสุดก่อนแก้ไข');
+          throw new ConflictException('เอกสารเปลี่ยนแปลงหรือออกสมบูรณ์แล้ว เปิดหน้านี้ใหม่ก่อนแก้ไข');
         }
         if (current.signatureMode !== input.signatureMode || current.payerUserId !== input.payerUserId || current.fundingSource !== input.fundingSource) {
-          throw new ConflictException('การแก้ข้อมูลต้องใช้วิธีลงนาม ผู้รับรอง และแหล่งเงินเดิม');
+          throw new ConflictException('การแก้ข้อมูลต้องใช้วิธีเซ็น ผู้รับรอง และแหล่งเงินเดิม คงข้อมูลเหล่านี้ไว้หรือยกเลิกใบรับรองก่อนสร้างใหม่');
         }
-        if (!input.paymentDate || !Number.isFinite(input.paymentDate.getTime())) throw new BadRequestException('กรุณาระบุวันที่จ่ายเงินที่ถูกต้อง');
+        if (!input.paymentDate || !Number.isFinite(input.paymentDate.getTime())) throw new BadRequestException('วันที่จ่ายเงินไม่ถูกต้อง เลือกวันที่จ่ายเงินอีกครั้ง');
         assertFullSubstitutePayment(input.fundingSource, expense.paidAmount.toString(), expense.netPayableAmount.toString());
         assertSubstitutePaymentDetails(input.fundingSource, expense, input);
         const ids = [...new Set([...input.paymentEvidenceAttachmentIds, ...input.supportingAttachmentIds])].sort();
         for (const id of ids) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${id}:attachment-retention`}))`;
         if (await tx.attachmentObject.count({ where: { companyId: input.companyId, id: { in: ids }, status: 'ACTIVE', links: { some: { companyId: input.companyId, targetType: 'expense.record', targetId: input.expenseId } } } }) !== ids.length) {
-          throw new ConflictException('หลักฐานเปลี่ยนแปลง กรุณาโหลดข้อมูลล่าสุดก่อนแก้ไข');
+          throw new ConflictException('หลักฐานเปลี่ยนแปลง เปิดหน้านี้ใหม่ก่อนแก้ไข');
         }
         const facts = Object.fromEntries(['reasonCode', 'missingReceiptReason', 'businessPurpose', 'payeeName', 'payeeAddress', 'payeeTaxId', 'paymentDate', 'paymentMethod', 'paymentEvidenceAttachmentIds', 'supportingAttachmentIds']
           .map(key => [key, (input as any)[key]]));
-        if (Object.entries(facts).every(([key, value]) => key === 'paymentDate'
+        const sellerFields = substitutePayeeExpenseFields(expense, input.payeeName, current);
+        if (!sellerFields.vendorNameSnapshot && Object.entries(facts).every(([key, value]) => key === 'paymentDate'
           ? current.paymentDate && input.paymentDate && civilDate(current.paymentDate) === civilDate(input.paymentDate)
           : JSON.stringify(current[key]) === JSON.stringify(value))) return mapSubstituteEvidence(current);
         assertSubstituteEditAllowed(current, expense);
         if (current.paymentDate && input.paymentDate && civilDate(current.paymentDate).slice(0, 7) !== civilDate(input.paymentDate).slice(0, 7)
           && input.amendment.keepDocumentNumberConfirmed !== true) {
-          throw new ConflictException({ code: 'substitute_payment_month_confirmation_required', message: 'กรุณายืนยันเปลี่ยนเดือนที่จ่ายเงินโดยคงเลขเอกสารเดิม' });
+          throw new ConflictException({ code: 'substitute_payment_month_confirmation_required', message: 'ยังไม่ได้ยืนยันเปลี่ยนเดือนที่จ่ายเงิน ติ๊กยืนยันว่าจะเปลี่ยนเดือนโดยคงเลขเอกสารเดิม' });
         }
         const sourceNote = substitutePurposeSourceNote(expense.note, input.businessPurpose, current.businessPurpose);
-        const sourceChanged = expense.missingReceiptReason !== input.missingReceiptReason || sourceNote !== expense.note;
+        const sourceChanged = Boolean(sellerFields.vendorNameSnapshot) || expense.missingReceiptReason !== input.missingReceiptReason || sourceNote !== expense.note;
         const sourceUpdatedAt = sourceChanged ? new Date(Math.max(Date.now(), expense.updatedAt.getTime() + 1)) : expense.updatedAt;
         const data = {
           reasonCode: input.reasonCode, missingReceiptReason: input.missingReceiptReason, businessPurpose: input.businessPurpose,
@@ -2379,6 +2645,7 @@ export class PrismaExpenseRepository {
         };
         if (Object.entries(data).every(([key, value]) => JSON.stringify(current[key]) === JSON.stringify(value))) return mapSubstituteEvidence(current);
         if (sourceChanged) await tx.expenseRecord.update({ where: { id: expense.id }, data: {
+          ...sellerFields,
           missingReceiptReason: input.missingReceiptReason, note: sourceNote,
           updatedAt: sourceUpdatedAt, updatedByUserId: input.preparedByUserId,
         } });
@@ -2417,7 +2684,7 @@ export class PrismaExpenseRepository {
         return mapSubstituteEvidence(existing);
       }
       if (!input.paymentDate || !Number.isFinite(input.paymentDate.getTime())) {
-        throw new BadRequestException('กรุณาระบุวันที่จ่ายเงินที่ถูกต้องก่อนจัดทำใบรับรองแทนใบเสร็จ');
+        throw new BadRequestException('วันที่จ่ายเงินไม่ถูกต้อง เลือกวันที่จ่ายเงินอีกครั้งก่อนจัดทำใบรับรองแทนใบเสร็จ');
       }
       const expense = await tx.expenseRecord.findFirst({ where: { id: input.expenseId, companyId: input.companyId } });
       if (!expense || expense.updatedAt.getTime() !== input.expectedExpenseUpdatedAt.getTime()) {
@@ -2487,9 +2754,11 @@ export class PrismaExpenseRepository {
       if (!correction) {
         const reviewedSource = await this.findByIdWithRelations(input.companyId, input.expenseId, tx);
         if (!reviewedSource || !hasCurrentExpenseEvidenceReview(reviewedSource) || expenseEvidenceAssessment(reviewedSource)?.route !== 'SUBSTITUTE_RECEIPT') {
-          throw new ConflictException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: 'หลักฐานเปลี่ยนแล้ว กรุณาบันทึกการตรวจล่าสุดก่อนจัดทำใบรับรอง' });
+          throw new ConflictException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: 'หลักฐานเปลี่ยนแล้ว บันทึกการตรวจล่าสุดก่อนจัดทำใบรับรอง' });
         }
       }
+      const sellerFields = correction ? {} : substitutePayeeExpenseFields(expense, input.payeeName);
+      if (sellerFields.sourceChannelMetadataJson) sourceChannelMetadataJson = { ...sellerFields.sourceChannelMetadataJson, ...sourceChannelMetadataJson, substituteReceiptPayeeName: sellerFields.vendorNameSnapshot };
       const safeUpdate = correction ? { count: 1 } : await tx.expenseRecord.updateMany({
         where: {
           id: input.expenseId,
@@ -2498,6 +2767,7 @@ export class PrismaExpenseRepository {
           status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] },
         },
         data: {
+          ...sellerFields,
           missingReceiptReason: input.missingReceiptReason,
           note: substitutePurposeSourceNote(expense.note, input.businessPurpose),
           taxEvidenceStatus: 'SUPPORTING_ONLY',
@@ -2516,7 +2786,7 @@ export class PrismaExpenseRepository {
           { status: 'PAYER_CERTIFIED' }, { status: 'PREPARED', signatureMode: 'PAPER', payerUserId: null },
         ] },
       });
-      if (pendingCertified) throw new ConflictException('มีเวอร์ชันที่รอลงนามบนกระดาษหรือรออนุมัติอยู่ กรุณายกเลิกเวอร์ชันนั้นก่อนจัดทำใหม่');
+      if (pendingCertified) throw new ConflictException('มีเวอร์ชันที่รอเซ็นบนกระดาษหรือรออนุมัติอยู่ ยกเลิกเวอร์ชันนั้นก่อนจัดทำใหม่');
       await tx.expenseSubstituteReceiptEvidence.updateMany({
         where: { companyId: input.companyId, expenseId: input.expenseId, status: 'PREPARED' },
         data: { status: 'SUPERSEDED', supersededAt: new Date(), supersedeReason: 'CORRECTED_VERSION_PREPARED' },
@@ -2591,9 +2861,9 @@ export class PrismaExpenseRepository {
     expectedVersion: number;
     expectedEvidenceUpdatedAt: Date;
     artifact: { storageProvider: string; bucket: string; objectKey: string; objectVersionId: string; byteSize: number; checksumSha256: string; originalFileName: string };
-  }): Promise<SubstituteReceiptEvidenceRecord> {
+  }, transaction?: any): Promise<SubstituteReceiptEvidenceRecord> {
     const client = this.prisma.client as any;
-    return client.$transaction(async (tx: any) => {
+    const execute = async (tx: any) => {
       await lockExpenseFunding(tx, input.companyId, input.expenseId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
       for (const attachmentId of [...new Set(input.referencedAttachmentIds)].sort()) {
@@ -2660,7 +2930,8 @@ export class PrismaExpenseRepository {
       });
       if (changed.count !== 1) throw new Error('Substitute evidence changed while certifying.');
       return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }));
-    });
+    };
+    return transaction ? execute(transaction) : client.$transaction(execute);
   }
 
   async issueSubstituteEvidence(input: {
@@ -2688,9 +2959,9 @@ export class PrismaExpenseRepository {
     expectedVersion: number;
     expectedEvidenceUpdatedAt: Date;
     artifact: { storageProvider: string; bucket: string; objectKey: string; objectVersionId: string; byteSize: number; checksumSha256: string; originalFileName: string };
-  }): Promise<SubstituteReceiptEvidenceRecord> {
+  }, transaction?: any): Promise<SubstituteReceiptEvidenceRecord> {
     const client = this.prisma.client as any;
-    return client.$transaction(async (tx: any) => {
+    const execute = async (tx: any) => {
       await lockExpenseFunding(tx, input.companyId, input.expenseId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
       for (const attachmentId of [...new Set(input.referencedAttachmentIds)].sort()) {
@@ -2790,6 +3061,7 @@ export class PrismaExpenseRepository {
       const isCompanyPayment = evidence.fundingSource === 'COMPANY';
       const paymentAmount = isCompanyPayment && paidBefore.isZero() ? payable : new Decimal(0);
       if (paymentAmount.gt(0)) {
+        const paymentCompany = await tx.company?.findUnique?.({ where: { id: input.companyId }, select: { timezone: true } });
         await tx.expensePayment.create({ data: {
           companyId: input.companyId,
           expenseId: input.expenseId,
@@ -2798,7 +3070,8 @@ export class PrismaExpenseRepository {
           payloadFingerprint: canonicalFingerprint({ expenseId: expense.id, amount: paymentAmount.toFixed(4), paymentMethod: evidence.paymentMethod, paidAt: evidence.paymentDate.toISOString() }),
           currency: expense.currency,
           paymentMethod: evidence.paymentMethod,
-          paidAt: evidence.paymentDate,
+          paidAt: civilInstantDayRangeToUtc(utcDateToCivilDate(evidence.paymentDate), undefined, paymentCompany?.timezone ?? 'Asia/Bangkok').gte!,
+          paidAtConfirmed: true,
           status: 'RECORDED',
           postingStatus: 'pending',
           createdByUserId: input.approverUserId,
@@ -2823,8 +3096,37 @@ export class PrismaExpenseRepository {
       } });
       if (expenseChanged.count !== 1) throw new Error('Expense details changed while approving substitute evidence.');
       return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }));
+    };
+    return transaction ? execute(transaction) : client.$transaction(execute);
+  }
+
+  async certifyAndIssueSubstituteEvidence(input: {
+    certification: Parameters<PrismaExpenseRepository['markSubstituteEvidenceCertified']>[0];
+    issuance: Parameters<PrismaExpenseRepository['issueSubstituteEvidence']>[0];
+    actorRoles: readonly string[];
+    auditEntries: import('../../audit/domain/models/audit-log.model').AuditLogEntry[];
+  }): Promise<SubstituteReceiptEvidenceRecord> {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      const { certification, issuance } = input;
+      await lockExpenseFunding(tx, certification.companyId, certification.expenseId);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${certification.companyId}:${certification.expenseId}:substitute-receipt`}))`;
+      const policy = await tx.expenseSubstituteReceiptPolicy.findUnique({ where: { companyId: certification.companyId } });
+      if ((policy?.approvalMode ?? 'OWNER_SELF') !== 'OWNER_SELF' || !input.actorRoles.includes('OWNER')
+        || certification.payerUserId !== issuance.approverUserId || !issuance.allowSelfApproval
+        || certification.payerSignatureAttachmentId !== issuance.approverSignatureAttachmentId
+        || certification.certifiedAt.getTime() !== issuance.approvedAt.getTime()) {
+        throw new ForbiddenException('substitute_combined_signing_denied');
+      }
+      const evidence = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { id: certification.evidenceId, companyId: certification.companyId, expenseId: certification.expenseId } });
+      if (evidence?.signatureMode !== 'DIGITAL') throw new ForbiddenException('substitute_combined_signing_denied');
+      const certified = await this.markSubstituteEvidenceCertified(certification, tx);
+      const issued = await this.issueSubstituteEvidence({ ...issuance, expectedEvidenceUpdatedAt: certified.updatedAt,
+        referencedAttachmentIds: [...new Set([...issuance.referencedAttachmentIds, certified.certifiedArtifactAttachmentId!])] }, tx);
+      for (const entry of input.auditEntries) await new PrismaAuditRepository(this.prisma).log(entry, tx);
+      return issued;
     });
   }
+
 
   async updatePostingStatus(
     companyId: string,
@@ -3054,10 +3356,8 @@ export class PrismaExpenseRepository {
         if (certificateOptions.taxFilingAttested !== true) throw new BadRequestException({
           code: 'expense_certificate_attestation_required', message: EXPENSE_VOID_CERTIFICATE_WORDS.attestationRequired,
         });
-        const locks = await readExpensePeriodLocks(tx, current, events.filter((event: any) => event.status === 'ACTIVE').map((event: any) => event.taxPeriodId), true);
-        const locked = locks.lockedTaxPeriods.find((period: { formType: string }) => period.formType === 'PND3' || period.formType === 'PND53');
-        if (locked) throw new ConflictException({ code: 'tax_period_locked', ...locked,
-          message: EXPENSE_VOID_CERTIFICATE_WORDS.periodLocked(handoff.status === 'EXTERNAL_LINKED' ? 'EXTERNAL' : 'SYSTEM', locked.periodKey, locked.formType) });
+        // Cancellation preserves filed WHT lines; VAT/accounting checks below still apply.
+        await readExpensePeriodLocks(tx, current, [], true, false);
       }
       // Read before the status claim below: a document voided while open for correction has its tax records retired
       // here; a confirmed one keeps the existing path (the tax sync retires or flags them, period locks included).
@@ -3235,8 +3535,8 @@ export class PrismaExpenseRepository {
     vatSourceOverride?: ExpenseVatSourceOverrideInput;
     confirmationAudit?: { requestId: string; authority?: Record<string, unknown> };
     outboxEvent: { eventKey: string; payloadJson: Record<string, unknown> };
-  }, finalizeTax: ExpenseTaxFinalizer): Promise<{ expense: ExpenseRecord; finalized: ExpenseLineInput[] }> {
-    return serializableTransaction(this.prisma.client, async (tx: any) => {
+  }, finalizeTax: ExpenseTaxFinalizer, db?: ExpenseDb): Promise<{ expense: ExpenseRecord; finalized: ExpenseLineInput[] }> {
+    const confirm = async (tx: any) => {
       await lockExpenseFunding(tx, input.companyId, input.id);
       await assertFundingMutation(tx, input.companyId, input.id, 'confirm');
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.id}:substitute-receipt`}))`;
@@ -3279,6 +3579,7 @@ export class PrismaExpenseRepository {
         payments: [],
       };
       if (expenseTaxSourceChecksum(currentRecord) !== input.expectedSourceChecksum) throw new ConflictException('expense_confirmation_source_checksum_changed');
+      const whtCategoryCode = await matchingExpenseWhtCategory(tx, current);
 
       const coveredByClaimForm = Boolean(input.substituteCoveredByClaimForm)
         && !current.substituteReceiptGeneratedAt && current.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
@@ -3365,6 +3666,7 @@ export class PrismaExpenseRepository {
         data: {
           status: 'CONFIRMED', confirmedByUserId: input.actorUserId, confirmedAt: new Date(), updatedByUserId: input.actorUserId,
           expenseNumber, postingStatus: input.postingStatus,
+          ...(whtCategoryCode !== current.whtCategoryCode ? { whtCategoryCode } : {}),
           ...(acceptedVat && {
             ...acceptedVat.totals, vatCaptureSnapshotJson: acceptedVat.snapshot,
             ...calcPaymentAmounts(acceptedVat.totals.netPayableAmount, currentRecord.paidAmount),
@@ -3384,7 +3686,7 @@ export class PrismaExpenseRepository {
           companyId: input.companyId, actorUserId: input.actorUserId,
           expense: {
             id: current.id, branchId: current.branchId, whtAmount: acceptedRecord.whtAmount,
-            whtCategoryCode: current.whtCategoryCode ?? null, whtRate: current.whtRate,
+            whtCategoryCode: whtCategoryCode ?? null, whtRate: current.whtRate,
             vendorCounterpartyId: current.vendorCounterpartyId, vendorNameSnapshot: current.vendorNameSnapshot,
             vendorTaxIdSnapshot: current.vendorTaxIdSnapshot, vendorAddressSnapshot: current.vendorAddressSnapshot,
             vendorBranchCodeSnapshot: current.vendorBranchCodeSnapshot, vendorEntityKindSnapshot: current.vendorEntityKindSnapshot,
@@ -3404,7 +3706,8 @@ export class PrismaExpenseRepository {
         metadataJson: { expenseNumber, grandTotalAmount: expense.grandTotalAmount, ...input.confirmationAudit.authority },
       }, tx);
       return { expense, finalized };
-    });
+    };
+    return db ? confirm(db) : serializableTransaction(this.prisma.client, confirm);
   }
 
   async terminalizeUnconfirmedClaimProjection(input: {
@@ -3545,7 +3848,7 @@ export class PrismaExpenseRepository {
           chargeKind: l.chargeKind ?? null,
           quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: l.discountAmount,
           taxableAmount: l.taxableAmount, vatRate: l.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: l.vatAmount,
-          whtRate: l.whtRate, whtAmount: l.whtAmount, lineSubtotalAmount: l.lineSubtotalAmount,
+          whtCategoryCode: l.whtCategoryCode ?? null, whtRate: l.whtRate, whtAmount: l.whtAmount, lineSubtotalAmount: l.lineSubtotalAmount,
           lineTotalAmount: l.lineTotalAmount, expenseCategoryId: l.expenseCategoryId,
           accountHintKey: l.accountHintKey, taxCategory: l.taxCategory, sourceLineText: l.sourceLineText,
           aiLineConfidence: l.aiLineConfidence, reviewStatus: l.reviewStatus,
@@ -4167,7 +4470,9 @@ export class PrismaExpenseRepository {
         const source = await tx.expenseRecord.findFirst({ where: { companyId: input.companyId, id: input.expenseId }, select: { sourceReimbursementRequestId: true } });
         if (source?.sourceReimbursementRequestId) {
           const claim = await tx.reimbursementRequest.findFirst({ where: { companyId: input.companyId, id: source.sourceReimbursementRequestId } });
-          if (claim && !claim.cancellationPendingAt && canTransition(claim.status, 'CANCELLED')) {
+          // A claim that was not approved is back with its requester and is not waiting to be paid: it is not
+          // announced (it became cancellable on 2026-10-13, so "may still be cancelled" no longer excludes it).
+          if (claim && !claim.cancellationPendingAt && claim.status !== 'REJECTED' && canTransition(claim.status, 'CANCELLED')) {
             const facts = await new PrismaReimbursementRepository(this.prisma, this.documentNumbers).paymentNoticeFacts(tx, input.companyId, claim.id);
             if (facts.paymentDuplicateBlock === 'CONFIRMED') await tx.outboxEvent.createMany({ skipDuplicates: true, data: [{
               companyId: input.companyId, eventType: 'reimbursement.duplicate_confirmed', aggregateType: 'reimbursement_request', aggregateId: claim.id,
@@ -4414,9 +4719,9 @@ export class PrismaExpenseRepository {
     if (filter.expenseIds !== undefined && (!Array.isArray(filter.expenseIds)
       || filter.expenseIds.length > 10000
       || filter.expenseIds.some((id) => typeof id !== 'string' || !id.trim() || id.length > 200))) {
-      throw new BadRequestException('รายการที่เลือกสำหรับส่งออกไม่ถูกต้อง กรุณาโหลดข้อมูลใหม่');
+      throw new BadRequestException('รายการที่เลือกสำหรับส่งออกไม่ถูกต้อง เปิดหน้านี้ใหม่');
     }
-    const dateField = filter.dateField === 'expenseDate' ? 'expenseDate' : 'uploadedAt';
+    const dateField = filter.dateField === 'uploadedAt' ? 'uploadedAt' : 'expenseDate';
     let fromDate = filter.fromDate;
     let toDate = filter.toDate;
     if (filter.yearMonth && /^\d{4}-\d{2}$/.test(filter.yearMonth)) {
@@ -4452,12 +4757,12 @@ export class PrismaExpenseRepository {
       ...(filter.expenseCategoryId && { expenseCategoryId: filter.expenseCategoryId }),
       ...(filter.paymentStatus && { paymentStatus: filter.paymentStatus }),
       ...(filter.createdByUserId && { createdByUserId: filter.createdByUserId }),
-      ...(fromDate || toDate ? { [dateField]: dateRange } : {}),
+      ...(fromDate || toDate ? dateField === 'expenseDate' ? documentDateWhere(fromDate, toDate) : { uploadedAt: dateRange } : {}),
     };
   }
 
-  async listSharedEvidence(companyId: string, filter: SharedEvidenceFilter, scopes?: { branchIds?: string[] }): Promise<{
-    rows: Array<ExpenseRecord & { categoryName: string | null; journalEntryNumber: string | null; additionalChargesAmount: string; attachments: import('@watchdog-bms/contracts').ExpenseAttachmentRef[]; evidenceSources: Awaited<ReturnType<typeof loadExpenseEvidenceSources>> extends Map<string, infer T> ? T : never }>;
+  async listSharedEvidence(companyId: string, filter: SharedEvidenceFilter, scopes?: { branchIds?: string[] }, includeUnavailableAttachments = false): Promise<{
+    rows: Array<ExpenseRecord & { latestInputVatDecision?: import('@watchdog-bms/contracts').ExpenseSummary['latestInputVatDecision']; inputVatRecordedBeforeReview?: boolean; categoryName: string | null; journalEntryNumber: string | null; additionalChargesAmount: string; attachments: import('@watchdog-bms/contracts').ExpenseAttachmentRef[]; evidenceSources: Awaited<ReturnType<typeof loadExpenseEvidenceSources>> extends Map<string, infer T> ? T : never }>;
     total: number;
     page: number;
     pageSize: number;
@@ -4465,12 +4770,12 @@ export class PrismaExpenseRepository {
     const page = filter.page && filter.page > 0 ? filter.page : 1;
     const pageSize = filter.pageSize && filter.pageSize > 0 && filter.pageSize <= 500 ? filter.pageSize : 50;
     const where = this.buildSharedEvidenceWhere(companyId, filter, scopes);
-    const dateField = filter.dateField === 'expenseDate' ? 'expenseDate' : 'uploadedAt';
+    const dateField = filter.dateField === 'uploadedAt' ? 'uploadedAt' : 'expenseDate';
 
     const [records, total] = await Promise.all([
       this.prisma.client.expenseRecord.findMany({
         where: where as any,
-        include: { expenseCategory: { select: { name: true } } },
+        include: { expenseCategory: { select: { name: true } }, inputVatDecisions: { take: 1, orderBy: { decidedAt: 'desc' }, select: { reason: true, decidedByUserId: true, decidedAt: true } } },
         orderBy: [{ [dateField]: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -4478,9 +4783,10 @@ export class PrismaExpenseRepository {
       this.prisma.client.expenseRecord.count({ where: where as any }),
     ]);
 
+    const decisionNames = await this.inputVatDecisionNames(records);
     const ids = records.map((r) => r.id);
     const journalIds = records.map((r) => r.journalEntryId).filter((id): id is string => !!id);
-    const evidenceByExpense = await loadExpenseEvidenceSources(this.prisma.client, companyId, records, scopes);
+    const evidenceByExpense = await loadExpenseEvidenceSources(this.prisma.client, companyId, records, scopes, includeUnavailableAttachments);
     const payments = ids.length > 0 ? await this.prisma.client.expensePayment.findMany({
       where: { companyId, expenseId: { in: ids }, status: 'RECORDED' },
       orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }],
@@ -4549,6 +4855,8 @@ export class PrismaExpenseRepository {
           : pendingSource?.sourceType === 'expense.record' ? r.postingError : null;
         return {
           ...mapExpense(r),
+          latestInputVatDecision: decisionNames.get(r.id) ?? null,
+          inputVatRecordedBeforeReview: inputVatRecordedBeforeReview(r, Boolean(r.inputVatDecisions?.length)),
           categoryName: (r as any).expenseCategory?.name ?? null,
           journalEntryId,
           journalEntryNumber: journalEntryId ? journalNumberById.get(journalEntryId) ?? null : null,
@@ -4569,20 +4877,21 @@ export class PrismaExpenseRepository {
 
   /** Virtual year/month folders from the chosen date field (bounded raw aggregate). */
   async summarizeSharedEvidenceFolders(companyId: string, filter: SharedEvidenceFilter, scopes?: { branchIds?: string[] }): Promise<Array<{ yearMonth: string; expenseCount: number; evidenceCount: number; totalAmount: string }>> {
-    const dateField = filter.dateField === 'expenseDate' ? 'expenseDate' : 'uploadedAt';
+    const dateField = filter.dateField === 'uploadedAt' ? 'uploadedAt' : 'expenseDate';
     const where = this.buildSharedEvidenceWhere(companyId, { ...filter, yearMonth: undefined }, scopes);
     const rows = await this.prisma.client.expenseRecord.findMany({
       where: where as any,
-      select: { id: true, branchId: true, sourceReimbursementRequestId: true, sourceReimbursementLineId: true, [dateField]: true, grandTotalAmount: true } as any,
+      select: { id: true, branchId: true, sourceReimbursementRequestId: true, sourceReimbursementLineId: true, expenseDate: true, uploadedAt: true, aiVerificationSummaryJson: true, grandTotalAmount: true } as any,
       take: 5000,
     });
     const evidence = await loadExpenseEvidenceSources(this.prisma.client, companyId, rows as any, scopes);
     const evidencedIds = new Set([...evidence].filter(([, value]) => value.attachments.some(file => !file.isHistorical)).map(([id]) => id));
     const buckets = new Map<string, { count: number; evidenceCount: number; total: number }>();
     for (const row of rows as Array<Record<string, any>>) {
-      const date = row[dateField] as Date | null;
+      const hasDocumentDate = dateField === 'expenseDate' && expenseDateIsReadable(row.aiVerificationSummaryJson);
+      const date = row[hasDocumentDate ? 'expenseDate' : 'uploadedAt'] as Date | null;
       if (!date) continue;
-      const key = civilPeriodKey(dateField === 'expenseDate' ? coerceCivilDate(date) : civilDate(date));
+      const key = civilPeriodKey(hasDocumentDate ? coerceCivilDate(date) : civilDate(date));
       const bucket = buckets.get(key) ?? { count: 0, evidenceCount: 0, total: 0 };
       bucket.count += 1;
       if (evidencedIds.has(row['id'] as string)) bucket.evidenceCount += 1;
@@ -4620,17 +4929,17 @@ async function createWhtHandoffForExpense(tx: any, input: {
     : withheldLines.length
       ? withheldLines.reduce((sum, line) => sum.plus(String(line.taxableAmount)), new Decimal(0)).toFixed(4)
       : deriveWhtIncomeBase(withheldAmount, whtRate) ?? String(expense.grandTotalAmount ?? '0');
-  const [company, category, payerBranch] = await Promise.all([
+  const [company, category] = await Promise.all([
     tx.company.findUnique({ where: { id: companyId }, select: { name: true, registeredName: true, taxId: true, addressJson: true } }),
     expense.whtCategoryCode ? tx.whtIncomeCategory.findUnique({ where: { code: expense.whtCategoryCode }, select: { nameTh: true } }) : Promise.resolve(null),
-    expense.branchId ? tx.branch.findUnique({ where: { companyId_id: { companyId, id: expense.branchId } }, select: { taxBranchCode: true } }) : Promise.resolve(null),
   ]);
+  const payerBranch = await withholdingPayerPrefill(tx, companyId, expense.expenseDate.toISOString().slice(0, 7), expense.branchId, company?.addressJson);
   const prefill = {
     payerSnapshot: {
       companyName: company?.registeredName ?? company?.name ?? 'Unknown company',
       taxId: company?.taxId ?? null,
-      branchCode: payerBranch?.taxBranchCode ?? null,
-      address: company?.addressJson ? JSON.stringify(company.addressJson) : null,
+      branchCode: payerBranch.branchCode,
+      address: payerBranch.address ? JSON.stringify(payerBranch.address) : null,
     },
     payeeSnapshot: {
       name: expense.vendorNameSnapshot ?? 'Unknown payee',
@@ -4695,4 +5004,18 @@ function assertExpensePaidWithinPayable(expense: any): void {
   if (new Decimal(String(expense.paidAmount ?? 0)).minus(String(expense.netPayableAmount)).gt(SETTLE_EPSILON)) {
     throw new BadRequestException({ code: 'expense_paid_exceeds_payable', message: EXPENSE_CORRECTION_WORDS.paidExceedsPayable });
   }
+}
+
+/** Review saves and confirmation both call this inside their existing locked transaction. */
+async function matchingExpenseWhtCategory(tx: any, expense: any): Promise<string | null | undefined> {
+  const code = expense.whtCategoryCode;
+  const form = expense.vendorEntityKindSnapshot === 'INDIVIDUAL' ? 'PND3' : expense.vendorEntityKindSnapshot === 'JURISTIC' ? 'PND53' : null;
+  if (!code || !form) return code;
+  const category = await tx.whtIncomeCategory.findUnique({ where: { code } });
+  if (!category || (category.formType === form || form === 'PND3' && category.formType === 'PND2')) return code;
+  const twinCode = WHT_INCOME_CATEGORY_TWINS.find(pair => pair.includes(code))?.find(twin => twin !== code);
+  const twin = twinCode ? await tx.whtIncomeCategory.findUnique({ where: { code: twinCode } }) : null;
+  if ((twin?.formType === form || form === 'PND3' && twin?.formType === 'PND2') && twin.status === 'ACTIVE' && expense.whtRate != null && new Decimal(expense.whtRate).eq(twin.defaultRate)) return twinCode;
+  throw new BadRequestException({ code: 'expense_wht_category_payee_mismatch',
+    message: 'จ่ายค่าอะไรไม่ตรงกับผู้รับเงิน เลือกประเภทเงินได้ให้ตรง หรือแก้ช่องผู้รับเงินเป็นใครให้ถูกต้อง' });
 }

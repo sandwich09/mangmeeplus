@@ -20,7 +20,7 @@ test('a foreign-currency document warns with its own code, and never offers a co
   const html = await render(summaryWith('USD'));
   assert.match(html, /เอกสารนี้เป็นสกุลเงิน ดอลลาร์สหรัฐ/);
   assert.match(html, /ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท/);
-  assert.match(html, /กรุณาตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก/);
+  assert.match(html, /ตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก/);
   assert.match(html, /role="alert"/);
   // Warning only: the reviewer edits the amount and proceeds. No FX rate is applied or suggested.
   assert.doesNotMatch(html, /อัตราแลกเปลี่ยน|แปลงค่า|\+/);

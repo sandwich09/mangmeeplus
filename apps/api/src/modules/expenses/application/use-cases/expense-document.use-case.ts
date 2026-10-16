@@ -216,7 +216,6 @@ export class CaptureLineExpenseNoteUseCase {
       ...(cmd.branchId ? { branchId: cmd.branchId } : {}),
       expenseDate: initialState?.header.expenseDate ?? validated.expenseDate ?? provisionalDate,
       vatMode: validated.vatMode,
-      inputVatClaimStatus: 'NEEDS_REVIEW',
       ...(documentCategoryId ? { expenseCategoryId: documentCategoryId } : {}),
       missingReceiptReason: LINE_TEXT_NOTE_MISSING_RECEIPT_MARKER,
       note: initialState?.header.businessPurpose ?? description,

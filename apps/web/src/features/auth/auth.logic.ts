@@ -122,17 +122,20 @@ export function companyAccessDescription(
   locale: 'th' | 'en',
   displayName?: string | null,
   companyName?: string | null,
+  code?: string,
 ): string {
+  if (code === 'company_membership_disabled') return 'บัญชีของคุณในร้านนี้ถูกปิดใช้งาน ให้เจ้าของกิจการหรือผู้ดูแลร้านเปิดใช้งานให้อีกครั้ง';
   if (!displayName) {
     return locale === 'th'
-      ? 'บริษัทอาจถูกปิดใช้งาน หรือสิทธิ์ของคุณถูกยกเลิก กรุณาติดต่อผู้ดูแลบริษัท หากต้องการเปลี่ยนบัญชีให้ออกจากระบบแล้วเข้าสู่ระบบใหม่'
-      : 'The company may be inactive or your access may have been removed. Contact your company administrator, or sign out to use another account.';
+      ? 'ร้านอาจถูกปิดใช้งาน หรือสิทธิ์ของคุณอาจถูกยกเลิก ติดต่อผู้ดูแลร้าน ถ้าจะเปลี่ยนบัญชี ให้ออกจากระบบแล้วเข้าสู่ระบบใหม่'
+      : 'The shop may be inactive or your access may have been removed. Contact the shop administrator, or sign out to use another account.';
   }
 
   const name = companyName?.trim();
   if (locale === 'th') {
-    const company = name ? (name.startsWith('บริษัท') ? name : `บริษัท ${name}`) : 'บริษัทนี้';
-    return `คุณกำลังเข้าสู่ระบบเป็น "${displayName}" ซึ่งไม่มีสิทธิ์ใน${company} หากลิงก์นี้มาจากอีกบัญชีหนึ่ง ให้ออกจากระบบแล้วเข้าสู่ระบบใหม่ด้วยบัญชีนั้น หรือติดต่อผู้ดูแลบริษัท`;
+    // A registered name that already starts with "บริษัท" is said as it is; any other name is a shop's.
+    const company = name ? (name.startsWith('บริษัท') ? name : `ร้าน ${name}`) : 'ร้านนี้';
+    return `คุณกำลังเข้าสู่ระบบเป็น "${displayName}" ซึ่งไม่มีสิทธิ์ใน${company} ถ้าลิงก์นี้มาจากอีกบัญชีหนึ่ง ให้ออกจากระบบแล้วเข้าสู่ระบบใหม่ด้วยบัญชีนั้น หรือติดต่อผู้ดูแลร้าน`;
   }
 
   return `You are signed in as "${displayName}", which has no access to ${name ? `"${name}"` : 'this company'}. If this link belongs to another account, sign out and sign in with that account, or contact your company administrator.`;

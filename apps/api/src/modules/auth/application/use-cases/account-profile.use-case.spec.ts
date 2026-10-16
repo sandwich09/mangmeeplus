@@ -597,3 +597,58 @@ describe('the HTTP surface of the my-account routes', () => {
     }
   });
 });
+
+describe('own display name and shop-scoped history', () => {
+  const ctx: any = { companyId: 'shop', userId: 'me', permissions: ['account.session.read'], requestId: 'r' };
+  function names() {
+    const users = [{ id: 'me', displayName: 'เดิม', status: 'ACTIVE' }, { id: 'other', displayName: 'คนอื่น', status: 'ACTIVE' }];
+    const history: any[] = [];
+    const memberships = [{ companyId: 'shop', userId: 'me', status: 'ACTIVE' }, { companyId: 'shop', userId: 'other', status: 'ACTIVE' }];
+    const db: any = {
+      $queryRaw: async () => [],
+      companyMembership: { findFirst: async ({ where }: any) => memberships.find(m => Object.entries(where).every(([k,v]) => (m as any)[k] === v)) ?? null },
+      user: { findUnique: async ({ where }: any) => users.find(u => u.id === where.id), update: async ({ where, data }: any) => Object.assign(users.find(u => u.id === where.id)!, data) },
+      auditLog: { findMany: async ({ where, select }: any) => history.filter(r => Object.entries(where).every(([k,v]) => r[k] === v)).reverse().map(row => ({ ...row, ...(select.actor ? { actor: users.find(user => user.id === row.actorUserId) ?? null } : {}) })) },
+    };
+    db.$transaction = async (work: any) => work(db);
+    const logger: any = { log: async (entry: any, tx: any) => { assert.equal(tx, db); history.push({ ...entry, id: String(history.length), createdAt: new Date() }); } };
+    return { useCase: new AccountProfileUseCase(lineMessagingCredentialsFixture(null), { client: db } as any, logger), users, history, memberships };
+  }
+  it('updates only self, trims the employee name limit and writes old-to-new history', async () => {
+    const h = names();
+    await (h.useCase as any).setDisplayName(ctx, 'shop', 'me', '  ใหม่  ');
+    assert.equal(h.users[0].displayName, 'ใหม่');
+    const result = await (h.useCase as any).displayNameHistory(ctx, 'shop', 'me');
+    assert.deepEqual(result.history.map((r: any) => [r.oldName, r.newName]), [['เดิม', 'ใหม่']]);
+    assert.equal(h.history[0].actorUserId, 'me'); assert.equal(h.history[0].companyId, 'shop');
+    await (h.useCase as any).setDisplayName(ctx, 'shop', 'me', 'ใหม่'); assert.equal(h.history.length, 1);
+    for (const name of ['', '  ', 'ก'.repeat(161)]) await assert.rejects(() => (h.useCase as any).setDisplayName(ctx, 'shop', 'me', name), BadRequestException);
+  });
+  it('history identifies the employee manager who changed the name, without exposing an account id', async () => {
+    const h = names();
+    h.history.push({ companyId: 'shop', targetType: 'User', targetId: 'me', action: 'account.display_name.update', result: 'SUCCESS', id: 'manager-change', createdAt: new Date('2026-10-13T01:00:00Z'), actorUserId: 'other', metadataJson: { oldName: 'เดิม', newName: 'ใหม่' } });
+    const result = await h.useCase.displayNameHistory(ctx, 'shop');
+    assert.deepEqual(result.history[0], { id: 'manager-change', changedAt: '2026-10-13T01:00:00.000Z', oldName: 'เดิม', newName: 'ใหม่', changedByName: 'คนอื่น' });
+    h.history[0].actorUserId = null;
+    assert.equal((await h.useCase.displayNameHistory(ctx, 'shop')).history[0].changedByName, null);
+  });
+  it('refuses another member name, cross-shop commands and inactive membership', async () => {
+    const h = names();
+    await assert.rejects(() => (h.useCase as any).setDisplayName(ctx, 'shop', 'other', 'เปลี่ยน'), ForbiddenException);
+    await assert.rejects(() => (h.useCase as any).setDisplayName(ctx, 'elsewhere', 'me', 'เปลี่ยน'), ForbiddenException);
+    h.memberships[0].status = 'DISABLED';
+    await assert.rejects(() => (h.useCase as any).setDisplayName(ctx, 'shop', 'me', 'เปลี่ยน'), ForbiddenException);
+    assert.equal(h.history.length, 0);
+  });
+  it('history is newest first, shop scoped and visible to self or an employee manager only', async () => {
+    const h = names();
+    await (h.useCase as any).setDisplayName(ctx, 'shop', 'me', 'หนึ่ง');
+    await (h.useCase as any).setDisplayName(ctx, 'shop', 'me', 'สอง');
+    h.history.push({ ...h.history[0], companyId: 'elsewhere', id: 'hidden' });
+    assert.deepEqual((await (h.useCase as any).displayNameHistory(ctx, 'shop', 'me')).history.map((r: any) => r.newName), ['สอง', 'หนึ่ง']);
+    const other = { ...ctx, userId: 'other' };
+    await assert.rejects(() => (h.useCase as any).displayNameHistory(other, 'shop', 'me'), ForbiddenException);
+    assert.equal((await (h.useCase as any).displayNameHistory({ ...other, permissions: ['access.employee.update'] }, 'shop', 'me')).history.length, 2);
+    await assert.rejects(() => (h.useCase as any).displayNameHistory(ctx, 'elsewhere', 'me'), ForbiddenException);
+  });
+});

@@ -65,7 +65,7 @@ test('payment confirmation shows only its facts, the Thai date and method, and a
   for (const [key, expected] of Object.entries({ pay_confirm: 'ยืนยัน จ่ายแล้ว {total}', pay_confirm_fact: 'จ่าย {total} ให้ {payee}', pay_review: 'กลับไปตรวจ', pay_no_evidence: 'ยังไม่ได้แนบหลักฐาน', approve_confirm: 'อนุมัติจ่าย {total} ให้ {payee} ใช่ไหม' }))
     assert.equal(workspaceDictionary.th[`expenses.disbursement.${key}` as keyof typeof workspaceDictionary.th], expected);
   assert.match(pay, /closeOnBackdrop=\{false\}/);
-  assert.match(pay, /className=\{styles.modalFooter\}/);
+  assert.doesNotMatch(pay, /styles.modalFooter|w-full sm:w-auto/); // plain buttons: the shared dialog footer sizes them
   assert.ok(pay.indexOf("word('pay_review')}</button>") < pay.indexOf("word('pay_confirm').replace"));
 });
 test('approval dialog never submits on mount and uses an explicit approve confirmation with amount and payee', () => {

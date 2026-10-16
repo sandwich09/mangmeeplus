@@ -48,16 +48,16 @@ describe('disbursement voucher one-source words', () => {
     assert.equal(disbursementVouchers.disbursementVoucherError('disbursement_payment_source_changed', { number: 'EXP-1', mayWithdraw: 'true' }).message,
       'รายการ EXP-1 ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ กด "กลับไปแก้" เพื่อตรวจรายการใหม่ หรือยกเลิกใบนี้');
     assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_payment_source_changed,
-      'รายการในใบนี้ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ ให้ผู้จัดทำหรือผู้อนุมัติของใบนี้กด "กลับไปแก้" เพื่อตรวจรายการใหม่ แล้วส่งอนุมัติอีกครั้ง');
+      'รายการในใบนี้ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ ให้ผู้เตรียมหรือผู้ส่งใบนี้กด "กลับไปแก้" เพื่อตรวจรายการใหม่ แล้วส่งอนุมัติอีกครั้ง');
     assert.equal(disbursementVouchers.disbursementVoucherError('disbursement_payment_source_changed', { number: 'EXP-1', mayWithdraw: 'false' }).message,
-      'รายการ EXP-1 ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ ให้ผู้จัดทำหรือผู้อนุมัติของใบนี้กด "กลับไปแก้" เพื่อตรวจรายการใหม่ แล้วส่งอนุมัติอีกครั้ง');
+      'รายการ EXP-1 ถูกเปลี่ยนแปลงหลังอนุมัติ จึงบันทึกจ่ายไม่ได้ ให้ผู้เตรียมหรือผู้ส่งใบนี้กด "กลับไปแก้" เพื่อตรวจรายการใหม่ แล้วส่งอนุมัติอีกครั้ง');
     for (const [code, message] of Object.entries(disbursementVouchers.DISBURSEMENT_VOUCHER_ERROR_WORDS)) {
       assert.ok(/[ก-๙]/.test(message), code);
       const result = disbursementVouchers.disbursementVoucherError(code as disbursementVouchers.DisbursementVoucherErrorCode, { number: 'EXP-1', outstanding: '104.0000' });
       assert.equal(result.code, code); assert.equal(/\{\w+\}/.test(result.message), false);
     }
     assert.equal(disbursementVouchers.disbursementVoucherError('disbursement_amount_invalid', { number: 'EXP-1', outstanding: '104.0000' }).message,
-      'ยอดของรายการ EXP-1 ต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย 104.0000');
+      'ยอดของรายการ EXP-1 ต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย 104.0000 แก้ยอดแล้วบันทึกอีกครั้ง');
   });
   it('keeps document names, header description, origin and all five status words/tones together', () => {
     assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_WORDS.title, 'ใบเตรียมจ่าย/ใบสำคัญจ่าย');
@@ -66,7 +66,7 @@ describe('disbursement voucher one-source words', () => {
     assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_WORDS.description, 'ใบเดียว เลขเดียว: ก่อนจ่ายคือรายการที่จะจ่ายให้ผู้รับเงินรายหนึ่งและรออนุมัติ จ่ายแล้วคือใบสรุปว่าจ่ายเงินครั้งนี้เพื่อชำระอะไร');
     assert.equal(disbursementVouchers.DISBURSEMENT_VOUCHER_WORDS.directPayment, 'บันทึกจ่ายโดยตรง');
     assert.deepEqual(disbursementVouchers.DISBURSEMENT_VOUCHER_STATUS_LABELS, {
-      DRAFT: 'ฉบับร่าง', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'อนุมัติแล้ว รอจ่าย', PAID: 'จ่ายแล้ว', CANCELLED: 'ยกเลิก',
+      DRAFT: 'ร่าง', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'อนุมัติแล้ว รอจ่าย', PAID: 'จ่ายแล้ว', CANCELLED: 'ยกเลิกแล้ว',
     });
     assert.deepEqual(disbursementVouchers.DISBURSEMENT_VOUCHER_STATUS_TONES, {
       DRAFT: 'grey', PENDING_APPROVAL: 'yellow', APPROVED: 'blue', PAID: 'green', CANCELLED: 'soft_red',
@@ -77,8 +77,8 @@ describe('disbursement voucher one-source words', () => {
     const message = disbursementVouchers.disbursementExpenseReasonMessage;
     assert.equal(message('reserved', 'PV-1'), 'อยู่ในใบเตรียมจ่ายเลขที่ PV-1 แล้ว');
     assert.equal(message('reserved', null), 'อยู่ในใบเตรียมจ่ายอีกใบที่รออนุมัติ');
-    assert.equal(message('claim'), 'รายการนี้อยู่ในคำขอเบิก ให้จ่ายผ่านคำขอเบิก');
-    assert.equal(message('personal_advance'), 'พนักงานจ่ายร้านไปแล้ว ให้คืนเงินพนักงานผ่านคำขอเบิก');
+    assert.equal(message('claim'), 'รายการนี้อยู่ในใบเบิก ให้จ่ายผ่านใบเบิก');
+    assert.equal(message('personal_advance'), 'พนักงานจ่ายร้านไปแล้ว ให้คืนเงินพนักงานผ่านใบเบิก');
     assert.equal(message('missing_branch'), 'รายการนี้ยังไม่มีสาขา เปิดรายจ่ายเพื่อระบุสาขาก่อน');
     assert.equal(message('foreign_currency'), 'รายการนี้ไม่ใช่เงินบาท ยังรวมในใบเตรียมจ่ายไม่ได้');
     for (const value of Object.values(disbursementVouchers.DISBURSEMENT_VOUCHER_WORDS)) assert.equal(/[a-z]/i.test(value), false);
@@ -382,4 +382,20 @@ describe('expense correction display facts', () => {
     assert.equal(excess({ paidAmount: '100.0051', netPayableAmount: '100' }), '0.0051');
     assert.equal(excess({ paidAmount: '99', netPayableAmount: '100' }), null);
   });
+});
+
+
+it('keeps input VAT document types and Thai labels in parity with Prisma', () => {
+  assert.deepEqual(Object.keys(expenses.SOURCE_DOCUMENT_TYPE_LABELS).sort(), [...SCHEMA_ENUMS.get('SourceDocumentType')!].sort());
+  assert.equal(expenses.SOURCE_DOCUMENT_TYPE_LABELS.CUSTOMS_VAT_RECEIPT, 'ใบเสร็จรับเงินกรมศุลกากร (VAT นำเข้า)');
+  assert.equal(expenses.SOURCE_DOCUMENT_TYPE_LABELS.PP36_RECEIPT, 'ใบเสร็จรับเงิน ภ.พ.36');
+});
+
+
+it('accepts a reviewer identifying either new VAT paper after an uncertain classification', () => {
+  for (const sourceDocumentType of ['CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT']) assert.equal(expenses.isNonExpenseClassificationBlocking({
+    status: 'NOT_EXPENSE_DOCUMENT', classification: { documentKind: 'ORDER_OR_CHECK_BILL' },
+    classificationResolution: { outcome: 'FINANCE_OVERRIDDEN_AS_EXPENSE', acknowledged: true, reason: 'ตรวจเอกสารแล้ว', sourceDocumentType,
+      resolvedAt: '2026-10-14T00:00:00.000Z', resolvedByUserId: 'reviewer' },
+  }), false);
 });

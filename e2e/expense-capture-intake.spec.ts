@@ -42,7 +42,7 @@ test.describe('appendix §25 — capture intake with no new screens', () => {
       await page.locator('input[type=file].hidden').first().setInputFiles({
         name: `w09-single-${randomUUID().slice(0, 8)}.png`, mimeType: 'image/png', buffer: PNG,
       });
-      await page.getByRole('button', { name: 'ให้ AI อ่านใบเสร็จ', exact: true }).click();
+      await page.getByRole('button', { name: /^ส่งใบเสร็จ(?: \d+ ใบ)?$/ }).click();
 
       // The landing a single receipt has always had: the detail page of the draft it created.
       await page.waitForURL(/\/expenses\/(?!upload$)[^/?#]+$/, { timeout: 150_000 });
@@ -76,7 +76,7 @@ test.describe('appendix §25 — capture intake with no new screens', () => {
       await expect(page.getByText('ทำงานเดิมต่อ')).toHaveCount(0);
       await expect(page.getByText('แยกเป็นกลุ่มหลักฐาน')).toHaveCount(0);
 
-      await page.getByRole('button', { name: /ส่งไฟล์ทั้งหมด|ให้ AI อ่านใบเสร็จ/ }).click();
+      await page.getByRole('button', { name: /^ส่งใบเสร็จ/ }).click();
 
       // The landing: the LIST, with the newest of the three highlighted.
       await page.waitForURL(/\/expenses\?highlight=/, { timeout: 280_000 });
@@ -106,7 +106,7 @@ test.describe('appendix §25 — capture intake with no new screens', () => {
     await page.locator('input[type=file].hidden').first().setInputFiles({
       name: `w09-pdf-${randomUUID().slice(0, 8)}.pdf`, mimeType: 'application/pdf', buffer: PDF,
     });
-    await page.getByRole('button', { name: 'ให้ AI อ่านใบเสร็จ', exact: true }).click();
+    await page.getByRole('button', { name: /^ส่งใบเสร็จ(?: \d+ ใบ)?$/ }).click();
     await page.waitForURL(/\/expenses\/(?!upload$)[^/?#]+$/, { timeout: 180_000 });
     const created = await createdIds();
     expect(created.length).toBe(1);

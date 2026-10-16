@@ -125,3 +125,14 @@ it('leaves the manual-expense guidance out when the company does not show that p
   // The setting never offers the card to a session that may not create.
   assert.deepEqual(permittedUsageGuidance(['expense.review'], true).map((g) => g.path), ['expenses']);
 });
+
+it('direct AI entry checks the shared route gate before loading the hub and provides a way back', async () => {
+  const { readFileSync } = await import('node:fs');
+  const page = readFileSync(new URL('../../../app/(workspace)/companies/[companyId]/ai-suggestions/page.tsx', import.meta.url), 'utf8');
+  assert.match(page, /!canSeeRoute\('\/ai-suggestions', session\?\.permissions \?\? \[\]\)/);
+  assert.match(page, /<ForbiddenState titleAs="h1"[\s\S]*action=\{<BackLink/);
+  assert.match(page, /packageAvailable=\{session\?\.availablePermissions \? canSeeRoute/);
+  assert.match(page, /isOwner=\{session\?\.roles.includes\('OWNER'\)\}/);
+  assert.match(page, /label="กลับไปหน้าแรก"/);
+  assert.ok(page.indexOf('return <ForbiddenState') < page.indexOf('return <AiSuggestionsHubPage'));
+});

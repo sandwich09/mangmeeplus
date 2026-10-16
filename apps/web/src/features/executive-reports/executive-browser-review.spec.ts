@@ -157,11 +157,12 @@ test('owner 2026-10-05: ten companies a page, a pager nobody overlooks, and one 
   const pager = html(Pagination, { page: 2, totalPages: 3, onPageChange() {}, prominent: true });
   assert.match(pager, />หน้า 2 จาก 3</);
   // Both ends are bordered buttons a thumb can hit (44 px), with the arrow hidden from the spoken name.
-  assert.equal((pager.match(/<button[^>]*border border-gray-300[^>]*min-h-11/g) ?? []).length, 2);
+  // (They are the shared secondary button since 2026-10-13: one look of button, thai-ux-standard §2.2.)
+  assert.equal((pager.match(/<button[^>]*data-variant="secondary"[^>]*class="mangmee-btn mangmee-btn-secondary[^"]*min-h-11/g) ?? []).length, 2);
   assert.match(pager, /<span aria-hidden="true">←<\/span>ก่อนหน้า/); assert.match(pager, /ถัดไป<span aria-hidden="true">→<\/span>/);
   assert.match(html(Pagination, { page: 1, totalPages: 3, onPageChange() {}, prominent: true }), /<button[^>]*disabled=""[^>]*>[\s\S]*?ก่อนหน้า/);
   // The plain pager other screens use keeps its look.
-  assert.doesNotMatch(html(Pagination, { page: 2, totalPages: 3, onPageChange() {} }), /border-gray-300|aria-hidden/);
+  assert.doesNotMatch(html(Pagination, { page: 2, totalPages: 3, onPageChange() {} }), /mangmee-btn-secondary|aria-hidden/);
   // Search, sort and export share one 44 px line: nothing hangs under the search box, the sort is named and never squeezed into a fixed column.
   const controls = page.match(/const directoryControls = [^\n]*\n[^\n]*\n[^\n]*/)?.[0] ?? '';
   assert.match(controls, /placeholder=\{W\.searchHint\}/); assert.doesNotMatch(controls, /hint=\{|md:w-80"|grid-cols-/);
@@ -256,7 +257,8 @@ test('B5: a history read failure belongs to the history tab and export never pre
 test('round A: optional executive field and picker styles preserve ordinary hints, sizes and disabled days', async () => {
   const { TextField } = await import('../../common/components/field/Field');
   const props = { id: 'search', label: W.search, hint: W.searchHint };
-  assert.match(html(TextField, props), /id="search-hint"[^>]*text-gray-400/);
+  // The ordinary hint is gray-500 since 2026-10-13: gray-400 on white is 2.6:1, too faint for text people must read.
+  assert.match(html(TextField, props), /id="search-hint"[^>]*text-gray-500/);
   assert.match(html(TextField, { ...props, hintClassName: 'truncate text-gray-600' }), /id="search-hint"[^>]*text-gray-600/);
   const code = source('../../common/components/field/ThemedDate.tsx').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
   const js = ts.transpileModule(code + '\nreturn ThemedDate;', { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;

@@ -26,10 +26,17 @@ describe('check-bill canonical preparation wiring', () => {
     assert.match(wizardSource, /checkBillRoute \? \{ routeCheckBill: true as const \}/);
     // New preparation needs explicit evidence review; check-bill classification alone cannot approve it.
     assert.doesNotMatch(wizardSource, /sourceDocumentType: !checkBillRoute && detail\.sourceDocumentType === 'NEEDS_REVIEW'/);
-    assert.match(wizardSource, /<DocumentReviewSection/);
+    assert.doesNotMatch(wizardSource, /<DocumentReviewSection/);
     const continueStep = sourceSection(wizardSource, 'const continueFromExpense = async', 'const prepare = async');
-    assert.match(continueStep, /!continuingExisting && \(!hasCurrentExpenseEvidenceReview\(detail\)/);
-    assert.match(continueStep, /expenseEvidenceAssessment\(detail\)\?\.route !== 'SUBSTITUTE_RECEIPT'/);
+    assert.equal((continueStep.match(/await updateExpenseReviewFields\(/g) ?? []).length, 1);
+    assert.match(continueStep, /if \(!continuingExisting\)/);
+    assert.match(continueStep, /route: 'SUBSTITUTE_RECEIPT', receiptProblem: 'NOT_AVAILABLE'/);
+    assert.match(continueStep, /sourceDocumentType: 'EXPENSE_NOTE_TEXT'/);
+    assert.match(continueStep, /lines: clearExpenseTaxSelections\(currentReview.lines\)/);
+    assert.match(continueStep, /\.\.\.sanitizedReview/);
+    assert.doesNotMatch(wizardSource, /item.blockedReason/);
+    assert.doesNotMatch(wizardSource, /บันทึกว่ามีใบเสร็จแล้ว จึงเลือกทำใบรับรองไม่ได้/);
+    assert.match(wizardSource, />เปิดค่าใช้จ่าย<\/Link>/);
     assert.match(wizardSource, /paymentCount: selectedPaymentCount/);
     assert.match(wizardSource, /String\(selectedCount\)/, 'a stale selected id must not count as a ready evidence file');
   });
@@ -61,34 +68,14 @@ function sourceSection(source: string, start: string, end: string): string {
   return source.slice(startIndex, endIndex);
 }
 
-describe('substitute-receipt state-aware document preview', () => {
-  it('opens the modal before waiting and covers its document area through image readiness', () => {
-    const openDocument = sourceSection(hubSource, 'async function openDocument', 'async function confirmCancellation');
-    const pending = openDocument.indexOf('setPreview({ item, data: null })');
-    const request = openDocument.indexOf('await previewIssuedSubstitutePaper');
-    assert.ok(pending >= 0 && pending < request, 'the visible modal must not wait for the API');
-    assert.match(hubSource, /<CoverLoader active=\{loading \|\| \(!failed && !!target\.data && loaded\.length !== pages\.length\)\} scope="section"/);
-    assert.match(hubSource, /min-h-\[50dvh\]/);
-    assert.match(hubSource, /error && <ErrorBanner message=\{error\}/);
-    assert.match(hubSource, /disabled=\{loading\} aria-busy=\{loading\} onClick=\{onRetry\}/);
-    assert.doesNotMatch(hubSource, /previewLoadingId && <p role="status"/);
-  });
-
-  it('only publishes the newest authenticated preview and invalidates close/company changes', () => {
-    assert.match(hubSource, /previewIssuedSubstitutePaper\(companyId, item\.expenseId, item\.evidenceId\)/);
-    assert.match(hubSource, /const requestId = \+\+previewRequestRef\.current/);
-    assert.match(hubSource, /if \(requestId === previewRequestRef\.current\) setPreview/);
-    assert.match(hubSource, /previewRequestRef\.current \+= 1/);
-    assert.match(hubSource, /\[companyId, closePreview\]/);
-  });
-
-  it('releases PDF URLs and waits for every page before allowing printing', () => {
-    assert.match(hubSource, /URL\.revokeObjectURL\(url\)/);
-    assert.match(hubSource, /target\.data\.pdfDataUrl\.startsWith\(prefix\)/);
-    assert.doesNotMatch(hubSource, /fetch\(target\.data\.pdfDataUrl\)/);
-    assert.match(hubSource, /loaded\.length !== pages\.length/);
-    assert.match(hubSource, /pages\.map\(\(page, index\)/);
-    assert.match(hubSource, /printSurface/);
+describe('substitute-receipt hub opens the document page', () => {
+  it('removes the separate preview button and modal; the document page retains its preview and download actions', () => {
+    assert.doesNotMatch(hubSource, /ReceiptPrintPreview|previewIssuedSubstitutePaper|openDocument|ดูเอกสาร|<Modal/);
+    assert.match(hubSource, /router\.push\(wizardHref\(item\.evidenceId\)\)/);
+    assert.match(hubSource, /event\.key === 'Enter'/);
+    assert.match(wizardSource, /const openArtifact = async/);
+    assert.match(wizardSource, /const openIssuedPdf = async/);
+    assert.match(wizardSource, /URL\.revokeObjectURL/);
   });
 });
 
@@ -113,8 +100,10 @@ describe('expense review preview lifecycle', () => {
 });
 
 describe('substitute-receipt wizard preview lifecycle', () => {
-  it('binds every async preview to the active company, expense, and evidence revision', () => {
-    assert.match(wizardSource, /const previewScope = \[\s*companyId,[\s\S]*receiptEvidence\?\.updatedAt \?\? '',[\s\S]*signerPosition[\s\S]*\]\.join/);
+  it('binds reader lifetime to document identity and signing validity to the evidence revision', () => {
+    assert.match(wizardSource, /const previewScope = \[companyId, detail\?\.id \?\? '', receiptEvidence\?\.id \?\? ''\]\.join/);
+    assert.match(wizardSource, /const previewRevision = \[previewScope, receiptEvidence\?\.updatedAt \?\? '', signerPosition\]\.join/);
+    assert.match(wizardSource, /\[companyId, detail\?\.id, receiptEvidence\?\.id, releasePreviewUrl\]/);
     assert.match(wizardSource, /requestId === previewRequestRef\.current && requestScope === previewScopeRef\.current/);
     for (const [start, end] of [
       ['const previewPrepared = async', 'const certify = async'],
@@ -132,9 +121,17 @@ describe('substitute-receipt wizard preview lifecycle', () => {
 
   it('revokes Blob URLs and prevents a stale media load from satisfying signing gates', () => {
     assert.match(wizardSource, /if \(source\.url\.startsWith\('blob:'\)\) URL\.revokeObjectURL\(source\.url\)/);
-    assert.match(wizardSource, /if \(requestId !== previewRequestRef\.current \|\| requestScope !== previewScopeRef\.current\) return;\s*source\.onViewed\?\.\(\)/);
+    assert.match(wizardSource, /if \(requestId !== previewRequestRef\.current \|\| requestScope !== previewScopeRef\.current\) return;/);
+    assert.match(wizardSource, /if \(requestRevision !== previewRevisionRef\.current\) \{[\s\S]*?return;\s*\}\s*source\.onViewed\?\.\(\)/);
     assert.match(wizardSource, /setPreviewChecksum\(null\);[\s\S]*await previewSubstituteReceipt/);
     assert.match(wizardSource, /if \(certified\) setCertifiedPreviewed\(false\)/);
     assert.match(wizardSource, /onClose=\{closePreview\}/);
   });
+});
+
+
+it('creation waits for the certificate route before offering its signing reader', () => {
+  const prepare = sourceSection(wizardSource, 'const result = await generateSubstituteReceipt', 'const selectSignatureFile');
+  assert.match(prepare, /setLoading\(true\);\s*router.push/);
+  assert.doesNotMatch(prepare, /setActiveStep\('certify'\)/);
 });
