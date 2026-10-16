@@ -34,7 +34,7 @@ test('the quota branch raises the latch; pressing Send returns to its reason wit
   assert.match(branch, /setQuotaLatch\(\{\s*monthKey: bangkokMonthKey\(todayCivilDate\(\)\)/);
   // Stamped with a month so the ceiling's own reset on the 1st clears it without a reload.
   assert.match(source, /const quotaBlocked = isReceiptQuotaBlocked\(quotaLatch, todayCivilDate\(\)\)/);
-  assert.match(source, /if \(quotaBlocked\) \{ focusExpenseField\(document\.querySelector\('\[data-upload-quota\]'\)\); return; \}/);
+  assert.match(source, /if \(quotaBlocked\) \{ focusExpenseField\(document\.querySelector<HTMLElement>\('\[data-upload-quota\]'\)\); return; \}/);
   assert.match(source, /disabled=\{loading\} aria-busy=\{loading\} data-loading-indicator/);
 });
 
