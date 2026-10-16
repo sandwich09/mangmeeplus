@@ -43,7 +43,7 @@ const { loginViaDevBff, ensureBrowserLegalAcceptance } = require('./e2e/harness/
     await warm('/companies/seed-local-company-2/dashboard');
     // The plain shop has the four QA members, not the legacy dev owner. Company routes above are shared.
     await loginAs(context, 'OWNER');
-    for (const shop of ['seed-local-plain-shop', 'seed-local-plain-shop-unanswered', 'seed-local-input-vat-shop']) {
+    for (const shop of ['seed-local-plain-shop', 'seed-local-plain-shop-unanswered', 'seed-local-input-vat-shop', 'seed-local-package-shop']) {
       await ensureBrowserLegalAcceptance(context, shop);
       await warm(`/companies/${shop}/dashboard`);
     }

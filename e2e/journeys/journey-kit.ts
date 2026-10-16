@@ -98,9 +98,13 @@ export async function pressMenu(page: Page, label: string, parent?: string) {
   const opener = page.locator('header').getByRole('button', { name: 'สลับเมนู', exact: true });
   // Wide screen: the menu is there. Phone: the three-line button is there instead. Wait for either.
   await expect(async () => { expect((await nav.isVisible()) || (await opener.isVisible())).toBe(true); }).toPass(FIRST_SIGHT);
-  if (!(await nav.isVisible())) await opener.click();
-  await expect(nav).toBeVisible(FIRST_SIGHT);
   const realRow = nav.locator('a:not([href*="/user-guide/"])');
+  // Phone: a page that is still settling can close the menu again right after it opened. Open it until the row is there.
+  const first = parent ? nav.getByRole('button', { name: new RegExp(`^${escapeRegExp(parent)}`) }) : nav.getByRole('link', { name: label, exact: true }).and(realRow);
+  await expect(async () => {
+    if (!(await nav.isVisible())) await opener.click();
+    await expect(first).toBeVisible({ timeout: 3_000 });
+  }).toPass(FIRST_SIGHT);
   if (!parent) {
     await nav.getByRole('link', { name: label, exact: true }).and(realRow).click();
     return;

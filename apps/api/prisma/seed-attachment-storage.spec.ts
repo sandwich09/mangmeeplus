@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it, mock } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { PLAIN_SHOP, UNANSWERED_PLAIN_SHOP, INPUT_VAT_SHOP, plainShopEntitlements, seedPlainShop } from './seed-plain-shop';
+import { PLAIN_SHOP, UNANSWERED_PLAIN_SHOP, INPUT_VAT_SHOP, PACKAGE_SHOP, plainShopEntitlements, seedPlainShop } from './seed-plain-shop';
 import { FEATURE_PACKAGE_PRESETS } from '@watchdog-bms/contracts';
 import { CompanyVatRegistrationUseCase } from '../src/modules/data-model-core/application/use-cases/company-vat-registration.use-case';
 import { HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -241,4 +241,13 @@ it('the input VAT journey shop grants review through starter, has four QA people
   try { await seedPlainShop(prisma as any, INPUT_VAT_SHOP); assert.equal(put.mock.callCount(), 0); } finally { put.mock.restore(); }
   assert.match(readFileSync(new URL('./seed.ts', import.meta.url), 'utf8'), /await seedPlainShop\(prisma, INPUT_VAT_SHOP\)/);
   assert.match(readFileSync(new URL('../../../scripts/local-proof/proof-journeys.sh', import.meta.url), 'utf8'), /seed-local-input-vat-shop/);
+});
+
+it('the package journey shop starts on the 999 menus with its owner only, and the journeys warm it', async () => {
+  assert.equal(PACKAGE_SHOP.id, 'seed-local-package-shop');
+  assert.deepEqual(PACKAGE_SHOP.roleKeys, ['OWNER']);
+  const rights = plainShopEntitlements(PACKAGE_SHOP.id);
+  for (const key of ['wht_pnd53', 'wht_50bis']) assert.equal(rights.find(row => row.featureKey === key)?.enabled, false);
+  assert.match(readFileSync(new URL('./seed.ts', import.meta.url), 'utf8'), /await seedPlainShop\(prisma, PACKAGE_SHOP\)/);
+  assert.match(readFileSync(new URL('../../../scripts/local-proof/proof-journeys.sh', import.meta.url), 'utf8'), /seed-local-package-shop/);
 });
