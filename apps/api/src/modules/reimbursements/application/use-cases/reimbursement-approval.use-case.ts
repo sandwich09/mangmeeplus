@@ -378,7 +378,9 @@ export class ApproveReimbursementUseCase {
     await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     // Decided, cancelled or taken back to a draft since the approver's page was loaded: said as that,
     // with a code the screen has words for, and never as the status the claim now has.
-    if (req.status !== 'PENDING_APPROVAL' || req.cancellationPendingAt) throw notAwaitingApproval();
+    if (req.status !== 'PENDING_APPROVAL') throw notAwaitingApproval();
+    // A started cancellation is refused by the atomic decision with its own code; a LINE preview stops here.
+    if (line?.previewOnly && req.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
     // Sent back to have its payout account corrected, and the requester has not given it yet: there is
     // nothing to approve, and the approver who presses it has an old page (payout spec §14.2).
     const correction = payoutCorrectionPhase(req);
@@ -669,7 +671,9 @@ export class RejectReimbursementUseCase {
     if (line?.expectedUpdatedAt && req.updatedAt.getTime() !== line.expectedUpdatedAt.getTime()) throw new ConflictException('reimbursement_source_version_changed');
     // The gate of the claim detail, ahead of every answer that depends on where the claim stands.
     await assertCanReadRequestOrAssignment(ctx, req, this.repo);
-    if (req.status !== 'PENDING_APPROVAL' || req.cancellationPendingAt) throw notAwaitingApproval();
+    if (req.status !== 'PENDING_APPROVAL') throw notAwaitingApproval();
+    // A started cancellation is refused by the atomic decision with its own code; a LINE preview stops here.
+    if (line?.previewOnly && req.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
     const correction = payoutCorrectionPhase(req);
     if (correction === 'AWAITING_REQUESTER') throw new ConflictException('payout_correction_in_progress');
 
