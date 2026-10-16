@@ -810,14 +810,14 @@ describe('item 2: claim decisions and expense confirmation prepare human confirm
           data: { reply: 'ตรวจรายละเอียดแล้วกดยืนยันค่ะ', preview: { action, token: 'signed-confirm-token' } } };
       },
     });
-    assert.deepEqual(calls, allowed || claim ? ['expense.action.preview'] : []);
+    assert.deepEqual(calls, allowed ? ['expense.action.preview'] : []);
     if (allowed) {
       assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
       assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'CONFIRMATION_REQUIRED');
       assert.equal(result.replyText, 'ตรวจรายละเอียดแล้วกดยืนยันค่ะ');
       assert.equal((result.outputs[0]?.toolData?.[0]?.data as any)?.preview.token, 'signed-confirm-token');
     } else {
-      assert.equal(result.semanticCoverage?.[0]?.status, claim ? 'denied' : 'unsupported');
+      assert.equal(result.semanticCoverage?.[0]?.status, 'denied');
       assert.ok(result.outputs.every(output => !output.toolData?.length), 'a refused preview carries no confirm card');
     }
     assert.doesNotMatch(result.replyText, /อนุมัติแล้ว|จ่ายแล้ว|ยืนยันแล้ว|ยกเลิกแล้ว/u);
@@ -1384,6 +1384,8 @@ describe('design lock: the v2 turn attaches a card layout built from the tool re
       requestId: 'req-detail', webhookEventId: 'event-detail', messageText, messagePreviewHash: 'c'.repeat(16),
       semanticSubrequests: [{ index: 0, kind: 'read', goal: 'รายละเอียดรายการ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
       userContext: baseUserContext(['expense.read']),
+      conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: [{ tool: 'expense.list_recent', answerShape: 'list', asOf: AS_OF,
+        shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้านสมใจ' }] }] },
     });
     // The composer's number is not in the result: grounding refuses it and the verified formatter answers.
     const fallback = await run(request('รายการนี้จ่ายหรือยังคะ'), [call('expense.get_detail', { expenseId: 'e1' }), answer('ยอด 12,345 บาทค่ะ', [detailRef.id])], detail);
