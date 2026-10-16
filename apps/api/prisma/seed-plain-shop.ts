@@ -19,6 +19,9 @@ export const UNANSWERED_PLAIN_SHOP = { ...PLAIN_SHOP, id: 'seed-local-plain-shop
   name: 'ร้านทั่วไป (ยังไม่ตอบเรื่อง VAT)', branchId: 'seed-plain-unanswered-branch-ho', vatCommandId: null };
 export const INPUT_VAT_SHOP = { ...PLAIN_SHOP, id: 'seed-local-input-vat-shop',
   name: 'ร้านทดลองภาษีซื้อ', branchId: 'seed-input-vat-branch-ho', vatCommandId: null };
+/** A 999 shop with nothing recorded: the package journey moves it to 1999 and issues a 50 ทวิ on an earlier expense. */
+export const PACKAGE_SHOP = { ...PLAIN_SHOP, id: 'seed-local-package-shop', name: 'ร้านทดลองเปลี่ยนแพ็กเกจ',
+  branchId: 'seed-package-branch-ho', roleKeys: ['OWNER'], vatCommandId: 'seed-package-shop-not-registered-v1' };
 export const plainShopEntitlements = (companyId: string = PLAIN_SHOP.id) => ALL_FEATURE_ENTITLEMENT_KEYS.map(featureKey => ({
   companyId, featureKey,
   enabled: (FEATURE_PACKAGE_PRESETS.starter.featureKeys as readonly string[]).includes(featureKey),

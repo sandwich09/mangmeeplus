@@ -5,7 +5,7 @@ import { AccountingDocumentSourceAdapter } from '../src/modules/tax/infrastructu
 import { ExpenseSourceAdapter } from '../src/modules/tax/infrastructure/adapters/expense-source.adapter';
 import { SupplierPaymentSourceAdapter } from '../src/modules/tax/infrastructure/adapters/supplier-payment-source.adapter';
 import { seedExpenses, seedExpenseRows } from './seed-expenses';
-import { seedPlainShop, UNANSWERED_PLAIN_SHOP, INPUT_VAT_SHOP } from './seed-plain-shop';
+import { seedPlainShop, UNANSWERED_PLAIN_SHOP, INPUT_VAT_SHOP, PACKAGE_SHOP } from './seed-plain-shop';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { syncPermissions } from './sync-permissions';
@@ -3101,6 +3101,7 @@ async function main() {
   await seedPlainShop(prisma);
   await seedPlainShop(prisma, UNANSWERED_PLAIN_SHOP);
   await seedPlainShop(prisma, INPUT_VAT_SHOP);
+  await seedPlainShop(prisma, PACKAGE_SHOP);
 
   console.log(`Seed complete: company, owner, ${QA_ROLE_ACCOUNTS.length} QA role accounts, roles, permissions, branch (${branch.id}), Room45 CRM demo workspace, operational menu demo data, location (${mainLocation.id}), product (${demoProduct.id}), document sequences, expense categories, notification rules, WHT categories, company tax profile, procurement sequences, reimbursement sequences/policy, and workflow template catalog (${WORKFLOW_TEMPLATE_CATALOG.length}) upserted.`);
 }
