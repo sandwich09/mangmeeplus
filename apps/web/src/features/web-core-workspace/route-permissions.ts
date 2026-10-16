@@ -15,11 +15,11 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
   { path: '/settings/po-approval', anyOf: ['procurement.purchase_order.manage'] },
   { path: '/settings/discount-policy', anyOf: ['crm.customer.update'] },
   { path: '/settings/substitute-receipt', anyOf: ['company.setup.manage'] },
-  // P10-L §15.4. `company.setup.read` is the LOW key every settings-capable member holds, so a
+  // Read also accepts legacy manage-only roles, without changing their saved grants. A
   // manager can open the page and read the masked shop block plus their own account section; the
   // shop form itself un-masks and saves only for a holder of `company.legal_identity.manage`,
   // which the API enforces separately from access to the settings hub.
-  { path: COMPANY_PROFILE_SETTINGS_PATH, anyOf: ['company.setup.read'] },
+  { path: COMPANY_PROFILE_SETTINGS_PATH, anyOf: ['company.setup.read', 'company.setup.manage'] },
   { path: '/settings/line-oa', anyOf: ['crm.channel.manage'] },
   { path: '/settings/notifications', anyOf: ['notification.preference.manage'] },
   { path: '/settings/notification-rules', anyOf: ['notification.rule.manage'] },

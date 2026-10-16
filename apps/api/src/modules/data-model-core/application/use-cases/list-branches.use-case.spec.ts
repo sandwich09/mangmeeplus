@@ -1,6 +1,8 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { ForbiddenException } from '@nestjs/common';
+import { REQUIRED_ANY_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
+import { BranchController } from '../../presentation/http/branch.controller';
 import { ListBranchesUseCase } from './list-branches.use-case';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 
@@ -37,4 +39,13 @@ describe('ListBranchesUseCase', () => {
     await uc.execute(makeCtx(['company.branch.read']), { status: 'ACTIVE' });
     assert.equal(((repo.list.mock.calls as any[])[0]?.arguments[0] as any).companyId, 'co-1');
   });
+});
+
+it('legacy branch managers may read branches in their company, while unrelated rights cannot', async () => {
+  assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, BranchController.prototype.list), ['company.branch.read', 'company.branch.manage']);
+  const repo = makeRepo();
+  const useCase = new ListBranchesUseCase(repo as any);
+  await useCase.execute(makeCtx(['company.branch.manage']), {});
+  assert.equal((repo.list.mock.calls[0]!.arguments as any[])[0].companyId, 'co-1');
+  await assert.rejects(() => useCase.execute(makeCtx(['company.setup.read']), {}), ForbiddenException);
 });

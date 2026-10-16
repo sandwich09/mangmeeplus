@@ -996,3 +996,16 @@ it('standard role descriptions do not promise work the package does not sell', a
     assert.doesNotMatch(role.description!, /ลงบัญชี|ปิดงวด|ทำภาษี|ธนาคาร|ใบเสนอราคา|รับ-จ่ายสินค้า|ใบขอซื้อ/);
   }
 });
+
+it('create and update persist settings view rights when only manage is selected', async () => {
+  const { prisma, state } = makePrisma();
+  const created = await new CreateRoleUseCase(prisma).execute({ companyId: COMPANY_ID, name: 'Shop settings helper',
+    capabilityPackKeys: ['pack.company.settings.manage'], requestingUserId: 'owner-1', requestId: 'create-settings', isOwner: true });
+  const updated = await new UpdateRoleUseCase(prisma).execute({ companyId: COMPANY_ID, roleId: created.id,
+    capabilityPackKeys: ['pack.company.settings.manage'], requestingUserId: 'owner-1', requestId: 'update-settings', isOwner: true });
+  for (const role of [created, updated]) {
+    for (const key of ['company.setup.read', 'company.branch.read', 'document.sequence.read']) assert.ok(role.permissionKeys.includes(key), key);
+    assert.ok(!role.permissionKeys.includes('company.legal_identity.manage'));
+  }
+  assert.ok(state.rolePermissions.some(row => row.roleId === created.id && row.permissionId === 'perm-company.setup.read'));
+});

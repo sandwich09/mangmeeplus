@@ -355,14 +355,11 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     buildHref: (companyId) => `/companies/${companyId}/settings`,
     iconKey: 'HorizontalDotsIcon',
     navGroup: 'admin',
-    // ตั้งค่าบริษัท is Owner / Company owner / Admin only. This used to be the union of every card
-    // inside the hub, which included account.password.change and company.branch.read — keys every
-    // role holds — so the menu showed for everyone. Account security is unaffected: it is reached
-    // from the header user menu, not from here. company.setup.manage is kept alongside the
-    // dedicated key so Owner/Admin keep the menu in an environment that has not run
-    // sync-permissions yet (fails safe rather than open).
+    // The explicit settings read grant opens the hub; the core branch-read grant alone does not.
+    // Keep the legacy hub key and manage-only roles working without rewriting saved roles.
     requiredAnyPermissions: [
       'company.settings.view',
+      'company.setup.read',
       'company.setup.manage',
       'ledger.account.read',
       'ledger.account.manage',

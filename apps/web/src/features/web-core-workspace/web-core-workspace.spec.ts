@@ -1028,8 +1028,10 @@ describe('WORKSPACE_MODULES', () => {
       assert.equal(binding.group, module.navGroup, `${binding.navKey}: group`);
       assert.equal(binding.iconKey, module.iconKey, `${binding.navKey}: iconKey`);
       assert.deepEqual(
-        [...binding.gatePermissions, ...(binding.retainedGatePermissions ?? [])],
-        module.requiredAnyPermissions,
+        // SETTINGS-PERMS is a web-only entrance change; leave the shared/LINE binding intact.
+        [...binding.gatePermissions, ...(binding.retainedGatePermissions ?? []),
+          ...(binding.navKey === 'settings' ? ['company.setup.read'] : [])].sort(),
+        [...module.requiredAnyPermissions].sort(),
         `${binding.navKey}: gatePermissions`,
       );
     }
@@ -1147,4 +1149,22 @@ describe('locked shell navigation', () => {
     assert.equal(resolveMenuKey('/companies/co/settings/profile', collectMenuTargets(items)), 'settings');
     assert.equal(resolveMenuKey('/companies/co/renew', collectMenuTargets(items)), null);
   });
+});
+
+it('settings view-only and legacy manage-only each open the hub and their readable pages from the menu', () => {
+  for (const permissions of [
+    ['company.setup.read', 'company.branch.read', 'document.sequence.read'],
+    ['company.setup.manage', 'company.branch.manage', 'document.sequence.manage'],
+  ]) {
+    const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
+    const settings = buildNavItems(modules, 'shop', 'th', {}, permissions).find(item => item.key === 'settings');
+    assert.ok(settings);
+    for (const key of ['settings.overview', 'settings.company-profile', 'settings.branches']) {
+      const child = settings.subItems?.find(item => item.key === key);
+      assert.ok(child, key);
+      assert.ok(canAccessWorkspacePath(WORKSPACE_MODULES, permissions, 'shop', child.href!));
+    }
+    assert.equal(canSeeRoute('/settings/profile', permissions), true);
+  }
+  assert.equal(canSeeRoute('/settings/profile', ['company.branch.read']), false);
 });

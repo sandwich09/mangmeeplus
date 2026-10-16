@@ -20,8 +20,9 @@ test('both role builders pass the gate, expense packs keep names, descriptions, 
   const builder = readFileSync(new URL('./EmployeeAccessPages.tsx', import.meta.url), 'utf8');
   assert.match(builder, /module === 'expense' && <DisbursementVoucherAccessHint entryOpen=\{disbursementEntryOpen\}/);
   assert.match(builder, /<label key=\{p.key\} className=\{`flex min-h-11 min-w-0/);
-  assert.match(builder, /\{p.nameTh\}/); assert.match(builder, /\{p.description\}/);
-  assert.match(builder, /checked=\{checked\} onChange=\{\(\) => togglePack\(p.key\)\}/);
+  assert.match(builder, /\{p.nameTh\}/); assert.match(builder, /requiredForSettings \? '[^']+' : p.description/);
+  assert.match(builder, /checked=\{checked\} disabled=\{requiredForSettings\} onChange=\{\(\) => togglePack\(p.key\)\}/);
+  assert.match(builder, /const requiredForSettings = p.key === 'pack.company.settings.view'/);
   assert.match(builder, /capabilityPackKeys: selectedPacks/);
   const overview = readFileSync(new URL('./IndividualPermissionsPrototypePage.tsx', import.meta.url), 'utf8');
   assert.match(overview, /group === 'fin' && <DisbursementVoucherAccessHint entryOpen=\{disbursementEntryOpen\}/);

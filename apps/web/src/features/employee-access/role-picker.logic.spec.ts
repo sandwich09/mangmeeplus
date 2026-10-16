@@ -156,7 +156,7 @@ describe('roleTemplateChoices', () => {
   it('is the rule the role builder offers and ticks examples by', () => {
     const builder = readFileSync(new URL('./EmployeeAccessPages.tsx', import.meta.url), 'utf8');
     assert.match(builder, /templates\.filter\(\(tpl\) => roleTemplateChoices\(tpl, allPacks, availablePackKeys\)\)/);
-    assert.match(builder, /setSelectedPacks\(roleTemplateChoices\(tpl, allPacks, availablePackKeys\) \?\? \[\]\)/);
+    assert.match(builder, /setSelectedPacks\(settingsViewIncluded\(roleTemplateChoices\(tpl, allPacks, availablePackKeys\) \?\? \[\]\)\)/);
   });
 });
 
