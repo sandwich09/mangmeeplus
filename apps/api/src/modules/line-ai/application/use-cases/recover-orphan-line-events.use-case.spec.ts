@@ -676,3 +676,22 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.deepEqual(purgeAudits[0].metadataJson, { fileIds: ['file-a1', 'file-a2'], fileCount: 2, retentionDays: 90 });
   });
 });
+
+it('Round 2 A: orphan replay accepts only a well-shaped signed expense-action binding', () => {
+  const control = { action: 'expense_action_confirm', token: '550e8400-e29b-41d4-a716-446655440000.' + 'a'.repeat(43) };
+  const envelope = envelopeFor('expense-action-confirm');
+  (envelope.item as any).expenseActionControl = control;
+  assert.deepEqual((parseBufferEnvelope(envelope)?.item as any)?.expenseActionControl, control);
+  for (const bad of [{ ...control, token: 'bad' }, { ...control, action: 'execute' }, { ...control, expenseId: 'injected' }, undefined]) {
+    assert.equal(parseBufferEnvelope({ ...envelope, item: { ...envelope.item, expenseActionControl: bad } }), null);
+  }
+});
+
+it('Round 4 recovers only strictly shaped package purchase controls', () => {
+  const control = { action: 'package_purchase_confirm', token: '550e8400-e29b-41d4-a716-446655440000.' + 'a'.repeat(43) };
+  const envelope = envelopeFor('package-confirm');
+  (envelope.item as any).packagePurchaseControl = control;
+  assert.deepEqual((parseBufferEnvelope(envelope)?.item as any)?.packagePurchaseControl, control);
+  for (const bad of [{ ...control, token: 'bad' }, { ...control, action: 'charge' }, { ...control, companyId: 'other' }, undefined])
+    assert.equal(parseBufferEnvelope({ ...envelope, item: { ...envelope.item, packagePurchaseControl: bad } }), null);
+});

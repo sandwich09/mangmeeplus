@@ -466,7 +466,7 @@ export type PartnerAiUsageMonthDto = {
 export type PartnerAiRequestKind = 'TEXT' | 'IMAGE' | 'OTHER' | 'UNKNOWN';
 export type PartnerAiBudgetBucket = 'CHAT' | 'OCR' | 'UNKNOWN';
 /** `UNKNOWN` stays LAST: the breakdown folds an unrecognised stored value into the final key. */
-export type PartnerAiUsageBasis = 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE' | 'OPERATOR_CHARGED_AT_BOUND' | 'UNKNOWN';
+export type PartnerAiUsageBasis = 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE' | 'OPERATOR_CHARGED_AT_BOUND' | 'COMPANY_ABSORBED' | 'UNKNOWN';
 
 /**
  * One slice of a month's AI spend, derived from `AiUsageEvent` rows (remediation spec §11.1).
@@ -496,7 +496,7 @@ export type PartnerAiUsageBreakdownDto = {
   monthKey: string;
   /**
    * Event-derived month total. `PartnerAiUsageDto.current` is the running `CompanyAiMonthlyUsage`
-   * aggregate instead; the two are normally identical and may legitimately differ if events are
+   * aggregate instead; the event total also includes COMPANY_ABSORBED internal cost; they may also differ if events are
    * ever pruned. Both are exposed rather than reconciled away.
    */
   total: PartnerAiUsageMeasuresDto;
@@ -504,7 +504,7 @@ export type PartnerAiUsageBreakdownDto = {
   byRequestKind: Array<{ requestKind: PartnerAiRequestKind } & PartnerAiUsageMeasuresDto>;
   /** Spend only in this phase; `reserved`/`available` per bucket are added in §12 without renaming. */
   byBudgetBucket: Array<{ budgetBucket: PartnerAiBudgetBucket } & PartnerAiUsageMeasuresDto>;
-  /** A CONSERVATIVE_ESTIMATE slice must never be presented as measured provider tokens. */
+  /** Includes COMPANY_ABSORBED internal cost separately; it is excluded from customer aggregates. */
   byUsageBasis: Array<{ usageBasis: PartnerAiUsageBasis } & PartnerAiUsageMeasuresDto>;
   /** Signed COST_ADJUSTMENT totals, already included in `total` cost/tokens and never in `calls`. */
   adjustments: { costSatang: number; rows: number };

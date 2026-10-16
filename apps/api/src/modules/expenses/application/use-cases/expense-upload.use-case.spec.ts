@@ -1,4 +1,6 @@
 import { describe, it } from 'node:test';
+import Decimal from 'decimal.js';
+import { LinkLinePaymentEvidenceUseCase } from './link-line-payment-evidence.use-case';
 import assert from 'node:assert/strict';
 import 'reflect-metadata';
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
@@ -1171,5 +1173,161 @@ describe('buyer-match confirm with reason', () => {
     let audits = 0;
     await assert.rejects(() => stale.repo.confirmBuyerMatch(input, async () => { audits += 1; }), ConflictException);
     assert.equal(audits, 0, 'no audit for an override that never landed');
+  });
+});
+
+// Lane B uses the registered upload suite so CI executes these without changing package.json.
+describe('LinkLinePaymentEvidenceUseCase', () => {
+  function fixture() {
+    const now = new Date(), receiptAt = new Date(now.getTime() - 60_000);
+    const base = { companyId: 'co-1', createdByUserId: 'user-1', branchId: 'branch-1', captureSource: 'LINE_UPLOAD',
+      status: 'DRAFT', expenseDate: new Date('2026-10-13'), grandTotalAmount: new Decimal('500.8000'),
+      paidAmount: new Decimal(0), paymentStatus: 'UNPAID', postingStatus: 'not_required', currency: 'THB',
+      reviewedAt: null, sourceReimbursementRequestId: null, reservedByDisbursementVoucherId: null,
+      sourceChannelMetadataJson: { chatKeyHash: 'chat-1' }, updatedAt: receiptAt,
+      aiVerificationSummaryJson: { recognizedFields: { expenseDate: '2026-10-13' }, missingFields: [] } };
+    const rows = new Map<string, any>([
+      ['receipt', { ...base, id: 'receipt', sourceDocumentType: 'RECEIPT', createdAt: receiptAt,
+        primaryAttachmentId: 'receipt-file', lineMessageId: 'receipt-message', vendorNameSnapshot: 'ร้านอาหาร' }],
+      ['slip', { ...base, id: 'slip', sourceDocumentType: 'TRANSFER_SLIP', createdAt: now,
+        primaryAttachmentId: 'slip-file', lineMessageId: 'slip-message', vendorNameSnapshot: 'TANG FU JAS' }],
+    ]);
+    let links: any[] = [ { companyId: 'co-1', targetType: 'expense.record', targetId: 'receipt', attachmentId: 'receipt-file', purpose: 'expense.receipt.primary' },
+      { companyId: 'co-1', targetType: 'expense.record', targetId: 'slip', attachmentId: 'slip-file', purpose: 'expense.receipt.primary' } ];
+    const audits: any[] = [], options = { failAudit: false, retention: false, dependency: false, revoked: false, scopes: {} as { branchIds?: string[] } };
+    const match = (row: any, where: any): boolean => Object.entries(where).every(([key, value]: [string, any]) => {
+      if (key === 'OR') return value.some((entry: any) => match(row, entry));
+      if (key === 'sourceChannelMetadataJson') return row.sourceChannelMetadataJson?.chatKeyHash === value.equals;
+      if (key === 'createdAt') return (!value.gte || row.createdAt >= value.gte) && (!value.lte || row.createdAt <= value.lte);
+      if (value && typeof value === 'object' && !(value instanceof Date)) {
+        if ('in' in value) return value.in.includes(row[key]);
+        if ('not' in value) return row[key] !== value.not;
+      }
+      return value instanceof Date ? row[key]?.getTime() === value.getTime() : row[key] === value;
+    });
+    const db: any = {
+      $executeRaw: async () => 0,
+      expenseRecord: {
+        findFirst: async ({ where }: any) => [...rows.values()].find(row => match(row, where)) ?? null,
+        findMany: async ({ where }: any) => [...rows.values()].filter(row => match(row, where)).sort((a, b) => b.createdAt - a.createdAt),
+        updateMany: async ({ where, data }: any) => { const row = [...rows.values()].find(row => match(row, where)); if (!row) return { count: 0 }; Object.assign(row, data); return { count: 1 }; },
+      },
+      attachmentLink: {
+        findMany: async ({ where }: any) => links.filter(row => match(row, where)),
+        findFirst: async ({ where }: any) => links.find(row => match(row, where)) ?? null,
+        deleteMany: async ({ where }: any) => { const kept = links.filter(row => !match(row, where)); const count = links.length - kept.length; links = kept; return { count }; },
+      },
+      attachmentObject: { findFirst: async () => ({ id: 'slip-file' }) },
+      expenseDuplicateCandidate: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
+      expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+      reimbursementLine: { findFirst: async () => null },
+      user: { findFirst: async () => ({ id: 'user-1' }) },
+    };
+    for (const name of ['taxEvent', 'taxReviewIssue', 'taxReconciliationLine', 'tradeTaxEvidence', 'journalEntry', 'journalLine', 'bankReconciliationMatch',
+      'workflowRun', 'workflowTask', 'workflowEventInbox', 'notificationEvent']) db[name] = { findFirst: async () => options.dependency ? { id: 'dependency' } : null };
+    db.$transaction = async (run: any) => {
+      const beforeRows = [...rows].map(([id, row]) => [id, { ...row }] as const), beforeLinks = [...links], auditCount = audits.length;
+      try { return await run(db); } catch (error) { rows.clear(); beforeRows.forEach(([id, row]) => rows.set(id, row)); links = beforeLinks; audits.length = auditCount; throw error; }
+    };
+    const uc = new LinkLinePaymentEvidenceUseCase({ client: db } as any, {
+      linkAttachment: async (targetId: string, attachmentId: string, purpose: string, companyId: string, _actor: string, tx: unknown) => {
+        assert.equal(tx, db); links.push({ targetId, attachmentId, purpose, companyId, targetType: 'expense.record' });
+      },
+    } as any, { findSubstituteEvidenceRetentionHold: async () => options.retention ? { id: 'hold' } : null } as any,
+    { log: async (entry: any, tx: unknown) => { assert.equal(tx, db); if (options.failAudit) throw new Error('audit unavailable'); audits.push(entry); } } as any,
+    { resolveAccess: async () => ({ ...ctx, scopes: options.scopes, permissions: options.revoked ? [] : ctx.permissions }) } as any);
+    return { uc, rows, get links() { return links; }, audits, options };
+  }
+
+  it('atomically links evidence, retires only the slip, replays once, and undoes to the original draft without re-reading', async () => {
+    const h = fixture();
+    const linked = await h.uc.link(ctx, 'chat-1', 'slip');
+    assert.equal(linked.kind, 'LINKED');
+    if (linked.kind !== 'LINKED') throw new Error('expected link');
+    assert.equal(h.rows.get('slip').status, 'VOIDED');
+    assert.equal(h.rows.get('receipt').status, 'DRAFT');
+    assert.equal(h.rows.get('receipt').grandTotalAmount.toString(), '500.8');
+    assert.equal(h.rows.get('receipt').paymentStatus, 'UNPAID');
+    assert.equal(h.links.filter(link => link.purpose === 'expense.payment.evidence').length, 1);
+    assert.deepEqual(await h.uc.link(ctx, 'chat-1', 'slip'), linked);
+    assert.equal(h.audits.length, 1);
+    await h.uc.undo(ctx, 'chat-1', 'slip', linked.operationId);
+    await h.uc.undo(ctx, 'chat-1', 'slip', linked.operationId);
+    assert.equal(h.rows.get('slip').status, 'DRAFT');
+    assert.equal(h.links.filter(link => link.purpose === 'expense.payment.evidence').length, 0);
+    assert.equal(h.links.filter(link => link.targetId === 'slip').length, 1);
+    assert.equal((await h.uc.forCapture(ctx, 'chat-1', 'slip')).kind, 'NONE', 'undo is not immediately auto-paired again');
+  });
+
+  for (const [name, patch] of [ ['other company', { companyId: 'other' }], ['other chat', { sourceChannelMetadataJson: { chatKeyHash: 'other' } }],
+    ['other creator', { createdByUserId: 'other' }], ['non-editable receipt', { status: 'CONFIRMED' }],
+    ['posted receipt', { postingStatus: 'posted' }] ] as const) {
+    it(`refuses ${name}`, async () => {
+      const h = fixture(); Object.assign(h.rows.get('receipt'), patch);
+      await assert.rejects(() => h.uc.link(ctx, 'chat-1', 'slip', 'receipt'));
+      assert.equal(h.rows.get('slip').status, 'DRAFT'); assert.equal(h.links.length, 2);
+    });
+  }
+  it('keeps the sold append-after-payment rule when LINE links evidence without changing payment facts', async () => {
+    const h = fixture(), receipt = h.rows.get('receipt');
+    receipt.paidAmount = new Decimal(1); receipt.paymentStatus = 'PARTIALLY_PAID';
+    assert.equal((await h.uc.link(ctx, 'chat-1', 'slip', 'receipt')).kind, 'LINKED');
+    assert.equal(receipt.paidAmount.toString(), '1'); assert.equal(receipt.paymentStatus, 'PARTIALLY_PAID');
+    assert.equal(receipt.primaryAttachmentId, 'receipt-file');
+  });
+  it('asks on an exact amount mismatch, and only an explicit selection associates it without changing money', async () => {
+    const h = fixture(); h.rows.get('receipt').grandTotalAmount = new Decimal('500.81');
+    assert.equal((await h.uc.link(ctx, 'chat-1', 'slip')).kind, 'ASK');
+    assert.equal(h.links.length, 2); assert.equal(h.rows.get('slip').status, 'DRAFT');
+    assert.equal((await h.uc.link(ctx, 'chat-1', 'slip', 'receipt')).kind, 'LINKED');
+    assert.equal(h.rows.get('receipt').grandTotalAmount.toString(), '500.81');
+  });
+  it('does not overwrite existing payment evidence', async () => {
+    const h = fixture(); h.links.push({ companyId: 'co-1', targetType: 'expense.record', targetId: 'receipt', attachmentId: 'another', purpose: 'expense.payment.evidence' });
+    await assert.rejects(() => h.uc.link(ctx, 'chat-1', 'slip', 'receipt'));
+    assert.equal(h.rows.get('slip').status, 'DRAFT');
+  });
+  it('refuses missing or freshly revoked permission and out-of-branch sources', async () => {
+    const h = fixture();
+    await assert.rejects(() => h.uc.link({ ...ctx, permissions: [] }, 'chat-1', 'slip'), ForbiddenException);
+    h.options.revoked = true;
+    await assert.rejects(() => h.uc.link(ctx, 'chat-1', 'slip'), ForbiddenException);
+    h.options.revoked = false;
+    h.options.scopes = { branchIds: ['other'] };
+    await assert.rejects(() => h.uc.link(ctx, 'chat-1', 'slip'), ForbiddenException);
+    assert.equal(h.links.length, 2);
+  });
+  it('refuses reviewed/paid slip drafts, retention holds and linked business dependencies', async () => {
+    for (const kind of ['reviewed', 'paid', 'retention', 'dependency']) {
+      const h = fixture();
+      if (kind === 'reviewed') h.rows.get('slip').reviewedAt = new Date();
+      if (kind === 'paid') h.rows.get('slip').paidAmount = new Decimal(1);
+      if (kind === 'retention') h.options.retention = true;
+      if (kind === 'dependency') h.options.dependency = true;
+      await assert.rejects(() => h.uc.link(ctx, 'chat-1', 'slip'));
+      assert.equal(h.links.length, 2); assert.equal(h.rows.get('slip').status, 'DRAFT');
+    }
+  });
+  it('rolls back attachment, retirement and receipt revision when the in-transaction audit fails', async () => {
+    const h = fixture(), original = h.rows.get('receipt').updatedAt;
+    h.options.failAudit = true;
+    await assert.rejects(() => h.uc.link(ctx, 'chat-1', 'slip'), /audit unavailable/);
+    assert.equal(h.rows.get('receipt').updatedAt, original);
+    assert.equal(h.rows.get('slip').status, 'DRAFT'); assert.equal(h.links.length, 2);
+  });
+  it('pairs in reverse order and never reattaches a slip deliberately kept separate', async () => {
+    const h = fixture();
+    h.rows.get('receipt').createdAt = new Date(h.rows.get('slip').createdAt.getTime() + 1000);
+    assert.equal((await h.uc.forCapture(ctx, 'chat-1', 'receipt')).kind, 'LINKED');
+    const separate = fixture(); await separate.uc.separate(ctx, 'chat-1', 'slip');
+    assert.equal((await separate.uc.forCapture(ctx, 'chat-1', 'receipt')).kind, 'NONE');
+  });
+  it('binds undo to the exact operation and refuses after receipt confirmation', async () => {
+    const h = fixture(), result = await h.uc.link(ctx, 'chat-1', 'slip');
+    if (result.kind !== 'LINKED') throw new Error('expected link');
+    await assert.rejects(() => h.uc.undo(ctx, 'chat-1', 'slip', 'wrong-operation'));
+    h.rows.get('receipt').status = 'CONFIRMED';
+    await assert.rejects(() => h.uc.undo(ctx, 'chat-1', 'slip', result.operationId));
+    assert.equal(h.rows.get('slip').status, 'VOIDED');
   });
 });

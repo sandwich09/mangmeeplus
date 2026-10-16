@@ -180,3 +180,15 @@ describe('a review save and the vendor registry', () => {
     assert.equal(updates[0].vendorAddressSnapshot, ADDRESS);
   });
 });
+
+it('U1 draft saves suppress merged slips by stored type, requested type or OCR classification', async () => {
+  for (const variant of ['stored', 'requested', 'ocr']) {
+    const h = makeUseCase({ record: { vendorNameSnapshot: 'TEST FOODS CO',
+      sourceDocumentType: variant === 'stored' ? 'TRANSFER_SLIP' : 'RECEIPT',
+      ...(variant === 'ocr' ? { aiVerificationSummaryJson: { classification: { documentKind: 'TRANSFER_SLIP' } } } : {}) } });
+    await h.useCase.execute(ctx, 'exp-1', variant === 'requested' ? { sourceDocumentType: 'TRANSFER_SLIP' } : { vendorNameSnapshot: 'TEST FOODS CO' });
+    assert.equal(h.updates.length, 1, variant);
+    assert.deepEqual(h.seen, [], variant);
+    assert.equal(h.updates[0].vendorCounterpartyId, undefined, variant);
+  }
+});

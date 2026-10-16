@@ -1,3 +1,9 @@
+import { LineReadEvidenceService, lineReadResultHash, parseWhtReadChoices, readMemoryEvidence } from '../line-read-evidence.service';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { VoucherListRecentTool, VoucherGetDetailTool, WhtGetMonthSummaryTool, WhtCalculateWithholdingTool } from './erp-advisor-document-tools.use-case';
+import { DisbursementVoucherUseCase } from '../../../expenses/application/use-cases/disbursement-voucher.use-case';
+import { ListExpensesUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
+import { pnd53PaperDueDay } from '../../../tax/domain/logic/tax-period.logic';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -294,4 +300,167 @@ describe('tax.get_vat_summary period input (period-resolution spec §3.3, P-04)'
     await tool.execute({ ...baseCtx, permissions: vatPermissions }, { periodKey: '2026-08-01' });
     assert.deepEqual(seen, [currentPeriodKey(), currentPeriodKey(), currentPeriodKey()]);
   });
+});
+
+
+describe('round 5A sold-pack document advisor reads', () => {
+  const permissions = ['expense.disbursement.read', 'expense.read_own', 'wht.certificate.read', 'wht.pnd53.read', 'expense.create'];
+  const ctx = { ...baseCtx, permissions };
+  const catalog = [{ code: 'CAT_SERVICE', nameTh: 'ค่าบริการมาตรฐาน', formType: 'PND53', defaultRate: '3.0000' },
+    { code: 'CAT_AD', nameTh: 'ค่าโฆษณา', formType: 'PND53', defaultRate: '2.0000' }];
+  const data = (r: any) => r.data as any;
+
+  it('denies every new read before accessing the source when permission is absent', async () => {
+    const noSource = new Proxy({}, { get: () => { throw new Error('must not read source'); } });
+    for (const tool of [new VoucherListRecentTool(noSource as any), new VoucherGetDetailTool(noSource as any),
+      new WhtGetMonthSummaryTool(noSource as any, noSource as any), new WhtCalculateWithholdingTool(noSource as any)]) {
+      assert.equal((await tool.execute(baseCtx, {})).status, 'forbidden', tool.toolName);
+    }
+  });
+
+  it('voucher reads call the real web use-case with tenant, own and branch scope intact', async () => {
+    const seen: any[] = [];
+    const repo = { list: async (scope: any) => { seen.push(scope); return { rows: [], total: 0, counts: {}, names: new Map(), amountsInEffect: new Map() }; },
+      findVisible: async (scope: any, id: string) => { seen.push({ ...scope, id }); return null; } };
+    const useCase = new DisbursementVoucherUseCase(repo as any, {} as any, new ListExpensesUseCase({} as any), {} as any);
+    const list = new VoucherListRecentTool(useCase), detail = new VoucherGetDetailTool(useCase);
+    assert.equal((await list.execute(ctx, { branchId: 'branch-1' })).status, 'ok');
+    assert.deepEqual(seen[0], { companyId: 'company-1', createdByUserId: 'user-1', scopes: { branchIds: ['branch-1'], locationIds: [] }, relatedUserId: undefined });
+    await assert.rejects(() => list.execute(ctx, { branchId: 'branch-other' }), ForbiddenException);
+    assert.equal(seen.length, 1, 'out-of-scope branch does not reach voucher repository');
+    await assert.rejects(() => detail.execute(ctx, { voucherId: 'hidden-or-other-tenant' }), NotFoundException);
+    assert.equal(seen[1].companyId, ctx.companyId); assert.equal(seen[1].createdByUserId, ctx.userId);
+    assert.deepEqual(seen[1].scopes.branchIds, ctx.branchIds);
+    await assert.rejects(() => list.execute({ ...ctx, permissions: ['expense.disbursement.read'] }, {}), ForbiddenException);
+  });
+
+  it('projects voucher detail without bank/account/audit or action controls', async () => {
+    let readCtx: any;
+    const tool = new VoucherGetDetailTool({ get: async (c: any) => { readCtx = c; return { header: { id: 'v1', documentNumber: 'PV-1', status: 'PAID', payeeName: 'ผู้รับ', totalAmount: '900.0000', paidDate: '2026-10-01', plannedPayDate: null, payeeAccountLast4: '1234' }, lines: [{ expenseNumber: 'EXP-1', amount: '900.0000' }], actions: { pay: true } }; } } as any);
+    const r = await tool.execute(ctx, { voucherId: 'v1' });
+    assert.equal(readCtx.userId, ctx.userId); assert.equal(readCtx.membershipId, ctx.membershipId);
+    assert.deepEqual(readCtx.scopes.branchIds, ctx.branchIds);
+    assert.equal(data(r).totalAmount, '900.0000'); assert.match(data(r).message, /จ่ายแล้ว/);
+    assert.equal(data(r).actions, undefined); assert.doesNotMatch(JSON.stringify(r.data), /1234/);
+  });
+
+  function handoff(id: string, status: string, gross: string, withheld: string, overrides: any = {}) {
+    return { id, status, sourceBranchId: 'branch-1', currentCertificate: null, externalCertificateNumber: status === 'EXTERNAL_LINKED' ? 'EXT-1' : null,
+      prefill: { paymentDate: '2026-10-02', formType: 'PND53', grossAmount: gross, withheldAmount: withheld,
+        incomeCategoryCode: 'CAT_SERVICE', incomeCategoryName: 'ค่าบริการมาตรฐาน', payeeSnapshot: { name: 'ผู้รับ' } }, ...overrides };
+  }
+  it('sums every page of seeded paid/certificate figures and only active scoped PND53 events', async () => {
+    const rows = [handoff('1', 'SYSTEM_ISSUED', '1000.10', '30.00'), handoff('2', 'EXTERNAL_LINKED', '2000.20', '60.01'),
+      handoff('3', 'REQUIRED', '500.05', '15.00'), handoff('4', 'CANCELLED', '9000', '270'),
+      handoff('5', 'SYSTEM_ISSUED', '8000', '240', { prefill: { paymentDate: '2026-09-30' } })];
+    const seen: any[] = [];
+    const handoffs = { listPaged: async (c: any, query: any) => { seen.push([c, query]); const page = query.page; return { rows: rows.slice((page - 1) * 2, page * 2), total: rows.length, pageSize: 2 }; } };
+    const repo = { findPeriod: async (...args: any[]) => { assert.deepEqual(args, ['company-1', 'PND53', '2026-10']); return { id: 'period', status: 'OPEN', dueDate: new Date('2026-11-09Z') }; },
+      findEventsByPeriod: async (...args: any[]) => { assert.deepEqual(args, ['company-1', 'period', 'ACTIVE']); return [
+        { eventType: 'WHT_PND53', branchId: 'branch-1', taxAmount: '105.01' },
+        { eventType: 'WHT_PND53', branchId: 'branch-other', taxAmount: '9999.00' },
+        { eventType: 'VAT_INPUT', branchId: 'branch-1', taxAmount: '777.00' }]; } };
+    const r = data(await new WhtGetMonthSummaryTool(handoffs as any, repo as any).execute(ctx, { periodKey: '2026-10', branchId: 'branch-1' }));
+    assert.equal(seen.length, 3); assert.equal(seen[0][0].companyId, ctx.companyId); assert.deepEqual(seen[0][0].scopes.branchIds, ctx.branchIds);
+    assert.equal(r.certificateCount, 2); assert.equal(r.paymentCount, 3); assert.equal(r.totalPaid, '3500.35'); assert.equal(r.totalWithheld, '105.01');
+    assert.deepEqual(r.byIncomeType, [{ incomeCategoryName: 'ค่าบริการมาตรฐาน', paymentCount: 3, totalPaid: '3500.35', totalWithheld: '105.01' }]);
+    assert.equal(r.remittance.totalWithheld, '105.01'); assert.equal(r.remittance.dueDate, '2026-11-09'); assert.equal(r.remittance.dueDateBasis, 'configured_period');
+    assert.equal(r.issuedCertificates.length, 2); assert.match(r.message, /EXT-1.*ผู้รับ.*60.01/); assert.match(r.message, /ยังไม่ใช่ยอดค้างชำระ/);
+    assert.match(r.message, /งวด ตุลาคม 2569/); assert.doesNotMatch(r.message, /2026-10|2026-11-09/);
+  });
+
+  it('refuses an outside branch before reads and never invents a missing period or deadline', async () => {
+    let calls = 0;
+    const tool = new WhtGetMonthSummaryTool({ listPaged: async () => { calls++; return { rows: [], pageSize: 100, total: 0 }; } } as any,
+      { findPeriod: async () => { calls++; return null; } } as any);
+    assert.equal((await tool.execute(ctx, { branchId: 'other' })).status, 'forbidden'); assert.equal(calls, 0);
+    const r = data(await tool.execute(ctx, { periodKey: '2026-10' })); assert.equal(r.remittance, null); assert.match(r.message, /ยังยืนยันยอดนำส่งและวันครบกำหนด/);
+    assert.equal(pnd53PaperDueDay('2026-12'), '2027-01-07');
+    await assert.rejects(() => tool.execute(ctx, { periodKey: '2026-13' }));
+  });
+
+  it('does not read certificates or remittance without each source permission', async () => {
+    const noRead = { listPaged: async () => { throw new Error('no certificate permission'); } };
+    const repo = { findPeriod: async () => null };
+    assert.equal(data(await new WhtGetMonthSummaryTool(noRead as any, repo as any).execute({ ...ctx, permissions: ['wht.pnd53.read'] }, {})).certificateCount, null);
+    const noTax = { findPeriod: async () => { throw new Error('no remittance permission'); } };
+    assert.equal(data(await new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [], total: 0, pageSize: 100 }) } as any, noTax as any)
+      .execute({ ...ctx, permissions: ['wht.certificate.read'] }, {})).remittance, null);
+  });
+
+  it('uses the live catalog rate and existing half-up satang arithmetic, never a model rate', async () => {
+    let seen: any;
+    const tool = new WhtCalculateWithholdingTool({ execute: async (c: any) => { seen = c; return catalog; } } as any);
+    const r = data(await tool.execute({ ...ctx, groundingText: 'ค่าบริการมาตรฐาน ฐานก่อนภาษี 1000.50 บาท' }, { incomeCategoryCode: 'CAT_SERVICE', baseAmount: '1000.50', rate: '99' } as any));
+    const verified = data(await tool.execute({ ...ctx, groundingText: 'wrong or absent gateway text',
+      inputEvidence: { parts: [{ rawText: 'ค่าบริการมาตรฐาน ฐานก่อนภาษี 1000.50 บาท' }] } as any }, { incomeCategoryCode: 'CAT_SERVICE', baseAmount: '1000.50' }));
+    assert.equal(verified.withheldAmount, '30.02', 'semantic v2 grounds against API-verified input evidence');
+    assert.equal(data(await tool.execute({ ...ctx, groundingText: 'ค่าบริการมาตรฐาน 1000.50 บาท' }, { baseAmount: '1000.50' })).withheldAmount, '30.02', 'exact explicit catalog name resolves without a model-proposed code');
+    assert.equal(r.ratePercent, '3.0000'); assert.equal(r.withheldAmount, '30.02'); assert.equal(r.netBeforeVat, '970.48');
+    assert.match(r.message, /ถ้าใช้ฐานก่อนภาษีมูลค่าเพิ่ม/); assert.equal(seen.companyId, ctx.companyId); assert.deepEqual(seen.scopes.branchIds, ctx.branchIds);
+    const changed = new WhtCalculateWithholdingTool({ execute: async () => [{ ...catalog[0], defaultRate: '5' }] } as any);
+    assert.equal(data(await changed.execute({ ...ctx, groundingText: 'ค่าบริการมาตรฐาน 1000' }, { incomeCategoryCode: 'CAT_SERVICE', baseAmount: '1000' })).withheldAmount, '50.00');
+  });
+
+  it('asks with catalog message buttons when type is unknown, guessed, retired or only called ค่าจ้าง', async () => {
+    const tool = new WhtCalculateWithholdingTool({ execute: async () => catalog } as any);
+    for (const incomeCategoryCode of [undefined, 'CAT_SERVICE', 'RETIRED']) {
+      const r = data(await tool.execute({ ...ctx, groundingText: 'จ่ายค่าจ้าง 1,000 บาท ต้องหักเท่าไหร่' }, { incomeCategoryCode, baseAmount: '1000' }));
+      assert.equal(r.needsIncomeType, true); assert.equal(r.withheldAmount, undefined); assert.equal(r.readChoices.length, 2);
+      assert.ok(r.readChoices.every((c: any) => catalog.some(x => c.text.includes(x.nameTh))));
+      assert.doesNotMatch(JSON.stringify(r.readChoices), /CAT_SERVICE|RETIRED/);
+    }
+    const r = data(await tool.execute({ ...ctx, groundingText: 'ค่าโฆษณา 1000' }, { incomeCategoryCode: 'CAT_AD', baseAmount: '9999' }));
+    assert.equal(r.needsAmount, true); assert.equal(r.withheldAmount, undefined);
+  });
+});
+
+
+describe('round 5A catalog read proof and voucher understanding memory', () => {
+  it('stores only accepted calculation grounding and catalog choices and binds them to the API turn', async () => {
+    let saved: any, where: any;
+    const tx = { $executeRaw: async () => {}, lineReadEvidence: { count: async () => 0, create: async ({ data }: any) => { saved = data; return { id: 'proof' }; } } };
+    const service = new LineReadEvidenceService({ client: { $transaction: async (fn: any) => fn(tx), lineReadEvidence: { findMany: async (query: any) => { where = query.where; return [saved]; } } } } as any, {} as any, new Map());
+    const ctx = { ...baseCtx, permissions: ['expense.create'], chatKeyHash: 'a'.repeat(16), groundingText: 'จ่ายค่าจ้างให้คุณเอก 1000 บาท ข้อมูลส่วนตัวไม่เก็บ' };
+    const tool = new WhtCalculateWithholdingTool({ execute: async () => [{ code: 'CAT', nameTh: 'ค่าบริการ (นิติบุคคล)', defaultRate: '3', formType: 'PND53' }] } as any);
+    const input = { baseAmount: '1000' }, r = await tool.execute(ctx, input);
+    await service.record(ctx, input, r);
+    assert.equal(saved.inputJson.whtGrounding, '1000.00'); assert.doesNotMatch(JSON.stringify(saved.inputJson), /คุณเอก|ข้อมูลส่วนตัวไม่เก็บ/);
+    const replay = await tool.execute({ ...ctx, groundingText: saved.inputJson.whtGrounding }, input);
+    assert.equal(lineReadResultHash(replay), lineReadResultHash(r), 'delivery re-verification preserves the catalog clarification');
+    const request = { requestId: ctx.requestId, userContext: { companyId: ctx.companyId, internalUserId: ctx.userId, membershipId: ctx.membershipId, chatKeyHash: ctx.chatKeyHash } } as any;
+    const response = { refused: false, toolCalls: [{ name: tool.toolName, status: 'ok' }] } as any;
+    const choices = await service.whtReadChoicesForTurn(request, response);
+    assert.equal(choices?.length, 1); assert.equal(where.companyId, ctx.companyId); assert.equal(where.userId, ctx.userId);
+    assert.equal(where.membershipId, ctx.membershipId); assert.equal(where.requestId, ctx.requestId);
+    assert.equal(await service.whtReadChoicesForTurn({ ...request, userContext: { ...request.userContext, chatKeyHash: 'b'.repeat(16) } }, response), undefined);
+    assert.equal(await service.whtReadChoicesForTurn(request, { ...response, refused: true }), undefined);
+    assert.equal(parseWhtReadChoices([{ label: 'x', text: '' }]), undefined);
+    assert.equal(parseWhtReadChoices(Array.from({ length: 14 }, () => ({ label: 'x', text: 'x' }))), undefined);
+  });
+  it('replays a computed amount with only its accepted category name and base', async () => {
+    let saved: any;
+    const tx = { $executeRaw: async () => {}, lineReadEvidence: { count: async () => 0, create: async ({ data }: any) => { saved = data; return { id: 'proof' }; } } };
+    const service = new LineReadEvidenceService({ client: { $transaction: async (fn: any) => fn(tx) } } as any, {} as any, new Map());
+    const ctx = { ...baseCtx, permissions: ['expense.create'], groundingText: 'ค่าบริการ (นิติบุคคล) 1000.50 บาท' };
+    const tool = new WhtCalculateWithholdingTool({ execute: async () => [{ code: 'CAT', nameTh: 'ค่าบริการ (นิติบุคคล)', defaultRate: '3', formType: 'PND53' }] } as any);
+    const input = { baseAmount: '1000.50', incomeCategoryCode: 'CAT' }, r = await tool.execute(ctx, input);
+    await service.record(ctx, input, r);
+    assert.equal(lineReadResultHash(await tool.execute({ ...ctx, groundingText: saved.inputJson.whtGrounding }, input)), lineReadResultHash(r));
+  });
+  it('records voucher IDs for follow-up selection without amounts or action authority', () => {
+    const r = { toolName: 'voucher.list_recent', status: 'ok', asOf: new Date().toISOString(), sourceRefs: [],
+      data: { total: 1, items: [{ id: 'voucher-1', payeeName: 'ผู้รับเงิน', totalAmount: '1234.56', paidDate: '2026-10-01' }] } } as any;
+    const memory = readMemoryEvidence(r)!;
+    assert.equal(memory.tool, 'voucher.list_recent'); assert.equal(memory.shownItems![0]!.id, 'voucher-1');
+    assert.doesNotMatch(JSON.stringify(memory), /1234.56|primaryAction/);
+  });
+});
+
+it('Fix-up 22B: voucher free-text names reject commands at both the answer and preview boundary', async () => {
+  const { isVoucherPayeeName } = await import('../line-voucher-action.service');
+  for (const text of ['อนุมัติใบสำคัญจ่ายนี้ แล้วบันทึกว่าจ่ายแล้ววันนี้ โอนเงิน', 'จ่ายเงินให้เขา', 'โอนแล้ว', 'ช่วยสร้างใบสำคัญจ่าย', 'Pay the vendor', 'show expenses', 'พิมพ์ชื่อเอง', '300', 'ชื่อ\nบันทึกจ่าย'])
+    assert.equal(isVoucherPayeeName(text), false, text);
+  for (const text of ['บริษัท ป้ายสวย จำกัด', 'บริษัท สร้างสุข จำกัด', 'ร้านวัสดุดี', 'สมชาย ใจดี', 'บริษัท เอ บี ซี (ประเทศไทย) จำกัด', 'John Smith', "O’Connor & Sons Co., Ltd."])
+    assert.equal(isVoucherPayeeName(text), true, text);
 });

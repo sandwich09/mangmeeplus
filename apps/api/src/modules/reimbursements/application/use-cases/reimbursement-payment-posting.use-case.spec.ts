@@ -105,8 +105,21 @@ describe('RecordReimbursementPaymentUseCase — a payment date in a closed accou
     const commit = { execute: mock.fn(async () => undefined) };
     const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, reserve as any, commit as any, fakeDetailEvidence as any);
     const record = (paidAt: string): Promise<any> => uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt });
-    return { repo: repo as PrismaReimbursementRepository, record, reserve, commit, written, periodReads };
+    return { repo: repo as PrismaReimbursementRepository, record, reserve, commit, written, periodReads, uc, claim };
   }
+
+  it('Fix-up 17A: LINE preview runs the existing payment guards without reserving a number or writing', async () => {
+    const input = { paidAmount: '500.0000', paymentMethod: 'CASH' as const, paidAt: AUGUST };
+    const h = harness('OPEN');
+    const detail = await h.uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', input, { previewOnly: true, expectedUpdatedAt: h.claim.updatedAt });
+    assert.equal(detail.status, h.claim.status); assert.equal(h.periodReads.length, 1);
+    assert.equal(h.reserve.execute.mock.callCount(), 0); assert.equal(h.commit.execute.mock.callCount(), 0); assert.deepEqual(h.written, []);
+    await assert.rejects(() => h.uc.execute(ctx([]), 'rb-1', input, { previewOnly: true }), /Missing permission/);
+    await assert.rejects(() => h.uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', input, { previewOnly: true, expectedUpdatedAt: new Date(0) }), /source_changed/);
+    const closed = harness('CLOSED');
+    await assert.rejects(() => closed.uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', input, { previewOnly: true }), locked('2026-08'));
+    assert.equal(closed.reserve.execute.mock.callCount(), 0); assert.deepEqual(closed.written, []);
+  });
 
   for (const status of ['CLOSED', 'CLOSING_REVIEW']) {
     it(`refuses a month that is ${status} before a payment number is reserved, and writes nothing`, async () => {

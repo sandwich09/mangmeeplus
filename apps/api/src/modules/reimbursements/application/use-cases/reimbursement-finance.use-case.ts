@@ -387,7 +387,7 @@ export class RecordReimbursementPaymentUseCase {
     private readonly evidence: ReimbursementEvidenceService,
   ) {}
 
-  async execute(ctx: RequestContext, id: string, input: RecordReimbursementPaymentInput): Promise<ReimbursementRequestDetail> {
+  async execute(ctx: RequestContext, id: string, input: RecordReimbursementPaymentInput, line: { previewOnly?: boolean; expectedUpdatedAt?: Date } = {}): Promise<ReimbursementRequestDetail> {
     if (!ctx.permissions.includes('reimbursement.payment.record')) throw new ForbiddenException('Missing permission: reimbursement.payment.record');
 
     const paidAt = new Date(input.paidAt);
@@ -399,6 +399,7 @@ export class RecordReimbursementPaymentUseCase {
 
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    if (line.expectedUpdatedAt && req.updatedAt.getTime() !== line.expectedUpdatedAt.getTime()) throw new ConflictException('reimbursement_payment_source_changed');
     // Ahead of the idempotent-replay return below, so a caller outside the branch cannot even
     // learn that a payment exists by replaying one.
     assertReimbursementBranchInScope(ctx, req.branchId);
@@ -428,7 +429,7 @@ export class RecordReimbursementPaymentUseCase {
       if ('error' in payoutPlan || !isSamePaymentRequest(
         { ...recorded, ...await this.repo.findRecordedPaymentPayout(req, recorded) }, { ...payment, ...payoutPlan },
       )) throw new ConflictException('reimbursement_payment_already_recorded');
-      if (!recorded.idempotencyKey.startsWith('legacy:')) {
+      if (!line.previewOnly && !recorded.idempotencyKey.startsWith('legacy:')) {
         await this.ensurePaymentNumber(ctx, paidAt, recorded.idempotencyKey, recorded.id, recorded.paymentNo);
       }
       return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
@@ -485,6 +486,8 @@ export class RecordReimbursementPaymentUseCase {
         ...(input.confirmSignedCopyWithdrawal === true && { confirmSignedCopyWithdrawal: true }),
       });
     }
+
+    if (line.previewOnly) return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
 
     const paymentAttemptKey = createHash('sha256')
       .update([ctx.companyId, id, clientKey ?? req.updatedAt.toISOString()].join(':'))

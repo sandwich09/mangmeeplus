@@ -1,0 +1,37 @@
+# Agent Memory: OCR round B
+
+Status: Merge into e1e6918d1 resolved in working files (2026-10-15); index remains unmerged until the owner stages it. Final contracts build, API/gateway package typechecks, all contracts tests and all six required API suites pass. Full-suite exceptions are reproduced identically on both original commits; see merge verification below. No commits.
+Owner: OCR-B; merge integration by Codex
+Scope: PDF page splitting/merge, image size/orientation, work-sized timeouts, one timeout retry.
+Decisions:
+- Follow existing capture spec/plan §16.7/§4; LINE expense files already queue the same guarded EXPENSE-owned capture job as web.
+- Read/extract one PDF page at a time; hard automatic scope 20 pages (existing call/time ceilings still pause earlier); retain pending pages and customer page-limit copy.
+- Deterministic page order: earliest header, every evidence-bound row, latest printed total of each kind.
+- Photos at most 2400 px/JPEG q85, no upscaling; storage keeps original bytes.
+- Ordinary photos 45s; A4/tall images and PDF pages 90s; transport outlasts the entire bounded chain including timeout retries.
+- Exactly one timeout retry through normal provider/client admission and usage recording. Billing absorption belongs to the other lane.
+- Do not change OCR-A reread decisions, row/date gates, extraction prompts, or JSON repair; no package.json changes.
+Open questions: Provider accuracy needs an authorized benchmark outside the sandbox. Failed/timeout monetary absorption is now integrated from the base; failed attempts retain company cost evidence, and only successful retries spend customer budget. Legacy whole-PDF benchmark calls must use the capture job. Earlier extraction-window checkpoints fail closed with CAPTURE_WINDOW_EVIDENCE_VERSION_CHANGED rather than being mapped onto different pages.
+Artifacts: Existing `.ocr-bench/` is local evidence only and must not be committed.
+Verification:
+- PASS `pnpm --filter @watchdog-bms/contracts build`.
+- PASS `pnpm --filter @watchdog-bms/ai-gateway typecheck`.
+- PASS `pnpm --filter @watchdog-bms/api typecheck` (required package script, 8GB Node heap), including the final-file repeat. Supplemental repository TS7 CI check also PASSED against final files: `packages/typescript-native/node_modules/.bin/tsc -p apps/api/tsconfig.typecheck.json --singleThreaded`.
+- PASS API registered specs: 155 tests, 0 failures, 0 skipped/cancelled. Command: `pnpm --filter @watchdog-bms/api exec node --import tsx --test src/modules/expenses/domain/logic/expense-capture-preprocess.logic.spec.ts src/modules/expenses/domain/logic/expense-capture-assembly.logic.spec.ts src/modules/expenses/application/services/expense-capture-read-runner.service.spec.ts src/modules/expenses/infrastructure/expense-capture-read.client.spec.ts src/modules/expenses/expense-capture-lane-parity.spec.ts src/modules/line-ai/infrastructure/ai-gateway.client.spec.ts`.
+- PASS gateway registered specs: 151 tests, 0 failures, 0 skipped/cancelled. Command: `pnpm --filter @watchdog-bms/ai-gateway exec node --import tsx --test src/modules/line-ai/presentation/http/line-ai-internal.controller.spec.ts src/modules/line-ai/presentation/http/expense-capture-routes.spec.ts`.
+- PASS final runner-only repeat after manifest restoration fix: 34/34 (`pnpm --filter @watchdog-bms/api exec node --import tsx --test src/modules/expenses/application/services/expense-capture-read-runner.service.spec.ts`).
+- PASS `git diff --check`; no package.json edits; OCR-A reread decisions/row/date gates/prompts/JSON repair untouched; `.ocr-bench/` remains untracked and unchanged.
+- Behavior evidence: preprocess specs create real text/scanned PDF fixtures, verify one actual page per chunk, visible budget page-count proof, 20-page hard bound, measured byte/edge limits, aspect/no-upscale/original bytes. Assembly specs verify shuffled page merge and latest printed totals. Runner/client specs verify timeout retry once, distinct request/usage, one customer OCR admission, lease/source/status fences, retained partial results and versioned checkpoints. Lane parity verifies LINE invokes existing init/complete use-cases before the shared capture job. Gateway specs verify timeout table, portrait/square/landscape boundary, reusable landscape transcription, timeout-only retry. API gateway-client spec verifies signed image grant deadlines and two-call profile.
+Next: Owner may stage the resolved files and finish the merge. Handoff: `/private/tmp/mangmee-mg-ocrb-20261015-last-message.md`. Live-model accuracy and PostgreSQL checks remain outside this sandbox; no deployment performed.
+
+## Merge verification (supersedes original branch-only counts above)
+- Base `e1e6918d1dc726031e2fe682f45b5108e7df59f6`; incoming `a692a4c4b9d737a25f80d82c306bae977e5699a8`. No git add/commit or package.json changes; final-mutation gates unchanged.
+- Shared function `receiptOcr`: retain A's complete-evidence reread decision and source/value gates; combine B's image preparation, forwarded landscape-text reuse, work-sized deadlines and one timeout retry. Retain both imports and both appended spec suites (close SHARED accounting describe before the new grant test).
+- New controller integration proves downscaled landscape read → timeout → one retry → tolerant JSON → 44 supported rows from 45, dropped unprinted unit prices, explicit partial-row gap, optional tax-ID removal, no futile image/JSON reread, all 3 usage entries retained.
+- Capture-client regression proves failed page cost is COMPANY_ABSORBED with zero customer aggregate writes, then successful retry alone charges; both attempts retain distinct identities. Existing runner specs prove one document admission, normal money guards and retry ceilings.
+- Updated old timeout/call-bound assertions in registered contracts/API specs. Regenerated W00 capability artifact for combined source hashes and existing capability groups; no gate changes.
+- PASS `pnpm --filter @watchdog-bms/contracts build`; PASS `pnpm --filter @watchdog-bms/api typecheck`; PASS `pnpm --filter @watchdog-bms/ai-gateway typecheck` on final code.
+- Full scripts attempted literally: gateway/contracts `pnpm --filter <pkg> test` both hit sandbox tsx IPC EPERM. Ran every file from those scripts using `pnpm --filter <pkg> exec node --import tsx --test --test-concurrency=4 <files>`: contracts 418 pass/0 fail; gateway 1653 pass/0 fail/46 cancelled (AgentCore HTTP listener EPERM).
+- API 20 specs, including every direct importer of changed API implementations plus required suites: 1469 pass/27 fail/2 skipped; all 27 are unchanged process-line-general-v2 fixture TypeErrors. Separate six required suites: 1025 pass/0 fail/0 skipped. PostgreSQL suites cannot execute without DATABASE_URL.
+- Independently extracted BOTH original commits with git archive and built each snapshot's own contracts; reran process-line-general-v2, capability-manifest and AgentCore runtime. A normalized signature comparison proves the same 27 webhook failures and 46 runtime cancellations on merge, base and incoming alone. Capability artifact passed incoming alone, so it was refreshed rather than called pre-existing.
+- Evidence: `/private/tmp/mangmee-merge-ocrb-checks/` contains exact command/file-list JSON, all logs, baseline commit IDs and `baseline-comparison.json`; `compare-baselines.py` passes. Final marker scan, `git diff --check`, unchanged package.json and final-mutation checks pass.

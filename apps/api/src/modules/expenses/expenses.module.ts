@@ -1,5 +1,6 @@
 import { ExpensePaymentSlipUploadUseCase } from './application/use-cases/expense-upload.use-case';
 import { Module } from '@nestjs/common';
+import { LinkLinePaymentEvidenceUseCase } from './application/use-cases/link-line-payment-evidence.use-case';
 import { AuditModule } from '../audit/audit.module';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
 import { DashboardNotificationsModule } from '../dashboard-notifications/dashboard-notifications.module';
@@ -139,6 +140,7 @@ import { ProcurementModule } from '../procurement/procurement.module';
   controllers: [ExpenseCaptureController, ExpenseCaptureReadInternalController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController, DisbursementVoucherController],
   providers: [
     ExpensePaymentSlipUploadUseCase,
+    LinkLinePaymentEvidenceUseCase,
     ReadDisbursementVoucherSourcesUseCase,
     DisbursementVoucherUseCase,
     DisbursementVoucherNoticeService,
@@ -232,6 +234,9 @@ import { ProcurementModule } from '../procurement/procurement.module';
     CreateAccountantPackageUseCase,
   ],
   exports: [
+    DisbursementVoucherUseCase,
+    RecordExpensePaymentUseCase,
+    LinkLinePaymentEvidenceUseCase,
     PrismaExpenseRepository,
     // W02-LINE needs the attempt log and the group intake from the LINE webhook lane.
     PrismaExpenseCaptureRepository,
@@ -246,6 +251,7 @@ import { ProcurementModule } from '../procurement/procurement.module';
     ReceiptOcrApplyService,
     CreateExpenseDraftUseCase,
     ListExpensesUseCase,
+    UpdateExpenseDraftUseCase,
     GetExpenseSourcePostingInputUseCase,
     InitReceiptUploadUseCase,
     CompleteReceiptUploadUseCase,
@@ -254,10 +260,15 @@ import { ProcurementModule } from '../procurement/procurement.module';
     LineDraftPreviewStore,
     LineDraftUpdateUseCase,
     LineSubstituteReceiptContinuationUseCase,
+    PreviewSubstituteReceiptUseCase,
+    CertifySubstituteReceiptUseCase,
+    ApproveSubstituteReceiptUseCase,
     // Advisor S1: the LINE read tool for the caller's own substitute-receipt signature queue.
     ListMySubstituteReceiptSignaturesUseCase,
     LineExpenseDraftConversationUseCase,
     ConfirmExpenseUseCase,
+    MarkExpenseReadyUseCase,
+    DeleteExpenseUseCase,
     ResolveDuplicateUseCase,
     VoidExpenseUseCase,
     InitSignatureUploadUseCase,

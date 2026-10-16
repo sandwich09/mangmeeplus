@@ -37,9 +37,9 @@ const LINE_REIMBURSEMENT_DRAFT_TOOL_NAME_SET: ReadonlySet<string> = new Set(LINE
 export function lineToolRegistryFor(flags: { draftEditEnabled?: boolean; publicLookupEnabled?: boolean; reimbursementDraftWriteEnabled?: boolean } = {}): ToolMeta[] {
   const allowed = new Set(allowedToolCategories(flags));
   return LINE_TOOL_REGISTRY.filter((tool) => tool.executionReady !== false && (tool.name !== 'public.lookup' || flags.publicLookupEnabled === true)
-    && (LINE_REIMBURSEMENT_DRAFT_TOOL_NAME_SET.has(tool.name)
+    && (tool.name === 'expense.action.preview' || tool.name === 'counterparty.action.preview' || tool.name === 'company.action.preview' || (LINE_REIMBURSEMENT_DRAFT_TOOL_NAME_SET.has(tool.name)
       ? flags.reimbursementDraftWriteEnabled === true
-      : allowed.has(tool.category) || !DYNAMIC_TOOL_CATEGORIES.has(tool.category)));
+      : allowed.has(tool.category) || !DYNAMIC_TOOL_CATEGORIES.has(tool.category))));
 }
 
 /** Categories whose presence depends on a runtime flag. Everything else keeps its existing
@@ -232,6 +232,11 @@ export const LINE_CAPABILITY_GROUPS = [
   // Assigned workflow tasks and run failures are "pending work and alerts" to the user, and the old
   // hardcoded copy claimed them under that wording; they keep their own feature gate.
   { id: 'alerts', featureKeys: ['dashboard_notifications', 'workflow_automation'] },
+  // These tools have shared feature gates, but do not grant sales or general tax reporting.
+  { id: 'counterparties', featureKeys: [], toolNames: ['counterparty.search', 'counterparty.get_detail', 'counterparty.action.preview'] },
+  { id: 'company_management', featureKeys: [], toolNames: ['company.action.preview'] },
+  { id: 'team', featureKeys: [], sourceModules: ['employee-access'], requiredPermissions: ['access.employee.read'] },
+  { id: 'tax_documents', featureKeys: ['wht_50bis', 'wht_pnd53'], toolNames: ['voucher.list_recent', 'voucher.get_detail', 'wht.get_month_summary', 'wht.calculate_withholding'] },
   // billing.get_package_usage is offered to every assistant user so a non-manager reaches its typed
   // refusal; only someone who manages the package is told the assistant answers it (owner 2026-09-30).
   // billing.get_package_catalog (package prices and contents, for anyone) shares the module and adds no line.
@@ -241,11 +246,52 @@ export const LINE_CAPABILITY_GROUPS = [
   featureKeys: readonly string[];
   /** Matched in addition to featureKeys, for modules that are deliberately not feature-gated. */
   sourceModules?: readonly string[];
+  /** Explicit ownership prevents shared feature gates from advertising unrelated capabilities. */
+  toolNames?: readonly string[];
   /** Advertised only to a caller holding all of these, when the tool itself answers others with a refusal. */
   requiredPermissions?: readonly string[];
 }>;
 
 export type LineCapabilityGroupId = (typeof LINE_CAPABILITY_GROUPS)[number]['id'];
+
+/** How-to entries are navigation only. Their commands re-enter the metered intake and normal business guards. */
+export const LINE_CHAT_ACTIONS = [
+  { id: 'expense_capture', group: 'expenses', title: 'บันทึกค่าใช้จ่าย', command: 'ช่วยบันทึกค่าใช้จ่ายให้หน่อย', sentence: 'ส่งใบเสร็จหรือบอกรายละเอียด แล้วน้องช่วยเตรียมค่าใช้จ่ายให้ตรวจค่ะ', permission: 'expense.create', tool: '', helpTopics: ['expense.start'], responsible: 'ผู้มีสิทธิ์บันทึกค่าใช้จ่าย' },
+  { id: 'reimbursement_claim', group: 'expenses', title: 'สร้างใบเบิก', command: 'ช่วยสร้างใบเบิกให้หน่อย', sentence: 'บอกรายการที่สำรองจ่าย แล้วน้องช่วยเตรียมใบเบิกให้ตรวจค่ะ', permission: 'reimbursement.create', tool: 'reimbursement.draft.get_options', helpTopics: ['reimbursement.meaning', 'reimbursement.roles'], responsible: 'ผู้มีสิทธิ์สร้างใบเบิก' },
+  { id: 'payment_voucher', group: 'expenses', title: 'สร้างใบสำคัญจ่าย', command: 'ช่วยสร้างใบเตรียมจ่ายให้หน่อย', sentence: 'ใบเตรียมจ่ายใช้รวบรวมรายจ่ายที่ยืนยันแล้วเพื่อตรวจก่อนอนุมัติและบันทึกจ่ายค่ะ', permission: 'expense.disbursement.prepare', tool: 'expense.action.preview', helpTopics: ['voucher.meaning'], responsible: 'ผู้มีสิทธิ์จัดทำใบเตรียมจ่าย' },
+  { id: 'wht_certificate', group: 'tax_documents', title: 'ออก 50 ทวิ', command: 'ช่วยออก 50 ทวิให้หน่อย', sentence: '50 ทวิเป็นหนังสือรับรองยอดเงินที่จ่ายและภาษีที่หักไว้ให้ผู้รับเงินค่ะ', permission: 'wht.certificate.issue', tool: 'expense.action.preview', helpTopics: ['wht.certificate-meaning'], responsible: 'ผู้มีสิทธิ์ออกหนังสือรับรอง' },
+  { id: 'pnd53', group: 'tax_documents', title: 'ดูสรุป ภ.ง.ด.53', command: 'ขอสรุป ภ.ง.ด.53 เดือนนี้', sentence: 'น้องช่วยสรุปภาษีหัก ณ ที่จ่ายของงวดที่ต้องการให้ตรวจได้ค่ะ', permission: 'wht.pnd53.read', tool: 'wht.get_month_summary', helpTopics: ['wht.pnd53-due'], responsible: 'ผู้มีสิทธิ์ดู ภ.ง.ด.53' },
+  { id: 'payout_account', group: 'expenses', title: 'เพิ่มบัญชีรับเงินคืนของฉัน', command: '', sentence: 'เพิ่มบัญชีรับเงินคืนของคุณที่หน้าบัญชีรับเงินคืนบนเว็บได้เลยค่ะ', permission: 'reimbursement.create', tool: '', helpTopics: [], responsible: 'ผู้มีสิทธิ์สร้างใบเบิก', webPath: '/companies/{companyId}/reimbursements/payout-account' },
+  { id: 'counterparty', group: 'counterparties', title: 'เพิ่มคู่ค้า ผู้ขาย หรือผู้รับเงิน', command: 'ช่วยเพิ่มคู่ค้าให้หน่อย', sentence: 'ข้อมูลคู่ค้าใช้ระบุผู้ขายหรือผู้รับเงินในเอกสารของร้านค่ะ', permission: 'accounting.counterparty.manage', tool: 'counterparty.action.preview', helpTopics: [], responsible: 'ผู้มีสิทธิ์จัดการคู่ค้า' },
+  { id: 'team_member', group: 'company_management', title: 'เพิ่มพนักงาน', command: 'ช่วยเพิ่มพนักงานให้หน่อย', sentence: 'เพิ่มพนักงานเพื่อกำหนดหน้าที่และสิทธิ์ทำงานในร้านค่ะ', permission: 'access.employee.create', tool: 'company.action.preview', helpTopics: [], responsible: 'ผู้มีสิทธิ์เพิ่มพนักงาน' },
+  { id: 'branch', group: 'company_management', title: 'เพิ่มสาขา', command: 'ช่วยเพิ่มสาขาให้หน่อย', sentence: 'เพิ่มสาขาเพื่อแยกสถานที่และขอบเขตการทำงานของร้านค่ะ', permission: 'company.branch.manage', tool: 'company.action.preview', helpTopics: [], responsible: 'ผู้มีสิทธิ์จัดการสาขา' },
+  { id: 'branch_edit', group: 'company_management', title: 'แก้ไขข้อมูลสาขา', command: 'ช่วยแก้ไขข้อมูลสาขาให้หน่อย', sentence: 'บอกชื่อสาขาและข้อมูลที่ต้องการแก้ไข แล้วน้องช่วยเตรียมให้ตรวจค่ะ', permission: 'company.branch.manage', tool: 'company.action.preview', helpTopics: [], responsible: 'ผู้มีสิทธิ์จัดการสาขา' },
+  { id: 'package_purchase', group: 'package', title: 'ซื้อหรือเปลี่ยนแพ็กเกจ', command: 'ขอเปลี่ยนแพ็กเกจ', sentence: 'เลือกแพ็กเกจ แล้วน้องช่วยเตรียมคำขอซื้อให้ตรวจค่ะ', permission: 'company.plan.manage', tool: 'billing.get_package_usage', helpTopics: [], responsible: 'ผู้มีสิทธิ์จัดการแพ็กเกจ' },
+  { id: 'approvals', group: 'expenses', title: 'อนุมัติใบเบิก', command: 'ขอดูใบเบิกที่รอฉันอนุมัติ', sentence: 'เลือกใบเบิกที่รอคุณอนุมัติ แล้วตรวจรายละเอียดก่อนยืนยันค่ะ', permission: 'reimbursement.approve', tool: 'reimbursement.list_pending_approvals', helpTopics: [], responsible: 'ผู้อนุมัติใบเบิกที่ได้รับมอบหมาย' },
+  {"id": "expense_search", "group": "expenses", "title": "ค้นหาค่าใช้จ่ายหรือบิล", "command": "ช่วยค้นหาค่าใช้จ่ายให้หน่อย", "sentence": "บอกบิลหรือช่วงเวลาที่ต้องการ แล้วน้องช่วยค้นให้ตามสิทธิ์ค่ะ", "permission": "expense.read_own", "tool": "expense.list_recent", "helpTopics": ["expense.find"], "responsible": "ผู้มีสิทธิ์ดูค่าใช้จ่าย"},
+  {"id": "sales", "group": "sales", "title": "ดูยอดขายหรือเอกสารขาย", "command": "ช่วยดูยอดขายให้หน่อย", "sentence": "บอกช่วงเวลาที่ต้องการ แล้วน้องช่วยดูยอดขายให้ค่ะ", "permission": "crm.report.read", "tool": "sales.get_sales_summary", "helpTopics": [], "responsible": "ผู้มีสิทธิ์ดูยอดขาย"},
+  {"id": "finance", "group": "finance", "title": "ดูรายงานการเงิน", "command": "ช่วยดูรายงานการเงินให้หน่อย", "sentence": "บอกช่วงเวลาที่ต้องการ แล้วน้องช่วยดูรายงานการเงินให้ค่ะ", "permission": "ledger.report.read", "tool": "ledger.get_financial_summary", "helpTopics": ["report.access"], "responsible": "ผู้มีสิทธิ์ดูรายงานการเงิน"},
+  {"id": "tax", "group": "tax", "title": "ดูงานภาษีที่ต้องทำ", "command": "ช่วยดูงานภาษีที่ต้องทำให้หน่อย", "sentence": "บอกช่วงเวลาที่ต้องการ แล้วน้องช่วยดูงานภาษีให้ค่ะ", "permission": "tax.period.read", "tool": "tax.get_upcoming_tax_obligations", "helpTopics": [], "responsible": "ผู้มีสิทธิ์ดูงานภาษี"},
+  {"id": "inventory", "group": "inventory", "title": "ค้นหาสินค้าหรือดูสต็อก", "command": "ช่วยค้นหาสินค้าให้หน่อย", "sentence": "บอกชื่อสินค้า แล้วน้องช่วยค้นให้ตามสิทธิ์ค่ะ", "permission": "inventory.product.read", "tool": "inventory.search_products", "helpTopics": [], "responsible": "ผู้มีสิทธิ์ดูสินค้า"},
+  {"id": "customers", "group": "customers", "title": "ค้นหาลูกค้า", "command": "ช่วยค้นหาลูกค้าให้หน่อย", "sentence": "บอกชื่อลูกค้า แล้วน้องช่วยค้นให้ตามสิทธิ์ค่ะ", "permission": "crm.customer.read", "tool": "crm.search_customers", "helpTopics": [], "responsible": "ผู้มีสิทธิ์ดูลูกค้า"},
+  {"id": "bookings", "group": "bookings", "title": "ดูรายการจอง", "command": "ช่วยดูรายการจองให้หน่อย", "sentence": "บอกช่วงเวลาที่ต้องการ แล้วน้องช่วยดูรายการจองให้ค่ะ", "permission": "crm.booking.read", "tool": "crm.list_bookings", "helpTopics": [], "responsible": "ผู้มีสิทธิ์ดูรายการจอง"},
+  {"id": "procurement", "group": "procurement", "title": "ดูงานจัดซื้อ", "command": "ช่วยดูงานจัดซื้อให้หน่อย", "sentence": "บอกช่วงเวลาที่ต้องการ แล้วน้องช่วยดูงานจัดซื้อให้ค่ะ", "permission": "procurement.purchase_order.read", "tool": "procurement.get_summary", "helpTopics": [], "responsible": "ผู้มีสิทธิ์ดูงานจัดซื้อ"},
+  {"id": "alerts", "group": "alerts", "title": "ดูงานแจ้งเตือน", "command": "ช่วยดูงานแจ้งเตือนให้หน่อย", "sentence": "น้องช่วยดูงานแจ้งเตือนที่คุณมีสิทธิ์เปิดได้ค่ะ", "permission": "notification.read", "tool": "notifications.list_open_alerts", "helpTopics": [], "responsible": "ผู้มีสิทธิ์ดูงานแจ้งเตือน"},
+  {"id": "team", "group": "team", "title": "ดูข้อมูลทีมงาน", "command": "ช่วยดูข้อมูลทีมงานให้หน่อย", "sentence": "บอกข้อมูลทีมงานที่ต้องการ แล้วน้องช่วยค้นให้ตามสิทธิ์ค่ะ", "permission": "access.employee.read", "tool": "company.get_employee_summary", "helpTopics": [], "responsible": "ผู้มีสิทธิ์ดูข้อมูลพนักงาน"},
+] as const;
+export type LineChatActionId = (typeof LINE_CHAT_ACTIONS)[number]['id'];
+export function lineChatAction(value: unknown) { return LINE_CHAT_ACTIONS.find(action => action.id === value); }
+export function canUseLineChatAction(id: unknown, permissions: readonly string[], entitled: ReadonlySet<string> | null): boolean {
+  const action = lineChatAction(id);
+  if (!action) return false;
+  if (action.id === 'expense_capture') return canAdvertiseReceiptCapture(permissions, entitled);
+  if (action.id !== 'expense_search' && !permissions.includes(action.permission)) return false;
+  if (action.id === 'payout_account') return true;
+  const tool = LINE_TOOL_REGISTRY.find(tool => tool.name === action.tool);
+  return !!tool && tool.executionReady !== false && hasToolPermissions(tool, permissions) && hasToolFeature(tool, entitled)
+    && (action.id !== 'wht_certificate' || entitled === null || entitled.has('wht_50bis'))
+    && (action.id !== 'pnd53' || entitled === null || entitled.has('wht_pnd53'));
+}
 
 /**
  * Opening words of every capability self-description the gateway renders — the card and its teaching
@@ -289,17 +335,21 @@ export function usableCapabilityGroupIds(
   const usable = LINE_TOOL_REGISTRY.filter(
     (tool) => tool.executionReady !== false && hasToolPermissions(tool, permissions) && hasToolFeature(tool, entitled),
   );
-  return LINE_CAPABILITY_GROUPS.filter((group) => usable.some((tool) => inCapabilityGroup(tool, group))
+  return LINE_CAPABILITY_GROUPS.filter((group) => usable.some((tool) => inCapabilityGroup(tool, group, entitled))
     && (!('requiredPermissions' in group) || group.requiredPermissions.every((permission) => permissions.includes(permission))))
     .map((group) => group.id);
 }
 
-/** A tool belongs to a group when the group owns one of its feature keys, or its whole module. */
+/** Explicit tool ownership takes precedence over feature/module grouping; only entitled features count. */
 export function inCapabilityGroup(
-  tool: Pick<ToolMeta, 'featureKeys' | 'sourceModule'>,
-  group: { featureKeys: readonly string[]; sourceModules?: readonly string[] },
+  tool: Pick<ToolMeta, 'name' | 'featureKeys' | 'sourceModule'>,
+  group: { featureKeys: readonly string[]; sourceModules?: readonly string[]; toolNames?: readonly string[] },
+  entitled: ReadonlySet<string> | null = null,
 ): boolean {
-  return toolFeatureKeys(tool).some((key) => group.featureKeys.includes(key))
+  if (group.toolNames) return group.toolNames.includes(tool.name)
+    && (entitled === null || group.featureKeys.length === 0 || group.featureKeys.some((key) => entitled.has(key)));
+  if (LINE_CAPABILITY_GROUPS.some((candidate) => 'toolNames' in candidate && candidate.toolNames.some((name) => name === tool.name))) return false;
+  return toolFeatureKeys(tool).some((key) => group.featureKeys.includes(key) && (entitled === null || entitled.has(key)))
     || (group.sourceModules?.includes(tool.sourceModule) ?? false);
 }
 
@@ -538,6 +588,41 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     // most recent attempts. `attemptRef` picks one out of an ambiguity list already shown.
     optionalInputFields: ['attemptRef'],
   },
+  {
+    name: 'counterparty.search',
+    description: 'Search คู่ค้า/ผู้รับเงิน by a name or tax-ID fragment (at most 10). This is the accounting counterparty registry available to starter shops, independent of procurement suppliers. Use the exact returned id for detail or an update preview.',
+    businessSubjects: ['supplier', 'expense', 'accounting_document'], questionKinds: ['search', 'list'], category: 'read_detail',
+    requiredPermissions: ['accounting.counterparty.read'], sourceModule: 'accounting-documents', featureKeys: ['expenses', 'sales_documents'],
+    supportedAgents: ['accounting', 'cfo', 'general'], sensitiveAudit: true, requiresErpPermissionCheck: true, optionalInputFields: ['search'],
+  },
+  {
+    name: 'counterparty.get_detail',
+    description: 'Read a counterparty/payee name, tax ID, address, tax branch code and entity kind using the web permission guards. No bank account is exposed by this registry. Copy counterpartyId from counterparty.search or a shown expense vendorCounterpartyId.',
+    businessSubjects: ['supplier', 'expense', 'accounting_document'], questionKinds: ['detail'], category: 'read_detail', requiredPermissions: [],
+    anyOfPermissions: ['accounting.counterparty.read', 'accounting.counterparty.manage', 'expense.read_related', 'accounting.document.read_related', 'expense.create', 'expense.update', 'expense.review', 'expense.receipt.upload', 'expense.receipt.line_upload'],
+    sourceModule: 'accounting-documents', featureKeys: ['expenses', 'sales_documents'], supportedAgents: ['accounting', 'cfo', 'general'], sensitiveAudit: true, requiresErpPermissionCheck: true, requiredInputFields: ['counterpartyId'],
+  },
+  {
+    name: 'counterparty.action.preview',
+    description: 'Prepare a human confirm card to CREATE or UPDATE คู่ค้า/ผู้รับเงิน. เพิ่มผู้ขาย/เพิ่มคู่ค้า/แก้ไขผู้รับเงิน/อัปเดตซัพพลายเออร์ are registry commands even after a capabilities question or an expense turn; never create an expense for them. Nothing is saved until the user presses its signed button. CREATE needs displayName and accounting.counterparty.manage. UPDATE needs counterpartyId from a read; the web use-case allows a manager or the creator/receipt uploader. Fields: displayName, legalName, taxId, addressText, branchCode (five-digit payee tax branch), entityKind. Show old → new. Ask only for missing values. For a later 50 ทวิ, offer this card to save a missing payee tax ID/address; never change expense draft rules.',
+    businessSubjects: ['supplier', 'expense', 'accounting_document'], questionKinds: ['detail'], category: 'draft_update', requiredPermissions: [],
+    anyOfPermissions: ['accounting.counterparty.read', 'accounting.counterparty.manage', 'expense.read_related', 'accounting.document.read_related', 'expense.create', 'expense.update', 'expense.review', 'expense.receipt.upload', 'expense.receipt.line_upload'],
+    sourceModule: 'accounting-documents', featureKeys: ['expenses', 'sales_documents'], supportedAgents: ['accounting', 'cfo', 'general'], sensitiveAudit: true, requiresErpPermissionCheck: true,
+    requiredInputFields: ['action'], optionalInputFields: ['counterpartyId', 'displayName', 'legalName', 'taxId', 'addressText', 'branchCode', 'entityKind'],
+    inputLengthLimits: { displayName: { min: 1, max: 255 }, legalName: { min: 0, max: 255 }, addressText: { min: 0, max: 500 }, taxId: { min: 0, max: 32 }, branchCode: { min: 0, max: 16 } },
+    inputEnumValues: { action: ['CREATE', 'UPDATE'], entityKind: ['JURISTIC', 'INDIVIDUAL'] },
+  },
+  {
+    name: 'expense.action.preview',
+    description: 'For payment vouchers use VOUCHER_CREATE with expenseId (or comma-separated expenseIds, at most 20) from shown expense records; all must be confirmed. Use voucherId ONLY from shownItems of any voucher.* read tool for VOUCHER_SUBMIT, VOUCHER_APPROVE, VOUCHER_RETURN, VOUCHER_PAY, VOUCHER_CANCEL or WHT_CERTIFICATE_ISSUE (paid voucher only). RETURN/CANCEL ask for a reason when missing; certificate asks for the missing payee address in one question. paidAt/paymentMethod describe voucher payment. Existing web use-cases and feature entitlements apply. For reimbursements use reimbursementId and REIMBURSEMENT_SUBMIT, REIMBURSEMENT_CANCEL, REIMBURSEMENT_APPROVE, REIMBURSEMENT_REJECT (ask one short reason question if absent). For claim payment use REIMBURSEMENT_RECORD_PAYMENT: send slip first, then the API prepares the guarded payment card. Copy reimbursementId ONLY from reimbursement.get_summary/get_detail/list_pending_approvals/get_approval_backlog returned items or shownItems. For confirmed expense payment use expenseId and RECORD_PAYMENT; omit paidAmount to use outstanding and paidAt to use Bangkok today, method is optional. A recent slip in this private chat is attached in the same confirmation. Prepare a LINE confirm card for ส่งตรวจ (MARK_READY), ยืนยันรายการ (CONFIRM), ลบร่าง (DELETE_DRAFT), or ยกเลิกรายการ (VOID). Preview only: nothing changes until the user presses the button. Copy expenseId only from conversationContext.recentReads shownItems, activeExpenseDrafts or recentCapturedExpenses. Ask which record if ambiguous. VOID requires the user’s reason; ask why when absent. The API checks the same permissions and status as the web.',
+    businessSubjects: ['expense', 'reimbursement', 'tax'], questionKinds: ['detail'], category: 'draft_update',
+    requiredPermissions: [],
+    anyOfPermissions: ['expense.update', 'expense.review', 'expense.confirm', 'expense.delete', 'expense.void', 'expense.payment.record', 'reimbursement.submit', 'reimbursement.cancel_own', 'reimbursement.finance_review', 'reimbursement.approve', 'reimbursement.reject', 'reimbursement.payment.record', 'reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own', 'expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.disbursement.pay', 'wht.certificate.issue'],
+    sourceModule: 'expenses', featureKeys: ['expenses'], supportedAgents: ['accounting', 'cfo', 'tax', 'general'],
+    sensitiveAudit: true, requiresErpPermissionCheck: true,
+    requiredInputFields: ['action'], optionalInputFields: ['expenseId', 'expenseIds', 'voucherId', 'reimbursementId', 'reason', 'paidAmount', 'paidAt', 'paymentMethod'],
+    inputEnumValues: { action: ['MARK_READY', 'CONFIRM', 'DELETE_DRAFT', 'VOID', 'RECORD_PAYMENT', 'REIMBURSEMENT_SUBMIT', 'REIMBURSEMENT_CANCEL', 'REIMBURSEMENT_APPROVE', 'REIMBURSEMENT_REJECT', 'REIMBURSEMENT_RECORD_PAYMENT', 'VOUCHER_CREATE', 'VOUCHER_SUBMIT', 'VOUCHER_APPROVE', 'VOUCHER_RETURN', 'VOUCHER_PAY', 'VOUCHER_CANCEL', 'WHT_CERTIFICATE_ISSUE'], paymentMethod: ['CASH', 'BANK_TRANSFER', 'CARD', 'CHEQUE', 'OTHER'] },
+  },
   // ── S-4 draft edit over LINE (spec §5.4) ────────────────────────────────────
   // Five tools, one shape. Each one PREVIEWS a change to the record THIS chat captured and returns
   // a `LineDraftUpdatePreview`; none of them writes. The write is the confirm postback, which no
@@ -548,7 +633,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   // (spec §4: income/receipt drafts join later without a contract break).
   {
     name: 'expense.draft.set_header',
-    description: 'Preview a header change on the expense draft this chat just captured: document date, vendor name, document number, or a note to append. Returns what would change and the resulting totals; the user must press ยืนยัน before anything is saved. Never use it on a confirmed record.',
+    description: 'Preview a header change on the expense draft this chat just captured: document date, vendor name, document number, a note to append, or categoryName for all uncategorized item lines. Returns what would change and the resulting totals; the user must press ยืนยัน before anything is saved. Never use it on a confirmed record.',
     businessSubjects: ['expense'],
     questionKinds: ['detail'],
     category: LINE_DRAFT_UPDATE_TOOL_CATEGORY,
@@ -557,11 +642,11 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'cfo', 'general'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['recordType', 'expenseDate', 'vendorName', 'documentNumber', 'noteAppend'],
+    optionalInputFields: ['recordType', 'expenseDate', 'vendorName', 'documentNumber', 'noteAppend', 'categoryName'],
   },
   {
     name: 'expense.draft.set_line',
-    description: 'Preview a change to ONE existing line of the expense draft this chat captured: its description, its amount, its VAT treatment, or moving it into an additional-charge field such as ค่าบริการ (chargeKind). Returns what would change and the resulting totals; the user must press ยืนยัน before anything is saved.',
+    description: 'Preview a change to ONE existing line of the expense draft this chat captured: its description, amount, categoryName, VAT treatment, or moving it into an additional-charge field such as ค่าบริการ (chargeKind). Returns what would change and the resulting totals; the user must press ยืนยัน before anything is saved.',
     businessSubjects: ['expense'],
     questionKinds: ['detail'],
     category: LINE_DRAFT_UPDATE_TOOL_CATEGORY,
@@ -573,7 +658,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     requiredInputFields: ['lineNumber'],
     // `chargeKind` is what turns "the OCR wrote service charge as a product line" into a move
     // rather than a duplicate charge (spec §5.4 / J3.3).
-    optionalInputFields: ['recordType', 'description', 'amount', 'vatTreatment', 'chargeKind'],
+    optionalInputFields: ['recordType', 'description', 'amount', 'vatTreatment', 'chargeKind', 'categoryName'],
   },
   {
     name: 'expense.draft.add_charge',
@@ -1006,6 +1091,23 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     requiredInputFields: ['nameQuery'],
   },
   {
+    name: 'company.get_roles',
+    description: 'Read company/system roles and their exact feature-filtered permissions using the web role and menu registry labels. Optional roleName selects a role; employeeName answers what a named employee may do; permissionKey (for example reimbursement.approve) lists active people holding that permission. People reads require access.employee.read too. Explain permissions in plain Thai; never show internal ids or permission codes, and approval still depends on the assigned workflow step.',
+    businessSubjects: ['employee', 'company'], questionKinds: ['list', 'detail', 'search', 'explain'], category: 'read_detail',
+    requiredPermissions: [], anyOfPermissions: ['access.role.read', 'access.role.manage', 'access.employee.create', 'access.employee.update'],
+    sourceModule: 'employee-access', featureKeys: [], supportedAgents: ['general'], sensitiveAudit: true, requiresErpPermissionCheck: true,
+    optionalInputFields: ['roleName', 'employeeName', 'permissionKey'],
+  },
+  {
+    name: 'company.action.preview',
+    description: 'Prepare a private LINE confirm card only; the user must press to save. EMPLOYEE_CREATE needs displayName, username, dateOfBirth (ISO), identityType, identityNumber, phoneNumber, roleName and branchName (oversight roles use all branches), optional email. Ask only missing web-required fields; never invent identity/date/contact data. EMPLOYEE_UPDATE takes employeeName and roleName and/or branchName. EMPLOYEE_DISABLE/EMPLOYEE_ENABLE take employeeName. BRANCH_CREATE needs name, code, type and optional address; BRANCH_UPDATE takes branchName and new name/address (code/type are immutable). Resolve names uniquely in the API; never send internal ids. Same web permissions, plan limits, self-role and owner guards apply at press time.',
+    businessSubjects: ['employee', 'company'], questionKinds: ['detail'], category: 'draft_update',
+    requiredPermissions: [], anyOfPermissions: ['access.employee.create', 'access.employee.update', 'access.employee.disable', 'company.branch.manage'],
+    sourceModule: 'employee-access', featureKeys: [], supportedAgents: ['general'], sensitiveAudit: true, requiresErpPermissionCheck: true,
+    requiredInputFields: ['action'], optionalInputFields: ['employeeName', 'displayName', 'username', 'dateOfBirth', 'identityType', 'identityNumber', 'phoneNumber', 'email', 'roleName', 'branchName', 'name', 'code', 'type', 'address'],
+    inputEnumValues: { action: ['EMPLOYEE_CREATE', 'EMPLOYEE_UPDATE', 'EMPLOYEE_DISABLE', 'EMPLOYEE_ENABLE', 'BRANCH_CREATE', 'BRANCH_UPDATE'], identityType: ['THAI_NATIONAL_ID', 'PASSPORT'], type: ['HEAD_OFFICE', 'BRANCH', 'ONLINE', 'WAREHOUSE'] },
+  },
+  {
     name: 'expense.get_breakdown',
     description: 'Read expense totals grouped by category, branch, and vendor (byVendor, top 10 by amount descending) for a period. Optional categoryName/vendorName resolve a free-text category or vendor name: exactly one match filters by it, several matches return categoryAmbiguous/vendorAmbiguous with availableCategories/availableVendors to disambiguate, and no match returns categoryUnresolved/vendorUnresolved with the available names, instead of a breakdown. Optional groupBy (category, branch, or vendor; default category) is a presentation hint only — it selects which grouping the answer features first; all three groupings are still returned regardless of its value.',
     businessSubjects: ['expense'],
@@ -1115,7 +1217,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'general'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
-    requiredInputFields: ['action', 'proposal'],
+    requiredInputFields: ['action', 'proposal'], optionalInputFields: ['suggestedCategoryChoiceId'],
   },
   {
     name: 'reimbursement.draft.preview_update',
@@ -1129,7 +1231,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'general'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
-    requiredInputFields: ['action', 'proposal'],
+    requiredInputFields: ['action', 'proposal'], optionalInputFields: ['suggestedCategoryChoiceId'],
   },
   {
     name: 'reimbursement.list_pending_approvals',
@@ -1221,6 +1323,35 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   // receipt.get_attachment_metadata / create_or_update_evidence_draft / find_duplicate_by_hash /
   // score_authenticity tools and their gateway agents were removed (RECEIPT-01); this also
   // dropped the non-canonical `expense.receipt.read` permission that only they referenced.
+  // Sold document reads stay separate from the full, unsold thai_tax workspace.
+  {
+    name: 'voucher.list_recent', description: 'Read recent payment vouchers and preparation status; never create, approve or pay.',
+    businessSubjects: ['expense', 'payment'], questionKinds: ['list', 'summary'], category: 'read_summary',
+    requiredPermissions: ['expense.disbursement.read'], featureKeys: ['expenses'], sourceModule: 'expenses',
+    supportedAgents: ['accounting', 'general'], sensitiveAudit: true, requiresErpPermissionCheck: true,
+    optionalInputFields: ['q', 'branchId'],
+  },
+  {
+    name: 'voucher.get_detail', description: 'Read one payment voucher already selected from voucher.list_recent.',
+    businessSubjects: ['expense', 'payment'], questionKinds: ['detail'], category: 'read_detail',
+    requiredPermissions: ['expense.disbursement.read'], featureKeys: ['expenses'], sourceModule: 'expenses',
+    supportedAgents: ['accounting', 'general'], sensitiveAudit: true, requiresErpPermissionCheck: true,
+    requiredInputFields: ['voucherId'],
+  },
+  {
+    name: 'wht.get_month_summary', description: 'Read issued 50 bis certificates, paid income bases and withholding by income type for periodKey YYYY-MM (current month by default). Read PND53 period remittance and its system deadline only with wht.pnd53.read. No other tax forms or mutations.',
+    businessSubjects: ['tax', 'payment'], questionKinds: ['summary', 'list', 'breakdown'], category: 'read_summary',
+    requiredPermissions: [], anyOfPermissions: ['wht.certificate.read', 'wht.pnd53.read'],
+    featureKeys: ['wht_50bis', 'wht_pnd53'], sourceModule: 'tax', supportedAgents: ['accounting', 'tax', 'general'],
+    sensitiveAudit: true, requiresErpPermissionCheck: true, optionalInputFields: ['periodKey', 'branchId'],
+  },
+  {
+    name: 'wht.calculate_withholding', description: 'Explain a hypothetical payment using only the ACTIVE system income-category catalog and existing money rounding. Pass baseAmount copied from user amount. Select incomeCategoryCode ONLY when the user explicitly chose the exact catalog income name; never infer from ค่าจ้าง or a generic payment description. With unknown income type call with no category to ask with catalog buttons. The amount is explicitly a conditional pre-VAT base; never guess a VAT rate.',
+    businessSubjects: ['tax', 'payment'], questionKinds: ['explain', 'summary'], category: 'read_summary',
+    requiredPermissions: [], anyOfPermissions: ['expense.create', 'procurement.supplier_payment.read'],
+    featureKeys: ['wht_50bis', 'wht_pnd53'], sourceModule: 'tax', supportedAgents: ['accounting', 'tax', 'general'],
+    sensitiveAudit: false, requiresErpPermissionCheck: true, optionalInputFields: ['incomeCategoryCode', 'baseAmount'],
+  },
   // ── Item 11 tax read-only tools ─────────────────────────────────────────────
   {
     name: 'tax.get_upcoming_tax_obligations',

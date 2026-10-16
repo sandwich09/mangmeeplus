@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import {
   extractValueCandidates,
+  todayCivilDate,
   isAmbiguousDateCandidate,
   type ExpenseCategorySummary,
   type LineExpenseAccountingClass,
@@ -13,6 +14,9 @@ import { EXPENSE_VENDOR_ADDRESS_MAX_LENGTH } from './expense-vendor-identity.log
 
 export const MAX_LINE_EXPENSE_DRAFT_ITEMS = 40;
 const MAX_ITEMS = MAX_LINE_EXPENSE_DRAFT_ITEMS;
+export const MAX_CAPTURE_EXPENSE_DRAFT_ITEMS = 200;
+export const expenseDraftItemLimit = (state: { itemSource?: 'LINE_MEDIA_OCR' }) =>
+  state.itemSource === 'LINE_MEDIA_OCR' ? MAX_CAPTURE_EXPENSE_DRAFT_ITEMS : MAX_ITEMS;
 const MAX_TEXT = 200;
 /** Vendor-address §11.3: the ONE question a receipt capture may ask, worded by the spec. */
 export const LINE_VENDOR_ADDRESS_PROMPT = 'อ่านที่อยู่ร้านจากใบไม่ได้ พิมพ์ที่อยู่ตามใบได้เลย หรือพิมพ์ ข้าม';
@@ -91,6 +95,7 @@ export type LineExpenseDraftContinuation = {
      */
     vendorAddressAsk?: true;
   };
+  itemSource?: 'LINE_MEDIA_OCR';
   items: LineExpenseDraftItem[];
   provenance: Record<string, {
     source: 'LINE_USER_TEXT' | 'LINE_AI_SOURCE_GROUNDED' | 'LINE_MEDIA_OCR' | 'WEB_USER';
@@ -155,15 +160,21 @@ function groundedNumber(text: string, value: string | undefined, positive = fals
 function groundedText(text: string, value: unknown): string | undefined {
   const candidate = bounded(value);
   if (!candidate) return undefined;
-  return normalized(text).toLocaleLowerCase('th-TH').includes(candidate.toLocaleLowerCase('th-TH'))
-    ? candidate
-    : undefined;
+  const source = normalized(text).toLocaleLowerCase('th-TH');
+  let cursor = 0;
+  for (const token of candidate.toLocaleLowerCase('th-TH').split(' ')) {
+    const index = source.indexOf(token, cursor);
+    if (index < 0) return undefined;
+    cursor = index + token.length;
+  }
+  return candidate;
 }
 
-function groundedDate(text: string, value: unknown): string | undefined {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) return undefined;
-  return extractValueCandidates(text).dates.some((candidate) =>
-    candidate.isoDate === value && !isAmbiguousDateCandidate(candidate)) ? value : undefined;
+function groundedDate(text: string, value: unknown, todayIso = todayCivilDate()): string | undefined {
+  const candidates = extractValueCandidates(text, todayIso);
+  const days = [...new Set([...candidates.dates.filter(candidate => !isAmbiguousDateCandidate(candidate)).map(candidate => candidate.isoDate),
+    ...(candidates.periods ?? []).filter(period => period.kind === 'day' && period.fromDate === period.toDate).map(period => period.fromDate)])];
+  return typeof value === 'string' && days.includes(value) ? value : value === undefined && days.length === 1 ? days[0] : undefined;
 }
 
 function messageHash(text: string): string {
@@ -178,29 +189,65 @@ function activeCategoryId(value: unknown, categories: Map<string, ExpenseCategor
   return typeof value === 'string' && categories.has(value) ? value : undefined;
 }
 
+/** Item names keep the purpose, while money and dates live in their own fields. */
+export function lineExpenseItemDescription(text: string | undefined, fallback?: string, maxLength = 120): string | undefined {
+  if (!text) return fallback ? lineExpenseItemDescription(fallback, undefined, maxLength) : undefined;
+  const values = extractValueCandidates(text, todayCivilDate('Asia/Bangkok'));
+  const ranges: Array<[number, number]> = [];
+  for (const candidate of [...values.amounts, ...values.dates]) {
+    let offset = 0, start: number;
+    while ((start = text.indexOf(candidate.span, offset)) !== -1) {
+      let end = start + candidate.span.length;
+      offset = end;
+      if ('isoDate' in candidate) {
+        const prefix = text.slice(0, start).match(/วันที่\s*$/u);
+        if (prefix) start -= prefix[0].length;
+      }
+      // The extractor deliberately offers digit candidates inside product names such as A4.
+      if ('value' in candidate && /[A-Za-z]/u.test(`${text[start - 1] ?? ''}${text[end] ?? ''}`)) continue;
+      if ('value' in candidate && /^\s*%/u.test(text.slice(end))) continue;
+      if ('value' in candidate && !candidate.currencyToken && /^\s*(?:คน|ชิ้น|เครื่อง|งาน|ครั้ง|ชุด|กล่อง|อัน|เมตร|กิโล)/u.test(text.slice(end))) continue;
+      if ('currencyToken' in candidate && candidate.currencyToken) {
+        const suffix = text.slice(end).match(/^\s*/u)![0].length;
+        if (text.startsWith(candidate.currencyToken, end + suffix)) end += suffix + candidate.currencyToken.length;
+        const prefix = text.slice(0, start).trimEnd();
+        if (prefix.endsWith(candidate.currencyToken)) start = prefix.length - candidate.currencyToken.length;
+      }
+      ranges.push([start, end]);
+    }
+  }
+  const cleaned = text.split('').map((char, index) => ranges.some(([start, end]) => index >= start && index < end) ? ' ' : char).join('');
+  const result = cleaned.replace(/\s+/gu, ' ').replace(/^[\s,;:—–-]+|[\s,;:—–-]+$/gu, '').trim();
+  return result ? result.slice(0, maxLength) : fallback ? lineExpenseItemDescription(fallback, undefined, maxLength) : undefined;
+}
+
 function initialItem(
   hint: LineIntakeExpenseItemHint,
   index: number,
   messageText: string,
   categories: Map<string, ExpenseCategorySummary>,
+  fallback?: string,
+  capture = false,
 ): LineExpenseDraftItem | null {
   const sourceText = groundedText(messageText, hint.sourceText)
     ?? groundedText(messageText, hint.description);
   if (!sourceText) return null;
-  const description = bounded(hint.description, 120) ?? sourceText.slice(0, 120);
+  const description = capture ? bounded(hint.description, 200)
+    : lineExpenseItemDescription(groundedText(messageText, hint.description) ?? sourceText, fallback);
+  const numericSource = capture ? hint.sourceText ?? sourceText : sourceText;
   const unit = groundedText(messageText, hint.unit)?.slice(0, 30);
   // Numeric evidence must occur inside this item's own bounded source span. A number belonging to
   // a laptop elsewhere in the message must never become the paper quantity merely because the
   // model returned it on the wrong item.
-  const quantity = groundedNumber(sourceText, hint.quantity, true);
-  const unitPrice = groundedNumber(sourceText, hint.unitPrice);
-  const totalAmount = groundedNumber(sourceText, hint.totalAmount);
+  const quantity = groundedNumber(numericSource, hint.quantity, true);
+  const unitPrice = groundedNumber(numericSource, hint.unitPrice);
+  const totalAmount = groundedNumber(numericSource, hint.totalAmount);
   const hasAdvisory = Boolean(hint.accountingClass || hint.itemBehavior || bounded(hint.taxTreatment, 80));
   return {
     itemRef: `I${String(index + 1).padStart(2, '0')}`,
     sourceText,
     description,
-    ...(quantity ? { quantity } : {}),
+    ...(quantity || totalAmount ? { quantity: quantity ?? '1' } : {}),
     ...(unit ? { unit } : {}),
     // When both representations are present, retain the source total and derive a safe unit price
     // during materialization. Keeping both lets a later correction appear accepted while the old
@@ -226,7 +273,7 @@ export function collectLineExpenseDraftQuestions(
   const names = new Map(categories.map((category) => [category.id, category.name]));
   for (const item of state.items) {
     if (!item.description) result.push({ id: `${item.itemRef}-DESC`, scope: 'ITEM', itemRef: item.itemRef, field: 'description', prompt: `${item.itemRef} รายการนี้คือสินค้า/บริการอะไร?` });
-    if (!item.quantity) result.push({ id: `${item.itemRef}-QTY`, scope: 'ITEM', itemRef: item.itemRef, field: 'quantity', prompt: `${item.itemRef} ${item.description ?? 'รายการนี้'} จำนวนเท่าไร และหน่วยอะไร?` });
+    if (!item.quantity && !item.totalAmount) result.push({ id: `${item.itemRef}-QTY`, scope: 'ITEM', itemRef: item.itemRef, field: 'quantity', prompt: `${item.itemRef} ${item.description ?? 'รายการนี้'} จำนวนเท่าไร และหน่วยอะไร?` });
     if (!item.unitPrice && !item.totalAmount) result.push({ id: `${item.itemRef}-PRICE`, scope: 'ITEM', itemRef: item.itemRef, field: 'price', prompt: `${item.itemRef} ${item.description ?? 'รายการนี้'} ราคาต่อหน่วยหรือยอดรวมเท่าไร?` });
     if (item.reviewRequired) result.push({ id: `${item.itemRef}-REVIEW`, scope: 'ITEM', itemRef: item.itemRef, field: 'review', prompt: `${item.itemRef} ตรวจรายการนี้ในเว็บก่อน เพื่อเก็บรายการและภาษีเดิมให้ครบ` });
     if (!item.expenseCategoryId) {
@@ -242,9 +289,10 @@ export function collectLineExpenseDraftQuestions(
   return result;
 }
 
-export function isLineExpenseDraftStartEligible(messageText: string, hints?: LineIntakeCaptureHints): boolean {
+export function isLineExpenseDraftStartEligible(messageText: string, hints?: LineIntakeCaptureHints, semanticBusinessExpenseConfirmed = false): boolean {
   if ((hints?.confidence ?? 0) < 0.6) return false;
   if (isClearlyNonExpenseDirection(messageText)) return false;
+  if (semanticBusinessExpenseConfirmed && groundedNumber(messageText, hints?.amount, true)) return true;
   if (!/(ซื้อ|จ่าย|ชำระ|ค่า(?:ใช้จ่าย)?|บิล|ใบเสร็จ|expense|paid|purchase)/iu.test(messageText)) return false;
   return Boolean(hints?.items?.length
     || groundedText(messageText, hints?.description)
@@ -273,26 +321,34 @@ export function buildInitialLineExpenseDraftContinuation(input: {
   /** Owner 2026-09-29, spec §13: a TEXT note's AI category is applied, not only suggested, exactly as
    *  the single-turn text capture has always applied it; the router names one only when it clearly
    *  fits. Photo callers leave this off — the receipt reader's own auto-fill rule decides theirs. */
+  itemSource?: 'LINE_MEDIA_OCR';
   applyCategoryHints?: boolean;
 }): LineExpenseDraftContinuation {
   const now = input.now ?? new Date().toISOString();
   const categories = categoryMap(input.categories);
-  if ((input.hints?.items?.length ?? 0) > MAX_ITEMS) throw new RangeError('Expense source draft supports at most 40 items.');
+  if ((input.hints?.items?.length ?? 0) > expenseDraftItemLimit(input)) throw new RangeError(`Expense source draft supports at most ${expenseDraftItemLimit(input)} items.`);
+  const purpose = groundedText(input.messageText, input.hints?.businessPurpose);
+  const vendor = groundedText(input.messageText, input.hints?.vendorName);
+  const descriptionFallback = purpose ?? (vendor ? `ค่าใช้จ่าย ${vendor}` : undefined);
   const hintedItems = (input.hints?.items ?? [])
-    .map((hint, index) => initialItem(hint, index, input.messageText, categories))
+    .map((hint, index) => initialItem(hint, index, input.messageText, categories, descriptionFallback, input.itemSource === 'LINE_MEDIA_OCR'))
     .filter((item): item is LineExpenseDraftItem => Boolean(item));
   // The note's own category covers every item that names none of its own; it never replaces one.
   const noteCategoryId = activeCategoryId(input.hints?.expenseCategoryId, categories);
   for (const item of hintedItems) if (!item.suggestedCategoryId && noteCategoryId) item.suggestedCategoryId = noteCategoryId;
-  const fallbackDescription = groundedText(input.messageText, input.hints?.description)
-    ?? bounded(input.messageText, 120);
-  const items: LineExpenseDraftItem[] = hintedItems.length > 0 ? hintedItems : fallbackDescription ? [{
-    itemRef: 'I01', sourceText: fallbackDescription, description: fallbackDescription,
-    ...(groundedNumber(input.messageText, input.hints?.amount) ? { totalAmount: groundedNumber(input.messageText, input.hints?.amount) } : {}),
+  const totalAmount = groundedNumber(input.messageText, input.hints?.amount);
+  const fallbackDescription = lineExpenseItemDescription(groundedText(input.messageText, input.hints?.description),
+    purpose ?? (totalAmount && vendor ? `${input.applyCategoryHints && noteCategoryId ? categories.get(noteCategoryId)!.name : 'ค่าใช้จ่าย'} ${vendor}` : undefined));
+  const items: LineExpenseDraftItem[] = hintedItems.length > 0 ? hintedItems : [{
+    itemRef: 'I01', sourceText: fallbackDescription ?? 'รายการค่าใช้จ่าย',
+    ...(fallbackDescription ? { description: fallbackDescription.slice(0, 120) } : {}),
+    ...(totalAmount ? { totalAmount, quantity: '1', unit: 'งาน' } : {}),
     ...(noteCategoryId ? { suggestedCategoryId: noteCategoryId } : {}),
-  }] : [];
+  }];
   if (input.applyCategoryHints) for (const item of items) if (item.suggestedCategoryId) item.expenseCategoryId = item.suggestedCategoryId;
-  const expenseDate = groundedDate(input.messageText, input.hints?.expenseDate);
+  const dates = extractValueCandidates(input.messageText).dates.filter(candidate => !isAmbiguousDateCandidate(candidate));
+  const expenseDate = groundedDate(input.messageText, input.hints?.expenseDate, input.provisionalExpenseDate)
+    ?? (new Set(dates.map(candidate => candidate.isoDate)).size === 1 ? dates[0]!.isoDate : undefined);
   const header = {
     provisionalExpenseDate: input.provisionalExpenseDate,
     ...(expenseDate ? { expenseDate } : {}),
@@ -311,6 +367,7 @@ export function buildInitialLineExpenseDraftContinuation(input: {
     version: 1,
     targetRevision: input.targetRevision,
     header,
+    ...(input.itemSource ? { itemSource: input.itemSource } : {}),
     items,
     provenance: {},
     unresolvedQuestions: [],
@@ -333,12 +390,12 @@ export function buildInitialLineExpenseDraftContinuation(input: {
   return state;
 }
 
-export function nextLineExpenseDraftItemRef(items: LineExpenseDraftItem[]): string {
-  for (let index = 1; index <= MAX_ITEMS; index++) {
+export function nextLineExpenseDraftItemRef(items: LineExpenseDraftItem[], limit = MAX_ITEMS): string {
+  for (let index = 1; index <= limit; index++) {
     const ref = `I${String(index).padStart(2, '0')}`;
     if (!items.some((item) => item.itemRef === ref)) return ref;
   }
-  throw new RangeError('Expense source draft supports at most 40 items.');
+  throw new RangeError(`Expense source draft supports at most ${limit} items.`);
 }
 
 export function parseLineExpenseDraftContinuation(value: unknown): LineExpenseDraftContinuation | null {
@@ -352,11 +409,12 @@ export function parseLineExpenseDraftContinuation(value: unknown): LineExpenseDr
     || !state.header || !Array.isArray(state.items) || !Array.isArray(state.unresolvedQuestions)
     || !state.provenance || !Number.isSafeInteger(state.version) || state.version! < 1
     || !['OPEN', 'PAUSED', 'PAUSED_INTERRUPTED', 'INPUT_ENDED_COMPLETE', 'INPUT_ENDED_INCOMPLETE', 'CANCELLED'].includes(String(state.status))) return null;
-  if (state.items.length > MAX_ITEMS || new Set(state.items.map((item) => item?.itemRef)).size !== state.items.length) return null;
+  if (state.itemSource !== undefined && state.itemSource !== 'LINE_MEDIA_OCR') return null;
+  if (state.items.length > expenseDraftItemLimit(state) || new Set(state.items.map((item) => item?.itemRef)).size !== state.items.length) return null;
   if (state.items.some((item) => !item || typeof item !== 'object'
-    || !/^I\d{2}$/u.test(String(item.itemRef))
+    || !(state.itemSource ? /^I\d{2,3}$/u : /^I\d{2}$/u).test(String(item.itemRef))
     || typeof item.sourceText !== 'string' || item.sourceText.length > MAX_TEXT)) return null;
-  if (state.unresolvedQuestions.length > 204 || state.unresolvedQuestions.some((question) =>
+  if (state.unresolvedQuestions.length > expenseDraftItemLimit(state) * 5 + 4 || state.unresolvedQuestions.some((question) =>
     !question || typeof question !== 'object' || typeof question.id !== 'string'
     || typeof question.field !== 'string' || typeof question.prompt !== 'string'
     || question.prompt.length > 300)) return null;
@@ -382,7 +440,7 @@ export function lineExpenseDraftControl(text: string): LineExpenseDraftControl |
 export function isDeterministicLineExpenseDraftInput(text: string): boolean {
   return Boolean(lineExpenseDraftControl(text)
     || /^ร่าง\s*\d{1,2}$/u.test(normalized(text))
-    || /(?:^|[,;\n])\s*(?:D-(?:DATE|VENDOR|PURPOSE|ITEMS)|I\d{2}-(?:DESC|QTY|PRICE|CATEGORY))\b/iu.test(text));
+    || /(?:^|[,;\n])\s*(?:D-(?:DATE|VENDOR|PURPOSE|ITEMS)|I\d{2,3}-(?:DESC|QTY|PRICE|CATEGORY))\b/iu.test(text));
 }
 
 function categoryByAnswer(value: string, categories: readonly ExpenseCategorySummary[]): string | undefined {
@@ -410,7 +468,7 @@ function itemForHint(items: LineExpenseDraftItem[], hint: LineIntakeExpenseItemH
 
 function questionSegments(text: string): Array<{ id: string; value: string }> {
   return text.split(/[,;\n]+/u).flatMap((segment) => {
-    const match = normalized(segment).match(/^((?:D-(?:DATE|VENDOR|PURPOSE|ITEMS)|I\d{2}-(?:DESC|QTY|PRICE|CATEGORY)))\s*(?::|=)?\s*(.+)$/iu);
+    const match = normalized(segment).match(/^((?:D-(?:DATE|VENDOR|PURPOSE|ITEMS)|I\d{2,3}-(?:DESC|QTY|PRICE|CATEGORY)))\s*(?::|=)?\s*(.+)$/iu);
     return match ? [{ id: match[1]!.toLocaleUpperCase('en-US'), value: match[2]! }] : [];
   });
 }
@@ -448,7 +506,7 @@ export function applyLineExpenseDraftAnswer(input: {
   };
 
   const hints = input.hints;
-  const hintedDate = groundedDate(input.messageText, hints?.expenseDate);
+  const hintedDate = groundedDate(input.messageText, hints?.expenseDate, new Date(now).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }));
   if (hintedDate) { next.header.expenseDate = hintedDate; record('D-DATE'); }
   else if (hints?.expenseDate !== undefined) reject('D-DATE', 'NOT_GROUNDED_OR_INVALID');
   const vendor = groundedText(input.messageText, hints?.vendorName);
@@ -458,7 +516,33 @@ export function applyLineExpenseDraftAnswer(input: {
   if (purpose) { next.header.businessPurpose = purpose; record('D-PURPOSE'); }
   else if (hints?.businessPurpose !== undefined) reject('D-PURPOSE', 'NOT_GROUNDED_OR_INVALID');
 
+  // Plain answers use the same validated question-segment path as optional printed question ids.
+  const plainSegments: Array<{ id: string; value: string }> = [];
+  if (!isDeterministicLineExpenseDraftInput(input.messageText)) {
+    const dates = extractValueCandidates(input.messageText).dates.filter(candidate => !isAmbiguousDateCandidate(candidate));
+    if (new Set(dates.map(candidate => candidate.isoDate)).size === 1) plainSegments.push({ id: 'D-DATE', value: dates[0]!.span });
+    const vendor = input.messageText.match(/^(?:ผู้ขาย|ร้าน)\s*[:=]?\s*(.+)$/u)?.[1];
+    if (vendor && input.state.unresolvedQuestions.some(question => question.id === 'D-VENDOR')) plainSegments.push({ id: 'D-VENDOR', value: vendor });
+    const soleItem = next.items.length === 1 ? next.items[0] : undefined;
+    if (soleItem) {
+      const quantity = input.messageText.match(/จำนวน\s*[:=]?\s*(\d[\d,]*(?:\.\d{1,4})?(?:\s*[^\d\s,;]+)?)/u)?.[1];
+      const price = input.messageText.match(/(?:ยอดรวม|ราคา)\s*[:=]?\s*(\d[\d,]*(?:\.\d{1,4})?)/u)?.[0];
+      if (quantity) plainSegments.push({ id: `${soleItem.itemRef}-QTY`, value: quantity });
+      if (price) plainSegments.push({ id: `${soleItem.itemRef}-PRICE`, value: price });
+      if (!price && input.state.unresolvedQuestions.some(question => question.id === `${soleItem.itemRef}-PRICE`)
+        && /^\s*\d[\d,]*(?:\.\d{1,4})?\s*(?:บาท|THB)\s*$/iu.test(input.messageText)) {
+        plainSegments.push({ id: `${soleItem.itemRef}-PRICE`, value: `ยอดรวม ${input.messageText}` });
+      }
+    }
+    const categoryQuestions = input.state.unresolvedQuestions.filter(question => question.field === 'expenseCategoryId');
+    if (categoryQuestions.length === 1 && categoryByAnswer(input.messageText, input.categories)) plainSegments.push({ id: categoryQuestions[0]!.id, value: input.messageText });
+  }
+
   const categories = categoryMap(input.categories);
+  if (next.items.length === 1 && !hints?.items?.length) {
+    const amount = groundedNumber(input.messageText, hints?.amount);
+    if (amount) { next.items[0]!.totalAmount = amount; delete next.items[0]!.unitPrice; record(`${next.items[0]!.itemRef}-PRICE`); }
+  }
   for (const [hintIndex, hint] of (hints?.items ?? []).entries()) {
     let item = itemForHint(next.items, hint, input.messageText);
     if (!item) {
@@ -467,8 +551,9 @@ export function applyLineExpenseDraftAnswer(input: {
         reject(candidateRef, 'UNKNOWN_ITEM');
         continue;
       }
-      const added = initialItem(hint, next.items.length, input.messageText, categories);
-      if (next.items.length >= MAX_ITEMS) {
+      const added = initialItem(hint, next.items.length, input.messageText, categories,
+        next.header.businessPurpose ?? (next.header.vendorName ? `ค่าใช้จ่าย ${next.header.vendorName}` : undefined));
+      if (next.items.length >= expenseDraftItemLimit(next)) {
         reject(candidateRef, 'ITEM_LIMIT_REACHED');
         continue;
       }
@@ -476,13 +561,15 @@ export function applyLineExpenseDraftAnswer(input: {
         reject(candidateRef, hint.itemRef ? 'UNKNOWN_ITEM' : 'NOT_GROUNDED_OR_INVALID');
         continue;
       }
-      item = { ...added, itemRef: nextLineExpenseDraftItemRef(next.items), newItem: true };
+      item = { ...added, itemRef: nextLineExpenseDraftItemRef(next.items, expenseDraftItemLimit(next)), newItem: true };
       next.items.push(item);
       record(`${item.itemRef}-DESC`);
       if (item.quantity) record(`${item.itemRef}-QTY`);
       if (item.unitPrice || item.totalAmount) record(`${item.itemRef}-PRICE`);
     }
-    const description = groundedText(input.messageText, hint.description);
+    const rawDescription = groundedText(input.messageText, hint.description);
+    const description = rawDescription ? lineExpenseItemDescription(rawDescription,
+      next.header.businessPurpose ?? (next.header.vendorName ? `ค่าใช้จ่าย ${next.header.vendorName}` : undefined)) : undefined;
     if (description) { item.description = description.slice(0, 120); record(`${item.itemRef}-DESC`); }
     else if (hint.description !== undefined) reject(`${item.itemRef}-DESC`, 'NOT_GROUNDED_OR_INVALID');
     const itemEvidence = groundedText(input.messageText, hint.sourceText)
@@ -523,7 +610,7 @@ export function applyLineExpenseDraftAnswer(input: {
     }
   }
 
-  for (const segment of questionSegments(input.messageText)) {
+  for (const segment of [...plainSegments, ...questionSegments(input.messageText)]) {
     if (segment.id === 'D-DATE') {
       const date = extractValueCandidates(segment.value).dates.find((candidate) => !isAmbiguousDateCandidate(candidate));
       if (date) { next.header.expenseDate = date.isoDate; record(segment.id); }
@@ -533,20 +620,21 @@ export function applyLineExpenseDraftAnswer(input: {
     if (segment.id === 'D-VENDOR') { next.header.vendorName = bounded(segment.value)!; record(segment.id); continue; }
     if (segment.id === 'D-PURPOSE') { next.header.businessPurpose = bounded(segment.value)!; record(segment.id); continue; }
     if (segment.id === 'D-ITEMS') {
-      for (const description of segment.value.split(/\s+(?:กับ|และ)\s+|[,;]+/u).map((value) => bounded(value, 120)).filter((value): value is string => Boolean(value))) {
-        if (next.items.length >= MAX_ITEMS) { reject(segment.id, 'ITEM_LIMIT_REACHED'); break; }
+      for (const description of segment.value.split(/\s+(?:กับ|และ)\s+|[,;]+/u).map((value) => lineExpenseItemDescription(value,
+        next.header.businessPurpose ?? (next.header.vendorName ? `ค่าใช้จ่าย ${next.header.vendorName}` : undefined))).filter((value): value is string => Boolean(value))) {
+        if (next.items.length >= expenseDraftItemLimit(next)) { reject(segment.id, 'ITEM_LIMIT_REACHED'); break; }
         if (next.items.some((item) => normalized(item.description ?? item.sourceText) === normalized(description))) continue;
-        const itemRef = nextLineExpenseDraftItemRef(next.items);
+        const itemRef = nextLineExpenseDraftItemRef(next.items, expenseDraftItemLimit(next));
         next.items.push({ itemRef, sourceText: description, description, newItem: true });
         record(`${itemRef}-DESC`);
       }
       continue;
     }
-    const itemRef = segment.id.match(/^(I\d{2})-/u)?.[1];
+    const itemRef = segment.id.match(/^(I\d{2,3})-/u)?.[1];
     const item = itemRef ? next.items.find((candidate) => candidate.itemRef === itemRef) : undefined;
     if (!item) { reject(segment.id, 'UNKNOWN_ITEM'); continue; }
     if (segment.id.endsWith('-DESC')) {
-      const description = bounded(segment.value, 120);
+      const description = lineExpenseItemDescription(segment.value, next.header.businessPurpose ?? (next.header.vendorName ? `ค่าใช้จ่าย ${next.header.vendorName}` : undefined));
       if (description) { item.description = description; record(segment.id); }
       else reject(segment.id, 'NOT_GROUNDED_OR_INVALID');
     }
@@ -584,7 +672,7 @@ export function applyLineExpenseDraftAnswer(input: {
 
   // Thai has no word boundaries; scan explicit ids independently so the last category answer in
   // a multi-answer sentence cannot be lost by punctuation/token segmentation.
-  for (const match of input.messageText.matchAll(/(I\d{2})-CATEGORY\s*(?:ตามที่แนะนำ|หมวดแนะนำ|แนะนำได้เลย)/giu)) {
+  for (const match of input.messageText.matchAll(/(I\d{2,3})-CATEGORY\s*(?:ตามที่แนะนำ|หมวดแนะนำ|แนะนำได้เลย)/giu)) {
     const item = next.items.find((candidate) => candidate.itemRef === match[1]!.toLocaleUpperCase('en-US'));
     if (item?.suggestedCategoryId && categories.has(item.suggestedCategoryId)) {
       item.expenseCategoryId = item.suggestedCategoryId;
@@ -615,6 +703,13 @@ export function applyLineExpenseDraftAnswer(input: {
     }
   }
 
+  for (const item of next.items) {
+    if (!item.quantity && item.totalAmount) item.quantity = '1';
+    if (accepted.size && next.items.length === 1 && !item.description && (item.totalAmount || item.unitPrice) && next.header.vendorName) {
+      item.description = lineExpenseItemDescription(`${categories.get(item.expenseCategoryId ?? '')?.name ?? 'ค่าใช้จ่าย'} ${next.header.vendorName}`);
+      record(`${item.itemRef}-DESC`);
+    }
+  }
   next.unresolvedQuestions = collectLineExpenseDraftQuestions(next, input.categories);
   return {
     state: next,
@@ -658,13 +753,14 @@ export function materializedLineExpenseDraftItems(state: LineExpenseDraftContinu
   accountHintKey?: string;
 }> {
   return state.items.flatMap((item, index) => {
-    if (!item.description || !item.quantity || (!item.unitPrice && !item.totalAmount)) return [];
+    const quantity = item.quantity ?? (item.totalAmount ? '1' : undefined);
+    if (!item.description || !quantity || (!item.unitPrice && !item.totalAmount)) return [];
     let price = item.unitPrice;
     if (!price && item.totalAmount) {
-      try { price = new Decimal(item.totalAmount).div(item.quantity).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toString(); } catch { return []; }
+      try { price = new Decimal(item.totalAmount).div(quantity).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toString(); } catch { return []; }
     }
     if (!price) return [];
-    return [{ lineNumber: index + 1, description: item.description, quantity: item.quantity, unitPrice: price,
+    return [{ lineNumber: index + 1, description: item.description, quantity, unitPrice: price,
       chargeKind: null,
       ...(item.expenseCategoryId ? { expenseCategoryId: item.expenseCategoryId } : {}) }];
   });
@@ -675,7 +771,7 @@ function acceptedFieldText(
   state: LineExpenseDraftContinuation,
   categoryNames: ReadonlyMap<string, string>,
 ): string {
-  if (field === 'D-DATE') return `วันที่ ${state.header.expenseDate}`;
+  if (field === 'D-DATE') return `วันที่ ${new Date(`${state.header.expenseDate}T00:00:00Z`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })}`;
   if (field === 'D-VENDOR') return `ผู้ขาย ${state.header.vendorName}`;
   if (field === 'D-ADDRESS') return `ที่อยู่ร้าน ${state.header.vendorAddress}`;
   if (field === 'D-PURPOSE') return `วัตถุประสงค์ ${state.header.businessPurpose}`;
@@ -702,12 +798,16 @@ export function formatLineExpenseDraftReply(input: {
   const fieldLabels: Record<string, string> = { description: 'ชื่อสินค้า/บริการ', quantity: 'จำนวนและหน่วย', price: 'ราคาต่อหน่วยหรือยอดรวม', expenseCategoryId: 'หมวดค่าใช้จ่าย', review: 'ตรวจรายการเดิมในเว็บ' };
   const lines: string[] = [];
   if (input.acceptedFields?.length) {
-    lines.push(state.items.length > 10 ? `บันทึกข้อมูลแล้ว ${input.acceptedFields.length} ข้อ — ดูข้อมูลปัจจุบันด้านล่าง` : `บันทึกแล้ว: ${input.acceptedFields.map((field) => acceptedFieldText(field, state, names)).join(' • ')}`);
+    lines.push(state.items.length > 10 ? `แก้ร่างแล้ว ${input.acceptedFields.length} ข้อ — ดูข้อมูลปัจจุบันด้านล่าง` : `แก้ร่างแล้ว: ${input.acceptedFields.map((field) => acceptedFieldText(field, state, names)).join(' • ')}`);
   }
   lines.push('🧾 เก็บร่างค่าใช้จ่ายแล้วค่ะ');
   if (state.header.vendorName) lines.push(`ร้าน: ${state.header.vendorName}`);
   if (state.header.expenseDate) lines.push(`วันที่: ${new Date(`${state.header.expenseDate}T00:00:00Z`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })}`);
+  else lines.push('วันที่: ยังไม่มีวันที่');
   if (state.header.businessPurpose) lines.push(`ใช้เพื่อ: ${state.header.businessPurpose}`);
+  for (const item of state.items) {
+    if (item.description && (item.quantity || item.totalAmount) && (item.unitPrice || item.totalAmount)) lines.push(`รายการ: ${item.description} ${item.quantity ?? '1'}${item.unit ? ` ${item.unit}` : ''} ${item.unitPrice ? `ราคา ${item.unitPrice} บาท/หน่วย` : `${item.totalAmount} บาท`}`);
+  }
   lines.push('ยังไม่ยืนยันรายการ');
   if (state.status === 'PAUSED' || state.status === 'PAUSED_INTERRUPTED') {
     return lines.join('\n');

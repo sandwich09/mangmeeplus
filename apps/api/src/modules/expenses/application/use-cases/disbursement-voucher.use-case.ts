@@ -11,8 +11,8 @@ import { DISBURSEMENT_VOUCHER_STATUSES, DISBURSEMENT_VOUCHER_WORDS, EXPENSE_PAYM
 } from '@watchdog-bms/contracts';
 import { PrismaExpenseRepository, assertActiveExpenseBranch, assertExpensePaymentSource, type ExpensePaymentResult } from '../../infrastructure/prisma-expense.repository';
 import { PrismaDisbursementVoucherRepository, type DisbursementReadScope, type DisbursementDraftData, type DisbursementLifecycleVoucher, disbursementVoucherReadWhere } from '../../infrastructure/prisma-disbursement-voucher.repository';
-import { disbursementExpenseSelectionReason } from '../../infrastructure/expense-void-blocker';
-import { disbursementPayeeIdentity, disbursementVoucherActions, disbursementVoucherHeader, disbursementVoucherPrimaryAction, disbursementVoucherSourceHash } from '../../domain/logic/disbursement-voucher.logic';
+import { lockExpenseCorrection, disbursementExpenseSelectionReason } from '../../infrastructure/expense-void-blocker';
+import { assertDisbursementVoucherAction, disbursementPayeeIdentity, disbursementVoucherActions, disbursementVoucherHeader, disbursementVoucherPrimaryAction, disbursementVoucherSourceHash } from '../../domain/logic/disbursement-voucher.logic';
 import { ListExpensesUseCase, recordExpensePaymentEffects } from './expense-draft.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
 import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
@@ -66,13 +66,13 @@ export class DisbursementVoucherUseCase {
     @Optional() private readonly createUpload?: CreateUploadIntentUseCase, @Optional() private readonly completeUpload?: CompleteAttachmentUploadUseCase,
     @Optional() @Inject(ATTACHMENT_STORAGE) private readonly storage?: AttachmentStoragePort, @Optional() private readonly notices?: DisbursementVoucherNoticeService) {}
 
-  private authorize(ctx: RequestContext, permissions: ('prepare' | 'approve' | 'read' | 'pay' | 'issue')[]) {
-    if (ctx.authProvider === 'line') throw new ForbiddenException(disbursementVoucherError('disbursement_line_session_denied'));
+  private authorize(ctx: RequestContext, permissions: ('prepare' | 'approve' | 'read' | 'pay' | 'issue')[], lineConfirmed = false) {
+    if (ctx.authProvider === 'line' && !lineConfirmed) throw new ForbiddenException(disbursementVoucherError('disbursement_line_session_denied'));
     if (!permissions.some(p => ctx.permissions.includes(`expense.disbursement.${p}`))) throw new ForbiddenException(disbursementVoucherError('disbursement_permission_denied'));
   }
 
-  private scope(ctx: RequestContext, permission: 'prepare' | 'approve' | 'read' | 'pay' | 'issue' | 'manage', branchId?: string): DisbursementReadScope {
-    this.authorize(ctx, permission === 'manage' ? ['prepare', 'approve'] : [permission]);
+  private scope(ctx: RequestContext, permission: 'prepare' | 'approve' | 'read' | 'pay' | 'issue' | 'manage', branchId?: string, lineConfirmed = false): DisbursementReadScope {
+    this.authorize(ctx, permission === 'manage' ? ['prepare', 'approve'] : [permission], lineConfirmed);
     const read = this.expenses.readScope(ctx, branchId);
     return { companyId: ctx.companyId, ...read.filter, scopes: ctx.scopes, relatedUserId: read.scope.relatedUserId };
   }
@@ -131,6 +131,31 @@ export class DisbursementVoucherUseCase {
     return this.repo.payeeAccount(scope, payeeKey, branchId);
   }
 
+  /** Internal signed-card lane; HTTP callers retain the default LINE-session denial. */
+  async previewLineAction(ctx: RequestContext, action: 'create' | 'submit' | 'approve' | 'return' | 'pay' | 'cancel', input: {
+    id?: string; draft?: CreateDisbursementVoucherDraftInput; reason?: string; payment?: PayDisbursementVoucherInput;
+  }) {
+    const permission = action === 'create' || action === 'submit' ? 'prepare' : action === 'approve' || action === 'return' ? 'approve' : action === 'pay' ? 'pay' : 'manage';
+    const scope = this.scope(ctx, permission, undefined, true);
+    return this.repo.readTransaction(async tx => {
+      if (action === 'create') return this.prepare(ctx, input.draft!, scope, tx);
+      const voucher = await this.repo.findVisible(scope, input.id!);
+      if (!voucher) throw new NotFoundException(disbursementVoucherError('disbursement_not_found'));
+      const preparersInactive = (action === 'return' || action === 'cancel') && await this.repo.canOwnerRecover(voucher, true, tx);
+      assertDisbursementVoucherAction(voucher, action, ctx.permissions, ctx.userId, ctx.roles.includes('OWNER') && preparersInactive, preparersInactive);
+      if ((action === 'return' || action === 'cancel') && (!input.reason || input.reason.trim().length < 3)) throw new BadRequestException(disbursementVoucherError(action === 'return' ? 'disbursement_return_reason_required' : 'disbursement_cancel_reason_required'));
+      if (action === 'submit') await this.prepare(ctx, { commandId: 'line-preview', lines: voucher.lines.map(l => ({ expenseId: l.expenseId, amount: new Decimal(String(l.amount)).toString() })), payeeName: voucher.payeeName, payeeConfirmed: voucher.payeeBasis === 'PREPARER_CONFIRMED' }, scope, tx);
+      if (action === 'approve' || action === 'pay') await this.verifiedSources(tx, scope, voucher, ctx, action === 'pay');
+      if (action === 'pay') {
+        const payment = input.payment!;
+        if (!payment.paymentMethod && !voucher.plannedMethod) throw new BadRequestException(disbursementVoucherError('disbursement_payment_method_required'));
+        if (payment.paymentMethod !== undefined && !EXPENSE_PAYMENT_METHODS.includes(payment.paymentMethod) || payment.paidDate !== undefined && !isCivilDate(payment.paidDate)) throw invalid();
+        for (const source of (await this.sources(tx, scope, voucher))) assertExpensePaymentSource(source, payment.paidDate ?? todayCivilDate('Asia/Bangkok'));
+      }
+      return disbursementVoucherHeader(voucher);
+    });
+  }
+
   async revealAccount(ctx: RequestContext, id: string, purpose?: 'prefill') {
     this.authorize(ctx, purpose === 'prefill' ? ['prepare'] : ['prepare', 'approve', 'pay']);
     const read = this.expenses.readScope(ctx);
@@ -146,8 +171,8 @@ export class DisbursementVoucherUseCase {
     return { accountNumber: openPayoutAccountNumber(voucher.payeeAccountCiphertext, this.config!.credentialEncryptionKey) };
   }
 
-  private async save(ctx: RequestContext, body: CreateDisbursementVoucherDraftInput, id?: string): Promise<DisbursementVoucherHeader> {
-    const scope = this.scope(ctx, 'prepare');
+  private async save(ctx: RequestContext, body: CreateDisbursementVoucherDraftInput, id?: string, lineConfirmed = false, sourceRevisions?: { id: string; revision: string }[]): Promise<DisbursementVoucherHeader> {
+    const scope = this.scope(ctx, 'prepare', undefined, lineConfirmed);
     validateInput(body, Boolean(id));
     const account = this.account(body);
     const accountIntent = body.payeeAccountNumber !== undefined || body.payeeBankName !== undefined || body.payeeAccountName !== undefined || body.payeeAccountFromVoucherId !== undefined;
@@ -162,6 +187,12 @@ export class DisbursementVoucherUseCase {
     return this.retryable(() => this.repo.saveDraftAtomic({ ...scope, id, expectedVersion: id ? (body as UpdateDisbursementVoucherDraftInput).expectedVersion : undefined,
       actorUserId: ctx.userId, permissions: ctx.permissions, commandId: body.commandId, payloadFingerprint },
       async tx => {
+        if (sourceRevisions) {
+          // Compare after taking the same source locks as submit/pay, so a card cannot race an expense edit.
+          for (const source of [...sourceRevisions].sort((a, b) => a.id.localeCompare(b.id))) await lockExpenseCorrection(tx, ctx.companyId, source.id);
+          const current = await tx.expenseRecord.findMany({ where: { companyId: ctx.companyId, id: { in: sourceRevisions.map(row => row.id) } }, select: { id: true, updatedAt: true } });
+          if (current.length !== sourceRevisions.length || current.some(row => sourceRevisions.find(source => source.id === row.id)?.revision !== row.updatedAt.toISOString())) throw new ConflictException(disbursementVoucherError('disbursement_source_changed', { number: 'ที่เลือก' }));
+        }
         if (id && account.payeeBankName === null && body.payeeAccountNumber === undefined) {
           const current = await tx.disbursementVoucher.findFirst({ where: { companyId: ctx.companyId, id } });
           if (current?.payeeAccountCiphertext) throw new BadRequestException(disbursementVoucherError('disbursement_account_bank_required'));
@@ -185,7 +216,7 @@ export class DisbursementVoucherUseCase {
         requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { commandId: body.commandId, version: header.version, lineCount: body.lines.length, ...(body.payeeAccountFromVoucherId && !body.payeeAccountNumber?.trim() ? { payeeAccountFromVoucherId: body.payeeAccountFromVoucherId } : {}) } }, tx)));
   }
 
-  create(ctx: RequestContext, body: CreateDisbursementVoucherDraftInput) { return this.save(ctx, body); }
+  create(ctx: RequestContext, body: CreateDisbursementVoucherDraftInput, lineConfirmed = false, sourceRevisions?: { id: string; revision: string }[]) { return this.save(ctx, body, undefined, lineConfirmed, sourceRevisions); }
   update(ctx: RequestContext, id: string, body: UpdateDisbursementVoucherDraftInput) { return this.save(ctx, body, id); }
 
   async delete(ctx: RequestContext, id: string): Promise<void> {
@@ -209,8 +240,8 @@ export class DisbursementVoucherUseCase {
     }) };
   }
 
-  async get(ctx: RequestContext, id: string): Promise<DisbursementVoucherDetail> {
-    const voucher = await this.repo.findVisible(this.scope(ctx, 'read'), id, true);
+  async get(ctx: RequestContext, id: string, lineConfirmed = false): Promise<DisbursementVoucherDetail> {
+    const voucher = await this.repo.findVisible(this.scope(ctx, 'read', undefined, lineConfirmed), id, true);
     if (!voucher) throw new NotFoundException(disbursementVoucherError('disbursement_not_found'));
     const snapshot = voucher.paidSnapshotJson as unknown as { lines?: { expenseId: string; sourceHashAfterPaid?: string; vendorName: string | null; vendorTaxId?: string | null; netPayable: string; outstandingAfter: string }[] } | null;
     const related = (v: typeof voucher.related[number] | undefined) => v?.documentNumber ? { id: voucher.visibleRelated.has(v.id) ? v.id : null, documentNumber: v.documentNumber } : null;
@@ -390,16 +421,16 @@ export class DisbursementVoucherUseCase {
     return { data: object.bytes, mimeType: file.mimeType };
   }
 
-  private async slipForPayer(ctx: RequestContext, id: string) {
-    const scope = this.scope(ctx, 'pay');
+  private async slipForPayer(ctx: RequestContext, id: string, lineConfirmed = false) {
+    const scope = this.scope(ctx, 'pay', undefined, lineConfirmed);
     const voucher = await this.repo.findVisible(scope, id);
     if (!voucher) throw new NotFoundException(disbursementVoucherError('disbursement_not_found'));
     if (voucher.status !== 'APPROVED' && voucher.status !== 'PAID') throw new ConflictException(disbursementVoucherError('disbursement_slip_status'));
     return { voucher, scope };
   }
 
-  async startSlipUpload(ctx: RequestContext, id: string, input: { originalFileName: string; mimeType: string; byteSize: number }) {
-    const { voucher } = await this.slipForPayer(ctx, id);
+  async startSlipUpload(ctx: RequestContext, id: string, input: { originalFileName: string; mimeType: string; byteSize: number }, lineConfirmed = false) {
+    const { voucher } = await this.slipForPayer(ctx, id, lineConfirmed);
     if (!REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES.includes(input.mimeType) || !Number.isInteger(input.byteSize)
       || input.byteSize <= 0 || input.byteSize > REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES) throw new BadRequestException(disbursementVoucherError('disbursement_slip_invalid'));
     return this.retryable(() => this.createUpload!.execute(withAttachmentCreate(ctx), { originalFileName: input.originalFileName,
@@ -407,8 +438,8 @@ export class DisbursementVoucherUseCase {
       metadataJson: { generatedFor: DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, voucherId: id } }));
   }
 
-  async completeSlipUpload(ctx: RequestContext, id: string, attachmentId: string, input: { checksumSha256?: string; byteSize?: number }) {
-    await this.slipForPayer(ctx, id);
+  async completeSlipUpload(ctx: RequestContext, id: string, attachmentId: string, input: { checksumSha256?: string; byteSize?: number }, lineConfirmed = false) {
+    await this.slipForPayer(ctx, id, lineConfirmed);
     const upload = await this.repo.findSlipUpload(ctx.companyId, id, attachmentId, ctx.userId);
     if (!upload || upload.status !== 'PENDING_UPLOAD') throw new BadRequestException(disbursementVoucherError('disbursement_slip_not_owned'));
     // The shared completion verifies actual bytes, checksum, type and malware before ACTIVE.
@@ -418,12 +449,30 @@ export class DisbursementVoucherUseCase {
     return { attachmentId };
   }
 
-  async attachSlip(ctx: RequestContext, id: string, attachmentId: string) {
-    const { scope } = await this.slipForPayer(ctx, id);
+  /** Copy the chat's validated bytes through the existing exclusive upload/complete/attach path. */
+  async attachLineSlip(ctx: RequestContext, id: string, evidence: { id: string; revision: string; attachmentId: string; chat: string }, expectedVersion: number) {
+    const { voucher } = await this.slipForPayer(ctx, id, true);
+    if (voucher.version !== expectedVersion) throw new ConflictException(disbursementVoucherError('disbursement_version_conflict'));
+    const source = await this.repo.lineSlipSource(ctx, evidence, voucher.branchId);
+    const object = await this.storage!.getObject({ bucket: source.bucket, objectKey: source.objectKey, objectVersionId: source.objectVersionId ?? undefined });
+    const upload = await this.startSlipUpload(ctx, id, { originalFileName: source.originalFileName, mimeType: source.mimeType, byteSize: object.bytes.length }, true);
+    const target = await this.repo.findSlipUpload(ctx.companyId, id, upload.attachmentId, ctx.userId);
+    if (!target) throw new BadRequestException(disbursementVoucherError('disbursement_slip_not_owned'));
+    const stored = await this.storage!.putObject({ objectKey: target.objectKey, mimeType: source.mimeType, bytes: object.bytes });
+    await this.completeSlipUpload(ctx, id, upload.attachmentId, { byteSize: stored.byteSize, checksumSha256: stored.checksumSha256 }, true);
+    // Recheck source and voucher after I/O; a changed card never attaches or pays a different revision.
+    await this.repo.lineSlipSource(ctx, evidence, voucher.branchId);
+    const current = await this.slipForPayer(ctx, id, true);
+    if (current.voucher.version !== expectedVersion) throw new ConflictException(disbursementVoucherError('disbursement_version_conflict'));
+    return this.attachSlip(ctx, id, upload.attachmentId, true, expectedVersion);
+  }
+
+  async attachSlip(ctx: RequestContext, id: string, attachmentId: string, lineConfirmed = false, expectedVersion?: number) {
+    const { scope } = await this.slipForPayer(ctx, id, lineConfirmed);
     if (typeof attachmentId !== 'string' || !attachmentId.trim()) throw invalid();
     await this.retryable(() => this.repo.attachSlipAtomic(scope, id, attachmentId, ctx.userId, tx => this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.disbursement.slip.attach', targetType: 'disbursement_voucher', targetId: id,
-      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { slipAttachmentId: attachmentId } }, tx)));
+      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { slipAttachmentId: attachmentId } }, tx), expectedVersion));
     const voucher = await this.repo.findVisible(scope, id);
     if (!voucher) throw new NotFoundException(disbursementVoucherError('disbursement_not_found'));
     return { header: disbursementVoucherHeader(voucher), slip: voucher.slip ? { attachmentId: voucher.slip.attachmentId,
@@ -509,9 +558,9 @@ export class DisbursementVoucherUseCase {
     }
   }
 
-  private async command(ctx: RequestContext, id: string, action: Exclude<DisbursementVoucherLifecycleAction, 'pay' | 'remind'>, body: SubmitDisbursementVoucherInput | EndDisbursementVoucherInput) {
+  private async command(ctx: RequestContext, id: string, action: Exclude<DisbursementVoucherLifecycleAction, 'pay' | 'remind'>, body: SubmitDisbursementVoucherInput | EndDisbursementVoucherInput, lineConfirmed = false) {
     if (action === 'return' && ctx.authProvider !== 'line' && !ctx.permissions.includes('expense.disbursement.approve')) throw new ForbiddenException({ ...disbursementVoucherError('disbursement_permission_denied'), message: DISBURSEMENT_VOUCHER_WORDS.returnPermissionRequired });
-    const scope = this.scope(ctx, action === 'submit' ? 'prepare' : action === 'approve' || action === 'return' ? 'approve' : 'manage');
+    const scope = this.scope(ctx, action === 'submit' ? 'prepare' : action === 'approve' || action === 'return' ? 'approve' : 'manage', undefined, lineConfirmed);
     const allowed = ['commandId', 'expectedVersion', ...(action === 'submit' ? ['requestedApproverUserId', 'approveNow'] : action === 'approve' ? [] : ['reason'])];
     if (!body || typeof body !== 'object' || Object.keys(body).some(k => !allowed.includes(k)) || typeof body.commandId !== 'string' || !body.commandId.trim() || body.commandId.length > 128
       || !Number.isSafeInteger(body.expectedVersion) || body.expectedVersion < 0) throw invalid();
@@ -521,7 +570,7 @@ export class DisbursementVoucherUseCase {
     if (action !== 'submit' && action !== 'approve' && end.reason !== undefined && typeof end.reason !== 'string') throw invalid();
     const reason = end.reason?.trim() || null;
     if ((action === 'return' || action === 'cancel') && (!reason || reason.length < 3)) throw new BadRequestException(disbursementVoucherError(action === 'return' ? 'disbursement_return_reason_required' : 'disbursement_cancel_reason_required'));
-    if (submit.approveNow) this.authorize(ctx, ['approve']);
+    if (submit.approveNow) this.authorize(ctx, ['approve'], lineConfirmed);
     const payloadFingerprint = canonicalFingerprint({ version: 1, operation: action, id, expectedVersion: body.expectedVersion,
       requestedApproverUserId: submit.requestedApproverUserId ?? null, approveNow: submit.approveNow ?? false, reason });
     let changed = false;
@@ -642,11 +691,11 @@ export class DisbursementVoucherUseCase {
     return header;
   }
 
-  submit(ctx: RequestContext, id: string, body: SubmitDisbursementVoucherInput) { return this.command(ctx, id, 'submit', body); }
-  approve(ctx: RequestContext, id: string, body: DisbursementVoucherCommandInput) { return this.command(ctx, id, 'approve', body); }
-  return(ctx: RequestContext, id: string, body: EndDisbursementVoucherInput) { return this.command(ctx, id, 'return', body); }
+  submit(ctx: RequestContext, id: string, body: SubmitDisbursementVoucherInput, lineConfirmed = false) { return this.command(ctx, id, 'submit', body, lineConfirmed); }
+  approve(ctx: RequestContext, id: string, body: DisbursementVoucherCommandInput, lineConfirmed = false) { return this.command(ctx, id, 'approve', body, lineConfirmed); }
+  return(ctx: RequestContext, id: string, body: EndDisbursementVoucherInput, lineConfirmed = false) { return this.command(ctx, id, 'return', body, lineConfirmed); }
   withdraw(ctx: RequestContext, id: string, body: EndDisbursementVoucherInput) { return this.command(ctx, id, 'withdraw', body); }
-  cancel(ctx: RequestContext, id: string, body: EndDisbursementVoucherInput) { return this.command(ctx, id, 'cancel', body); }
+  cancel(ctx: RequestContext, id: string, body: EndDisbursementVoucherInput, lineConfirmed = false) { return this.command(ctx, id, 'cancel', body, lineConfirmed); }
 
   private async paidSnapshot(tx: Prisma.TransactionClient, ctx: RequestContext, voucher: DisbursementLifecycleVoucher, sources: Map<string, Source>, payments: { payment: { id: string; amount: string }; expense: { outstandingAmount: string } }[], paidDate: string, paidMethod: DisbursementVoucherHeader['paidMethod'], paidFromRef: string | null, paidRecordedAt: Date, paidByUserId: string) {
     const slip = voucher.slipAttachmentId ? await tx.attachmentLink.findFirst({ where: { companyId: ctx.companyId, attachmentId: voucher.slipAttachmentId, targetType: DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, targetId: voucher.id, purpose: DISBURSEMENT_VOUCHER_SLIP_PURPOSE }, select: { linkedByUserId: true, createdAt: true } }) : null;
@@ -679,8 +728,8 @@ export class DisbursementVoucherUseCase {
         payer: { userId: paidByUserId, name: names.get(paidByUserId) ?? null, at: paidRecordedAt.toISOString(), signature: voucher.payerSignatureJson as DisbursementSignatureSnapshot | null } } };
   }
 
-  async pay(ctx: RequestContext, id: string, body: PayDisbursementVoucherInput): Promise<DisbursementVoucherHeader> {
-    const scope = this.scope(ctx, 'pay');
+  async pay(ctx: RequestContext, id: string, body: PayDisbursementVoucherInput, lineConfirmed = false): Promise<DisbursementVoucherHeader> {
+    const scope = this.scope(ctx, 'pay', undefined, lineConfirmed);
     if (!body || typeof body !== 'object' || Object.keys(body).some(k => !['commandId', 'expectedVersion', 'paidDate', 'paymentMethod', 'paidFromRef', 'slipAttachmentId'].includes(k))
       || typeof body.commandId !== 'string' || !body.commandId.trim() || body.commandId.length > 128
       || !Number.isSafeInteger(body.expectedVersion) || body.expectedVersion < 0

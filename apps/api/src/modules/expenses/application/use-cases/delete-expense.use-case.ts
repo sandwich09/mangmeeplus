@@ -36,7 +36,7 @@ const RETENTION_LOCKED_RESPONSE = {
   message: 'Expense is retained as substitute-receipt evidence.',
 };
 
-async function findLinkedDataBlocker(
+export async function findLinkedDataBlocker(
   tx: Prisma.TransactionClient,
   companyId: string,
   expenseId: string,
@@ -112,7 +112,7 @@ async function findLinkedDataBlocker(
  * pointing at a row that no longer exists. Same rule as `runDuplicateCheck`. Returns the
  * re-verdicted expense ids for the delete audit.
  */
-async function recheckExpensesReferencing(
+export async function recheckExpensesReferencing(
   tx: Prisma.TransactionClient,
   companyId: string,
   expenseId: string,
@@ -157,7 +157,15 @@ export class DeleteExpenseUseCase {
     private readonly audit: AuditService,
   ) {}
 
-  async execute(ctx: RequestContext, expenseId: string): Promise<void> {
+  async execute(ctx: RequestContext, expenseId: string, expectedUpdatedAt?: Date): Promise<void> {
+    return this.run(ctx, expenseId, { expectedUpdatedAt });
+  }
+
+  async previewLineAction(ctx: RequestContext, expenseId: string): Promise<void> {
+    return this.run(ctx, expenseId, { previewOnly: true });
+  }
+
+  private async run(ctx: RequestContext, expenseId: string, options: { previewOnly?: boolean; expectedUpdatedAt?: Date }): Promise<void> {
     const deniedEntry = (reason: string, metadataJson: Record<string, unknown> = {}) => ({
       companyId: ctx.companyId,
       actorUserId: ctx.userId,
@@ -194,7 +202,7 @@ export class DeleteExpenseUseCase {
         });
         if (!expense) return { kind: 'NOT_FOUND' };
 
-        const deny = (reason: string, metadataJson: Record<string, unknown> = {}) => this.audit.log(
+        const deny = (reason: string, metadataJson: Record<string, unknown> = {}) => options.previewOnly ? Promise.resolve() : this.audit.log(
           deniedEntry(reason, metadataJson),
           tx,
         );
@@ -204,6 +212,7 @@ export class DeleteExpenseUseCase {
           return { kind: 'FORBIDDEN' };
         }
 
+        if (options.expectedUpdatedAt && expense.updatedAt.getTime() !== options.expectedUpdatedAt.getTime()) throw new ConflictException('expense_source_version_changed');
         const canDelete = ctx.permissions.includes('expense.delete')
           || (expense.createdByUserId === ctx.userId && ctx.permissions.includes('expense.update'));
         if (!canDelete) {
@@ -269,6 +278,7 @@ export class DeleteExpenseUseCase {
             return { kind: 'RETENTION_LOCKED' };
           }
         }
+        if (options.previewOnly) return { kind: 'DELETED' };
         await tx.attachmentLink.deleteMany({ where: linkWhere });
         // Appendix §25: an auto-split sibling shares its bytes with the draft the file was uploaded
         // to. A file another record still links is theirs — only an unshared file is retired, the

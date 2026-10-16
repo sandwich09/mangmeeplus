@@ -2,6 +2,7 @@ import { AI_BUDGET_STEP_ATTEMPTS } from '@watchdog-bms/contracts';
 import type { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
 import type { IModelProvider } from './provider.port';
 import { BedrockProvider } from './bedrock.provider';
+import { AnthropicApiProvider } from './anthropic-api.provider';
 import { DisabledProvider } from './disabled.provider';
 import { OpenAiProvider } from './openai.provider';
 import { withAiBudgetEnvelope } from '../../../../common/usage/ai-budget-provider';
@@ -14,6 +15,8 @@ export function createProvider(
   // stronger model and a longer timeout than chat/tool calls; unset falls back to defaults.
   opts?: { modelId?: string; timeoutMs?: number },
 ): IModelProvider {
+  // Standalone evals also use duck-typed config; they must obey the same local-only boundary.
+  if (config.anthropicApiKey && config.appEnv !== 'local') throw new Error('ANTHROPIC_API_KEY is local only (APP_ENV must be local).');
   const timeoutMs = opts?.timeoutMs ?? config.aiToolTimeoutMs;
   // Under a SPLIT envelope the model the MONEY was reserved for wins over the deployment default,
   // for a route whose caller passes no per-request policy (`draft-generate`). Any other model is
@@ -38,15 +41,17 @@ export function createProvider(
     // The signed grant pins all three provider coordinates; never drift to deployment defaults.
     if (!region || !selectedModel || (grant && config.bedrockRegion !== grant.model.region)) return new DisabledProvider();
     assertApproved(config, 'bedrock', selectedModel, region);
-    return budgeted(config, selectedModel, new BedrockProvider({
-      region,
+    const providerConfig = {
       modelId: selectedModel,
       timeoutMs,
       // ADR 0013 §6 step 3: the reservation prices exactly one SDK attempt, so under an envelope
       // the client is pinned to it — a silent SDK retry would spend a second invocation's money
       // against one hold. Absent without an envelope, which leaves today's SDK default untouched.
       ...(budgetActive ? { maxAttempts: grant ? 1 : AI_BUDGET_STEP_ATTEMPTS } : {}),
-    }));
+    };
+    return budgeted(config, selectedModel, config.anthropicApiKey
+      ? new AnthropicApiProvider({ ...providerConfig, apiKey: config.anthropicApiKey })
+      : new BedrockProvider({ ...providerConfig, region }));
   }
   return new DisabledProvider();
 }

@@ -27,23 +27,13 @@ const loadPdfjs = (): Promise<any> => Function('return import("pdfjs-dist/legacy
 export const EXPENSE_CAPTURE_PREPROCESS_LIMITS = Object.freeze({
   /** Bedrock document block is ~4.5 MB; this leaves margin for the prompt and the base64 envelope. */
   maxPdfChunkBytes: 4_000_000,
-  maxPdfChunkPages: 3,
+  maxPdfChunkPages: 1,
+  maxPdfPages: 20,
   /** Bedrock image block is ~3.75 MB / 8000 px per side. */
   maxImageBytes: 3_500_000,
-  maxImageEdgePx: 8_000,
-  /**
-   * W10 D3: a photo or screenshot whose LONGER side is under this is upscaled before it is read.
-   *
-   * The 896x533 screenshot of a Leceipt invoice (research note §6) prints its totals block at ~8 px
-   * high: `capture-read` transcribed the item row and skipped the whole block. 1,600 px is chosen
-   * because the provider itself normalises an image to ~1,568 px on the long edge — upscaling to it
-   * roughly doubles the height of that printing at no extra image cost, while going further would
-   * only be scaled back down. Nothing larger is ever touched, and the downscale rules below are
-   * unchanged: this only ever ENLARGES, and never past `maxImageBytes`/`maxImageEdgePx`.
-   */
-  minImageEdgePx: 1_600,
+  maxImageEdgePx: 2_400,
   /** Long edge a whole-page render targets before legibility, not bytes, decides tiling. */
-  renderLongEdgePx: 4_000,
+  renderLongEdgePx: 2_400,
   /** Shared with the certificate renderer: the decoded raster of ONE page, never of a document. */
   maxRasterPixels: SUBSTITUTE_RECEIPT_PDF_LIMITS.maxRasterPixels,
   /**
@@ -79,6 +69,7 @@ export type CaptureChunkImage = {
 };
 
 export type CaptureChunkPlan = {
+  sourceMimeType?: string;
   id: string;
   kind: 'pdf' | 'image' | 'tiles';
   /** Zero-based indexes into the ORIGINAL file, so the manifest and the reader agree on a page. */
@@ -138,7 +129,7 @@ export async function planCapturePreprocessing(
     return { ...empty, failure: isEncryptedPdfError(error) ? 'encrypted_pdf' : 'corrupt_pdf' };
   }
   if (pageCount < 1) return { ...empty, failure: 'corrupt_pdf' };
-  const inScope = Math.min(pageCount, Math.max(1, options.maxPages));
+  const inScope = Math.min(pageCount, Math.max(1, Math.min(options.maxPages, limits.maxPdfPages)));
   const pagesBeyondLimit = Array.from({ length: pageCount - inScope }, (_, offset) => inScope + offset);
 
   const textLayer = await readPdfTextLayer(bytes, inScope, limits);
@@ -174,7 +165,7 @@ export async function planCapturePreprocessing(
     chunks[index] = await renderPageChunk(bytes, page, chunk.id, limits);
   }
 
-  return { pageCount, chunks, textLayer, pagesBeyondLimit };
+  return { pageCount, chunks: chunks.map(chunk => ({ ...chunk, sourceMimeType: 'application/pdf' })), textLayer, pagesBeyondLimit };
 }
 
 /**
@@ -227,7 +218,8 @@ async function fitPdfChunk(
     const pageIndexes = Array.from({ length: size }, (_, offset) => from + offset);
     const copy = await PDFDocument.create();
     for (const page of await copy.copyPages(source, pageIndexes)) copy.addPage(page);
-    const bytes = Buffer.from(await copy.save());
+    // Keep the page tree visible to the gateway's PDF input-budget proof.
+    const bytes = Buffer.from(await copy.save({ useObjectStreams: false }));
     if (bytes.byteLength <= limits.maxPdfChunkBytes) return { kind: 'pdf', pageIndexes, bytes };
   }
   return { kind: 'oversize' };
@@ -274,7 +266,7 @@ async function readPdfTextLayer(
   return out;
 }
 
-/** One image attachment: re-encoded ONLY when it is outside the provider's own image bound. */
+/** One image attachment: shrink to the OCR pixel/byte bound; never upscale a photo. */
 async function planImageChunk(
   bytes: Buffer,
   mimeType: 'image/jpeg' | 'image/png',
@@ -292,53 +284,12 @@ async function planImageChunk(
   const withinBounds = bytes.byteLength <= limits.maxImageBytes
     && width > 0 && width <= limits.maxImageEdgePx && height > 0 && height <= limits.maxImageEdgePx;
   if (withinBounds) {
-    // W10 D3: small printing is the one case where re-encoding EARNS its cost — a totals block the
-    // reader cannot see is a draft with no total. An image already big enough passes through as is.
-    const enlarged = Math.max(width, height) < limits.minImageEdgePx
-      ? await enlargeToLegibleEdge(bytes, width, height, limits)
-      : null;
-    return enlarged
-      ? { id: 'c1', kind: 'image', pageIndexes: [0], mimeType: 'image/jpeg', bytes: enlarged, byteLength: enlarged.byteLength }
-      : { id: 'c1', kind: 'image', pageIndexes: [0], mimeType, bytes, byteLength: bytes.byteLength };
+    return { id: 'c1', kind: 'image', pageIndexes: [0], mimeType, bytes, byteLength: bytes.byteLength };
   }
   const shrunk = await shrinkToImageBound(bytes, limits);
   return shrunk
     ? { id: 'c1', kind: 'image', pageIndexes: [0], mimeType: 'image/jpeg', bytes: shrunk, byteLength: shrunk.byteLength }
     : null;
-}
-
-/**
- * Enlarge a small image to the legibility floor with `lanczos3`, or return null and keep the original.
- *
- * `lanczos3` is sharp's sharpest kernel for printed text; JPEG rather than PNG because an enlarged
- * screenshot re-encodes to a few hundred KB either way and PNG would not. Quality steps down rather
- * than the size, exactly like `renderPageChunk`: the point is more pixels per printed character, so
- * shrinking the result would undo the change. Returns null when nothing fits the byte bound — the
- * original image is still a read, just the one the reader already struggles with.
- */
-async function enlargeToLegibleEdge(
-  bytes: Buffer,
-  width: number,
-  height: number,
-  limits: ExpenseCapturePreprocessLimits,
-): Promise<Buffer | null> {
-  const longEdge = Math.max(width, height);
-  const target = Math.min(limits.minImageEdgePx, limits.maxImageEdgePx);
-  // Never past the decoded-raster budget either: the guard is sharp's own `limitInputPixels`.
-  const scale = Math.min(target / longEdge, Math.sqrt(limits.maxRasterPixels / Math.max(1, width * height)));
-  if (!Number.isFinite(scale) || scale <= 1) return null;
-  for (const quality of [90, 80, 70]) {
-    try {
-      const out = await sharp(bytes, { limitInputPixels: limits.maxRasterPixels })
-        .resize({ width: Math.round(width * scale), height: Math.round(height * scale), kernel: 'lanczos3' })
-        .jpeg({ quality })
-        .toBuffer();
-      if (out.byteLength <= limits.maxImageBytes) return out;
-    } catch {
-      return null;
-    }
-  }
-  return null;
 }
 
 /** JPEG q85 inside the edge bound, then progressively smaller until the byte bound holds. */
@@ -349,7 +300,7 @@ async function shrinkToImageBound(
   let edge: number = limits.maxImageEdgePx;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
-      const out = await sharp(bytes, { limitInputPixels: limits.maxRasterPixels })
+      const out = await sharp(bytes, { limitInputPixels: limits.maxRasterPixels }).rotate()
         .resize({ width: edge, height: edge, fit: 'inside', withoutEnlargement: true })
         .jpeg({ quality: 85 })
         .toBuffer();
@@ -473,19 +424,15 @@ async function tilePage(
     role: 'overview',
     index: 0,
     mimeType: 'image/jpeg',
-    bytes: await sharp(raster, { limitInputPixels: limits.maxRasterPixels })
-      .resize({ width: limits.renderLongEdgePx, height: limits.renderLongEdgePx, fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 80 }).toBuffer(),
+    bytes: (await shrinkToImageBound(raster, limits))!,
   }];
   for (const rect of captureTileRects(width, height, limits)) {
     images.push({
       role: 'tile',
       index: images.length,
       mimeType: 'image/jpeg',
-      bytes: await sharp(raster, { limitInputPixels: limits.maxRasterPixels })
-        .extract(rect)
-        .resize({ width: limits.maxImageEdgePx, height: limits.maxImageEdgePx, fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 85 }).toBuffer(),
+      bytes: (await shrinkToImageBound(await sharp(raster, { limitInputPixels: limits.maxRasterPixels })
+        .extract(rect).jpeg({ quality: 85 }).toBuffer(), limits))!,
     });
   }
   return images;

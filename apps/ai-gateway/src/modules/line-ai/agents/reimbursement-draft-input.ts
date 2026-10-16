@@ -20,7 +20,7 @@ function issuedLocator(results: ReadonlyArray<{ result: ToolResult }>) {
 
 /** The user's own words bound to their one exact span — the unique-substring rule the compact intake decoder
  *  applies to its quotes. Words that are not in the message exactly once are left as planned; the API decides. */
-function userText(raw: unknown, evidence: LineAiTurnRequest['inputEvidence']): unknown {
+function userText(raw: unknown, evidence: LineAiTurnRequest['inputEvidence'], splitDescription = false): unknown {
   const value = typeof raw === 'string' ? raw : object(raw) && typeof raw['value'] === 'string' ? raw['value'] : undefined;
   if (!value || object(raw) && object(raw['proof']) && raw['proof']['kind'] !== 'USER_TEXT') return raw;
   const spans = (evidence?.parts ?? []).flatMap(part => {
@@ -28,7 +28,36 @@ function userText(raw: unknown, evidence: LineAiTurnRequest['inputEvidence']): u
     return start >= 0 && part.rawText.indexOf(value, start + 1) < 0
       ? [{ partId: part.partId, startUtf16: start, endUtf16: start + value.length, rawSha256: part.rawSha256 }] : [];
   });
-  return spans.length === 1 ? { value, proof: { kind: 'USER_TEXT', refs: spans } } : raw;
+  if (spans.length === 1) return { value, proof: { kind: 'USER_TEXT', refs: spans } };
+  // A description can quote phrases separated by the amount/date in the user's message.
+  // The contract joins ordered source spans with newlines; never prove a paraphrase.
+  const phrases = value.trim().split(/\s+/u);
+  if (splitDescription && phrases.length > 1) {
+    const matches = (evidence?.parts ?? []).flatMap(part => {
+      let end = 0;
+      const refs = phrases.map(phrase => {
+        const start = part.rawText.indexOf(phrase);
+        if (start < end || start < 0 || part.rawText.indexOf(phrase, start + 1) >= 0) return null;
+        end = start + phrase.length;
+        return { partId: part.partId, startUtf16: start, endUtf16: end, rawSha256: part.rawSha256 };
+      });
+      return refs.every(ref => ref !== null) ? [refs] : [];
+    });
+    if (matches.length === 1) return { value: phrases.join('\n'), proof: { kind: 'USER_TEXT', refs: matches[0] } };
+  }
+  return raw;
+}
+
+/** Dates and money use exact deterministic candidates, never model-authored offsets or normalized text. */
+function candidateValue(key: string, raw: unknown, req: LineAiTurnRequest): unknown {
+  const value = typeof raw === 'string' ? raw : object(raw) ? raw['value'] : undefined;
+  if (!req.valueCandidates || !('version' in req.valueCandidates) || req.valueCandidates.version !== 2) return raw;
+  if (object(raw) && object(raw['proof']) && raw['proof']['kind'] !== 'USER_TEXT') return raw;
+  const matches = key === 'amount' ? req.valueCandidates.amounts.filter(item => item.value === value)
+    : [...req.valueCandidates.dates.filter(item => item.isoDate === value),
+      ...req.valueCandidates.periods.filter(item => item.kind === 'day' && item.fromDate === value && item.toDate === value)];
+  const candidate = matches.length === 1 ? matches[0] : undefined;
+  return candidate ? { value, proof: { kind: 'USER_TEXT', candidateId: candidate.candidateId, refs: [candidate.source] } } : raw;
 }
 
 /**
@@ -57,8 +86,8 @@ export function completeReimbursementDraftInput(toolName: string, input: unknown
   const fields = object(proposal['fields']) ? { ...proposal['fields'] } : {};
   for (const key of TEXT_FIELDS) if (fields[key] !== undefined && fields[key] !== null) fields[key] = userText(fields[key], req.inputEvidence);
   const lineChanges = Array.isArray(proposal['lineChanges']) ? proposal['lineChanges'].map(change => object(change) && object(change['values'])
-    ? { ...change, values: Object.fromEntries(Object.entries(change['values']).map(([key, value]) =>
-      [key, LINE_TEXT_FIELDS.includes(key) && value !== null && value !== undefined ? userText(value, req.inputEvidence) : value])) }
+    ? { ...change, values: Object.fromEntries(Object.entries(change['values']).filter(([key]) => key !== 'proposedValue').map(([key, value]) =>
+      [key, ['amount', 'incurredDate'].includes(key) ? candidateValue(key, value, req) : LINE_TEXT_FIELDS.includes(key) && value !== null && value !== undefined ? userText(value, req.inputEvidence, key === 'description') : value])) }
     : change) : undefined;
   return { ...input,
     // The action is the API's own locator and nothing else: a key the planner added (round 10: the options

@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { effectiveIntakeToolNames, IntentRouterAgent, LINE_INTAKE_ROUTER_SYSTEM_PROMPT, intakeRouterSystemPrompt } from './intent-router.agent';
 import { DisabledProvider } from '../infrastructure/provider/disabled.provider';
-import { createLineAiInputEvidence, verifyLineAiRetainedTaskSource, type BusinessDocumentClassification, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
+import { createLineAiInputEvidence, parseLineAiSemanticSubrequests, verifyLineAiRetainedTaskSource, type BusinessDocumentClassification, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
 import { runWithUsageContext } from '../../../common/usage/usage-context';
 
@@ -45,6 +45,38 @@ function documentClassification(overrides: Partial<BusinessDocumentClassificatio
 }
 
 describe('LINE intake router – routeIntake', () => {
+  it('D3: a batched facts reply accepts absent document classification and a matching redundant clause index', async () => {
+    const text = 'ผู้จ่าย บริษัท ผู้รับเงิน คุณเอ อินฟลู เหตุผล ผู้รับเงินไม่ออกใบเสร็จ วัตถุประสงค์ ค่าโปรโมทร้าน จ่ายโอน วันที่ 10 ต.ค. 2569';
+    const built = (await createLineAiInputEvidence({ turnKey: 'fx8b-router', parts: [{ partId: 'part-0', eventIdHash: 'b'.repeat(64), acceptedAtMs: 1, rawText: text }] }))!;
+    const request = baseRequest({ messageText: text, inputEvidence: built.inputEvidence, capabilities: { substituteSemantic: true },
+      openClarifications: [{ id: 'question', question: 'ใครจ่ายและจ่ายเพื่ออะไรคะ', text: 'ทำใบรับรองแทนใบเสร็จ', askedAt: '2026-10-15T20:41:00Z', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION' }] });
+    const output = { intent: 'SUBSTITUTE_RECEIPT_CONTINUATION', language: 'th', confidence: 0.95, documentClassification: null,
+      resolvedClarificationIds: ['question'], decisionV1: { subrequests: [{ index: 0, kind: 'write', goal: text,
+        sources: [{ part: 0, whole: true }], filters: {}, writeIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION' }] } };
+    const plan = await new IntentRouterAgent(modelAnswer(output)).routeIntake(request);
+    assert.equal(plan.status, 'ROUTED'); assert.equal(plan.documentClassification, undefined);
+    assert.equal(plan.semanticSubrequests?.[0]?.writeIntent, 'SUBSTITUTE_RECEIPT_CONTINUATION');
+    assert.deepEqual(plan.resolvedClarificationIds, ['question']);
+    assert.equal(plan.semanticSubrequests?.[0]?.evidenceRefs?.[0]?.endUtf16, text.length);
+    for (const index of [1, '0']) {
+      const wrong = structuredClone(output); (wrong.decisionV1.subrequests[0] as any).index = index;
+      assert.equal((await new IntentRouterAgent(modelAnswer(wrong)).routeIntake(request)).status, 'UNAVAILABLE');
+    }
+  });
+  it('X2: payment preview is a valid write clause without an invented writeIntent', async () => {
+    const text = 'จ่ายแล้ว';
+    const built = (await createLineAiInputEvidence({ turnKey: 'fx5-router-payment', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: 1, rawText: text }] }))!;
+    const capture: { input?: ProviderInput } = {};
+    const plan = await new IntentRouterAgent(modelAnswer({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98,
+      decisionV1: { subrequests: [{ kind: 'write', goal: text, sources: [{ part: 0, whole: true }], filters: {} }] } }, capture))
+      .routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, offeredToolNames: ['expense.action.preview'],
+        permissions: ['ai.tool.invoke', 'line.ai.query', 'expense.payment.record'] }));
+    assert.equal(plan.status, 'ROUTED'); assert.equal(plan.intent, 'BUSINESS_READ_QUESTION');
+    assert.equal(plan.semanticSubrequests?.[0]?.writeIntent, undefined);
+    assert.ok(parseLineAiSemanticSubrequests(plan.semanticSubrequests, text, built.inputEvidence));
+    assert.match(capture.input!.systemPrompt!, /expense\.action\.preview \(including RECORD_PAYMENT\) uses kind write with no writeIntent/u);
+    assert.match(capture.input!.systemPrompt!, /จ่ายแล้ว \/ โอนแล้ว \/ บันทึกจ่าย/u);
+  });
   it('fails closed on malformed authority and preserves only configured, permitted, entitled tools', () => {
     const configured = new Set(['expense.list_recent', 'sales.get_sales_summary']);
     const permissions = ['ai.tool.invoke', 'expense.read'];
@@ -1071,4 +1103,44 @@ it('preserves full correction field proposals for API field-specific validation'
   const plan = await router.routeIntake(baseRequest({ messageText: `${note} ${vendor}` }));
   assert.equal(plan.correctionHints?.note?.to, note);
   assert.equal(plan.correctionHints?.vendorName?.to, vendor);
+});
+
+it('preserves evidence association in the compact write inventory rather than creating another capture', async () => {
+  const text = 'สลิปโอนเงินเป็นหลักฐานของค่าใช้จ่ายเมื่อกี้';
+  const created = await createLineAiInputEvidence({ turnKey: 'evidence-link-compact', parts: [
+    { partId: 'p0', eventIdHash: 'c'.repeat(64), acceptedAtMs: Date.now(), rawText: text },
+  ] });
+  assert.ok(created);
+  const router = new IntentRouterAgent(modelAnswer({ intent: 'EXPENSE_PAYMENT_EVIDENCE_LINK', language: 'th', confidence: 0.98,
+    decisionV1: { subrequests: [{ kind: 'write', goal: text, sources: [{ part: 0, whole: true }], filters: {}, writeIntent: 'EXPENSE_PAYMENT_EVIDENCE_LINK' }] } }));
+  const result = await router.routeIntake(baseRequest({ messageText: text, inputEvidence: created.inputEvidence,
+    capabilities: { fusedPlan: true } }));
+  assert.equal(result.intent, 'EXPENSE_PAYMENT_EVIDENCE_LINK');
+  assert.equal(result.semanticSubrequests?.[0]?.writeIntent, 'EXPENSE_PAYMENT_EVIDENCE_LINK');
+});
+
+it('R10 J6: capabilities → vendor command makes a fresh model intake with write registry guidance', async () => {
+  const capture: { input?: ProviderInput } = {};
+  let calls = 0;
+  const provider = { generateText: async (input: ProviderInput) => {
+    capture.input = input; calls += 1;
+    return { ok: true as const, text: JSON.stringify(calls === 1
+      ? { intent: 'UNSUPPORTED', language: 'th', confidence: 0.98, decisionV1: { subrequests: [{ kind: 'help', goal: 'ช่วยอะไรได้บ้าง', sources: [{ part: 0, whole: true }], filters: {} }] } }
+      : { intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98, decisionV1: { subrequests: [{ kind: 'write', goal: 'เพิ่มผู้ขาย บริษัท ทดสอบ จำกัด', sources: [{ part: 0, whole: true }], filters: {} }] } }) };
+  } };
+  const router = new IntentRouterAgent(provider);
+  for (const [index, text] of ['น้องมั่งมีทำอะไรได้บ้าง', 'เพิ่มผู้ขาย บริษัท ทดสอบ จำกัด เลขผู้เสียภาษี 0105556000011'].entries()) {
+    const built = (await createLineAiInputEvidence({ turnKey: `r10-j6-${index}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: 1, rawText: text }] }))!;
+    const plan = await router.routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence,
+      capabilities: { fusedPlan: true, advisor: true }, offeredToolNames: ['counterparty.action.preview'],
+      permissions: ['ai.tool.invoke', 'line.ai.query', 'accounting.counterparty.manage'],
+      ...(index ? { conversationContext: { recentTurns: [{ userMessagePreview: 'น้องมั่งมีทำอะไรได้บ้าง', replyPreview: 'เพิ่มผู้ขายได้ค่ะ', createdAt: new Date().toISOString() }] } as any } : {}) }));
+    assert.equal(plan.status, 'ROUTED'); assert.equal(plan.semanticSubrequests?.[0]?.kind, index ? 'write' : 'help');
+    if (index) {
+      assert.equal(plan.intent, 'BUSINESS_READ_QUESTION'); assert.equal(plan.semanticSubrequests?.[0]?.writeIntent, undefined);
+      assert.match(capture.input!.systemPrompt!, /regardless of previous help, social, expense or clarification turns/);
+      assert.match(JSON.stringify(capture.input), /counterparty.action.preview/);
+    }
+  }
+  assert.equal(calls, 2);
 });

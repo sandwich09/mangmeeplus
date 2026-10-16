@@ -1,8 +1,12 @@
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
+
+import { buildSubstituteReceiptActionCard } from '../line-substitute-receipt-action.service';
 import { capabilityFollowUpReply } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
-import { describe, it } from 'node:test';
+import { describe, it, type TestContext } from 'node:test';
+import { LineReplyAdapter } from '../../infrastructure/line-reply.adapter';
+import { validateLineDeliveryPlan } from '../../domain/logic/line-delivery-plan.logic';
 import { ForbiddenException } from '@nestjs/common';
 import assert from 'node:assert/strict';
 import { canAdvertiseReceiptCapture, createLineAiInputEvidence, LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
@@ -21,9 +25,86 @@ import { lineMessagePreview } from '../../domain/logic/line-message-preview.logi
 import { STAFF_CONTACT_COMMAND } from '../../domain/logic/line-staff-menu.logic';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { LineReadEvidenceService } from '../line-read-evidence.service';
+import { LineExpenseDraftConversationUseCase } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
+import { isLineCounterpartyCommand } from '../line-counterparty.service';
+import { buildInitialLineExpenseDraftContinuation, formatLineExpenseDraftReply, materializedLineExpenseDraftItems } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 const CLEAN_SCANNER = { assertClean: async () => undefined } as any;
+
+it('Fix-up 10 P2/P3: an explicit vendor command after capability help reaches counterparty preview and sends one card', async () => {
+  const { prisma } = makePrisma({ recentTurns: [{ userMessagePreview: 'น้องมั่งมีทำอะไรได้บ้าง', replyPreview: 'ส่งใบเสร็จได้ค่ะ', createdAt: new Date() }] });
+  const token = '2191d48d-704a-4b1e-a800-6b02661001bb.' + 'a'.repeat(43);
+  const preview = { token, expiresAt: new Date(Date.now() + 600_000).toISOString(), lines: ['ตรวจคู่ค้าที่จะเพิ่มแล้วกดยืนยันค่ะ', 'ชื่อคู่ค้า: บริษัท ทดสอบ จำกัด'] };
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'ai.tool.invoke', 'accounting.counterparty.manage', 'expense.create'],
+    intakeRouteFn: request => {
+      assert.equal(request.messageText, 'เพิ่มผู้ขาย บริษัท ทดสอบ จำกัด เลขผู้เสียภาษี 0105556000011');
+      return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98,
+        semanticSubrequests: [{ index: 0, kind: 'write', goal: request.messageText, requestedFilters: {}, requiredEvidence: [], dependsOn: [] }] };
+    },
+    aiGatewayFn: request => {
+      assert.equal(request.intakeIntent, 'BUSINESS_READ_QUESTION');
+      assert.equal(request.semanticSubrequests[0].kind, 'write');
+      assert.equal(request.semanticSubrequests[0].writeIntent, undefined);
+      return { requestId: request.requestId, replyText: preview.lines[0], intent: 'business_read', agent: 'accounting',
+        durationMs: 1, webLinks: [], sourceLabels: ['คู่ค้า'], sourceRefs: [], toolsInvoked: ['counterparty.action.preview'], refused: false };
+    } });
+  const flow = h.useCase as any;
+  flow.counterparties = { pending: async () => preview };
+  flow.reliabilityContext = async () => ({});
+  flow.captureExpenseNote = { execute: async () => assert.fail('a counterparty command never creates an expense') };
+  await h.useCase.execute({ ...BASE_EVENT, messageText: 'เพิ่มผู้ขาย บริษัท ทดสอบ จำกัด เลขผู้เสียภาษี 0105556000011' });
+  assert.equal(h.aiGatewayRequests.length, 1);
+  assert.equal(h.sentMessageBatches.length, 1);
+  assert.equal(h.sentMessageBatches[0]!.length, 1, 'no source-summary prelude before the real control card');
+  const card = h.sentMessageBatches[0]![0];
+  assert.equal(card.type, 'flex');
+  assert.match(JSON.stringify(card.contents), /counterparty_confirm/);
+  assert.equal(card.canonicalText, preview.lines.join('\n'));
+  for (const verb of ['เพิ่ม', 'แก้', 'แก้ไข', 'อัปเดต']) for (const noun of ['ผู้ขาย', 'คู่ค้า', 'ผู้รับเงิน', 'ซัพพลายเออร์']) {
+    assert.equal(isLineCounterpartyCommand(`${verb}${noun} บริษัท ทดสอบ จำกัด`), true);
+  }
+  for (const text of ['น้องมั่งมีทำอะไรได้บ้าง', 'เพิ่มผู้ขายได้ไหม', 'บันทึกค่าขนส่ง 500 บาท']) assert.equal(isLineCounterpartyCommand(text), false);
+});
+
+it('Fix-up 10 P4a/e: attachment summaries render once on both delivery paths and the multipart closer uses a neutral header', async () => {
+  const { prisma } = makePrisma(); const h = makeUseCase(prisma), flow = h.useCase as any;
+  const event = { ...BASE_EVENT, lineMessageId: 'message', messageText: 'ข้อความของผู้ใช้ที่ไม่ควรเป็นหัวปิดท้าย' };
+  const summary = 'ข้อมูลครบแล้วค่ะ กดเตรียมใบรับรองเพื่อตรวจและลงนามต่อ\nวัตถุประสงค์: ค่าโปรโมทร้าน';
+  flow.deliverySubstituteActions.set(event, { preview: { summary, label: 'เตรียมใบรับรอง', token: 'sub_current', webPath: 'https://app.example.com/companies/company-1/expenses/substitute-receipts/e1' } });
+  const sent: any[][] = []; flow.deliverMessages = async (_event: unknown, messages: any[]) => { sent.push(messages); return 'ok'; };
+  const text = `แนบหลักฐานให้แล้วค่ะ\n\n${summary}`;
+  await flow.deliverReply(event, text);
+  await flow.deliverCompletedReply(event, text, 'company-1', { permissions: [], roles: [] });
+  for (const messages of sent) {
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].canonicalText, text);
+    const body = messages[0].contents.body.contents.map((item: any) => item.text).filter(Boolean).join('\n');
+    assert.equal(body.split('วัตถุประสงค์: ค่าโปรโมทร้าน').length - 1, 1);
+  }
+  for (const label of ['เปิดลงนามในเว็บ', 'เปิดอนุมัติในเว็บ']) {
+    sent.length = 0;
+    const handoff = { token: 'sub_current', webOnly: true, label, summary: 'เตรียมใบรับรองแล้วค่ะ เปิดเว็บเพื่อลงนามและอนุมัติ\nวัตถุประสงค์: ค่าโปรโมทร้าน',
+      webPath: 'https://app.example.com/companies/company-1/expenses/substitute-receipts/e1' };
+    flow.deliverySubstituteActions.set(event, { preview: handoff });
+    await flow.deliverReply(event, handoff.summary);
+    await flow.deliverCompletedReply(event, handoff.summary, 'company-1', { permissions: [], roles: [] });
+    for (const messages of sent) {
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0].canonicalText, handoff.summary);
+      assert.equal(messages[0].contents.footer.contents.length, 1);
+      assert.deepEqual(messages[0].contents.footer.contents[0].action, { type: 'uri', label, uri: handoff.webPath });
+      assert.doesNotMatch(JSON.stringify(messages[0]), /expense_action_confirm|expense_action_cancel|postback/);
+    }
+  }
+  flow.deliverySubstituteActions.delete(event); sent.length = 0;
+  flow.boundConversations.set(event, { owner: { companyId: 'company-1' } });
+  await flow.deliverCompletedReplies(event, ['ก'.repeat(2000)], 'company-1', { permissions: [], roles: [] });
+  const closer = sent[0]!.at(-1);
+  assert.equal(closer.type, 'flex');
+  assert.deepEqual(readLineSystemCard(closer).header, ['น้องมั่งมี', 'ขั้นตอนถัดไป']);
+  assert.doesNotMatch(JSON.stringify(closer.contents), /ข้อความของผู้ใช้/u);
+});
 
 function savedMediaFixture(id: string) {
   return { id, companyId: 'company-1', createdByUserId: 'user-1', captureSource: 'LINE_UPLOAD', status: 'DRAFT',
@@ -219,7 +300,7 @@ describe('OCR governance LINE reply UX', () => {
       ['OCR_MONTHLY_LIMIT_EXCEEDED', /^💚 รับรูปไว้แล้วค่ะ แต่เครดิตสำหรับการอ่านเอกสารไม่พอ/]] as const) {
       const reply = formatOcrGovernanceClarifyReply(code);
       assert.match(reply, kept, code);
-      assert.match(reply, /1\) ใบเสร็จ/, code);
+      assert.match(reply, /เลือกบันทึกใบเสร็จ/, code);
       assert.doesNotMatch(reply, /OCR_|receipt-ocr|quota/i, code);
     }
   });
@@ -235,7 +316,7 @@ describe('OCR governance LINE reply UX', () => {
       const reply = formatOcrGovernanceClarifyReply(code, true);
       assert.match(reply, /อ่านรูปนี้ไม่สำเร็จ/, 'names the failure, not the photo');
       assert.match(reply, /รูปยังเก็บไว้ให้และยังไม่ได้บันทึกรายการ/, 'states what happened to the user\'s data');
-      assert.match(reply, /1\) ใบเสร็จ/, 'the numbered manual path survives');
+      assert.match(reply, /เลือกบันทึกใบเสร็จ/, 'the numbered manual path survives');
       assert.doesNotMatch(reply, /OCR_|PROVIDER/i, 'internal codes never reach the customer');
     }
     // Governance refusals keep their own lead-in even though their status is also OCR_FAILED.
@@ -2232,7 +2313,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(aiTurns.length, 1, 'turn persisted despite delivery failure');
     assert.equal((aiTurns[0] as any).data.status, 'PROCESSING');
     assert.equal((aiTurnUpdates.at(-1) as any).data.status, 'ERROR');
-    assert.equal((updates.at(-1) as any).data.status, 'delivery_pending');
+    assert.equal((updates.filter((update: any) => update.data.status).at(-1) as any).data.status, 'delivery_pending');
     assert.deepEqual(
       logs.filter((entry) => entry.msg === 'line.ai.terminal').map((entry) => entry.terminalClass),
       ['delivery_pending'],
@@ -2653,7 +2734,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal((aiTurnUpdates.at(-1) as any).data.status, 'ERROR');
     assert.match((aiTurnUpdates.at(-1) as any).data.errorCode, /LINE_DELIVERY_FAILED_OTHER/);
-    assert.equal((updates.at(-1) as any).data.status, 'delivery_pending');
+    assert.equal((updates.filter((update: any) => update.data.status).at(-1) as any).data.status, 'delivery_pending');
   });
 
   it('keeps a failed deterministic rich reply in delivery_pending', async () => {
@@ -2668,7 +2749,7 @@ describe('ProcessLineWebhookUseCase', () => {
       /LINE_DELIVERY_FAILED_OTHER/,
     );
 
-    assert.equal((updates.at(-1) as any).data.status, 'delivery_pending');
+    assert.equal((updates.filter((update: any) => update.data.status).at(-1) as any).data.status, 'delivery_pending');
   });
 
 	  it('passes at most LINE_AI_CONTEXT_MAX_TURNS recent turns from the active 15-minute window to intake router and AI Gateway', async () => {
@@ -4152,11 +4233,11 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(pendingRows[0].askedQuestionJson.ocrFields.grandTotalAmount, '2883.65');
     assert.match(replies.join('\n'), /ยังไม่สร้างรายการค่าใช้จ่าย/);
     assert.match(replies.join('\n'), /ยังไม่ยืนยันว่าร้านรับเงินแล้ว/);
-    assert.match(replies.join('\n'), /1\).*จ่ายแล้ว/);
+    assert.doesNotMatch(replies.join('\n'), /พิมพ์ 1|1\)/);
     assert.deepEqual(sentMessages[0]?.quickReply?.items.map((item: any) => item.action.label), [
       'จ่ายแล้ว ไม่ได้ใบ', 'ยังไม่ได้จ่าย', 'มีใบเสร็จ ส่งใหม่',
     ]);
-    assert.deepEqual(sentMessages[0]?.quickReply?.items.map((item: any) => item.action.text), ['1', '2', '3']);
+    assert.deepEqual(sentMessages[0]?.quickReply?.items.map((item: any) => item.action.text), ['จ่ายแล้ว แต่ไม่มีใบเสร็จ', 'ยังไม่ได้จ่าย', 'มีใบเสร็จแล้ว จะส่งรูปใหม่']);
   });
 
   // A4: the SIGNATURE_UPLOAD_TICKET route depends on an AI call that can come back UNAVAILABLE or
@@ -4234,7 +4315,7 @@ describe('ProcessLineWebhookUseCase', () => {
     }
   });
 
-  it('steers the caption-route signature back to “ตอบ 1” only when the issue decision is pending (F8)', async () => {
+  it('steers the caption-route signature to preparation only when the issue decision is pending (F8)', async () => {
     const runCaption = async (pendingIssueDecision: boolean) => {
       const { prisma } = makePrisma();
       const delivered: string[] = [];
@@ -4260,8 +4341,8 @@ describe('ProcessLineWebhookUseCase', () => {
       return delivered.join('\n');
     };
 
-    assert.match(await runCaption(true), /ตอบ 1 เพื่อออกเอกสาร/, 'steers when a decision is pending');
-    assert.doesNotMatch(await runCaption(false), /ตอบ 1 เพื่อออกเอกสาร/, 'no steer when nothing is pending');
+    assert.match(await runCaption(true), /กดเตรียมใบรับรอง/, 'steers when a decision is pending');
+    assert.doesNotMatch(await runCaption(false), /กดเตรียมใบรับรอง/, 'no steer when nothing is pending');
   });
 
   // F1: `ลายเซ็น` is a substring test, and plenty of real receipts mention it ("ค่าทำป้ายลายเซ็น").
@@ -4673,7 +4754,7 @@ describe('ProcessLineWebhookUseCase', () => {
     // Journey A: usable at once, and the sender is put back on the decision they were answering
     // rather than left at "saved!" one keystroke from the document.
     assert.match(image.replies.join('\n'), /ใช้ลงนามเอกสารได้ทันที ไม่ต้องรออนุมัติ/);
-    assert.match(image.replies.join('\n'), /ตอบ 1 เพื่อออกเอกสารต่อได้เลยค่ะ/);
+    assert.match(image.replies.join('\n'), /กดเตรียมใบรับรอง แล้วน้องจะส่งลิงก์ลงนามในเว็บค่ะ/);
 
     const pdf = await run('application/pdf');
     assert.equal(pdf.created.length, 0, 'a PDF must never become a signature asset');
@@ -4985,7 +5066,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(card.header[1], 'รอตรวจสอบ');
     assert.match(card.mascot, /system-card-mascot-review-\d{8}\.png$/u);
     assert.ok(card.texts.every((text) => !/https?:\/\//u.test(text)), 'no raw link in any text of the card');
-    assert.deepEqual(card.actions, [{ type: 'uri', label: 'ตรวจสอบและยืนยันในเว็บ', uri: 'https://app.example.com/companies/company-1/expenses/expense-line-1' }]);
+    assert.deepEqual(card.actions, [{ type: 'message', label: 'ยืนยันรายการ', text: 'ยืนยันรายการนี้' }, { type: 'uri', label: 'เปิดดูในเว็บ', uri: 'https://app.example.com/companies/company-1/expenses/expense-line-1' }]);
     assert.match(replies[0].canonicalText, /ตรวจสอบและยืนยันในเว็บแอป/, 'the reply that was sent before is the card\'s canonical text');
     assert.ok(replies[0]?.quickReply?.items.some((item: any) => item.action.label === '📷 ถ่ายใบเสร็จ'));
     assert.equal((updates.at(-1) as any).data.status, 'completed');
@@ -5889,7 +5970,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
       const bind = <T extends object>(event: T): T => { flow.boundConversations.set(event, { owner: { companyId: 'company-1', userId: 'user-1' }, id: 'conversation', epoch: 1 }); return event; };
       return { flow, sent, bind };
     }
-    const CLARIFY = '🤔 รูปนี้เป็นอะไรคะ ตอบเลขข้อได้เลยนะคะ\n1) ใบเสร็จ/เอกสารค่าใช้จ่ายรายการเดียวที่ต้องการบันทึก\n2) ภาพประกอบคำถาม ไม่ต้องบันทึก';
+    const CLARIFY = '🤔 รูปนี้เป็นอะไรคะ เลือกบันทึกใบเสร็จ ภาพประกอบ หรือสรุปหลายรายการได้เลยค่ะ';
 
     it('each outcome has its own fixed second line under "เอกสารที่ส่งมา"; a reply that names none is a result of the read', async () => {
       assert.deepEqual(LINE_SENT_DOCUMENT_OUTCOMES, {
@@ -6037,7 +6118,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     assert.match(rendered, /รับรูปไว้แล้วค่ะ/);
     assert.match(rendered, /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     assert.match(rendered, /ยังไม่ได้บันทึกรายการค่าใช้จ่าย/);
-    assert.match(rendered, /1\) ใบเสร็จ/, 'the existing numbered clarify still follows');
+    assert.match(rendered, /เลือกบันทึกใบเสร็จ/, 'the existing numbered clarify still follows');
     assert.equal(rendered.includes('ระบบอ่านเอกสารขัดข้องชั่วคราว'), false, 'the false outage story is gone');
     const final = (updates.at(-1) as any).data;
     // §9.3: the picture is kept and one question is open, so the workflow state is preserved and the
@@ -6148,7 +6229,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     assert.match(rendered, /ยังมีรูปก่อนหน้าที่รอคำตอบอยู่/);
     assert.match(rendered, /รูปนี้จึงยังไม่ได้เก็บไว้/);
     assert.equal(rendered.includes('รับรูปไว้แล้ว'), false, 'no retention claim for bytes that were dropped');
-    assert.equal(/1\) ใบเสร็จ/.test(rendered), false, 'the numbered question belongs to the picture that IS parked');
+    assert.equal(/เลือกบันทึกใบเสร็จ/.test(rendered), false, 'the numbered question belongs to the picture that IS parked');
     const final = (updates.at(-1) as any).data;
     assert.equal(final.status, 'clarification_required');
     assert.equal(final.errorCode, 'AI_MONTHLY_BUDGET_EXCEEDED');
@@ -6174,7 +6255,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     const rendered = h.replies.join('\n');
     assert.match(rendered, /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     assert.match(rendered, /ยังไม่ได้เก็บหรือบันทึกรายการใด ๆ/);
-    assert.equal(/1\) ใบเสร็จ/.test(rendered), false, 'never offer a capture workflow this user cannot finish');
+    assert.equal(/เลือกบันทึกใบเสร็จ/.test(rendered), false, 'never offer a capture workflow this user cannot finish');
     assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
   });
 
@@ -6186,7 +6267,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
       assert.match(reply, /^💚 รับรูปไว้แล้วค่ะ แต่เครดิตสำหรับการอ่านเอกสารไม่พอ /, code);
       // The two facts beside the reason never move: the file is kept, nothing was recorded.
       assert.match(reply, /จึงยังไม่ได้อ่านและยังไม่ได้บันทึกรายการค่าใช้จ่ายนะคะ/, code);
-      assert.match(reply, /1\) ใบเสร็จ/, `${code} keeps the numbered manual path`);
+      assert.match(reply, /เลือกบันทึกใบเสร็จ/, `${code} keeps the numbered manual path`);
     }
     // Retryable and administrative reasons stay their own sentence — the shop acts differently.
     assert.match(formatOcrGovernanceClarifyReply('AI_BUDGET_UNAVAILABLE', true), /^⏳ .*ยังตรวจสอบเครดิต AI ของร้านไม่ได้/);
@@ -6785,14 +6866,15 @@ describe('LINE expense edit uses the three-turn preview boundary', () => {
 
   it('lists multiple candidates and does not choose a target for a capability question', async () => {
     const { prisma } = makePrisma();
-    const { useCase, replies } = makeUseCase(prisma, {
+    const { useCase, replies, sentMessages } = makeUseCase(prisma, {
       permissions: ['line.ai.query', 'expense.update'], expenseRepo, draftUpdate: { enabled: true },
       lineEditCapabilityFn: async () => true,
     });
     (useCase as any).loadCorrectionCandidates = async () => [candidate, { ...candidate, id: 'exp-edit-2', label: 'ใบเสร็จ · 25 ก.ย. 2569 · 80.00' }];
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-edit-multiple', messageText: 'แก้รายการได้ไหม' });
-    assert.match(replies.join('\n'), /1\) ใบเสร็จ/);
-    assert.match(replies.join('\n'), /2\) ใบเสร็จ/);
+    assert.doesNotMatch(replies.join('\n'), /[12]\) ใบเสร็จ/);
+    assert.equal(sentMessages[0]?.quickReply?.items.length, 2);
+    assert.ok(sentMessages[0]?.quickReply?.items.every((item: any) => item.action.text.startsWith('ขอแก้รายการ ใบเสร็จ')));
     assert.match(replies.join('\n'), /ระบุบิลหรือวันที่ก่อนแก้/);
   });
 });
@@ -6903,7 +6985,7 @@ describe('receipt capture card: an unread date says so', () => {
 
   it('names the placeholder and the way to correct it', () => {
     const reply = card({ grandTotalAmount: '1789.04' });
-    assert.match(reply, /• วันที่เอกสาร – ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน/);
+    assert.match(reply, /• วันที่เอกสาร – ยังไม่มีวันที่/);
   });
 
   it('prints a date the document proved with no caveat at all', () => {
@@ -6921,7 +7003,7 @@ describe('receipt capture card: an unread date says so', () => {
 
     assert.match(withStatus('assumed', '2026-09-03'), /• วันที่เอกสาร – 3 ก\.ย\. 2569 \(อ่านจากบิล แบบ วัน\/เดือน\)/);
     assert.match(withStatus('implausible', '2019-01-05'), /• วันที่เอกสาร – 5 ม\.ค\. 2562 \(ผิดปกติ ตรวจในเว็บ\)/);
-    assert.match(withStatus('unverified', '2026-09-05'), /• วันที่เอกสาร – ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน/);
+    assert.match(withStatus('unverified', '2026-09-05'), /• วันที่เอกสาร – ยังไม่มีวันที่/);
     assert.match(withStatus('verified', '2026-09-03'), /• วันที่เอกสาร – 3 ก\.ย\. 2569$/m);
   });
 
@@ -7219,6 +7301,35 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
   }
   const P = { permissions: ['line.ai.query', 'expense.review'] };
 
+  it('D3: a failed intake preserves a batched raw answer for the sole open question; ambiguous/absent questions and budget failures remain unavailable', async () => {
+    const text = 'ผู้จ่าย บริษัท ผู้รับเงิน คุณเอ อินฟลู เหตุผล ผู้รับเงินไม่ออกใบเสร็จ วัตถุประสงค์ ค่าโปรโมทร้าน จ่ายโอน วันที่ 10 ต.ค. 2569';
+    const built = (await createLineAiInputEvidence({ turnKey: 'fx8b-fallback', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: 1, rawText: text }] }))!;
+    const question = { id: 'q1', question: 'ใครจ่ายและจ่ายเพื่ออะไรคะ', text: 'ทำใบรับรองแทนใบเสร็จ', askedAt: new Date().toISOString(), clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION' };
+    for (const [errorCode, openClarifications, expected] of [
+      ['ROUTER_SEMANTIC_SCHEMA_INVALID', [question], 'ROUTED'],
+      ['ROUTER_SEMANTIC_SCHEMA_INVALID', [], 'UNAVAILABLE'],
+      ['ROUTER_SEMANTIC_SCHEMA_INVALID', [question, { ...question, id: 'q2' }], 'UNAVAILABLE'],
+      ['AI_BUDGET_UNAVAILABLE', [question], 'UNAVAILABLE'],
+    ] as const) {
+      const { prisma } = makePrisma();
+      const h = makeUseCase(prisma, { ...P, intakeRouteFn: () => ({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode }) });
+      const flow = h.useCase as any;
+      flow.prepareTextGrantV2 = async () => undefined; flow.reliabilityContext = async () => ({});
+      const event = { ...BASE_EVENT, messageText: text, inputEvidence: built.inputEvidence };
+      const plan = await flow.tryRouteIntake({ event, requestId: 'request', companyId: 'company-1', userId: 'user-1', permissions: P.permissions,
+        messageText: text, openClarifications });
+      assert.equal(plan.status, expected);
+      if (expected === 'ROUTED') {
+        assert.equal(plan.intent, 'SUBSTITUTE_RECEIPT_CONTINUATION');
+        assert.deepEqual(plan.resolvedClarificationIds, ['q1']);
+        assert.equal(plan.semanticSubrequests[0].goal, text);
+        assert.equal(plan.semanticSubrequests[0].evidenceRefs[0].endUtf16, text.length);
+        assert.equal(plan.captureHints, undefined, 'never manufacture facts from failed model output');
+      }
+      assert.equal(event.messageText, text); assert.equal(h.getAiGatewayCalled(), false);
+    }
+  });
+
   it('advertises substitute semantics for a bound v2 turn while legacy off stays off', async () => {
     for (const [bound, mode, expected] of [[true, 'off', true], [false, 'off', false], [false, 'primary', true]] as const) {
       const { prisma } = makePrisma();
@@ -7241,6 +7352,35 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
     (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-sub-1', messageText: 'ทำใบทดแทนของค่าวิน' });
     assert.equal(sub.executeCalls.length, 1, 'continuation executed once');
+  });
+
+  it('D3: a bound schema-failed batched answer reaches the existing question handler once with raw text; a stale question never dispatches', async () => {
+    for (const stale of [false, true]) {
+      const text = 'ผู้จ่าย บริษัท ผู้รับเงิน คุณเอ อินฟลู เหตุผล ผู้รับเงินไม่ออกใบเสร็จ วัตถุประสงค์ ค่าโปรโมทร้าน จ่ายโอน วันที่ 10 ต.ค. 2569';
+      const { prisma } = makePrisma(), sub = makeSub();
+      prisma.client.lineLedgerDelivery = { findMany: async () => [], findFirst: async () => null, findUnique: async () => null };
+      prisma.client.lineIntakePendingMedia.findMany = async () => [];
+      const led = makeLedger([{ id: 'w-1', text: 'ทำใบรับรองต่อ', question: 'ใครจ่ายและจ่ายเพื่ออะไรคะ', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', entry: { id: 'w-1' } }]);
+      const h = makeUseCase(prisma, { ...P, substituteContinuation: sub.useCase, substituteLedger: led.ledger,
+        config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'], lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+        intakeRouteFn: () => ({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'ROUTER_SEMANTIC_SCHEMA_INVALID' }),
+        aiGatewayFn: () => assert.fail('the open question handler owns the raw reply') });
+      const flow = h.useCase as any, grant = { turnKey: `fx8b-bound-${stale}` };
+      flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+        projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }), save: async () => true };
+      flow.prepareTextGrantV2 = async (accepted: object) => { flow.budgetGrantsV2.set(accepted, grant); return grant; };
+      flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+      flow.aiGateway.narrowLineReliabilityGrant = async () => grant;
+      flow.preserveSemanticTask = async () => true;
+      flow.sendMessages = async () => 'ok';
+      if (stale) flow.clarificationSourceCurrent = async () => false;
+      const event: any = { ...BASE_EVENT, webhookEventId: `evt-fx8b-bound-${stale}`, messageText: text };
+      event.inputEvidence = (await createLineAiInputEvidence({ turnKey: grant.turnKey, parts: [{ partId: 'part-0', eventIdHash: 'e'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+      await h.useCase.execute(event);
+      assert.equal(sub.executeCalls.length, stale ? 0 : 1);
+      if (!stale) assert.equal(sub.executeCalls[0].messageText, text);
+      assert.equal(h.getAiGatewayCalled(), false);
+    }
   });
 
   it('PRIMARY: a non-substitute route (side question) does NOT execute the continuation; substitute stays open', async () => {
@@ -7718,13 +7858,16 @@ describe('ProcessLineWebhookUseCase – durable terminal outcome (§8.3, default
     assert.equal(turnOutcomeUpdates[0]!.where.deliveredAt, null);
   });
 
-  it('FAILS CLOSED: an outcome it cannot record is never sent', async () => {
+  it('keeps an unrecordable business outcome private and sends a plain failure fallback', async () => {
     const { run, replyCalls, pushCalls, updates } = makeDeliveryRun({
       config: { lineAiTerminalOutcomeReplayEnabled: true }, turnOutcomeUnavailable: true,
     });
     await run();
 
-    assert.equal(replyCalls.length, 0, 'sending what we cannot replay is the one thing this table exists to prevent');
+    assert.equal(replyCalls.length, 1);
+    assert.equal(replyCalls[0]!.messages[0].type, 'text');
+    assert.match(replyCalls[0]!.messages[0].text, /เกิดข้อผิดพลาดชั่วคราว/);
+    assert.doesNotMatch(JSON.stringify(replyCalls), /บันทึกวัตถุประสงค์แล้ว/);
     assert.equal(pushCalls.length, 0);
     const pending = updates.map((update: any) => update.data).find((data: any) => data.status === 'delivery_pending');
     assert.ok(pending, 'the turn still owes the user an answer');
@@ -7736,7 +7879,8 @@ describe('ProcessLineWebhookUseCase – Flex→text delivery fallback (§14.3, d
   it('takes the exact legacy push path for a rejected Flex payload while the flag is off', async () => {
     const { run, replyCalls, pushCalls, updates } = makeDeliveryRun({ replyResults: ['failed_flex'], pushResult: 'failed_other' });
     await run();
-    assert.equal(replyCalls.length, 1, 'no retry');
+    assert.equal(replyCalls.length, 2, 'a plain failure follows an unsaved, undelivered answer');
+    assert.match(replyCalls[1]!.messages[0].text, /เกิดข้อผิดพลาดชั่วคราว/);
     assert.equal(pushCalls.length, 1, 'failed_flex takes the same push failed_token always took');
     assert.deepEqual(pushCalls[0]!.messages, replyCalls[0]!.messages, 'with the SAME messages');
     const pending = updates.map((update: any) => update.data).find((data: any) => data.status === 'delivery_pending');
@@ -7793,14 +7937,15 @@ describe('ProcessLineWebhookUseCase – Flex→text delivery fallback (§14.3, d
     assert.equal(pending.errorCode, 'LINE_OUTCOME_REPRESENTATION_PENDING');
   });
 
-  it('never retries a failure that is not a rejected Flex body', async () => {
+  it('uses only a plain failure after an unsaved transport failure', async () => {
     for (const [first, expectedReplies, expectedPushes] of [['failed_other', 1, 0], ['failed_token', 1, 1]] as const) {
       const { run, replyCalls, pushCalls } = makeDeliveryRun({
         config: { lineAiFlexTextFallbackEnabled: true }, replyResults: [first], pushResult: 'failed_other',
       });
       await run();
-      assert.equal(replyCalls.length, expectedReplies, first);
-      assert.equal(pushCalls.length, expectedPushes, `${first}: an expired token still gets its push, with the CARD intact`);
+      assert.equal(replyCalls.length, expectedReplies + 1, first);
+      assert.match(replyCalls.at(-1)!.messages[0].text, /เกิดข้อผิดพลาดชั่วคราว/);
+      assert.equal(pushCalls.length, expectedPushes * 2, `${first}: expired tokens also push the plain failure`);
       if (expectedPushes > 0) assert.equal(pushCalls[0]!.messages[0].type, 'flex');
     }
   });
@@ -8169,7 +8314,7 @@ describe('ProcessLineWebhookUseCase – expense draft card on the capture termin
     // says so in the summary's own words instead of showing a date nobody read.
     assert.deepEqual(card.rows, [
       ['ผู้ขาย / ร้านค้า', ':', 'ร้านกาแฟบ้านไร่'],
-      ['วันที่เอกสาร', ':', 'ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน'],
+      ['วันที่เอกสาร', ':', 'ยังไม่มีวันที่'],
       ['ประเภทเอกสาร', ':', 'ใบเสร็จรับเงิน'],
       ['หมวดค่าใช้จ่าย', ':', 'ค่าเดินทาง'],
       ['ยอดรวม', ':', '200.00 บาท'],
@@ -8178,7 +8323,7 @@ describe('ProcessLineWebhookUseCase – expense draft card on the capture termin
     assert.deepEqual(card.totals, ['ยอดรวม']);
     assert.deepEqual(Object.keys(card.pills), ['สถานะเอกสาร']);
     assert.deepEqual(card.notes, ['รายการนี้เป็นร่าง ยังไม่ได้ยืนยันรายการ', '📎 ยังไม่มีไฟล์แนบ – กรุณาแนบรูป/PDF ในเว็บก่อนยืนยันถ้าต้องใช้หลักฐาน']);
-    assert.deepEqual(card.actions, [{ type: 'uri', label: 'ตรวจสอบและยืนยันในเว็บ', uri: 'https://app.example.com/companies/company-1/expenses/exp-1' }]);
+    assert.deepEqual(card.actions, [{ type: 'message', label: 'ยืนยันรายการ', text: 'ยืนยันรายการนี้' }, { type: 'uri', label: 'เปิดดูในเว็บ', uri: 'https://app.example.com/companies/company-1/expenses/exp-1' }]);
     assert.equal(card.banner, undefined, 'no yellow "รอตรวจสอบ" strip: the owner cut it');
     // The canonical text is the summary this lane has always sent; the card is its presentation.
     assert.match(message.canonicalText, /^🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว \(รอตรวจสอบ\)/u);
@@ -8301,6 +8446,27 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     return { ...base, ...run, event, eventStore, sends, logs, expense: () => expense,
       allowSend: () => { sendFails = false; }, counts: () => ({ downloads, uploads, initialized, completed, applied, routed, ocrReads, draftStarts }) };
   }
+
+  it('pairs a transfer slip only after OCR facts are saved and replies once with undo', async () => {
+    const h = receiptHarness(), uc = h.useCase as any;
+    uc.aiGateway.requestReceiptOcr = async () => ({ status: 'ok', classification: { ...receiptClassification('120.00'),
+      documentKind: 'TRANSFER_SLIP', documentFamily: 'PAYMENT_EVIDENCE', businessDirection: 'UNKNOWN' }, fields: { grandTotalAmount: '120.00' } });
+    const apply = uc.receiptOcrApply.apply.bind(uc.receiptOcrApply);
+    uc.receiptOcrApply.apply = async (...args: any[]) => { assert.equal(args[3].sourceDocumentType, 'TRANSFER_SLIP'); assert.equal(args[3].ocrDocumentType, 'TRANSFER_SLIP'); return apply(...args); };
+    let pairCalls = 0;
+    uc.paymentEvidence = { forCapture: async (_ctx: any, chat: string, id: string) => {
+      pairCalls += 1;
+      assert.equal(id, h.expense().id); assert.ok(chat);
+      assert.equal(h.expense().sourceDocumentType, 'TRANSFER_SLIP');
+      assert.equal(h.expense().grandTotalAmount, '120.0000');
+      return { kind: 'LINKED', slipId: id, receiptId: 'previous-receipt', operationId: 'paired-once' };
+    } };
+    await h.useCase.executeReceiptUpload(h.event('pair-slip-after-ocr'));
+    assert.equal(pairCalls, 1);
+    const reply = h.sends.flat().find((message: any) => message.text?.includes('แนบสลิป'));
+    assert.ok(reply); assert.equal(reply.quickReply.items[0].action.type, 'postback');
+    assert.doesNotMatch(h.sends.map(batch => JSON.stringify(batch)).join(''), /กรุณาตรวจว่าจ่ายค่าอะไร/);
+  });
 
   for (const resumed of [false, true]) it(`rechecks original LINE identity after ${resumed ? 'resumed' : 'direct'} storage before committing the receipt`, async () => {
     const h = receiptHarness(), useCase = h.useCase as any;
@@ -8802,4 +8968,2823 @@ it('keeps the bound turn grant after zero-model period routing and after origina
 it('binds the read clarification marker to the waiting question content proof', () => {
   const question = { text: 'สรุปค่าใช้จ่าย', question: 'ปีไหนคะ' };
   assert.notEqual(lineClarificationContentHash(question), lineClarificationContentHash({ ...question, reasonCode: 'READ_FILTER_NOT_UNDERSTOOD' } as any));
+});
+
+// Owner's production transcript, 2026-10-15. The real draft use case keeps its CAS/owner guards;
+// only persistence and the two model boundaries are doubled.
+describe('Round 1A LINE text expense continuity', () => {
+  it('replays all four turns with one draft, grounded money/date, category update and four replies (A1–A4)', async () => {
+    const { prisma, updates } = makePrisma();
+    const categories = [{ ...TH_SME_EXPENSE_CATEGORIES_V1[0], id: 'cat-service', name: 'ค่าบริการ', companyId: 'company-1', status: 'ACTIVE' }] as any;
+    const expense = savedMediaFixture('service-draft');
+    let captures = 0;
+    const repo = {
+      listLineExpenseDraftContinuationRows: async () => expense.sourceChannelMetadataJson.lineExpenseDraftContinuation ? [expense] : [],
+      findByIdWithRelations: async (_company: string, id: string) => id === expense.id ? expense : null,
+      listCategories: async () => categories, listRecentLineCaptures: async () => [],
+    } as any;
+    const draft = new LineExpenseDraftConversationUseCase(repo, { execute: async (ctx: any, id: string, input: any, options: any) => {
+      assert.equal(ctx.companyId, expense.companyId); assert.equal(ctx.userId, expense.createdByUserId);
+      assert.equal(id, expense.id); assert.equal(input.expectedUpdatedAt, expense.updatedAt.toISOString());
+      expense.sourceChannelMetadataJson = options.lineDraftCollection.sourceChannelMetadataJson;
+      expense.updatedAt = options.lineDraftCollection.nextUpdatedAt;
+      if (input.lines) expense.lines = input.lines.map((line: any, index: number) => ({ ...line, id: `line-${index}`, lineTotalAmount: '500' }));
+      return structuredClone(expense);
+    } } as any);
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.receipt.line_upload'],
+      config: { lineExpenseDraftConversationEnabled: true }, expenseRepo: repo, expenseDraftConversation: draft,
+      intakeRouteFn: () => captures === 0 ? {"status":"ROUTED","intent":"EXPENSE_DOCUMENT_CAPTURE","language":"th","confidence":0.93,"captureHints":{"sourceDocumentType":"EXPENSE_NOTE_TEXT","sourceDocumentLanguage":"th","vendorName":"อินฟลู","description":"ค่าใช้จ่าย อินฟลู","expenseDate":"2026-10-10","amount":"500","vatMode":"NEEDS_REVIEW","confidence":0.88,"missingFields":["businessPurpose","vatMode"]},"semanticOutcome":"BUSINESS_EXPENSE","fundingSource":"COMPANY_PAID","semanticSubrequests":[{"index":0,"kind":"write","goal":"บันทึกค่าใช้จ่าย อินฟลู 500 บาท วันที่ 10 ตุลาคม 2569","requiredEvidence":[],"requestedFilters":{},"writeIntent":"EXPENSE_DOCUMENT_CAPTURE","dependsOn":[],"evidenceRefs":[{"partId":"part-0","startUtf16":0,"endUtf16":53,"rawSha256":"3d9cf8292aa61a3ac0a030c4c68390a2d4e07fb47cff82ea82f631ef9f9b07e9"}]}],"usage":[{"tag":"line.intake-route","modelId":"global.anthropic.claude-sonnet-4-6","ok":true,"inputTokens":3329,"outputTokens":247,"cacheReadInputTokens":19943,"cacheWriteInputTokens":0,"durationMs":5990,"usageBasis":"PROVIDER_REPORTED","invocationKey":"company-a#81d312a41abb205a470b48b0319c497fa261a8567edc8ab4864a64040c4a9594#provider-v2#0"}]}
+        : { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      aiGatewayFn: () => ({ ...LEDGER_TURN_RESPONSE, replyText: 'น้องยังอยู่ค่ะ พิมพ์ข้อมูลที่ต้องการแก้ต่อได้เลยค่ะ' }),
+    });
+    (h.useCase as any).captureExpenseNote = { execute: async (ctx: any, input: any) => {
+      captures++;
+      assert.equal(input.semanticBusinessExpenseConfirmed, true, 'BUSINESS_EXPENSE is independent of reimbursement mode');
+      const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'service-flow', companyId: ctx.companyId, userId: ctx.userId,
+        expenseId: expense.id, chatKeyHash: input.chatKeyHash, targetRevision: expense.updatedAt.toISOString(),
+        provisionalExpenseDate: '2026-10-15', messageText: input.messageText, hints: input.captureHints, categories });
+      expense.sourceChannelMetadataJson.lineExpenseDraftContinuation = state;
+      expense.expenseDate = new Date(state.header.expenseDate!);
+      expense.vendorNameSnapshot = state.header.vendorName;
+      expense.lines = materializedLineExpenseDraftItems(state).map(line => ({ ...line, id: 'line-0', lineTotalAmount: '500' }));
+      return { expense: structuredClone(expense), insertedAmount: '500', categoryName: null,
+        replyTexts: [formatLineExpenseDraftReply({ state, categories })] };
+    } };
+    const transcript = ['สร้างค่าใช้จ่ายให้ อินฟลู 500 บาท วันที่ 10 ตุลา 2569',
+      'วันที่ 10 ตุลา 2569 จำนวน 1 คน ราคา 500', 'เป็นค่าบริการ', 'อ่าว ทำไมเงียบ'];
+    for (const [index, messageText] of transcript.entries()) {
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `r1a-turn-${index}`, messageText });
+      assert.equal(h.sentMessageBatches.length, index + 1, `turn ${index + 1} answers once`);
+      const state = expense.sourceChannelMetadataJson.lineExpenseDraftContinuation;
+      assert.equal(state.expenseId, 'service-draft'); assert.equal(state.header.expenseDate, '2026-10-10');
+      assert.equal(state.items.length, 1); assert.equal(state.items[0].description, 'ค่าใช้จ่าย อินฟลู');
+      assert.equal(expense.lines[0].quantity, '1'); assert.equal(expense.lines[0].unitPrice, '500');
+      if (index === 0) assert.deepEqual(state.unresolvedQuestions.map((question: any) => question.id), ['I01-CATEGORY']);
+    }
+    assert.equal(captures, 1);
+    assert.equal(h.intakeRequests.length, 2, 'plain answers bypass new-capture routing');
+    assert.equal(expense.sourceChannelMetadataJson.lineExpenseDraftContinuation.items[0].expenseCategoryId, 'cat-service');
+    assert.doesNotMatch(JSON.stringify(h.sentMessageBatches), /ยังไม่สร้างรายการนะคะ|ข้อมูลต้นทางเปลี่ยน|D-DATE|I01-/u);
+    assert.ok(!updates.some((update: any) => update.data.errorCode === 'LINE_DELIVERY_SOURCE_CHANGED'));
+  });
+
+  it('continues the unique pending draft when a capture route has insufficient start facts (A4)', async () => {
+    const { prisma } = makePrisma();
+    const expense = savedMediaFixture('pending-draft');
+    const calls: any[] = [];
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.receipt.line_upload'],
+      config: { lineExpenseDraftConversationEnabled: true },
+      expenseRepo: { findByIdWithRelations: async () => expense, listCategories: async () => [], listRecentLineCaptures: async () => [] },
+      expenseDraftConversation: {
+        routeContexts: async () => [{ expenseId: expense.id, status: 'OPEN', questions: [{ id: 'I01-CATEGORY', prompt: 'หมวดใดคะ' }] }],
+        execute: async (_ctx: any, input: any) => { calls.push(input); return { handled: input.messageText !== 'ตอบไม่ชัด', status: 'UPDATED', replyTexts: ['บันทึกคำตอบในร่างเดิมแล้วค่ะ'], acceptedFields: [],
+          source: { records: [{ id: expense.id, updatedAt: expense.updatedAt }], categories: [] } }; },
+      }, intakeRouteFn: () => ({ ...ROUTED_EXPENSE_DOCUMENT, captureHints: { amount: '500', confidence: 0.9 } }),
+    });
+    (h.useCase as any).captureExpenseNote = { execute: () => assert.fail('must not create another draft') };
+    await h.useCase.execute({ ...BASE_EVENT, messageText: '500 บาท' });
+    assert.equal(calls.length, 1); assert.equal(calls[0].captureHints.targetExpenseId, expense.id);
+    assert.match(JSON.stringify(h.sentMessages), /ร่างเดิม/);
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'r1a-reask', messageText: 'ตอบไม่ชัด' });
+    assert.equal(calls.length, 3);
+    assert.equal(calls[2].messageText, 'ต่อ', 'an unrecognized answer re-asks the existing draft questions');
+    assert.equal(h.sentMessageBatches.length, 2);
+  });
+
+  it('saves and reauthorizes waiting-question proofs in a v2 webhook plan (A5)', async () => {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+    const flow = h.useCase as any, event = { ...BASE_EVENT, webhookEventId: 'r1a-waiting-plan' };
+    const item = questionFixture({ id: 'q-1', text: 'ค่าบริการ', question: 'หมวดใดคะ', entry: {} }, ['line.ai.query']);
+    const source = JSON.parse(item.entry.sourceContext);
+    const ctx = { companyId: 'company-1', userId: 'user-1', permissions: ['line.ai.query'], scopes: {} };
+    flow.deliveryAccess.set(event, { userId: ctx.userId, companyId: ctx.companyId, membershipId: 'mem-1', fingerprint: source.fingerprint });
+    flow.boundConversations.set(event, { id: 'line-v2:conversation', epoch: 1 });
+    flow.deliveryWaitingSources.set(event, { context: ctx, items: [item] });
+    flow.contextV2 = { load: async () => ({ row: { id: 'line-v2:conversation', lifecycleEpoch: 1 } }) };
+    prisma.client.lineWebhookEventLog.findUnique = async () => ({ createdAt: new Date() });
+    let savedPlan: any;
+    flow.deliveryPlans = { savePlan: async (_owner: any, plan: any) => { savedPlan = structuredClone(plan); return { id: plan.planId }; } };
+    flow.replayDeliveryPlan = async () => {
+      assert.equal(await flow.verifyWebhookPlan(savedPlan, event), true);
+      return 'ok';
+    };
+    assert.equal(await flow.sendMessagesV2(event, [{ type: 'text', text: 'รับคำตอบแล้วค่ะ' }]), 'ok');
+    assert.equal(savedPlan.authorization.proofs[0].kind, 'CLARIFICATION');
+    assert.equal(savedPlan.authorization.proofs[0].items[0].id, item.id);
+    savedPlan.authorization.proofs[0].items[0].question = 'เปลี่ยนคำถาม';
+    assert.equal(await flow.verifyWebhookPlan(savedPlan, event), false, 'replay cannot drop waiting-source validation');
+    flow.deliveryWaitingSources.set(event, { context: ctx, items: savedPlan.authorization.proofs[0].items });
+    assert.equal(await flow.webhookPlanAuthorization(event, new Date(Date.now() + 60_000).toISOString()), null, 'invalid waiting sources fail closed');
+  });
+
+  it('ignores status/questions in clarification snapshots, checks revisions, and routes fresh text after dropping stale work (A6)', async () => {
+    const { prisma, updates } = makePrisma();
+    const permissions = ['line.ai.query', 'expense.receipt.line_upload'];
+    const old = { expenseId: 'draft-1', revision: '2026-10-15T00:00:00.000Z', status: 'OPEN', questions: [{ id: 'D-DATE', prompt: 'วันไหนคะ' }] };
+    const item = questionFixture({ id: 'stale-q', text: 'เรื่องเก่า', question: 'วันไหนคะ', entry: { id: 'stale-q', userId: 'user-1' } }, permissions,
+      { draftRouting: JSON.stringify([old]) });
+    const h = makeLedgerUseCase(prisma, { permissions, openWaiting: [item], config: { lineExpenseDraftConversationEnabled: true }, aiGatewayFn: () => LEDGER_TURN_RESPONSE });
+    const flow = h.useCase as any;
+    let current = { ...old, status: 'PAUSED_INTERRUPTED', questions: [] };
+    flow.expenseDraftConversation = { routeContexts: async () => [current], answersOpenDraft: async () => false };
+    const event = { ...BASE_EVENT, webhookEventId: 'r1a-stale', messageText: 'อ่าว ทำไมเงียบ' };
+    flow.deliveryAccess.set(event, { userId: 'user-1', companyId: 'company-1', fingerprint: JSON.parse(item.entry.sourceContext).fingerprint });
+    const ctx = { userId: 'user-1', companyId: 'company-1' };
+    assert.equal(await flow.clarificationSourceCurrent(event, ctx, item), true);
+    current = { ...current, revision: '2026-10-15T00:00:01.000Z' };
+    assert.equal(await flow.clarificationSourceCurrent(event, ctx, item), false);
+    await h.useCase.execute(event);
+    assert.equal(h.intakeRequests.length, 1); assert.equal(h.aiGatewayRequests.length, 1);
+    assert.equal(h.intakeRequests[0].openClarifications, undefined);
+    assert.ok(h.ledgerCalls.acks.some(ack => ack.id === 'stale-q'));
+    assert.doesNotMatch(JSON.stringify(h.sentMessages), /ข้อมูลต้นทางเปลี่ยน/u);
+    assert.ok(!updates.some((update: any) => update.data.errorCode === 'LINE_DELIVERY_SOURCE_CHANGED'));
+  });
+
+  it('refuses stale field answers, choices and mutation questions before routing (controller provenance regression)', async () => {
+    for (const messageText of ['1 วันที่ 14 กันยายน 2569', '1 ได้ไหมคะ', 'เป็นค่าบริการ', 'แก้ยอดเป็น 600 ได้ไหมคะ']) {
+      const { prisma, markerWrites } = makePrisma();
+      const permissions = ['line.ai.query', 'expense.receipt.line_upload'];
+      const item = questionFixture({ id: 'stale-q', text: 'ร่างเดิม', question: 'หมวดใดคะ', entry: { id: 'stale-q', userId: 'user-1' } },
+        permissions, { draftRouting: JSON.stringify([{ expenseId: 'draft-1', revision: 'old' }]) });
+      const h = makeLedgerUseCase(prisma, { permissions, openWaiting: [item], config: { lineExpenseDraftConversationEnabled: true },
+        intakeRouteFn: () => assert.fail('a stale answer cannot become a fresh route'),
+        aiGatewayFn: () => assert.fail('a stale answer cannot reach free compose') });
+      (h.useCase as any).expenseDraftConversation = {
+        routeContexts: async () => [{ expenseId: 'draft-1', revision: 'new', status: 'OPEN' }],
+        execute: async () => assert.fail('a stale answer cannot update the current draft'),
+      };
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `stale-answer-${messageText}`, messageText });
+      assert.ok(h.ledgerCalls.acks.some(ack => ack.id === 'stale-q' && ack.outcome === 'acked'), messageText);
+      assert.ok(markerWrites.some(row => row.payloadJson.entryId === 'stale-q'
+        && row.payloadJson.outcome === 'clarification_source_changed'), 'retirement commits before refusal');
+      assert.equal(h.intakeRequests.length, 0);
+      assert.match(JSON.stringify(h.sentMessages), /ข้อมูลต้นทางเปลี่ยน/u);
+    }
+  });
+
+  it('snapshots draft revisions after parking the draft, before saving a new question (A6)', async () => {
+    const { prisma } = makePrisma();
+    const h = makeLedgerUseCase(prisma, { permissions: ['line.ai.query', 'expense.receipt.line_upload'],
+      config: { lineExpenseDraftConversationEnabled: true },
+      aiGatewayFn: () => ({ ...LEDGER_TURN_RESPONSE, coverage: [{ request: 'คำถามใหม่', verdict: 'needs_user', question: 'ต้องการช่วงไหนคะ' }] }),
+    });
+    const flow = h.useCase as any;
+    let current = { expenseId: 'draft-1', revision: '2026-10-15T00:00:00.000Z', status: 'OPEN', questions: [{ id: 'D-DATE', prompt: 'วันไหนคะ' }] };
+    flow.expenseDraftConversation = { routeContexts: async () => [current], answersOpenDraft: async () => false,
+      interruptOpen: async () => { current = { ...current, status: 'PAUSED_INTERRUPTED', revision: '2026-10-15T00:00:01.000Z' }; } };
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'r1a-after-interrupt', messageText: 'ถามเรื่องอื่นค่ะ' });
+    const source = JSON.parse(h.ledgerCalls.subs[0].items[0].sourceContext);
+    assert.deepEqual(JSON.parse(source.draftRouting), [{ expenseId: current.expenseId, revision: current.revision }]);
+  });
+});
+
+describe('A5 safety net tracks successful sends before execute finally', () => {
+  for (const path of ['deliverReply', 'deliverRequiredMessages', 'deliverMessages', 'sendMessages', 'sendMessagesV2', 'delivery-control'] as const) {
+    it(`sends exactly once through ${path} without a persisted outcome`, async () => {
+      const { prisma, turnOutcomeWrites } = makePrisma();
+      const h = makeUseCase(prisma);
+      const flow = h.useCase as any;
+      flow.mayDeliverBusinessReply = async () => true;
+      flow.executeText = async (event: any) => {
+        flow.deliveryAccess.set(event, {});
+        const messages = [{ type: 'text', text: 'รับคำตอบแล้วค่ะ' }];
+        if (path === 'deliverReply') await flow.deliverReply(event, messages[0]!.text);
+        else if (path === 'delivery-control') {
+          prisma.client.lineDeliveryPlan.findUnique = async () => null;
+          event.answerDeliveryControl = { planId: 'missing-plan', action: 'continue' };
+          await flow.handleAnswerDeliveryControl(event);
+        } else if (path === 'sendMessagesV2') {
+          // V2 replay can send successfully while no terminal-outcome row is available to finally.
+          prisma.client.lineTurnOutcome.findUnique = async (query: any) => query.include
+            ? { presentationKind: 'delivery_plan_v2', deliveryPlan: { id: 'plan' } } : null;
+          flow.replayDeliveryPlan = async () => {
+            await flow.lineReply.sendReply(event.replyToken, messages);
+            return 'ok';
+          };
+          await flow.sendMessagesV2(event, messages);
+        } else await flow[path](event, messages);
+        assert.equal(flow.deliveredTextTurns.has(event), true, 'the send boundary records acceptance');
+      };
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `a5-once-${path}` });
+      assert.equal(h.sentMessageBatches.length, 1);
+      assert.equal(h.pushes.length, 0);
+      assert.equal(turnOutcomeWrites.length, 0);
+      assert.doesNotMatch(JSON.stringify(h.sentMessages), /เกิดข้อผิดพลาดชั่วคราว/);
+    });
+  }
+
+  it('records a successful push even if later bookkeeping fails', async () => {
+    const { prisma } = makePrisma();
+    let replyAttempts = 0;
+    const h = makeUseCase(prisma, { sendReplyFn: async () => { replyAttempts++; return 'failed_token'; } });
+    const flow = h.useCase as any;
+    flow.mayDeliverBusinessReply = async () => true;
+    flow.executeText = async (event: any) => {
+      flow.deliveryAccess.set(event, {});
+      await flow.attemptDelivery(event, [{ type: 'text', text: 'รับคำตอบแล้วค่ะ' }]);
+      throw new Error('bookkeeping failed after send');
+    };
+    await assert.rejects(h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'a5-push-once' }), /bookkeeping failed/);
+    assert.equal(replyAttempts, 1);
+    assert.equal(h.pushes.length, 1);
+  });
+
+  it('sends exactly one plain fallback when the admitted text turn sent nothing', async () => {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma);
+    const flow = h.useCase as any;
+    flow.executeText = async (event: any) => { flow.deliveryAccess.set(event, {}); };
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'a5-silent-once' });
+    assert.equal(h.sentMessageBatches.length, 1);
+    assert.equal(h.pushes.length, 0);
+    assert.equal(h.sentMessages[0].type, 'text');
+    assert.match(h.sentMessages[0].text, /เกิดข้อผิดพลาดชั่วคราว/);
+  });
+});
+
+describe('LINE evidence association precedes text capture', () => {
+  it('handles the real owner statement without calling the text-capture router', async () => {
+    const base = makePrisma();
+    const h = makeUseCase(base.prisma, { permissions: ['line.ai.query', 'expense.receipt.upload'] });
+    let links = 0;
+    (h.useCase as any).paymentEvidence = { recent: async (ctx: any, chat: string) => {
+      assert.equal(ctx.companyId, 'company-1'); assert.ok(chat); links += 1;
+      return { kind: 'LINKED', slipId: 'slip', receiptId: 'receipt', operationId: 'operation' };
+    } };
+    await h.useCase.execute({ ...BASE_EVENT, messageText: 'สลิปโอนเงินเป็นหลักฐานของค่าใช้จ่ายเมื่อกี้' });
+    assert.equal(links, 1); assert.equal(h.getAiGatewayCalled(), false); assert.equal(h.intakeRequests.length, 0);
+    assert.match(h.replies.join(' '), /แนบสลิปเป็นหลักฐานการจ่ายของใบเสร็จแล้วค่ะ/);
+  });
+});
+
+it('grounds show-that-item in own chat captures even without a prior read/AI turn, and excludes group contexts', async () => {
+  const base = makePrisma({ recentTurns: [] });
+  const queries: any[] = [];
+  const permissions = ['expense.receipt.upload'];
+  const h = makeUseCase(base.prisma, { permissions, branchIds: ['branch-1'], expenseRepo: {
+    listRecentLineCaptures: async (input: any) => { queries.push(input); return [{ id: 'own-chat-draft' }]; },
+  } });
+  const context = await (h.useCase as any).loadConversationContext('company-1', 'user-1', { ...BASE_EVENT });
+  assert.deepEqual(context.recentCapturedExpenses, [{ id: 'own-chat-draft' }]);
+  assert.equal(queries[0].companyId, 'company-1'); assert.equal(queries[0].createdByUserId, 'user-1');
+  assert.ok(queries[0].chatKeyHash); assert.deepEqual(queries[0].scopes.branchIds, ['branch-1']);
+  permissions.splice(0);
+  assert.equal(await (h.useCase as any).loadConversationContext('company-1', 'user-1', { ...BASE_EVENT }), undefined);
+  assert.equal(queries.length, 1, 'revoked capture/correction authority prevents even an ID lookup');
+  assert.equal(await (h.useCase as any).loadConversationContext('company-1', 'user-1', { ...BASE_EVENT, pushTargetId: 'group' }), undefined);
+  assert.equal(queries.length, 1);
+});
+
+// Round 2 A: keep apply on the deterministic, private postback path.
+describe('Round 2 A expense action postback', () => {
+  const actor: any = { requestId: 'press-request', authSubject: 'actor', userId: 'actor', companyId: 'company', membershipId: 'membership',
+    roles: ['OWNER'], permissions: ['expense.confirm'], scopes: { branchIds: ['branch'] }, authProvider: 'line' };
+  const token = '550e8400-e29b-41d4-a716-446655440000.' + 'a'.repeat(43);
+  function actionPostbackHarness() {
+    const flow: any = Object.create(ProcessLineWebhookUseCase.prototype), calls: any[] = [], replies: any[] = [];
+    let plan: any = null;
+    flow.prisma = { client: { lineDeliveryPlan: { findFirst: async () => plan } } };
+    flow.deliveryExpenseActions = new WeakMap();
+    flow.expenseActions = { apply: async (...args: any[]) => { calls.push(args); return { status: 'applied', reply: 'ยืนยันแล้วค่ะ',
+      preview: { previewId: token.split('.')[0], token, action: 'CONFIRM', record: { vendorName: 'ร้านทดสอบ', amount: '100.00', currency: 'THB', date: '2026-10-14', status: 'ยืนยันแล้ว', nextStatus: 'ยืนยันแล้ว' } } }; } };
+    flow.deliverRequiredMessages = async (_e: any, messages: any) => { replies.push(...messages); };
+    flow.deliverReply = async (_e: any, text: string) => { replies.push({ type: 'text', text }); };
+    flow.updateEventLog = async () => {};
+    const event: any = { ...BASE_EVENT, channelKind: 'USER', expenseActionControl: { action: 'expense_action_confirm', token } };
+    return { flow, calls, replies, event, setPlan: (value: any) => { plan = value; } };
+  }
+  it('applies with the exact resolved LINE RequestContext and returns the updated status card', async () => {
+    const h = actionPostbackHarness();
+    await h.flow.handleExpenseActionPostback(h.event, actor, new Set(['expenses']));
+    assert.equal(h.calls.length, 1); assert.equal(h.calls[0][0], actor);
+    assert.equal(h.calls[0][1], chatKeyHashOf(h.event)); assert.deepEqual(h.calls[0][2], h.event.expenseActionControl);
+    assert.match(h.replies[0].canonicalText, /ยืนยันแล้วค่ะ/u);
+    assert.equal(h.replies[0].contents.footer, undefined, 'completed cards offer no second mutation button');
+  });
+  it('H2: a refused payment gives the in-chat confirm next step without another mutation', async () => {
+    const h = actionPostbackHarness();
+    h.flow.expenseActions.apply = async () => ({ status: 'blocked', reply: 'ต้องยืนยันรายการก่อนบันทึกจ่ายค่ะ' });
+    await h.flow.handleExpenseActionPostback(h.event, actor, new Set(['expenses']));
+    assert.equal(h.replies[0].text, 'ต้องยืนยันรายการก่อนบันทึกจ่ายค่ะ');
+    assert.deepEqual(h.replies[0].quickReply.items[0].action, { type: 'message', label: 'ยืนยันรายการ', text: 'ยืนยันรายการนี้' });
+    assert.equal(h.flow.deliveryExpenseActions.get(h.event), undefined);
+  });
+  it('Y1: a refused step offers a button to the exact expense through its signed source', async () => {
+    const h = actionPostbackHarness(); h.flow.config = { webBaseUrl: 'https://app.example.com' };
+    h.flow.expenseActions.apply = async () => ({ status: 'blocked', reply: 'ให้ผู้ดูแลบัญชีเปิดงวดบัญชีที่ปิดอยู่ก่อนทำรายการค่ะ' });
+    h.flow.expenseActions.quoteRecords = async () => [{ tool: 'expense.get_detail', id: 'expense-this-card' }];
+    await h.flow.handleExpenseActionPostback(h.event, actor, new Set(['expenses']));
+    assert.match(h.replies[0].canonicalText, /เปิดงวดบัญชี/);
+    assert.match(JSON.stringify(h.replies[0]), /เปิดตรวจรายการ/);
+    assert.match(JSON.stringify(h.replies[0]), /https:\/\/app.example.com\/companies\/company\/expenses\/expense-this-card/);
+  });
+  it('refuses group/room and missing feature before reaching apply', async () => {
+    for (const channelKind of ['GROUP', 'ROOM']) {
+      const h = actionPostbackHarness(); h.event.channelKind = channelKind;
+      await h.flow.handleExpenseActionPostback(h.event, actor, new Set(['expenses']));
+      assert.equal(h.calls.length, 0); assert.match(h.replies[0].text, /แชตส่วนตัว/u);
+    }
+    const h = actionPostbackHarness();
+    await h.flow.handleExpenseActionPostback(h.event, actor, new Set());
+    assert.equal(h.calls.length, 0); assert.equal(h.replies[0].text, 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องนี้ค่ะ');
+  });
+  it('refuses an incompletely delivered or malformed confirm plan before applying', async () => {
+    for (const status of ['READY', 'UNKNOWN', 'ACCEPTED']) {
+      const h = actionPostbackHarness(); h.setPlan({ status, planJson: {} });
+      await h.flow.handleExpenseActionPostback(h.event, actor, null);
+      assert.equal(h.calls.length, 0); assert.match(h.replies[0].text, /อ่านรายละเอียด/u);
+    }
+  });
+  it('Round 3 opening an approval notice produces a confirmable card with a pending delivery proof', async () => {
+    const h = actionPostbackHarness(); h.event.expenseActionControl.action = 'expense_action_approve';
+    const preview = { previewId: token.split('.')[0], token, action: 'REIMBURSEMENT_APPROVE', expiresAt: new Date(Date.now() + 60_000).toISOString(), summary: 'กรุณาตรวจรายละเอียดแล้วกดอนุมัติค่ะ', record: { vendorName: 'ค่าเดินทาง', amount: '100.00', currency: 'THB', date: '2026-10-14', status: 'รออนุมัติ', nextStatus: 'อนุมัติแล้ว' } };
+    h.flow.expenseActions.apply = async () => ({ status: 'prepared', reply: preview.summary, preview });
+    await h.flow.handleExpenseActionPostback(h.event, actor, new Set(['expenses']));
+    assert.equal(h.flow.deliveryExpenseActions.get(h.event).applied, false);
+    assert.equal(h.replies[0].contents.footer.contents[0].action.label, 'อนุมัติ');
+  });
+
+});
+
+
+it('F2: a real-model draft tool result without a preview delivers its answer through V2', async () => {
+  const { prisma, updates } = makePrisma();
+  prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+  const event = { ...BASE_EVENT, webhookEventId: 'f2-no-preview', messageText: 'เป็นค่าบริการ' };
+  const response = {"requestId":"0881abb8-c31e-4b7c-8f99-10edd972ebe4","replyText":"ยังต้องตรวจสอบข้อมูลหรือยืนยันข้อเสนอร่างส่วนนี้ กรุณาตรวจรายละเอียดที่ระบบแสดง ยังไม่ได้บันทึกรายการ","sourceRefs":[{"label":"ข้อมูลค่าใช้จ่าย","module":"expenses","entityType":"expense_query","asOf":"2026-10-15T10:59:11.940Z","permissionChecked":true,"webPath":"/companies/company-a/expenses"}],"sourceLabels":["ข้อมูลค่าใช้จ่าย"],"webLinks":[{"label":"ข้อมูลค่าใช้จ่าย","path":"/companies/company-a/expenses"}],"intent":"unknown","agent":"general","refused":false,"toolsInvoked":["expense.draft.set_line"],"toolCalls":[{"name":"expense.draft.set_line","status":"ok","durationMs":30,"errorCode":"EXPENSE_NOT_FOUND"}],"durationMs":10130,"semanticCoverage":[{"index":0,"status":"needs_user","reasonCode":"DRAFT_INPUT_REQUIRED","question":"ยังต้องตรวจสอบข้อมูลหรือยืนยันข้อเสนอร่างส่วนนี้ กรุณาตรวจรายละเอียดที่ระบบแสดง ยังไม่ได้บันทึกรายการ","sourceRefIds":["expenses:expense_query:summary"]}],"modelLineage":[{"provider":"bedrock","modelId":"global.anthropic.claude-sonnet-4-6","region":"ap-southeast-1","purpose":"employee_line_assistant"}],"usage":[{"tag":"line.loop","modelId":"global.anthropic.claude-sonnet-4-6","ok":true,"inputTokens":5416,"outputTokens":52,"cacheReadInputTokens":1428,"cacheWriteInputTokens":0,"durationMs":3635,"usageBasis":"PROVIDER_REPORTED","invocationKey":"company-a#620d80b5b1ace200ad509d649564a811ce3006ea084c18caa63331682893ff28#provider-v2#1"},{"tag":"line.compose","modelId":"global.anthropic.claude-sonnet-4-6","ok":true,"inputTokens":1415,"outputTokens":297,"cacheReadInputTokens":3364,"cacheWriteInputTokens":0,"durationMs":6361,"usageBasis":"PROVIDER_REPORTED","invocationKey":"company-a#620d80b5b1ace200ad509d649564a811ce3006ea084c18caa63331682893ff28#provider-v2#2"}]};
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.update'],
+    config: { lineAiDeliveryPlanV2Enabled: true, lineAiTerminalOutcomeReplayEnabled: true },
+    draftUpdate: { enabled: true, pendingPreview: async () => null },
+    intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }),
+    aiGatewayFn: () => {
+      flow.boundConversations.set(event, { id: 'line-v2:conversation', epoch: 1,
+        owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1' } });
+      prisma.client.lineWebhookEventLog.findUnique = async () => ({ createdAt: new Date(), companyId: 'company-1' });
+      return response;
+    },
+  });
+  const flow = h.useCase as any;
+  // Exercise the V2 delivery boundary with the exact gateway response; intake routing is covered separately.
+  flow.bindConversation = async () => undefined;
+  flow.contextV2 = { load: async () => ({ row: { id: 'line-v2:conversation', lifecycleEpoch: 1 } }),
+    createTurn: async (_owner: any, _epoch: number, data: any) => prisma.client.aiTurn.create({ data }),
+    projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }) };
+  let savedPlan: any;
+  flow.deliveryPlans = { savePlan: async (_owner: any, plan: any) => { savedPlan = structuredClone(plan); return { id: plan.planId }; } };
+  flow.replayDeliveryPlan = async (_id: string, event: any) => {
+    assert.equal(await flow.verifyWebhookPlan(savedPlan, event), true);
+    assert.ok(!savedPlan.authorization.proofs.some((proof: any) => proof.kind === 'EXPENSE_EDIT_PREVIEW'));
+    return flow.sendTrackedReply(event, [{ type: 'text', text: savedPlan.answer.items[0].text }]);
+  };
+  await h.useCase.execute(event);
+  assert.equal(flow.deliveryDraftPreviews.has(event), false);
+  assert.equal(h.sentMessageBatches.length, 1);
+  assert.match(JSON.stringify(h.sentMessages), /ยังไม่ได้บันทึกรายการ/u);
+  assert.doesNotMatch(JSON.stringify(h.sentMessages), /เกิดข้อผิดพลาดชั่วคราว/u);
+  assert.ok(!updates.some((update: any) => update.data.errorCode === 'LINE_DELIVERY_V2_PENDING'));
+});
+
+it('F4: paired show-that-item formats the current record and altText in Thai', async () => {
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma);
+  const flow = h.useCase as any;
+  const expense = { ...savedMediaFixture('receipt'), vendorNameSnapshot: 'อินฟลู', currency: 'THB', grandTotalAmount: '500.8',
+    expenseDate: new Date('2026-10-13T00:00:00Z'), status: 'DRAFT' };
+  const ctx = { companyId: 'company-1', userId: 'user-1', permissions: ['expense.read'], scopes: { branchIds: ['branch-1'] } };
+  flow.getLinkedExpense = { execute: async (actual: any, id: string) => {
+    assert.equal(actual, ctx); assert.equal(id, expense.id); return expense;
+  } };
+  const messages: any[] = [];
+  flow.deliverRequiredMessages = async (_event: any, batch: any[]) => messages.push(...batch);
+  await flow.deliverPaymentEvidence({ ...BASE_EVENT, messageText: 'แสดงรายการที่จับคู่แล้ว' }, ctx,
+    { kind: 'LINKED', slipId: 'slip', receiptId: 'receipt', operationId: 'operation' });
+  assert.equal(messages.length, 2);
+  const card = messages[1];
+  for (const text of [JSON.stringify(card.contents.body), card.altText]) {
+    assert.match(text, /13 ต.ค. 2569/u); assert.match(text, /500.80 บาท/u); assert.match(text, /ร่าง/u);
+    assert.doesNotMatch(text, /2026-10-13|THB|DRAFT/u);
+  }
+});
+// Round 4: the purchase lane resolves the caller before asking billing to prepare or create Checkout.
+describe('Round 4 private LINE purchase dispatch', () => {
+  function purchaseDispatchHarness() {
+    const flow: any = Object.create(ProcessLineWebhookUseCase.prototype), calls: any[] = [], replies: any[] = [], queries: any[] = [];
+    let plan: any = null, current: string | null = 'company', companies = [{ companyId: 'company', company: { name: 'ร้าน', status: 'DISABLED', planTerm: { termDisabledAt: new Date() } } }];
+    const access = { membershipId: 'membership', roles: ['CUSTOM'], permissions: ['company.plan.manage'], scopes: { branchIds: ['branch'] } };
+    flow.prisma = { client: { lineCompanyContext: { findUnique: async () => ({ companyId: current }) }, companyFeatureEntitlement: { findMany: async () => [] },
+      companyMembership: { findMany: async (query: any) => { queries.push(query); return companies; } }, lineDeliveryPlan: { findFirst: async () => plan } } };
+    flow.permissionResolver = { resolveAccess: async (...args: any[]) => { calls.push(['access', ...args]); return access; } };
+    flow.deliveryPackagePurchases = new WeakMap(); flow.deliveryAccess = new WeakMap();
+    flow.config = { webBaseUrl: 'https://app.example.com' };
+    flow.bindConversation = async () => {}; flow.refusePendingLegalAcceptance = async () => false;
+    flow.packagePurchases = { accepts: async () => true, prepare: async (...args: any[]) => { calls.push(['prepare', ...args]); return { reply: 'จ่ายด้วยบัตรหรือพร้อมเพย์คะ' }; },
+      apply: async (...args: any[]) => { calls.push(['apply', ...args]); return { reply: 'กดจ่ายได้เลยค่ะ' }; } };
+    flow.deliverRequiredMessages = async (_event: any, messages: any[]) => replies.push(...messages);
+    flow.deliverReply = async (_event: any, text: string) => replies.push({ type: 'text', text }); flow.updateEventLog = async () => {};
+    const event: any = { ...BASE_EVENT, channelKind: 'USER', messageText: 'ซื้อแพ็กเกจ 999 ให้หน่อย' };
+    return { flow, calls, replies, event, queries, access, setPlan: (value: any) => { plan = value; },
+      twoCompanies: () => { current = null; companies = [...companies, { ...companies[0], companyId: 'other' }]; } };
+  }
+  it('routes an expired shop purchase before the ordinary active-company/AI gate with the resolved LINE ctx', async () => {
+    const h = purchaseDispatchHarness();
+    assert.equal(await h.flow.handlePackagePurchase(h.event, 'actor', 'request'), true);
+    const call = h.calls.find(c => c[0] === 'prepare');
+    assert.deepEqual(call[1], { requestId: 'request', authSubject: 'actor', authProvider: 'line', userId: 'actor', companyId: 'company', ...h.access });
+    assert.equal(call[2], chatKeyHashOf(h.event)); assert.equal(call[3], h.event.messageText);
+    assert.ok(h.queries[0].where.company.OR.some((row: any) => row.status === 'DISABLED'));
+    assert.match(h.replies[0].text, /บัตรหรือพร้อมเพย์คะ/u);
+  });
+  it('never chooses among two companies or reaches billing from group, room or redirected recipients', async () => {
+    const multiple = purchaseDispatchHarness(); multiple.twoCompanies(); await multiple.flow.handlePackagePurchase(multiple.event, 'actor', 'request');
+    assert.equal(multiple.calls.length, 0); assert.match(multiple.replies.at(-1).text, /เลือกร้าน/u);
+    for (const event of [{ channelKind: 'GROUP' }, { channelKind: 'ROOM' }, { pushTargetId: 'other-recipient' }]) {
+      const h = purchaseDispatchHarness(); Object.assign(h.event, event); await h.flow.handlePackagePurchase(h.event, 'actor', 'request');
+      assert.equal(h.calls.length, 0); assert.match(h.replies[0].text, /แชตส่วนตัว/u);
+    }
+  });
+  it('checks legal acceptance and complete delivered confirmation before apply', async () => {
+    const legal = purchaseDispatchHarness(); legal.flow.refusePendingLegalAcceptance = async () => true;
+    await legal.flow.handlePackagePurchase(legal.event, 'actor', 'request'); assert.equal(legal.calls.some(c => c[0] === 'prepare'), false);
+    for (const status of ['READY', 'UNKNOWN', 'ACCEPTED']) {
+      const h = purchaseDispatchHarness(); h.event.packagePurchaseControl = { action: 'package_purchase_confirm', token: 'token' }; h.setPlan({ status, planJson: {} });
+      await h.flow.handlePackagePurchase(h.event, 'actor', 'request');
+      assert.equal(h.calls.some(c => c[0] === 'apply'), false); assert.match(h.replies[0].text, /อ่านรายละเอียด/u);
+    }
+    const h = purchaseDispatchHarness(); h.event.packagePurchaseControl = { action: 'package_purchase_confirm', token: 'token' };
+    await h.flow.handlePackagePurchase(h.event, 'actor', 'request');
+    const call = h.calls.find(c => c[0] === 'apply'); assert.equal(call[1].authProvider, 'line'); assert.equal(call[1].membershipId, 'membership'); assert.equal(call[3], h.event.packagePurchaseControl);
+  });
+});
+
+it('G3: exact live continuation route for ทำไมเงียบ reaches conversation without a draft card', async () => {
+  const route = {"status":"ROUTED","intent":"EXPENSE_DRAFT_CONTINUATION","language":"th","confidence":0.82,"captureHints":{"sourceDocumentType":"EXPENSE_NOTE_TEXT","description":"ค่าบริการ อินฟลู","expenseCategoryId":"category-a-service","targetExpenseId":"cmv9idt23002bu9k1dw3isbqi","items":[{"itemRef":"I01","sourceText":"เป็นค่าบริการ","description":"ค่าบริการ อินฟลู","accountingClass":"OPEX","itemBehavior":"SERVICE","confidence":0.82,"missingFields":[]}],"confidence":0.82,"missingFields":[]},"semanticOutcome":"BUSINESS_EXPENSE","fundingSource":"COMPANY_PAID","semanticSubrequests":[{"index":0,"kind":"write","goal":"ระบุประเภทรายการ I01 ว่าเป็นค่าบริการ สำหรับอินฟลู","requiredEvidence":[],"requestedFilters":{},"writeIntent":"EXPENSE_DOCUMENT_CAPTURE","dependsOn":[],"evidenceRefs":[{"partId":"part-0","startUtf16":0,"endUtf16":14,"rawSha256":"5dfb046d01e1b12740c2de6c00fbc6aa89acfb8ea0222c2e017414cd3d24c749"}]}],"usage":[{"tag":"line.intake-route","modelId":"global.anthropic.claude-sonnet-4-6","ok":true,"inputTokens":3874,"outputTokens":349,"cacheReadInputTokens":20595,"cacheWriteInputTokens":0,"durationMs":8920,"usageBasis":"PROVIDER_REPORTED","invocationKey":"company-a#47c551cfc06f5ef191f7fc685b27d55ba8042ede828e9d906e14bc0eed46fd42#provider-v2#0"}]};
+  const { prisma } = makePrisma();
+  const expense = savedMediaFixture(route.captureHints.targetExpenseId);
+  const categories = [{ ...TH_SME_EXPENSE_CATEGORIES_V1[0], id: 'category-a-service', name: 'ค่าบริการ', companyId: 'company-1', status: 'ACTIVE' }] as any;
+  expense.sourceChannelMetadataJson.lineExpenseDraftContinuation = buildInitialLineExpenseDraftContinuation({
+    workflowId: 'g3-live', companyId: expense.companyId, userId: expense.createdByUserId, expenseId: expense.id,
+    chatKeyHash: chatKeyHashOf(BASE_EVENT), targetRevision: expense.updatedAt.toISOString(), provisionalExpenseDate: '2026-10-15',
+    messageText: 'สร้างค่าใช้จ่ายให้ อินฟลู 500 บาท วันที่ 10 ตุลา 2569', categories,
+    hints: { confidence: 1, vendorName: 'อินฟลู', amount: '500' },
+  });
+  const repo = { listLineExpenseDraftContinuationRows: async () => [expense],
+    findByIdWithRelations: async (_company: string, id: string) => id === expense.id ? expense : null,
+    listCategories: async () => categories, listRecentLineCaptures: async () => [], } as any;
+  const draft = new LineExpenseDraftConversationUseCase(repo, { execute: () => assert.fail('no draft answer may be saved') } as any);
+  // Parking an unrelated conversation is separately covered; isolate answer handling here.
+  draft.interruptOpen = async () => undefined;
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.receipt.line_upload'],
+    config: { lineExpenseDraftConversationEnabled: true }, expenseRepo: repo, expenseDraftConversation: draft,
+    intakeRouteFn: () => route,
+    aiGatewayFn: (request: any) => {
+      assert.equal(request.intakeIntent, 'ADVISOR_CONVERSATION');
+      assert.deepEqual(request.semanticSubrequests.map((item: any) => ({ kind: item.kind, goal: item.goal })), [{ kind: 'general', goal: 'อ่าว ทำไมเงียบ' }]);
+      return { ...LEDGER_TURN_RESPONSE, replyText: 'ไม่ได้เงียบนะคะ มีอะไรให้ช่วยต่อไหมคะ?' };
+    },
+  });
+  await h.useCase.execute({ ...BASE_EVENT, messageText: 'อ่าว ทำไมเงียบ', webhookEventId: 'g3-live' });
+  assert.equal(h.aiGatewayRequests.length, 1);
+  assert.equal(h.sentMessageBatches.length, 1);
+  assert.match(JSON.stringify(h.sentMessages), /ไม่ได้เงียบนะคะ/u);
+  assert.doesNotMatch(JSON.stringify(h.sentMessages), /เก็บร่างค่าใช้จ่าย|ชื่อสินค้า\/บริการ/u);
+});
+
+it('Z1/Z4: park before preparing first-ask evidence buttons or a single confirmation/payment card', async () => {
+  for (const action of ['evidence', 'CONFIRM', 'RECORD_PAYMENT']) {
+    const { prisma } = makePrisma();
+    const order: string[] = [];
+    let draft = { expenseId: 'first-ask', status: 'OPEN', revision: '2026-10-15T00:00:00.000Z', questions: [] };
+    let preparedRevision: string | undefined;
+    const summary = 'กรุณาตรวจรายละเอียดแล้วกดยืนยันค่ะ';
+    const preview: any = { previewId: 'first-ask', token: 'first-ask.' + 'a'.repeat(43), action, summary,
+      expiresAt: new Date(Date.now() + 60000).toISOString(), record: { vendorName: 'ร้านทดสอบ', amount: '100', currency: 'THB',
+        date: '2026-10-15', status: 'รอตรวจ', nextStatus: 'ยืนยันแล้ว' } };
+    const choices = [{ label: 'ส่งรูปใบเสร็จ', text: 'ส่งรูปใบเสร็จ' }, { label: 'รอใบเสร็จ', text: 'รอใบเสร็จ' }];
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.review', 'expense.confirm', 'expense.receipt.line_upload'],
+      config: { lineExpenseDraftConversationEnabled: true },
+      aiGatewayFn: () => {
+        order.push('prepare'); preparedRevision = draft.revision;
+        return { ...LEDGER_TURN_RESPONSE, replyText: action === 'evidence' ? 'เลือกหลักฐานที่ใช้กับรายการนี้ได้เลยค่ะ' : summary,
+          toolsInvoked: ['expense.action.preview'], sourceRefs: [], sourceLabels: [], webLinks: [] };
+      },
+    });
+    const flow = h.useCase as any;
+    flow.expenseDraftConversation = { routeContexts: async () => [draft], answersOpenDraft: async () => false,
+      interruptOpen: async () => { order.push('interrupt'); draft = { ...draft, status: 'PAUSED_INTERRUPTED', revision: '2026-10-15T00:00:01.000Z' }; } };
+    flow.expenseActions = {
+      pending: async () => action !== 'evidence' && preparedRevision === draft.revision ? preview : null,
+      repairChoices: async () => action === 'evidence' && preparedRevision === draft.revision ? choices : null,
+    };
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `z1-first-${action}`, messageText: 'ยืนยันรายการนี้ให้หน่อย' });
+    assert.deepEqual(order, ['interrupt', 'prepare']);
+    assert.equal(h.sentMessageBatches.length, 1); assert.equal(h.sentMessageBatches[0]!.length, 1);
+    const message: any = h.sentMessageBatches[0]![0]!;
+    if (action === 'evidence') assert.deepEqual(message.quickReply.items.map((item: any) => item.action.text), choices.map(choice => choice.text));
+    else { assert.equal(message.type, 'flex'); assert.equal(message.altText, summary); assert.match(JSON.stringify(message), /expense_action_confirm/); }
+  }
+});
+
+it('Z4: choosing the sole missing category delivers the combined confirm card without an edit-confirm card', async () => {
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.confirm', 'expense.update'] });
+  const preview: any = { previewId: 'category-confirm', token: 'category-confirm.' + 'a'.repeat(43), action: 'CONFIRM',
+    expiresAt: new Date(Date.now() + 60000).toISOString(), summary: 'กรุณาตรวจรายละเอียดแล้วกดยืนยันค่ะ', details: ['หมวดค่าใช้จ่าย: ค่าบริการ'],
+    record: { vendorName: 'ร้านทดสอบ', amount: '100', currency: 'THB', date: '2026-10-15', status: 'รอตรวจ', nextStatus: 'ยืนยันแล้ว' } };
+  (h.useCase as any).expenseActions = { answerCategory: async () => ({ preview, reply: preview.summary }), pending: async () => preview };
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'z4-category-combined', messageText: 'ค่าบริการ' });
+  assert.equal(h.sentMessageBatches.length, 1); assert.equal(h.sentMessageBatches[0]!.length, 1);
+  assert.match(JSON.stringify(h.sentMessages), /expense_action_confirm/);
+  assert.doesNotMatch(JSON.stringify(h.sentMessages), /draft-update-confirm|ยืนยันการแก้ไขรายการ/);
+  assert.equal(h.aiGatewayRequests.length, 0);
+});
+
+it('G2: final-action refusal delivers category quick replies in LINE without inventing a preview proof', async () => {
+  const { prisma } = makePrisma();
+  const reply = 'ยังขาดหมวดค่าใช้จ่าย เลือกหมวดด้านล่างหรือพิมพ์ชื่อหมวดได้เลยค่ะ';
+  const choices = ['ค่าอาหาร', 'ค่าบริการ', 'ค่าเดินทาง', 'ค่าโฆษณา'].map(text => ({ label: text, text })).concat([{ label: 'อื่นๆ', text: 'เลือกหมวดอื่น' }]);
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.confirm', 'expense.update'],
+    aiGatewayFn: () => ({ ...LEDGER_TURN_RESPONSE, replyText: reply, toolsInvoked: ['expense.action.preview'], sourceRefs: [], sourceLabels: [], webLinks: [] }),
+  });
+  (h.useCase as any).expenseActions = { pending: async () => null, repairChoices: async () => choices };
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'g2-category-refusal', messageText: 'ยืนยันรายการนี้ให้หน่อย' });
+  assert.equal(h.sentMessageBatches.length, 1);
+  assert.match(JSON.stringify(h.sentMessages), /ยังขาดหมวดค่าใช้จ่าย/u);
+  assert.deepEqual(h.sentMessages.at(-1)?.quickReply?.items.map((item: any) => item.action), choices.map(choice => ({ type: 'message', ...choice })));
+  assert.doesNotMatch(JSON.stringify(h.sentMessages), /expense_action_confirm|ยืนยันแล้วค่ะ|เกิดข้อผิดพลาดชั่วคราว/u);
+});
+
+it('G2: picking a category prepares the existing draft edit and its confirm postback re-offers only the final-action card', async () => {
+  const { prisma } = makePrisma();
+  const preview: any = { previewId: '550e8400-e29b-41d4-a716-446655440000', expenseId: 'g2-expense', recordType: 'expense', tool: 'expense.draft.set_header',
+    record: { vendorName: 'ร้านทดสอบ', expenseDate: '2026-10-13', statusLabel: 'พร้อมยืนยัน' },
+    diff: [1, 2, 3, 4].map(line => ({ field: `line.${line}.category`, label: `บรรทัด ${line} หมวดค่าใช้จ่าย`, before: null, after: 'ค่าอาหาร', kind: 'text' })),
+    totalsBefore: { grandTotalAmount: '500.80' }, totalsAfter: { grandTotalAmount: '500.80' }, warnings: [], expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  const calls: any[] = [];
+  const draftUpdate = { enabled: true, preview: async (ctx: any, input: any) => { calls.push({ kind: 'preview', ctx, input }); return { status: 'preview', preview }; },
+    pendingPreview: async () => preview,
+    apply: async (ctx: any, chat: string, eventId: string, id: string) => { calls.push({ kind: 'edit', ctx, chat, eventId, id }); return { status: 'applied', preview, expenseId: preview.expenseId }; },
+  };
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.confirm', 'expense.update'], draftUpdate });
+  const flow = h.useCase as any;
+  const finalPreview = { previewId: 'final-action', token: 'final-action.' + 'a'.repeat(43), action: 'CONFIRM', expiresAt: preview.expiresAt, summary: 'กรุณาตรวจรายละเอียดแล้วกดยืนยันค่ะ',
+    record: { vendorName: 'ร้านทดสอบ', amount: '500.80', currency: 'THB', date: '2026-10-13', status: 'พร้อมยืนยัน', nextStatus: 'ยืนยันแล้ว' } };
+  flow.expenseActions = {
+    answerCategory: async (_ctx: any, _chat: string, text: string) => text === 'ค่าอาหาร' ? { expenseId: preview.expenseId, tool: 'expense.draft.set_header', input: { categoryName: 'ค่าอาหาร' } } : null,
+    linkRepairEdit: async (_ctx: any, _chat: string, id: string) => { calls.push({ kind: 'link', id }); },
+    afterRepairEdit: async (_ctx: any, _chat: string, id: string, expenseId: string) => { calls.push({ kind: 'reoffer', id, expenseId }); return { preview: finalPreview, reply: finalPreview.summary }; },
+    apply: () => assert.fail('an edit-confirm must not execute the final expense action'),
+  };
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'g2-pick', messageText: 'ค่าอาหาร' });
+  assert.deepEqual(calls.map(call => call.kind), ['preview', 'link']);
+  assert.equal(calls[0].input.tool, 'expense.draft.set_header'); assert.deepEqual(calls[0].input.input, { categoryName: 'ค่าอาหาร' });
+  assert.equal(calls[0].input.expenseId, preview.expenseId);
+  assert.equal(calls[0].input.evidence[0].text, 'ค่าอาหาร');
+  assert.match(JSON.stringify(h.sentMessages), /action=draft-update-confirm/u);
+  assert.equal(h.aiGatewayRequests.length, 0);
+  const event = { ...BASE_EVENT, webhookEventId: 'g2-edit-confirm', messageText: 'ยืนยันการแก้ไข', draftUpdatePreviewId: preview.previewId };
+  await flow.handleDraftUpdatePostback(event, calls[0].ctx, { permissions: calls[0].ctx.permissions, roles: [] }, true);
+  assert.deepEqual(calls.map(call => call.kind), ['preview', 'link', 'edit', 'reoffer']);
+  assert.equal(calls[3].id, preview.previewId); assert.equal(calls[3].expenseId, preview.expenseId);
+  assert.equal(flow.deliveryExpenseActions.get(event).preview.token, finalPreview.token);
+  assert.equal(h.sentMessageBatches.at(-1)?.length, 2);
+  assert.match(JSON.stringify(h.sentMessageBatches.at(-1)), /expense_action_confirm/u);
+});
+
+it('round 5A delivers only API-issued WHT catalog message buttons for this read turn', async () => {
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma, {
+    permissions: ['line.ai.query', 'expense.create'], entitledFeatureKeys: ['expenses', 'wht_50bis'],
+    intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 }),
+    aiGatewayFn: (req: any) => ({ requestId: req.requestId, replyText: 'เป็นเงินได้ประเภทใดคะ เลือกจากปุ่มได้เลยค่ะ',
+      sourceRefs: [], sourceLabels: [], webLinks: [], intent: 'read_summary', agent: 'tax', refused: false,
+      toolsInvoked: ['wht.calculate_withholding'], toolCalls: [{ name: 'wht.calculate_withholding', status: 'ok', durationMs: 1 }], durationMs: 1 }),
+  });
+  let choiceReads = 0;
+  (h.useCase as any).readEvidence = {
+    forTurn: async () => ['wht-proof'], verify: async () => true,
+    whtReadChoicesForTurn: async (request: any, response: any) => {
+      choiceReads++; assert.equal(request.userContext.companyId, 'company-1');
+      assert.equal(response.toolsInvoked[0], 'wht.calculate_withholding');
+      return [{ label: 'ค่าบริการ', text: 'ค่าบริการ (นิติบุคคล) ฐานก่อนภาษี 1000 บาท ต้องหักเท่าไหร่' }];
+    },
+  };
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'wht-catalog-buttons', messageText: 'จ่ายค่าจ้าง 1000 บาท หักเท่าไหร่' });
+  assert.equal(choiceReads, 1);
+  const encoded = JSON.stringify(h.sentMessages); assert.match(encoded, /ค่าบริการ \(นิติบุคคล\)/);
+  assert.match(encoded, /"type":"message"/); assert.doesNotMatch(encoded, /"type":"postback"/);
+});
+
+import { LineQuotedMessageService, quoteReadMemory, quoteRecordsFromPlan } from '../line-quoted-message.service';
+import { buildLineDeliveryPlan, deliveryHash, initialDeliveryBatchStates } from '../../domain/logic/line-delivery-plan.logic';
+
+function quotedDeliveryFixture() {
+  const owner = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', chatKeyHash: 'quoted-chat', channelId: 'oa-1',
+    recipientHash: 'recipient', accessFingerprint: 'fingerprint', conversationId: 'line-v2:conversation', ownerEpoch: 1 };
+  const now = new Date(), expiresAt = new Date(now.getTime() + 600_000).toISOString();
+  const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'quoted-outcome', createdAt: now.toISOString(), readyAt: now.toISOString(), expiresAt,
+    firstDispatchDeadlineAt: new Date(now.getTime() + 40_000).toISOString(), control: null, businessResult: null,
+    authorization: { v: 2, kind: 'PRIVATE', issuedAt: now.toISOString(), expiresAt, actor: { ...owner, requestId: 'original', channel: 'line', channelKind: 'USER' },
+      proofs: [{ id: 'expense-source', kind: 'EXPENSE_REVISION', records: [{ id: 'quoted-draft', revision: now.toISOString() }] }] },
+    answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: 'ร่างค่าใช้จ่ายค่ะ', required: true, sourceProofIds: ['expense-source'] }] } });
+  const states = initialDeliveryBatchStates(plan); states[0] = { ...states[0]!, status: 'ACCEPTED', acceptedAt: now.toISOString(), sentMessageIds: ['bot-message'] };
+  let saved: any;
+  const prisma: any = { client: { lineDeliveryPlan: { findMany: async ({ where }: any) => {
+    assert.ok(where.createdAt.gte instanceof Date); assert.ok(where.purgeAt.gt instanceof Date);
+    return [{ planJson: plan, planHash: deliveryHash(plan), batchStateJson: states }];
+  } }, lineTurnOutcome: { findMany: async () => [], findUnique: async () => ({ id: 'outcome', authorizationJson: { v: 1 } }),
+    updateMany: async (input: any) => { saved = input.data.authorizationJson; return { count: 1 }; } } } };
+  return { owner, plan, states, prisma, service: new LineQuotedMessageService(prisma), saved: () => saved };
+}
+
+describe('Round 7A quoted replies', () => {
+  it('resolves the accepted bot message to IDs only; drafts/claims/vouchers keep their record type', async () => {
+    const h = quotedDeliveryFixture();
+    assert.deepEqual(await h.service.resolve(h.owner, 'bot-message'), [{ tool: 'expense.get_detail', id: 'quoted-draft' }]);
+    assert.deepEqual(await h.service.resolve(h.owner, 'unseen-message'), []);
+    h.plan.authorization.kind === 'PRIVATE' && h.plan.authorization.proofs.push({ id: 'read-records', kind: 'QUOTE_REFERENCES', records: [
+      { tool: 'voucher.get_detail', id: 'voucher-1' }, { tool: 'reimbursement.get_detail', id: 'claim-1' }, { tool: 'counterparty.get_detail', id: 'counterparty-1' }] });
+    assert.equal(quoteRecordsFromPlan(h.plan).length, 4);
+    assert.equal(JSON.stringify(quoteRecordsFromPlan(h.plan)).includes('ร่างค่าใช้จ่าย'), false);
+    h.states[0]!.status = 'UNKNOWN'; assert.deepEqual(await h.service.resolve(h.owner, 'bot-message'), []);
+  });
+  it('ignores another chat/user/company/membership/channel/recipient/access scope/epoch', async () => {
+    const h = quotedDeliveryFixture();
+    for (const field of ['companyId', 'userId', 'membershipId', 'chatKeyHash', 'channelId', 'recipientHash', 'accessFingerprint', 'conversationId', 'ownerEpoch'] as const) {
+      assert.deepEqual(await h.service.resolve({ ...h.owner, [field]: field === 'ownerEpoch' ? 2 : 'other' }, 'bot-message'), [], field);
+    }
+  });
+  it('stores only provider and record IDs in the retained legacy outcome and resolves them after restart', async () => {
+    const h = quotedDeliveryFixture(), records = [{ tool: 'expense.get_detail' as const, id: 'expense-1' }];
+    await h.service.rememberLegacy('original-event', h.owner, ['sent-legacy'], records);
+    assert.deepEqual(h.saved().quote.records, records); assert.deepEqual(h.saved().quote.messageIds, ['sent-legacy']);
+    assert.equal('text' in h.saved().quote, false); assert.equal('messages' in h.saved().quote, false);
+    h.prisma.client.lineDeliveryPlan.findMany = async () => [];
+    h.prisma.client.lineTurnOutcome.findMany = async () => [{ authorizationJson: h.saved() }];
+    const restarted = new LineQuotedMessageService(h.prisma);
+    assert.deepEqual(await restarted.resolve(h.owner, 'sent-legacy'), records);
+    assert.deepEqual(await restarted.resolve({ ...h.owner, userId: 'other' }, 'sent-legacy'), []);
+  });
+  it('passes the quoted ID through the API conversation context to the intake router and gateway', async () => {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.read'],
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.99 }),
+      aiGatewayFn: () => ({ requestId: 'quote-read', replyText: 'รายการที่อ้างตอบค่ะ', toolsInvoked: [], sourceRefs: [], sourceLabels: [], webLinks: [], refused: false, intent: 'read_summary', agent: 'accounting', durationMs: 1 }) });
+    const flow = h.useCase as any;
+    flow.quotedMessages = { resolve: async (owner: any, id: string) => {
+      assert.equal(owner.companyId, 'company-1'); assert.equal(owner.userId, 'user-1'); assert.equal(id, 'bot-message');
+      return [{ tool: 'expense.get_detail', id: 'quoted-draft' }];
+    } };
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'quoted-turn', messageText: 'ของอันนี้', quotedMessageId: 'bot-message' });
+    assert.equal(h.intakeRequests.at(-1)?.conversationContext?.recentReads[0]?.shownItems[0]?.id, 'quoted-draft');
+    assert.equal(h.aiGatewayRequests.at(-1)?.conversationContext?.quotedRecords[0]?.id, 'quoted-draft');
+  });
+  it('narrows active draft routing to the quoted draft and leaves the record rules untouched', async () => {
+    const { prisma } = makePrisma(), h = makeUseCase(prisma), flow = h.useCase as any;
+    const event = { ...BASE_EVENT, quotedMessageId: 'bot-message' };
+    flow.quotedRecords.set(event, [{ tool: 'expense.get_detail', id: 'draft-two' }]);
+    flow.expenseDraftConversation = { routeContexts: async () => [{ expenseId: 'draft-one', status: 'OPEN' }, { expenseId: 'draft-two', status: 'OPEN' }] };
+    flow.ledger = { openWaitingUser: async () => [] };
+    const ctx: any = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', permissions: ['expense.create'], scopes: {}, roles: [] };
+    const result = await flow.loadOpenWorkContext(event, 'r7a', ctx, { chatKey: event.lineUserId, corrections: false, drafts: true, substituteMode: 'off' });
+    assert.deepEqual(result.activeExpenseDrafts.map((draft: any) => draft.expenseId), ['draft-two']);
+  });
+});
+
+it('Round 7A quote association chooses the record shown by that message in a mixed delivery', async () => {
+  const h = quotedDeliveryFixture();
+  if (h.plan.authorization.kind !== 'PRIVATE') assert.fail('private fixture');
+  h.plan.authorization.proofs.push({ id: 'quote-references', kind: 'QUOTE_REFERENCES',
+    records: [{ tool: 'expense.get_detail', id: 'other-draft' }, { tool: 'expense.get_detail', id: 'selected-draft' }],
+    items: [{ itemId: h.plan.answer.items[0]!.id, records: [{ tool: 'expense.get_detail', id: 'selected-draft' }] }] });
+  assert.deepEqual(await h.service.resolve(h.owner, 'bot-message'), [{ tool: 'expense.get_detail', id: 'selected-draft' }]);
+  const refs = [{ tool: 'expense.get_detail' as const, id: 'other-draft' }, { tool: 'expense.get_detail' as const, id: 'selected-draft' }];
+  await h.service.rememberLegacy('original', h.owner, ['legacy-one', 'legacy-two'], refs, [[refs[0]!], [refs[1]!]]);
+  h.prisma.client.lineDeliveryPlan.findMany = async () => [];
+  h.prisma.client.lineTurnOutcome.findMany = async () => [{ authorizationJson: h.saved() }];
+  assert.deepEqual(await h.service.resolve(h.owner, 'legacy-two'), [refs[1]]);
+});
+it('H2: preview refusal delivers an in-chat ready button after the Thai next step', async () => {
+  const { prisma } = makePrisma();
+  const reply = 'รายการนี้ยังยืนยันไม่ได้ค่ะ ต้องส่งตรวจให้พร้อมยืนยันก่อน';
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.confirm', 'expense.update'],
+    aiGatewayFn: () => ({ ...LEDGER_TURN_RESPONSE, replyText: reply, toolsInvoked: ['expense.action.preview'], sourceRefs: [], sourceLabels: [], webLinks: [] }) });
+  (h.useCase as any).expenseActions = { pending: async () => null, repairChoices: async () => null };
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'h2-ready-next-step', messageText: 'ยืนยันรายการนี้ให้หน่อย' });
+  assert.deepEqual(h.sentMessages.at(-1)?.quickReply?.items[0].action, { type: 'message', label: 'ส่งตรวจ', text: 'ส่งตรวจรายการนี้' });
+  assert.doesNotMatch(JSON.stringify(h.sentMessages), /expense_action_confirm|ยืนยันแล้วค่ะ/u);
+});
+
+it('Round 7 B: company preview uses the existing signed confirm-card delivery without expense entitlement', async () => {
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'company.branch.manage'],
+    aiGatewayFn: () => ({ ...LEDGER_TURN_RESPONSE, replyText: 'กรุณาตรวจรายละเอียดแล้วกดยืนยันค่ะ', toolsInvoked: ['company.action.preview'], sourceRefs: [], sourceLabels: [], webLinks: [] }),
+  });
+  const preview: any = { previewId: 'team_test', token: 'team_test.' + 'a'.repeat(43), action: 'BRANCH_CREATE', expiresAt: new Date(Date.now() + 60_000).toISOString(), summary: 'กรุณาตรวจรายละเอียดแล้วกดยืนยันค่ะ', details: ['ชื่อสาขา: ลาดพร้าว'], record: { vendorName: 'ลาดพร้าว', amount: '', currency: '', date: '', status: 'รอยืนยัน', nextStatus: 'เพิ่มสาขา' } };
+  let pending = 0;
+  (h.useCase as any).expenseActions = { pending: async () => { pending++; return preview; }, repairChoices: async () => null };
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'r7-team-preview', messageText: 'เพิ่มสาขาลาดพร้าว' });
+  assert.ok(pending > 0); assert.match(JSON.stringify(h.sentMessageBatches), /expense_action_confirm/u); assert.match(JSON.stringify(h.sentMessageBatches), /ลาดพร้าว/u); assert.doesNotMatch(JSON.stringify(h.sentMessageBatches), /Invalid Date|THB|0 บาท/u);
+});
+
+
+it('Round 7B capability follow-up lists management only for reachable team/branch previews', () => {
+  for (const permission of ['access.employee.create', 'access.employee.update', 'access.employee.disable', 'company.branch.manage']) {
+    assert.match(capabilityFollowUpReply('ยังไง', { permissions: [permission], entitledFeatureKeys: [] }), /จัดการทีมงานหรือสาขาตามสิทธิ์ผ่านการ์ดยืนยันค่ะ/u);
+    assert.match(capabilityFollowUpReply('how', { permissions: [permission], entitledFeatureKeys: [] }), /manage team members or branches within your permissions/u);
+  }
+  for (const permissions of [[], ['access.employee.read'], ['company.branch.read']]) {
+    assert.doesNotMatch(capabilityFollowUpReply('ยังไง', { permissions, entitledFeatureKeys: [] }), /จัดการทีมงานหรือสาขา/u);
+  }
+});
+
+
+async function fixup6MediaFixture() {
+  const { prisma } = makePrisma();
+  const access = { membershipId: 'member', roles: [], permissions: ['line.ai.query', 'expense.review', 'expense.receipt.upload'], scopes: {}, entitledFeatureKeys: ['expenses'] };
+  const h = makeUseCase(prisma, { permissions: access.permissions });
+  const flow = h.useCase as any, trace: string[] = [], delivered: string[] = [];
+  const event = { ...BASE_EVENT, webhookEventId: 'fixup6-media', companyIdAtAcceptance: 'company', lineMessageId: 'fixup6-file', messageType: 'file', fileName: 'document.pdf', channelKind: 'USER' };
+  const media = { fileName: 'document.pdf', mimeType: 'application/pdf', bytes: Buffer.from('PDF'), byteSize: 3, checksumSha256: 'hash' };
+  const owner = { companyId: 'company', userId: 'user', membershipId: 'member', channel: 'line', channelKind: 'USER', messagingChannelId: event.messagingChannelId, chatKeyHash: chatKeyHashOf(event) };
+  flow.boundConversations.set(event, { owner, id: 'conversation', epoch: 3 });
+  let expenseInitializations = 0, pending: any;
+  Object.assign(flow, {
+    claimWebhookEvent: async () => true, stampSupportMedia: async () => false, assistantPaused: async () => false,
+    resolveLineIdentity: async () => ({ userId: 'user', user: { status: 'ACTIVE' } }),
+    permissionResolver: { resolveAccess: async () => access }, refusePendingLegalAcceptance: async () => false,
+    recordShadowTurn: async () => undefined, refuseWhenLaunchRouteClosed: async () => false, bindConversation: async () => undefined,
+    timeStage: async (_id: string, _stage: string, run: () => Promise<unknown>) => run(),
+    downloadLineMedia: async () => ({ ok: true, media }), lineMediaRejectionReason: async () => null,
+    expenseRepo: { findByLineMessageId: async () => null },
+    initReceiptUpload: { execute: async () => { expenseInitializations++; return { expenseId: 'unexpected-expense' }; } },
+    completeReceiptUpload: { execute: async () => assert.fail('unexpected expense completion') },
+    routeDocumentQuestionBeforeCapture: async () => null, loadConversationContext: async () => undefined,
+    mayDeliverBusinessReply: async () => true, persistIntakeTurn: async () => undefined,
+    ensurePendingMedia: async () => { pending = { status: 'PENDING', attachmentId: 'attachment' }; return { created: true, pending }; },
+    appendMediaClarification: async () => trace.push('waiting-for-purpose'),
+    deliverReply: async (_event: any, text: string) => delivered.push(text), updateEventLog: async () => undefined,
+  });
+  prisma.client.companyFeatureEntitlement = { findMany: async () => [] };
+  prisma.client.lineIntakePendingMedia.findUnique = async () => pending;
+  return { flow, event, media, trace, delivered, expenseInitializations: () => expenseInitializations };
+}
+
+it('Y3: a blank bound PDF offers the same typed capture and file-question answers as quick replies', async () => {
+  const f = await fixup6MediaFixture();
+  const questions: any[] = [];
+  f.flow.deliverReply = async (...args: any[]) => questions.push(args);
+  await f.flow.executeReceiptUploadInner(f.event, '', {});
+  assert.equal(f.expenseInitializations(), 0);
+  assert.deepEqual(questions[0][2].items.map((item: any) => item.action), [
+    { type: 'message', label: 'บันทึกเป็นค่าใช้จ่าย', text: 'ใช้เป็นหลักฐานบันทึกค่าใช้จ่าย' },
+    { type: 'message', label: 'ถามจากไฟล์', text: 'ถามจากไฟล์' },
+  ]);
+  assert.equal((await f.flow.prisma.client.lineIntakePendingMedia.findUnique()).status, 'PENDING');
+});
+
+it('Y2: a requested receipt photo uses the existing completion guard on the selected draft and re-offers confirmation', async () => {
+  const f = await fixup6MediaFixture();
+  Object.assign(f.event, { messageType: 'image', lineMessageId: 'new-photo' });
+  const target = { expenseId: 'text-draft', revision: '2026-10-16T00:00:00.000Z', primaryAttachmentId: null, branchId: 'branch' };
+  const preview = { previewId: 'confirm', token: 'signed', action: 'CONFIRM', expiresAt: '2026-10-16T01:00:00Z', summary: 'กรุณาตรวจแล้วกดยืนยันค่ะ', record: { vendorName: 'ร้านเดิม', amount: '100', currency: 'THB', date: '2026-10-16', status: 'ร่าง', nextStatus: 'ยืนยันแล้ว' } };
+  const completed: any[] = [], uploaded: any[] = [], delivered: any[] = [];
+  Object.assign(f.flow, { deliveryExpenseActions: new WeakMap(),
+    expenseActions: { evidencePhotoTarget: async () => target,
+      afterEvidencePhoto: async (ctx: any, chat: string, id: string) => { assert.equal(id, target.expenseId); assert.equal(ctx.userId, 'user'); assert.equal(chat, chatKeyHashOf(f.event)); return { preview, reply: preview.summary }; }, repairChoices: async () => null },
+    createUploadIntent: { execute: async (ctx: any, input: any) => { assert.equal(ctx.userId, 'user'); assert.equal(input.branchId, 'branch'); return { attachmentId: 'photo-attachment' }; } },
+    uploadLineMedia: async (...args: any[]) => uploaded.push(args),
+    completeReceiptUpload: { execute: async (...args: any[]) => { completed.push(args); return { id: target.expenseId }; } },
+    deliverReply: async (...args: any[]) => delivered.push(args),
+  });
+  await f.flow.executeReceiptUploadInner(f.event, '', {});
+  assert.equal(uploaded.length, 1); assert.equal(completed.length, 1);
+  assert.equal(completed[0][0].userId, 'user'); assert.equal(completed[0][0].companyId, 'company');
+  assert.deepEqual(completed[0][1], { expenseId: 'text-draft', attachmentId: 'photo-attachment', checksumSha256: 'hash', byteSize: f.media.byteSize,
+    intent: 'replace', expectedUpdatedAt: target.revision, operationId: 'new-photo' });
+  assert.equal(f.expenseInitializations(), 0, 'the photo must never create a second expense');
+  assert.equal(f.trace.includes('intake'), false); assert.equal(f.trace.includes('expense-capture'), false);
+  assert.equal(delivered[0][3].contents.footer.contents[0].action.label, 'ยืนยัน');
+  assert.equal(f.flow.deliveryExpenseActions.get(f.event).preview, preview);
+});
+
+it('Y2: the substitute choice starts the real existing LINE continuation for the bound draft without preparing or confirming', async () => {
+  const { prisma } = makePrisma(), saves: any[] = [];
+  const record = { ...savedMediaFixture('chosen-text-draft'), sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY', currency: 'THB',
+    grandTotalAmount: '100', netPayableAmount: '100', paidAmount: '0', vendorNameSnapshot: 'ร้านทดสอบ', primaryAttachmentId: null,
+    sourceChannelMetadataJson: { kind: 'text_note', chatKeyHash: chatKeyHashOf(BASE_EVENT) }, expenseCategoryId: 'cat-services',
+    lines: [{ description: 'ค่าบริการ', expenseCategoryId: 'cat-services' }], attachments: [], substituteReceiptEvidence: null };
+  const repo: any = { listLineSubstituteContinuationRows: async () => [], findByIdWithRelations: async (_company: string, id: string) => id === record.id ? record : null,
+    listCategories: async () => [{ id: 'cat-services', name: 'ค่าบริการ' }], getSubstituteReceiptPolicy: async () => null,
+    listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'user-1', displayName: 'เจ้าของ' }],
+    findActiveMemberIdentity: async (_company: string, userId: string) => ({ userId, displayName: 'เจ้าของ' }),
+    saveLineSubstituteContinuation: async (input: any) => { saves.push(input); return { updatedAt: record.updatedAt, continuation: input.continuation }; } };
+  const continuation = new LineSubstituteReceiptContinuationUseCase(repo, { execute: async () => assert.fail('a choice cannot prepare a certificate') } as any,
+    { log: async () => undefined } as any, {} as any, {} as any);
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.review', 'expense.confirm'], substituteReceiptContinuation: continuation });
+  (h.useCase as any).expenseActions = { answerEvidence: async () => ({ substituteExpenseId: record.id, reply: '' }) };
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'y2-substitute-choice', messageText: 'จัดทำใบรับรองแทนใบเสร็จ' });
+  assert.equal(saves.length, 1, h.replies.join('\n'));
+  assert.equal(saves[0].expenseId, record.id); assert.equal(saves[0].actorUserId, 'user-1'); assert.equal(saves[0].companyId, 'company-1');
+  assert.equal(saves[0].continuation.acceptedValues.reasonCode, 'RECEIPT_UNAVAILABLE');
+  assert.equal(saves[0].continuation.status, 'OPEN'); assert.equal(h.aiGatewayRequests.length, 0); assert.equal(record.status, 'DRAFT');
+});
+
+it('7B W3: a photo answering the open substitute payment ask attaches before intake and never creates a new draft', async () => {
+  const f = await fixup6MediaFixture();
+  Object.assign(f.event, { messageType: 'image', lineMessageId: 'substitute-slip' });
+  const attached: any[] = [], continued: any[] = [], delivered: string[] = [];
+  Object.assign(f.flow, {
+    substituteReceiptContinuation: {
+      loadOpenMediaContext: async () => ({ expenseId: 'open-substitute-expense', awaitingScans: [], signatureRequested: false,
+        paymentEvidenceRequestedAt: new Date().toISOString() }),
+      attachMedia: async (...args: any[]) => { attached.push(args); return { replyText: 'ทำต่อ: พิมพ์ “ทำใบรับรองต่อ” เพื่อดูสถานะงานล่าสุดค่ะ' }; },
+      execute: async (...args: any[]) => { continued.push(args); return { handled: true, status: 'READY_FOR_WEB', expenseId: 'open-substitute-expense',
+        acceptedFields: [], blockers: [], replyText: 'ข้อมูลครบแล้วค่ะ\nตอบ 1 เพื่อออกเอกสาร\n1) ออกเอกสาร', source: { records: [] } }; },
+    },
+    substituteActions: { prepare: async () => ({ preview: { token: 'sub_current', label: 'เตรียมใบรับรอง',
+      summary: 'ข้อมูลครบแล้วค่ะ กดเตรียมใบรับรองเพื่อตรวจและลงนามต่อ\nวัตถุประสงค์: ค่าโปรโมทร้าน' } }) },
+    ensurePendingMedia: async () => ({ created: true, pending: { id: 'pending-substitute-slip', attachmentId: 'kept-slip', lineMessageId: 'substitute-slip' } }),
+    resolvePendingRow: async () => undefined,
+    deliverCompletedReply: async (_event: any, text: string) => delivered.push(text),
+    expenseActions: { evidencePhotoTarget: async () => assert.fail('substitute evidence owns this photo') },
+    aiGateway: { lineIntakeRoute: async () => assert.fail('an asked-for substitute slip needs no new capture route') },
+  });
+  await f.flow.executeReceiptUploadInner(f.event, '', {});
+  assert.equal(attached.length, 1); assert.equal(attached[0][0].authProvider, 'line');
+  assert.equal(attached[0][0].userId, 'user'); assert.equal(attached[0][0].companyId, 'company');
+  assert.equal(attached[0][1].expenseId, 'open-substitute-expense'); assert.equal(attached[0][1].attachmentId, 'kept-slip');
+  assert.equal(attached[0][1].purpose, 'expense.payment.evidence'); assert.equal(f.expenseInitializations(), 0);
+  assert.equal(continued.length, 1); assert.match(delivered.join('\n'), /ข้อมูลครบ/);
+  assert.match(delivered.join('\n'), /แนบหลักฐานให้แล้วค่ะ.*\n.*\nข้อมูลครบ/su);
+  assert.match(delivered.join('\n'), /วัตถุประสงค์: ค่าโปรโมทร้าน/);
+  assert.doesNotMatch(delivered.join('\n'), /ทำต่อ:|ทำใบรับรองต่อ|ตอบ 1|1\)/);
+  assert.equal(f.flow.deliverySubstituteActions.get(f.event).preview.token, 'sub_current');
+});
+
+it('R11 T4: a saved signature offers the existing signed prepare button and web-signing wording', async () => {
+  const { buildSubstituteReceiptActionCard } = await import('../line-substitute-receipt-action.service');
+  const f = await fixup6MediaFixture(), calls: any[] = [];
+  const preview = { token: 'sub_current', label: 'เตรียมใบรับรอง', summary: 'กดเตรียมใบรับรอง แล้วน้องจะส่งลิงก์ลงนามในเว็บค่ะ',
+    webPath: 'https://app.example.com/companies/company/expenses/substitute-receipts/new?expenseId=open-substitute-expense' };
+  Object.assign(f.flow, {
+    createSignatureAsset: { execute: async () => ({ id: 'personal-signature' }) },
+    substituteReceiptContinuation: { pendingIssueDecisionExpenseId: async () => 'open-substitute-expense' },
+    substituteActions: { prepare: async (...args: any[]) => { calls.push(args); return { preview }; } },
+  });
+  const actor = { companyId: 'company', userId: 'user' };
+  const reply = await f.flow.createLineSignatureAsset({ ctx: actor,
+    event: f.event, sourceEvent: f.event, companyId: 'company', attachmentId: 'signature-upload', steerToPendingDecision: true });
+  assert.match(reply, /รับรูปลายเซ็นแล้ว/);
+  assert.match(reply, /กดเตรียมใบรับรอง แล้วน้องจะส่งลิงก์ลงนามในเว็บค่ะ/);
+  assert.doesNotMatch(reply, /ตอบ 1|ออกเอกสารต่อ/);
+  assert.equal(calls.length, 1); assert.equal(calls[0][0], actor); assert.equal(calls[0][2], 'open-substitute-expense');
+  const stored = f.flow.deliverySubstituteActions.get(f.event); assert.equal(stored.preview, preview);
+  const card = buildSubstituteReceiptActionCard(stored.preview, reply) as any;
+  const actions = card.contents.footer.contents.map((button: any) => button.action);
+  assert.equal(actions[0]!.label, 'เตรียมใบรับรอง'); assert.equal(actions[0]!.type, 'postback');
+  assert.match(actions[0]!.data!, /token=sub_current/);
+  calls.length = 0;
+  await f.flow.createLineSignatureAsset({ ctx: actor, event: f.event, sourceEvent: { ...f.event },
+    companyId: 'company', attachmentId: 'signature-upload', steerToPendingDecision: false });
+  assert.equal(calls.length, 0, 'a standalone saved signature has no pending prepare action');
+});
+
+it('8A S2: a bare amount in the one paid expense context reports saved payment facts without correction or another payment', async () => {
+  const f = await fixup6MediaFixture(), delivered: any[] = [], reads: any[] = [];
+  const actor: any = { companyId: 'company', userId: 'user', permissions: ['expense.read'], scopes: { branchIds: ['branch'] } };
+  const record: any = { id: 'paid-expense', companyId: 'company', branchId: 'branch', createdByUserId: 'user', status: 'CONFIRMED',
+    netPayableAmount: '500', paidAmount: '500', paymentStatus: 'PAID', currency: 'THB', paidAt: new Date('2026-10-10'), updatedAt: new Date() };
+  Object.assign(f.flow, {
+    expenseRepo: { listRecentLineCaptures: async () => [{ id: record.id }], findByIdWithRelations: async (...args: any[]) => { reads.push(args); return record; } },
+    expenseActions: { preview: async () => assert.fail('a bare amount must not propose another payment'), repairChoices: async () => null },
+    deliverRequiredMessages: async (_event: any, messages: any[]) => delivered.push(...messages),
+    updateEventLog: async () => undefined,
+  });
+  const event = { ...f.event, messageText: '500' };
+  assert.equal(await f.flow.handleExpensePaymentText(event, actor, new Set(['expenses'])), true);
+  assert.match(delivered[0].text, /^รายการนี้บันทึกจ่ายครบแล้วค่ะ 500\.00 บาท วันที่ 10 ต\.ค\. 2569$/u);
+  assert.equal(reads[0][0], actor.companyId); assert.deepEqual(reads[0][3], actor.scopes);
+  assert.equal(f.flow.deliveryReceiptSources.get(event).records.get(record.id), record.updatedAt.toISOString());
+  record.paidAmount = '0';
+  assert.equal(await f.flow.handleExpensePaymentText({ ...event }, actor, new Set(['expenses'])), false, 'a fresh/unpaid amount stays with its own open workflow');
+  record.paidAmount = '500'; record.branchId = 'foreign';
+  assert.equal(await f.flow.handleExpensePaymentText({ ...event }, actor, new Set(['expenses'])), false, 'the web read guard still enforces branch scope');
+  assert.equal(delivered.length, 1);
+});
+
+it('Fix-up 11: prepare retires only its clarification and replies with one web handoff card', async () => {
+  const f = await fixup6MediaFixture(), calls: any[] = [], consumed: any[] = [], delivered: any[] = [];
+  const event = { ...f.event, expenseActionControl: { action: 'expense_action_confirm', token: 'sub_signed.' + 'a'.repeat(43) } };
+  const next = { token: 'sub_next.' + 'b'.repeat(43), label: 'เปิดลงนามในเว็บ', webOnly: true, summary: 'เตรียมใบรับรองแล้วค่ะ เปิดเว็บเพื่อลงนามและอนุมัติ', webPath: 'https://web.example.com/companies/company/expenses/substitute-receipts/evidence', expiresAt: new Date(Date.now() + 600_000).toISOString() };
+  const actor = { userId: 'user', companyId: 'company', membershipId: 'member', permissions: ['expense.review'], roles: [], scopes: {}, authProvider: 'line' };
+  f.flow.prisma.client.lineDeliveryPlan = { findFirst: async () => null };
+  Object.assign(f.flow, {
+    substituteActions: { apply: async (...args: any[]) => { calls.push(args); return { reply: 'เตรียมใบรับรองแล้วค่ะ', expenseId: 'expense', preview: { ...next, token: event.expenseActionControl.token } }; }, prepare: async () => ({ preview: next }) },
+    ledger: { openWaitingUser: async () => [
+      { id: 'that-substitute', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', candidateExpenseIds: ['expense'], entry: {} },
+      { id: 'other-substitute', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', candidateExpenseIds: ['other-expense'], entry: {} },
+      { id: 'other-intent', clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE', candidateExpenseIds: ['expense'], entry: {} },
+    ] },
+    consumeClarifications: async (...args: any[]) => consumed.push(args),
+    deliverCompletedReply: async (...args: any[]) => delivered.push(args),
+  });
+  await f.flow.handleExpenseActionPostback(event, actor, new Set(['expenses']));
+  assert.equal(calls.length, 1); assert.equal(calls[0][0], actor); assert.equal(calls[0][1], chatKeyHashOf(event));
+  assert.deepEqual(consumed[0][4], ['that-substitute']);
+  assert.equal(f.flow.deliverySubstituteActions.get(event).preview, next); assert.equal(delivered.length, 1);
+  assert.equal(delivered[0][1], next.summary);
+  const card: any = buildSubstituteReceiptActionCard(next);
+  assert.equal(card.contents.footer.contents.length, 1);
+  assert.deepEqual(card.contents.footer.contents[0].action, { type: 'uri', label: 'เปิดลงนามในเว็บ', uri: next.webPath });
+  assert.doesNotMatch(JSON.stringify(card), /postback|expense_action_confirm/);
+});
+
+it('7B W3: a committed substitute attachment survives a failed continuation refresh without creating an expense', async () => {
+  const f = await fixup6MediaFixture(), delivered: string[] = [];
+  Object.assign(f.event, { messageType: 'image' });
+  let attached = 0;
+  Object.assign(f.flow, {
+    substituteReceiptContinuation: {
+      loadOpenMediaContext: async () => ({ expenseId: 'substitute-expense', awaitingScans: [], signatureRequested: false, paymentEvidenceRequestedAt: new Date().toISOString() }),
+      attachMedia: async () => { attached++; return { replyText: 'แนบหลักฐานในรายการเดิมแล้วค่ะ' }; },
+      execute: async () => { throw new Error('refresh unavailable'); },
+    },
+    ensurePendingMedia: async () => ({ created: true, pending: { id: 'pending', attachmentId: 'slip', lineMessageId: f.event.lineMessageId } }),
+    resolvePendingRow: async () => undefined,
+    deliverCompletedReply: async (_event: any, text: string) => delivered.push(text),
+  });
+  await f.flow.executeReceiptUploadInner(f.event, '', {});
+  assert.equal(attached, 1); assert.equal(f.expenseInitializations(), 0); assert.match(delivered[0], /แนบหลักฐานในรายการเดิม/);
+});
+
+it('R10 Q1: webhook counterparty command consumes intake before the REAL authority can narrow', async () => {
+  const { LineAiBudgetAuthorityService } = await import('../line-ai-budget-authority.service');
+  const text = 'เพิ่มผู้ขาย บริษัท ทดสอบ จำกัด เลขผู้เสียภาษี 0105556000011';
+  const built = (await createLineAiInputEvidence({ turnKey: 'r10-counterparty', parts: [{ partId: 'part-0', eventIdHash: 'e'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!;
+  const row: any = { id: 'r10-event', companyId: 'company-1', status: 'received', budgetAuthorityRevision: 0 };
+  const tx: any = { $executeRaw: async () => 0,
+    lineWebhookEventLog: { findUnique: async () => row, updateMany: async ({ data }: any) => {
+      row.budgetAuthorityJson = data.budgetAuthorityJson; row.budgetAuthorityRevision += 1; return { count: 1 };
+    } },
+    lineChannelBinding: { findFirst: async () => ({ id: 'channel' }) },
+    companyMembership: { findFirst: async () => ({ id: 'mem-1' }) },
+    aiConversation: { findFirst: async () => ({ id: 'conversation', taskStateJson: null }) } };
+  const modelId = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
+  const authority = new LineAiBudgetAuthorityService({ client: { ...tx, $transaction: async (run: any) => run(tx) } } as any,
+    { approvedAiModelIds: [modelId], aiGatewayInternalSecret: 'r10-test-authority' } as any);
+  const grant = await authority.issue({ authorityKind: 'webhook_event', authorityId: row.id,
+    owner: { kind: 'PRIVATE', epoch: 1, owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line', channelKind: 'USER', messagingChannelId: 'channel', chatKeyHash: 'a'.repeat(64) } },
+    turnKey: built.inputEvidence.turnKey, attemptKey: 'r10-counterparty', inputDigest: built.inputEvidence.joinedSha256,
+    requestKind: 'TEXT', admittedAtMs: Date.now(), coalescingExtraMs: 0, lane: 'public',
+    model: { provider: 'bedrock', modelId, region: 'ap-southeast-1' }, modelContextTokens: 200000, modelMaxOutputTokens: 4096,
+    tariff: { version: 'r10-test:1', provider: 'bedrock', modelId, region: 'ap-southeast-1', thbPerUsd: 33, usdPerMTok: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } },
+    allowedProfileIds: ['line-intake-text/2'] });
+  assert.ok(grant);
+  assert.equal(await authority.narrow(grant, 'mixed', ['line-control/2', 'line-answer/2']), null, 'model-free routing is forbidden by the unchanged contract');
+  const { prisma } = makePrisma({ recentTurns: [{ userMessagePreview: 'น้องมั่งมีทำอะไรได้บ้าง', replyPreview: 'เพิ่มคู่ค้าได้ค่ะ', createdAt: new Date() }] });
+  prisma.client.lineLedgerDelivery = { findMany: async () => [], findFirst: async () => null };
+  const h = makeUseCase(prisma, { config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'], lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] }, permissions: ['line.ai.query', 'ai.tool.invoke', 'accounting.counterparty.manage'],
+    intakeRouteFn: request => {
+      assert.equal(request.budgetGrantV2.signature, grant.signature);
+      // Provider dispatch is faked here; the PostgreSQL spec below exercises real reserve + settle.
+      row.budgetAuthorityJson.nextOrdinal += 1;
+      return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98,
+        semanticSubrequests: [{ index: 0, kind: 'write', goal: text, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [{ partId: 'part-0', startUtf16: 0, endUtf16: text.length, rawSha256: built.inputEvidence.parts[0]!.rawSha256 }] }] };
+    }, aiGatewayFn: request => {
+      assert.equal(request.budgetGrantV2.nextOrdinal, 1);
+      return { requestId: request.requestId, replyText: 'ตรวจคู่ค้าที่จะเพิ่มแล้วกดยืนยันค่ะ', intent: 'business_read', agent: 'accounting', durationMs: 1,
+        webLinks: [], sourceLabels: [], sourceRefs: [], toolsInvoked: ['counterparty.action.preview'], refused: false };
+    } });
+  const flow = h.useCase as any;
+  flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }), projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }), save: async () => true, createTurn: async () => ({ id: 'turn-1' }) };
+  flow.prepareTextGrantV2 = async (event: object) => { flow.budgetGrantsV2.set(event, grant); return grant; };
+  flow.reliabilityContext = async () => ({});
+  flow.aiGateway.narrowLineReliabilityGrant = authority.narrow.bind(authority);
+  flow.counterparties = { pending: async () => null };
+  flow.captureExpenseNote = { execute: async () => assert.fail('registry command cannot create an expense') };
+  flow.sendMessages = async () => 'ok';
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'r10-counterparty', messageText: text, inputEvidence: built.inputEvidence });
+  assert.equal(h.intakeRequests.length, 1); assert.equal(h.aiGatewayRequests.length, 1);
+  assert.equal(row.budgetAuthorityJson.narrowedLane, 'mixed'); assert.equal(row.budgetAuthorityJson.nextOrdinal, 1);
+});
+
+import { LINE_CHAT_ACTIONS, extractValueCandidatesV2 } from '@watchdog-bms/contracts';
+import { productHelpQuickReply } from '../../domain/logic/line-business-card.logic';
+import { buildReimbursementDraftMessages, buildReimbursementOptionsMessages } from '../../domain/logic/line-reimbursement-draft-card.logic';
+import { LineReimbursementDraftAdapterService } from '../line-reimbursement-draft-adapter.service';
+import { LineReimbursementDraftService } from '../line-reimbursement-draft.service';
+import { LineReimbursementDraftUseCase } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
+import { readFileSync } from 'node:fs';
+const fx17bReplayRoutes = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx17b-router-replays.json'), 'utf8')) as any[];
+
+describe('Fix-up 17B: real router replay through webhook and semantic turn', () => {
+  for (const turn of [0, 1, 2]) it(`C11 turn ${turn} opens the personal payout page with one sentence and a web button`, async () => {
+    const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+    const replay = fx17bReplayRoutes.find(row => row.journey === 'C11' && row.turn === turn)!;
+    const { prisma } = makePrisma({ recentTurns: turn ? [{ userMessagePreview: 'เพิ่มบัญชีรับเงินคืนของฉันทำยังไง', replyPreview: 'เพิ่มบัญชีรับเงินคืนของคุณที่หน้าบัญชีรับเงินคืนบนเว็บได้เลยค่ะ', createdAt: new Date() }] : [] });
+    prisma.client.lineIntakePendingMedia.findMany = async () => [];
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'reimbursement.create'], roles: ['STAFF'], intakeRouteFn: () => replay.route,
+      aiGatewayFn: async req => {
+        const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+          provider: { generateText: async input => { assert.equal(input.usageTag, 'line.compose'); return { ok: true, text: JSON.stringify({ helpActions: [{ index: 0, actionId: 'payout_account' }] }) }; } },
+          invoke: async () => assert.fail('payout details stay on the web') });
+        return { ...result, requestId: req.requestId, intent: 'help', agent: 'general', toolsInvoked: [], sourceLabels: [], refused: false };
+      } });
+    const flow = h.useCase as any;
+    flow.bindConversation = async (event: object) => flow.boundConversations.set(event, { owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1' }, id: 'conversation', epoch: 1 });
+    flow.reliabilityContext = async () => ({}); flow.reconcileDeliveredSemanticTasks = async () => undefined;
+    flow.prepareTextGrantV2 = async (event: any) => { const grant = { turnKey: event.inputEvidence.turnKey, nextOrdinal: 0, authorityKind: 'webhook_event', authorityId: 'accepted-edit', signature: 'fixture-signature', attemptKey: event.webhookEventId }; flow.budgetGrantsV2.set(event, grant); return grant; };
+    flow.aiGateway.narrowLineReliabilityGrant = async (grant: any) => grant;
+    flow.preserveSemanticTask = async () => true;
+    flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }), projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, tasks: [] }), createTurn: async () => ({ id: 'turn' }), save: async () => true };
+    flow.deliverMessages = async (_event: any, messages: any[]) => { h.sentMessageBatches.push(messages); flow.deliveredTextTurns.add(_event); return 'ok'; };
+    const evidence = (await createLineAiInputEvidence({ turnKey: `fx17b-c11-${turn}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: replay.messageText }] }))!.inputEvidence;
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `fx17b-c11-${turn}`, messageText: replay.messageText, inputEvidence: evidence });
+    assert.equal(h.intakeRequests.length, 1); assert.equal(h.aiGatewayRequests.length, 1);
+    assert.equal(h.sentMessageBatches.length, 1);
+    const payload = JSON.stringify(h.sentMessageBatches[0]);
+    assert.match(payload, /https:\/\/app.example.com\/companies\/company-1\/reimbursements\/payout-account/);
+    assert.match(payload, /เพิ่มบัญชีรับเงินคืนของคุณที่หน้าบัญชีรับเงินคืนบนเว็บได้เลยค่ะ/);
+    assert.doesNotMatch(payload, /ต้องการเพิ่มเพื่ออะไร|ให้น้องทำให้/);
+  });
+  for (const [journey, turn, action, tool, readTool, idField] of [
+    ['C04', 1, 'VOUCHER_CREATE', 'expense.action.preview', 'expense.list_recent', 'expenseId'],
+    ['C07', 3, 'UPDATE', 'counterparty.action.preview', 'counterparty.search', 'counterpartyId'],
+  ] as const) it(`${journey} reads the target and delivers only its human confirmation card`, async () => {
+    const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+    const { runWithUsageContext } = await import('../../../../../../ai-gateway/src/common/usage/usage-context');
+    const replay = fx17bReplayRoutes.find(row => row.journey === journey && row.turn === turn)!;
+    const { prisma } = makePrisma();
+    const token = '2191d48d-704a-4b1e-a800-6b02661001bb.' + 'a'.repeat(43);
+    const reply = 'ตรวจรายละเอียดแล้วกดยืนยันค่ะ';
+    const preview: any = tool === 'counterparty.action.preview' ? { token, expiresAt: new Date(Date.now() + 600_000).toISOString(), lines: [reply, 'ที่อยู่: เดิม → 101 ถนนงามวงศ์วาน'] }
+      : { previewId: 'voucher-preview', token, action, expiresAt: new Date(Date.now() + 600_000).toISOString(), summary: reply,
+        record: { vendorName: 'บริษัท ทดสอบ จำกัด', amount: '2081', currency: 'THB', date: '2026-10-14', status: 'ยืนยันแล้ว', nextStatus: 'ร่างใบเตรียมจ่าย' } };
+    const calls: string[] = [];
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'ai.tool.invoke', 'expense.read', 'expense.disbursement.prepare', 'accounting.counterparty.read', 'accounting.counterparty.manage'],
+      intakeRouteFn: () => replay.route, aiGatewayFn: async req => {
+        assert.deepEqual(req.semanticSubrequests, replay.route.semanticSubrequests);
+        let round = 0;
+        const state: any = { status: 'active-v2', calls: 1, repairCount: 0, grant: { maxTurnSlots: 4 } };
+        const result = await runWithUsageContext({ budget: state }, () => runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+          provider: { generateText: async input => {
+            assert.equal(input.usageTag, 'line.loop'); state.calls++;
+            const next = round++ > 0;
+            return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: next ? tool : readTool,
+              input: next ? { action, [idField]: 'read-target', ...(action === 'UPDATE' ? { addressText: '101 ถนนงามวงศ์วาน ตำบลบางกระสอ อำเภอเมืองนนทบุรี นนทบุรี 11000' } : {}) } : {} }] }) };
+          } }, invoke: async (meta, ctx) => { calls.push(meta.name); assert.equal(ctx.companyId, 'company-1');
+            return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(), data: meta.name === readTool ? { items: [{ id: 'read-target' }] } : { reply, preview }, sourceRefs: [] }; } }));
+        return { ...result, requestId: req.requestId, intent: 'business_read', agent: 'accounting', toolsInvoked: calls, sourceLabels: [], refused: false };
+      } });
+    const flow = h.useCase as any;
+    flow.reliabilityContext = async () => ({});
+    flow.counterparties = { pending: async () => tool === 'counterparty.action.preview' ? preview : null };
+    flow.expenseActions = { pending: async () => tool === 'expense.action.preview' ? preview : null, repairChoices: async () => null };
+    flow.captureExpenseNote = { execute: async () => assert.fail('registry actions never create another expense') };
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `fx17b-${journey}`, messageText: replay.messageText });
+    assert.deepEqual(calls, [readTool, tool]); assert.equal(h.sentMessageBatches.length, 1);
+    assert.equal(h.sentMessageBatches[0]!.length, 1);
+    assert.match(JSON.stringify(h.sentMessageBatches[0]), tool === 'counterparty.action.preview' ? /counterparty_confirm/ : /expense_action_confirm/);
+    assert.doesNotMatch(JSON.stringify(h.sentMessageBatches[0]), /ไม่อยู่ในขอบเขต|แก้ไขที่อยู่คู่ค้าต้องทำผ่านหน้าเว็บ/);
+  });
+
+  it('C05 records the first dependent clause and retains the other two for their next buttons', async t => {
+    const replay = fx17bReplayRoutes.find(row => row.journey === 'C05' && row.turn === 1)!;
+    const { prisma } = makePrisma(); prisma.client.lineIntakePendingMedia.findMany = async () => [];
+    const delivered: any[][] = [];
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'ai.tool.invoke', 'expense.create', 'wht.certificate.issue', 'accounting.counterparty.manage'],
+      entitledFeatureKeys: ['expenses', 'wht_50bis'], intakeRouteFn: () => replay.route,
+      aiGatewayFn: () => assert.fail('no write is planned until the user chooses one') });
+    const flow = h.useCase as any;
+    const owner = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1' };
+    let projection: any = { version: 2, stateVersion: 1, lifecycleEpoch: 1, tasks: [] };
+    flow.bindConversation = async (event: object) => flow.boundConversations.set(event, { owner, id: 'conversation', epoch: 1 });
+    flow.reliabilityContext = async () => ({}); flow.reconcileDeliveredSemanticTasks = async () => undefined;
+    flow.prepareTextGrantV2 = async (event: any) => { const grant = { turnKey: event.inputEvidence.turnKey, nextOrdinal: 0, authorityKind: 'webhook_event', authorityId: 'accepted-edit', signature: 'fixture-signature', attemptKey: event.webhookEventId }; flow.budgetGrantsV2.set(event, grant); return grant; };
+    flow.aiGateway.narrowLineReliabilityGrant = async (grant: any) => grant;
+    flow.bindMixedTaskSource = async () => undefined;
+    flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }), projection: async () => projection,
+      createTurn: async () => ({ id: 'turn' }), save: async (_owner: any, _version: number, _epoch: number, next: any) => { projection = { ...next, lifecycleEpoch: 1, stateVersion: projection.stateVersion + 1 }; return true; } };
+    const plans = await fx20RealLineDelivery(t, flow, prisma, delivered);
+    const captured = savedMediaFixture('fx17b-first');
+    flow.expenseRepo = { listRecentLineCaptures: async () => [], listCategories: async () => [], findByIdWithRelations: async () => captured };
+    flow.captureExpenseNote = { execute: async () => ({ expense: captured, replyTexts: ['เก็บร่างค่าจ้างทำป้าย 10000 บาทแล้วค่ะ'] }) };
+    const evidence = (await createLineAiInputEvidence({ turnKey: 'fx17b-c05', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: replay.messageText }] }))!.inputEvidence;
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'fx17b-c05', messageText: replay.messageText, inputEvidence: evidence });
+    assert.equal(plans.length, 1); assert.equal(plans[0].answer.status, 'PARTIAL');
+    assert.doesNotMatch(JSON.stringify(delivered), /กรุณาเลือกทำข้อ/);
+    assert.equal(h.intakeRequests.length, 1); assert.equal(h.aiGatewayRequests.length, 0);
+    assert.equal(delivered.length, 1);
+    assert.match(JSON.stringify(delivered[0]), /เก็บร่างค่าจ้างทำป้าย/);
+    assert.ok(delivered.flat().some((item: any) => item.quickReply?.items.some((choice: any) => choice.action.text === 'ทำข้อ 2 ก่อน')));
+    assert.doesNotMatch(JSON.stringify(delivered), /แพ็กเกจที่ใช้อยู่ยังไม่มี|1\)|1\./);
+    assert.deepEqual(projection.tasks[0].subrequests.map((item: any) => item.goal), replay.route.semanticSubrequests.map((item: any) => item.goal));
+  });
+});
+
+it('Fix-up 17B: C05 shared facts survive exact task selection, including untyped voucher/counterparty work', async () => {
+  const { freezeAcceptedLedgerRequest } = await import('../line-ledger-accepted-request');
+  const { lineConversationId } = await import('../line-conversation-context.service');
+  const { AI_BUDGET_PROFILE_TABLE_DIGEST_V2, verifyLineAiRetainedTaskSource } = await import('@watchdog-bms/contracts');
+  const replay = fx17bReplayRoutes.find(row => row.journey === 'C05' && row.turn === 1)!;
+  const original: any = { ...BASE_EVENT, webhookEventId: 'fx17b-original', messagingChannelId: 'oa', messageText: replay.messageText };
+  original.inputEvidence = (await createLineAiInputEvidence({ turnKey: 'fx17b-original', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now() - 1000, rawText: original.messageText }] }))!.inputEvidence;
+  const owner = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line' as const, channelKind: 'USER' as const, messagingChannelId: 'oa', chatKeyHash: chatKeyHashOf(original) };
+  const binding = { owner, id: lineConversationId(owner), epoch: 1 };
+  const now = Date.now();
+  const grant: any = { version: 2, turnKey: original.inputEvidence.turnKey, authorityKind: 'webhook_event', authorityId: 'original',
+    channelOwnerDigest: 'a'.repeat(64), attemptKey: 'attempt', monthKey: '2026-10', payerCompanyId: owner.companyId,
+    model: { provider: 'openai', modelId: 'gpt-4.1-mini', region: 'global' }, allowedProfileIds: ['line-answer/2'], profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
+    maxTurnSlots: 4, maxRepairs: 1, admittedAtMs: now - 1000, workDeadlineAtMs: now + 30000, finalDeadlineAtMs: now + 40000,
+    nonce: 'nonce', issuerVersion: 'api-1', signature: 'a'.repeat(64), nextOrdinal: 1 };
+  const request: any = { requestId: 'fx17b-original', webhookEventId: original.webhookEventId, messageText: original.messageText,
+    messagePreviewHash: 'a'.repeat(16), userContext: { lineUserId: '[REDACTED]', internalUserId: owner.userId, companyId: owner.companyId, membershipId: owner.membershipId, permissions: ['ai.tool.invoke'], roles: [], locale: 'th-TH' },
+    inputEvidence: original.inputEvidence, budgetGrantV2: grant, semanticSubrequests: replay.route.semanticSubrequests };
+  const accepted = freezeAcceptedLedgerRequest({ request, ownerEpoch: binding.epoch, conversationId: binding.id, accessFingerprint: 'fp' },
+    { companyId: owner.companyId, userId: owner.userId, webhookEventId: original.webhookEventId, turnId: request.requestId, chatKey: original.lineUserId, messagingChannelId: 'oa' });
+  const projection: any = { version: 2, stateVersion: 1, lifecycleEpoch: 1, tasks: [{ taskId: 'task', revision: 2, state: 'waiting_user', kind: 'write',
+    userGoal: 'จัดทำ 50 ทวิ', subrequests: replay.route.semanticSubrequests.map((item: any) => ({ index: item.index, kind: 'write', goal: item.goal, status: 'needs_user' })),
+    sourceRevisionLocators: replay.route.semanticSubrequests.map((item: any) => ({ sourceType: `LINE_ACCEPTED_TASK_${item.index}_${item.index}`, sourceId: accepted.deliveryId, revision: accepted.digest })) }] };
+  const rejected: string[] = [], delivered: any[][] = [];
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  Object.assign(flow, { boundConversations: new WeakMap(), retainedTaskSources: new WeakMap(), deliveryAccess: new WeakMap(),
+    contextV2: { projection: async () => projection }, prisma: { client: { lineLedgerDelivery: { findUnique: async () => ({ companyId: owner.companyId, userId: owner.userId,
+      webhookEventId: original.webhookEventId, acceptedRequestJson: accepted, expiresAt: new Date(now + 600000) }) } } },
+    deliverReply: async (_event: any, text: string) => rejected.push(text), deliverMessages: async (_event: any, messages: any[]) => { delivered.push(messages); return 'ok'; } });
+  for (const index of [0, 1, 2]) {
+    const selected = { ...original, webhookEventId: `fx17b-select-${index}`, messageText: `ทำข้อ ${index + 1} ก่อน` };
+    flow.boundConversations.set(selected, binding); flow.deliveryAccess.set(selected, { fingerprint: 'fp' });
+    assert.equal(await flow.prepareRetainedTaskSelection(selected), false);
+    const retained = flow.retainedTaskSources.get(selected); assert.ok(retained);
+    assert.equal(retained.sourceText, replay.messageText);
+    assert.deepEqual(retained.source.semanticSubrequest, replay.route.semanticSubrequests[0]);
+    assert.equal(retained.source.taskRef.subrequestIndex, 0, 'an unrecorded source is prepared before its dependent action');
+    assert.ok(await verifyLineAiRetainedTaskSource(retained.source));
+    assert.equal(selected.messageText, `ทำข้อ ${index + 1} ก่อน`, 'live message and budget authority stay on the selection event');
+    flow.deliveryAccess.set(selected, { fingerprint: 'changed' });
+    assert.equal(await flow.prepareRetainedTaskSelection(selected), true); assert.equal(flow.retainedTaskSources.has(selected), false);
+  }
+  assert.equal(rejected.length, 3);
+  // More than four choices are paged; the second page still selects exact original clause indices.
+  const task = projection.tasks[0];
+  task.subrequests.push(...[3, 4, 5].map(index => ({ index, kind: 'write', goal: `งานเพิ่มเติม ${index}`, status: 'needs_user' })));
+  task.sourceRevisionLocators.push(...[3, 4, 5].map(index => ({ sourceType: `LINE_ACCEPTED_TASK_${index}_${index}`, sourceId: accepted.deliveryId, revision: accepted.digest })));
+  const more = { ...original, messageText: 'ขอดูงานค้างที่เหลือ' }; flow.boundConversations.set(more, binding);
+  assert.equal(await flow.prepareRetainedTaskSelection(more), true);
+  assert.deepEqual(delivered[0]![0].quickReply.items.map((item: any) => item.action.text), ['ทำข้อ 5 ก่อน', 'ทำข้อ 6 ก่อน']);
+});
+
+describe('Fix-up 15: chat action navigation and reimbursement choices', () => {
+  it('rechecks every advertised action before producing the primary button', () => {
+    for (const action of LINE_CHAT_ACTIONS) {
+      const response: any = { refused: false, presentation: { kind: 'answer_cards', cards: [{ text: action.sentence, chatActionId: action.id }] } };
+      const quick = productHelpQuickReply(response, ['ai.tool.invoke', action.permission], null)!;
+      if ('webPath' in action) { assert.equal(quick, undefined); continue; }
+      assert.deepEqual(quick.items.map(item => item.action), [{ type: 'message', label: 'ให้น้องทำให้', text: action.command }]);
+      assert.equal(productHelpQuickReply(response, [], null), undefined);
+      assert.equal(productHelpQuickReply({ ...response, refused: true }, ['ai.tool.invoke', action.permission], null), undefined);
+    }
+  });
+
+  it('delivers each collection step as buttons in both primary and fallback delivery plans', () => {
+    const base = { selected: { branchChoiceId: 'b', requesterChoiceId: 'r' }, pages: {}, choices: [] as any[], collection: { lineChosen: true, receiptChosen: false, categoryChosen: false } };
+    const cases = [
+      { options: base, labels: ['ส่งรูปใบเสร็จ', 'ไม่มีใบเสร็จ'] },
+      { options: { ...base, collection: { ...base.collection, lineChosen: false }, choices: Array.from({ length: 6 }, (_, i) => ({ kind: 'SOURCE', label: `ร้าน ${i}`, details: { eligible: true, amount: '350', incurredDate: '2026-10-15' } })) }, labels: ['ร้าน 0', 'ร้าน 1', 'ร้าน 2', 'ร้าน 3', 'รายการใหม่'] },
+      { options: { ...base, collection: { lineChosen: true, receiptChosen: true, categoryChosen: false }, choices: Array.from({ length: 20 }, (_, i) => ({ kind: 'CATEGORY', label: `หมวด ${i}` })) }, labels: [...Array.from({ length: 12 }, (_, i) => `หมวด ${i}`), 'ค้นหาหมวดเพิ่มเติม'] },
+    ];
+    for (const row of cases) {
+      const messages = buildReimbursementOptionsMessages(row.options);
+      assert.equal(messages.length, 1);
+      const labels = messages[0]!.quickReply!.items.map(item => item.action.label);
+      assert.equal(labels.length, row.labels.length);
+      row.labels.forEach((label, i) => assert.ok(labels[i]!.startsWith(label)));
+      assert.doesNotMatch(JSON.stringify(messages), /จากรายการด้านล่าง|พิมพ์ลำดับ|\d\) /);
+      const now = new Date(), expires = new Date(now.getTime() + 60_000).toISOString();
+      const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: `fx15-${labels.length}`, createdAt: now.toISOString(), readyAt: now.toISOString(), expiresAt: expires,
+        firstDispatchDeadlineAt: expires, answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: (messages[0] as any).text, required: true, sourceProofIds: [] }] },
+        businessResult: null, control: null, authorization: { v: 2, kind: 'PRIVATE', actor: { companyId: 'company', userId: 'user', membershipId: 'member', requestId: 'fx15', accessFingerprint: 'fingerprint',
+          channelId: 'oa', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation', ownerEpoch: 1 },
+          proofs: [], issuedAt: now.toISOString(), expiresAt: expires }, preferredMessages: messages });
+      const batch = plan.batches[0]!;
+      assert.deepEqual(batch.primary.messages[0]!.quickReply, messages[0]!.quickReply);
+      if (batch.fallback) assert.deepEqual(batch.fallback.messages[0]!.quickReply, messages[0]!.quickReply);
+    }
+  });
+
+  it('replays the exact J7 STAFF/Starter turns through the webhook and sends the actionable choices', async () => {
+    const turns = ['สร้างใบเบิกยังไง', 'เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย'];
+    const { prisma } = makePrisma();
+    prisma.client.lineIntakePendingMedia.findMany = async () => [];
+    const actionId = '018fbad0-4d4e-7cc7-8e43-0123456789ac';
+    const delivered: any[][] = [];
+    let flow: any;
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'ai.tool.invoke', 'reimbursement.create', 'reimbursement.read_own'], roles: ['STAFF'],
+      config: { lineAiReimbursementDraftWriteEnabled: true, lineAiApprovedKnowledgeEnabled: true },
+      intakeRouteFn: request => ({ status: 'ROUTED', intent: request.messageText === turns[0] ? 'BUSINESS_READ_QUESTION' : 'REIMBURSEMENT_REQUEST_START', language: 'th', confidence: 1,
+        howToActionId: request.messageText === turns[0] ? 'reimbursement_claim' : undefined,
+        semanticSubrequests: [{ index: 0, kind: request.messageText === turns[0] ? 'help' : 'write', goal: request.messageText,
+          ...(request.messageText === turns[1] ? { writeIntent: 'REIMBURSEMENT_REQUEST_START' } : {}), requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] }),
+      aiGatewayFn: request => {
+        const help = request.messageText === turns[0];
+        if (help) assert.equal(request.howToActionId, 'reimbursement_claim');
+        return { requestId: request.requestId, replyText: help ? 'บอกรายการที่สำรองจ่าย แล้วน้องช่วยเตรียมใบเบิกให้ตรวจค่ะ' : 'เลือกบิลที่จะเบิกจากรายการด้านล่างค่ะ',
+          intent: 'unknown', agent: 'general', durationMs: 1, refused: false, webLinks: help ? [{ label: 'คู่มือใบเบิก', path: '/companies/company-1/user-guide/reimbursements' }] : [], sourceLabels: [],
+          sourceRefs: help ? [] : [{ module: 'reimbursements', entityType: 'reimbursement_draft_action', entityId: actionId, label: 'ร่างใบเบิก', permissionChecked: true }],
+          toolsInvoked: help ? [] : ['reimbursement.draft.get_options'], semanticCoverage: [{ index: 0, status: help ? 'handled' : 'needs_user' }],
+          ...(help ? { presentation: { kind: 'answer_cards', cards: [{ text: 'บอกรายการที่สำรองจ่าย แล้วน้องช่วยเตรียมใบเบิกให้ตรวจค่ะ', chatActionId: 'reimbursement_claim' }] } } : {}) };
+      } });
+    flow = h.useCase as any;
+    flow.bindConversation = async (event: object) => flow.boundConversations.set(event, { owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1' }, id: 'conversation', epoch: 1 });
+    flow.reliabilityContext = async () => ({});
+    flow.reconcileDeliveredSemanticTasks = async () => undefined;
+    flow.prepareTextGrantV2 = async (event: any) => { event.inputEvidence ??= (await createLineAiInputEvidence({ turnKey: event.webhookEventId, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] }))!.inputEvidence; const grant = { turnKey: event.inputEvidence.turnKey, nextOrdinal: 0, authorityKind: 'webhook_event', authorityId: 'accepted-edit', signature: 'fixture-signature', attemptKey: event.webhookEventId }; flow.budgetGrantsV2.set(event, grant); return grant; };
+    flow.aiGateway.narrowLineReliabilityGrant = async (grant: any) => grant;
+    flow.preserveSemanticTask = async () => true;
+    flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }), projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }), createTurn: async () => ({ id: 'turn' }), save: async () => true };
+    flow.reimbursementDrafts = { active: async () => null, get: async () => ({ status: 'needs_fields', actionId, actionRevision: 0, fieldPaths: [] }) };
+    flow.reimbursementAdapter = { readDisplayOptions: async () => ({ selected: { branchChoiceId: 'b', requesterChoiceId: 'r' }, pages: {}, choices: [], collection: { lineChosen: true, receiptChosen: false, categoryChosen: false } }) };
+    flow.deliverMessages = async (_event: any, messages: any[]) => { delivered.push(messages); return 'ok'; };
+    for (const [i, text] of turns.entries()) {
+      const evidence = (await createLineAiInputEvidence({ turnKey: `fx15-j7-${i}`, parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `fx15-j7-${i}`, messageText: text, inputEvidence: evidence });
+    }
+    assert.equal(h.aiGatewayRequests.length, 2);
+    assert.ok(delivered[0]!.some(message => message.quickReply?.items.some((item: any) => item.action.label === 'ให้น้องทำให้')));
+    assert.match(JSON.stringify(delivered[0]), /user-guide\/reimbursements/);
+    assert.equal(delivered[1]!.length, 1);
+    assert.deepEqual(delivered[1]![0].quickReply.items.map((item: any) => item.action.label), ['ส่งรูปใบเสร็จ', 'ไม่มีใบเสร็จ']);
+    assert.doesNotMatch(JSON.stringify(delivered[1]), /จากรายการด้านล่าง|ร่างใบเบิกยังไม่ครบ|1\) /);
+  });
+});
+
+it('Fix-up 15: J7 facts survive button turns to the existing guarded reimbursement confirm card', async () => {
+  const { completeReimbursementDraftInput } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/reimbursement-draft-input');
+  const now = new Date(), branch = { id: 'branch-1', name: 'สำนักงานใหญ่', code: 'HQ', type: 'HEAD_OFFICE', updatedAt: now };
+  const owner = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line', channelKind: 'USER', messagingChannelId: 'msg-channel-1', chatKeyHash: 'a'.repeat(64) };
+  const ctx: any = { requestId: 'fx15', authSubject: owner.userId, companyId: owner.companyId, userId: owner.userId, membershipId: owner.membershipId,
+    roles: ['STAFF'], permissions: ['line.ai.query', 'ai.tool.invoke', 'reimbursement.create', 'reimbursement.read_own'], scopes: { branchIds: [branch.id] }, authProvider: 'line' };
+  let action: any = null, authority: any;
+  let categories = [{ id: 'company-other', name: 'อื่น ๆ' }, { id: 'company-fuel', name: 'ค่าน้ำมัน' }];
+  let evidenceChecks = 0;
+  const repo: any = {
+    isDraftActionOwnerCurrent: async () => true, findActiveDraftAction: async () => action?.status === 'COLLECTING' || action?.status === 'PREVIEW' ? action : null,
+    findDraftAction: async () => action,
+    findOrCreateDraftAction: async (input: any) => action ??= { ...input, status: 'COLLECTING', previewRevision: 0, createdAt: now, updatedAt: now },
+    saveDraftActionCollection: async (input: any) => action = { ...action, ...input, updatedAt: new Date() },
+    saveDraftActionPreview: async (input: any) => action = { ...action, ...input, status: 'PREVIEW', updatedAt: new Date() },
+    listReimbursementRequesters: async () => [{ userId: owner.userId, displayName: 'พิม' }], listReimbursementSources: async () => [],
+    resolveCreateBranchId: async () => branch.id, findBranchName: async () => branch.name, assertReimbursementRequester: async () => ({ displayName: 'พิม' }),
+    findPolicy: async () => ({ currency: 'THB', requireReceipt: true, allowMissingReceiptWithReason: true, status: 'ACTIVE' }),
+    resolveSourceLines: async (_company: any, _user: any, _branch: any, _currency: any, lines: any) => lines,
+  };
+  const prisma: any = { client: { branch: { findMany: async () => [branch], findFirst: async () => branch }, companyMembership: { findUnique: async () => ({ defaultBranchId: branch.id }) }, attachmentObject: { findMany: async () => [] } } };
+  const drafts = new LineReimbursementDraftUseCase(repo, { validate: async (_ctx: any, requester: string, lines: any[], branchId: string) => {
+    evidenceChecks++; assert.equal(requester, owner.userId); assert.equal(branchId, branch.id); assert.equal(lines[0].categoryKey, 'company-fuel');
+  } } as any, { lineAiReimbursementDraftWriteEnabled: true, reimbursementWriteQuiesce: false, lineMessagingChannelId: owner.messagingChannelId } as any);
+  const service = new LineReimbursementDraftService(drafts);
+  const adapter = new LineReimbursementDraftAdapterService(prisma, repo, {} as any, service, drafts, { listCategories: async () => categories } as any);
+  (adapter as any).authority = async () => authority;
+  let turn = 0;
+  const run = async (text: string, fragment: (options: any) => any) => {
+    const evidence = (await createLineAiInputEvidence({ turnKey: `fx15-${turn++}`, parts: [{ partId: `p-${turn}`, eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const candidates = (await extractValueCandidatesV2(evidence, '2026-10-16'))!;
+    authority = { ctx, owner: { owner, epoch: 1, taskRevision: 1 }, evidence, candidates, acceptedRequest: { requestId: 'fx15' }, writeIndexes: [0], continuedActionId: action?.id };
+    const toolContext: any = { ...ctx, budgetGrantV2: { attemptKey: 'fx15' } };
+    const options = await adapter.getOptions(toolContext, { operation: 'CREATE', subrequestIndex: 0 });
+    assert.equal(options.status, 'ok', JSON.stringify(options));
+    const input = completeReimbursementDraftInput('reimbursement.draft.preview_create', fragment((options.data as any).options), [{ result: options }], { inputEvidence: evidence, valueCandidates: candidates } as any);
+    return adapter.preview(toolContext, input, 'CREATE');
+  };
+  let result = await run('เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย', options => ({ action: {},
+    suggestedCategoryChoiceId: options.choices.find((choice: any) => choice.label === 'ค่าน้ำมัน').choiceId,
+    proposal: { fields: {}, lineChanges: [{ operation: 'ADD', values: { description: 'ค่าน้ำมัน', amount: '350', incurredDate: '2026-10-15' } }] } }));
+  assert.equal((result.data as any).reimbursementDraft.status, 'needs_fields', JSON.stringify(result));
+  const stored = action.commandJson.accepted.proposal.lineChanges[0].values;
+  assert.equal(stored.amount.value, '350'); assert.equal(stored.incurredDate.value, '2026-10-15');
+  result = await run('ไม่มีใบเสร็จ ร้านไม่ออกให้', () => ({ action: {}, proposal: { fields: { missingReceiptReason: 'ร้านไม่ออกให้' }, lineChanges: [{ operation: 'ADD', values: { attachmentChoiceId: null } }] } }));
+  assert.equal((result.data as any).reimbursementDraft.status, 'needs_fields', JSON.stringify(result));
+  const shown = await adapter.readDisplayOptions({ ctx, owner: owner as any, ownerEpoch: 1, actionId: action.id }); assert.ok(shown);
+  const buttons = buildReimbursementOptionsMessages(shown)[0]!.quickReply!.items;
+  assert.equal(buttons[0]!.action.label, 'ค่าน้ำมัน', 'the suggested company category is first, without silently choosing it');
+  result = await run('เลือกหมวดค่าใช้จ่าย ค่าน้ำมัน', options => ({ action: {}, proposal: { fields: {}, lineChanges: [{ operation: 'ADD', values: { categoryChoiceId: options.choices.find((choice: any) => choice.label === 'ค่าน้ำมัน').choiceId } }] } }));
+  assert.equal((result.data as any).reimbursementDraft.status, 'needs_fields', JSON.stringify(result));
+  result = await run('ยังไม่ได้บอกเหตุผล', () => ({ action: {}, proposal: { fields: { reason: 'คำที่แต่งขึ้น' } } }));
+  assert.equal((result.data as any).reimbursementDraft.errorCode, 'invalid_provenance');
+  assert.equal(action.commandJson.accepted.proposal.fields.reason, undefined, 'a bad new fragment cannot overwrite the previously accepted facts');
+  result = await run('เดินทางพบลูกค้า', () => ({ action: {}, proposal: { fields: { reason: 'เดินทางพบลูกค้า' } } }));
+  const preview = (result.data as any).reimbursementDraft;
+  assert.equal(preview.status, 'preview', JSON.stringify(result));
+  assert.equal(preview.preview.after.amount, '350.0000');
+  assert.equal(preview.preview.after.lines[0].incurredDate, '2026-10-15');
+  assert.equal(preview.preview.after.lines[0].categoryKey, 'company-fuel');
+  assert.equal(preview.preview.after.receiptRequirementStatus, 'MISSING_WITH_REASON');
+  assert.ok(evidenceChecks > 0, 'the existing evidence service validates the final proposal');
+  assert.match(JSON.stringify(buildReimbursementDraftMessages(preview, 'https://app.example.com', owner.companyId)), /reimbursement_draft_confirm/);
+  assert.equal(repo.createRequest, undefined, 'collection and preview have no financial writer');
+  repo.listReimbursementSources = async () => [
+    { expenseId: 'matching', label: 'ปั๊มน้ำมัน', updatedAt: now.toISOString(), eligible: true, amount: '350.0000', incurredDate: '2026-10-15', currency: 'THB' },
+    { expenseId: 'wrong-amount', label: 'บิลอื่น', updatedAt: now.toISOString(), eligible: true, amount: '351', incurredDate: '2026-10-15', currency: 'THB' },
+    { expenseId: 'wrong-date', label: 'บิลวันอื่น', updatedAt: now.toISOString(), eligible: true, amount: '350', incurredDate: '2026-10-14', currency: 'THB' },
+  ];
+  const matched = await (adapter as any).buildOptions(ctx, { actionId: action.id, taskId: action.taskId, operation: 'CREATE', actionOrdinal: 1 }, 1,
+    { operation: 'CREATE', subrequestIndex: 0 }, undefined, undefined, undefined, { amount: '350', incurredDate: '2026-10-15' });
+  assert.deepEqual(matched.choices.filter((choice: any) => choice.kind === 'SOURCE').map((choice: any) => choice.raw.expenseId), ['matching']);
+});
+
+it('Fix-up 15: receipt capture continues the open claim and never confirms the expense first', async () => {
+  const { prisma } = makePrisma(), h = makeUseCase(prisma), flow = h.useCase as any;
+  const event = { ...BASE_EVENT, messageText: 'ส่งรูปใบเสร็จ' };
+  const ctx = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', permissions: ['reimbursement.create'], scopes: {} };
+  flow.deliveryReceiptSources.set(event, { context: ctx });
+  flow.boundConversations.set(event, { owner: ctx, epoch: 1 });
+  flow.reimbursementDrafts = { active: async () => ({ status: 'COLLECTING' }) };
+  flow.expenseActions = { preview: async () => assert.fail('a claim receipt must remain eligible for the existing reimbursement source guard') };
+  const card = await flow.receiptReviewCard(event, 'เก็บใบเสร็จเป็นร่างแล้วค่ะ', { expenseId: 'expense', subject: 'ข้อมูลใบเสร็จ', rows: [{ label: 'ยอดรวม', value: '350.00 บาท' }], notes: [] }, ctx.companyId);
+  assert.deepEqual(card.quickReply.items.map((item: any) => item.action), [{ type: 'message', label: 'ใช้บิลนี้ทำใบเบิก', text: 'ใช้บิลที่เพิ่งส่งรูปทำใบเบิกต่อ' }]);
+  assert.doesNotMatch(JSON.stringify(card), /expense_action_confirm|ยืนยันรายการนี้/);
+});
+
+it('Fix-up 15: a saved draft offers the existing submit journey only to a submitter', () => {
+  const result: any = { status: 'applied', receipt: { requestId: 'private-id', amount: '350', currency: 'THB', currentState: 'DRAFT' } };
+  const messages = buildReimbursementDraftMessages(result, 'https://app.example.com', 'company', ['reimbursement.submit'], 'signed-token');
+  assert.deepEqual(messages[0]!.quickReply!.items.map(item => item.action), [{ type: 'postback', label: 'ส่งอนุมัติ', data: 'action=expense_action_submit&token=signed-token' }]);
+  assert.equal(buildReimbursementDraftMessages(result, '', 'company', [])[0]!.quickReply, undefined);
+  assert.equal(buildReimbursementDraftMessages({ ...result, receipt: { ...result.receipt, currentState: 'PENDING_APPROVAL' } }, '', 'company', ['reimbursement.submit'])[0]!.quickReply, undefined);
+  assert.doesNotMatch(JSON.stringify(messages), /private-id/);
+});
+
+it('Fix-up 15: the newly created claim locator comes only from a delivered receipt for this exact owner', async () => {
+  const { LineQuotedMessageService } = await import('../line-quoted-message.service');
+  const now = new Date(), expiresAt = new Date(now.getTime() + 60_000).toISOString();
+  const owner = { companyId: 'company', userId: 'user', membershipId: 'member', chatKeyHash: 'chat', channelId: 'oa', recipientHash: 'recipient', accessFingerprint: 'access', conversationId: 'line-v2:conversation', ownerEpoch: 1 };
+  const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'fx15-receipt', createdAt: now.toISOString(), readyAt: now.toISOString(), expiresAt, firstDispatchDeadlineAt: expiresAt,
+    answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: 'บันทึกร่างใบเบิกแล้วค่ะ', required: true, sourceProofIds: [] }] },
+    control: null, businessResult: { kind: 'REIMBURSEMENT_DRAFT', operationKey: 'action', committedAt: now.toISOString(), recordIds: ['claim'], resultingRevisions: ['revision'] },
+    authorization: { v: 2, kind: 'PRIVATE', actor: { ...owner, channel: 'line', channelKind: 'USER', requestId: 'request' }, issuedAt: now.toISOString(), expiresAt,
+      proofs: [{ id: 'quote', kind: 'QUOTE_REFERENCES', records: [{ tool: 'reimbursement.get_detail', id: 'claim' }] }] } });
+  const states = initialDeliveryBatchStates(plan).map(state => ({ ...state, status: 'ACCEPTED', acceptedAt: now.toISOString(), sentMessageIds: ['message'] }));
+  let row = { planJson: plan, planHash: deliveryHash(plan), batchStateJson: states };
+  const service = new LineQuotedMessageService({ client: { lineDeliveryPlan: { findMany: async () => [row] } } } as any);
+  assert.deepEqual(await service.recentReimbursementDraft(owner), [{ tool: 'reimbursement.get_detail', id: 'claim' }]);
+  for (const changed of [{ userId: 'other' }, { membershipId: 'other' }, { chatKeyHash: 'other' }, { accessFingerprint: 'changed' }, { ownerEpoch: 2 }])
+    assert.deepEqual(await service.recentReimbursementDraft({ ...owner, ...changed }), []);
+  row = { ...row, planHash: 'tampered' }; assert.deepEqual(await service.recentReimbursementDraft(owner), []);
+  row = { planJson: plan, planHash: deliveryHash(plan), batchStateJson: initialDeliveryBatchStates(plan) as any }; assert.deepEqual(await service.recentReimbursementDraft(owner), []);
+});
+
+import { join } from 'node:path';
+import { createHmac } from 'node:crypto';
+import { LineWebhookController } from '../../../auth/presentation/line-webhook.controller';
+import { parseLineReimbursementChoiceControl } from '../line-reimbursement-draft.service';
+
+// Extracted verbatim from .live/*/trace.jsonl gateway responses, not inferred from the message.
+const FX25_LIVE = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx25-router-replays.json'), 'utf8'));
+const FX24_LIVE = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx24-router-replays.json'), 'utf8'));
+const FX23_LIVE = JSON.parse(readFileSync(join(__dirname, 'fixtures/fx23-live.json'), 'utf8'));
+const FX22_LIVE = JSON.parse(readFileSync(join(__dirname, 'fixtures/fx22a-live.json'), 'utf8'));
+const FX21_LIVE = JSON.parse(readFileSync(join(__dirname, 'fixtures/fx21a-live.json'), 'utf8'));
+const FX17_LIVE = JSON.parse(readFileSync(join(__dirname, 'fixtures/fx17a-live-routes.json'), 'utf8'));
+
+/** Only persistence and HTTP are fakes: deliverMessages, plan construction/validation, replay and LINE serialization are real. */
+async function fx20RealLineDelivery(t: TestContext, flow: any, prisma: any, delivered: any[][], conversationId = 'line-v2:conversation') {
+  const rows = new Map<string, any>(), plans: any[] = [];
+  prisma.client.lineLedgerDelivery ??= { findFirst: async () => null };
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    const payload = JSON.parse(String(init?.body));
+    assert.ok(Array.isArray(payload.messages)); delivered.push(payload.messages);
+    return Response.json({ sentMessages: [{ id: `sent-${delivered.length}` }] });
+  }) as typeof fetch;
+  flow.lineReply = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic', lineMessagingChannelId: 'msg-channel-1' } as any), {} as any);
+  Object.assign(flow.config, { lineAiDeliveryPlanV2Enabled: true, lineAiTerminalOutcomeReplayEnabled: true });
+  const bind = flow.bindConversation.bind(flow);
+  flow.bindConversation = async (event: any, ...args: any[]) => {
+    await bind(event, ...args); const bound = flow.boundConversations.get(event);
+    if (bound) bound.id = conversationId;
+  };
+  flow.contextV2.load = async () => ({ row: { id: conversationId, lifecycleEpoch: 1 } });
+  const createLog = prisma.client.lineWebhookEventLog.create;
+  const logs = new Map<string, any>();
+  prisma.client.lineWebhookEventLog.create = async (args: any) => { const result = await createLog(args); logs.set(args.data.webhookEventId, args.data); return result; };
+  const findLog = prisma.client.lineWebhookEventLog.findUnique;
+  prisma.client.lineWebhookEventLog.findUnique = async (args: any) => logs.get(args.where.webhookEventId) ?? await findLog(args);
+  Object.assign(prisma.client.lineDeliveryPlan, {
+    findUnique: async ({ where }: any) => rows.get(where.id),
+    findFirst: async ({ where }: any) => [...rows.values()].reverse().find(row => row.status === 'ACCEPTED'
+      && (!where.planJson || row.planJson.control?.actionId === where.planJson.equals || row.planJson.control?.token === where.planJson.equals)),
+    updateMany: async () => ({ count: 1 }),
+  });
+  flow.deliveryPlans = {
+    savePlan: async (_owner: any, plan: any) => {
+      validateLineDeliveryPlan(plan); plans.push(plan);
+      const row = { id: plan.planId, planJson: structuredClone(plan), planHash: deliveryHash(plan), outcomeId: plan.producerId, status: 'READY', states: initialDeliveryBatchStates(plan) };
+      rows.set(row.id, row); return row;
+    },
+    claimPlan: async (id: string) => { const row = rows.get(id); return { plan: row.planJson, states: row.states, row }; },
+    beginPlanBatch: async (claim: any) => ({ index: claim.states.findIndex((state: any) => state.status !== 'ACCEPTED'), timeoutMs: 5000 }),
+    finishPlanBatch: async (claim: any, index: number, result: any) => {
+      assert.equal(result.kind, 'accepted'); claim.states[index].status = 'ACCEPTED'; claim.states[index].acceptedAt = new Date().toISOString();
+      if (claim.states.every((state: any) => state.status === 'ACCEPTED')) claim.row.status = 'ACCEPTED'; return true;
+    },
+  };
+  return plans;
+}
+
+FX23_LIVE[4] = { source: 'after-fx23/J7', route: FX24_LIVE.J7.turns[1].route, message: FX24_LIVE.J7.turns[1].body.events[0].message.text, acceptedAtMs: FX24_LIVE.J7.turns[1].body.events[0].timestamp };
+FX23_LIVE[5] = { source: 'after-fx23/E03', route: FX24_LIVE.E03.turns[1].route, message: FX24_LIVE.E03.turns[1].body.events[0].message.text, acceptedAtMs: FX24_LIVE.E03.turns[1].body.events[0].timestamp };
+
+for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of [['J7', false, false], ['C02', false, false], ['J7', true, false], ['C02', false, true], ['J7', false, false, true], ['C02', true, false, true], ['E03', false, false, true], ['J7', false, false, true, true], ['E03', false, false, true, true], ['J7', false, false, false, false, 0], ['J7', false, false, false, false, 1], ['E03', false, false, false, false, 2], ['J7', false, false, false, false, 4], ['E03', false, false, false, false, 5], ['J7', false, false, true, true, undefined, true]] as const) it(`Fix-up ${live25 ? '25 exact after-fx24' : fresh23 !== undefined ? `${fresh23 >= 4 ? '24' : '23'} exact ${FX23_LIVE[fresh23].source} planner timeout` : live22 ? '22A after-fx21' : literal ? '21A literal' : '17A'} ${journey}${withPhoto ? ' photo' : editAmount ? ' E03 edit' : ''}: real router JSON and signed webhook taps retain claim facts through receipt/category/confirm`, async t => {
+  const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+  const { runWithUsageContext } = await import('../../../../../../ai-gateway/src/common/usage/usage-context');
+  const fixture = live25 ? FX25_LIVE.J7.bootstrap : live22 ? FX22_LIVE[journey] : literal ? FX21_LIVE[journey] : undefined;
+  const stored = fixture && (journey !== 'E03' || live22);
+  if (fixture) t.mock.timers.enable({ apis: ['Date'], now: Date.parse(fixture.accepted.options.issuedAt) + 60_000 });
+  if (fresh23 !== undefined) t.mock.timers.enable({ apis: ['Date'], now: FX23_LIVE[fresh23].acceptedAtMs });
+  const live = fresh23 !== undefined ? { text: FX23_LIVE[fresh23].message, route: FX23_LIVE[fresh23].route, acceptedAtMs: Date.now(), tools: FX22_LIVE[journey].tools } : fixture ? { ...fixture, text: fixture.message, acceptedAtMs: Date.now() } : FX17_LIVE[journey][1], tapRoute = fixture?.tapRoute ?? FX17_LIVE.J7[2].route;
+  const expectedAmount = journey === 'C02' ? '280' : '350';
+  const categoryName = fixture?.accepted.suggestedCategoryChoiceId ? fixture.accepted.options.choices.find((choice: any) => choice.choiceId === fixture.accepted.suggestedCategoryChoiceId).label : journey === 'J7' ? 'ค่าน้ำมัน' : journey === 'E03' ? 'ค่าเดินทาง' : 'ค่าบริการ';
+  assert.equal(tapRoute.intent, fixture?.tapRoute.intent ?? 'REIMBURSEMENT_REQUEST_START');
+  assert.equal(tapRoute.semanticSubrequests[0].writeIntent, undefined, 'the exact live continuation omitted writeIntent');
+  const now = new Date(), branch = { id: fixture ? 'branch-a-1' : 'branch-1', name: 'สำนักงานใหญ่', code: fixture ? 'BR1' : 'HQ', type: 'HEAD_OFFICE', updatedAt: fixture ? new Date(fixture.accepted.options.choices[0].revision) : now };
+  const owner = { companyId: fixture ? 'company-a' : 'company-1', userId: fixture ? 'user-a-staff' : 'user-1', membershipId: 'mem-1', channel: 'line', channelKind: 'USER', messagingChannelId: 'msg-channel-1', chatKeyHash: chatKeyHashOf(BASE_EVENT) };
+  const ctx: any = { requestId: 'fx17-claim', authSubject: owner.userId, ...owner, roles: ['STAFF'],
+    permissions: ['line.ai.query', 'ai.tool.invoke', 'attachment.create', 'reimbursement.create', 'reimbursement.read_own', 'reimbursement.submit', 'reimbursement.update_own_draft'], scopes: { branchIds: [branch.id] }, authProvider: 'line' };
+  let action: any, authority: any, flow: any, savedClaim: any, savedEdit = false, savedSubmit = false, submitActions: any, writes = 0, evidenceChecks = 0;
+  const repo: any = {
+    isDraftActionOwnerCurrent: async () => true,
+    findActiveDraftAction: async () => ['COLLECTING', 'PREVIEW'].includes(action?.status) ? action : null, findDraftAction: async () => action,
+    findOrCreateDraftAction: async (input: any) => action ??= { ...input, status: 'COLLECTING', previewRevision: 0, createdAt: now, updatedAt: now },
+    saveDraftActionCollection: async (input: any) => action = { ...action, ...input, updatedAt: now },
+    saveDraftActionPreview: async (input: any) => action = { ...action, ...input, status: 'PREVIEW', updatedAt: now },
+    listReimbursementRequesters: async () => [{ userId: owner.userId, displayName: fixture ? 'พนักงาน (A)' : 'พิม' }], listReimbursementSources: async () => [],
+    resolveCreateBranchId: async () => branch.id, findBranchName: async () => branch.name, assertReimbursementRequester: async () => ({ displayName: fixture ? 'พนักงาน (A)' : 'พิม' }),
+    findPolicy: async () => ({ currency: 'THB', requireReceipt: true, allowMissingReceiptWithReason: fresh23 !== 5 && !live25, status: 'ACTIVE' }),
+    resolveSourceLines: async (_c: any, _u: any, _b: any, _currency: any, lines: any) => lines,
+    markDraftActionLineDelivered: async (input: any) => input.confirmationDigest === action.confirmationDigest,
+    findRequestById: async () => savedClaim, listRequests: async (input: any) => savedClaim && (!input.status || input.status === savedClaim.status) ? [savedClaim] : [],
+    applyDraftActionAtomic: async (input: any) => {
+      assert.equal(input.confirmationDigest, action.confirmationDigest); assert.equal(input.previewRevision, action.previewRevision);
+      writes++;
+      const command = action.commandJson;
+      savedClaim = { ...command, ...command.header, id: 'saved-claim', requesterUserId: owner.userId, status: 'DRAFT', incurredDate: new Date(command.header.incurredDate), createdAt: now, updatedAt: now,
+        lines: command.lines.map((line: any, index: number) => ({ ...line, id: `saved-line-${index}`, incurredDate: new Date(line.incurredDate), createdAt: now, updatedAt: now })) };
+      action = { ...action, status: 'APPLIED', requestId: savedClaim.id, resultJson: { actionId: action.id, operation: action.operation, requestId: savedClaim.id, committedState: 'DRAFT', amount: action.commandJson.header.amount, currency: 'THB', committedAt: now.toISOString(), appliedRequestUpdatedAt: now.toISOString() } };
+      return { kind: 'applied', action, request: savedClaim };
+    },
+  };
+  const dataPrisma: any = { client: { branch: { findMany: async () => [branch], findFirst: async () => branch },
+    companyMembership: { findUnique: async () => ({ defaultBranchId: branch.id }) }, attachmentObject: { findMany: async () => [] } } };
+  const drafts = new LineReimbursementDraftUseCase(repo, { validate: async () => { evidenceChecks++; } } as any,
+    { lineAiReimbursementDraftWriteEnabled: true, reimbursementWriteQuiesce: false, lineMessagingChannelId: owner.messagingChannelId } as any);
+  const service = new LineReimbursementDraftService(drafts);
+  const adapter = new LineReimbursementDraftAdapterService(dataPrisma, repo, {} as any, service, drafts,
+    { listCategories: async () => fixture ? fixture.accepted.options.choices.filter((choice: any) => choice.kind === 'CATEGORY').map((choice: any) => ({ id: choice.raw.key, name: choice.label })) : [{ id: 'other', name: 'อื่น ๆ' }, { id: 'fuel', name: 'ค่าน้ำมัน' }, { id: 'service', name: 'ค่าบริการ' }, { id: 'travel', name: 'ค่าเดินทาง' }] } as any);
+  const realAuthority = (adapter as any).authority.bind(adapter);
+  (adapter as any).authorityService = { resolvePrivateOwner: async () => ({ owner, epoch: 1, taskRevision: 1 }) };
+  dataPrisma.client.lineLedgerDelivery = { findFirst: async () => ({ acceptedRequestJson: { request: authority.acceptedRequest } }) };
+  dataPrisma.client.lineWebhookEventLog = { findUnique: async () => ({ webhookEventId: 'accepted-edit' }) };
+  (adapter as any).authority = async (toolCtx: any, update: boolean) => {
+    if (fresh23 !== undefined && h.aiGatewayRequests.length === 1) {
+      const result = await realAuthority(toolCtx, update);
+      assert.ok(result, 'the replay uses the persisted admission and real authority checks');
+      assert.equal(await realAuthority({ ...toolCtx, userId: 'foreign' }, update), null);
+      assert.equal(await realAuthority({ ...toolCtx, budgetGrantV2: { ...toolCtx.budgetGrantV2, signature: 'tampered' } }, update), null);
+      return result;
+    }
+    if (!live22 || !savedEdit) return authority;
+    const result = await realAuthority(toolCtx, update);
+    assert.ok(result, 'the exact admitted untyped UPDATE must pass authority');
+    assert.equal(await realAuthority(toolCtx, false), null, 'untyped UPDATE admission does not admit CREATE');
+    assert.equal(await realAuthority({ ...toolCtx, userId: 'foreign' }, update), null);
+    assert.equal(await realAuthority({ ...toolCtx, budgetGrantV2: { ...toolCtx.budgetGrantV2, signature: 'tampered' } }, update), null);
+    return result;
+  };
+  const { prisma } = makePrisma({ identityUserId: owner.userId, memberships: [{ companyId: owner.companyId }] }); const delivered: any[][] = [];
+  let currentRoute: any = live.route, currentFragment: any;
+  const unproof = (value: any): any => Array.isArray(value) ? value.map(unproof) : value && typeof value === 'object'
+    ? value.proof && 'value' in value ? value.value : Object.fromEntries(Object.entries(value).map(([key, val]) => [key, unproof(val)])) : value;
+  const recorded = live.tools.find((tool: any) => (tool.name ?? tool.tool) === 'reimbursement.draft.preview_create').input.proposal;
+  const h = makeUseCase(prisma, { permissions: ctx.permissions, roles: ctx.roles, branchIds: [branch.id], config: { lineAiReimbursementDraftWriteEnabled: true, aiGatewayInternalSecret: 'fx22-submit-secret' },
+    intakeRouteFn: () => structuredClone(currentRoute),
+    aiGatewayFn: async request => {
+      authority = { ctx: { ...ctx, requestId: request.requestId }, owner: { owner, epoch: 1, taskRevision: 1 }, evidence: request.inputEvidence,
+        candidates: request.valueCandidates, acceptedRequest: request, writeIndexes: [0], continuedActionId: action?.id };
+      const budget: any = { status: 'active-v2', calls: 0, repairCount: 0, grant: { maxTurnSlots: 4 } };
+      let round = 0;
+      const result = await runWithUsageContext({ budget }, () => runSemanticTurnV2({ req: request,
+        draftEditEnabled: false, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        provider: { generateText: async input => {
+          budget.calls++;
+          if (fresh23 !== undefined && h.aiGatewayRequests.length === 1 && round === 1) return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'captured second planner round timeout', retryable: true } };
+          assert.equal(input.usageTag, 'line.loop');
+          if (live25) {
+            const call = FX25_LIVE.J7.tools.filter((tool: any) => tool.turn === 4)[round++];
+            return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: call.tool, input: call.input }], questions: [] }) };
+          }
+          if (editAmount) assert.match(input.systemPrompt ?? '', /Editing ใบเบิก uses reimbursement\.draft\.get_options UPDATE/);
+          const fragment = currentFragment ?? { fields: unproof(recorded.fields), lineChanges: unproof(recorded.lineChanges) };
+          const prior = JSON.parse(input.messages[0]!.text).previousToolResults;
+          const options = prior?.at(-1)?.result?.data?.options;
+          if (savedSubmit) return { ok: true, text: JSON.stringify({ calls: [round++ === 0 ? { index: 0, toolName: 'reimbursement.get_detail', input: { reimbursementId: savedClaim.id } } : { index: 0, toolName: 'expense.action.preview', input: { action: 'REIMBURSEMENT_SUBMIT', reimbursementId: savedClaim.id } }], questions: [] }) };
+          if (savedEdit && round === 1 && options.nonEditableTargets?.length) return { ok: true, text: JSON.stringify({ calls: [], questions: [{ index: 0, question: 'เปิดใบเบิกในเว็บก่อนแก้ไขค่ะ' }] }) };
+          if (savedEdit && round === 1) assert.equal(options.selected.targetRef, undefined, 'line refs do not silently select the target');
+          if (savedEdit) return { ok: true, text: JSON.stringify({ calls: [round++ === 0
+            ? { index: 0, toolName: 'reimbursement.draft.get_options', input: live22 ? fixture.editOptions : { operation: 'UPDATE', subrequestIndex: 0 } }
+            : { index: 0, toolName: 'reimbursement.draft.preview_update', input: { action: {}, proposal: { fields: {}, targetRef: options.choices.find((choice: any) => choice.kind === 'TARGET').choiceId, lineChanges: [{ operation: 'SET', lineRef: options.choices.find((choice: any) => choice.kind === 'LINE').choiceId, values: { amount: '380' } }] } } }], questions: [] }) };
+          return { ok: true, text: JSON.stringify({ calls: [round++ === 0
+            ? { index: 0, toolName: 'reimbursement.draft.get_options', input: { operation: editAmount && currentFragment?.lineChanges ? 'UPDATE' : 'CREATE', subrequestIndex: 0 } }
+            : { index: 0, toolName: 'reimbursement.draft.preview_create', input: { action: {}, proposal: fragment,
+                suggestedCategoryChoiceId: options.choices.find((choice: any) => choice.label === categoryName).choiceId } }], questions: [] }) };
+        } }, invoke: async (meta, toolCtx, input) => { if (meta.name === 'reimbursement.get_detail') { assert.equal(input.reimbursementId, savedClaim.id); assert.equal(toolCtx.userId, savedClaim.requesterUserId); return { toolName: meta.name, status: 'ok', data: { id: savedClaim.id }, sourceRefs: [{ module: 'reimbursements', entityType: 'reimbursement_request', entityId: savedClaim.id, label: 'ใบเบิกที่บันทึก', permissionChecked: true }], asOf: new Date().toISOString() }; } if (meta.name === 'expense.action.preview') { const { ExpenseActionPreviewTool } = await import('../line-expense-action.service'); return new ExpenseActionPreviewTool(submitActions).execute({ ...toolCtx, roles: ctx.roles } as any, input); } const out = meta.name === 'reimbursement.draft.get_options' ? await adapter.getOptions(toolCtx as any, input) : await adapter.preview(toolCtx as any, input, meta.name.endsWith('preview_update') ? 'UPDATE' : 'CREATE'); return out; } }));
+      return { requestId: request.requestId, ...result, intent: 'unknown', agent: 'general', refused: false, sourceLabels: [],
+        toolsInvoked: result.outputs.flatMap(output => output.toolCalls.map(call => call.name)), toolCalls: result.outputs.flatMap(output => output.toolCalls) };
+    } });
+  flow = h.useCase as any;
+  flow.bindConversation = async (event: any) => flow.boundConversations.set(event, { owner, id: 'conversation', epoch: 1 });
+  flow.reliabilityContext = async () => ({}); flow.reconcileDeliveredSemanticTasks = async () => undefined;
+  flow.prepareTextGrantV2 = async (event: any) => { event.inputEvidence ??= (await createLineAiInputEvidence({ turnKey: event.webhookEventId, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] }))!.inputEvidence; const grant = { turnKey: event.inputEvidence.turnKey, nextOrdinal: 0, authorityKind: 'webhook_event', authorityId: 'accepted-edit', signature: 'fixture-signature', attemptKey: event.webhookEventId }; flow.budgetGrantsV2.set(event, grant); return grant; };
+  flow.aiGateway.narrowLineReliabilityGrant = async (grant: any) => grant;
+  flow.preserveSemanticTask = async () => true;
+  flow.contextV2 = { load: async () => ({ row: { id: 'conversation', lifecycleEpoch: 1 } }), admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+    projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }), createTurn: async () => ({ id: 'turn' }), save: async () => true };
+  prisma.client.lineIntakePendingMedia.findMany = async () => [];
+  flow.reimbursementDrafts = service; flow.reimbursementAdapter = adapter;
+  flow.expenseActions = { answerTeam: async () => null, answerEvidence: async (_ctx: any, _chat: string, text: string) => { if (text === 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้') assert.fail('a claim no-receipt answer must never enter expense evidence'); return null; }, answerCategory: async () => null, answerReason: async () => null };
+  flow.substituteReceiptContinuation = { execute: async () => assert.fail('STAFF claim evidence never needs expense.review'), loadOpenMediaContext: async () => null, substituteContext: async () => ({ workflowState: 'none', hasPendingQuestion: false, preparedState: 'none', recentCandidateCount: 0 }) };
+  await fx20RealLineDelivery(t, flow, prisma, delivered);
+  let sequence = 0;
+  const send = async (text: string, control?: any) => {
+    if ((live22 || fresh23 !== undefined) && !control) {
+      let item: any;
+      const controller = new LineWebhookController(lineMessagingCredentialsFixture({ lineMessagingChannelSecret: 'line-secret', lineMessagingChannelId: owner.messagingChannelId } as any), {} as any,
+        { enqueue: async (value: any) => { item = value.item; } } as any);
+      const body = { events: [{ type: 'message', webhookEventId: `text-${sequence}`, replyToken: 'reply', source: { type: 'user', userId: BASE_EVENT.lineUserId }, message: { type: 'text', id: `message-${sequence}`, text } }] };
+      const rawBody = Buffer.from(JSON.stringify(body));
+      await controller.lineWebhook({ body, rawBody, headers: { 'x-line-signature': createHmac('sha256', 'line-secret').update(rawBody).digest('base64') } } as any);
+      assert.equal(item.text, text);
+    }
+    const evidence = (await createLineAiInputEvidence({ turnKey: `fx17-${journey}-${sequence}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: live.acceptedAtMs, rawText: text }] }))!.inputEvidence;
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `fx17-${journey}-${sequence++}`, messageText: text, inputEvidence: evidence, ...control });
+    return delivered.at(-1)!;
+  };
+  const tap = async (data: string) => {
+    let enqueued: any;
+    const controller = new LineWebhookController(lineMessagingCredentialsFixture({ lineMessagingChannelSecret: 'line-secret', lineMessagingChannelId: owner.messagingChannelId } as any), {} as any,
+      { enqueue: async (value: any) => { enqueued = value; } } as any);
+    const body = { events: [{ type: 'postback', webhookEventId: `tap-${sequence}`, replyToken: 'reply', source: { type: 'user', userId: BASE_EVENT.lineUserId }, postback: { data } }] };
+    const rawBody = Buffer.from(JSON.stringify(body));
+    await controller.lineWebhook({ body, rawBody, headers: { 'x-line-signature': createHmac('sha256', 'line-secret').update(rawBody).digest('base64') } } as any);
+    assert.ok(enqueued, 'the real webhook parser must accept the emitted postback');
+    return send(enqueued.item.text, { reimbursementChoiceControl: enqueued.item.reimbursementChoiceControl, reimbursementDraftControl: enqueued.item.reimbursementDraftControl, expenseActionControl: enqueued.item.expenseActionControl });
+  };
+  let messages: any[][][number];
+  if (fixture) {
+    const options = fixture.accepted.options;
+    action = { ...owner, actorUserId: owner.userId, ownerEpoch: 1, id: options.actionId, taskId: options.taskId, actionOrdinal: 1, operation: 'CREATE',
+      status: 'COLLECTING', previewRevision: 0, createdAt: now, updatedAt: now, expiresAt: new Date(options.expiresAt),
+      commandJson: { schemaVersion: 1, kind: 'COLLECTION', accepted: structuredClone(fixture.accepted), fieldPaths: [] } };
+    const display = await adapter.readDisplayOptions({ ctx, owner: owner as any, ownerEpoch: 1, actionId: action.id });
+    assert.equal(display?.control.revision, new URLSearchParams(fixture.postback).get('revision'), 'reconstructed trace state must match the literal postback digest');
+    if (journey === 'E03' && !live22) {
+      currentRoute = tapRoute;
+      messages = await tap(fixture.postback);
+      assert.match(JSON.stringify(messages), /ขอรายละเอียดรายการ/);
+      assert.doesNotMatch(JSON.stringify(messages), /ส่งรูปใบเสร็จ|reimbursement_choice/);
+      action = undefined; currentRoute = live.route;
+      h.intakeRequests.length = 0;
+    }
+  }
+  messages = stored ? buildReimbursementOptionsMessages((await adapter.readDisplayOptions({ ctx, owner: owner as any, ownerEpoch: 1, actionId: action.id }))!) : await send(live.text);
+  assert.deepEqual(h.intakeRequests.length, stored ? 0 : 1); assert.equal(action.status, 'COLLECTING');
+  if (fresh23 !== undefined) {
+    assert.deepEqual(h.intakeRequests[0].messageText, live.text);
+    assert.equal(h.aiGatewayRequests[0].reimbursementHints.description, journey === 'J7' ? 'ค่าน้ำมัน' : 'ค่าแท็กซี่');
+    assert.equal(h.aiGatewayRequests[0].reimbursementHints.amount, '350');
+    assert.doesNotMatch(JSON.stringify(messages), /ขอรายละเอียดรายการ/);
+    assert.deepEqual(messages[0].quickReply.items.map((item: any) => item.action.label), ['ส่งรูปใบเสร็จ', 'ไม่มีใบเสร็จ']);
+    if (journey === 'E03') {
+      assert.equal(action.commandJson.accepted.proposal.fields.reason.value, 'ไปส่งของให้ลูกค้า');
+      assert.equal(action.commandJson.accepted.proposal.lineChanges[0].values.purpose.value, 'ไปส่งของให้ลูกค้า');
+    }
+    const options = action.commandJson.accepted.options;
+    for (const reimbursementHints of [{ description: 'คำที่ผู้ใช้ไม่ได้พิมพ์', amount: '350' }, { description: 'ค่าน้ำมัน', amount: '999' }])
+      assert.equal((adapter as any).intakeProposal({ ...authority, acceptedRequest: { ...authority.acceptedRequest, reimbursementHints } }, options), undefined);
+    assert.equal((adapter as any).intakeProposal(authority, { ...options, choices: [...options.choices, { kind: 'SOURCE', details: { eligible: true } }] }), undefined,
+      'an existing bill still requires the user to select its issued source choice');
+  }
+  let facts = structuredClone(action.commandJson.accepted.proposal.lineChanges[0].values);
+  assert.equal(facts.amount.value, expectedAmount); assert.equal(facts.incurredDate.value, '2026-10-15');
+  if (editAmount) {
+    currentRoute = { status: 'ROUTED', intent: 'EXPENSE_CAPTURE_CORRECTION', semanticOutcome: 'REIMBURSEMENT_CLAIM', fundingSource: 'EMPLOYEE_PAID',
+      language: 'th', confidence: 0.82, correctionHints: { amount: { from: '280', to: '380' }, confidence: 0.82 },
+      semanticSubrequests: [{ index: 0, kind: 'write', goal: 'แก้ยอดใบเบิกค่าแท็กซี่เป็น 380 บาท', requestedFilters: {}, requiredEvidence: [], dependsOn: [] }] };
+    currentFragment = { lineChanges: [{ operation: 'ADD', values: { amount: '380' } }] };
+    messages = await send('ช่วยแก้ยอดใบเบิกค่าแท็กซี่เป็น 380 บาท');
+    assert.equal(h.aiGatewayRequests.at(-1).intakeIntent, 'REIMBURSEMENT_REQUEST_START');
+    assert.equal(action.commandJson.accepted.proposal.lineChanges[0].values.amount.value, '380');
+    assert.equal(action.commandJson.accepted.proposal.lineChanges[0].values.incurredDate.value, '2026-10-15');
+    assert.equal(writes, 0); facts = structuredClone(action.commandJson.accepted.proposal.lineChanges[0].values);
+    currentFragment = undefined;
+  }
+  const noReceipt = messages[0].quickReply.items.find((item: any) => item.action.label === (withPhoto ? 'ส่งรูปใบเสร็จ' : 'ไม่มีใบเสร็จ')).action;
+  assert.equal(noReceipt.type, 'postback'); assert.ok(parseLineReimbursementChoiceControl(noReceipt.data));
+  currentRoute = tapRoute;
+  messages = await tap(stored ? fixture.postback : noReceipt.data);
+  assert.equal(h.intakeRequests.length, stored ? 1 : editAmount ? 3 : 2, 'a choice still goes through the model-metered intake');
+  assert.equal(h.aiGatewayRequests.length, stored ? 0 : editAmount ? 2 : 1, 'the router cannot send a bound choice back into the planner loop');
+  assert.equal((await adapter.choose({ ctx: { ...ctx, userId: 'foreign' }, owner: owner as any, ownerEpoch: 1, control: parseLineReimbursementChoiceControl(noReceipt.data)! })).status, 'stale');
+  assert.equal((await adapter.choose({ ctx, owner: owner as any, ownerEpoch: 1, control: parseLineReimbursementChoiceControl(noReceipt.data)! })).status, 'stale', 'an old button cannot change the next stage');
+  if (withPhoto) {
+    assert.equal(messages[0].quickReply.items[0].action.type, 'cameraRoll');
+    let uploaded = 0, completed = 0;
+    const file = { id: 'claim-photo', companyId: ctx.companyId, branchId: branch.id, uploadedByUserId: ctx.userId,
+      status: 'ACTIVE', originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', updatedAt: now, checksumSha256: 'photo-sha' };
+    dataPrisma.client.attachmentObject.findFirst = async (query: any) => { assert.equal(query.where.id, file.id); assert.equal(query.where.companyId, ctx.companyId); assert.equal(query.where.status, 'ACTIVE'); if (query.where.branchId) assert.equal(query.where.branchId, branch.id); return file; };
+    dataPrisma.client.attachmentObject.findMany = async (query: any) => query.where.branchId === branch.id ? [file] : [];
+    flow.downloadLineMedia = async () => ({ ok: true, media: { fileName: file.originalFileName, mimeType: 'image/jpeg', byteSize: JPEG_BYTES.length, bytes: JPEG_BYTES, contentBase64: JPEG_BYTES.toString('base64'), checksumSha256: file.checksumSha256 } });
+    flow.createUploadIntent = { execute: async (actor: any, input: any) => { assert.equal(actor.userId, ctx.userId); assert.equal(input.branchId, branch.id);
+      assert.equal(input.metadataJson.lineReimbursementEpoch, 1); return { attachmentId: file.id, uploadUrl: 'https://upload.test/receipt', uploadMethod: 'PUT' }; } };
+    flow.uploadLineMedia = async (_intent: any, media: any) => { assert.deepEqual(media.bytes, JPEG_BYTES); uploaded++; };
+    flow.completeAttachmentUpload = { execute: async (_actor: any, input: any) => { assert.equal(input.attachmentId, file.id); completed++; } };
+    prisma.client.lineIntakePendingMedia.findUnique = async () => null;
+    prisma.client.lineIntakePendingMedia.create = async () => ({ id: 'pending' });
+    prisma.client.lineIntakePendingMedia.updateMany = async () => ({ count: 1 });
+    await h.useCase.executeReceiptUpload({ ...BASE_EVENT, webhookEventId: 'claim-photo-event', lineMessageId: 'claim-photo-message', messageType: 'image' });
+    messages = delivered.at(-1)!;
+    assert.equal(uploaded, 1); assert.equal(completed, 1); assert.equal(h.intakeRequests.length, fixture ? 2 : 3);
+  }
+
+  if (fresh23 === 5 || live25) {
+    assert.match(JSON.stringify(messages), /บริษัทกำหนดให้มีหลักฐานก่อนส่งอนุมัติ/);
+    assert.match(JSON.stringify(messages), /เลือกหมวดค่าใช้จ่ายได้เลยค่ะ/);
+  }
+  assert.ok(messages[0].quickReply.items.some((item: any) => item.action.label === categoryName));
+  if (fresh23 === undefined) assert.equal(messages[0].quickReply.items[0].action.label, categoryName);
+  if (withPhoto) assert.match(action.commandJson.accepted.proposal.lineChanges[0].values.attachmentChoiceId, /^[a-f0-9]{64}$/);
+  else assert.equal(action.commandJson.accepted.proposal.lineChanges[0].values.attachmentChoiceId, null);
+  assert.deepEqual(action.commandJson.accepted.proposal.lineChanges[0].values.amount, facts.amount);
+  const category = messages[0].quickReply.items.find((item: any) => item.action.label === categoryName).action;
+  messages = await tap(live22 ? fixture.categoryPostback : category.data);
+  assert.doesNotMatch(JSON.stringify(messages), /ส่วนที่ยังไม่เสร็จ|ข้อ 1|ส่งรูปใบเสร็จ|ไม่มีสิทธิ์/);
+  if (withPhoto) assert.doesNotMatch(JSON.stringify(messages), /เหตุผลที่ไม่มีใบเสร็จ/);
+  if (live22 && journey === 'J7') assert.equal(messages[0].text, 'ขอเหตุผลการเบิกค่าน้ำมัน 350 บาทสั้นๆ ค่ะ');
+  currentRoute = live.route;
+  currentFragment = { fields: { reason: 'เดินทางพบลูกค้า', ...(!withPhoto ? { missingReceiptReason: 'ร้านไม่ออกใบเสร็จให้' } : {}) } };
+  if (fresh23 === 4) currentRoute = FX24_LIVE.J7.turns[4].route;
+  if (live25) currentRoute = FX25_LIVE.J7.turns[4].route;
+  if (live22 && journey === 'J7') currentFragment = { fields: { reason: 'ขับรถไปส่งของให้ลูกค้า' } };
+  if (action.status !== 'PREVIEW') messages = await send(fresh23 === 4 || live22 && journey === 'J7' ? 'ขับรถไปส่งของให้ลูกค้า' : withPhoto ? 'เดินทางพบลูกค้า' : 'เดินทางพบลูกค้า ร้านไม่ออกใบเสร็จให้');
+  if (fresh23 === 4 || live25) {
+    assert.match(JSON.stringify(messages), /บันทึกเป็นร่าง/);
+    assert.equal(h.aiGatewayRequests.length, live25 ? 0 : 1, 'the pending reason is collected after metered intake without another planner');
+    assert.equal(action.previewJson.after.reason, (live25 ? FX25_LIVE : FX24_LIVE).J7.turns[4].body.events[0].message.text);
+    assert.equal(action.previewJson.after.amount, '350.0000');
+    assert.equal(h.intakeRequests.at(-1).messageText, 'ขับรถไปส่งของให้ลูกค้า');
+  }
+  if (editAmount) assert.equal(action.previewJson.after.amount, '380.0000');
+  assert.equal(action.status, 'PREVIEW', JSON.stringify(messages)); assert.ok(evidenceChecks > 0);
+  const confirm = messages.flatMap((message: any) => message.contents?.footer?.contents ?? []).find((button: any) => button.action.label === 'บันทึกเป็นร่าง').action;
+  assert.equal(writes, 0); messages = await tap(confirm.data);
+  assert.equal(writes, 1); assert.match(JSON.stringify(messages), /ส่งอนุมัติ/);
+  if ((literal || fresh23 === 5) && journey === 'E03') {
+    const { SubmitReimbursementUseCase } = await import('../../../reimbursements/application/use-cases/reimbursement-request.use-case');
+    const { payoutSubmitToken } = await import('../../../reimbursements/domain/logic/payout-destination.logic');
+    const { toRequestDetail } = await import('../../../reimbursements/application/dto/reimbursement.mapper');
+    const { LineExpenseActionService } = await import('../line-expense-action.service');
+    const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+    const cashPlan = { payoutMethod: 'CASH', followsDefault: false } as const;
+    const policy = await repo.findPolicy();
+    Object.assign(repo, { findPolicy: async () => ({ ...policy, updatedAt: now, approvalRequiredFromAmount: '1', allowSelfApproval: false, duplicatePolicy: 'WARN', financeReviewRequired: true }),
+      findLinesClaimedElsewhere: async () => [], findReceiptChecksums: async () => ({}), findDuplicateCandidates: async () => [],
+      planSubmitPayout: async () => cashPlan, getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listPaymentSlips: async () => ({}), findClaimPayout: async () => undefined });
+    const submit = new SubmitReimbursementUseCase(repo, { log: async () => undefined } as any, {} as any,
+      { validate: async () => { evidenceChecks++; }, getAttachmentFileNames: async () => ({}), getAttachmentFileName: async () => undefined } as any,
+      { resolveSubmissionRoute: async () => ({ responsibilityRole: 'MANAGER', effectiveTaskRole: 'MANAGER', recipientUserIds: ['manager'], ownerFallbackUsed: false }) } as any, {} as any);
+    submitActions = new LineExpenseActionService({ client: { aiConversation: { findFirst: async () => ({ id: 'line-v2:conversation', lifecycleEpoch: 1 }) } } } as any,
+      {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, new LineDraftPreviewStore<any>(), { aiGatewayInternalSecret: 'fx22-submit-secret' } as any,
+      { execute: async () => ({ ...toRequestDetail(savedClaim), payout: { payoutMethod: 'CASH', submitToken: payoutSubmitToken(savedClaim.id, cashPlan) } }) } as any, submit);
+    if (!live22) (submitActions as any).grounded = async (_actor: any, _chat: string, id: string) => id === savedClaim.id;
+    flow.expenseActions = submitActions; savedSubmit = true;
+    currentRoute = { status: 'ROUTED', intent: 'MUTATION_REQUEST_REFUSAL', semanticOutcome: 'REIMBURSEMENT_CLAIM', language: 'th', confidence: 1, semanticSubrequests: [{ index: 0, kind: 'write', goal: 'ส่งอนุมัติใบเบิกที่เพิ่งบันทึก', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
+    const savedSubmitButton = messages[0].quickReply.items[0].action;
+    assert.equal(savedSubmitButton.type, 'postback');
+    if (fresh23 === 5) {
+      messages = await tap(savedSubmitButton.data);
+      const payload = JSON.stringify(messages);
+      assert.match(payload, /แนบหลักฐาน \/ เปิดใบเบิก/);
+      assert.match(payload, /\/reimbursements\/saved-claim/); assert.equal(savedClaim.status, 'DRAFT'); assert.equal(writes, 1);
+      return;
+    }
+    if (live22) {
+      // The trace's save postback also replays the applied receipt without a second save.
+      messages = await tap(fixture.savePostback);
+      assert.equal(writes, 1); assert.deepEqual(messages[0].quickReply.items[0].action, savedSubmitButton);
+      messages = await tap(savedSubmitButton.data);
+      assert.match(JSON.stringify(messages), /แนบหลักฐาน \/ เปิดใบเบิก/);
+      assert.doesNotMatch(JSON.stringify(messages), /ขอเลือกจากรายการ/); assert.equal(savedClaim.status, 'DRAFT');
+    }
+    // Eligible variant: evidence has been completed on the persisted claim before submission.
+    savedClaim.missingReceiptReason = 'ร้านไม่ออกใบเสร็จให้';
+
+    messages = live22 ? await tap(savedSubmitButton.data) : await send('ขอส่งอนุมัติใบเบิกที่เพิ่งบันทึก');
+    assert.match(JSON.stringify(messages), /expense_action_confirm/);
+    assert.equal(savedClaim.status, 'DRAFT'); assert.equal(writes, 1);
+    savedSubmit = false;
+    const original = structuredClone(savedClaim);
+    action = undefined; savedEdit = true;
+    currentRoute = { status: 'ROUTED', intent: 'EXPENSE_CAPTURE_CORRECTION', semanticOutcome: 'REIMBURSEMENT_CLAIM', language: 'th', confidence: 1,
+      semanticSubrequests: [{ index: 0, kind: 'write', goal: 'แก้ยอดใบเบิกค่าแท็กซี่เป็น 380 บาท', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
+    if (live22) currentRoute = fixture.editRoute;
+    messages = await send(live22 ? fixture.editMessage : 'ช่วยแก้ยอดใบเบิกค่าแท็กซี่เป็น 380 บาท');
+    assert.equal(action.status, 'PREVIEW', JSON.stringify(messages));
+    assert.equal(action.operation, 'UPDATE'); assert.equal(action.previewJson.after.amount, '380.0000');
+    assert.deepEqual(savedClaim, original, 'editing requires the new confirm card');
+    const update = messages.flatMap((message: any) => message.contents?.footer?.contents ?? []).find((button: any) => button.action.label === 'บันทึกเป็นร่าง').action;
+    await tap(update.data);
+    assert.equal(writes, 2); assert.equal(savedClaim.amount, '380.0000');
+    assert.equal(savedClaim.lines[0].incurredDate.toISOString(), original.lines[0].incurredDate.toISOString());
+    assert.equal(savedClaim.lines[0].description, original.lines[0].description);
+    if (live22) {
+      repo.submitDraftAtomic = async (input: any) => {
+        assert.equal(input.requestId, savedClaim.id); assert.equal(input.expectedUpdatedAt.getTime(), savedClaim.updatedAt.getTime());
+        assert.deepEqual(input.approvalStep.assignedApproverUserIdsJson, ['manager']);
+        Object.assign(savedClaim, input.request, { updatedAt: new Date(now.getTime() + 1000), requestNo: 'RB-2569-0001' });
+        writes++; return { documentNumber: { documentNumber: savedClaim.requestNo } };
+      };
+      savedEdit = false;
+      messages = await tap(savedSubmitButton.data);
+      const finalPress = messages[0].contents.footer.contents[0].action.data;
+      assert.equal(savedClaim.status, 'DRAFT');
+      await tap(finalPress);
+      assert.equal(savedClaim.status, 'PENDING_APPROVAL'); assert.equal(writes, 3);
+      await tap(finalPress); assert.equal(writes, 3, 'repeated confirmation cannot submit twice');
+      action = undefined; savedEdit = true;
+      currentRoute = fixture.editRoute;
+      messages = await send(fixture.editMessage);
+      assert.match(JSON.stringify(messages), /ถอนกลับเป็นร่าง/);
+      assert.doesNotMatch(JSON.stringify(messages), /reimbursement_draft_confirm/);
+      assert.equal(writes, 3);
+      for (const [status, decided, expected] of [['REJECTED', false, /เปิดเป็นร่าง/], ['PENDING_APPROVAL', true, /เปิดดูวิธีดำเนินการต่อ/]] as const) {
+        action = undefined;
+        Object.assign(savedClaim, { status, updatedAt: new Date(savedClaim.updatedAt.getTime() + 1000),
+          approvalSteps: decided ? [{ status: 'APPROVED' }] : [] });
+        messages = await send(fixture.editMessage);
+        assert.match(JSON.stringify(messages), expected);
+        assert.doesNotMatch(JSON.stringify(messages), /reimbursement_draft_confirm/); assert.equal(writes, 3);
+      }
+
+    }
+  }
+});
+
+it('Fix-up 17A C03: real refusal-router JSON reaches approval/rejection cards and only signed presses decide', async t => {
+  const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+  const { runWithUsageContext } = await import('../../../../../../ai-gateway/src/common/usage/usage-context');
+  const { LineExpenseActionService } = await import('../line-expense-action.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { prisma } = makePrisma(); const delivered: any[][] = [], mutations: string[] = [], currentReads: any[] = [];
+  const claims: any[] = ['claim-first', 'claim-second'].map(id => ({ id, requesterUserId: 'staff', branchId: 'branch-1', title: 'ค่าเดินทาง', amount: '350', currency: 'THB',
+    incurredDate: '2026-10-15', updatedAt: new Date().toISOString(), status: 'PENDING_APPROVAL', approvalSnapshotHash: 'snapshot', lines: [] }));
+  const permissions = ['line.ai.query', 'ai.tool.invoke', 'reimbursement.approve', 'reimbursement.reject', 'reimbursement.read_related'];
+  let current = FX17_LIVE.C03[1], flow: any;
+  const reply = (request: any, result: any) => ({ requestId: request.requestId, ...result, intent: 'unknown', agent: 'general', refused: false, sourceLabels: [],
+    toolsInvoked: result.outputs.flatMap((output: any) => output.toolCalls.map((call: any) => call.name)), toolCalls: result.outputs.flatMap((output: any) => output.toolCalls) });
+  const h = makeUseCase(prisma, { permissions, roles: ['MANAGER'], branchIds: ['branch-1'], intakeRouteFn: () => structuredClone(current.route), aiGatewayFn: async request => {
+    assert.equal(request.intakeIntent, 'MUTATION_REQUEST_REFUSAL', 'preserve the exact live router decision');
+    const budget: any = { status: 'active-v2', calls: 0, repairCount: 0, grant: { maxTurnSlots: 4 } }; let round = 0;
+    return reply(request, await runWithUsageContext({ budget }, () => runSemanticTurnV2({ req: request,
+      draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async input => {
+        budget.calls++;
+        if (input.usageTag !== 'line.loop') return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'needs_user', text: 'ตรวจรายละเอียดแล้วกดยืนยันค่ะ' }] }) };
+        return { ok: true, text: JSON.stringify({ calls: [round++ === 0 ? { index: 0, toolName: 'reimbursement.list_pending_approvals', input: {} }
+          : { index: 0, toolName: 'expense.action.preview', input: { action: current.turn === 1 ? 'REIMBURSEMENT_APPROVE' : 'REIMBURSEMENT_REJECT',
+              reimbursementId: current.turn === 1 ? claims[0].id : claims[1].id, ...(current.turn === 2 ? { reason: 'ไม่มีใบเสร็จแนบ' } : {}) } }], questions: [] }) };
+      } }, invoke: async (meta, toolCtx, input) => {
+        if (meta.name === 'reimbursement.list_pending_approvals') {
+          currentReads.push({ inputJson: { chatKeyHash: toolCtx.chatKeyHash, readMemory: { shownItems: claims.map(claim => ({ id: claim.id })) } }, toolName: meta.name });
+          return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(), data: { items: claims.filter(claim => claim.status === 'PENDING_APPROVAL') },
+            sourceRefs: [{ module: 'reimbursements', entityType: 'reimbursement_approval_queue', label: 'ใบเบิกรออนุมัติ', permissionChecked: true }] };
+        }
+        const { ExpenseActionPreviewTool } = await import('../line-expense-action.service');
+        return new ExpenseActionPreviewTool(actions).execute(toolCtx as any, input);
+      } })));
+  } });
+  flow = h.useCase as any;
+  prisma.client.aiConversation = { ...prisma.client.aiConversation, findFirst: async () => ({ id: 'conversation', lifecycleEpoch: 1 }) };
+  prisma.client.lineReadEvidence = { findMany: async () => currentReads };
+  const decide = (next: string, permission: string) => ({ execute: async (ctx: any, id: string, ...args: any[]) => {
+    assert.ok(ctx.permissions.includes(permission)); assert.deepEqual(ctx.scopes.branchIds, ['branch-1']);
+    const claim = claims.find(row => row.id === id)!; assert.equal(claim.status, 'PENDING_APPROVAL');
+    if (!args.at(-1).previewOnly) { mutations.push(next); claim.status = next; claim.updatedAt = new Date(Date.now() + 1000).toISOString(); }
+    return claim;
+  } });
+  const actions = new LineExpenseActionService(prisma, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    new LineDraftPreviewStore<any>(), { aiGatewayInternalSecret: 'fx17-secret' } as any,
+    { execute: async (_ctx: any, id: string) => claims.find(row => row.id === id) } as any, undefined, undefined,
+    decide('APPROVED', 'reimbursement.approve') as any, decide('REJECTED', 'reimbursement.reject') as any);
+  flow.expenseActions = actions;
+  prisma.client.lineIntakePendingMedia.findMany = async () => [];
+  const owner = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line', channelKind: 'USER', messagingChannelId: 'msg-channel-1', chatKeyHash: chatKeyHashOf(BASE_EVENT) };
+  flow.bindConversation = async (event: object) => flow.boundConversations.set(event, { owner, id: 'conversation', epoch: 1 });
+  flow.reliabilityContext = async () => ({}); flow.reconcileDeliveredSemanticTasks = async () => undefined;
+  flow.prepareTextGrantV2 = async (event: any) => { const grant = { turnKey: event.inputEvidence.turnKey }; flow.budgetGrantsV2.set(event, grant); return grant; };
+  flow.aiGateway.narrowLineReliabilityGrant = async (grant: any) => grant;
+  flow.preserveSemanticTask = async () => true;
+  flow.contextV2 = { projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }), createTurn: async () => ({ id: 'turn' }), save: async () => true };
+  await fx20RealLineDelivery(t, flow, prisma, delivered);
+  for (const index of [1, 2]) {
+    current = FX17_LIVE.C03[index];
+    const inputEvidence = (await createLineAiInputEvidence({ turnKey: `c03-${index}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: current.acceptedAtMs, rawText: current.text }] }))!.inputEvidence;
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `c03-${index}`, messageText: current.text, inputEvidence });
+    const cards = delivered.at(-1)!;
+    assert.equal(cards.length, 1, JSON.stringify(cards));
+    assert.equal(cards[0].type, 'flex'); assert.doesNotMatch(JSON.stringify(cards), /ทำผ่าน LINE ไม่ได้|ข้อ 1|ใบที่ 1|ส่วนที่ยังไม่เสร็จ/);
+    assert.equal(mutations.length, index - 1);
+    const token = new URLSearchParams(cards[0].contents.footer.contents[0].action.data).get('token')!;
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `c03-press-${index}`, messageText: 'ตรวจผลรายการค่าใช้จ่าย', expenseActionControl: { action: 'expense_action_confirm', token } });
+    assert.equal(mutations.length, index);
+  }
+  assert.deepEqual(mutations, ['APPROVED', 'REJECTED']);
+});
+
+it('Fix-up 20A C03 payout: missing account delivers one sentence and an exact claim web button', async t => {
+  const { prisma } = makePrisma(), delivered: any[][] = [];
+  const path = '/companies/company-1/reimbursements/seeded-approved-claim';
+  const replyText = 'เปิดใบเบิกเพื่อตรวจบัญชีรับเงินและวิธีจ่ายก่อนบันทึกจ่ายคืนค่ะ';
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'ai.tool.invoke', 'reimbursement.payment.record', 'reimbursement.read_related'],
+    intakeRouteFn: () => ({ status: 'ROUTED', intent: 'MUTATION_REQUEST_REFUSAL', semanticOutcome: 'REIMBURSEMENT_CLAIM', language: 'th', confidence: 1,
+      semanticSubrequests: [{ index: 0, kind: 'write', goal: 'จ่ายคืนใบเบิกที่อนุมัติ', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] }),
+    aiGatewayFn: request => ({ requestId: request.requestId, replyText, intent: 'unknown', agent: 'general', refused: false, webLinks: [{ label: 'ใบเบิกที่ยังรออยู่', path: '/companies/company-1/reimbursements' }, { label: 'คำขอทำรายการค่าใช้จ่าย', path }], toolsInvoked: ['reimbursement.get_approval_backlog', 'expense.action.preview'],
+      semanticCoverage: [{ index: 0, status: 'needs_user', question: replyText }], sourceLabels: ['ใบเบิกที่ยังรออยู่', 'คำขอทำรายการค่าใช้จ่าย'], sourceRefs: [{ module: 'reimbursements', entityType: 'reimbursement_approval_backlog', label: 'ใบเบิกที่ยังรออยู่', permissionChecked: true, webPath: '/companies/company-1/reimbursements' }, { module: 'expenses', entityType: 'expense_action_preview', label: 'คำขอทำรายการค่าใช้จ่าย', permissionChecked: true, webPath: path }] }) });
+  const flow = h.useCase as any;
+  flow.bindConversation = async (event: any) => flow.boundConversations.set(event, { owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1' }, id: 'conversation', epoch: 1 });
+  flow.reliabilityContext = async () => ({}); flow.reconcileDeliveredSemanticTasks = async () => undefined;
+  flow.prepareTextGrantV2 = async (event: any) => { const grant = { turnKey: event.inputEvidence.turnKey }; flow.budgetGrantsV2.set(event, grant); return grant; };
+  flow.aiGateway.narrowLineReliabilityGrant = async (grant: any) => grant;
+  flow.preserveSemanticTask = async () => true;
+  flow.contextV2 = { projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }), createTurn: async () => ({ id: 'turn' }), save: async () => true };
+  flow.expenseActions = { answerTeam: async () => null, answerEvidence: async () => null, answerCategory: async () => null, answerReason: async () => null, pending: async () => null, repairChoices: async () => null };
+  prisma.client.lineIntakePendingMedia.findMany = async () => [];
+  const plans = await fx20RealLineDelivery(t, flow, prisma, delivered);
+  const messageText = 'ใบเบิกที่อนุมัติแล้ว จ่ายเงินคืนให้พนักงานเลย โอนไปแล้ววันนี้';
+  const inputEvidence = (await createLineAiInputEvidence({ turnKey: 'fx20-c03-pay', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] }))!.inputEvidence;
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'fx20-c03-pay', messageText, inputEvidence });
+  assert.equal(plans.length, 1); assert.equal(delivered.length, 1); assert.equal(delivered[0]!.length, 1);
+  const payload = JSON.stringify(delivered[0]);
+  assert.match(payload, /เปิดใบเบิก/); assert.ok(payload.includes(`${path}?openExternalBrowser=1`));
+  assert.doesNotMatch(payload, /แหล่งข้อมูล|ส่งสลิป|ลายเซ็น|เซ็น|expense_action_confirm/);
+});
+
+const fx20bReplayRoutes = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx20b-router-replays.json'), 'utf8')) as any[];
+describe('Fix-up 20B: editing by words uses the metered route and existing human cards', () => {
+  for (const journey of ['E01', 'E04']) it(`${journey} vague real router JSON offers editable recent items and Other`, async () => {
+    const replay = fx20bReplayRoutes.find(row => row.journey === journey && row.turn === 0)!;
+    const { prisma } = makePrisma();
+    const candidates = [{ id: 'draft-1', label: 'ค่าน้ำมัน · 900 บาท', amount: '900', createdAt: new Date().toISOString() }];
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.update', 'reimbursement.read_own', 'reimbursement.update_own_draft', 'accounting.counterparty.read'],
+      intakeRouteFn: () => replay.route, aiGatewayFn: () => assert.fail('the already-metered edit choice needs no compose call') });
+    const flow = h.useCase as any;
+    flow.expenseRepo = {};
+    flow.loadCorrectionCandidates = async () => candidates;
+    flow.editableClaims = { execute: async (ctx: any, filter: any) => { assert.equal(ctx.companyId, 'company-1'); assert.equal(filter.scope, 'own'); assert.equal(filter.status, 'DRAFT');
+      return { items: [{ id: 'claim-own', requesterUserId: ctx.userId, status: 'DRAFT', requestNo: 'ใบเบิกค่าวัสดุ' }, { id: 'claim-other', requesterUserId: 'other', status: 'DRAFT', requestNo: 'ต้องไม่เห็น' }, { id: 'paid', requesterUserId: ctx.userId, status: 'PAID', requestNo: 'จ่ายแล้ว' }] }; } };
+    flow.editableCounterparties = { execute: async () => ({ data: [{ id: 'party-own', displayName: 'ร้านสมใจ' }, { id: 'party-other', displayName: 'ห้ามแก้' }] }) };
+    flow.getEditableCounterparty = { execute: async (_ctx: any, id: string) => ({ canEdit: id === 'party-own' }) };
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `fx20b-${journey}-vague`, messageText: replay.messageText });
+    assert.equal(h.intakeRequests.length, 1, JSON.stringify(h.replies));
+    const message = h.sentMessageBatches.flat().find((row: any) => row.quickReply?.items.some((item: any) => item.action.label === 'อื่นๆ'));
+    assert.ok(message, JSON.stringify(h.sentMessageBatches));
+    assert.equal(message.quickReply.items.length, 4);
+    assert.match(JSON.stringify(message.quickReply), /ค่าน้ำมัน|ใบเบิกค่าวัสดุ|ร้านสมใจ/);
+    assert.doesNotMatch(JSON.stringify(message.quickReply), /ต้องไม่เห็น|จ่ายแล้ว|ห้ามแก้|draft-1|claim-own|party-own/);
+    assert.match(message.canonicalText, /^ต้องการแก้ไขรายการไหนคะ$/);
+  });
+  it('limits edit choices to four, obeys feature/permission denial and deduplicates an active draft', async () => {
+    const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+    const recent = Array.from({ length: 7 }, (_, i) => ({ id: `expense-${i}`, label: `ค่าน้ำมัน ${900 + i} บาท` }));
+    const ctx: any = { userId: 'user', permissions: ['expense.update'] };
+    const drafts: any[] = [{ expenseId: recent[0]!.id, label: recent[0]!.label }];
+    assert.equal((await flow.recentEditableChoices(ctx, recent, drafts, null)).length, 4);
+    assert.deepEqual(await flow.recentEditableChoices({ ...ctx, permissions: [] }, recent, drafts, null), []);
+    assert.deepEqual(await flow.recentEditableChoices(ctx, recent, drafts, new Set()), []);
+    assert.equal((await flow.recentEditableChoices(ctx, recent.slice(0, 1), drafts, null)).length, 1);
+  });
+  it('E04 real STAFF correction names who can edit without reading or pretending the record is absent', async () => {
+    const replay = fx20bReplayRoutes.find(row => row.journey === 'E04' && row.turn === 1)!;
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.receipt.line_upload'], intakeRouteFn: () => replay.route });
+    const flow = h.useCase as any;
+    flow.getLinkedExpense = { execute: async () => assert.fail('no permission, no record disclosure') };
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'fx20b-staff-edit', messageText: replay.messageText });
+    const payload = JSON.stringify(h.sentMessageBatches);
+    assert.match(payload, /เจ้าของกิจการหรือผู้มีสิทธิ์แก้ไขรายจ่าย/);
+    assert.doesNotMatch(payload, /ยังไม่พบรายการ|action=draft-update-confirm/);
+  });
+  it('E02 exact capture route preserves confirm, paid-today and cash in the existing preview card', async () => {
+    const replay = fx20bReplayRoutes.find(row => row.journey === 'E02' && row.turn === 1)!;
+    const { prisma } = makePrisma(); const inputs: any[] = [];
+    const expense = { ...savedMediaFixture('fuel-capture'), status: 'DRAFT', vendorNameSnapshot: 'ปั๊มสยาม', grandTotalAmount: '900', note: 'ค่าน้ำมัน' };
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.receipt.line_upload', 'expense.confirm', 'expense.payment.record'], intakeRouteFn: () => replay.route });
+    const flow = h.useCase as any;
+    flow.expenseRepo = { findByIdWithRelations: async () => expense, listCategories: async () => [], listRecentLineCaptures: async () => [] };
+    let current: any;
+    flow.captureExpenseNote = { execute: async () => ({ expense, insertedAmount: '900', categoryName: 'ค่าน้ำมัน', replyTexts: ['เก็บร่างค่าน้ำมัน 900 บาทแล้วค่ะ'] }) };
+    flow.expenseActions = { preview: async (ctx: any, chat: string, input: any, opened: boolean) => { inputs.push(input); assert.equal(opened, true); assert.equal(ctx.userId, 'user-1'); assert.equal(chat, chatKeyHashOf(BASE_EVENT));
+      current = { token: 'signed-confirm', action: 'CONFIRM', summary: 'ตรวจแล้วกดยืนยันค่ะ', expiresAt: new Date(Date.now() + 60_000).toISOString(), record: { vendorName: 'ปั๊มสยาม', amount: '900', currency: 'THB', date: '2026-10-16', status: 'ร่าง', nextStatus: 'ยืนยันแล้ว' } }; return { reply: 'ตรวจแล้วกดยืนยันค่ะ', preview: current }; }, pending: async () => current };
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'fx20b-capture-confirm', messageText: replay.messageText });
+    assert.deepEqual(inputs, [{ action: 'CONFIRM', expenseId: expense.id, recordPaymentAfterConfirm: true, paymentMethod: 'CASH', paidAt: todayCivilDate('Asia/Bangkok') }]);
+    assert.equal(h.sentMessageBatches.length, 1); assert.equal(h.sentMessageBatches[0]!.length, 2);
+    assert.match(JSON.stringify(h.sentMessageBatches[0]![1]), /expense_action_confirm/);
+    assert.doesNotMatch(JSON.stringify(h.sentMessageBatches), /ยืนยันและบันทึกจ่ายแล้ว/);
+  });
+});
+
+describe('Fix-up 20B: expense edit × status × permission', () => {
+  for (const status of ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'CONFIRMED']) for (const paymentStatus of ['UNPAID', 'PAID']) for (const permitted of [true, false]) {
+    it(`${status}/${paymentStatus}/mayEdit=${permitted}`, async () => {
+      const flow: any = Object.create(ProcessLineWebhookUseCase.prototype), delivered: any[] = [], reads: any[] = [];
+      const ctx: any = { requestId: 'status-table', companyId: 'company', userId: 'actor', permissions: permitted ? ['expense.update', 'expense.read', 'expense.confirm'] : [], roles: [], scopes: { branchIds: ['allowed'] }, authProvider: 'line' };
+      const repo: any = { findByIdWithRelations: async (company: string, id: string, _db: any, scope: any) => { reads.push(id); assert.equal(company, ctx.companyId); assert.deepEqual(scope, ctx.scopes); return { id, companyId: company, branchId: 'allowed', status, paymentStatus }; },
+        expenseCorrectionCapabilities: async () => ({ canReopen: true, reopenBlockers: [], payments: [] }) };
+      flow.getLinkedExpense = new GetExpenseUseCase(repo);
+      flow.expenseRepo = { listRecentLineCaptures: async () => [{ id: 'expense' }] };
+      flow.config = { webBaseUrl: 'https://app.example.com' };
+      flow.deliverCompletedReply = async (...args: any[]) => delivered.push(args);
+      flow.persistIntakeTurn = async () => {}; flow.updateEventLog = async () => {};
+      const handled = await flow.explainLockedExpenseEdit({ ...BASE_EVENT }, ctx, ctx, 'expense', status === 'CONFIRMED' ? [] : [{ id: 'expense' }]);
+      assert.equal(handled, !permitted || status === 'CONFIRMED');
+      if (!permitted) { assert.equal(reads.length, 0); assert.match(delivered[0][1], /เจ้าของกิจการหรือผู้มีสิทธิ์/); }
+      else if (status === 'CONFIRMED') { assert.equal(reads.length, 1); assert.match(delivered[0][1], /ยืนยัน.*แล้ว/); assert.match(JSON.stringify(delivered[0][5]), /แก้ไขเอกสารบนเว็บ/); }
+      else assert.equal(delivered.length, 0, 'editable drafts continue to the existing preview and confirmation path');
+      assert.doesNotMatch(JSON.stringify(delivered), /expense_action_confirm|draft-update-confirm/);
+    });
+  }
+});
+
+import { GetExpenseUseCase, ListExpensesUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
+import { todayCivilDate } from '@watchdog-bms/contracts';
+
+it('Fix-up 20B: a selected draft among several keeps its exact target through edit preview and the bound confirm button', async () => {
+  const { prisma } = makePrisma();
+  const candidates = ['first', 'selected'].map((id, i) => ({ id, label: `ค่าน้ำมัน ${900 + i} บาท`, createdAt: new Date().toISOString() }));
+  const preview: any = { previewId: '550e8400-e29b-41d4-a716-446655440000', expenseId: 'selected', record: { vendorName: 'ปั๊มสยาม', expenseDate: '2026-10-16', statusLabel: 'ร่าง' },
+    diff: [{ field: 'amount', label: 'ยอดรวม', before: '901', after: '950', kind: 'money' }], totalsBefore: { grandTotalAmount: '901' }, totalsAfter: { grandTotalAmount: '950' }, warnings: [] };
+  let selected = false, applied = 0; const previews: any[] = [];
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.update'], expenseRepo: { findByIdWithRelations: async (_company: string, id: string) => ({ id, grandTotalAmount: '901', expenseDate: new Date('2026-10-16'), vendorNameSnapshot: 'ปั๊มสยาม', vendorDocumentNumber: null, note: null }) }, lineEditCapabilityFn: async () => true,
+    draftUpdate: { enabled: true, preview: async (_ctx: any, input: any) => { previews.push(input); return { status: 'preview', preview }; }, pendingPreview: async () => preview,
+      appliedResult: async () => ({ status: 'applied', expenseId: 'selected', preview }), apply: async (_ctx: any, _chat: string, _event: string, id: string) => { assert.equal(id, preview.previewId); applied++; return { status: 'applied', expenseId: 'selected', preview }; } },
+    intakeRouteFn: () => ({ status: 'ROUTED', intent: 'EXPENSE_CAPTURE_CORRECTION', language: 'th', confidence: 1,
+      correctionHints: { targetExpenseId: 'selected', ...(selected ? { amount: { to: '950' } } : {}) } }) });
+  const flow = h.useCase as any; flow.loadCorrectionCandidates = async () => candidates;
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'fx20b-select', messageText: `ขอแก้รายการ ${candidates[1]!.label}` });
+  assert.match(h.replies[0]!, /ช่องไหนเป็นค่าอะไร/); assert.equal(previews.length, 0);
+  selected = true;
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'fx20b-edit-selected', messageText: 'แก้ยอดเป็น 950 บาท' });
+  assert.equal(previews[0]?.expenseId, 'selected'); assert.equal(applied, 0);
+  assert.match(JSON.stringify(h.sentMessageBatches.at(-1)), /action=draft-update-confirm/);
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'fx20b-confirm-selected', messageText: 'ยืนยันการแก้ไข', draftUpdatePreviewId: preview.previewId });
+  assert.equal(applied, 1);
+});
+
+for (const canVoid of [true, false]) it(`Fix-up 20B: locked edit offers void-and-recreate only after the existing use-case preflight permits it (${canVoid})`, async () => {
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype); const delivered: any[] = [];
+  const actor: any = { requestId: 'locked', companyId: 'company', userId: 'actor', permissions: ['expense.update', 'expense.read', 'expense.void'], roles: [], scopes: {} };
+  flow.config = { webBaseUrl: 'https://app.example.com' };
+  flow.expenseRepo = { listRecentLineCaptures: async () => [{ id: 'locked' }] };
+  flow.getLinkedExpense = { execute: async () => ({ status: 'CONFIRMED' }), correctionCapabilities: async () => ({ canReopen: false, reopenBlockers: ['ledger_posted'] }) };
+  flow.previewEditVoid = { previewLineAction: async (ctx: any, id: string) => { assert.equal(ctx, actor); assert.equal(id, 'locked'); if (!canVoid) throw new ForbiddenException(); } };
+  flow.deliverCompletedReply = async (...args: any[]) => delivered.push(args); flow.persistIntakeTurn = async () => {}; flow.updateEventLog = async () => {};
+  assert.equal(await flow.explainLockedExpenseEdit({ ...BASE_EVENT }, actor, actor, 'locked', []), true);
+  assert.equal(JSON.stringify(delivered).includes('ยกเลิกและสร้างใหม่'), canVoid);
+});
+
+it('Fix-up 21A C03: exact live approve postback is parsed; real approval preflight delivers missing evidence and a claim web button', async t => {
+  const { ApproveReimbursementUseCase } = await import('../../../reimbursements/application/use-cases/reimbursement-approval.use-case');
+  const { REIMBURSEMENT_POLICY_DEFAULTS } = await import('../../../reimbursements/domain/reimbursement.constants');
+  const { buildCompanySeed } = await import('../../../../../../../scripts/line-ai-expense-advisor/seed');
+  const { toRequestDetail } = await import('../../../reimbursements/application/dto/reimbursement.mapper');
+  const { LineExpenseActionService, ExpenseActionPreviewTool } = await import('../line-expense-action.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+  const { runWithUsageContext } = await import('../../../../../../ai-gateway/src/common/usage/usage-context');
+  const seed = buildCompanySeed('A', new Date('2026-10-16T09:06:00Z'));
+  const claim: any = seed.rows.find(row => row.model === 'reimbursementRequest' && row.data.id === 'reimbursement-company-a-5')!.data;
+  claim.updatedAt = new Date(); claim.createdAt = new Date();
+  claim.approvalSteps = seed.rows.filter(row => row.model === 'reimbursementApprovalStep' && row.data.reimbursementRequestId === claim.id).map(row => ({ ...row.data, assignedAt: claim.submittedAt, createdAt: claim.createdAt, updatedAt: claim.updatedAt }));
+  claim.currency = 'THB';
+  claim.lines = [{ id: `rbl_${claim.id}`, lineNo: 1, incurredDate: claim.incurredDate, description: claim.reason, categoryKey: claim.categoryKey, amount: claim.amount, createdAt: claim.createdAt, updatedAt: claim.updatedAt }];
+  toRequestDetail(claim);
+  assert.equal(claim.lines.length, 1); assert.equal(claim.lines[0].attachmentId ?? null, null);
+  const permissions = ['line.ai.query', 'ai.tool.invoke', 'reimbursement.approve', 'reimbursement.read_related'];
+  const ctx: any = { requestId: 'fx21-c03', userId: seed.users.MANAGER.userId, companyId: seed.companyId, membershipId: 'mem-1', roles: ['MANAGER'], permissions, scopes: { branchIds: seed.branchIds }, authProvider: 'line' };
+  let decisions = 0;
+  const approval = new ApproveReimbursementUseCase({ findRequestById: async () => claim, isUserRelatedToRequest: async () => true,
+    findPolicy: async () => ({ ...REIMBURSEMENT_POLICY_DEFAULTS, financeReviewRequired: false }),
+    findActiveApproverUserIds: async (_company: string, ids: string[]) => new Set(ids),
+    beginApprovalDecisionAtomic: async () => { decisions++; assert.fail('missing evidence must be rejected before any decision'); } } as any,
+    { log: async () => assert.fail('preflight must not audit a decision') } as any,
+    { execute: async () => assert.fail('preflight must not create projections') } as any, {} as any);
+  const { prisma } = makePrisma({ identityUserId: ctx.userId, memberships: [{ companyId: ctx.companyId }] });
+  const delivered: any[][] = [];
+  const actions = new LineExpenseActionService({ client: { aiConversation: { findFirst: async () => ({ id: 'line-v2:conversation', lifecycleEpoch: 1 }) } } } as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, new LineDraftPreviewStore<any>(), { aiGatewayInternalSecret: 'fx21-secret' } as any,
+    { execute: async () => toRequestDetail(claim) } as any, undefined, undefined, approval);
+  (actions as any).grounded = async () => true;
+  assert.match((await actions.preview(ctx, chatKeyHashOf(BASE_EVENT), FX21_LIVE.C03.tools[1].input, true)).reply, /ต้องแนบและตรวจหลักฐาน/);
+  const h = makeUseCase(prisma, { permissions, roles: ctx.roles, branchIds: seed.branchIds, intakeRouteFn: () => FX21_LIVE.C03.route,
+    aiGatewayFn: async request => {
+      const budget: any = { status: 'active-v2', calls: 0, repairCount: 0, grant: { maxTurnSlots: 4 } }; let round = 0;
+      const result = await runWithUsageContext({ budget }, () => runSemanticTurnV2({ req: request, draftEditEnabled: true,
+        reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        provider: { generateText: async () => { budget.calls++; return { ok: true, text: JSON.stringify({ calls: [round++ === 0
+          ? { index: 0, toolName: 'reimbursement.list_pending_approvals', input: {} }
+          : { index: 0, toolName: 'expense.action.preview', input: FX21_LIVE.C03.tools[1].input }], questions: [] }) }; } },
+        invoke: async (meta, toolCtx, input) => meta.name === 'expense.action.preview'
+          ? new ExpenseActionPreviewTool(actions).execute({ ...toolCtx, roles: ctx.roles, branchIds: seed.branchIds } as any, input)
+          : structuredClone(FX21_LIVE.C03.tools[0].result) }));
+      return { requestId: request.requestId, ...result, intent: 'unknown', agent: 'general', refused: false, sourceLabels: [],
+        toolsInvoked: result.outputs.flatMap(output => output.toolCalls.map(call => call.name)), toolCalls: result.outputs.flatMap(output => output.toolCalls) };
+    } });
+  const flow = h.useCase as any, owner = { ...ctx, channel: 'line', channelKind: 'USER', messagingChannelId: 'msg-channel-1', chatKeyHash: chatKeyHashOf(BASE_EVENT) };
+  flow.expenseActions = actions;
+  flow.bindConversation = async (event: any) => flow.boundConversations.set(event, { owner, id: 'line-v2:conversation', epoch: 1 });
+  flow.reliabilityContext = async () => ({}); flow.reconcileDeliveredSemanticTasks = async () => undefined;
+  flow.prepareTextGrantV2 = async (event: any) => { event.inputEvidence ??= (await createLineAiInputEvidence({ turnKey: event.webhookEventId, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] }))!.inputEvidence; const grant = { turnKey: event.webhookEventId }; flow.budgetGrantsV2.set(event, grant); return grant; };
+  flow.aiGateway.narrowLineReliabilityGrant = async (grant: any) => grant;
+  flow.preserveSemanticTask = async () => true;
+  flow.contextV2 = { projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }), createTurn: async () => ({ id: 'turn' }), save: async () => true };
+  prisma.client.lineIntakePendingMedia.findMany = async () => [];
+  await fx20RealLineDelivery(t, flow, prisma, delivered);
+  // Verbatim C03 turn 2: an already-issued card cannot become authority in a new session.
+  let enqueued: any;
+  const controller = new LineWebhookController(lineMessagingCredentialsFixture({ lineMessagingChannelSecret: 'line-secret', lineMessagingChannelId: 'msg-channel-1' } as any), {} as any, { enqueue: async (value: any) => { enqueued = value; } } as any);
+  const body = { events: [{ type: 'postback', webhookEventId: 'fx21-c03-literal', replyToken: 'reply', source: { type: 'user', userId: BASE_EVENT.lineUserId }, postback: { data: FX21_LIVE.C03.postback } }] };
+  const rawBody = Buffer.from(JSON.stringify(body));
+  await controller.lineWebhook({ body, rawBody, headers: { 'x-line-signature': createHmac('sha256', 'line-secret').update(rawBody).digest('base64') } } as any);
+  assert.equal(enqueued.item.expenseActionControl.token, new URLSearchParams(FX21_LIVE.C03.postback).get('token'));
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'fx21-c03-literal', messageText: enqueued.item.text, expenseActionControl: enqueued.item.expenseActionControl });
+  assert.equal(decisions, 0);
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'fx21-c03-preview', messageText: FX21_LIVE.C03.message });
+  const messages = delivered.at(-1)!;
+  assert.match(JSON.stringify(messages), /ต้องแนบและตรวจหลักฐาน/);
+  assert.doesNotMatch(JSON.stringify(messages), /expense_action_confirm/);
+  assert.equal(messages[0].contents.footer.contents[0].action.type, 'uri');
+  assert.equal(messages[0].contents.footer.contents[0].action.uri, `https://app.example.com/companies/${ctx.companyId}/reimbursements/${claim.id}?openExternalBrowser=1`);
+  assert.equal(decisions, 0);
+});
+
+const fx21bReplays = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx21b-router-replays.json'), 'utf8')) as any[];
+const fx22bReplays = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx22b-router-replays.json'), 'utf8')) as any[];
+async function fx21bBoundWebhook(t: TestContext, replay: any, permissions: string[]) {
+  const { freezeAcceptedLedgerRequest } = await import('../line-ledger-accepted-request');
+  const { lineConversationId } = await import('../line-conversation-context.service');
+  const { AI_BUDGET_PROFILE_TABLE_DIGEST_V2 } = await import('@watchdog-bms/contracts');
+  const baseEvent = { ...BASE_EVENT, ...(replay.body ? { lineUserId: replay.body.events[0].source.userId } : {}) };
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma, { permissions, intakeRouteFn: (req: any) => req.retainedTaskSource
+    ? { ...replay.route, semanticSubrequests: [{ ...req.retainedTaskSource.semanticSubrequest, index: 0, dependsOn: [], taskRef: req.retainedTaskSource.taskRef }] }
+    : structuredClone(replay.route), aiGatewayFn: () => assert.fail('the metered intake owns these existing write/navigation paths') });
+  const flow = h.useCase as any, delivered: any[][] = [], ledgerRows = new Map<string, any>();
+  if (replay.taskProjection) Object.assign(flow.config, { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'], lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] });
+  const owner = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line' as const, channelKind: 'USER' as const,
+    messagingChannelId: baseEvent.messagingChannelId, chatKeyHash: chatKeyHashOf(baseEvent) };
+  const conversationId = lineConversationId(owner);
+  let projection: any = { ...(replay.taskProjection ?? { version: 2, tasks: [] }), stateVersion: 0, lifecycleEpoch: 1 };
+  flow.bindConversation = async (event: object) => flow.boundConversations.set(event, { owner, id: conversationId, epoch: 1 });
+  flow.contextV2 = { admit: async () => ({ id: conversationId, lifecycleEpoch: 1 }), projection: async () => structuredClone(projection),
+    save: async (_owner: any, version: number, epoch: number, next: any) => {
+      assert.equal(version, projection.stateVersion); assert.equal(epoch, 1);
+      projection = { ...projection, ...next, stateVersion: version + 1, lifecycleEpoch: epoch }; return true;
+    }, createTurn: async () => ({ id: 'fx21b-turn' }) };
+  flow.reliabilityContext = async () => replay.taskProjection ? { taskProjection: structuredClone(projection) } : {};
+  flow.prepareTextGrantV2 = async (event: any) => {
+    const now = Date.now(), grant = { version: 2, turnKey: event.inputEvidence.turnKey, authorityKind: 'webhook_event', authorityId: event.webhookEventId,
+      channelOwnerDigest: 'a'.repeat(64), attemptKey: 'attempt', monthKey: '2026-10', payerCompanyId: owner.companyId,
+      model: { provider: 'openai', modelId: 'gpt-4.1-mini', region: 'global' }, allowedProfileIds: ['line-intake-text/2'], profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
+      maxTurnSlots: 4, maxRepairs: 1, admittedAtMs: now, workDeadlineAtMs: now + 30_000, finalDeadlineAtMs: now + 40_000,
+      nonce: event.webhookEventId, issuerVersion: 'api-1', signature: 'a'.repeat(64), nextOrdinal: 1 };
+    flow.budgetGrantsV2.set(event, grant); return grant;
+  };
+  flow.aiGateway.narrowLineReliabilityGrant = async (grant: any) => grant;
+  prisma.client.lineLedgerDelivery = { findUnique: async ({ where }: any) => ledgerRows.get(where.id), findMany: async () => [], findFirst: async () => null };
+  prisma.client.lineIntakePendingMedia.findMany = async () => [];
+  flow.ledger = { appendTurn: async (input: any) => {
+    const accepted = freezeAcceptedLedgerRequest(input.acceptedRequest, { ...input, turnId: input.turnId });
+    ledgerRows.set(accepted.deliveryId, { ...input, id: accepted.deliveryId, acceptedRequestJson: accepted, expiresAt: new Date(Date.now() + 900_000) });
+    return accepted.deliveryId;
+  }, ack: async () => undefined, coverageToSubRequests: () => [], openWaitingUser: async () => [], listOpenWaiting: async () => [], listWaiting: async () => [] };
+  await fx20RealLineDelivery(t, flow, prisma, delivered, conversationId);
+  let count = 0;
+  const execute = async (text = replay.messageText, postbackData?: string) => {
+    let webhookEventId = `fx21b-${replay.source.replaceAll('/', '-')}-${++count}`;
+    let enqueued: any;
+    const controller = new LineWebhookController(lineMessagingCredentialsFixture({ lineMessagingChannelSecret: 'line-secret', lineMessagingChannelId: baseEvent.messagingChannelId } as any), flow.config,
+      { enqueue: async (value: any) => { enqueued = value; } } as any);
+    const body = !postbackData && count === 1 && replay.body ? structuredClone(replay.body) : { events: [postbackData ? { type: 'postback', webhookEventId, replyToken: baseEvent.replyToken, source: { type: 'user', userId: baseEvent.lineUserId }, postback: { data: postbackData } } : { type: 'message', webhookEventId, replyToken: baseEvent.replyToken, source: { type: 'user', userId: baseEvent.lineUserId }, message: { type: 'text', id: webhookEventId, text } }] };
+    webhookEventId = body.events[0].webhookEventId;
+    const rawBody = Buffer.from(JSON.stringify(body));
+    await controller.lineWebhook({ body, rawBody, headers: { 'x-line-signature': createHmac('sha256', 'line-secret').update(rawBody).digest('base64') } } as any);
+    if (!postbackData) assert.equal(enqueued.item.text, text);
+    const inputEvidence = (await createLineAiInputEvidence({ turnKey: webhookEventId, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const event = { ...baseEvent, webhookEventId, messageText: enqueued.item.text, inputEvidence,
+      ...(replay.body && count === 1 ? { replyToken: enqueued.item.replyToken, lineMessageId: enqueued.item.lineMessageId } : {}),
+      ...(enqueued.item.counterpartyControl ? { counterpartyControl: enqueued.item.counterpartyControl } : {}),
+      ...(enqueued.item.expenseActionControl ? { expenseActionControl: enqueued.item.expenseActionControl } : {}),
+      ...(enqueued.item.draftUpdatePreviewId ? { draftUpdatePreviewId: enqueued.item.draftUpdatePreviewId } : {}) };
+    await h.useCase.execute(event); return event;
+  };
+  return { ...h, flow, prisma, delivered, execute, projection: () => projection, ledgerRows, baseEvent };
+}
+
+describe('Fix-up 21B: exact after-fx20 inputs through bound webhook and LINE HTTP payload', () => {
+  for (const source of ['after-fx20/E02', 'after-fx20-b/C05']) it(`${source} records the dependent expense first and offers its next step`, async t => {
+    const replay = fx21bReplays.find(row => row.source === source)!;
+    const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.receipt.line_upload', 'expense.read', 'expense.confirm', 'expense.payment.record']);
+    const record = { ...savedMediaFixture('fx21b-capture'), status: 'DRAFT', vendorNameSnapshot: replay.route.captureHints.vendorName, grandTotalAmount: replay.route.captureHints.amount };
+    let captures = 0, pending: any;
+    h.flow.expenseRepo = { listRecentLineCaptures: async () => [], listCategories: async () => [], findByIdWithRelations: async () => record };
+    h.flow.captureExpenseNote = { execute: async (_ctx: any, input: any) => {
+      captures++; return { expense: record, replyTexts: [`เก็บร่าง ${record.vendorNameSnapshot} ${record.grandTotalAmount} บาทแล้วค่ะ`] };
+    } };
+    h.flow.expenseActions = { preview: async (_ctx: any, _chat: string, input: any) => {
+      assert.equal(input.expenseId, record.id); assert.equal(input.paymentMethod, 'CASH'); assert.equal(input.recordPaymentAfterConfirm, true);
+      pending = { previewId: 'fx21b-confirm', token: 'fx21b-confirm.' + 'a'.repeat(43), action: 'CONFIRM', summary: 'ตรวจแล้วกดยืนยันค่ะ', expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        record: { vendorName: record.vendorNameSnapshot, amount: record.grandTotalAmount, currency: 'THB', date: '2026-10-16', status: 'ร่าง', nextStatus: 'ยืนยันแล้ว' } };
+      return { reply: pending.summary, preview: pending };
+    }, pending: async () => pending, quoteRecords: async () => [{ tool: 'expense.get_detail', id: record.id }] };
+    await h.execute();
+    assert.equal(captures, 1, JSON.stringify(h.delivered)); assert.equal(h.intakeRequests.length, 1);
+    const payload = JSON.stringify(h.delivered);
+    assert.match(payload, new RegExp(record.vendorNameSnapshot)); assert.match(payload, new RegExp(record.grandTotalAmount));
+    assert.doesNotMatch(payload, /เลือกงานที่จะทำก่อน|หมดอายุ/);
+    assert.ok(h.delivered.flat().some((item: any) => item.quickReply?.items.some((choice: any) => choice.action.text === 'ทำข้อ 2 ก่อน')), payload);
+    if (source.endsWith('E02')) assert.match(payload, /expense_action_confirm/);
+    assert.deepEqual(h.projection().tasks[0].subrequests.map((sub: any) => sub.status), ['handled', 'needs_user']);
+    assert.equal(h.ledgerRows.size, 1, 'the original source is retained durably before the capture');
+  });
+
+  it('E02 exact offered words continue the stored task seconds later, including the old overlapping spans', async t => {
+    const replay = fx21bReplays.find(row => row.source === 'after-fx20/E02')!;
+    const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.receipt.line_upload', 'expense.read']);
+    const record = { ...savedMediaFixture('fx21b-selected'), status: 'DRAFT' }; let captures = 0;
+    h.flow.expenseRepo = { listRecentLineCaptures: async () => [], listCategories: async () => [], findByIdWithRelations: async () => record };
+    h.flow.captureExpenseNote = { execute: async () => { captures++; return { expense: record, replyTexts: ['เก็บร่างค่าน้ำมัน 900 บาทแล้วค่ะ'] }; } };
+    // Simulate the already-delivered pre-fix selector; do not bypass its durable source binding or task settlement.
+    const order = h.flow.orderedExpenseWrites.bind(h.flow); h.flow.orderedExpenseWrites = () => undefined;
+    await h.execute(); assert.equal(captures, 0); assert.match(JSON.stringify(h.delivered), /ทำข้อ 2 ก่อน/);
+    h.flow.orderedExpenseWrites = order;
+    const selectedAt = Date.now() + 5_000;
+    t.mock.method(Date, 'now', () => selectedAt);
+    await h.execute('ทำข้อ 2 ก่อน');
+    assert.equal(captures, 1, JSON.stringify(h.delivered));
+    assert.match(JSON.stringify(h.delivered.at(-1)), /เก็บร่างค่าน้ำมัน/);
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /หมดอายุ|ยังตรวจสอบรายการที่เลือกไม่สำเร็จ/);
+    assert.equal(h.intakeRequests.length, 2, 'selection still has its own metered intake');
+    assert.equal(h.intakeRequests[1].messageText, 'ทำข้อ 2 ก่อน');
+    assert.equal(h.intakeRequests[1].retainedTaskSource.semanticSubrequest.index, 0, 'capture precedes confirmation');
+  });
+
+  for (const source of ['after-fx20/E01', 'after-fx20/E04']) it(`${source} bypasses pure-general delivery and offers company drafts at chat start`, async t => {
+    const replay = fx21bReplays.find(row => row.source === source && row.turn === 0)!;
+    const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'expense.read', 'expense.update', 'expense.review']);
+    const reads: any[] = [], record = { ...savedMediaFixture('seeded-web-draft'), companyId: 'company-1', createdByUserId: 'other-owner', captureSource: 'WEB_MANUAL', status: 'DRAFT', vendorNameSnapshot: 'ร้านวัสดุดี', grandTotalAmount: '1200.00' };
+    h.flow.expenseRepo = { listRecentLineCaptures: async () => [], listCategories: async () => [] };
+    h.flow.editableExpenses = new ListExpensesUseCase({ listExpenses: async (filter: any, scopes: any, related: any) => {
+      reads.push(filter); assert.equal(filter.companyId, 'company-1'); assert.deepEqual(scopes, {}); assert.equal(related, undefined);
+      return { data: filter.status === 'DRAFT' ? [record] : [], total: 1, page: 1, pageSize: 4 };
+    } } as any);
+    await h.execute(); assert.equal(h.intakeRequests.length, 1); assert.ok(reads.length);
+    const message = h.delivered.flat().find((item: any) => item.quickReply?.items.some((choice: any) => choice.action.label === 'อื่นๆ'));
+    assert.ok(message, JSON.stringify(h.delivered)); assert.match(JSON.stringify(message.quickReply), /ร้านวัสดุดี/);
+    assert.ok(message.quickReply.items.some((choice: any) => choice.action.type === 'uri' && choice.action.uri.includes('/expenses/seeded-web-draft')), JSON.stringify(message));
+    assert.ok(message.quickReply.items.every((choice: any) => !/seeded-web-draft/.test(choice.action.label)));
+  });
+
+  it('E04 STAFF exact correction says who can edit and changes nothing', async t => {
+    const replay = fx21bReplays.find(row => row.source === 'after-fx20/E04' && row.turn === 1)!;
+    const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'expense.receipt.line_upload']);
+    h.flow.getLinkedExpense = { execute: async () => assert.fail('a denied edit cannot disclose the record') };
+    await h.execute(); const payload = JSON.stringify(h.delivered);
+    assert.match(payload, /เจ้าของกิจการหรือผู้มีสิทธิ์แก้ไขรายจ่าย/); assert.doesNotMatch(payload, /ยังไม่พบรายการ|draft.update|expense_action_confirm/);
+  });
+});
+
+it('Fix-up 21B C10: exact live unavailable package request offers AVAILABLE buttons even with no purchase modes', async t => {
+  const { LinePackagePurchaseService } = await import('../line-package-purchase.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { billingOffer } = await import('@watchdog-bms/contracts');
+  const text = 'ทำให้หน่อย อยากอัปเกรดเป็นแพ็กเกจ 1,999 ที่มีหัก ณ ที่จ่ายด้วย'; // after-fx20/C10 trace.jsonl turn 1
+  const h = await fx21bBoundWebhook(t, { source: 'after-fx20/C10', messageText: text }, ['line.ai.query', 'company.plan.manage']);
+  Object.assign(h.prisma.client.aiConversation, { findFirst: async () => ({ id: 'purchase-owner', lifecycleEpoch: 1 }) });
+  let quotes = 0;
+  const offers = (['STARTER_249', 'BASIC_499', 'ENTERPRISE_1999'] as const).flatMap(tier => (['month', 'year'] as const).map(interval => ({ ...billingOffer(tier, interval), availability: tier === 'ENTERPRISE_1999' ? 'COMING_SOON' : 'AVAILABLE' })));
+  const billing: any = { assertOwner: async (ctx: any) => { assert.equal(ctx.companyId, 'company-1'); assert.ok(ctx.permissions.includes('company.plan.manage')); },
+    status: async () => ({ interval: 'month', availablePurchaseModes: [], attemptId: null }), catalog: async () => ({ offers }),
+    quote: async () => { quotes++; assert.fail('an unavailable request cannot create a quote or payment'); } };
+  h.flow.packagePurchases = new LinePackagePurchaseService(h.prisma, billing, new LineDraftPreviewStore(), { aiGatewayInternalSecret: 'fx21b-purchase' } as any);
+  await h.execute(); const payload = JSON.stringify(h.delivered);
+  assert.match(payload, /ธุรกิจ ยังไม่เปิดขายค่ะ/); assert.match(payload, /เลือกแพ็กเกจที่เปิดขาย/);
+  const choices = h.delivered.flat().flatMap((item: any) => item.quickReply?.items ?? []).map((item: any) => item.action);
+  assert.ok(choices.some((choice: any) => /249/.test(choice.label)), payload); assert.ok(choices.some((choice: any) => /499/.test(choice.label)), payload);
+  assert.ok(choices.every((choice: any) => !/1,?999|ธุรกิจ/.test(choice.text)), payload); assert.equal(quotes, 0);
+});
+
+for (const vendor of ['snapshot', 'counterparty', 'missing', 'trace24'] as const) it(vendor === 'trace24' ? 'Fix-up 24 D3: exact C04 Grab and approve-pay replay settles promptly and follows signed submit/approve/pay cards' : `Fix-up 22B C04: exact after-fx21 voucher input carries ${vendor} payee and rejects command answers`, async t => {
+  const { LineExpenseActionService, ExpenseActionPreviewTool } = await import('../line-expense-action.service');
+  const { LineVoucherActionService } = await import('../line-voucher-action.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const replay = vendor === 'trace24' ? { source: 'after-fx23/C04', messageText: FX24_LIVE.C04.turns[1].body.events[0].message.text, route: FX24_LIVE.C04.turns[1].route } : fx22bReplays.find(row => row.source === 'after-fx21/C04')!;
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.read', 'expense.disbursement.read', 'expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.disbursement.pay', 'accounting.counterparty.read']);
+  const record = { ...savedMediaFixture('fx21b-voucher-source'), companyId: 'company-1', createdByUserId: 'user-1', status: 'CONFIRMED',
+    vendorNameSnapshot: vendor === 'snapshot' ? 'บริษัท ป้ายสวย จำกัด' : null, vendorCounterpartyId: vendor === 'counterparty' ? 'linked-vendor' : null,
+    grandTotalAmount: '1040.50', outstandingAmount: '1040.50', whtAmount: '0' };
+  const repo: any = { findByIdWithRelations: async (company: string, id: string) => company === record.companyId && id === record.id ? record : null,
+    listRecentLineCaptures: async () => [], listCategories: async () => [] };
+  h.flow.expenseRepo = repo;
+  Object.assign(h.prisma.client.aiConversation, { findFirst: async () => ({ id: 'voucher-conversation', lifecycleEpoch: 1 }) });
+  h.prisma.client.companyFeatureEntitlement.findMany = async () => [{ featureKey: 'expenses', enabled: true }, { featureKey: 'ai_line_assistant', enabled: true }];
+  h.prisma.client.lineReadEvidence = { findMany: async ({ where }: any) => {
+    assert.equal(where.companyId, 'company-1'); assert.equal(where.userId, 'user-1');
+    return [{ toolName: 'expense.list_recent', inputJson: { chatKeyHash: chatKeyHashOf(BASE_EVENT), readMemory: { tool: 'expense.list_recent', shownItems: [{ id: record.id }] } } }];
+  } };
+  const drafts: any[] = [];
+  const vouchers: any = { previewLineAction: async (_ctx: any, operation: string, input: any) => {
+    assert.equal(operation, 'create'); assert.equal(record.status, 'CONFIRMED'); drafts.push(structuredClone(input.draft));
+  }, create: async () => assert.fail('preview must not create a voucher') };
+  const header: any = { id: 'fx24-voucher', status: 'DRAFT', version: 1, companyId: 'company-1', branchId: record.branchId,
+    preparedByUserId: 'user-1', payeeName: 'Grab', totalAmount: '1040.50', currency: 'THB', createdAt: record.updatedAt.toISOString(), updatedAt: record.updatedAt.toISOString(), plannedMethod: 'BANK_TRANSFER' };
+  const writes: string[] = [], terminal: string[] = [];
+  const originalUpdate = h.prisma.client.lineWebhookEventLog.updateMany;
+  h.prisma.client.lineWebhookEventLog.updateMany = async (query: any) => { if (query.data.status) terminal.push(query.data.status); return originalUpdate(query); };
+  if (vendor === 'trace24') {
+    const { assertDisbursementVoucherAction } = await import('../../../expenses/domain/logic/disbursement-voucher.logic');
+    vouchers.get = async (ctx: any, id: string) => { assert.equal(ctx.companyId, header.companyId); assert.equal(id, header.id);
+      return { header: { ...header }, lines: [{ expenseId: record.id, amount: '1040.50', whtAmount: '0', vendorName: 'Grab' }] }; };
+    const oldPreview = vouchers.previewLineAction;
+    vouchers.previewLineAction = async (ctx: any, operation: string, input: any) => operation === 'create'
+      ? oldPreview(ctx, operation, input) : assertDisbursementVoucherAction(header, operation as any, ctx.permissions);
+    for (const [operation, status] of Object.entries({ create: 'DRAFT', submit: 'PENDING_APPROVAL', approve: 'APPROVED', pay: 'PAID' }))
+      vouchers[operation] = async (ctx: any, ...args: any[]) => {
+        assert.equal(ctx.companyId, header.companyId);
+        if (operation !== 'create') { assert.equal(args[0], header.id); assert.equal(args[1].expectedVersion, header.version);
+          assertDisbursementVoucherAction(header, operation as any, ctx.permissions); }
+        writes.push(operation); header.status = status; header.version++; header.updatedAt = new Date(Date.parse(header.updatedAt) + 1000).toISOString(); return { ...header };
+      };
+  }
+  const getExpense = new GetExpenseUseCase(repo);
+  const adapter = new LineVoucherActionService(h.prisma, vouchers, getExpense, {} as any, {} as any, {} as any);
+  const { ListCounterpartiesUseCase } = await import('../../../accounting-documents/application/use-cases/counterparty.use-case');
+  (adapter as any).listCounterparties = new ListCounterpartiesUseCase({ listCounterparties: async (company: string, page: number, pageSize: number) => {
+    assert.equal(company, 'company-1'); assert.equal(pageSize, 4);
+    return { total: 5, data: ['บริษัท ป้ายสวย จำกัด', 'ร้านวัสดุดี', 'สมชาย ใจดี', 'ร้านกาแฟ'].map((displayName, i) => ({ id: `payee-${i}`, displayName })) };
+  } } as any);
+  (adapter as any).counterparties = { execute: async (ctx: any, id: string) => { assert.equal(ctx.companyId, 'company-1'); assert.equal(id, 'linked-vendor'); return { displayName: 'บริษัท ป้ายสวย จำกัด' }; } };
+  const actions = new LineExpenseActionService(h.prisma, repo, getExpense, {} as any, {} as any, {} as any, {} as any,
+    { routeContexts: async () => [] } as any, new LineDraftPreviewStore<any>(), { aiGatewayInternalSecret: 'fx21b-voucher' } as any,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, adapter);
+  h.flow.expenseActions = actions;
+  h.flow.aiGateway.requestLineTurn = async (req: any) => {
+    if (vendor !== 'trace24' && req.messageText === 'อนุมัติใบสำคัญจ่ายนี้ แล้วบันทึกว่าจ่ายแล้ววันนี้ โอนเงิน') return { requestId: req.requestId,
+      replyText: 'เลือกใบเตรียมจ่ายที่จะอนุมัติก่อนค่ะ', sourceRefs: [], sourceLabels: [], webLinks: [], intent: 'unknown', agent: 'general', refused: false,
+      toolsInvoked: [], durationMs: 1, semanticCoverage: [{ index: 0, status: 'needs_user', reasonCode: 'BUSINESS_INPUT_REQUIRED', question: 'เลือกใบเตรียมจ่ายที่จะอนุมัติก่อนค่ะ' }] };
+    const result = await new ExpenseActionPreviewTool(actions).execute({ ...req.userContext, userId: req.userContext.internalUserId,
+      requestId: req.requestId, chatKeyHash: chatKeyHashOf(BASE_EVENT) }, req.messageText === FX24_LIVE.C04.turns[4].body.events[0].message.text
+        ? { action: 'VOUCHER_APPROVE', voucherId: header.id, paidAt: '2026-10-16', paymentMethod: 'BANK_TRANSFER' } : { action: 'VOUCHER_CREATE', expenseId: record.id });
+    return { requestId: req.requestId, replyText: (result.data as any).reply, sourceRefs: result.sourceRefs, sourceLabels: [], webLinks: [],
+      intent: 'unknown', agent: 'general', refused: false, toolsInvoked: ['expense.list_recent', 'expense.action.preview'], durationMs: 1,
+      semanticCoverage: [{ index: 0, status: 'needs_user', reasonCode: 'BUSINESS_INPUT_REQUIRED', question: (result.data as any).reply }] };
+  };
+  await h.execute();
+  if (vendor === 'trace24') {
+    const intakeCount = h.intakeRequests.length;
+    await h.execute(FX24_LIVE.C04.turns[2].body.events[0].message.text); // exact "Grab" message action from trace
+    assert.equal(h.intakeRequests.length, intakeCount); assert.equal(terminal.at(-1), 'expense_action_prepared');
+    const button = (label: string) => h.delivered.at(-1)!.flatMap((m: any) => m.contents?.footer?.contents ?? []).find((b: any) => b.action?.label === label)?.action.data;
+    assert.ok(button('สร้างใบเตรียมจ่าย')); assert.equal(writes.length, 0);
+    await h.execute('สร้างใบเตรียมจ่าย', button('สร้างใบเตรียมจ่าย'));
+    assert.deepEqual(writes, ['create']); assert.ok(button('ส่งอนุมัติ'), JSON.stringify(h.delivered.at(-1)));
+    const next = button('ส่งอนุมัติ'); await h.execute('ส่งอนุมัติ', next);
+    assert.deepEqual(writes, ['create']); assert.ok(button('ส่งอนุมัติ'));
+    await h.execute('ส่งอนุมัติ', button('ส่งอนุมัติ'));
+    assert.deepEqual(writes, ['create', 'submit']); assert.ok(button('อนุมัติใบเตรียมจ่าย'));
+    await h.execute('อนุมัติใบเตรียมจ่าย', button('อนุมัติใบเตรียมจ่าย'));
+    assert.deepEqual(writes, ['create', 'submit']);
+    await h.execute('อนุมัติใบเตรียมจ่าย', button('อนุมัติใบเตรียมจ่าย'));
+    assert.deepEqual(writes, ['create', 'submit', 'approve']); assert.ok(button('บันทึกจ่าย'));
+    await h.execute('บันทึกจ่าย', button('บันทึกจ่าย'));
+    assert.deepEqual(writes, ['create', 'submit', 'approve']);
+    await h.execute('บันทึกจ่าย', button('บันทึกจ่าย'));
+    assert.deepEqual(writes, ['create', 'submit', 'approve', 'pay']); assert.equal(header.status, 'PAID');
+    header.status = 'DRAFT';
+    h.prisma.client.lineReadEvidence.findMany = async () => [{ toolName: 'voucher.list_recent', inputJson: { chatKeyHash: chatKeyHashOf(BASE_EVENT), readMemory: { tool: 'voucher.list_recent', shownItems: [{ id: header.id }] } } }];
+    await h.execute(FX24_LIVE.C04.turns[4].body.events[0].message.text);
+    assert.ok(button('ส่งอนุมัติ'), JSON.stringify(h.delivered.at(-1))); assert.equal(writes.length, 4);
+    return;
+  }
+  if (vendor === 'missing') {
+    assert.match(JSON.stringify(h.delivered), /ขอชื่อผู้รับเงินสำหรับใบเตรียมจ่ายนี้ค่ะ/);
+    assert.doesNotMatch(JSON.stringify(h.delivered), /expense_action_confirm/);
+    const choices = h.delivered.flat().flatMap((m: any) => m.quickReply?.items ?? []).map((c: any) => c.action);
+    assert.equal(choices.length, 5); assert.ok(choices.some((c: any) => c.text === 'บริษัท ป้ายสวย จำกัด'));
+    assert.ok(choices.some((c: any) => c.label === 'พิมพ์ชื่อเอง'));
+    await h.execute('พิมพ์ชื่อเอง');
+    assert.match(JSON.stringify(h.delivered.at(-1)), /ขอชื่อผู้รับเงิน/);
+    await h.execute('อนุมัติใบสำคัญจ่ายนี้ แล้วบันทึกว่าจ่ายแล้ววันนี้ โอนเงิน');
+    assert.match(JSON.stringify(h.delivered.at(-1)), /เลือกใบเตรียมจ่ายที่จะอนุมัติ/);
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+    assert.ok(drafts.every(draft => !draft.payeeName), JSON.stringify(drafts));
+    await h.execute(replay.messageText);
+    await h.execute('บริษัท ป้ายสวย จำกัด');
+  }
+  const payload = JSON.stringify(h.delivered.at(-1));
+  assert.match(payload, /บริษัท ป้ายสวย จำกัด/); assert.match(payload, /expense_action_confirm/);
+  assert.doesNotMatch(payload, /ไม่ระบุชื่อผู้ขาย|ไม่ระบุผู้ขาย/);
+  assert.equal(drafts.at(-1).payeeName, 'บริษัท ป้ายสวย จำกัด');
+});
+
+it('Fix-up 21B C05: the next untyped task keeps its goal and cannot create the expense again', async t => {
+  const replay = fx21bReplays.find(row => row.source === 'after-fx20-b/C05')!;
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.receipt.line_upload', 'expense.read', 'accounting.counterparty.manage']);
+  const record = { ...savedMediaFixture('fx21b-sequence'), status: 'DRAFT' }; let captures = 0, chosen = 0;
+  h.flow.expenseRepo = { listRecentLineCaptures: async () => [], listCategories: async () => [], findByIdWithRelations: async () => record };
+  h.flow.captureExpenseNote = { execute: async () => { captures++; return { expense: record, replyTexts: ['เก็บร่างค่าจ้างทำป้าย 10000 บาทแล้วค่ะ'] }; } };
+  h.flow.aiGateway.requestLineTurn = async (req: any) => {
+    chosen++; assert.equal(req.semanticSubrequests.length, 1); assert.equal(req.semanticSubrequests[0].goal, replay.route.semanticSubrequests[1].goal);
+    return { requestId: req.requestId, replyText: 'ตรวจข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด ก่อนบันทึกค่ะ', sourceRefs: [], sourceLabels: [], webLinks: [],
+      intent: 'unknown', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1, semanticCoverage: [{ index: 0, status: 'handled' }] };
+  };
+  await h.execute(); assert.equal(captures, 1); assert.equal(chosen, 0);
+  await h.execute('ทำข้อ 2 ก่อน');
+  assert.equal(captures, 1, 'a selected counterparty goal cannot re-enter capture'); assert.equal(chosen, 1);
+  assert.match(JSON.stringify(h.delivered.at(-1)), /ตรวจข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด/);
+  assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /หมดอายุ|เก็บร่าง/);
+});
+
+it('Fix-up 22B C05: exact after-fx21 untyped writes capture first and deliver the empty WHT catalog settings button', async t => {
+  const { WhtCalculateWithholdingTool } = await import('./erp-advisor-document-tools.use-case');
+  const { ListWhtIncomeCategoriesUseCase } = await import('../../../procurement/application/use-cases/wht-income-category.use-case');
+  const { LineReadEvidenceService } = await import('../line-read-evidence.service');
+  const replay = fx22bReplays.find(row => row.source === 'after-fx21/C05')!;
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.create', 'expense.receipt.line_upload', 'expense.read', 'accounting.counterparty.manage']);
+  h.prisma.client.companyFeatureEntitlement.findMany = async () => ['expenses', 'ai_line_assistant', 'wht_50bis', 'wht_pnd53'].map(featureKey => ({ featureKey, enabled: true }));
+  h.prisma.client.user = { findUnique: async () => ({ status: 'ACTIVE', aiAssistantOptOutAt: null }) };
+  const record = { ...savedMediaFixture('fx22b-capture'), status: 'DRAFT', vendorNameSnapshot: 'บริษัท ป้ายสวย จำกัด', grandTotalAmount: '10000.00' };
+  let captures = 0, reads = 0, stored: any;
+  h.flow.expenseRepo = { listRecentLineCaptures: async () => [], listCategories: async () => [], findByIdWithRelations: async () => record };
+  h.flow.captureExpenseNote = { execute: async (_ctx: any, input: any) => {
+    assert.match(JSON.stringify(input), /ป้ายสวย/); captures++;
+    return { expense: record, replyTexts: ['เก็บร่างค่าจ้างทำป้าย 10,000 บาทแล้วค่ะ'] };
+  } };
+  h.prisma.client.whtIncomeCategory = { findMany: async ({ where }: any) => { assert.deepEqual(where, { status: 'ACTIVE' }); reads++; return []; } };
+  h.prisma.client.$executeRaw = async () => 1;
+  h.prisma.client.$transaction = async (fn: any) => fn(h.prisma.client);
+  h.prisma.client.lineReadEvidence = { count: async () => 0, create: async ({ data }: any) => { stored = { id: 'wht-evidence', ...data }; return stored; },
+    findMany: async () => stored ? [stored] : [] };
+  const calculator = new WhtCalculateWithholdingTool(new ListWhtIncomeCategoriesUseCase(h.prisma));
+  const evidence = new LineReadEvidenceService(h.prisma, { resolveAccess: async (user: string, companyId: string) => ({
+    ...await h.flow.permissionResolver.resolveAccess(user, companyId), companyId,
+  }) } as any, new Map([[calculator.toolName, calculator]]));
+  h.flow.readEvidence = evidence;
+  h.flow.aiGateway.requestLineTurn = async (req: any) => {
+    assert.equal(req.semanticSubrequests.length, 1); assert.equal(req.semanticSubrequests[0].kind, 'read');
+    const ctx = { ...req.userContext, userId: req.userContext.internalUserId, requestId: req.requestId,
+      chatKeyHash: chatKeyHashOf(BASE_EVENT), inputEvidence: req.inputEvidence };
+    const result = await calculator.execute(ctx, {});
+    await evidence.record(ctx, {}, result);
+    return { requestId: req.requestId, replyText: (result.data as any).message, sourceRefs: result.sourceRefs, sourceLabels: [], webLinks: [],
+      intent: 'unknown', agent: 'general', refused: false, toolsInvoked: [calculator.toolName], toolCalls: [{ name: calculator.toolName, status: 'ok', input: {} }], durationMs: 1,
+      semanticCoverage: [{ index: 0, status: 'needs_user', reasonCode: 'BUSINESS_INPUT_REQUIRED', question: (result.data as any).message }] };
+  };
+  await h.execute();
+  const payload = JSON.stringify(h.delivered);
+  assert.equal(captures, 1, payload); assert.ok(reads > 0); assert.equal(h.intakeRequests.length, 1);
+  assert.match(payload, /เก็บร่างค่าจ้างทำป้าย/); assert.doesNotMatch(payload, /เลือกงานที่จะทำก่อน/);
+  const choices = h.delivered.flat().flatMap((m: any) => m.quickReply?.items ?? []).map((c: any) => c.action);
+  assert.ok(choices.some((c: any) => c.type === 'uri' && c.label === 'ตั้งค่าประเภทเงินได้'
+    && c.uri === 'https://app.example.com/system/wht-income-categories'), payload);
+  assert.ok(choices.some((c: any) => c.text === 'ทำข้อ 2 ก่อน'), payload);
+  assert.match(payload, /ให้ผู้ดูแลระบบเปิดประเภทเงินได้มาตรฐาน/);
+  assert.equal(stored.inputJson.whtReadChoices[0].webPath, '/system/wht-income-categories');
+  assert.deepEqual(h.projection().tasks[0].subrequests.map((s: any) => s.status), ['handled', 'needs_user', 'needs_user']);
+});
+
+for (const prefix of ['ทำให้หน่อย ', '']) it(`Fix-up 22B C10: exact live ${prefix ? 'follow-through' : 'request'} with the real disabled catalog delivers web choices`, async t => {
+  const { LinePackagePurchaseService } = await import('../line-package-purchase.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { BillingService } = await import('../../../billing/application/billing.service');
+  const replay = fx22bReplays.find(row => row.source === 'after-fx21/C10')!;
+  const text = prefix + replay.messageText.replace(/^ทำให้หน่อย /u, '');
+  const h = await fx21bBoundWebhook(t, { ...replay, messageText: text }, ['line.ai.query', 'company.plan.manage']);
+  h.prisma.client.aiConversation.findFirst = async () => ({ id: 'purchase-owner', lifecycleEpoch: 1 });
+  let quotes = 0, catalogs = 0;
+  const billing: any = { assertOwner: async (ctx: any) => { assert.equal(ctx.companyId, 'company-1'); assert.ok(ctx.permissions.includes('company.plan.manage')); },
+    status: async () => ({ interval: 'month', availablePurchaseModes: [], attemptId: null }),
+    catalog: async () => { catalogs++; return BillingService.prototype.catalog.call({ stripe: { enabled: false }, config: {} } as any); },
+    quote: async () => { quotes++; assert.fail('an unavailable catalog cannot charge'); } };
+  h.flow.packagePurchases = new LinePackagePurchaseService(h.prisma, billing, new LineDraftPreviewStore(),
+    { aiGatewayInternalSecret: 'fx22b-package', webBaseUrl: 'https://app.example.com' } as any);
+  await h.execute();
+  const payload = JSON.stringify(h.delivered);
+  assert.match(payload, /ธุรกิจ ยังไม่เปิดขายค่ะ/); assert.match(payload, /ดูแพ็กเกจอื่น/);
+  assert.doesNotMatch(payload, /เลือกแพ็กเกจที่เปิดขาย/);
+  const choices = h.delivered.flat().flatMap((m: any) => m.quickReply?.items ?? []).map((c: any) => c.action);
+  assert.ok(choices.some((c: any) => /249/.test(c.label) && c.type === 'uri' && /offer=STARTER_249/.test(c.uri)), payload);
+  assert.ok(choices.some((c: any) => /499/.test(c.label) && c.type === 'uri'), payload);
+  assert.ok(choices.some((c: any) => c.label === 'จัดการแพ็กเกจ' && /\/billing\?/.test(c.uri)), payload);
+  assert.ok(choices.every((c: any) => c.type === 'uri' && !/1,?999|ธุรกิจ/.test(c.label)), payload);
+  assert.equal(quotes, 0); assert.equal(catalogs, 1);
+});
+
+it('Fix-up 23 R2: exact after-fx22 E02 waiting tap saves an unreviewed evidence draft and delivers the upload button', async t => {
+  const { GetExpenseUseCase, UpdateExpenseDraftUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const { LineExpenseActionService } = await import('../line-expense-action.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { expenseTaxSourceChecksum } = await import('../../../expenses/domain/logic/expense-status.logic');
+  const replay = FX23_LIVE.find((row: any) => row.source === 'after-fx22/E02');
+  const text = replay.message;
+  const h = await fx21bBoundWebhook(t, { ...replay, messageText: text }, ['line.ai.query', 'ai.tool.invoke', 'expense.read', 'expense.review', 'expense.confirm']);
+  const chat = chatKeyHashOf(BASE_EVENT), writes: any[] = [];
+  const record: any = { ...savedMediaFixture('fx23-waiting'), branchId: 'branch-1',
+    vendorNameSnapshot: 'ปั๊มสยาม', sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY',
+    primaryAttachmentId: null, currency: 'THB', grandTotalAmount: '900.00', netPayableAmount: '900.00', inputVatClaimStatus: 'NON_CLAIMABLE',
+    paymentStatus: 'UNPAID', paidAmount: '0', aiVerificationSummaryJson: {}, payments: [] };
+  const repo: any = { listCategories: async () => [], findById: async (company: string, id: string) => company === record.companyId && id === record.id ? record : null,
+    findByIdWithRelations: async (company: string, id: string) => company === record.companyId && id === record.id ? record : null,
+    updateExpense: async (input: any, withinTx: any) => {
+      if (input.expectedUpdatedAt) assert.equal(input.expectedUpdatedAt.toISOString(), record.updatedAt.toISOString());
+      writes.push(input); const { expectedUpdatedAt: _version, ...fields } = input;
+      Object.assign(record, fields); if (!input.updatedAt) record.updatedAt = new Date(record.updatedAt.getTime() + 1000);
+      if (withinTx) await withinTx({}); return { ...record };
+    } };
+  const ctx: any = { requestId: 'fx23-waiting', authSubject: 'user-1', userId: 'user-1', companyId: 'company-1', membershipId: 'mem-1',
+    roles: ['OWNER'], permissions: ['line.ai.query', 'expense.read', 'expense.review', 'expense.confirm'], scopes: { branchIds: ['branch-1'] }, authProvider: 'line' };
+  h.prisma.client.aiConversation.findFirst = async () => ({ id: 'fx23-wait-conversation', lifecycleEpoch: 1 });
+  const store = new LineDraftPreviewStore<any>();
+  const update = new UpdateExpenseDraftUseCase(repo, { log: async () => undefined } as any, {} as any);
+  const actions = new LineExpenseActionService(h.prisma, repo, new GetExpenseUseCase(repo), {} as any, {} as any, {} as any, {} as any,
+    {} as any, store, { aiGatewayInternalSecret: 'fx23-wait' } as any,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, update);
+  // State issued by the evidence picker after capture; the real web update and all read guards run below.
+  await store.save({ previewId: 'fx23-evidence', companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId,
+    chatKeyHash: `expense-action-evidence:${chat}`, conversationId: 'fx23-wait-conversation', ownerEpoch: 1,
+    expenseId: record.id, revision: record.updatedAt.toISOString(), digest: expenseTaxSourceChecksum(record), requestId: ctx.requestId, stage: 'choice' });
+  h.flow.expenseActions = actions;
+  assert.deepEqual((await actions.repairChoices(ctx, chat))?.map(choice => choice.label), ['ส่งรูปใบเสร็จ', 'รอใบเสร็จ', 'ใบรับรองแทนใบเสร็จ']);
+  await h.execute(text);
+  const messages = h.delivered.at(-1)!;
+  assert.equal(messages[0].text, 'เก็บร่างไว้รอใบเสร็จแล้วค่ะ');
+  assert.deepEqual(messages[0].quickReply.items.map((item: any) => item.action), [{ type: 'message', label: 'ส่งรูปใบเสร็จ', text: 'ส่งรูปใบเสร็จ' }]);
+  assert.equal(writes.filter(input => input.expectedUpdatedAt).length, 1); assert.equal(record.status, 'DRAFT');
+  assert.deepEqual(record.aiVerificationSummaryJson.documentEvidenceDraft, { route: 'ALTERNATIVE_EVIDENCE', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [], reason: '' });
+  assert.equal(record.aiVerificationSummaryJson.documentReview, undefined);
+  assert.equal(await actions.evidencePhotoTarget(ctx, chat), null);
+  const waitingWrites = writes.length;
+  await h.execute('ส่งรูปใบเสร็จ');
+  const target = await actions.evidencePhotoTarget(ctx, chat);
+  assert.ok(target && 'expenseId' in target); assert.equal(target.expenseId, record.id);
+  assert.equal(writes.length, waitingWrites);
+});
+
+it('Fix-up 24 D4: exact C05 router starts the counterparty card and offers only its dependent expense after signed save', async t => {
+  const { LineCounterpartyService, CounterpartyActionPreviewTool } = await import('../line-counterparty.service');
+  const { CreateCounterpartyUseCase, GetCounterpartyUseCase, UpdateCounterpartyUseCase } = await import('../../../accounting-documents/application/use-cases/counterparty.use-case');
+  const { CaptureLineExpenseNoteUseCase } = await import('../../../expenses/application/use-cases/expense-document.use-case');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const turn = FX24_LIVE.C05.turns[1], text = turn.body.events[0].message.text;
+  const h = await fx21bBoundWebhook(t, { source: 'after-fx23/C05', messageText: text, route: turn.route },
+    ['line.ai.query', 'ai.tool.invoke', 'accounting.counterparty.manage', 'accounting.counterparty.read', 'expense.create', 'expense.read', 'expense.receipt.line_upload']);
+  h.prisma.client.aiConversation.findFirst = async () => ({ id: 'counterparty-owner', lifecycleEpoch: 1 });
+  h.prisma.client.companyFeatureEntitlement.findMany = async () => ['expenses', 'ai_line_assistant', 'wht_50bis'].map(featureKey => ({ featureKey, enabled: true }));
+  let counterparty: any; const createdDrafts: any[] = [];
+  const cpRepo: any = { createCounterparty: async (input: any) => counterparty = { ...input, id: 'saved-counterparty', updatedAt: new Date(), status: 'ACTIVE' },
+    findCounterpartyById: async (company: string, id: string) => company === 'company-1' && id === counterparty?.id ? counterparty : null, counterpartyUsage: async () => ({}) };
+  const service = new LineCounterpartyService(h.prisma, new GetCounterpartyUseCase(cpRepo), new CreateCounterpartyUseCase(cpRepo, { log: async () => undefined } as any),
+    new UpdateCounterpartyUseCase(cpRepo, {} as any), new LineDraftPreviewStore(), { aiGatewayInternalSecret: 'fx24-cp' } as any);
+  h.flow.counterparties = service;
+  const record = { ...savedMediaFixture('fx24-wht-draft'), status: 'DRAFT', whtAmount: '300.0000', grandTotalAmount: '10000.0000', vendorNameSnapshot: 'บริษัท ป้ายสวย จำกัด' };
+  const repo: any = { listRecentLineCaptures: async () => [], listCategories: async () => [], findByLineMessageId: async () => null,
+    findByIdWithRelations: async () => record, updateExpense: async (input: any) => { Object.assign(record, input); return record; } };
+  h.flow.expenseRepo = repo;
+  h.flow.captureExpenseNote = new CaptureLineExpenseNoteUseCase(repo, { execute: async (_ctx: any, input: any) => {
+    createdDrafts.push(input); assert.deepEqual(input.whtInput, { inputType: 'RATE', value: '3' });
+    assert.equal(input.vendorCounterpartyId, counterparty.id); assert.equal(Number(input.lines[0].unitPrice), 10000); return record;
+  } } as any, { log: async () => undefined } as any, { append: async () => undefined } as any);
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    assert.equal(request.semanticSubrequests.length, 1); assert.match(request.semanticSubrequests[0].goal, /ข้อมูลคู่ค้า/);
+    const result = await new CounterpartyActionPreviewTool(service).execute({ ...request.userContext, userId: request.userContext.internalUserId,
+      requestId: request.requestId, chatKeyHash: chatKeyHashOf(BASE_EVENT) }, { action: 'CREATE', displayName: 'บริษัท ป้ายสวย จำกัด',
+      taxId: '0105561234560', addressText: '12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900', entityKind: 'JURISTIC' });
+    return { requestId: request.requestId, replyText: (result.data as any).reply, sourceRefs: result.sourceRefs, sourceLabels: [], webLinks: [],
+      intent: 'unknown', agent: 'general', refused: false, toolsInvoked: [result.toolName], durationMs: 1,
+      semanticCoverage: [{ index: 0, status: 'needs_user', reasonCode: 'BUSINESS_INPUT_REQUIRED', question: (result.data as any).reply }] };
+  };
+  await h.execute(); let payload = JSON.stringify(h.delivered.at(-1));
+  assert.match(payload, /counterparty_confirm/); assert.doesNotMatch(payload, /เลือกงานที่จะทำก่อน/); assert.equal(counterparty, undefined); assert.equal(createdDrafts.length, 0);
+  const confirm = h.delivered.at(-1)!.flatMap((m: any) => m.contents?.footer?.contents ?? []).find((b: any) => b.action?.type === 'postback').action.data;
+  await h.execute('ยืนยันบันทึก', confirm);
+  payload = JSON.stringify(h.delivered.at(-1)); assert.match(payload, /บันทึกข้อมูลคู่ค้าแล้ว/); assert.match(payload, /ทำข้อ 1 ก่อน/);
+  assert.doesNotMatch(payload, /ทำข้อ 3 ก่อน|เลือกงานที่จะทำก่อน/); assert.equal(createdDrafts.length, 0);
+  await h.execute('ทำข้อ 1 ก่อน');
+  assert.equal(createdDrafts.length, 1, JSON.stringify(h.delivered.at(-1)));
+  assert.equal(record.vendorTaxIdSnapshot, '0105561234560'); assert.match(record.vendorAddressSnapshot, /ลาดพร้าว/);
+  assert.equal(record.vendorEntityKindSnapshot, 'JURISTIC'); assert.equal(record.whtAmount, '300.0000');
+  assert.equal(h.intakeRequests.length, 2, 'each new text stage remains model-metered');
+});
+
+it('Fix-up 25 R1: exact after-fx24 J2 webhook restores category edit, evidence choice and prepared web-sign link', async t => {
+  const { CaptureLineExpenseNoteUseCase } = await import('../../../expenses/application/use-cases/expense-document.use-case');
+  const { GetExpenseUseCase, MarkExpenseReadyUseCase, ConfirmExpenseUseCase, UpdateExpenseDraftUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const { LineDraftUpdateUseCase } = await import('../../../expenses/application/use-cases/line-draft-update.use-case');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { LineExpenseActionService, ExpenseActionPreviewTool } = await import('../line-expense-action.service');
+  const { LineSubstituteReceiptActionService } = await import('../line-substitute-receipt-action.service');
+  const { toSubstituteEvidenceSummary } = await import('../../../expenses/infrastructure/prisma-expense.repository');
+  const { PrepareSubstituteReceiptUseCase } = await import('../../../expenses/application/use-cases/substitute-receipt.use-case');
+  const turns = FX25_LIVE.J2.turns;
+  const replay = { source: 'after-fx24/J2', route: turns[0].route, messageText: turns[0].body.events[0].message.text };
+  const permissions = ['line.ai.query', 'ai.tool.invoke', 'expense.create', 'expense.receipt.line_upload', 'expense.read', 'expense.update', 'expense.review', 'expense.confirm'];
+  const h = await fx21bBoundWebhook(t, replay, permissions), chat = chatKeyHashOf(BASE_EVENT);
+  h.flow.ledger.appendSubRequests = async () => undefined;
+  h.flow.config.lineExpenseDraftConversationEnabled = true;
+  h.flow.config.lineAiDraftEditEnabled = true;
+  const record: any = { ...savedMediaFixture(FX25_LIVE.J2.tools[0].input.expenseId), branchId: 'branch-1',
+    primaryAttachmentId: null, vendorNameSnapshot: 'อินฟลู', currency: 'THB', subtotalAmount: '500', taxableAmount: '500',
+    grandTotalAmount: '500', netPayableAmount: '500', paidAmount: '0', paymentStatus: 'UNPAID', duplicateStatus: 'NO_MATCH',
+    sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE',
+    expenseDate: new Date('2026-10-10'), createdAt: new Date('2026-10-16T13:36:00Z'), aiVerificationSummaryJson: {}, payments: [], note: null };
+  const categories = [{ id: 'category-a-service', name: 'ค่าบริการ', status: 'ACTIVE' }];
+  const audits: any[] = [], prepares: any[] = [];
+  const audit: any = { log: async (input: any) => audits.push(input) };
+  const read = async (company: string, id: string) => company === record.companyId && id === record.id ? record : null;
+  const repo: any = { findByLineMessageId: async () => null, findById: read, findByIdWithRelations: read, listCategories: async () => categories, listLineChargeKinds: async () => [],
+    listRecentLineCaptures: async () => [record], listLineExpenseDraftContinuationRows: async () => record.sourceChannelMetadataJson.lineExpenseDraftContinuation ? [record] : [], listLineSubstituteContinuationRows: async () => {
+      const state = record.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation;
+      return state ? [{ id: record.id, updatedAt: record.updatedAt, sourceChannelMetadataJson: record.sourceChannelMetadataJson }] : [];
+    },
+    updateExpense: async (input: any, within?: any) => {
+      if (input.expectedUpdatedAt) assert.equal(input.expectedUpdatedAt.toISOString(), record.updatedAt.toISOString());
+      const { expectedUpdatedAt: _revision, ...fields } = input;
+      Object.assign(record, fields); if (!input.updatedAt) record.updatedAt = new Date(record.updatedAt.getTime() + 1000);
+      if (within) await within({}); return { ...record };
+    },
+    upsertLines: async (_c: string, _id: string, lines: any[]) => { record.lines = lines.map((line, i) => ({ ...line, id: `line-${i}` })); },
+    expenseCorrectionCapabilities: async () => ({ certificateOnExpense: null, disbursementReservation: null }),
+    getSubstituteReceiptPolicy: async () => null,
+    listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'user-1', displayName: 'เจ้าของ' }],
+    findActiveMemberIdentity: async (_c: string, userId: string) => userId === 'user-1' ? { userId, displayName: 'เจ้าของ' } : null,
+    findReusableSignatureAsset: async () => ({ id: 'signature-1', status: 'ACTIVE' }),
+    findSubstituteEvidenceAttachments: async (_c: string, _id: string, ids: string[]) => record.attachments.filter((file: any) => ids.includes(file.id)),
+    saveLineSubstituteContinuation: async (input: any) => {
+      assert.equal(input.expectedUpdatedAt.toISOString(), record.updatedAt.toISOString());
+      record.updatedAt = new Date(record.updatedAt.getTime() + 1000);
+      const continuation = { ...input.continuation, targetRevision: record.updatedAt.toISOString(), lastActivityAt: record.updatedAt.toISOString() };
+      record.sourceChannelMetadataJson = { ...record.sourceChannelMetadataJson, lineSubstituteReceiptContinuation: continuation };
+      return { updatedAt: record.updatedAt, continuation };
+    },
+    createPreparedSubstituteEvidence: async (input: any) => {
+      prepares.push(input); record.updatedAt = new Date(record.updatedAt.getTime() + 1000);
+      record.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status = 'CONSUMED';
+      const created = { ...input, id: 'prepared-substitute', documentNumber: 'SUB-2569-00001', status: 'PREPARED',
+        signatureMode: 'DIGITAL', preparedAt: record.updatedAt, expenseUpdatedAtAtPreparation: record.updatedAt, updatedAt: record.updatedAt };
+      record.substituteReceiptEvidence = toSubstituteEvidenceSummary(created as any);
+      return created;
+    },
+  };
+  const tx: any = { $executeRaw: async () => undefined, expenseRecord: { findFirstOrThrow: async () => ({ updatedAt: record.updatedAt }) } };
+  h.prisma.client.$transaction = async (run: any) => {
+    const before = structuredClone(record), count = audits.length;
+    try { return await run(tx); } catch (error) { for (const key of Object.keys(record)) delete record[key]; Object.assign(record, before); audits.length = count; throw error; }
+  };
+  h.prisma.client.aiConversation.findFirst = async () => ({ id: (await import('../line-conversation-context.service')).lineConversationId({ companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line', channelKind: 'USER', messagingChannelId: BASE_EVENT.messagingChannelId, chatKeyHash: chat }), lifecycleEpoch: 1 });
+  const update = new UpdateExpenseDraftUseCase(repo, audit, { resolveLines: async (_ctx: any, _header: any, lines: any[]) => lines } as any);
+  const get = new GetExpenseUseCase(repo), ready = new MarkExpenseReadyUseCase(repo);
+  const confirm = new ConfirmExpenseUseCase(repo, audit, {} as any, {} as any);
+  const draft = new LineExpenseDraftConversationUseCase(repo, update);
+  h.flow.expenseDraftConversation = draft;
+  const actions = new LineExpenseActionService(h.prisma, repo, get, ready, confirm, {} as any, {} as any, draft,
+    new LineDraftPreviewStore(), { aiGatewayInternalSecret: 'fx25-actions' } as any,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, update);
+  h.flow.expenseRepo = repo; h.flow.expenseActions = actions;
+  h.flow.draftUpdate = new LineDraftUpdateUseCase(h.prisma, repo, update, audit, new LineDraftPreviewStore(), { lineAiDraftEditEnabled: true } as any);
+  h.flow.captureExpenseNote = new CaptureLineExpenseNoteUseCase(repo, { execute: async (_ctx: any, input: any) => {
+    assert.equal(input.lines[0].unitPrice, '500');
+    await repo.upsertLines(record.companyId, record.id, input.lines.map((line: any) => ({ ...line, vatRate: '0', vatAmount: '0', lineTotalAmount: '500', lineSubtotalAmount: '500', taxableAmount: '500', whtAmount: '0' }))); return record;
+  } } as any, audit, { append: async () => undefined } as any);
+  const continuation = new LineSubstituteReceiptContinuationUseCase(repo, new PrepareSubstituteReceiptUseCase(repo, audit, {} as any), audit, {} as any, update);
+  h.flow.substituteReceiptContinuation = continuation;
+  h.flow.substituteActions = new LineSubstituteReceiptActionService({ aiGatewayInternalSecret: 'fx25-sub', webBaseUrl: 'https://web.eval.test' } as any,
+    h.prisma, repo, continuation, { execute: async () => ({ asPayer: { items: [] }, asApprover: { items: [] } }) } as any);
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    const result = await new ExpenseActionPreviewTool(actions).execute({ ...request.userContext, userId: 'user-1', requestId: request.requestId, chatKeyHash: chat }, FX25_LIVE.J2.tools[0].input);
+    return { requestId: request.requestId, replyText: (result.data as any).reply, sourceRefs: result.sourceRefs, sourceLabels: [], webLinks: [],
+      intent: 'unknown', agent: 'general', refused: false, toolsInvoked: [result.toolName], durationMs: 1,
+      semanticCoverage: [{ index: 0, status: 'needs_user', reasonCode: 'DRAFT_INPUT_REQUIRED', question: (result.data as any).reply }] };
+  };
+  await h.execute();
+  assert.equal(record.sourceChannelMetadataJson.lineExpenseDraftContinuation.unresolvedQuestions[0].field, 'expenseCategoryId');
+  replay.route = turns[1].route;
+  await h.execute(turns[1].body.events[0].message.text);
+  assert.match(JSON.stringify(h.delivered.at(-1)), /ค่าบริการ/);
+  const before = structuredClone(record);
+  await h.execute(turns[2].body.events[0].message.text);
+  let messages = h.delivered.at(-1)!;
+  assert.match(JSON.stringify(messages), /action=draft-update-confirm/);
+  assert.deepEqual(record, before, 'category selection commits no expense change');
+  const buttons = (items: any[]): any[] => {
+    const actions: any[] = [];
+    const visit = (node: any) => { if (!node || typeof node !== 'object') return; if (node.action) actions.push(node.action); for (const child of Object.values(node)) visit(child); };
+    visit(items); return actions;
+  };
+  await h.execute('ยืนยันการแก้ไข', buttons(messages).find(button => button.label === 'ยืนยัน').data);
+  messages = h.delivered.at(-1)!;
+  assert.equal(record.lines[0].expenseCategoryId, categories[0].id); assert.equal(record.status, 'DRAFT');
+  assert.match(JSON.stringify(messages), /เลือกหลักฐานที่ใช้/);
+  const substitute = messages.flatMap((message: any) => message.quickReply?.items ?? []).find((item: any) => item.action.label === 'ใบรับรองแทนใบเสร็จ').action;
+  await h.execute(substitute.text);
+  assert.equal(record.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'OPEN');
+  // Exact facts and payer answer from the failing run; an already saved signature and payment file are persistence fixtures.
+  // Hydrate the recorded pending-task locator for the literal router taskRef (the test uses fresh webhook ids).
+  h.projection().tasks = structuredClone(FX25_LIVE.J2.factsProjection.tasks);
+  replay.route = turns[4].route;
+  await h.execute(turns[4].body.events[0].message.text);
+  assert.equal(record.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.businessPurpose, 'ค่าโปรโมทร้าน', JSON.stringify(h.delivered.at(-1)));
+  replay.route = turns[6].route;
+  await h.execute(turns[6].body.events[0].message.text);
+  record.attachments.push({ id: 'payment-slip', purpose: 'expense.payment.evidence', status: 'ACTIVE', mimeType: 'image/jpeg', originalFileName: 'slip.jpg', checksumSha256: 'slip-sha' });
+  await h.execute(turns[6].body.events[0].message.text);
+  messages = h.delivered.at(-1)!;
+  const prepareButton = buttons(messages).find(button => button.label === 'เตรียมใบรับรอง');
+  assert.ok(prepareButton, JSON.stringify(messages)); assert.equal(prepares.length, 0);
+  await h.execute('เตรียมใบรับรอง', prepareButton.data);
+  messages = h.delivered.at(-1)!;
+  assert.equal(prepares.length, 1, JSON.stringify(messages)); assert.equal(prepares[0].preparedFromChannel, 'LINE');
+  assert.equal(record.substituteReceiptEvidence.status, 'PREPARED'); assert.equal(record.status, 'DRAFT');
+  assert.equal(messages.length, 1); const sign = buttons(messages).filter(button => button.type === 'uri');
+  assert.equal(sign.length, 1); assert.equal(sign[0].label, 'เปิดลงนามในเว็บ'); assert.equal(sign[0].type, 'uri');
+  assert.match(sign[0].uri, /\/substitute-receipts\/prepared-substitute/);
+});
+
+const FX26_LIVE = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx26-router-replays.json'), 'utf8'));
+
+it('Fix-up 26 U1: exact ondev C07 webhook/router uses the signed saved counterparty and updates its sold address only on confirm', async t => {
+  const { LineCounterpartyService, CounterpartyActionPreviewTool } = await import('../line-counterparty.service');
+  const { CreateCounterpartyUseCase, GetCounterpartyUseCase, UpdateCounterpartyUseCase } = await import('../../../accounting-documents/application/use-cases/counterparty.use-case');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+  const { runWithUsageContext } = await import('../../../../../../ai-gateway/src/common/usage/usage-context');
+  const replay = { ...structuredClone(FX26_LIVE.C07), messageText: FX26_LIVE.C07.body.events[0].message.text };
+  t.mock.timers.enable({ apis: ['Date'], now: replay.body.events[0].timestamp });
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'accounting.counterparty.manage', 'accounting.counterparty.read']);
+  const id = replay.taskProjection.tasks[0].slots.counterpartyId, revision = replay.taskProjection.tasks[0].slots.counterpartyRevision;
+  const before = '99 ถนนงามวงศ์วาน ตำบลบางกระสอ อำเภอเมืองนนทบุรี นนทบุรี 11000';
+  const counterparty: any = { id, companyId: 'company-1', createdByUserId: 'user-1', displayName: 'บริษัท ผักสดดี จำกัด', status: 'ACTIVE',
+    billingAddressJson: { version: 2, addressText: before, locked: true, postalCode: '11000', seenOnDocuments: [] }, updatedAt: new Date(revision) };
+  let writes = 0;
+  const repo: any = { findCounterpartyById: async (company: string, target: string) => company === 'company-1' && target === id ? counterparty : null,
+    counterpartyUsage: async () => ({}), updateCounterparty: async (input: any) => {
+      assert.equal(input.companyId, 'company-1'); assert.equal(input.counterpartyId, id); assert.equal(input.updatedByUserId, 'user-1');
+      assert.equal(input.expectedUpdatedAt.toISOString(), revision); writes++;
+      Object.assign(counterparty, { billingAddressJson: input.billingAddressJson, updatedAt: new Date(Date.now() + 1) }); return counterparty;
+    } };
+  h.prisma.client.aiConversation.findFirst = async () => ({ id: 'fx26-counterparty-owner', lifecycleEpoch: 1 });
+  h.prisma.client.companyFeatureEntitlement.findMany = async () => ['expenses', 'ai_line_assistant'].map(featureKey => ({ featureKey, enabled: true }));
+  const service = new LineCounterpartyService(h.prisma, new GetCounterpartyUseCase(repo), new CreateCounterpartyUseCase(repo, {} as any),
+    new UpdateCounterpartyUseCase(repo, { log: async () => undefined } as any), new LineDraftPreviewStore(), { aiGatewayInternalSecret: 'fx26-counterparty' } as any);
+  h.flow.counterparties = service;
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    assert.deepEqual(request.semanticSubrequests, replay.route.semanticSubrequests);
+    const budget: any = { status: 'active-v2', calls: 1, repairCount: 0, grant: { maxTurnSlots: 4 } };
+    const result = await runWithUsageContext({ budget }, () => runSemanticTurnV2({ req: request,
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async () => { budget.calls++; return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'counterparty.action.preview', input: replay.route.semanticSubrequests[0].requestedFilters }] }) }; } },
+      invoke: async (meta, ctx, input) => {
+        assert.equal(meta.name, 'counterparty.action.preview');
+        return new CounterpartyActionPreviewTool(service).execute(ctx, input);
+      } }));
+    return { requestId: request.requestId, ...result, intent: 'unknown', agent: 'general', refused: false, sourceLabels: [],
+      toolsInvoked: result.outputs.flatMap(output => output.toolCalls.map(call => call.name)), toolCalls: result.outputs.flatMap(output => output.toolCalls) };
+  };
+  await h.execute();
+  assert.equal(writes, 0); assert.equal(counterparty.billingAddressJson.addressText, before);
+  const messages = h.delivered.at(-1)!;
+  assert.match(JSON.stringify(messages), /ตรวจข้อมูลที่จะแก้ไข/); assert.doesNotMatch(JSON.stringify(messages), /ดึงข้อมูลส่วนนี้ไม่ได้/);
+  const confirm = messages.flatMap((m: any) => m.contents?.footer?.contents ?? []).find((b: any) => b.action?.data?.includes('counterparty_confirm'));
+  assert.ok(confirm, JSON.stringify(messages));
+  await h.execute('ยืนยันบันทึก', confirm.action.data);
+  assert.equal(writes, 1); assert.equal(counterparty.billingAddressJson.addressText, replay.route.semanticSubrequests[0].requestedFilters.addressText);
+  assert.equal(counterparty.billingAddressJson.locked, true); assert.equal(counterparty.billingAddressJson.postalCode, '11000');
+  assert.match(JSON.stringify(h.delivered.at(-1)), /บันทึกข้อมูลคู่ค้าแล้วค่ะ/);
+  await h.execute('ยืนยันบันทึก', confirm.action.data); assert.equal(writes, 1);
+  assert.equal(h.intakeRequests.length, 1, 'the exact text still uses metered intake; signed presses do not call a model');
+});
+
+for (const canReopen of [false, true]) for (const blocker of [null, 'tax_period_filed', 'disbursement_reserved', 'certificate'] as const) it(`Fix-up 26 U2: exact ondev E02 paid edit refuses before mixed hints; reopen=${canReopen}, void preflight=${blocker ?? 'allowed'}`, async t => {
+  const { VoidExpenseUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const replay = { ...structuredClone(FX26_LIVE.E02), messageText: FX26_LIVE.E02.body.events[0].message.text };
+  t.mock.timers.enable({ apis: ['Date'], now: replay.body.events[0].timestamp });
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.read', 'expense.update', 'expense.void']);
+  const record = { ...savedMediaFixture('cmvb2ltjy002oaek12jly9l2t'), companyId: 'company-1', branchId: 'branch-1', status: 'CONFIRMED', paymentStatus: 'PAID',
+    vendorNameSnapshot: 'ร้านทดสอบฟู้ดส์', grandTotalAmount: '500.8000', netPayableAmount: '500.8000', paidAmount: '500.8000', paidAt: new Date(), sourceReimbursementRequestId: null };
+  const slip = { ...savedMediaFixture('fx26-linked-slip'), companyId: 'company-1', branchId: 'branch-1', status: 'VOIDED', vendorNameSnapshot: 'สลิปโอนเงิน' };
+  let preflights = 0;
+  const capabilities = { canReopen, reopenBlockers: canReopen ? [] : ['ledger_posted'], payments: [],
+    ...(blocker === 'disbursement_reserved' ? { disbursementReservation: { id: 'voucher' } } : {}),
+    ...(blocker === 'certificate' ? { certificateOnExpense: { kind: 'SYSTEM' } } : {}) };
+  const repo: any = { listRecentLineCaptures: async (input: any) => {
+    assert.equal(input.companyId, 'company-1'); assert.equal(input.createdByUserId, 'user-1'); assert.equal(input.chatKeyHash, chatKeyHashOf(h.baseEvent));
+    return input.includeAllStatuses ? [slip, record] : [];
+  }, findByIdWithRelations: async (company: string, id: string, _db: any, scopes: any) => {
+    assert.equal(company, 'company-1'); assert.deepEqual(scopes, {}); return [record, slip].find(row => row.id === id);
+  }, findById: async (company: string, id: string) => { assert.equal(company, 'company-1'); assert.equal(id, record.id); preflights++; return record; },
+    expenseCorrectionCapabilities: async () => capabilities, lineVoidBlocker: async () => blocker === 'tax_period_filed' ? { code: blocker } : null,
+    updateExpense: async () => assert.fail('paid edits must never mutate'), voidExpenseAtomic: async () => assert.fail('preflight must never void') };
+  h.flow.expenseRepo = repo; h.flow.getLinkedExpense = new GetExpenseUseCase(repo);
+  h.flow.previewEditVoid = new VoidExpenseUseCase(repo, {} as any, {} as any, {} as any, {} as any, {} as any);
+  h.flow.draftUpdate = { enabled: true, preview: async () => assert.fail('confirmed paid rows never reach a draft preview') };
+  await h.execute();
+  const messages = h.delivered.at(-1)!, payload = JSON.stringify(messages);
+  assert.match(payload, /รายการนี้ยืนยันและจ่ายแล้ว จึงแก้ยอดเดิมโดยตรงไม่ได้ค่ะ/); assert.doesNotMatch(payload, /ทีละอย่าง|counterparty_confirm|draft-update-confirm|expense_action_confirm/);
+  const actions = messages.flatMap((m: any) => [...(m.contents?.footer?.contents ?? []).map((b: any) => b.action), ...(m.quickReply?.items ?? []).map((b: any) => b.action)]);
+  assert.ok(actions.some((a: any) => /เว็บ/.test(a.label) && a.uri?.includes(`/expenses/${record.id}`)), payload);
+  assert.equal(actions.some((a: any) => a.label === 'ยกเลิกและสร้างใหม่'), blocker === null, payload);
+  assert.equal(preflights, 1); assert.equal(record.grandTotalAmount, '500.8000'); assert.equal(record.status, 'CONFIRMED'); assert.equal(record.paymentStatus, 'PAID');
+  assert.equal(h.intakeRequests.length, 1);
+});
+
+const FX27_LIVE = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx27-router-replays.json'), 'utf8'));
+
+for (const key of ['C05_passing', 'C05_earlier']) it(`Fix-up 27 F2: exact ${key} webhook/router creates 10000 with WHT 300 without reasking amount or purpose`, async t => {
+  const { CaptureLineExpenseNoteUseCase } = await import('../../../expenses/application/use-cases/expense-document.use-case');
+  const { CreateExpenseDraftUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const replay = { ...structuredClone(FX27_LIVE[key]), messageText: FX27_LIVE[key].body.events[0].message.text };
+  t.mock.timers.enable({ apis: ['Date'], now: replay.body.events[0].timestamp });
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.create', 'expense.read', 'expense.receipt.line_upload', 'accounting.counterparty.manage']);
+  h.flow.config.lineExpenseDraftConversationEnabled = true;
+  h.flow.expenseDraftConversation = { routeContexts: async () => [] };
+  h.prisma.client.companyFeatureEntitlement.findMany = async () => ['expenses', 'ai_line_assistant', 'wht_50bis', 'wht_pnd53'].map(featureKey => ({ featureKey, enabled: true }));
+  let creates = 0, record: any;
+  const lines: any[] = [];
+  const repo: any = { listRecentLineCaptures: async () => [], listCategories: async () => [], findByLineMessageId: async () => null,
+    resolveCreateBranchId: async () => 'branch-1', findByIdWithRelations: async () => record,
+    createExpense: async (input: any, within: any) => {
+      assert.equal(input.companyId, 'company-1'); assert.equal(input.createdByUserId, 'user-1'); creates++;
+      record = { ...savedMediaFixture('fx27-hired-service'), ...input, status: 'DRAFT', updatedAt: new Date() };
+      await within({}, record); return record;
+    }, upsertLines: async (_company: string, _id: string, rows: any[]) => { lines.push(...rows); },
+    updateExpense: async (input: any) => { Object.assign(record, input); return record; } };
+  const audit = { log: async () => undefined } as any;
+  h.flow.expenseRepo = repo;
+  h.flow.captureExpenseNote = new CaptureLineExpenseNoteUseCase(repo,
+    new CreateExpenseDraftUseCase(repo, audit, { resolveLines: async (_ctx: any, _header: any, rows: any[]) => rows } as any,
+      { assertLaunchRouteOpen: async () => undefined } as any), audit, { append: async () => undefined } as any);
+  // The earlier route also asks an independent WHT read; it must not affect the capture.
+  h.flow.aiGateway.requestLineTurn = async (request: any) => ({ requestId: request.requestId, replyText: 'เลือกประเภทเงินได้ค่ะ', sourceRefs: [], sourceLabels: [], webLinks: [],
+    intent: 'unknown', agent: 'general', refused: false, toolsInvoked: [], toolCalls: [], durationMs: 0,
+    semanticCoverage: request.semanticSubrequests.map((item: any) => ({ index: item.index, status: 'needs_user', question: 'เลือกประเภทเงินได้ค่ะ' })) });
+  await h.execute();
+  const payload = JSON.stringify(h.delivered.at(-1));
+  assert.equal(creates, 1, payload); assert.equal(Number(record.grandTotalAmount), 10000);
+  assert.equal(Number(record.whtAmount), 300); assert.equal(Number(record.netPayableAmount), 9700);
+  assert.equal(record.vendorNameSnapshot, 'บริษัท ป้ายสวย จำกัด'); assert.equal(record.status, 'DRAFT');
+  assert.equal(lines.length, 1); assert.match(lines[0].description, /ทำป้ายหน้าร้าน/);
+  assert.doesNotMatch(payload, /ระบุยอดเงิน|วัตถุประสงค์.*ให้ครบ|ราคาต่อหน่วยหรือยอดรวมเท่าไร|สินค้า\/บริการอะไร/);
+  assert.equal(h.intakeRequests.length, 1, 'the exact input retains metered model intake');
+});
+
+for (const canReopen of [false, true]) for (const blocker of [null, 'tax_period_filed', 'disbursement_reserved', 'certificate'] as const) it(`Fix-up 27 F1: exact ondev-fx26 E02 paid edit refuses before mixed hints; reopen=${canReopen}, void preflight=${blocker ?? 'allowed'}`, async t => {
+  const { VoidExpenseUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const replay = { ...structuredClone(FX27_LIVE.E02), messageText: FX27_LIVE.E02.body.events[0].message.text };
+  t.mock.timers.enable({ apis: ['Date'], now: replay.body.events[0].timestamp });
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.read', 'expense.update', 'expense.void']);
+  const record = { ...savedMediaFixture('cmvb2ltjy002oaek12jly9l2t'), companyId: 'company-1', branchId: 'branch-1', status: 'CONFIRMED', paymentStatus: 'PAID',
+    vendorNameSnapshot: 'บริษัท ทดสอบ ฟู้ดส์ จำกัด', grandTotalAmount: '500.8000', netPayableAmount: '500.8000', paidAmount: '500.8000', paidAt: new Date(), sourceReimbursementRequestId: null };
+  const slip = { ...savedMediaFixture('fx26-linked-slip'), companyId: 'company-1', branchId: 'branch-1', status: 'VOIDED', vendorNameSnapshot: 'สลิปโอนเงิน' };
+  let preflights = 0;
+  const capabilities = { canReopen, reopenBlockers: canReopen ? [] : ['ledger_posted'], payments: [],
+    ...(blocker === 'disbursement_reserved' ? { disbursementReservation: { id: 'voucher' } } : {}),
+    ...(blocker === 'certificate' ? { certificateOnExpense: { kind: 'SYSTEM' } } : {}) };
+  const repo: any = { listRecentLineCaptures: async (input: any) => {
+    assert.equal(input.companyId, 'company-1'); assert.equal(input.createdByUserId, 'user-1'); assert.equal(input.chatKeyHash, chatKeyHashOf(h.baseEvent));
+    return input.includeAllStatuses ? [slip, record] : [];
+  }, findByIdWithRelations: async (company: string, id: string, _db: any, scopes: any) => {
+    assert.equal(company, 'company-1'); assert.deepEqual(scopes, {}); return [record, slip].find(row => row.id === id);
+  }, findById: async (company: string, id: string) => { assert.equal(company, 'company-1'); assert.equal(id, record.id); preflights++; return record; },
+    expenseCorrectionCapabilities: async () => capabilities, lineVoidBlocker: async () => blocker === 'tax_period_filed' ? { code: blocker } : null,
+    updateExpense: async () => assert.fail('paid edits must never mutate'), voidExpenseAtomic: async () => assert.fail('preflight must never void') };
+  h.flow.expenseRepo = repo; h.flow.getLinkedExpense = new GetExpenseUseCase(repo);
+  h.flow.previewEditVoid = new VoidExpenseUseCase(repo, {} as any, {} as any, {} as any, {} as any, {} as any);
+  h.flow.draftUpdate = { enabled: true, preview: async () => assert.fail('confirmed paid rows never reach a draft preview') };
+  await h.execute();
+  const messages = h.delivered.at(-1)!, payload = JSON.stringify(messages);
+  assert.match(payload, /รายการนี้ยืนยันและจ่ายแล้ว จึงแก้ยอดเดิมโดยตรงไม่ได้ค่ะ/); assert.doesNotMatch(payload, /ทีละอย่าง|counterparty_confirm|draft-update-confirm|expense_action_confirm/);
+  const actions = messages.flatMap((m: any) => [...(m.contents?.footer?.contents ?? []).map((b: any) => b.action), ...(m.quickReply?.items ?? []).map((b: any) => b.action)]);
+  assert.ok(actions.some((a: any) => /เว็บ/.test(a.label) && a.uri?.includes(`/expenses/${record.id}`)), payload);
+  assert.equal(actions.some((a: any) => a.label === 'ยกเลิกและสร้างใหม่'), blocker === null, payload);
+  assert.equal(preflights, 1); assert.equal(record.grandTotalAmount, '500.8000'); assert.equal(record.status, 'CONFIRMED'); assert.equal(record.paymentStatus, 'PAID');
+  assert.equal(h.intakeRequests.length, 1);
 });

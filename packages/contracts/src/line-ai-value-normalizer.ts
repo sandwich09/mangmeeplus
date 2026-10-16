@@ -336,7 +336,7 @@ const THAI_MONTHS: Array<[string, number]> = [
 
 /** Spoken short month names (UAT 2026-09-29: "ของเดือนสิงหาละ" read no period, so the follow-up could not be
  *  grounded). Chat-period use only, and only where the period rules below see a clear boundary — "กันยา" is also
- *  a given name and "ตุลา" starts ตุลาการ — never inside receipt/date extraction. */
+ *  a given name and "ตุลา" starts ตุลาการ. Dates require a day AND year around these names. */
 const THAI_SPOKEN_MONTHS: Array<[string, number]> = [
   ['มกรา', 1], ['กุมภา', 2], ['มีนา', 3], ['เมษา', 4], ['พฤษภา', 5], ['มิถุนา', 6],
   ['กรกฎา', 7], ['กรกฏา', 7], ['สิงหา', 8], ['กันยา', 9], ['ตุลา', 10], ['พฤศจิกา', 11], ['ธันวา', 12],
@@ -358,7 +358,7 @@ const MONTH_NAME_ALTERNATION = [...THAI_MONTHS, ...ENGLISH_MONTHS]
 
 function monthFromName(name: string): number | null {
   const lowered = name.toLowerCase();
-  for (const [candidate, month] of [...THAI_MONTHS, ...ENGLISH_MONTHS]) {
+  for (const [candidate, month] of [...THAI_MONTHS, ...ENGLISH_MONTHS, ...THAI_SPOKEN_MONTHS]) {
     if (candidate === lowered) return month;
   }
   return null;
@@ -496,6 +496,15 @@ export function extractValueCandidates(
     dateRanges.push({ start, end });
   };
 
+  // Spoken months are dates only between an explicit day and year; never match a name or
+  // the prefix of a full month. Keep them out of month-first and month-period extraction.
+  const spokenDatePattern = new RegExp(`(?<!\\d)(\\d{1,2})\\s+(${THAI_SPOKEN_MONTHS.map(([name]) => name).join('|')})\\s+(?:ปี\\s*)?(\\d{4}|\\d{2})(?!\\d)`, 'gu');
+  for (const match of mapped.matchAll(spokenDatePattern)) {
+    const readings = resolveNamedMonthYearReadings(match[2], Number(match[3]), match[3].length);
+    for (const reading of readings) pushDate(match.index, match.index + match[0].length, Number(match[1]), monthFromName(match[2])!, reading, []);
+    recordDateRange(match.index, match.index + match[0].length);
+  }
+
   // 1) Labeled slots: วันที่ <day> [เดือน <month>] [ปี <year>] — labels lock the reading.
   //    Day may be digits or a Thai number word (e.g. "วันที่เก้า เดือน11ปี2537").
   const labeledPattern = new RegExp(
@@ -533,9 +542,13 @@ export function extractValueCandidates(
     const start = match.index;
     const end = start + match[0].length;
     if (overlaps(dateRanges, start, end)) continue;
+    // A day-first slip header (16 ก.ย. 69 14:10) is not month-first ก.ย. 69 14.
+    // Do not reserve its span before the day-first pass can read the actual date.
+    if (/(?:^|[^\d])(?:0?[1-9]|[12]\d|3[01])\s*$/.test(mapped.slice(0, start))) continue;
     const month = monthFromName(match[1]);
     if (!month) continue;
     const day = Number(match[2]);
+    if (day < 1 || day > 31) continue;
     const yearRaw = match[3];
     const readings = resolveNamedMonthYearReadings(match[1], Number(yearRaw), yearRaw.length === 2 ? 2 : 4);
     for (const reading of readings) pushDate(start, end, day, month, reading, []);
@@ -1141,7 +1154,9 @@ const EVERYDAY_PERIOD_RULES: PeriodRule[] = [
     build: (m, today) => completeUnits(Number(m[1]), m[2]!, today, 'ล่าสุด'),
   },
   // Consume an approximate/unsupported count before "this unit" instead of reading only its suffix.
-  { pattern: new RegExp(`${PERIOD_COUNT_PATTERN}\\s*(?:เดือน|สัปดาห์|อาทิตย์|วีค|ปี|ไตรมาส)นี้`, 'gu'), build: () => [] },
+  { pattern: new RegExp(`${PERIOD_COUNT_PATTERN}\\s*(?:เดือน|สัปดาห์|อาทิตย์|วีค|ปี|ไตรมาส)นี้`, 'gu'),
+    // ภ.ง.ด.53 เดือนนี้: 53 names the form, not a count of months.
+    build: m => /(?:ภ\.?\s*ง\.?\s*ด\.?|pnd)\s*$/iu.test((m.input ?? '').slice(0, m.index ?? 0)) ? null : [] },
 ];
 
 /** Ordered most-specific first; an earlier rule's span blocks any later overlapping match, exactly

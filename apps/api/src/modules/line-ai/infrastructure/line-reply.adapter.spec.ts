@@ -270,3 +270,17 @@ describe('v2 exact frozen delivery', () => {
     } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
   });
 });
+
+it('Round 7A captures only accepted LINE sent message IDs for reply, push and frozen delivery', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ sentMessages: [{ id: 'bot-message-1', quoteToken: 'never-store' }, { id: 7 }, { id: 'bad id' }] }), { status: 200 });
+  try {
+    const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'secret' } as any), {} as any);
+    const stored: string[][] = [];
+    assert.equal(await adapter.sendReply('token', [{ type: 'text', text: 'hello' }], async ids => { stored.push(ids); }), 'ok');
+    assert.equal(await adapter.sendPush('user', [{ type: 'text', text: 'hello' }], 'operation', async ids => { stored.push(ids); }), 'ok');
+    const result = await adapter.sendFrozenV2({ transport: 'REPLY', target: 'token', messages: [{ type: 'text', text: 'hello' }], pushRetryKey: '12345678-1234-1234-1234-123456789abc', timeoutMs: 500 });
+    assert.equal(result.kind, 'accepted'); assert.deepEqual(result.sentMessageIds, ['bot-message-1']);
+    assert.deepEqual(stored, [['bot-message-1'], ['bot-message-1']]); assert.equal(JSON.stringify(stored).includes('never-store'), false);
+  } finally { globalThis.fetch = originalFetch; }
+});

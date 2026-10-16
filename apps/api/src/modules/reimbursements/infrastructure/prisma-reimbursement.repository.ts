@@ -1873,6 +1873,7 @@ export class PrismaReimbursementRepository {
    * expense-confirm path. An exact retry resumes from the already-approved step.
    */
   async beginApprovalDecisionAtomic(data: {
+    previewOnly?: boolean;
     companyId: string;
     requestId: string;
     expectedUpdatedAt: Date;
@@ -1936,6 +1937,8 @@ export class PrismaReimbursementRepository {
         return { request, resumed: true, approvalStepId: step.id };
       }
       if (step.status !== 'PENDING') throw new ConflictException('stale_approval_snapshot');
+      // The LINE card reads the same locked source/snapshot/branch/assignment guards as its press.
+      if (data.previewOnly) return { request, resumed: false, approvalStepId: step.id };
       // Same transaction as the decision: an approval of a transfer claim cannot exist without it.
       await attestClaimPayout(tx, request, {
         verifiedVersion: data.payoutVerifiedVersion, thirdPartyAccepted: data.payoutThirdPartyAccepted, actorUserId: data.actorUserId, verifiedAt: data.decidedAt, approvalStepId: step.id,

@@ -66,6 +66,28 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
     return settleAiBudgetStep(prisma, { invocationKey: key, meta: { sourceRoute: 'line-ai-v2' }, entry: { modelId: model, tag: 'fixture', ok: true,
       inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, usageBasis: 'PROVIDER_REPORTED' } as never });
   }
+  it('R10 Q1: webhook counterparty intake reserves ordinal zero before narrowing the real grant', async () => {
+    const { ProcessLineWebhookUseCase } = await import('./use-cases/process-line-webhook.use-case');
+    const { grant, owner } = await fixture('counterparty-intake', 'SPLIT', false);
+    assert.equal(await service.narrow(grant, 'mixed', ['line-control/2', 'line-answer/2']), null);
+    const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+    let intakeCalls = 0;
+    Object.assign(flow, { mediaTextContinuations: new WeakMap(), intakePlansV2: new WeakMap(), boundConversations: new WeakMap(),
+      config: {}, logger: { log() {}, warn() {} }, prepareTextGrantV2: async () => grant, reliabilityContext: async () => ({}),
+      aiGateway: { requestLineIntakeRoute: async () => {
+        intakeCalls += 1;
+        const reserved = await service.reserve(invocation(grant, 0, 'line-intake-text/2')); assert.ok(reserved.ok);
+        assert.equal(await settle(reserved.envelope.invocationKey), 'settled');
+        return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98 };
+      } } });
+    const text = 'เพิ่มผู้ขาย บริษัท ทดสอบ จำกัด เลขผู้เสียภาษี 0105556000011';
+    const plan = await flow.tryRouteIntake({ event: { messageText: text }, requestId: 'r10-counterparty', companyId: owner.companyId,
+      userId: owner.userId, permissions: ['line.ai.query', 'ai.tool.invoke', 'accounting.counterparty.manage'], messageText: text });
+    assert.equal(plan.status, 'ROUTED'); assert.equal(intakeCalls, 1);
+    const narrowed = await service.narrow(grant, 'mixed', ['line-control/2', 'line-answer/2']); assert.ok(narrowed);
+    assert.equal(narrowed.nextOrdinal, 1);
+    assert.equal(await client.aiBudgetReservation.count({ where: { companyId: owner.companyId } }), 1);
+  });
   it('atomically claims one global ordinal across racing profiles and commits DISPATCHED before returning', async () => {
     const { grant } = await fixture('race');
     const results = await Promise.all([service.reserve(invocation(grant)), service.reserve(invocation(grant, 1, 'line-answer/2'))]);

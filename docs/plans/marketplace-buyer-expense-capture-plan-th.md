@@ -756,3 +756,8 @@ Test trace ที่ต้องทำเมื่อ implement (ยังไม
 Reuse/impact: ขยาย `formatBusinessDocumentReply`, `formatCheckBillDecisionReply`, reference/clarify branches, `ensurePendingMedia`, expense eligibility และ Web review เดิม; Gateway ให้ผลอ่าน/จำแนก ส่วน API ตรวจสิทธิ์และตัดสิน mutation. ใช้ชุด `process-line-webhook.use-case.spec.ts` และ `expense-document.logic.spec.ts` เดิม รวม continuation/UI/E2E ที่เกี่ยวข้องเมื่อ behavior เปลี่ยน. ไม่ต้องสร้าง global error framework หรือ formatter แยกรายขนส่ง; ช่องว่างจริงคือ copy ที่ตรงเอกสารและ persisted reference→Web ซึ่งต้องพิสูจน์ก่อนเปิดใช้
 
 ผลตรวจเอกสารส่วนนี้ 2026-09-18: PASS `python3 /tmp/check-mangmee-non-receipt-replies.py` — NR9/spec-plan-catalog/persist-and-reuse flags และ test paths เดิม 2 ไฟล์ (ไม่ได้รัน tests). Courier checker PASS 218 links/118 line targets; baseline v0.11 checker PASS A88/IG29/E27/D9/W9, 221 links/121 line targets; scoped `git diff --check` ผ่าน. ไม่มี application/AI/browser/LINE/UX verification หรือ implementation change ในรอบปรับ spec/plan
+
+
+### OCR round B (2026-10-15)
+
+Scope/acceptance: one PDF page per read/extract; deterministic header/rows/latest printed totals; 20-page hard bound with partial/pause; 45s photo vs 90s page deadlines and longer transports/grants; ≤2400px q85 derivatives without upscaling; landscape >1.25 only; usable intake text reused; one normal metered timeout retry, one OCR admission per document. Existing upload, branch, source revision, tenant and apply guards remain authoritative. No model/network calls in this worktree. Implementation and verification state: `docs/agent-memory/ocr-round-b.md`.

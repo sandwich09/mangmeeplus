@@ -106,6 +106,6 @@ import { LineReimbursementDraftUseCase } from './application/use-cases/line-reim
     AttachPaymentSlipUseCase,
     CreatePaymentSlipDownloadUrlUseCase,
   ],
-  exports: [PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, ListReimbursementApproverOptionsUseCase, GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase, LineReimbursementDraftUseCase],
+  exports: [ListReimbursementsUseCase, RecordReimbursementPaymentUseCase, InitPaymentSlipUploadUseCase, CompletePaymentSlipUploadUseCase, SubmitReimbursementUseCase, CancelReimbursementUseCase, ApproveReimbursementUseCase, RejectReimbursementUseCase, PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, ListReimbursementApproverOptionsUseCase, GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase, LineReimbursementDraftUseCase],
 })
 export class ReimbursementsModule {}

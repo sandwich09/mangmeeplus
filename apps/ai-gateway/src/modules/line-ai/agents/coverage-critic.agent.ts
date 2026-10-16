@@ -9,6 +9,7 @@
 import type { LineAiBusinessSubject, LineAiCoverageItem, LineAiCoverageVerdict, LineAiOpenClarification } from '@watchdog-bms/contracts';
 import { LINE_AI_BUSINESS_SUBJECTS } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
+import { safeModelLineText } from './response-composer.agent';
 
 export const COVERAGE_CRITIC_SYSTEM_PROMPT = `
 You are the Coverage Critic for MangmeePlus LINE AI.
@@ -79,7 +80,7 @@ export function parseCoverage(text: string): LineAiCoverageItem[] | null {
       const request = typeof record['request'] === 'string' ? record['request'].trim().slice(0, MAX_TEXT_LENGTH) : '';
       if (!request) continue;
       const question = typeof record['question'] === 'string' && !record['question'].trim().startsWith('{')
-        ? record['question'].trim().slice(0, 500)
+        ? safeModelLineText(record['question'].trim().slice(0, 500))
         : undefined;
       const reason = typeof record['reason'] === 'string' ? record['reason'].trim().slice(0, MAX_TEXT_LENGTH) : undefined;
       const subject = typeof record['subject'] === 'string' && LINE_AI_BUSINESS_SUBJECTS.includes(record['subject'] as LineAiBusinessSubject)

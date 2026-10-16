@@ -1,3 +1,4 @@
+import { linePaymentEvidencePostbackCommand, parseLinePaymentEvidenceControl } from './line-payment-evidence-reply.logic';
 import { createHash } from 'node:crypto';
 import { withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
 import { parseOutcomeMessages, type LineReplyMessage } from '../../infrastructure/line-reply.adapter';
@@ -16,6 +17,9 @@ export type DeliveryAuthorizationV2 = {
   actorUserId: string | null; initiatorHash: string; admissionPolicyDigest: string; sourceManifestDigest: string; approvedPublicSourceIds: string[]; issuedAt: string; expiresAt: string;
 };
 export type DeliveryControlV2 = { kind: 'EXPENSE_EDIT_CONFIRM'; previewId: string; previewRevision: string; expiresAt: string; requiredItemIds: string[] }
+  | { kind: 'PACKAGE_PURCHASE_CONFIRM'; token: string; expiresAt: string; requiredItemIds: string[] }
+  | { kind: 'COUNTERPARTY_CONFIRM'; token: string; expiresAt: string; requiredItemIds: string[] }
+  | { kind: 'EXPENSE_ACTION_CONFIRM'; token: string; expiresAt: string; requiredItemIds: string[] }
   | { kind: 'REIMBURSEMENT_DRAFT_CONFIRM'; actionId: string; previewRevision: number; confirmationDigest: string; expiresAt: string; requiredItemIds: string[] };
 export type FrozenRepresentation = { messages: LineReplyMessage[]; wireHash: string; pushRetryKey: string };
 export type DeliveryPlanV2 = {
@@ -26,6 +30,7 @@ export type DeliveryPlanV2 = {
   batches: Array<{ id: string; index: number; spans: Array<{ itemId: string; start: number; end: number; messageIndex: number }>; primary: FrozenRepresentation; fallback: FrozenRepresentation | null }>;
 };
 export type DeliveryBatchState = {
+  sentMessageIds?: string[];
   batchId: string; variant: 'primary' | 'fallback'; status: 'READY' | 'UNKNOWN' | 'ACCEPTED' | 'REFUSED' | 'CANCELLED'; transport: null | 'REPLY' | 'PUSH'; replyAttempted: boolean; pushAttempts: number;
   firstAttemptAt: string | null; lastAttemptAt: string | null; acceptedAt: string | null; providerRequestId: string | null; lastErrorCode: string | null;
 };
@@ -95,9 +100,36 @@ function controlActions(message: LineReplyMessage): Array<{ type: 'postback'; la
   };
   visit(message, 0); return found;
 }
+/** Inline evidence association and payment/tax-preview opening reauthorize on tap. */
+function authorizedInlineActions(message: LineReplyMessage, authorization: DeliveryAuthorizationV2): boolean {
+  const actions = controlActions(message);
+  if (!actions.length || authorization.kind !== 'PRIVATE') return false;
+  const ids = new Set(authorization.proofs.flatMap(proof => proof.kind === 'CAPTURE_RESULT' && Array.isArray(proof.recordIds)
+    ? proof.recordIds.filter((id): id is string => typeof id === 'string')
+    : proof.kind === 'EXPENSE_REVISION' && Array.isArray(proof.records)
+      ? proof.records.flatMap(row => row && typeof row === 'object' && typeof row.id === 'string' ? [row.id] : []) : []));
+  return actions.every(action => {
+    const params = new URLSearchParams(action.data);
+    if (params.get('action') === 'reimbursement_choice') return [...params.keys()].length === 4
+      && ['action', 'actionId', 'revision', 'choice'].every(key => params.getAll(key).length === 1)
+      && authorization.proofs.some(proof => proof.kind === 'REIMBURSEMENT_OPTIONS'
+        && proof.actionId === params.get('actionId') && proof.controlRevision === params.get('revision'));
+    if (params.get('action') === 'expense_action_submit') return [...params.keys()].length === 2
+      && ['action', 'token'].every(key => params.getAll(key).length === 1)
+      && authorization.proofs.some(proof => proof.kind === 'REIMBURSEMENT_DRAFT' && proof.status === 'applied' && proof.submitToken === params.get('token'));
+    if (['expense_action_payment', 'expense_action_wht', 'expense_action_next'].includes(params.get('action') ?? '')) return [...params.keys()].length === 2
+      && authorization.proofs.some(proof => proof.kind === 'EXPENSE_ACTION_PREVIEW' && proof.applied === true && proof.token === params.get('token'));
+    const command = linePaymentEvidencePostbackCommand(action.data);
+    const control = command ? parseLinePaymentEvidenceControl(command) : null;
+    return !!control && ids.has(control.slipId) && (!control.receiptId || ids.has(control.receiptId));
+  });
+}
 function matchingControl(message: LineReplyMessage, control: DeliveryControlV2): boolean {
   return controlActions(message).some(action => {
     const p = new URLSearchParams(action.data);
+    if (control.kind === 'PACKAGE_PURCHASE_CONFIRM') return p.get('action') === 'package_purchase_confirm' && p.get('token') === control.token;
+    if (control.kind === 'COUNTERPARTY_CONFIRM') return p.get('action') === 'counterparty_confirm' && p.get('token') === control.token;
+    if (control.kind === 'EXPENSE_ACTION_CONFIRM') return p.get('action') === 'expense_action_confirm' && p.get('token') === control.token;
     if (control.kind === 'EXPENSE_EDIT_CONFIRM') return p.get('action') === 'draft-update-confirm' && p.get('previewId') === control.previewId;
     return p.get('action') === 'reimbursement_draft_confirm' && p.get('actionId') === control.actionId
       && p.get('previewRevision') === String(control.previewRevision) && p.get('confirmationDigest') === control.confirmationDigest;
@@ -118,18 +150,31 @@ export function buildLineDeliveryPlan(input: Omit<DeliveryPlanV2, 'v' | 'planId'
   const items = input.answer.items.map((item, i) => ({ ...item, text: escape(item.text), id: `${planId}:item:${i}` }));
   if (preferredMessages && preferredMessages.length !== items.length) fail('PLAN_INVALID_PRESENTATION');
   const all: Array<{ primary: LineReplyMessage; fallback?: LineReplyMessage; span?: DeliveryPlanV2['batches'][number]['spans'][number] }> = [];
+  let coveredControl: (typeof all)[number] | undefined;
   for (const [i, item] of items.entries()) {
-    const parts = splitLineDeliveryText(item.text), preferred = preferredMessages?.[i] ?? null;
+    const parts = splitLineDeliveryText(item.text);
+    const isControl = input.control && controlMessage?.type === 'flex'
+      && controlMessage.canonicalText !== undefined && escape(controlMessage.canonicalText) === item.text;
+    const preferred = isControl ? controlMessage : preferredMessages?.[i] ?? null;
     // Same escaped form as `item.text`; the presentation proof below still reads the ORIGINAL object.
     const matches = preferred?.type === 'text' ? escape(preferred.text) === item.text
       : preferred?.type === 'flex' ? preferred.canonicalText !== undefined && escape(preferred.canonicalText) === item.text : false;
-    const quickReply = matches && preferred && controlActions(preferred).length === 0 ? preferred.quickReply : undefined;
-    if (preferred?.type === 'flex' && matches && isCompleteLineBusinessAnswerPresentation(preferred)
-      && parts.length === 1 && controlActions(preferred).length === 0
+    const evidenceActions = preferred && authorizedInlineActions(preferred, input.authorization);
+    // Completion menus cannot replace the card's authorized actions in its text fallback.
+    const quickReply = matches && preferred && (controlActions(preferred).length === 0 || evidenceActions || isControl)
+      ? ((isControl || evidenceActions) && controlActions(preferred).length <= 13
+        ? { items: controlActions(preferred).map(action => ({ type: 'action' as const, action })) } : preferred.quickReply) : undefined;
+    if (preferred?.type === 'flex' && matches && (isControl || isCompleteLineBusinessAnswerPresentation(preferred))
+      && parts.length === 1 && (controlActions(preferred).length === 0 || evidenceActions || isControl)
       && parseOutcomeMessages(lineDeliveryWireMessages([preferred]))) {
       const part = parts[0]!;
-      all.push({ primary: preferred, fallback: { type: 'text', text: part.text, ...(quickReply ? { quickReply } : {}) },
-        span: { itemId: item.id, start: part.start, end: part.end, messageIndex: 0 } });
+      // Ordinary cards keep their reviewed preview; controls must describe the exact action being confirmed.
+      const entry = { primary: { ...preferred, altText: isControl ? item.text.slice(0, 400) : preferred.altText }, fallback: { type: 'text' as const, text: part.text, ...(quickReply ? { quickReply } : {}) },
+        span: { itemId: item.id, start: part.start, end: part.end, messageIndex: 0 } };
+      if (isControl) {
+        if (coveredControl) fail('PLAN_INVALID_CONTROL');
+        coveredControl = entry;
+      } else all.push(entry);
       continue;
     }
     for (const [partIndex, part] of parts.entries()) all.push({
@@ -138,7 +183,8 @@ export function buildLineDeliveryPlan(input: Omit<DeliveryPlanV2, 'v' | 'planId'
     });
   }
   if (!!input.control !== !!controlMessage) fail('PLAN_CONTROL_MISSING');
-  if (controlMessage) all.push({ primary: controlMessage, fallback: { type: 'text', text: 'ตรวจสอบรายละเอียดทั้งหมดด้านบนก่อนยืนยัน',
+  if (coveredControl) all.push(coveredControl);
+  else if (controlMessage) all.push({ primary: controlMessage, fallback: { type: 'text', text: 'ตรวจสอบรายละเอียดทั้งหมดด้านบนก่อนยืนยัน',
     quickReply: { items: controlActions(controlMessage).map(action => ({ type: 'action' as const, action })) } } });
   if (!all.length || all.length > 15) fail('PLAN_TOO_LARGE');
   const batches: DeliveryPlanV2['batches'] = [];
@@ -193,6 +239,8 @@ export function validateLineDeliveryPlan(plan: DeliveryPlanV2): void {
       if (!message || message.type === 'image' || (message.type === 'text' ? message.text !== expected : fallback?.type !== 'text' || fallback.text !== expected)
         || ![...segmenter.segment(item.text)].some(s => s.index + s.segment.length === span.end)) fail('PLAN_INCOMPLETE_COVERAGE');
       if (batch.fallback && (fallback?.type !== 'text' || fallback.text !== expected)) fail('PLAN_INVALID_FALLBACK');
+      for (const presented of [message, fallback]) if (presented && controlActions(presented).some(action => ['reimbursement_choice', 'payment-evidence', 'expense_action_payment', 'expense_action_wht', 'expense_action_next', 'expense_action_submit'].includes(new URLSearchParams(action.data).get('action') ?? ''))
+        && !authorizedInlineActions(presented, plan.authorization)) fail('PLAN_INVALID_CONTROL');
       covered.set(item.id, prior + expected);
     }
   }
@@ -206,7 +254,7 @@ export function validateLineDeliveryPlan(plan: DeliveryPlanV2): void {
     for (let j = 0; j < batch.primary.messages.length; j++) {
       const terminalControl = !!plan.control && batch === lastBatch && j === batch.primary.messages.length - 1;
       if (terminalControl) {
-        if (spanIndexes.has(j) || !matchingControl(batch.primary.messages[j]!, plan.control!) || (batch.fallback && !matchingControl(batch.fallback.messages[j]!, plan.control!))) fail('PLAN_INVALID_CONTROL');
+        if (!matchingControl(batch.primary.messages[j]!, plan.control!) || (batch.fallback && !matchingControl(batch.fallback.messages[j]!, plan.control!))) fail('PLAN_INVALID_CONTROL');
       } else if (!spanIndexes.has(j) || (plan.control && matchingControl(batch.primary.messages[j]!, plan.control))) fail('PLAN_UNCOVERED_MESSAGE');
     }
   }
@@ -224,6 +272,7 @@ export function parseDeliveryBatchStates(value: unknown, plan: DeliveryPlanV2): 
   let unaccepted = false;
   for (const [i, s] of value.entries()) {
     if (!s || s.batchId !== plan.batches[i]?.id || !['primary', 'fallback'].includes(s.variant) || (s.variant === 'fallback' && !plan.batches[i]?.fallback) || !['READY', 'UNKNOWN', 'ACCEPTED', 'REFUSED', 'CANCELLED'].includes(s.status) || ![null, 'REPLY', 'PUSH'].includes(s.transport) || typeof s.replyAttempted !== 'boolean' || !Number.isInteger(s.pushAttempts) || s.pushAttempts < 0 || s.pushAttempts > 5) return null;
+    if (s.sentMessageIds !== undefined && (!Array.isArray(s.sentMessageIds) || s.sentMessageIds.length > 5 || !s.sentMessageIds.every((id: unknown) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,200}$/u.test(id)))) return null;
     if (s.status === 'ACCEPTED' && unaccepted) return null;
     if (s.status !== 'ACCEPTED') unaccepted = true;
     if (s.status === 'ACCEPTED' && !Number.isFinite(Date.parse(s.acceptedAt))) return null;

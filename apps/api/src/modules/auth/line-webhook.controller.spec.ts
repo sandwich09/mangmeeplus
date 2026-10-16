@@ -226,3 +226,45 @@ describe('LineWebhookController', () => {
     );
   });
 });
+
+it('Round 2 A: signed expense-action postbacks are buffered with their token even with draft-edit off; typed words grant no control', async () => {
+  const { controller, enqueued } = makeController();
+  const token = '550e8400-e29b-41d4-a716-446655440000.' + 'a'.repeat(43);
+  await controller.lineWebhook(requestFor({ events: [{ type: 'postback', webhookEventId: 'evt-action', replyToken: 'reply-action',
+    source: { type: 'user', userId: 'line-action' }, postback: { data: new URLSearchParams({ action: 'expense_action_confirm', token }).toString() } }] }));
+  assert.deepEqual(enqueued[0].item.expenseActionControl, { action: 'expense_action_confirm', token });
+  assert.equal(enqueued[0].channelKind, 'USER');
+  await controller.lineWebhook(requestFor({ events: [{ type: 'message', webhookEventId: 'evt-typed-action', replyToken: 'reply-action',
+    source: { type: 'user', userId: 'line-action' }, message: { type: 'text', text: 'ยืนยัน' } }] }));
+  assert.equal(enqueued[1].item.expenseActionControl, undefined);
+  const bad = requestFor({ events: [] }); bad.headers['x-line-signature'] = 'invalid';
+  await assert.rejects(() => controller.lineWebhook(bad), UnauthorizedException);
+});
+
+it('Round 4 forwards only strict package controls through signature-verified ingress', async () => {
+  const token = '550e8400-e29b-41d4-a716-446655440000.' + 'a'.repeat(43);
+  const { controller, enqueued } = makeController();
+  const data = new URLSearchParams({ action: 'package_purchase_confirm', token }).toString();
+  const payload = (value: string) => ({ events: [{ type: 'postback', webhookEventId: 'package-press', replyToken: 'reply', source: { type: 'user', userId: 'line-user' }, postback: { data: value } }] });
+  await controller.lineWebhook(requestFor(payload(data)));
+  assert.deepEqual(enqueued[0].item.packagePurchaseControl, { action: 'package_purchase_confirm', token });
+  const badSignature = requestFor(payload(data)); badSignature.headers['x-line-signature'] = 'forged';
+  await assert.rejects(controller.lineWebhook(badSignature), UnauthorizedException);
+  for (const value of [data + '&token=forged', data + '&companyId=other', data.replace('confirm', 'charge')]) await controller.lineWebhook(requestFor(payload(value)));
+  assert.equal(enqueued.length, 1);
+});
+
+it('Round 7A forwards a bounded quotedMessageId and recognizes only signed-shape counterparty postbacks', async () => {
+  const { controller, enqueued } = makeController();
+  const token = '12345678-1234-1234-1234-123456789abc.' + 'a'.repeat(43);
+  await controller.lineWebhook(requestFor({ events: [
+    { type: 'message', webhookEventId: 'quote-evt', replyToken: 'reply', source: { type: 'user', userId: 'line-user' },
+      message: { type: 'text', id: 'user-msg', text: 'ของอันนี้', quotedMessageId: 'bot-msg-123' } },
+    { type: 'message', webhookEventId: 'bad-quote-evt', replyToken: 'reply', source: { type: 'user', userId: 'line-user' },
+      message: { type: 'text', id: 'user-msg2', text: 'ของอันนี้', quotedMessageId: { id: 'attacker' } } },
+    { type: 'postback', webhookEventId: 'cp-press', replyToken: 'reply', source: { type: 'user', userId: 'line-user' },
+      postback: { data: new URLSearchParams({ action: 'counterparty_confirm', token }).toString() } },
+  ] }));
+  assert.equal(enqueued[0].item.quotedMessageId, 'bot-msg-123'); assert.equal(enqueued[1].item.quotedMessageId, undefined);
+  assert.deepEqual(enqueued[2].item.counterpartyControl, { action: 'counterparty_confirm', token });
+});

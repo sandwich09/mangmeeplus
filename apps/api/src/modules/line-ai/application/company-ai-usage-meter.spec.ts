@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   AI_BANK_STATEMENT_MAX_PROVIDER_CALLS,
   AI_DOCUMENT_OCR_TIMEOUT_MS,
+  AI_DOCUMENT_PAGE_TIMEOUT_MS,
   AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS,
   AI_RECEIPT_OCR_MAX_PROVIDER_CALLS,
   aiGatewayClientTimeoutMs,
@@ -501,6 +502,7 @@ describe('company OCR admission — commercial plan ceiling', () => {
 function fakePrisma(monthlyBudgetSatang?: number | null) {
   const transactions: Array<Array<{ op: string; args: any }>> = [];
   const aggregate: Record<string, number> = {};
+  const events: any[] = [];
   const client = {
     // Read by the post-transaction threshold check; `undefined` means "no configuration row".
     companyAiConfiguration: {
@@ -513,6 +515,7 @@ function fakePrisma(monthlyBudgetSatang?: number | null) {
         aiUsageEvent: {
           createMany: async (args: any) => {
             ops.push({ op: 'createMany', args });
+            events.push(...args.data);
             return { count: args.data.length };
           },
         },
@@ -528,7 +531,7 @@ function fakePrisma(monthlyBudgetSatang?: number | null) {
       return fn(tx);
     },
   };
-  return { prisma: { client } as any, transactions, aggregate };
+  return { prisma: { client } as any, transactions, aggregate, events };
 }
 
 let warnings: any[];
@@ -797,11 +800,11 @@ describe('classifyAiUsageRequest', () => {
 
 describe('recordCompanyAiCostAdjustment', () => {
   /** Minimal ledger fake: one original row, one aggregate, and the unique correctionKey fence. */
-  function adjustmentPrisma(options: { aggregate?: Record<string, number>; eventKind?: string } = {}) {
+  function adjustmentPrisma(options: { aggregate?: Record<string, number>; eventKind?: string; usageBasis?: string } = {}) {
     const events = new Map<string, any>([['evt-1', {
       id: 'evt-1', companyId: 'co-1', monthKey: '2026-09', sourceRoute: 'line-turn', usageTag: 'line_turn',
       modelId: 'sonnet', thbPerUsd: 33, thbPerUsdSource: 'env-fallback', requestKind: 'TEXT', budgetBucket: 'CHAT',
-      usageBasis: 'PROVIDER_REPORTED', requestId: 'req-1', eventKind: options.eventKind ?? 'MODEL_CALL',
+      usageBasis: options.usageBasis ?? 'PROVIDER_REPORTED', requestId: 'req-1', eventKind: options.eventKind ?? 'MODEL_CALL',
     }]]);
     const aggregate: Record<string, number> = {
       costSatang: 1_000, callCount: 3, inputTokens: 100, outputTokens: 100,
@@ -830,6 +833,17 @@ describe('recordCompanyAiCostAdjustment', () => {
     };
     return { prisma: { client } as any, aggregate, created };
   }
+
+  it('keeps corrections to absorbed company cost out of every customer aggregate', async () => {
+    const { prisma, aggregate, created } = adjustmentPrisma({ usageBasis: 'COMPANY_ABSORBED' });
+    const before = structuredClone(aggregate);
+    const correction = { eventId: 'evt-1', correctionKey: 'internal-adjustment', costSatang: -120 };
+    assert.equal(await recordCompanyAiCostAdjustment(prisma, correction), 'applied');
+    assert.equal(await recordCompanyAiCostAdjustment(prisma, correction), 'duplicate');
+    assert.deepEqual(aggregate, before);
+    assert.equal(created[0].usageBasis, 'COMPANY_ABSORBED');
+    assert.equal(created[0].costSatang, -120);
+  });
 
   it('moves cost and tokens on the original month without touching callCount', async () => {
     const { prisma, aggregate, created } = adjustmentPrisma();
@@ -1436,8 +1450,8 @@ describe('admission lanes', () => {
 /**
  * The caller must outlast the gateway, not race it.
  *
- * `/internal/ai/receipt-ocr` chains up to four provider calls at `DOCUMENT_OCR_TIMEOUT_MS` each
- * (read, understand, vision re-read, understand again) = 180s, while both API-side clients used to
+ * `/internal/ai/receipt-ocr` chains up to eight provider calls at the 90s page ceiling each
+ * (read, understand, vision re-read, understand again, plus four timeout retries), while clients used to
  * abort at 120s. That abort returns AI_GATEWAY_UNREACHABLE, which on the web lane refunds the OCR
  * admission as a retryable failure AND — because `recordCompanyAiUsage` reads its numbers off the
  * response body that never arrived — writes no AiUsageEvent at all. Real provider spend then misses
@@ -1452,13 +1466,13 @@ describe('AI gateway timeout budget', () => {
   );
 
   it('waits strictly longer than the gateway chain worst case', () => {
-    const worstCase = AI_RECEIPT_OCR_MAX_PROVIDER_CALLS * AI_DOCUMENT_OCR_TIMEOUT_MS;
-    assert.equal(worstCase, 180_000, 'four provider calls at the document budget');
+    const worstCase = AI_RECEIPT_OCR_MAX_PROVIDER_CALLS * AI_DOCUMENT_PAGE_TIMEOUT_MS;
+    assert.equal(worstCase, 720_000, 'eight provider calls at the page budget');
     assert.ok(
       AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS > worstCase,
       `client ${AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS}ms must exceed the ${worstCase}ms chain`,
     );
-    assert.equal(AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS, 195_000, '180s chain plus a 15s transport margin');
+    assert.equal(AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS, 735_000, '720s chain plus a 15s transport margin');
   });
 
   it('is the SAME constant the gateway budgets each provider call with', () => {
@@ -1466,6 +1480,7 @@ describe('AI gateway timeout budget', () => {
     // arithmetic above would keep passing while the real chain outgrew the real client.
     assert.match(gatewaySource, /const DOCUMENT_OCR_TIMEOUT_MS = AI_DOCUMENT_OCR_TIMEOUT_MS;/);
     assert.doesNotMatch(gatewaySource, /const DOCUMENT_OCR_TIMEOUT_MS = \d/);
+    assert.equal(AI_DOCUMENT_OCR_TIMEOUT_MS, 45_000, 'ordinary photos retain their shorter budget');
   });
 
   it('is what BOTH receipt callers actually pass to AbortSignal', () => {
@@ -1480,11 +1495,11 @@ describe('AI gateway timeout budget', () => {
   });
 
   it('covers the bank statement route on the same rule, at its own chain depth', () => {
-    // Two calls, not four (read then extract), so 105s rather than 195s — but the same rule, because
+    // Read, one timeout retry, then extract, each bounded by the 90s page ceiling. The same rule applies because
     // an early abort loses the same usage body. This route sits outside the plan slip ceiling, so
     // there is no admission to refund; the unmetered spend is identical either way.
-    const worstCase = AI_BANK_STATEMENT_MAX_PROVIDER_CALLS * AI_DOCUMENT_OCR_TIMEOUT_MS;
-    assert.equal(worstCase, 90_000);
+    const worstCase = AI_BANK_STATEMENT_MAX_PROVIDER_CALLS * AI_DOCUMENT_PAGE_TIMEOUT_MS;
+    assert.equal(worstCase, 270_000);
     assert.ok(
       aiGatewayClientTimeoutMs(AI_BANK_STATEMENT_MAX_PROVIDER_CALLS) > worstCase,
       'the banking client must outlast its own chain',
@@ -1495,9 +1510,11 @@ describe('AI gateway timeout budget', () => {
     assert.doesNotMatch(source, /EXTRACT_TIMEOUT_MS = \d/, 'a re-hardcoded number puts it back out of step');
   });
 
-  it('leaves the four-call chain visible in the gateway, so the count cannot drift unnoticed', () => {
-    const perCallBudgets = gatewaySource.match(/timeoutMs: DOCUMENT_OCR_TIMEOUT_MS/g) ?? [];
-    assert.ok(perCallBudgets.length >= 3, 'read, extract and re-read providers all carry the budget');
+  it('uses work-sized shared budgets for receipt extraction and document reading', () => {
+    assert.match(gatewaySource, /createProvider\(this.config, \{ modelId: extractionModelId, timeoutMs: image.timeoutMs \}\)/);
+    assert.match(gatewaySource, /timeoutMs: image\?\.timeoutMs \?\? AI_DOCUMENT_PAGE_TIMEOUT_MS/);
+    const mediaSource = readFileSync(join(appsRoot, 'ai-gateway/src/modules/line-ai/domain/logic/document-media.logic.ts'), 'utf8');
+    assert.match(mediaSource, /aiDocumentOcrTimeoutMs\(\{ \.\.\.image, width, height \}\)/);
   });
 });
 
@@ -2180,5 +2197,54 @@ describe('recordCompanyAiUsage settles each gateway-tagged invocation (E1c)', ()
     assert.deepEqual(probe.settled, [], 'no reservation is touched without an envelope');
     assert.deepEqual(probe.metered.map((row) => [row.usageTag, row.invocationKey]),
       [['ocr.receipt.image-read', undefined]]);
+  });
+});
+
+
+describe('owner no-charge rule on SHARED', () => {
+  it('retains failed cost without changing month, CHAT credit, calls or threshold alerts', async () => {
+    const { prisma, events, aggregate, transactions } = fakePrisma(1_000);
+    const meta = { companyId: 'shared', sourceRoute: 'line-turn', requestId: 'ok', budgetBucket: 'CHAT' as const };
+    await recordCompanyAiUsage(prisma, config, meta, [usage()]);
+    const before = structuredClone(aggregate);
+    const failed = await recordCompanyAiUsage(prisma, config, { ...meta, requestId: 'timeout' }, [
+      usage({ ok: false, usageBasis: 'CONSERVATIVE_ESTIMATE', inputTokens: 1200, outputTokens: 17,
+        cacheReadInputTokens: 0, cacheWriteInputTokens: 0, errorCode: 'PROVIDER_TIMEOUT' }),
+      usage({ ok: false, usageBasis: 'PROVIDER_REPORTED', errorCode: 'PROVIDER_BLOCKED' }),
+    ]);
+    assert.equal(failed, undefined);
+    assert.deepEqual(aggregate, before);
+    assert.equal(transactions[1]!.some(op => op.op === 'upsert'), false);
+    assert.equal(events.length, 3);
+    assert.ok(events[1].costSatang > 0);
+    assert.equal(events[1].inputTokens, 1200);
+    assert.deepEqual(events.slice(1).map(row => [row.eventKind, row.usageBasis]),
+      [['MODEL_CALL', 'COMPANY_ABSORBED'], ['MODEL_CALL', 'COMPANY_ABSORBED']]);
+    assert.equal(warnings.some(w => w.msg === 'ai.company_budget.threshold'), false);
+  });
+
+  it('records both distinct provider calls sharing one requestId, route and tag', async () => {
+    const { prisma, events, aggregate, transactions } = fakePrisma();
+    const meta = { companyId: 'shared', sourceRoute: 'receipt-capture', requestId: 'one-job' };
+    await recordCompanyAiUsage(prisma, config, meta, [usage({ tag: 'ocr.capture.read', inputTokens: 1000 })]);
+    await recordCompanyAiUsage(prisma, config, meta, [usage({ tag: 'ocr.capture.read', inputTokens: 2000 })]);
+    assert.equal(events.length, 2, 'each batch starts at ordinal zero but represents a different provider call');
+    assert.deepEqual(events.map(row => [row.requestId, row.sourceRoute, row.usageTag, row.inputTokens, row.invocationKey]), [
+      ['one-job', 'receipt-capture', 'ocr.capture.read', 1000, undefined],
+      ['one-job', 'receipt-capture', 'ocr.capture.read', 2000, undefined],
+    ]);
+    assert.equal(Object.values(aggregate)[0], events[0].costSatang + events[1].costSatang);
+    for (const ops of transactions) {
+      assert.equal(ops[0]!.args.skipDuplicates, undefined, 'SHARED writes never silently skip rows');
+      assert.equal(ops[1]!.args.create.callCount, 1);
+    }
+  });
+
+  it('only ok=false grants absorbed treatment; a successful wire row cannot choose it', async () => {
+    const { prisma, events, aggregate } = fakePrisma();
+    await recordCompanyAiUsage(prisma, config, { companyId: 'shared', sourceRoute: 'line-turn' },
+      [usage({ usageBasis: 'COMPANY_ABSORBED' })]);
+    assert.equal(events[0].usageBasis, null);
+    assert.equal(Object.values(aggregate)[0], 347);
   });
 });

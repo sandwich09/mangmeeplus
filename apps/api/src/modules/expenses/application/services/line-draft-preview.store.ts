@@ -59,7 +59,7 @@ export type DraftPreviewRedis = {
 };
 
 @Injectable()
-export class LineDraftPreviewStore {
+export class LineDraftPreviewStore<T extends { previewId: string; companyId: string; chatKeyHash: string } = StoredDraftPreview> {
   private readonly logger = new Logger(LineDraftPreviewStore.name);
   private client: DraftPreviewRedis | null = null;
   private clientFailed = false;
@@ -83,7 +83,7 @@ export class LineDraftPreviewStore {
     return Boolean(this.client) || Boolean(this.config?.redisUrl) || !this.config?.isProduction;
   }
 
-  async save(entry: StoredDraftPreview): Promise<boolean> {
+  async save(entry: T): Promise<boolean> {
     // A NEW question retires the old answer. Belt to the apply path's braces: that path only
     // consults the applied memory when nothing is pending, but leaving a stale confirmation
     // sitting next to a live preview is a trap for the next reader of either.
@@ -119,13 +119,13 @@ export class LineDraftPreviewStore {
     }
   }
 
-  async load(companyId: string, chatKeyHash: string): Promise<StoredDraftPreview | null> {
+  async load(companyId: string, chatKeyHash: string): Promise<T | null> {
     return this.read(previewKey(companyId, chatKeyHash));
   }
 
   /** Atomically reserve only the preview a card names, so fast-dispatched buttons cannot act on a
    *  replacement preview or consume one another's proposal. */
-  async claimCurrent(companyId: string, chatKeyHash: string, previewId: string): Promise<{ entry: StoredDraftPreview; token: string } | null> {
+  async claimCurrent(companyId: string, chatKeyHash: string, previewId: string): Promise<{ entry: T; token: string } | null> {
     const key = previewKey(companyId, chatKeyHash);
     const token = randomUUID();
     const redis = this.redis();
@@ -133,7 +133,7 @@ export class LineDraftPreviewStore {
       const current = this.loadLocal(key);
       if (!current || this.hasLocalClaim(key)) return null;
       try {
-        const entry = JSON.parse(current) as StoredDraftPreview;
+        const entry = JSON.parse(current) as T;
         if (entry.previewId !== previewId) return null;
         this.localClaims.set(key, { token, expiresAt: Date.now() + LINE_DRAFT_PREVIEW_CLAIM_TTL_SECONDS * 1_000 });
         return { entry, token };
@@ -154,7 +154,7 @@ export class LineDraftPreviewStore {
         2, key, claimKey(companyId, chatKeyHash), previewId, token, String(LINE_DRAFT_PREVIEW_CLAIM_TTL_SECONDS),
       );
       if (typeof raw !== 'string') return null;
-      const entry = JSON.parse(raw) as StoredDraftPreview;
+      const entry = JSON.parse(raw) as T;
       return entry.previewId === previewId ? { entry, token } : null;
     } catch (err) {
       this.logger.warn({ msg: 'expense.line_ai.draft_preview.claim_failed', error: (err as Error).message });
@@ -184,7 +184,7 @@ export class LineDraftPreviewStore {
     }
   }
 
-  private async read(key: string): Promise<StoredDraftPreview | null> {
+  private async read(key: string): Promise<T | null> {
     const redis = this.redis();
     let raw: string | null = null;
     if (redis) {
@@ -198,7 +198,7 @@ export class LineDraftPreviewStore {
     raw ??= this.loadLocal(key);
     if (!raw) return null;
     try {
-      return JSON.parse(raw) as StoredDraftPreview;
+      return JSON.parse(raw) as T;
     } catch {
       // A payload this process cannot read is a payload it must not act on.
       this.local.delete(key);
@@ -212,7 +212,7 @@ export class LineDraftPreviewStore {
    * pending, which is a lie about an edit they just made. Short TTL — this is a UI courtesy, and
    * the `updatedAt` guard is what actually prevents a second write.
    */
-  async remember(companyId: string, chatKeyHash: string, entry: StoredDraftPreview): Promise<void> {
+  async remember(companyId: string, chatKeyHash: string, entry: T): Promise<void> {
     const key = appliedKey(companyId, chatKeyHash);
     const value = JSON.stringify(entry);
     const redis = this.redis();
@@ -229,7 +229,7 @@ export class LineDraftPreviewStore {
   }
 
   /** The preview this chat applied a moment ago, if any. */
-  async loadApplied(companyId: string, chatKeyHash: string): Promise<StoredDraftPreview | null> {
+  async loadApplied(companyId: string, chatKeyHash: string): Promise<T | null> {
     return this.read(appliedKey(companyId, chatKeyHash));
   }
 
@@ -268,7 +268,7 @@ export class LineDraftPreviewStore {
     const local = this.loadLocal(key);
     if (local) {
       try {
-        if ((JSON.parse(local) as StoredDraftPreview).previewId === previewId) {
+        if ((JSON.parse(local) as T).previewId === previewId) {
           this.local.delete(key);
           discardedLocal = true;
         }
@@ -285,7 +285,7 @@ export class LineDraftPreviewStore {
       }
       // Test doubles without EVAL take this best-effort branch; production ioredis is atomic above.
       const raw = await redis.get(key);
-      if (!raw || (JSON.parse(raw) as StoredDraftPreview).previewId !== previewId) return false;
+      if (!raw || (JSON.parse(raw) as T).previewId !== previewId) return false;
       return (await redis.del(key)) === 1 || discardedLocal;
     } catch (err) {
       this.logger.warn({ msg: 'expense.line_ai.draft_preview.discard_current_failed', error: (err as Error).message });

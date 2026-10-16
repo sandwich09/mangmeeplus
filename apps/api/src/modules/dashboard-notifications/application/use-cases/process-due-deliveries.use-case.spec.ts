@@ -1207,3 +1207,13 @@ describe('notification sweeps shadow coverage (piece 5)', () => {
     assert.deepEqual(result, { processed: 2, failures: 0 });
   });
 });
+
+import { reimbursementApprovalButtons } from '../../../line-ai/domain/logic/line-reimbursement-approval-control.logic';
+it('Round 3 existing reimbursement approval notice renders scoped opening buttons instead of a web-only footer', () => {
+  const buttons = reimbursementApprovalButtons('secret', 'co-1', 'approver-1', 'claim-1');
+  const notice = buildLineMessage({ companyId: 'co-1', triggerKey: 'workflow.reimbursement_pending_approval', title: 'ใบเบิกรอคุณอนุมัติค่ะ', body: 'ค่าเดินทาง 100 บาท', severity: 'action', approvalButtons: buttons });
+  const footer = (notice.contents as any).footer;
+  assert.deepEqual(footer.contents.map((b: any) => b.action.label), ['อนุมัติ', 'ไม่อนุมัติ']);
+  assert.ok(footer.contents.every((b: any) => b.action.type === 'postback'));
+  assert.match(footer.contents[0].action.data, /expense_action_approve/u);
+});

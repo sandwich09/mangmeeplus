@@ -314,6 +314,7 @@ export class LineAiTurnUseCase {
         ...(req.contractCapabilities ? { contractCapabilities: req.contractCapabilities } : {}),
         ...(req.budgetGrantV2 ? { budgetGrantV2: req.budgetGrantV2 } : {}),
         ...(req.approvedKnowledge ? { approvedKnowledge: true } : {}),
+        ...(req.howToActionId ? { howToActionId: req.howToActionId } : {}),
         ...(req.selectedKnowledgeCardIds ? { selectedKnowledgeCardIds: req.selectedKnowledgeCardIds } : {}),
         ...(req.taskProjection ? { taskProjection: req.taskProjection } : {}),
         ...(req.responsePreferences ? { responsePreferences: req.responsePreferences } : {}),

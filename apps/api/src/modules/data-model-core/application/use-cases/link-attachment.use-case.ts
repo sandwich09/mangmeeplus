@@ -1,3 +1,4 @@
+import type { Prisma } from '../../../../generated/prisma/client';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaAttachmentRepository } from '../../infrastructure/repositories/prisma-attachment.repository';
 import type { AttachmentLinkRecord } from '../../domain/models/attachment.model';
@@ -37,7 +38,7 @@ export class LinkAttachmentUseCase {
     private readonly audit: AuditService,
   ) {}
 
-  async execute(ctx: RequestContext, cmd: LinkAttachmentCommand): Promise<AttachmentLinkRecord> {
+  async execute(ctx: RequestContext, cmd: LinkAttachmentCommand, tx?: Prisma.TransactionClient): Promise<AttachmentLinkRecord> {
     const validTarget = isAllowedAttachmentTarget(cmd.targetType, cmd.purpose)
       && typeof cmd.targetId === 'string'
       && cmd.targetId.length > 0
@@ -55,7 +56,7 @@ export class LinkAttachmentUseCase {
       throw new ForbiddenException('Attachment target or purpose is not permitted.');
     }
 
-    const existing = await this.attachments.findById({ id: cmd.attachmentId, companyId: ctx.companyId });
+    const existing = await this.attachments.findById({ id: cmd.attachmentId, companyId: ctx.companyId }, tx);
     if (!existing) throw new NotFoundException('Attachment not found.');
     if (existing.status !== 'ACTIVE') {
       throw new BadRequestException('Attachment must be ACTIVE to link.');
@@ -73,13 +74,14 @@ export class LinkAttachmentUseCase {
         && ctx.permissions.some((permission) => ['expense.review', 'expense.payment.record'].includes(permission))
         ? undefined
         : ctx.userId,
-    });
+    }, tx);
 
-    void this.audit.log({
+    const logged = this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'attachment.link.create', targetType: 'attachment', targetId: cmd.attachmentId,
       requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
-    });
+    }, tx);
+    if (tx) await logged;
 
     return link;
   }

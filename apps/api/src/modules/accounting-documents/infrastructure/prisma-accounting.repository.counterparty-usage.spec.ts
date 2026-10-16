@@ -11,6 +11,20 @@ import { PrismaAccountingRepository } from './prisma-accounting.repository';
 const CO = 'co-1';
 const VERSION = new Date('2026-01-01T00:00:00.000Z');
 
+it('OCR-C name lookup requires exactly one ACTIVE match in the company, including all branches', async () => {
+  for (const count of [0, 1, 2]) {
+    const queries: any[] = [];
+    const repo = new PrismaAccountingRepository({ client: { accountingCounterparty: {
+      findMany: async (query: any) => { queries.push(query); return Array.from({ length: count }, (_, index) => ({
+        ...counterpartyRow(`cp-${index}`, 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด'), taxId: '0105473325385', branchCode: String(index).padStart(5, '0'),
+      })); },
+    } } } as any);
+    const result = await repo.findUniqueActiveCounterpartyByTaxId(CO, '0105473325385');
+    assert.deepEqual(queries, [{ where: { companyId: CO, status: 'ACTIVE', taxId: '0105473325385' }, take: 2 }]);
+    assert.equal(result?.displayName, count === 1 ? 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด' : undefined);
+  }
+});
+
 function counterpartyRow(id: string, displayName: string) {
   return {
     id, companyId: CO, type: 'VENDOR', displayName, legalName: null, taxId: null, branchCode: null,

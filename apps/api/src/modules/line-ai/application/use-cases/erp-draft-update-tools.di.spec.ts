@@ -27,6 +27,8 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { LINE_DRAFT_UPDATE_TOOLS } from '@watchdog-bms/contracts';
 import {
   ExpenseDraftSetHeaderTool,
@@ -73,4 +75,89 @@ describe('draft update tools — Nest constructibility', () => {
       assert.equal(instance['repo'], repo, `${tool.name} must pass repo through super()`);
     }
   });
+});
+
+import { ExpensesModule } from '../../../expenses/expenses.module';
+import { DataModelCoreModule } from '../../../data-model-core/data-model-core.module';
+import { ReimbursementsModule } from '../../../reimbursements/reimbursements.module';
+import { RecordExpensePaymentUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
+import { LinkAttachmentUseCase } from '../../../data-model-core/application/use-cases/link-attachment.use-case';
+import { SubmitReimbursementUseCase, CancelReimbursementUseCase } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
+import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
+it('Round 3 action and evidence dependencies are exported by their owning Nest modules', () => {
+  for (const [module, providers] of [[ExpensesModule, [RecordExpensePaymentUseCase]], [DataModelCoreModule, [LinkAttachmentUseCase]], [ReimbursementsModule, [SubmitReimbursementUseCase, CancelReimbursementUseCase, ApproveReimbursementUseCase, RejectReimbursementUseCase]]] as const) {
+    for (const provider of providers) assert.ok((Reflect.getMetadata('exports', module) as unknown[]).includes(provider), provider.name);
+  }
+});
+
+import { TaxModule } from '../../../tax/tax.module';
+import { DisbursementVoucherUseCase } from '../../../expenses/application/use-cases/disbursement-voucher.use-case';
+import { IssueWhtCertificateFromHandoffUseCase } from '../../../tax/application/use-cases/issue-wht-certificate-from-handoff.use-case';
+import { WhtCertificateHandoffUseCase } from '../../../tax/application/use-cases/wht-certificate-handoff.use-case';
+it('Round 5 voucher and certificate actions resolve the existing business use-cases from their owning modules', () => {
+  assert.ok((Reflect.getMetadata('exports', ExpensesModule) as unknown[]).includes(DisbursementVoucherUseCase));
+  for (const provider of [IssueWhtCertificateFromHandoffUseCase, WhtCertificateHandoffUseCase]) assert.ok((Reflect.getMetadata('exports', TaxModule) as unknown[]).includes(provider));
+});
+
+it('boots the real Nest modules and resolves every optional dependency in LINE actions and ERP tools', () => {
+  // tsx omits decorator metadata. A clean child uses the API's SWC config, exactly as the image does.
+  // NestFactory.create resolves providers without init/listen, so no database or sockets are needed.
+  const boot = spawnSync(process.execPath, ['-e', String.raw`
+    const assert = require('node:assert/strict');
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const swc = require('@swc/core');
+    require('reflect-metadata');
+    const config = JSON.parse(fs.readFileSync('.swcrc', 'utf8'));
+    const Module = require('node:module'), resolveFilename = Module._resolveFilename;
+    Module._resolveFilename = function(request, parent, ...args) {
+      if (request === '@watchdog-bms/config') request = path.resolve('../../packages/config/src/index.ts');
+      if (request.startsWith('.') && request.endsWith('.js') && parent) {
+        const source = path.resolve(path.dirname(parent.filename), request.slice(0, -3) + '.ts');
+        if (fs.existsSync(source)) request = source;
+      }
+      return resolveFilename.call(this, request, parent, ...args);
+    };
+    require.extensions['.ts'] = (module, filename) => module._compile(swc.transformFileSync(filename, { ...config, filename }).code, filename);
+    Object.assign(process.env, { APP_ENV: 'local', SERVICE_NAME: 'line-optional-di-test', S3_BUCKET: 'line-optional-di-test',
+      DATABASE_URL: 'postgresql://nobody:nobody@127.0.0.1:1/nodb' });
+    (async () => {
+      const { NestFactory } = require('@nestjs/core');
+      const { AppModule } = require('./src/app.module.ts');
+      const app = await NestFactory.create(AppModule, { logger: false, abortOnError: false });
+      const { ProcessLineWebhookUseCase } = require('./src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts');
+      const { ListExpensesUseCase } = require('./src/modules/expenses/application/use-cases/expense-draft.use-case.ts');
+      const { LineVoucherActionService } = require('./src/modules/line-ai/application/line-voucher-action.service.ts');
+      const { GetCounterpartyUseCase, ListCounterpartiesUseCase } = require('./src/modules/accounting-documents/application/use-cases/counterparty.use-case.ts');
+      assert.equal(app.get(ProcessLineWebhookUseCase).editableExpenses, app.get(ListExpensesUseCase));
+      assert.equal(app.get(LineVoucherActionService).counterparties, app.get(GetCounterpartyUseCase));
+      assert.equal(app.get(LineVoucherActionService).listCounterparties, app.get(ListCounterpartiesUseCase));
+      const dir = './src/modules/line-ai/application';
+      const files = ['line-expense-action.service.ts', 'line-voucher-action.service.ts', 'line-package-purchase.service.ts',
+        'line-counterparty.service.ts', 'line-team-action.service.ts', 'line-quoted-message.service.ts',
+        ...fs.readdirSync(path.join(dir, 'use-cases')).filter(file => /^erp-.*tools.*\.ts$/.test(file) && !file.endsWith('.spec.ts')).map(file => 'use-cases/' + file)];
+      files.push('../../expenses/application/use-cases/link-line-payment-evidence.use-case.ts');
+      files.push('../../expenses/application/use-cases/expense-draft.use-case.ts');
+      let count = 0;
+      for (const file of files) for (const provider of Object.values(require(path.resolve(dir, file)))) {
+        if (typeof provider !== 'function') continue;
+        const optional = Reflect.getMetadata('optional:paramtypes', provider) || [];
+        if (!optional.length) continue;
+        const instance = app.get(provider);
+        const types = Reflect.getMetadata('design:paramtypes', provider);
+        for (const index of optional) {
+          const token = types[index], dependency = app.get(token);
+          assert.ok(dependency instanceof token, provider.name + ': ' + token.name);
+          assert.ok(Object.values(instance).includes(dependency), provider.name + ' must receive ' + token.name + ', not undefined');
+          count++;
+        }
+      }
+      assert.ok(count >= 14, 'the optional dependency audit must include expense actions, expense detail and payment evidence tools');
+      await app.close();
+      console.log('Resolved ' + count + ' optional LINE dependencies');
+      process.exit(0);
+    })().catch(error => { console.error(error); process.exit(1); });
+  `], { cwd: resolve(__dirname, '../../../../..'), encoding: 'utf8', timeout: 60_000, maxBuffer: 2_000_000 });
+  assert.equal(boot.status, 0, `${boot.error ?? ''}\n${boot.stdout}\n${boot.stderr}`);
+  assert.match(boot.stdout, /Resolved \d+ optional LINE dependencies/);
 });

@@ -518,7 +518,9 @@ it('does not let model-authored product buttons escape the reviewed-help boundar
   // Spec R-L3: "no reviewed guide yet" is a statement, not a question to the user, so it is terminal.
   assert.deepEqual(run.response.semanticCoverage?.map(item => item.status), ['unsupported', 'handled']);
   assert.equal(run.apiCalls.length, 0);
-  assert.equal(run.events.filter(event => event === 'vendor:answer').length, 1, 'the unresolved general clause still composes once');
+  // Owner action how-tos require an explicit reviewed action selector; its omission gets one bounded repair.
+  assert.equal(run.events.filter(event => event === 'vendor:answer').length, 2);
+  assert.ok(run.response.presentation?.cards.every(card => !card.chatActionId) ?? true, 'model-authored buttons never become actions');
 });
 
 it('answers pure help from the deterministic guide boundary without control or composition', async () => {

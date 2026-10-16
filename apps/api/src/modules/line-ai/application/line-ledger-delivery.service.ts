@@ -248,7 +248,7 @@ export class LineLedgerDeliveryService {
       const terminal = PLAN_TERMINAL.has(row.status);
       let status = row.status, reason: string | null = result.code;
       if (result.kind === 'accepted') {
-        states[index] = { ...state, status: 'ACCEPTED', acceptedAt: now.toISOString(), providerRequestId: result.requestId ?? null, lastErrorCode: null };
+        states[index] = { ...state, status: 'ACCEPTED', acceptedAt: now.toISOString(), providerRequestId: result.requestId ?? null, ...(result.sentMessageIds?.length ? { sentMessageIds: result.sentMessageIds } : {}), lastErrorCode: null };
         if (!terminal) status = states.every(s => s.status === 'ACCEPTED') ? 'ACCEPTED' : index === 1 && states.length === 3 ? 'WAITING_CONTINUATION' : 'READY';
         reason = null;
       } else if (result.kind === 'rejected') {

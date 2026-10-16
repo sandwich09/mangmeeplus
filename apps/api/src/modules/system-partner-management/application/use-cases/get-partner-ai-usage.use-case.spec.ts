@@ -245,7 +245,7 @@ describe('GetPartnerAiUsageUseCase', () => {
     // `OPERATOR_CHARGED_AT_BOUND` (hold spec §4.2) is always emitted like every other key, so the
     // slice still reconciles with `total` when a month happens to carry no operator decision.
     assert.deepEqual(breakdown.byUsageBasis.map((row) => [row.usageBasis, row.costSatang, row.calls]),
-      [['PROVIDER_REPORTED', 900, 3], ['CONSERVATIVE_ESTIMATE', 200, 2], ['OPERATOR_CHARGED_AT_BOUND', 0, 0], ['UNKNOWN', 400, 5]]);
+      [['PROVIDER_REPORTED', 900, 3], ['CONSERVATIVE_ESTIMATE', 200, 2], ['OPERATOR_CHARGED_AT_BOUND', 0, 0], ['COMPANY_ABSORBED', 0, 0], ['UNKNOWN', 400, 5]]);
 
     for (const slice of [breakdown.byRequestKind, breakdown.byBudgetBucket, breakdown.byUsageBasis]) {
       assert.equal(slice.reduce((sum, row) => sum + row.costSatang, 0), breakdown.total.costSatang);
@@ -702,5 +702,24 @@ describe('GetPartnerAiUsageUseCase — chat credit and receipt images (admin tab
     assert.equal(partnerReceiptImages({ term, companyActive: true, lots: [], monthlyUsed: 0, enforced: true, now }).active, false);
     const held = partnerReceiptImages({ term: { ...term, termEndsAt: soon, termDisabledAt: now }, companyActive: true, lots: [], monthlyUsed: 0, enforced: true, now });
     assert.deepEqual([held.active, held.package, held.totalRemaining], [false, { limit: 0, used: 0, remaining: 0, expiresAt: null }, 0]);
+  });
+});
+
+
+describe('company-absorbed admin usage', () => {
+  it('shows our cost separately while the customer month remains unchanged', async () => {
+    const monthKey = bangkokMonthKey();
+    const prisma = makePrisma({ months: [{ monthKey, costSatang: 50, callCount: 1, inputTokens: 10, outputTokens: 5,
+      cacheReadInputTokens: 0, cacheWriteInputTokens: 0 }], events: [
+      eventGroup({ usageBasis: 'PROVIDER_REPORTED', costSatang: 50, rows: 1 }),
+      eventGroup({ usageBasis: 'COMPANY_ABSORBED', costSatang: 25, rows: 2 }),
+    ] });
+    const result = await new GetPartnerAiUsageUseCase(prisma, makeConfig()).execute('co-1');
+    assert.equal(result.current!.costSatang, 50);
+    assert.equal(result.breakdown.total.costSatang, 75);
+    const absorbed = result.breakdown.byUsageBasis.find(row => row.usageBasis === 'COMPANY_ABSORBED')!;
+    assert.equal(absorbed.costSatang, 25);
+    assert.equal(absorbed.calls, 2);
+    assert.equal(result.breakdown.byUsageBasis.reduce((sum, row) => sum + row.costSatang, 0), 75);
   });
 });

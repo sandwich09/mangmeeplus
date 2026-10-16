@@ -45,7 +45,7 @@ const BUDGET_BUCKETS: PartnerAiBudgetBucket[] = ['CHAT', 'OCR', 'UNKNOWN'];
 // its rows are `COST_ADJUSTMENT`, so `addRow` already keeps them out of `calls` and `coverage`
 // while their cost still reconciles with `total` (J-07). UNKNOWN stays LAST: `foldBy` folds an
 // unrecognised stored value into the final key.
-const USAGE_BASES: PartnerAiUsageBasis[] = ['PROVIDER_REPORTED', 'CONSERVATIVE_ESTIMATE', 'OPERATOR_CHARGED_AT_BOUND', 'UNKNOWN'];
+const USAGE_BASES: PartnerAiUsageBasis[] = ['PROVIDER_REPORTED', 'CONSERVATIVE_ESTIMATE', 'OPERATOR_CHARGED_AT_BOUND', 'COMPANY_ABSORBED', 'UNKNOWN'];
 const TOP_TAG_LIMIT = 10;
 
 /**

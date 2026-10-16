@@ -8,6 +8,8 @@ Specification: `docs/specs/line-ai-expense-draft-conversation-spec.md`
 
 ## 1. Delivery objective
 
+Fix-up 2 (2026-10-15): default grounded total/payee item descriptions before materialization; expose actual source-draft missing fields and offer category repair through existing draft-edit preview/confirm then round-2 action cards; ignore unsupported current-message continuation hints. Verify registered focused specs, full dispatch/webhook/feature-coverage/orchestrator specs, contracts build, API and gateway package typechecks. No new flags, dependencies, package edits or live operations.
+
 Deliver the smallest permission-safe LINE workflow that persists incomplete multi-item expense drafts, accepts free-text answers, displays the current draft on every accepted turn, asks all remaining questions together, and resumes independently of short-term AI context.
 
 The code-review deliverable is complete only when implementation and deterministic regression evidence pass. Release readiness remains separate and additionally requires the database-backed E2E artifact and recorded real LINE UAT in the specification proof matrix.
@@ -51,7 +53,7 @@ Exit evidence:
 1. Implement pure logic to normalize item candidates without discarding incomplete items.
 2. Generate stable item references and stable question IDs.
 3. Compute document, item, classification, and web-only blockers together.
-4. Keep unknown numeric facts absent; never create fake quantity/price values.
+4. Keep unknown numeric facts absent; never create fake price values. Owner decision 2026-10-15: grounded total-only items use quantity `1` unless a quantity was stated (spec §7.1/AC-04).
 5. Separate human category, accounting class, item behavior, account, and tax suggestions.
 6. Render the full compact draft and all unresolved questions from deterministic state.
 

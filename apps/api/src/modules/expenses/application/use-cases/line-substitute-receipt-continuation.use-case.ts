@@ -34,7 +34,8 @@ export type LineSubstituteReceiptValues = {
   payerUserId?: string;
   payeeName?: string;
   paymentDate?: string;
-  paymentMethod?: ExpensePaymentMethod;
+  /** null keeps an ambiguous correction unresolved instead of restoring the expense's old method. */
+  paymentMethod?: ExpensePaymentMethod | null;
   itemDescription?: string;
   amount?: string;
   expenseCategoryId?: string;
@@ -252,7 +253,7 @@ function normalizedText(value: string): string {
   return value.normalize('NFC').replace(/\s+/g, ' ').trim();
 }
 
-export const CHECK_BILL_PAYMENT_QUESTION = 'จ่ายเงินแล้วหรือยังคะ? แตะคำตอบด้านล่าง หรือพิมพ์ 1, 2, 3';
+export const CHECK_BILL_PAYMENT_QUESTION = 'จ่ายเงินแล้วหรือยังคะ เลือกคำตอบได้เลยค่ะ';
 export const CHECK_BILL_PAYMENT_CHOICES = [
   'จ่ายแล้ว แต่ไม่ได้ใบเสร็จ',
   'ยังไม่ได้จ่าย',
@@ -288,32 +289,37 @@ const LABELS = {
   missingReceiptReason: 'เหตุผล(?:ที่ไม่มีใบเสร็จ)?|สาเหตุ',
   businessPurpose: 'วัตถุประสงค์(?:ทางธุรกิจ)?|ใช้เพื่อ',
   payeeName: 'ผู้รับเงิน|ผู้ขาย|ร้านค้า',
-  paymentMethod: 'วิธีชำระ(?:เงิน)?|ชำระด้วย|จ่ายด้วย',
+  paymentMethod: 'วิธีชำระ(?:เงิน)?|วิธีจ่าย|ชำระด้วย|จ่ายด้วย|จ่ายโดย',
+  paymentDate: 'วันที่จ่าย|วันที่ชำระ|ชำระเมื่อ|จ่ายเมื่อ|วันที่',
+  payer: '(?:ฉัน|ผม|ดิฉัน|หนู)เป็นผู้จ่าย|ผู้จ่าย(?:เงิน)?',
+  funding: 'บริษัทจ่าย(?:เต็ม(?:จำนวน)?)?|พนักงานสำรองจ่ายเต็ม(?:จำนวน)?',
   itemDescription: 'รายการ|รายละเอียดรายการ',
   amount: 'ยอด(?:รวม)?|จำนวนเงิน',
   expenseCategoryId: 'หมวด(?:ค่าใช้จ่าย)?',
 } as const;
 const ANY_LABEL = Object.values(LABELS).join('|');
+const LABEL_END = '(?=\\s|[:：]|$)';
+const METHOD_TOKEN = /จ่ายโอน|เงินสด|โอน(?:เงิน)?|พร้อมเพย์|bank\s*transfer|cash|บัตร(?:เครดิต)?|card|เช็ค|เช็ก|cheque/iu;
 
-/** The dispatcher's normalizeLineText collapses every newline to a space, so a multi-line LINE
- *  message arrives as ONE line: a label must be matchable mid-line, and its value must stop at the
- *  next label instead of swallowing it.
- *
- *  Mid-line a label is only a label when an explicit `:` follows it: without that,
- *  “เหตุผล: ผู้ขายรายย่อยไม่ออกเอกสาร” reads its own reason text as a payee name, and ordinary prose
- *  (“ค่าส่งของวันนี้ ผู้ขายเป็นคนจัดส่งเอง”) writes a legal field. คือ/เป็น stay valid only at the
- *  start of a line, unchanged, which is what makes a bare “ชำระด้วยเงินสด” line an answer.
- *
- *  The value-ending lookahead stays permissive on purpose: truncating at a คือ/เป็น phrase loses a
- *  value, while running past it would store the rest of the sentence in a certified field. */
+/** LINE can collapse newlines. The same label boundary starts AND ends a field, with an optional
+ * colon. Continuous Thai prose such as ผู้รับเงินไม่ออกใบเสร็จ is a value, not a second label. */
 function labeled(text: string, labels: string): string | undefined {
-  const label = `(?:${labels})`;
-  const sep = '(?::|คือ|เป็น)';
-  const match = text.match(new RegExp(
-    `(?:(?:^|\\n)\\s*${label}\\s*${sep}?|\\s+${label}\\s*:)\\s*(.+?)(?=\\s*(?:${ANY_LABEL})\\s*${sep}|[,;\\n]|$)`,
-    'imu',
-  ));
-  return bounded(match?.[1]);
+  const matches = [...text.matchAll(new RegExp(
+    `(?:^\\s*(?:${labels})(?=\\s|[:：]|คือ|เป็น|$)|[\\s,;](?:${labels})${LABEL_END})\\s*(?:[:：]|คือ|เป็น)?\\s*(.*?)(?=\\s*(?:${ANY_LABEL})${LABEL_END}|,(?![\\d๐-๙])|[;\\n]|$)`, 'gimu',
+  ))];
+  const values = [...new Set(matches.map(match => bounded(match[1])))];
+  return values.length === 1 ? values[0] : undefined;
+}
+
+/** Legal free text stops before facts owned by the value extractors. Empty/conflicting values stay
+ * missing; they never fall back to the entire message. */
+function freeTextOf(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const candidates = extractValueCandidates(value);
+  const ends = [value.search(new RegExp(`(?:${ANY_LABEL})${LABEL_END}`, 'iu')), value.search(METHOD_TOKEN),
+    value.search(/บริษัทจ่าย|พนักงานสำรองจ่าย/u),
+    ...[...candidates.dates, ...candidates.amounts].map(candidate => value.indexOf(candidate.span))].filter(index => index >= 0);
+  return bounded(value.slice(0, ends.length ? Math.min(...ends) : value.length));
 }
 
 function paymentMethodOf(text: string): ExpensePaymentMethod | undefined {
@@ -331,15 +337,16 @@ function nonQuestionLines(text: string): string {
 }
 
 function reasonCodeOf(text: string): SubstituteReceiptReasonCode | undefined {
-  if (/(ผู้ขาย|ผู้รับเงิน|ร้าน).*(ออก|ให้).*(ไม่ได้|ไม่ออก)|ไม่สามารถออก/u.test(text)) return 'PAYEE_CANNOT_ISSUE';
+  if (/(ผู้ขาย|ผู้รับเงิน|ร้าน).*(?:ไม่ออก|ไม่ให้|ออก.*ไม่ได้|ให้.*ไม่ได้)|ไม่สามารถออก/u.test(text)) return 'PAYEE_CANNOT_ISSUE';
   if (/(ชำรุด|ไม่ครบ|ข้อมูลไม่ครบ|อ่านไม่ออก)/u.test(text)) return 'RECEIPT_MATERIALLY_INCOMPLETE';
   if (/(ไม่มีใบเสร็จ|ใบเสร็จหาย|ไม่ได้รับใบเสร็จ|หาใบเสร็จไม่เจอ)/u.test(text)) return 'RECEIPT_UNAVAILABLE';
   return undefined;
 }
 
 function firstPaymentDate(text: string): string | undefined {
-  if (!/(วันที่จ่าย|วันที่ชำระ|ชำระเมื่อ|จ่ายเมื่อ)/u.test(text)) return undefined;
-  return extractValueCandidates(text).dates.find((candidate) => !isAmbiguousDateCandidate(candidate))?.isoDate;
+  const dates = extractValueCandidates(text).dates;
+  const unique = new Set(dates.map(candidate => candidate.isoDate));
+  return unique.size === 1 && dates.every(candidate => !isAmbiguousDateCandidate(candidate)) ? dates[0]?.isoDate : undefined;
 }
 
 function messageHash(text: string): string {
@@ -405,10 +412,13 @@ function extractValues(
   pendingField: string | null,
   currentUserId: string,
   activeCategories: Array<{ id: string; name: string }>,
+  missingFields: string[] = [],
 ): LineSubstituteReceiptValues {
   const values: LineSubstituteReceiptValues = {};
-  const declarative = nonQuestionLines(text);
-  const companyFull = /บริษัทจ่ายเต็ม(?:จำนวน)?/u.test(declarative);
+  const declarative = nonQuestionLines(text).replace(/ไม่มีใบเสร็จเพราะ\s*/gu, 'เหตุผล: ');
+  const payerLabel = labeled(declarative, LABELS.payer);
+  const companyFull = /บริษัทจ่าย(?:เต็ม(?:จำนวน)?)?/u.test(declarative)
+    || payerLabel === 'บริษัท' || payerLabel === 'บริษัทจ่าย';
   const personalFull = /(?:พนักงาน|ฉัน|ผม|ดิฉัน|หนู)(?:ใช้เงินส่วนตัว)?(?:สำรอง)?จ่ายเต็ม(?:จำนวน)?/u.test(declarative);
   const unsupportedFunding = /บางส่วน|ทยอย|แบ่งจ่าย|หารจ่าย|เงินผสม/u.test(declarative) || (companyFull && personalFull);
   if (!unsupportedFunding && companyFull) { values.fundingSource = 'COMPANY'; values.paidInFullAcknowledged = true; }
@@ -416,12 +426,17 @@ function extractValues(
   if (unsupportedFunding) values.paidInFullAcknowledged = false;
   const reasonCode = reasonCodeOf(declarative);
   if (reasonCode) values.reasonCode = reasonCode;
-  const missingReceiptReason = labeled(declarative, LABELS.missingReceiptReason);
-  if (missingReceiptReason) values.missingReceiptReason = missingReceiptReason;
-  const businessPurpose = labeled(declarative, LABELS.businessPurpose);
-  if (businessPurpose) values.businessPurpose = businessPurpose;
-  const payeeName = labeled(declarative, LABELS.payeeName);
-  if (payeeName) values.payeeName = payeeName;
+  const missingReceiptReason = freeTextOf(labeled(declarative, LABELS.missingReceiptReason));
+  if (missingReceiptReason) {
+    values.missingReceiptReason = missingReceiptReason;
+    values.reasonCode ??= reasonCodeOf(text) ?? 'OTHER';
+  }
+  for (const field of ['missingReceiptReason', 'businessPurpose', 'payeeName', 'itemDescription'] as const) {
+    if (new RegExp(`(?:^\\s*(?:${LABELS[field]})(?=\\s|[:：]|คือ|เป็น|$)|[\\s,;](?:${LABELS[field]})${LABEL_END})`, 'mu').test(declarative)) {
+      // Empty strings survive JSON storage and block fallback to an old expense fact.
+      values[field] = freeTextOf(labeled(declarative, LABELS[field])) ?? '';
+    }
+  }
   if (/(ฉัน|ผม|ดิฉัน|หนู).*(เป็น|คือ).*(ผู้จ่าย|คนจ่าย)|ผู้จ่าย(?:เงิน)?\s*(?:คือ|เป็น)?\s*(ฉัน|ผม|ดิฉัน|หนู)/u.test(declarative)) {
     values.payerUserId = currentUserId;
   }
@@ -429,12 +444,12 @@ function extractValues(
   const plainPayment = pendingField === 'paymentMethod' && normalizedText(declarative).length <= 40
     ? declarative
     : undefined;
-  const paymentMethod = paymentMethodOf(labeledPayment ?? plainPayment ?? '');
-  if (paymentMethod) values.paymentMethod = paymentMethod;
+  const methodText = labeledPayment ?? plainPayment ?? declarative.match(METHOD_TOKEN)?.[0] ?? '';
+  const methods = new Set([...declarative.matchAll(new RegExp(METHOD_TOKEN.source, 'giu'))].map(match => paymentMethodOf(match[0])));
+  const paymentMethod = methods.size <= 1 ? paymentMethodOf(methodText) : undefined;
+  if (paymentMethod || methods.size > 1) values.paymentMethod = paymentMethod ?? null;
   const paymentDate = firstPaymentDate(declarative);
-  if (paymentDate) values.paymentDate = paymentDate;
-  const itemDescription = labeled(declarative, LABELS.itemDescription);
-  if (itemDescription) values.itemDescription = itemDescription;
+  if (paymentDate || extractValueCandidates(declarative).dates.length) values.paymentDate = paymentDate ?? '';
   const amountLabel = labeled(declarative, LABELS.amount);
   if (amountLabel) {
     const amount = extractValueCandidates(amountLabel).amounts[0]?.value;
@@ -455,7 +470,7 @@ function extractValues(
   // R5 ask-once: only the evidence question may be answered with “no evidence”. An unprompted
   // “ไม่มีใบเสร็จ” is a reason code, never a statement that no file exists. The natural answer to
   // “มีสลิปไหม” is a bare “ไม่มี”, so that short form counts too — but only while it is the question.
-  if (pendingField === 'evidenceNone'
+  if ((pendingField === 'evidenceNone' || missingFields.includes('evidenceNone'))
     && (/(ไม่มีหลักฐาน|ไม่มีสลิป|ไม่มีรูป|ไม่มีไฟล์)/u.test(declarative)
       || /^ไม่มี\S{0,4}$/u.test(normalizedText(declarative)))) {
     values.evidenceNone = true;
@@ -474,10 +489,11 @@ function extractValues(
     || SUBSTITUTE_CANCEL.test(lowered)
     || SUBSTITUTE_CONTROL_REPLY.test(plain)
   );
-  if (plain && !controlPhrase && Object.keys(values).length === 0 && !/[?？]|ไหม|หรือไม่|อย่างไร|ยังไง/u.test(plain)) {
-    if (pendingField === 'missingReceiptReason') values.missingReceiptReason = plain;
-    if (pendingField === 'businessPurpose') values.businessPurpose = plain;
-    if (pendingField === 'payeeName') values.payeeName = plain;
+  if (plain && !controlPhrase && Object.keys(values).length === 0 && !/[?？]|ไหม|หรือไม่|อย่างไร|ยังไง/u.test(plain)
+    && !new RegExp(`(?:^|\\s)(?:${ANY_LABEL})${LABEL_END}`, 'u').test(plain)) {
+    if (pendingField === 'missingReceiptReason') values.missingReceiptReason = freeTextOf(plain);
+    if (pendingField === 'businessPurpose') values.businessPurpose = freeTextOf(plain);
+    if (pendingField === 'payeeName') values.payeeName = freeTextOf(plain);
   }
   return values;
 }
@@ -514,7 +530,7 @@ function currentValue<T extends keyof LineSubstituteReceiptValues>(
   key: T,
   fallback: LineSubstituteReceiptValues[T],
 ): LineSubstituteReceiptValues[T] {
-  return values[key] ?? fallback;
+  return values[key] !== undefined ? values[key] : fallback;
 }
 
 function preflight(
@@ -542,7 +558,7 @@ function preflight(
     result.push(blocker('missing_receipt_reason_required', 'ระบุเหตุผลที่ไม่มีใบเสร็จ', true));
   }
   if (!values.businessPurpose) result.push(blocker('business_purpose_required', 'ระบุวัตถุประสงค์ทางธุรกิจ', true));
-  if (!values.payerUserId) result.push(blocker('payer_required', 'ยืนยันผู้จ่ายเงินจริง (เช่น “ฉันเป็นผู้จ่าย”)', true));
+  if (!values.payerUserId) result.push(blocker('payer_required', 'เลือกผู้ดำเนินการจ่ายและรับรองค่ะ', true));
   else if (!payerActive) result.push(blocker('payer_not_active_in_branch', 'ผู้จ่ายต้องเป็นสมาชิกที่ยังใช้งานและอยู่ในขอบเขตสาขานี้'));
   if (!currentValue(values, 'payeeName', expense.vendorNameSnapshot ?? undefined)) {
     result.push(blocker('payee_required', 'ระบุชื่อผู้รับเงิน/ผู้ขาย', true));
@@ -570,7 +586,7 @@ function preflight(
   }
   if (substituteReceiptRequiresPaymentEvidence(expense.aiVerificationSummaryJson, paymentMethod, policy.cashEvidencePolicy)
     && payments.length === 0) {
-    result.push(blocker('payment_evidence_required', 'ส่งรูปหลักฐานการชำระเงินเข้ามาในแชทนี้ หรือแนบในเว็บ (ข้อความใช้แทนไฟล์ไม่ได้)'));
+    result.push(blocker('payment_evidence_required', 'ส่งรูปหลักฐานการชำระเงินเข้ามาในแชทนี้ค่ะ ข้อความใช้แทนไฟล์ไม่ได้'));
   }
   return result;
 }
@@ -581,15 +597,24 @@ function preflight(
 const CATEGORY_BLOCKER = 'reviewed_category_required';
 
 const QUESTIONS: Record<string, string> = {
+  funding_source_required: 'ใช้เงินของบริษัทหรือเงินส่วนตัวคะ? ตอบ “บริษัทจ่ายเต็มจำนวน” หรือ “พนักงานสำรองจ่ายเต็มจำนวน” ค่ะ',
   reason_code_required: 'ใบเสร็จไม่มี/หาย ผู้ขายออกให้ไม่ได้ หรือเอกสารเดิมไม่ครบคะ?',
   missing_receipt_reason_required: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?',
   business_purpose_required: 'ค่าใช้จ่ายนี้ใช้เพื่อธุรกิจเรื่องอะไรคะ?',
-  payer_required: 'ใครเป็นผู้จ่ายเงินจริงคะ? ถ้าเป็นคุณ ตอบ “ฉันเป็นผู้จ่าย” ได้เลย',
+  payer_required: 'เลือกผู้รับรองการจ่ายจากปุ่มด้านล่างค่ะ ผู้ที่เลือกต้องลงนามด้วยบัญชีของตนเอง',
   payee_required: 'ผู้รับเงินหรือผู้ขายชื่ออะไรคะ?',
   payment_method_required: 'ชำระด้วยเงินสด โอน บัตร หรือเช็คคะ?',
   payment_date_required: 'ชำระเงินจริงวันที่เท่าไรคะ?',
+  payment_evidence_required: 'ส่งรูปสลิปหรือหลักฐานการชำระเงินของรายการนี้เข้ามาในแชทได้เลยค่ะ',
   supporting_evidence_required: 'มีสลิปหรือรูปถ่ายประกอบไหมคะ? ถ้ามี ส่งรูปเข้ามาในแชทนี้ หรือแนบในเว็บ ถ้าไม่มี ตอบ “ไม่มีหลักฐาน” ได้เลย',
 };
+
+function collectionQuestion(blockers: LineSubstituteReceiptBlocker[], categories: Array<{ id: string; name: string }>): string | undefined {
+  const questions = blockers.filter(item => item.collectableInLine && questionFor(item.code, categories));
+  if (questions.length > 1) return `ตอบข้อมูลที่ยังขาดรวมในข้อความเดียวได้เลยค่ะ\n${questions.map(item => `• ${questionFor(item.code, categories)}`).join('\n')}`;
+  return questions.length ? questionFor(questions[0]!.code, categories)
+    : blockers.some(item => item.code === 'payment_evidence_required') ? QUESTIONS.payment_evidence_required : undefined;
+}
 
 /** `listCategories` returns the company's own rows AND the global defaults, so the same name can
  *  appear twice — and “1) ค่าเดินทาง 2) ค่าเดินทาง” is a choice whose label cannot say what picking it
@@ -798,6 +823,7 @@ export type LineSubstituteMediaContext = {
    *  `lastActivityAt`), so a caption-less photo is claimed only right after that ask. */
   signatureRequestedAt?: string;
   finalReceiptRequestedAt?: string;
+  paymentEvidenceRequestedAt?: string;
 };
 
 /** How long after the chat asked for a signed form's scan, a signature or a final receipt a caption-less
@@ -816,7 +842,8 @@ export function substituteAwaitsCaptionlessPhoto(context: LineSubstituteMediaCon
   };
   return context.awaitingScans.some((scan) => recent(scan.preparedAt))
     || (context.signatureRequested && recent(context.signatureRequestedAt))
-    || (context.finalReceiptExpected === true && recent(context.finalReceiptRequestedAt));
+    || (context.finalReceiptExpected === true && recent(context.finalReceiptRequestedAt))
+    || recent(context.paymentEvidenceRequestedAt);
 }
 
 export type LineSubstituteMediaChoice =
@@ -1034,12 +1061,15 @@ function expenseLabel(expense: ExpenseRecordWithRelations): string {
   const date = expense.expenseDate instanceof Date
     ? expense.expenseDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', timeZone: 'UTC' })
     : undefined;
-  return [date, expense.vendorNameSnapshot ?? undefined, bahtAmount(expense)].filter(Boolean).join(' · ');
+  const state = expense.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation as LineSubstituteReceiptContinuation | undefined;
+  const payeeName = expense.substituteReceiptEvidence?.status !== 'SUPERSEDED' && expense.substituteReceiptEvidence?.payeeName
+    || state?.acceptedValues.payeeName || expense.vendorNameSnapshot;
+  return [date, payeeName ?? undefined, bahtAmount(expense)].filter(Boolean).join(' · ');
 }
 
 /** Every echoed bullet shows a value the sender can recognise: no ids, no enum codes, no ISO dates. */
-function echoLines(values: LineSubstituteReceiptValues, categories: Array<{ id: string; name: string }>): string[] {
-  return Object.entries(values).map(([field, value]) => {
+export function substituteReceiptFactLines(values: LineSubstituteReceiptValues, categories: Array<{ id: string; name: string }> = []): string[] {
+  return Object.entries(values).filter(([, value]) => value != null && value !== '').map(([field, value]) => {
     const shown = field === 'reasonCode' ? REASON_CODE_LABELS[value as SubstituteReceiptReasonCode]
       : field === 'fundingSource' ? (value === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน')
       : field === 'paidInFullAcknowledged' ? (value === true ? 'ยืนยันแล้ว' : 'ยังไม่ยืนยันจ่ายเต็มจากแหล่งเดียว')
@@ -1113,11 +1143,11 @@ function formatStandalone(input: {
   boundary?: string;
 }): string {
   const lines = ['📄 ใบรับรองแทนใบเสร็จรับเงิน'];
-  const echo = echoLines(input.echoed ?? {}, input.categories ?? []);
+  const echo = substituteReceiptFactLines(input.echoed ?? {}, input.categories ?? []);
   if (echo.length) lines.push('รับทราบจากข้อความนี้ (ยังไม่บันทึก):', ...echo);
   lines.push(input.headline);
   (input.choices ?? []).forEach((choice, index) => lines.push(`${index + 1}) ${choice}`));
-  lines.push(input.boundary ?? 'LINE ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร');
+  lines.push(input.boundary ?? 'ลงนามและอนุมัติทำในเว็บค่ะ เตรียมใบรับรองเสร็จแล้วน้องจะส่งลิงก์ให้');
   lines.push('เอกสารภายในนี้ไม่ใช่ใบกำกับภาษีและไม่ทำให้ VAT ซื้อเครดิตได้');
   if (input.webPath) lines.push(`เปิดในเว็บ: ${webLink(input.webPath)}`);
   lines.push('', `ทำต่อ: ${input.question}`);
@@ -1146,7 +1176,7 @@ function resumeCapsule(
   const lines = [`↩️ งานใบรับรองแทนใบเสร็จรับเงินของรายการ ${expenseLabel(expense)} ยังอยู่`];
   if (acceptedFields.length) lines.push(`รับเพิ่มแล้ว: ${acceptedFields.map((field) => VALUE_LABELS[field] ?? field).join(', ')}`);
   if (state.pendingQuestion) lines.push(`ทำต่อ: ${state.pendingQuestion}`);
-  else lines.push(`ยังมี ${state.missingFields.length} ช่องที่ตอบผ่าน LINE ได้; ส่งไฟล์หลักฐานเข้ามาในแชทนี้หรือแนบในเว็บก็ได้ ส่วนการลงนาม/อนุมัติทำในเว็บ`);
+  else lines.push(`ยังมี ${state.missingFields.length} ช่องที่ตอบผ่าน LINE ได้; ส่งไฟล์หลักฐานเข้ามาในแชทนี้หรือแนบในเว็บก็ได้ ส่วนการลงนามและอนุมัติให้กดการ์ดยืนยันค่ะ`);
   if (webPath) lines.push(`เปิดในเว็บ: ${webLink(webPath)}`);
   return lines.join('\n');
 }
@@ -1179,6 +1209,8 @@ function formatResult(input: {
     lines.push(`✅ รับข้อมูลเข้าร่างแล้ว${wroteCategory ? '' : ' (ยังไม่แก้รายการ)'}: ${input.acceptedFields.map((field) => VALUE_LABELS[field] ?? field).join(', ')}`);
     if (wroteCategory) lines.push('หมวดค่าใช้จ่ายบันทึกลงรายการให้แล้ว ส่วนช่องอื่นเก็บไว้ในร่างเอกสาร');
   }
+  const facts = substituteReceiptFactLines(input.state.acceptedValues, categories);
+  if (facts.length) lines.push('ตรวจข้อมูลสำหรับใบรับรองค่ะ:', ...facts);
   if (input.sideAnswer) lines.push('', input.sideAnswer);
   if (input.status === 'PAUSED') return [...lines, '⏸️ พักงานนี้ไว้แล้ว ข้อมูลที่รับไว้ยังอยู่', 'พิมพ์ “ทำใบรับรองต่อ” เพื่อกลับมาทำต่อ'].join('\n');
   if (input.status === 'CANCELLED') {
@@ -1200,13 +1232,13 @@ function formatResult(input: {
   }
   if (input.policy) {
     const source = input.policy.configured ? 'ตั้งค่าเฉพาะบริษัทแล้ว' : 'ใช้ค่าเริ่มต้นของระบบ';
-    lines.push(`นโยบายอนุมัติ: ${input.policy.approvalMode} · ${source} · ${input.policy.ready ? 'พร้อม' : 'ยังไม่พร้อม'}`);
+    lines.push(`นโยบายอนุมัติ: ${input.policy.approvalMode === 'OWNER_SELF' ? 'เจ้าของอนุมัติเองได้' : 'ผู้อนุมัติที่บริษัทกำหนด'} · ${source} · ${input.policy.ready ? 'พร้อม' : 'ยังไม่พร้อม'}`);
   }
-  lines.push('', 'LINE ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร');
+  lines.push('', 'ลงนามและอนุมัติทำในเว็บค่ะ เตรียมใบรับรองเสร็จแล้วน้องจะส่งลิงก์ให้');
   lines.push('เอกสารภายในนี้ไม่ใช่ใบกำกับภาษีและไม่ทำให้ VAT ซื้อเครดิตได้');
   if (input.webPath) lines.push(`เปิดตรวจสอบในเว็บ: ${webLink(input.webPath)}`);
-  const next = input.blockers.find((item) => item.collectableInLine && questionFor(item.code, categories));
-  if (next) lines.push('', `ทำต่อ: ${questionFor(next.code, categories)}`);
+  const nextQuestion = collectionQuestion(input.blockers, categories);
+  if (nextQuestion) lines.push('', `ทำต่อ: ${nextQuestion}`);
   // R13: nothing is missing, so the single next question is whether to issue — and it is a question,
   // never an action already taken.
   else if (input.state.pendingDecision === 'ISSUE_CONFIRM') {
@@ -1342,7 +1374,12 @@ export class LineSubstituteReceiptContinuationUseCase {
       .filter((at) => typeof at === 'string').sort().at(-1);
     const signatureRequestedAt = signatureRequested ? newestActivity((state) => state.signatureRequested === true) : undefined;
     const finalReceiptRequestedAt = finalReceiptExpected ? newestActivity((state) => state.pendingDecision === 'CHECK_BILL_FINAL_RECEIPT') : undefined;
+    const paymentEvidenceRequestedAt = states.filter(state => state.status === 'OPEN').length === 1
+      ? newestActivity(state => state.status === 'OPEN' && state.expenseId === expenseId && !state.signatureRequested
+      && !state.pendingDecision && (state.missingFields.includes('evidenceNone')
+        || state.pendingQuestion === QUESTIONS.payment_evidence_required)) : undefined;
     return { expenseId, awaitingScans, signatureRequested, finalReceiptExpected,
+      ...(paymentEvidenceRequestedAt ? { paymentEvidenceRequestedAt } : {}),
       ...(signatureRequestedAt ? { signatureRequestedAt } : {}), ...(finalReceiptRequestedAt ? { finalReceiptRequestedAt } : {}) };
   }
 
@@ -1373,19 +1410,20 @@ export class LineSubstituteReceiptContinuationUseCase {
     };
   }
 
-  /** F8: is a substitute workflow in this chat parked at the issue decision? A signature photo filed
-   *  on ANY route (router ticket, caption, numbered answer) should steer the sender back to “ตอบ 1”
-   *  exactly when this is true — and never otherwise, so the steer is computed from the live decision
-   *  rather than hard-coded per route. */
-  async hasPendingIssueDecision(ctx: RequestContext, chatKeyHash: string): Promise<boolean> {
-    if (!ctx.permissions.includes('expense.review')) return false;
+  /** Resolve the pending workflow in this chat through the same scoped repository as continuation. */
+  async pendingIssueDecisionExpenseId(ctx: RequestContext, chatKeyHash: string): Promise<string | undefined> {
+    if (!ctx.permissions.includes('expense.review')) return undefined;
     const rows = await this.repo.listLineSubstituteContinuationRows({
       companyId: ctx.companyId, userId: ctx.userId, chatKeyHash, scopes: ctx.scopes ?? {}, take: 5,
     });
-    return rows.some((row) => {
+    return rows.find((row) => {
       const state = stateFromMetadata(row.sourceChannelMetadataJson);
       return !!state && ACTIVE_STATUSES.has(state.status) && state.pendingDecision === 'ISSUE_CONFIRM';
-    });
+    })?.id;
+  }
+
+  async hasPendingIssueDecision(ctx: RequestContext, chatKeyHash: string): Promise<boolean> {
+    return Boolean(await this.pendingIssueDecisionExpenseId(ctx, chatKeyHash));
   }
 
   /** §11/§14: a file the sender offered as evidence for the open work, attached under the purpose
@@ -1399,6 +1437,11 @@ export class LineSubstituteReceiptContinuationUseCase {
     if (!ctx.permissions.includes('expense.receipt.upload')) {
       throw new ForbiddenException('Missing permission: expense.receipt.upload');
     }
+    const expense = await this.repo.findByIdWithRelations(ctx.companyId, input.expenseId, undefined, ctx.scopes ?? {});
+    const state = expense && stateFromMetadata(expense.sourceChannelMetadataJson);
+    if (!expense || !state || state.userId !== ctx.userId || state.companyId !== ctx.companyId
+      || state.expenseId !== input.expenseId || state.status !== 'OPEN'
+      || expense.substituteReceiptEvidence && expense.substituteReceiptEvidence.status !== 'SUPERSEDED') throw new ForbiddenException();
     await this.repo.linkAttachment(input.expenseId, input.attachmentId, input.purpose, ctx.companyId, ctx.userId);
     await this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'attachment.upload',
@@ -1468,7 +1511,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       replyText: formatStandalone({
         headline: [
           `🔵 รอยืนยัน — รับฟอร์มที่เซ็นแล้วของเลขที่ ${linked.documentNumber} ไว้เป็นต้นฉบับลายเซ็นสดแล้วค่ะ`,
-          'รูปนี้ยังไม่ทำให้เอกสารออก ต้องรับรองและอนุมัติในเว็บอีก 2 ขั้นตอน',
+          'รูปนี้ยังไม่ทำให้เอกสารออกค่ะ ต้องรับรองและอนุมัติในเว็บ และเก็บต้นฉบับกระดาษไว้',
         ].join('\n'),
         boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
         question: 'เปิดลิงก์ด้านบนเพื่อรับรองและอนุมัติในเว็บได้เลยค่ะ',
@@ -1497,7 +1540,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       targetRevision: state.targetRevision,
       status: state.status as 'OPEN' | 'PAUSED',
       ...(state.routeCheckBill ? { routeCheckBill: true as const } : {}),
-      acceptedValues: state.acceptedValues,
+      acceptedValues: { ...state.acceptedValues, paymentMethod: state.acceptedValues.paymentMethod ?? undefined },
     };
   }
 
@@ -1755,14 +1798,22 @@ export class LineSubstituteReceiptContinuationUseCase {
     }
     // R13: the assistant asked whether to issue, so this turn is that answer. It runs before value
     // extraction, otherwise a bare “1” would be read as a stray value instead of a choice.
-    if (selected.state.pendingDecision === 'ISSUE_CONFIRM') {
+    const storedFactsChanged = (['missingReceiptReason', 'businessPurpose', 'payeeName', 'itemDescription'] as const)
+      .some(field => selected.state.acceptedValues[field]
+        && selected.state.acceptedValues[field] !== (freeTextOf(selected.state.acceptedValues[field]) ?? ''));
+    // Old continuations may contain swallowed facts. Re-present the split text before any prepare.
+    if (selected.state.pendingDecision === 'ISSUE_CONFIRM' && !storedFactsChanged) {
       const decided = await this.answerIssueDecision(ctx, input, expense, selected.state, categories);
       if (decided) return decided;
     }
     const pendingField = selected.state.missingFields[0] ?? null;
-    const acceptedNow = extractValues(input.messageText, pendingField, ctx.userId, categories);
+    const acceptedNow = extractValues(input.messageText, pendingField, ctx.userId, categories, selected.state.missingFields);
     const sideAnswer = groundedSideAnswer(expense, input.messageText);
     const acceptedValues = { ...selected.state.acceptedValues, ...acceptedNow };
+    for (const field of ['missingReceiptReason', 'businessPurpose', 'payeeName', 'itemDescription'] as const) {
+      if (acceptedValues[field]) acceptedValues[field] = freeTextOf(acceptedValues[field]) ?? '';
+    }
+    const acceptedFields = Object.keys(acceptedNow).filter(field => acceptedNow[field as keyof LineSubstituteReceiptValues] != null && acceptedNow[field as keyof LineSubstituteReceiptValues] !== '');
     const acceptedAt = new Date().toISOString();
     const provenance = { ...selected.state.provenance };
     for (const field of Object.keys(acceptedNow)) provenance[field] = { source: 'LINE_USER_TEXT', acceptedAt, messageHash: messageHash(input.messageText) };
@@ -1796,16 +1847,15 @@ export class LineSubstituteReceiptContinuationUseCase {
       .filter((item) => item.collectableInLine)
       .map((item) => FIELD_BY_BLOCKER[item.code])
       .filter((field): field is keyof LineSubstituteReceiptValues => Boolean(field));
-    const pending = blockers.find((item) => item.collectableInLine && questionFor(item.code, categories));
     const nextState: LineSubstituteReceiptContinuation = {
       ...selected.state,
       status: 'OPEN',
       acceptedValues,
       provenance,
-      resolvedFields: Object.keys(acceptedValues).sort(),
+      resolvedFields: Object.keys(acceptedValues).filter(field => acceptedValues[field as keyof LineSubstituteReceiptValues] != null && acceptedValues[field as keyof LineSubstituteReceiptValues] !== '').sort(),
       missingFields,
       attachmentRefs: expense.attachments.filter((item) => item.status === 'ACTIVE').map((item) => item.id).slice(0, 20),
-      pendingQuestion: pending ? questionFor(pending.code, categories)! : blockers.length ? null : ISSUE_DECISION_QUESTION,
+      pendingQuestion: collectionQuestion(blockers, categories) ?? (blockers.length ? null : ISSUE_DECISION_QUESTION),
       // Set only while the preflight is clean: a value the user changes later reopens a blocker and
       // takes the decision back off the table until everything is answered again.
       pendingDecision: blockers.length ? undefined : 'ISSUE_CONFIRM',
@@ -1814,7 +1864,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     };
     const ineligible = blockers.some((item) => INELIGIBLE_CODES.has(item.code));
     const forbidden = blockers.some((item) => item.code === 'expense_review_forbidden');
-    const hasAcceptedChange = Object.keys(acceptedNow).length > 0;
+    const hasAcceptedChange = Object.keys(acceptedNow).length > 0 || storedFactsChanged;
     // Permission/feature/eligibility/preflight rejection happens BEFORE any save: a FORBIDDEN or
     // INELIGIBLE turn writes nothing. A fresh OPEN is created whenever the start is CONFIRMED (see
     // startConfirmed — canonical/vocabulary/affirmative, or any non-PRIMARY-model-only caller such as the
@@ -1857,13 +1907,13 @@ export class LineSubstituteReceiptContinuationUseCase {
         policy: { branchId: expense.branchId ?? null, payerUserId: acceptedValues.payerUserId ?? null, hash: sourceHash([policyRow, eligibleApprovers, payer]) },
         ...(state.pendingDecision === 'ISSUE_CONFIRM' ? { signatureAvailable: hasReusableSignature } : {}),
       },
-      acceptedFields: Object.keys(acceptedNow), blockers, webPath: targetPath,
+      acceptedFields, blockers, webPath: targetPath,
       ...(badge ? { badge } : {}),
       policy: policyFacts,
       sideQuestionAnswered: Boolean(sideAnswer),
-      resumeCapsule: resumeCapsule(expense, state, Object.keys(acceptedNow), targetPath),
+      resumeCapsule: resumeCapsule(expense, state, acceptedFields, targetPath),
       ...(state.pendingQuestion ? { pendingQuestion: state.pendingQuestion } : {}),
-      replyText: formatResult({ status, expense, state, acceptedFields: Object.keys(acceptedNow), blockers, webPath: targetPath, policy: policyFacts, sideAnswer, categories, hasReusableSignature }),
+      replyText: formatResult({ status, expense, state, acceptedFields, blockers, webPath: targetPath, policy: policyFacts, sideAnswer, categories, hasReusableSignature }),
     };
   }
 
@@ -1901,14 +1951,14 @@ export class LineSubstituteReceiptContinuationUseCase {
         ? 'เอกสารออกเรียบร้อยแล้ว'
         : awaitingPaperSignature
           ? 'แบบฟอร์มรอลงนามมีลายน้ำ UNSIGNED — พิมพ์แล้วเซ็นด้วยมือ แล้วถ่ายส่งกลับมาในแชทนี้'
-          : 'เตรียมและจองเลขที่ไว้แล้ว เหลือลงนามรับรองและอนุมัติในเว็บ',
+          : 'เตรียมและจองเลขที่ไว้แล้วค่ะ เหลือลงนามรับรองและอนุมัติในเว็บ',
     ];
     return {
       handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, acceptedFields: [], blockers: [], webPath, source: substituteReplySource(expense),
       ...(badge ? { badge } : {}),
       replyText: formatStandalone({
         headline: headline.join('\n'),
-        boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
+        boundary: issued ? 'เอกสารออกเรียบร้อยแล้วค่ะ' : 'ยังรอลงนามและอนุมัติค่ะ',
         question: issued
           ? 'เปิดหน้าเว็บด้านบนเพื่อดาวน์โหลดเอกสารที่ออกแล้วได้เลยค่ะ'
           : awaitingPaperSignature
@@ -2262,7 +2312,7 @@ export class LineSubstituteReceiptContinuationUseCase {
             ? [
               `🔵 รอยืนยัน — เตรียมเอกสารและจองเลขที่ ${evidence.documentNumber} ไว้แล้ว`,
               `ยอด ${amount} · ผู้จ่าย ${evidence.payerName}`,
-              'ขั้นต่อไปทำในเว็บหน้าเดียว: ผู้จ่ายลงนามรับรอง แล้วผู้มีสิทธิ์อนุมัติ',
+              'ขั้นต่อไปทำในเว็บค่ะ ผู้จ่ายลงนามรับรอง แล้วผู้มีสิทธิ์อนุมัติ',
             ].join('\n')
             : formLines.join('\n'),
           boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',

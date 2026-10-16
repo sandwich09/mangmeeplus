@@ -1,3 +1,7 @@
+import { sourceDraftState, projectExpenseSourceDraft, applyExpenseSourceDraftInput, assertExpenseSourceDraftComplete } from '../../domain/logic/expense-source-draft.logic';
+import { buildInitialLineExpenseDraftContinuation, parseLineExpenseDraftContinuation } from '../../domain/logic/line-expense-draft-conversation.logic';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ocrWhtInput, RECEIPT_REVIEW_REASONS, receiptFallbackLineTotal, ReceiptOcrApplyService, reviewReceiptDate, usableItemLines, verifyDiscountAmount } from './receipt-ocr-apply.service';
@@ -223,7 +227,7 @@ describe('ocrVatSource', () => {
 });
 
 async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, existing: Record<string, unknown> = {}, todayIso?: string,
-  repoOverrides: Record<string, unknown> = {}, ensureVendorCounterparty?: { execute: (ctx: unknown, input: any) => Promise<any> }) {
+  repoOverrides: Record<string, unknown> = {}, ensureVendorCounterparty?: { execute: (ctx: unknown, input: any) => Promise<any>; resolveOcrVendorName?: (ctx: any, taxId: string) => Promise<string | undefined> }, sourceDocumentType?: any, sourceAttachmentId?: string, ocrDocumentType?: any) {
   const updates: any[] = [];
   const lines: any[] = [];
   const tx = {
@@ -237,11 +241,45 @@ async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, exis
   };
   const prisma = makeApplyPrisma(tx);
   const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo(repoOverrides) as any, ensureVendorCounterparty as any)
-    .apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', fields, todayIso ? { todayIso } : {});
+    .apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', fields, { ...(todayIso ? { todayIso } : {}), ...(sourceDocumentType ? { sourceDocumentType } : {}), ...(sourceAttachmentId ? { sourceAttachmentId } : {}), ...(ocrDocumentType ? { ocrDocumentType } : {}) });
   return { record: updates[0]?.data, line: lines[0], lines, result };
 }
 
 describe('ReceiptOcrApplyService.apply — receipt uploader scope', () => {
+  it('D2: the existing fenced apply persists all 70 assembled PDF rows and exact VAT/total', async () => {
+    const result = await applyFields({ vendorName: 'First printed issuer', grandTotalAmount: '7490.00', vatAmount: '490.00',
+      vatMode: 'VAT_EXCLUDED', vatRate: '0.07', lines: Array.from({ length: 70 }, (_, row) => ({
+        description: `item ${row + 1}`, quantity: '1', unitPrice: '100.00', amount: '100.00', evidenceSignal: `item ${row + 1} 100.00` })) });
+    assert.equal(result.lines.length, 70);
+    assert.equal(result.record.grandTotalAmount, '7490.0000');
+    assert.equal(result.record.vatAmount, '490.0000');
+    assert.equal(result.result.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES');
+  });
+  it('OCR-C corrects small Thai OCR names from the unique tax-ID match, retaining raw evidence and reviewer identity', async () => {
+    const registered = 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด';
+    for (const name of ['บริษัท ออฟฟิศชัพพลายจำลอง จำกัด', 'บริษัท ออฟฟิศซัพพลายพลายจำลอง จำกัด']) {
+      for (const matched of [true, false]) {
+        const seen: any[] = [];
+        const fields = { vendorName: name, vendorTaxId: '0105473325385', grandTotalAmount: '599586.00' };
+        const ensure = {
+          resolveOcrVendorName: async (context: any, taxId: string) => { seen.push([context.companyId, taxId]); return matched ? registered : undefined; },
+          execute: async (_context: any, input: any) => { assert.equal(input.vendorName, matched ? registered : name); return { result: { case: 'NOOP' } }; },
+        };
+        const result = await applyFields(fields, null, {}, undefined, {}, ensure);
+        assert.equal(result.record.vendorNameSnapshot, matched ? registered : name);
+        assert.equal(result.record.aiVerifiedFieldsJson.vendorName, name);
+        assert.equal(fields.vendorName, name);
+        assert.deepEqual(seen, [['company-1', '0105473325385']]);
+      }
+    }
+    const ensure = { resolveOcrVendorName: async () => assert.fail('no lookup without extracted ID or after review'),
+      execute: async () => ({ result: { case: 'NOOP' } }) };
+    const noId = await applyFields({ vendorName: 'ชัพพลาย', grandTotalAmount: '10.00' }, null, {}, undefined, {}, ensure);
+    assert.equal(noId.record.vendorNameSnapshot, 'ชัพพลาย');
+    const reviewed = await applyFields({ vendorName: 'ชัพพลาย', vendorTaxId: '0105473325385', grandTotalAmount: '10.00' },
+      null, { reviewedAt: new Date() }, undefined, {}, ensure);
+    assert.equal(reviewed.record.vendorNameSnapshot, undefined);
+  });
   it('uses the uploadedByUserId on the linked source receipt, not the expense creator or OCR actor', async () => {
     const seen: any[] = [];
     const { result } = await applyFields({ vendorName: 'ร้าน OCR', grandTotalAmount: '10.00' }, null, {
@@ -1281,6 +1319,23 @@ describe('usableItemLines per-row VAT', () => {
 // printed zero as malformed turned a 5-item order into one "AI สรุปยอดรวม" line — silently, since
 // the reviewer is never told the breakdown was dropped. A zero is a printed amount.
 describe('usableItemLines keeps a bill whose till prints free rows at 0.00', () => {
+  it('applies a complete 60-row receipt through reconciliation and preserves its total', async () => {
+    const items = Array.from({ length: 60 }, (_, index) => ({ description: `สินค้า ${index + 1}`, amount: '10.00', quantity: '1', evidenceSignal: `สินค้า ${index + 1} 10.00` }));
+    const complete = await applyFields({ lines: items, vatMode: 'NO_VAT', grandTotalAmount: '600.00' });
+    assert.equal(complete.lines.length, 60);
+    assert.equal(complete.record.grandTotalAmount, '600.0000');
+    const partial = await applyFields({ lines: items, vatMode: 'NO_VAT', grandTotalAmount: '600.00', missingFields: ['lines'] });
+    assert.equal(partial.lines.length, 1, 'flagged partial detail remains source evidence; summary preserves money');
+    assert.equal(partial.record.grandTotalAmount, '600.0000');
+  });
+
+  it('admits up to 200 complete rows and keeps flagged partial evidence out of financial splitting', () => {
+    const lines = Array.from({ length: 200 }, (_, index) => ({ description: `สินค้า ${index + 1}`, amount: '10.00', quantity: '1', evidenceSignal: 'สินค้า 10.00' }));
+    assert.equal(usableItemLines({ lines }).length, 200);
+    assert.equal(usableItemLines({ lines: [...lines, lines[0]!] }).length, 0);
+    assert.equal(usableItemLines({ lines: lines.slice(0, 2), missingFields: ['lines'] }).length, 0);
+  });
+
   const paid = (description: string, amount: string) => ({ description, quantity: '1', amount, evidenceSignal: description });
   const bill = [
     paid('BOGO 12" Half & half pizza', '499.00'),
@@ -2058,5 +2113,120 @@ describe('OCR preserves an explicitly entered receipt date', () => {
     assert.equal(result.dateStatus, 'verified');
     assert.equal(result.dateVerified, true);
     assert.ok(!result.reviewReasons.includes(RECEIPT_REVIEW_REASONS.dateUnverified));
+  });
+});
+
+it('R10 Q5c: applying a transfer slip does not create a second registry payee before receipt pairing', async () => {
+  for (const sourceDocumentType of [undefined, 'TRANSFER_SLIP']) {
+  const result = await applyFields({ vendorName: 'TEST FOODS CO', vendorTaxId: '0105556000011', grandTotalAmount: '500.80' }, null,
+    { captureSource: 'LINE_UPLOAD', primaryAttachmentId: 'slip-1', sourceDocumentType: 'TRANSFER_SLIP' }, undefined,
+    { findPrimaryReceiptUploader: async () => assert.fail('payment evidence has no supplier registration') },
+    { execute: async () => assert.fail('slip payee must not create a supplier'), resolveOcrVendorName: async () => assert.fail('slip must not resolve a supplier') }, sourceDocumentType);
+  if (sourceDocumentType) assert.equal(result.record.sourceDocumentType, 'TRANSFER_SLIP');
+  assert.equal(result.record.vendorCounterpartyId, undefined);
+  assert.equal(result.result.vendorCounterpartyAutoSave, undefined);
+  }
+});
+
+it('R10 Q2: durable PDF apply stores printed-date provenance atomically and keeps unread dates missing', async () => {
+  for (const printedDate of ['2026-09-26', undefined]) {
+    const result = await applyFields({ vendorName: 'ร้านบนเอกสาร', grandTotalAmount: '100', ...(printedDate ? { expenseDate: printedDate } : {}),
+      missingFields: printedDate ? [] : ['expenseDate'] }, null,
+      { primaryAttachmentId: 'pdf-1', expenseDate: new Date('2026-10-16'), aiVerificationSummaryJson: { dateStatus: 'unverified', missingFields: ['expenseDate'], sourceStale: true, sourceAttachmentId: 'old-pdf' } },
+      '2026-10-16', {}, undefined, 'TAX_INVOICE', 'pdf-1');
+    const summary = result.record.aiVerificationSummaryJson;
+    assert.equal(summary.dateStatus, printedDate ? 'verified' : 'unverified');
+    assert.equal(summary.recognizedFields.expenseDate, printedDate); assert.equal(summary.missingFields.includes('expenseDate'), !printedDate);
+    assert.equal(summary.recognizedFields.vendorName, 'ร้านบนเอกสาร');
+    assert.equal(summary.sourceStale, undefined); assert.equal(summary.sourceAttachmentId, undefined);
+    if (printedDate) assert.equal(result.record.expenseDate.toISOString().slice(0, 10), printedDate);
+    else assert.equal(result.record.expenseDate, undefined);
+  }
+});
+
+
+it('R11 T1: retains all 70 recorded PDF rows and the printed whole-bill VAT', async () => {
+  const pdf = JSON.parse(readFileSync(resolve(__dirname, '../../domain/logic/fixtures/live-r10-pdf-excerpts.json'), 'utf8'));
+  const clean = (value: string) => value.replace(/,/g, '');
+  const result = await applyFields({ grandTotalAmount: clean(pdf.total), subtotalAmount: clean(pdf.subtotal),
+    vatAmount: clean(pdf.vat), vatMode: 'VAT_EXCLUDED',
+    lines: pdf.rows.map((row: any) => ({ ...row, unitPrice: clean(row.unitPrice), amount: clean(row.amount), evidenceSignal: row.evidenceSpan })) });
+  assert.equal(result.lines.length, 70, JSON.stringify(result.result));
+  assert.equal(result.record.grandTotalAmount, '1123978.2900');
+  assert.equal(result.record.vatAmount, '73531.2900');
+  assert.equal(result.result.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES');
+});
+
+
+it('U1 OCR apply skips transfer-slip classification from both incoming OCR and saved facts on a RECEIPT', async () => {
+  for (const saved of [false, true]) {
+    const result = await applyFields({ vendorName: 'TEST FOODS CO', vendorTaxId: '0105556000011', grandTotalAmount: '500.80' }, null,
+      { captureSource: 'LINE_UPLOAD', primaryAttachmentId: 'slip-1', sourceDocumentType: 'RECEIPT',
+        ...(saved ? { aiVerificationSummaryJson: { classification: { documentKind: 'TRANSFER_SLIP' } } } : {}) }, undefined,
+      { findPrimaryReceiptUploader: async () => assert.fail('slip must not look up receipt uploader') },
+      { execute: async () => assert.fail('slip must not autosave a counterparty'), resolveOcrVendorName: async () => assert.fail('slip must not resolve registry') },
+      undefined, undefined, saved ? undefined : 'TRANSFER_SLIP');
+    assert.equal(result.record.sourceDocumentType, undefined, 'retain reviewer document type');
+    assert.equal(result.record.vendorCounterpartyId, undefined);
+  }
+});
+
+
+it('R11 T1: capture source facts round trip 70 and 200 rows while typed text retains its 40-row bound', () => {
+  const categories = [{ id: 'cat', companyId: 'co', status: 'ACTIVE', name: 'สำนักงาน' }] as any;
+  const base = { workflowId: 'wf', companyId: 'co', userId: 'u', expenseId: 'ex', chatKeyHash: 'chat', targetRevision: '2026-09-01T00:00:00.000Z', provisionalExpenseDate: '2026-09-01', categories };
+  for (const count of [70, 200]) {
+    const lines = Array.from({ length: count }, (_, index) => ({ id: `line-${index}`, description: `สินค้า ${index + 1}`,
+      quantity: '1', unitPrice: '100', expenseCategoryId: 'cat', chargeKind: null }));
+    const expense = { id: 'ex', companyId: 'co', createdByUserId: 'u', captureSource: 'LINE_UPLOAD', status: 'NEEDS_REVIEW',
+      updatedAt: new Date(base.targetRevision), expenseDate: new Date('2026-09-01'), vendorNameSnapshot: 'ร้าน ก', lines,
+      aiVerificationSummaryJson: { recognizedFields: { expenseDate: '2026-09-01', lines: lines.map(line => ({ ...line, amount: '100' })) },
+        chargeReconciliation: { status: 'RECONCILED_ITEM_LINES' } } } as any;
+    const state = sourceDraftState(expense, categories)!;
+    assert.equal(state.items.length, count);
+    assert.equal(state.items.at(-1)!.lineId, `line-${count - 1}`);
+    const reloaded = parseLineExpenseDraftContinuation(JSON.parse(JSON.stringify(state)))!;
+    assert.ok(reloaded); assert.equal(reloaded.items.length, count);
+    assert.equal(projectExpenseSourceDraft(reloaded, true).items.length, count);
+    const changed = applyExpenseSourceDraftInput(reloaded, { items: reloaded.items.map(item => ({ itemRef: item.itemRef, expenseCategoryId: 'cat' })) }, categories);
+    assert.doesNotThrow(() => assertExpenseSourceDraftComplete({ lineExpenseDraftContinuation: changed.state }));
+    const hints = { items: lines.map(line => ({ sourceText: `${line.description} 1 100`, description: line.description, quantity: '1', unitPrice: '100' })) };
+    assert.throws(() => buildInitialLineExpenseDraftContinuation({ ...base, messageText: hints.items.map(item => item.sourceText).join(' '), hints }), /at most 40/);
+  }
+});
+
+// Actual model-result fields from the synthetic full-field traces; missing facts are added explicitly.
+describe('Fix-up 16 printed rounding and combined discount', () => {
+  const D3 = {"vendorName":"ห้างหุ้นส่วนจำกัด ช่างเหล็กวัสดุ","vendorIdentityEvidence":"ห้างหุ้นส่วนจำกัด ช่างเหล็กวัสดุ","vendorEntityKind":"JURISTIC","vendorTaxId":"0123556033444","vendorBranchCode":"00000","vendorAddress":"15/2 หมู่ 4 ต.บางกระสอ อ.เมือง จ.นนทบุรี 11000","documentNumber":"CL-6910-0098","expenseDate":"2026-10-02","description":"วัสดุก่อสร้าง (ปูนซีเมนต์ ทรายหยาบ ตะปู ถุงมือผ้า และอื่นๆ)","vatRate":"0.07","subtotalAmount":"3,039.50","taxableAmount":"2,889.50","vatAmount":"202.27","grandTotalAmount":"3,091.00","currency":"THB","vatMode":"VAT_EXCLUDED","lines":[{"description":"ปูนซีเมนต์ 50 กก.","quantity":"10","amount":"1,450.00","unitPrice":"145.00","evidenceSignal":"ปูนซีเมนต์ 50 กก.","confidence":0.95},{"description":"ทรายหยาบ (คิว)","quantity":"2","amount":"1,300.00","unitPrice":"650.00","evidenceSignal":"ทรายหยาบ (คิว)","confidence":0.95},{"description":"ตะปู 2 นิ้ว (กก.)","quantity":"3","amount":"145.50","unitPrice":"48.50","evidenceSignal":"ตะปู 2 นิ้ว (กก.)","confidence":0.95},{"description":"ถุงมือผ้า","quantity":"12","amount":"144.00","unitPrice":"12.00","evidenceSignal":"ถุงมือผ้า","confidence":0.95}],"confidence":0.93,"categorySuggestion":{"expenseCategoryId":"category-a-other","confidence":0.62,"evidenceSignals":["ปูนซีเมนต์ 50 กก.","ทรายหยาบ (คิว)","ตะปู 2 นิ้ว (กก.)","ช่างเหล็กวัสดุ"]},"expenseDateAssumptions":["order_assumed_day_month","era_resolved_ce"],"missingFields":["discountAmount","additionalCharges"]};
+  const R4 = {"vendorName":"บริษัท สุกี้นานา จำกัด","vendorIdentityEvidence":"บริษัท สุกี้นานา จำกัด","vendorEntityKind":"JURISTIC","vendorTaxId":"0105563098761","vendorBranchCode":"00017","documentNumber":"SN17-2610-1188","expenseDate":"2026-10-14","description":"อาหารสุกี้และเครื่องดื่ม (โต๊ะ 21)","vatRate":"0.07","subtotalAmount":"1155.00","taxableAmount":"1270.50","vatAmount":"88.94","grandTotalAmount":"1359.00","currency":"THB","vatMode":"VAT_EXCLUDED","lines":[{"description":"ชุดสุกี้รวมมิตร","quantity":"2","amount":"718.00","unitPrice":"359.00","evidenceSignal":"ชุดสุกี้รวมมิตร","confidence":0.97},{"description":"หมูสไลซ์","quantity":"2","amount":"238.00","unitPrice":"119.00","evidenceSignal":"หมูสไลซ์","confidence":0.97},{"description":"เกี้ยวกุ้ง","quantity":"1","amount":"89.00","unitPrice":"89.00","evidenceSignal":"เกี้ยวกุ้ง","confidence":0.97},{"description":"ชาเขียวเย็น","quantity":"2","amount":"110.00","unitPrice":"55.00","evidenceSignal":"ชาเขียวเย็น","confidence":0.97}],"additionalCharges":[{"kind":"SERVICE_CHARGE","description":"ค่าบริการ (Service Charge) 10%","amount":"115.50","evidenceSignal":"ค่าบริการ (Service Charge) 10%","vatRate":"0.07","confidence":0.97}],"categorySuggestion":{"expenseCategoryId":"category-a-other","confidence":0.72,"evidenceSignals":["ชุดสุกี้รวมมิตร","ชาเขียวเย็น","บริษัท สุกี้นานา จำกัด"]},"expenseDateAssumptions":["era_resolved_ce"],"missingFields":["additionalCharges"]};
+
+  for (const [name, raw, discount, rounding] of [
+    ['D3', D3, '150.00', '-0.77'], ['R4', R4, undefined, '-0.44'],
+  ] as const) {
+    it(`${name}: keeps the printed total, discount, VAT and signed rounding through apply`, async () => {
+      const fields = { ...raw, missingFields: [], ...(discount ? { discountAmount: discount } : {}), additionalCharges: [
+        ...('additionalCharges' in raw ? raw.additionalCharges : []),
+        { kind: 'ROUNDING', description: 'ปัดเศษ', amount: rounding, vatRate: '0', evidenceSignal: `ปัดเศษ ${rounding}` },
+      ] };
+      assert.equal(verifyDiscountAmount(fields as any).discountAmount, discount);
+      const { record, lines } = await applyFields(fields);
+      assert.equal(record.grandTotalAmount, Number(raw.grandTotalAmount.replace(/,/g, '')).toFixed(4));
+      assert.equal(record.vatAmount, Number(raw.vatAmount).toFixed(4));
+      assert.equal(record.discountAmount, Number(discount ?? 0).toFixed(4));
+      assert.equal(lines.length, raw.lines.length + fields.additionalCharges.length);
+      assert.equal(lines.at(-1).chargeKind, 'ROUNDING');
+      assert.equal(lines.at(-1).unitPrice, Number(rounding).toFixed(4));
+      assert.equal(lines.at(-1).vatAmount, '0.0000');
+      assert.equal(lines.at(-1).whtAmount, '0.0000');
+      assert.equal(record.vatCaptureSnapshotJson.reconciliation.status, 'MATCHED');
+    });
+  }
+
+  it('does not fold settlement rounding into a VAT-exclusive discount when the printed base is absent', () => {
+    const fields = { subtotalAmount: '100.00', discountAmount: '10.00', vatMode: 'VAT_EXCLUDED' as const,
+      vatAmount: '6.30', grandTotalAmount: '96.00', additionalCharges: [
+        { kind: 'ROUNDING' as const, description: 'ปัดเศษ', amount: '-0.30', vatRate: '0', evidenceSignal: 'ปัดเศษ -0.30' }] };
+    assert.equal(verifyDiscountAmount(fields).discountAmount, '10.00');
+    assert.equal(completeVatFields(fields).taxableAmount, '90.00');
   });
 });

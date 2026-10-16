@@ -47,6 +47,7 @@ class AiBudgetSettleUsageDto {
   @IsString() @IsNotEmpty() @MaxLength(128) modelId!: string;
   @IsString() @IsNotEmpty() @MaxLength(64) tag!: string;
   @IsBoolean() ok!: boolean;
+  @IsString() @IsOptional() @MaxLength(64) errorCode?: string;
   @IsInt() @Min(0) inputTokens!: number;
   @IsInt() @Min(0) outputTokens!: number;
   @IsInt() @Min(0) cacheReadInputTokens!: number;
@@ -158,6 +159,7 @@ export class InternalAiBudgetController {
       invocationKey: body.invocationKey, externalUnits: body.externalUnits,
       entry: {
         modelId: body.usage.modelId, tag: body.usage.tag, ok: body.usage.ok,
+        ...(body.usage.errorCode ? { errorCode: body.usage.errorCode } : {}),
         inputTokens: body.usage.inputTokens, outputTokens: body.usage.outputTokens,
         cacheReadInputTokens: body.usage.cacheReadInputTokens,
         cacheWriteInputTokens: body.usage.cacheWriteInputTokens,

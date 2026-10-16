@@ -7,6 +7,7 @@ import {
 import { notAwaitingApproval, PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
+import { assertClaimProjectionConfirmable } from '../services/materialize-claim-expenses.service';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 import { toRequestSummary, detailWithFileNames } from '../dto/reimbursement.mapper';
@@ -365,18 +366,19 @@ export class ApproveReimbursementUseCase {
   ) {}
 
   /** `payoutVerifiedVersion`: the approver's "ตรวจบัญชีแล้ว" for the account version they looked at. */
-  async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string, payoutVerifiedVersion?: unknown, payoutThirdPartyAccepted?: unknown): Promise<ReimbursementRequestDetail> {
+  async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string, payoutVerifiedVersion?: unknown, payoutThirdPartyAccepted?: unknown, line?: { previewOnly?: boolean; expectedUpdatedAt?: Date }): Promise<ReimbursementRequestDetail> {
     // The comment stays on the step, which every reader of the claim is shown, and in the audit row.
     // An approver has just checked an account: its number is not typed here.
     if (looksLikeAccountNumber(comment)) throw new BadRequestException('note_contains_account_number');
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    if (line?.expectedUpdatedAt && req.updatedAt.getTime() !== line.expectedUpdatedAt.getTime()) throw new ConflictException('reimbursement_source_version_changed');
     // The gate of the claim detail, ahead of every answer that depends on where the claim stands (final
     // review item 18): a caller who could not open the claim was told its status by the line below.
     await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     // Decided, cancelled or taken back to a draft since the approver's page was loaded: said as that,
     // with a code the screen has words for, and never as the status the claim now has.
-    if (req.status !== 'PENDING_APPROVAL') throw notAwaitingApproval();
+    if (req.status !== 'PENDING_APPROVAL' || req.cancellationPendingAt) throw notAwaitingApproval();
     // Sent back to have its payout account corrected, and the requester has not given it yet: there is
     // nothing to approve, and the approver who presses it has an old page (payout spec §14.2).
     const correction = payoutCorrectionPhase(req);
@@ -394,7 +396,7 @@ export class ApproveReimbursementUseCase {
       throw new ForbiddenException('Missing permission: reimbursement.approve');
     }
     if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
-      void this.audit.log({
+      if (!line?.previewOnly) void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.approval.self_approval_denied',
         targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH',
       });
@@ -417,6 +419,11 @@ export class ApproveReimbursementUseCase {
       if (payoutError) throw new ConflictException(payoutError);
     }
 
+    if (line?.previewOnly && expectedHash !== req.approvalSnapshotHash) throw new ConflictException('stale_approval_snapshot');
+    if (!policy.financeReviewRequired && correction !== 'AWAITING_APPROVAL') {
+      assertClaimProjectionConfirmable(req, policy.allowMissingReceiptWithReason);
+    }
+    if (line?.previewOnly && correction === 'AWAITING_APPROVAL') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     const now = new Date();
     if (correction === 'AWAITING_APPROVAL') {
       // The same button and endpoint, the same permission, eligibility, self-approval and attestation
@@ -488,6 +495,7 @@ export class ApproveReimbursementUseCase {
       return detailWithFileNames(this.repo, this.evidence, ctx.companyId, approved!, ctx);
     }
     const decision = await this.repo.beginApprovalDecisionAtomic({
+      previewOnly: line?.previewOnly,
       companyId: ctx.companyId,
       requestId: id,
       expectedUpdatedAt: req.updatedAt,
@@ -579,6 +587,7 @@ export class ApproveReimbursementUseCase {
       },
     });
 
+    if (line?.previewOnly) return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     if (!policy.financeReviewRequired) {
       await this.projections.execute(ctx, decision.request, {
         kind: 'MANAGER',
@@ -652,14 +661,15 @@ export class RejectReimbursementUseCase {
   ) {}
 
   /** `payoutCorrectionReasonCode`: only read for a claim whose payout account is being corrected. */
-  async execute(ctx: RequestContext, id: string, reason: string, payoutCorrectionReasonCode?: unknown): Promise<ReimbursementRequestDetail> {
+  async execute(ctx: RequestContext, id: string, reason: string, payoutCorrectionReasonCode?: unknown, line?: { previewOnly?: boolean; expectedUpdatedAt?: Date }): Promise<ReimbursementRequestDetail> {
     if (!validateRejectionReason(reason)) throw new BadRequestException('rejection_reason_required');
 
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    if (line?.expectedUpdatedAt && req.updatedAt.getTime() !== line.expectedUpdatedAt.getTime()) throw new ConflictException('reimbursement_source_version_changed');
     // The gate of the claim detail, ahead of every answer that depends on where the claim stands.
     await assertCanReadRequestOrAssignment(ctx, req, this.repo);
-    if (req.status !== 'PENDING_APPROVAL') throw notAwaitingApproval();
+    if (req.status !== 'PENDING_APPROVAL' || req.cancellationPendingAt) throw notAwaitingApproval();
     const correction = payoutCorrectionPhase(req);
     if (correction === 'AWAITING_REQUESTER') throw new ConflictException('payout_correction_in_progress');
 
@@ -676,6 +686,7 @@ export class RejectReimbursementUseCase {
     if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers, req.requesterUserId)) {
       throw new ForbiddenException('not_eligible_approver');
     }
+    if (line?.previewOnly) return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     // Refusing the account a correction round gave the claim sends it back to its requester again
     // (payout spec §14.6). Never REJECTED: that status releases the claim's receipts to other claims,
     // and this claim's expense records stand. The words typed here become the round's note.

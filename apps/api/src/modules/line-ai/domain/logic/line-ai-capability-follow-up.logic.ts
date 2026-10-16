@@ -73,7 +73,11 @@ const EXAMPLES: Record<'th' | 'en', Record<LineCapabilityGroupId, string>> = {
     bookings: '• ถามคิวหรือนัดหมายวันนี้',
     procurement: '• ถามใบสั่งซื้อที่ยังค้างอยู่',
     alerts: '• ถามงานค้างและการแจ้งเตือนของคุณ',
-    package: '• ถาม “แพ็กเกจนี้พอไหม”',
+    counterparties: '• ขอดูข้อมูลคู่ค้าหรือผู้รับเงิน',
+    company_management: '• ขอจัดการทีมงานหรือสาขาตามสิทธิ์ผ่านการ์ดยืนยันค่ะ',
+    team: '• ถามจำนวนทีมงาน',
+    tax_documents: '• ขอดูใบสำคัญจ่ายหรือ 50 ทวิที่มีสิทธิ์ดู',
+    package: '• ถาม “แพ็กเกจนี้พอไหม” หรือขอซื้อแพ็กเกจ',
   },
   en: {
     sales: '• Ask “What are today’s sales?”',
@@ -85,7 +89,11 @@ const EXAMPLES: Record<'th' | 'en', Record<LineCapabilityGroupId, string>> = {
     bookings: '• Ask about today’s bookings or queue',
     procurement: '• Ask which purchase orders are still open',
     alerts: '• Ask what pending work and alerts you have',
-    package: '• Ask “Is my package enough?”',
+    counterparties: '• Ask for counterparty or payee details',
+    company_management: '• Ask to manage team members or branches within your permissions through a confirmation card',
+    team: '• Ask how many team members there are',
+    tax_documents: '• Ask for payment vouchers or withholding certificates you can access',
+    package: '• Ask “Is my package enough?” or to buy a package',
   },
 };
 
@@ -93,13 +101,13 @@ const COPY = {
   th: {
     intro: 'ตัวอย่างค่ะ',
     receipt: '• ส่งรูปใบเสร็จ/สลิปเพื่อสร้างร่างค่าใช้จ่ายให้ตรวจสอบ',
-    closing: 'น้องมั่งมีจะใช้เฉพาะข้อมูลที่สิทธิ์ปัจจุบันของคุณเข้าถึงได้ ส่วนการอนุมัติ จ่ายเงิน ออกเอกสาร และลงบัญชีขั้นสุดท้ายยังทำในเว็บค่ะ',
+    closing: 'อนุมัติใบเบิกหรือบันทึกจ่าย น้องจะเตรียมการ์ดให้กดยืนยันเองค่ะ',
     none: LINE_CAPABILITY_NO_ACCESS_TH,
   },
   en: {
     intro: 'For example:',
     receipt: '• Send a receipt/slip to create a reviewable expense draft',
-    closing: 'I only use data allowed by your current company permissions. Final approval, payment, issuance, and posting stay in the web app.',
+    closing: 'For claim approval or recording payment, I prepare a card for you to confirm.',
     none: 'Right now there is no data Nong Mangmee can pull for your account through LINE. Please ask your company admin to check your access.',
   },
 } as const;
@@ -113,7 +121,7 @@ export function capabilityFollowUpReply(text: string, access?: CapabilityFollowU
   const permissions = access ? access.permissions ?? [] : undefined;
   const groups = permissions
     ? usableCapabilityGroupIds(permissions, entitled)
-    : LINE_CAPABILITY_GROUPS.filter((group) => !('requiredPermissions' in group)).map((group) => group.id);
+    : LINE_CAPABILITY_GROUPS.filter((group) => !('requiredPermissions' in group) && !('toolNames' in group)).map((group) => group.id);
   const receipt = permissions ? canAdvertiseReceiptCapture(permissions, entitled) : true;
   const lines = [...groups.map((id) => EXAMPLES[language][id]), ...(receipt ? [copy.receipt] : [])];
   if (lines.length === 0) return copy.none;

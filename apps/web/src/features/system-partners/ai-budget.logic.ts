@@ -145,6 +145,7 @@ export const AI_BUDGET_BUCKET_LABELS: Record<string, string> = {
 export const AI_USAGE_BASIS_LABELS: Record<string, string> = {
   PROVIDER_REPORTED: 'ผู้ให้บริการรายงานจริง',
   CONSERVATIVE_ESTIMATE: 'ค่าประมาณเมื่อหมดเวลา',
+  COMPANY_ABSORBED: 'บริษัทแบก (ไม่หักเครดิตร้าน)',
   // Hold spec §4.2: an operator closed a stranded hold at the amount that was held for it. Money
   // with no measurement behind it and no model call attached, which is why it says "operator".
   OPERATOR_CHARGED_AT_BOUND: 'operator คิดตามยอดที่กันไว้',
@@ -173,12 +174,15 @@ export function aiCoverageNotice(
 /** Says so when any of the month's spend rests on estimated or unknown counters (F-11). */
 export function aiUsageBasisNote(rows: Array<{ usageBasis: string; costSatang: number; calls: number }>): string | null {
   const estimated = rows.find((row) => row.usageBasis === 'CONSERVATIVE_ESTIMATE');
+  const absorbed = rows.find((row) => row.usageBasis === 'COMPANY_ABSORBED');
   const unknown = rows.find((row) => row.usageBasis === 'UNKNOWN');
   const parts = [
     estimated && estimated.calls > 0 ? `ค่าประมาณเมื่อหมดเวลา ${estimated.calls.toLocaleString('th-TH')} ครั้ง (${satangToBaht(estimated.costSatang)})` : null,
     unknown && unknown.calls > 0 ? `ไม่ทราบที่มา ${unknown.calls.toLocaleString('th-TH')} ครั้ง (${satangToBaht(unknown.costSatang)})` : null,
   ].filter(Boolean);
-  return parts.length === 0 ? null : `token บางส่วนไม่ได้วัดจริง: ${parts.join(' · ')}`;
+  const notes = [parts.length === 0 ? null : `token บางส่วนไม่ได้วัดจริง: ${parts.join(' · ')}`,
+    absorbed && absorbed.calls > 0 ? `บริษัทแบก ${satangToBaht(absorbed.costSatang)} จาก ${absorbed.calls.toLocaleString('th-TH')} ครั้ง ไม่หักเครดิตร้านค่ะ` : null].filter(Boolean);
+  return notes.length === 0 ? null : notes.join(' · ');
 }
 
 /**

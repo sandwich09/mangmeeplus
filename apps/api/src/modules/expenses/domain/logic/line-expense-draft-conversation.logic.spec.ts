@@ -8,6 +8,7 @@ import {
   isDeterministicLineExpenseDraftInput,
   isLineExpenseDraftStartEligible,
   lineExpenseDraftControl,
+  lineExpenseItemDescription,
   materializedLineExpenseDraftItems,
   splitLineExpenseDraftReply,
   transitionLineExpenseDraft,
@@ -34,6 +35,66 @@ function initial() {
 }
 
 describe('LINE expense draft conversation logic', () => {
+  it('H3: live อินฟลู 500 บาท descriptions omit money/dates for defaults and accepted answers', () => {
+    for (const description of ['อินฟลู 500 บาท', 'อินฟลู 500 บาท วันที่ 10 ตุลา 2569', 'อินฟลู 500 บาท 10/10/69']) {
+      const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'h3', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',
+        targetRevision: '2026-10-15T00:00:00Z', provisionalExpenseDate: '2026-10-15', categories,
+        messageText: description, hints: { confidence: 1, vendorName: 'อินฟลู', amount: '500', description } });
+      assert.equal(state.items[0]!.description, 'อินฟลู');
+      const answer = applyLineExpenseDraftAnswer({ state, categories, messageText: description,
+        hints: { confidence: 1, items: [{ itemRef: 'I01', sourceText: description, description }] } });
+      assert.equal(answer.state.items[0]!.description, 'อินฟลู');
+      assert.match(formatLineExpenseDraftReply({ state: answer.state, categories, acceptedFields: answer.acceptedFields }), /แก้ร่างแล้ว:/u);
+    }
+    assert.equal(lineExpenseItemDescription('500 บาท วันที่ 10 ตุลา 2569', 'ค่าใช้จ่าย อินฟลู'), 'ค่าใช้จ่าย อินฟลู');
+    assert.equal(lineExpenseItemDescription('กระดาษ A4 500 บาท'), 'กระดาษ A4');
+    assert.equal(lineExpenseItemDescription('สาย USB-C 2 เมตร 100 บาท'), 'สาย USB-C 2 เมตร');
+  });
+  it('grounds the owner text as a total-only service and applies plain answers to the same draft (A1–A4)', () => {
+    const serviceCategories = [{ ...categories[0]!, id: 'cat-service', name: 'ค่าบริการ' }];
+    const state = buildInitialLineExpenseDraftContinuation({
+      workflowId: 'wf-service', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',
+      targetRevision: '2026-10-15T00:00:00.000Z', provisionalExpenseDate: '2026-10-15', categories: serviceCategories,
+      messageText: 'สร้างค่าใช้จ่ายให้ อินฟลู 500 บาท วันที่ 10 ตุลา 2569',
+      hints: { confidence: 0.95, amount: '500', businessPurpose: 'อินฟลู', vendorName: 'อินฟลู' },
+    });
+    assert.equal(state.header.expenseDate, '2026-10-10');
+    assert.equal(state.items[0]!.description, 'อินฟลู');
+    assert.equal(state.items[0]!.quantity, '1');
+    assert.deepEqual(state.unresolvedQuestions.map(question => question.id), ['I01-CATEGORY']);
+    assert.deepEqual(materializedLineExpenseDraftItems(state).map(({ quantity, unitPrice }) => ({ quantity, unitPrice })), [{ quantity: '1', unitPrice: '500' }]);
+    const second = applyLineExpenseDraftAnswer({ state, categories: serviceCategories, messageText: 'วันที่ 10 ตุลา 2569 จำนวน 1 คน ราคา 500' });
+    assert.equal(second.state.expenseId, state.expenseId);
+    assert.equal(second.state.items.length, 1);
+    assert.equal(second.state.items[0]!.unit, 'คน');
+    assert.equal(second.state.items[0]!.unitPrice, '500');
+    assert.ok(second.acceptedFields.includes('D-DATE'));
+    const third = applyLineExpenseDraftAnswer({ state: second.state, categories: serviceCategories, messageText: 'เป็นค่าบริการ' });
+    assert.equal(third.state.expenseId, state.expenseId);
+    assert.equal(third.state.items[0]!.expenseCategoryId, 'cat-service');
+    assert.deepEqual(third.state.unresolvedQuestions, []);
+  });
+
+  it('uses a neutral placeholder and asks for the description when none is grounded (A3)', () => {
+    const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'wf', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',
+      targetRevision: '2026-10-15T00:00:00.000Z', provisionalExpenseDate: '2026-10-15', categories,
+      messageText: 'สร้างค่าใช้จ่าย 500 บาท', hints: { confidence: 0.95, amount: '500', description: 'คำที่ไม่ได้พูด' } });
+    assert.equal(state.items[0]!.description, undefined);
+    assert.equal(state.items[0]!.sourceText, 'รายการค่าใช้จ่าย');
+    assert.ok(state.unresolvedQuestions.some(question => question.id === 'I01-DESC'));
+    assert.deepEqual(materializedLineExpenseDraftItems(state), []);
+  });
+
+  it('defaults hinted and previously saved total-only items to one without filling unknown money (A2)', () => {
+    const state = initial();
+    delete state.items[1]!.quantity;
+    assert.equal(materializedLineExpenseDraftItems(state)[0]!.quantity, '1');
+    assert.equal(materializedLineExpenseDraftItems(state)[0]!.unitPrice, '25000');
+    assert.equal(state.items[0]!.quantity, undefined);
+    const answer = applyLineExpenseDraftAnswer({ state, categories, messageText: 'I01-PRICE รวม 500' });
+    assert.equal(answer.state.items[0]!.quantity, '1');
+    assert.ok(!answer.state.unresolvedQuestions.some(question => question.id.endsWith('-QTY')));
+  });
   it('preserves every item and asks every document/item gap together without inventing paper numbers', () => {
     const state = initial();
     assert.equal(state.items.length, 2);
@@ -119,9 +180,8 @@ describe('LINE expense draft conversation logic', () => {
     assert.equal(answer.state.items[0]?.unit, undefined);
     assert.equal(answer.state.items[0]?.unitPrice, undefined);
     assert.equal(answer.state.items[0]?.expenseCategoryId, undefined);
-    assert.equal(answer.state.header.expenseDate, undefined);
+    assert.equal(answer.state.header.expenseDate, '2026-08-18');
     assert.deepEqual(answer.rejectedCandidates, [
-      { field: 'D-DATE', reason: 'NOT_GROUNDED_OR_INVALID' },
       { field: 'I01-QTY', reason: 'NOT_GROUNDED_OR_INVALID' },
       { field: 'I01-PRICE', reason: 'NOT_GROUNDED_OR_INVALID' },
       { field: 'I01-CATEGORY', reason: 'UNKNOWN_OR_UNCONFIRMED_CATEGORY' },
@@ -318,4 +378,12 @@ describe('LINE one-time seller address question (vendor-address §11.3)', () => 
     assert.equal(asked().unresolvedQuestions.some((question) => question.id === 'D-ADDRESS'), false);
     assert.equal(answer('ข้าม').state.unresolvedQuestions.some((question) => question.id === 'D-ADDRESS'), false);
   });
+});
+
+it('R10 Q5a: accepted date edits print the Thai date and unknown dates stay empty', () => {
+  const state = initial(); state.header.expenseDate = '2026-10-10';
+  const reply = formatLineExpenseDraftReply({ state, categories, acceptedFields: ['D-DATE'] });
+  assert.match(reply, /แก้ร่างแล้ว: วันที่ 10 ต\.ค\. 2569/); assert.doesNotMatch(reply, /2026-10-10/);
+  delete state.header.expenseDate;
+  assert.match(formatLineExpenseDraftReply({ state, categories }), /วันที่: ยังไม่มีวันที่/);
 });

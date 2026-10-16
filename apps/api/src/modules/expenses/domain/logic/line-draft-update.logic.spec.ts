@@ -319,3 +319,13 @@ describe('lossless document edit boundaries', () => {
     assert.equal(parseLineDraftPatch('expense.draft.set_header', { expenseDate: '2024-02-29' }).ok, true);
   });
 });
+
+it('H3: accepted LINE description edits strip the exact live money/date spans and retain a payee fallback', () => {
+  for (const [description, expected] of [['อินฟลู 500 บาท วันที่ 10 ต.ค. 2569', 'อินฟลู'], ['500 บาท 10/10/69', 'ค่าใช้จ่าย BHC'], ['กระดาษ A4', 'กระดาษ A4']]) {
+    const projected = projectLineDraftPatch(record([line()]), { tool: 'expense.draft.set_line', lineNumber: 1, description });
+    assert.ok(!('error' in projected));
+    assert.equal(projected.lines?.[0]?.description, expected);
+    assert.equal(projected.diff[0]?.after, expected);
+    assert.equal(projected.lines?.[0]?.unitPrice, '1520');
+  }
+});

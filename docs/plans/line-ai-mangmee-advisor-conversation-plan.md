@@ -509,3 +509,12 @@ flow เดิม และ v1 ตอบ "เท่าไร/ขึ้นหร�
 - fine-tuning/distillation for persona/routing after sufficient reviewed production data
 - new autonomous agent เฉพาะเมื่อ eval แสดงงาน multi-step ที่ one-call + tools เดิมแก้ไม่ได้
 - managed knowledge infrastructure เมื่อ corpus/operations โตเกิน compiled/provider-neutral adapter รุ่นแรก
+
+
+## Fix-up 6 verification plan (2026-10-16)
+
+1. Extend registered security specs with draft → ready → evidence review → confirmed, exact revisions, permission/CAS stops, repair continuation, payment-button preview, evidence choices/reason/photo/substitute routing and Thai result copy.
+2. Extend registered capture runner and gateway route specs with PARTIAL → retry → DONE, version-3 reload, changed-window extraction, legacy refusal, and dense intermediate-page transcription at the recorded token scale.
+3. Run contracts build, API/gateway typecheck scripts, full gateway/contracts package test lists, and every registered API spec importing changed files (including real-module DI and webhook/browser-facing delivery seams). Record results in task memory and the last-message file; leave uncommitted.
+
+Verification completed locally: contracts build and API/gateway package typechecks pass; full contracts 419 pass; full gateway 1,667 pass with 46 socket cancellations reproduced on the exact original base; all 159 registered API importers 5,496 pass with two socket failures reproduced on that base and 233 declared integration skips. Real-module DI, added Y1–Y4 regressions and regenerated W00 manifest pass. See `docs/agent-memory/mangmee-advisor-fixup-6.md` for commands, logs and baseline comparison.

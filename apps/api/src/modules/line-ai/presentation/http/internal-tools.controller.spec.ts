@@ -933,3 +933,20 @@ describe('InternalToolsController — company feature entitlement', () => {
     }
   });
 });
+
+it('Round 7A counterparty tools re-resolve permissions, retain branch scopes and use expenses OR sales feature admission', async () => {
+  for (const feature of ['expenses', 'sales_documents', 'procurement']) {
+    for (const name of ['counterparty.search', 'counterparty.get_detail', 'counterparty.action.preview']) {
+      const seen: any[] = [], tools: any[] = Array.from({ length: 80 }, () => ({}));
+      const index = name === 'counterparty.search' ? 77 : name === 'counterparty.get_detail' ? 78 : 79;
+      tools[index] = { execute: async (ctx: any) => { seen.push(ctx); return { toolName: name, status: 'ok', sourceRefs: [], asOf: new Date().toISOString(), data: {} }; } };
+      const controller = makeController({ aiGatewayInternalSecret: 'secret', lineAiDraftEditEnabled: false } as any,
+        fakePrisma([{ featureKey: feature, enabled: true }]), okAudit,
+        fakeResolver({ permissions: [AI, 'accounting.counterparty.read'], branchIds: ['b1'] }), fakeDelegation(), ...tools);
+      const response = await controller.invoke('secret', DELEGATION, { toolName: name, context: { companyId: 'c1', userId: 'u1', locale: 'th-TH', permissions: ['accounting.counterparty.manage'], branchIds: ['attacker-branch'] },
+        input: name === 'counterparty.action.preview' ? { action: 'UPDATE', counterpartyId: 'cp1', addressText: 'ใหม่' } : name === 'counterparty.get_detail' ? { counterpartyId: 'cp1' } : { search: 'ร้าน' } });
+      if (feature === 'procurement') { assert.equal(response.errorCode, 'FEATURE_NOT_ENABLED'); assert.equal(seen.length, 0); }
+      else { assert.equal(response.status, 'ok'); assert.deepEqual(seen[0].branchIds, ['b1']); assert.equal(seen[0].permissions.includes('accounting.counterparty.manage'), false); }
+    }
+  }
+});

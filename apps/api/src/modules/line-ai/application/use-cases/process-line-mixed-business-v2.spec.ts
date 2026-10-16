@@ -14,7 +14,7 @@ function fixture(kind: 'general' | 'read' = 'general') {
   let acceptance = 'ok', providerFails = false;
   Object.assign(flow, {
     boundConversations: new WeakMap([[event, { owner, id: 'conversation', epoch: 3 }]]), budgetGrantsV2: new WeakMap([[event, grant]]),
-    deliveryAccess: new WeakMap([[event, { fingerprint: 'fp' }]]), semanticDelivery: new WeakMap(), deliverySources: new WeakMap(),
+    deliveryAccess: new WeakMap([[event, { fingerprint: 'fp' }]]), semanticDelivery: new WeakMap(), deliverySources: new WeakMap(), deliveredTextTurns: new WeakSet(),
     bindMixedTaskSource: async () => {}, retainedTaskSources: new WeakMap(), mixedBusinessQuestions: new WeakMap(), intermediateDeliveries: new WeakSet(), config: { webBaseUrl: '', lineAiApprovedKnowledgeEnabled: false },
     reliabilityContext: async () => ({ taskProjection: { tasks: [{ taskId: 'task', state: 'active' }] } }),
     aiGateway: { requestLineTurn: async (request: any) => {
@@ -99,9 +99,8 @@ describe('same-turn existing business write and independent questions', () => {
     assert.deepEqual(f.calls, ['durable']); // no generic writer and no reused expense-create call
     assert.equal(await f.flow.deliverMixedBusinessWriteSelection(f.event, f.route.semanticSubrequests), 'ok');
     assert.equal(f.delivered[0]!.length, 1);
-    assert.match(f.delivered[0]![0].text, /1\) บันทึกค่าเดินทาง/);
-    assert.match(f.delivered[0]![0].text, /2\) ทำใบรับรองแทนใบเสร็จ/);
-    assert.match(f.delivered[0]![0].text, /ระบบจะใช้รายละเอียดเดิมของข้อนั้น/);
+    assert.equal(f.delivered[0]![0].text, 'เลือกงานที่จะทำก่อน แล้วน้องใช้รายละเอียดเดิมเตรียมให้ตรวจทีละรายการค่ะ');
+    assert.deepEqual(f.delivered[0]![0].quickReply.items.map((item: any) => item.action.text), ['ทำข้อ 1 ก่อน', 'ทำข้อ 2 ก่อน']);
     assert.deepEqual(f.flow.semanticDelivery.get(f.event).map((item: any) => [item.index, item.status, item.reasonCode]), [
       [0, 'needs_user', 'FINANCIAL_ACTION_SELECTION_REQUIRED'],
       [1, 'needs_user', 'FINANCIAL_ACTION_SELECTION_REQUIRED'],

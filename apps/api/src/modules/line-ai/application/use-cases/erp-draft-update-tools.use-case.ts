@@ -68,8 +68,11 @@ abstract class ExpenseDraftUpdateTool implements ErpReadToolPort {
     if (!this.draftUpdate.enabled) {
       return { toolName: this.toolName, status: 'unsupported_module', sourceRefs: [], asOf, errorCode: 'LINE_DRAFT_EDIT_DISABLED' };
     }
+    if (!ctx.permissions.includes('expense.update')) {
+      return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf, errorCode: 'ERP_PERMISSION_DENIED' };
+    }
 
-    const candidates = ctx.chatKeyHash
+    let candidates = ctx.chatKeyHash
       ? await listRecentLineCaptureCandidates(this.repo, {
           companyId: ctx.companyId,
           userId: ctx.userId,
@@ -78,6 +81,12 @@ abstract class ExpenseDraftUpdateTool implements ErpReadToolPort {
           take: DRAFT_CANDIDATE_LIMIT,
         })
       : [];
+    if (!candidates.length && ctx.chatKeyHash) {
+      candidates = await listRecentLineCaptureCandidates(this.repo, {
+        companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: ctx.chatKeyHash,
+        scopes: { ...(ctx.branchIds ? { branchIds: ctx.branchIds } : {}) }, take: DRAFT_CANDIDATE_LIMIT, includeAllStatuses: true,
+      });
+    }
     if (candidates.length !== 1) {
       return {
         toolName: this.toolName,

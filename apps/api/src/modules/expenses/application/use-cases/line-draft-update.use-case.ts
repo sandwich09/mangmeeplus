@@ -162,6 +162,16 @@ export class LineDraftUpdateUseCase {
     // asks which — the same rule the correction lane's `amountOnlyLine` used to encode, now stated
     // once, where the record is actually in hand.
     const resolved = { ...input.input };
+    // Resolve names only against this company's active catalogue; model-supplied ids grant nothing.
+    if (['expense.draft.set_header', 'expense.draft.set_line'].includes(input.tool)) {
+      delete resolved['expenseCategoryId'];
+      if (resolved['categoryName'] !== undefined) {
+        const matches = (await this.repo.listCategories(ctx.companyId)).filter(category => category.status === 'ACTIVE'
+          && category.name === resolved['categoryName']);
+        if (matches.length !== 1) return { status: 'blocked', reason: 'invalid_patch', detail: 'invalid_category' };
+        resolved['expenseCategoryId'] = matches[0]!.id;
+      }
+    }
     if (input.tool === 'expense.draft.set_line' && resolved['lineNumber'] === undefined) {
       if (target.lines.length !== 1) return { status: 'blocked', reason: 'ambiguous_line' };
       resolved['lineNumber'] = target.lines[0]!.lineNumber;
@@ -329,6 +339,14 @@ export class LineDraftUpdateUseCase {
       return { status: 'changed', expenseId: target.id };
     }
 
+    if ((stored.patch.tool === 'expense.draft.set_header' || stored.patch.tool === 'expense.draft.set_line') && stored.patch.expenseCategoryId) {
+      const patch = stored.patch;
+      if (!(await this.repo.listCategories(ctx.companyId)).some(category => category.status === 'ACTIVE'
+        && category.id === patch.expenseCategoryId && category.name === patch.categoryName)) {
+        return { status: 'blocked', reason: 'invalid_patch', detail: 'invalid_category' };
+      }
+    }
+
     const projected = projectLineDraftPatch(target, stored.patch);
     if ('error' in projected) {
       await this.previews.discardIfCurrent(ctx.companyId, chatKeyHash, stored.previewId);
@@ -422,7 +440,9 @@ export class LineDraftUpdateUseCase {
     patch: LineDraftPatch,
     committedUpdatedAt: string,
   ): Promise<{ updatedAt: string; result?: VendorCounterpartyAutoSaveResult }> {
-    if (!this.ensureVendorCounterparty) return { updatedAt: committedUpdatedAt };
+    const classification = target.aiVerificationSummaryJson?.['classification'] as { documentKind?: string } | undefined;
+    if (!this.ensureVendorCounterparty || target.sourceDocumentType === 'TRANSFER_SLIP'
+      || classification?.documentKind === 'TRANSFER_SLIP') return { updatedAt: committedUpdatedAt };
     try {
       const vendorName = patch.tool === 'expense.draft.set_header' && patch.vendorName !== undefined
         ? patch.vendorName : target.vendorNameSnapshot;
@@ -432,6 +452,8 @@ export class LineDraftUpdateUseCase {
         : null;
       const outcome = await this.ensureVendorCounterparty.execute(ctx, {
         expenseId: target.id,
+        sourceDocumentType: target.sourceDocumentType,
+        ocrDocumentType: classification?.documentKind,
         ...(receiptUploaderUserId ? { receiptUploaderUserId } : {}),
         captureSource: target.captureSource,
         sourceReimbursementRequestId: target.sourceReimbursementRequestId,

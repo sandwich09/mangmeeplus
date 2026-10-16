@@ -28,6 +28,7 @@ export type AgentCoreInvokeInput = {
   budgetGrantV2?: LineAiTurnRequest['budgetGrantV2'];
   approvedKnowledge?: LineAiTurnRequest['approvedKnowledge'];
   selectedKnowledgeCardIds?: LineAiTurnRequest['selectedKnowledgeCardIds'];
+  howToActionId?: LineAiTurnRequest['howToActionId'];
   taskProjection?: LineAiTaskProjectionV2;
   responsePreferences?: LineAiResponsePreferences;
   semanticSubrequests?: LineAiTurnRequest['semanticSubrequests'];
