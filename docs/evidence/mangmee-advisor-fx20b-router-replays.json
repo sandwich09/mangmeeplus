@@ -1,0 +1,725 @@
+[
+  {
+    "journey": "C04",
+    "turn": 0,
+    "source": "after-fx18/C04/trace.jsonl",
+    "messageText": "ทำใบสำคัญจ่ายทำยังไง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.93,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีทำใบสำคัญจ่าย",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 20,
+              "rawSha256": "c85a1ec264bf72aaddd1f06c3e9386e1661fda79720e80ce1bb7bb36f301d849"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C04",
+    "turn": 1,
+    "source": "after-fx18/C04/trace.jsonl",
+    "messageText": "ทำให้หน่อย ทำใบสำคัญจ่ายจากค่าใช้จ่ายที่ยืนยันแล้วรายการล่าสุด",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.88,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบสำคัญจ่ายจากค่าใช้จ่ายที่ยืนยันแล้วรายการล่าสุด",
+          "requiredEvidence": [],
+          "requestedFilters": {
+            "action": "VOUCHER_CREATE",
+            "documentStatus": "CONFIRMED"
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 62,
+              "rawSha256": "7968fb92aae88c886ab40999d7141569f7963489ee866d694be0848efbfd3193"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C04",
+    "turn": 3,
+    "source": "after-fx18/C04/trace.jsonl",
+    "messageText": "อนุมัติใบสำคัญจ่ายนี้ แล้วบันทึกว่าจ่ายแล้ววันนี้ โอนเงิน",
+    "route": {
+      "status": "ROUTED",
+      "intent": "MUTATION_REQUEST_REFUSAL",
+      "language": "th",
+      "confidence": 0.93,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "อนุมัติใบสำคัญจ่ายและบันทึกว่าจ่ายแล้ววันนี้ด้วยการโอนเงิน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "taskRef": {
+            "taskId": "047955124a6d2f459676bfe025134c456c51321e7c6475cecb8cf6fe9f7c3442",
+            "taskRevision": 1,
+            "subrequestIndex": 0
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 57,
+              "rawSha256": "c1eb111340ca24aea2f6dd67c1dc7d4d1ff0068768d7860b63e1aff24a37b551"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C08",
+    "turn": 0,
+    "source": "after-fx18/C08/trace.jsonl",
+    "messageText": "เพิ่มพนักงานเข้าระบบทำยังไง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.95,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีเพิ่มพนักงานเข้าระบบ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 27,
+              "rawSha256": "ad67d633af67e4378a28251a7938cee5ab56f5a57d5b40f77467c0a166e9631f"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C08",
+    "turn": 1,
+    "source": "after-fx18/C08/trace.jsonl",
+    "messageText": "ทำให้หน่อย เพิ่มพนักงานชื่อ สมศรี ใจงาม username somsri.j เกิด 12 มีนาคม 2538 บัตรประชาชน 1101700203450 เบอร์ 0812345678 ตำแหน่งพนักงาน สาขาสำนักงานใหญ่",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.97,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "เพิ่มพนักงานใหม่ชื่อ สมศรี ใจงาม พร้อมข้อมูลครบถ้วน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 152,
+              "rawSha256": "e56de4d89de9f62819e945452692ea7f1cd08145b9cf1ff0797db5641df7f11c"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C08",
+    "turn": 3,
+    "source": "after-fx18/C08/trace.jsonl",
+    "messageText": "เปลี่ยนตำแหน่ง สมศรี ใจงาม เป็นผู้จัดการ",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.95,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "เปลี่ยนตำแหน่ง สมศรี ใจงาม เป็นผู้จัดการ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 40,
+              "rawSha256": "955dbb756851edfd1218335af23384f304a9c68d41044674f0350f3c65593e62"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C09",
+    "turn": 0,
+    "source": "after-fx18/C09/trace.jsonl",
+    "messageText": "เพิ่มสาขาทำยังไง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.97,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีเพิ่มสาขาในระบบ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 16,
+              "rawSha256": "4ff88eb77613a20b8d6ad5e01c1d29377433203461348a7474afb395dda7a3f0"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C09",
+    "turn": 1,
+    "source": "after-fx18/C09/trace.jsonl",
+    "messageText": "ทำให้หน่อย เพิ่มสาขาใหม่ ชื่อ สาขาบางนา รหัส BR3 เป็นสาขาหน้าร้าน ที่อยู่ 88 ถนนบางนา-ตราด แขวงบางนา เขตบางนา กรุงเทพฯ 10260",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.97,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "เพิ่มสาขาใหม่ ชื่อสาขาบางนา รหัส BR3 ประเภทหน้าร้าน พร้อมที่อยู่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 124,
+              "rawSha256": "950fb73cb6d7c29a3188aa214eeb502a4e4319e4ed3a6d232b2c54915b5d88fc"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C11",
+    "turn": 0,
+    "source": "after-fx18/C11/trace.jsonl",
+    "messageText": "เพิ่มบัญชีรับเงินคืนของฉันทำยังไง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "UNSUPPORTED",
+      "language": "th",
+      "confidence": 0.93,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีเพิ่มบัญชีรับเงินคืนของตัวเอง",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 33,
+              "rawSha256": "6700eaba37b914d82c3d53da6a9f1f1459f6dff7087a36fc503dc44c5108781a"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "C11",
+    "turn": 1,
+    "source": "after-fx18/C11/trace.jsonl",
+    "messageText": "ทำให้หน่อย ธนาคารกสิกรไทย เลขบัญชี 123-4-56789-0 ชื่อบัญชีเป็นชื่อฉันเอง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "UNSUPPORTED",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "เพิ่มบัญชีรับเงินคืนของฉัน ด้วยข้อมูลธนาคารกสิกรไทย เลขบัญชี 123-4-56789-0",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 72,
+              "rawSha256": "833a33e535249f6abd62683e595a70e8c01a5d8d9b8112266d2030249a9aceff"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "E01",
+    "turn": 0,
+    "source": "edit-fx19/E01/trace.jsonl",
+    "messageText": "ช่วยแก้ไขข้อมูลให้หน่อย",
+    "route": {
+      "status": "ROUTED",
+      "intent": "CLARIFY",
+      "language": "th",
+      "confidence": 0.45,
+      "clarifyQuestion": "ต้องการแก้ไขรายการค่าใช้จ่ายที่บันทึกไว้ (เช่น ยอด วันที่ ร้านค้า) หรือต้องการแก้ไขข้อมูลอื่น เช่น ข้อมูลพนักงาน สาขา หรือคู่ค้าคะ?",
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "general",
+          "goal": "ระบุว่าต้องการแก้ไขข้อมูลประเภทใด",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 23,
+              "rawSha256": "9fd84e7ea191e357cdd05d45117c61de7943e3ad15e23058cfe91dcfc1bbf6e7"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "E01",
+    "turn": 1,
+    "source": "edit-fx19/E01/trace.jsonl",
+    "messageText": "บันทึกค่าวัสดุซ่อมร้าน 1,200 บาท ร้านวัสดุดี วันนี้",
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.97,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "sourceDocumentLanguage": "th",
+        "vendorName": "ร้านวัสดุดี",
+        "description": "ค่าวัสดุซ่อมร้าน",
+        "expenseDate": "2026-10-16",
+        "amount": "1200",
+        "expenseCategoryId": "category-a-other",
+        "vatMode": "NEEDS_REVIEW",
+        "confidence": 0.93,
+        "missingFields": []
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าวัสดุซ่อมร้าน 1,200 บาท ร้านวัสดุดี วันนี้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 51,
+              "rawSha256": "8cbcd4862f2b6b9e6e7061bd9e2467a84eeaa675625c31b2b4b70192debd219b"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "E01",
+    "turn": 2,
+    "source": "edit-fx19/E01/trace.jsonl",
+    "messageText": "ช่วยแก้ไขข้อมูลรายการเมื่อกี้ให้หน่อย ร้านจริงๆ คือร้านสมใจวัสดุ ยอด 1,250 บาท",
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_CAPTURE_CORRECTION",
+      "language": "th",
+      "confidence": 0.93,
+      "correctionHints": {
+        "targetExpenseId": "cmvaoa7nq002oy9k11opj33sx",
+        "amount": {
+          "to": "1250"
+        },
+        "vendorName": {
+          "to": "ร้านสมใจวัสดุ",
+          "from": "ร้านวัสดุดี"
+        },
+        "confidence": 0.93
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "แก้ไขร้านเป็นร้านสมใจวัสดุ และยอดเป็น 1,250 บาท",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 78,
+              "rawSha256": "f08e892428b9127574cd62ed340545b8ceb60db1ca967f63390bfef061506d38"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "E02",
+    "turn": 0,
+    "source": "edit-fx19/E02/trace.jsonl",
+    "messageText": "แก้ไขรายการที่ยืนยันแล้วได้ไหม",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.88,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "แก้ไขรายการค่าใช้จ่ายที่ยืนยันแล้วได้ไหม",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 30,
+              "rawSha256": "67c2553bdc09e443e216856febaa9da06b88062b8eabb1e2f4f3b7548a6f312d"
+            }
+          ]
+        }
+      ],
+      "selectedKnowledgeCardIds": [
+        "expense.draft",
+        "expense.status"
+      ]
+    }
+  },
+  {
+    "journey": "E02",
+    "turn": 1,
+    "source": "edit-fx19/E02/trace.jsonl",
+    "messageText": "บันทึกค่าน้ำมัน 900 บาท ปั๊มสยาม วันนี้ จ่ายเงินสดแล้ว ยืนยันเลย",
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.82,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "sourceDocumentLanguage": "th",
+        "vendorName": "ปั๊มสยาม",
+        "description": "ค่าน้ำมัน",
+        "expenseDate": "2026-10-16",
+        "amount": "900",
+        "expenseCategoryId": "category-a-fuel",
+        "items": [
+          {
+            "sourceText": "ค่าน้ำมัน 900 บาท",
+            "description": "ค่าน้ำมัน",
+            "quantity": "1",
+            "unitPrice": "900",
+            "totalAmount": "900",
+            "expenseCategoryId": "category-a-fuel",
+            "taxTreatment": "อาจมีหรือไม่มี VAT ขึ้นอยู่กับใบเสร็จจริง",
+            "accountingClass": "OPEX",
+            "itemBehavior": "NON_STOCK",
+            "confidence": 0.85,
+            "missingFields": []
+          }
+        ],
+        "vatMode": "NEEDS_REVIEW",
+        "confidence": 0.82,
+        "missingFields": []
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าน้ำมัน 900 บาท ปั๊มสยาม วันนี้ พร้อมยืนยัน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 64,
+              "rawSha256": "143e7efd4325388df266f8ae144d9d6405ce8a71fbbd49a8dcc0de1cd4af6a9d"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "E02",
+    "turn": 2,
+    "source": "edit-fx19/E02/trace.jsonl",
+    "messageText": "ช่วยแก้ยอดค่าน้ำมันเมื่อกี้เป็น 950 บาทหน่อย",
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_CAPTURE_CORRECTION",
+      "language": "th",
+      "confidence": 0.97,
+      "correctionHints": {
+        "targetExpenseId": "cmvaob2gx002k0vk1jvaxnmtq",
+        "amount": {
+          "to": "950",
+          "from": "900"
+        },
+        "confidence": 0.97
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "แก้ยอดค่าน้ำมันจาก 900 เป็น 950 บาท",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 44,
+              "rawSha256": "e0a4ccd6097a124db9124f3f7bd7c5fa1f7abbfd84a633bf46bd54e80e9e9f64"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "E04",
+    "turn": 0,
+    "source": "edit-fx19/E04/trace.jsonl",
+    "messageText": "ช่วยแก้ไขข้อมูลให้หน่อย",
+    "route": {
+      "status": "ROUTED",
+      "intent": "CLARIFY",
+      "language": "th",
+      "confidence": 0.45,
+      "clarifyQuestion": "ช่วยบอกด้วยนะคะ ว่าต้องการแก้ไขอะไรคะ — แก้ข้อมูลค่าใช้จ่ายที่บันทึกไว้ (เช่น ยอดเงิน วันที่ ชื่อร้าน) หรือแก้ข้อมูลอื่น เช่น ข้อมูลบริษัท หรือผู้ขาย?",
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "general",
+          "goal": "ระบุว่าต้องการแก้ไขข้อมูลประเภทใด",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 23,
+              "rawSha256": "9fd84e7ea191e357cdd05d45117c61de7943e3ad15e23058cfe91dcfc1bbf6e7"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "E04",
+    "turn": 1,
+    "source": "edit-fx19/E04/trace.jsonl",
+    "messageText": "ช่วยแก้ยอดค่าใช้จ่ายรายการล่าสุดของร้านเป็น 10 บาท",
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_CAPTURE_CORRECTION",
+      "language": "th",
+      "confidence": 0.72,
+      "correctionHints": {
+        "amount": {
+          "to": "10"
+        },
+        "confidence": 0.72,
+        "missingFields": [
+          "targetExpenseId"
+        ]
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "แก้ยอดค่าใช้จ่ายรายการล่าสุดเป็น 10 บาท",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 50,
+              "rawSha256": "f87d58c108a398142b080ba117c8033baa9f0f28a7ae4fe46bf1e07f67931e8b"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "E05",
+    "turn": 0,
+    "source": "edit-fx19/E05/trace.jsonl",
+    "messageText": "แก้ไขข้อมูลสาขาทำยังไง",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีแก้ไขข้อมูลสาขาในระบบ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 22,
+              "rawSha256": "d65ffc2a021d057456c5c3b3580cb751bcccbe845f9831571bee4a622dfcbcda"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "journey": "E05",
+    "turn": 1,
+    "source": "edit-fx19/E05/trace.jsonl",
+    "messageText": "ช่วยแก้ไขข้อมูลสาขา 2 ให้หน่อย เปลี่ยนชื่อเป็น สาขารามอินทรา ที่อยู่ 55 ถนนรามอินทรา แขวงคันนายาว เขตคันนายาว กรุงเทพฯ 10230",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.95,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "แก้ไขข้อมูลสาขา 2 เปลี่ยนชื่อเป็น สาขารามอินทรา และอัปเดตที่อยู่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 124,
+              "rawSha256": "fbe06901107a881b926a76568b85ce95e94da354bc9760ba44904719f9acb17d"
+            }
+          ]
+        }
+      ]
+    }
+  }
+]

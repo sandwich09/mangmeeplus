@@ -158,3 +158,11 @@ describe('draft update card layout', () => {
     }
   });
 });
+
+it('Fix-up 20B: finalized-candidate discovery never describes an extracting or voided record as confirmed', () => {
+  for (const detail of ['EXTRACTING', 'VOIDED']) {
+    const reply = formatDraftUpdateReply({ found: true, blocked: 'mutation_blocked', detail });
+    assert.ok(reply); assert.doesNotMatch(reply, /ยืนยันไปแล้ว|EXTRACTING|VOIDED/);
+    if (detail === 'VOIDED') assert.match(reply, /ยกเลิกแล้ว/);
+  }
+});

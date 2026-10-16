@@ -875,3 +875,21 @@ describe('reconcileExpenseVat', () => {
     assert.match(validateExpenseVatSourceInput({ inputType: 'RATE', vatRatePercent: '7' }, 'NO_VAT', [1]) ?? '', /cannot contain/);
   });
 });
+
+it('R11 T1: whole-document VAT rounding needs the complete base, single known rate and exact printed gross', () => {
+  const lines = Array.from({ length: 70 }, (_, index) => ({ lineNumber: index + 1, quantity: '1', unitPrice: '100.25', vatRate: '0.07' }));
+  const input = { vatMode: 'VAT_EXCLUDED' as const, lines, source: { inputType: 'BOTH' as const, vatRatePercent: '7', vatAmount: '491.23' },
+    sourceTaxableAmount: '7017.50', sourceGrossAmount: '7508.73' };
+  const result = reconcileExpenseVat(input);
+  assert.equal(result.snapshot.reconciliation.status, 'MATCHED');
+  assert.equal(result.snapshot.calculation.vatAmount, '491.4000');
+  assert.equal(result.totals.vatAmount, '491.2300'); assert.equal(result.totals.grandTotalAmount, '7508.7300');
+  assert.equal(result.lines.length, 70);
+  for (const defective of [
+    { ...input, sourceTaxableAmount: '7017.49' },
+    { ...input, sourceGrossAmount: '7508.74' },
+    { ...input, source: { ...input.source, vatAmount: '491.24' } },
+    { ...input, lines: lines.slice(1) },
+    { ...input, sourceTaxableAmount: undefined },
+  ]) assert.equal(reconcileExpenseVat(defective).snapshot.reconciliation.status, 'MISMATCH');
+});

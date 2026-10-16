@@ -6,6 +6,8 @@
  * chunk), which payload shapes are refused outright, and the value cross-check that drops a number
  * the window text never printed.
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException } from '@nestjs/common';
@@ -73,14 +75,16 @@ const extractRequest = (over: Partial<ExpenseCaptureExtractRequest> = {}): Expen
  */
 function stubBedrock(answers: {
   read?: string;
+  readRaw?: string;
   /** W10 D3: what the model puts in the stage-1 `partial` key when it could not read part of a page. */
   readPartial?: string | true;
   readStopReason?: string;
+  readOutputTokens?: number;
   extract?: string[];
   extractStopReason?: string;
 }) {
   const original = BedrockRuntimeClient.prototype.send;
-  const calls: Array<{ kind: 'read' | 'extract'; images: number; documents: number; systemPrompt: string; userText: string }> = [];
+  const calls: Array<{ kind: 'read' | 'extract'; images: number; documents: number; systemPrompt: string; userText: string; maxTokens: number }> = [];
   let extractIndex = 0;
   (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
     const content = command.input.messages.at(-1).content;
@@ -88,13 +92,13 @@ function stubBedrock(answers: {
     const documents = content.filter((block: any) => block.document).length;
     const kind = images > 0 || documents > 0 ? 'read' : 'extract';
     calls.push({
-      kind, images, documents, systemPrompt: command.input.system?.[0]?.text ?? '',
+      maxTokens: command.input.inferenceConfig.maxTokens, kind, images, documents, systemPrompt: command.input.system?.[0]?.text ?? '',
       userText: content.map((block: any) => block.text ?? '').join('\n'),
     });
     if (kind === 'read') {
       return {
-        usage: { inputTokens: 1_000, outputTokens: 200, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
-        output: { message: { content: [{ text: JSON.stringify({
+        usage: { inputTokens: 1_000, outputTokens: answers.readOutputTokens ?? 200, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
+        output: { message: { content: [{ text: answers.readRaw ?? JSON.stringify({
           natural_text: answers.read ?? '',
           ...(answers.readPartial !== undefined ? { [CAPTURE_PARTIAL_KEY]: answers.readPartial } : {}),
         }) }] } },
@@ -132,6 +136,19 @@ const observationsJson = (over: Record<string, unknown> = {}) => JSON.stringify(
   payments: [], refunds: [],
   completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [0], notes: [] },
   ...over,
+});
+
+it('OCR-C admits the benchmark formatted issuer IDs and address, never a changed digit or buyer ID', () => {
+  for (const [printed, digits] of [['0-1054-73325-38-5', '0105473325385'],
+    ['0-1054-53059-06-0', '0105453059060'], ['0-1059-37316-07-9', '0105937316079']]) {
+    const text = `[SELLER]\nบริษัท ออฟฟิศซัพพลายจำลอง จำกัด\n326/24 ถนนจำลอง\nเลขประจำตัวผู้เสียภาษีอากร ${printed}\n[/SELLER]\n[BUYER]\n0105912524204\n[/BUYER]`;
+    const parse = (taxId: string) => parseCaptureObservationsJson(observationsJson({ documents: [{ ref: 'd1', pageIndexes: [0],
+      issuer: { name: 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด', taxId, address: '326/24 ถนนจำลอง' }, classification: classification() }] }), text);
+    assert.equal(parse(digits!)!.documents[0]!.issuer.taxId, digits);
+    assert.equal(parse(digits!)!.documents[0]!.issuer.address, '326/24 ถนนจำลอง');
+    assert.equal(parse('0105912524204')!.documents[0]!.issuer.taxId, undefined);
+    assert.equal(parse('9999999999999')!.documents[0]!.issuer.taxId, undefined);
+  }
 });
 
 describe('capture read pages', () => {
@@ -178,13 +195,7 @@ describe('capture-read', () => {
     } finally { bedrock.restore(); }
   });
 
-  /**
-   * W10 D3. The 896-px Leceipt screenshot transcribed its item row and silently dropped the whole
-   * totals block (~8 px printing), answering `truncated: false` — so the job ended DONE with a line
-   * and no total. The contract now lets the reader SAY it skipped something, and the API treats that
-   * exactly like `max_tokens`.
-   */
-  it('reports a transcription the model declared incomplete as a truncated page', async () => {
+  it('retains a narrative partial reason without inventing a provider output limit', async () => {
     const bedrock = stubBedrock({
       read: '=== PAGE 1 ===\nITEM 7,000.00',
       readPartial: 'the totals block at the bottom is too small to read',
@@ -194,14 +205,14 @@ describe('capture-read', () => {
         chunk: { id: 'c1', kind: 'image', mimeType: 'image/jpeg', pageIndexes: [0], fileLabel: 'f', contentBase64: 'aW1n' },
       }));
       assert.equal(result.status, 'ok');
-      assert.deepEqual(result.pages?.map((page) => page.truncated), [true]);
+      assert.deepEqual(result.pages?.map((page) => page.truncated), [false]);
       assert.equal(result.pages?.[0]!.text, 'ITEM 7,000.00', 'what WAS read is still kept');
     } finally { bedrock.restore(); }
   });
 
   it('asks stage 1 for every printed line and offers the way to admit a partial read', () => {
     const prompt = captureReadPrompt('BASE', 1, 'image');
-    assert.ok(prompt.includes('including the summary and total block at the bottom'),
+    assert.ok(prompt.includes('Include the summary and total block at the bottom'),
       'the totals block is the thing that went missing');
     assert.ok(prompt.includes('even when it is printed much smaller than the item rows'));
     assert.ok(prompt.includes(`\`${CAPTURE_PARTIAL_KEY}\``), 'and the model is told how to say it could not');
@@ -651,4 +662,66 @@ describe('W07A local numeric evidence', () => {
     assert.deepEqual(pages.map(page => page.truncated), [true, false]);
     assert.equal(pages[0]?.text.length, 20000);
   });
+});
+
+
+it('Z2: recorded cut off; no totals block on an intermediate PDF page does not trigger a resplit loop', async () => {
+  const bedrock = stubBedrock({ read: '=== PAGE 1 ===\nPAGE 1 OF 2\nSERVICE 60.00\n=== PAGE 2 ===\nTOTAL 100.00',
+    readPartial: 'cut off; no totals block', readStopReason: 'end_turn', readOutputTokens: 2200 });
+  try {
+    const result = await controller().captureRead('secret', readRequest({ chunk: { ...readRequest().chunk, pageIndexes: [0, 1] } }));
+    assert.deepEqual(result.pages?.map(page => page.truncated), [false, false]);
+    assert.equal(result.pages?.[0]?.text, 'PAGE 1 OF 2\nSERVICE 60.00');
+    assert.equal(result.pages?.[1]?.text, 'TOTAL 100.00');
+    assert.equal(bedrock.calls.length, 1);
+    assert.match(bedrock.calls[0]!.systemPrompt, /only where printed/);
+  } finally { bedrock.restore(); }
+});
+
+it('Z2: genuinely incomplete JSON still marks the last available page truncated', async () => {
+  const bedrock = stubBedrock({ readRaw: '{"natural_text":"=== PAGE 1 ===\\nSERVICE 60.00', readStopReason: 'end_turn' });
+  try {
+    const result = await controller().captureRead('secret', readRequest({ chunk: { ...readRequest().chunk, pageIndexes: [0] } }));
+    assert.equal(result.pages?.[0]?.truncated, true);
+    assert.equal(parseCaptureNaturalText('{"natural_text":"unfinished', 100)?.truncated, true);
+    assert.equal(parseCaptureNaturalText(JSON.stringify({ natural_text: 'x'.repeat(101), partial: 'no totals' }), 100)?.truncated, true);
+  } finally { bedrock.restore(); }
+});
+
+it('Y3: a dense intermediate A4 page at the recorded ~2,200-token scale is complete without a printed total', async () => {
+  const text = '=== PAGE 1 ===\n' + Array.from({ length: 110 }, (_, index) => `Line ${index + 1} service description quantity 1 amount 10.00`).join('\n');
+  const bedrock = stubBedrock({ read: text, readOutputTokens: 2_200 });
+  try {
+    const result = await controller().captureRead('secret', readRequest({ chunk: { ...readRequest().chunk, pageIndexes: [0] } }));
+    assert.equal(result.status, 'ok'); assert.equal(result.pages?.[0]?.truncated, false);
+    assert.ok(result.pages?.[0]?.text.includes('Line 110'));
+    assert.equal(bedrock.calls[0].maxTokens, 8192, 'the recorded 2,200 tokens is below the actual call cap');
+    assert.match(bedrock.calls[0].systemPrompt, /complete intermediate page may have no totals/);
+    assert.match(bedrock.calls[0].systemPrompt, /Dense A4 pages must be transcribed in full/);
+    assert.doesNotMatch(bedrock.calls[0].systemPrompt, /A page whose totals you did not transcribe is not a read page/);
+  } finally { bedrock.restore(); }
+});
+
+it('R10 Q2: header window keeps the printed Buddhist date when the model omits documentDate', () => {
+  const fixture = JSON.parse(readFileSync(resolve(__dirname, '../../../../../../api/src/modules/expenses/domain/logic/fixtures/live-r10-pdf-excerpts.json'), 'utf8'));
+  const header = `บริษัท ตัวอย่าง จำกัด\nเลขที่ INV-26\n${fixture.twoPageHeader}\nสินค้า 100.00`;
+  const read = (text: string, documents?: any[]) => parseCaptureObservationsJson(observationsJson({
+    documents: documents ?? [{ ref: 'd1', pageIndexes: [0], issuer: { name: 'บริษัท ตัวอย่าง จำกัด' }, classification: classification() }],
+    items: [], components: [], totals: [],
+  }), text, '2026-10-16')!;
+  assert.equal(read(header).documents[0]!.documentDate, '2026-09-26');
+  assert.equal(read(header + '\nครบกำหนด 30/09/2569', [{ ref: 'd1', pageIndexes: [0], issuer: {}, documentDate: '2026-09-30', classification: classification() }]).documents[0]!.documentDate, '2026-09-26');
+  assert.equal(read('บริษัท ตัวอย่าง จำกัด\nรวมทั้งสิ้น 100.00').documents[0]!.documentDate, undefined);
+  assert.equal(read(header + '\nวันที่ 27/09/2569').documents[0]!.documentDate, undefined, 'conflicting header dates ask instead');
+});
+
+it('R10 Q3: the recorded signature-only page is a stored empty-facts window; unread invoices still fail closed', () => {
+  const fixture = JSON.parse(readFileSync(resolve(__dirname, '../../../../../../api/src/modules/expenses/domain/logic/fixtures/live-r10-pdf-excerpts.json'), 'utf8'));
+  const empty = { documents: [], items: [], components: [], totals: [], payments: [], refunds: [],
+    completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [2], notes: [] } };
+  const parsed = parseCaptureObservationsJson(JSON.stringify(empty), `=== PAGE 2 ===\n${fixture.signaturePage}`)!;
+  assert.ok(parsed); assert.deepEqual(parsed.documents, []); assert.deepEqual(parsed.completeness.pagesCovered, [2]);
+  for (const text of ['ใบเสร็จ สินค้า 100.00 ผู้รับเงิน', 'ผู้รับเงิน [unreadable]', fixture.signaturePage + '\nวันที่ 26/09/2569']) {
+    assert.equal(parseCaptureObservationsJson(JSON.stringify(empty), text), null, text);
+  }
 });

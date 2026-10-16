@@ -8,7 +8,7 @@
  * rounding or discount (spec §6 rule 9, §16.2).
  */
 import Decimal from 'decimal.js';
-import { EXPENSE_CAPTURE_OBSERVATION_LIMITS, expenseCaptureFieldRole } from '@watchdog-bms/contracts';
+import { EXPENSE_CAPTURE_OBSERVATION_LIMITS, expenseCaptureFieldRole, mapThaiDigits } from '@watchdog-bms/contracts';
 import type {
   ExpenseCaptureAssembledObservations,
   ExpenseCaptureComponentObservation,
@@ -58,6 +58,8 @@ const THAI_VAT_RATE = new Decimal('0.07');
 export type CaptureAssemblyWindow = {
   /** Window id, only used to keep document refs unique across windows. */
   id: string;
+  /** Physical pages sent by the runner; model page labels are not coverage evidence. */
+  pageIndexes: readonly number[];
   observations: ExpenseCaptureObservations;
 };
 
@@ -80,26 +82,39 @@ export function assembleCaptureObservations(
   windows: readonly CaptureAssemblyWindow[],
   context: { pageCount: number },
 ): ExpenseCaptureAssembledObservations {
+  // Checkpoints may be restored in a different insertion order; physical page order wins.
+  windows = [...windows].sort((left, right) =>
+    Math.min(...left.pageIndexes)
+      - Math.min(...right.pageIndexes)
+      || left.id.localeCompare(right.id, 'en', { numeric: true }));
   const documents: ExpenseCaptureDocumentObservation[] = [];
   /** `<windowId>|<ref>` → the canonical ref it merged into. */
   const canonical = new Map<string, string>();
   const byIdentity = new Map<string, string>();
+  const classifications = new Map<string, Array<{ value: ExpenseCaptureDocumentObservation['classification']; awaitingTotals: boolean }>>();
 
   for (const window of windows) {
-    for (const document of window.observations.documents ?? []) {
+    for (const source of window.observations.documents ?? []) {
+      const issuer = Object.fromEntries(Object.entries(source.issuer ?? {}).filter(([key, value]) =>
+        typeof value === 'string' && value.trim() && (key !== 'taxId' || validIssuerTaxId(value))));
+      const document = { ...source, pageIndexes: [...window.pageIndexes], issuer, ...(source.fieldEvidence ? { fieldEvidence: { ...source.fieldEvidence } } : {}) };
+      if (!issuer.taxId && document.fieldEvidence) delete document.fieldEvidence['issuer.taxId'];
       const identity = documentIdentity(document);
       const continued = document.continuationOfRef
         ? canonical.get(`${window.id}|${document.continuationOfRef}`)
           ?? [...canonical.entries()].find(([key]) => key.endsWith(`|${document.continuationOfRef}`))?.[1]
         : undefined;
       const existingRef = continued ?? (identity ? byIdentity.get(identity) : undefined);
+      const ref = existingRef ?? uniqueRef(documents, document.ref);
+      const values = classifications.get(ref) ?? [];
+      values.push({ value: document.classification, awaitingTotals: !window.observations.totals.some(total => total.documentRef === source.ref && total.kind === 'document_total') });
+      classifications.set(ref, values);
       if (existingRef) {
         canonical.set(`${window.id}|${document.ref}`, existingRef);
         mergeDocument(documents.find((row) => row.ref === existingRef)!, document);
         if (identity && !byIdentity.has(identity)) byIdentity.set(identity, existingRef);
         continue;
       }
-      const ref = uniqueRef(documents, document.ref);
       canonical.set(`${window.id}|${document.ref}`, ref);
       if (identity) byIdentity.set(identity, ref);
       const { continuationOfRef: _dropped, ...rest } = document;
@@ -116,7 +131,6 @@ export function assembleCaptureObservations(
   const refunds: ExpenseCaptureRefundObservation[] = [];
   const seenItems = new Set<string>();
   const seenComponents = new Set<string>();
-  const seenTotals = new Set<string>();
   const seenPayments = new Set<string>();
   const seenRefunds = new Set<string>();
   let itemsTruncated = false;
@@ -152,10 +166,11 @@ export function assembleCaptureObservations(
     for (const total of observations.totals ?? []) {
       const documentRef = resolve(window.id, total.documentRef);
       if (!documentRef) continue;
-      const key = `${documentRef}|${total.kind}|${total.amount}`;
-      if (seenTotals.has(key)) continue;
-      seenTotals.add(key);
-      totals.push({ ...total, documentRef });
+      // A later page's printed total replaces the same kind on an earlier page.
+      const existing = totals.findIndex(row => row.documentRef === documentRef && row.kind === total.kind);
+      const value = { ...total, documentRef };
+      if (existing < 0) totals.push(value);
+      else totals[existing] = value;
     }
     for (const payment of observations.payments ?? []) {
       const documentRef = resolve(window.id, payment.documentRef);
@@ -176,8 +191,22 @@ export function assembleCaptureObservations(
     const completeness = observations.completeness;
     if (completeness?.itemsTruncated) itemsTruncated = true;
     unreadableRows += completeness?.unreadableRows ?? 0;
-    for (const page of completeness?.pagesCovered ?? []) pagesCovered.add(page);
+    for (const page of window.pageIndexes) pagesCovered.add(page);
     for (const note of completeness?.notes ?? []) if (!notes.includes(note)) notes.push(note);
+  }
+
+  // A printed goods subtotal is already represented by its rows, never an extra charge.
+  for (let index = components.length - 1; index >= 0; index -= 1) {
+    const component = components[index]!;
+    if (component.role !== 'charge') continue;
+    const amount = money(component.amount);
+    if (!amount) continue;
+    const rows = items.filter(item => item.documentRef === component.documentRef && item.event === 'sale');
+    const rowAmounts = rows.map(item => money(item.amount));
+    const rowSum = rows.length && rowAmounts.every(value => value !== null)
+      ? rowAmounts.reduce<Decimal>((sum, value) => sum.plus(value!), new Decimal(0)) : null;
+    if (rowSum?.eq(amount) || totals.some(total => total.documentRef === component.documentRef
+      && total.kind === 'merchandise' && money(total.amount)?.eq(amount))) components.splice(index, 1);
   }
 
   // W10 D2: a printed VAT amount the model filed as a component and not as a total is still this
@@ -189,6 +218,32 @@ export function assembleCaptureObservations(
 
   const reconciliation = documents.map((document) =>
     reconcileDocument(document, items, components, totals, context.pageCount));
+  for (const document of documents) {
+    const readings = classifications.get(document.ref)!;
+    if (readings.length < 2) continue;
+    const reconciled = reconciliation.find(row => row.documentRef === document.ref)!;
+    const complete = !itemsTruncated && unreadableRows === 0 && !reconciled.suspectedMissingPages
+      && pagesCovered.size === context.pageCount && reconciled.status === 'reconciled';
+    const signals = (key: 'evidenceSignals' | 'amountSignals' | 'settlementSignals') =>
+      [...new Set(readings.flatMap(reading => reading.value[key]))];
+    const paid = readings.some(reading => reading.value.transactionState === 'PAID' && reading.value.settlementSignals.length > 0);
+    const missing = (reading: (typeof readings)[number]) => reading.value.missingRequiredSignals.filter(reason =>
+      !(complete && reading.awaitingTotals && ['HUMAN_REVIEW_REQUIRED', 'MISSING_TRANSACTION_TOTAL', 'MISSING_MONETARY_AMOUNT'].includes(reason))
+      && !(reason === 'MISSING_PAYMENT_EVIDENCE' && paid) && !(reason === 'MISSING_VENDOR' && document.issuer?.name));
+    const contradictions = [...new Set([...document.classification.contradictionSignals, ...readings.flatMap(reading => reading.value.contradictionSignals)])];
+    document.classification = {
+      ...document.classification,
+      documentKind: document.kind, documentFamily: document.family,
+      evidenceSignals: signals('evidenceSignals'),
+      amountSignals: [...new Set([...signals('amountSignals'), ...totals.filter(total => total.documentRef === document.ref).map(total => total.evidenceSpan)])],
+      settlementSignals: signals('settlementSignals'),
+      transactionState: paid ? 'PAID' : document.classification.transactionState,
+      missingRequiredSignals: [...new Set(readings.flatMap(missing))],
+      contradictionSignals: contradictions,
+      requiresClarification: contradictions.length > 0 || readings.some(reading => reading.value.requiresClarification
+        && (reading.value.missingRequiredSignals.length === 0 || missing(reading).length > 0)),
+    };
+  }
   const issuers = new Set(documents.map((document) => (document.issuer?.name ?? '').trim()).filter(Boolean));
 
   return {
@@ -262,11 +317,33 @@ function documentIdentity(document: ExpenseCaptureDocumentObservation): string |
   return issuer && number ? `${issuer}|${number}` : null;
 }
 
+function validIssuerTaxId(value: string | undefined): string | undefined {
+  const digits = mapThaiDigits(value ?? '').replace(/[-\s]/g, '');
+  return /^\d{13}$/.test(digits) ? digits : undefined;
+}
+
 /** A later page may print facts the header page did not; it never overwrites one that is set. */
 function mergeDocument(
   into: ExpenseCaptureDocumentObservation,
   from: ExpenseCaptureDocumentObservation,
 ): void {
+  const oldId = validIssuerTaxId(into.issuer?.taxId);
+  const nextId = validIssuerTaxId(from.issuer?.taxId);
+  const conflictingIssuer = Boolean(oldId && nextId && oldId !== nextId);
+  if (conflictingIssuer) into.classification = {
+    ...into.classification, requiresClarification: true,
+    contradictionSignals: [...new Set([...into.classification.contradictionSignals, 'CONTRADICTORY_SIGNALS' as const])],
+  };
+  // Copy only missing fields from a compatible issuer; its locator must follow the chosen value.
+  const issuer = { ...into.issuer };
+  const issuerEvidence = { ...into.fieldEvidence };
+  if (!conflictingIssuer) for (const [key, value] of Object.entries(from.issuer ?? {})) {
+    if (issuer[key as keyof typeof issuer] || !value?.trim()) continue;
+    issuer[key as keyof typeof issuer] = value;
+    const path = `issuer.${key}`;
+    delete issuerEvidence[path];
+    if (from.fieldEvidence?.[path]) issuerEvidence[path] = from.fieldEvidence[path];
+  }
   const printedEvidence = new Map([
     ...(from.printedPage?.number !== undefined ? [[from.printedPage.number, from.fieldEvidence?.['printedPage.number']] as const] : []),
     ...(into.printedPage?.number !== undefined ? [[into.printedPage.number, into.fieldEvidence?.['printedPage.number']] as const] : []),
@@ -274,13 +351,15 @@ function mergeDocument(
     ...(into.printedPages ?? []).map((value, index) => [value, into.fieldEvidence?.[`printedPages.${index}`]] as const),
   ]);
   if (from.fieldEvidence || into.fieldEvidence) into.fieldEvidence = { ...from.fieldEvidence, ...into.fieldEvidence };
+  for (const key of Object.keys(into.fieldEvidence ?? {})) if (key.startsWith('issuer.')) delete into.fieldEvidence![key];
+  for (const [key, evidence] of Object.entries(issuerEvidence)) if (key.startsWith('issuer.')) (into.fieldEvidence ??= {})[key] = evidence;
   into.pageIndexes = [...new Set([...into.pageIndexes, ...from.pageIndexes])].sort((a, b) => a - b);
   into.documentNumber ??= from.documentNumber;
   into.documentDate ??= from.documentDate;
   into.currency ??= from.currency;
   into.buyer ??= from.buyer;
   into.categorySuggestion ??= from.categorySuggestion;
-  if (from.issuer) into.issuer = { ...from.issuer, ...into.issuer };
+  into.issuer = issuer;
   // The printed "page n of m" of ANY page proves how many pages the document claims to have.
   if (from.printedPage?.of !== undefined && (into.printedPage?.of ?? 0) < from.printedPage.of) {
     into.printedPage = { ...into.printedPage, of: from.printedPage.of };
@@ -388,6 +467,13 @@ function reconcileDocument(
 
   const decision = { ...base, ...(alreadyNet ? { discountAlreadyInRows: true } : {}) };
   if (!documentTotal) return { ...decision, computedTotal: sum.toString() };
+  const tax = money(ownTotals.find((total) => total.kind === 'tax')?.amount);
+  // Printed VAT can explain exclusive rows; inclusive rows must never pay it twice.
+  if (tax?.greaterThan(0) && sum.minus(documentTotal).abs().greaterThan(EXPENSE_CAPTURE_RECONCILIATION_TOLERANCE)
+    && (ownComponents.some((component) => component.role === 'tax_additional')
+      || sum.plus(tax).minus(documentTotal).abs().lessThanOrEqualTo(EXPENSE_CAPTURE_RECONCILIATION_TOLERANCE))) {
+    sum = sum.plus(tax);
+  }
   const difference = sum.minus(documentTotal);
   return {
     ...decision,
@@ -451,7 +537,7 @@ function hasMissingPages(document: ExpenseCaptureDocumentObservation, pageCount:
 }
 
 /**
- * Consecutive read pages grouped into windows inside the declared 12,000-character ceiling (§4.3).
+ * One page per extraction window inside the declared 12,000-character ceiling (§4.3).
  * Whole pages stay together when possible. Long pages split at line boundaries without losing
  * their tail; an oversized single line stays whole for the Gateway's explicit size refusal.
  */
@@ -463,7 +549,6 @@ export function planWindows(
     .filter((page) => Number.isSafeInteger(page.pageIndex) && page.text.trim().length > 0)
     .sort((left, right) => left.pageIndex - right.pageIndex);
   const windows: Array<{ id: string; pageIndexes: number[]; pages: ExpenseCaptureExtractWindow['pages'] }> = [];
-  let current: { id: string; pageIndexes: number[]; pages: ExpenseCaptureExtractWindow['pages']; chars: number } | null = null;
   const chunks = ordered.flatMap(page => {
     const chunks: ExpenseCaptureExtractWindow['pages'] = [];
     const limit = EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars;
@@ -480,17 +565,8 @@ export function planWindows(
     return chunks;
   });
   for (const page of chunks) {
-    const text = page.text;
-    if (current && (current.chars + text.length > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars || current.pageIndexes.includes(page.pageIndex))) {
-      windows.push({ id: current.id, pageIndexes: current.pageIndexes, pages: current.pages });
-      current = null;
-    }
-    if (!current) current = { id: `w${windows.length + 1}`, pageIndexes: [], pages: [], chars: 0 };
-    current.pageIndexes.push(page.pageIndex);
-    current.pages.push(page);
-    current.chars += text.length;
+    windows.push({ id: `w${windows.length + 1}`, pageIndexes: [page.pageIndex], pages: [page] });
   }
-  if (current) windows.push({ id: current.id, pageIndexes: current.pageIndexes, pages: current.pages });
   return windows;
 }
 

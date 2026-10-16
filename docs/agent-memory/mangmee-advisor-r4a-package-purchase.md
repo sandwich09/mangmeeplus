@@ -1,0 +1,27 @@
+# Agent Memory: mangmee-advisor-r4a-package-purchase
+
+Status: implemented and locally verified, 2026-10-15; inherited regression failures recorded below; diff uncommitted.
+Owner: Round 4 lane A.
+Scope: explicit private LINE package purchase → catalog selection → signed confirmation → existing web Checkout.
+Decisions:
+- Web uses POST /companies/:id/billing/quote and /checkout, BillingService.quote/checkout; resume uses /attempts/:id/resume. BillingService.assertOwner rechecks active user/membership/role with company.plan.manage. Custom roles remain valid; owner/admin wording explains the ordinary buyer.
+- Purchase-without-setup spec §18.2 R-A1/R-A2/R-A6 and its memory supersede the old address/email gate. Quote derives company profile and recipient; Checkout collects missing address/email. No LINE profile form.
+- Web defaults interval to the current interval or month, mode to CARD_AUTO if available then the first available mode. LINE asks card/PromptPay only when both families are available; explicit once/renew instructions select that mode, with renewal consent visible on the card.
+- Catalog availability is authoritative, including ENTERPRISE price binding. Never silently substitute the nearest available offer; offer it for a new explicit selection.
+- The generic package-change command now enters the same purchase conversation; other support/callback/help behavior remains. Explicit purchases never open a manual package-change request. Existing attempt is resumed, never duplicated; quote/checkout own all holds/source/capacity/end rules. Multi-company selection includes eligible locked shops and never silently switches company.
+- Reuse LineDraftPreviewStore in its own namespace, HMAC actor/company/membership/chat/conversation epoch/quote/expiry binding, atomic claim, billing idempotency, private signed ingress and durable delivery controls. Gateway final-mutation policy stays unchanged; no new flags/dependencies/package.json edits.
+Open questions: no product ambiguity. Provider/LINE/browser/database integration cannot run in the offline sandbox. Capacity selections and authoritative billing holds are explained without bypassing them. Ten inherited intake regressions remain, reproduced with HEAD process-line-webhook source.
+Artifacts: docs/plans/mangmee-advisor-full-capability-plan-th.md; line-package-purchase.service.ts; W00 manifest JSON; /private/tmp/round-4-lane-a-last-message.md.
+Verification:
+- pnpm --filter @watchdog-bms/contracts build — PASS; /private/tmp/r4-contracts.log.
+- pnpm --filter @watchdog-bms/api typecheck — PASS (package script); /private/tmp/r4-api-typecheck.log.
+- pnpm --filter @watchdog-bms/ai-gateway typecheck — PASS; /private/tmp/r4-gateway-typecheck.log.
+- Focused registered security + webhook specs: pnpm --filter @watchdog-bms/api exec node --import tsx --test src/modules/expenses/application/use-cases/line-draft-update.security.spec.ts src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts — 515 PASS, 0 FAIL; /private/tmp/r4-focused.log.
+- All registered API specs importing changed source/test files, plus the registered signup/package-change spec (12 files total): 1,294 tests, 1,284 PASS, 10 FAIL, 0 SKIP. Exact commands/list: /private/tmp/r4-checks.sh and /private/tmp/r4-registered-tests.txt; log /private/tmp/r4-api-tests.log.
+- The same 10 failures reproduce with HEAD process-line-webhook source: line-intake-dispatch.use-case.spec.ts, 351 PASS / 10 FAIL; /private/tmp/r4-baseline-intake.log. Failure names match exactly: receipt progress “does not widen correction permissions…” and 9 stored clarification provenance cases (missing, corrupt, oversized, wording, intent, ordered_ids, amount, access, channel). Baseline source was restored in a finally block; unrelated code was left untouched.
+- UPDATE_LINE_AI_CAPABILITY_MANIFEST=1 pnpm --filter @watchdog-bms/api exec node --import tsx --test src/modules/line-ai/line-ai-capability-manifest.spec.ts — 5 PASS; frozen snapshot regenerated after final code. git diff --check — PASS.
+Integration evidence:
+- Existing registered line-draft-update.security.spec.ts: 12 Round 4 cases cover current catalog/name/price resolution, unsellable and later-bound ENTERPRISE, nearest available offer without substitution, minimal questions, current/year/month interval, modes, real BillingService.assertOwner custom-role/revocation, exact ctx/quote/consent/idempotency passed to Checkout, URI and provider expiry, open-attempt resume/held explanation, quote/checkout holds, actor/company/membership/chat/epoch/quote/expiry/signature/replacement/cancel refusal, concurrent confirms/replay, promotion defaults/quoted totals and durable confirm/payment fallback.
+- Existing webhook/controller/buffer/recovery specs: 6 new Round 4 cases prove signature-verified control ingress, strict orphan parsing, buffered control preservation, private-only/recipient restrictions, multi-company and locked-company resolution, legal acceptance and delivered-card gating.
+- BillingCheckoutResult now optionally exposes Stripe expires_at via the same checkout/resume calls; absent/invalid expiry stays absent. No guessed link expiry. Quote derives recipient/profile; Checkout asks for missing details per purchase-without-setup.
+Next: review/integrate the diff; investigate inherited intake failures separately and perform real LINE/provider/browser validation in a suitable environment. No commit/deploy/package.json/flag/policy changes.

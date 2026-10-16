@@ -327,3 +327,40 @@ test('W4 only a payment recorder in branch scope confirms a real date, with an a
   assert.equal(writes.length, 1); assert.equal(writes[0].paidAt, '2026-10-01');
   assert.equal(audits[0].action, 'expense.payment_date_confirmed');
 });
+
+import { LinkAttachmentUseCase } from '../../../data-model-core/application/use-cases/link-attachment.use-case';
+
+describe('Round 3 LINE expense payment evidence transaction', () => {
+  it('links the existing active upload through LinkAttachmentUseCase using the same transaction and user context; rolls back a refused link', async () => {
+    let allowed = true, committed = 0; const links: any[] = [], audits: any[] = [];
+    const actor = { ...ctx(), authProvider: 'line', permissions: ['expense.payment.record', 'attachment.create'], scopes: { branchIds: ['branch-1'] } };
+    const tx: any = { attachmentLink: { findFirst: async () => null }, outboxEvent: { create: async () => {} } };
+    const attachments: any = { findById: async (_input: any, transaction: any) => { assert.equal(transaction, tx); return { status: allowed ? 'ACTIVE' : 'DELETED' }; },
+      linkToTarget: async (input: any, transaction: any) => { assert.equal(transaction, tx); links.push(input); return { id: 'link-1' }; } };
+    const audit: any = { log: async (entry: any) => audits.push(entry) };
+    const link = new LinkAttachmentUseCase(attachments, audit);
+    const repo: any = { findById: async () => ({ branchId: 'branch-1', updatedAt: new Date(0) }),
+      recordPaymentAtomic: async (input: any, effects: any) => {
+        assert.equal(input.expectedUpdatedAt.getTime(), 0); assert.equal(input.actorUserId, actor.userId); assert.deepEqual(input.scopes, actor.scopes);
+        const result = { expense: { id: 'exp-1', paidAmount: '10.00', paymentStatus: 'PAID' }, payment: { id: 'pay-1', amount: '10.00' } };
+        await effects(tx, result); committed += 1; return result;
+      } };
+    const useCase = new RecordExpensePaymentUseCase(repo, audit, link);
+    const input = { paidAmount: '10.00', paidAt: '2026-10-14', idempotencyKey: 'line-card-1' };
+    await useCase.execute(actor, 'exp-1', input, { expectedUpdatedAt: new Date(0), evidenceAttachmentId: 'chat-slip', beforeEvidence: async transaction => assert.equal(transaction, tx) });
+    assert.equal(committed, 1); assert.equal(links.length, 1); assert.equal(links[0].purpose, 'expense.payment.evidence'); assert.equal(links[0].linkedByUserId, actor.userId);
+    allowed = false;
+    await assert.rejects(() => useCase.execute(actor, 'exp-1', input, { expectedUpdatedAt: new Date(0), evidenceAttachmentId: 'chat-slip' }), /ACTIVE/);
+    assert.equal(committed, 1); assert.equal(links.length, 1);
+  });
+  it('preview uses the same input/outstanding validators and preserves branch/source/status/permission guards', async () => {
+    const row: any = { id: 'exp-1', branchId: 'branch-1', status: 'CONFIRMED', netPayableAmount: '100.00', paidAmount: '25.00' };
+    const uc = new RecordExpensePaymentUseCase({ findById: async () => row } as any, noopAudit);
+    assert.equal(await uc.previewLineAction(ctx(), row.id, { paidAmount: '75.00' }), row);
+    for (const input of [{ paidAmount: '76.00' }, { paidAmount: '0' }, { paidAmount: 'oops' }, { paidAmount: '1', paymentMethod: 'invalid' }, { paidAmount: '1', paidAt: '2026-02-30' }]) await assert.rejects(() => uc.previewLineAction(ctx(), row.id, input as any), BadRequestException);
+    await assert.rejects(() => uc.previewLineAction({ ...ctx(), permissions: [] }, row.id, { paidAmount: '1' }), ForbiddenException);
+    await assert.rejects(() => uc.previewLineAction({ ...ctx(), scopes: { branchIds: ['other'] } }, row.id, { paidAmount: '1' }), ForbiddenException);
+    row.status = 'DRAFT'; await assert.rejects(() => uc.previewLineAction(ctx(), row.id, { paidAmount: '1' }), BadRequestException);
+    row.status = 'CONFIRMED'; row.sourceReimbursementRequestId = 'claim-1'; await assert.rejects(() => uc.previewLineAction(ctx(), row.id, { paidAmount: '1' }), /reimbursement/i);
+  });
+});

@@ -1258,3 +1258,76 @@ describe('AiGatewayClient v2 transport', () => {
     } finally { globalThis.fetch = original; }
   });
 });
+
+
+describe('SHARED LINE failed-call accounting', () => {
+  it('absorbs timeouts while retaining every provider call, including calls sharing a request identity', async () => {
+    const events: any[] = [];
+    let aggregateWrites = 0;
+    const modelId = SPLIT_FIXTURE_MODEL_ID;
+    const tx = {
+      aiUsageEvent: { createMany: async ({ data }: any) => {
+        events.push(...data);
+        return { count: data.length };
+      } },
+      companyAiMonthlyUsage: { upsert: async () => { aggregateWrites += 1; return { costSatang: 0 }; } },
+    };
+    const prisma = { client: {
+      companyAiConfiguration: { findUnique: async () => ({ modelId, budgetMode: 'SHARED', monthlyBudgetSatang: 100_000 }) },
+      companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+      companyAiMonthlyBucketUsage: { findUnique: async () => null },
+      $transaction: async (fn: any) => fn(tx),
+    } } as any;
+    const config = { aiGatewayInternalUrl: 'http://gateway.test/v1', aiGatewayInternalSecret: 'secret',
+      approvedAiModelIds: [modelId], aiMonthlyBudgetSatang: 100_000, aiThbPerUsd: 33 } as any;
+    const client = new AiGatewayClient(config, { issue: () => 'signed' } as any, undefined, prisma);
+    const request = { requestId: 'transport-1', companyId: 'shared-nocharge', userId: 'user-1',
+      attachment: { id: 'image-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'aGVsbG8=' } } as const;
+    const result = { status: 'failed', errorCode: 'PROVIDER_TIMEOUT', usage: [{ tag: 'ocr.receipt.image-read', modelId, ok: false,
+      inputTokens: 1200, outputTokens: 100, cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+      durationMs: 1, usageBasis: 'CONSERVATIVE_ESTIMATE' }] };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify(result), { status: 200 });
+    try {
+      assert.deepEqual(await client.requestReceiptOcr(request, { ocrAlreadyAdmitted: true, retryWebhookEventId: 'event-1' }), result);
+      await client.requestReceiptOcr(request, { ocrAlreadyAdmitted: true, retryWebhookEventId: 'event-1' });
+      assert.equal(events.length, 2);
+      assert.ok(events.every(event => event.invocationKey === undefined));
+      assert.equal(events[0].usageBasis, 'COMPANY_ABSORBED');
+      assert.ok(events[0].costSatang > 0);
+      assert.equal(aggregateWrites, 0);
+      await client.requestReceiptOcr({ ...request, requestId: 'real-retry' }, { ocrAlreadyAdmitted: true, retryWebhookEventId: 'event-2' });
+      assert.equal(events.length, 3);
+      await client.requestReceiptOcr({ ...request, attachment: { ...request.attachment, id: 'image-2' } },
+        { ocrAlreadyAdmitted: true, retryWebhookEventId: 'event-1' });
+      assert.equal(events.length, 4, 'different attachments in one event are also retained');
+    } finally { globalThis.fetch = originalFetch; }
+  });
+});
+
+it('gives signed image intake enough time for a page and one timeout retry', async () => {
+  const { LineAiBudgetAuthorityService } = await import('../application/line-ai-budget-authority.service');
+  const { aiGatewayClientTimeoutMs, AI_BUDGET_PROFILES_V2 } = await import('@watchdog-bms/contracts');
+  const model = { provider: 'bedrock' as const, modelId: 'fixture-model', region: 'ap-southeast-1' };
+  const owner = { kind: 'PRIVATE' as const, epoch: 1, owner: { companyId: 'co', userId: 'user', membershipId: 'member',
+    messagingChannelId: 'channel', chatKeyHash: 'chat', channelKind: 'USER' as const, channel: 'line' as const } };
+  const tx = { $executeRaw: async () => 1,
+    lineWebhookEventLog: { findUnique: async () => ({ id: 'event', companyId: 'co', status: 'processing', budgetAuthorityRevision: 0 }), updateMany: async () => ({ count: 1 }) },
+    companyMembership: { findFirst: async () => ({ id: 'member' }) },
+    aiConversation: { findFirst: async () => ({ id: 'conversation' }) },
+  };
+  const service = new LineAiBudgetAuthorityService({ client: { $transaction: async (fn: any) => fn(tx) } } as any,
+    { approvedAiModelIds: ['fixture-model'], aiGatewayInternalSecret: 'fixture', lineMessagingChannelId: 'channel' } as any);
+  const now = new Date();
+  for (const requestKind of ['TEXT', 'IMAGE'] as const) {
+    const grant = await service.issue({ authorityKind: 'webhook_event', authorityId: 'event', owner, turnKey: 'turn', attemptKey: 'attempt',
+      inputDigest: 'a'.repeat(64), requestKind, admittedAtMs: now.getTime(), coalescingExtraMs: 0, lane: 'public', model,
+      modelContextTokens: 200000, modelMaxOutputTokens: 8192,
+      tariff: { version: 'fixture:1', ...model, thbPerUsd: 35, usdPerMTok: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 } },
+      allowedProfileIds: [requestKind === 'IMAGE' ? 'line-intake-image/2' : 'line-intake-text/2'] }, now);
+    assert.ok(grant);
+    assert.equal(grant.finalDeadlineAtMs - now.getTime(), requestKind === 'IMAGE' ? aiGatewayClientTimeoutMs(2) : 40000);
+    if (requestKind === 'IMAGE') assert.ok(grant.workDeadlineAtMs - now.getTime() > 2 * 90000);
+  }
+  assert.equal(AI_BUDGET_PROFILES_V2['line-intake-image/2'].maxCalls, 2);
+});

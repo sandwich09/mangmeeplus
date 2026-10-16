@@ -1,13 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import type { CallHandler, ExecutionContext } from '@nestjs/common';
 import { defer, firstValueFrom } from 'rxjs';
 import { AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey } from '@watchdog-bms/contracts';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
-import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson, parseUtilityDocuments, receiptRereadImage, receiptItemsMismatch, validateIntakeOnePassReceipt } from './line-ai-internal.controller';
+import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson, parseUtilityDocuments, receiptRereadImage, receiptItemsMismatch, shouldRereadReceiptImage, validateIntakeOnePassReceipt } from './line-ai-internal.controller';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
-import type { BusinessDocumentClassification, LineAiTurnRequest } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, LineAiTurnRequest, ReceiptOcrFieldResult } from '@watchdog-bms/contracts';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
 
 const linkedUserReq: LineAiTurnRequest = {
@@ -150,8 +152,8 @@ describe('LineAiInternalController', () => {
       attachment: { id: 'att-1', mimeType: 'application/pdf', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
     });
 
-    assert.equal(result.status, 'not_configured');
-    assert.equal(result.errorCode, 'PDF_PROVIDER_UNSUPPORTED');
+    assert.equal(result.status, 'failed');
+    assert.equal(result.errorCode, 'PDF_CAPTURE_REQUIRED');
   });
 
   it('receipt OCR keeps PDFs on the Bedrock document channel', async () => {
@@ -182,8 +184,8 @@ describe('LineAiInternalController', () => {
 
       // Only Bedrock has a document channel; anything else must fail typed, not silently
       // send the PDF to any image-only third-party OCR endpoint.
-      assert.equal(result.status, 'not_configured');
-      assert.equal(result.errorCode, 'PDF_PROVIDER_UNSUPPORTED');
+      assert.equal(result.status, 'failed');
+      assert.equal(result.errorCode, 'PDF_CAPTURE_REQUIRED');
       assert.equal(thirdPartyOcrCalled, false, 'no third-party OCR vendor is called any more');
     } finally {
       globalThis.fetch = originalFetch;
@@ -295,7 +297,7 @@ describe('LineAiInternalController', () => {
 
   // UAT 2026-08-14: a two-item bill returned one line. The item block now travels as `lines`, and
   // like every other extracted number each row's money must appear in the stage-1 OCR text.
-  it('receipt OCR returns one entry per printed item row and drops the block when a row amount is unprinted', async () => {
+  it('receipt OCR keeps printed sibling rows and flags an unprinted row amount', async () => {
     const originalFetch = globalThis.fetch;
     const runOcr = async (rows: unknown[]) => {
       globalThis.fetch = (async (url: any, init: any) => {
@@ -345,7 +347,8 @@ describe('LineAiInternalController', () => {
         { description: 'พิซซ่า', quantity: '1', amount: '524.00', evidenceSignal: 'พิซซ่า 1 524.00' },
         { description: 'ปีกไก่', quantity: '2', amount: '299.00', evidenceSignal: 'ปีกไก่ 2 298.00' },
       ]);
-      assert.equal(invented.fields?.lines, undefined, '299.00 appears nowhere in the OCR text');
+      assert.deepEqual(invented.fields?.lines?.map((line) => line.amount), ['524.00']);
+      assert.ok(invented.fields?.missingFields?.includes('lines'), '299.00 appears nowhere in the OCR text');
       assert.equal(invented.fields?.grandTotalAmount, '822.00', 'the printed total still survives');
 
       const single = await runOcr([
@@ -1365,7 +1368,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       const content = command.input.messages.at(-1).content;
       const isRead = content.some((block: any) => block.image);
       calls.push(isRead ? 'read' : 'extract');
-      if (isRead) {
+      if (isRead && readCount === 0) {
         readCount += 1;
         const text = readCount === 1 ? firstReadText : rereadText;
         return { stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify({ natural_text: text }) }] } } };
@@ -1378,7 +1381,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
         return { stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify({ utilityDocuments: options.utilityFallbackParts }) }] } } };
       }
       const rereadMarker = options.rereadMarker ?? options.rereadVatAmount ?? 'Total Amount 180.00';
-      const sawRereadText = JSON.stringify(content).includes(rereadMarker);
+      const sawRereadText = isRead || JSON.stringify(content).includes(rereadMarker);
       const total = sawRereadText ? secondTotal : firstTotal;
       const fields = {
         vendorName: 'Starbucks Coffee',
@@ -1396,6 +1399,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
           message: {
             content: [{
               text: JSON.stringify({
+                ...(isRead ? { natural_text: rereadText } : {}),
                 classification: classification(total, sawRereadText ? false : (options.firstRequiresClarification ?? true), options.contentKind),
                 fields,
                 ...(options.utilityDocuments ? { utilityDocuments: options.utilityDocuments } : {}),
@@ -1415,7 +1419,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     attachment: { id: 'att-1', mimeType: 'image/jpeg' as const, purpose: 'receipt' as const, contentBase64: 'ZmFrZQ==' },
   };
 
-  it('recovers the printed total from one Bedrock vision re-read', async () => {
+  it('keeps a total requiring clarification without another image pass', async () => {
     const restoreFetch = stubTyphoon();
     const bedrock = stubBedrock();
     try {
@@ -1430,17 +1434,17 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       const result = await controller.receiptOcr('secret', request);
 
       assert.equal(result.status, 'ok');
-      assert.equal(result.fields?.grandTotalAmount, '180.00');
-      assert.equal(result.classification?.requiresClarification, false);
-      assert.deepEqual(result.fallbackReasons, ['TOTAL_MISSING']);
-      assert.deepEqual(bedrock.calls, ['read', 'extract', 'read', 'extract'], 'one vision read, then exactly one re-read');
+      assert.equal(result.fields?.grandTotalAmount, '160.00');
+      assert.equal(result.classification?.requiresClarification, true);
+      assert.equal(result.fallbackReasons, undefined);
+      assert.deepEqual(bedrock.calls, ['read', 'extract']);
     } finally {
       bedrock.restore();
       restoreFetch();
     }
   });
 
-  it('recovers one printed VAT amount only when the re-read confirms the same total', async () => {
+  it('leaves an unprinted VAT amount unknown without another image pass', async () => {
     const firstText = '# Royal Pizza\nTotal 2890.00\nVAT 7% (รวม)\nPayment 2890.00';
     const rereadText = '# Royal Pizza\nTotal 2890.00\nVAT 7% (รวม) 189.07\nPayment 2890.00';
     const restoreFetch = stubTyphoon();
@@ -1464,10 +1468,10 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       const result = await controller.receiptOcr('secret', request);
 
       assert.equal(result.fields?.grandTotalAmount, '2890.00', 'retain the first cross-checked display value');
-      assert.equal(result.fields?.vatAmount, '189.07');
-      assert.ok(!result.fields?.missingFields?.includes('vatAmount'));
-      assert.deepEqual(result.fallbackReasons, ['VAT_MISSING']);
-      assert.deepEqual(bedrock.calls, ['read', 'extract', 'read', 'extract'], 'one bounded re-read after the stage-1 read');
+      assert.equal(result.fields?.vatAmount, undefined);
+      assert.ok(result.fields?.missingFields?.includes('vatAmount'));
+      assert.equal(result.fallbackReasons, undefined);
+      assert.deepEqual(bedrock.calls, ['read', 'extract']);
     } finally {
       bedrock.restore();
       restoreFetch();
@@ -1475,11 +1479,11 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
   });
 
   it('records item mismatch before the bounded image re-read', async () => {
-    const text = '# Starbucks Coffee\nLatte 1 40.00\nCake 1 25.00\nTotal 65.00\nPayment 65.00';
-    const rereadText = `${text}\nImage re-read`;
+    const text = '# Starbucks Coffee\nLatte 1 40.00\nCake 1 20.00\nTotal 65.00\nPayment 65.00';
+    const rereadText = `${text.replace('Cake 1 20.00', 'Cake 1 25.00')}\nImage re-read`;
     const firstLines = [
       { description: 'Latte', quantity: '1', amount: '40.00', evidenceSignal: 'Latte 1 40.00' },
-      { description: 'Cake', quantity: '1', amount: '20.00', evidenceSignal: 'Cake 1 25.00' },
+      { description: 'Cake', quantity: '1', amount: '20.00', evidenceSignal: 'Cake 1 20.00' },
     ];
     const secondLines = [
       firstLines[0]!,
@@ -1503,7 +1507,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
 
       assert.equal(result.fields?.lines?.[1]?.amount, '25.00');
       assert.deepEqual(result.fallbackReasons, ['ITEMS_INCOMPLETE']);
-      assert.deepEqual(bedrock.calls, ['read', 'extract', 'read', 'extract']);
+      assert.deepEqual(bedrock.calls, ['read', 'extract', 'read']);
     } finally {
       bedrock.restore();
       restoreFetch();
@@ -1727,11 +1731,13 @@ describe('intake route timeout budget', () => {
   /** Never answers; only the provider's own abort ends the call — so the wall clock IS the budget. */
   function hangUntilAborted() {
     const original = BedrockRuntimeClient.prototype.send;
+    let calls = 0;
     (BedrockRuntimeClient.prototype as any).send = (_command: any, options: any) =>
       new Promise((_resolve, reject) => {
+        calls++;
         options.abortSignal.addEventListener('abort', () => reject(new Error('aborted')));
       });
-    return () => { (BedrockRuntimeClient.prototype as any).send = original; };
+    return Object.assign(() => { (BedrockRuntimeClient.prototype as any).send = original; }, { calls: () => calls });
   }
 
   async function settle() {
@@ -1749,11 +1755,15 @@ describe('intake route timeout budget', () => {
         attachments: [{ id: 'att-fuel', mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'ZmFrZQ==' }],
       } as any).then((plan) => { settled = true; return plan; });
 
+      while (restore.calls() < 1) await new Promise<void>(resolve => setImmediate(resolve));
       t.mock.timers.tick(15_100);
       await settle();
       assert.equal(settled, false, 'the old 15s chat budget must no longer abort a photo intake');
 
       t.mock.timers.tick(30_000);
+      await settle();
+      while (restore.calls() < 2) await new Promise<void>(resolve => setImmediate(resolve));
+      t.mock.timers.tick(45_100);
       await settle();
       const plan = await pending;
       assert.equal(plan.status, 'UNAVAILABLE', 'the document budget still bounds it — it does not hang forever');
@@ -1772,6 +1782,7 @@ describe('intake route timeout budget', () => {
       const pending = controller.lineIntakeRoute('secret', { ...baseBody, messageText: 'ยอดขายวันนี้' } as any)
         .then((plan) => { settled = true; return plan; });
 
+      while (restore.calls() < 1) await new Promise<void>(resolve => setImmediate(resolve));
       t.mock.timers.tick(15_100);
       await settle();
       assert.equal(settled, false, 'the old 15s chat budget must no longer abort a text intake');
@@ -1948,6 +1959,18 @@ describe('receipt OCR reuses the intake read', () => {
     } finally { bedrock.restore(); }
   });
 
+  it('reuses usable transcription even for a clearly landscape photo', async () => {
+    const sharp = (await import('sharp')).default;
+    const contentBase64 = (await sharp({ create: { width: 1800, height: 1000, channels: 3, background: '#ffffff' } }).jpeg().toBuffer()).toString('base64');
+    const bedrock = stubReads();
+    try {
+      const controller = new LineAiInternalController(config, {} as any);
+      const result = await controller.receiptOcr('secret', request({ documentText: PAGE,
+        attachment: { id: 'att', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64 } }) as any);
+      assert.equal(result.status, 'ok'); assert.deepEqual(bedrock.calls, ['extract']);
+    } finally { bedrock.restore(); }
+  });
+
   it('reads the image itself when no intake read is forwarded (unchanged behaviour)', async () => {
     const bedrock = stubReads();
     try {
@@ -2017,6 +2040,29 @@ describe('receipt tax integrity evidence and recovery', () => {
     const checked = applyOcrValueCrossCheck(parsed!.fields!, page);
     assert.equal(checked.additionalCharges?.[0]?.amount, '-0.72');
     assert.equal(receiptItemsMismatch({ ...fields, vatMode: 'VAT_INCLUDED' } as any), false);
+  });
+
+  it('accepts the early classification brace locally and sends the corrected extract definitions once', async () => {
+    const original = BedrockRuntimeClient.prototype.send;
+    const page = 'ใบเสร็จ ร้านตัวอย่าง\nยอดรวม 65.00\nชำระแล้ว';
+    const payload = { classification: classification(), fields: { vendorName: 'ร้านตัวอย่าง', grandTotalAmount: '65.00' } };
+    let count = 0;
+    try {
+      (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+        count++;
+        assert.ok(!command.input.messages.at(-1).content.some((part: any) => part.image));
+        const prompt = command.input.system.map((part: any) => part.text).join('\n');
+        for (const definition of ['at most 200 printed item rows', 'unitPrice ONLY when', '168.-', 'รวมภาษีมูลค่าเพิ่มแล้ว', 'restaurant-style percentage surcharge', 'ค่าบริการติดตั้งระบบ', 'zero-width characters']) assert.ok(prompt.includes(definition), definition);
+        return { stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify(payload).replace('},"fields":', '}},"fields":') }] } } };
+      };
+      const controller = new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', bedrockModelId: 'm', documentAiModelId: 'm' } as any, {} as any);
+      const result = await controller.receiptOcr('secret', { requestId: 'early-brace', companyId: 'co', userId: 'u', documentText: page,
+        attachment: { mimeType: 'image/jpeg', contentBase64: 'ZmFrZQ==' } } as any);
+      assert.equal(result.status, 'ok');
+      assert.equal(result.fields?.grandTotalAmount, '65.00');
+      assert.equal(result.fallbackReasons, undefined);
+      assert.equal(count, 1, 'forwarded LINE text needs only extraction, no repair or image read');
+    } finally { (BedrockRuntimeClient.prototype as any).send = original; }
   });
 
   it('repairs invalid structure once without extra image reads and preserves typed exhaustion', async () => {
@@ -2275,6 +2321,475 @@ describe('receipt-ocr under a SPLIT budget envelope (E1c)', () => {
     } finally {
       bedrock.restore();
       money.restore();
+    }
+  });
+});
+
+// Synthetic benchmark spans copied here so registered tests do not depend on .ocr-bench.
+describe('OCR-A partial row gates and field definitions', () => {
+  const row = (description: string, amount: string, evidenceSignal = description, extra = {}) => ({ description, quantity: '1', amount, evidenceSignal, ...extra });
+  const parse = (fields: Record<string, unknown>, text: string) => parseReceiptOcrJson(JSON.stringify({ fields }), text, new Set())?.fields;
+
+  it('keeps quantity/amount when the model derived an unprinted unit price', () => {
+    const text = '2 x ข้าวผัดกะเพราหมูสับไข่ดาว    359.00\nซีอิ๊วขาว 500 มล.    140.00';
+    const parsed = parse({ lines: [row('ข้าวผัดกะเพราหมูสับไข่ดาว', '359.00', '2 x ข้าวผัดกะเพราหมูสับไข่ดาว', { quantity: '2', unitPrice: '179.50' }), row('ซีอิ๊วขาว 500 มล.', '140.00')] }, text)!;
+    const out = applyOcrValueCrossCheck(parsed, text);
+    assert.deepEqual(out.lines?.map(({ quantity, amount, unitPrice }) => ({ quantity, amount, unitPrice })), [
+      { quantity: '2', amount: '359.00', unitPrice: undefined }, { quantity: '1', amount: '140.00', unitPrice: undefined },
+    ]);
+    assert.ok(!out.missingFields?.includes('lines'));
+    assert.equal(parsed.lines?.[0]?.unitPrice, '179.50', 'cross-check must not mutate input');
+  });
+
+  it('drops only an invalid optional unit-price shape', () => {
+    const parsed = parse({ lines: [row('ผักชี 100 ก.', '168.-', 'ผักชี 100 ก.', { unitPrice: 'เดา' }), row('น้ำเปล่า', '172.-')] }, 'ผักชี 100 ก. 168.-\nน้ำเปล่า 172.-')!;
+    assert.equal(parsed.lines?.length, 2);
+    assert.equal(parsed.lines?.[0]?.unitPrice, undefined);
+  });
+
+  it('binds row quotes across table pipes, joined cells and whitespace to an exact source span', () => {
+    for (const source of [
+      '| 1 | P1000 | ปูนซีเมนต์ผสม 50 กก. | 12 | 991.00 | 11,892.00 |',
+      '|1|P1000|ปูนซีเมนต์ผสม 50 กก.|12|991.00|11,892.00|',
+      '1   P1000   ปูนซีเมนต์ผสม 50 กก.  12  991.00  11,892.00',
+    ]) {
+      const text = source + '\nถุงมือผ้า (โหล) 6 1,957.50 11,745.00';
+      const out = parse({ lines: [row('ปูนซีเมนต์ผสม 50 กก.', '11,892.00', 'P1000 ปูนซีเมนต์ผสม 50 กก.'), row('ถุงมือผ้า (โหล)', '11,745.00')] }, text)!;
+      assert.equal(out.lines?.length, 2, source);
+      assert.ok(text.includes(out.lines![0]!.evidenceSignal), 'retain source evidence, including original pipes');
+      assert.ok(!out.missingFields?.includes('lines'));
+    }
+  });
+
+  it('keeps one surviving row and flags a failing quote, without joining separate source rows', () => {
+    const text = 'ผักชี 100 ก. 168.-\nน้ำเปล่า 172.-';
+    for (const evidenceSignal of ['ไม่มีข้อความนี้', 'ผักชี 100 ก. 168.- น้ำเปล่า 172.-']) {
+      const out = parse({ lines: [row('ผักชี 100 ก.', '168.-'), row('น้ำเปล่า', '172.-', evidenceSignal)] }, text)!;
+      assert.deepEqual(out.lines?.map((line) => line.description), ['ผักชี 100 ก.']);
+      assert.ok(out.missingFields?.includes('lines'));
+      assert.equal(receiptItemsMismatch(out), true, 'partial evidence stays incomplete');
+    }
+  });
+
+  it('drops only a row with an unsupported amount and retains its sibling evidence', () => {
+    const fields = { grandTotalAmount: '340.00', lines: [row('ผักชี 100 ก.', '168.00'), row('น้ำเปล่า', '173.00')] };
+    const out = applyOcrValueCrossCheck(fields, 'ผักชี 100 ก. 168.-\nน้ำเปล่า 172.-\nรวม 340.00');
+    assert.deepEqual(out.lines?.map((line) => line.amount), ['168.00']);
+    assert.ok(out.missingFields?.includes('lines'));
+    assert.equal(out.grandTotalAmount, '340.00');
+  });
+
+  it('retains the partial-row flag even when the model already filled the missing-field bound', () => {
+    const missingFields = Array.from({ length: 20 }, (_, i) => `unknown-${i}`);
+    const text = 'ผักชี 100 ก. 168.-\nน้ำเปล่า 172.-\nรวม 340.00';
+    const quoteFailure = parse({ missingFields, lines: [row('ผักชี 100 ก.', '168.00'), row('น้ำเปล่า', '172.00', 'ไม่มีข้อความนี้')] }, text)!;
+    const amountFailure = applyOcrValueCrossCheck({ missingFields, lines: [row('ผักชี 100 ก.', '168.00'), row('น้ำเปล่า', '173.00')] }, text);
+    for (const out of [quoteFailure, amountFailure]) {
+      assert.equal(out.missingFields?.length, 20);
+      assert.ok(out.missingFields?.includes('lines'));
+      assert.equal(out.lines?.length, 1);
+    }
+  });
+
+  it('admits 45, 60 and 200 printed rows but flags an over-bound block', () => {
+    for (const count of [45, 60, 200, 201]) {
+      const lines = Array.from({ length: count }, (_, i) => row(`สินค้า ${i + 1}`, '10.00', `สินค้า ${i + 1} 10.00`));
+      const text = lines.map((line) => line.evidenceSignal).join('\n');
+      const out = parse({ lines }, text)!;
+      assert.equal(out.lines?.length ?? 0, count <= 200 ? count : 0);
+      assert.equal(out.missingFields?.includes('lines') ?? false, count > 200);
+    }
+  });
+
+  it('normalizes exact cash-bill shorthand in row and document money', () => {
+    const text = '| 2 | ผักชี 100 ก. | 84 | 168.- |\n| 1 | น้ำเปล่า | 172 | 172.- |\nรวมเงิน 340.-';
+    const parsed = parse({ subtotalAmount: '340.-', grandTotalAmount: '340.-', lines: [row('ผักชี 100 ก.', '168.-', 'ผักชี 100 ก.', { quantity: '2', unitPrice: '84' }), row('น้ำเปล่า', '172.-', 'น้ำเปล่า', { unitPrice: '172' })] }, text)!;
+    const out = applyOcrValueCrossCheck(parsed, text);
+    assert.deepEqual(out.lines?.map((line) => line.amount), ['168.00', '172.00']);
+    assert.equal(out.lines?.[0]?.unitPrice, '84');
+    assert.equal(out.grandTotalAmount, '340.00');
+    assert.equal(out.subtotalAmount, '340.00');
+    assert.equal(receiptItemsMismatch(out), false);
+  });
+
+  it('honors explicit included-VAT wording even when a pre-tax base is also printed', () => {
+    for (const label of ['VAT INCLUDED', 'รวมภาษีมูลค่าเพิ่มแล้ว']) {
+      const out = applyOcrValueCrossCheck({ vatMode: 'VAT_EXCLUDED', taxableAmount: '635.28', vatAmount: '44.47', grandTotalAmount: '679.75' }, `มูลค่าสินค้าก่อนภาษี: 635.28\nภาษีมูลค่าเพิ่ม 7%: 44.47\nรวมทั้งสิ้น: 679.75\n${label}`);
+      assert.equal(out.vatMode, 'VAT_INCLUDED');
+      assert.equal(out.vatAmount, '44.47');
+      assert.equal(out.grandTotalAmount, '679.75');
+    }
+    for (const label of ['NOT VAT INCLUDED', 'ไม่รวมภาษีมูลค่าเพิ่มแล้ว']) {
+      assert.equal(applyOcrValueCrossCheck({ vatMode: 'VAT_EXCLUDED' }, label).vatMode, 'VAT_EXCLUDED');
+    }
+  });
+
+  it('compacts slip references without inventing letters or digits and preserves printed dates', () => {
+    const text = 'โอนเงินสำเร็จ\n16 ก.ย. 69 14:10 น.\nเลขที่รายการ: 202609161 9918297X3845';
+    const out = applyOcrValueCrossCheck({ documentNumber: '202609161 9918297X3845', expenseDate: '2026-09-16' }, text, '2026-10-15', 'TRANSFER_SLIP');
+    assert.equal(out.documentNumber, '2026091619918297X3845');
+    assert.equal(out.expenseDate, '2026-09-16');
+    const zeroWidth = applyOcrValueCrossCheck({ documentNumber: '202609158\u200b6765600K4322' }, 'เลขที่รายการ: 202609158\u200b6765600K4322', '2026-10-15', 'TRANSFER_SLIP');
+    assert.equal(zeroWidth.documentNumber, '2026091586765600K4322');
+    const invented = applyOcrValueCrossCheck({ documentNumber: '2026091619918297Y3845' }, text, '2026-10-15', 'TRANSFER_SLIP');
+    assert.equal(invented.documentNumber, undefined);
+    assert.ok(invented.missingFields?.includes('documentNumber'));
+  });
+
+  it('removes optional tax-ID gaps while preserving a full invoice gap', () => {
+    for (const kind of ['RECEIPT', 'HANDWRITTEN_CASH_BILL', 'TRANSFER_SLIP', 'TAX_INVOICE']) {
+      const out = applyOcrValueCrossCheck({ missingFields: ['vendorTaxId'] }, 'รวมเงิน 836.50', '2026-10-15', kind);
+      assert.equal(out.missingFields?.includes('vendorTaxId'), kind === 'TAX_INVOICE');
+    }
+  });
+});
+
+describe('OCR-A image reread decision table', () => {
+  const classification: BusinessDocumentClassification = {
+    contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'TAX_INVOICE',
+    businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', evidenceRoles: ['EXPENSE_SUPPORT'],
+    confidence: 0.95, evidenceSignals: [], amountSignals: ['65.00'], settlementSignals: [],
+    missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
+  };
+  const fields: ReceiptOcrFieldResult = { grandTotalAmount: '65.00', vatMode: 'NO_VAT', lines: [
+    { description: 'Latte', quantity: '1', amount: '40.00', evidenceSignal: 'Latte 1 40.00' },
+    { description: 'Cake', quantity: '1', amount: '20.00', evidenceSignal: 'Cake 1 20.00' },
+  ] };
+  const cases: Array<[string, Partial<ReceiptOcrFieldResult>, Partial<BusinessDocumentClassification>, boolean]> = [
+    ['all rows admitted with a real gap', {}, {}, true],
+    ['rows reconcile', { grandTotalAmount: '60.00' }, {}, false],
+    ['gates dropped a row', { missingFields: ['lines'] }, {}, true],
+    ['no admitted block', { lines: undefined }, {}, false],
+    ['total missing', { grandTotalAmount: undefined }, {}, false],
+    ['clarification', {}, { requiresClarification: true }, false],
+    ['multiple documents', {}, { contentKind: 'MULTI_DOCUMENT' }, false],
+    ['VAT mode explains gap', { vatMode: 'VAT_INCLUDED', vatAmount: '5.00' }, {}, false],
+    ['VAT mode uncertain', { vatMode: 'NEEDS_REVIEW' }, {}, false],
+    ['VAT amount missing', { vatMode: 'VAT_EXCLUDED', vatRate: '0.07' }, {}, false],
+    ['charge rejected by gate', { missingFields: ['additionalCharges'] }, {}, false],
+  ];
+  for (const [name, fieldChanges, classChanges, expected] of cases) {
+    it(name, () => assert.equal(shouldRereadReceiptImage({ ok: true, fields: { ...fields, ...fieldChanges }, classification: { ...classification, ...classChanges } }), expected));
+  }
+  it('does not reread a failed extraction', () => assert.equal(shouldRereadReceiptImage({ ok: false, errorCode: 'OCR_SCHEMA_INVALID' }), false));
+});
+
+describe('OCR-B media bounds and timeout policy', () => {
+  it('OCR-C retries the initial read/extract and spends at most one recovery call within the unchanged budget', async () => {
+    const sharp = (await import('sharp')).default;
+    const { runWithUsageContext, drainUsage } = await import('../../../../common/usage/usage-context');
+    const { AI_RECEIPT_OCR_MAX_PROVIDER_CALLS, AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS, AI_BUDGET_STEP_BOUNDS } = await import('@watchdog-bms/contracts');
+    const image = await sharp({ create: { width: 100, height: 100, channels: 3, background: '#fff' } }).jpeg().toBuffer();
+    const original = BedrockRuntimeClient.prototype.send;
+    const calls: string[] = [];
+    (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+      const read = command.input.messages.at(-1).content.some((part: any) => part.image);
+      calls.push(read ? 'read' : 'extract');
+      if (calls.length % 2 === 1) throw Object.assign(new Error('fixture timeout'), { name: 'ProviderTimeout' });
+      const amount = calls.length <= 4 ? '30.00' : '35.00';
+      const lines = [{ description: 'น้ำดื่ม', amount, evidenceSignal: `น้ำดื่ม ${amount}` },
+        { description: 'ขนม', amount: '30.00', evidenceSignal: 'ขนม 30.00' }];
+      const page = `ใบเสร็จ ร้านตัวอย่าง\n${lines.map(line => line.evidenceSignal).join('\n')}\nรวม 65.00\nชำระแล้ว`;
+      return { stopReason: 'end_turn', usage: { inputTokens: 1000, outputTokens: 100 },
+        output: { message: { content: [{ text: JSON.stringify(read ? { natural_text: page } : {
+          classification: classification({ amountSignals: ['65.00'], settlementSignals: ['ชำระแล้ว'] }),
+          fields: { vendorName: 'ร้านตัวอย่าง', grandTotalAmount: '65.00', vatMode: 'NO_VAT', lines },
+        }) }] } } };
+    };
+    try {
+      await runWithUsageContext({ companyId: 'company' }, async () => {
+        const controller = new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock',
+          bedrockRegion: 'ap-southeast-1', documentAiModelId: 'm' } as any, {} as any);
+        const result = await controller.receiptOcr('secret', { requestId: 'extract-timeouts', companyId: 'company', userId: 'u',
+          attachment: { mimeType: 'image/jpeg', contentBase64: image.toString('base64') } } as any);
+        assert.equal(result.status, 'ok'); assert.equal(result.fields?.lines?.[0]?.amount, '30.00', 'a failed recovery preserves the initial read');
+        assert.deepEqual(calls, ['read', 'read', 'extract', 'extract', 'read']);
+        const usage = drainUsage();
+        assert.deepEqual(usage.map(entry => entry.ok), [false, true, false, true, false]);
+        assert.deepEqual(usage.map(entry => entry.tag), ['ocr.receipt.image-read', 'ocr.receipt.image-read', 'ocr.receipt.extract', 'ocr.receipt.extract',
+          'ocr.receipt.image-reread']);
+        assert.ok(AI_RECEIPT_OCR_MAX_PROVIDER_CALLS >= calls.length);
+        assert.equal(AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxCalls, AI_RECEIPT_OCR_MAX_PROVIDER_CALLS);
+        assert.ok(AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS > calls.length * 90000);
+      });
+    } finally { (BedrockRuntimeClient.prototype as any).send = original; }
+  });
+
+  it('OCR-C stops after the second extract timeout and does not retry other provider failures', async () => {
+    const original = BedrockRuntimeClient.prototype.send;
+    try {
+      for (const timeout of [false, true]) {
+        let calls = 0;
+        (BedrockRuntimeClient.prototype as any).send = async () => { calls++;
+          throw Object.assign(new Error('fixture failure'), { name: timeout ? 'ProviderTimeout' : 'ValidationException' }); };
+        const controller = new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock',
+          bedrockRegion: 'ap-southeast-1', documentAiModelId: 'm' } as any, {} as any);
+        const result = await controller.receiptOcr('secret', { requestId: 'extract-failed', companyId: 'company', userId: 'u',
+          documentText: 'ใบเสร็จ ร้านตัวอย่าง\nรวม 65.00\nชำระแล้ว', attachment: { mimeType: 'image/jpeg', contentBase64: 'AA==' } } as any);
+        assert.equal(result.status, 'failed'); assert.equal(calls, timeout ? 2 : 1);
+      }
+    } finally { (BedrockRuntimeClient.prototype as any).send = original; }
+  });
+  it('retries a downscaled landscape read once, then attempts partial-row recovery once and preserves the first result on failure', async () => {
+    const sharp = (await import('sharp')).default;
+    const { runWithUsageContext, drainUsage } = await import('../../../../common/usage/usage-context');
+    const bytes = await sharp({ create: { width: 3200, height: 1800, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
+    const contentBase64 = bytes.toString('base64');
+    const lines = Array.from({ length: 45 }, (_, index) => ({ description: `สินค้า ${index + 1}`, quantity: '1',
+      amount: '10.00', unitPrice: '7.50', evidenceSignal: `สินค้า ${index + 1} 1 10.00` }));
+    const page = ['ใบเสร็จ ร้านตัวอย่าง', ...lines.map(line => line.evidenceSignal), 'ยอดรวม 450.00', 'ชำระแล้ว'].join('\n');
+    lines[44]!.evidenceSignal = 'ไม่มีข้อความนี้';
+    const payload = { classification: classification({ amountSignals: ['450.00'] }),
+      fields: { grandTotalAmount: '450.00', vatMode: 'NO_VAT', missingFields: ['vendorTaxId'], lines } };
+    const original = BedrockRuntimeClient.prototype.send;
+    const calls: string[] = [];
+    (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+      const images = command.input.messages.at(-1).content.filter((part: any) => part.image);
+      calls.push(images.length ? 'read' : 'extract');
+      if (calls.length === 1) throw Object.assign(new Error('fixture timeout'), { name: 'ProviderTimeout' });
+      for (const image of images) {
+        const meta = await sharp(Buffer.from(image.image.source.bytes)).metadata();
+        assert.ok(Math.max(meta.width!, meta.height!) <= 2400);
+      }
+      if (images.length) assert.equal(images.length, calls.length <= 2 ? 2 : 1, 'initial landscape read carries the alternate view');
+      return { stopReason: 'end_turn', output: { message: { content: [{ text: images.length
+        ? JSON.stringify({ natural_text: page }) : JSON.stringify(payload).replace('},"fields":', '}},"fields":') }] } } };
+    };
+    try {
+      await runWithUsageContext({ companyId: 'co' }, async () => {
+        const controller = new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock',
+          bedrockRegion: 'ap-southeast-1', bedrockModelId: 'm', documentAiModelId: 'm' } as any, {} as any);
+        const result = await controller.receiptOcr('secret', { requestId: 'merged-ocr', companyId: 'co', userId: 'u',
+          attachment: { mimeType: 'image/jpeg', contentBase64 } } as any);
+        assert.equal(result.status, 'ok');
+        assert.equal(result.fields?.lines?.length, 44, 'admit beyond 40 and retain supported siblings');
+        assert.ok(result.fields?.lines?.every(line => line.unitPrice === undefined));
+        assert.ok(result.fields?.missingFields?.includes('lines'));
+        assert.ok(!result.fields?.missingFields?.includes('vendorTaxId'));
+        assert.equal(result.fields?.grandTotalAmount, '450.00');
+        assert.deepEqual(result.fallbackReasons, ['ITEMS_INCOMPLETE']);
+        assert.deepEqual(calls, ['read', 'read', 'extract', 'read']);
+        assert.deepEqual(drainUsage().map(entry => entry.ok), [false, true, true, true]);
+      });
+      assert.equal(bytes.toString('base64'), contentBase64, 'original bytes are preserved');
+    } finally { (BedrockRuntimeClient.prototype as any).send = original; }
+  });
+
+  it('selects time by work size and keeps outer waits above the whole chain', async () => {
+    const { aiDocumentOcrTimeoutMs, aiGatewayClientTimeoutMs, AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS } = await import('@watchdog-bms/contracts');
+    for (const [mimeType, width, height, expected] of [
+      ['image/jpeg', 1200, 1600, 45000], ['image/png', 1000, 1000, 45000],
+      ['image/jpeg', 1654, 2339, 90000], ['image/jpeg', 800, 4000, 90000],
+      ['image/jpeg', 2339, 1654, 90000], ['application/pdf', 0, 0, 90000],
+    ] as const) assert.equal(aiDocumentOcrTimeoutMs({ mimeType, width, height }), expected);
+    assert.ok(aiGatewayClientTimeoutMs(2) > 2 * 90000);
+    assert.ok(AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS > 8 * 90000);
+  });
+
+  it('shrinks a photo to 2400px, keeps aspect and original bytes, and never upscales', async () => {
+    const sharp = (await import('sharp')).default;
+    const { prepareDocumentImage } = await import('../../domain/logic/document-media.logic');
+    for (const [width, height, targetWidth, targetHeight] of [[4000, 3000, 2400, 1800], [600, 800, 600, 800]]) {
+      const bytes = await sharp({ create: { width: width!, height: height!, channels: 3, background: '#eeeddd' } }).jpeg().toBuffer();
+      const original = Buffer.from(bytes);
+      const result = await prepareDocumentImage({ mimeType: 'image/jpeg', contentBase64: bytes.toString('base64') });
+      const meta = await sharp(Buffer.from(result.contentBase64, 'base64')).metadata();
+      assert.equal(meta.width, targetWidth); assert.equal(meta.height, targetHeight);
+      assert.deepEqual(bytes, original);
+      assert.ok(Buffer.from(result.contentBase64, 'base64').length <= 3500000);
+    }
+  });
+
+  it('adds an alternate view only beyond the landscape ratio boundary', async () => {
+    const sharp = (await import('sharp')).default;
+    const { isLandscapeDocument } = await import('../../domain/logic/document-media.logic');
+    const { receiptRereadImage } = await import('./line-ai-internal.controller');
+    for (const [width, height, expected] of [[100, 100, false], [125, 100, false], [126, 100, true], [100, 140, false]] as const) {
+      assert.equal(isLandscapeDocument(width, height), expected);
+      const bytes = await sharp({ create: { width, height, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
+      const contentBase64 = bytes.toString('base64');
+      const result = await receiptRereadImage('image/jpeg', contentBase64);
+      assert.equal(result.contentBase64 !== contentBase64, expected);
+    }
+  });
+
+  it('retries only a timeout and never more than once', async () => {
+    const { readWithTimeoutRetry } = await import('../../domain/logic/document-media.logic');
+    for (const code of ['PROVIDER_TIMEOUT', 'PROVIDER_UNKNOWN', 'PROVIDER_BUDGET_EXHAUSTED'] as const) {
+      let calls = 0;
+      await readWithTimeoutRetry({ generateText: async () => { calls++; return { ok: false, error: { code, message: 'fixture', retryable: true } }; } }, { messages: [] });
+      assert.equal(calls, code === 'PROVIDER_TIMEOUT' ? 2 : 1);
+    }
+    let calls = 0;
+    const recovered = await readWithTimeoutRetry({ generateText: async () => ++calls === 1
+      ? { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'fixture', retryable: true } }
+      : { ok: true, text: 'complete page' } }, { messages: [] });
+    assert.equal(recovered.ok, true); assert.equal(calls, 2);
+  });
+});
+
+// Actual gateway model-result JSON from the 2026-10-16 synthetic full-field benchmark.
+// Corrections below are explicit mocked responses, not a claim that a live model was rerun.
+describe('Fix-up 16 full-field OCR trace regressions', () => {
+  const D3 = {"fields":{"vendorName":"ห้างหุ้นส่วนจำกัด ช่างเหล็กวัสดุ","vendorIdentityEvidence":"ห้างหุ้นส่วนจำกัด ช่างเหล็กวัสดุ","vendorEntityKind":"JURISTIC","vendorTaxId":"0123556033444","vendorBranchCode":"00000","vendorAddress":"15/2 หมู่ 4 ต.บางกระสอ อ.เมือง จ.นนทบุรี 11000","documentNumber":"CL-6910-0098","expenseDate":"2026-10-02","description":"วัสดุก่อสร้าง (ปูนซีเมนต์ ทรายหยาบ ตะปู ถุงมือผ้า และอื่นๆ)","vatRate":"0.07","subtotalAmount":"3,039.50","taxableAmount":"2,889.50","vatAmount":"202.27","grandTotalAmount":"3,091.00","currency":"THB","vatMode":"VAT_EXCLUDED","lines":[{"description":"ปูนซีเมนต์ 50 กก.","quantity":"10","amount":"1,450.00","unitPrice":"145.00","evidenceSignal":"ปูนซีเมนต์ 50 กก.","confidence":0.95},{"description":"ทรายหยาบ (คิว)","quantity":"2","amount":"1,300.00","unitPrice":"650.00","evidenceSignal":"ทรายหยาบ (คิว)","confidence":0.95},{"description":"ตะปู 2 นิ้ว (กก.)","quantity":"3","amount":"145.50","unitPrice":"48.50","evidenceSignal":"ตะปู 2 นิ้ว (กก.)","confidence":0.95},{"description":"ถุงมือผ้า","quantity":"12","amount":"144.00","unitPrice":"12.00","evidenceSignal":"ถุงมือผ้า","confidence":0.95}],"confidence":0.93,"categorySuggestion":{"expenseCategoryId":"category-a-other","confidence":0.62,"evidenceSignals":["ปูนซีเมนต์ 50 กก.","ทรายหยาบ (คิว)","ตะปู 2 นิ้ว (กก.)","ช่างเหล็กวัสดุ"]},"expenseDateAssumptions":["order_assumed_day_month","era_resolved_ce"],"missingFields":["discountAmount","additionalCharges"]},"classification":{"contentKind":"DOCUMENT","documentFamily":"EXPENSE_EVIDENCE","documentKind":"ABBREVIATED_TAX_INVOICE","businessDirection":"PURCHASE_EXPENSE","transactionState":"PAID","evidenceRoles":["EXPENSE_SUPPORT","TAX_EVIDENCE_CANDIDATE","PAYMENT_PROOF"],"confidence":0.93,"evidenceSignals":["บิลเงินสด/ใบกำกับภาษีอย่างย่อ","เลขที่ CL-6910-0098","ห้างหุ้นส่วนจำกัด ช่างเหล็กวัสดุ","เลขประจำตัวผู้เสียภาษี 0123556033444"],"amountSignals":["3,091.00"],"settlementSignals":["บิลเงินสด/ใบกำกับภาษีอย่างย่อ","ชำระโดย เงินโอน"],"missingRequiredSignals":[],"contradictionSignals":[],"requiresClarification":false}};
+  const R4 = {"fields":{"vendorName":"บริษัท สุกี้นานา จำกัด","vendorIdentityEvidence":"บริษัท สุกี้นานา จำกัด","vendorEntityKind":"JURISTIC","vendorTaxId":"0105563098761","vendorBranchCode":"00017","documentNumber":"SN17-2610-1188","expenseDate":"2026-10-14","description":"อาหารสุกี้และเครื่องดื่ม (โต๊ะ 21)","vatRate":"0.07","subtotalAmount":"1155.00","taxableAmount":"1270.50","vatAmount":"88.94","grandTotalAmount":"1359.00","currency":"THB","vatMode":"VAT_EXCLUDED","lines":[{"description":"ชุดสุกี้รวมมิตร","quantity":"2","amount":"718.00","unitPrice":"359.00","evidenceSignal":"ชุดสุกี้รวมมิตร","confidence":0.97},{"description":"หมูสไลซ์","quantity":"2","amount":"238.00","unitPrice":"119.00","evidenceSignal":"หมูสไลซ์","confidence":0.97},{"description":"เกี้ยวกุ้ง","quantity":"1","amount":"89.00","unitPrice":"89.00","evidenceSignal":"เกี้ยวกุ้ง","confidence":0.97},{"description":"ชาเขียวเย็น","quantity":"2","amount":"110.00","unitPrice":"55.00","evidenceSignal":"ชาเขียวเย็น","confidence":0.97}],"additionalCharges":[{"kind":"SERVICE_CHARGE","description":"ค่าบริการ (Service Charge) 10%","amount":"115.50","evidenceSignal":"ค่าบริการ (Service Charge) 10%","vatRate":"0.07","confidence":0.97}],"categorySuggestion":{"expenseCategoryId":"category-a-other","confidence":0.72,"evidenceSignals":["ชุดสุกี้รวมมิตร","ชาเขียวเย็น","บริษัท สุกี้นานา จำกัด"]},"expenseDateAssumptions":["era_resolved_ce"],"missingFields":["additionalCharges"]},"classification":{"contentKind":"DOCUMENT","documentFamily":"EXPENSE_EVIDENCE","documentKind":"ABBREVIATED_TAX_INVOICE","businessDirection":"PURCHASE_EXPENSE","transactionState":"PAID","evidenceRoles":["EXPENSE_SUPPORT","TAX_EVIDENCE_CANDIDATE","PAYMENT_PROOF"],"confidence":0.97,"evidenceSignals":["ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ","SN17-2610-1188","บริษัท สุกี้นานา จำกัด"],"amountSignals":["1,359.00"],"settlementSignals":["ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ","ชำระโดย QR พร้อมเพย์"],"missingRequiredSignals":[],"contradictionSignals":[],"requiresClarification":false}};
+  const S4 = {"fields":{"vendorName":"บริษัท ไฟฟ้าทดสอบ จำกัด","vendorIdentityEvidence":"บริษัท ไฟฟ้าทดสอบ จำกัด","vendorEntityKind":"JURISTIC","documentNumber":"000941782301","expenseDate":"2026-10-14","description":"ชำระค่าไฟฟ้า","currency":"THB","confidence":0.9,"categorySuggestion":{"expenseCategoryId":"category-a-other","confidence":0.72,"evidenceSignals":["บริษัท ไฟฟ้าทดสอบ จำกัด","Ref.1: 020004571236"]},"missingFields":["grandTotalAmount"],"expenseDateAssumptions":["era_read_be"]},"classification":{"contentKind":"DOCUMENT","documentFamily":"PAYMENT_EVIDENCE","documentKind":"TRANSFER_SLIP","businessDirection":"PURCHASE_EXPENSE","transactionState":"PAID","evidenceRoles":["PAYMENT_PROOF"],"confidence":0.93,"evidenceSignals":["ชำระเงินสำเร็จ","ธนาคารกรุงไทย"],"amountSignals":["4,127.15"],"settlementSignals":["ชำระเงินสำเร็จ"],"missingRequiredSignals":[],"contradictionSignals":[],"requiresClarification":false}};
+  const P1 = {"fields":{"vendorName":"บริษัท ก๋วยเตี๋ยวเรือทองคำ จำกัด","vendorIdentityEvidence":"บริษัท ก๋วยเตี๋ยวเรือทองคำ จำกัด","vendorEntityKind":"JURISTIC","vendorTaxId":"0105561135791","vendorBranchCode":"00002","documentNumber":"TK2-0007714","expenseDate":"2026-10-06","description":"อาหารและเครื่องดื่ม ร้านก๋วยเตี๋ยวเรือทองคำ","vatRate":"0.07","subtotalAmount":"490.00","taxableAmount":"539.00","vatAmount":"37.73","grandTotalAmount":"576.73","currency":"THB","vatMode":"VAT_EXCLUDED","lines":[{"description":"ก๋วยเตี๋ยวเรือหมู","quantity":"4","amount":"90.00","unitPrice":"60.00","evidenceSignal":"ก๋วยเตี๋ยวเรือหมู","confidence":0.6},{"description":"หมูสะเต๊ะ","quantity":"1","amount":"160.00","unitPrice":"90.00","evidenceSignal":"หมูสะเต๊ะ","confidence":0.6}],"additionalCharges":[{"kind":"SERVICE_CHARGE","description":"ค่าบริการ (Service Charge) 10%","amount":"49.00","evidenceSignal":"ค่าบริการ (Service Charge) 10%","vatRate":"0.07","confidence":0.85}],"confidence":0.88,"categorySuggestion":{"expenseCategoryId":"category-a-other","confidence":0.72,"evidenceSignals":["ก๋วยเตี๋ยวเรือหมู","หมูสะเต๊ะ","ชาไทยเย็น"]},"missingFields":["lines","category"],"expenseDateAssumptions":["order_assumed_day_month","era_resolved_ce"]},"classification":{"contentKind":"DOCUMENT","documentFamily":"EXPENSE_EVIDENCE","documentKind":"ABBREVIATED_TAX_INVOICE","businessDirection":"PURCHASE_EXPENSE","transactionState":"PAID","evidenceRoles":["EXPENSE_SUPPORT","TAX_EVIDENCE_CANDIDATE"],"confidence":0.88,"evidenceSignals":["ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ","เลขประจำตัวผู้เสียภาษี 0105561135791","เลขที่ TK2-0007714"],"amountSignals":["576.73","490.00"],"settlementSignals":["ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ","ชำระโดย เงินสด"],"missingRequiredSignals":[],"contradictionSignals":["CONTRADICTORY_SIGNALS"],"requiresClarification":true}};
+
+  const textFor = (fields: any) => [
+    fields.vendorName, fields.vendorTaxId, fields.vendorBranchCode, fields.documentNumber,
+    'วันที่ 14/10/2026',
+    ...(fields.lines ?? []).map((line: any) => `${line.description} ${line.quantity} ${line.unitPrice ?? ''} ${line.amount}`),
+    `ยอดรวม ${fields.subtotalAmount ?? ''}`, `มูลค่าก่อนภาษี ${fields.taxableAmount ?? ''}`,
+    `ภาษีมูลค่าเพิ่ม 7% ${fields.vatAmount ?? ''}`,
+    ...(fields.additionalCharges ?? []).map((charge: any) => `${charge.description} ${charge.amount}`),
+    `รวมทั้งสิ้น ${fields.grandTotalAmount ?? ''}`, 'ชำระแล้ว',
+  ].join('\n');
+
+  async function replay(read: string, first: any, recovery?: any) {
+    const original = BedrockRuntimeClient.prototype.send;
+    const calls: any[] = [];
+    (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+      calls.push(command.input);
+      const answer = calls.length === 1 ? { natural_text: read } : calls.length === 2 ? first : recovery;
+      assert.ok(answer, 'at most one additional provider call');
+      return { stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify(answer) }] } } };
+    };
+    try {
+      const controller = new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock',
+        bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model' } as any, {} as any);
+      const result = await controller.receiptOcr('secret', { requestId: 'full-field-regression', companyId: 'company', userId: 'owner',
+        attachment: { id: 'photo', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' } });
+      return { result, calls };
+    } finally { (BedrockRuntimeClient.prototype as any).send = original; }
+  }
+
+  it('O1/O2: requests and retains D3 line + bill discount and signed final rounding', async () => {
+    assert.equal('discountAmount' in D3.fields, false);
+    const fields = { ...D3.fields, discountAmount: '150.00', missingFields: [], additionalCharges: [
+      { kind: 'ROUNDING', description: 'ปัดเศษ', amount: '-0.77', vatRate: '0', evidenceSignal: 'ปัดเศษ -0.77' },
+    ] };
+    const read = textFor(fields) + '\nส่วนลด ราคาส่ง -50.00\nรวมส่วนลดรายการ -50.00\nส่วนลดท้ายบิล -100.00';
+    const { result, calls } = await replay(read, { ...D3, fields });
+    assert.equal(result.fields?.discountAmount, '150.00', 'aggregate is not a separately printed amount');
+    assert.equal(result.fields?.additionalCharges?.[0]?.amount, '-0.77');
+    assert.equal(receiptItemsMismatch(result.fields), false);
+    assert.equal(calls.length, 2);
+    assert.match(calls[0].system[0].text, /สตางค์ปัดเศษ/);
+    assert.match(calls[1].system[0].text, /line discounts AND a bill-level discount/);
+  });
+
+  it('O2: refuses an unprinted aggregate that the admitted settlement cannot prove', async () => {
+    const { applyOcrValueCrossCheck } = await import('./line-ai-internal.controller');
+    const fields = { ...D3.fields, discountAmount: '149.00', missingFields: [], additionalCharges: [
+      { kind: 'ROUNDING' as const, description: 'ปัดเศษ', amount: '-0.77', vatRate: '0', evidenceSignal: 'ปัดเศษ -0.77' }] };
+    const checked = applyOcrValueCrossCheck(fields as any, textFor(fields) + '\nส่วนลดรายการ -50.00\nส่วนลดท้ายบิล -100.00', '2026-10-16');
+    assert.equal(checked.discountAmount, undefined);
+    assert.ok(checked.missingFields?.includes('discountAmount'));
+  });
+
+  it('O1: retains R4 negative rounding alongside the service charge', async () => {
+    assert.equal(R4.fields.additionalCharges.length, 1);
+    const fields = { ...R4.fields, missingFields: [], additionalCharges: [...R4.fields.additionalCharges,
+      { kind: 'ROUNDING', description: 'สตางค์ปัดเศษ', amount: '-0.44', vatRate: '0', evidenceSignal: 'สตางค์ปัดเศษ -0.44' }] };
+    const { result, calls } = await replay(textFor(fields), { ...R4, fields });
+    assert.deepEqual(result.fields?.additionalCharges?.map(charge => charge.kind), ['SERVICE_CHARGE', 'ROUNDING']);
+    assert.equal(receiptItemsMismatch(result.fields), false);
+    assert.equal(calls.length, 2);
+  });
+
+  it('O3: requests the paid amount on the S4 Ref.1/Ref.2 bill-payment slip', async () => {
+    assert.equal('grandTotalAmount' in S4.fields, false);
+    const read = `${textFor(S4.fields)}\nชำระบิล\nชำระเงินสำเร็จ\nธนาคารกรุงไทย\nRef.1: 020004571236\nRef.2: 000941782301\nจำนวนเงิน 4,127.15 บาท`;
+    const { result, calls } = await replay(read, { ...S4, fields: { ...S4.fields, grandTotalAmount: '4,127.15', missingFields: [] } });
+    assert.equal(result.fields?.grandTotalAmount, '4,127.15');
+    assert.equal(result.classification?.documentFamily, 'PAYMENT_EVIDENCE');
+    assert.match(calls[1].system[0].text, /On TRANSFER_SLIP, including bill-payment slips/);
+    assert.equal(calls.length, 2);
+  });
+
+  it('O4: the real P1 incomplete/clarification result qualifies for row recovery', () => {
+    assert.equal(shouldRereadReceiptImage({ ok: true, ...P1 } as any), true);
+  });
+
+  for (const failure of [undefined, 'total', 'document', 'rows', 'transcription'] as const) {
+    it(`O4: one combined visual recovery ${failure ? 'rejects changed ' + failure : 'restores all three P1 rows'}`, async () => {
+      const truth = { ...P1.fields, missingFields: [], lines: [
+        { description: 'ก๋วยเตี๋ยวเรือหมู', quantity: '4', unitPrice: '60.00', amount: '240.00', evidenceSignal: 'ก๋วยเตี๋ยวเรือหมู 4 60.00 240.00' },
+        { description: 'หมูสะเต๊ะ', quantity: '1', unitPrice: '90.00', amount: '90.00', evidenceSignal: 'หมูสะเต๊ะ 1 90.00 90.00' },
+        { description: 'ชาไทยเย็น', quantity: '4', unitPrice: '40.00', amount: '160.00', evidenceSignal: 'ชาไทยเย็น 4 40.00 160.00' },
+      ] };
+      if (failure === 'total') truth.grandTotalAmount = '600.00';
+      if (failure === 'document') truth.documentNumber = 'OTHER-2';
+      if (failure === 'rows') truth.lines.pop();
+      const recovery = { fields: truth, classification: { ...P1.classification, contradictionSignals: [], requiresClarification: false },
+        ...(failure === 'transcription' ? {} : { natural_text: textFor(truth) }) };
+      const { result, calls } = await replay(textFor(P1.fields), P1, recovery);
+      assert.equal(calls.length, 3);
+      assert.deepEqual(result.fallbackReasons, ['ITEMS_INCOMPLETE']);
+      assert.equal(result.fields?.lines?.length, failure ? 2 : 3);
+      assert.equal(result.fields?.grandTotalAmount, '576.73');
+      assert.equal(result.classification?.requiresClarification, !!failure);
+      if (!failure) assert.deepEqual(result.fields?.lines?.map(({ quantity, unitPrice, amount }) => ({ quantity, unitPrice, amount })), [
+        { quantity: '4', unitPrice: '60.00', amount: '240.00' },
+        { quantity: '1', unitPrice: '90.00', amount: '90.00' },
+        { quantity: '4', unitPrice: '40.00', amount: '160.00' },
+      ]);
+    });
+  }
+});
+
+// Exact gateway fields received by API on 2026-10-16; text transcribed from the local paper images.
+describe('Fix-up 18 printed money evidence', () => {
+  const fixtures = JSON.parse(readFileSync(resolve(__dirname, '../../../../../../../docs/research/fixtures/receipt-fx18-printed-money.json'), 'utf8')) as Array<{ id: string; fields: ReceiptOcrFieldResult; printedText: string }>;
+  for (const fixture of fixtures) {
+    it(`${fixture.id}: preserves captured paper money and recovers only the labelled subtotal`, () => {
+      const out = applyOcrValueCrossCheck(fixture.fields, fixture.printedText, '2026-10-16');
+      assert.equal(out.grandTotalAmount, fixture.fields.grandTotalAmount);
+      assert.equal(out.vatAmount, fixture.fields.vatAmount);
+      assert.equal(Number(out.subtotalAmount?.replace(/,/g, '')), fixture.id === 'A1' ? 156 : Number(fixture.fields.subtotalAmount!.replace(/,/g, '')));
+    });
+  }
+  for (const id of ['R4', 'D3', 'D2']) {
+    const fixture = fixtures.find((row) => row.id === id)!;
+    const magnitude = id === 'R4' ? '0.44' : id === 'D3' ? '0.77' : '0.10';
+    for (const label of ['ปัดเศษ', 'สตางค์ปัดเศษ', 'Rounding']) {
+      for (const printed of [`-${magnitude}`, `(${magnitude})`, `${magnitude}-`, magnitude]) {
+        it(`${id}: proves ${label} ${printed} from settlement with a label-only or mismatched quote`, () => {
+          const printedText = fixture.printedText.replace(/ปัดเศษ -[\d.]+/, `${label} | ${printed}`);
+          // Reconstruct the model candidate removed by the old cross-check; the captured fields
+          // themselves remain unchanged in the fixture and are exercised separately above.
+          const fields = { ...fixture.fields, ...(id === 'D3' ? { discountAmount: '150.00' } : {}), additionalCharges: [
+            ...(fixture.fields.additionalCharges ?? []).filter((charge) => charge.kind !== 'ROUNDING'),
+            { kind: 'ROUNDING', description: label, amount: magnitude, vatRate: '0', evidenceSignal: printed === magnitude ? label : `${label} -${magnitude}` },
+          ] };
+          const parsed = parseReceiptOcrJson(JSON.stringify({ fields }), printedText, new Set())!;
+          assert.ok(parsed.fields?.additionalCharges?.some((charge) => charge.kind === 'ROUNDING'));
+          const out = applyOcrValueCrossCheck(parsed.fields!, printedText, '2026-10-16');
+          assert.equal(out.additionalCharges?.at(-1)?.amount, `-${magnitude}`);
+          assert.equal(out.additionalCharges?.at(-1)?.evidenceSignal, `${label} | ${printed}`);
+          if (id === 'D3') assert.equal(out.discountAmount, '150.00');
+          assert.equal(out.grandTotalAmount, fixture.fields.grandTotalAmount);
+        });
+      }
+    }
+  }
+  it('proves positive rounding from arithmetic rather than trusting the candidate sign', () => {
+    const out = applyOcrValueCrossCheck({ subtotalAmount: '100', vatMode: 'NO_VAT', grandTotalAmount: '100.44',
+      additionalCharges: [{ kind: 'ROUNDING', description: 'Rounding', amount: '-0.44', evidenceSignal: 'Rounding' }] }, 'Sub Total 100.00\nRounding 0.44\nTotal 100.44');
+    assert.equal(out.additionalCharges?.[0]?.amount, '0.44');
+  });
+  it('rejects unrelated, ambiguous and arithmetically contradictory rounding evidence', () => {
+    for (const text of ['Rounding\nOther -0.44', 'Other -0.44', 'Rounding -0.44\nRounding -0.44', 'Rounding -0.45']) {
+      const out = applyOcrValueCrossCheck({ subtotalAmount: '100.00', grandTotalAmount: '99.56', vatMode: 'NO_VAT',
+        additionalCharges: [{ kind: 'ROUNDING', description: 'Rounding', amount: '-0.44', evidenceSignal: 'Rounding' }] }, `Sub Total 100.00\nTotal 99.56\n${text}`);
+      assert.equal(out.additionalCharges, undefined);
+      assert.ok(out.missingFields?.includes('additionalCharges'));
+    }
+  });
+  it('leaves conflicting subtotals and an unlabelled item sum unknown', () => {
+    for (const text of ['Sub Total 150.00\nยอดรวม 156.00\nTotal 156.00', 'Item A 100.00\nItem B 56.00\nTotal 156.00']) {
+      assert.equal(applyOcrValueCrossCheck({ grandTotalAmount: '156.00' }, text).subtotalAmount, undefined);
     }
   });
 });

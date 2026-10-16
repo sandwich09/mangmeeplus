@@ -92,14 +92,14 @@ Scope: ไม่เปลี่ยนกติกาเงิน/สิทธิ
 
 - ต้นฉบับ ≤ **10,485,760** (= `UPLOAD_MAX_BYTES` default; `validateAttachmentMeta` เดิม) ทั้งรูปและ PDF; UI/LINE อ่านค่านี้จาก capability (`GET /v1/companies/{c}/expenses/capture-capability` → `{ maxBytes, allowedMimeTypes, pdfAutomaticRead: true, pdfMaxPagesAutomatic }`) ไม่ hard-code
 - ยกเลิก gate PDF 4,000,000 ใน `expense-extraction.use-case.ts:20` และ 4,194,304 ใน `expense-upload.logic.ts:18` สำหรับเส้นทางที่ใช้ job; ข้อความ `expenses.upload_pdf_too_large` ถูกแทนด้วยสถานะ "เก็บไฟล์แล้ว กำลังอ่านเอกสาร"
-- ขอบภายในต่อ provider call (Bedrock Converse ตรวจ 2026-09-18: document ≤ 4.5 MB, ≤ 5 documents; image ≤ 3.75 MB, ≤ 8000 px, ≤ 20 images): **PDF chunk ≤ 4,000,000 bytes และ ≤ 3 หน้า**; **ภาพ/region ≤ 3,500,000 bytes, ≤ 8000 px ต่อด้าน**; วัด `Buffer.byteLength` ของ output จริง ไม่ประมาณจากหน้า
+- ขอบภายในต่อ provider call (Bedrock Converse ตรวจ 2026-09-18: document ≤ 4.5 MB, ≤ 5 documents; image ≤ 3.75 MB, ≤ 8000 px, ≤ 20 images): **PDF chunk ≤ 4,000,000 bytes และ 1 หน้า**; **ภาพ/region ≤ 3,500,000 bytes, ด้านยาว ≤ 2400 px (JPEG q85), ไม่ขยายภาพถ่าย**; วัด `Buffer.byteLength` ของ output จริง ไม่ประมาณจากหน้า
 - Serialized payload ต่อ call ≤ 16 MB ตาม `BASE64_MEDIA_ROUTES` (gateway `main.ts:53`) — ตรวจ `contentBase64.length` ก่อนส่ง
-- เพดานหน้าที่ประกาศรองรับอ่านอัตโนมัติ: **≤ 60 หน้าต่อไฟล์** (`pdfMaxPagesAutomatic`, config `EXPENSE_CAPTURE_PDF_MAX_PAGES` default 60); เกินนั้น = `PAUSED` เหตุ `page_limit` พร้อมผลที่อ่านแล้วและทางแนบ/กรอกต่อ (ไม่ตัดหน้าเงียบ) ตัวเลขนี้เป็น declared scope ของรอบนี้ ไม่ใช่ SLA
+- เพดานหน้าที่ประกาศรองรับอ่านอัตโนมัติ: **≤ 20 หน้าต่อไฟล์** (ใช้ค่าที่น้อยกว่าระหว่าง hard ceiling 20 กับ config `EXPENSE_CAPTURE_PDF_MAX_PAGES`); เกินนั้น = `PAUSED` เหตุ `page_limit` พร้อมผลที่อ่านแล้วและทางแนบ/กรอกต่อ (ไม่ตัดหน้าเงียบ) ตัวเลขนี้เป็น declared scope ของรอบนี้ ไม่ใช่ SLA
 
 ### 4.2 Preprocessing (API เป็นผู้ทำ; reuse `pdf-lib`, `pdfjs-dist` + `@napi-rs/canvas` ที่ image production มีแล้ว, `sharp`)
 
 1. โหลด PDF ด้วย `pdf-lib` (`ignoreEncryption: false`): ติดรหัส → `FAILED/encrypted_pdf` (UXE-06), เปิดไม่ได้ → `FAILED/corrupt_pdf` (UXE-07); นับหน้า → manifest
-2. จัด chunk: copy หน้าต่อเนื่อง ≤ 3 หน้าเป็น PDF ใหม่ (`copyPages`), วัด bytes; เกิน 4,000,000 → ลดจำนวนหน้าจน 1 หน้า; หน้าเดียวยังเกิน หรือหน้าเดียวเป็นภาพสแกนใหญ่ → render หน้าเป็นภาพด้วย pdfjs (scale ให้ด้านยาว ≤ 4000 px, JPEG q85 ผ่าน sharp) ตรวจ ≤ 3,500,000 bytes; ยังเกินหรือความสูง/กว้าง > 8000 → แบ่ง tiles 2×N พร้อม overview (ลดขนาด) และ overlap 5% ส่งเป็น images หลายภาพใน call เดียว (≤ 20)
+2. จัด chunk: copy ทีละ 1 หน้าเป็น PDF ใหม่ (`copyPages`), วัด bytes; หน้าเดียวยังเกิน หรือหน้าเดียวเป็นภาพสแกนใหญ่ → render หน้าเป็นภาพด้วย pdfjs (scale ให้ด้านยาว ≤ 2400 px, JPEG q85 ผ่าน sharp) ตรวจ ≤ 3,500,000 bytes; ยังเกินหรือความสูง/กว้าง > 2400 → แบ่ง tiles 2×N พร้อม overview (ลดขนาด) และ overlap 5% ส่งเป็น images หลายภาพใน call เดียว (≤ 20)
 3. Text layer (pdfjs `getTextContent`) เก็บเป็น evidence ต่อหน้าใน manifest (ไม่ส่งแทนภาพ; ใช้เทียบ/ค้นหา span เท่านั้น — ไม่เปลี่ยน vision policy)
 4. ต้นฉบับไม่ถูกเขียนทับ; derivative อยู่ในหน่วยความจำ/ชั่วคราวเท่านั้น (ไม่เก็บถาวร) และ manifest อ้าง `attachmentChecksum` + `objectVersionId` ของต้นฉบับ
 
@@ -813,3 +813,14 @@ Fixture ใหม่ใน `scripts/expense-capture-read.fixtures.ts` (สัง
 ## ถ้อยคำตามสิทธิ์ — 2026-10-03
 
 คำแนะนำหลังเก็บไฟล์ต้องระบุว่า “ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้” ใช้ข้อความเดียวจากสัญญาร่วมทั้งเว็บและ LINE สำหรับอ่านไม่สำเร็จ อ่านได้บางส่วน พักการอ่าน และเอกสารที่ให้กรอกต่อบนเว็บ โดยไม่เปลี่ยนการเก็บไฟล์ ลิงก์ ปุ่ม สิทธิ์ หรือสถานะงาน ชื่อชนิดไฟล์แสดงเป็นภาษาไทยและใช้ “เมกะไบต์” สำหรับขนาด โดยคงรายการชนิดไฟล์และเพดานเดิม
+
+
+### OCR round B — 2026-10-15
+
+- LINE PDF ใช้ EXPENSE-owned capture job และ upload/complete guards เดียวกับเว็บ; whole-document `/receipt-ocr` ปฏิเสธ PDF ด้วย `PDF_CAPTURE_REQUIRED` ก่อนเรียกโมเดล
+- อ่านและ extract ทีละหน้า; รวม header หน้าแรกและ rows ทุกหน้า โดย total แต่ละ kind ใช้หน้าสุดท้ายที่พิมพ์ค่านั้น; คง document identity/continuation และ source evidence เดิม
+- ภาพทั่วไป 45 วินาที; A4/ภาพยาว (อัตราส่วน ≥1.35) และแต่ละหน้า PDF 90 วินาที; output cap 8192 tokens ต่อหน้า; HTTP รอเกินผลรวมทุก call/retry และ LINE image grant รองรับ 2 calls
+- derivative JPEG q85 ด้านยาวไม่เกิน 2400 px ไม่ upscale; เก็บต้นฉบับเดิม; ส่งภาพหมุนเพิ่มเฉพาะ width >1.25×height และใช้ intake transcription ที่ใช้ได้ต่อ
+- timeout PAGE/IMAGE retry ได้ครั้งเดียวผ่าน admission/usage เดิมแต่มี request key ของตัวเอง; ลูกค้านับ OCR หนึ่งครั้งต่อ job; การดูดซับต้นทุน failed/timeout เป็นงาน lane แยก
+- window checkpoint รุ่นก่อน 3 ห้ามจับคู่กับ window หน้าเดียวโดยเดา; คืน `CAPTURE_WINDOW_EVIDENCE_VERSION_CHANGED` เพื่อให้ตรวจทานผลเดิม ไม่ซื้อผลเดิมซ้ำหรือเขียนข้ามหน้า
+- supersedes เฉพาะการ upscale ใน W10 D3; partial detection/สถานะตรวจทานยังใช้เดิม ดูหลักฐานทดสอบใน `docs/agent-memory/ocr-round-b.md`

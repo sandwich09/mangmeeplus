@@ -56,6 +56,8 @@ function expenseSummaryEvidence(result: ToolResult): ExpenseSummaryEvidence | un
 // own chat-scoped record-continuity rule (chatKeyHash on the capture itself), and a draft preview is
 // never something a later turn should silently re-target.
 const READ_MEMORY_TOOLS = new Set([
+  'counterparty.search', 'counterparty.get_detail',
+  'voucher.list_recent', 'voucher.get_detail',
   'expense.list_recent', 'expense.get_breakdown', 'expense.get_detail', 'expense.get_daily_closing',
   'reimbursement.list_pending_approvals', 'reimbursement.get_summary', 'reimbursement.get_detail',
   'expense.list_substitute_receipts_to_sign',
@@ -65,7 +67,9 @@ const READ_MEMORY_TOOLS = new Set([
 /** Hardcoded per tool, not derived from the data shape: a detail read is a "single_metric"-style
  *  answer (one record) even though it also produces exactly one `shownItems` entry for that record. */
 const READ_MEMORY_ANSWER_SHAPE: Record<string, 'single_metric' | 'list'> = {
+  'counterparty.search': 'list', 'counterparty.get_detail': 'single_metric',
   'expense.list_recent': 'list',
+  'voucher.list_recent': 'list', 'voucher.get_detail': 'single_metric',
   'expense.get_breakdown': 'list',
   'expense.get_detail': 'single_metric',
   'expense.get_daily_closing': 'single_metric',
@@ -147,7 +151,15 @@ export function readMemoryEvidence(result: ToolResult): LineAiReadMemory | undef
   const groupBy = groupByRaw === 'category' || groupByRaw === 'branch' || groupByRaw === 'vendor' ? groupByRaw : undefined;
 
   let shownItems: LineAiReadMemoryShownItem[] | undefined;
-  if (result.toolName === 'expense.list_recent') {
+  if (result.toolName === 'counterparty.search') {
+    shownItems = readMemoryRecordItems(data['items'], 'id', 'displayName', 'คู่ค้า', 'createdAt');
+  } else if (result.toolName === 'counterparty.get_detail') {
+    if (typeof data['id'] === 'string') shownItems = [{ ordinal: 1, id: data['id'], label: readMemoryLabel(data['displayName'], 'คู่ค้า') }];
+  } else if (result.toolName === 'voucher.list_recent') {
+    shownItems = readMemoryRecordItems(data['items'], 'id', 'payeeName', 'ไม่ระบุผู้รับเงิน', 'paidDate');
+  } else if (result.toolName === 'voucher.get_detail') {
+    if (typeof data['id'] === 'string') shownItems = [{ ordinal: 1, id: data['id'], label: readMemoryLabel(data['payeeName'], 'ไม่ระบุผู้รับเงิน') }];
+  } else if (result.toolName === 'expense.list_recent') {
     shownItems = readMemoryRecordItems(data['items'], 'id', 'vendorNameSnapshot', 'ไม่ระบุร้าน', 'expenseDate');
   } else if (result.toolName === 'reimbursement.list_pending_approvals') {
     shownItems = readMemoryRecordItems(data['items'], 'id', 'requesterDisplayName', 'ไม่ระบุผู้ขอ', 'submittedAt');
@@ -366,7 +378,13 @@ export class LineReadEvidenceService {
     // Grounding text belongs to draft preview and is deliberately never persisted here.
     const expenseSummary = expenseSummaryEvidence(result);
     const readMemory = readMemoryEvidence(result);
-    const snapshot = JSON.stringify({ input, locale: ctx.locale, ...(ctx.chatKeyHash ? { chatKeyHash: ctx.chatKeyHash } : {}),
+    const calculation = result.toolName === 'wht.calculate_withholding' && result.data && typeof result.data === 'object'
+      ? result.data as Record<string, unknown> : undefined;
+    // Replay only the accepted catalog name and amount, never the original chat text.
+    const whtGrounding = calculation ? [calculation['incomeCategoryName'], calculation['baseAmount']].filter(v => typeof v === 'string').join(' ') : undefined;
+    const whtReadChoices = calculation ? parseWhtReadChoices(calculation['readChoices']) : undefined;
+    const snapshot = JSON.stringify({ input, locale: ctx.locale, ...(whtGrounding !== undefined ? { whtGrounding } : {}),
+      ...(whtReadChoices?.length ? { whtReadChoices } : {}), ...(ctx.chatKeyHash ? { chatKeyHash: ctx.chatKeyHash } : {}),
       ...(expenseSummary ? { expenseSummary } : {}), ...(readMemory ? { readMemory } : {}) });
     if (Buffer.byteLength(snapshot, 'utf8') > LINE_READ_EVIDENCE_MAX_INPUT_BYTES) throw new Error('LINE_READ_EVIDENCE_INPUT_LIMIT');
     const resultHash = lineReadResultHash(result);
@@ -388,6 +406,17 @@ export class LineReadEvidenceService {
     });
     if (rows.length > LINE_READ_EVIDENCE_MAX) throw new Error('LINE_READ_EVIDENCE_LIMIT');
     return rows.map(row => row.id);
+  }
+
+  /** Buttons come from the API's own successful catalog result, bound to this member/chat/turn. */
+  async whtReadChoicesForTurn(request: LineAiTurnRequest, response: LineAiTurnResponse) {
+    if (response.refused || !request.userContext.chatKeyHash || !response.toolCalls?.some(c => c.name === 'wht.calculate_withholding' && c.status === 'ok')) return undefined;
+    const rows = await this.prisma.client.lineReadEvidence.findMany({ where: {
+      companyId: request.userContext.companyId!, userId: request.userContext.internalUserId!, requestId: request.requestId,
+      membershipId: request.userContext.membershipId, toolName: 'wht.calculate_withholding',
+    }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 1, select: { inputJson: true } });
+    const saved = rows[0]?.inputJson as { chatKeyHash?: string; whtReadChoices?: unknown } | undefined;
+    return saved?.chatKeyHash === request.userContext.chatKeyHash ? parseWhtReadChoices(saved.whtReadChoices) : undefined;
   }
 
   /** Telemetry can require extra proof, but can never discard a read recorded by the API. */
@@ -618,7 +647,7 @@ export class LineReadEvidenceService {
     for (const row of rows) {
       const meta = LINE_TOOL_REGISTRY.find(tool => tool.name === row.toolName), tool = this.tools.get(row.toolName);
       if (!meta || !tool || !READ_CATEGORIES.has(meta.category) || !hasToolPermissions(meta, access.permissions) || !hasToolFeature(meta, entitled)) return false;
-      const saved = row.inputJson as { input?: unknown; locale?: unknown; chatKeyHash?: unknown } | null;
+      const saved = row.inputJson as { input?: unknown; locale?: unknown; chatKeyHash?: unknown; whtGrounding?: unknown } | null;
       if (!saved || typeof saved !== 'object' || Array.isArray(saved) || !saved.input
         || typeof saved.input !== 'object' || Array.isArray(saved.input) || typeof saved.locale !== 'string'
         || (saved.chatKeyHash !== undefined && typeof saved.chatKeyHash !== 'string')
@@ -626,9 +655,18 @@ export class LineReadEvidenceService {
       const current = await tool.execute({ requestId, companyId, userId, membershipId: access.membershipId,
         permissions: access.permissions, roles: access.roles, branchIds: access.scopes.branchIds,
         locationIds: access.scopes.locationIds, locale: saved.locale, chatKeyHash: saved.chatKeyHash as string | undefined,
+        ...(row.toolName === 'wht.calculate_withholding' && typeof saved.whtGrounding === 'string' ? { groundingText: saved.whtGrounding } : {}),
       }, saved.input as Record<string, unknown>);
       if (current.status !== 'ok' || lineReadResultHash(current) !== row.resultHash) return false;
     }
     return true;
   }
+}
+
+/** LINE permits at most 13 quick replies. These are plain user messages, never mutation controls. */
+export function parseWhtReadChoices(value: unknown): Array<{ label: string; text: string; webPath?: string }> | undefined {
+  if (!Array.isArray(value) || value.length > 13 || value.some(v => !v || typeof v.label !== 'string' || !v.label.trim()
+    || Array.from(v.label).length > 20 || typeof v.text !== 'string' || !v.text.trim() || v.text.length > 500
+    || v.webPath !== undefined && v.webPath !== '/system/wht-income-categories')) return undefined;
+  return value.map(({ label, text, webPath }) => ({ label, text, ...(webPath ? { webPath } : {}) }));
 }

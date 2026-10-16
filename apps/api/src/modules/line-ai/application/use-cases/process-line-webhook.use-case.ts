@@ -1,4 +1,17 @@
-import { THAI_SYSTEM_ROLE_NAMES, LINE_FEATURE_DISABLED_HELP_TH, SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
+import { LineSubstituteReceiptActionService, buildSubstituteReceiptActionCard, buildSubstituteReceiptFactsCard, type SubstituteActionPreview } from '../line-substitute-receipt-action.service';
+import { LineQuotedMessageService, quoteReadMemory, quoteRecordsFromReads, validQuoteRecords, type LineQuotedRecord, type LineQuoteOwner } from '../line-quoted-message.service';
+import { LineCounterpartyService, buildCounterpartyCard, isLineCounterpartyCommand, type CounterpartyPreview } from '../line-counterparty.service';
+import { LinePackagePurchaseService, buildPackagePurchaseCard, isPackagePurchaseIntent, isPackagePurchaseAnswer, type PackagePurchaseView } from '../line-package-purchase.service';
+import { reimbursementApprovalButtons } from '../../domain/logic/line-reimbursement-approval-control.logic';
+import { LineExpenseActionService, expenseActionNextStepChoices, paidExpenseReply, type ExpenseActionPreview } from '../line-expense-action.service';
+import { buildExpenseActionCard } from '../../domain/logic/line-expense-action-card.logic';
+import { LinkLinePaymentEvidenceUseCase, type LinePaymentEvidenceResult } from '../../../expenses/application/use-cases/link-line-payment-evidence.use-case';
+import { GetExpenseUseCase, ListExpensesUseCase, VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
+import { ListReimbursementsUseCase } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
+import { GetCounterpartyUseCase, ListCounterpartiesUseCase } from '../../../accounting-documents/application/use-cases/counterparty.use-case';
+import { isRecentPaymentEvidenceLinkText } from '../../../expenses/domain/logic/line-payment-evidence.logic';
+import { linePaymentEvidenceReply, parseLinePaymentEvidenceControl, paymentEvidencePage } from '../../domain/logic/line-payment-evidence-reply.logic';
+import { THAI_SYSTEM_ROLE_NAMES, LINE_FEATURE_DISABLED_HELP_TH, SIGNATURE_FILE_TYPES_LABEL, SOURCE_DOCUMENT_TYPE_LABELS, expenseReopenBlockerMessages, scrubRecordText } from '@watchdog-bms/contracts';
 import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSemanticSubrequests, lineAiReplyClarifications, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import { PDFDocument } from 'pdf-lib';
@@ -9,6 +22,7 @@ import { LineReimbursementDraftService } from '../line-reimbursement-draft.servi
 import type { LineReimbursementDraftResult } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
 import { LineReimbursementDraftAdapterService } from '../line-reimbursement-draft-adapter.service';
 import { buildReimbursementDraftMessages, buildReimbursementOptionsMessages } from '../../domain/logic/line-reimbursement-draft-card.logic';
+import { reimbursementApprovalOpenToken } from '../../domain/logic/line-reimbursement-approval-control.logic';
 import { DrainLineLedgerUseCase } from './drain-line-ledger.use-case';
 import { LineCaptureResultNotifierUseCase } from './line-capture-result-notifier.use-case';
 import { parseLinePreferenceCommand, formatLinePreferences, linePreferenceChangedText, linePreferenceForgetsNothing, LINE_PREFERENCE_NOTHING_TO_FORGET, LINE_PREFERENCE_NOTICE, type LinePreferenceCommand } from '../../domain/logic/line-preference-command.logic';
@@ -28,7 +42,7 @@ import { LineMessagingCredentialsService } from '../../../../common/config/line-
  * 6. Reply to LINE
  * 7. Persist turn
  */
-import { HttpException, Inject, forwardRef, Injectable, Logger, Optional, ForbiddenException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
+import { HttpException, Inject, forwardRef, Injectable, Logger, Optional, NotFoundException, ForbiddenException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { LINE_READ_EVIDENCE_MAX, LineReadEvidenceService } from '../line-read-evidence.service';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '../../../../generated/prisma/client';
@@ -100,7 +114,9 @@ import {
   type LineSubstituteReceiptContinuationResult,
 } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { LineExpenseDraftConversationUseCase, type LineExpenseDraftConversationResult } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
-import { splitLineExpenseDraftReply, isDeterministicLineExpenseDraftInput, parseLineExpenseDraftContinuation, LINE_VENDOR_ADDRESS_PROMPT } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
+import { splitLineExpenseDraftReply, isDeterministicLineExpenseDraftInput, isLineExpenseDraftStartEligible, parseLineExpenseDraftContinuation, LINE_VENDOR_ADDRESS_PROMPT } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
+import { normalizeVendorName } from '../../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
+import { resolveNameCandidate, VENDOR_NAME_STRIP_PREFIXES } from '../../domain/logic/business-read-source.logic';
 import { EXPENSE_SOURCE_DRAFT_KEY } from '../../../expenses/domain/logic/expense-source-draft.logic';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase, maySubmitSignature } from '../../../expenses/application/use-cases/signature-asset.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
@@ -160,7 +176,7 @@ import { buildEventDiscountCard, EVENT_DISCOUNT_MEMBER_REPLY, isMangmeeDiscountQ
 import { BillingService } from '../../../billing/application/billing.service';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { lineSystemCardTexts } from '../../domain/logic/line-system-card.logic';
-import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, buildKeptReceiptCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildLineSystemTextCardMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LIFF_ID_PATTERN, LINE_SENT_DOCUMENT_CARD_CONTEXT, LINE_SENT_DOCUMENT_OUTCOMES, type LineExpenseDraftCardFacts, type LineSentDocumentOutcome } from '../../domain/logic/line-business-card.logic';
+import { lineChoiceQuickReply, productHelpQuickReply, asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, buildKeptReceiptCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildLineSystemTextCardMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LIFF_ID_PATTERN, LINE_SENT_DOCUMENT_CARD_CONTEXT, LINE_SENT_DOCUMENT_OUTCOMES, type LineExpenseDraftCardFacts, type LineSentDocumentOutcome } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -208,7 +224,12 @@ export type LineTextEvent = {
   /** Chat to push into when the reply token has expired (group id in group chats). */
   pushTargetId?: string;
   /** Exact preview bound to a validated draft confirm/cancel postback; typed commands lack this. */
+  packagePurchaseControl?: import('../line-package-purchase.service').PackagePurchaseControl;
+  counterpartyControl?: import('../line-counterparty.service').CounterpartyControl;
+  quotedMessageId?: string;
+  expenseActionControl?: import('../line-expense-action.service').ExpenseActionControl;
   draftUpdatePreviewId?: string;
+  reimbursementChoiceControl?: import('../line-reimbursement-draft.service').LineReimbursementChoiceControl;
   reimbursementDraftControl?: import('../line-reimbursement-draft.service').LineReimbursementDraftControl;
   answerDeliveryControl?: import('../../domain/logic/line-delivery-plan.logic').LineAnswerDeliveryControl;
   /** Internal buffer hook: settle any in-flight pre-reply feedback before the answer. */
@@ -511,16 +532,18 @@ const MEDIA_UNSUPPORTED_REPLY = 'ℹ️ ระบบรองรับ: ส่�
 const MEDIA_SECURITY_REJECTED_REPLY = `⚠️ ไม่สามารถรับไฟล์นี้ได้ค่ะ กรุณาส่งไฟล์ PDF หรือ${SIGNATURE_FILE_TYPES_LABEL} ที่ไฟล์ไม่เสียหายและผ่านการตรวจสอบความปลอดภัยนะคะ`;
 /** RECEIPT-05 (owner decision 2026-07-12): the ONE clarify question asked when media arrives
  *  with a business-question caption, instead of silently discarding the image. */
-const MEDIA_CLARIFY_REPLY = [
-  '🤔 รูปนี้เป็นอะไรคะ ตอบเลขข้อได้เลยนะคะ',
-  '1) ใบเสร็จ/เอกสารค่าใช้จ่ายรายการเดียวที่ต้องการบันทึก',
-  '2) ภาพประกอบคำถาม ไม่ต้องบันทึก',
-  '3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)',
-].join('\n');
+const MEDIA_CLARIFY_REPLY = '🤔 รูปนี้เป็นอะไรคะ เลือกบันทึกใบเสร็จ ภาพประกอบ หรือสรุปหลายรายการได้เลยค่ะ';
+const MEDIA_REVIEW_CHOICE = 'เลือกเก็บรูปไว้ตรวจโดยไม่สร้างค่าใช้จ่าย แล้วส่งเอกสารแยกทีละภาพได้ค่ะ';
 const MULTI_DOCUMENT_CLARIFY_REPLY = [
   '📄 พบเอกสารมากกว่า 1 ฉบับในภาพ จึงยังไม่ดึงยอดไปบันทึกเป็นค่าใช้จ่ายรายการเดียวค่ะ',
-  'รูปเดิมเก็บไว้แล้ว ตอบ 3 เพื่อเก็บไว้ตรวจโดยไม่สร้างค่าใช้จ่าย จากนั้นส่งเอกสารแยกทีละภาพเพื่อให้อ่านยอดแต่ละใบค่ะ',
+  MEDIA_REVIEW_CHOICE,
 ].join('\n');
+function mediaChoiceQuickReply(text: string): LineReplyMessage['quickReply'] | undefined {
+  if (text.includes(MEDIA_CLARIFY_REPLY)) return lineChoiceQuickReply([
+    { label: 'บันทึกใบเสร็จ', text: 'บันทึกใบเสร็จ' }, { label: 'ภาพประกอบคำถาม', text: 'ภาพประกอบคำถาม' }, { label: 'สรุปหลายรายการ', text: 'สรุปหลายรายการ' },
+  ]);
+  return text.includes(MEDIA_REVIEW_CHOICE) ? lineChoiceQuickReply([{ label: 'สรุปหลายรายการ', text: 'สรุปหลายรายการ' }]) : undefined;
+}
 function formatUtilityDocumentsReply(parts: NonNullable<ReceiptOcrResponse['utilityDocuments']>): string {
   return [
     `📄 อ่านเอกสารค่าน้ำ/ค่าไฟได้ ${parts.length} ส่วนจากภาพเดียว:`,
@@ -529,7 +552,7 @@ function formatUtilityDocumentsReply(parts: NonNullable<ReceiptOcrResponse['util
       const state = part.role === 'BILL_DUE' ? 'ยอดเรียกเก็บ ยังไม่ยืนยันว่าชำระ' : 'หลักฐานรับเงินของงวดนี้';
       return `• ${label} งวด ${part.period.replace(/\s+/g, ' ').slice(0, 60)}: ${part.amount} บาท (${state})`;
     }),
-    'ยังไม่รวมยอดหรือสร้างค่าใช้จ่ายจากภาพนี้ ตอบ 3 เพื่อเก็บรูปไว้ตรวจและเปิดรายการแยกตามงวดค่ะ',
+    MEDIA_REVIEW_CHOICE,
   ].join('\n');
 }
 
@@ -960,7 +983,7 @@ function decideLineBusinessDocument(
   if (ocr.status !== 'OCR_EXTRACTED_NEEDS_REVIEW' || !ocr.classification) {
     return { outcome: 'clarify', persistMedia: true, classification };
   }
-  if (isExpenseExtractionEligible(ocr.classification, ocr.fields?.grandTotalAmount)) {
+  if (isExpenseExtractionEligible(ocr.classification, ocr.fields?.grandTotalAmount, ocr.classification.documentKind === 'TRANSFER_SLIP')) {
     return { outcome: 'expense', manualReview: false, classification: ocr.classification };
   }
   if (ocr.classification.requiresClarification || ocr.classification.contentKind !== 'DOCUMENT') {
@@ -1044,16 +1067,15 @@ function formatCheckBillDecisionReply(): string {
     'ตอนนี้ยังไม่สร้างรายการค่าใช้จ่ายนะคะ',
     '',
     CHECK_BILL_PAYMENT_QUESTION,
-    ...CHECK_BILL_PAYMENT_CHOICES.map((choice, index) => `${index + 1}) ${choice}`),
   ].join('\n');
 }
 
 export function buildCheckBillDecisionQuickReply(): NonNullable<LineReplyMessage['quickReply']> {
   return {
     items: [
-      { type: 'action', action: { type: 'message', label: 'จ่ายแล้ว ไม่ได้ใบ', text: '1' } },
-      { type: 'action', action: { type: 'message', label: 'ยังไม่ได้จ่าย', text: '2' } },
-      { type: 'action', action: { type: 'message', label: 'มีใบเสร็จ ส่งใหม่', text: '3' } },
+      { type: 'action', action: { type: 'message', label: 'จ่ายแล้ว ไม่ได้ใบ', text: 'จ่ายแล้ว แต่ไม่มีใบเสร็จ' } },
+      { type: 'action', action: { type: 'message', label: 'ยังไม่ได้จ่าย', text: 'ยังไม่ได้จ่าย' } },
+      { type: 'action', action: { type: 'message', label: 'มีใบเสร็จ ส่งใหม่', text: 'มีใบเสร็จแล้ว จะส่งรูปใหม่' } },
     ],
   };
 }
@@ -1105,7 +1127,7 @@ function formatSignatureTicketReply(
   return [
     '✍️ รับรูปลายเซ็นแล้ว และบันทึกเป็นลายเซ็นประจำตัวให้แล้ว',
     'สถานะ: ใช้ลงนามเอกสารได้ทันที ไม่ต้องรออนุมัติ',
-    ...(steerToPendingDecision ? ['', 'ตอบ 1 เพื่อออกเอกสารต่อได้เลยค่ะ'] : []),
+    ...(steerToPendingDecision ? ['', 'กดเตรียมใบรับรอง แล้วน้องจะส่งลิงก์ลงนามในเว็บค่ะ'] : []),
     '',
     `เปิดดูลายเซ็น:\n${link}`,
   ].join('\n');
@@ -1430,6 +1452,7 @@ function computeValueCandidates(normalizedText: string): LineAiValueCandidates |
 }
 
 const SOURCE_DOC_TYPE_REPLY_LABELS: Record<string, string> = {
+  ...SOURCE_DOCUMENT_TYPE_LABELS,
   RECEIPT: 'ใบเสร็จรับเงิน',
   CUSTOMS_VAT_RECEIPT: 'ใบเสร็จรับเงินกรมศุลกากร (VAT นำเข้า)',
   PP36_RECEIPT: 'ใบเสร็จรับเงิน ภ.พ.36',
@@ -1520,7 +1543,7 @@ export function receiptCardDateLine(
   if (status === 'unverified' || !printed) {
     // Both halves: true about the reading AND about the record. UAT 2026-09-03 stored today's date
     // on a bill printing 03/09/69 and the sender had no way to know, nor to fix it from the chat.
-    return 'ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน';
+    return 'ยังไม่มีวันที่';
   }
   if (status === 'implausible') return `${printed} (ผิดปกติ ตรวจในเว็บ)`;
   if (status === 'assumed') return `${printed} (อ่านจากบิล แบบ วัน/เดือน)`;
@@ -1610,7 +1633,7 @@ export function formatPaypersReply(
     ...(docType && options.sourceDocumentType !== 'RECEIPT' ? [`เอกสาร: ${docType}`] : []),
     ...(options.fields?.vendorName ? [`ร้าน: ${options.fields.vendorName}`] : []),
     `ยอดในใบเสร็จ: ${amount === 'ยังไม่ระบุ' ? 'ยังอ่านยอดไม่ได้' : `${amount}${options.fields?.currency && options.fields.currency !== 'THB' ? ` ${options.fields.currency}` : ' บาท'}`}`,
-    `วันที่: ${!options.fields?.expenseDate ? 'ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน' : options.dateStatus === 'unverified' ? 'ยังรอตรวจสอบ' : receiptCardDateLine(options.fields.expenseDate, options.dateStatus ?? 'verified')}`,
+    `วันที่: ${!options.fields?.expenseDate ? 'ยังไม่มีวันที่' : options.dateStatus === 'unverified' ? 'ยังรอตรวจสอบ' : receiptCardDateLine(options.fields.expenseDate, options.dateStatus ?? 'verified')}`,
     'ยังไม่ยืนยันรายการ',
   ] : [
     '🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)',
@@ -1691,7 +1714,7 @@ export function formatGroundedReceiptFollowUp(
   const fields = receiptSummaryFields(expense);
   const missing = expense.aiVerificationSummaryJson?.['missingFields'];
   const missingFields = Array.isArray(missing) ? missing.filter((item): item is string => typeof item === 'string').slice(0, 10) : [];
-  const sourceType = SOURCE_DOC_TYPE_REPLY_LABELS[expense.sourceDocumentType] ?? expense.sourceDocumentType;
+  const sourceType = SOURCE_DOC_TYPE_REPLY_LABELS[expense.sourceDocumentType] ?? 'เอกสารค่าใช้จ่าย';
   const amount = Number(expense.grandTotalAmount) > 0
     ? Number(expense.grandTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : 'ยังไม่ระบุ';
@@ -2036,6 +2059,10 @@ type LineOpenWorkContext = {
   substituteContext: LineIntakeSubstituteContext;
 };
 
+function draftRoutingRevisions(drafts: readonly LineExpenseDraftRouteContext[]): string {
+  return JSON.stringify(drafts.map(({ expenseId, revision }) => ({ expenseId, revision })).sort((a, b) => a.expenseId.localeCompare(b.expenseId)));
+}
+
 @Injectable()
 export class ProcessLineWebhookUseCase {
   private readonly logger = new Logger(ProcessLineWebhookUseCase.name);
@@ -2043,6 +2070,15 @@ export class ProcessLineWebhookUseCase {
   @Inject(LineDocumentQaService) private readonly documentQa!: LineDocumentQaService;
   @Inject(LineDocumentQaWorker) private readonly documentQaWorker!: LineDocumentQaWorker;
   private readonly semanticDelivery = new WeakMap<object, NonNullable<LineAiTurnResponse['semanticCoverage']>>();
+  @Inject(LinePackagePurchaseService) private readonly packagePurchases!: LinePackagePurchaseService;
+  private readonly deliveryPackagePurchases = new WeakMap<object, { context: RequestContext; view: PackagePurchaseView }>();
+  @Inject(LineQuotedMessageService) private readonly quotedMessages!: LineQuotedMessageService;
+  private readonly quotedRecords = new WeakMap<object, LineQuotedRecord[]>();
+  @Inject(LineCounterpartyService) private readonly counterparties!: LineCounterpartyService;
+  private readonly deliveryCounterparties = new WeakMap<object, { context: RequestContext; preview: CounterpartyPreview }>();
+  @Optional() @Inject(LineSubstituteReceiptActionService) private readonly substituteActions?: LineSubstituteReceiptActionService;
+  @Inject(LineExpenseActionService) private readonly expenseActions!: LineExpenseActionService;
+  private readonly deliveryExpenseActions = new WeakMap<object, { context: RequestContext; chat: string; requestId: string; preview: ExpenseActionPreview; applied?: boolean }>();
   private readonly deliveryReimbursements = new WeakMap<object, { context: RequestContext; result: LineReimbursementDraftResult }>();
   @Inject(LineReimbursementDraftService) private readonly reimbursementDrafts!: LineReimbursementDraftService;
   @Inject(LineReimbursementDraftAdapterService) private readonly reimbursementAdapter!: LineReimbursementDraftAdapterService;
@@ -2052,6 +2088,8 @@ export class ProcessLineWebhookUseCase {
   private readonly retainedTaskSources = new WeakMap<object, { source: NonNullable<LineIntakeRouteRequest['retainedTaskSource']>; sourceText: string; operationId: string }>();
   private readonly mixedBusinessQuestions = new WeakMap<object, { requestId: string; ledgerId?: string | null;
     businessIndexes: number[]; businessStatus: 'handled' | 'needs_user' | 'denied'; selectionRequired: boolean;
+    orderedWrites?: NonNullable<LineAiTurnRequest['semanticSubrequests']>;
+    readChoices?: Array<{ label: string; text: string; uri?: string }>;
     dependentQuestions: Array<{ index: number; goal: string; dependsOn: number[] }>;
     response: LineAiTurnResponse; coverage: NonNullable<LineAiTurnResponse['semanticCoverage']> }>();
   private readonly mediaTextContinuations = new WeakMap<LineTextEvent, { route: GovernedLineIntakeRoutePlan; requestId: string }>();
@@ -2063,20 +2101,31 @@ export class ProcessLineWebhookUseCase {
   private readonly deliveryDraftPreviews = new WeakMap<object, { context: RequestContext; chatKeyHash: string; requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' }>();
   private readonly deliveryReceiptSources = new WeakMap<object, { context: RequestContext; chatKeyHash: string;
     records: Map<string, string | null>; categories: Map<string, string | null>; draftChoices?: LineExpenseDraftRouteContext[] }>();
+  private readonly deliverySubstituteActions = new WeakMap<object, { context: RequestContext; preview: SubstituteActionPreview; applied?: boolean }>();
   private readonly deliverySubstituteSources = new WeakMap<object, Array<{ context: RequestContext; source: LineSubstituteReceiptContinuationResult['source'] }>>();
+  private readonly deliverySubstituteContinuations = new WeakMap<object, LineSubstituteReceiptContinuationResult>();
   private readonly deliveryCandidates = new WeakMap<object, { context: RequestContext; chatKeyHash: string; snapshot: string; originalChoices?: boolean }>();
-  private readonly deliveryWaitingSources = new WeakMap<object, { context: RequestContext; items: Array<LineAiOpenClarification & { entry: LedgerEntry }> }>();
+  private readonly deliveryWaitingSources = new WeakMap<object, { context: RequestContext; items: Array<LineAiOpenClarification & { entry: Pick<LedgerEntry, 'sourceContext'> }> }>();
   private readonly clarificationRouteSources = new WeakMap<object, { candidates: string; draftRouting?: string }>();
   private readonly deliveryDenialCode = new WeakMap<object, string>();
   private readonly publicPolicyTopics = new WeakMap<object, PublicPolicyTopic>();
   private readonly replayedOutcomes = new WeakMap<object, unknown>();
   private readonly intermediateDeliveries = new WeakSet<object>();
+  private readonly deliveredTextTurns = new WeakSet<object>();
   private readonly boundConversations = new WeakMap<object, { owner: LineConversationOwner; id: string; epoch: number }>();
   @Inject(forwardRef(() => DrainLineLedgerUseCase)) private readonly ledgerDrain!: Pick<DrainLineLedgerUseCase, 'verifyLedgerDeliveryPlan'>;
   @Inject(LineCaptureResultNotifierUseCase) private readonly captureNotifier!: LineCaptureResultNotifierUseCase;
   @Inject(LineLedgerDeliveryService) private readonly deliveryPlans!: LineLedgerDeliveryService;
   @Inject(LineConversationContextService) private readonly contextV2!: LineConversationContextService;
   @Inject(LineReadEvidenceService) private readonly readEvidence!: LineReadEvidenceService;
+
+  @Inject(LinkLinePaymentEvidenceUseCase) private readonly paymentEvidence!: LinkLinePaymentEvidenceUseCase;
+  @Inject(GetExpenseUseCase) private readonly getLinkedExpense!: GetExpenseUseCase;
+  @Inject(ListExpensesUseCase) private readonly editableExpenses!: ListExpensesUseCase;
+  @Inject(VoidExpenseUseCase) private readonly previewEditVoid!: VoidExpenseUseCase;
+  @Inject(ListReimbursementsUseCase) private readonly editableClaims!: ListReimbursementsUseCase;
+  @Inject(ListCounterpartiesUseCase) private readonly editableCounterparties!: ListCounterpartiesUseCase;
+  @Inject(GetCounterpartyUseCase) private readonly getEditableCounterparty!: GetCounterpartyUseCase;
 
   constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
@@ -2283,6 +2332,7 @@ export class ProcessLineWebhookUseCase {
           total: rows.length,
           items: rows.slice(0, PENDING_APPROVAL_ITEM_LIMIT).map((row) => ({
             title: row.requestNo ?? 'คำขอเบิกเงิน',
+            ...(this.config.aiGatewayInternalSecret ? { buttons: reimbursementApprovalButtons(this.config.aiGatewayInternalSecret, ctx.companyId, ctx.userId, row.id) } : {}),
             detail: [row.requesterDisplayNameSnapshot, bahtText(row.amount)].filter(Boolean).join(' · '),
           })),
         };
@@ -2483,6 +2533,21 @@ export class ProcessLineWebhookUseCase {
         this.logger.log({ msg: 'line.ai.intake_timing', surface: 'employee_oa', requestId: input.requestId, webhookEventId: input.webhookEventId,
           grantMs: timing.grantMs, contextMs: timing.contextMs, categoriesMs: timing.categoriesMs, gatewayMs: Date.now() - gatewayStartedAt });
       } catch { /* telemetry cannot change the outcome it observes */ }
+      const question = input.openClarifications?.length === 1 ? input.openClarifications[0] : undefined;
+      const intent = question?.clarifyForIntent;
+      const evidence = input.event?.inputEvidence;
+      if (routed.status === 'UNAVAILABLE' && routed.errorCode === 'ROUTER_SEMANTIC_SCHEMA_INVALID'
+        && !input.attachment && !this.retainedTaskSources?.has(input.event!) && evidence && intent
+        && ['SUBSTITUTE_RECEIPT_CONTINUATION', 'EXPENSE_DRAFT_CONTINUATION', 'EXPENSE_CAPTURE_CORRECTION'].includes(intent)) {
+        // The live answer is DATA for the existing question's handler, never repaired model facts.
+        // The normal dispatcher still rechecks the question source, permissions and current state.
+        const semanticSubrequests = parseLineAiSemanticSubrequests([{ index: 0, kind: 'write', goal: input.messageText,
+          writeIntent: intent, requestedFilters: {}, requiredEvidence: [], dependsOn: [],
+          evidenceRefs: evidence.parts.filter(part => part.rawText.length).map(part => ({ partId: part.partId,
+            startUtf16: 0, endUtf16: part.rawText.length, rawSha256: part.rawSha256 })) }], input.messageText, evidence);
+        if (semanticSubrequests) return { status: 'ROUTED', intent, language: 'th', confidence: 0,
+          resolvedClarificationIds: [question!.id], semanticSubrequests, usage: routed.usage };
+      }
       return routed;
     } catch (err) {
       // Spec §9.1: our own money gate refused BEFORE any provider ran. Collapsing that into
@@ -2523,6 +2588,12 @@ export class ProcessLineWebhookUseCase {
     /** For a reply to a photo or a file: what became of that document (its card's second header line). */
     outcome?: LineSentDocumentOutcome,
   ): Promise<void> {
+    quickReply ??= mediaChoiceQuickReply(text);
+    const substituteAction = this.deliverySubstituteActions.get(event);
+    designed ??= substituteAction ? buildSubstituteReceiptActionCard(substituteAction.preview, substituteAction.applied || text.includes(substituteAction.preview.summary) ? text : `${text}\n\n${substituteAction.preview.summary}`, substituteAction.applied) : undefined;
+    const facts = this.deliverySubstituteContinuations.get(event);
+    designed ??= facts ? buildSubstituteReceiptFactsCard(facts, text) : undefined;
+    if (designed && quickReply) designed = inheritCompleteLineBusinessAnswerPresentation(designed, { ...designed, quickReply });
     const card = designed ? undefined : this.boundReplyCard(event, text, undefined, outcome);
     const result = await this.deliverMessages(event, [designed
       ?? (card ? inheritCompleteLineBusinessAnswerPresentation(card, { ...card, ...(quickReply ? { quickReply } : {}) }) : {
@@ -3471,6 +3542,160 @@ export class ProcessLineWebhookUseCase {
    * record says so and drops the proposal, a confirmed record gets the `mutation_blocked` copy
    * rather than "out of scope", and an expired or foreign preview is simply "not found".
    */
+  private async handlePackagePurchase(event: LineTextEvent, userId: string, requestId: string): Promise<boolean> {
+    if (!this.packagePurchases) return false;
+    const explicit = isPackagePurchaseIntent(event.messageText), control = event.packagePurchaseControl;
+    const continuation = isPackagePurchaseAnswer(event.messageText);
+    if (!explicit && !control && !continuation) return false;
+    if (event.channelKind === 'GROUP' || event.channelKind === 'ROOM' || event.pushTargetId && event.pushTargetId !== event.lineUserId) {
+      await this.deliverReply(event, 'กรุณาทำรายการในแชตส่วนตัวค่ะ'); return true;
+    }
+    const current = await this.prisma.client.lineCompanyContext.findUnique({ where: { lineUserId: event.lineUserId }, select: { companyId: true } });
+    const memberships = await this.listLineCompanies(userId);
+    const selected = current?.companyId ? memberships.find(m => m.companyId === current.companyId) : memberships.length === 1 ? memberships[0] : undefined;
+    if (!selected) {
+      if (!explicit && !control) return false;
+      await this.deliverRequiredMessages(event, memberships.length ? [buildCompanyPickerMessage(memberships.map(companyPickerItem)),
+        { type: 'text', text: 'เลือกร้านแล้วบอกแพ็กเกจที่ต้องการอีกครั้งค่ะ' }] : [{ type: 'text', text: `ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}ที่มีสิทธิ์จัดการแพ็กเกจเป็นผู้ซื้อค่ะ` }]);
+      await this.updateEventLog(event.webhookEventId, memberships.length ? 'needs_company_selection' : 'package_purchase_denied');
+      return true;
+    }
+    let access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>;
+    try { access = await this.permissionResolver.resolveAccess(userId, selected.companyId); }
+    catch { await this.deliverReply(event, `ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}ที่มีสิทธิ์จัดการแพ็กเกจเป็นผู้ซื้อค่ะ`); return true; }
+    const ctx: RequestContext = { requestId, authSubject: userId, authProvider: 'line', userId, companyId: selected.companyId,
+      membershipId: access.membershipId, roles: access.roles, permissions: access.permissions, scopes: access.scopes };
+    if (!explicit && !control && !await this.packagePurchases.accepts(ctx, chatKeyHashOf(event), event.messageText)) return false;
+    event.handoff = { userId, companyId: ctx.companyId };
+    if (await this.refusePendingLegalAcceptance(event, userId, ctx.companyId, ctx.membershipId)) return true;
+    const entitled = await loadEntitledFeatureKeys(this.prisma, ctx.companyId);
+    this.deliveryAccess.set(event, { userId, companyId: ctx.companyId, membershipId: ctx.membershipId,
+      fingerprint: resolvedLineDeliveryAccessFingerprint(userId, ctx.companyId, access, entitled), allowDuringSupportPause: !!control || staffMenuCommand(event.messageText) === 'package_change' });
+    await this.bindConversation(event);
+    if (control?.action === 'package_purchase_confirm') {
+      const plan = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId: ctx.companyId, userId,
+        planJson: { path: ['control', 'token'], equals: control.token } }, select: { status: true, planJson: true } });
+      if (plan && (plan.status !== 'ACCEPTED' || !parseLineDeliveryPlan(plan.planJson))) {
+        await this.deliverReply(event, 'ยังสร้างลิงก์ไม่ได้ค่ะ กรุณาอ่านรายละเอียดการ์ดให้ครบก่อน'); return true;
+      }
+    }
+    const result: Awaited<ReturnType<LinePackagePurchaseService['prepare']>> = control ? await this.packagePurchases.apply(ctx, chatKeyHashOf(event), control)
+      : await this.packagePurchases.prepare(ctx, chatKeyHashOf(event), event.messageText);
+    if (result.view) this.deliveryPackagePurchases.set(event, { context: ctx, view: result.view });
+    const purchaseMessage: LineReplyMessage = result.view ? buildPackagePurchaseCard(result.view) : result.choices?.length
+      ? buildLineAssistantTextCardMessage(result.reply, this.config.webBaseUrl, ctx.companyId) : { type: 'text', text: result.reply };
+    if (result.choices?.length) purchaseMessage.quickReply = lineChoiceQuickReply(result.choices);
+    await this.deliverRequiredMessages(event, [purchaseMessage]);
+    await this.updateEventLog(event.webhookEventId, result.view?.payment ? 'package_purchase_link' : result.view ? 'package_purchase_preview' : 'package_purchase_answer', undefined, ctx.companyId);
+    return true;
+  }
+
+  private async handleExpenseActionPostback(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null): Promise<void> {
+    if (!event.expenseActionControl || event.channelKind === 'GROUP' || event.channelKind === 'ROOM'
+      || event.pushTargetId && event.pushTargetId !== event.lineUserId) {
+      await this.deliverReply(event, 'กรุณาทำรายการในแชตส่วนตัวค่ะ'); return;
+    }
+    if (!event.expenseActionControl.token.startsWith('team_') && features !== null && !features.has('expenses')) { await this.deliverReply(event, 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องนี้ค่ะ'); return; }
+    const control = event.expenseActionControl;
+    if (control.action === 'expense_action_confirm') {
+      const plan = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId: ctx.companyId, userId: ctx.userId,
+        planJson: { path: ['control', 'token'], equals: control.token } }, select: { status: true, planJson: true } });
+      if (plan && (plan.status !== 'ACCEPTED' || !parseLineDeliveryPlan(plan.planJson))) {
+        if (control.token.startsWith('sub_') && this.substituteActions) {
+          await this.deliverRequiredMessages(event, [buildSubstituteReceiptActionCard(this.substituteActions.webHandoff(ctx))]); return;
+        }
+        await this.deliverReply(event, 'ยังยืนยันไม่ได้ค่ะ กรุณาอ่านรายละเอียดการ์ดให้ครบก่อน'); return;
+      }
+    }
+    if (control.token.startsWith('sub_')) {
+      const result = await this.substituteActions?.apply(ctx, chatKeyHashOf(event), control);
+      let reply = result?.reply ?? 'ยังดำเนินการไม่ได้ค่ะ กรุณาลองใหม่อีกครั้ง';
+      if (result?.expenseId) {
+        if (result.preview) this.deliverySubstituteActions.set(event, { context: ctx, preview: result.preview, applied: true });
+        const next = await this.substituteActions?.prepare(ctx, chatKeyHashOf(event), result.expenseId);
+        if (next?.preview) {
+          this.deliverySubstituteActions.set(event, { context: ctx, preview: next.preview });
+          if (next.preview.webOnly) reply = next.preview.summary;
+        }
+        else if (next?.reply && !reply.includes(next.reply)) reply += `\n${next.reply}`;
+        const waiting = await this.ledger?.openWaitingUser(ctx.companyId, mediaChatKey(event), ctx.userId) ?? [];
+        const resolved = waiting.filter(item => {
+          if (item.clarifyForIntent !== 'SUBSTITUTE_RECEIPT_CONTINUATION') return false;
+          if (item.candidateExpenseIds?.includes(result.expenseId!)) return true;
+          try { return (JSON.parse(item.entry.sourceContext ?? '{}') as LineClarificationSource).substitute
+            ?.some(proof => proof?.records.some(record => record.id === result.expenseId)); } catch { return false; }
+        }).map(item => item.id);
+        await this.consumeClarifications(ctx.companyId, mediaChatKey(event), ctx.userId, waiting, resolved, 'business_answer');
+      }
+      if (result?.expenseId) await this.deliverCompletedReply(event, reply, ctx.companyId, ctx);
+      else if (result?.preview?.webOnly) await this.deliverRequiredMessages(event, [buildSubstituteReceiptActionCard(result.preview)]);
+      else await this.deliverReply(event, reply);
+      await this.updateEventLog(event.webhookEventId, 'substitute_action_result', undefined, ctx.companyId);
+      return;
+    }
+    const result = await this.expenseActions.apply(ctx, chatKeyHashOf(event), control);
+    if ('preview' in result) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview, applied: result.status !== 'prepared' });
+    if ((result.status === 'applied' || result.status === 'replayed') && result.expenseIds?.length)
+      await this.expenseSequenceTask(event, result.expenseIds, result.preview.action);
+    const choices = await this.expenseActions.repairChoices?.(ctx, chatKeyHashOf(event)) ?? expenseActionNextStepChoices(result.reply);
+    let nextCard: LineReplyMessage | undefined;
+    const nextItems: NonNullable<LineReplyMessage['quickReply']>['items'] = choices.map(choice => ({ type: 'action', action: { type: 'message', ...choice } }));
+    if (result.status === 'blocked' && control.action === 'expense_action_submit' && /หลักฐานใบเบิก|เหตุผลที่ไม่มีใบเสร็จ/u.test(result.reply)) {
+      const claimId = control.token.split('.')[0]!;
+      const uri = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/reimbursements/${claimId}`);
+      if (uri.startsWith('https://')) nextCard = { type: 'text', text: result.reply,
+        quickReply: { items: [{ type: 'action', action: { type: 'uri', label: 'แนบหลักฐาน / เปิดใบเบิก', uri } }] } };
+    }
+    if (result.status === 'blocked' && !nextItems.length && !nextCard) {
+      const records = await this.expenseActions.quoteRecords?.(ctx, chatKeyHashOf(event), control.token);
+      const record = records?.length === 1 && records[0]?.tool === 'expense.get_detail' ? records[0] : undefined;
+      const uri = record ? absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${record.id}`) : '';
+      if (uri.startsWith('https://')) nextCard = buildLineSystemTextCardMessage({ text: `${result.reply}\n${uri}`,
+        header: { lines: ['รายการค่าใช้จ่าย', 'ขั้นตอนถัดไป'] }, webBaseUrl: this.config.webBaseUrl, companyId: ctx.companyId, linkLabel: 'เปิดตรวจรายการ' })
+        ?? buildLineAssistantTextCardMessage(`${result.reply}\n${uri}`, this.config.webBaseUrl, ctx.companyId);
+    }
+    await this.deliverRequiredMessages(event, ['preview' in result ? buildExpenseActionCard(result.preview, result.status === 'prepared' ? undefined : result.reply) : nextCard ?? { type: 'text', text: result.reply,
+      ...(nextItems.length ? { quickReply: { items: nextItems } } : {}) }]);
+    await this.updateEventLog(event.webhookEventId, `expense_action_${result.status}`, undefined, ctx.companyId);
+  }
+
+  private async handleExpensePaymentText(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null,
+    conversation?: LineAiConversationContext): Promise<boolean> {
+    const text = event.messageText.trim();
+    const amountOnly = /^[\d๐-๙]+(?:,[\d๐-๙]{3})*(?:\.[\d๐-๙]{1,2})?(?:\s*บาท)?$/u.test(text);
+    if (!this.expenseRepo || (!amountOnly && !/^(?:จ่ายแล้ว|โอนแล้ว|บันทึกจ่าย)(?:\s*(?:ค่ะ|ครับ|คะ|ให้หน่อย|รายการนี้))*$/u.test(text))) return false;
+    if (features && !features.has('expenses')) { await this.deliverReply(event, EXPENSE_FEATURE_DISABLED_REPLY); return true; }
+    const expenseTools = ['expense.get_detail', 'expense.list_recent', 'expense.list_substitute_receipts_to_sign'];
+    const quoted = conversation?.quotedRecords;
+    const shown = conversation?.recentReads?.find(read => expenseTools.includes(read.tool))?.shownItems?.filter(item => !item.kind);
+    const targets = quoted?.length ? quoted.filter(record => expenseTools.includes(record.tool))
+      : shown?.length ? shown : (await this.expenseRepo.listRecentLineCaptures({ companyId: ctx.companyId, createdByUserId: ctx.userId,
+        chatKeyHash: chatKeyHashOf(event), since: new Date(Date.now() - 2 * 60 * 60_000), scopes: ctx.scopes ?? {}, take: 5, includeAllStatuses: true }))
+        .filter(record => record.sourceDocumentType !== 'TRANSFER_SLIP');
+    const ids = [...new Set(targets.map(record => record.id))];
+    if (amountOnly) {
+      if (ids.length !== 1) return false;
+      const expense = await new GetExpenseUseCase(this.expenseRepo).execute(ctx, ids[0]!).catch(error => {
+        if (error instanceof HttpException) return null;
+        throw error;
+      });
+      const reply = expense && paidExpenseReply(expense);
+      if (!reply) return false;
+      this.rememberReceiptDeliverySource(event, ctx, expense);
+      await this.deliverRequiredMessages(event, [{ type: 'text', text: reply }]);
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
+      return true;
+    }
+    const result = ids.length === 1 ? await this.expenseActions.preview(ctx, chatKeyHashOf(event), { action: 'RECORD_PAYMENT', expenseId: ids[0] })
+      : { reply: 'ต้องการบันทึกจ่ายรายการไหนคะ' };
+    if (result.preview) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview });
+    const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event), ctx.requestId) ?? expenseActionNextStepChoices(result.reply);
+    await this.deliverRequiredMessages(event, [result.preview ? buildExpenseActionCard(result.preview) : { type: 'text', text: result.reply,
+      ...(choices.length ? { quickReply: { items: choices.map(choice => ({ type: 'action' as const, action: { type: 'message' as const, ...choice } })) } } : {}) }]);
+    await this.updateEventLog(event.webhookEventId, result.preview ? 'expense_action_prepared' : 'clarification_required', undefined, ctx.companyId);
+    return true;
+  }
+
   private async handleDraftUpdatePostback(
     event: LineTextEvent,
     ctx: RequestContext,
@@ -3529,8 +3754,19 @@ export class ProcessLineWebhookUseCase {
       reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
       status = outcome.reason === 'forbidden' ? 'forbidden' : 'draft_update_blocked';
     }
-    await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined,
-      buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId));
+    const repaired = outcome.status === 'applied'
+      ? await this.expenseActions?.afterRepairEdit?.(ctx, chatKeyHash, outcome.preview.previewId, outcome.expenseId) : null;
+    if (repaired?.preview) {
+      this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHash, requestId: ctx.requestId, preview: repaired.preview });
+      const outcomeCard = buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId);
+      await this.deliverRequiredMessages(event, [outcomeCard ?? { type: 'text', text: reply }, buildExpenseActionCard(repaired.preview)]);
+    } else {
+      if (repaired) reply = `${reply}\n${repaired.reply}`;
+      const choices = repaired ? await this.expenseActions.repairChoices(ctx, chatKeyHash) : null;
+      if (choices?.length) await this.deliverReply(event, reply, { items: choices.map(choice => ({ type: 'action' as const, action: { type: 'message' as const, ...choice } })) });
+      else await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined,
+        buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId));
+    }
     await this.persistIntakeTurn({ event,
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
@@ -3629,7 +3865,7 @@ export class ProcessLineWebhookUseCase {
   ): Promise<LineReplyMessage> {
     return inheritCompleteLineBusinessAnswerPresentation(message, {
       ...message,
-      quickReply: buildStaffCompletionQuickReply({
+      quickReply: message.quickReply ?? mediaChoiceQuickReply(message.type === 'text' ? message.text : message.type === 'flex' ? message.canonicalText ?? message.altText : '') ?? buildStaffCompletionQuickReply({
         permissions: access.permissions,
         entitledFeatureKeys: await loadEntitledFeatureKeys(this.prisma, companyId),
         isOwner: access.roles.includes('OWNER'),
@@ -3650,6 +3886,10 @@ export class ProcessLineWebhookUseCase {
     /** For a reply to a photo or a file: what became of that document (its card's second header line). */
     outcome?: LineSentDocumentOutcome,
   ): Promise<void> {
+    const substituteAction = this.deliverySubstituteActions.get(event);
+    designed ??= substituteAction ? buildSubstituteReceiptActionCard(substituteAction.preview, substituteAction.applied || text.includes(substituteAction.preview.summary) ? text : `${text}\n\n${substituteAction.preview.summary}`, substituteAction.applied) : undefined;
+    const facts = this.deliverySubstituteContinuations.get(event);
+    designed ??= facts ? buildSubstituteReceiptFactsCard(facts, text) : undefined;
     // Bound chats render the same card production sends (UAT 2026-09-29: the receipt draft reply had
     // become plain text ending in a raw link with ids). A lossless card is a complete presentation, so
     // the delivery plan sends the card itself with this text as its fallback.
@@ -3723,7 +3963,9 @@ export class ProcessLineWebhookUseCase {
         parts[parts.length - 1] = await this.withCompletionMenu(parts[parts.length - 1]!, companyId, access);
         return parts;
       }
-      parts.push(await this.withCompletionMenu(terminalCard(MULTIPART_TERMINAL_FLEX_CLOSER), companyId, access));
+      parts.push(await this.withCompletionMenu(buildLineSystemTextCardMessage({ text: MULTIPART_TERMINAL_FLEX_CLOSER,
+        header: { lines: ['น้องมั่งมี', 'ขั้นตอนถัดไป'] }, webBaseUrl: this.config.webBaseUrl, companyId })
+        ?? buildLineAssistantTextCardMessage(MULTIPART_TERMINAL_FLEX_CLOSER, this.config.webBaseUrl, companyId), companyId, access));
       return parts;
     });
     await this.deliverRequiredMessages(event, messages);
@@ -3739,11 +3981,15 @@ export class ProcessLineWebhookUseCase {
     const mediaNotice = this.pendingMediaNotices?.get(event);
     if (mediaNotice) messages = [...messages, mediaNotice];
     const mixed = this.mixedBusinessQuestions?.get(event);
-    if (!mixed || this.intermediateDeliveries.has(event)) return this.timeStage(event.webhookEventId, 'line_delivery', () => this.sendMessages(event, messages));
+    if (!mixed || this.intermediateDeliveries.has(event)) {
+      const result = await this.timeStage(event.webhookEventId, 'line_delivery', () => this.sendMessages(event, messages));
+      if (result === 'ok') this.deliveredTextTurns.add(event);
+      return result;
+    }
     const businessText = messages.map(message => message.type === 'text' ? message.text : message.type === 'flex' ? message.canonicalText ?? '' : '').join('\n');
     const businessCoverage: NonNullable<LineAiTurnResponse['semanticCoverage']> = mixed.businessIndexes.map(index => ({ index,
       status: mixed.selectionRequired ? 'needs_user' : mixed.businessStatus,
-      ...(mixed.selectionRequired ? { question: `กรุณาเลือกทำข้อ ${index + 1} ก่อน ระบบจะใช้รายละเอียดเดิมของข้อนี้`, reasonCode: 'FINANCIAL_ACTION_SELECTION_REQUIRED' }
+      ...(mixed.selectionRequired ? { question: businessText, reasonCode: 'FINANCIAL_ACTION_SELECTION_REQUIRED' }
         : mixed.businessStatus === 'needs_user' ? { question: businessText.length <= 500 && businessText.trim() ? businessText : 'กรุณาตอบข้อมูลที่รายการนี้ถามให้ครบ', reasonCode: 'BUSINESS_INPUT_REQUIRED' } : {}) }));
     const unresolvedDependencies = (item: { dependsOn: number[] }) => item.dependsOn.filter(index =>
       mixed.selectionRequired || mixed.businessStatus !== 'handled' || !mixed.businessIndexes.includes(index));
@@ -3759,9 +4005,17 @@ export class ProcessLineWebhookUseCase {
       ? `⏳ ข้อ ${item.index + 1} “${item.goal}” ยังรออ่านจากผลจริงค่ะ กรุณาถามข้อนี้อีกครั้งโดยอ้าง “รายการที่เพิ่งบันทึก”`
       : `⏳ ข้อ ${item.index + 1} “${item.goal}” ต้องรอให้ข้อ ${unresolvedDependencies(item).map(index => index + 1).join(', ')} เสร็จก่อน ระบบยังไม่ได้ตอบข้อนี้จากข้อมูลที่ยังไม่บันทึก`).join('\n');
     const sideText = [mixed.response.replyText.trim() ? formatLineReply(mixed.response, this.config.webBaseUrl) : '', dependentText].filter(Boolean).join('\n\n');
-    const remainingChoices = this.retainedTaskSources?.has(event) && mixed.businessStatus === 'handled' ? await this.remainingTaskChoiceMessages(event) : [];
-    const combined = [...messages, ...splitLineExpenseDraftReply(sideText).filter(Boolean).map(text => ({ type: 'text' as const, text })), ...remainingChoices];
+    const nextWrite = mixed.orderedWrites?.[1];
+    const remainingChoices: LineReplyMessage[] = nextWrite && mixed.businessStatus === 'handled'
+      ? [{ type: 'text', text: 'กดทำขั้นตอนถัดไปเมื่อรายการแรกพร้อมค่ะ', quickReply: lineChoiceQuickReply([
+        { label: nextWrite.goal, text: `ทำข้อ ${nextWrite.index + 1} ก่อน` },
+      ]) }]
+      : this.retainedTaskSources?.has(event) && mixed.businessStatus === 'handled' ? await this.remainingTaskChoiceMessages(event) : [];
+    const sideMessages: LineReplyMessage[] = splitLineExpenseDraftReply(sideText).filter(Boolean).map(text => ({ type: 'text' as const, text }));
+    if (mixed.readChoices?.length && sideMessages.length) sideMessages.at(-1)!.quickReply = lineChoiceQuickReply(mixed.readChoices);
+    const combined = [...messages, ...sideMessages, ...remainingChoices];
     const result = await this.timeStage(event.webhookEventId, 'line_delivery', () => this.sendMessages(event, combined));
+    if (result === 'ok') this.deliveredTextTurns.add(event);
     if (result === 'ok') {
       await this.settleSemanticTask(event as LineTextEvent, coverage);
       const bound = this.boundConversations.get(event);
@@ -4088,6 +4342,7 @@ export class ProcessLineWebhookUseCase {
       ...(candidates ? { valueCandidates: candidates } : {}), intakeIntent: route.intent,
       ...(conversationContext ? { conversationContext } : {}),
       ...(features ? { entitledFeatureKeys: [...features] } : {}),
+      ...(route.howToActionId ? { howToActionId: route.howToActionId } : {}),
       ...(this.config.lineAiApprovedKnowledgeEnabled ? { approvedKnowledge: true, selectedKnowledgeCardIds: route.selectedKnowledgeCardIds } : {}) };
     const ledgerId = await this.ledger?.appendTurn({ messagingChannelId: event.messagingChannelId, companyId: bound.owner.companyId,
       chatKey: mediaChatKey(event), turnId: requestId, webhookEventId: event.webhookEventId, userId: bound.owner.userId, text: event.messageText,
@@ -4113,8 +4368,11 @@ export class ProcessLineWebhookUseCase {
     await this.updateEventLog(event.webhookEventId, 'response_ready', undefined, bound.owner.companyId);
     // The answer on the locked design, under the reader's own question; its text where the design cannot be drawn.
     const answerText = formatLineReply(response, this.config.webBaseUrl);
-    const delivered = await this.deliverMessages(event, [buildDesignedLineAnswerMessage(response, answerText, this.config.webBaseUrl, bound.owner.companyId, event.messageText)
-      ?? { type: 'text', text: answerText }]);
+    const message = buildDesignedLineAnswerMessage(response, answerText, this.config.webBaseUrl, bound.owner.companyId, event.messageText)
+      ?? { type: 'text' as const, text: answerText };
+    const quickReply = productHelpQuickReply(response, access.permissions, features === null ? null : new Set(features));
+    if (quickReply) message.quickReply = quickReply;
+    const delivered = await this.deliverMessages(event, [message]);
     // Same terminal row states as the business-answer path; only COMPLETED/REFUSED rows feed the next turn's context.
     await this.prisma.client.aiTurn.update({ where: { id: turnId }, data: delivered === 'ok'
       ? { status: response.refused ? 'REFUSED' : 'COMPLETED', errorCode: response.errorCode }
@@ -4127,13 +4385,30 @@ export class ProcessLineWebhookUseCase {
   }
 
   /** Independent questions use the same admitted turn; existing API write paths keep all domain guards. */
+  private orderedExpenseWrites(inventory: NonNullable<LineAiTurnRequest['semanticSubrequests']>) {
+    const writes = inventory.filter(item => item.kind === 'write');
+    // The admitted model can name the capture correctly while omitting its optional route enum.
+    if (!writes[0]?.writeIntent && /^บันทึก(?:ค่าใช้จ่าย|รายจ่าย|ค่าจ้าง)/u.test(writes[0]?.goal ?? ''))
+      writes[0] = { ...writes[0]!, writeIntent: 'EXPENSE_DOCUMENT_CAPTURE' };
+    const first = writes[0];
+    if (writes.length < 2 || first?.writeIntent !== 'EXPENSE_DOCUMENT_CAPTURE') return undefined;
+    // A capture and its following actions share one source object, even when intake omits dependsOn.
+    const related = writes.slice(1).every(item => item.dependsOn.some(index => writes.some(parent => parent.index === index && index < item.index))
+      || item.evidenceRefs?.length && item.evidenceRefs.every(ref => first.evidenceRefs?.some(source => source.partId === ref.partId
+        && source.startUtf16 <= ref.startUtf16 && source.endUtf16 >= ref.endUtf16)));
+    if (!related) return undefined;
+    const counterparty = writes.find(item => /(?:บันทึก|อัปเดต|เพิ่ม).*(?:ข้อมูลคู่ค้า|ผู้รับเงิน)/u.test(item.goal));
+    return counterparty && writes.some(item => /50\s*ทวิ/u.test(item.goal))
+      ? [counterparty, ...writes.filter(item => item !== counterparty)] : writes;
+  }
+
   private async prepareMixedBusinessQuestions(event: LineTextEvent, requestId: string, route: GovernedLineIntakeRoutePlan,
     access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>, features: ReadonlySet<string> | null,
     candidates: LineAiTurnRequest['valueCandidates']): Promise<boolean> {
     const inventory = route.semanticSubrequests, bound = this.boundConversations.get(event), grant = this.budgetGrantsV2.get(event);
     if (!bound || !grant || !event.inputEvidence || !inventory || inventory.length < 2 && !this.retainedTaskSources?.has(event)) return false;
     const writes = inventory.filter(item => item.kind === 'write'), others = inventory.filter(item => item.kind !== 'write');
-    if (!writes.length || writes.some(item => !item.writeIntent || !['EXPENSE_DOCUMENT_CAPTURE', 'EXPENSE_DRAFT_CONTINUATION', 'EXPENSE_CAPTURE_CORRECTION', 'SUBSTITUTE_RECEIPT_CONTINUATION', ...(writes.length > 1 ? ['REIMBURSEMENT_REQUEST_START'] : [])].includes(item.writeIntent))
+    if (!writes.length || writes.length === 1 && writes.some(item => !item.writeIntent || !['EXPENSE_DOCUMENT_CAPTURE', 'EXPENSE_DRAFT_CONTINUATION', 'EXPENSE_CAPTURE_CORRECTION', 'SUBSTITUTE_RECEIPT_CONTINUATION'].includes(item.writeIntent))
       || others.some(item => !['general', 'help', 'read', 'public'].includes(item.kind))) return false;
     const blocked = new Set(writes.map(item => item.index));
     for (let changed = true; changed;) {
@@ -4153,6 +4428,7 @@ export class ProcessLineWebhookUseCase {
       semanticSubrequests: independent.map((item, index) => ({ ...item, index, dependsOn: item.dependsOn.map(dep => indices.get(dep)!).filter(dep => dep !== undefined) })),
       ...await this.reliabilityContext(event), ...(candidates ? { valueCandidates: candidates } : {}),
       intakeIntent: 'BUSINESS_READ_QUESTION', ...(features ? { entitledFeatureKeys: [...features] } : {}),
+      ...(route.howToActionId ? { howToActionId: route.howToActionId } : {}),
       ...(this.config.lineAiApprovedKnowledgeEnabled ? { approvedKnowledge: true, selectedKnowledgeCardIds: route.selectedKnowledgeCardIds } : {}) };
     const ledgerId = await this.ledger?.appendTurn({ messagingChannelId: event.messagingChannelId, companyId: bound.owner.companyId,
       chatKey: mediaChatKey(event), turnId: requestId, webhookEventId: event.webhookEventId, userId: bound.owner.userId, text: event.messageText,
@@ -4174,10 +4450,16 @@ export class ProcessLineWebhookUseCase {
         semanticCoverage: independent.map((_item, index) => ({ index, status: 'needs_user', reasonCode: 'INDEPENDENT_ANSWER_UNAVAILABLE', question: 'กรุณาถามส่วนนี้อีกครั้ง' })) };
       this.deliverySources.set(event, { requestId, ids: [] });
     } else this.deliverySources.set(event, { requestId, ids: [] });
-    this.mixedBusinessQuestions.set(event, { requestId, ledgerId, businessIndexes: writes.map(item => item.index),
-      businessStatus: 'needs_user', selectionRequired: writes.length > 1,
+    const orderedWrites = this.orderedExpenseWrites(inventory);
+    const readChoices = (await this.readEvidence.whtReadChoicesForTurn?.(request, response).catch(() => undefined))?.map(choice => ({ ...choice,
+      ...(choice.webPath ? { uri: absoluteWebLink(this.config.webBaseUrl, choice.webPath) } : {}) }));
+    this.mixedBusinessQuestions.set(event, { requestId, ledgerId, businessIndexes: (orderedWrites ? orderedWrites.slice(0, 1) : writes).map(item => item.index),
+      ...(readChoices?.length ? { readChoices } : {}),
+      businessStatus: 'needs_user', selectionRequired: writes.length > 1 && !orderedWrites, ...(orderedWrites ? { orderedWrites } : {}),
       dependentQuestions: dependent.map(item => ({ index: item.index, goal: item.goal, dependsOn: item.dependsOn.filter(index => blocked.has(index)) })), response,
-      coverage: response.semanticCoverage!.map(item => ({ ...item, index: independent[item.index]!.index })) });
+      coverage: [...response.semanticCoverage!.map(item => ({ ...item, index: independent[item.index]!.index })),
+        ...(orderedWrites?.slice(1).map(item => ({ index: item.index, status: 'needs_user' as const,
+          reasonCode: 'DEPENDENCY_SOURCE_PENDING', question: 'กดทำขั้นตอนถัดไปเมื่อรายการแรกพร้อมค่ะ' })) ?? [])] });
     return true;
   }
 
@@ -4204,6 +4486,8 @@ export class ProcessLineWebhookUseCase {
         task.sourceRevisionLocators = [...locators, ...selected.filter(mapping => !locators.some(locator => locator.sourceType.startsWith(`LINE_ACCEPTED_TASK_${mapping.subrequestIndex}_`)))
           .map(mapping => ({ sourceType: `LINE_ACCEPTED_TASK_${mapping.subrequestIndex}_${mapping.index}`, sourceId: id, revision: accepted.digest }))];
         if (task.sourceRevisionLocators.length > 8) throw new Error('LINE_TASK_SOURCE_LIMIT');
+        const ordered = this.orderedExpenseWrites(accepted.request.semanticSubrequests ?? []);
+        if (ordered) task.slots = { ...task.slots, writeOrder: ordered.map(item => item.index).join(',') };
         task.revision++;
       }
       if (await this.contextV2.save(bound.owner, projection.stateVersion, bound.epoch, { version: 2, tasks })) return;
@@ -4217,7 +4501,8 @@ export class ProcessLineWebhookUseCase {
    *  accepted for a button delivered before that change. */
   private async prepareRetainedTaskSelection(event: LineTextEvent): Promise<boolean> {
     const words = /^ทำ(ข้อ|รายการ) ([1-8]) (?:ก่อน|ต่อ)$/u.exec(event.messageText.trim());
-    if (!event.messageText.startsWith('/task choose ') && !words) return false;
+    const more = event.messageText.trim() === 'ขอดูงานค้างที่เหลือ';
+    if (!event.messageText.startsWith('/task choose ') && !words && !more) return false;
     const bound = this.boundConversations.get(event);
     if (!bound) return false;
     this.retainedTaskSources.delete(event);
@@ -4225,7 +4510,7 @@ export class ProcessLineWebhookUseCase {
     const legacy = /^\/task choose ([A-Za-z0-9_-]{1,128}) ([0-9]{1,10}) ([0-7])$/u.exec(event.messageText);
     if (legacy) choice = { taskId: legacy[1]!, revision: Number(legacy[2]), index: Number(legacy[3]) };
     const projection = await this.contextV2.projection(bound.owner).catch(() => null);
-    if (words) {
+    if (words || more) {
       // The same list the buttons were built from, in the same order (remainingTaskChoiceMessages).
       const waiting = (projection?.tasks ?? []).flatMap(task => task.subrequests.flatMap(sub => {
         const locator = sub.kind === 'write' && ['needs_user', 'pending'].includes(sub.status)
@@ -4234,19 +4519,27 @@ export class ProcessLineWebhookUseCase {
       }));
       // Nothing is waiting to be chosen, so these are ordinary words for the normal route.
       if (!waiting.length) return false;
-      const number = Number(words[2]);
-      const picked = words[1] === 'ข้อ'
+      if (more) {
+        const choices = waiting.slice(4, 8);
+        await this.deliverMessages(event, [{ type: 'text', text: 'เลือกงานที่จะทำต่อ แล้วน้องใช้รายละเอียดเดิมเตรียมให้ตรวจค่ะ',
+          quickReply: lineChoiceQuickReply((choices.length ? choices : waiting.slice(0, 4)).map(({ sub, originalIndex }) => ({
+            label: sub.goal, text: `ทำข้อ ${originalIndex + 1} ก่อน`,
+          }))) }]);
+        return true;
+      }
+      const number = Number(words?.[2]);
+      const picked = words?.[1] === 'ข้อ'
         ? waiting.filter(item => item.originalIndex === number - 1).at(-1)
         : waiting[number - 1];
       if (picked) choice = { taskId: picked.task.taskId, revision: picked.task.revision, index: picked.sub.index };
     }
     try {
       const task = choice && projection?.tasks.find(item => item.taskId === choice!.taskId);
-      const localIndex = Number(choice?.index);
+      let localIndex = Number(choice?.index);
       const sub = task?.subrequests.find(item => item.index === localIndex);
       if (!choice || !projection || projection.lifecycleEpoch !== bound.epoch || !task || task.revision !== choice.revision
         || !['waiting_user', 'paused'].includes(task.state) || sub?.kind !== 'write' || !['needs_user', 'pending'].includes(sub.status)) throw new Error('LINE_TASK_STALE_SELECTION');
-      const locator = task.sourceRevisionLocators?.find(item => item.sourceType.startsWith(`LINE_ACCEPTED_TASK_${localIndex}_`));
+      let locator = task.sourceRevisionLocators?.find(item => item.sourceType.startsWith(`LINE_ACCEPTED_TASK_${localIndex}_`));
       const originalIndex = Number(locator?.sourceType.split('_').at(-1));
       const row = locator && await this.prisma.client.lineLedgerDelivery.findUnique({ where: { id: locator.sourceId } });
       if (!row || row.companyId !== bound.owner.companyId || row.userId !== bound.owner.userId || row.expiresAt.getTime() <= Date.now()) throw new Error('LINE_TASK_SOURCE_EXPIRED');
@@ -4258,16 +4551,30 @@ export class ProcessLineWebhookUseCase {
       const evidence = accepted.request.inputEvidence!;
       const inventory = parseLineAiSemanticSubrequests(accepted.request.semanticSubrequests, accepted.request.messageText, evidence,
         lineAiReplyClarifications(accepted.request.openClarifications, accepted.request.resolvedClarificationIds));
-      const original = inventory?.find(item => item.index === originalIndex);
-      if (!original || original.kind !== 'write' || !original.writeIntent || !original.evidenceRefs?.length) throw new Error('LINE_TASK_SOURCE_MISSING');
+      let original = inventory?.find(item => item.index === originalIndex);
+      if (!original || original.kind !== 'write' || !original.evidenceRefs?.length) throw new Error('LINE_TASK_SOURCE_MISSING');
+      const capture = inventory && this.orderedExpenseWrites(inventory)?.find(candidate => task.sourceRevisionLocators?.some(source =>
+        source.sourceId === locator!.sourceId && Number(source.sourceType.split('_').at(-1)) === candidate.index
+        && task.subrequests.some(sub => sub.index === Number(source.sourceType.split('_').at(-2)) && ['pending', 'needs_user'].includes(sub.status))));
+      const captureLocator = capture && task.sourceRevisionLocators?.find(item => item.sourceId === locator!.sourceId
+        && Number(item.sourceType.split('_').at(-1)) === capture.index);
+      const captureIndex = Number(captureLocator?.sourceType.split('_').at(-2));
+      if (capture && captureLocator && task.subrequests.some(item => item.index === captureIndex && ['pending', 'needs_user'].includes(item.status))) {
+        original = capture; localIndex = captureIndex; locator = captureLocator;
+      }
       if (original.dependsOn.some(dependency => !projection.tasks.some(parent => parent.sourceRevisionLocators?.some(source => {
         const match = /^LINE_ACCEPTED_TASK_([0-7])_([0-7])$/u.exec(source.sourceType);
         return source.sourceId === locator!.sourceId && source.revision === locator!.revision && Number(match?.[2]) === dependency
           && parent.subrequests.find(item => item.index === Number(match?.[1]))?.status === 'handled';
       })))) throw new Error('LINE_TASK_DEPENDENCY_PENDING');
-      const refs = original.evidenceRefs;
+      const refs = original.evidenceRefs!;
       if (inventory!.some(item => item.index !== originalIndex && item.kind === 'write' && item.evidenceRefs?.some(other => refs.some(ref =>
-        ref.partId === other.partId && ref.startUtf16 < other.endUtf16 && other.startUtf16 < ref.endUtf16)))) throw new Error('LINE_TASK_SOURCE_AMBIGUOUS');
+        ref.partId === other.partId && ref.startUtf16 < other.endUtf16 && other.startUtf16 < ref.endUtf16
+        // One message may supply shared payee/amount facts for several operations (C05).
+        // Containment also covers a confirmation suffix inside its expense capture (E02).
+        // Crossing spans remain ambiguous; containment is scoped by the selected goal/intent.
+        && !(ref.startUtf16 <= other.startUtf16 && ref.endUtf16 >= other.endUtf16)
+        && !(other.startUtf16 <= ref.startUtf16 && other.endUtf16 >= ref.endUtf16))))) throw new Error('LINE_TASK_SOURCE_AMBIGUOUS');
       const sourceText = refs.map(ref => validateLineAiSourceRefV2(ref, evidence)).filter((text): text is string => text !== undefined).join('\n');
       if (!sourceText.trim()) throw new Error('LINE_TASK_SOURCE_MISSING');
       this.retainedTaskSources.set(event, { source: { taskRef: { taskId: task.taskId, taskRevision: task.revision, subrequestIndex: localIndex },
@@ -4279,20 +4586,79 @@ export class ProcessLineWebhookUseCase {
     }
   }
 
+  private async expenseSequenceTask(event: LineTextEvent, expenseIds: string[], action?: string): Promise<void> {
+    const bound = this.boundConversations.get(event); if (!bound) return;
+    const mapping = this.semanticTaskMappings.get(event)?.[0];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const projection = await this.contextV2.projection(bound.owner);
+      if (!projection || projection.lifecycleEpoch !== bound.epoch) return;
+      const tasks = structuredClone(projection.tasks); let changed = false;
+      for (const task of tasks) {
+        if (!task.slots?.writeOrder) continue;
+        let touched = false;
+        if (!action && task.taskId === mapping?.taskId && expenseIds.length === 1) {
+          task.slots.sequenceExpenseId = expenseIds[0]!; touched = true;
+        } else if (typeof task.slots.sequenceExpenseId === 'string' && expenseIds.includes(task.slots.sequenceExpenseId)) {
+          for (const sub of task.subrequests) if (sub.kind === 'write'
+            && (action === 'CONFIRM' && /^บันทึก(?:ค่าใช้จ่าย|รายจ่าย|ค่าจ้าง)/u.test(sub.goal)
+              || action === 'WHT_CERTIFICATE_ISSUE' && /50\s*ทวิ/u.test(sub.goal))) { sub.status = 'handled'; touched = true; }
+          task.state = task.subrequests.some(sub => ['pending', 'needs_user'].includes(sub.status)) ? 'waiting_user' : 'completed';
+        }
+        if (touched) { task.revision++; changed = true; }
+      }
+      if (!changed || await this.contextV2.save(bound.owner, projection.stateVersion, bound.epoch, { version: 2, tasks })) return;
+    }
+    throw new Error('LINE_CONTEXT_STALE_STATE');
+  }
+
+  private async counterpartyTask(event: LineTextEvent, token: string, completed = false, source?: { id: string; revision: string }): Promise<void> {
+    const bound = this.boundConversations.get(event); if (!bound) return;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const projection = await this.contextV2.projection(bound.owner);
+      if (!projection || projection.lifecycleEpoch !== bound.epoch) return;
+      const mappings = completed ? projection.tasks.flatMap(task => task.subrequests.filter(sub =>
+        task.slots?.[`counterpartyToken${sub.index}`] === token).map(sub => ({ index: 0, taskId: task.taskId, subrequestIndex: sub.index })))
+        : this.semanticTaskMappings.get(event)?.filter(mapping =>
+          (this.mixedBusinessQuestions.get(event)?.businessIndexes ?? [mapping.index]).includes(mapping.index));
+      if (mappings?.length !== 1) return;
+      const tasks = structuredClone(projection.tasks), mapping = mappings[0]!, task = tasks.find(item => item.taskId === mapping.taskId);
+      const sub = task?.subrequests.find(item => item.index === mapping.subrequestIndex);
+      if (!task || !sub || sub.kind !== 'write') return;
+      if (completed) {
+        sub.status = 'handled';
+        if (source) task.slots = { ...task.slots, counterpartyId: source.id, counterpartyRevision: source.revision };
+        task.state = task.subrequests.some(item => ['pending', 'needs_user'].includes(item.status)) ? 'waiting_user' : 'completed';
+      } else task.slots = { ...task.slots, [`counterpartyToken${sub.index}`]: token };
+      task.revision++;
+      if (await this.contextV2.save(bound.owner, projection.stateVersion, bound.epoch, { version: 2, tasks })) {
+        if (completed) this.semanticTaskMappings.set(event, mappings);
+        return;
+      }
+    }
+    throw new Error('LINE_CONTEXT_STALE_STATE');
+  }
+
   private async remainingTaskChoiceMessages(event: object): Promise<LineReplyMessage[]> {
     const bound = this.boundConversations.get(event), mappings = this.semanticTaskMappings.get(event);
     const projection = bound && await this.contextV2.projection(bound.owner);
     if (!projection || projection.lifecycleEpoch !== bound!.epoch || !mappings) throw new Error('LINE_TASK_SOURCE_MISSING');
-    const remaining = projection.tasks.flatMap(task => task.subrequests.filter(sub => sub.kind === 'write' && ['needs_user', 'pending'].includes(sub.status)
+    const remaining = projection.tasks.filter(task => !task.slots?.sequenceExpenseId).flatMap(task => task.subrequests.filter(sub => sub.kind === 'write' && ['needs_user', 'pending'].includes(sub.status)
       && !mappings.some(mapping => mapping.taskId === task.taskId && mapping.subrequestIndex === sub.index)
       && task.sourceRevisionLocators?.some(locator => locator.sourceType.startsWith(`LINE_ACCEPTED_TASK_${sub.index}_`)))
       .map(sub => ({ task, sub, revision: task.revision + (mappings.some(mapping => mapping.taskId === task.taskId) ? 1 : 0) })));
     if (!remaining.length) return [];
-    const choices = remaining.slice(0, 8);
-    return [{ type: 'text', text: ['รายการต่อไปนี้ยังไม่ได้ทำ รายละเอียดเดิมยังอยู่ค่ะ เลือกงานที่จะทำต่อได้เลย',
-      ...choices.map(({ sub }, index) => `${index + 1}) ${sub.goal}`)].join('\n'), quickReply: { items: choices.map(({ task, sub, revision }, index) => ({
-        type: 'action' as const, action: { type: 'message' as const, label: `ทำรายการ ${index + 1} ต่อ`, text: `ทำรายการ ${index + 1} ต่อ` },
-      })) } }];
+    const orderedTask = remaining.find(item => typeof item.task.slots?.writeOrder === 'string')?.task;
+    const order = String(orderedTask?.slots?.writeOrder ?? '').split(',').map(Number);
+    const choices = orderedTask ? [...remaining.filter(item => item.task.taskId === orderedTask.taskId)].sort((a, b) => {
+      const original = (item: typeof a) => Number(item.task.sourceRevisionLocators?.find(ref => ref.sourceType.startsWith(`LINE_ACCEPTED_TASK_${item.sub.index}_`))?.sourceType.split('_').at(-1));
+      return order.indexOf(original(a)) - order.indexOf(original(b));
+    }).slice(0, 1) : remaining.slice(0, 4);
+    return [{ type: 'text', text: 'รายละเอียดเดิมยังอยู่ค่ะ เลือกงานที่จะทำต่อได้เลย', quickReply: lineChoiceQuickReply([
+      ...choices.map(({ task, sub }, index) => ({ label: sub.goal, text: orderedTask
+        ? `ทำข้อ ${Number(task.sourceRevisionLocators?.find(ref => ref.sourceType.startsWith(`LINE_ACCEPTED_TASK_${sub.index}_`))?.sourceType.split('_').at(-1)) + 1} ก่อน`
+        : `ทำรายการ ${index + 1} ต่อ` })),
+      ...(remaining.length > 4 ? [{ label: 'อื่นๆ', text: 'ขอดูงานค้างที่เหลือ' }] : []),
+    ]) }];
   }
 
   private async deliverMixedBusinessWriteSelection(event: LineTextEvent,
@@ -4300,16 +4666,15 @@ export class ProcessLineWebhookUseCase {
     const bound = this.boundConversations.get(event), mappings = this.semanticTaskMappings.get(event);
     const projection = bound && await this.contextV2.projection(bound.owner);
     if (!projection || projection.lifecycleEpoch !== bound!.epoch || !mappings) throw new Error('LINE_TASK_SOURCE_MISSING');
-    const items = writes.map(item => {
+    const items = writes.slice(0, 4).map(item => {
       const mapping = mappings.find(value => value.index === item.index), task = projection.tasks.find(value => value.taskId === mapping?.taskId);
       if (!task || !mapping) throw new Error('LINE_TASK_SOURCE_MISSING');
       // The words name the clause; prepareRetainedTaskSelection maps them back to this waiting task.
-      return { type: 'action' as const, action: { type: 'message' as const, label: `ทำข้อ ${item.index + 1} ก่อน`,
+      return { type: 'action' as const, action: { type: 'message' as const, label: Array.from(item.goal).slice(0, 20).join(''),
         text: `ทำข้อ ${item.index + 1} ก่อน` } };
     });
-    const text = ['มีคำขอสร้างหรือแก้เอกสารหลายรายการค่ะ ระบบยังไม่ได้เริ่มรายการใด กรุณาเลือกทำทีละรายการ',
-      ...writes.map(item => `${item.index + 1}) ${item.goal}`),
-      'เลือกปุ่มของรายการที่ต้องการทำก่อน ระบบจะใช้รายละเอียดเดิมของข้อนั้น รายการอื่นยังพักไว้ค่ะ'].join('\n');
+    if (writes.length > 4) items.push({ type: 'action', action: { type: 'message', label: 'อื่นๆ', text: 'ขอดูงานค้างที่เหลือ' } });
+    const text = 'เลือกงานที่จะทำก่อน แล้วน้องใช้รายละเอียดเดิมเตรียมให้ตรวจทีละรายการค่ะ';
     const messages: LineReplyMessage[] = splitLineExpenseDraftReply(text).map(part => ({ type: 'text', text: part }));
     const last = messages.at(-1); if (last?.type === 'text') last.quickReply = { items };
     return this.deliverMessages(event, messages);
@@ -4561,10 +4926,66 @@ export class ProcessLineWebhookUseCase {
     this.boundConversations.set(event, { owner, id: row.id, epoch: row.lifecycleEpoch });
   }
 
+  private quoteOwner(event: { lineUserId: string; pushTargetId?: string; messagingChannelId?: string; channelKind?: string }): LineQuoteOwner | null {
+    const access = this.deliveryAccess.get(event), bound = this.boundConversations.get(event);
+    if (!access || event.channelKind === 'GROUP' || event.channelKind === 'ROOM' || event.pushTargetId && event.pushTargetId !== event.lineUserId) return null;
+    return { companyId: access.companyId, userId: access.userId, membershipId: access.membershipId, chatKeyHash: chatKeyHashOf(event),
+      channelId: event.messagingChannelId ?? '', recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
+      accessFingerprint: access.fingerprint, ...(bound ? { conversationId: bound.id, ownerEpoch: bound.epoch } : {}) };
+  }
+  private async quotedRecordsForEvent(event: LineTextEvent | LineReceiptUploadEvent): Promise<LineQuotedRecord[]> {
+    const previous = this.quotedRecords.get(event);
+    if (previous) return previous;
+    const owner = this.quoteOwner(event);
+    const records = owner && 'quotedMessageId' in event && this.quotedMessages
+      ? await this.quotedMessages.resolve(owner, event.quotedMessageId).catch(() => []) : [];
+    this.quotedRecords.set(event, records);
+    return records;
+  }
+  private async deliveryQuoteRecords(event: object): Promise<LineQuotedRecord[]> {
+    const records = quoteRecordsFromReads(this.deliverySources.get(event)?.recentReads ?? []);
+    const receipt = this.deliveryReceiptSources.get(event);
+    if (receipt) for (const id of receipt.records.keys()) records.push({ tool: 'expense.get_detail', id });
+    const draft = this.deliveryDraftPreviews.get(event);
+    if (draft) {
+      const preview = await this.draftUpdate?.pendingPreview(draft.context, draft.chatKeyHash, draft.requestId);
+      if (preview) records.push({ tool: 'expense.get_detail', id: preview.expenseId });
+    }
+    const substitute = this.deliverySubstituteActions.get(event);
+    if (substitute) records.push(...await this.substituteActions!.quoteRecords(substitute.context, chatKeyHashOf(event as LineTextEvent), substitute.preview.token, substitute.applied));
+    const action = this.deliveryExpenseActions.get(event);
+    if (action) records.push(...await this.expenseActions.quoteRecords(action.context, action.chat, action.preview.token));
+    const reimbursement = this.deliveryReimbursements.get(event)?.result;
+    if (reimbursement?.status === 'applied') records.push({ tool: 'reimbursement.get_detail', id: String(reimbursement.receipt.requestId) });
+    return validQuoteRecords(records);
+  }
+  private async quoteRecordsForMessage(event: object, message: LineReplyMessage): Promise<LineQuotedRecord[]> {
+    const wire = message.type === 'flex' ? JSON.stringify(message.contents) : JSON.stringify(message.quickReply ?? {});
+    const action = this.deliveryExpenseActions.get(event);
+    if (action && /expense_action_(?:confirm|cancel|wht|payment)/u.test(wire)) return this.expenseActions.quoteRecords(action.context, action.chat, action.preview.token);
+    const draft = this.deliveryDraftPreviews.get(event);
+    if (draft && /draft-update-(?:confirm|cancel)/u.test(wire)) {
+      const preview = await this.draftUpdate?.pendingPreview(draft.context, draft.chatKeyHash, draft.requestId);
+      return preview ? [{ tool: 'expense.get_detail', id: preview.expenseId }] : [];
+    }
+    return this.deliveryQuoteRecords(event);
+  }
+  private async rememberSentQuote(event: object, messageIds: string[], messages: LineReplyMessage[]): Promise<void> {
+    if (!messageIds.length || !this.quotedMessages || !('webhookEventId' in event) || !('lineUserId' in event)) return;
+    const typed = event as LineTextEvent;
+    const owner = this.quoteOwner(typed);
+    if (owner) await this.quotedMessages.rememberLegacy(typed.webhookEventId, owner, messageIds, await this.deliveryQuoteRecords(event), await Promise.all(messages.map(message => this.quoteRecordsForMessage(event, message))));
+  }
+
   private async webhookPlanAuthorization(event: LineTextEvent | LineReceiptUploadEvent, expiresAt: string): Promise<DeliveryAuthorizationV2 | null> {
     const access = this.deliveryAccess.get(event), bound = this.boundConversations.get(event);
-    if (!access || !bound || this.deliveryWaitingSources.has(event)) return null;
+    if (!access || !bound) return null;
     const proofs: Extract<DeliveryAuthorizationV2, { kind: 'PRIVATE' }>['proofs'] = [];
+    const waiting = this.deliveryWaitingSources.get(event);
+    if (waiting) {
+      for (const item of waiting.items) if (!await this.clarificationSourceCurrent(event as LineTextEvent, waiting.context, item)) return null;
+      proofs.push({ id: 'waiting', kind: 'CLARIFICATION', items: waiting.items.map(({ entry, ...item }) => ({ ...item, entry: { sourceContext: entry.sourceContext } })) });
+    }
     const qaJob = this.documentQaDelivery.get(event);
     if (qaJob) proofs.push({ id: 'document-qa', ...this.documentQa.buildDeliveryProof(qaJob), kind: 'LINE_DOCUMENT_QA' });
     const read = this.deliverySources.get(event);
@@ -4586,18 +5007,49 @@ export class ProcessLineWebhookUseCase {
       if (!substitute.source) return null;
       proofs.push({ id: `substitute-${i}`, kind: 'SUBSTITUTE', source: substitute.source });
     }
+    const purchase = this.deliveryPackagePurchases.get(event);
+    if (purchase) {
+      const view = await this.packagePurchases.current(purchase.context, chatKeyHashOf(event), purchase.view.token);
+      if (!view || deliveryHash(view) !== deliveryHash(purchase.view)) return null;
+      proofs.push({ id: 'package-purchase', kind: 'PACKAGE_PURCHASE', token: view.token, viewHash: deliveryHash(view) });
+    }
+    const counterparty = this.deliveryCounterparties.get(event);
+    if (counterparty) {
+      const preview = await this.counterparties.pending(counterparty.context, chatKeyHashOf(event));
+      if (!preview || deliveryHash(preview) !== deliveryHash(counterparty.preview)) return null;
+      proofs.push({ id: 'counterparty', kind: 'COUNTERPARTY_PREVIEW', token: preview.token, previewHash: deliveryHash(preview) });
+    }
+    const substituteAction = this.deliverySubstituteActions.get(event);
+    if (substituteAction) {
+      const preview = await this.substituteActions?.pending(substituteAction.context, chatKeyHashOf(event), substituteAction.preview.token, substituteAction.applied);
+      if (!preview || deliveryHash(preview) !== deliveryHash(substituteAction.preview)) return null;
+      proofs.push({ id: 'substitute-action', kind: 'EXPENSE_ACTION_PREVIEW', requestId: substituteAction.context.requestId,
+        previewHash: deliveryHash(preview), applied: substituteAction.applied === true, token: preview.token });
+    }
+    const action = this.deliveryExpenseActions.get(event);
+    if (action) {
+      const preview = action.applied ? await this.expenseActions.appliedPreview(action.context, action.chat, action.preview.token)
+        : await this.expenseActions.pending(action.context, action.chat, action.requestId);
+      if (!preview || deliveryHash(preview) !== deliveryHash(action.preview)) return null;
+      proofs.push({ id: 'expense-action', kind: 'EXPENSE_ACTION_PREVIEW', requestId: action.requestId, previewHash: deliveryHash(preview), applied: action.applied === true, token: preview.token });
+    }
     const reimbursement = this.deliveryReimbursements.get(event)?.result;
     if (reimbursement && (reimbursement.status === 'preview' || reimbursement.status === 'applied')) {
       const actionId = reimbursement.status === 'preview' ? reimbursement.preview.actionId : String(reimbursement.receipt.actionId);
-      proofs.push({ id: 'reimbursement', kind: 'REIMBURSEMENT_DRAFT', actionId, status: reimbursement.status, resultHash: deliveryHash(reimbursement) });
+      proofs.push({ id: 'reimbursement', kind: 'REIMBURSEMENT_DRAFT', actionId, status: reimbursement.status, resultHash: deliveryHash(reimbursement),
+        ...(reimbursement.status === 'applied' && typeof reimbursement.receipt.requestId === 'string' && this.config.aiGatewayInternalSecret
+          ? { submitToken: reimbursementApprovalOpenToken(this.config.aiGatewayInternalSecret, bound.owner.companyId, bound.owner.userId, reimbursement.receipt.requestId, 'expense_action_submit') } : {}) });
     }
     const reimbursementOptions = this.reimbursementOptionsDelivery.get(event);
-    if (reimbursementOptions) proofs.push({ id: 'reimbursement-options', kind: 'REIMBURSEMENT_OPTIONS', actionId: reimbursementOptions.actionId, optionsHash: deliveryHash(reimbursementOptions.options) });
+    if (reimbursementOptions) proofs.push({ id: 'reimbursement-options', kind: 'REIMBURSEMENT_OPTIONS', actionId: reimbursementOptions.actionId,
+      controlRevision: reimbursementOptions.options.control.revision, optionsHash: deliveryHash(reimbursementOptions.options) });
     const candidates = this.deliveryCandidates.get(event);
     if (candidates) {
       const rows = JSON.parse(candidates.snapshot) as LineIntakeCorrectionCandidate[];
       proofs.push({ id: 'candidates', kind: 'CANDIDATES', ids: rows.map(r => r.id), snapshotHash: deliveryHash(rows), originalChoices: candidates.originalChoices === true });
     }
+    const quoteRecords = await this.deliveryQuoteRecords(event);
+    if (quoteRecords.length) proofs.push({ id: 'quote-references', kind: 'QUOTE_REFERENCES', records: quoteRecords });
     return { v: 2, kind: 'PRIVATE', actor: { userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
       requestId: read?.requestId ?? draft?.requestId ?? event.webhookEventId, accessFingerprint: access.fingerprint, channelId: event.messagingChannelId,
       channel: 'line', channelKind: 'USER', recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId), chatKeyHash: chatKeyHashOf(event), conversationId: bound.id, ownerEpoch: bound.epoch },
@@ -4616,12 +5068,17 @@ export class ProcessLineWebhookUseCase {
     if (!bound || bound.row.id !== a.conversationId || bound.row.lifecycleEpoch !== a.ownerEpoch) return false;
     const resolved = await this.permissionResolver.resolveAccess(a.userId, a.companyId);
     if (resolved.membershipId !== a.membershipId) return false;
-    const ctx: RequestContext = { authSubject: a.userId, authProvider: 'line', requestId: a.requestId, companyId: a.companyId, userId: a.userId, membershipId: a.membershipId, permissions: resolved.permissions, roles: resolved.roles, scopes: resolved.scopes };
+    const ctx: RequestContext = { authSubject: a.userId, authProvider: 'line', requestId: a.requestId, companyId: a.companyId, userId: a.userId, membershipId: a.membershipId, permissions: resolved.permissions, entitlementDeniedPermissions: resolved.entitlementDeniedPermissions, roles: resolved.roles, scopes: resolved.scopes };
     this.deliveryAccess.set(event, { userId: a.userId, companyId: a.companyId, membershipId: a.membershipId, fingerprint: a.accessFingerprint });
     this.deliverySources.delete(event); this.deliveryReceiptSources.delete(event); this.deliveryDraftPreviews.delete(event);
-    this.deliverySubstituteSources.delete(event); this.deliveryCandidates.delete(event);
+    this.deliverySubstituteActions.delete(event); this.deliverySubstituteSources.delete(event); this.deliveryCandidates.delete(event); this.deliveryWaitingSources.delete(event);
     for (const proof of auth.proofs) {
-      if (proof.kind === 'LINE_DOCUMENT_QA') {
+      if (proof.kind === 'CLARIFICATION') {
+        if (!Array.isArray(proof.items) || !proof.items.length) return false;
+        const items = proof.items as Array<LineAiOpenClarification & { entry: Pick<LedgerEntry, 'sourceContext'> }>;
+        for (const item of items) if (!await this.clarificationSourceCurrent(event as LineTextEvent, ctx, item)) return false;
+        this.deliveryWaitingSources.set(event, { context: ctx, items });
+      } else if (proof.kind === 'LINE_DOCUMENT_QA') {
         const { id: _id, ...qaProof } = proof;
         if (!await this.documentQa.verifyDeliveryProof(qaProof, { companyId: a.companyId, userId: a.userId, membershipId: a.membershipId, ownerEpoch: a.ownerEpoch, channelKind: 'USER', messagingChannelId: a.channelId, chatKeyHash: a.chatKeyHash })) return false;
       } else if (proof.kind === 'READ') {
@@ -4642,6 +5099,30 @@ export class ProcessLineWebhookUseCase {
       } else if (proof.kind === 'SUBSTITUTE') {
         const list = this.deliverySubstituteSources.get(event) ?? [];
         list.push({ context: ctx, source: proof.source as LineSubstituteReceiptContinuationResult['source'] }); this.deliverySubstituteSources.set(event, list);
+      } else if (proof.kind === 'PACKAGE_PURCHASE') {
+        if (typeof proof.token !== 'string') return false;
+        const view = await this.packagePurchases.current(ctx, a.chatKeyHash, proof.token);
+        if (!view || deliveryHash(view) !== proof.viewHash) return false;
+        this.deliveryPackagePurchases.set(event, { context: ctx, view });
+      } else if (proof.kind === 'QUOTE_REFERENCES') {
+        if (!validQuoteRecords(proof.records).length) return false;
+      } else if (proof.kind === 'COUNTERPARTY_PREVIEW') {
+        const preview = await this.counterparties.pending(ctx, a.chatKeyHash);
+        if (!preview || preview.token !== proof.token || deliveryHash(preview) !== proof.previewHash) return false;
+        this.deliveryCounterparties.set(event, { context: ctx, preview });
+      } else if (proof.kind === 'EXPENSE_ACTION_PREVIEW') {
+        if (typeof proof.requestId !== 'string') return false;
+        if (typeof proof.token !== 'string') return false;
+        if (proof.token.startsWith('sub_')) {
+          const preview = await this.substituteActions?.pending(ctx, a.chatKeyHash, proof.token, proof.applied === true);
+          if (!preview || deliveryHash(preview) !== proof.previewHash) return false;
+          this.deliverySubstituteActions.set(event, { context: ctx, preview, applied: proof.applied === true });
+          continue;
+        }
+        const preview = proof.applied === true ? await this.expenseActions.appliedPreview(ctx, a.chatKeyHash, proof.token)
+          : await this.expenseActions.pending(ctx, a.chatKeyHash, proof.requestId);
+        if (!preview || deliveryHash(preview) !== proof.previewHash) return false;
+        this.deliveryExpenseActions.set(event, { context: ctx, chat: a.chatKeyHash, requestId: proof.requestId, preview, applied: proof.applied === true });
       } else if (proof.kind === 'REIMBURSEMENT_DRAFT') {
         if (typeof proof.actionId !== 'string' || !['preview', 'applied'].includes(String(proof.status))) return false;
         const result = await this.reimbursementDrafts.get({ ctx, owner, ownerEpoch: a.ownerEpoch, actionId: proof.actionId });
@@ -4649,7 +5130,7 @@ export class ProcessLineWebhookUseCase {
       } else if (proof.kind === 'REIMBURSEMENT_OPTIONS') {
         if (typeof proof.actionId !== 'string') return false;
         const options = await this.reimbursementAdapter.readDisplayOptions({ ctx, owner, ownerEpoch: a.ownerEpoch, actionId: proof.actionId });
-        if (!options || deliveryHash(options) !== proof.optionsHash) return false;
+        if (!options || deliveryHash(options) !== proof.optionsHash || options.control.revision !== proof.controlRevision) return false;
       } else if (proof.kind === 'CANDIDATES') {
         if (!Array.isArray(proof.ids) || !proof.ids.every(id => typeof id === 'string')) return false;
         const current = await this.loadCorrectionCandidates(a.companyId, a.userId, a.chatKeyHash, resolved.scopes, proof.originalChoices ? proof.ids as string[] : undefined);
@@ -4682,6 +5163,7 @@ export class ProcessLineWebhookUseCase {
       if (!dispatch) return 'failed_other';
       const frozen = claim.plan.batches[dispatch.index]![claim.states[dispatch.index]!.variant]!;
       const result = await this.lineReply.sendFrozenV2({ channelId: plan.authorization.kind === 'PRIVATE' ? plan.authorization.actor.channelId : plan.authorization.destination.channelId, transport, target: transport === 'REPLY' ? event.replyToken : event.pushTargetId ?? event.lineUserId, messages: frozen.messages, pushRetryKey: frozen.pushRetryKey, timeoutMs: dispatch.timeoutMs });
+      if (result.kind === 'accepted') this.rememberDelivery(event, 'ok');
       if (!await this.deliveryPlans.finishPlanBatch(claim, dispatch.index, result)) return 'failed_other';
       // E4 (production's reply path): a reply token LINE no longer accepts is answered by pushing the
       // same frozen batch now, instead of leaving the customer to wait for the recovery sweep.
@@ -4695,7 +5177,31 @@ export class ProcessLineWebhookUseCase {
     return 'failed_other';
   }
 
+  private reimbursementDraftMessages(result: LineReimbursementDraftResult, ctx: RequestContext) {
+    const id = result.status === 'applied' ? result.receipt.requestId : undefined;
+    const secret = this.config.aiGatewayInternalSecret;
+    const token = typeof id === 'string' && secret
+      ? reimbursementApprovalOpenToken(secret, ctx.companyId, ctx.userId, id, 'expense_action_submit') : undefined;
+    return buildReimbursementDraftMessages(result, this.config.webBaseUrl ?? '', ctx.companyId, ctx.permissions, token);
+  }
+
   /** This handler is reached only after verified identity, current company/member/legal admission. */
+  private async deliverReimbursementCollection(event: LineTextEvent | LineReceiptUploadEvent, ctx: RequestContext,
+    result: import('../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case').LineReimbursementDraftResult) {
+    this.deliveryReimbursements.set(event, { context: ctx, result });
+    let messages = this.reimbursementDraftMessages(result, ctx);
+    const bound = this.boundConversations.get(event);
+    if (bound && (result.status === 'needs_fields' || result.status === 'needs_target')) {
+      const options = await this.reimbursementAdapter.readDisplayOptions({ ctx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: result.actionId });
+      if (options) {
+        this.reimbursementOptionsDelivery.set(event, { actionId: result.actionId, options });
+        const choices = buildReimbursementOptionsMessages(options, this.config.webBaseUrl ?? '');
+        if (choices.length) messages = choices;
+      }
+    }
+    await this.deliverRequiredMessages(event, messages);
+  }
+
   private async handleReimbursementDraftControl(event: LineTextEvent, ctx: RequestContext): Promise<void> {
     const control = event.reimbursementDraftControl!;
     const owner: LineConversationOwner = { companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId!,
@@ -4756,7 +5262,7 @@ export class ProcessLineWebhookUseCase {
     this.deliveryReimbursements.set(event, { context: ctx, result });
     const remaining = (result.status === 'applied' || result.status === 'cancelled') && this.semanticTaskMappings.has(event)
       ? await this.remainingTaskChoiceMessages(event) : [];
-    await this.deliverRequiredMessages(event, [...buildReimbursementDraftMessages(result, this.config.webBaseUrl ?? '', ctx.companyId), ...remaining]);
+    await this.deliverRequiredMessages(event, [...this.reimbursementDraftMessages(result, ctx), ...remaining]);
   }
 
   private async handleAnswerDeliveryControl(event: LineTextEvent): Promise<void> {
@@ -4767,17 +5273,17 @@ export class ProcessLineWebhookUseCase {
       ? await this.captureNotifier.verifyCaptureDeliveryPlan(plan, event).catch(() => null)
       : plan.producerKind === 'LEDGER' ? await this.ledgerDrain.verifyLedgerDeliveryPlan(plan, event).catch(() => false)
       : await this.verifyWebhookPlan(plan, event).catch(() => false))) {
-      await this.lineReply.sendReply(event.replyToken, [{ type: 'text', text: 'คำตอบชุดนี้หมดอายุหรือสิทธิ์เปลี่ยนแล้วค่ะ กรุณาถามใหม่' }]);
+      await this.sendTrackedReply(event, [{ type: 'text', text: 'คำตอบชุดนี้หมดอายุหรือสิทธิ์เปลี่ยนแล้วค่ะ กรุณาถามใหม่' }]);
       await this.updateEventLog(event.webhookEventId, 'delivery_failed', 'LINE_PLAN_CONTROL_DENIED'); return;
     }
     if (control.action === 'cancel') {
       const canceled = await this.deliveryPlans.cancelPlan(row.id, row.planHash);
-      await this.lineReply.sendReply(event.replyToken, [{ type: 'text', text: canceled ? 'หยุดส่งส่วนที่เหลือแล้วค่ะ การหยุดส่งคำตอบไม่ย้อนรายการที่บันทึกไปแล้ว' : 'คำตอบชุดนี้สิ้นสุดแล้วค่ะ' }]);
+      await this.sendTrackedReply(event, [{ type: 'text', text: canceled ? 'หยุดส่งส่วนที่เหลือแล้วค่ะ การหยุดส่งคำตอบไม่ย้อนรายการที่บันทึกไปแล้ว' : 'คำตอบชุดนี้สิ้นสุดแล้วค่ะ' }]);
       await this.updateEventLog(event.webhookEventId, 'completed'); return;
     }
     const continued = await this.deliveryPlans.continuePlan(row.id, row.planHash, control.next);
     if (plan.producerKind === 'CAPTURE_OUTBOX' || plan.producerKind === 'LEDGER') {
-      await this.lineReply.sendReply(event.replyToken, [{ type: 'text', text: continued ? 'กำลังส่งคำตอบส่วนที่เหลือค่ะ' : 'คำตอบส่วนนี้กำลังส่งหรือสิ้นสุดแล้วค่ะ' }]);
+      await this.sendTrackedReply(event, [{ type: 'text', text: continued ? 'กำลังส่งคำตอบส่วนที่เหลือค่ะ' : 'คำตอบส่วนนี้กำลังส่งหรือสิ้นสุดแล้วค่ะ' }]);
       await this.updateEventLog(event.webhookEventId, 'completed'); return;
     }
     const result = await this.replayDeliveryPlan(row.id, event);
@@ -4788,13 +5294,18 @@ export class ProcessLineWebhookUseCase {
     const existing = await this.prisma.client.lineTurnOutcome.findUnique({ where: { webhookEventId: event.webhookEventId }, include: { deliveryPlan: true } });
     if (existing) {
       if (existing.presentationKind !== 'delivery_plan_v2' || !existing.deliveryPlan) return 'failed_other';
-      return this.replayDeliveryPlan(existing.deliveryPlan.id, event, 2);
+      return this.rememberDelivery(event, await this.replayDeliveryPlan(existing.deliveryPlan.id, event, 2));
     }
     await this.persistSemanticTaskCompletion(event);
     const log = await this.prisma.client.lineWebhookEventLog.findUnique({ where: { webhookEventId: event.webhookEventId } });
     if (!log) return 'failed_other';
     const reimbursement = this.deliveryReimbursements.get(event)?.result;
-    const previewExpiry = reimbursement?.status === 'preview' ? Date.parse(reimbursement.preview.expiresAt) : Infinity;
+    const expenseActionSource = this.deliveryExpenseActions.get(event);
+    const substituteAction = this.deliverySubstituteActions.get(event);
+    const expenseAction = (substituteAction?.applied || substituteAction?.preview.webOnly ? undefined : substituteAction?.preview) ?? (expenseActionSource?.applied ? undefined : expenseActionSource?.preview);
+    const counterpartyView = this.deliveryCounterparties.get(event)?.preview;
+    const packageView = this.deliveryPackagePurchases.get(event)?.view;
+    const previewExpiry = Math.min(counterpartyView ? Date.parse(counterpartyView.expiresAt) : Infinity, packageView ? Date.parse(packageView.expiresAt) : Infinity, expenseAction ? Date.parse(expenseAction.expiresAt) : Infinity, reimbursement?.status === 'preview' ? Date.parse(reimbursement.preview.expiresAt) : Infinity);
     const now = new Date(), expiresAt = new Date(Math.min(log.createdAt.getTime() + 60 * 60_000, now.getTime() + 60 * 60_000, previewExpiry)).toISOString();
     const authorization = await this.webhookPlanAuthorization(event, expiresAt);
     if (!authorization) return 'failed_other';
@@ -4809,6 +5320,12 @@ export class ProcessLineWebhookUseCase {
       if (!text) throw new Error('LINE_PLAN_CANONICAL_TEXT_REQUIRED');
       return { kind: 'answer' as const, text, required: true, sourceProofIds: authorization.kind === 'PRIVATE' ? authorization.proofs.map(p => p.id) : [] };
     });
+    if (authorization.kind === 'PRIVATE') {
+      const quoteProof = authorization.proofs.find(proof => proof.kind === 'QUOTE_REFERENCES');
+      if (quoteProof) {
+        quoteProof.items = await Promise.all(messages.map(async (message, i) => ({ itemId: `${planId}:item:${i}`, records: await this.quoteRecordsForMessage(event, message) })));
+      }
+    }
     const pending = (this.semanticDelivery.get(event) ?? []).filter(item => item.status === 'needs_user');
     const qaResult = parseLineDocumentQaResult(this.documentQaDelivery.get(event)?.resultJson);
     const failedPages = qaResult?.coverage.failed ?? [];
@@ -4817,7 +5334,7 @@ export class ProcessLineWebhookUseCase {
       ...failedPages.map(page => `file:${page.attachmentId}:page:${page.page}`)];
     const missingLimitations: string[] = [];
     for (const limitation of [
-      ...pending.map(item => ({ match: item.question, text: `ข้อ ${item.index + 1}: ${item.question}` })),
+      ...pending.map(item => ({ match: item.question, text: item.question ?? 'ขอข้อมูลเพิ่มเติมเพื่อทำรายการต่อค่ะ' })),
       ...failedPages.map(page => {
         const text = `ยังอ่านเอกสารแนบลำดับที่ ${attachmentIds.indexOf(page.attachmentId) + 1} หน้า ${page.page} ไม่สำเร็จ`;
         return { match: text, text };
@@ -4828,11 +5345,24 @@ export class ProcessLineWebhookUseCase {
       else missingLimitations.push(limitation.text);
     }
     if (missingLimitations.length) items.push({ kind: 'limitation', required: true, sourceProofIds: [],
-      text: ['ส่วนที่ยังไม่เสร็จ:', ...missingLimitations].join('\n') });
-    const financialControlIndex = reimbursementControlIndex >= 0 ? reimbursementControlIndex : controlIndex;
-    const control = reimbursement?.status === 'preview' && reimbursementControlIndex >= 0
+      text: missingLimitations.join('\n') });
+    const expenseActionControlIndex = expenseAction ? messages.findIndex(m => m.type === 'flex' && JSON.stringify(m.contents).includes('expense_action_confirm')) : -1;
+    const packageControlIndex = packageView && !packageView.payment ? messages.findIndex(m => m.type === 'flex' && JSON.stringify(m.contents).includes('package_purchase_confirm')) : -1;
+    const counterpartyControlIndex = counterpartyView ? messages.findIndex(m => m.type === 'flex' && JSON.stringify(m.contents).includes('counterparty_confirm')) : -1;
+    const financialControlIndex = counterpartyControlIndex >= 0 ? counterpartyControlIndex : packageControlIndex >= 0 ? packageControlIndex : expenseActionControlIndex >= 0 ? expenseActionControlIndex : reimbursementControlIndex >= 0 ? reimbursementControlIndex : controlIndex;
+    const control = counterpartyView && counterpartyControlIndex >= 0
+      ? { kind: 'COUNTERPARTY_CONFIRM' as const, token: counterpartyView.token, expiresAt: counterpartyView.expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) }
+      : packageView && packageControlIndex >= 0
+      ? { kind: 'PACKAGE_PURCHASE_CONFIRM' as const, token: packageView.token, expiresAt: packageView.expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) }
+      : expenseAction && expenseActionControlIndex >= 0
+      ? { kind: 'EXPENSE_ACTION_CONFIRM' as const, token: expenseAction.token, expiresAt: expenseAction.expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) }
+      : reimbursement?.status === 'preview' && reimbursementControlIndex >= 0
       ? { kind: 'REIMBURSEMENT_DRAFT_CONFIRM' as const, actionId: reimbursement.preview.actionId, previewRevision: reimbursement.preview.previewRevision, confirmationDigest: reimbursement.preview.confirmationDigest, expiresAt: reimbursement.preview.expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) }
       : controlIndex >= 0 && previewProof && draft?.previewId ? { kind: 'EXPENSE_EDIT_CONFIRM' as const, previewId: draft.previewId, previewRevision: String(previewProof.previewRevision), expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) } : null;
+    if (authorization.kind === 'PRIVATE' && financialControlIndex >= 0) {
+      const quoteProof = authorization.proofs.find(proof => proof.kind === 'QUOTE_REFERENCES');
+      if (quoteProof) quoteProof.controlRecords = await this.quoteRecordsForMessage(event, messages[financialControlIndex]!);
+    }
     // A photo/file turn reports a file the server already stored (and usually the draft it became), so
     // like a QA job its answer is a durable obligation for the plan's lifetime — not a conversational
     // answer that is late after the foreground deadline. A second photo queued behind the first one
@@ -4853,7 +5383,20 @@ export class ProcessLineWebhookUseCase {
     const authorizationJson = this.buildTurnAuthorizationJson(event, randomUUID());
     const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId, authorizationJson);
     if (!saved) return 'failed_other';
-    return this.replayDeliveryPlan(saved.id, event, 2);
+    return this.rememberDelivery(event, await this.replayDeliveryPlan(saved.id, event, 2));
+  }
+
+  private rememberDelivery(event: object, result: LineDeliveryResult): LineDeliveryResult {
+    if (result === 'ok') this.deliveredTextTurns.add(event);
+    return result;
+  }
+
+  private async sendTrackedReply(event: { replyToken: string }, messages: LineReplyMessage[]): Promise<LineDeliveryResult> {
+    return this.rememberDelivery(event, await this.lineReply.sendReply(event.replyToken, messages, ids => this.rememberSentQuote(event, ids, messages)));
+  }
+
+  private async sendTrackedPush(event: object, target: string, messages: LineReplyMessage[], operationId: string): Promise<LineDeliveryResult> {
+    return this.rememberDelivery(event, await this.lineReply.sendPush(target, messages, operationId, ids => this.rememberSentQuote(event, ids, messages)));
   }
 
   private async sendMessages(
@@ -4889,7 +5432,7 @@ export class ProcessLineWebhookUseCase {
     if (this.config.lineAiDeliveryPlanV2Enabled && this.config.lineAiTerminalOutcomeReplayEnabled && !this.intermediateDeliveries.has(event) && bound) {
       const result = await this.sendMessagesV2(event as LineTextEvent, messages);
       if (result !== 'ok') await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_DELIVERY_V2_PENDING');
-      return result;
+      return this.rememberDelivery(event, result);
     }
     const persistentOutcome = this.config.lineAiTerminalOutcomeReplayEnabled && !this.intermediateDeliveries.has(event);
     if (persistentOutcome) {
@@ -4902,7 +5445,7 @@ export class ProcessLineWebhookUseCase {
       messages = outcome.messages;
       if (outcome.accepted) {
         await this.completePendingDelivery(event.webhookEventId);
-        return 'ok';
+        return this.rememberDelivery(event, 'ok');
       }
     }
     let result = await this.attemptDelivery(event, messages);
@@ -4959,7 +5502,7 @@ export class ProcessLineWebhookUseCase {
         }
       }
     }
-    return result;
+    return this.rememberDelivery(event, result);
   }
 
   /** One reply attempt plus the expired-reply-token push fallback (E4).
@@ -4992,7 +5535,7 @@ export class ProcessLineWebhookUseCase {
     if (!await this.mayDeliverBusinessReply(event)) return 'failed_permanent';
     let result: LineDeliveryResult;
     try {
-      result = await this.lineReply.sendReply(event.replyToken, outgoing);
+      result = await this.sendTrackedReply(event, outgoing);
     } catch (error) {
       this.logger.warn({ msg: 'LINE reply adapter threw unexpectedly', ...safeLineErrorDetails(error) });
       result = 'failed_other';
@@ -5001,7 +5544,7 @@ export class ProcessLineWebhookUseCase {
       if (!await this.mayDeliverBusinessReply(event)) return 'failed_permanent';
       this.logger.warn({ msg: 'line_push_fallback_used' });
       try {
-        result = await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, outgoing, event.webhookEventId);
+        result = await this.sendTrackedPush(event, event.pushTargetId ?? event.lineUserId, outgoing, event.webhookEventId);
       } catch (error) {
         this.logger.warn({ msg: 'LINE push adapter threw unexpectedly', ...safeLineErrorDetails(error) });
         result = 'failed_other';
@@ -5040,6 +5583,24 @@ export class ProcessLineWebhookUseCase {
           : await this.draftUpdate?.pendingPreview(draft.context, draft.chatKeyHash, draft.requestId);
         sourcesCurrent = sourcesCurrent && Boolean(draft.previewId && current?.previewId === draft.previewId);
         if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
+      const purchase = this.deliveryPackagePurchases.get(event);
+      if (purchase) {
+        const view = await this.packagePurchases.current(purchase.context, chatKeyHashOf(event), purchase.view.token);
+        sourcesCurrent = sourcesCurrent && !!view && deliveryHash(view) === deliveryHash(purchase.view);
+      }
+      const counterparty = this.deliveryCounterparties.get(event);
+      if (counterparty) {
+        const current = await this.counterparties.pending(counterparty.context, chatKeyHashOf(event));
+        sourcesCurrent = sourcesCurrent && !!current && deliveryHash(current) === deliveryHash(counterparty.preview);
+      }
+      const substituteAction = this.deliverySubstituteActions.get(event);
+      if (substituteAction) sourcesCurrent = sourcesCurrent && !!await this.substituteActions?.current(substituteAction.context, chatKeyHashOf(event), substituteAction.preview.token, substituteAction.applied);
+      const action = this.deliveryExpenseActions.get(event);
+      if (action) {
+        const current = action.applied ? await this.expenseActions.appliedPreview(action.context, action.chat, action.preview.token)
+          : await this.expenseActions.pending(action.context, action.chat, action.requestId);
+        sourcesCurrent = sourcesCurrent && !!current && deliveryHash(current) === deliveryHash(action.preview);
       }
       if (this.deliveryReceiptSources.has(event)) {
         denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
@@ -5110,11 +5671,22 @@ export class ProcessLineWebhookUseCase {
     if (source.choices) this.deliveryReceiptSources.get(event)!.draftChoices = source.choices;
   }
 
-  private rememberSubstituteDeliverySource(event: LineTextEvent, context: RequestContext, result: LineSubstituteReceiptContinuationResult) {
+  private async rememberSubstituteDeliverySource(event: LineTextEvent, context: RequestContext, result: LineSubstituteReceiptContinuationResult) {
+    this.deliverySubstituteContinuations.set(event, result);
     if (!result.source && !result.expenseId && !result.candidateExpenseIds?.length && !result.resumeCapsule) return;
     if (result.status === 'FORBIDDEN' && !result.source) return; // Static permission guidance only.
     const proofs = this.deliverySubstituteSources.get(event) ?? [];
     proofs.push({ context, source: result.source }); this.deliverySubstituteSources.set(event, proofs);
+    if (result.expenseId && result.status === 'READY_FOR_WEB' && this.substituteActions) {
+      const offered = await this.substituteActions.prepare(context, chatKeyHashOf(event), result.expenseId);
+      if (offered.preview) {
+        this.deliverySubstituteActions.set(event, { context, preview: offered.preview });
+        result.replyText = offered.preview.summary;
+        result.pendingQuestion = undefined;
+        result.resumeCapsule = undefined;
+      }
+      else if (offered.reply) result.replyText += `\n${offered.reply}`;
+    }
   }
 
   private rememberCandidateDeliverySources(event: LineTextEvent, context: RequestContext, candidates: LineIntakeCorrectionCandidate[], originalChoices = false) {
@@ -5187,7 +5759,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   /** Verify the old question itself, never relabel old wording with a newly read revision. */
-  private async clarificationSourceCurrent(event: LineTextEvent, ctx: RequestContext, item: LineAiOpenClarification & { entry: LedgerEntry }): Promise<boolean> {
+  private async clarificationSourceCurrent(event: LineTextEvent, ctx: RequestContext, item: LineAiOpenClarification & { entry: Pick<LedgerEntry, 'sourceContext'> }): Promise<boolean> {
     try {
       const raw = item.entry.sourceContext, access = this.deliveryAccess.get(event);
       if (!raw || Buffer.byteLength(raw, 'utf8') > LINE_CLARIFICATION_SOURCE_MAX_BYTES || !access) return false;
@@ -5214,7 +5786,8 @@ export class ProcessLineWebhookUseCase {
         if (!source.draft.previewId || preview?.previewId !== source.draft.previewId) return false;
       }
       if (source.draftRouting !== undefined && (!this.expenseDraftConversation
-        || JSON.stringify(await this.expenseDraftConversation.routeContexts(ctx, source.chatKeyHash)) !== source.draftRouting)) return false;
+        || draftRoutingRevisions(await this.expenseDraftConversation.routeContexts(ctx, source.chatKeyHash))
+          !== draftRoutingRevisions(JSON.parse(source.draftRouting)))) return false;
       if (item.candidateExpenseIds?.length) {
         const ids = item.candidateExpenseIds;
         const provenIds = new Set([
@@ -5255,7 +5828,7 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'marker_unavailable', 'CONSUMPTION_MARKER_UNAVAILABLE', ctx.companyId);
       return null;
     }
-    if (!await this.waitingSourcesCurrent(event, ctx, openWaiting)) return null;
+    if (!await this.waitingSourcesCurrent(event, ctx, openWaiting, true)) return null;
     const openClarifications: LineAiOpenClarification[] | undefined = openWaiting.length > 0
       ? openWaiting.map(({ id, question, text, subject, askedAt, reasonCode, clarifyForIntent, candidateExpenseIds, pendingMedia }) => ({
         id, question, text, ...(subject && { subject }), askedAt,
@@ -5269,9 +5842,11 @@ export class ProcessLineWebhookUseCase {
     const recentCapturedExpenses = input.corrections
       ? await this.loadCorrectionCandidates(ctx.companyId, ctx.userId, chatKeyHashOf(event), ctx.scopes ?? {})
       : [];
-    const activeExpenseDrafts = input.drafts && this.expenseDraftConversation
+    let activeExpenseDrafts = input.drafts && this.expenseDraftConversation
       ? await this.expenseDraftConversation.routeContexts(ctx, chatKeyHashOf(event))
       : [];
+    const quotedExpenses = (await this.quotedRecordsForEvent(event)).filter(record => record.tool === 'expense.get_detail');
+    if (quotedExpenses.length) activeExpenseDrafts = activeExpenseDrafts.filter(draft => quotedExpenses.some(record => record.id === draft.expenseId));
     // Bounded substitute context for the semantic router (DATA only, never authority). In PRIMARY the
     // AUTHORITATIVE workflowState (none/open/paused/multiple) is read from the continuation rows (execute
     // re-reads them before any action); OFF/SHADOW keep the cheap signal so the legacy path adds NO query.
@@ -5297,6 +5872,7 @@ export class ProcessLineWebhookUseCase {
    *  is open in this chat. Text first, so an ordinary question reads no pending state here. */
   private async answersOpenWork(event: LineTextEvent, ctx: RequestContext, drafts: boolean): Promise<boolean> {
     const text = event.messageText;
+    if (isLineCounterpartyCommand(text)) return false;
     if (splitPendingMediaReply(text) || classifyPendingMediaReply(text) !== 'ambiguous' || checkBillPaymentChoice(text)
       || substituteScanConfirmAnswer(text) || numberedSelection(text, 9) !== undefined) {
       const rows = await this.prisma.client.lineIntakePendingMedia.findMany({
@@ -5314,16 +5890,30 @@ export class ProcessLineWebhookUseCase {
             : asked.kind === 'SUBSTITUTE_SCAN_PICK' ? numberedSelection(text, asked.evidenceIds.length) !== undefined
               : !!substituteMediaAnswer(text, asked.choices))) return true;
     }
-    return drafts && !!this.expenseDraftConversation && isDeterministicLineExpenseDraftInput(text)
-      && (await this.expenseDraftConversation.routeContexts(ctx, chatKeyHashOf(event))).length > 0;
+    if (!drafts || !this.expenseDraftConversation) return false;
+    const open = await this.expenseDraftConversation.routeContexts(ctx, chatKeyHashOf(event));
+    return open.length > 0 && (isDeterministicLineExpenseDraftInput(text)
+      || !!await this.expenseDraftConversation.answersOpenDraft?.(ctx, chatKeyHashOf(event), text));
   }
 
-  private async waitingSourcesCurrent(event: LineTextEvent, ctx: RequestContext, open: Array<LineAiOpenClarification & { entry: LedgerEntry }>): Promise<boolean> {
-    const stale = [];
+  private async waitingSourcesCurrent(event: LineTextEvent, ctx: RequestContext, open: Array<LineAiOpenClarification & { entry: LedgerEntry }>, dropStale = false): Promise<boolean> {
+    const stale: string[] = [];
     for (const item of open) if (!await this.clarificationSourceCurrent(event, ctx, item)) stale.push(item.id);
     if (!stale.length) return true;
     // A durable refusal prevents this unsafe question from trapping every later fresh request.
     await this.consumeClarifications(ctx.companyId, event.pushTargetId ?? event.lineUserId, ctx.userId, open, stale, 'clarification_source_changed');
+    // Retire stale work without blocking an independent question. A choice, field answer or
+    // requested mutation must never be rebound to today's candidates after losing its proof.
+    const text = normalizeLineText(event.messageText);
+    const independentQuestion = (isInterveningQuestionText(text) || /ทำไม|\bwhy\b/iu.test(text))
+      && !isDeterministicLineExpenseDraftInput(text)
+      && !/^(?:[\d๐-๙]|(?:รายการ|ร่าง|บิล|ใบเสร็จ)(?:ที่)?\s*[\d๐-๙])/u.test(text)
+      && !/(?:แก้|เปลี่ยน|บันทึก|สร้าง|เก็บ|ยืนยัน|ยกเลิก|ลบ|อนุมัติ|ชำระ|โอน|\b(?:change|edit|save|create|confirm|cancel|delete|approve|pay|transfer)\b)/iu.test(text);
+    if (dropStale && independentQuestion) {
+      const current = open.filter(item => !stale.includes(item.id));
+      open.splice(0, open.length, ...current);
+      return true;
+    }
     await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
     return false;
   }
@@ -5351,8 +5941,8 @@ export class ProcessLineWebhookUseCase {
           ? 'ข้อมูลต้นทางเปลี่ยนหรือยังตรวจสอบไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ'
           : 'สิทธิ์หรือร้านที่เลือกเปลี่ยนระหว่างดำเนินการ กรุณาเลือกร้านแล้วถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ')];
       try {
-        const result = await this.lineReply.sendReply(event.replyToken, messages);
-        if (result === 'failed_token') await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, messages, `${event.webhookEventId}:access-denied`);
+        const result = await this.sendTrackedReply(event, messages);
+        if (result === 'failed_token') await this.sendTrackedPush(event, event.pushTargetId ?? event.lineUserId, messages, `${event.webhookEventId}:access-denied`);
       } catch (error) {
         this.logger.warn({ msg: 'line_delivery_refusal_unavailable', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(error) });
       }
@@ -5380,7 +5970,7 @@ export class ProcessLineWebhookUseCase {
     const access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
     const topic = this.publicPolicyTopics.get(event);
     const recipientHash = lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '');
-    const noOtherSource = !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event)
+    const noOtherSource = !this.deliveryExpenseActions.has(event) && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event)
       && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event);
     return { v: 1, producerId,
       ...(topic ? { publicPolicy: { topic, recipientHash } } : {}),
@@ -5545,8 +6135,8 @@ export class ProcessLineWebhookUseCase {
     const admission = await this.preflightPublicGeneral({ lineUserId: event.lineUserId, messagingChannelId: event.messagingChannelId, chatId: target, channelKind }).catch(() => null);
     if (!admission) {
       const messages = [{ type: 'text' as const, text: 'แชตนี้ยังไม่พร้อมตอบด้วย AI ค่ะ งานเอกสารหรือข้อมูลบริษัทกรุณาส่งในแชตส่วนตัว' }];
-      const result = await this.lineReply.sendReply(event.replyToken, messages);
-      if (result === 'failed_token') await this.lineReply.sendPush(target, messages, `public-unavailable:${event.webhookEventId}`);
+      const result = await this.sendTrackedReply(event, messages);
+      if (result === 'failed_token') await this.sendTrackedPush(event, target, messages, `public-unavailable:${event.webhookEventId}`);
       await this.updateEventLog(event.webhookEventId, 'public_unavailable'); return;
     }
     const log = await this.prisma.client.lineWebhookEventLog.findUniqueOrThrow({ where: { webhookEventId: event.webhookEventId } });
@@ -5562,11 +6152,11 @@ export class ProcessLineWebhookUseCase {
       owner: { kind: 'PUBLIC_GENERAL', owner: { companyId: admission.companyId, channel: 'line', channelKind, messagingChannelId: event.messagingChannelId, chatKeyHash: chatKeyHashOf(event) } },
       turnKey: evidence.turnKey, attemptKey: deliveryHash(['public-turn-v2', event.webhookEventId]), inputDigest: evidence.joinedSha256, requestKind: 'TEXT',
       admittedAtMs: first, coalescingExtraMs: Math.min(6000, Math.max(0, last - first)), lane: 'general', allowedProfileIds: ['line-answer/2'] });
-    if (!grant) { await this.lineReply.sendReply(event.replyToken, [{ type: 'text', text: AI_BUDGET_UNAVAILABLE_REPLY }]); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_BUDGET_UNAVAILABLE'); return; }
+    if (!grant) { await this.sendTrackedReply(event, [{ type: 'text', text: AI_BUDGET_UNAVAILABLE_REPLY }]); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_BUDGET_UNAVAILABLE'); return; }
     const response = await this.aiGateway.requestLinePublicGeneral({ requestId, webhookEventId: event.webhookEventId, kind: 'PUBLIC_GENERAL', messageText: event.messageText,
       inputEvidence: evidence, budgetGrantV2: grant, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'], publicAdmission: { channelKind, channelKeyHash: chatKeyHashOf(event), payerCompanyId: admission.companyId, admissionId: log.id } });
     if (response.status !== 'answered' || Date.now() >= grant.finalDeadlineAtMs - 500) {
-      await this.lineReply.sendReply(event.replyToken, [{ type: 'text', text: 'ยังตอบคำขอนี้ไม่สำเร็จค่ะ ระบบไม่ได้อ่านหรือทำรายการในบริษัทให้' }]);
+      await this.sendTrackedReply(event, [{ type: 'text', text: 'ยังตอบคำขอนี้ไม่สำเร็จค่ะ ระบบไม่ได้อ่านหรือทำรายการในบริษัทให้' }]);
       await this.updateEventLog(event.webhookEventId, 'provider_unavailable', response.errorCode ?? 'DEADLINE_EXCEEDED'); return;
     }
     const now = new Date(), expiresAt = new Date(log.createdAt.getTime() + 60 * 60_000).toISOString(), outcomeId = deliveryHash(['line-outcome-v2', event.webhookEventId]);
@@ -5619,6 +6209,28 @@ export class ProcessLineWebhookUseCase {
   }
 
   async execute(event: LineTextEvent): Promise<void> {
+    try { await this.executeText(event); }
+    finally {
+      // A failed plan build used to leave delivery_pending with neither a reply nor recoverable bytes.
+      // This plain failure contains no business facts; never replace an existing durable answer.
+      if (this.deliveryAccess.has(event) && !this.deliveredTextTurns.has(event) && !this.deliveryDenialNotified.has(event)) {
+        try {
+          const saved = await this.prisma.client.lineTurnOutcome.findUnique({ where: { webhookEventId: event.webhookEventId } });
+          if (!saved) {
+            const owner = await this.prisma.client.lineWebhookEventLog.updateMany({ where: { webhookEventId: event.webhookEventId,
+              OR: [{ deliveryOwnerId: null }, { deliveryOwnerId: 'webhook' }] }, data: { deliveryOwnerId: 'webhook' } });
+            if (owner.count === 1) {
+              const messages = [this.lineReply.buildTextMessage(ERROR_REPLY)];
+              const result = await this.sendTrackedReply(event, messages);
+              if (result === 'failed_token') await this.sendTrackedPush(event, event.pushTargetId ?? event.lineUserId, messages, `${event.webhookEventId}:fallback`);
+            }
+          }
+        } catch (error) { this.logger.warn({ msg: 'line_text_fallback_unavailable', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(error) }); }
+      }
+    }
+  }
+
+  private async executeText(event: LineTextEvent): Promise<void> {
     const mediaContinuation = this.mediaTextContinuations.get(event);
     const requestId = mediaContinuation?.requestId ?? randomUUID();
 
@@ -5630,7 +6242,13 @@ export class ProcessLineWebhookUseCase {
     }
 
     if (event.answerDeliveryControl) { await this.handleAnswerDeliveryControl(event); return; }
-    if (event.channelKind === 'GROUP' || event.channelKind === 'ROOM' || event.pushTargetId && event.pushTargetId !== event.lineUserId) { await this.executePublicGeneral(event, requestId); return; }
+    if (event.channelKind === 'GROUP' || event.channelKind === 'ROOM' || event.pushTargetId && event.pushTargetId !== event.lineUserId) {
+      if (event.counterpartyControl || event.expenseActionControl || event.packagePurchaseControl || isPackagePurchaseIntent(event.messageText)) {
+        await this.deliverReply(event, 'กรุณาทำรายการในแชตส่วนตัวค่ะ');
+        await this.updateEventLog(event.webhookEventId, 'expense_action_private_required');
+      } else await this.executePublicGeneral(event, requestId);
+      return;
+    }
 
     // Public deterministic command: the verified controller and event claim already ran, but no
     // identity, company, acceptance, permission, entitlement, or model read is needed.
@@ -5776,6 +6394,7 @@ export class ProcessLineWebhookUseCase {
     // front of them. Under the pause they were swallowed by the "we are looking into it" reply and
     // no request was ever created, so the one action an expired shop is in the chat to take
     // silently did nothing for 24 hours.
+    if (publicCommand === 'package_change' && await this.handlePackagePurchase(event, identity.userId, requestId)) return;
     if (publicCommand === 'package_change') {
       await this.handlePackageChangeRequest(event, identity.userId, requestId);
       return;
@@ -5796,7 +6415,7 @@ export class ProcessLineWebhookUseCase {
     // shown. Swallowing them filed a button press as a sentence for an operator to read and gave
     // back a confirmation nobody asked for. S-4's two phrases only count while its lane is lit; with
     // the flag off they are ordinary text and stay under the pause like any other sentence.
-    const deterministicCommand = !!event.reimbursementDraftControl || publicCommand !== null
+    const deterministicCommand = !!event.counterpartyControl || !!event.packagePurchaseControl || !!event.expenseActionControl || !!event.reimbursementDraftControl || publicCommand !== null
       && (this.draftUpdate?.enabled === true
         || (publicCommand !== 'draft_update_confirm' && publicCommand !== 'draft_update_cancel'));
     if (!deterministicCommand
@@ -5828,6 +6447,8 @@ export class ProcessLineWebhookUseCase {
       await this.handleCompanyCommand(event, requestId, identity.userId, identity.user.displayName, companyCommand);
       return;
     }
+
+    if (await this.handlePackagePurchase(event, identity.userId, requestId)) return;
 
     // 4. Resolve company from membership + LineCompanyContext (NOT channel binding)
     const resolved = await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
@@ -5874,6 +6495,100 @@ export class ProcessLineWebhookUseCase {
       fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, resolvedAccess, entitledFeatureKeys),
       allowDuringSupportPause: deterministicCommand });
     await this.bindConversation(event);
+    if (event.counterpartyControl) {
+      const ctx: RequestContext = { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+        membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
+        scopes: resolvedAccess.scopes, authProvider: 'line' };
+      const control = event.counterpartyControl;
+      if (control.action === 'counterparty_confirm') {
+        const plan = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId, userId: identity.userId,
+          planJson: { path: ['control', 'token'], equals: control.token } }, select: { status: true, planJson: true } });
+        if (plan && (plan.status !== 'ACCEPTED' || !parseLineDeliveryPlan(plan.planJson))) {
+          await this.deliverReply(event, 'กรุณาอ่านรายละเอียดคู่ค้าให้ครบก่อนยืนยันค่ะ'); return;
+        }
+      }
+      const result = await this.counterparties.apply(ctx, chatKeyHashOf(event), control);
+      if (result.status === 'applied' || result.status === 'replayed') await this.counterpartyTask(event, control.token, true, result.source);
+      const remaining = (result.status === 'applied' || result.status === 'replayed') && this.semanticTaskMappings.has(event)
+        ? await this.remainingTaskChoiceMessages(event) : [];
+      await this.deliverRequiredMessages(event, [{ type: 'text', text: result.reply }, ...remaining]);
+      await this.updateEventLog(event.webhookEventId, `counterparty_${result.status}`, undefined, companyId);
+      return;
+    }
+    if (event.expenseActionControl) {
+      const ctx: RequestContext = { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+        membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions, entitlementDeniedPermissions: resolvedAccess.entitlementDeniedPermissions,
+        scopes: resolvedAccess.scopes, authProvider: 'line' };
+      await this.handleExpenseActionPostback(event, ctx, entitledFeatureKeys);
+      return;
+    }
+    if (event.messageText) {
+      const teamCtx: RequestContext = { requestId, authSubject: identity.userId, userId: identity.userId, companyId, membershipId: resolvedAccess.membershipId,
+        roles: resolvedAccess.roles, permissions: resolvedAccess.permissions, entitlementDeniedPermissions: resolvedAccess.entitlementDeniedPermissions, scopes: resolvedAccess.scopes, authProvider: 'line' };
+      const answer = await this.expenseActions?.answerTeam?.(teamCtx, chatKeyHashOf(event), event.messageText);
+      if (answer) {
+        if (answer.preview) this.deliveryExpenseActions.set(event, { context: teamCtx, chat: chatKeyHashOf(event), requestId, preview: answer.preview });
+        await this.deliverRequiredMessages(event, [answer.preview ? buildExpenseActionCard(answer.preview) : { type: 'text', text: answer.reply }]);
+        await this.updateEventLog(event.webhookEventId, 'team_action_input', undefined, companyId);
+        return;
+      }
+    }
+    if (event.messageText && !event.reimbursementChoiceControl && event.messageText !== 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้' && (entitledFeatureKeys === null || entitledFeatureKeys.has('expenses'))) {
+      const reasonCtx: RequestContext = { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+        membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
+        scopes: resolvedAccess.scopes, authProvider: 'line' };
+      const signing = await this.substituteActions?.resume(reasonCtx, chatKeyHashOf(event), event.messageText);
+      if (signing) {
+        if (signing.preview) this.deliverySubstituteActions.set(event, { context: reasonCtx, preview: signing.preview });
+        await this.deliverCompletedReply(event, signing.reply ?? signing.preview!.summary, companyId, resolvedAccess);
+        await this.updateEventLog(event.webhookEventId, 'substitute_signature_preview', undefined, companyId);
+        return;
+      }
+      const evidence = await this.expenseActions?.answerEvidence?.(reasonCtx, chatKeyHashOf(event), event.messageText);
+      if (evidence) {
+        if ('substituteExpenseId' in evidence && evidence.substituteExpenseId && this.substituteReceiptContinuation) {
+          const result = await this.substituteReceiptContinuation.execute(reasonCtx, { chatKeyHash: chatKeyHashOf(event),
+            messageText: 'ไม่มีใบเสร็จ ขอทำใบรับรองแทนใบเสร็จ', recentCandidates: [{ id: evidence.substituteExpenseId, label: 'รายการนี้' }],
+            boundCandidateExpenseIds: [evidence.substituteExpenseId], confirmedStart: true, webBaseUrl: this.config.webBaseUrl });
+          await this.rememberSubstituteDeliverySource(event, reasonCtx, result);
+          await this.deliverReply(event, result.replyText);
+        } else {
+          if ('preview' in evidence && evidence.preview) this.deliveryExpenseActions.set(event, { context: reasonCtx, chat: chatKeyHashOf(event), requestId, preview: evidence.preview });
+          const choices = await this.expenseActions.repairChoices(reasonCtx, chatKeyHashOf(event));
+          await this.deliverRequiredMessages(event, ['preview' in evidence && evidence.preview ? buildExpenseActionCard(evidence.preview)
+            : { type: 'text', text: evidence.reply, ...(choices?.length ? { quickReply: { items: choices.map(choice => ({ type: 'action' as const, action: { type: 'message' as const, ...choice } })) } } : {}) }]);
+        }
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
+      const category = await this.expenseActions?.answerCategory?.(reasonCtx, chatKeyHashOf(event), event.messageText);
+      if (category) {
+        if ('preview' in category && category.preview) {
+          this.deliveryExpenseActions.set(event, { context: reasonCtx, chat: chatKeyHashOf(event), requestId, preview: category.preview });
+          await this.deliverRequiredMessages(event, [buildExpenseActionCard(category.preview)]);
+        } else if ('reply' in category) {
+          const choices = await this.expenseActions.repairChoices(reasonCtx, chatKeyHashOf(event));
+          await this.deliverRequiredMessages(event, [{ type: 'text', text: category.reply!, quickReply: { items: (choices ?? []).map(choice => ({ type: 'action', action: { type: 'message', ...choice } })) } }]);
+        } else {
+          const proposed = await this.proposeDraftUpdate(event, reasonCtx, resolvedAccess, category,
+            [{ text: event.messageText, todayIso: todayCivilDate() }], category.expenseId);
+          if (proposed === 'not_handled') await this.deliverReply(event, 'ยังขาดหมวดค่าใช้จ่าย แก้หมวดในหน้ารายการแล้วพิมพ์ยืนยันอีกครั้งค่ะ');
+          const preview = await this.draftUpdate?.pendingPreview(reasonCtx, chatKeyHashOf(event), requestId);
+          if (preview) await this.expenseActions.linkRepairEdit(reasonCtx, chatKeyHashOf(event), preview.previewId);
+        }
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
+      const answer = await this.expenseActions?.answerReason?.(reasonCtx, chatKeyHashOf(event), event.messageText);
+      if (answer) {
+        if (answer.preview) this.deliveryExpenseActions.set(event, { context: reasonCtx, chat: chatKeyHashOf(event), requestId, preview: answer.preview });
+        const choices = answer.preview ? undefined : await this.expenseActions.repairChoices?.(reasonCtx, chatKeyHashOf(event));
+        await this.deliverRequiredMessages(event, [answer.preview ? buildExpenseActionCard(answer.preview) : { type: 'text', text: answer.reply,
+          ...(choices?.length ? { quickReply: lineChoiceQuickReply(choices) } : {}) }]);
+        await this.updateEventLog(event.webhookEventId, answer.preview ? 'expense_action_prepared' : 'clarification_required', undefined, companyId);
+        return;
+      }
+    }
     if (event.reimbursementDraftControl) {
       await this.handleReimbursementDraftControl(event, { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
@@ -5987,6 +6702,13 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    if (this.paymentEvidence && (parseLinePaymentEvidenceControl(event.messageText) || isRecentPaymentEvidenceLinkText(event.messageText))) {
+      await this.handlePaymentEvidenceText(event, { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+        membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
+        scopes: resolvedAccess.scopes, authProvider: 'line' });
+      return;
+    }
+
     await this.reconcileDeliveredSemanticTasks(event);
     if (await this.handlePreferenceCommand(event, requestId)) return;
     if (await this.handlePendingMediaControl(event)) return;
@@ -5999,7 +6721,8 @@ export class ProcessLineWebhookUseCase {
     const canEditLine = resolvedAccess.permissions.includes('expense.update');
     const canSubmitSignature = maySubmitSignature(resolvedAccess.permissions);
     // Phase 1 is personal-chat only. Group/room capture retains the proven single-turn path.
-    const expenseDraftConversationEnabled = this.config.lineExpenseDraftConversationEnabled === true
+    const counterpartyCommand = isLineCounterpartyCommand(event.messageText);
+    const expenseDraftConversationEnabled = !counterpartyCommand && this.config.lineExpenseDraftConversationEnabled === true
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && Boolean(this.expenseDraftConversation);
     if (!canQuery && !canCaptureExpense && !canSubmitSignature && !editCapabilityQuestion) {
@@ -6070,7 +6793,7 @@ export class ProcessLineWebhookUseCase {
     const expenseDraftCtx: RequestContext = {
       requestId, authSubject: identity.userId, userId: identity.userId, companyId,
       membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
-      permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
+      permissions: resolvedAccess.permissions, entitlementDeniedPermissions: resolvedAccess.entitlementDeniedPermissions, scopes: resolvedAccess.scopes, authProvider: 'line',
     };
     const draftRoutingEnabled = expenseDraftConversationEnabled && canCaptureExpense && !!this.expenseDraftConversation;
     const substituteMode = this.boundConversations.has(event) ? 'primary' : this.config.lineAiSubstituteSemanticRoutingMode;
@@ -6083,6 +6806,7 @@ export class ProcessLineWebhookUseCase {
     if (boundSemanticV2 && !await this.answersOpenWork(event, expenseDraftCtx, draftRoutingEnabled)) {
       const open = await loadOpenWork();
       if (!open) return;
+      if (await this.handleExpensePaymentText(event, expenseDraftCtx, entitledFeatureKeys, conversationContext)) return;
       const candidates = await this.textValueCandidates(event, event.messageText);
       semanticRoutePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({ event, requestId, webhookEventId: event.webhookEventId,
         companyId, userId: identity.userId, permissions: resolvedAccess.permissions, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : null,
@@ -6099,10 +6823,15 @@ export class ProcessLineWebhookUseCase {
           ? LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY);
         await this.updateEventLog(event.webhookEventId, 'provider_unavailable', semanticRoutePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
+      if (this.paymentEvidence && (semanticRoutePlan.intent === 'EXPENSE_PAYMENT_EVIDENCE_LINK'
+        || semanticRoutePlan.semanticSubrequests?.some(item => item.writeIntent === 'EXPENSE_PAYMENT_EVIDENCE_LINK'))) {
+        await this.handlePaymentEvidenceText(event, expenseDraftCtx); return;
+      }
       if (await this.handleRoutedPreference(event, requestId, semanticRoutePlan)) return;
       if (await this.resumeDocumentQuestionV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
       if (await this.draftCurrentDocumentV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
-      if (!open.openClarifications?.length && semanticRoutePlan.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
+      if (!open.openClarifications?.length && !/^(?:ช่วย)?แก้(?:ไข)?ข้อมูล(?:ให้)?(?:หน่อย)?(?:ค่ะ|คะ|ครับ)?[?？]?$/u.test(event.messageText.replace(/\s+/gu, ''))
+        && semanticRoutePlan.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
         await this.deliverPureGeneralV2(event, requestId, semanticRoutePlan, resolvedAccess, entitledFeatureKeys, candidates, conversationContext); return;
       }
     }
@@ -6115,7 +6844,7 @@ export class ProcessLineWebhookUseCase {
     // build the draft from the stored attachment; illustration → answer the original caption;
     // multiple → retain for review without collapsing rows; ambiguous → leave it PENDING.
     const pendingWhere = { companyId, userId: identity.userId, status: 'PENDING' as const, expiresAt: { gt: new Date() }, ...this.pendingMediaBinding(event) };
-    const pendingRows = this.boundConversations.has(event)
+    const pendingRows = counterpartyCommand ? [] : this.boundConversations.has(event)
       ? await this.prisma.client.lineIntakePendingMedia.findMany({ where: pendingWhere, orderBy: { createdAt: 'asc' }, take: 6 })
       : [await this.prisma.client.lineIntakePendingMedia.findFirst({ where: pendingWhere, orderBy: { createdAt: 'desc' } })].filter((row): row is NonNullable<typeof row> => !!row);
     const explicitlySelected = pendingRows.filter(row => (row.askedQuestionJson as { selectedForContinuation?: boolean } | null)?.selectedForContinuation === true);
@@ -6257,6 +6986,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     let activeExpenseDrafts = open.activeExpenseDrafts;
+    if (activeExpenseDrafts.length && conversationContext) conversationContext.activeExpenseDrafts = activeExpenseDrafts.map(draft => ({ expenseId: draft.expenseId }));
     let draftRouteSnapshot = JSON.stringify(activeExpenseDrafts);
     const draftRouteCurrent = async () => {
       if (!expenseDraftConversationEnabled || !canCaptureExpense || !this.expenseDraftConversation) return true;
@@ -6296,12 +7026,14 @@ export class ProcessLineWebhookUseCase {
               ? `ถ้าหมายถึงรายการนี้ แก้ผ่าน LINE ได้ค่ะ: ${recentCapturedExpenses[0]!.label}`
               : 'ถ้าหมายถึงรายการใดรายการหนึ่งในรายการด้านล่าง แก้ผ่าน LINE ได้ค่ะ:',
             ...(recentCapturedExpenses.length > 1
-              ? recentCapturedExpenses.map((candidate, index) => `${index + 1}) ${candidate.label}`)
+              ? recentCapturedExpenses.map(candidate => candidate.label)
               : []),
             'พิมพ์ฟิลด์กับค่าใหม่ เช่น “แก้วันที่เป็น 20 กันยายน 2569” ระบบจะแสดงตัวอย่างให้ตรวจ และจะบันทึกก็ต่อเมื่อคุณกด “ยืนยัน” เท่านั้น',
             ...(recentCapturedExpenses.length > 1 ? ['กรุณาระบุบิลหรือวันที่ก่อนแก้ค่ะ'] : []),
           ].join('\n');
-      await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
+      const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId);
+      if (servingEnabled && recentCapturedExpenses.length > 1) card.quickReply = lineChoiceQuickReply(recentCapturedExpenses.map(candidate => ({ label: candidate.label, text: `ขอแก้รายการ ${candidate.label}` })));
+      await this.deliverCompletedReply(event, reply, companyId, resolvedAccess, undefined, card);
       await this.updateEventLog(event.webhookEventId, 'expense_edit_capability', undefined, companyId);
       return;
     }
@@ -6368,13 +7100,18 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
     }
-    const interruptExpenseDraft = async (excludeExpenseIds: string[] = []) => activeExpenseDrafts
-      .some((draft) => draft.status === 'OPEN' && !excludeExpenseIds.includes(draft.expenseId))
-      && this.expenseDraftConversation
-      ? this.expenseDraftConversation.interruptOpen(expenseDraftCtx, chatKeyHashOf(event), excludeExpenseIds)
-      : undefined;
+    const interruptExpenseDraft = async (excludeExpenseIds: string[] = []) => {
+      if (!this.expenseDraftConversation || !activeExpenseDrafts.some(draft => draft.status === 'OPEN' && !excludeExpenseIds.includes(draft.expenseId))) return undefined;
+      const reply = await this.expenseDraftConversation.interruptOpen(expenseDraftCtx, chatKeyHashOf(event), excludeExpenseIds);
+      activeExpenseDrafts = await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event));
+      draftRouteSnapshot = JSON.stringify(activeExpenseDrafts);
+      const routing = this.clarificationRouteSources.get(event);
+      if (routing) routing.draftRouting = draftRoutingRevisions(activeExpenseDrafts);
+      return reply;
+    };
     if (activeExpenseDrafts.length > 0 && this.expenseDraftConversation
-      && isDeterministicLineExpenseDraftInput(normalizedText)) {
+      && (isDeterministicLineExpenseDraftInput(normalizedText)
+        || !!await this.expenseDraftConversation.answersOpenDraft?.(expenseDraftCtx, chatKeyHashOf(event), normalizedText))) {
       if (!await draftRouteCurrent() || !await this.mayDeliverBusinessReply(event)) return;
       const result = await this.expenseDraftConversation.execute(expenseDraftCtx, {
         messageText: normalizedText,
@@ -6413,8 +7150,10 @@ export class ProcessLineWebhookUseCase {
     if (this.expenseRepo && isGroundedReceiptFollowUp(normalizedText) && !isSubstituteReceiptConversationText(normalizedText)) {
       if (recentCapturedExpenses.length > 1) {
         this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
-        const reply = ['พบรายการล่าสุดมากกว่า 1 รายการ กรุณาระบุรายการก่อนค่ะ', ...recentCapturedExpenses.map((item, index) => `${index + 1}) ${item.label}`)].join('\n');
-        await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
+        const reply = 'พบรายการล่าสุดมากกว่า 1 รายการค่ะ เลือกรายการที่จะตรวจได้เลย';
+        const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId);
+        card.quickReply = lineChoiceQuickReply(recentCapturedExpenses.map(item => ({ label: item.label, text: `ขอดูรายการ ${item.label}` })));
+        await this.deliverCompletedReply(event, reply, companyId, resolvedAccess, undefined, card);
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: reply, intent: 'CLARIFY',
@@ -6483,9 +7222,11 @@ export class ProcessLineWebhookUseCase {
       ? await this.substituteWorkInFlight(companyId, identity.userId, chatKeyHashOf(event), resolvedAccess.scopes)
       : undefined;
     let substituteInterruption: LineSubstituteReceiptContinuationResult | undefined;
-    if (substituteMode !== 'primary'
+    const explicitNoMoreEvidence = substituteContext.workflowState === 'open'
+      && /^(?:ไม่มี(?:หลักฐาน(?:อื่น)?|สลิป|รูป|ไฟล์)?)(?:แล้ว)?(?:ค่ะ|ครับ|คะ)?$/u.test(normalizedText);
+    if (!event.reimbursementChoiceControl && normalizedText !== 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้' && !counterpartyCommand && (substituteMode !== 'primary' || explicitNoMoreEvidence)
       && this.substituteReceiptContinuation
-      && (isSubstituteReceiptConversationText(normalizedText) || hasSubstituteClarification || nextStepSubstituteTarget)) {
+      && (isSubstituteReceiptConversationText(normalizedText) || hasSubstituteClarification || nextStepSubstituteTarget || explicitNoMoreEvidence)) {
       // R1: one message can be both a capture and a substitute request. Capture-first exists for the
       // dead-end it removes — a requester with NO candidate to target — so it stays off whenever the
       // existing target-selection flow can still do its job: a recent capture to point at, a
@@ -6525,6 +7266,7 @@ export class ProcessLineWebhookUseCase {
           fields: {
             ...(captured.expense.expenseDate ? { expenseDate: new Date(captured.expense.expenseDate).toISOString() } : {}),
             ...(captured.expense.vendorNameSnapshot ? { vendorName: captured.expense.vendorNameSnapshot } : {}),
+          ...(Number(captured.expense.whtAmount) > 0 ? { whtAmount: captured.expense.whtAmount } : {}),
           } as ReceiptOcrFieldResult,
         })
         : undefined;
@@ -6562,7 +7304,7 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
         return;
       }
-      this.rememberSubstituteDeliverySource(event, continuationCtx, result);
+      await this.rememberSubstituteDeliverySource(event, continuationCtx, result);
       if (captured) captureReply = (await this.savedReceiptReply(event, companyId, captured.expense.id)).texts.join('\n');
       // A FORBIDDEN outcome answers nothing and carries no resume capsule, so it must be delivered
       // through the normal branch instead of being reduced to a side-question interruption.
@@ -6676,14 +7418,14 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    const aiOpenClarifications = openClarifications?.filter((item) =>
+    const aiOpenClarifications = counterpartyCommand ? undefined : openClarifications?.filter((item) =>
       !(substituteInterruption && item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION')
       && !(mediaResumeCapsule && item.pendingMedia));
 
     const routedWaiting = openWaiting.filter(item => aiOpenClarifications?.some(clarification => clarification.id === item.id));
     if (!await this.waitingSourcesCurrent(event, expenseDraftCtx, routedWaiting)) return;
     this.clarificationRouteSources.set(event, { candidates: JSON.stringify(recentCapturedExpenses),
-      ...(expenseDraftConversationEnabled && canCaptureExpense ? { draftRouting: draftRouteSnapshot } : {}),
+      ...(expenseDraftConversationEnabled && canCaptureExpense ? { draftRouting: draftRoutingRevisions(activeExpenseDrafts) } : {}),
     });
 
     // 5.5 LINE Intake Router first: semantic route before any source-module dispatch.
@@ -6710,6 +7452,33 @@ export class ProcessLineWebhookUseCase {
       ...(substituteMode === 'primary' ? { substituteContext } : {}),
       busyWaitDeadlineMs,
     }));
+    const claimOwner = this.boundConversations.get(event);
+    if (claimOwner && this.budgetGrantsV2.has(event) && event.inputEvidence && routePlan.status === 'ROUTED'
+      && (routePlan.semanticOutcome === 'REIMBURSEMENT_CLAIM' || routePlan.semanticOutcome === 'AMBIGUOUS')
+      && (routePlan.intent === 'EXPENSE_DRAFT_CONTINUATION' || routePlan.intent === 'REIMBURSEMENT_REQUEST_START')) {
+      const answer = await this.reimbursementAdapter?.answerReason?.({ ctx: expenseDraftCtx, owner: claimOwner.owner,
+        ownerEpoch: claimOwner.epoch, evidence: event.inputEvidence, text: normalizedText });
+      if (answer) {
+        await this.deliverReimbursementCollection(event, expenseDraftCtx, answer);
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
+    }
+    // A history-only continuation must not survive as a semantic write in the gateway either.
+    if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DRAFT_CONTINUATION'
+      && expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation?.answersOpenDraft
+      && !isDeterministicLineExpenseDraftInput(normalizedText)
+      && routePlan.semanticOutcome !== 'REIMBURSEMENT_CLAIM'
+      && !this.retainedTaskSources?.has(event)
+      && (routePlan.semanticSubrequests ?? []).every(item => item.kind === 'general' || item.kind === 'help'
+        || item.kind === 'write' && (!item.writeIntent || ['EXPENSE_DOCUMENT_CAPTURE', 'EXPENSE_DRAFT_CONTINUATION'].includes(item.writeIntent)))
+      && !await this.expenseDraftConversation.answersOpenDraft(expenseDraftCtx, chatKeyHashOf(event), normalizedText, routePlan.captureHints)) {
+      routePlan = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', language: routePlan.language, confidence: routePlan.confidence,
+        usage: routePlan.usage, semanticSubrequests: routePlan.semanticSubrequests?.map(item => {
+          const { writeIntent: _writeIntent, taskRef: _taskRef, ...source } = item;
+          return { ...source, kind: 'general' as const, goal: normalizedText };
+        }) };
+    }
     // A bound chat ends a refused route just below (a retained selection, then the grant gate), so the
     // credit refusal is answered here. An unbound chat keeps its deterministic fallbacks and is answered
     // after them, further down.
@@ -6727,15 +7496,42 @@ export class ProcessLineWebhookUseCase {
       }
       // Domain grounding sees the selected immutable clause. The current intake input/grant stay on the selection event.
       normalizedText = retainedTask.sourceText;
+      // Untyped voucher/counterparty clauses use their preview tools, never the capture intent of their original message.
+      if (!selected.writeIntent) routePlan = { ...routePlan, intent: 'BUSINESS_READ_QUESTION' };
     }
     if (await this.handleRoutedPreference(event, requestId, routePlan)) return;
+    const orderedWrites = routePlan.semanticSubrequests && this.orderedExpenseWrites(routePlan.semanticSubrequests);
+    if (orderedWrites) routePlan = { ...routePlan, semanticSubrequests: routePlan.semanticSubrequests!.map(item => orderedWrites.find(write => write.index === item.index) ?? item) };
     const typedWrites = routePlan.semanticSubrequests?.filter(item => item.kind === 'write');
-    const multipleExistingBusinessWrites = (typedWrites?.length ?? 0) > 1 && typedWrites!.every(item => item.writeIntent
-      && ['EXPENSE_DOCUMENT_CAPTURE', 'EXPENSE_DRAFT_CONTINUATION', 'EXPENSE_CAPTURE_CORRECTION', 'SUBSTITUTE_RECEIPT_CONTINUATION', 'REIMBURSEMENT_REQUEST_START'].includes(item.writeIntent));
-    if (this.boundConversations.has(event) && typedWrites?.length === 1 && typedWrites[0]?.writeIntent) {
-      routePlan = { ...routePlan, intent: typedWrites[0].writeIntent };
+    const multipleExistingBusinessWrites = (typedWrites?.length ?? 0) > 1;
+    if (this.boundConversations.has(event) && typedWrites?.[0]?.writeIntent
+      && (typedWrites.length === 1 || this.orderedExpenseWrites(routePlan.semanticSubrequests!))) {
+      routePlan = { ...routePlan, intent: orderedWrites?.[0]?.writeIntent ?? (orderedWrites ? 'BUSINESS_READ_QUESTION' : typedWrites[0].writeIntent) };
     }
+    // The intake identifies a claim correction; expense draft tools cannot edit its collection or saved draft.
+    if (this.boundConversations.has(event) && this.config.lineAiReimbursementDraftWriteEnabled
+      && routePlan.intent === 'EXPENSE_CAPTURE_CORRECTION' && routePlan.semanticOutcome === 'REIMBURSEMENT_CLAIM'
+      && typedWrites?.length === 1) routePlan = { ...routePlan, intent: 'REIMBURSEMENT_REQUEST_START' };
     const initialGrantV2 = this.budgetGrantsV2.get(event);
+    // Choice postbacks still pass the metered intake/admission above; only their bound proposal is deterministic.
+    if (initialGrantV2 && (event.reimbursementChoiceControl || normalizedText === 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้')) {
+      const bound = this.boundConversations.get(event);
+      if (bound) {
+        let control = event.reimbursementChoiceControl;
+        if (!control) {
+          const active = await this.reimbursementDrafts.active({ ctx: expenseDraftCtx, owner: bound.owner, ownerEpoch: bound.epoch });
+          const options = active && await this.reimbursementAdapter.readDisplayOptions({ ctx: expenseDraftCtx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: active.id });
+          if (options?.control) control = { action: 'reimbursement_choice', ...options.control, choice: 'no-receipt' };
+        }
+        if (control) {
+          const result = await this.reimbursementAdapter.choose({ ctx: expenseDraftCtx, owner: bound.owner, ownerEpoch: bound.epoch, control });
+          await this.deliverReimbursementCollection(event, expenseDraftCtx, result);
+          await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+          return;
+        }
+      }
+    }
+
     if (this.boundConversations.has(event)) {
       if (!initialGrantV2 || routePlan.status !== 'ROUTED') {
         // A missing grant is a system/budget-admission gap, not a text the model failed to parse.
@@ -6775,8 +7571,26 @@ export class ProcessLineWebhookUseCase {
       }
     }
 
+    // Navigation follows the metered intake; the buttons carry requests, never mutation authority.
+    if (routePlan.status === 'ROUTED' && /^(?:ช่วย)?แก้(?:ไข)?ข้อมูล(?:ให้)?(?:หน่อย)?(?:ค่ะ|คะ|ครับ)?[?？]?$/u.test(normalizedText.replace(/\s+/gu, ''))
+      && routePlan.semanticSubrequests?.length === 1 && ['general', 'help', 'write'].includes(routePlan.semanticSubrequests[0]!.kind)) {
+      const choices = await this.recentEditableChoices(expenseDraftCtx, recentCapturedExpenses, activeExpenseDrafts, entitledFeatureKeys);
+      const reply = 'ต้องการแก้ไขรายการไหนคะ';
+      const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId);
+      card.quickReply = lineChoiceQuickReply([...choices, { label: 'อื่นๆ', text: 'ต้องการแก้ไขข้อมูลอื่น ช่วยถามว่าข้อมูลส่วนไหน' }]);
+      for (const [index, choice] of choices.entries()) if (choice.uri) {
+        card.quickReply!.items[index]!.action = { type: 'uri', label: card.quickReply!.items[index]!.action.label, uri: choice.uri };
+      }
+      if (canEditLine) this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
+      await this.deliverCompletedReply(event, reply, companyId, resolvedAccess, undefined, card);
+      await this.persistIntakeTurn({ event, userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizedText, replyText: reply, intent: 'CLARIFY' });
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+      return;
+    }
+
     const mixedBusiness = !!initialGrantV2 && await this.prepareMixedBusinessQuestions(event, requestId, routePlan, resolvedAccess, entitledFeatureKeys, valueCandidates);
-    if (mixedBusiness && multipleExistingBusinessWrites) {
+    if (mixedBusiness && multipleExistingBusinessWrites && !this.mixedBusinessQuestions.get(event)?.orderedWrites) {
       const delivery = await this.deliverMixedBusinessWriteSelection(event, typedWrites!);
       if (delivery === 'ok') await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
       return;
@@ -6896,7 +7710,7 @@ export class ProcessLineWebhookUseCase {
         });
         const mixedSubstitute = this.mixedBusinessQuestions?.get(event);
         if (mixedSubstitute) mixedSubstitute.businessStatus = result.status === 'FORBIDDEN' ? 'denied' : result.status === 'READY_FOR_WEB' || result.status === 'CANCELLED' ? 'handled' : 'needs_user';
-        this.rememberSubstituteDeliverySource(event, continuationCtx, result);
+        await this.rememberSubstituteDeliverySource(event, continuationCtx, result);
         // PRECEDENCE when BOTH a substitute workflow AND an expense draft are open: the substitute path
         // (semantic route, OR the narrow canonical fallback taken because the provider was UNAVAILABLE)
         // wins THIS turn, and any OPEN expense draft is INTERRUPTED — paused with a note appended to the
@@ -7050,7 +7864,12 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DRAFT_CONTINUATION') {
+    if (routePlan.status === 'ROUTED' && (routePlan.intent === 'EXPENSE_DRAFT_CONTINUATION'
+      || routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE' && expenseDraftConversationEnabled
+        && activeExpenseDrafts.filter(draft => draft.status === 'OPEN').length === 1
+        && activeExpenseDrafts.some(draft => draft.status === 'OPEN' && draft.questions?.length)
+        && !isLineExpenseDraftStartEligible(normalizedText, routePlan.captureHints,
+          routePlan.semanticOutcome === 'BUSINESS_EXPENSE' && routePlan.fundingSource === 'COMPANY_PAID'))) {
       if (!expenseDraftConversationEnabled) {
         await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY);
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
@@ -7064,12 +7883,18 @@ export class ProcessLineWebhookUseCase {
           companyId);
         return;
       }
-      const result = await this.expenseDraftConversation.execute(expenseDraftCtx, {
+      let result = await this.expenseDraftConversation.execute(expenseDraftCtx, {
         messageText: normalizedText,
         chatKeyHash: chatKeyHashOf(event),
         webhookEventId: event.webhookEventId,
-        captureHints: routePlan.captureHints,
+        captureHints: routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE'
+          ? { ...routePlan.captureHints, targetExpenseId: activeExpenseDrafts.find(draft => draft.status === 'OPEN')!.expenseId }
+          : routePlan.captureHints,
       });
+      if (!result.handled && routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE') {
+        result = await this.expenseDraftConversation.execute(expenseDraftCtx, { messageText: 'ต่อ', chatKeyHash: chatKeyHashOf(event),
+          webhookEventId: event.webhookEventId, captureHints: { targetExpenseId: activeExpenseDrafts.find(draft => draft.status === 'OPEN')!.expenseId } });
+      }
       if (result.handled) {
         const mixedContinuation = this.mixedBusinessQuestions?.get(event);
         if (mixedContinuation) mixedContinuation.businessStatus = ['ENDED', 'CANCELLED'].includes(result.status) ? 'handled' : 'needs_user';
@@ -7157,13 +7982,27 @@ export class ProcessLineWebhookUseCase {
         }
       }
 
+      const sourceTask = retainedTask && (await this.contextV2.projection(this.boundConversations.get(event)!.owner))?.tasks
+        .find(task => task.taskId === retainedTask.source.taskRef.taskId);
+      const counterparty = typeof sourceTask?.slots?.counterpartyId === 'string' && typeof sourceTask.slots.counterpartyRevision === 'string'
+        ? await this.counterparties.source(ctx, sourceTask.slots.counterpartyId, sourceTask.slots.counterpartyRevision) : undefined;
+      const originalCandidates = retainedTask && counterparty
+        ? await extractValueCandidatesV2(retainedTask.source.inputEvidence, todayCivilDate('Asia/Bangkok')) : undefined;
+      const sourceAmounts = originalCandidates?.amounts.filter(amount => amount.currencyToken === 'บาท') ?? [];
+      const retainedHints = sourceAmounts.length === 1 ? {
+        amount: sourceAmounts[0]!.value,
+        description: normalizedText.split('เลขผู้เสียภาษี')[0]!.trim(), vendorName: counterparty!.name,
+        sourceDocumentType: 'EXPENSE_NOTE_TEXT' as const,
+      } : {};
       let captured: Awaited<ReturnType<CaptureLineExpenseNoteUseCase['execute']>>;
       // Resolved OUTSIDE `timeStage`: the stage measures the capture, not this lookup.
       const captureBranchId = await this.resolveLineCaptureBranchId(companyId, ctx.membershipId, ctx.scopes ?? {});
       try {
         captured = await this.timeStage(event.webhookEventId, 'capture_execute', () => this.captureExpenseNote!.execute(ctx, {
           messageText: normalizedText,
+          ...(counterparty ? { counterparty } : {}),
           captureHints: {
+            ...retainedHints,
             ...(routePlan.captureHints ?? {}),
             confidence: routePlan.captureHints?.confidence ?? routePlan.confidence,
           },
@@ -7177,11 +8016,8 @@ export class ProcessLineWebhookUseCase {
           // the identical TRANSACTION_BRANCH_REQUIRED dead end.
           branchId: captureBranchId,
           draftConversationEnabled: expenseDraftConversationEnabled,
-          // Phase 1B (§8.1): grounded `businessPurpose` may satisfy completeness ONLY behind the semantic
-          // primary guard. 'off'/'shadow' never sets it, so the completeness expansion cannot ship alone —
-          // and a route the server did not verify as company-paid business spend never unlocks it.
-          semanticBusinessExpenseConfirmed: (reimbursementMode === 'clarify_only' || reimbursementMode === 'handoff')
-            && routePlan.semanticOutcome === 'BUSINESS_EXPENSE' && routePlan.fundingSource === 'COMPANY_PAID',
+          semanticBusinessExpenseConfirmed: routePlan.semanticOutcome === 'BUSINESS_EXPENSE'
+            && routePlan.fundingSource === 'COMPANY_PAID',
           chatKeyHash: chatKeyHashOf(event),
           ...(capturePlan ? { consumption: capturePlan.consumption } : {}),
         }));
@@ -7236,7 +8072,9 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
-      const mixedCapture = this.mixedBusinessQuestions?.get(event); if (mixedCapture) mixedCapture.businessStatus = 'handled';
+      const sequenceCapture = !!counterparty && Number(captured.expense.whtAmount) > 0;
+      if (sequenceCapture) await this.expenseSequenceTask(event, [captured.expense.id]);
+      const mixedCapture = this.mixedBusinessQuestions?.get(event); if (mixedCapture) mixedCapture.businessStatus = sequenceCapture ? 'needs_user' : 'handled';
       this.rememberReceiptDeliverySource(event, ctx, captured.expense,
         captured.categoryNameSourceId && captured.categoryName ? { id: captured.categoryNameSourceId, name: captured.categoryName } : undefined);
       const captureSummary = {
@@ -7247,6 +8085,7 @@ export class ProcessLineWebhookUseCase {
         fields: {
           ...(captured.expense.expenseDate ? { expenseDate: new Date(captured.expense.expenseDate).toISOString() } : {}),
           ...(captured.expense.vendorNameSnapshot ? { vendorName: captured.expense.vendorNameSnapshot } : {}),
+          ...(Number(captured.expense.whtAmount) > 0 ? { whtAmount: captured.expense.whtAmount } : {}),
         } as ReceiptOcrFieldResult,
       };
       // The review card states what this lane's own summary states, so it is built for that summary
@@ -7257,11 +8096,16 @@ export class ProcessLineWebhookUseCase {
         : captured.replyTexts;
       const expenseDraftInterruption = await interruptExpenseDraft([captured.expense.id]);
       if (expenseDraftInterruption) replyTexts[replyTexts.length - 1] = `${replyTexts.at(-1)}\n\n${expenseDraftInterruption}`;
-      await this.deliverCompletedReplies(event, replyTexts, companyId, resolvedAccess, ownSummary
-        ? expenseDraftCardFacts(captured.expense.id, { ...captureSummary, status: captured.expense.status, item: captured.expense.note,
-          ...(expenseDraftInterruption ? { tail: expenseDraftInterruption } : {}) })
-        : undefined);
-      await this.settleWriteLane(event, 'handled');
+      const confirmation = await this.requestedCaptureConfirmation(event, ctx, captured.expense.id, normalizedText);
+      if (confirmation) {
+        await this.deliverRequiredMessages(event, [...replyTexts.map(text => buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId)), confirmation]);
+      } else {
+        await this.deliverCompletedReplies(event, replyTexts, companyId, resolvedAccess, ownSummary
+          ? expenseDraftCardFacts(captured.expense.id, { ...captureSummary, status: captured.expense.status, item: captured.expense.note,
+            ...(expenseDraftInterruption ? { tail: expenseDraftInterruption } : {}) })
+          : undefined);
+      }
+      await this.settleWriteLane(event, sequenceCapture ? 'needs_user' : 'handled');
       await this.ackConsumed(capturePlan, 'evidence_capture');
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -7272,6 +8116,8 @@ export class ProcessLineWebhookUseCase {
     }
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_CAPTURE_CORRECTION') {
+      if ((entitledFeatureKeys === null || entitledFeatureKeys.has('expenses'))
+        && await this.explainLockedExpenseEdit(event, expenseDraftCtx, resolvedAccess, routePlan.correctionHints?.targetExpenseId, recentCapturedExpenses, routePlan.correctionHints?.vendorName?.to)) return;
       if (!canCaptureExpense && !canEditLine) {
         await this.deliverReply(event, receiptDeniedReply(resolvedAccess));
         await this.updateEventLog(event.webhookEventId,
@@ -7332,12 +8178,25 @@ export class ProcessLineWebhookUseCase {
       const hints = routePlan.correctionHints;
       const hintedFields = (['expenseDate', 'amount', 'vendorName', 'documentNumber', 'note'] as const)
         .filter((field) => hints?.[field] !== undefined);
+      if (hints?.targetExpenseId && correctionCandidates.some(candidate => candidate.id === hints.targetExpenseId) && !hintedFields.length && !detectLineDraftEditRequest(normalizedText)) {
+        const selected = hints?.targetExpenseId ? correctionCandidates.filter(candidate => candidate.id === hints.targetExpenseId) : correctionCandidates;
+        const reply = selected.length === 1 ? 'ต้องการแก้ไขช่องไหนเป็นค่าอะไรคะ' : 'ต้องการแก้ไขรายการไหนคะ';
+        this.rememberCandidateDeliverySources(event, expenseDraftCtx, correctionCandidates, Boolean(originalIds));
+        const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId);
+        if (selected.length > 1) card.quickReply = lineChoiceQuickReply(selected.slice(0, 4).map(candidate => ({ label: candidate.label, text: `ขอแก้รายการ ${candidate.label}` })));
+        await this.deliverCompletedReply(event, reply, companyId, resolvedAccess, undefined, card);
+        await this.appendSourceBoundClarifications(event, { companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId, userId: identity.userId,
+          items: [{ text: normalizedText, state: 'waiting_user', clarifyQuestion: reply, intent: 'CLARIFY', clarifyForIntent: 'EXPENSE_CAPTURE_CORRECTION', candidateExpenseIds: selected.map(candidate => candidate.id) }] });
+        await this.persistIntakeTurn({ event, userId: identity.userId, companyId, webhookEventId: event.webhookEventId, userMessagePreview: normalizedText, replyText: reply, intent: 'CLARIFY' });
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
       const detectedRequest = detectLineDraftEditRequest(normalizedText);
       const headerFields = hintedFields.filter((field) => field !== 'amount');
       const mixedEdit = (detectedRequest && hintedFields.length > 0)
         || (headerFields.length > 0 && hintedFields.includes('amount'));
       let draftRequest: { tool: LineDraftUpdateTool; input: Record<string, unknown> } | null = detectedRequest;
-      let draftTargetId: string | undefined;
+      let draftTargetId = hints?.targetExpenseId && correctionCandidates.some(candidate => candidate.id === hints.targetExpenseId) ? hints.targetExpenseId : undefined;
       let draftClarification: string | undefined;
       if (!draftRequest && hintedFields.length > 0) {
         const hintedTarget = hints?.targetExpenseId
@@ -7346,7 +8205,7 @@ export class ProcessLineWebhookUseCase {
         if (!hintedTarget && correctionCandidates.length > 1) {
           draftClarification = [
             'พบหลายรายการค่ะ กรุณาระบุบิลหรือวันที่ก่อน แล้วส่งการแก้ไขทีละอย่างนะคะ',
-            ...correctionCandidates.map((candidate, index) => `${index + 1}) ${candidate.label}`),
+            ...correctionCandidates.map(candidate => candidate.label),
           ].join('\n');
         } else if (hintedTarget && this.expenseRepo && hints) {
           const target = await this.expenseRepo.findByIdWithRelations(companyId, hintedTarget.id, undefined, resolvedAccess.scopes);
@@ -7383,7 +8242,9 @@ export class ProcessLineWebhookUseCase {
       if (mixedEdit) draftClarification = 'ขอแก้ทีละอย่างก่อนนะคะ เพื่อให้ตัวอย่างแสดงการเปลี่ยนแปลงครบและไม่ตกหล่นค่ะ';
       if (draftClarification) {
         this.rememberCandidateDeliverySources(event, expenseDraftCtx, correctionCandidates, Boolean(originalIds));
-        await this.deliverCompletedReply(event, draftClarification, companyId, resolvedAccess);
+        const card = buildLineAssistantTextCardMessage(draftClarification, this.config.webBaseUrl, companyId);
+        if (correctionCandidates.length > 1) card.quickReply = lineChoiceQuickReply(correctionCandidates.map(candidate => ({ label: candidate.label, text: `ขอแก้รายการ ${candidate.label}` })));
+        await this.deliverCompletedReply(event, draftClarification, companyId, resolvedAccess, undefined, card);
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: draftClarification, intent: 'CLARIFY',
@@ -7532,10 +8393,13 @@ export class ProcessLineWebhookUseCase {
       ...(modelPolicy && { modelPolicy }),
       messageText: event.inputEvidence ? event.messageText : normalizedText,
       ...await this.reliabilityContext(event),
-      ...(routePlan.semanticSubrequests ? { semanticSubrequests: routePlan.semanticSubrequests } : {}),
+      ...(routePlan.semanticSubrequests ? { semanticSubrequests: mixedBusiness && orderedWrites?.[0] && !orderedWrites[0].writeIntent
+        ? [{ ...orderedWrites[0], index: 0, dependsOn: [] }] : routePlan.semanticSubrequests } : {}),
+      ...(routePlan.intent === 'REIMBURSEMENT_REQUEST_START' && routePlan.reimbursementHints ? { reimbursementHints: routePlan.reimbursementHints } : {}),
       ...(routePlan.resolvedClarificationIds ? { resolvedClarificationIds: routePlan.resolvedClarificationIds } : {}),
       ...(retainedTask ? { retainedTaskSource: retainedTask.source } : {}),
       ...(this.budgetGrantsV2.get(event) && event.inputEvidence ? { inputEvidence: event.inputEvidence, budgetGrantV2: this.budgetGrantsV2.get(event), contractCapabilities: ['input-evidence-v2' as const, 'budget-envelope-v2' as const] } : {}),
+      ...(routePlan.howToActionId ? { howToActionId: routePlan.howToActionId } : {}),
       ...(this.boundConversations.has(event) && this.config.lineAiApprovedKnowledgeEnabled ? { approvedKnowledge: true, ...(routePlan.selectedKnowledgeCardIds ? { selectedKnowledgeCardIds: routePlan.selectedKnowledgeCardIds } : {}) } : {}),
       ...(conversationContext && { conversationContext }),
       ...(valueCandidates && { valueCandidates }),
@@ -7593,7 +8457,7 @@ export class ProcessLineWebhookUseCase {
 
     // 7.5 Item 10F: durable `turn` entry BEFORE the gateway call — a crash mid-turn leaves it
     // unacked and the reclaim worker re-runs it (at-least-once is safe: read-only channel).
-    const ledgerTurnId = this.ledger
+    const ledgerTurnId = mixedBusiness ? this.mixedBusinessQuestions.get(event)?.ledgerId ?? null : this.ledger
       ? await this.ledger.appendTurn({
           messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
@@ -7606,6 +8470,8 @@ export class ProcessLineWebhookUseCase {
         })
       : null;
 
+    // Park before tools prepare revision-bound evidence choices, repairs or action cards.
+    const expenseDraftInterruption = await interruptExpenseDraft();
     // 8. Call AI Gateway
     let turnResponse: LineAiTurnResponse;
     try {
@@ -7680,16 +8546,17 @@ export class ProcessLineWebhookUseCase {
         metadataJson: { intent: turnResponse.intent },
       });
     }
-    const expenseDraftInterruption = await interruptExpenseDraft();
     const resumeCapsules = [substituteInterruption?.resumeCapsule, mediaResumeCapsule, expenseDraftInterruption].filter((item): item is string => !!item);
     if (resumeCapsules.length > 0) {
       const resumeText = resumeCapsules.length === 1
         ? resumeCapsules[0]
-        : `↩️ ยังมีงานค้าง ${resumeCapsules.length} งาน กรุณาเลือกงานที่จะทำต่อค่ะ\n${resumeCapsules.map((item, index) => `${index + 1}) ${item.replace(/^↩️\s*/, '')}`).join('\n')}`;
+        : `↩️ ยังมีงานค้าง ${resumeCapsules.length} งานค่ะ\n${resumeCapsules.map(item => item.replace(/^↩️\s*/, '')).join('\n')}`;
+      const actionCard = turnResponse.presentation?.cards.find(card => card.chatActionId);
+      const replyText = `${turnResponse.replyText}\n\n${resumeText}`;
       turnResponse = {
         ...turnResponse,
-        replyText: `${turnResponse.replyText}\n\n${resumeText}`,
-        presentation: undefined,
+        replyText,
+        presentation: actionCard ? { kind: 'answer_cards', cards: [{ ...actionCard, text: replyText }] } : undefined,
       };
     }
     const turnId = await this.timeStage(event.webhookEventId, 'persistence', () => this.persistTurn(
@@ -7709,6 +8576,13 @@ export class ProcessLineWebhookUseCase {
       companyId,
       resolvedAccess,
     ));
+    const actionHelpQuickReply = productHelpQuickReply(turnResponse, resolvedAccess.permissions, entitledFeatureKeys);
+    if (actionHelpQuickReply) completionMessage.quickReply = actionHelpQuickReply;
+    if (evidenceIds && turnResponse.toolsInvoked.includes('wht.calculate_withholding') && this.readEvidence.whtReadChoicesForTurn) {
+      const choices = await this.readEvidence.whtReadChoicesForTurn(turnRequest, turnResponse).catch(() => undefined);
+      if (choices?.length) completionMessage.quickReply = lineChoiceQuickReply(choices.map(({ label, text, webPath }) => ({ label, text,
+        ...(webPath ? { uri: absoluteWebLink(this.config.webBaseUrl, webPath) } : {}) })));
+    }
     // S-4 (spec §5.4): when the gateway's plan reached one of the five `draft_update` tools, the
     // API has already computed and stored a preview for THIS turn — the tool call is the proposal,
     // the card is the question, and the write is still the confirm postback. The card is built
@@ -7719,9 +8593,31 @@ export class ProcessLineWebhookUseCase {
     const draftPreview = hasDraftPreview
       ? await this.draftUpdate?.pendingPreview(expenseDraftCtx, chatKeyHashOf(event), requestId)
       : null;
-    if (hasDraftPreview && (draftPreview || !turnResponse.refused)) this.deliveryDraftPreviews.set(event, {
+    const draftCalls = turnResponse.toolCalls?.filter(call => (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(call.name));
+    const draftFailed = !!draftCalls?.length && draftCalls.every(call => call.status !== 'ok' || !!call.errorCode);
+    // An explained tool failure has no preview to authorize. An alleged successful preview still
+    // fails closed when missing, and an existing preview retains its final-send revision check.
+    if (hasDraftPreview && (draftPreview || !turnResponse.refused && !draftFailed)) this.deliveryDraftPreviews.set(event, {
       context: expenseDraftCtx, chatKeyHash: chatKeyHashOf(event), requestId, previewId: draftPreview?.previewId ?? null, phase: 'PENDING',
     });
+    const counterpartyPreview = turnResponse.toolsInvoked.includes('counterparty.action.preview')
+      ? await this.counterparties.pending(expenseDraftCtx, chatKeyHashOf(event), requestId) : null;
+    if (counterpartyPreview) {
+      this.deliveryCounterparties.set(event, { context: expenseDraftCtx, preview: counterpartyPreview });
+      await this.counterpartyTask(event, counterpartyPreview.token);
+    }
+    const actionPreview = turnResponse.toolsInvoked.some(name => ['expense.action.preview', 'company.action.preview'].includes(name))
+      ? await this.expenseActions.pending(expenseDraftCtx, chatKeyHashOf(event), requestId) : null;
+    const claimHandoff = !actionPreview && turnResponse.toolsInvoked.includes('expense.action.preview')
+      ? turnResponse.sourceRefs.find(ref => ref.entityType === 'expense_action_preview'
+        && ref.permissionChecked && ref.webPath?.startsWith(`/companies/${companyId}/reimbursements/`)) : undefined;
+    if (actionPreview) this.deliveryExpenseActions.set(event, { context: expenseDraftCtx, chat: chatKeyHashOf(event), requestId, preview: actionPreview });
+    const repairChoices = turnResponse.toolsInvoked.includes('expense.action.preview')
+      ? await this.expenseActions.repairChoices(expenseDraftCtx, chatKeyHashOf(event), requestId) ?? expenseActionNextStepChoices(turnResponse.replyText) : null;
+    const completionWithChoices = repairChoices?.length ? inheritCompleteLineBusinessAnswerPresentation(completionMessage, {
+      ...completionMessage, quickReply: { items: repairChoices.map(choice => ({ type: 'action' as const, action: choice.text === 'ส่งสลิปโอนสำหรับใบเบิกนี้'
+        ? { type: 'cameraRoll' as const, label: choice.label } : { type: 'message' as const, ...choice } })) },
+    }) : completionMessage;
     const bound = this.boundConversations.get(event);
     const actionIds = [...new Set(turnResponse.sourceRefs.filter(ref => ref.module === 'reimbursements'
       && ref.entityType === 'reimbursement_draft_action' && typeof ref.entityId === 'string').map(ref => ref.entityId!))];
@@ -7729,18 +8625,28 @@ export class ProcessLineWebhookUseCase {
     if (bound && actionIds.length === 1 && turnResponse.toolsInvoked.some(name => name.startsWith('reimbursement.draft.'))) {
       const result = await this.reimbursementDrafts.get({ ctx: expenseDraftCtx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: actionIds[0]! });
       this.deliveryReimbursements.set(event, { context: expenseDraftCtx, result });
-      reimbursementMessages = buildReimbursementDraftMessages(result, this.config.webBaseUrl ?? '', companyId);
+      reimbursementMessages = this.reimbursementDraftMessages(result, expenseDraftCtx);
       if (result.status === 'needs_fields' || result.status === 'needs_target') {
         const options = await this.reimbursementAdapter?.readDisplayOptions({ ctx: expenseDraftCtx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: actionIds[0]! });
         if (options) {
           this.reimbursementOptionsDelivery.set(event, { actionId: actionIds[0]!, options });
-          reimbursementMessages.push(...buildReimbursementOptionsMessages(options));
+          const choices = buildReimbursementOptionsMessages(options, this.config.webBaseUrl ?? '');
+          if (choices.length) reimbursementMessages = choices;
         }
       }
     }
+    const actionOnly = (actionPreview || counterpartyPreview || reimbursementMessages.length > 0) && (routePlan.semanticSubrequests?.length ?? 1) === 1;
+    if (actionOnly) {
+      const first = reimbursementMessages[0];
+      const question = actionPreview?.summary ?? (first?.type === 'text' ? first.text : first?.type === 'flex' ? first.canonicalText : undefined);
+      if (question) this.semanticDelivery.set(event, (turnResponse.semanticCoverage ?? []).map(item => item.status === 'needs_user' ? { ...item, question } : item));
+    }
+
     const delivery = await this.deliverMessages(
       event,
-      [...(draftPreview ? [completionMessage, buildDraftUpdatePreviewCard(draftPreview, this.config.webBaseUrl)] : [completionMessage]), ...reimbursementMessages],
+      [...(actionOnly ? [] : draftPreview ? [completionWithChoices, buildDraftUpdatePreviewCard(draftPreview, this.config.webBaseUrl)]
+        : claimHandoff ? [buildLineAssistantTextCardMessage(`${turnResponse.replyText}\nเปิดใบเบิก: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}`, this.config.webBaseUrl, companyId)]
+        : [completionWithChoices]), ...reimbursementMessages, ...(counterpartyPreview ? [buildCounterpartyCard(counterpartyPreview)] : []), ...(actionPreview ? [buildExpenseActionCard(actionPreview)] : [])],
     );
     this.emitTurnSummary({ webhookEventId: event.webhookEventId, requestId, request: turnRequest, response: turnResponse, delivery });
     if (delivery !== 'ok') {
@@ -8247,7 +9153,28 @@ export class ProcessLineWebhookUseCase {
         refused: true,
       },
     });
-    if (rows.length === 0) return undefined;
+    const captureAccess = this.expenseRepo?.listRecentLineCaptures
+      ? await this.permissionResolver.resolveAccess(userId, companyId) : null;
+    const canReadCaptures = captureAccess && (RECEIPT_CAPTURE_PERMISSIONS.some(permission => captureAccess.permissions.includes(permission))
+      || captureAccess.permissions.includes('expense.update'));
+    const captures = canReadCaptures && this.expenseRepo ? await this.expenseRepo.listRecentLineCaptures({
+      companyId, createdByUserId: userId, chatKeyHash: chatKeyHashOf(event),
+      since: new Date(Date.now() - 2 * 60 * 60_000), scopes: captureAccess.scopes ?? {}, take: 5,
+    }) : [];
+    const noticeAccess = this.deliveryAccess.get(event);
+    const noticeItems = noticeAccess ? await this.expenseActions?.shownApprovalNotices?.({ requestId: 'line-notice-context', authSubject: userId, userId, companyId, membershipId: noticeAccess.membershipId, roles: [], permissions: [], scopes: {}, authProvider: 'line' }, chatKeyHashOf(event)) ?? [] : [];
+    let quotedRecords = await this.quotedRecordsForEvent(event);
+    const quoteOwner = this.quoteOwner(event);
+    const createdClaims = quoteOwner && this.quotedMessages?.recentReimbursementDraft
+      ? await this.quotedMessages.recentReimbursementDraft(quoteOwner) : [];
+    if (!quotedRecords.length) quotedRecords = createdClaims;
+    // Signed counterparty saves leave a locator in this owner's task. Carry it before
+    // preserveSemanticTask drops completed tasks; tools still recheck the sold web permissions.
+    const projection = owner ? await this.contextV2.projection(owner) : undefined;
+    if (projection && projection.expiresAtMs > Date.now()) quotedRecords = validQuoteRecords([...quotedRecords,
+      ...projection.tasks.flatMap(task => task.state === 'completed' && typeof task.slots?.counterpartyId === 'string'
+        && typeof task.slots.counterpartyRevision === 'string' ? [{ tool: 'counterparty.get_detail', id: task.slots.counterpartyId }] : [])]);
+    if (rows.length === 0 && captures.length === 0 && noticeItems.length === 0 && quotedRecords.length === 0) return undefined;
     // AP21: tool permission/feature checks cannot prove a historical record is still in scope.
     // Even an unchanged actor can lose access when a record moves. The existing sourceRefs carry
     // locators, not current authorization. Keep the user's questions for follow-ups, but never
@@ -8325,11 +9252,15 @@ export class ProcessLineWebhookUseCase {
       const flattenedReads = provedReads.sort((a, b) => b.at.getTime() - a.at.getTime()).flatMap(item => item.entries).slice(0, 3);
       if (flattenedReads.length) recentReads = flattenedReads;
     }
+    if (quotedRecords.length) recentReads = quoteReadMemory(quotedRecords);
+    if (noticeItems.length) recentReads = [...(recentReads ?? []), { tool: 'reimbursement.list_pending_approvals', answerShape: 'list' as const, asOf: new Date().toISOString(), shownItems: noticeItems }].slice(0, 3);
     return {
       windowMinutes: LINE_AI_CONTEXT_WINDOW_MINUTES,
       maxTurns: LINE_AI_CONTEXT_MAX_TURNS,
       lastTurnAt: recentTurns.at(-1)?.at,
       ...(recentReads ? { recentReads } : {}),
+      ...(quotedRecords.length ? { quotedRecords } : {}),
+      ...(captures.length ? { recentCapturedExpenses: captures.map(item => ({ id: item.id })) } : {}),
       recentTurns,
       ...(deliveredExpenseSummary ? { deliveredExpenseSummary } : {}),
     };
@@ -8361,8 +9292,8 @@ export class ProcessLineWebhookUseCase {
       if (err instanceof LineDeliveryError) return { outcome: 'done' };
       if (saved?.uploaded) {
         const summary = await this.savedReceiptReply(event, saved.companyId, saved.expenseId);
-        const delivered = await this.deliverRequiredMessages(event, summary.texts.map((text) => this.receiptReviewCard(text, summary.draft, saved!.companyId)
-          ?? this.boundReplyCard(event, text) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, saved!.companyId)))
+        const delivered = await this.deliverRequiredMessages(event, await Promise.all(summary.texts.map(async (text) => await this.receiptReviewCard(event, text, summary.draft, saved!.companyId)
+          ?? this.boundReplyCard(event, text) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, saved!.companyId))))
           .then(() => true, (error: unknown) => {
             this.logger.warn({ msg: 'line_receipt_saved_reply_failed', webhookEventId: event.webhookEventId, expenseId: saved!.expenseId, ...safeLineErrorDetails(error) });
             return false;
@@ -8494,7 +9425,8 @@ export class ProcessLineWebhookUseCase {
     const canStageReimbursement = !!this.boundConversations.get(event) && this.config.lineAiReimbursementDraftWriteEnabled
       && access.permissions.includes('line.ai.query') && access.permissions.includes('attachment.create')
       && access.permissions.some(permission => ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission));
-    if (!canCaptureExpense && !canSubmitSignature && !canReadDocument && !canStageReimbursement) {
+    const canCaptureClaimPayment = !!this.boundConversations.get(event) && access.permissions.includes('reimbursement.payment.record');
+    if (!canCaptureExpense && !canSubmitSignature && !canReadDocument && !canStageReimbursement && !canCaptureClaimPayment) {
       await this.deliverReply(event, receiptDeniedReply(access), undefined, undefined, 'notTaken');
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_receipt_line_upload' } });
       await this.updateEventLog(event.webhookEventId,
@@ -8503,7 +9435,7 @@ export class ProcessLineWebhookUseCase {
         companyId);
       return;
     }
-    if ((!this.initReceiptUpload || !this.completeReceiptUpload) && !canReadDocument && !canStageReimbursement) {
+    if ((!this.initReceiptUpload || !this.completeReceiptUpload) && !canReadDocument && !canStageReimbursement && !canCaptureClaimPayment) {
       await this.deliverReply(event, ERROR_REPLY, undefined, undefined, 'notTaken');
       await this.updateEventLog(event.webhookEventId, 'expense_module_unavailable', 'EXPENSE_MODULE_UNAVAILABLE', companyId);
       return;
@@ -8589,6 +9521,74 @@ export class ProcessLineWebhookUseCase {
 
 
 
+    const caption = captionText?.trim() ?? '';
+    const captionSuffix = caption ? ` ${caption}` : '';
+
+    const claimOwner = this.boundConversations.get(event);
+    const payoutPending = claimOwner && await this.expenseActions?.awaitingClaimSlip?.(ctx, chatKeyHashOf(event));
+    const claimPhoto = claimOwner && !payoutPending && await this.reimbursementAdapter?.photoTarget?.({ ctx, owner: claimOwner.owner, ownerEpoch: claimOwner.epoch });
+    if (claimOwner && (payoutPending || claimPhoto)) {
+      const textEvent: LineTextEvent = { ...event, messageText: caption || (payoutPending ? 'ส่งสลิปโอนสำหรับใบเบิกนี้' : 'แนบใบเสร็จกับใบเบิกที่เลือกไว้') };
+      this.boundConversations.set(textEvent, claimOwner);
+      this.deliveryAccess.set(textEvent, this.deliveryAccess.get(event)!);
+      const route = await this.tryRouteIntake({ event: textEvent, requestId, webhookEventId: event.webhookEventId, companyId, userId: ctx.userId,
+        permissions: access.permissions, entitledFeatureKeys, messageText: textEvent.messageText,
+        attachment: { id: event.lineMessageId, mimeType: media.mimeType, ...(media.contentBase64 ? { contentBase64: media.contentBase64 } : {}) } });
+      if (route.status !== 'ROUTED' || !this.budgetGrantsV2.has(textEvent)) {
+        await this.deliverReply(event, 'ยังแนบหลักฐานไม่สำเร็จค่ะ กรุณาลองส่งรูปอีกครั้ง'); return;
+      }
+      if (payoutPending) {
+        const slip = await this.expenseActions.captureClaimSlip(ctx, chatKeyHashOf(event), media, intent => this.uploadLineMedia(intent, media));
+        if (slip?.preview) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId, preview: slip.preview });
+        await this.deliverRequiredMessages(event, [slip?.preview ? buildExpenseActionCard(slip.preview) : slip?.webPath
+          ? buildLineSystemTextCardMessage({ text: `${slip.reply}\n${absoluteWebLink(this.config.webBaseUrl, slip.webPath)}`,
+            webBaseUrl: this.config.webBaseUrl, companyId, header: { lines: ['บันทึกจ่ายคืน', 'ตรวจข้อมูลในเว็บ'] }, linkLabel: 'เปิดใบเบิก' })
+            ?? { type: 'text', text: slip.reply }
+          : { type: 'text', text: slip?.reply ?? 'ยังแนบสลิปไม่สำเร็จค่ะ กรุณาลองใหม่' }]);
+      } else if (claimPhoto) {
+        const pending = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: { companyId_lineMessageId: { companyId, lineMessageId: event.lineMessageId } } });
+        const attachmentId = await this.stageReimbursementMedia(event, ctx, textEvent.messageText, media, claimOwner, pending, claimPhoto.branchId);
+        const result = await this.reimbursementAdapter.attachPhoto({ ctx, owner: claimOwner.owner, ownerEpoch: claimOwner.epoch, attachmentId });
+        if (result) await this.deliverReimbursementCollection(event, ctx, result);
+        else await this.deliverReply(event, 'รายการใบเบิกเปลี่ยนแล้วค่ะ เปิดร่างล่าสุดก่อนแนบรูปอีกครั้ง');
+      }
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      return;
+    }
+
+    if (this.substituteReceiptContinuation && canCaptureExpense && access.permissions.includes('expense.receipt.upload')
+      && event.messageType === 'image' && !isSignatureCaptionText(caption)) {
+      const context = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event));
+      if (context?.paymentEvidenceRequestedAt && substituteAwaitsCaptionlessPhoto(context)
+        && (!caption || /สลิป|หลักฐาน|โอน/u.test(caption))) {
+        const outcome = await this.handleSubstituteMediaArrival({ event, ctx, access, companyId, userId: identity.userId,
+          requestId, caption: caption || 'สลิป', captionSuffix, media, context });
+        if (outcome) return outcome;
+      }
+    }
+
+    const evidenceTarget = event.messageType === 'image' ? await this.expenseActions?.evidencePhotoTarget?.(ctx, chatKeyHashOf(event)) : null;
+    if (evidenceTarget && 'reply' in evidenceTarget) {
+      await this.deliverReply(event, evidenceTarget.reply!, { items: [{ type: 'action', action: { type: 'message', label: 'ดูรายการล่าสุด', text: 'ดูรายการนี้ล่าสุด' } }] });
+      return;
+    }
+    if (evidenceTarget && this.createUploadIntent && this.completeReceiptUpload) {
+      const intent = await this.createUploadIntent.execute(ctx, { originalFileName: media.fileName, mimeType: media.mimeType,
+        byteSize: media.byteSize, ...(evidenceTarget.branchId ? { branchId: evidenceTarget.branchId } : {}) });
+      await this.uploadLineMedia(intent, media);
+      await this.completeReceiptUpload.execute(ctx, { expenseId: evidenceTarget.expenseId, attachmentId: intent.attachmentId,
+        checksumSha256: media.checksumSha256, byteSize: media.byteSize, intent: 'replace', expectedUpdatedAt: evidenceTarget.revision,
+        ...(evidenceTarget.primaryAttachmentId ? { expectedPrimaryAttachmentId: evidenceTarget.primaryAttachmentId } : {}), operationId: event.lineMessageId });
+      (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT] = { expenseId: evidenceTarget.expenseId, companyId, uploaded: true };
+      const result = await this.expenseActions.afterEvidencePhoto(ctx, chatKeyHashOf(event), evidenceTarget.expenseId);
+      if (result.preview) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId, preview: result.preview });
+      const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event));
+      await this.deliverReply(event, result.reply, choices?.length ? { items: choices.map(choice => ({ type: 'action' as const, action: { type: 'message' as const, ...choice } })) } : undefined,
+        result.preview ? buildExpenseActionCard(result.preview) : undefined);
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      return;
+    }
+
     const qaRoute = await this.routeDocumentQuestionBeforeCapture(event, ctx, access, captionText ?? '', media, entitledFeatureKeys,
       (identity) => { admissionAttempt.identity = identity; admissionAttempt.companyId = companyId; });
     if (qaRoute?.handled) return;
@@ -8652,8 +9652,7 @@ export class ProcessLineWebhookUseCase {
     const conversationContext = access.permissions.includes('line.ai.query')
       ? await this.loadConversationContext(companyId, identity.userId, event)
       : undefined;
-    const caption = captionText?.trim() ?? '';
-    const captionSuffix = caption ? ` ${caption}` : '';
+
     const expenseDraftConversationEnabled = this.config.lineExpenseDraftConversationEnabled === true
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && Boolean(this.expenseDraftConversation);
@@ -8707,7 +9706,7 @@ export class ProcessLineWebhookUseCase {
     admissionAttempt.receiptRequested = routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE';
     if (!await this.mayDeliverBusinessReply(event)) { admissionAttempt.receiptRequested = true; return; }
 
-    // F8: a signature photo filed on ANY route should steer the sender back to “ตอบ 1” exactly when a
+    // F8: a signature photo filed on ANY route should steer the sender back to the prepare button exactly when a
     // substitute workflow in this chat is parked at the issue decision — not only on the numbered
     // route. Computed lazily at each signature site so non-signature uploads pay for no extra query.
     const pendingIssueDecisionSteer = () => this.substituteReceiptContinuation
@@ -8783,7 +9782,10 @@ export class ProcessLineWebhookUseCase {
           this.logger.warn({ msg: 'line_clarify_pending_media_failed', requestId, ...safeLineErrorDetails(error) });
         }
       }
-      await this.deliverReply(event, clarifyReply, undefined, undefined, 'question');
+      await this.deliverReply(event, clarifyReply, v2NeedsCaptureClarification ? { items: [
+        { type: 'action', action: { type: 'message', label: 'บันทึกเป็นค่าใช้จ่าย', text: 'ใช้เป็นหลักฐานบันทึกค่าใช้จ่าย' } },
+        { type: 'action', action: { type: 'message', label: 'ถามจากไฟล์', text: 'ถามจากไฟล์' } },
+      ] } : undefined, undefined, 'question');
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `${parked?.pending ? mediaPreviewLabel(parked.pending) : '[ผู้ใช้ส่งรูป/ไฟล์]'}${captionSuffix}`,
@@ -9287,6 +10289,8 @@ export class ProcessLineWebhookUseCase {
     if (ocrFields) {
       const applyOutcome = await this.timeStage(event.webhookEventId, 'receipt_ocr_apply', () => this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
         expectedUpdatedAt: sourceUpdatedAt,
+        ocrDocumentType: toSourceDocumentType(sourceDocumentTypeFromClassification(ocr.classification)),
+        ...(hintedDocType === 'TRANSFER_SLIP' ? { sourceDocumentType: hintedDocType } : {}),
         ...(hintedCategory
           ? {
               fallbackCategorySuggestion: {
@@ -9302,7 +10306,7 @@ export class ProcessLineWebhookUseCase {
       const duplicateResult = applyOutcome;
       sourceUpdatedAt = applyOutcome.committedUpdatedAt;
       admissionAttempt.usablePersisted = ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW'
-        && isExpenseExtractionEligible(ocr.classification ?? undefined, ocrFields.grandTotalAmount);
+        && isExpenseExtractionEligible(ocr.classification ?? undefined, ocrFields.grandTotalAmount, ocr.classification?.documentKind === 'TRANSFER_SLIP');
       hasDuplicate ||= (duplicateResult?.candidatesCreated ?? 0) > 0;
       reviewReasons = duplicateResult?.reviewReasons ?? [];
       dateVerified = duplicateResult?.dateVerified ?? false;
@@ -9348,7 +10352,7 @@ export class ProcessLineWebhookUseCase {
         lineEventId: event.webhookEventId,
         aiVerificationStatus: 'NEEDS_REVIEW',
         // Chat provenance: a later correction may only target records captured in this chat.
-        sourceChannelMetadataJson: { channel: 'LINE', kind: 'media', chatKeyHash: chatKeyHashOf(event) },
+        sourceChannelMetadataJson: { ...this.captureOwnerMetadata(event), channel: 'LINE', kind: 'media', chatKeyHash: chatKeyHashOf(event) },
         sourceDocumentType: hintedDocType,
         ...(languageHint ? { sourceDocumentLanguage: languageHint } : {}),
         taxEvidenceStatus: taxEvidence.taxEvidenceStatus,
@@ -9407,6 +10411,10 @@ export class ProcessLineWebhookUseCase {
         // the user to confirm and never applies on its own.
         ...(draftSuggestedCategoryId ? { suggestedCategoryId: draftSuggestedCategoryId } : {}),
       });
+    if (this.paymentEvidence) {
+      const pairing = await this.paymentEvidence.forCapture(ctx, chatKeyHashOf(event), intent.expenseId);
+      if (await this.deliverPaymentEvidence(event, ctx, pairing)) return { outcome: 'done' };
+    }
     // Source facts remain durable and editable, but sending a photo never starts a questionnaire.
     const saved = await this.savedReceiptReply(event, companyId, intent.expenseId, caption);
     const replyTexts = saved.texts;
@@ -9426,7 +10434,7 @@ export class ProcessLineWebhookUseCase {
     const leads = [utilityLead, nrOnExpense].filter((lead): lead is string => !!lead);
     if (leads.length) replyTexts[0] = [...leads, replyTexts[0]!].join('\n\n');
     await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access, undefined,
-      this.receiptReviewCard(replyTexts[0]!, saved.draft, companyId, leads));
+      await this.receiptReviewCard(event, replyTexts[0]!, saved.draft, companyId, leads));
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({ event,
       userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -9437,8 +10445,19 @@ export class ProcessLineWebhookUseCase {
 
   /** The saved receipt's summary as the locked review card. `leads` are what the caller put in front of
    *  the summary; `undefined` when the record is past review or the card cannot be drawn whole. */
-  private receiptReviewCard(text: string, draft: LineExpenseDraftCardFacts | undefined, companyId: string, leads: readonly string[] = []): LineReplyMessage | undefined {
-    return draft && buildExpenseDraftReviewCard(text, { ...draft, notes: [...leads, ...draft.notes] }, this.config.webBaseUrl, companyId);
+  private async receiptReviewCard(event: LineTextEvent | LineReceiptUploadEvent, text: string, draft: LineExpenseDraftCardFacts | undefined, companyId: string, leads: readonly string[] = []): Promise<LineReplyMessage | undefined> {
+    if (!draft) return undefined;
+    const ctx = this.deliveryReceiptSources.get(event)?.context;
+    const bound = this.boundConversations.get(event);
+    const claim = ctx && bound && this.reimbursementDrafts
+      ? await this.reimbursementDrafts.active({ ctx, owner: bound.owner, ownerEpoch: bound.epoch }) : null;
+    const nextAction = claim?.status === 'COLLECTING' ? { label: 'ใช้บิลนี้ทำใบเบิก', text: 'ใช้บิลที่เพิ่งส่งรูปทำใบเบิกต่อ' } : undefined;
+    const confirmation = ctx && bound && !nextAction
+      ? await this.expenseActions?.preview(ctx, chatKeyHashOf(event), { action: 'CONFIRM', expenseId: draft.expenseId }, true) : undefined;
+    const card = buildExpenseDraftReviewCard(text, { ...draft, notes: [...leads, ...draft.notes] }, this.config.webBaseUrl, companyId, confirmation?.preview, nextAction);
+    if (card && confirmation?.preview) this.deliveryExpenseActions.set(event, { context: ctx!, chat: chatKeyHashOf(event), requestId: ctx!.requestId, preview: confirmation.preview });
+    if (card && nextAction) card.quickReply = lineChoiceQuickReply([nextAction]);
+    return card;
   }
 
   /** Recovery reads the saved record; it never opens a questionnaire or reapplies money. `draft` is the
@@ -9524,6 +10543,7 @@ export class ProcessLineWebhookUseCase {
     const chatKeyHash = chatKeyHashOf(event);
     const lineUserIdHash = hashMessagePreview(event.lineUserId);
     let reply: string;
+    let choices: LineReplyMessage['quickReply'];
     try {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const rows = await this.captureRepo.listLineIntakeAttempts({
@@ -9552,15 +10572,18 @@ export class ProcessLineWebhookUseCase {
           reply = fileAttemptAnswer(target, earlier);
         } else {
           reply = fileAttemptChoiceList(facts);
+          choices = lineChoiceQuickReply(facts.map((fact, index) => ({ label: `ไฟล์ที่ ${index + 1} ${fact.fileNameSanitized ?? ''}`, text: String(index + 1) })));
           await this.recordFileAttemptChoiceList(event, input.companyId, facts.map((fact) => fact.ref));
         }
       }
     } catch (error) {
       // §17.5: a lookup that failed is NEVER reported as "no file found".
       this.logger.warn({ msg: 'line_file_attempt_lookup_failed', ...safeLineErrorDetails(error) });
-      reply = FILE_ATTEMPT_LOOKUP_FAILED_REPLY;
+      reply = FILE_ATTEMPT_LOOKUP_FAILED_REPLY; choices = undefined;
     }
-    await this.deliverCompletedReply(event, reply, input.companyId, access);
+    const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, input.companyId);
+    if (choices) card.quickReply = choices;
+    await this.deliverCompletedReply(event, reply, input.companyId, access, undefined, card);
     await this.persistIntakeTurn({ event,
       userId: input.userId, companyId: input.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: input.normalizedText, replyText: reply, intent: 'UNKNOWN',
@@ -9653,9 +10676,70 @@ export class ProcessLineWebhookUseCase {
    * lineMessageId])` on `ExpenseRecord` gives redelivery for free, and the read is the same
    * `ownerType EXPENSE` job the web PDF lane queues — one lane, one auto-split, one set of copy.
    */
-  private captureOwnerMetadata(event: LineReceiptUploadEvent) {
+  private async deliverPaymentEvidence(event: LineTextEvent | LineReceiptUploadEvent, ctx: RequestContext,
+    result: LinePaymentEvidenceResult, requestedPage = 0): Promise<boolean> {
+    const page = result.kind === 'ASK' ? paymentEvidencePage(result, requestedPage) : 0;
+    const raw = linePaymentEvidenceReply(result, page);
+    if (!raw) return false;
+    const message = raw.type === 'flex' ? asCompleteLineCard(raw) : raw;
+    const ids = result.kind === 'LINKED' ? [result.slipId, result.receiptId]
+      : result.kind === 'ASK' ? [result.slipId, ...result.candidates.slice(page * 4, page * 4 + 4).map(item => item.id)] : [];
+    for (const id of ids) {
+      const row = await this.expenseRepo?.findById(ctx.companyId, id);
+      if (row) this.rememberReceiptDeliverySource(event, ctx, row);
+    }
+    const messages = [message];
+    if (result.kind === 'LINKED' && 'messageText' in event && /(?:แสดง|ขอดู|ให้ดู|ดูรายการ)/u.test(event.messageText) && this.getLinkedExpense) {
+      const expense = await this.getLinkedExpense.execute(ctx, result.receiptId).catch(() => null);
+      if (expense) {
+        const total = `${moneyLabel(expense.grandTotalAmount)} ${expense.currency === 'THB' ? 'บาท' : expense.currency}`;
+        const date = formatReplyDate(expense.expenseDate.toISOString());
+        const status = EXPENSE_STATUS_LABELS[expense.status];
+        const card = buildExpenseDraftReviewCard(
+        `${expense.vendorNameSnapshot ?? 'ค่าใช้จ่าย'} ${total} ${date} ${status}`,
+        expenseDraftCardFactsFrom({ expenseId: expense.id, status, subject: expenseDraftCardSubject(expense.sourceDocumentType),
+          vendor: expense.vendorNameSnapshot, total, date }), this.config.webBaseUrl, ctx.companyId);
+        if (card) messages.push(card);
+      }
+    }
+    await this.deliverRequiredMessages(event, messages);
+    await this.updateEventLog(event.webhookEventId, result.kind === 'ASK' ? 'clarification_required' : 'completed', undefined, ctx.companyId);
+    return true;
+  }
+
+  private async handlePaymentEvidenceText(event: LineTextEvent, ctx: RequestContext): Promise<void> {
+    const control = parseLinePaymentEvidenceControl(event.messageText), chat = chatKeyHashOf(event);
+    const say = (text: string) => control
+      ? this.deliverRequiredMessages(event, [{ type: 'text', text }]) : this.deliverReply(event, text);
+    try {
+      if (control?.operation === 'page') {
+        await this.deliverPaymentEvidence(event, ctx, await this.paymentEvidence.choices(ctx, chat, control.slipId), Number(control.page)); return;
+      } else if (control?.operation === 'undo') {
+        await this.paymentEvidence.undo(ctx, chat, control.slipId, control.operationId!);
+        await say('แยกสลิปกลับเป็นรายการร่างแล้วค่ะ');
+      } else if (control?.operation === 'new') {
+        await this.paymentEvidence.separate(ctx, chat, control.slipId);
+        await say('เก็บสลิปเป็นรายการร่างแยกแล้วค่ะ');
+      } else {
+        const result = control?.operation === 'link'
+          ? await this.paymentEvidence.link(ctx, chat, control.slipId, control.receiptId)
+          : await this.paymentEvidence.recent(ctx, chat);
+        if (await this.deliverPaymentEvidence(event, ctx, result)) return;
+        await say('ยังไม่พบสลิปกับใบเสร็จที่จับคู่ได้ในแชตนี้ค่ะ กรุณาส่งเอกสารที่เกี่ยวข้องอีกครั้ง');
+      }
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
+    } catch (error) {
+      if (!(error instanceof ForbiddenException || error instanceof ConflictException || error instanceof NotFoundException)) throw error;
+      await say(error instanceof ForbiddenException
+        ? 'คุณยังไม่มีสิทธิ์แนบหลักฐานกับรายการนี้ค่ะ'
+        : 'รายการหรือหลักฐานเปลี่ยนไปแล้วค่ะ กรุณาเปิดรายการล่าสุดเพื่อตรวจสอบ');
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+    }
+  }
+
+  private captureOwnerMetadata(event: LineReceiptUploadEvent | LineTextEvent, lineMessageId = event.lineMessageId ?? '') {
     const bound = this.boundConversations.get(event);
-    return { lineMessageId: event.lineMessageId, lineEventId: event.webhookEventId, chatKeyHash: chatKeyHashOf(event),
+    return { lineMessageId, lineEventId: event.webhookEventId, chatKeyHash: chatKeyHashOf(event),
       pushTargetId: event.pushTargetId ?? event.lineUserId,
       ...(bound ? { ownerBinding: { conversationId: bound.id, membershipId: bound.owner.membershipId,
         channelId: bound.owner.messagingChannelId, ownerEpoch: bound.epoch } } : {}) };
@@ -9891,7 +10975,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     else {
       const summary = await this.savedReceiptReply(event, ctx.companyId, expense.id);
       const text = summary.texts.join('\n');
-      await this.deliverCompletedReply(event, text, ctx.companyId, access, undefined, this.receiptReviewCard(text, summary.draft, ctx.companyId));
+      await this.deliverCompletedReply(event, text, ctx.companyId, access, undefined, await this.receiptReviewCard(event, text, summary.draft, ctx.companyId));
     }
     await this.recordDeliveredReceiptContinuation(event, ctx.companyId, ctx.userId, expense.id, ctx.scopes);
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
@@ -10019,13 +11103,13 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
   }
 
   private async stageReimbursementMedia(event: LineReceiptUploadEvent, ctx: RequestContext, caption: string, media: DownloadedLineMedia,
-    bound: { owner: LineConversationOwner; id: string; epoch: number }, pending: { attachmentId: string; messagingChannelId: string | null; chatKeyHash: string | null; membershipId: string | null; lifecycleEpoch: number } | null): Promise<void> {
+    bound: { owner: LineConversationOwner; id: string; epoch: number }, pending: { attachmentId: string; messagingChannelId: string | null; chatKeyHash: string | null; membershipId: string | null; lifecycleEpoch: number } | null, branchId?: string): Promise<string> {
     if (!this.createUploadIntent || !this.completeAttachmentUpload) throw new Error('LINE_ATTACHMENT_MODULE_UNAVAILABLE');
     const binding = this.pendingMediaBinding(event);
     if (pending && Object.entries(binding).some(([key, value]) => (pending as unknown as Record<string, unknown>)[key] !== value)) throw new Error('LINE_PENDING_MEDIA_OWNER_MISMATCH');
     const intent = pending ? await this.createUploadIntent.resume(ctx, pending.attachmentId)
       : await this.createUploadIntent.execute(ctx, { originalFileName: media.fileName, mimeType: media.mimeType, byteSize: media.byteSize,
-          metadataJson: { lineReimbursementOwner: bound.owner, lineReimbursementEpoch: bound.epoch } });
+          ...(branchId ? { branchId } : {}), metadataJson: { lineReimbursementOwner: bound.owner, lineReimbursementEpoch: bound.epoch } });
     if (!pending) await this.prisma.client.lineIntakePendingMedia.create({ data: { companyId: ctx.companyId, userId: ctx.userId,
       lineMessageId: event.lineMessageId, attachmentId: intent.attachmentId, caption, mimeType: media.mimeType, status: 'PENDING', ...binding,
       expiresAt: new Date(Date.now() + 86400000), askedQuestionJson: { kind: 'LINE_REIMBURSEMENT_DRAFT', webhookEventId: event.webhookEventId } } });
@@ -10034,6 +11118,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     // The attachment is retained for the reimbursement picker, never passed through expense capture.
     await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { companyId: ctx.companyId, lineMessageId: event.lineMessageId, ...binding },
       data: { status: 'RESOLVED_RECEIPT', revision: { increment: 1 } } });
+    return intent.attachmentId;
   }
 
   private async resumeDocumentQuestionV2(event: LineTextEvent, requestId: string, route: GovernedLineIntakeRoutePlan,
@@ -10404,6 +11489,12 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       lineMessageId: input.event.lineMessageId,
       ...(input.attachmentId ? { attachmentAlreadyActive: true } : {}),
     }, { beforeCommit: async () => { if (!await this.mayDeliverBusinessReply(input.sourceEvent)) throw new LineDeliveryError('failed_permanent'); } });
+    if (input.steerToPendingDecision && this.substituteActions && this.substituteReceiptContinuation) {
+      const chat = chatKeyHashOf(input.sourceEvent);
+      const expenseId = await this.substituteReceiptContinuation.pendingIssueDecisionExpenseId(input.ctx, chat);
+      const offered = expenseId ? await this.substituteActions.prepare(input.ctx, chat, expenseId) : undefined;
+      if (offered?.preview) this.deliverySubstituteActions.set(input.sourceEvent, { context: input.ctx, preview: offered.preview });
+    }
     return formatSignatureTicketReply(this.config.webBaseUrl, input.companyId, asset.id, input.steerToPendingDecision);
   }
 
@@ -10490,13 +11581,15 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
   }): Promise<LineMediaTurnOutcome> {
     const { event, companyId } = input;
     if (!await this.mayDeliverBusinessReply(event)) return { outcome: 'done' };
-    const { replyText } = await this.substituteReceiptContinuation!.attachMedia(input.ctx, {
+    const attached = await this.substituteReceiptContinuation!.attachMedia(input.ctx, {
       expenseId: input.context.expenseId,
       attachmentId: input.pending.attachmentId,
       purpose: input.purpose,
       webBaseUrl: this.config.webBaseUrl,
     });
+    const replyText = await this.currentSubstituteAttachmentReply(event, input.ctx, input.context.expenseId, attached.replyText);
     await this.deliverCompletedReply(event, replyText, companyId, input.access, undefined, undefined, 'stored');
+    await this.replaceAttachedSubstituteClarification(event, input.ctx, input.context.expenseId);
     await this.resolvePendingRow(input.pending.id, 'RESOLVED_RECEIPT');
     await this.persistIntakeTurn({ event,
       userId: input.userId, companyId, webhookEventId: event.webhookEventId,
@@ -10504,6 +11597,39 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     });
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
     return { outcome: 'done' };
+  }
+
+  private async currentSubstituteAttachmentReply(event: LineReceiptUploadEvent | LineTextEvent, ctx: RequestContext, expenseId: string, fallback: string): Promise<string> {
+    try {
+      const continued = await this.substituteReceiptContinuation!.execute(ctx, { messageText: 'ทำใบรับรองต่อ',
+        chatKeyHash: chatKeyHashOf(event), recentCandidates: [{ id: expenseId, label: 'รายการนี้' }],
+        boundCandidateExpenseIds: [expenseId], webBaseUrl: this.config.webBaseUrl });
+      await this.rememberSubstituteDeliverySource(event as LineTextEvent, ctx, continued);
+      return `แนบหลักฐานให้แล้วค่ะ\n\n${continued.replyText}`;
+    } catch (error) {
+      // The attachment committed. A failed refresh must never recapture it as a new expense.
+      this.logger.warn({ msg: 'line_substitute_after_attachment_refresh_failed', ...safeLineErrorDetails(error) });
+      return fallback;
+    }
+  }
+
+  private async replaceAttachedSubstituteClarification(event: LineReceiptUploadEvent | LineTextEvent, ctx: RequestContext, expenseId: string): Promise<void> {
+    const chatKey = event.pushTargetId ?? event.lineUserId;
+    const waiting = await this.ledger?.openWaitingUser(ctx.companyId, chatKey, ctx.userId) ?? [];
+    const ids = waiting.filter(item => {
+      if (item.clarifyForIntent !== 'SUBSTITUTE_RECEIPT_CONTINUATION') return false;
+      if (item.candidateExpenseIds?.includes(expenseId)) return true;
+      try { return (JSON.parse(item.entry.sourceContext ?? '{}') as LineClarificationSource).substitute
+        ?.some(proof => proof?.records.some(record => record.id === expenseId)); } catch { return false; }
+    }).map(item => item.id);
+    await this.consumeClarifications(ctx.companyId, chatKey, ctx.userId, waiting, ids, 'business_answer');
+    const current = this.deliverySubstituteContinuations.get(event);
+    if (current?.expenseId === expenseId && current.pendingQuestion) await this.appendSourceBoundClarifications(event, {
+      messagingChannelId: event.messagingChannelId, companyId: ctx.companyId, chatKey,
+      turnId: ctx.requestId, webhookEventId: event.webhookEventId, userId: ctx.userId,
+      items: [{ text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', state: 'waiting_user', intent: 'CLARIFY',
+        clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', clarifyQuestion: current.pendingQuestion, candidateExpenseIds: [expenseId] }],
+    });
   }
 
   /** A pending-media answer that could not be honoured. The row is left PENDING either way — the
@@ -10638,7 +11764,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
         sourceEvent: event,
         companyId: ctx.companyId,
         attachmentId: pending.attachmentId,
-        // F8: steer to “ตอบ 1” only when a workflow is actually parked at the issue decision — read
+        // F8: offer preparation only when a workflow is actually parked at the issue decision — read
         // from the live continuation, since this route can also be reached with no decision pending.
         steerToPendingDecision: await this.substituteReceiptContinuation.hasPendingIssueDecision(ctx, chatKeyHash),
       });
@@ -10665,7 +11791,8 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       purpose: answer === 'PAYMENT_EVIDENCE' ? 'expense.payment.evidence' : 'expense.receipt.supporting',
       webBaseUrl: this.config.webBaseUrl,
     });
-    return this.deliverSubstituteMediaOutcome(event, ctx, access, pending, text, replyText);
+    const currentReply = await this.currentSubstituteAttachmentReply(event, ctx, context.expenseId, replyText);
+    return this.deliverSubstituteMediaOutcome(event, ctx, access, pending, text, currentReply, undefined, context.expenseId);
   }
 
   private async resolvePendingCheckBillAction(
@@ -10736,7 +11863,8 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     // A saved check bill may have been edited since the original answer. Resume it without
     // applying its old pending OCR or replacing its current review metadata a second time.
     const applied = !existing && asked.ocrFields
-      ? await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields, { expectedUpdatedAt: captured.updatedAt }) : undefined;
+      ? await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields, { expectedUpdatedAt: captured.updatedAt,
+        ocrDocumentType: toSourceDocumentType(sourceDocumentTypeFromClassification(asked.classification ?? null)) }) : undefined;
     if (applied && (isStaleOcrApply(applied) || !applied.committedUpdatedAt)) throw new ConflictException('Receipt changed before OCR could be saved');
     const appliedOutcome = applied;
     const classification = asked.classification ?? { documentKind: 'ORDER_OR_CHECK_BILL' };
@@ -10777,7 +11905,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
           webBaseUrl: this.config.webBaseUrl,
           confirmedStart: true,
         });
-    this.rememberSubstituteDeliverySource(event, ctx, continuation);
+    await this.rememberSubstituteDeliverySource(event, ctx, continuation);
     const completed = await this.expenseRepo.findByIdWithRelations(ctx.companyId, expenseId, undefined, access.scopes);
     if (!completed) throw new ConflictException('Receipt changed before the reply.');
     this.rememberReceiptDeliverySource(event, ctx, completed);
@@ -10832,6 +11960,8 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
         checksumSha256: await this.pendingMediaChecksum(ctx.companyId, pending.attachmentId),
         webBaseUrl: this.config.webBaseUrl,
       });
+      const next = await this.substituteActions?.prepare(ctx, chatKeyHashOf(event), scan.expenseId);
+      if (next?.preview) this.deliverySubstituteActions.set(event, { context: ctx, preview: next.preview });
       return this.deliverSubstituteMediaOutcome(event, ctx, access, pending, text, replyText, badge);
     } catch (error: unknown) {
       if (!(error instanceof HttpException)) throw error;
@@ -10904,6 +12034,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     text: string,
     replyText: string,
     badge?: string,
+    attachedExpenseId?: string,
   ): Promise<{ outcome: 'handled' }> {
     // W1, same rule as the signature branch: every caller reaches here with the attachment ALREADY
     // linked (payment/supporting evidence, or a wet-signed original). A throw in the delivery below
@@ -10911,6 +12042,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     // linked to a second, incompatible target.
     await this.resolvePendingRow(pending.id, 'RESOLVED_RECEIPT');
     await this.deliverCompletedReply(event, replyText, ctx.companyId, access, badge);
+    if (attachedExpenseId) await this.replaceAttachedSubstituteClarification(event, ctx, attachedExpenseId);
     await this.persistIntakeTurn({ event,
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: text, replyText, intent: 'EVIDENCE_CAPTURE',
@@ -11034,7 +12166,22 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
         access.scopes,
         chatKeyHashOf(event),
         access.membershipId,
+        this.captureOwnerMetadata(event, pending.lineMessageId),
       ));
+    }
+    const pdfReading = pending.mimeType === 'application/pdf';
+    if (pdfReading) {
+      const saved = await this.expenseRepo.findByIdWithRelations(companyId, expenseId, undefined, access.scopes);
+      if (!saved || saved.createdByUserId !== userId || saved.captureSource !== 'LINE_UPLOAD'
+        || saved.primaryAttachmentId !== pending.attachmentId
+        || saved.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) throw new ForbiddenException('Receipt is outside your capture scope.');
+      const attachment = await this.prisma.client.attachmentObject.findFirst({
+        where: { id: pending.attachmentId, companyId, uploadedByUserId: userId, status: 'ACTIVE' },
+        select: { checksumSha256: true },
+      });
+      if (!attachment || !this.captureLine) throw new ConflictException('The original receipt attachment is unavailable.');
+      await this.captureLine.queueExpenseRead({ companyId, expenseId, attachmentId: pending.attachmentId,
+        attachmentChecksum: attachment.checksumSha256, expectedSourceUpdatedAt: saved.updatedAt });
     }
     let additionalReply: string | undefined;
     let pendingQuestion: string | undefined;
@@ -11050,7 +12197,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
           recentCandidates: [{ id: expenseId, label: `รายการที่เพิ่งบันทึก ${expenseId}` }],
           webBaseUrl: this.config.webBaseUrl,
         });
-        this.rememberSubstituteDeliverySource(event, { requestId, authSubject: userId, userId, companyId,
+        await this.rememberSubstituteDeliverySource(event, { requestId, authSubject: userId, userId, companyId,
           membershipId: access.membershipId, roles: access.roles, permissions: access.permissions, scopes: access.scopes, authProvider: 'line' }, continuation);
         additionalReply = continuation.replyText;
         pendingQuestion = continuation.pendingQuestion;
@@ -11059,12 +12206,14 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
         additionalReply = SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED;
       }
     }
-    const summary = await this.savedReceiptReply(event, companyId, expenseId);
+    const summary = pdfReading
+      ? { texts: [this.fileStoredReply(this.expenseCaptureLink(companyId, expenseId))], draft: undefined }
+      : await this.savedReceiptReply(event, companyId, expenseId);
     const receiptReply = summary.texts.join('\n');
     const reply = additionalReply ? `${receiptReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${additionalReply}` : receiptReply;
     // The review card is the receipt's own summary; a reply that also reports the substitute work keeps the card that shows its text.
     await this.deliverCompletedReply(event, reply, companyId, access, undefined,
-      additionalReply ? undefined : this.receiptReviewCard(reply, summary.draft, companyId));
+      additionalReply || pdfReading ? undefined : await this.receiptReviewCard(event, reply, summary.draft, companyId), pdfReading ? 'reading' : undefined);
     await this.prisma.client.lineIntakePendingMedia.updateMany({
       where: { id: pending.id, status: 'PENDING' },
       data: { status: 'RESOLVED_RECEIPT' },
@@ -11113,6 +12262,135 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
 
   /** Correction candidates for this turn (spec §8 candidate scope). Structured-only labels:
    *  vendor/category free text is deliberately excluded so the payload cannot carry injection. */
+  private async requestedCaptureConfirmation(event: LineTextEvent, ctx: RequestContext, expenseId: string, text: string): Promise<LineReplyMessage | null> {
+    if (!this.retainedTaskSources.get(event)?.source.semanticSubrequest.goal.match(/^บันทึก(?:ค่าใช้จ่าย|รายจ่าย|ค่าจ้าง)/u) && !/(?:ยืนยัน(?:เลย|ด้วย|ให้)|พร้อมยืนยัน|confirm)/iu.test(text) || /(?:ไม่|อย่า|ยังไม่)\s*ยืนยัน/u.test(text) || !this.expenseActions) return null;
+    const paid = /(?:จ่าย|ชำระ)(?:เงินสด|ด้วยเงินสด|เงิน|ด้วยบัตร|บัตร|โอนไป)?แล้ว|โอนแล้ว/u.test(text) && !/(?:ยังไม่|ไม่ได้|ยังไม่ได้)\s*(?:จ่าย|ชำระ|โอน)/u.test(text);
+    const paymentMethod = /เงินสด/u.test(text) ? 'CASH' : /โอน/u.test(text) ? 'BANK_TRANSFER' : /บัตร/u.test(text) ? 'CARD' : /เช็ค|เช็ก/u.test(text) ? 'CHEQUE' : undefined;
+    const result = await this.expenseActions.preview(ctx, chatKeyHashOf(event), { action: 'CONFIRM', expenseId,
+      ...(paid ? { recordPaymentAfterConfirm: true, ...(paymentMethod ? { paymentMethod } : {}), paidAt: todayCivilDate('Asia/Bangkok') } : {}) }, true);
+    if (result.preview) {
+      this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview });
+      return buildExpenseActionCard(result.preview);
+    }
+    const card = buildLineAssistantTextCardMessage(result.reply, this.config.webBaseUrl, ctx.companyId);
+    const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event));
+    if (choices?.length) card.quickReply = lineChoiceQuickReply(choices);
+    else if (result.webPath) {
+      const uri = absoluteWebLink(this.config.webBaseUrl, result.webPath);
+      if (uri.startsWith('https://')) card.quickReply = { items: [{ type: 'action', action: { type: 'uri',
+        label: result.webPath === '/system/wht-income-categories' ? 'ตั้งค่าประเภทเงินได้' : 'เปิดตรวจรายการ', uri } }] };
+    }
+    return card;
+  }
+
+  private async recentEditableChoices(ctx: RequestContext, recent: LineIntakeCorrectionCandidate[], drafts: LineExpenseDraftRouteContext[], features: Set<string> | null): Promise<Array<{ label: string; text: string; uri?: string }>> {
+    const choices: Array<{ label: string; text: string; uri?: string }> = [];
+    if ((features === null || features.has('expenses')) && ctx.permissions.includes('expense.update')) {
+      const seen = new Set<string>();
+      for (const row of [...drafts.map(draft => ({ id: draft.expenseId, label: draft.label, amount: undefined })), ...recent]) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        const label = scrubRecordText(row.label, 120);
+        choices.push({ label: row.amount ? `${row.amount} บาท · ${label}` : label, text: `ขอแก้รายการ ${label}` });
+      }
+      if (choices.length < 4 && this.editableExpenses) {
+        try {
+          for (const status of ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as const) {
+            const page = await this.editableExpenses.execute(ctx, { status, page: 1, pageSize: 4 });
+            for (const row of page.data) {
+              if (seen.has(row.id) || row.status !== status || (!ctx.permissions.includes('expense.review') && row.createdByUserId !== ctx.userId)) continue;
+              seen.add(row.id);
+              const label = [scrubRecordText(row.vendorNameSnapshot, 60) || 'รายจ่าย', formatReplyDate(row.expenseDate.toISOString()), `${row.grandTotalAmount} บาท`].join(' · ');
+              // Company records keep the web editor's guards; chat-local edits retain their existing signed preview.
+              choices.push({ label, text: `ขอแก้รายการ ${label}`, uri: absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${row.id}`) });
+              if (choices.length >= 4) break;
+            }
+            if (choices.length >= 4) break;
+          }
+        } catch (error) { if (!(error instanceof ForbiddenException)) throw error; }
+      }
+    }
+    if (choices.length < 4 && (ctx.permissions.includes('reimbursement.update_own_draft') || ctx.permissions.includes('reimbursement.finance_review')) && this.editableClaims) {
+      try {
+        const page = await this.editableClaims.execute(ctx, { scope: ctx.permissions.includes('reimbursement.finance_review') ? 'all' : 'own', status: 'DRAFT', page: 1, pageSize: 4 });
+        for (const row of page.items) if ((row.requesterUserId === ctx.userId || ctx.permissions.includes('reimbursement.finance_review')) && row.status === 'DRAFT') {
+          const label = scrubRecordText(row.requestNo || row.title || row.reason, 100);
+          choices.push({ label: `ใบเบิก ${label}`, text: `ขอแก้ไขใบเบิก ${label}` });
+        }
+      } catch (error) { if (!(error instanceof ForbiddenException)) throw error; }
+    }
+    if (choices.length < 4 && (features === null || features.has('expenses') || features.has('sales_documents')) && ctx.permissions.includes('accounting.counterparty.read') && this.editableCounterparties) {
+      const page = await this.editableCounterparties.execute(ctx, 1, 4);
+      for (const row of page.data) {
+        const detail = await this.getEditableCounterparty.execute(ctx, row.id);
+        if (!detail.canEdit) continue;
+        const label = scrubRecordText(row.displayName, 100);
+        choices.push({ label: `คู่ค้า ${label}`, text: `ขอแก้ไขคู่ค้า ${label}` });
+      }
+    }
+    return choices.slice(0, 4);
+  }
+
+  private async explainLockedExpenseEdit(event: LineTextEvent, ctx: RequestContext, access: { permissions: string[]; roles: string[] }, targetId: string | undefined, editable: LineIntakeCorrectionCandidate[], vendorName?: string): Promise<boolean> {
+    let reply: string | undefined, label = 'เปิดตรวจสอบรายจ่าย', id: string | undefined;
+    let offerVoid = false;
+    const namedVendor = vendorName?.trim() && event.messageText.includes(vendorName.trim()) ? vendorName.trim() : undefined;
+    if (!ctx.permissions.includes('expense.update')) {
+      reply = 'ให้เจ้าของกิจการหรือผู้มีสิทธิ์แก้ไขรายจ่ายแก้รายการนี้ค่ะ';
+    } else if ((!targetId && namedVendor) || (targetId && !editable.some(row => row.id === targetId)) || (!targetId && !editable.length)) {
+      // A finalized row is read through the web guard; never mistake an empty EDITABLE list for absence.
+      const rows = this.expenseRepo ? await listRecentLineCaptureCandidates(this.expenseRepo, { companyId: ctx.companyId, userId: ctx.userId,
+        chatKeyHash: chatKeyHashOf(event), scopes: ctx.scopes ?? {}, take: 5, includeAllStatuses: true,
+        ...(targetId ? { expenseIds: [targetId] } : {}) }) : [];
+      id = targetId ?? (rows.length === 1 ? rows[0]!.id : undefined);
+      if (!this.getLinkedExpense) return false;
+      try {
+        if (!targetId && namedVendor) {
+          const candidates = [];
+          for (const row of rows) {
+            try {
+              const record = await this.getLinkedExpense.execute(ctx, row.id);
+              if (record.vendorNameSnapshot) candidates.push({ id: row.id, name: normalizeVendorName(record.vendorNameSnapshot) });
+            } catch (error) { if (!(error instanceof ForbiddenException || error instanceof NotFoundException)) throw error; }
+          }
+          const match = resolveNameCandidate(normalizeVendorName(namedVendor), candidates, VENDOR_NAME_STRIP_PREFIXES);
+          id = match.kind === 'resolved' ? match.id : undefined;
+        }
+        if (!id) return false;
+        const record = await this.getLinkedExpense.execute(ctx, id);
+        if (record.status !== 'CONFIRMED') return false;
+        const capability = await this.getLinkedExpense.correctionCapabilities(ctx, id);
+        reply = capability.canReopen
+          ? 'รายการนี้ยืนยันแล้ว ให้เปิดแก้ไขเอกสารบนเว็บเพื่อตรวจและยืนยันใหม่ค่ะ'
+          : `${expenseReopenBlockerMessages(capability)[0] ?? 'รายการนี้ล็อกการแก้ไขแล้ว กรุณาเปิดตรวจสอบทางแก้บนเว็บ'}ค่ะ`;
+        label = capability.canReopen ? 'แก้ไขเอกสารบนเว็บ' : 'ตรวจทางแก้บนเว็บ';
+        if (record.paymentStatus === 'PAID') reply = 'รายการนี้ยืนยันและจ่ายแล้ว จึงแก้ยอดเดิมโดยตรงไม่ได้ค่ะ';
+        if (ctx.permissions.includes('expense.void') && this.previewEditVoid) {
+          try {
+            await this.previewEditVoid.previewLineAction(ctx, id, 'แก้ไขข้อมูลที่บันทึกผิด');
+            offerVoid = true;
+          } catch (error) { if (!(error instanceof HttpException)) throw error; }
+        }
+      } catch (error) {
+        if (!(error instanceof ForbiddenException || error instanceof NotFoundException)) throw error;
+        reply = 'ให้เจ้าของกิจการหรือผู้มีสิทธิ์แก้ไขรายจ่ายตรวจและแก้รายการนี้ค่ะ';
+        id = undefined;
+      }
+    }
+    if (!reply) return false;
+    const path = `/companies/${ctx.companyId}/expenses${id ? `/${id}` : ''}`;
+    const response: LineAiTurnResponse = { requestId: ctx.requestId, replyText: reply, sourceRefs: [], sourceLabels: [], webLinks: [],
+      intent: 'unknown', agent: 'general', refused: false, toolsInvoked: [], toolCalls: [], durationMs: 0,
+      presentation: { kind: 'answer_cards', cards: [{ text: reply, webLink: { label, path } }] } };
+    const card = buildLineBusinessAnswerMessage(response, reply, this.config.webBaseUrl, ctx.companyId);
+    if (offerVoid) card.quickReply = { items: [{ type: 'action', action: { type: 'uri', label: 'ยกเลิกและสร้างใหม่', uri: absoluteWebLink(this.config.webBaseUrl, path) } }] };
+    await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined, card);
+    await this.persistIntakeTurn({ event, userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: event.messageText, replyText: reply, intent: 'CORRECTION' });
+    await this.updateEventLog(event.webhookEventId, 'correction_guidance', undefined, ctx.companyId);
+    return true;
+  }
+
   private async loadCorrectionCandidates(
     companyId: string,
     userId: string,
@@ -11131,7 +12409,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       const amount = row.grandTotalAmount && Number(row.grandTotalAmount) > 0
         ? Number(row.grandTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
         : undefined;
-      const docType = row.sourceDocumentType ? SOURCE_DOC_TYPE_REPLY_LABELS[row.sourceDocumentType] ?? row.sourceDocumentType : 'เอกสารค่าใช้จ่าย';
+      const docType = row.sourceDocumentType ? SOURCE_DOC_TYPE_REPLY_LABELS[row.sourceDocumentType] ?? 'เอกสารค่าใช้จ่าย' : 'เอกสารค่าใช้จ่าย';
       const dateLabel = formatReplyDate(row.expenseDate?.toISOString());
       return {
         id: row.id,

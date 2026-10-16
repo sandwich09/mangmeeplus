@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ErpToolClient, enforceSourceHonesty, toolMetaToPolicy } from './erp-tool.client';
 import { ToolPolicyEnforcerService } from '../../../common/ai/tool-policy-enforcer.service';
 import type { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
-import type { ToolMeta } from '@watchdog-bms/contracts';
+import { LINE_TOOL_REGISTRY, type ToolMeta } from '@watchdog-bms/contracts';
 import { runWithUsageContext } from '../../../common/usage/usage-context';
 
 function makeConfig(overrides: Partial<AiGatewayConfigService> = {}): AiGatewayConfigService {
@@ -117,6 +117,13 @@ describe('toolMetaToPolicy', () => {
 });
 
 describe('ErpToolClient – governed tool path', () => {
+  it('X3: accepts counterparty previews with the same source convention as expense previews', () => {
+    const tool = LINE_TOOL_REGISTRY.find(tool => tool.name === 'counterparty.action.preview')!;
+    const result = { toolName: tool.name, status: 'ok' as const, data: { reply: 'ตรวจคู่ค้าที่จะเพิ่มแล้วกดยืนยันค่ะ', preview: { lines: ['เลขผู้เสียภาษี: ยังไม่มี → 0105556000011'] } },
+      sourceRefs: [{ module: 'accounting-documents', entityType: 'counterparty_action_preview', label: 'คู่ค้า/ผู้รับเงิน', permissionChecked: true as const }], asOf: new Date().toISOString() };
+    assert.equal(enforceSourceHonesty(tool, result), result);
+    assert.equal(enforceSourceHonesty(tool, { ...result, sourceRefs: [{ ...result.sourceRefs[0]!, sourceType: 'ACTION' }] }).errorCode, 'TOOL_RESULT_SOURCE_MISMATCH');
+  });
   it('accepts only successful results with the declared permission-checked source module', () => {
     const valid = { toolName: readTool.name, status: 'ok' as const, data: { count: 1 }, sourceRefs: [{ label: 'stock', module: 'inventory', entityType: 'stock', permissionChecked: true as const }], asOf: '2026-07-15T00:00:00Z' };
     assert.equal(enforceSourceHonesty(readTool, valid), valid);

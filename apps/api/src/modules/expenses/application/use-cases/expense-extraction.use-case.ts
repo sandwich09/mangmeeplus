@@ -219,7 +219,10 @@ export class RequestReceiptExtractionUseCase {
 
       if (!response.fields) return this.finish(ctx, expenseId, 'failed', attachment.id, response.modelLineage);
 
+      const suggestedDocType = toSourceDocumentType(sourceDocumentTypeFromClassification(response.classification));
       const applyOutcome = await this.applyService.apply(ctx, expenseId, response.fields, {
+        ocrDocumentType: suggestedDocType,
+        ...(expense.sourceDocumentType === 'NEEDS_REVIEW' && suggestedDocType === 'TRANSFER_SLIP' ? { sourceDocumentType: suggestedDocType } : {}),
         ...(expense.updatedAt ? { expectedUpdatedAt: expense.updatedAt } : {}),
       });
       if (isStaleOcrApply(applyOutcome) || !applyOutcome.committedUpdatedAt) {
@@ -239,7 +242,6 @@ export class RequestReceiptExtractionUseCase {
       );
       // AI classification defaults the review document type only while it is still
       // unclassified — a reviewer's explicit choice survives re-extraction.
-      const suggestedDocType = toSourceDocumentType(sourceDocumentTypeFromClassification(response.classification));
       const defaultDocType = toSourceDocumentType(expense.sourceDocumentType) === 'NEEDS_REVIEW' && suggestedDocType !== 'NEEDS_REVIEW';
       const taxEvidence = defaultDocType
         ? deriveTaxEvidence({

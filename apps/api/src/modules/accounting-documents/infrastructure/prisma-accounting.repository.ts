@@ -161,6 +161,14 @@ export class PrismaAccountingRepository {
     return row ? this.toCounterpartyRecord(row) : null;
   }
 
+  /** OCR name correction requires one active tax-ID match across ALL branches, never oldest-wins. */
+  async findUniqueActiveCounterpartyByTaxId(companyId: string, taxId: string): Promise<CounterpartyRecord | null> {
+    const rows = await this.prisma.client.accountingCounterparty.findMany({
+      where: { companyId, status: 'ACTIVE' as any, taxId }, take: 2,
+    });
+    return rows.length === 1 ? this.toCounterpartyRecord(rows[0]!) : null;
+  }
+
   async isCounterpartyReceiptUploader(companyId: string, counterpartyId: string, userId: string): Promise<boolean> {
     const row = await this.prisma.client.accountingCounterparty.findFirst({
       where: { id: counterpartyId, companyId, receiptUploaderUserId: userId },

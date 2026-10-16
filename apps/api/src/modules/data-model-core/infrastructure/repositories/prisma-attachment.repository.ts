@@ -291,8 +291,8 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
     return tx ? mark(tx) : client.$transaction(mark);
   }
 
-  async linkToTarget(input: LinkAttachmentInput): Promise<AttachmentLinkRecord> {
-    const row = await this.prisma.client.$transaction(async (tx) => {
+  async linkToTarget(input: LinkAttachmentInput, transaction?: Prisma.TransactionClient): Promise<AttachmentLinkRecord> {
+    const link = async (tx: Prisma.TransactionClient) => {
       if (input.targetType === 'expense.record') {
         await lockFundingEvidence(tx, input.companyId, { attachmentIds: [input.attachmentId], expenseIds: [input.targetId] });
       }
@@ -335,7 +335,8 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
           linkedByUserId: input.linkedByUserId,
         },
       });
-    });
+    };
+    const row = transaction ? await link(transaction) : await this.prisma.client.$transaction(link);
     return {
       id: row.id,
       companyId: row.companyId,
@@ -348,8 +349,8 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
     };
   }
 
-  async findById(input: FindAttachmentInput): Promise<AttachmentRecord | null> {
-    const row = await this.prisma.client.attachmentObject.findFirst({
+  async findById(input: FindAttachmentInput, tx?: Prisma.TransactionClient): Promise<AttachmentRecord | null> {
+    const row = await (tx ?? this.prisma.client).attachmentObject.findFirst({
       where: { id: input.id, companyId: input.companyId },
     });
     return row ? this.toRecord(row) : null;

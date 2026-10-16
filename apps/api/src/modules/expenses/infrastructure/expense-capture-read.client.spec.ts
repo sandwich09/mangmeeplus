@@ -26,15 +26,17 @@ const config = {
 /** SHARED budget (every company today): admission passes through with no reservation. */
 function sharedPrisma() {
   const usage: any[] = [];
+  const aggregateWrites: any[] = [];
   return {
     usage,
+    aggregateWrites,
     prisma: {
       client: {
         companyAiConfiguration: { findUnique: async () => null },
         companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
         $transaction: async (fn: (tx: any) => Promise<unknown>) => fn({
           aiUsageEvent: { createMany: async ({ data }: any) => { usage.push(...data); return { count: data.length }; } },
-          companyAiMonthlyUsage: { upsert: async ({ create }: any) => ({ costSatang: create.costSatang }) },
+          companyAiMonthlyUsage: { upsert: async ({ create }: any) => { aggregateWrites.push(create); return { costSatang: create.costSatang }; } },
         }),
       },
     } as any,
@@ -53,7 +55,7 @@ function stubGateway(answer: Record<string, unknown>, status = 200) {
 
 const chunk = {
   id: 'c2', kind: 'pdf' as const, mimeType: 'application/pdf', contentBase64: 'ZmFrZQ==',
-  pageIndexes: [3, 4, 5], fileLabel: 'file-1',
+  pageIndexes: [3], fileLabel: 'file-1',
 };
 
 describe('ExpenseCaptureReadClient', () => {
@@ -69,7 +71,7 @@ describe('ExpenseCaptureReadClient', () => {
       assert.equal(gateway.seen.length, 1);
       assert.match(gateway.seen[0]!.url, /\/internal\/ai\/capture-read$/);
       assert.equal(gateway.seen[0]!.body.contractVersion, EXPENSE_CAPTURE_CONTRACT_VERSION);
-      assert.deepEqual(gateway.seen[0]!.body.chunk.pageIndexes, [3, 4, 5]);
+      assert.deepEqual(gateway.seen[0]!.body.chunk.pageIndexes, [3]);
     } finally { gateway.restore(); }
   });
 
@@ -157,4 +159,61 @@ describe('ExpenseCaptureReadClient', () => {
       assert.equal(state.usage[0].budgetBucket, 'OCR');
     } finally { gateway.restore(); }
   });
+});
+
+
+it('absorbs a timed-out page and charges only its successful retry, retaining both attempts', async () => {
+  const state = sharedPrisma();
+  const answer: any = { status: 'failed', contractVersion: 1, errorCode: 'PROVIDER_TIMEOUT',
+    usage: [{ tag: 'ocr.capture.read', modelId: 'anthropic.claude-sonnet-4-6', ok: false, errorCode: 'PROVIDER_TIMEOUT',
+      inputTokens: 1000, outputTokens: 100, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 }] };
+  const gateway = stubGateway(answer);
+  try {
+    const client = new ExpenseCaptureReadClient(config, undefined, state.prisma);
+    const request = { companyId: 'co-1', userId: 'system', requestId: 'job-1:c2', jobId: 'job-1', fileLabel: 'f', chunk };
+    assert.equal((await client.readChunk(request)).status, 'failed');
+    assert.equal(state.aggregateWrites.length, 0, 'the timed-out attempt never spends customer budget');
+    answer.status = 'ok';
+    delete answer.errorCode;
+    answer.pages = [{ pageIndex: 3, text: 'TOTAL 10.00', truncated: false, blank: false }];
+    answer.usage[0] = { ...answer.usage[0], ok: true };
+    delete answer.usage[0].errorCode;
+    assert.equal((await client.readChunk({ ...request, requestId: 'job-1:c2:timeout-retry' })).status, 'ok');
+    assert.equal(state.usage.length, 2);
+    assert.equal(state.usage[0].usageBasis, 'COMPANY_ABSORBED');
+    assert.ok(state.usage[0].costSatang > 0, 'the failed provider cost is retained');
+    assert.notEqual(state.usage[1].usageBasis, 'COMPANY_ABSORBED');
+    assert.equal(state.aggregateWrites.length, 1);
+    assert.equal(state.aggregateWrites[0].costSatang, state.usage[1].costSatang);
+    assert.notEqual(gateway.seen[0]!.body.requestId, gateway.seen[1]!.body.requestId);
+    assert.ok(state.usage.every(entry => entry.sourceRoute === CAPTURE_USAGE_SOURCE_ROUTE));
+  } finally { gateway.restore(); }
+});
+
+it('OCR-C absorbs a timed-out extraction and charges only its successful retry, retaining both attempts', async () => {
+  const state = sharedPrisma();
+  const answer: any = { status: 'failed', contractVersion: 1, errorCode: 'PROVIDER_TIMEOUT',
+    usage: [{ tag: 'ocr.capture.extract', modelId: 'anthropic.claude-sonnet-4-6', ok: false, errorCode: 'PROVIDER_TIMEOUT',
+      inputTokens: 1000, outputTokens: 100, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 }] };
+  const gateway = stubGateway(answer);
+  try {
+    const client = new ExpenseCaptureReadClient(config, undefined, state.prisma);
+    const request = { companyId: 'co-1', userId: 'system', requestId: 'job-1:c2', jobId: 'job-1', windowId: 'w1', window: { fileLabel: 'f', pageIndexes: [0], pages: [{ pageIndex: 0, text: 'TOTAL 10.00' }] } };
+    assert.equal((await client.extractWindow(request)).status, 'failed');
+    assert.equal(state.aggregateWrites.length, 0, 'the timed-out attempt never spends customer budget');
+    answer.status = 'ok';
+    delete answer.errorCode;
+    answer.observations = { documents: [], items: [], components: [], totals: [], payments: [], refunds: [], completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [0], notes: [] } };
+    answer.usage[0] = { ...answer.usage[0], ok: true };
+    delete answer.usage[0].errorCode;
+    assert.equal((await client.extractWindow({ ...request, requestId: 'job-1:c2:timeout-retry' })).status, 'ok');
+    assert.equal(state.usage.length, 2);
+    assert.equal(state.usage[0].usageBasis, 'COMPANY_ABSORBED');
+    assert.ok(state.usage[0].costSatang > 0, 'the failed provider cost is retained');
+    assert.notEqual(state.usage[1].usageBasis, 'COMPANY_ABSORBED');
+    assert.equal(state.aggregateWrites.length, 1);
+    assert.equal(state.aggregateWrites[0].costSatang, state.usage[1].costSatang);
+    assert.notEqual(gateway.seen[0]!.body.requestId, gateway.seen[1]!.body.requestId);
+    assert.ok(state.usage.every(entry => entry.sourceRoute === CAPTURE_USAGE_SOURCE_ROUTE));
+  } finally { gateway.restore(); }
 });

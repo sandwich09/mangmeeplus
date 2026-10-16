@@ -1,3 +1,8 @@
+import { ctx as lineCtx, expense as lineExpense, harness as lineHarness, readyHarness as lineReadyHarness } from './line-substitute-receipt-continuation.use-case.spec';
+import { SUBSTITUTE_PHOTO_ASK_WINDOW_MS, substituteAwaitsCaptionlessPhoto } from './line-substitute-receipt-continuation.use-case';
+import { LineSubstituteReceiptActionService, buildSubstituteReceiptActionCard, buildSubstituteReceiptFactsCard } from '../../../line-ai/application/line-substitute-receipt-action.service';
+import { ProcessLineWebhookUseCase, chatKeyHashOf } from '../../../line-ai/application/use-cases/process-line-webhook.use-case';
+import { buildLineDeliveryPlan, lineDeliveryPlanId, validateLineDeliveryPlan } from '../../../line-ai/domain/logic/line-delivery-plan.logic';
 import assert from 'node:assert/strict';
 import { expenseEvidenceFingerprint, SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
 import { describe, it } from 'node:test';
@@ -497,7 +502,8 @@ describe('PrepareSubstituteReceiptUseCase', () => {
 
 describe('substitute receipt signing lifecycle', () => {
   it('accepts omitted positions through digital and legacy paper certification and approval', async () => {
-    for (const signatureMode of ['DIGITAL', 'PAPER']) {
+    for (const authProvider of ['watchdog']) for (const signatureMode of ['DIGITAL', 'PAPER']) {
+      const actor = (...args: Parameters<typeof ctx>) => ({ ...ctx(...args), authProvider });
       let evidence = prepared({ signatureMode, ...(signatureMode === 'PAPER' ? { wetSignedScanAttachmentId: 'scan', wetSignedScanChecksumSha256: 'scan-sha' } : {}), supportingAttachmentIds: [] });
       let issuedInput: any;
       const repo = {
@@ -516,23 +522,28 @@ describe('substitute receipt signing lifecycle', () => {
         issueSubstituteEvidence: async (input: any) => { issuedInput = input; return prepared({ ...evidence, status: 'ISSUED' }); },
       } as any;
       const storage = { getObject: async () => ({ bytes: png }), putObject: async (input: any) => ({ bucket: 'b', objectKey: input.objectKey, byteSize: input.bytes.length }), deleteObject: async () => {} } as any;
+      const events: any[] = [];
+      const signingAudit = { log: async (event: any) => { events.push(event); } } as any;
       const previewCase = new PreviewSubstituteReceiptUseCase(repo);
-      const certifyCase = new CertifySubstituteReceiptUseCase(repo, storage, audit, notification, cleanup);
-      const approveCase = new ApproveSubstituteReceiptUseCase(repo, storage, audit, cleanup);
-      const preview = await previewCase.execute(ctx(), 'exp-1', 'sub-1', {});
+      const certifyCase = new CertifySubstituteReceiptUseCase(repo, storage, signingAudit, notification, cleanup);
+      const approveCase = new ApproveSubstituteReceiptUseCase(repo, storage, signingAudit, cleanup);
+      const preview = await previewCase.execute(actor(), 'exp-1', 'sub-1', {});
       for (const position of [123, 'ก'.repeat(121)]) {
-        await assert.rejects(previewCase.execute(ctx(), 'exp-1', 'sub-1', { payerPosition: position } as any), /payerPosition/);
-        await assert.rejects(certifyCase.execute(ctx(), 'exp-1', 'sub-1', { certificationAcknowledged: true, payerPosition: position } as any), /payerPosition/);
-        await assert.rejects(approveCase.execute(ctx('approver-1', ['expense.confirm']), 'exp-1', 'sub-1', { approvalAcknowledged: true, approverPosition: position } as any), /approverPosition/);
+        await assert.rejects(previewCase.execute(actor(), 'exp-1', 'sub-1', { payerPosition: position } as any), /payerPosition/);
+        await assert.rejects(certifyCase.execute(actor(), 'exp-1', 'sub-1', { certificationAcknowledged: true, payerPosition: position } as any), /payerPosition/);
+        await assert.rejects(approveCase.execute(actor('approver-1', ['expense.confirm']), 'exp-1', 'sub-1', { approvalAcknowledged: true, approverPosition: position } as any), /approverPosition/);
       }
       const certifyInput = { certificationAcknowledged: true as const, signatureAttachmentId: 'sig', previewChecksumSha256: preview.previewChecksumSha256, expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString() };
-      await assert.rejects(certifyCase.execute(ctx(), 'exp-1', 'sub-1', { ...certifyInput, payerPosition: 'เปลี่ยนหลังตรวจ' }), /preview no longer matches/);
-      await certifyCase.execute(ctx(), 'exp-1', 'sub-1', certifyInput);
+      await assert.rejects(certifyCase.execute(actor(), 'exp-1', 'sub-1', { ...certifyInput, payerPosition: 'เปลี่ยนหลังตรวจ' }), /preview no longer matches/);
+      await certifyCase.execute(actor(), 'exp-1', 'sub-1', certifyInput);
       assert.equal(evidence.payerPosition, '');
       assert.equal(evidence.snapshotJson.payer.position, '');
       assert.doesNotMatch(evidence.snapshotJson.certificationText, /ตำแหน่ง/);
-      await approveCase.execute(ctx('approver-1', ['expense.confirm']), 'exp-1', 'sub-1', { approvalAcknowledged: true, signatureAttachmentId: 'sig', certifiedArtifactChecksumSha256: evidence.certifiedArtifactChecksumSha256, expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString() });
+      await approveCase.execute(actor('approver-1', ['expense.confirm']), 'exp-1', 'sub-1', { approvalAcknowledged: true, signatureAttachmentId: 'sig', certifiedArtifactChecksumSha256: evidence.certifiedArtifactChecksumSha256, expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString() });
       assert.equal(issuedInput.approverPosition, '');
+      assert.deepEqual(events.map(event => event.action), ['expense.substitute_receipt.certify', 'expense.substitute_receipt.approve']);
+      assert.ok(events.every(event => event.metadataJson.source === (authProvider === 'line' ? 'LINE' : 'WEB')));
+      assert.deepEqual(events.map(event => event.actorUserId), ['payer-1', 'approver-1']);
     }
   });
 
@@ -1215,7 +1226,7 @@ describe('re-pointing a signature derivative (R9 hardening)', () => {
   });
 });
 
-describe('R7 — LINE may prepare; LINE may not sign, approve, or download', () => {
+describe('R7 / Fix-up 11 — LINE prepares; preview, signing, approval and downloads stay web-only', () => {
   const line = (userId = 'payer-1', permissions = ['expense.review']) => ({ ...ctx(userId, permissions), authProvider: 'line' });
 
   function prepareHarness() {
@@ -1268,8 +1279,8 @@ describe('R7 — LINE may prepare; LINE may not sign, approve, or download', () 
     );
   });
 
-  it('keeps certify, approve, preview, and artifact download web-only', async () => {
-    const repo = { findSubstituteEvidence: async () => prepared() } as any;
+  it('refuses LINE preview, certify and approve before reading evidence; downloads stay web-only', async () => {
+    const repo = { findSubstituteEvidence: async () => assert.fail('LINE cannot read signing evidence') } as any;
     const web = /authenticated web only/;
     await assert.rejects(
       () => new CertifySubstituteReceiptUseCase(repo, {} as any, audit, notification, cleanup)
@@ -1278,11 +1289,11 @@ describe('R7 — LINE may prepare; LINE may not sign, approve, or download', () 
     );
     await assert.rejects(
       () => new ApproveSubstituteReceiptUseCase(repo, {} as any, audit, cleanup)
-        .execute(line('payer-1', ['expense.confirm']) as any, 'exp-1', 'sub-1', { approvalAcknowledged: true } as any),
+        .execute(line('payer-1', []) as any, 'exp-1', 'sub-1', { approvalAcknowledged: true } as any),
       web,
     );
     await assert.rejects(
-      () => new PreviewSubstituteReceiptUseCase(repo).execute(line() as any, 'exp-1', 'sub-1', { payerPosition: 'พนักงาน' }),
+      () => new PreviewSubstituteReceiptUseCase(repo).execute(line() as any, 'exp-1', 'sub-1', {}),
       web,
     );
     await assert.rejects(
@@ -2022,4 +2033,322 @@ describe('substitute hub repository totals and order', () => {
     assert.equal(result.total, 0); assert.equal(result.sums.total, '0.00'); assert.equal(result.attention.approval.count, 0);
     assert.match(queries[0].sql, /r\."branchId" IS NULL/); assert.doesNotMatch(queries[0].sql, / IN \(\)/);
   });
+});
+
+describe('Fix-up 7B — combined facts and targeted payment evidence', () => {
+  it('W1 asks once and captures every fact from the live combined influencer answer', async () => {
+    const h = lineHarness({ expense: lineExpense({ vendorNameSnapshot: 'อินฟลู' }) });
+    const first = await h.useCase.execute(lineCtx(), { messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'รายการนี้' }] });
+    for (const label of ['เงินของบริษัท', 'เหตุผล', 'ธุรกิจ', 'ผู้รับรองการจ่าย', 'โอน', 'วันที่']) assert.match(first.pendingQuestion!, new RegExp(label));
+    const answered = await h.useCase.execute(lineCtx(), { messageText: 'บริษัทจ่ายเต็มจำนวน ไม่มีใบเสร็จเพราะอินฟลูเอนเซอร์ไม่ได้ออกใบเสร็จให้ วัตถุประสงค์ ค่าจ้างรีวิวร้าน ฉันเป็นผู้จ่าย จ่ายโดยโอนเงิน วันที่จ่าย 10 ตุลา 2569',
+      chatKeyHash: 'chat-hash', recentCandidates: [] });
+    const values = h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues;
+    assert.equal(values.payerUserId, 'user-1'); assert.equal(values.fundingSource, 'COMPANY'); assert.equal(values.paidInFullAcknowledged, true);
+    assert.equal(values.missingReceiptReason, 'อินฟลูเอนเซอร์ไม่ได้ออกใบเสร็จให้');
+    assert.equal(values.businessPurpose, 'ค่าจ้างรีวิวร้าน'); assert.equal(values.paymentMethod, 'BANK_TRANSFER'); assert.equal(values.paymentDate, '2026-10-10');
+    assert.deepEqual(answered.blockers.map(item => item.code), ['supporting_evidence_required', 'payment_evidence_required']);
+    assert.doesNotMatch(answered.pendingQuestion!, /ใครเป็นผู้จ่าย|ธุรกิจเรื่องอะไร|วันที่เท่าไร/);
+    assert.equal(Object.keys(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.provenance).length, answered.acceptedFields.length);
+  });
+
+  for (const answer of ['ไม่มีหลักฐานอื่น', 'ไม่มี', 'ไม่มีค่ะ']) it(`W2 accepts ${answer} without weakening required transfer proof`, async () => {
+    const h = lineHarness({ expense: lineExpense({ vendorNameSnapshot: 'อินฟลู', paymentMethod: 'BANK_TRANSFER', paidAt: new Date('2026-10-10') }) });
+    await h.useCase.execute(lineCtx(), { messageText: 'เหตุผล: ไม่มีใบเสร็จ วัตถุประสงค์: รีวิวร้าน ฉันเป็นผู้จ่าย บริษัทจ่ายเต็มจำนวน',
+      chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'รายการนี้' }] });
+    const result = await h.useCase.execute(lineCtx(), { messageText: answer, chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.ok(result.acceptedFields.includes('evidenceNone'));
+    assert.deepEqual(result.blockers.map(item => item.code), ['payment_evidence_required']);
+    assert.match(result.pendingQuestion!, /ส่งรูปสลิป/);
+    assert.equal(h.prepares.length, 0);
+  });
+
+  it('W3 claims a recent evidence photo, attaches to the open expense, then clears the proof blocker', async () => {
+    const h = lineHarness({ expense: lineExpense({ vendorNameSnapshot: 'อินฟลู', paymentMethod: 'BANK_TRANSFER', paidAt: new Date('2026-10-10') }) });
+    await h.useCase.execute(lineCtx(), { messageText: 'เหตุผล: ไม่มีใบเสร็จ วัตถุประสงค์: รีวิวร้าน ฉันเป็นผู้จ่าย บริษัทจ่ายเต็มจำนวน',
+      chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'รายการนี้' }] });
+    const context = await h.useCase.loadOpenMediaContext(lineCtx(), 'chat-hash');
+    assert.equal(context?.expenseId, 'expense-1'); assert.ok(context?.paymentEvidenceRequestedAt);
+    const now = new Date(context!.paymentEvidenceRequestedAt!);
+    assert.equal(substituteAwaitsCaptionlessPhoto(context!, now), true);
+    assert.equal(substituteAwaitsCaptionlessPhoto(context!, new Date(+now + SUBSTITUTE_PHOTO_ASK_WINDOW_MS + 1)), false);
+    await h.useCase.attachMedia(lineCtx(['expense.review', 'expense.receipt.upload']), { expenseId: 'expense-1', attachmentId: 'slip-7b', purpose: 'expense.payment.evidence' });
+    assert.equal(h.links.length, 1); assert.equal(h.links[0].expenseId, 'expense-1');
+    const continued = await h.useCase.execute(lineCtx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.deepEqual(continued.blockers, []); assert.equal(continued.status, 'READY_FOR_WEB');
+    assert.equal(h.prepares.length, 0, 'attaching a photo does not prepare, sign or issue');
+  });
+});
+
+async function actionHarness() {
+  const h = await lineReadyHarness({ signature: { id: 'my-signature' } });
+  const calls: any[] = [];
+  let epoch = 1, policy: any = { approvalMode: 'OWNER_SELF', approverUserIds: [] }, available = true;
+  h.repo.getSubstituteReceiptPolicy = async () => policy;
+  h.repo.findReusableSignatureAsset = async () => available ? { id: 'my-signature' } : null;
+  const service = new LineSubstituteReceiptActionService(
+    { aiGatewayInternalSecret: 'test-secret', webBaseUrl: 'https://app.example.com', isProduction: false } as any,
+    { client: { aiConversation: { findFirst: async () => ({ id: 'conversation', lifecycleEpoch: epoch }) } } } as any,
+    h.repo, h.useCase,
+    { execute: async () => ({ asPayer: { count: 0, items: [] }, asApprover: { count: 0, items: [] } }) } as any,
+  );
+  return { ...h, service, calls, epoch: () => { epoch++; }, policy: (next: any) => { policy = next; }, signature: (value: boolean) => { available = value; } };
+}
+
+describe('Fix-up 11 — LINE prepares and hands signing to the web', () => {
+  const confirm = (token: string) => ({ action: 'expense_action_confirm' as const, token });
+  it('prepares once with the real LINE actor, then offers one facts card with the exact web signing link', async () => {
+    const h = await actionHarness(), actor = lineCtx();
+    const prep = await h.service.prepare(actor, 'chat-hash', 'expense-1');
+    assert.equal(prep.preview?.label, 'เตรียมใบรับรอง');
+    for (const fact of ['ไปพบลูกค้า', 'วินไม่ออกใบเสร็จ', 'บริษัทจ่ายเต็มจำนวน', 'คุณ (ผู้ส่งข้อความ)', 'เงินสด', '15 ส.ค. 2569'])
+      assert.ok(prep.preview!.summary.includes(fact), fact);
+    assert.match(JSON.stringify(buildSubstituteReceiptActionCard(prep.preview!)), /expense_action_confirm/);
+    const prepared = await h.service.apply(actor, 'chat-hash', confirm(prep.preview!.token));
+    assert.equal(prepared.expenseId, 'expense-1'); assert.equal(h.prepares.length, 1);
+    assert.equal(h.prepares[0].preparedByUserId, actor.userId);
+    assert.equal(h.prepares[0].preparedFromChannel, 'LINE');
+    h.signature(false); // Signing now belongs to the web even when no asset is saved.
+    const sign = (await h.service.prepare(actor, 'chat-hash', 'expense-1')).preview!;
+    assert.equal(sign.label, 'เปิดลงนามในเว็บ'); assert.equal(sign.webOnly, true);
+    assert.match(sign.summary, /ไปพบลูกค้า/);
+    assert.equal(sign.webPath, 'https://app.example.com/companies/company-1/expenses/substitute-receipts/evidence-1');
+    const rendered: any = buildSubstituteReceiptActionCard(sign);
+    assert.equal(rendered.type, 'flex'); assert.equal(rendered.contents.type, 'bubble');
+    assert.deepEqual(rendered.contents.footer.contents, [{ type: 'button', style: 'primary',
+      action: { type: 'uri', label: 'เปิดลงนามในเว็บ', uri: sign.webPath } }]);
+    assert.doesNotMatch(JSON.stringify(rendered), /expense_action_confirm|expense_action_cancel|postback|sub_/);
+    assert.equal(await h.service.current(actor, 'chat-hash', sign.token), true);
+    assert.deepEqual(await h.service.quoteRecords(actor, 'chat-hash', sign.token), [{ tool: 'expense.get_detail', id: 'expense-1' }]);
+    assert.equal(h.calls.length, 0);
+  });
+
+  for (const action of ['CERTIFY', 'APPROVE_ISSUE']) it(`a stale ${action} postback navigates to the same web page without signing`, async () => {
+    const h = await actionHarness(), actor = lineCtx();
+    await h.useCase.execute(actor, { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    const current = (await h.service.prepare(actor, 'chat-hash', 'expense-1')).preview!;
+    const store = (h.service as any).store, entry = await store.load(actor.companyId, 'substitute-action:chat-hash');
+    entry.action = action; delete entry.preview.webOnly;
+    entry.preview.token = `${entry.previewId}.${(h.service as any).sign(entry)}`;
+    await store.save(entry);
+    h.getExpense().updatedAt = new Date('2026-10-16'); // Old source revision cannot trigger a mutation.
+    const old = await h.service.apply(actor, 'chat-hash', confirm(entry.preview.token));
+    assert.equal(old.expenseId, undefined); assert.match(old.reply, /เปิดเว็บ/);
+    assert.equal(old.preview?.webPath, current.webPath); assert.equal(old.preview?.webOnly, true);
+    assert.doesNotMatch(JSON.stringify(buildSubstituteReceiptActionCard(old.preview!)), /postback/);
+    assert.equal(h.getExpense().substituteReceiptEvidence.status, 'PREPARED'); assert.equal(h.calls.length, 0);
+    assert.equal(h.prepares.length, 1);
+  });
+
+  it('an expired old postback returns the authenticated hub link without an error or document facts', async () => {
+    const h = await actionHarness();
+    const result = await h.service.apply(lineCtx(), 'chat-hash', confirm('sub_expired.signature'));
+    assert.equal(result.preview?.webPath, 'https://app.example.com/companies/company-1/expenses/substitute-receipts');
+    assert.equal(result.preview?.webOnly, true); assert.match(result.reply, /เปิดเว็บ/);
+    assert.doesNotMatch(JSON.stringify(buildSubstituteReceiptActionCard(result.preview!)), /postback|ใช้ไม่ได้|expense-1/);
+    assert.equal(h.prepares.length, 0);
+  });
+
+  for (const changed of ['company', 'user', 'membership', 'chat', 'branch', 'epoch', 'revision', 'attachments', 'token', 'expiry']) {
+    it(`rejects a ${changed} change before any use-case mutation`, async () => {
+      const h = await actionHarness();
+      const card = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
+      let actor = lineCtx(), chat = 'chat-hash', token = card.token;
+      if (changed === 'company') actor = { ...actor, companyId: 'other' };
+      if (changed === 'user') actor = { ...actor, userId: 'other' };
+      if (changed === 'membership') actor = { ...actor, membershipId: 'other' };
+      if (changed === 'chat') chat = 'other';
+      if (changed === 'branch') actor = { ...actor, scopes: { branchIds: ['other'] } };
+      if (changed === 'epoch') h.epoch();
+      if (changed === 'revision') h.getExpense().updatedAt = new Date('2026-10-16');
+      if (changed === 'attachments') h.getExpense().attachments.push({ id: 'new-attachment' });
+      if (changed === 'token') token = token.slice(0, -1) + (token.endsWith('a') ? 'b' : 'a');
+      if (changed === 'expiry') {
+        const store = (h.service as any).store, entry = await store.load(actor.companyId, 'substitute-action:chat-hash');
+        entry.preview.expiresAt = '2020-01-01T00:00:00.000Z'; await store.save(entry);
+      }
+      assert.equal((await h.service.apply(actor, chat, confirm(token))).expenseId, undefined);
+      assert.equal(h.prepares.length, 0); assert.equal(h.calls.filter(call => ['certify', 'approve'].includes(call[0])).length, 0);
+    });
+  }
+
+  it('uses the approval label only for an approver allowed by current policy', async () => {
+    const h = await actionHarness();
+    h.issue({ status: 'PAYER_CERTIFIED', payerUserId: 'user-1', version: 1, updatedAt: '2026-10-16T00:00:00Z' });
+    for (const actor of [{ ...lineCtx(), roles: [] }, lineCtx(['expense.review'])])
+      assert.equal((await h.service.prepare(actor, 'chat-hash', 'expense-1')).preview?.label, 'เปิดลงนามในเว็บ');
+    assert.equal((await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview?.label, 'เปิดอนุมัติในเว็บ');
+    h.policy({ approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['other'] });
+    assert.equal((await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview?.label, 'เปิดลงนามในเว็บ');
+  });
+
+  it('does not expose prepared facts to an unrelated caller after review permission is lost', async () => {
+    const h = await actionHarness();
+    h.issue({ status: 'PREPARED', payerUserId: 'other-payer', version: 1, updatedAt: '2026-10-16T00:00:00Z' });
+    const actor = lineCtx(['expense.review']);
+    const offered = (await h.service.prepare(actor, 'chat-hash', 'expense-1')).preview!;
+    assert.equal(offered.webOnly, true);
+    assert.equal(await h.service.current(lineCtx([]), 'chat-hash', offered.token), false);
+    assert.deepEqual(await h.service.prepare(lineCtx([]), 'chat-hash', 'expense-1'), {});
+    const approver = (await h.service.prepare(lineCtx(['expense.confirm']), 'chat-hash', 'expense-1')).preview!;
+    assert.equal(approver.label, 'เปิดอนุมัติในเว็บ');
+  });
+
+  it('a legacy paper form opens the web and does not ask for or embed a digital signature', async () => {
+    const h = await actionHarness();
+    await h.useCase.execute(lineCtx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    Object.assign(h.getExpense().substituteReceiptEvidence, { signatureMode: 'PAPER', wetSignedScanAttachmentId: 'original-scan' });
+    h.repo.findReusableSignatureAsset = async () => assert.fail('web owns signing');
+    const paper = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
+    assert.equal(paper.webOnly, true); assert.equal(paper.label, 'เปิดลงนามในเว็บ');
+    assert.doesNotMatch(JSON.stringify(buildSubstituteReceiptActionCard(paper)), /postback/);
+    assert.equal(h.getExpense().substituteReceiptEvidence.wetSignedScanAttachmentId, 'original-scan');
+  });
+
+  it('cancellation has no mutation and completed cards have no second signing button', async () => {
+    const h = await actionHarness(), actor = lineCtx();
+    const card = (await h.service.prepare(actor, 'chat-hash', 'expense-1')).preview!;
+    const rendered = buildSubstituteReceiptActionCard(card, `ตรวจแล้วกดยืนยันค่ะ\nเปิดเอกสาร: ${card.webPath}`);
+    assert.match(JSON.stringify(rendered), /expense_action_confirm/);
+    assert.equal((rendered as any).contents.footer.contents.length, 2);
+    assert.doesNotMatch(JSON.stringify((rendered as any).contents.body.contents.filter((part: any) => !part.action)), /https?:|expense-1|evidence-1/);
+    assert.doesNotMatch(JSON.stringify(buildSubstituteReceiptActionCard(card, 'ออกแล้วค่ะ', true)), /expense_action_confirm|expense_action_cancel/);
+    await h.service.apply(actor, 'chat-hash', { action: 'expense_action_cancel', token: card.token });
+    assert.equal(h.prepares.length, 0); assert.equal(await h.service.current(actor, 'chat-hash', card.token), false);
+  });
+});
+
+it('Fix-up 10 P4b: prepare without a signature sends only the real ask and never reoffers a live prepare card', async () => {
+  const h = await actionHarness(), actor = lineCtx();
+  h.signature(false);
+  const offered = await h.service.prepare(actor, 'chat-hash', 'expense-1');
+  assert.ok(offered.preview);
+  const event: any = { webhookEventId: 'missing-signature', lineUserId: 'user',
+    expenseActionControl: { action: 'expense_action_confirm', token: offered.preview.token } };
+  const flow: any = Object.assign(Object.create(ProcessLineWebhookUseCase.prototype), {
+    prisma: { client: { lineDeliveryPlan: { findFirst: async () => null } } }, substituteActions: h.service,
+    deliverySubstituteActions: new WeakMap(), config: { webBaseUrl: 'https://app.example.com' },
+    updateEventLog: async () => undefined,
+    deliverCompletedReply: async () => assert.fail('a signature ask is not a completed action or an old preview'),
+  });
+  // The real continuation owns its stored chat binding.
+  const result = await h.service.apply(actor, 'chat-hash', event.expenseActionControl);
+  assert.match(result.reply, /ส่งรูป.*ลายเซ็น|ส่งรูปลายเซ็น/u);
+  assert.equal(result.expenseId, undefined); assert.equal(result.preview, undefined);
+  assert.equal(h.prepares.length, 0); assert.equal(h.calls.length, 0);
+  assert.equal((await h.service.prepare(actor, 'chat-hash', 'expense-1')).preview, undefined);
+  const sent: string[] = [];
+  flow.substituteActions = { apply: async () => result, prepare: async () => assert.fail('do not refresh a prepare preview after the signature ask') };
+  flow.deliverReply = async (_event: unknown, text: string) => sent.push(text);
+  await flow.handleExpenseActionPostback(event, actor, null);
+  assert.deepEqual(sent, [result.reply]);
+  assert.doesNotMatch(sent.join('\n'), /ข้อมูลครบแล้ว|กดเตรียมใบรับรอง|expense_action_confirm/u);
+  assert.equal(flow.deliverySubstituteActions.get(event), undefined);
+});
+
+it('Fix-up 11: a designated approver resumes their own queue to the approval page without expense.review', async () => {
+  const h = await actionHarness(), actor = { ...lineCtx(['expense.confirm']), roles: ['STAFF'] };
+  h.issue({ status: 'PAYER_CERTIFIED', payerUserId: 'other-payer', version: 1, updatedAt: '2026-10-16T00:00:00Z' });
+  h.policy({ approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['user-1'] });
+  (h.service as any).queue.execute = async (supplied: any) => {
+    assert.equal(supplied, actor); return { asApprover: { count: 1, items: [{ documentNumber: 'SUB-202608-00007' }] } };
+  };
+  (h.service as any).prisma.client.expenseSubstituteReceiptEvidence = { findFirst: async (input: any) => {
+    assert.deepEqual(input.where, { companyId: 'company-1', documentNumber: 'SUB-202608-00007' }); return { expenseId: 'expense-1' };
+  } };
+  const resumed = await h.service.resume(actor, 'chat-hash', 'อนุมัติใบรับรอง');
+  assert.equal(resumed!.preview?.label, 'เปิดอนุมัติในเว็บ');
+  assert.equal(resumed!.preview?.webPath, 'https://app.example.com/companies/company-1/expenses/substitute-receipts/evidence-1');
+  assert.equal(h.getExpense().substituteReceiptEvidence.status, 'PAYER_CERTIFIED'); assert.equal(h.calls.length, 0);
+});
+
+it('Fix-up 9 R2/R3: a slip refreshes its own pending question; the facts card selects the person in one press and prepares once', async () => {
+  const event: any = { webhookEventId: 'facts', lineUserId: 'line-user', messagingChannelId: 'oa', messageText: 'ข้อมูลใบรับรอง' };
+  const chat = chatKeyHashOf(event), actor = lineCtx(['expense.review', 'expense.confirm', 'expense.receipt.upload']);
+  const h = lineHarness({ expense: lineExpense(), signature: { id: 'my-signature' } });
+  const first = await h.useCase.execute(actor, { messageText: 'ทำใบรับรองแทนใบเสร็จ ผู้จ่าย บริษัท ผู้รับเงิน คุณเอ อินฟลู เหตุผล ผู้รับเงินไม่ออกใบเสร็จ วัตถุประสงค์ ค่าโปรโมทร้าน จ่ายโอน วันที่ 10 ต.ค. 2569',
+    chatKeyHash: chat, recentCandidates: [{ id: 'expense-1', label: 'รายการนี้' }], webBaseUrl: 'https://app.example.com' });
+  assert.ok(first.blockers.some(item => item.code === 'payer_required'));
+  assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.payerUserId, undefined, 'company funding never invents a human signer');
+  // Real webhook source binding/consumption over storage seams; no validator or continuation doubles.
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype), markers: any[] = [];
+  let waiting: any[] = [], serial = 0;
+  Object.assign(flow, { config: { webBaseUrl: 'https://app.example.com' }, substituteReceiptContinuation: h.useCase,
+    prisma: { client: { $transaction: async (work: any) => work({ outboxEvent: { create: async ({ data }: any) => markers.push(data) } }) } },
+    ledger: { openWaitingUser: async () => waiting, ack: async (entry: any) => { waiting = waiting.filter(item => item.id !== entry.id); },
+      appendSubRequests: async (input: any) => { for (const item of input.items) waiting.push({ id: `question-${++serial}`, text: item.text, question: item.clarifyQuestion,
+        clarifyForIntent: item.clarifyForIntent, candidateExpenseIds: item.candidateExpenseIds, entry: { id: `question-${serial}`, userId: actor.userId, sourceContext: item.sourceContext } }); } },
+    logger: { warn: () => undefined },
+  });
+  for (const key of ['deliveryAccess', 'deliverySources', 'deliveryReceiptSources', 'deliveryDraftPreviews', 'deliveryCandidates', 'clarificationRouteSources',
+    'boundConversations', 'deliverySubstituteSources', 'deliverySubstituteActions', 'deliverySubstituteContinuations']) flow[key] = new WeakMap();
+  const bind = (turn: any) => flow.deliveryAccess.set(turn, { userId: actor.userId, companyId: actor.companyId, fingerprint: 'current-access' });
+  bind(event);
+  await flow.rememberSubstituteDeliverySource(event, actor, first);
+  await flow.appendSourceBoundClarifications(event, { companyId: actor.companyId, userId: actor.userId, chatKey: event.lineUserId,
+    turnId: 'facts', webhookEventId: event.webhookEventId, items: [{ text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', state: 'waiting_user', intent: 'CLARIFY',
+      clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', clarifyQuestion: first.pendingQuestion, candidateExpenseIds: ['expense-1'] }] });
+  const old = waiting[0];
+  waiting.push({ id: 'other-work', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', candidateExpenseIds: ['another-expense'], entry: { id: 'other-work', userId: actor.userId } });
+  const media: any = { ...event, webhookEventId: 'slip', messageText: undefined, messageType: 'image' }; delete media.messageText; bind(media);
+  await h.useCase.attachMedia(actor, { expenseId: 'expense-1', attachmentId: 'slip', purpose: 'expense.payment.evidence' });
+  assert.equal(await flow.clarificationSourceCurrent(media, actor, old), false, 'the pre-attachment proof remains stale; it is never weakened');
+  const reply = await flow.currentSubstituteAttachmentReply(media, actor, 'expense-1', 'แนบแล้วค่ะ');
+  await flow.replaceAttachedSubstituteClarification(media, actor, 'expense-1');
+  assert.ok(markers.length > 0); assert.ok(waiting.some(item => item.id === 'other-work'));
+  assert.ok(!waiting.some(item => item.id === old.id));
+  const refreshed = waiting.find(item => item.id !== 'other-work')!;
+  const selfEvent = { ...event, webhookEventId: 'self', messageText: 'ฉันเป็นผู้จ่าย' }; bind(selfEvent);
+  assert.equal(await flow.waitingSourcesCurrent(selfEvent, actor, [refreshed]), true, 'own evidence does not trap the next payer answer behind LINE_DELIVERY_SOURCE_CHANGED');
+  const current = flow.deliverySubstituteContinuations.get(media);
+  const card: any = buildSubstituteReceiptFactsCard(current, reply);
+  assert.deepEqual(card.contents.footer.contents.map((button: any) => button.action.label), ['ฉันเป็นผู้จ่าย', 'เลือกสมาชิกคนอื่น']);
+  assert.equal(card.contents.footer.contents[0].action.text, 'ฉันเป็นผู้จ่าย');
+  assert.equal(card.quickReply, undefined, 'the payer action appears once in the body, without a duplicate quick reply');
+  assert.equal(card.contents.footer.contents[1].action.uri, current.webPath, 'other-person choice uses the existing guarded web member selector');
+  assert.doesNotMatch(card.canonicalText, /ยืนยันผู้จ่ายเงินจริง|ตอบ “ฉันเป็นผู้จ่าย”/);
+  const assertPlan = (message: any, token?: string) => {
+    const createdAt = new Date().toISOString(), expiresAt = new Date(Date.now() + 600_000).toISOString(), producerId = token ? 'prepare' : 'facts';
+    const planId = lineDeliveryPlanId('WEBHOOK', producerId);
+    const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId, createdAt, readyAt: createdAt, expiresAt, firstDispatchDeadlineAt: expiresAt,
+      authorization: { v: 2, kind: 'PRIVATE', issuedAt: createdAt, expiresAt, actor: { userId: actor.userId, companyId: actor.companyId, membershipId: actor.membershipId,
+        requestId: actor.requestId, accessFingerprint: 'current-access', channelId: 'oa', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: chat, conversationId: 'line-v2:conversation', ownerEpoch: 1 }, proofs: [] },
+      businessResult: null, answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: message.canonicalText, required: true, sourceProofIds: [] }] },
+      control: token ? { kind: 'EXPENSE_ACTION_CONFIRM', token, expiresAt, requiredItemIds: [`${planId}:item:0`] } : null,
+      preferredMessages: [token ? null : message], ...(token ? { controlMessage: message } : {}) });
+    assert.doesNotThrow(() => validateLineDeliveryPlan(plan)); assert.deepEqual(plan.batches[0]!.primary.messages.map(message => message.type), ['flex']);
+  };
+  assertPlan(card);
+  const selected = await h.useCase.execute(actor, { messageText: card.contents.footer.contents[0].action.text, chatKeyHash: chat, recentCandidates: [] });
+  assert.equal(selected.status, 'READY_FOR_WEB'); assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.payerUserId, actor.userId);
+  const service = new LineSubstituteReceiptActionService({ aiGatewayInternalSecret: 'test-secret', webBaseUrl: 'https://app.example.com', isProduction: false } as any,
+    { client: { aiConversation: { findFirst: async () => ({ id: 'conversation', lifecycleEpoch: 1 }) } } } as any,
+    h.repo, h.useCase, {} as any);
+  const next = await service.prepare(actor, chat, 'expense-1'); assert.equal(next.preview?.label, 'เตรียมใบรับรอง');
+  assertPlan(buildSubstituteReceiptActionCard(next.preview!), next.preview!.token);
+  await service.apply(actor, chat, { action: 'expense_action_confirm', token: next.preview!.token });
+  await service.apply(actor, chat, { action: 'expense_action_confirm', token: next.preview!.token });
+  assert.equal(h.prepares.length, 1, 'only the explicit prepare press creates a certificate, once');
+  const handoff = (await service.prepare(actor, chat, 'expense-1')).preview!;
+  assert.equal(handoff.webOnly, true);
+  assertPlan(buildSubstituteReceiptActionCard(handoff));
+});
+
+it('U4 parsed substitute payee stays consistent across continuation, prepare and web-signing cards', async () => {
+  const h = await actionHarness();
+  const expense = h.getExpense();
+  expense.vendorNameSnapshot = 'อินฟลู';
+  expense.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.payeeName = 'คุณเอ อินฟลู';
+  expense.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision = undefined;
+  const continued = await h.useCase.execute(lineCtx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [] });
+  assert.match(continued.replyText, /คุณเอ อินฟลู/);
+  assert.doesNotMatch(continued.replyText, /รายการ: [^\n]* · อินฟลู ·/);
+  const preview = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
+  assert.match(preview.summary, /ผู้รับเงิน: คุณเอ อินฟลู/);
+  assert.doesNotMatch(preview.summary, /ผู้รับเงิน: อินฟลู/);
+  await h.service.apply(lineCtx(), 'chat-hash', { action: 'expense_action_confirm', token: preview.token });
+  assert.equal(h.prepares[0].payeeName, 'คุณเอ อินฟลู');
+  const web = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
+  assert.match(web.summary, /ผู้รับเงิน: คุณเอ อินฟลู/);
+  assert.match(JSON.stringify(buildSubstituteReceiptActionCard(web)), /คุณเอ อินฟลู/);
 });

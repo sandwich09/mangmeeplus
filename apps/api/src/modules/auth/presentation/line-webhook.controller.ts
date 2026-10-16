@@ -1,4 +1,7 @@
-import { parseLineReimbursementDraftControl } from '../../line-ai/application/line-reimbursement-draft.service';
+import { parseCounterpartyControl } from '../../line-ai/application/line-counterparty.service';
+import { parsePackagePurchaseControl } from '../../line-ai/application/line-package-purchase.service';
+import { parseExpenseActionControl } from '../../line-ai/application/line-expense-action.service';
+import { parseLineReimbursementDraftControl, parseLineReimbursementChoiceControl } from '../../line-ai/application/line-reimbursement-draft.service';
 import { parseLineAnswerDeliveryControl } from '../../line-ai/domain/logic/line-delivery-plan.logic';
 import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import { Controller, HttpCode, Logger, Post, Req, UnauthorizedException } from '@nestjs/common';
@@ -17,7 +20,7 @@ type LineMessageEvent = {
   replyToken?: string;
   timestamp?: number;
   source?: { type?: string; userId?: string; groupId?: string; roomId?: string };
-  message?: { id?: string; type?: string; text?: string; fileName?: string; fileSize?: number };
+  message?: { quotedMessageId?: string; id?: string; type?: string; text?: string; fileName?: string; fileSize?: number };
   postback?: { data?: string };
 };
 
@@ -84,9 +87,13 @@ export class LineWebhookController {
         // P10-L G-03: adding the friend has a reply token and used to match no arm at all, so with
         // the OA's own Greeting switched off a new customer got silence. A synthetic item carries
         // it into the same lane a typed message uses, where §3.1 decides door card or status card.
+        const counterpartyControl = event.type === 'postback' ? parseCounterpartyControl(event.postback?.data) : null;
+        const packagePurchaseControl = event.type === 'postback' ? parsePackagePurchaseControl(event.postback?.data) : null;
+        const expenseActionControl = event.type === 'postback' ? parseExpenseActionControl(event.postback?.data) : null;
+        const reimbursementChoiceControl = event.type === 'postback' ? parseLineReimbursementChoiceControl(event.postback?.data) : null;
         const reimbursementDraftControl = event.type === 'postback' ? parseLineReimbursementDraftControl(event.postback?.data) : null;
         const answerDeliveryControl = event.type === 'postback' ? parseLineAnswerDeliveryControl(event.postback?.data) : null;
-        const synthetic = reimbursementDraftControl ? 'ตรวจผลร่างใบเบิก' : answerDeliveryControl ? answerDeliveryControl.action === 'continue' ? 'อ่านคำตอบต่อ' : 'ยกเลิกการส่งคำตอบ' : event.type === 'follow'
+        const synthetic = reimbursementChoiceControl ? reimbursementChoiceControl.choice === 'photo' ? 'ส่งรูปใบเสร็จสำหรับใบเบิกนี้' : reimbursementChoiceControl.choice === 'no-receipt' ? 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้' : 'เลือกหมวดค่าใช้จ่ายสำหรับใบเบิกนี้' : counterpartyControl ? 'ตรวจข้อมูลคู่ค้า' : packagePurchaseControl ? 'ตรวจลิงก์จ่ายแพ็กเกจ' : expenseActionControl ? 'ตรวจผลรายการค่าใช้จ่าย' : reimbursementDraftControl ? 'ตรวจผลร่างใบเบิก' : answerDeliveryControl ? answerDeliveryControl.action === 'continue' ? 'อ่านคำตอบต่อ' : 'ยกเลิกการส่งคำตอบ' : event.type === 'follow'
           ? LINE_FOLLOW_EVENT_TEXT
           : event.type === 'postback'
             ? linePostbackCommandText(event.postback?.data, this.config.lineAiDraftEditEnabled)
@@ -105,9 +112,13 @@ export class LineWebhookController {
               webhookEventId: event.webhookEventId ?? `${lineUserId}-${Date.now()}`,
               replyToken: event.replyToken,
               text: synthetic,
+              ...(counterpartyControl ? { counterpartyControl } : {}),
+              ...(expenseActionControl ? { expenseActionControl } : {}),
+              ...(packagePurchaseControl ? { packagePurchaseControl } : {}),
               ...(draftUpdatePreviewId ? { draftUpdatePreviewId } : {}),
               ...(answerDeliveryControl ? { answerDeliveryControl } : {}),
               ...(reimbursementDraftControl ? { reimbursementDraftControl } : {}),
+              ...(reimbursementChoiceControl ? { reimbursementChoiceControl } : {}),
               timestamp,
             },
           });
@@ -122,6 +133,7 @@ export class LineWebhookController {
               webhookEventId: event.webhookEventId ?? `${lineUserId}-${Date.now()}`,
               replyToken: event.replyToken,
               text: event.message.text,
+              quotedMessageId: typeof event.message.quotedMessageId === 'string' && /^[A-Za-z0-9_-]{1,200}$/u.test(event.message.quotedMessageId) ? event.message.quotedMessageId : undefined,
               lineMessageId: event.message.id,
               timestamp,
             },

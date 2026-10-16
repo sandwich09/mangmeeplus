@@ -585,11 +585,12 @@ export class SubmitReimbursementUseCase {
   ) {}
 
   /** `payoutSubmitToken`: the `payout.submitToken` of the detail the submitter was looking at. */
-  async execute(ctx: RequestContext, id: string, input?: { payoutSubmitToken?: unknown } | null): Promise<ReimbursementRequestDetail> {
+  async execute(ctx: RequestContext, id: string, input?: { payoutSubmitToken?: unknown } | null, line?: { previewOnly?: boolean; expectedUpdatedAt?: Date }): Promise<ReimbursementRequestDetail> {
     if (!ctx.permissions.includes('reimbursement.submit')) throw new ForbiddenException('Missing permission: reimbursement.submit');
 
     const req = await this.repo.findRequestById(ctx.companyId, id);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    if (line?.expectedUpdatedAt && req.updatedAt.getTime() !== line.expectedUpdatedAt.getTime()) throw new ConflictException('reimbursement_source_version_changed');
     if (req.requesterUserId !== ctx.userId && !ctx.permissions.includes('reimbursement.finance_review')) {
       throw new ForbiddenException('Only the requester can submit this request');
     }
@@ -622,7 +623,7 @@ export class SubmitReimbursementUseCase {
     // Duplicate detection (warn on submit; blocking only if policy = BLOCK_SUBMIT).
     const dupResult = await this.detectDuplicates(ctx.companyId, req);
     if (dupResult.blocking && policy.duplicatePolicy === 'BLOCK_SUBMIT') {
-      await this.repo.recordBlockedSubmitDuplicates({ companyId: ctx.companyId, requestId: id, expectedUpdatedAt: req.updatedAt, candidates: dupResult.candidates,
+      if (!line?.previewOnly) await this.repo.recordBlockedSubmitDuplicates({ companyId: ctx.companyId, requestId: id, expectedUpdatedAt: req.updatedAt, candidates: dupResult.candidates,
         onPersisted: tx => this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.duplicate.detect', targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId,
           result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { blockedSubmit: true, candidateCount: dupResult.candidates.length } }, tx),
       });
@@ -700,6 +701,11 @@ export class SubmitReimbursementUseCase {
     const initialStatus = humanApprovalRequired
       ? 'PENDING_APPROVAL'
       : policy.financeReviewRequired ? 'FINANCE_REVIEW' : 'APPROVED';
+    if (line?.previewOnly) {
+      if ('error' in payoutPlan) throw new BadRequestException(payoutPlan.error);
+      if (input?.payoutSubmitToken !== payoutSubmitToken(req.id, payoutPlan)) throw new ConflictException('payout_destination_changed');
+      return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
+    }
     // Optional step, policy snapshot, number, status, audit and outbox facts commit together.
     const {
       documentNumber,
@@ -1087,9 +1093,10 @@ export class CancelReimbursementUseCase {
    * intent; what cannot be known then leaves a cancellation the claim detail shows and this same
    * call finishes.
    */
-  async execute(ctx: RequestContext, id: string, reason?: string, taxFilingAttested?: boolean): Promise<ReimbursementRequestSummary> {
+  async execute(ctx: RequestContext, id: string, reason?: string, taxFilingAttested?: boolean, line?: { previewOnly?: boolean; expectedUpdatedAt?: Date }): Promise<ReimbursementRequestSummary> {
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    if (line?.expectedUpdatedAt && req.updatedAt.getTime() !== line.expectedUpdatedAt.getTime()) throw new ConflictException('reimbursement_source_version_changed');
     // The gate of the claim detail, ahead of every answer that depends on where the claim stands (final
     // review item 18): "Cannot cancel from status …" was said before the branch was looked at.
     await assertCanReadRequestOrAssignment(ctx, req, this.repo);
@@ -1117,6 +1124,7 @@ export class CancelReimbursementUseCase {
       });
     }
 
+    if (line?.previewOnly) return toRequestSummary(req);
     const startedAt = new Date();
     const intent = await this.repo.beginCancellationAtomic({
       companyId: ctx.companyId,

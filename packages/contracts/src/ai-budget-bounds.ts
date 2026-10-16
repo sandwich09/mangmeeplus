@@ -77,20 +77,20 @@ export const AI_BUDGET_STEP_BOUNDS: Readonly<Record<AiBudgetStepKind, AiBudgetSt
   // 1,500 = the fused-plan branch of `intent-router.agent.ts:423` (the plain branch is 1,000).
   'line-intake-text': { maxInputTokens: 20_000, maxOutputTokens: 1_500, maxCalls: 1 },
   // 8,000 = INTAKE_DOCUMENT_MAX_TOKENS (`intent-router.agent.ts:32`, used at `:423`).
-  'line-intake-image': { maxInputTokens: 30_000, maxOutputTokens: 8_000, maxCalls: 1 },
+  'line-intake-image': { maxInputTokens: 30_000, maxOutputTokens: 8_000, maxCalls: 2 },
   // 1,024 = the native tool loop (`orchestrator.agent.ts:974`); plan-route 500, chooseNextTool 300,
   // critic 500, casual 180, compose 600 and polish 500 are all below it. 16 = the worst-case chain
   // (AI_MAX_TOOL_CALLS hard max 8 loop turns + final + resume, 2 plan-route attempts, 2 critics,
   // compose and polish) — see the research doc for the arithmetic.
   'line-turn': { maxInputTokens: 40_000, maxOutputTokens: 1_024, maxCalls: 16 },
   // 8,192 = RECEIPT_EXTRACTION_MAX_TOKENS (`line-ai-internal.controller.ts:40`, used at `:322`);
-  // the read and the vision re-read pass 4,096. maxCalls = AI_RECEIPT_OCR_MAX_PROVIDER_CALLS.
-  'receipt-ocr': { maxInputTokens: 30_000, maxOutputTokens: 8_192, maxCalls: 4 },
+  // Read/extract and vision re-read/extract each allow one timeout retry. maxCalls = AI_RECEIPT_OCR_MAX_PROVIDER_CALLS.
+  'receipt-ocr': { maxInputTokens: 30_000, maxOutputTokens: 8_192, maxCalls: 8 },
   // 4,096 = the shared document read (`line-ai-internal.controller.ts:294`); stage 2 passes 4,000.
   // maxCalls = AI_BANK_STATEMENT_MAX_PROVIDER_CALLS.
-  'bank-statement': { maxInputTokens: 30_000, maxOutputTokens: 4_096, maxCalls: 2 },
+  'bank-statement': { maxInputTokens: 30_000, maxOutputTokens: 4_096, maxCalls: 3 },
   // Capture reading is metered PER PROVIDER CALL, not per file: the API chunks a PDF into
-  // ≤ 3-page / ≤ 4,000,000-byte pieces and holds money for each one separately (appendix §4.6),
+  // one-page / ≤ 4,000,000-byte pieces and holds money for each one separately (appendix §4.6),
   // so both chains declare `maxCalls: 1` and the job's own `providerCallCount` bounds the file.
   // 8,192 = the same transcription ceiling as `receipt-ocr`, which shares the prompt.
   'receipt-capture-read': { maxInputTokens: 30_000, maxOutputTokens: 8_192, maxCalls: 1 },
@@ -214,14 +214,14 @@ export const AI_BUDGET_PROFILE_TABLE_VERSION_V2 = 'budget-profile-table/2' as co
 export const AI_BUDGET_ESTIMATOR_VERSION_V2 = 'utf8-v2' as const;
 export const AI_BUDGET_PROFILES_V2 = {
   'line-intake-text/2': { maxInputTokens: 160_000, maxOutputTokens: 4_096, maxCalls: 2 },
-  'line-intake-image/2': { maxInputTokens: 160_000, maxOutputTokens: 8_000, maxCalls: 1 },
+  'line-intake-image/2': { maxInputTokens: 160_000, maxOutputTokens: 8_000, maxCalls: 2 },
   'line-control/2': { maxInputTokens: 160_000, maxOutputTokens: 2_048, maxCalls: 3 },
   'line-answer/2': { maxInputTokens: 160_000, maxOutputTokens: 4_096, maxCalls: 2 },
   'document-qa/2': { maxInputTokens: 160_000, maxOutputTokens: 8_192, maxCalls: 2 },
   'public-lookup/2': { maxInputTokens: 32_000, maxOutputTokens: 4_096, maxCalls: 1, hostedToolUnits: 2 },
 } as const;
 /** SHA-256 of the lexicographically canonical JSON form of version, estimatorVersion and profiles. */
-export const AI_BUDGET_PROFILE_TABLE_DIGEST_V2 = 'c035ee0e52ebfcf8d5d0845c8e1cde17a2485fae55565b3c2deeaa9ac4dc61a6' as const;
+export const AI_BUDGET_PROFILE_TABLE_DIGEST_V2 = 'bb983780e657127bf2a8cc3e5334d7d4cce1928f5fc457d3c581c71896613d98' as const;
 export type AiBudgetProfileIdV2 = keyof typeof AI_BUDGET_PROFILES_V2;
 export type AiBudgetProfileBoundsV2 = (typeof AI_BUDGET_PROFILES_V2)[AiBudgetProfileIdV2];
 

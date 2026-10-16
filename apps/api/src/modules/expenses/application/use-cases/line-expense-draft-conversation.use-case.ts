@@ -7,6 +7,8 @@ import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.rep
 import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 import {
   applyLineExpenseDraftAnswer,
+  isClearlyNonExpenseDirection,
+  isDeterministicLineExpenseDraftInput,
   collectLineExpenseDraftQuestions,
   buildInitialLineExpenseDraftContinuation,
   formatLineExpenseDraftReply,
@@ -51,7 +53,7 @@ function routeContexts(rows: ContinuationRow[]): LineExpenseDraftRouteContext[] 
   const openRows = rows.filter((row) => row.state.status === 'OPEN');
   const focusedExpenseId = rows.length === 1 ? rows[0]!.id : openRows.length === 1 ? openRows[0]!.id : undefined;
   return rows.map((row) => ({
-    expenseId: row.id, label: label(row), status: row.state.status as LineExpenseDraftRouteContext['status'],
+    expenseId: row.id, revision: row.updatedAt.toISOString(), label: label(row), status: row.state.status as LineExpenseDraftRouteContext['status'],
     questions: (row.id === focusedExpenseId && row.state.status === 'OPEN' ? row.state.unresolvedQuestions : []).map((question) => ({
       id: question.id, prompt: question.prompt.slice(0, 200), ...(question.itemRef ? { itemRef: question.itemRef } : {}),
     })),
@@ -115,6 +117,15 @@ export class LineExpenseDraftConversationUseCase {
 
   async routeContexts(ctx: RequestContext, chatKeyHash: string): Promise<LineExpenseDraftRouteContext[]> {
     return routeContexts(await this.rows(ctx, chatKeyHash));
+  }
+
+  async answersOpenDraft(ctx: RequestContext, chatKeyHash: string, messageText: string, hints?: LineIntakeCaptureHints): Promise<boolean> {
+    if (isClearlyNonExpenseDirection(messageText)
+      || !hints && /^(?:ช่วย)?(?:สร้าง|บันทึก|เพิ่ม|ทำรายการ|ซื้อ|จ่าย|ชำระ)|[?？]|(?:ไหม|มั้ย|เท่าไร|เท่าไหร่|อะไร|อย่างไร|ทำไม)/u.test(messageText.trim())) return false;
+    const open = (await this.rows(ctx, chatKeyHash)).filter(row => hints?.targetExpenseId ? row.id === hints.targetExpenseId : row.state.status === 'OPEN');
+    if (open.length !== 1 || !hints && !open[0]!.state.unresolvedQuestions.length) return false;
+    const result = applyLineExpenseDraftAnswer({ state: open[0]!.state, messageText, hints, categories: await this.repo.listCategories(ctx.companyId) });
+    return result.acceptedFields.length > 0;
   }
 
   /** The item a one-item draft's money belongs to, so a correction can name it; none otherwise. */
@@ -312,7 +323,8 @@ export class LineExpenseDraftConversationUseCase {
     const addressTurnOnly = addressAsked && !control && selectedIndex === null
       && changed.acceptedFields.every((field) => field === 'D-ADDRESS');
     if (addressTurnOnly) changed.state.status = selected.state.status;
-    if (!control && selectedIndex === null && changed.acceptedFields.length === 0 && changed.rejectedCandidates.length === 0) {
+    if (!control && selectedIndex === null && changed.acceptedFields.length === 0
+      && (!changed.rejectedCandidates.length || !isDeterministicLineExpenseDraftInput(input.messageText))) {
       if (addressAsked) {
         try { await this.persist(ctx, expense, changed.state, categories, [], [], false, selected.state.targetRevision); }
         catch (error) { if (!(error instanceof ConflictException)) throw error; }

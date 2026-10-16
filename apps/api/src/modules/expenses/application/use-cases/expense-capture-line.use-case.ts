@@ -1,7 +1,7 @@
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { randomUUID } from 'node:crypto';
 import { ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { emptyExpenseCaptureReadManifest, type RequestContext } from '@watchdog-bms/contracts';
+import { expenseDateIsReadable, emptyExpenseCaptureReadManifest, type RequestContext } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
@@ -130,7 +130,7 @@ export class ExpenseCaptureLineUseCase {
       select: {
         id: true, status: true, captureSource: true, createdByUserId: true,
         sourceChannelMetadataJson: true, vendorNameSnapshot: true, grandTotalAmount: true,
-        currency: true, sourceDocumentType: true, expenseDate: true, primaryAttachmentId: true,
+        currency: true, sourceDocumentType: true, expenseDate: true, aiVerificationSummaryJson: true, primaryAttachmentId: true,
         vendorDocumentNumber: true, expenseCategory: { select: { name: true } }, vatAmount: true, vatMode: true,
       },
     });
@@ -150,7 +150,7 @@ export class ExpenseCaptureLineUseCase {
         vendorNameSnapshot: expense.vendorNameSnapshot,
         grandTotalAmount: expense.grandTotalAmount === null ? null : String(expense.grandTotalAmount),
         currency: expense.currency, sourceDocumentType: expense.sourceDocumentType,
-        expenseDate: expense.expenseDate, primaryAttachmentId: expense.primaryAttachmentId,
+        expenseDate: expenseDateIsReadable(expense.aiVerificationSummaryJson as Record<string, unknown> | null) ? expense.expenseDate : null, primaryAttachmentId: expense.primaryAttachmentId,
         vendorDocumentNumber: expense.vendorDocumentNumber, categoryName: expense.expenseCategory?.name ?? null,
         vatAmount: expense.vatAmount === null ? null : String(expense.vatAmount), vatMode: expense.vatMode,
       },

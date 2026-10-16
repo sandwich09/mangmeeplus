@@ -191,9 +191,20 @@ describe('OrchestratorAgent – native tool-use loop (item 10F)', () => {
     });
     const orchestrator = new OrchestratorAgent(trackingErpTools(calls), makeConfig());
     const result = await orchestrator.run(makeReq('ขอดูข้อมูลหน่อย'));
-    assert.equal(result.replyText, 'ต้องการดูสาขาไหนครับ');
+    assert.equal(result.replyText, 'ต้องการดูสาขาไหนค่ะ');
     assert.equal(calls.length, 0);
-    assert.deepEqual(result.coverage, [{ request: 'ขอดูข้อมูลหน่อย', subject: 'inventory', verdict: 'needs_user', question: 'ต้องการดูสาขาไหนครับ' }]);
+    assert.deepEqual(result.coverage, [{ request: 'ขอดูข้อมูลหน่อย', subject: 'inventory', verdict: 'needs_user', question: 'ต้องการดูสาขาไหนค่ะ' }]);
+  });
+
+  it('F3/F5: guards write acknowledgements and Markdown in native questions', async () => {
+    for (const question of ['สร้างร่างค่าใช้จ่ายแล้วค่ะ', '## ขอข้อมูล\n**ต้องการดูสาขาไหนคะ**']) {
+      const calls: Array<{ name: string; input: any }> = [];
+      installNativeFetch({ nativeTurns: [{ toolCalls: [{ name: 'ask_user', input: { question } }] }] });
+      const result = await new OrchestratorAgent(trackingErpTools(calls), makeConfig()).run(makeReq('ขอดูข้อมูลหน่อย'));
+      assert.equal(calls.length, 0);
+      assert.doesNotMatch(result.replyText, /สร้างร่างค่าใช้จ่ายแล้ว|[*#]/u);
+      assert.equal(result.coverage?.[0]?.question, result.replyText);
+    }
   });
 
   it('caps executions at the tool budget and defers the tail honestly', async () => {

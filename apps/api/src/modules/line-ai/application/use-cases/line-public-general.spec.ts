@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
+// Owner signed-card/delivery state uses real class field initializers, including on public turns.
 import { createLineAiInputEvidence } from '@watchdog-bms/contracts';
 
 function fixture() {
@@ -9,7 +10,7 @@ function fixture() {
   const now = new Date();
   const config: any = { lineAiReliabilityV2Mode: 'on', lineAiDeliveryPlanV2Enabled: true, lineMessagingChannelId: 'oa', lineAiDeliveryPlanV2PublicChannelIds: ['oa'], aiDataRetentionDays: 30 };
   const forbidden = () => { throw new Error('PRIVATE_PREFETCH'); };
-  const handler: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const handler: any = new (ProcessLineWebhookUseCase as any)();
   Object.assign(handler, { mediaTextContinuations: new WeakMap(), config, logger: { log() {} }, claimWebhookEvent: async () => true, launchGate: { assertLaunchRouteOpen: async () => undefined },
     // buildTurnAuthorizationJson (called from executePublicGeneral) reads these WeakMaps directly on
     // `this`, same as the real class fields — empty here since this fixture's whole point is a public

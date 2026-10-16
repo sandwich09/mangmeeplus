@@ -30,6 +30,8 @@ import {
   reserveAiBudgetStep,
   settleAiBudgetStep,
 } from './company-ai-budget-reservation';
+import { splitPrisma } from './company-ai-budget-prisma.fixture';
+import { priceRenderedAiInvocationV2 } from './ai-model-pricing';
 import { aiCreditLotOrder, consumeAiCreditHold, planAiCreditAllocation, type AiCreditLot } from './ai-credit-ledger';
 import { aiCreditCycleAllowance } from './company-ai-budget-policy';
 
@@ -840,5 +842,36 @@ describe('AI credit funding order and use (add-on spec §5.2–§5.3, plan PR C3
       { units: 8_000, source: 'DEFAULT' }, 'a TOTAL override is only the safety ceiling (admin tab rework)');
     assert.deepEqual(aiCreditCycleAllowance({ ...base, row: { budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30_000, ocrMonthlyBudgetSatang: 10_000 } }),
       { units: 30_000, source: 'SPLIT_CHAT_CAP' });
+  });
+});
+
+
+describe('known failed v2 funded invocations are company-absorbed', () => {
+  it('releases the hold without month/bucket usage, breach or credit CONSUME, and fences late replay', async () => {
+    const modelId = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
+    const price = priceRenderedAiInvocationV2({ version: 'test:1', provider: 'bedrock', modelId, region: 'ap-southeast-1', thbPerUsd: 33,
+      usdPerMTok: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } }, 4096, 2048)!;
+    const fixture = splitPrisma({ total: 10000, chat: 5000, ocr: 5000, spentChat: 19 }, {
+      aiCreditEntry: { findMany: async () => assert.fail('failed calls must never consume credit') },
+    });
+    const key = 'co#attempt#provider-v2#0';
+    fixture.reservations.set('hold', { id: 'hold', companyId: 'co', monthKey: '2026-10', bucket: 'CHAT', stepKind: 'provider-v2',
+      invocationKey: key, status: 'DISPATCHED', upperBoundSatang: price.upperBoundSatang,
+      pricingSnapshot: { ...price.snapshot, aiCredit: { cycleKey: 'cycle' } } });
+    const before = structuredClone(fixture.monthUsage);
+    const input = { invocationKey: key, meta: { sourceRoute: 'line-ai-v2' },
+      entry: { tag: 'line.loop', modelId, ok: false, inputTokens: 1000, outputTokens: 100,
+        cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 1, usageBasis: 'CONSERVATIVE_ESTIMATE' as const } };
+    assert.equal(await settleAiBudgetStep(fixture.prisma, input), 'settled');
+    const hold = fixture.reservations.get('hold');
+    assert.equal(hold.status, 'CANCELLED', 'CANCELLED is the existing released-credit status');
+    assert.equal(hold.settledCostSatang, 0);
+    assert.equal(hold.breach, false);
+    assert.equal(hold.usageBasis, 'COMPANY_ABSORBED');
+    assert.deepEqual(fixture.monthUsage, before);
+    assert.equal(fixture.buckets.get('CHAT')!.costSatang, 19);
+    assert.ok(fixture.events.get(key).costSatang > 0, 'company cost evidence survives');
+    assert.equal(await settleAiBudgetStep(fixture.prisma, input), 'duplicate');
+    assert.equal(fixture.events.size, 1);
   });
 });

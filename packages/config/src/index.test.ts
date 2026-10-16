@@ -614,6 +614,21 @@ describe('validateProductionConfig', () => {
 describe('aiGatewayConfigSchema – item 10B new keys', () => {
   const base = { APP_ENV: 'local', SERVICE_NAME: 'ai-gateway', PORT: 3002 };
 
+  it('accepts an Anthropic API key only in local mode', () => {
+    const local = aiGatewayConfigSchema.parse({ ...base, ANTHROPIC_API_KEY: ' test-key \n' });
+    assert.equal(local.ANTHROPIC_API_KEY, 'test-key');
+    assert.equal(aiGatewayConfigSchema.parse(base).ANTHROPIC_API_KEY, undefined);
+    assert.equal(aiGatewayConfigSchema.safeParse({ ...base, ANTHROPIC_API_KEY: ' ' }).success, false);
+    assert.equal(aiGatewayConfigSchema.safeParse({ ...base, APP_ENV: 'uat', ANTHROPIC_API_KEY: 'test-key' }).success, false);
+    // Deployed UAT uses APP_ENV=production plus DEPLOY_ENVIRONMENT=uat.
+    for (const DEPLOY_ENVIRONMENT of ['uat', 'production']) {
+      const result = aiGatewayConfigSchema.safeParse({ ...base, APP_ENV: 'production', DEPLOY_ENVIRONMENT, ANTHROPIC_API_KEY: 'test-key' });
+      assert.equal(result.success, false);
+      if (!result.success) assert.ok(result.error.issues.some((issue) => issue.path[0] === 'ANTHROPIC_API_KEY' && issue.message.includes('local only')));
+      assert.equal(aiGatewayConfigSchema.safeParse({ ...base, APP_ENV: 'production', DEPLOY_ENVIRONMENT }).success, true);
+    }
+  });
+
   it('caps AI_MAX_TOOL_CALLS at the eight-delegation M-01 budget', () => {
     assert.equal(aiGatewayConfigSchema.safeParse({ ...base, AI_MAX_TOOL_CALLS: 8 }).success, true);
     assert.equal(aiGatewayConfigSchema.safeParse({ ...base, AI_MAX_TOOL_CALLS: 9 }).success, false);

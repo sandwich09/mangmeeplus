@@ -1,5 +1,6 @@
 import { parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, publicSourceUrl, PUBLIC_LOOKUP_SYSTEM_PROMPT, type AiUsageEntry, type ProviderError } from '@watchdog-bms/contracts';
 import type { IModelProvider, ProviderInput, ProviderOutput, ProviderToolCall, ProviderToolsInput, ProviderToolsOutput } from './provider.port';
+import { conservativeTimeoutUsage } from './provider-usage-estimate';
 import { parseProviderToolCalls } from './provider-output.logic';
 import { appendUsage, currentUsageCompanyId } from '../../../../common/usage/usage-context';
 import { normalizePublicLookupOutput, publicLookupExternalUnits, type PublicSearchResponse } from './public-lookup-output.logic';
@@ -156,6 +157,7 @@ export class OpenAiProvider implements IModelProvider {
         return { ok: false, error: incompleteError() };
       }
       const completion = body.status === 'completed' ? 'complete' as const : 'output_limit' as const;
+      if (completion === 'output_limit') errorCode = 'PROVIDER_OUTPUT_INCOMPLETE';
       return {
         ok: true,
         text,
@@ -174,7 +176,7 @@ export class OpenAiProvider implements IModelProvider {
       input.signal?.removeEventListener('abort', abortFromCaller);
       // Reported from `finally` (Bedrock's shape) so every call yields exactly one usage entry,
       // successes and mapped errors alike.
-      this.logUsage(input.usageTag, startedAt, usage, errorCode);
+      await this.logUsage(input, startedAt, usage, errorCode);
     }
   }
 
@@ -213,7 +215,7 @@ export class OpenAiProvider implements IModelProvider {
       const result = normalizePublicLookupOutput(body, policy);
       return { ok: true, text: JSON.stringify(result), completion: 'complete', providerStopReason: body.status ?? 'unknown', stopReason: 'end_turn' };
     } catch (err) { const error = this.mapThrownError(err); errorCode = error.code; return { ok: false, error: { ...error, retryable: false } }; }
-    finally { clearTimeout(timer); input.signal?.removeEventListener('abort', abort); this.logUsage(input.usageTag, startedAt, usage, errorCode, externalUnits); }
+    finally { clearTimeout(timer); input.signal?.removeEventListener('abort', abort); await this.logUsage(input, startedAt, usage, errorCode, externalUnits); }
   }
 
   /** Item 10F native tool loop – Responses API function calling (`tools` / `function_call` /
@@ -293,6 +295,7 @@ export class OpenAiProvider implements IModelProvider {
         return { ok: false, error: incompleteError() };
       }
       const outputLimited = body.status === 'incomplete';
+      if (outputLimited) errorCode = 'PROVIDER_OUTPUT_INCOMPLETE';
 
       const rawCalls: Array<{ callId?: unknown; name?: unknown; arguments?: unknown }> = [];
       const textParts: string[] = [];
@@ -333,35 +336,36 @@ export class OpenAiProvider implements IModelProvider {
     } finally {
       clearTimeout(timer);
       input.signal?.removeEventListener('abort', abortFromCaller);
-      this.logUsage(input.usageTag, startedAt, usage, errorCode);
+      await this.logUsage(input, startedAt, usage, errorCode);
     }
   }
 
   /** Same bounded `ai.usage` shape as Bedrock. Known counters survive provider and parser errors. */
-  private logUsage(tag: string | undefined, startedAt: number, usage?: OpenAiUsage, errorCode?: string, externalUnits?: number | null): void {
+  private async logUsage(input: ProviderInput | ProviderToolsInput, startedAt: number, usage?: OpenAiUsage, errorCode?: string, externalUnits?: number | null): Promise<void> {
     // Responses input_tokens includes cached tokens; the shared cost contract keeps disjoint
     // input/cache buckets. Invalid counters stay unknown, never a fabricated free measurement.
     if (usage && (![usage.input_tokens, usage.output_tokens, usage.input_tokens_details?.cached_tokens ?? 0]
       .every(value => Number.isSafeInteger(value) && Number(value) >= 0)
       || (usage.input_tokens_details?.cached_tokens ?? 0) > usage.input_tokens!)) usage = undefined;
+    const estimated = !usage && errorCode === 'PROVIDER_TIMEOUT' ? await conservativeTimeoutUsage(input) : undefined;
     const entry: AiUsageEntry = {
-      tag: tag ?? 'untagged',
+      tag: input.usageTag ?? 'untagged',
       modelId: this.cfg.model,
       ok: !errorCode,
-      inputTokens: (usage?.input_tokens ?? 0) - (usage?.input_tokens_details?.cached_tokens ?? 0),
-      outputTokens: usage?.output_tokens ?? 0,
+      ...(errorCode ? { errorCode } : {}),
+      inputTokens: estimated?.inputTokens ?? (usage?.input_tokens ?? 0) - (usage?.input_tokens_details?.cached_tokens ?? 0),
+      outputTokens: estimated?.outputTokens ?? usage?.output_tokens ?? 0,
       cacheReadInputTokens: usage?.input_tokens_details?.cached_tokens ?? 0,
       // The Responses API exposes no cache-write counter; 0 keeps the entry shape uniform.
       cacheWriteInputTokens: 0,
       durationMs: Date.now() - startedAt,
       ...(externalUnits !== undefined ? { externalUnits } : {}),
-      // This provider never estimates: either the response carried counters, or the entry reports
-      // zeros with no basis at all. Absent is the honest answer (spec §11.2).
-      ...(usage ? { usageBasis: 'PROVIDER_REPORTED' as const } : {}),
+      // Unknown timeout counters are internal estimates; the API absorbs every failed call.
+      ...(estimated ? { usageBasis: 'CONSERVATIVE_ESTIMATE' as const } : usage ? { usageBasis: 'PROVIDER_REPORTED' as const } : {}),
     };
     try {
       appendUsage(entry);
-      if (!usage) return;
+      if (!usage && !estimated) return;
       const companyId = currentUsageCompanyId();
       console.log(JSON.stringify({
         msg: 'ai.usage',
@@ -369,9 +373,11 @@ export class OpenAiProvider implements IModelProvider {
         modelId: entry.modelId,
         ok: entry.ok,
         ...(companyId ? { companyId } : {}),
-        ...(usage.input_tokens !== undefined ? { inputTokens: entry.inputTokens } : {}),
-        ...(usage.output_tokens !== undefined ? { outputTokens: usage.output_tokens } : {}),
-        ...(usage.input_tokens_details?.cached_tokens !== undefined ? { cacheReadInputTokens: usage.input_tokens_details.cached_tokens } : {}),
+        ...(usage?.input_tokens !== undefined || estimated ? { inputTokens: entry.inputTokens } : {}),
+        ...(usage?.output_tokens !== undefined || estimated ? { outputTokens: entry.outputTokens } : {}),
+        ...(estimated ? { usageEstimated: true } : {}),
+        ...(errorCode ? { errorCode } : {}),
+        ...(usage?.input_tokens_details?.cached_tokens !== undefined ? { cacheReadInputTokens: usage.input_tokens_details.cached_tokens } : {}),
         durationMs: entry.durationMs,
       }));
     } catch {

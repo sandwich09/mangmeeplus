@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { lineActionBoundaryReplyText, moduleFeatureEnabled, readOnlyCaptureReplyText, scopePolicyOverride, unsoldModuleReplyText, unsoldModuleTopicFor } from './line-ai-scope-policy.logic';
+import { LINE_ACTION_RULES, lineActionBoundaryReplyText, moduleFeatureEnabled, readOnlyCaptureReplyText, scopePolicyOverride, unsoldModuleReplyText, unsoldModuleTopicFor } from './line-ai-scope-policy.logic';
 
 describe('item 1: unsold module topic classifier (spec §2/§3 row 17)', () => {
   const CASES: Array<{ name: string; text: string; featureKey: string | null }> = [
@@ -104,89 +104,25 @@ describe('item 1: moduleFeatureEnabled fail-open/entitlement convention', () => 
   });
 });
 
-describe('item 2: LINE approve/reject/pay/confirm/void action boundary (spec §11)', () => {
-  const APPROVER = ['reimbursement.approve', 'reimbursement.reject', 'reimbursement.payment.record'];
-  const FINANCE = ['expense.confirm', 'expense.void'];
-
-  it('approve reimbursement with permission: says do it on the web, never "ดึงข้อมูลไม่ได้"', () => {
-    const text = lineActionBoundaryReplyText('ช่วยอนุมัติใบเบิกของสมชายให้หน่อยค่ะ', APPROVER, 'th')!;
-    assert.ok(text, 'expected an override');
-    assert.ok(text.includes('LINE ไม่ได้'), text);
-    assert.ok(!text.includes('ดึงข้อมูล'), text);
-  });
-
-  it('approve reimbursement WITHOUT permission: names the role limit, not a data-fetch failure', () => {
-    const text = lineActionBoundaryReplyText('ช่วยอนุมัติใบเบิกอันนี้ให้หน่อยค่ะ', ['reimbursement.read_own'], 'th')!;
-    assert.ok(text.startsWith('บทบาทของคุณยังไม่มีสิทธิ์'), text);
-  });
-
-  it('reject a reimbursement claim', () => {
-    const withPermission = lineActionBoundaryReplyText('ปฏิเสธใบเบิกนี้หน่อยค่ะ', APPROVER, 'th');
-    const withoutPermission = lineActionBoundaryReplyText('ปฏิเสธใบเบิกนี้หน่อยค่ะ', [], 'th');
-    assert.ok(withPermission?.includes('เว็บ'));
-    assert.ok(withoutPermission?.startsWith('บทบาทของคุณยังไม่มีสิทธิ์'));
-  });
-
-  it('pay a reimbursement claim', () => {
-    const text = lineActionBoundaryReplyText('ช่วยจ่ายใบเบิกให้หน่อยค่ะ', APPROVER, 'th')!;
-    assert.ok(text.includes('LINE ไม่ได้'), text);
-  });
-
-  it('confirm an expense record', () => {
-    const withPermission = lineActionBoundaryReplyText('ยืนยันรายการค่าใช้จ่ายนี้ให้หน่อยค่ะ', FINANCE, 'th');
-    const withoutPermission = lineActionBoundaryReplyText('ยืนยันรายการค่าใช้จ่ายนี้ให้หน่อยค่ะ', [], 'th');
-    assert.ok(withPermission?.includes('เว็บ'));
-    assert.ok(withoutPermission?.startsWith('บทบาทของคุณยังไม่มีสิทธิ์'));
-  });
-
-  it('void a confirmed expense record', () => {
-    const withPermission = lineActionBoundaryReplyText('ยกเลิกรายการค่าใช้จ่ายนี้หน่อยค่ะ', FINANCE, 'th');
-    const withoutPermission = lineActionBoundaryReplyText('ยกเลิกรายการค่าใช้จ่ายนี้หน่อยค่ะ', [], 'th');
-    assert.ok(withPermission?.includes('เว็บ'));
-    assert.ok(withoutPermission?.startsWith('บทบาทของคุณยังไม่มีสิทธิ์'));
-  });
-
-  it('does not fire for an ordinary read question naming neither a claim nor an action verb', () => {
-    assert.equal(lineActionBoundaryReplyText('ค่าใช้จ่ายเดือนนี้เท่าไหร่คะ', [], 'th'), undefined);
-  });
-
-  it('does not fire for an unrelated use of a bare action verb with no reimbursement/expense noun', () => {
-    assert.equal(lineActionBoundaryReplyText('ยกเลิกการนัดหมายพรุ่งนี้ให้หน่อยค่ะ', [], 'th'), undefined);
-  });
-
-  it('does not fire for a STATUS QUESTION about a claim, only for a REQUEST to act on it (eval T-093-b)', () => {
-    // "has my claim not been paid yet?" names ใบเบิก + จ่าย but asks, it does not request the action —
-    // this belongs to item 4's routing guard (reimbursement.get_summary), never this override.
-    assert.equal(lineActionBoundaryReplyText('ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ', [], 'th'), undefined);
-    assert.equal(lineActionBoundaryReplyText('ใบเบิกอนุมัติหรือยังคะ', [], 'th'), undefined);
-  });
-
-  it('does not fire for "รออนุมัติ" (pending approval, a STATE) with no request marker (whole-chain regression T-089)', () => {
-    // "how many claims are pending approval this month?" — a plain count/read question routed to
-    // reimbursement.list_pending_approvals; "รออนุมัติ" contains the bare verb "อนุมัติ" as a
-    // substring but names a state, never a command, and the sentence carries no request marker.
-    assert.equal(lineActionBoundaryReplyText('ใบเบิกรออนุมัติเดือนนี้มีกี่รายการครับ', [], 'th'), undefined);
-  });
-
-  it('does not fire for a STATE phrase even WITH a request marker on the read verb (C2, T-084-b)', () => {
-    // "เช็ค...หน่อยครับ" ("please check...") carries a request marker, but it requests a CHECK, not
-    // an approval — "รออนุมัติ"/"จ่ายแล้ว" here name the claim's state, not a command.
-    assert.equal(lineActionBoundaryReplyText('เช็คใบเบิกที่รออนุมัติหน่อยครับ', [], 'th'), undefined);
-    assert.equal(lineActionBoundaryReplyText('รบกวนเช็คใบเบิกที่รออนุมัติอยู่ด้วยค่ะ', [], 'th'), undefined);
-    assert.equal(lineActionBoundaryReplyText('ขอดูใบเบิกที่จ่ายแล้วหน่อย', [], 'th'), undefined);
-  });
-
-  it('does not fire for a backlog question naming the approver or who has not approved yet (advisor S3)', () => {
-    assert.equal(lineActionBoundaryReplyText('สรุปใบเบิกที่ค้างให้หน่อย แยกตามคนอนุมัติ', APPROVER, 'th'), undefined);
-    assert.equal(lineActionBoundaryReplyText('ช่วยดูหน่อยว่าใครยังไม่อนุมัติใบเบิก', APPROVER, 'th'), undefined);
-    assert.equal(lineActionBoundaryReplyText('ขอดูใบเบิกแยกตามผู้อนุมัติหน่อย', APPROVER, 'th'), undefined);
-    assert.ok(lineActionBoundaryReplyText('ช่วยอนุมัติใบเบิกที่ยังไม่อนุมัติหน่อย', APPROVER, 'th')?.includes('LINE ไม่ได้'));
-  });
-
-  it('still fires when a real action verb accompanies the state phrase (C2)', () => {
-    const text = lineActionBoundaryReplyText('ช่วยอนุมัติใบเบิกที่รออนุมัติหน่อย', APPROVER, 'th')!;
-    assert.ok(text.includes('LINE ไม่ได้'), text);
-  });
+describe('Fix-up 17A: LINE_ACTION_RULES × permission', () => {
+  for (const rule of LINE_ACTION_RULES) for (const granted of [false, true]) {
+    const text = `ช่วย${rule.verb[0]}${rule.noun[0] ?? ''}ให้หน่อย`;
+    it(`${rule.actionLabelTh} permission=${granted}: ${rule.page === 'substitute-receipts' ? 'web boundary' : 'existing use-case decides'}`, () => {
+      const reply = lineActionBoundaryReplyText(text, granted ? [rule.permission] : [], 'th');
+      if (rule.page !== 'substitute-receipts') assert.equal(reply, undefined);
+      else assert.match(reply!, granted ? /เว็บ/ : /ไม่มีสิทธิ์/);
+    });
+  }
+  for (const text of ['ใบเบิกรออนุมัติเดือนนี้มีกี่รายการ', 'เช็คใบเบิกที่รออนุมัติหน่อย', 'ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ', 'ค่าใช้จ่ายเดือนนี้เท่าไหร่', 'สรุปใบเบิกแยกตามผู้อนุมัติหน่อย']) {
+    it(`keeps status/read questions: ${text}`, () => assert.equal(lineActionBoundaryReplyText(text, [], 'th'), undefined));
+  }
+  for (const text of ['ตั้งค่าการอนุมัติใบเบิกยังไง', 'ตั้งให้ผู้จัดการอนุมัติใบเบิกได้', 'ใครอนุมัติใบเบิก', 'ทำให้หน่อย ให้ผู้จัดการอนุมัติใบเบิกได้ด้วย ไม่ต้องรอฉันคนเดียว']) {
+    it(`approval settings: ${text}`, () => {
+      assert.equal(lineActionBoundaryReplyText(text, ['reimbursement.approve'], 'th'), undefined);
+      assert.equal(scopePolicyOverride(text, 'write', ['reimbursement.policy.manage'], ['expenses'], 'th')?.webPage, 'approval-settings');
+      assert.equal(scopePolicyOverride(text, 'write', [], ['expenses'], 'th')?.webPage, undefined);
+    });
+  }
 });
 
 describe('item 3: a read-only role asking to record, upload, or capture (spec §8 "นอกสิทธิ์")', () => {
@@ -239,7 +175,7 @@ describe('scopePolicyOverride: combined entry point and kind exemption', () => {
 
   it('never exempts the LINE action boundary for kind "help"', () => {
     const override = scopePolicyOverride('อนุมัติใบเบิกทำยังไงคะ ช่วยอนุมัติให้เลยได้ไหม', 'help', [], undefined, 'th');
-    assert.equal(override?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
+    assert.equal(override, undefined);
   });
 
   it('applies the unsold-module check for kind "read" and "write"', () => {
@@ -259,7 +195,7 @@ describe('scopePolicyOverride: combined entry point and kind exemption', () => {
 
   it('still applies the LINE action boundary to kind "general"', () => {
     const override = scopePolicyOverride('ช่วยอนุมัติใบเบิกของสมชายให้หน่อยค่ะ', 'general', [], ['expenses'], 'th');
-    assert.equal(override?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
+    assert.equal(override, undefined);
   });
 
   it('a company with the feature entitled is never blocked', () => {

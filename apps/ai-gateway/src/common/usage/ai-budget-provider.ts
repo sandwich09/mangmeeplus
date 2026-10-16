@@ -18,6 +18,9 @@
  *      and timeout alike — and a settle failure never fails the business call.
  */
 import { createHash } from 'node:crypto';
+import { conservativeTimeoutUsage, pdfPageUpperBound } from '../../modules/line-ai/infrastructure/provider/provider-usage-estimate';
+export { pdfPageUpperBound } from '../../modules/line-ai/infrastructure/provider/provider-usage-estimate';
+
 import {
   AI_BUDGET_DOCUMENT_MAX_PAGES,
   AI_BUDGET_DOCUMENT_PAGE_TOKEN_CEILING,
@@ -40,6 +43,7 @@ import type { IModelProvider, ProviderInput, ProviderToolsInput } from '../../mo
 import type { AiBudgetSeam } from './ai-budget-seam';
 import { beginGuardedProviderCall, endGuardedProviderCall } from './ai-budget-durability';
 import {
+  appendUsage,
   claimBudgetCallOrdinal,
   claimBudgetInFlight,
   currentBudgetState,
@@ -90,32 +94,6 @@ export function providerErrorEnvelope(
     errorCode: error.budgetCode ?? error.code,
     ...(error.budgetScope ? { budgetScope: error.budgetScope } : {}),
   };
-}
-
-/**
- * Upper bound on a PDF's page count from its own bytes, or `undefined` when it cannot be proven.
- *
- * `/Count` in the page tree is the document's own page total and `/Type /Page` counts the page
- * objects; the larger of the two is taken, because over-counting only refuses work while
- * under-counting would spend past the hold. A PDF whose page objects live in compressed object
- * streams shows neither, and an unprovable bound is `AI_BUDGET_UNAVAILABLE` (spec §12.3) rather
- * than a guess.
- */
-export function pdfPageUpperBound(contentBase64: string): number | undefined {
-  let text: string;
-  try {
-    text = Buffer.from(contentBase64, 'base64').toString('latin1');
-  } catch {
-    return undefined;
-  }
-  // `/Type /Page` must not match `/Pages` (the tree node), hence the trailing guard.
-  const pageObjects = text.match(/\/Type\s*\/Page(?![sA-Za-z])/g)?.length ?? 0;
-  let declared = 0;
-  for (const match of text.matchAll(/\/Count\s+(\d+)/g)) {
-    declared = Math.max(declared, Number(match[1]));
-  }
-  const pages = Math.max(pageObjects, declared);
-  return pages > 0 ? pages : undefined;
 }
 
 const bytes = (value: string | undefined): number => (value ? Buffer.byteLength(value, 'utf8') : 0);
@@ -318,39 +296,23 @@ async function admitV2(
   return { ok: true, invocationKey: returned.invocationKey, envelope: returned };
 }
 
-/**
- * A timed-out call whose provider could not report counters is settled at the DECLARED bound, not
- * at zero (spec §12.6: real provider cost must never become 0).
- *
- * The Bedrock provider already estimates a timeout itself (at the envelope's bound since E1c), so
- * this changes nothing there. It is what makes the envelope hold for a provider that reports zeros
- * on an abort — the OpenAI adapter — without touching that provider's behaviour for the SHARED
- * companies that are all of them today. The row is mutated IN PLACE, so the evidence and the copy
- * that rides back on the HTTP response carry the same numbers and the same honest basis.
- */
-function estimateTimeoutInPlace(
+/** A known timeout releases customer credit; retain only realistic company cost evidence. */
+async function estimateTimeoutInPlace(
   entry: AiUsageEntry,
-  state: Extract<BudgetRequestState, { status: 'active' }>,
-  requestedMaxTokens: number | undefined,
-): void {
-  if (entry.usageBasis) return;
-  const { bounds } = state.envelope;
-  entry.inputTokens = Math.max(entry.inputTokens, bounds.maxInputTokens);
-  entry.outputTokens = Math.max(entry.outputTokens, Math.min(requestedMaxTokens ?? bounds.maxOutputTokens, bounds.maxOutputTokens));
-  entry.usageBasis = 'CONSERVATIVE_ESTIMATE';
-}
-
-function estimateTimeoutInPlaceV2(
-  entry: AiUsageEntry,
-  envelope: AiBudgetEnvelopeV2,
-): void {
-  // A provider adapter may have already emitted its legacy conservative ceiling before the v2
-  // wrapper sees the timeout. Replace that non-v2 ceiling with this invocation's reserved bound;
-  // never let a 200k model-context fallback exceed the v2 hold.
+  input: ProviderInput | ProviderToolsInput,
+  bounds: { maxInputTokens: number; maxOutputTokens: number },
+): Promise<void> {
+  entry.ok = false;
+  entry.errorCode = 'PROVIDER_TIMEOUT';
   if (entry.usageBasis === 'PROVIDER_REPORTED') return;
-  entry.inputTokens = envelope.inputTokenBound;
-  entry.outputTokens = envelope.requestedOutputTokens;
-  entry.usageBasis = 'CONSERVATIVE_ESTIMATE';
+  if (!entry.usageBasis) {
+    const usage = await conservativeTimeoutUsage(input, bounds);
+    entry.inputTokens = usage.inputTokens!;
+    entry.outputTokens = usage.outputTokens!;
+    entry.usageBasis = 'CONSERVATIVE_ESTIMATE';
+  }
+  entry.inputTokens = Math.min(entry.inputTokens, bounds.maxInputTokens);
+  entry.outputTokens = Math.min(entry.outputTokens, bounds.maxOutputTokens);
 }
 
 /** Posts this invocation's evidence and tags the response rows with its key. Never throws. */
@@ -359,12 +321,12 @@ async function settle(
   invocationKey: string,
   fromIndex: number,
   opts: AiBudgetProviderOptions,
-  timedOut: { requestedMaxTokens: number | undefined } | undefined,
+  timedOut: ProviderInput | ProviderToolsInput | undefined,
 ): Promise<void> {
   const tagged = tagUsageInvocation(fromIndex, invocationKey);
   const entry = tagged[0];
-  if (entry && timedOut) estimateTimeoutInPlace(entry, state, timedOut.requestedMaxTokens);
-  if (!entry || (!entry.usageBasis && entry.inputTokens === 0 && entry.outputTokens === 0
+  if (entry && timedOut) await estimateTimeoutInPlace(entry, timedOut, state.envelope.bounds);
+  if (!entry || (entry.ok !== false && !entry.usageBasis && entry.inputTokens === 0 && entry.outputTokens === 0
     && entry.cacheReadInputTokens === 0 && entry.cacheWriteInputTokens === 0)) {
     // Missing provider counters leave the hold DISPATCHED -> UNRESOLVED rather than settling a
     // fabricated zero. The API's reconciliation path owns the unresolved dispatched reservation.
@@ -389,12 +351,12 @@ async function settleV2(
   envelope: AiBudgetEnvelopeV2,
   fromIndex: number,
   opts: AiBudgetProviderOptions,
-  timedOut: boolean,
+  timedOut: ProviderInput | ProviderToolsInput | undefined,
 ): Promise<void> {
   const tagged = tagUsageInvocation(fromIndex, envelope.invocationKey);
   const entry = tagged[0];
-  if (entry && timedOut) estimateTimeoutInPlaceV2(entry, envelope);
-  if (!entry || (!entry.usageBasis && entry.inputTokens === 0 && entry.outputTokens === 0
+  if (entry && timedOut) await estimateTimeoutInPlace(entry, timedOut, { maxInputTokens: envelope.inputTokenBound, maxOutputTokens: envelope.requestedOutputTokens });
+  if (!entry || (entry.ok !== false && !entry.usageBasis && entry.inputTokens === 0 && entry.outputTokens === 0
     && entry.cacheReadInputTokens === 0 && entry.cacheWriteInputTokens === 0)) {
     opts.log({ msg: 'ai.budget.evidence_missing', invocationKey: envelope.invocationKey });
     return;
@@ -450,7 +412,8 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
       if (!admission.ok) return { ok: false, error: admission.error };
       // Recorded BEFORE the call so the rows this call appends — and only those — are the evidence.
       const fromIndex = usageEntryCount();
-      let timedOut: { requestedMaxTokens: number | undefined } | undefined;
+      let timedOut: ProviderInput | ProviderToolsInput | undefined;
+      let failure: ProviderError | undefined;
       // Process-wide gauge, so a SIGTERM waits for this call and its settlement instead of killing
       // them (hold spec §3). Only under an envelope: a SHARED request never reaches this line.
       beginGuardedProviderCall();
@@ -461,14 +424,15 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
           : input;
         const output = await call(bounded);
         if (state.status === 'active-v2' && (Date.now() >= bounded.deadlineAt! || input.signal?.aborted)) {
-          timedOut = { requestedMaxTokens: input.maxTokens };
+          timedOut = input;
+          failure = { code: 'PROVIDER_TIMEOUT', message: 'Admitted work deadline elapsed.', retryable: false };
           // Usage already appended by the provider still settles below. Late text/tool arguments
           // are not authorization to execute effects or publish an ordinary completed answer.
           return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'Admitted work deadline elapsed.', retryable: false } };
         }
-        if ((output as { ok?: unknown; error?: ProviderError }).ok === false
-          && (output as { error?: ProviderError }).error?.code === 'PROVIDER_TIMEOUT') {
-          timedOut = { requestedMaxTokens: input.maxTokens };
+        if ((output as { ok?: unknown }).ok === false) failure = (output as { error?: ProviderError }).error;
+        if (failure?.code === 'PROVIDER_TIMEOUT') {
+          timedOut = input;
         }
         if (state.status === 'active-v2' && ((output as { ok?: unknown; completion?: string }).completion === 'output_limit'
           || ((output as { ok?: unknown; error?: ProviderError }).ok === false
@@ -477,12 +441,18 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
         }
         return output;
       } finally {
+        // A known refusal/timeout before the adapter logged counters still releases its hold.
+        // A thrown/lost transport with no result retains the existing unresolved path.
+        if (failure && usageEntryCount() === fromIndex) appendUsage({
+          tag: input.usageTag ?? 'untagged', modelId: opts.modelId, ok: false, errorCode: failure.code,
+          inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 0,
+        });
         // In `finally` so a throw from the provider (or from a parser inside it) still settles the
         // money it already spent, exactly as the providers log their own usage from `finally`.
         if (state.status === 'active') {
           await settle(state, admission.invocationKey, fromIndex, opts, timedOut);
         } else if ('envelope' in admission) {
-          await settleV2(state, admission.envelope as AiBudgetEnvelopeV2, fromIndex, opts, timedOut !== undefined);
+          await settleV2(state, admission.envelope as AiBudgetEnvelopeV2, fromIndex, opts, timedOut);
         }
         endGuardedProviderCall();
       }

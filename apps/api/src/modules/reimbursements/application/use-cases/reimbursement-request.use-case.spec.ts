@@ -60,7 +60,7 @@ import {
 import { attestClaimPayout, confirmPaymentPayout, readClaimPayoutVersions } from '../../infrastructure/reimbursement-payout';
 import { freezePayoutCorrection, payoutCorrectionKeptDestination, readPaymentPayoutDestinations } from '../../infrastructure/reimbursement-payout';
 import { paymentTurnUserIds, payoutCorrectionFacts, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
-import { payoutDefaultToken } from '../../domain/logic/payout-destination.logic';
+import { payoutDefaultToken, payoutSubmitToken } from '../../domain/logic/payout-destination.logic';
 import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
 import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from './reimbursement-payout-correction.use-case';
 
@@ -6100,4 +6100,28 @@ describe('CLAIM-LIST scoped queue metrics', () => {
     assert.equal(summary.totalAmount, '79.9000');
     assert.equal(summary.counts.all, 12);
   });
+
+});
+describe('Round 3 LINE submit/cancel use-case preview', () => {
+  for (const action of ['submit', 'cancel'] as const) {
+    it(`${action}: permits the owner, refuses missing permission/status/branch/revision and makes no business writes`, async () => {
+      const state = fakeRepo();
+      const uc = useCases(state);
+      await uc.create.execute(ctx(), { reason: 'ค่าเดินทาง', missingReceiptReason: 'ใบเสร็จหาย', lines: [inputLine({ attachmentId: 'att-1' })] } as any);
+      await uc.update.execute(ctx(), state.request.id, { payout: { mode: 'CASH' } });
+      const actor = ctx({ authProvider: 'line', permissions: [...ctx().permissions, 'reimbursement.cancel_own'] });
+      const detail = { payout: { submitToken: payoutSubmitToken(state.request.id, await state.repo.planSubmitPayout(state.request)) } };
+      const before = JSON.stringify(state.request), audits = state.calls.audits.length;
+      const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, state.voidExpense);
+      const run = (context: any, revision = state.request.updatedAt) => action === 'submit'
+        ? uc.submit.execute(context, state.request.id, { payoutSubmitToken: detail.payout?.submitToken }, { previewOnly: true, expectedUpdatedAt: revision })
+        : cancel.execute(context, state.request.id, undefined, undefined, { previewOnly: true, expectedUpdatedAt: revision });
+      assert.equal((await run(actor)).status, 'DRAFT');
+      assert.equal(JSON.stringify(state.request), before); assert.equal(state.calls.audits.length, audits);
+      await assert.rejects(() => run({ ...actor, permissions: ['reimbursement.read_own'] }), /permission|Cannot cancel/i);
+      await assert.rejects(() => run({ ...actor, scopes: { branchIds: ['other'] } }), /branch/i);
+      await assert.rejects(() => run(actor, new Date(0)), /version_changed/);
+      state.request.status = 'PAID'; await assert.rejects(() => run(actor), /Cannot.*(submit|cancel)/i);
+    });
+  }
 });

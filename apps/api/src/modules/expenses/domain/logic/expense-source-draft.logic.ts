@@ -8,7 +8,7 @@ import { storedLineToInput } from './line-draft-update.logic';
 import {
   buildInitialLineExpenseDraftContinuation, collectLineExpenseDraftQuestions,
   materializedLineExpenseDraftItems, parseLineExpenseDraftContinuation, nextLineExpenseDraftItemRef,
-  MAX_LINE_EXPENSE_DRAFT_ITEMS, type LineExpenseDraftContinuation, type LineExpenseDraftItem,
+  expenseDraftItemLimit, type LineExpenseDraftContinuation, type LineExpenseDraftItem,
 } from './line-expense-draft-conversation.logic';
 
 export const EXPENSE_SOURCE_DRAFT_KEY = 'lineExpenseDraftContinuation';
@@ -114,6 +114,7 @@ export function sourceDraftState(expense: Expense, categories: ExpenseCategorySu
   const vendor = expense.vendorNameSnapshot ?? recognized?.vendorName;
   const businessPurpose = purpose(expense.note);
   const state = buildInitialLineExpenseDraftContinuation({
+    itemSource: 'LINE_MEDIA_OCR',
     workflowId: randomUUID(), companyId: expense.companyId, userId: expense.createdByUserId, expenseId: expense.id,
     // Web staging must not invent a reachable LINE conversation or enable the feature flag.
     chatKeyHash: typeof expense.sourceChannelMetadataJson?.['chatKeyHash'] === 'string' ? expense.sourceChannelMetadataJson['chatKeyHash'] : '',
@@ -165,6 +166,7 @@ export function applyExpenseSourceDraftInput(state: LineExpenseDraftContinuation
   const raw = record(input, ['expenseDate', 'vendorName', 'businessPurpose', 'items']);
   const next = structuredClone(state);
   const acceptedFields: string[] = [];
+  const itemLimit = expenseDraftItemLimit(state);
   for (const [field, suffix] of [['expenseDate', 'DATE'], ['vendorName', 'VENDOR'], ['businessPurpose', 'PURPOSE']] as const) {
     if (raw[field] === undefined) continue;
     const value = text(raw[field], field === 'expenseDate' ? 10 : field === 'businessPurpose' ? 500 : 200);
@@ -178,7 +180,7 @@ export function applyExpenseSourceDraftInput(state: LineExpenseDraftContinuation
     acceptedFields.push(`D-${suffix}`);
   }
   if (raw.items !== undefined) {
-    if (!Array.isArray(raw.items) || raw.items.length > MAX_LINE_EXPENSE_DRAFT_ITEMS) invalid('Source draft supports at most 40 items.');
+    if (!Array.isArray(raw.items) || raw.items.length > itemLimit) invalid(`Source draft supports at most ${itemLimit} items.`);
     const seen = new Set<string>();
     for (const candidate of raw.items) {
       const patch = record(candidate, ['itemRef', 'description', 'quantity', 'unitPrice', 'totalAmount', 'expenseCategoryId']);
@@ -189,8 +191,8 @@ export function applyExpenseSourceDraftInput(state: LineExpenseDraftContinuation
         item = next.items.find((item) => item.itemRef === patch.itemRef);
         if (!item) invalid('Unknown source item reference.');
       } else {
-        if (next.items.length >= MAX_LINE_EXPENSE_DRAFT_ITEMS) invalid('Source draft supports at most 40 items.');
-        item = { itemRef: nextLineExpenseDraftItemRef(next.items), sourceText: '', newItem: true };
+        if (next.items.length >= itemLimit) invalid(`Source draft supports at most ${itemLimit} items.`);
+        item = { itemRef: nextLineExpenseDraftItemRef(next.items, itemLimit), sourceText: '', newItem: true };
         next.items.push(item);
       }
       if (patch.unitPrice != null && patch.unitPrice !== '' && patch.totalAmount != null && patch.totalAmount !== '') invalid('Supply either unit price or total amount.');
@@ -259,8 +261,10 @@ export function assertExpenseSourceDraftComplete(metadata: Record<string, unknow
   if (metadata?.[EXPENSE_SOURCE_DRAFT_KEY] || expense?.captureSource === 'LINE_UPLOAD') {
     const state = metadata?.[EXPENSE_SOURCE_DRAFT_KEY]
       ? parseLineExpenseDraftContinuation(metadata[EXPENSE_SOURCE_DRAFT_KEY]) : expense ? sourceDraftState(expense, []) : null;
-    if (!state || collectLineExpenseDraftQuestions(state, []).length > 0) throw new BadRequestException({
+    const missingFields = state ? [...new Set(collectLineExpenseDraftQuestions(state, []).map(question => question.field))] : ['items'];
+    if (missingFields.length > 0) throw new BadRequestException({
       code: 'EXPENSE_SOURCE_DRAFT_INCOMPLETE', message: 'Complete the saved source draft before submitting or confirming this expense.',
+      missingFields,
     });
   }
   if (expense && !expenseDateIsReadable(expense.aiVerificationSummaryJson)) throw new BadRequestException({

@@ -1,3 +1,4 @@
+import { conservativeTimeoutUsage } from '../../modules/line-ai/infrastructure/provider/provider-usage-estimate';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CallHandler, ExecutionContext } from '@nestjs/common';
@@ -602,7 +603,8 @@ describe('withAiBudgetEnvelope: v2 budget envelope', () => {
       const provider = guarded({ generateText: async () => { appendUsage({ ...entry('line.loop'), usageBasis: 'PROVIDER_REPORTED' }); now += 101; return { ok: true, text: 'late success' }; } }, v2Seam(log), log);
       const result = await runWithUsageContext({ companyId: 'co-1', budget: state }, () => provider.generateText(textInput({ usageTag: 'line.loop', maxTokens: 1024 })));
       assert.equal(result.ok, false); if (!result.ok) assert.equal(result.error.code, 'PROVIDER_TIMEOUT');
-      assert.ok(log.events.some(event => event.startsWith('settle:') && event.endsWith(':PROVIDER_REPORTED')));
+      assert.ok(log.events.some(event => event.startsWith('settle:') && event.endsWith(':false:PROVIDER_REPORTED')),
+        'late success is company cost because the customer never received it');
     } finally { Date.now = realNow; }
   });
 
@@ -697,6 +699,30 @@ describe('withAiBudgetEnvelope: invocation evidence', () => {
     assert.deepEqual(log.events, ['provider', 'settle:co-1#line-image:abc#receipt-ocr#0:false:none']);
   });
 
+  it('settles known timeouts even when the adapter returned before logging usage', async () => {
+    const log = trace();
+    const provider: IModelProvider = { generateText: async () => ({ ok: false,
+      error: { code: 'PROVIDER_TIMEOUT', message: 'deadline elapsed', retryable: false } }) };
+    await runWithUsageContext({ companyId: 'co-1', budget: activeState(OCR_ENVELOPE) }, async () => {
+      const result = await guarded(provider, fakeSeam(log), log).generateText(textInput());
+      assert.equal(result.ok, false);
+      const [entry] = drainUsage();
+      assert.equal(entry!.ok, false);
+      assert.equal(entry!.errorCode, 'PROVIDER_TIMEOUT');
+      assert.ok(entry!.inputTokens > 0 && entry!.inputTokens < OCR_ENVELOPE.bounds.maxInputTokens);
+    });
+    assert.deepEqual(log.events, ['settle:co-1#line-image:abc#receipt-ocr#0:false:CONSERVATIVE_ESTIMATE']);
+  });
+
+  it('retains missing evidence for a thrown transport outcome for operator reconciliation', async () => {
+    const log = trace();
+    const provider: IModelProvider = { generateText: async () => { throw new Error('transport outcome unknown'); } };
+    await assert.rejects(runWithUsageContext({ companyId: 'co-1', budget: activeState(OCR_ENVELOPE) },
+      () => guarded(provider, fakeSeam(log), log).generateText(textInput())), /transport outcome unknown/);
+    assert.equal(log.events.some(event => event.startsWith('settle:')), false);
+    assert.ok(log.events.includes('log:ai.budget.evidence_missing'));
+  });
+
   it('posts a timeout at the conservative basis the provider reported', async () => {
     const log = trace();
     await runWithUsageContext(
@@ -781,7 +807,7 @@ describe('withAiBudgetEnvelope: a provider that cannot estimate its own timeout'
     };
   }
 
-  it('settles it at the declared bound, labelled an estimate — never at zero (spec §12.6)', async () => {
+  it('settles a known timeout with a request-size estimate for company accounting', async () => {
     const log = trace();
     const drained = await runWithUsageContext({ companyId: 'co-1', budget: activeState(OCR_ENVELOPE) }, async () => {
       await guarded(zeroTimeoutProvider(log), fakeSeam(log), log).generateText(textInput());
@@ -795,7 +821,7 @@ describe('withAiBudgetEnvelope: a provider that cannot estimate its own timeout'
     // money and the other is an idempotent duplicate.
     assert.deepEqual(
       [drained[0]!.inputTokens, drained[0]!.outputTokens, drained[0]!.usageBasis],
-      [AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxInputTokens, 4096, 'CONSERVATIVE_ESTIMATE'],
+      [(await conservativeTimeoutUsage(textInput())).inputTokens, 4096, 'CONSERVATIVE_ESTIMATE'],
     );
   });
 

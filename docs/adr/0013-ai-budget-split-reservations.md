@@ -1,5 +1,7 @@
 # ADR 0013: Separate CHAT/OCR AI budget caps — per-step reservations and evidence-driven settlement
 
+> Owner amendment 2026-10-15: known failed/no-result calls are company-absorbed (`COMPANY_ABSORBED`), release customer holds as `CANCELLED`, and never consume customer spend/credit. SHARED rows keep NULL invocation keys and never suppress writes by requestId (controller review: one request can cover distinct invocations). Failed-call charging below is superseded by [the owner money rule](../specs/ai-usage-metering-and-monthly-budget-spec.md#owner-money-rule--2026-10-15-supersedes-failed-call-charging-below); unknown transport outcomes and operator reconciliation stay unchanged.
+
 - Status: Accepted for implementation (dark — no company can activate SPLIT until the readiness gate in §9 is open)
 - Date: 2026-09-17
 - Spec: [LINE AI — NOGROUP, budget errors, intake cost, chat/OCR caps §12](../specs/line-ai-ledger-lifecycle-remediation-spec-th.md)

@@ -21,6 +21,7 @@ import { TIER_FEATURE_PRESETS } from '../../packages/contracts/src/menu-entitlem
 import { ALL_FEATURE_ENTITLEMENT_KEYS } from '../../packages/contracts/src/feature-entitlements';
 import { civilPeriodKey, todayCivilDate, DEFAULT_COMPANY_TIME_ZONE } from '../../packages/contracts/src/civil-date';
 import { CURRENT_LEGAL_DOCUMENTS, LEGAL_ACCEPTANCE_STATEMENT_VERSION, legalAcceptanceStatements } from '../../packages/contracts/src/legal-acceptance';
+import { claimSnapshotFields, computeSnapshotHash } from '../../apps/api/src/modules/reimbursements/domain/logic/reimbursement.logic';
 import { ROLES, type EvalRole, type EvalCompany } from './types';
 
 export type SeedRow = { model: string; data: Record<string, unknown> };
@@ -302,13 +303,19 @@ function buildReimbursementRows(companyId: string, branchIds: string[], users: R
       categoryKey: category.key, categoryLabelSnapshot: category.name, amount, incurredDate,
       status, createdByUserId: requester.userId,
     };
-    if (status !== 'DRAFT') { data['submittedAt'] = incurredDate; data['submittedByUserId'] = requester.userId; }
+    if (status !== 'DRAFT') {
+      data['submittedAt'] = incurredDate; data['submittedByUserId'] = requester.userId;
+      // Match the fallback line inserted by the production trigger, including its approval hash.
+      data['approvalSnapshotHash'] = computeSnapshotHash(claimSnapshotFields({ amount, currency: 'THB',
+        categoryKey: category.key, incurredDate, reason: String(data['reason']),
+        lines: [{ lineNo: 1, incurredDate, description: String(data['reason']), categoryKey: category.key, amount }] }));
+    }
     if (status === 'PENDING_APPROVAL') {
       const stepId = `${requestId}-step1`;
       data['currentApprovalStepId'] = stepId;
       approvalSteps.push({ model: 'reimbursementApprovalStep', data: {
         id: stepId, companyId, reimbursementRequestId: requestId, sequenceNo: 1,
-        approverRoleSnapshot: 'MANAGER', status: 'PENDING', requestSnapshotHash: `seed-${requestId}`,
+        approverRoleSnapshot: 'MANAGER', status: 'PENDING', requestSnapshotHash: data['approvalSnapshotHash'],
       } });
     }
     if (status === 'APPROVED' || status === 'PAID') {
@@ -316,7 +323,7 @@ function buildReimbursementRows(companyId: string, branchIds: string[], users: R
       approvalSteps.push({ model: 'reimbursementApprovalStep', data: {
         id: `${requestId}-step1`, companyId, reimbursementRequestId: requestId, sequenceNo: 1,
         approverRoleSnapshot: 'MANAGER', status: 'APPROVED', decidedAt: incurredDate,
-        decisionByUserId: users.MANAGER!.userId, requestSnapshotHash: `seed-${requestId}`,
+        decisionByUserId: users.MANAGER!.userId, requestSnapshotHash: data['approvalSnapshotHash'],
       } });
     }
     if (status === 'REJECTED') {
@@ -324,7 +331,7 @@ function buildReimbursementRows(companyId: string, branchIds: string[], users: R
       approvalSteps.push({ model: 'reimbursementApprovalStep', data: {
         id: `${requestId}-step1`, companyId, reimbursementRequestId: requestId, sequenceNo: 1,
         approverRoleSnapshot: 'MANAGER', status: 'REJECTED', decidedAt: incurredDate,
-        decisionByUserId: users.MANAGER!.userId, rejectionReason: 'ไม่มีหลักฐานแนบ', requestSnapshotHash: `seed-${requestId}`,
+        decisionByUserId: users.MANAGER!.userId, rejectionReason: 'ไม่มีหลักฐานแนบ', requestSnapshotHash: data['approvalSnapshotHash'],
       } });
     }
     if (status === 'PAID') {

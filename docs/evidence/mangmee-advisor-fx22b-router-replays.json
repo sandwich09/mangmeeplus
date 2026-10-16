@@ -1,0 +1,102 @@
+[
+  {
+    "source": "after-fx21/C04",
+    "messageText": "ทำให้หน่อย ทำใบสำคัญจ่ายจากค่าใช้จ่ายที่ยืนยันแล้วรายการล่าสุด",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.88,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบสำคัญจ่ายจากค่าใช้จ่ายที่ยืนยันแล้วรายการล่าสุด",
+          "requiredEvidence": [],
+          "requestedFilters": {
+            "action": "VOUCHER_CREATE",
+            "documentStatus": "CONFIRMED"
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 62,
+              "rawSha256": "7968fb92aae88c886ab40999d7141569f7963489ee866d694be0848efbfd3193"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "source": "after-fx21/C05",
+    "messageText": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.82,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าใช้จ่ายจ้างทำป้ายหน้าร้าน 10,000 บาท พร้อมหัก ณ ที่จ่าย 3% และบันทึกจ่ายโอนแล้ววันนี้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "บันทึกหรืออัปเดตข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด เลขผู้เสียภาษี และที่อยู่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "read",
+          "goal": "คำนวณหัก ณ ที่จ่าย 3% จากฐาน 10,000 บาท",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "toolHint": "wht.calculate_withholding",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "source": "after-fx21/C10",
+    "messageText": "ทำให้หน่อย อยากอัปเกรดเป็นแพ็กเกจ 1,999 ที่มีหัก ณ ที่จ่ายด้วย"
+  }
+]

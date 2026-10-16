@@ -1,0 +1,215 @@
+{
+  "C07": {
+    "source": "ondev/C07",
+    "turn": 3,
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvb2fghr-3-13647a63",
+          "replyToken": "rt-0f3a2871-2fe7-41ec-864d-b25656beaf88",
+          "message": {
+            "type": "text",
+            "id": "m17921610709114",
+            "text": "แก้ที่อยู่ บริษัท ผักสดดี จำกัด เป็น 101 ถนนงามวงศ์วาน ตำบลบางกระสอ อำเภอเมืองนนทบุรี นนทบุรี 11000",
+            "quoteToken": "4b1f6acb11d8acd0"
+          },
+          "timestamp": 1792161070911,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.97,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "แก้ที่อยู่ บริษัท ผักสดดี จำกัด เป็น 101 ถนนงามวงศ์วาน ตำบลบางกระสอ อำเภอเมืองนนทบุรี นนทบุรี 11000",
+          "requiredEvidence": [],
+          "requestedFilters": {
+            "action": "UPDATE",
+            "counterpartyId": "cmvb2fe0y002zlrk1astt88nz",
+            "addressText": "101 ถนนงามวงศ์วาน ตำบลบางกระสอ อำเภอเมืองนนทบุรี นนทบุรี 11000"
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 99,
+              "rawSha256": "7db7e16b37e4ffab4699ce9c1eb8884c731c45a39e1a4cf3b33488c4e62a590f"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4446,
+          "outputTokens": 262,
+          "cacheReadInputTokens": 23232,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 6789,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#23e712c964037a7b1384090ba7532196075b835f5c4f45267f77698a989c008c#provider-v2#0"
+        }
+      ]
+    },
+    "taskProjection": {
+      "version": 2,
+      "stateVersion": 4,
+      "lifecycleEpoch": 0,
+      "expiresAtMs": 1792161967719,
+      "tasks": [
+        {
+          "kind": "write",
+          "slots": {
+            "counterpartyId": "cmvb2fe0y002zlrk1astt88nz",
+            "counterpartyToken0": "1cb4095a-45bb-440d-90f4-0eee8a19f439.0iWblUdz0I5yaa7RTTs1YdJmrNniOhjaQRcKBUEUZYg",
+            "counterpartyRevision": "2026-10-16T14:31:07.714Z"
+          },
+          "state": "completed",
+          "taskId": "39a2231a0ab68108936d2ea5324107e93d640a103a809422d6f9e0525c2a0a59",
+          "revision": 3,
+          "userGoal": "เพิ่มผู้ขาย บริษัท ผักสดดี จำกัด พร้อมเลขผู้เสียภาษีและที่อยู่",
+          "subrequests": [
+            {
+              "goal": "เพิ่มผู้ขาย บริษัท ผักสดดี จำกัด พร้อมเลขผู้เสียภาษีและที่อยู่",
+              "kind": "write",
+              "index": 0,
+              "status": "handled"
+            }
+          ],
+          "deliveredQuestionRefs": [
+            "db6b57cae7f016fac9708804c95d80a6ebf4d37c7f133ebd2a6ca32b4b4bb7c2"
+          ]
+        }
+      ]
+    }
+  },
+  "E02": {
+    "source": "ondev/E02",
+    "turn": 7,
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvb2mryu-8-aa0185ed",
+          "replyToken": "rt-fa591e3e-9c40-4f41-a8ea-0d03ddd26d86",
+          "message": {
+            "type": "text",
+            "id": "m17921614123749",
+            "text": "ช่วยแก้ยอดรายการร้านทดสอบฟู้ดส์เมื่อกี้เป็น 600 บาทหน่อย",
+            "quoteToken": "731042c6c878e51d"
+          },
+          "timestamp": 1792161412374,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_CAPTURE_CORRECTION",
+      "language": "th",
+      "confidence": 0.88,
+      "correctionHints": {
+        "amount": {
+          "to": "600"
+        },
+        "vendorName": {
+          "to": "ร้านทดสอบฟู้ดส์"
+        },
+        "confidence": 0.88
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "แก้ไขยอดรายการร้านทดสอบฟู้ดส์เป็น 600 บาท",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "taskRef": {
+            "taskId": "faa900a105dec6b6c4741ef3048a6466056fab383784acd00968f73f51e53603",
+            "taskRevision": 1,
+            "subrequestIndex": 0
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 56,
+              "rawSha256": "e01e02a94b2ae9e96970ff32fa2ff563d4bbd94b498a917cad7872a21467a168"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4106,
+          "outputTokens": 232,
+          "cacheReadInputTokens": 23232,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 5965,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#ac89e0bec488906651cdd170462a7f3d2af75702ab2ca03f976bf9a7119e739f#provider-v2#0"
+        }
+      ]
+    },
+    "taskProjection": {
+      "version": 2,
+      "stateVersion": 2,
+      "lifecycleEpoch": 0,
+      "expiresAtMs": 1792162294870,
+      "tasks": [
+        {
+          "kind": "write",
+          "state": "waiting_user",
+          "taskId": "faa900a105dec6b6c4741ef3048a6466056fab383784acd00968f73f51e53603",
+          "revision": 1,
+          "userGoal": "ยืนยันรายการค่าใช้จ่ายที่เพิ่งบันทึก",
+          "subrequests": [
+            {
+              "goal": "ยืนยันรายการค่าใช้จ่ายที่เพิ่งบันทึก",
+              "kind": "write",
+              "index": 0,
+              "status": "needs_user"
+            }
+          ],
+          "deliveredQuestionRefs": [
+            "8f00a36519912b3534cf75feb192c95f0f2a049eac410ebb90a059c844bbcb31"
+          ]
+        }
+      ]
+    }
+  }
+}

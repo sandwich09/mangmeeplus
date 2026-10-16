@@ -21,6 +21,8 @@ export type VendorAutoSaveContext = { companyId: string; userId: string; request
 
 export type EnsureVendorCounterpartyInput = {
   expenseId: string;
+  sourceDocumentType?: string | null;
+  ocrDocumentType?: string | null;
   /** Uploader of the linked active primary receipt; unlike ctx.userId this can differ from the reviewer. */
   receiptUploaderUserId?: string | null;
   /** CON-4: both markers of a system-generated expense; either one skips the whole thing. */
@@ -66,10 +68,21 @@ export class EnsureVendorCounterpartyFromExpenseUseCase {
     private readonly audit: AuditService,
   ) {}
 
+  /** Read-only OCR correction; registry failures must not lose an otherwise usable receipt. */
+  async resolveOcrVendorName(ctx: VendorAutoSaveContext, taxId: string): Promise<string | undefined> {
+    const key = vendorMatchKey({ taxId });
+    if (key?.kind !== 'TAX_ID') return undefined;
+    try {
+      const matched = await this.repo.findUniqueActiveCounterpartyByTaxId(ctx.companyId, key.taxId);
+      return matched?.legalName?.trim() || matched?.displayName?.trim() || undefined;
+    } catch { return undefined; }
+  }
+
   async execute(ctx: VendorAutoSaveContext, input: EnsureVendorCounterpartyInput): Promise<EnsureVendorCounterpartyOutcome> {
     // CON-4: a reimbursement projection's vendor is `เบิกคืนพนักงาน: <employee>`, not a shop. Without
     // this, every employee who ever claimed anything becomes a counterparty row.
-    if (input.captureSource === 'API_INTERNAL' || input.sourceReimbursementRequestId) {
+    if (input.sourceDocumentType === 'TRANSFER_SLIP' || input.ocrDocumentType === 'TRANSFER_SLIP'
+      || input.captureSource === 'API_INTERNAL' || input.sourceReimbursementRequestId) {
       return { result: { case: 'SKIPPED' } };
     }
 

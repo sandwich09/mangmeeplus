@@ -1,3 +1,4 @@
+import { linePaymentEvidencePostbackCommand } from './line-payment-evidence-reply.logic';
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import type { LineSystemCard, LineSystemCardRow } from './line-system-card.logic';
@@ -479,7 +480,7 @@ function companyBubble(company: CompanyPickerItem, selectionNumber: number, curr
         ...(company.stateLabel ? [{ type: 'text', text: `🔒 ${company.stateLabel}`, size: 'sm', color: '#B42318' }] : []),
         // "ใช้งานอยู่" beside a lock chip contradicts it; the chat is merely on this shop.
         ...(current ? [{ type: 'text', text: company.stateLabel ? '✓ เลือกอยู่' : '✓ ใช้งานอยู่', size: 'sm', color: '#16A34A', weight: 'bold' }] : []),
-        ...(!current ? [{ type: 'text', text: `ตอบ ${selectionNumber} หรือกดปุ่มด้านล่าง`, size: 'sm', color: '#667085', wrap: true }] : []),
+        ...(!current ? [{ type: 'text', text: 'กดปุ่มเลือกบริษัทได้เลยค่ะ', size: 'sm', color: '#667085', wrap: true }] : []),
         // Only where a switch actually happens. On the ✓ ใช้งานอยู่ bubble the chat is already on
         // this company, so promising "ระบบจะสลับบริษัทในไลน์ให้ด้วย" describes a change that will
         // not occur — the button there just opens the web.
@@ -603,7 +604,7 @@ const APPROVAL_SURFACES = [
 export type ApprovalSurfaceKey = (typeof APPROVAL_SURFACES)[number]['key'];
 
 /** One waiting record: what identifies it (its number) and, when the queue says, who asked and how much. */
-export type PendingApprovalItem = { title: string; detail?: string };
+export type PendingApprovalItem = { title: string; detail?: string; buttons?: Record<string, unknown>[] };
 
 /** What the approver has waiting: `total` is the whole queue, `items` the records the card may show.
  *  A key left out means that queue could not be read — the card then links out without a count
@@ -708,6 +709,21 @@ export function buildPendingApprovalCard(context: StaffMenuContext, pending: Pen
   const total = counted.reduce((sum, surface) => sum + pending[surface.key]!.total, 0);
   const altText = counted.length === 0 ? 'รายการรออนุมัติ' : `รายการรออนุมัติ ${total} รายการ`;
 
+  const actionable = surfaces.some(surface => surface.key === 'reimbursement') ? pending.reimbursement?.items.filter(item => item.buttons?.length) ?? [] : [];
+  if (actionable.length) {
+    const others = surfaces.filter(surface => surface.key !== 'reimbursement');
+    const otherLines = others.flatMap(surface => {
+      const queue = pending[surface.key];
+      return queue ? [`${surface.label} (${queue.total})`, ...queue.items.map(item => [item.title, item.detail].filter(Boolean).join(' · '))] : [];
+    });
+    const links = base ? others.map(surface => ({ type: 'button', style: 'primary', action: { type: 'uri', label: surface.label, uri: `${base}${companySegment}${surface.path}` } })) : [];
+    const lines = [`รายการรออนุมัติ ${total} รายการค่ะ`, ...actionable.map(item => [item.title, item.detail].filter(Boolean).join(' · ')), ...otherLines];
+    return { type: 'flex', altText, canonicalText: [...lines, ...links.map(link => `${link.action.label}: ${link.action.uri}`)].join('\n'), contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [
+      { type: 'text', text: lines[0], weight: 'bold', wrap: true },
+      ...actionable.map(item => ({ type: 'box', layout: 'vertical', spacing: 'sm', contents: [{ type: 'text', text: [item.title, item.detail].filter(Boolean).join(' · '), wrap: true }, ...item.buttons!] })),
+      ...otherLines.map(text => ({ type: 'text', text, wrap: true })),
+    ] }, ...(links.length ? { footer: { type: 'box', layout: 'vertical', contents: links } } : {}) } };
+  }
   const designed = pendingApprovalDesignedCard(
     surfaces, pending, base ? surfaces.map((surface) => ({ label: surface.open, uri: `${base}${companySegment}${surface.path}` })) : [],
     context.webBaseUrl, asOfLabel,
@@ -861,6 +877,8 @@ const DRAFT_POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
  * than the more permissive one.
  */
 export function linePostbackCommandText(data: string | undefined, draftEditEnabled = false): string | null {
+  const paymentEvidence = linePaymentEvidencePostbackCommand(data);
+  if (paymentEvidence) return paymentEvidence;
   if (!data) return null;
   let action: string | null;
   try {

@@ -293,7 +293,7 @@ describe('LINE staff menu', () => {
     assert.equal((message.contents as any).type, 'carousel');
     assert.match(JSON.stringify(message), /บริษัท 1/);
     assert.match(JSON.stringify(message), /บริษัท 2/);
-    assert.match(JSON.stringify(message), /ตอบ 2 หรือกดปุ่มด้านล่าง/);
+    assert.match(JSON.stringify(message), /กดปุ่มเลือกบริษัทได้เลยค่ะ/);
     assert.match(JSON.stringify(message), /\/company co-2/);
     assert.equal(JSON.stringify(message).includes('/company co-1'), false);
   });
@@ -317,7 +317,7 @@ describe('LINE staff menu', () => {
     assert.equal(second.footer.contents[1].style, 'secondary', 'the switch-only button stays the primary one');
     // The number still works: typing "2" must keep switching, so its hint keeps its place.
     const lines = second.body.contents.map((line: any) => line.text);
-    assert.ok(lines.includes('ตอบ 2 หรือกดปุ่มด้านล่าง'));
+    assert.ok(lines.includes('กดปุ่มเลือกบริษัทได้เลยค่ะ'));
     assert.ok(lines.includes(COMPANY_PICKER_OPEN_WEB_HINT));
     assert.equal((message as any).altText, 'เลือกบริษัทที่ต้องการใช้งาน', 'the notification line is unchanged');
   });
@@ -1090,4 +1090,22 @@ it('the public package answer names the home menu as หน้าแรก', () 
   assert.equal(answer?.topic, 'trial_limits');
   assert.match(answer!.text, /ผู้ช่วย AI ทาง LINE หน้าแรก ค่าใช้จ่ายและใบเสร็จ/);
   assert.doesNotMatch(answer!.text, /แดชบอร์ด/);
+
+});
+import { reimbursementApprovalButtons } from './line-reimbursement-approval-control.logic';
+it('Round 3 pending-approval menu offers approval/rejection buttons for each scoped claim', () => {
+  const buttons = reimbursementApprovalButtons('secret', 'company', 'approver', 'claim');
+  const card = buildPendingApprovalCard({ displayName: 'สมใจ', roleLabel: 'ผู้จัดการ', branchScopeLabel: 'สาขาหลัก', companyId: 'company', permissions: ['reimbursement.approve'], entitledFeatureKeys: null },
+    { reimbursement: { total: 1, items: [{ title: 'ใบเบิกค่าเดินทาง', detail: 'สมชาย · 100 บาท', buttons }] } });
+  assert.equal(card.type, 'flex'); if (card.type !== 'flex') return;
+  const data = JSON.stringify(card.contents); assert.match(data, /expense_action_approve/u); assert.match(data, /expense_action_reject/u);
+  assert.doesNotMatch(card.canonicalText!, /ไปทำในเว็บ|เปิดในเว็บ/u);
+});
+it('Round 3 claim controls preserve other entitled approval queues and remain hidden without claim permission', () => {
+  const pending = { reimbursement: { total: 1, items: [{ title: 'ใบเบิกค่าเดินทาง', buttons: reimbursementApprovalButtons('secret', 'company', 'user', 'claim') }] }, procurement: { total: 1, items: [{ title: 'คำขอซื้ออุปกรณ์' }] } };
+  const context = { displayName: 'สมใจ', roleLabel: 'ผู้จัดการ', branchScopeLabel: 'ทุกสาขา', companyId: 'company', permissions: ['reimbursement.approve', 'procurement.purchase_request.approve'], entitledFeatureKeys: null, webBaseUrl: 'https://app.example.com' };
+  const card = buildPendingApprovalCard(context, pending);
+  assert.equal(card.type, 'flex');
+  if (card.type === 'flex') assert.match(card.canonicalText!, /คำขอซื้ออุปกรณ์/u);
+  assert.doesNotMatch(JSON.stringify(buildPendingApprovalCard({ ...context, permissions: [] }, pending)), /expense_action_approve|ใบเบิกค่าเดินทาง/u);
 });

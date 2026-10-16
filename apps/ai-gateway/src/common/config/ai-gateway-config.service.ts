@@ -39,6 +39,7 @@ export class AiGatewayConfigService {
   get swaggerEnabled(): boolean { return this.config.SWAGGER_ENABLED; }
 
   get modelProvider(): string { return this.config.MODEL_PROVIDER; }
+  get anthropicApiKey(): string | undefined { return this.config.ANTHROPIC_API_KEY; }
   get openAiApiKey(): string | undefined { return this.config.OPENAI_API_KEY; }
   get openAiModel(): string { return this.config.OPENAI_MODEL; }
   get openAiProcessingRegion(): string | undefined { return this.config.OPENAI_PROCESSING_REGION; }

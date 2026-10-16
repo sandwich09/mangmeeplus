@@ -1,3 +1,10 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { PRODUCT_HELP_PACK, PRODUCT_HELP_DRAFT_PACK } from './approved-product-help';
+import { eligibleKnowledgeCards, knowledgeCardHash, knowledgePackHash, renderApprovedKnowledge, validateKnowledgePack, type KnowledgeAccess } from './approved-knowledge';
+const access = (): KnowledgeAccess => ({ release: '2.4.0', permissions: [], featureKeys: [], capabilities: [], member: true, now: new Date('2026-10-15T00:00:00Z') });
+const rehash = (pack: typeof PRODUCT_HELP_PACK) => { for (const card of pack.cards) card.contentHash = knowledgeCardHash(card); pack.contentHash = knowledgePackHash(pack); return pack; };
 /**
  * Registry drift guard: every tool name referenced by an agent ALLOWED_TOOLS set
  * must exist in LINE_TOOL_REGISTRY. If this test fails, a tool was removed from
@@ -338,5 +345,31 @@ describe('LINE_TOOL_REGISTRY – drift guard', () => {
         );
       }
     }
+  });
+});
+
+describe('round 5A pinned document help awaiting owner review', () => {
+  it('keeps the new immutable pack draft without claiming the original approval', () => {
+    validateKnowledgePack(PRODUCT_HELP_DRAFT_PACK);
+    assert.equal(PRODUCT_HELP_DRAFT_PACK.version, 5); assert.equal(PRODUCT_HELP_DRAFT_PACK.status, 'DRAFT');
+    assert.deepEqual(PRODUCT_HELP_DRAFT_PACK.reviewers, []); assert.equal(PRODUCT_HELP_DRAFT_PACK.cards.length, 16);
+    assert.equal(PRODUCT_HELP_PACK.cards.length, 12); assert.equal(PRODUCT_HELP_PACK.status, 'APPROVED');
+    assert.deepEqual(eligibleKnowledgeCards(PRODUCT_HELP_DRAFT_PACK, { ...access(), permissions: ['expense.disbursement.read', 'wht.certificate.read', 'wht.pnd53.read', 'expense.create'], featureKeys: ['expenses', 'wht_50bis', 'wht_pnd53'] }), []);
+    const root = resolve(__dirname, '../../../../../..');
+    for (const card of PRODUCT_HELP_DRAFT_PACK.cards.slice(12)) {
+      assert.equal(createHash('sha256').update(readFileSync(resolve(root, card.sourceFile))).digest('hex'), card.sourceHash);
+      assert.equal(card.contentHash, knowledgeCardHash(card));
+      const [guide, anchor] = card.sourceURL.split('/user-guide/')[1]!.split('#');
+      assert.ok(readFileSync(resolve(root, `apps/web/app/(workspace)/companies/[companyId]/user-guide/${guide}/page.tsx`)));
+      assert.ok(readFileSync(resolve(root, card.sourceFile), 'utf8').includes(`id: '${anchor}'`));
+    }
+  });
+  it('filters the proposed cards by their source permissions and sold features after a test-only review', () => {
+    const pack = structuredClone(PRODUCT_HELP_DRAFT_PACK); pack.status = 'APPROVED'; pack.reviewers = ['test-only-owner-review-fixture']; rehash(pack);
+    const all = { ...access(), permissions: ['expense.disbursement.read', 'wht.certificate.read', 'wht.pnd53.read', 'expense.create'], featureKeys: ['expenses', 'wht_50bis', 'wht_pnd53'] };
+    assert.deepEqual(eligibleKnowledgeCards(pack, all).filter(c => /^(voucher|wht)\./.test(c.id)).map(c => c.id), ['voucher.meaning', 'wht.certificate-meaning', 'wht.pnd53-due', 'wht.calculation']);
+    assert.deepEqual(eligibleKnowledgeCards(pack, { ...all, featureKeys: ['expenses'] }).filter(c => c.id.startsWith('wht.')), []);
+    assert.deepEqual(eligibleKnowledgeCards(pack, { ...all, permissions: [] }), []);
+    assert.equal(renderApprovedKnowledge(PRODUCT_HELP_DRAFT_PACK, ['wht.calculation'], all, 'company-A'), null);
   });
 });

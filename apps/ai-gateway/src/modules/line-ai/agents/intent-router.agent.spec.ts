@@ -459,7 +459,7 @@ describe('IntentRouterAgent – read-only tool boundary', () => {
       const meta = LINE_TOOL_REGISTRY.find((t) => t.name === name);
       assert.ok(meta, `enabled tool ${name} must exist in registry`);
       const previewTool = meta!.category === 'draft_update'
-        && (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(name);
+        && ((LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(name) || name === 'expense.action.preview' || name === 'counterparty.action.preview' || name === 'company.action.preview');
       assert.ok(readOnly.has(meta!.category) || previewTool,
         `enabled tool ${name} must be read-only or a draft_update preview, got ${meta!.category}`);
     }
@@ -1674,4 +1674,63 @@ describe('approved knowledge selection in the existing semantic route', () => {
       assert.deepEqual(result.intents, readPlan.intents);
     }
   });
+});
+
+
+describe('receipt/slip association route contract', () => {
+  it('offers a distinct evidence link route, preserves valid JSON, and clarifies low confidence', async () => {
+    for (const confidence of [0.98, 0.2]) {
+      const inputs: ProviderInput[] = [];
+      const router = new IntentRouterAgent({ generateText: async (input) => {
+        inputs.push(input);
+        return { ok: true, text: JSON.stringify({ intent: 'EXPENSE_PAYMENT_EVIDENCE_LINK', language: 'th', confidence }) };
+      } });
+      const plan = await router.routeIntake({ requestId: 'evidence-link', companyId: 'company', userId: 'user', locale: 'th-TH',
+        messageText: 'สลิปโอนเงินเป็นหลักฐานของค่าใช้จ่ายเมื่อกี้', permissions: ['expense.receipt.upload'],
+        recentCapturedExpenses: [{ id: 'receipt', label: 'รายการล่าสุด' }] } as any);
+      assert.equal(plan.status, 'ROUTED');
+      assert.equal(plan.intent, confidence > 0.5 ? 'EXPENSE_PAYMENT_EVIDENCE_LINK' : 'CLARIFY');
+      const prompt = inputs[0]!.systemPrompt ?? '';
+      assert.match(prompt, /"intent": "EXPENSE_PAYMENT_EVIDENCE_LINK"/);
+      assert.match(prompt, /NEVER route this to a new EXPENSE_DOCUMENT_CAPTURE/);
+      assert.match(INTENT_ROUTER_SYSTEM_PROMPT, /conversationContext.recentCapturedExpenses/);
+    }
+  });
+});
+
+import { createLineAiInputEvidence, LINE_CHAT_ACTIONS } from '@watchdog-bms/contracts';
+it('Fix-up 15: the metered intake selects a catalog action by meaning and ignores invented navigation', async () => {
+  const text = 'สร้างใบเบิกยังไง';
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'fx15-router', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+  for (const actionId of ['reimbursement_claim', 'invented_action']) {
+    const calls: ProviderInput[] = [];
+    const router = new IntentRouterAgent({ generateText: async input => {
+      calls.push(input);
+      return { ok: true, text: JSON.stringify({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1, howToActionId: actionId,
+        decisionV1: { subrequests: [{ kind: 'help', goal: 'สร้างใบเบิก', sources: [{ part: 0, whole: true }], filters: {} }] } }) };
+    } });
+    const plan = await router.routeIntake({ requestId: 'fx15', companyId: 'company', userId: 'user', locale: 'th-TH', messageText: text,
+      permissions: ['reimbursement.create'], enabledFeatures: [], inputEvidence: evidence, offeredToolNames: [] } as any);
+    assert.equal(calls.length, 1, 'uses the existing intake call');
+    assert.match(calls[0]!.systemPrompt!, /For ANY product action how-to/);
+    assert.deepEqual(JSON.parse(calls[0]!.messages[0]!.text).chatActions.map((action: any) => action.id), LINE_CHAT_ACTIONS.map(action => action.id));
+    assert.equal(plan.howToActionId, actionId === 'reimbursement_claim' ? actionId : undefined);
+    assert.equal(plan.semanticSubrequests?.[0]?.kind, 'help');
+  }
+});
+
+it('Fix-up 17B: personal payout setup and its bank-detail continuation select the web entry without a purpose question', async () => {
+  for (const text of ['เพิ่มบัญชีรับเงินคืนของฉันทำยังไง', 'ทำให้หน่อย ธนาคารกสิกรไทย เลขบัญชี 123-4-56789-0 ชื่อบัญชีเป็นชื่อฉันเอง']) {
+    const evidence = (await createLineAiInputEvidence({ turnKey: 'fx17b-payout', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const router = new IntentRouterAgent({ generateText: async input => {
+      assert.match(input.systemPrompt!, /payout_account with kind help/);
+      assert.match(input.systemPrompt!, /never write bank details or ask their purpose first/);
+      return { ok: true, text: JSON.stringify({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1, howToActionId: 'payout_account',
+        decisionV1: { subrequests: [{ kind: 'help', goal: 'ตั้งบัญชีรับเงินคืนส่วนตัวบนเว็บ', sources: [{ part: 0, whole: true }], filters: {} }] } }) };
+    } });
+    const plan = await router.routeIntake({ requestId: 'fx17b-payout', companyId: 'company', userId: 'user', messageText: text, locale: 'th-TH', inputEvidence: evidence,
+      contractCapabilities: ['input-evidence-v2'], permissions: ['reimbursement.create'] } as any);
+    assert.equal(plan.howToActionId, 'payout_account'); assert.equal(plan.semanticSubrequests?.[0]?.kind, 'help');
+    assert.equal(plan.clarifyQuestion, undefined);
+  }
 });

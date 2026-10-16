@@ -4,6 +4,13 @@ import { CoverageCriticAgent, parseCoverage, COVERAGE_CRITIC_SYSTEM_PROMPT } fro
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
 
 describe('parseCoverage (item 10F)', () => {
+  it('F3/F5: guards model questions before they enter coverage or LINE replies', () => {
+    for (const question of ['เก็บข้อมูลแล้วค่ะ', '## ขอข้อมูล\n**สาขาไหนคะ**']) {
+      const result = parseCoverage(JSON.stringify([{ request: 'รายการนี้', verdict: 'needs_user', question }]));
+      assert.ok(result?.[0]?.question);
+      assert.doesNotMatch(result[0].question, /เก็บข้อมูลแล้ว|[*#]/u);
+    }
+  });
   it('parses plain and fenced JSON arrays with bounded fields', () => {
     const raw = [
       { request: 'ยอดขายวันนี้', verdict: 'covered' },

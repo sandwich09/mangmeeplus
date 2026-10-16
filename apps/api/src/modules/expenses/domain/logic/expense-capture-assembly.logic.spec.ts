@@ -7,6 +7,8 @@
  * (A54) and a document that says it is page 1 of 3 in a two-page file (A82).
  */
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
 import type {
   BusinessDocumentClassification,
@@ -17,6 +19,7 @@ import type {
   ExpenseCaptureTotalObservation,
 } from '@watchdog-bms/contracts';
 import { assembleCaptureObservations, planWindows } from './expense-capture-assembly.logic';
+import { isExpenseExtractionEligible } from './expense-document.logic';
 
 describe('complete capture extraction windows', () => {
   it('keeps every long-page character and the bottom total with original offsets', () => {
@@ -80,7 +83,92 @@ function observations(over: Partial<ExpenseCaptureObservations> = {}): ExpenseCa
 }
 
 const assemble = (windows: ExpenseCaptureObservations[], pageCount = 1) =>
-  assembleCaptureObservations(windows.map((value, index) => ({ id: `w${index + 1}`, observations: value })), { pageCount });
+  assembleCaptureObservations(windows.map((value, index) => ({ id: `w${index + 1}`, pageIndexes: [...new Set(value.documents.flatMap(document => document.pageIndexes).concat(value.completeness.pagesCovered))], observations: value })), { pageCount });
+
+it('D2: assembled classification keeps missing settlement, real review, contradictions, gaps and mismatches blocking', () => {
+  const first = observations({ documents: [document({ classification: { ...classification, transactionState: 'DUE', requiresClarification: true,
+    missingRequiredSignals: ['HUMAN_REVIEW_REQUIRED'] } })], items: [item({ id: '0:1', amount: '50.00' })] });
+  const last = observations({ documents: [document({ pageIndexes: [1], continuationOfRef: 'd1', kind: 'SUPPLIER_INVOICE_OR_BILL', issuer: {},
+    classification: { ...classification, documentKind: 'SUPPLIER_INVOICE_OR_BILL', transactionState: 'DUE', settlementSignals: [] } })],
+    items: [item({ id: '1:1', amount: '50.00' })], totals: [total('document_total', '100.00')],
+    completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [1], notes: [] } });
+  const merged = assemble([first, last], 2);
+  assert.equal(merged.documents[0]!.classification.requiresClarification, false);
+  assert.equal(isExpenseExtractionEligible(merged.documents[0]!.classification, '100.00', true), false, 'a total is never proof that a receipt is paid');
+  const unpaidHeader = structuredClone(first), paidFooter = structuredClone(last);
+  unpaidHeader.documents[0]!.classification.missingRequiredSignals.push('MISSING_PAYMENT_EVIDENCE');
+  paidFooter.documents[0]!.classification = { ...paidFooter.documents[0]!.classification, transactionState: 'PAID',
+    settlementSignals: ['ชำระแล้ว 100.00'], missingRequiredSignals: ['MISSING_VENDOR'], requiresClarification: true };
+  const settled = assemble([unpaidHeader, paidFooter], 2).documents[0]!;
+  assert.equal(settled.classification.documentKind, 'RECEIPT', 'the footer inherits the first header kind');
+  assert.equal(settled.issuer!.name, 'ร้านตัวอย่าง');
+  assert.equal(settled.classification.requiresClarification, false);
+  assert.equal(isExpenseExtractionEligible(settled.classification, '100.00', true), true, 'assembled header and actual later payment evidence resolve both missing signals');
+  for (const defect of ['review', 'contradiction', 'mismatch', 'gap', 'unreadable', 'truncated']) {
+    const a = structuredClone(first), b = structuredClone(last);
+    if (defect === 'review') b.documents[0]!.classification = { ...b.documents[0]!.classification, requiresClarification: true, missingRequiredSignals: ['HUMAN_REVIEW_REQUIRED'] };
+    if (defect === 'contradiction') b.documents[0]!.classification.contradictionSignals = ['CONTRADICTORY_SIGNALS'];
+    if (defect === 'mismatch') b.totals[0]!.amount = '120.00';
+    if (defect === 'unreadable') b.completeness.unreadableRows = 1;
+    if (defect === 'truncated') b.completeness.itemsTruncated = true;
+    const out = assemble([a, b], defect === 'gap' ? 3 : 2);
+    assert.equal(out.documents[0]!.classification.requiresClarification, true, defect);
+  }
+});
+
+describe('OCR-C benchmark VAT and issuer identity', () => {
+  for (const [subtotal, vat, grand] of [
+    ['560,360.75', '39,225.25', '599,586.00'], ['796,262.25', '55,738.36', '852,000.61'],
+    ['1,050,447.00', '73,531.29', '1,123,978.29'], ['1,670,195.75', '116,913.70', '1,787,109.45'],
+  ]) it(`reconciles the printed exclusive VAT ${vat} once`, () => {
+    for (const inclusive of [false, true]) {
+      const result = assemble([observations({ items: [item({ id: 'p0', amount: inclusive ? grand : subtotal })],
+        totals: [total('merchandise', subtotal!), total('tax', vat!), total('document_total', grand!)] })]);
+      assert.equal(result.reconciliation[0]!.status, 'reconciled');
+      assert.equal(result.reconciliation[0]!.difference, '0');
+    }
+  });
+
+  it('keeps real exclusive VAT differences visible and never invents missing tax', () => {
+    const read = observations({ items: [item({ id: 'p0', amount: '99.00' })],
+      components: [component({ id: 'vat', role: 'tax_additional', scope: 'document', amount: '7.00' })],
+      totals: [total('tax', '7.00'), total('document_total', '107.00')] });
+    assert.equal(assemble([read]).reconciliation[0]!.computedTotal, '106');
+    assert.equal(assemble([read]).reconciliation[0]!.difference, '-1');
+    read.components = []; read.totals = [total('document_total', '107.00')];
+    assert.equal(assemble([read]).reconciliation[0]!.status, 'mismatch');
+    assert.equal(assemble([read]).reconciliation[0]!.computedTotal, '99');
+  });
+
+  it('retains first valid identity and evidence through later name-only, blank and invalid windows', () => {
+    const proof = { attachmentId: 'a', checksumSha256: 'a'.repeat(64), pageIndex: 0,
+      localSpan: { start: 0, end: 13 }, rawValue: '0105473325385', role: 'document:issuer.taxId' };
+    const header = observations({ documents: [document({ issuer: { name: 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด',
+      taxId: '0105473325385', branchCode: 'สำนักงานใหญ่', address: '326/24 ถนนจำลอง' }, fieldEvidence: { 'issuer.taxId': proof } })] });
+    const later = (issuer: ExpenseCaptureDocumentObservation['issuer'], page: number) => observations({
+      documents: [document({ pageIndexes: [page], continuationOfRef: 'd1', issuer })],
+    });
+    const result = assemble([header, later({ name: 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด' }, 1),
+      later({ taxId: '', branchCode: '', address: '' }, 2), later({ taxId: '123' }, 3)], 4);
+    assert.deepEqual(result.documents[0]!.issuer, header.documents[0]!.issuer);
+    assert.deepEqual(result.documents[0]!.fieldEvidence?.['issuer.taxId'], proof);
+    assert.equal(result.documents[0]!.classification.requiresClarification, false);
+    const repaired = assemble([later({ name: 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด', taxId: '123', address: '' }, 0), header]);
+    assert.equal(repaired.documents[0]!.issuer.taxId, '0105473325385');
+    assert.equal(repaired.documents[0]!.issuer.address, '326/24 ถนนจำลอง');
+  });
+
+  it('flags a different valid continuation tax ID without mixing or replacing the issuer', () => {
+    const first = observations({ documents: [document({ issuer: { name: 'บริษัท ออฟฟิศซัพพลายจำลอง จำกัด', taxId: '0105473325385' } })] });
+    const next = observations({ documents: [document({ pageIndexes: [1], continuationOfRef: 'd1',
+      issuer: { taxId: '0105453059060', address: 'ที่อยู่คนละบริษัท' } })] });
+    const result = assemble([first, next], 2).documents[0]!;
+    assert.equal(result.issuer.taxId, '0105473325385'); assert.equal(result.issuer.address, undefined);
+    assert.equal(result.classification.requiresClarification, true);
+    assert.ok(result.classification.contradictionSignals.includes('CONTRADICTORY_SIGNALS'));
+    assert.equal(first.documents[0]!.classification.requiresClarification, false, 'raw window remains unchanged');
+  });
+});
 
 it('split-page source ids retain both rows and deduplicate only the same source row', () => {
   const head = observations({ items: [item({ id: 'item:p0:s10:e20', amount: '10.00' })] });
@@ -575,4 +663,56 @@ describe('capture assembly — W10 D2: non-VAT goods are not a discount', () => 
     assert.equal(result.components[0]!.role, 'charge');
     assert.equal(result.reconciliation[0]!.computedTotal, '150');
   });
+});
+
+ it('merges shuffled pages deterministically: first header, all rows, latest printed totals', () => {
+  const first = observations({ documents: [document({ issuer: { name: 'First header' } })], items: [item({ id: 'p0', amount: '10.00' })], totals: [total('document_total', '10.00'), total('tax', '0.70')] });
+  const last = observations({ documents: [document({ pageIndexes: [2], continuationOfRef: 'd1', issuer: { name: 'Repeated header' } })], items: [item({ id: 'p2', amount: '30.00' })], totals: [total('document_total', '60.00'), total('tax', '4.20')] });
+  const middle = observations({ documents: [document({ pageIndexes: [1], continuationOfRef: 'd1' })], items: [item({ id: 'p1', amount: '20.00' })] });
+  const result = assembleCaptureObservations([{ id: 'w3', pageIndexes: [2], observations: last }, { id: 'w1', pageIndexes: [0], observations: first }, { id: 'w2', pageIndexes: [1], observations: middle }], { pageCount: 3 });
+  assert.equal(result.documents[0]!.issuer!.name, 'First header');
+  assert.deepEqual(result.items.map(row => row.id), ['p0', 'p1', 'p2']);
+  assert.equal(result.totals.find(row => row.kind === 'document_total')!.amount, '60.00');
+  assert.equal(result.totals.find(row => row.kind === 'tax')!.amount, '4.20');
+ });
+
+ it('plans one extraction page per call in physical page order', () => {
+  const windows = planWindows({ '2': { text: 'last total' }, '0': { text: 'header' }, '1': { text: 'rows' } });
+  assert.deepEqual(windows.map(window => window.pageIndexes), [[0], [1], [2]]);
+ });
+
+const livePdf = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/live-r10-pdf-excerpts.json'), 'utf8'));
+
+it('R10 Q3: the printed 1,050,447 goods subtotal cannot be added again as a charge', () => {
+  const rows = livePdf.rows.map((row: any) => item(row));
+  for (const includeSubtotal of [false, true]) {
+    const result = assemble([observations({ items: rows,
+      components: [component({ id: 'subtotal-charge', role: 'charge', scope: 'document', label: 'รวมเงิน', amount: '1,050,447' }),
+        component({ id: 'delivery', role: 'charge', scope: 'shipping', label: 'ค่าจัดส่ง', amount: '100' })],
+      totals: [...(includeSubtotal ? [total('merchandise', '1,050,447')] : []), total('document_total', '1050547')] })]);
+    assert.equal(result.items.length, 70); assert.deepEqual(result.components.map(row => row.id), ['delivery']);
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+  }
+  const printed = assemble([observations({ items: [item({ id: 'partial', amount: '10' })],
+    components: [component({ id: 'subtotal', role: 'charge', scope: 'document', label: 'รวมเงิน', amount: '1,050,447' })],
+    totals: [total('merchandise', '1050447'), total('document_total', '1050447')] })]);
+  assert.equal(printed.components.length, 0); assert.equal(printed.reconciliation[0]!.status, 'mismatch', 'missing rows remain blocked');
+});
+
+it('R10 Q3: the recorded 70 rows plus a signature-only third window assemble without a false document or charge', () => {
+  const windows = [0, 1, 2].map(page => ({ id: `w${page + 1}`, pageIndexes: [page], observations: observations({
+    documents: page === 2 ? [] : [document({ pageIndexes: [page], documentDate: page === 0 ? '2026-08-16' : undefined,
+      ...(page ? { continuationOfRef: 'd1' } : {}), classification: { ...classification, evidenceSignals: ['TAX INVOICE / RECEIPT'], amountSignals: [livePdf.total], settlementSignals: ['RECEIPT'], requiresClarification: page === 0, missingRequiredSignals: page === 0 ? ['HUMAN_REVIEW_REQUIRED'] : [] } })],
+    items: livePdf.rows.filter((row: any) => row.pageIndex === page).map((row: any) => item(row)),
+    components: page === 1 ? [component({ id: 'subtotal', label: 'รวมเงิน', role: 'charge', scope: 'document', amount: livePdf.subtotal }),
+      component({ id: 'vat', label: 'ภาษีมูลค่าเพิ่ม 7%', role: 'tax_additional', scope: 'document', amount: livePdf.vat })] : [],
+    totals: page === 1 ? [total('merchandise', livePdf.subtotal), total('tax', livePdf.vat), total('document_total', livePdf.total)] : [],
+    completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [page], notes: [] },
+  }) }));
+  const assembled = assembleCaptureObservations(windows, { pageCount: 3 });
+  assert.deepEqual(assembled.completeness.pagesCovered, [0, 1, 2]); assert.equal(assembled.documents.length, 1);
+  assert.equal(assembled.items.length, 70); assert.deepEqual(assembled.components.map(row => row.id), ['vat']);
+  assert.equal(assembled.reconciliation[0]!.status, 'reconciled');
+  assert.equal(assembled.documents[0]!.classification.requiresClarification, false);
+  assert.equal(isExpenseExtractionEligible(assembled.documents[0]!.classification, livePdf.total, true), true);
 });

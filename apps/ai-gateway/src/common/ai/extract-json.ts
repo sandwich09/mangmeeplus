@@ -3,7 +3,8 @@
  *  one hardening surface instead of four divergent copies. */
 export function extractJson(text: string): string {
   const current = legacyExtract(text);
-  if (parsesAsObject(current)) return current;
+  if (parsesAsObject(current)
+    && !/^,\s*"fields"\s*:\s*\{/.test(text.slice(text.indexOf('{') + current.length).trim())) return current;
   // tuning-6a (E1, eval run 5 malformedRouter): the legacy slice above only ever grabs from the
   // FIRST '{' to the LAST '}', so it overshoots whenever the current candidate fails to parse.
   // Try progressively more invasive repairs and return the first one that actually parses;
@@ -13,7 +14,19 @@ export function extractJson(text: string): string {
     const object = firstBalancedObject(text, escapeStrayQuotes);
     if (object === undefined) continue;
     const candidate = escapeControlCharsInStrings(object);
-    if (parsesAsObject(candidate)) return candidate;
+    if (parsesAsObject(candidate)) {
+      // Receipt extraction sometimes closes the root after classification, then writes fields.
+      // Rejoin only this shape, before the generic fallback discards the financial fields.
+      const head = JSON.parse(candidate) as Record<string, unknown>;
+      const tail = text.slice(text.indexOf('{') + object.length).trim().replace(/\s*```$/, '');
+      if (Object.keys(head).length === 1 && head['classification']
+        && /^,\s*"fields"\s*:\s*\{/.test(tail)) {
+        const joined = escapeControlCharsInStrings(object.slice(0, -1) + tail);
+        if (parsesAsObject(joined)) return joined;
+        return candidate + tail; // A truncated financial sibling still needs the normal repair path.
+      }
+      return candidate;
+    }
   }
   return current;
 }
