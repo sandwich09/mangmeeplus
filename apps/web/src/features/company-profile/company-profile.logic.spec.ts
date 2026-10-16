@@ -454,8 +454,9 @@ describe('the profile route is reachable and dynamic', () => {
     const item = SETTINGS_MENU_ITEMS.find((entry) => entry.href === '/settings/profile');
     assert.ok(item, 'the settings menu must carry the profile card');
     assert.equal(item.title, 'ข้อมูลร้าน');
-    assert.deepEqual(findRoutePermissionRule('/settings/profile')?.anyOf, ['company.setup.read']);
+    assert.deepEqual(findRoutePermissionRule('/settings/profile')?.anyOf, ['company.setup.read', 'company.setup.manage']);
     assert.equal(canSeeRoute('/settings/profile', ['company.setup.read']), true);
+    assert.equal(canSeeRoute('/settings/profile', ['company.setup.manage']), true);
     assert.equal(canSeeRoute('/settings/profile', ['expense.read']), false);
   });
 

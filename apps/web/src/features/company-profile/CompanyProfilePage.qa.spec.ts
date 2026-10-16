@@ -566,3 +566,14 @@ it('UX4 the substitute certificate detour has its own return action before and a
   }
   assert.match(source, /id="vat-status"\s+aria-label="ร้านจดทะเบียน VAT หรือยัง"/);
 });
+
+it('settings view-only and legacy settings manage-only render masked facts without shop actions', () => {
+  for (const permissions of [['company.setup.read', 'company.branch.read', 'document.sequence.read'], ['company.setup.manage']]) {
+    const html = renderLoaded({ permissions, identity: MASKED_IDENTITY });
+    const shop = html.slice(html.indexOf('id="shop"'), html.indexOf('id="account"') > -1 ? html.indexOf('id="account"') : undefined);
+    assert.match(shop, /บริษัท มั่งมี จำกัด/);
+    assert.match(shop, /ลงท้าย 3456/);
+    assert.doesNotMatch(shop, /<button|<input|<textarea|<select/);
+    assert.doesNotMatch(shop, /บันทึกข้อมูลร้าน/);
+  }
+});

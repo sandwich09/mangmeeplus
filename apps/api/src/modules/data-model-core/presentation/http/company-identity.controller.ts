@@ -20,7 +20,7 @@ import {
   type LegalIdentityCorrectionReason,
   type UserLegalIdentityChangeKind,
 } from '@watchdog-bms/contracts';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { CompanyIdentityUseCase } from '../../application/use-cases/company-identity.use-case';
@@ -59,7 +59,7 @@ export class CompanyIdentityController {
   // sees the control block and a masked identity. The full value needs company.legal_identity.read,
   // which the use case checks per section.
   @Get()
-  @RequirePermissions('company.setup.read')
+  @RequireAnyPermission('company.setup.read', 'company.setup.manage')
   @ApiOperation({ summary: 'Read company tax identity, filtered per permission' })
   async get(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string) {
     assertRouteCompany(ctx, companyId);

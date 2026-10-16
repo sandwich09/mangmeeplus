@@ -154,20 +154,18 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
       await expect(member).toHaveURL(new RegExp(`/companies/${shop}/settings/profile$`));
     });
 
-    await test.step('owner: adds ดูตั้งค่าร้าน and จัดการตั้งค่าร้าน to the same role; member reloads and finds ตั้งค่าร้าน › ข้อมูลร้าน in the menu', async () => {
+    await test.step('owner: adds ดูตั้งค่าร้าน alone; member finds ข้อมูลร้าน in the menu and can only read', async () => {
       await pressMenu(owner, 'บทบาทและสิทธิ์', 'พนักงานและสิทธิ์');
       await expect(heading(owner, 'บทบาทและสิทธิ์')).toBeVisible(FIRST_SIGHT);
       await cardWith(owner, 'บทบาททั้งหมด').getByRole('button').filter({ has: owner.getByText(roleName, { exact: true }) }).click();
       await main.getByRole('button', { name: 'แก้ไขบทบาท', exact: true }).click();
       const editor = main.locator('form').filter({ has: owner.getByRole('heading', { name: `แก้ไขบทบาท ${roleName}`, exact: true }) });
       await expect(editor.getByRole('checkbox', { name: /^บันทึกค่าใช้จ่ายของฉัน/ })).toBeChecked();
-      // Both packs: ดูตั้งค่าร้าน alone opens the page with no menu, จัดการตั้งค่าร้าน alone shows the menu and the page
-      // refuses (2026-10-16, asked of the owner). Together they give the menu and the page.
       await editor.getByRole('checkbox', { name: /^ดูตั้งค่าร้าน/ }).check();
-      await editor.getByRole('checkbox', { name: /^จัดการตั้งค่าร้าน/ }).check();
+      await expect(editor.getByRole('checkbox', { name: /^จัดการตั้งค่าร้าน/ })).not.toBeChecked();
       await editor.getByRole('button', { name: 'บันทึกบทบาท', exact: true }).click();
       await expect(toast(owner, `บันทึกบทบาท ${roleName} แล้ว`)).toBeVisible(AFTER_PRESS);
-      await expect(main.getByTestId('role-can-do')).toContainText('จัดการตั้งค่าร้าน');
+      await expect(main.getByTestId('role-can-do')).toContainText('ดูตั้งค่าร้าน');
       await member.reload();
       await expect(heading(member, 'ข้อมูลร้าน')).toBeVisible(FIRST_SIGHT);
       await member.locator('header').getByRole('button', { name: 'สลับเมนู', exact: true }).click();
@@ -175,6 +173,28 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
       await pressMenu(member, 'ข้อมูลร้าน', 'ตั้งค่าร้าน');
       await expect(heading(member, 'ข้อมูลร้าน')).toBeVisible(FIRST_SIGHT);
       await expect(member.getByText('ไม่มีสิทธิ์เข้าถึง', { exact: true })).toHaveCount(0);
+      await expect(member.locator('main').getByRole('button', { name: 'บันทึกข้อมูลร้าน', exact: true })).toHaveCount(0);
+    });
+
+    await test.step('owner: manage automatically includes view; member can add a branch, the shop tax facts stay read-only', async () => {
+      await main.getByRole('button', { name: 'แก้ไขบทบาท', exact: true }).click();
+      const editor = main.locator('form').filter({ has: owner.getByRole('heading', { name: `แก้ไขบทบาท ${roleName}`, exact: true }) });
+      // Clear the previous view choice first, to prove that manage selects it automatically.
+      const view = editor.getByRole('checkbox', { name: /^ดูตั้งค่าร้าน/ });
+      await view.uncheck();
+      await editor.getByRole('checkbox', { name: /^จัดการตั้งค่าร้าน/ }).check();
+      await expect(view).toBeChecked();
+      await expect(view).toBeDisabled();
+      await expect(editor.getByText('ต้องดูตั้งค่าร้านได้ก่อน จึงจะจัดการตั้งค่าร้านได้', { exact: true })).toBeVisible();
+      await editor.getByRole('button', { name: 'บันทึกบทบาท', exact: true }).click();
+      await expect(toast(owner, `บันทึกบทบาท ${roleName} แล้ว`)).toBeVisible(AFTER_PRESS);
+      await member.reload();
+      await expect(heading(member, 'ข้อมูลร้าน')).toBeVisible(FIRST_SIGHT);
+      // The shop's registered name, tax number and address are their own right (แก้ไขข้อมูลภาษีร้าน), not settings manage.
+      await expect(member.locator('main').getByRole('button', { name: 'บันทึกข้อมูลร้าน', exact: true })).toHaveCount(0);
+      await pressMenu(member, 'สาขา', 'ตั้งค่าร้าน');
+      await expect(heading(member, 'สาขา')).toBeVisible(FIRST_SIGHT);
+      await expect(member.locator('main').getByRole('button', { name: '+ เพิ่มสาขา', exact: true })).toBeVisible(AFTER_PRESS);
     });
 
     await test.step('owner: switches the member off; the next page load refuses access with a way out', async () => {

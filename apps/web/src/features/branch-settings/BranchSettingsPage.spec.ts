@@ -51,3 +51,31 @@ test('payer question is only for multiple active branches and legal-identity edi
   assert.match(source, /กลับไปภาษีหัก ณ ที่จ่าย/);
   assert.match(source, /ใช้รหัส 5 หลักนี้ยื่นแบบภาษีหัก ณ ที่จ่ายในนามสาขาที่จ่าย/);
 });
+
+test('view-only branch page renders facts and no add, edit or save controls', () => {
+  const React = require('react');
+  (globalThis as any).React = React;
+  const { renderToStaticMarkup } = require('react-dom/server');
+  const { ToastContext } = require('@/common/components/toast/use-toast');
+  const priorSvg = require.extensions['.svg'];
+  require.extensions['.svg'] = (module) => { module.exports = () => null; };
+  const Page = require('./BranchSettingsPage').default;
+  if (priorSvg) require.extensions['.svg'] = priorSvg; else delete require.extensions['.svg'];
+  const original = React.useState;
+  let seeded = false;
+  React.useState = (initial: unknown) => {
+    if (Array.isArray(initial) && !seeded) {
+      seeded = true;
+      return [[{ id: 'branch', name: 'สำนักงานใหญ่', code: 'HO', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00000' }], () => {}];
+    }
+    return original(initial === true ? false : initial);
+  };
+  try {
+    const html = renderToStaticMarkup(React.createElement(ToastContext.Provider, { value: { success() {}, warning() {}, error() {} } },
+      React.createElement(Page, { companyId: 'shop', permissions: ['company.setup.read', 'company.branch.read', 'document.sequence.read'] })));
+    assert.match(html, /สำนักงานใหญ่/);
+    assert.match(html, /00000/);
+    assert.doesNotMatch(html, /<button|<input|<textarea|<select/);
+    assert.doesNotMatch(html, /เพิ่มสาขา|แก้ไขสาขา|>บันทึก</);
+  } finally { React.useState = original; }
+});

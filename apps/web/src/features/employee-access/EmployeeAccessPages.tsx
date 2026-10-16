@@ -12,7 +12,7 @@ import { Notice } from '@/common/components/notice';
 import { choiceInputClass } from '@/common/components/field';
 import { primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
 import { type SupportedLocale } from '@/common/i18n/workspace-dictionary';
-import { roleDisplayName, roleTemplateChoices } from './role-picker.logic';
+import { roleDisplayName, roleTemplateChoices, settingsViewIncluded } from './role-picker.logic';
 import { employeeFullName } from '@watchdog-bms/contracts';
 import type {
   CapabilityPackView, RiskLevel, RolePreviewResult, RoleTemplate, PermissionCatalogItem,
@@ -906,7 +906,7 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
   const locale = useWorkspaceLocale();
   const coreKeys = useMemo(() => new Set(allPacks.filter((p) => p.isCore).flatMap((p) => p.permissionKeys)), [allPacks]);
   const availablePackKeys = useMemo(
-    () => new Set(allPacks.filter((p) => !p.isCore && !p.locked && p.grantableByCurrentUser).map((p) => p.key)),
+    () => new Set(settingsViewIncluded(allPacks.filter((p) => !p.isCore && !p.locked && p.grantableByCurrentUser).map((p) => p.key))),
     [allPacks],
   );
 
@@ -914,7 +914,7 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
   const [description, setDescription] = useState(initial?.description ?? '');
   // Round-trip an edited role: visible packs become toggles; unmatched keys stay preserved but hidden.
   const initSelected = useMemo(
-    () => (initial ? coveredPacks(initial.permissionKeys, allPacks).filter((p) => availablePackKeys.has(p.key)).map((p) => p.key) : []),
+    () => settingsViewIncluded(initial ? coveredPacks(initial.permissionKeys, allPacks).filter((p) => availablePackKeys.has(p.key)).map((p) => p.key) : []),
     [initial, allPacks, availablePackKeys],
   );
   const [selectedPacks, setSelectedPacks] = useState<string[]>(initSelected);
@@ -930,12 +930,12 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
   const [error, setError] = useState<string | null>(null);
 
   const togglePack = (key: string) =>
-    setSelectedPacks((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+    setSelectedPacks((prev) => settingsViewIncluded(prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
   const applyPreset = (tpl: RoleTemplate) => {
     // Expand the preset into pack toggles client-side; the compiled keys are identical to sending the
     // template key, but this keeps deselecting a preset pack working (the API unions template packs).
     // Only its tick boxes: a pack every role holds automatically has none, and the API adds it anyway.
-    setSelectedPacks(roleTemplateChoices(tpl, allPacks, availablePackKeys) ?? []);
+    setSelectedPacks(settingsViewIncluded(roleTemplateChoices(tpl, allPacks, availablePackKeys) ?? []));
     setPreservedKeys([]);
     if (!name) setName(tpl.nameTh);
   };
@@ -1052,15 +1052,16 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
                       <div className="space-y-1.5">
                         {shown.map((p) => {
                           const checked = selectedPacks.includes(p.key);
+                          const requiredForSettings = p.key === 'pack.company.settings.view' && selectedPacks.includes('pack.company.settings.manage');
                           return (
                             <label key={p.key} className={`flex min-h-11 min-w-0 items-start gap-3 rounded-lg border px-3 py-2.5 text-sm [overflow-wrap:anywhere] ${checked ? 'border-brand-200 bg-brand-50' : 'border-gray-200 bg-white hover:border-brand-300'}`}>
-                              <input type="checkbox" className={choiceInputClass} checked={checked} onChange={() => togglePack(p.key)} />
+                              <input type="checkbox" className={choiceInputClass} checked={checked} disabled={requiredForSettings} onChange={() => togglePack(p.key)} />
                               <span className="min-w-0 flex-1">
                                 <span className="flex flex-wrap items-center gap-1.5">
                                   <span className="font-semibold text-gray-800">{p.nameTh}</span>
                                   <RiskBadge risk={p.riskLevel} />
                                 </span>
-                                <span className="block text-gray-600">{p.description}</span>
+                                <span className="block text-gray-600">{requiredForSettings ? 'ต้องดูตั้งค่าร้านได้ก่อน จึงจะจัดการตั้งค่าร้านได้' : p.description}</span>
                               </span>
                             </label>
                           );
