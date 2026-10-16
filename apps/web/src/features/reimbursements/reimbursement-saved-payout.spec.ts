@@ -85,7 +85,7 @@ it('saved account validation names the first failing field including holder and 
 });
 it('saved refusals have actionable Thai messages, including holder validation and future payment guards', () => {
   for (const code of ['payout_saved_account_not_found', 'payout_saved_account_limit', 'payout_saved_account_duplicate', 'payout_saved_account_is_default', 'payout_default_must_be_own', 'payout_third_party_acceptance_required', 'payout_third_party_needs_approval', 'payment_currency_mismatch', 'payment_source_bank_account_invalid', 'payout_holder_type_invalid', 'payout_holder_note_invalid', 'payout_saved_account_label_invalid']) {
-    const text = translateApiError(code); assert.ok(text, code); assert.doesNotMatch(text!, /[A-Za-z_]/); assert.match(text!, /กรุณา|เลือก|ติ๊ก|ระบุ|ลบ|ใช้|ยกเลิก/);
+    const text = translateApiError(code); assert.ok(text, code); assert.doesNotMatch(text!, /[A-Za-z_]/); assert.match(text!, /กรุณา|เลือก|ติ๊ก|ระบุ|ลบ|ใช้|ยกเลิก|แก้/);
   }
 });
 it('saved API client uses the five contracted routes and delete accepts 204', async () => {
@@ -116,7 +116,9 @@ it('saved rows expose audited reveal and own-only promotion with 44px actions', 
   assert.doesNotMatch(row(other), /ตั้งเป็นบัญชีประจำ/);
   for (const account of [saved, other, { ...saved, payoutKind: 'PROMPTPAY_PHONE' as const }]) {
     const html = row(account);
-    assert.match(html, /ลบบัญชี/); assert.match(html, /min-h-11/);
+    // The shared buttons (44 px high on a phone by the shared rule) in one group; deleting is the red one, and a row has no main button.
+    assert.match(html, /<div class="mangmee-actions"><button type="button" class="mangmee-btn mangmee-btn-danger"[^>]*>ลบบัญชี<\/button>/);
+    assert.doesNotMatch(html, /mangmee-btn-primary/);
     assert.match(html, account.payoutKind === 'PROMPTPAY_PHONE' ? /แสดงเบอร์พร้อมเพย์/ : /แสดงเลขบัญชี/);
     assert.doesNotMatch(html, /00123456789/);
   }

@@ -1,4 +1,5 @@
-import { Controller, Delete, Get, Post, Patch, Param, Body, Query, HttpCode, UseGuards } from '@nestjs/common';
+import type { ReimbursementHubBootstrap } from '@watchdog-bms/contracts';
+import { Controller, Delete, Get, Post, Patch, Param, Body, Query, HttpCode, UseGuards, ParseEnumPipe } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
@@ -124,6 +125,28 @@ export class ReimbursementController {
 
   // ---- Static routes (declared before :requestId) ----
 
+  @Get('hub')
+  @RequirePermissions('account.session.read')
+  async hub(@ReqCtx() ctx: RequestContext): Promise<ReimbursementHubBootstrap> {
+    const canReview = ctx.permissions.includes('reimbursement.finance_review');
+    const canPay = ctx.permissions.includes('reimbursement.payment.record');
+    const [policy, approvals, finance, list] = await Promise.all([
+      this.listRequests.hubPolicy(ctx), this.approvalQueue.execute(ctx),
+      canReview || canPay ? this.financeQueue.execute(ctx) : Promise.resolve([]),
+      ctx.permissions.some(permission => ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own'].includes(permission))
+        ? this.listRequests.execute(ctx, { pageSize: 1 }) : Promise.resolve(null),
+    ]);
+    return { ...policy, hasApprovalTasks: approvals.length > 0, listCounts: {
+      ...(list ? { mine: list.total } : {}), approvals: approvals.length, ...(canReview || canPay ? { finance: finance.length } : {}),
+    }, queueCounts: {
+      approvals: approvals.filter(row => row.approvalActions.canApprove).length,
+      ...(canReview || canPay ? { finance: finance.filter(row => !row.cancellationPending && (
+        row.status === 'FINANCE_REVIEW' ? canReview && row.financeReviewStatus !== 'APPROVED_FOR_PAYMENT'
+          : canPay && row.status === 'READY_FOR_PAYMENT' && !!row.branchId && !row.hasDuplicateBlocker && !row.duplicateReasons?.includes('EXPENSE_CONFIRMATION')
+      )).length } : {}),
+    } };
+  }
+
   @Get('approval-queue')
   // The pending-step snapshot is the real capability. `account.session.read` keeps the global
   // deny-by-default guard explicit while the use case narrows the result to this exact assignee.
@@ -134,7 +157,7 @@ export class ReimbursementController {
   }
 
   @Get('finance-queue')
-  @RequirePermissions('reimbursement.finance_review')
+  @RequireAnyPermission('reimbursement.finance_review', 'reimbursement.payment.record')
   @ApiOperation({ summary: 'List reimbursement finance queue' })
   listFinanceQueue(@ReqCtx() ctx: RequestContext) {
     return this.financeQueue.execute(ctx);
@@ -198,9 +221,10 @@ export class ReimbursementController {
     @Query('pageSize') pageSize?: string,
     @Query('bucket') bucket?: ReimbursementHubBucket,
     @Query('search') search?: string,
+    @Query('order', new ParseEnumPipe({ newest: 'newest', oldest: 'oldest' }, { optional: true })) order?: 'newest' | 'oldest',
   ) {
     const filter: ListReimbursementsFilter = {
-      scope, status, paymentStatus, requesterUserId, bucket,
+      scope, status, paymentStatus, requesterUserId, bucket, order,
       // A repeated parameter arrives as a list: only one search text is read.
       search: typeof search === 'string' ? search : undefined,
       page: page ? Number(page) : undefined,
@@ -268,6 +292,13 @@ export class ReimbursementController {
   @ApiOperation({ summary: 'Reopen a rejected reimbursement, or withdraw one nobody has decided yet, as a draft for correction and resubmission' })
   reopenRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
     return this.reopenRejected.execute(ctx, requestId);
+  }
+
+  @Delete(':requestId')
+  @RequirePermissions('account.session.read')
+  @HttpCode(204)
+  deleteDraft(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
+    return this.cancel.deleteDraft(ctx, requestId);
   }
 
   @Post(':requestId/cancel')

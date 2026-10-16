@@ -17,3 +17,5 @@ export {
   stripThaiTitlePrefix,
 } from './mangmee-design';
 export type { MangmeeNavGroup, MangmeeTone } from './mangmee-design';
+export { MetricGrid } from './MetricGrid';
+export type { MetricGridItem } from './MetricGrid';

@@ -8,14 +8,17 @@ export function disbursementPaymentsToCancel(payments: Payments, paymentId?: str
     && (!payment.disbursementVoucher.id || vouchers[payment.disbursementVoucher.id]?.header?.status !== 'CANCELLED'));
 }
 export function expenseDisbursementCancellationWarnings(payments: Payments, vouchers: Record<string, DisbursementVoucherDetail>, _expenseId: string, paymentId?: string): string[] {
-  return [...new Map(disbursementPaymentsToCancel(payments, paymentId, vouchers).map(payment => [payment.disbursementVoucher!.documentNumber, payment])).values()].map(payment => {
-    const voucher = payment.disbursementVoucher!;
-    return workspaceDictionary.th['expenses.disbursement.cancel_payment_warning'].replace('{number}', voucher.documentNumber);
-  });
+  // Cancelling one payment and cancelling the whole expense are two acts: each sentence names its own.
+  const sentence = workspaceDictionary.th[paymentId ? 'expenses.disbursement.cancel_payment_warning' : 'expenses.disbursement.cancel_document_warning'];
+  return [...new Set(disbursementPaymentsToCancel(payments, paymentId, vouchers).map(payment => payment.disbursementVoucher!.documentNumber))]
+    .map(number => sentence.replace('{number}', number));
 }
 export function expenseDisbursementCancellationToast(message: string, payments: Payments, paymentId?: string, vouchers?: Record<string, DisbursementVoucherDetail>): string {
   const numbers = [...new Set(disbursementPaymentsToCancel(payments, paymentId, vouchers).map(payment => payment.disbursementVoucher!.documentNumber))];
-  return numbers.length ? numbers.map(number => workspaceDictionary.th['expenses.disbursement.cancel_payment_and_document_toast'].replace('{number}', number)).join(' ') : message;
+  if (!numbers.length) return message;
+  const words = workspaceDictionary.th;
+  return paymentId ? numbers.map(number => words['expenses.disbursement.cancel_payment_and_document_toast'].replace('{number}', number)).join(' ')
+    : [message, ...numbers.map(number => words['expenses.disbursement.cancel_payment_toast'].replace('{number}', number))].join(' ');
 }
 
 export function canAddExpenseToDisbursement(detail: ExpenseDetail, permissions: readonly string[], entryOpen: boolean): boolean {

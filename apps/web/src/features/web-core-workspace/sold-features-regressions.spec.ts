@@ -11,6 +11,8 @@ import { canAccessWorkspacePath } from './web-core-workspace.logic';
 import { WORKSPACE_MODULES } from './web-core-workspace.constants';
 
 (globalThis as any).React = React;
+// CSS modules (the shared MoreActions menu, the list pages) load as their class names, as in the other rendered specs.
+require.extensions['.css'] = (module) => { module.exports = { __esModule: true, default: new Proxy({}, { get: (_, key) => key }) }; };
 const svg = require.extensions['.svg'];
 require.extensions['.svg'] = (module) => { module.exports = () => null; };
 const expense = require('../expenses/ExpensesPages');
@@ -45,7 +47,8 @@ test('missing extraction facts do not ask read-only readers to fill fields; edit
   for (const canEdit of [false, true]) {
     const html = render(h(expense.AiFieldMissingHint, { field: 'vendorNameSnapshot', summary: { missingFields: ['vendorName'] }, canEdit }));
     assert.ok(html.length > 0);
-    if (canEdit) assert.match(html, /กรุณากรอกเอง/);
+    // 2026-10-13: the editor's prompt lost "กรุณา" (thai-ux-standard §1.4); it still tells the editor to fill the field.
+    if (canEdit) assert.match(html, /AI อ่านไม่ได้ กรอกเอง/);
     else { assert.match(html, /อ่านข้อมูลช่องนี้ไม่ได้/); assert.doesNotMatch(html, /กรุณา|กรอก|AI/); }
   }
 });
@@ -106,7 +109,9 @@ test('denied URLs stay inside the shell with an explanation and a reachable retu
   assert.doesNotMatch(page, /!canAccessCurrentPath[^\n]*router\.replace/);
   assert.match(page, /canAccessCurrentPath \? children :/);
   assert.match(page, /<ForbiddenState/);
-  assert.match(page, /href=\{fallbackHref\}/);
+  // 2026-10-13: the return link is the state's own `action` and is named after where it goes (thai-ux-standard §1.6).
+  assert.match(page, /action=\{fallback && <Link className=\{secondaryButtonClass\} href=\{fallback\.href\}>\{`กลับไป\$\{fallback\.label\}`\}<\/Link>\}/);
+  assert.match(page, /<ForbiddenState\s+titleAs="h1"/);
   const owner = ['notification.read', 'notification.preference.manage', 'notification.rule.manage', 'dashboard.read', 'company.setup.read'];
   for (const path of ['/settings/notifications', '/settings/notification-rules', '/notifications/preferences', '/notifications/rules']) {
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, owner, 'c', `/companies/c${path}`), true);
@@ -125,7 +130,8 @@ test('report history makes no claim about previous purchase and hides creation/e
 });
 
 test('a staff draft shows the receipt-policy warning once even after the same submit error', () => {
-  const warning = 'นโยบายบริษัทกำหนดให้ต้องแนบใบเสร็จ เหตุผลที่ไม่มีใบเสร็จไม่สามารถใช้แทนได้';
+  // 2026-10-13 (reimbursement lane): the sentence says what is missing and what the shop asks for, without "นโยบาย".
+  const warning = 'มีรายการที่ยังไม่มีใบเสร็จ ร้านกำหนดให้แนบใบเสร็จทุกรายการ จึงส่งอนุมัติได้เมื่อแนบครบ';
   const detail = { id: 'claim', status: 'DRAFT', requesterUserId: 'staff', lines: [], amount: '100', outstandingAmount: '100', currency: 'THB', receiptRequirementStatus: 'REQUIRED', allowMissingReceiptWithReason: false };
   for (const actionError of [null, warning, 'บันทึกไม่สำเร็จ']) {
     let nulls = 0;
@@ -134,9 +140,10 @@ test('a staff draft shows the receipt-policy warning once even after the same su
       ++nulls;
       return nulls === 2 ? detail : nulls === 5 ? actionError : undefined;
     });
-    assert.equal(html.split(warning).length - 1, 1, 'one visible warning, referenced by the disabled button');
+    assert.equal(html.split(warning).length - 1, 1, 'one visible warning, referenced by the send button');
     assert.match(html, /aria-describedby="claim-submit-readiness"/);
-    assert.match(html, /disabled=""/);
+    // CLAIM-DETAIL (2026-10-16): no dead button; ส่งอนุมัติ stays pressable and takes the person to what is missing.
+    assert.match(html, /<button type="button" class="mangmee-btn mangmee-btn-primary" aria-describedby="claim-submit-readiness" aria-busy="false">ส่งอนุมัติ<\/button>/);
     if (actionError && actionError !== warning) assert.match(html, /บันทึกไม่สำเร็จ/);
   }
 });
@@ -149,4 +156,48 @@ test('report history never describes loading or failed reads as empty results', 
     assert.doesNotMatch(html, /ยังไม่มี(?:มุมมองที่บันทึกไว้|ประวัติรายงานที่คุณดูได้|การส่งออกล่าสุด|ไฟล์รายงานที่คุณดูได้)/);
     if (error) assert.match(html, /โหลดไม่สำเร็จ/);
   }
+});
+
+
+test('W2 shared controls keep document prompts out of choices and reuse standard field, text and button sizes', () => {
+  const review = source('../expenses/ExpensesPages.tsx');
+  assert.match(review, /placeholder=\{t\('expenses\.document_type_choose', locale\)\}/);
+  assert.match(review, /filter\(\(\[k\]\) => k !== 'NEEDS_REVIEW'/);
+  assert.match(source('TransactionBranchField.tsx'), /invalid \? 'text-sm font-normal text-red-600'/);
+  const payout = source('../reimbursements/ReimbursementPayout.tsx').split('export function MemberPayoutAccountLine')[1].split('export function ClaimPayoutFormSection')[0];
+  assert.match(payout, /text-sm font-semibold/);
+  assert.doesNotMatch(payout, /text-xs|text-\[(?:10|11)px\]/);
+  const pager = source('../../common/components/data-table/Pagination.tsx');
+  // The prominent pager keeps its 44 px ends on every width (owner 2026-10-05: "a pager nobody overlooks").
+  // 44 px tall (owner 2026-10-05); on a phone the two buttons give up their minimum width so "หน้า 1 จาก 9" stays on one line (2026-10-15).
+  assert.match(pager, /variant: 'secondary', size: 'md', className: 'min-h-11 min-w-0 whitespace-nowrap px-3 sm:min-w-32 !text-base'/);
+});
+
+// Owner 2026-10-13, looking at a window about 1556 px wide: "ทำไมไม่ทำเต็มจอ" and "ยกเลิก บันทึกร่าง ทำไมไปลอยอยู่ข้างๆ".
+test('sold pages fill the content area and a form ends in the action bar, never with buttons in a side card', () => {
+  const css = source('../../../app/globals.css');
+  assert.doesNotMatch(css, /\.mangmee-page\[data-width/);
+  assert.match(css, /\.mangmee-form-bar \{\s*position: sticky;\s*bottom: 0;/);
+  // Inside a card the bar is the card's footer (it overlapped the card's edge on the signature page, 2026-10-13).
+  assert.match(css, /\.mangmee-card \.mangmee-form-bar \{\s*position: static;\s*margin: 0;/);
+  for (const path of ['../reimbursements/ReimbursementCreatePage.tsx', '../expenses/ExpensesPages.tsx']) {
+    const page = source(path);
+    assert.match(page, /<FormActionBar\b/, path);
+    assert.doesNotMatch(page, /lg:grid-cols-\[minmax\(0,1fr\)_320px\]|lg:sticky lg:top-4/, path);
+  }
+  // No sold page narrows itself: the frame takes no width, and cards and the branch field carry no private cap.
+  for (const path of ['../expenses/ExpensesPages.tsx', '../expenses/ExpensesWorkspacePanels.tsx', '../tax/WithholdingPage.tsx', '../company-profile/CompanyProfilePage.tsx',
+    '../expenses/SubstituteReceiptWizardPage.tsx', '../reimbursements/ReimbursementJourneyPage.tsx', '../counterparties/CounterpartyDetailPage.tsx']) {
+    assert.doesNotMatch(source(path), /<MangmeePage[^>]*\bwidth=|<MangmeeCard className="max-w-(?:2xl|3xl)/, path);
+  }
+  for (const path of ['../expenses/ExpensesPages.tsx', '../reimbursements/ReimbursementCreatePage.tsx', '../expenses/SubstituteReceiptWizardPage.tsx']) {
+    assert.match(source(path), /<TransactionBranchField fill /, path);
+  }
+});
+
+test('the shell explains forbidden pages from package availability and the reader role', () => {
+  const source = readFileSync(new URL('./WorkspaceLayout.tsx', import.meta.url), 'utf8');
+  assert.match(source, /packageAvailable=\{session.availablePermissions \? canAccessWorkspacePath/);
+  assert.match(source, /isOwner=\{session.roles.includes\('OWNER'\)\}/);
+  assert.doesNotMatch(source, /ถ้าต้องใช้หน้านี้ ให้/);
 });

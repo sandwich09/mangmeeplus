@@ -31,7 +31,8 @@ test('the cancellation child reads an openable voucher quietly, warns above the 
   };
   try {
     draw(); await new Promise(resolve => setImmediate(resolve)); const html = draw();
-    assert.match(html, /ยกเลิกรายการจ่ายนี้ แล้วใบสำคัญจ่ายเลขที่ DV-1 จะถูกยกเลิกด้วย/);
+    // The window's title already says "ยกเลิกรายการจ่ายนี้": the sentence under it says only the consequence.
+    assert.match(html, /<p>ใบสำคัญจ่ายเลขที่ DV-1 จะถูกยกเลิกด้วย<\/p>/); assert.doesNotMatch(html, /ยกเลิกรายการจ่ายนี้ แล้ว/);
     assert.doesNotMatch(html, /การจ่ายรายการอื่นในใบยังอยู่/); assert.ok(html.indexOf('จะถูกยกเลิกด้วย') < html.indexOf('เหตุผล'));
     assert.equal(successMessage('ยกเลิกรายการจ่ายแล้ว'), 'ยกเลิกรายการจ่ายแล้ว ใบสำคัญจ่ายเลขที่ DV-1 ถูกยกเลิกด้วย');
     draw(); assert.equal(read.mock.callCount(), 1);
@@ -44,7 +45,7 @@ test('a non-openable voucher gets the short warning without an unauthorized deta
   const read = mock.method(api, 'getDisbursementVoucher', async () => { throw new Error('unexpected read'); });
   try {
     const html = renderToStaticMarkup(h(ExpenseDisbursementCancellation, { companyId: 'shop', expenseId: 'expense', payments: [{ ...payment, disbursementVoucher: { id: null, documentNumber: 'DV-1' } }], children: (warning: React.ReactNode) => warning }));
-    assert.match(html, /ยกเลิกรายการจ่ายนี้ แล้วใบสำคัญจ่ายเลขที่ DV-1 จะถูกยกเลิกด้วย/); assert.doesNotMatch(html, /การจ่ายรายการอื่น/); assert.equal(read.mock.callCount(), 0);
+    assert.match(html, /รายการจ่ายและใบสำคัญจ่ายเลขที่ DV-1 จะถูกยกเลิกด้วย/); assert.doesNotMatch(html, /ยกเลิกรายการจ่ายนี้/); assert.doesNotMatch(html, /การจ่ายรายการอื่น/); assert.equal(read.mock.callCount(), 0);
   } finally { read.mock.restore(); }
 });
 
@@ -54,7 +55,7 @@ test('all expense cancellation paths add children above the existing reason with
   assert.match(page, /ExpenseDisbursementCancellation[^\n]*payments=\{detail.payments\}[\s\S]*?\{warning\}[\s\S]*?expenses.void_reason/);
   assert.match(page, /payments=\{correctionAction\?\.paymentId \? detail.payments : \[\]\}/);
   assert.match(page, /\{warning\}[\s\S]*?expense-correction-reason/);
-  assert.match(page, /successMessage\('ยกเลิกเอกสารเรียบร้อยแล้ว'\)/);
+  assert.match(page, /successMessage\('ยกเลิกเอกสารแล้ว'\)/);
   assert.match(page, /toast.success\(successMessage\(paymentId \? EXPENSE_CORRECTION_WORDS.paymentCancelled/);
   assert.match(certificate, /\{warning\}\s+<label[^\n]*expenses.void_reason/);
   assert.match(certificate, /toast.success\(successMessage\(expenseCertificateVoidedMessage/);

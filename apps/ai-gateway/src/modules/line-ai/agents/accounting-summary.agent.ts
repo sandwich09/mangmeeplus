@@ -360,7 +360,7 @@ export class AccountingSummaryAgent {
       } else if (tool.name === 'dashboard.get_business_health_summary') {
         if (!Array.isArray(data['widgets'])) { readFailed = true; toolData.pop(); continue; }
         const widgets = data['widgets'];
-        pushFacts({ label: 'แดชบอร์ด', value: `${widgets.length} ตัวชี้วัด` });
+        pushFacts({ label: 'หน้าแรก', value: `${widgets.length} ตัวชี้วัด` });
       } else if (tool.name === 'expense.list_recent') {
         // Branch the user named could not be resolved: the tool returned the real branch catalog
         // instead of records. Surface both so the composed answer offers the actual names rather

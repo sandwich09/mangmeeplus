@@ -3,7 +3,7 @@ import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-ta
 import { AccountingDocumentSourceAdapter } from '../../infrastructure/adapters/accounting-document-source.adapter';
 import { ExpenseSourceAdapter } from '../../infrastructure/adapters/expense-source.adapter';
 import { SupplierPaymentSourceAdapter } from '../../infrastructure/adapters/supplier-payment-source.adapter';
-import { formPeriodKey, assertPeriodUnlocked, makeReviewIssue } from '../../domain/logic/tax-period.logic';
+import { formPeriodKey, assertPeriodUnlocked, makeReviewIssue, withholdingIssueDescription } from '../../domain/logic/tax-period.logic';
 import { taxEventIdempotencyKey, computeSourceHash } from '../../domain/logic/tax-event.logic';
 import type { TaxFormType } from '@watchdog-bms/contracts';
 
@@ -57,7 +57,26 @@ export class SyncTaxEventsUseCase {
       : this.taxRepo.findEventByIdempotencyKey(versionKey);
   }
 
-  async execute(companyId: string, since?: Date, scope: 'ALL' | 'PND53' = 'ALL'): Promise<SyncResult> {
+  private async withholdingForm(companyId: string, kind: string | null, juristicKind: string, date: Date, sourceType: string, sourceId: string, payeeName: string | null, incomeCategoryCode?: string | null): Promise<{ formType: 'PND2' | 'PND3' | 'PND53'; filingRoute: string } | null> {
+    if (kind !== 'INDIVIDUAL' && kind !== juristicKind) {
+      const period = await this.taxRepo.upsertPeriod({ companyId, taxType: 'WHT', formType: 'PND53', periodKey: formPeriodKey('PND53', date) });
+      const issue = makeReviewIssue('WHT_PAYEE_KIND_UNKNOWN', { context: payeeName ?? undefined });
+      await this.taxRepo.createIssue({ companyId, taxPeriodId: period.id, severity: issue.severity, issueCode: issue.code, description: issue.description, sourceType, sourceId });
+      // Remove the old PND53 fallback too; filed history remains under the existing period lock.
+      await this.taxRepo.supersedeUnclassifiedWithholding(companyId, sourceType, sourceId);
+      return null;
+    }
+    await this.taxRepo.resolveSourceIssues(companyId, 'WHT_PAYEE_KIND_UNKNOWN', sourceType, sourceId);
+    const category = incomeCategoryCode ? await this.taxRepo.prisma?.client?.whtIncomeCategory?.findUnique({ where: { code: incomeCategoryCode } }) : null;
+    if (category?.filingRoute === 'SEPARATE_PND2' || category?.filingRoute === 'ACCOUNTANT_PREPARES') {
+      for (const code of ['MISSING_TAX_ID', 'FUNCTIONAL_CURRENCY_FX_MISSING']) await this.taxRepo.resolveSourceIssues(companyId, code, sourceType, sourceId);
+    }
+    const formType = kind === 'INDIVIDUAL' ? category?.filingRoute === 'SEPARATE_PND2' ? 'PND2' : 'PND3' : 'PND53';
+    await this.taxRepo.supersedeUnclassifiedWithholding?.(companyId, sourceType, sourceId, `WHT_${formType}`);
+    return { formType, filingRoute: category?.filingRoute ?? 'SYSTEM_FILLS' };
+  }
+
+  async execute(companyId: string, since?: Date, scope: 'ALL' | 'WHT' | 'PND53' = 'ALL'): Promise<SyncResult> {
     const result: SyncResult = { transactionTaxComponentsCreated: 0, voidedComponentsSuperseded: 0, vatOutputCreated: 0, vatInputCreated: 0, whtCreated: 0, reviewIssuesCreated: 0, skippedLocked: 0 };
     const company = await this.taxRepo.prisma?.client?.company?.findUnique?.({ where: { id: companyId }, select: { baseCurrency: true } });
     if (!company && this.taxRepo instanceof PrismaTaxRepository) throw new Error('company_base_currency_missing');
@@ -116,6 +135,11 @@ export class SyncTaxEventsUseCase {
           result.skippedLocked++;
           continue;
         }
+        if (source.sourceType === 'expense.record' && eventType === 'VAT_INPUT'
+          && (source.inputVatClaimStatus !== 'CLAIMABLE' || source.taxEvidenceStatus !== 'USABLE_FOR_TAX')) {
+          if (existing) await this.taxRepo.supersedeEvent(existing.id);
+          continue;
+        }
         if (component.componentKey === 'PP36_INPUT' && snapshot.claimability === 'PENDING_EVIDENCE') {
           // Payment recognizes the PP36 liability and parks input VAT in a G/L
           // pending account. PP30 starts only from the later immutable claim release.
@@ -132,6 +156,7 @@ export class SyncTaxEventsUseCase {
         await this.taxRepo.upsertEvent({
           companyId, branchId: source.branchId, taxPeriodId: period.id, idempotencyKey: idKey, eventType, status: 'ACTIVE',
           expectedExpenseConfirmedAt: source.sourceType === 'expense.record' ? source.confirmedAt : undefined,
+          ...(source.sourceType === 'expense.record' && eventType === 'VAT_INPUT' && { expectedInputVatClaimStatus: source.inputVatClaimStatus, expectedTaxEvidenceStatus: source.taxEvidenceStatus }),
           sourceType: source.sourceType, sourceId: source.sourceId, sourceLineId: source.sourceLineId, sourceLineKey: source.sourceLineId,
           componentKey: component.componentKey, taxSnapshot: snapshot, reportContributions: component.reportContributions,
           accountAssignments: component.accountAssignments, sourceEventType: source.sourceEventType, sourceHash: hash,
@@ -231,7 +256,7 @@ export class SyncTaxEventsUseCase {
 
       await this.taxRepo.upsertEvent({
         companyId, taxPeriodId: period.id, idempotencyKey: idKey, eventType: 'VAT_INPUT', status: 'ACTIVE',
-        expectedExpenseConfirmedAt: exp.confirmedAt, sourceType: 'expense.record', sourceId: exp.id, sourceEventType: 'expense.confirmed', sourceHash: hash,
+        expectedExpenseConfirmedAt: exp.confirmedAt, expectedInputVatClaimStatus: exp.inputVatClaimStatus, expectedTaxEvidenceStatus: exp.taxEvidenceStatus, sourceType: 'expense.record', sourceId: exp.id, sourceEventType: 'expense.confirmed', sourceHash: hash,
         periodKey, eventDate: exp.expenseDate,
         taxableBase: exp.taxableAmount, taxAmount: exp.vatAmount, currency: exp.currency,
         vatMode: exp.vatMode, outputTaxCode: null, whtFormType: null,
@@ -250,43 +275,47 @@ export class SyncTaxEventsUseCase {
 
     // ── WHT from confirmed expenses with whtAmount > 0 ────────────────────────
     const whtExpenses = await this.expenseSource.findConfirmedWithWhtByCompany(companyId, since);
+    await this.taxRepo.retireObsoleteExpenseWithholding?.(companyId, whtExpenses);
     for (const exp of whtExpenses) {
-      if (parseFloat(exp.whtAmount) <= 0) continue;
-      // RA-18: the RD form follows the payee's taxpayer class — บุคคลธรรมดา files ภ.ง.ด.3, นิติบุคคล files
-      // ภ.ง.ด.53. A payee that review has not classified yet keeps PND53 as the documented fallback; a
-      // 13-digit tax ID does not distinguish the two classes, so nothing is inferred from it.
-      const formType: TaxFormType = exp.payeeEntityKind === 'INDIVIDUAL' ? 'PND3' : 'PND53';
-      if (scope === 'PND53' && formType !== 'PND53') continue;
-      const eventType = formType === 'PND3' ? 'WHT_PND3' : 'WHT_PND53';
+      if ((!exp.paymentId && parseFloat(exp.whtAmount) === 0) || parseFloat(exp.whtAmount) < 0 || parseFloat(exp.grossAmount) <= 0) continue;
+      const sourceLineKey = exp.sourceLineKey ?? (exp.paymentId ? `payment:${exp.paymentId}` : '__HEADER__');
+      if (await this.taxRepo.isWithholdingPaymentFiled?.(companyId, 'expense.record', exp.id, undefined, exp.paymentId ? sourceLineKey : undefined)) { result.skippedLocked++; continue; }
+      const route = await this.withholdingForm(companyId, exp.payeeEntityKind, 'JURISTIC', exp.expenseDate, 'expense.record', exp.id, exp.vendorName, exp.incomeCategoryCode);
+      if (!route) { result.reviewIssuesCreated++; continue; }
+      const { formType, filingRoute } = route;
+      const eventType = formType === 'PND2' ? 'WHT_PND2' : formType === 'PND3' ? 'WHT_PND3' : 'WHT_PND53';
       const periodKey = formPeriodKey(formType, exp.expenseDate);
+      if (formType !== 'PND2' && await this.taxRepo.isWithholdingPaymentFiled?.(companyId, 'expense.record', exp.id, { formType, periodKey }, exp.paymentId ? sourceLineKey : undefined)) { result.skippedLocked++; continue; }
       const period = await this.taxRepo.upsertPeriod({ companyId, taxType: 'WHT', formType, periodKey });
 
-      if (exp.currency.toUpperCase() !== baseCurrency) {
-        await this.taxRepo.createIssue({ companyId, taxPeriodId: period.id, severity: 'BLOCKING', issueCode: 'FUNCTIONAL_CURRENCY_FX_MISSING', description: 'Foreign-currency WHT requires an immutable functional-currency FX snapshot before reporting', sourceType: 'expense.record', sourceId: exp.id });
+      if (filingRoute === 'SYSTEM_FILLS' && exp.currency.toUpperCase() !== baseCurrency) {
+        await this.taxRepo.createIssue({ companyId, taxPeriodId: period.id, severity: 'BLOCKING', issueCode: 'FUNCTIONAL_CURRENCY_FX_MISSING', description: withholdingIssueDescription('FUNCTIONAL_CURRENCY_FX_MISSING', '', exp.vendorName), sourceType: 'expense.record', sourceId: exp.id });
         result.reviewIssuesCreated++;
         continue;
       }
 
-      try { assertPeriodUnlocked(period.status, formType, periodKey); }
+      try { if (formType === 'PND2') assertPeriodUnlocked(period.status, formType, periodKey); }
       catch { result.skippedLocked++; continue; }
 
-      if (!exp.vendorTaxId) {
+      if (filingRoute === 'SYSTEM_FILLS' && !exp.vendorTaxId) {
         const issue = makeReviewIssue('MISSING_TAX_ID', { context: exp.vendorName ?? exp.id });
         await this.taxRepo.createIssue({ companyId, taxPeriodId: period.id, severity: issue.severity, issueCode: issue.code, description: issue.description, sourceType: 'expense.record', sourceId: exp.id });
         result.reviewIssuesCreated++;
         continue;
       }
 
-      const hash = computeSourceHash({ whtAmount: exp.whtAmount, updatedAt: exp.updatedAt.toISOString() });
+      await this.taxRepo.resolveSourceIssues(companyId, 'MISSING_TAX_ID', 'expense.record', exp.id, period.id);
+      await this.taxRepo.resolveSourceIssues(companyId, 'FUNCTIONAL_CURRENCY_FX_MISSING', 'expense.record', exp.id, period.id);
+      const hash = computeSourceHash({ sourceLineKey, paymentDate: exp.expenseDate.toISOString(), grossAmount: exp.grossAmount, whtAmount: exp.whtAmount, updatedAt: exp.updatedAt.toISOString(), incomeCategoryCode: exp.incomeCategoryCode });
       const idKey = taxEventIdempotencyKey(companyId, 'expense.record', exp.id, `${eventType}:${hash}`);
       // The gated expense correction command supersedes both WHT forms before making the source editable.
-      const existing = await this.activeEvent(companyId, 'expense.record', exp.id, '__HEADER__', null, eventType, idKey);
+      const existing = await this.activeEvent(companyId, 'expense.record', exp.id, sourceLineKey, null, eventType, idKey);
       if (existing && existing.sourceHash === hash) continue;
       if (existing) await this.taxRepo.supersedeEvent(existing.id);
 
       await this.taxRepo.upsertEvent({
-        companyId, taxPeriodId: period.id, idempotencyKey: idKey, eventType, status: 'ACTIVE',
-        expectedExpenseConfirmedAt: exp.confirmedAt, sourceType: 'expense.record', sourceId: exp.id, sourceEventType: 'expense.wht', sourceHash: hash,
+        companyId, branchId: exp.branchId, taxPeriodId: period.id, idempotencyKey: idKey, eventType, status: 'ACTIVE',
+        expectedExpenseConfirmedAt: exp.confirmedAt, sourceType: 'expense.record', sourceId: exp.id, sourceLineKey, sourceEventType: 'expense.wht', sourceHash: hash,
         periodKey, eventDate: exp.expenseDate,
         taxableBase: exp.grossAmount, taxAmount: exp.whtAmount, currency: exp.currency,
         vatMode: null, outputTaxCode: null, whtFormType: formType,
@@ -294,7 +323,7 @@ export class SyncTaxEventsUseCase {
         // where it gets typed in; a missing address never stops the event being written.
         payeeSnapshot: { name: exp.vendorName ?? '', taxId: exp.vendorTaxId, address: exp.vendorAddress ?? null, branchCode: exp.vendorBranchCode ?? null },
         incomeCategoryCode: exp.incomeCategoryCode ?? null, whtRate: exp.whtRate ?? null,
-        grossAmount: exp.grossAmount, withheldAmount: exp.whtAmount, netPaidAmount: null,
+        grossAmount: exp.grossAmount, withheldAmount: exp.whtAmount, netPaidAmount: exp.paymentAmount ?? null,
         taxInvoiceNumber: null, reviewNote: null,
       });
       result.whtCreated++;
@@ -302,37 +331,38 @@ export class SyncTaxEventsUseCase {
 
     // ── WHT from recorded supplier payments that withheld tax (RA-20) ─────────
     // The same forms as the expense loop above, from the other seam: an expense withholds when the
-    // cost is captured, a payment when the money leaves. They cannot double-count — a bill that
+    // money leaves, including each partial cash payment. They cannot double-count — a bill that
     // withheld at accrual is refused a second withholding at payment (wht_double_withholding).
     const whtPayments = await this.supplierPaymentSource.findRecordedWithWhtByCompany(companyId, since);
     for (const pay of whtPayments) {
       if (parseFloat(pay.whtAmount) <= 0) continue;
-      // Same rule as RA-18 on the expense side: the RD form follows the payee's taxpayer class, and
-      // an unclassified payee keeps ภ.ง.ด.53 as the documented fallback rather than being guessed
-      // at from a tax ID. FOREIGN payees also land here — ภ.ง.ด.54 is out of scope, so they surface
-      // for review instead of silently taking a form that does not apply.
-      const formType: TaxFormType = pay.supplierType === 'INDIVIDUAL' ? 'PND3' : 'PND53';
-      if (scope === 'PND53' && formType !== 'PND53') continue;
-      const eventType = formType === 'PND3' ? 'WHT_PND3' : 'WHT_PND53';
+      if (await this.taxRepo.isWithholdingPaymentFiled?.(companyId, 'procurement.supplier_payment', pay.id)) { result.skippedLocked++; continue; }
+      const route = await this.withholdingForm(companyId, pay.supplierType, 'JURISTIC_PERSON', pay.paymentDate, 'procurement.supplier_payment', pay.id, pay.payeeName, pay.incomeCategoryCode);
+      if (!route) { result.reviewIssuesCreated++; continue; }
+      const { formType, filingRoute } = route;
+      const eventType = formType === 'PND2' ? 'WHT_PND2' : formType === 'PND3' ? 'WHT_PND3' : 'WHT_PND53';
       const periodKey = formPeriodKey(formType, pay.paymentDate);
+      if (formType !== 'PND2' && await this.taxRepo.isWithholdingPaymentFiled?.(companyId, 'procurement.supplier_payment', pay.id, { formType, periodKey })) { result.skippedLocked++; continue; }
       const period = await this.taxRepo.upsertPeriod({ companyId, taxType: 'WHT', formType, periodKey });
 
-      if (pay.currency.toUpperCase() !== baseCurrency) {
-        await this.taxRepo.createIssue({ companyId, taxPeriodId: period.id, severity: 'BLOCKING', issueCode: 'FUNCTIONAL_CURRENCY_FX_MISSING', description: 'Foreign-currency WHT requires an immutable functional-currency FX snapshot before reporting', sourceType: 'procurement.supplier_payment', sourceId: pay.id });
+      if (filingRoute === 'SYSTEM_FILLS' && pay.currency.toUpperCase() !== baseCurrency) {
+        await this.taxRepo.createIssue({ companyId, taxPeriodId: period.id, severity: 'BLOCKING', issueCode: 'FUNCTIONAL_CURRENCY_FX_MISSING', description: withholdingIssueDescription('FUNCTIONAL_CURRENCY_FX_MISSING', '', pay.payeeName), sourceType: 'procurement.supplier_payment', sourceId: pay.id });
         result.reviewIssuesCreated++;
         continue;
       }
 
-      try { assertPeriodUnlocked(period.status, formType, periodKey); }
+      try { if (formType === 'PND2') assertPeriodUnlocked(period.status, formType, periodKey); }
       catch { result.skippedLocked++; continue; }
 
-      if (!pay.payeeTaxId) {
+      if (filingRoute === 'SYSTEM_FILLS' && !pay.payeeTaxId) {
         const issue = makeReviewIssue('MISSING_TAX_ID', { context: pay.payeeName ?? pay.id });
         await this.taxRepo.createIssue({ companyId, taxPeriodId: period.id, severity: issue.severity, issueCode: issue.code, description: issue.description, sourceType: 'procurement.supplier_payment', sourceId: pay.id });
         result.reviewIssuesCreated++;
         continue;
       }
 
+      await this.taxRepo.resolveSourceIssues(companyId, 'MISSING_TAX_ID', 'procurement.supplier_payment', pay.id, period.id);
+      await this.taxRepo.resolveSourceIssues(companyId, 'FUNCTIONAL_CURRENCY_FX_MISSING', 'procurement.supplier_payment', pay.id, period.id);
       const hash = computeSourceHash({ whtAmount: pay.whtAmount, updatedAt: pay.updatedAt.toISOString() });
       const idKey = taxEventIdempotencyKey(companyId, 'procurement.supplier_payment', pay.id, `${eventType}:${hash}`);
       const existing = await this.activeEvent(companyId, 'procurement.supplier_payment', pay.id, '__HEADER__', null, eventType, idKey);

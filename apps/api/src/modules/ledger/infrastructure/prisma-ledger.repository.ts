@@ -78,6 +78,49 @@ function mapEntry(r: any): JournalEntryRecord {
   };
 }
 
+function journalLineData(l: LedgerJournalLineInput, idx: number) {
+  return {
+    // companyId is inherited from the parent journalEntry compound FK; passing it explicitly is rejected by Prisma 7
+    accountId: l.accountId, branchId: l.branchId,
+    lineNumber: idx + 1, description: l.description,
+    // Decimal(18,4) columns take the string as-is, the way every other money and rate
+    // field in this create already does. Going through parseFloat first spent the
+    // value's precision on a float64: the DTO accepts up to 14 integer digits and 4
+    // decimals (18 significant), float64 holds ~15-16, so `12345678901234.5678` posted
+    // as `...4.568`. Amounts that large have not been posted yet, which is the only
+    // reason this never showed up as a wrong balance.
+    debitAmount: l.debitAmount || '0',
+    creditAmount: l.creditAmount || '0',
+    currency: l.currency ?? 'THB', sourceType: l.sourceType, sourceId: l.sourceId,
+    taxCode: l.taxCode,
+    componentKey: l.taxComponentKey as any,
+    taxCodeDefinitionId: l.taxSnapshot?.taxCodeDefinitionId,
+    externalTaxCodeSnapshot: l.taxSnapshot?.externalTaxCode,
+    taxProfileKeySnapshot: l.taxSnapshot?.taxProfileKey,
+    taxProfileVersionSnapshot: l.taxSnapshot?.taxProfileVersion,
+    roundingModeSnapshot: l.taxSnapshot?.roundingMode,
+    roundingScaleSnapshot: l.taxSnapshot?.roundingScale,
+    taxAmountToleranceSnapshot: l.taxSnapshot?.taxAmountTolerance,
+    taxRegimeSnapshot: l.taxSnapshot?.taxRegime as any,
+    taxDirectionSnapshot: l.taxSnapshot?.taxDirection as any,
+    taxTreatmentSnapshot: l.taxSnapshot?.taxTreatment as any,
+    taxContextSnapshot: l.taxSnapshot?.taxContext as any,
+    taxRateSnapshot: l.taxSnapshot?.taxRate,
+    sourceCurrencySnapshot: l.taxSnapshot?.sourceCurrency,
+    taxCurrencySnapshot: l.taxSnapshot?.taxCurrency,
+    exchangeRateSnapshot: l.taxSnapshot?.exchangeRate,
+    exchangeRateSourceSnapshot: l.taxSnapshot?.exchangeRateSource,
+    exchangeRateDateSnapshot: l.taxSnapshot?.exchangeRateDate ? new Date(l.taxSnapshot.exchangeRateDate) : undefined,
+    taxBaseAmount: l.taxSnapshot?.taxBaseAmount,
+    transactionTaxAmount: l.taxSnapshot?.taxAmount,
+    claimabilitySnapshot: l.taxSnapshot?.claimability as any,
+    accountRuleVersionSnapshot: l.taxSnapshot?.accountRuleVersion,
+    reportRuleVersionSnapshot: l.taxSnapshot?.reportRuleVersion,
+    taxEvidenceReviewStatus: l.taxSnapshot?.evidenceStatus as any,
+    reportContributionsJson: (l as LedgerJournalLineInput & { reportContributions?: unknown[] }).reportContributions as any,
+  };
+}
+
 @Injectable()
 export class PrismaLedgerRepository {
   async resolveCreateBranchId(companyId: string, scopes: { branchIds?: string[] }, selectedBranchId?: string | null): Promise<string> {
@@ -221,7 +264,7 @@ export class PrismaLedgerRepository {
     return r ? mapEntry(r) : null;
   }
 
-  async createJournalEntry(input: CreateJournalEntryInput & { entryNumber: string; expectedExpenseConfirmedAt?: Date | null; expectedExpenseStatus?: string }, db: LedgerDb = this.prisma.client): Promise<JournalEntryRecord> {
+  async createJournalEntry(input: CreateJournalEntryInput & { entryNumber: string; expectedExpenseConfirmedAt?: Date | null; expectedExpenseStatus?: string; expectedInputVatClaimStatus?: string; expectedTaxEvidenceStatus?: string }, db: LedgerDb = this.prisma.client): Promise<JournalEntryRecord> {
     if (input.entryType === 'GENERATED' && ['expense.record', 'expense.payment'].includes(input.sourceType ?? '')) {
       if (db === this.prisma.client) return this.prisma.client.$transaction((tx) => this.createJournalEntry(input, tx), { isolationLevel: 'ReadCommitted' });
       const payment = input.sourceType === 'expense.payment'
@@ -232,6 +275,8 @@ export class PrismaLedgerRepository {
       const expense = await db.expenseRecord.findFirst({ where: { companyId: input.companyId, id: expenseId } });
       const currentPayment = payment ? await db.expensePayment.findFirst({ where: { companyId: input.companyId, id: input.sourceId } }) : null;
       if (!expense || !['CONFIRMED', 'VOIDED'].includes(expense.status) || expense.status !== (input.expectedExpenseStatus ?? 'CONFIRMED') || (input.sourceType === 'expense.payment' && currentPayment?.status !== 'RECORDED')
+        || (input.expectedInputVatClaimStatus !== undefined && expense.inputVatClaimStatus !== input.expectedInputVatClaimStatus)
+        || (input.expectedTaxEvidenceStatus !== undefined && expense.taxEvidenceStatus !== input.expectedTaxEvidenceStatus)
         || (input.expectedExpenseConfirmedAt !== undefined && (expense.confirmedAt?.getTime() ?? null) !== (input.expectedExpenseConfirmedAt?.getTime() ?? null))) {
         throw new ConflictException({ code: 'expense_posting_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
       }
@@ -244,46 +289,7 @@ export class PrismaLedgerRepository {
         entryDate: input.entryDate, memo: input.memo, status: 'DRAFT',
         createdByUserId: input.createdByUserId,
         lines: {
-          create: input.lines.map((l: LedgerJournalLineInput, idx: number) => ({
-            // companyId is inherited from the parent journalEntry compound FK; passing it explicitly is rejected by Prisma 7
-            accountId: l.accountId, branchId: l.branchId,
-            lineNumber: idx + 1, description: l.description,
-            // Decimal(18,4) columns take the string as-is, the way every other money and rate
-            // field in this create already does. Going through parseFloat first spent the
-            // value's precision on a float64: the DTO accepts up to 14 integer digits and 4
-            // decimals (18 significant), float64 holds ~15-16, so `12345678901234.5678` posted
-            // as `...4.568`. Amounts that large have not been posted yet, which is the only
-            // reason this never showed up as a wrong balance.
-            debitAmount: l.debitAmount || '0',
-            creditAmount: l.creditAmount || '0',
-            currency: l.currency ?? 'THB', sourceType: l.sourceType, sourceId: l.sourceId,
-            taxCode: l.taxCode,
-            componentKey: l.taxComponentKey as any,
-            taxCodeDefinitionId: l.taxSnapshot?.taxCodeDefinitionId,
-            externalTaxCodeSnapshot: l.taxSnapshot?.externalTaxCode,
-            taxProfileKeySnapshot: l.taxSnapshot?.taxProfileKey,
-            taxProfileVersionSnapshot: l.taxSnapshot?.taxProfileVersion,
-            roundingModeSnapshot: l.taxSnapshot?.roundingMode,
-            roundingScaleSnapshot: l.taxSnapshot?.roundingScale,
-            taxAmountToleranceSnapshot: l.taxSnapshot?.taxAmountTolerance,
-            taxRegimeSnapshot: l.taxSnapshot?.taxRegime as any,
-            taxDirectionSnapshot: l.taxSnapshot?.taxDirection as any,
-            taxTreatmentSnapshot: l.taxSnapshot?.taxTreatment as any,
-            taxContextSnapshot: l.taxSnapshot?.taxContext as any,
-            taxRateSnapshot: l.taxSnapshot?.taxRate,
-            sourceCurrencySnapshot: l.taxSnapshot?.sourceCurrency,
-            taxCurrencySnapshot: l.taxSnapshot?.taxCurrency,
-            exchangeRateSnapshot: l.taxSnapshot?.exchangeRate,
-            exchangeRateSourceSnapshot: l.taxSnapshot?.exchangeRateSource,
-            exchangeRateDateSnapshot: l.taxSnapshot?.exchangeRateDate ? new Date(l.taxSnapshot.exchangeRateDate) : undefined,
-            taxBaseAmount: l.taxSnapshot?.taxBaseAmount,
-            transactionTaxAmount: l.taxSnapshot?.taxAmount,
-            claimabilitySnapshot: l.taxSnapshot?.claimability as any,
-            accountRuleVersionSnapshot: l.taxSnapshot?.accountRuleVersion,
-            reportRuleVersionSnapshot: l.taxSnapshot?.reportRuleVersion,
-            taxEvidenceReviewStatus: l.taxSnapshot?.evidenceStatus as any,
-            reportContributionsJson: (l as LedgerJournalLineInput & { reportContributions?: unknown[] }).reportContributions as any,
-          })),
+          create: input.lines.map(journalLineData),
         },
       },
       include: { lines: true },
@@ -291,7 +297,17 @@ export class PrismaLedgerRepository {
     return mapEntry(r);
   }
 
+  async replaceExpenseDraftJournalLines(companyId: string, id: string, lines: LedgerJournalLineInput[], db: LedgerDb) {
+    await db.journalEntry.update({ where: { id, companyId, status: 'DRAFT', entryType: 'GENERATED', sourceType: 'expense.record' },
+      data: { lines: { deleteMany: {}, create: lines.map(journalLineData) } } });
+  }
+
   async postJournalEntry(id: string, userId: string, db: LedgerDb = this.prisma.client): Promise<JournalEntryRecord> {
+    const source = await db.journalEntry.findUnique({ where: { id } });
+    if (source?.sourceType === 'expense.record' && source.entryType === 'GENERATED' && source.sourceId) {
+      if (db === this.prisma.client) return this.prisma.client.$transaction(tx => this.postJournalEntry(id, userId, tx));
+      await lockExpenseCorrection(db, source.companyId, source.sourceId);
+    }
     const r = await db.journalEntry.update({
       where: { id }, data: { status: 'POSTED', postedAt: new Date(), postedByUserId: userId },
     });

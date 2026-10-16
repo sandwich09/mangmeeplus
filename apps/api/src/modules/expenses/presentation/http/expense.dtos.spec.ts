@@ -5,6 +5,9 @@ import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validat
 import { CreateDisbursementVoucherDraftDto, UpdateDisbursementVoucherDraftDto, DisbursementVoucherCommandDto, SubmitDisbursementVoucherDto, EndDisbursementVoucherDto, PayDisbursementVoucherDto, IssueDisbursementVoucherDto, ReissueDisbursementVoucherDto,
   InitDisbursementVoucherSlipUploadDto, CompleteDisbursementVoucherSlipUploadDto, AttachDisbursementVoucherSlipDto } from './disbursement-voucher.dtos';
 import {
+  AccountantEvidenceBundleDto,
+  SubstituteReceiptListQueryDto,
+  DecideExpenseInputVatDto,
   AmendSubstituteReceiptDto,
   CorrectSubstituteDocumentDto,
   SubmitSubstituteReceiptPaperDto,
@@ -275,6 +278,10 @@ describe('expense body DTOs (audit H-23)', () => {
   });
 
   describe('RecordExpensePaymentDto', () => {
+    it('validates the optional payment slip identifier', async () => {
+      assert.equal((await run(RecordExpensePaymentDto, { paidAmount: '1', slipAttachmentId: 'slip-1' })).slipAttachmentId, 'slip-1');
+      for (const slipAttachmentId of ['', 12, {}, 'a'.repeat(65)]) await assert.rejects(run(RecordExpensePaymentDto, { paidAmount: '1', slipAttachmentId }), BadRequestException);
+    });
     it('normalizes leading zeros before the existing money validation', async () => {
       const result = await run(RecordExpensePaymentDto, { paidAmount: '0500.00' });
       assert.equal(result.paidAmount, '500.00');
@@ -362,6 +369,43 @@ it('reopen accepts only an optional boolean tax-filing attestation beside the re
 });
 
 
+it('a draft save by a person without the review right goes to the draft update; only review-fields uses the certificate-only rule', async () => {
+  const { ExpenseController } = await import('./expense.controller');
+  const calls: string[] = [];
+  const saved = { id: 'e1', sourceChannelMetadataJson: {}, lineMessageId: null, lineEventId: null };
+  const controller = {
+    update: { execute: async () => { calls.push('draft-update'); return saved; } },
+    ownCertificateReview: { execute: async () => { calls.push('certificate-only'); return saved; } },
+  };
+  const staff = { companyId: 'c1', userId: 'u1', roles: [], permissions: ['expense.update', 'expense.read_own'], scopes: {} } as any;
+  const reviewer = { ...staff, permissions: ['expense.update', 'expense.review'] };
+  const body = { vendorNameSnapshot: 'ร้านตัวอย่าง', expectedUpdatedAt: '2026-10-13T00:00:00.000Z' } as any;
+  assert.deepEqual(await ExpenseController.prototype.updateDraft.call(controller as any, staff, 'e1', body), { id: 'e1' });
+  await ExpenseController.prototype.updateDraft.call(controller as any, reviewer, 'e1', body);
+  assert.deepEqual(calls, ['draft-update', 'draft-update']);
+  await ExpenseController.prototype.updateReviewFields.call(controller as any, staff, 'e1', body);
+  await ExpenseController.prototype.updateReviewFields.call(controller as any, reviewer, 'e1', body);
+  assert.deepEqual(calls.slice(2), ['certificate-only', 'draft-update']);
+});
+
+it('send-for-checking and certificate-evidence bodies are whitelisted (owner decisions ข8, ก4)', async () => {
+  const { MarkExpenseReadyDto, SubstitutePreparationUploadIntentDto, SubstitutePreparationUploadCompletionDto } = await import('./expense.dtos');
+  assert.equal((await run(MarkExpenseReadyDto, {})).requestedReviewerUserId, undefined);
+  assert.equal((await run(MarkExpenseReadyDto, { requestedReviewerUserId: 'user-1' })).requestedReviewerUserId, 'user-1');
+  for (const body of [{ requestedReviewerUserId: '' }, { requestedReviewerUserId: { $ne: null } }, { requestedReviewerUserId: 'user-1', submittedByUserId: 'someone-else' }]) {
+    await assert.rejects(() => run(MarkExpenseReadyDto, body), BadRequestException);
+  }
+  const file = { originalFileName: 'slip.png', mimeType: 'image/png', byteSize: 1200 };
+  assert.equal((await run(SubstitutePreparationUploadIntentDto, { ...file, purpose: 'expense.payment.evidence' })).purpose, 'expense.payment.evidence');
+  assert.equal((await run(SubstitutePreparationUploadCompletionDto, { purpose: 'expense.receipt.supporting' })).purpose, 'expense.receipt.supporting');
+  // The primary receipt and the reviewer's evidence are not this person's to attach through this door.
+  for (const purpose of ['expense.receipt.primary', 'expense.review.evidence', undefined]) {
+    await assert.rejects(() => run(SubstitutePreparationUploadIntentDto, { ...file, purpose }), BadRequestException);
+    await assert.rejects(() => run(SubstitutePreparationUploadCompletionDto, { purpose }), BadRequestException);
+  }
+  await assert.rejects(() => run(SubstitutePreparationUploadIntentDto, { ...file, purpose: 'expense.payment.evidence', expenseId: 'other' }), BadRequestException);
+});
+
 it('accepts an optional strict boolean attestation on expense void', async () => {
   for (const taxFilingAttested of [true, false, undefined]) await run(VoidExpenseDto, { reason: 'บันทึกผิด', ...(taxFilingAttested === undefined ? {} : { taxFilingAttested }) });
   for (const taxFilingAttested of ['true', 1, null]) await assert.rejects(run(VoidExpenseDto, { reason: 'บันทึกผิด', taxFilingAttested }), BadRequestException);
@@ -373,4 +417,34 @@ it('validates issue and reissue intent without accepting amounts, paid facts or 
   assert.deepEqual(JSON.parse(JSON.stringify(await run(ReissueDisbursementVoucherDto, { commandId: 'reissue-command' }))), { commandId: 'reissue-command' });
   for (const patch of [{ commandId: '' }, { expenseId: '' }, { paymentId: null }, { amount: '1' }, { origin: 'DIRECT_PAYMENT' }, { paidDate: '2026-10-01' }]) await assert.rejects(() => run(IssueDisbursementVoucherDto, { ...body, ...patch }), BadRequestException);
   for (const patch of [{ commandId: '' }, { commandId: 'x'.repeat(129) }, { expectedVersion: 1 }, { paymentIds: [] }]) await assert.rejects(() => run(ReissueDisbursementVoucherDto, { commandId: 'reissue-command', ...patch }), BadRequestException);
+});
+
+
+it('validates evidence bundle selections and rejects forged scope, file ids and invalid filters', async () => {
+  const body = { expenseIds: ['e1'], branchId: 'b1', yearMonth: '2026-10', dateField: 'expenseDate', status: 'CONFIRMED', taxEvidenceStatus: 'NOT_TAX_EVIDENCE' };
+  assert.deepEqual(JSON.parse(JSON.stringify(await run(AccountantEvidenceBundleDto, body))), body);
+  assert.ok(await run(AccountantEvidenceBundleDto, { expenseIds: [] }));
+  for (const patch of [{ companyId: 'other' }, { attachmentIds: ['other'] }, { scopes: {} }, { yearMonth: '../file' }, { yearMonth: '2026-13' }, { dateField: 'createdAt' }, { status: 'bad' }, { expenseIds: [12] }, { expenseIds: Array(10001).fill('e') }]) {
+    await assert.rejects(() => run(AccountantEvidenceBundleDto, { ...body, ...patch }), BadRequestException);
+  }
+});
+
+
+it('validates VAT decision bodies and rejects forged actors or malformed conditions', async () => {
+  const body = { toStatus: 'CLAIMABLE', reviewerConditions: ['BUSINESS_USE', 'NOT_PROHIBITED', 'ISSUER_ENTITLED'], buyerConfirmed: true };
+  assert.ok(await run(DecideExpenseInputVatDto, body));
+  for (const patch of [{ toStatus: 'NEEDS_REVIEW' }, { reason: 1 }, { reason: 'x'.repeat(501) }, { reviewerConditions: 'BUSINESS_USE' },
+    { reviewerConditions: ['unknown'] }, { buyerConfirmed: 'true' }, { decidedByUserId: 'other' }, { conditionsJson: [] }])
+    await assert.rejects(() => run(DecideExpenseInputVatDto, { ...body, ...patch }), BadRequestException);
+});
+
+
+it('validates substitute receipt list date order, status, month and paging at the query boundary', async () => {
+  const query = (value: unknown) => pipe.transform(value, { type: 'query', metatype: SubstituteReceiptListQueryDto });
+  const valid = await query({ order: 'oldest', status: 'ISSUED', yearMonth: '2026-10', page: '2', pageSize: '10' });
+  assert.equal(valid.order, 'oldest'); assert.equal(valid.page, 2); assert.equal(valid.pageSize, 10);
+  assert.equal((await query({})).order, undefined);
+  for (const value of [{ order: 'ascending' }, { status: 'APPROVED' }, { yearMonth: '2026-13' }, { page: '1.5' }, { pageSize: '0' }]) {
+    await assert.rejects(() => query(value), BadRequestException);
+  }
 });

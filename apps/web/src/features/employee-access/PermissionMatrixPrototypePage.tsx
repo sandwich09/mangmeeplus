@@ -2,6 +2,7 @@
 
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { isRoleEditableByCompany, type ActionId, type CapabilityPackView, type MenuId, type PermissionMatrix as PermissionMatrixDto, type RoleSummary, type RoleTemplate } from '@watchdog-bms/contracts';
 import {
   BellIcon,
@@ -21,12 +22,16 @@ import {
   UserIcon,
 } from '@/common/icons';
 import {
-  MangmeeBranchChip,
   MangmeeCard,
   MangmeeIconFrame,
+  MangmeePage,
   cx,
   type MangmeeTone,
 } from '@/common/components/mangmee';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { BackLink } from '@/common/components/app-shell/BackLink';
+import { Notice } from '@/common/components/notice';
+import { dangerButtonClass, primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
 import { LoadingState } from '@/common/components/state';
 import {
   createRole,
@@ -39,7 +44,8 @@ import {
   updateRole,
 } from './employee-access.api';
 import { MENU_GROUP_LABEL_TH, MENU_GROUP_ORDER } from './access-overview.model';
-import { RoleBuilder, coveredPacks, ghostClass, dangerClass, roleDisplayName } from './EmployeeAccessPages';
+import { RoleBuilder, RoleCanDoList, roleDisplayName } from './EmployeeAccessPages';
+import { roleCanDoPacks } from './role-picker.logic';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
@@ -151,8 +157,18 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
   const [roleOptionsAvailable, setRoleOptionsAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  // The chosen role is in the address (`?role=`). Below the two-column width (1024 px) the list is the
+  // page and a role is its own view, so the phone's back gesture returns to the list (thai-ux-standard 3.1).
+  const pathname = usePathname();
+  const roleParam = useSearchParams().get('role');
   const [mode, setMode] = useState<'view' | 'create' | 'edit'>('view');
+  const showRole = (roleId: string, step: 'push' | 'replace' = 'replace') => {
+    setMode('view');
+    const url = `${pathname}?role=${encodeURIComponent(roleId)}`;
+    if (step === 'push') { window.history.pushState(null, '', url); window.scrollTo({ top: 0 }); } else window.history.replaceState(null, '', url);
+  };
+  // Leaving a role by the back gesture also leaves its editor.
+  useEffect(() => { if (!roleParam) setMode((current) => (current === 'edit' ? 'view' : current)); }, [roleParam]);
   useEffect(() => {
     if (mode !== 'create') return;
     const id = requestAnimationFrame(() => builderRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
@@ -174,7 +190,6 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
 
     if (rolesR.status === 'fulfilled') {
       setRoles(rolesR.value);
-      setSelectedRoleId((prev) => rolesR.value.some((role) => role.id === prev) ? prev : rolesR.value[0]?.id ?? null);
     } else {
       setError(localizedErrorMessage(rolesR.reason, locale, { fallback: 'error.load_failed' }));
     }
@@ -203,8 +218,8 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
 
   const allPacks = useMemo(() => packModules.flatMap((m) => m.packs), [packModules]);
   const selectedRole = useMemo(
-    () => roles.find((r) => r.id === selectedRoleId) ?? roles[0] ?? null,
-    [roles, selectedRoleId],
+    () => roles.find((r) => r.id === roleParam) ?? roles[0] ?? null,
+    [roles, roleParam],
   );
   const roleEditable = Boolean(canManageRoles && selectedRole && isRoleEditableByCompany(selectedRole));
   const selectedRow = useMemo(
@@ -212,17 +227,19 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
     [matrix, selectedRole],
   );
   const menus = matrix?.menus ?? [];
-  const openMenuCount = selectedRow
-    ? menus.filter((m) => selectedRow.menus[m.id]?.view).length
-    : 0;
   const { confirm, confirmDialog } = useConfirm();
 
   const handleDisable = async (roleId: string) => {
-    if (!canManageRoles || disabling || !(await confirm('ปิดใช้งานบทบาทนี้ใช่หรือไม่?'))) return;
+    if (!canManageRoles || disabling) return;
+    const role = roles.find((item) => item.id === roleId);
+    const name = role ? roleDisplayName(role, locale) : '';
+    // Four parts (thai-ux-standard 4.2). The sentence says only what this screen can show to be true.
+    const accepted = await confirm({ title: `ปิดใช้งานบทบาท ${name}?`, message: 'บทบาทนี้จะขึ้นว่าปิดใช้งาน และแก้ไขไม่ได้อีก', confirmLabel: 'ปิดใช้งานบทบาท', cancelLabel: 'ไม่ปิด', variant: 'danger' });
+    if (!accepted) return;
     setDisabling(true);
     try {
       await disableRole(companyId, roleId);
-      toast.success('ปิดใช้งานบทบาทเรียบร้อยแล้ว');
+      toast.success(`ปิดใช้งานบทบาท ${name} แล้ว`);
       await reload();
     } catch (e) {
       setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' }));
@@ -233,84 +250,74 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
 
   if (loading) {
     return (
-      <div className="mangmee-page">
+      <MangmeePage title="บทบาทและสิทธิ์">
         <LoadingState label="กำลังโหลด..." />
-      </div>
+      </MangmeePage>
     );
   }
 
-  return (
-    <div className="mangmee-page">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-sm font-semibold text-gray-500">
-            <span>มั่งมี</span>
-            <span className="mx-2 text-gray-300">/</span>
-            <span className="text-gray-700">สิทธิ์การใช้งาน</span>
-          </div>
-          <h1 className="mt-7 text-3xl font-extrabold leading-tight text-gray-900">สิทธิ์การใช้งาน</h1>
-          <p className="mt-3 text-base font-medium text-gray-500">
-            เลือกบทบาท แล้วกำหนดเมนูและงานที่คนในบทบาทนี้ทำได้
-          </p>
-        </div>
-        <MangmeeBranchChip label={t('branch.scope.company_wide', locale)} />
-      </div>
+  // What the chosen role can do, in the builder's own plain sentences (the menu grid below cannot tell
+  // two roles apart: receipts, claims and tax papers are not menus of their own).
+  // Only what this shop's package has: a standard role also carries rights of features the shop does not hold.
+  const selectedPacks = selectedRole ? roleCanDoPacks(selectedRole.permissionKeys, allPacks) : [];
+  const corePacks = allPacks.filter((pack) => pack.isCore && !pack.locked);
+  // On a narrow screen: the list, or one role (or the form for a new one).
+  const narrowDetail = mode === 'create' || Boolean(roleParam);
 
-      {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+  return (
+    <MangmeePage
+      title="บทบาทและสิทธิ์"
+      back={roleParam && mode === 'view' ? <div className="lg:hidden"><BackLink href={pathname} label="กลับไปบทบาททั้งหมด" /></div> : undefined}
+      actions={canManageRoles && mode !== 'create' ? (
+        <button type="button" className={cx(primaryButtonClass, narrowDetail && 'hidden lg:inline-flex')} disabled={!roleOptionsAvailable} onClick={() => setMode('create')}>เพิ่มบทบาท</button>
+      ) : undefined}
+    >
+      {error && <Notice tone="error">{error}</Notice>}
       {canManageRoles && !roleOptionsAvailable && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          ยังโหลดตัวเลือกสำหรับกำหนดบทบาทไม่ได้ กรุณาลองใหม่อีกครั้ง
-        </div>
+        <Notice tone="warning" action={<button type="button" className={secondaryButtonClass} onClick={() => void reload()}>ลองอีกครั้ง</button>}>
+          ยังโหลดตัวเลือกสำหรับกำหนดบทบาทไม่ได้
+        </Notice>
       )}
 
       {/* `grid-cols-[minmax(0,1fr)]` is load-bearing on the phone: a bare `grid` sizes its single
           implicit column to the WIDEST child, so the builder grew to 494px inside a 375px screen and
           the overflow was clipped rather than scrollable — the right third of the form could not be
           reached at all. Letting the column shrink to zero puts it back inside the viewport. */}
-      <div className="grid gap-5 grid-cols-[minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]">
-        <MangmeeCard className="min-w-0 p-4">
-          <div className="flex flex-wrap items-center justify-between px-2">
-            <h2 className="text-sm font-bold text-gray-500">บทบาททั้งหมด</h2>
-            {canManageRoles && <button
-              type="button"
-              className="inline-flex h-11 items-center gap-1 rounded-lg border border-gray-200 px-2 text-xs sm:h-8 font-bold text-gray-600 hover:border-brand-200 hover:bg-brand-25 disabled:opacity-50"
-              disabled={!roleOptionsAvailable}
-              onClick={() => setMode(mode === 'create' ? 'view' : 'create')}
-            >
-              <PlusIcon className="h-3.5 w-3.5" />
-              เพิ่ม
-            </button>}
-          </div>
+      <div className="grid gap-5 grid-cols-[minmax(0,1fr)] lg:grid-cols-[300px_minmax(0,1fr)]">
+        <MangmeeCard className={cx('min-w-0 p-4', narrowDetail && 'hidden lg:block')}>
+          <h2 className="px-2 text-sm font-semibold text-gray-700">บทบาททั้งหมด</h2>
           <div className="mt-4 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
             {roles.map((role) => {
               const active = role.id === selectedRole?.id && mode !== 'create';
+              const isOpen = active && Boolean(roleParam);
               const disabled = role.status !== 'ACTIVE';
               return (
                 <button
                   key={role.id}
                   type="button"
-                  onClick={() => { setSelectedRoleId(role.id); setMode('view'); }}
+                  aria-current={isOpen ? 'true' : undefined}
+                  onClick={() => showRole(role.id, window.innerWidth < 1024 ? 'push' : 'replace')}
                   className={cx(
-                    'flex min-h-[74px] min-w-0 w-full items-center gap-3 rounded-lg border px-3 py-3 text-left transition',
+                    'flex min-h-14 min-w-0 w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition',
+                    // The highlight says "shown at the right", which is true only where there are two columns.
                     active
-                      ? 'border-brand-200 bg-brand-25 shadow-[inset_3px_0_0_var(--color-brand-500)]'
+                      ? 'border-gray-200 bg-white lg:border-brand-200 lg:bg-brand-25 lg:shadow-[inset_3px_0_0_var(--color-brand-500)]'
                       : 'border-gray-200 bg-white hover:border-brand-100 hover:bg-gray-50',
                   )}
                 >
-                  <PositionGlyph isSystem={role.isSystem} tone={role.isSystem ? 'brand' : 'slate'} />
                   <span className="min-w-0 flex-1">
-                    <span className="block break-words text-base font-extrabold text-gray-900">{roleDisplayName(role, locale)}</span>
-                    <span className="mt-1 block text-sm font-medium text-gray-500">
-                      {disabled ? 'ปิดใช้งาน' : staffCountsAvailable ? `${staffCounts[role.id] ?? 0} คน` : role.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทที่กำหนดเอง'}
+                    <span className="block break-words text-base font-semibold text-gray-900">{roleDisplayName(role, locale)}</span>
+                    <span className="mt-0.5 block text-sm text-gray-500">
+                      {disabled ? 'ปิดใช้งาน' : `${staffCountsAvailable ? `${staffCounts[role.id] ?? 0} คน · ` : ''}${role.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทของร้าน'}`}
                     </span>
                   </span>
-                  {role.isSystem && <LockIcon className="h-4 w-4 shrink-0 text-amber-500" />}
                 </button>
               );
             })}
           </div>
         </MangmeeCard>
 
+        <div className={cx('min-w-0', !narrowDetail && 'hidden lg:block')}>
         {mode === 'create' ? (
           <div ref={builderRef} className="min-w-0 scroll-mt-24">
           <RoleBuilder
@@ -318,9 +325,8 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
             onCancel={() => setMode('view')}
             onSubmit={async (body) => {
               const created = await createRole(companyId, body);
-              setSelectedRoleId(created.id);
-              toast.success('สร้างบทบาทเรียบร้อยแล้ว');
-              setMode('view');
+              toast.success(`สร้างบทบาท ${roleDisplayName(created, locale)} แล้ว`);
+              showRole(created.id);
               await reload();
             }}
           />
@@ -328,9 +334,9 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
         ) : mode === 'edit' && selectedRole && roleEditable ? (
           <div className="min-w-0 space-y-3">
             {selectedRole.isSystem && roleEditable && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
-                บทบาทมาตรฐาน — เมื่อบันทึก ระบบจะสร้างสำเนาสำหรับบริษัทของคุณ {staffCountsAvailable ? `พนักงาน ${staffCounts[selectedRole.id] ?? 0} คน` : 'พนักงานที่ใช้บทบาทนี้'}จะย้ายมาอัตโนมัติ · บริษัทอื่นไม่ได้รับผลกระทบ
-              </div>
+              <Notice tone="warning">
+                บทบาทมาตรฐาน: บันทึกแล้วร้านจะได้สำเนาของตัวเอง {staffCountsAvailable ? `พนักงาน ${staffCounts[selectedRole.id] ?? 0} คน` : 'พนักงานที่ใช้บทบาทนี้'}ย้ายมาใช้สำเนานี้
+              </Notice>
             )}
             <RoleBuilder
               companyId={companyId} disbursementEntryOpen={disbursementEntryOpen} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
@@ -338,46 +344,46 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
               onCancel={() => setMode('view')}
               onSubmit={async (body) => {
                 const updated = await updateRole(companyId, selectedRole.id, body);
-                setSelectedRoleId(updated.id);
-                toast.success('บันทึกบทบาทเรียบร้อยแล้ว');
-                setMode('view');
+                toast.success(`บันทึกบทบาท ${roleDisplayName(updated, locale)} แล้ว`);
+                showRole(updated.id);
                 await reload();
               }}
             />
           </div>
         ) : selectedRole ? (
           <MangmeeCard className="min-w-0 overflow-hidden p-0">
-            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 p-6">
-              <div className="min-w-0 lg:max-w-[620px]">
-                <h2 className="break-words text-xl font-extrabold text-gray-900">สิทธิ์เข้าถึงเมนู — {roleDisplayName(selectedRole, locale)}</h2>
-                <p className="mt-2 break-words text-sm font-medium text-gray-500">
-                  {selectedRole.description || 'ดู / สร้าง / แก้ไข / ลบ / อนุมัติ ในแต่ละเมนู — ปิด “ดู” = ซ่อนเมนูทั้งหมด'}
+            <div className="space-y-4 border-b border-gray-100 p-4 sm:p-6">
+              <div className="min-w-0">
+                <h2 className="break-words text-xl font-bold text-gray-900">{roleDisplayName(selectedRole, locale)}</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  {staffCountsAvailable ? `${staffCounts[selectedRole.id] ?? 0} คน · ` : ''}{selectedRole.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทของร้าน'}
                 </p>
+                {/* A standard role's description is the server's list of its menus, which the table below already says. */}
+                {!selectedRole.isSystem && selectedRole.description && <p className="mt-1 break-words text-sm text-gray-600">{selectedRole.description}</p>}
               </div>
               {roleEditable && selectedRole.status === 'ACTIVE' ? (
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <button type="button" className={`${ghostClass} h-9 px-3`} onClick={() => setMode('edit')}>
-                    <PencilIcon className="h-4 w-4" />
-                    แก้ไข
-                  </button>
+                <ActionGroup align="start">
+                  <button type="button" className={secondaryButtonClass} onClick={() => setMode('edit')}>แก้ไขบทบาท</button>
                   {!selectedRole.isSystem && (
-                    <button type="button" className={`${dangerClass} h-9 px-3`} disabled={disabling} aria-busy={Boolean(disabling)} onClick={() => void handleDisable(selectedRole.id)}>
-                      <TrashIcon className="h-4 w-4" />
-                      {disabling ? 'กำลังปิดใช้งาน...' : 'ปิดใช้งาน'}
-                    </button>
+                    <button type="button" className={dangerButtonClass} disabled={disabling} aria-busy={Boolean(disabling)} onClick={() => void handleDisable(selectedRole.id)}>ปิดใช้งานบทบาท</button>
                   )}
-                  <span className="inline-flex h-9 items-center rounded-full bg-brand-50 px-4 text-sm font-extrabold text-brand-700">
-                    {openMenuCount} เมนูที่เปิด
-                  </span>
-                </div>
+                </ActionGroup>
               ) : selectedRole.status !== 'ACTIVE' ? (
-                <span className="inline-flex h-9 shrink-0 items-center rounded-full bg-gray-100 px-4 text-sm font-extrabold text-gray-600">ปิดใช้งาน</span>
+                <p className="text-sm font-semibold text-gray-600">ปิดใช้งาน</p>
               ) : (
-                <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium text-gray-400">
-                  <LockIcon className="h-4 w-4 shrink-0" />
-                  {isRoleEditableByCompany(selectedRole) ? 'คุณมีสิทธิ์ดู แต่ยังไม่มีสิทธิ์จัดการบทบาท' : 'บทบาทนี้ระบบดูแลให้ แก้ไขไม่ได้'}
+                <p className="text-sm text-gray-500">
+                  {isRoleEditableByCompany(selectedRole) ? 'คุณดูได้ แต่ไม่มีสิทธิ์แก้บทบาท' : 'บทบาทนี้แก้ไขไม่ได้'}
+                </p>
+              )}
+
+              {/* The role said as the things it lets a person do. */}
+              {allPacks.length > 0 && (
+                <div data-testid="role-can-do">
+                  <h3 className="text-sm font-semibold text-gray-900">บทบาทนี้ทำอะไรได้</h3>
+                  <RoleCanDoList packs={selectedPacks} corePacks={corePacks} />
                 </div>
               )}
+              <h3 className="text-sm font-semibold text-gray-900">สิทธิ์เข้าถึงเมนู</h3>
             </div>
 
             {/* The rights never scroll sideways. A phone has no room for five tick columns beside a menu
@@ -390,7 +396,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
                 if (groupMenus.length === 0) return null;
                 return (
                   <div key={group} className="grid gap-1">
-                    <h3 className="px-3 text-xs font-extrabold tracking-wide text-gray-400">{MENU_GROUP_LABEL_TH[group]}</h3>
+                    <h3 className="px-3 text-sm font-semibold text-gray-500">{MENU_GROUP_LABEL_TH[group]}</h3>
                     {groupMenus.map((menu) => {
                       const granted = ACTIONS.filter((action) => selectedRow?.menus[menu.id]?.[action.key]);
                       return (
@@ -402,7 +408,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
                             <span className="min-w-0 break-words text-sm font-extrabold text-gray-800">{menu.labelTh}</span>
                           </div>
                           <div className="flex flex-wrap gap-x-3 gap-y-1 pl-11">
-                            {granted.length === 0 ? <span className="text-sm font-medium text-gray-400">ไม่ได้เปิดสิทธิ์</span> : granted.map((action) => (
+                            {granted.length === 0 ? <span className="text-sm font-medium text-gray-500">ไม่ได้เปิดสิทธิ์</span> : granted.map((action) => (
                               <span key={action.key} className="inline-flex items-center gap-1 text-sm font-extrabold text-brand-700">
                                 <CheckLineIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                                 {action.label}
@@ -453,10 +459,11 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
             </div>
           </MangmeeCard>
         ) : (
-          <MangmeeCard className="p-6 text-sm text-gray-400">ยังไม่มีบทบาทในบริษัทนี้</MangmeeCard>
+          <MangmeeCard className="p-6 text-sm text-gray-500">ยังไม่มีบทบาทในร้านนี้</MangmeeCard>
         )}
+        </div>
       </div>
       {confirmDialog}
-    </div>
+    </MangmeePage>
   );
 }

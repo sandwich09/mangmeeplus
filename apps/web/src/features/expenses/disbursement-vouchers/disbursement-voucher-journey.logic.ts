@@ -23,7 +23,6 @@ export function disbursementVoucherIsSender(detail: DisbursementVoucherDetail, v
 }
 export function disbursementVoucherPrimary(detail: DisbursementVoucherDetail, viewerUserId?: string | null): 'selfApprove' | 'submit' | 'approve' | null {
   const { header, actions } = detail;
-  if (disbursementReturnedApprover(detail, viewerUserId)) return 'submit';
   if (disbursementVoucherIsSender(detail, viewerUserId)) return null;
   if (header.status === 'DRAFT') return actions.submitAndApprove ? 'selfApprove' : actions.submit ? 'submit' : null;
   return header.status === 'PENDING_APPROVAL' && actions.approve ? 'approve' : null;
@@ -46,7 +45,7 @@ export const initialApprover = (people: DisbursementApprover[], preferred?: stri
 export function disbursementCommandBody(kind: Exclude<DisbursementDialogKind, 'delete' | 'remind'>, base: DisbursementVoucherCommandInput, approver: string, reason: string): SubmitDisbursementVoucherInput | EndDisbursementVoucherInput {
   if (kind === 'selfApprove') return { ...base, approveNow: true };
   if (kind === 'submit') return approver ? { ...base, requestedApproverUserId: approver } : base;
-  return kind !== 'approve' && reason.trim() ? { ...base, reason: reason.trim() } : base;
+  return (kind === 'return' || kind === 'cancel') && reason.trim() ? { ...base, reason: reason.trim() } : base;
 }
 export function disbursementPayeeBasisNote(detail: DisbursementVoucherDetail) {
   if (detail.header.payeeBasis === 'SAME_NAME') return DISBURSEMENT_VOUCHER_PAYEE_BASIS_WORDS.sameNameNote;
@@ -60,19 +59,26 @@ export function disbursementCancellationSentence(detail: DisbursementVoucherDeta
 export function disbursementVoucherHistory(detail: DisbursementVoucherDetail) {
   const { header } = detail;
   const person = (name: string | null | undefined) => name ?? words['expenses.disbursement.removed_member'];
-  const events: DisbursementHistoryEvent[] = [{ key: 'created', at: header.createdAt, label: words['expenses.disbursement.created'], actor: person(detail.preparerName) }];
+  const events: DisbursementHistoryEvent[] = [{ key: 'created', at: header.createdAt, label: words['expenses.disbursement.created'], actor: person(detail.preparerName) + (detail.preparerActive === false ? ' (ปิดใช้งานแล้ว)' : '') }];
   if (header.lastReminderAt) events.push({ key: 'reminder', at: header.lastReminderAt, actor: null,
     label: words['expenses.disbursement.history_reminder'].replace('{name}', person(detail.lastReminderToName)).replace('{time}', formatThaiDateTime(header.lastReminderAt)) });
   if (header.paidRecordedAt) events.push({ key: 'paid', at: header.paidRecordedAt, label: words['expenses.disbursement.pay'], actor: person(detail.paidByName) });
-  const labels = { APPROVED: words['expenses.disbursement.approve_document'], RETURNED: words['expenses.disbursement.return'], WITHDRAWN: words['expenses.disbursement.withdraw'], CANCELLED: words['expenses.disbursement.cancel'] };
+  const labels = { APPROVED: words['expenses.disbursement.approve_document'], RETURNED: words['expenses.disbursement.returned_toast'], WITHDRAWN: words['expenses.disbursement.withdraw'], CANCELLED: words['expenses.disbursement.cancel'] };
   for (const revision of detail.revisions) {
-    events.push({ key: `sent-${revision.revision}`, at: revision.submittedAt, label: words['expenses.disbursement.history_sent'].replace('{n}', String(revision.revision)), actor: person(revision.submittedByName),
+    events.push({ key: `sent-${revision.revision}`, at: revision.submittedAt, label: words['expenses.disbursement.history_sent'].replace('{n}', String(revision.revision)), actor: person(revision.submittedByName) + (revision.submittedByUserId === header.submittedByUserId && detail.senderActive === false ? ' (ปิดใช้งานแล้ว)' : ''),
       recipient: revision.requestedApproverUserId ? person(revision.requestedApproverName) : null });
     if (revision.decision && revision.decidedAt) events.push({ key: `decision-${revision.revision}`, at: revision.decidedAt,
       label: revision.decision === 'APPROVED' && revision.submittedByUserId === revision.decidedByUserId ? words['expenses.disbursement.history_self'] : labels[revision.decision],
       actor: person(revision.decidedByName ?? (revision.revision === header.revision && revision.decision === 'RETURNED' ? header.returnedByName ?? detail.returnedByName : revision.revision === header.revision && revision.decision === 'CANCELLED' ? header.cancelledByName ?? detail.cancelledByName : null)), reason: revision.decisionReason });
     if (revision.postApprovalAction && revision.postApprovalAt) events.push({ key: `post-${revision.revision}`, at: revision.postApprovalAt,
       label: labels[revision.postApprovalAction], actor: person(revision.postApprovalByName ?? (revision.revision === header.revision && revision.postApprovalAction === 'CANCELLED' ? header.cancelledByName ?? detail.cancelledByName : null)), reason: revision.postApprovalReason });
+  }
+  // Old/direct documents may have header facts without a matching revision; retain those facts in history.
+  if (header.submittedAt && !detail.revisions.some(revision => revision.submittedAt === header.submittedAt)) {
+    events.push({ key: 'submitted', at: header.submittedAt, label: words['expenses.disbursement.submit'], actor: person(detail.submittedByName) + (detail.senderActive === false ? ' (ปิดใช้งานแล้ว)' : ''), recipient: detail.requestedApproverName });
+  }
+  if (header.approvedAt && !detail.revisions.some(revision => revision.decision === 'APPROVED' && revision.decidedAt === header.approvedAt)) {
+    events.push({ key: 'approved', at: header.approvedAt, label: labels.APPROVED, actor: person(detail.approvedByName) });
   }
   if (header.returnedAt && !events.some(e => e.at === header.returnedAt && e.label === labels.RETURNED)) {
     events.push({ key: 'returned', at: header.returnedAt, label: labels.RETURNED, actor: person(header.returnedByName ?? detail.returnedByName), reason: header.returnReason });

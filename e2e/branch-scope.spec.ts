@@ -119,7 +119,7 @@ test.describe('BSC — branch scope visibility', () => {
     const siamName = displayName((await activeBranches(api, companyId)).byCode(SIAM_CODE));
     await gotoCompany(authedPage, companyId, '/bookings');
 
-    // A fresh browser context has no watchdog.branchFilter.<companyId> key (WorkspaceScope.tsx:42),
+    // A fresh browser context has no watchdog.branchFilter.<companyId>.<userId> key,
     // so the page always opens on all branches — no UI reset step needed.
     await expect(selector(authedPage)).toHaveText(ALL_BRANCHES);
 
@@ -185,7 +185,7 @@ test.describe('BSC — branch scope visibility', () => {
 
     await expect(chip(siamName)).toBeVisible();
     await expect(subtitle).toContainText(siamName);
-    await expect(main(authedPage).getByText('โหลดข้อมูลแดชบอร์ดไม่สำเร็จ')).toHaveCount(0);
+    await expect(main(authedPage).getByText('โหลดข้อมูลหน้าแรกไม่สำเร็จ')).toHaveCount(0);
   });
 
   test('BSC-04 @p1 a company-wide page states its own scope, not the selected branch', async ({ authedPage, api, companyId }) => {

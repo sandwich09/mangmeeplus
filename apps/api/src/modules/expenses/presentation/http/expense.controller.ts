@@ -1,6 +1,11 @@
+import { ExpensePaymentSlipUploadUseCase } from '../../application/use-cases/expense-upload.use-case';
+import { DecideExpenseInputVatUseCase } from '../../application/use-cases/expense-draft.use-case';
+import { DecideExpenseInputVatDto, SubstituteReceiptListQueryDto } from './expense.dtos';
+import { PrismaService } from '../../../../common/database/prisma.service';
 import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  AccountantEvidenceBundleDto,
   AmendSubstituteReceiptDto,
   CorrectSubstituteDocumentDto,
   SubmitSubstituteReceiptPaperDto,
@@ -16,7 +21,11 @@ import {
   RemoveExpenseReceiptDto,
   ReceiptUploadIntentDto,
   RecordExpensePaymentDto,
+  ConfirmExpensePaymentDateDto,
   SetSignatureDerivedAssetDto,
+  MarkExpenseReadyDto,
+  SubstitutePreparationUploadCompletionDto,
+  SubstitutePreparationUploadIntentDto,
   UploadCompletionDto,
   UploadIntentDto,
 } from './expense.dtos';
@@ -60,6 +69,9 @@ import {
   DownloadSubstituteReceiptPdfUseCase,
   InitSubstituteSignatureUploadUseCase,
   ListCompanySubstituteReceiptsUseCase,
+  ListSubstituteReceiptCandidatesUseCase,
+  SaveOwnSubstituteReceiptReviewUseCase,
+  SubstituteReceiptEvidenceUploadUseCase,
   ListSubstituteReceiptHistoryUseCase,
   ListSubstituteReceiptPayersUseCase,
   PrepareSubstituteReceiptUseCase,
@@ -97,8 +109,6 @@ import type {
   NonExpenseClassificationOverrideInput, OcrTotalAcknowledgementInput, SourceDocumentType, CertifySubstituteReceiptInput, ApproveSubstituteReceiptInput,
   UpdateSubstituteReceiptPolicyInput,
   PreviewSubstituteReceiptInput,
-  SubstituteReceiptEvidenceStatus,
-  SubstituteReceiptListFilter,
   SupersedeSubstituteReceiptInput,
 } from '@watchdog-bms/contracts';
 
@@ -107,6 +117,7 @@ export class ExpenseController {
   constructor(
     private readonly create: CreateExpenseDraftUseCase,
     private readonly get: GetExpenseUseCase,
+    private readonly decideVat: DecideExpenseInputVatUseCase,
     private readonly list: ListExpensesUseCase,
     private readonly update: UpdateExpenseDraftUseCase,
     private readonly confirm: ConfirmExpenseUseCase,
@@ -114,6 +125,7 @@ export class ExpenseController {
     private readonly void_: VoidExpenseUseCase,
     private readonly ready: MarkExpenseReadyUseCase,
     private readonly payment: RecordExpensePaymentUseCase,
+    private readonly paymentSlip: ExpensePaymentSlipUploadUseCase,
     private readonly reopen: ReopenExpenseUseCase,
     private readonly cancelPayment: CancelExpensePaymentUseCase,
     private readonly initUpload: InitReceiptUploadUseCase,
@@ -122,6 +134,8 @@ export class ExpenseController {
     private readonly dupCheck: DuplicateCheckUseCase,
     private readonly dupResolve: ResolveDuplicateUseCase,
     private readonly listCats: ListExpenseCategoriesUseCase,
+    private readonly ownCertificateReview: SaveOwnSubstituteReceiptReviewUseCase,
+    private readonly preparationUploads: SubstituteReceiptEvidenceUploadUseCase,
     private readonly prepareSubstituteReceipt: PrepareSubstituteReceiptUseCase,
     private readonly lineSubstituteReceiptContinuation: LineSubstituteReceiptContinuationUseCase,
     private readonly previewSubstituteReceipt: PreviewSubstituteReceiptUseCase,
@@ -145,6 +159,7 @@ export class ExpenseController {
     private readonly capturePolicy: GetExpenseCapturePolicyUseCase,
     private readonly buyerMatch: ConfirmBuyerMatchUseCase,
     private readonly listWhtCategories: ListWhtIncomeCategoriesUseCase,
+    private readonly prisma: PrismaService,
   ) {}
 
   // Any authority that puts a user on an expense screen may read it: the answer is only whether
@@ -162,8 +177,11 @@ export class ExpenseController {
   // the AP endpoint. Registered before `:expenseId` — see NOTE below.
   @Get('wht-income-categories')
   @RequirePermissions('expense.create')
-  whtIncomeCategories(@ReqCtx() ctx: RequestContext) {
-    return this.listWhtCategories.execute(ctx);
+  async whtIncomeCategories(@ReqCtx() ctx: RequestContext) {
+    const rows = await this.listWhtCategories.execute(ctx);
+    const routes = await this.prisma.client.whtIncomeCategory.findMany({ where: { code: { in: rows.map(row => row.code) } }, select: { code: true, filingRoute: true } });
+    const byCode = new Map(routes.map(row => [row.code, row.filingRoute]));
+    return rows.map(row => ({ ...row, filingRoute: byCode.get(row.code) ?? 'SYSTEM_FILLS' }));
   }
 
   @Get()
@@ -217,7 +235,7 @@ export class ExpenseController {
   getSharedEvidence(@ReqCtx() ctx: RequestContext, @Query() query: Record<string, string>) {
     const filter: SharedEvidenceFilter = {
       ...(query['branchId'] && { branchId: query['branchId'] }),
-      ...(query['dateField'] === 'expenseDate' ? { dateField: 'expenseDate' as const } : { dateField: 'uploadedAt' as const }),
+      ...(query['dateField'] === 'uploadedAt' ? { dateField: 'uploadedAt' as const } : { dateField: 'expenseDate' as const }),
       ...(query['fromDate'] && { fromDate: query['fromDate'] }),
       ...(query['toDate'] && { toDate: query['toDate'] }),
       ...(query['yearMonth'] && { yearMonth: query['yearMonth'] }),
@@ -232,6 +250,23 @@ export class ExpenseController {
       ...(query['pageSize'] && { pageSize: parseInt(query['pageSize'], 10) }),
     };
     return this.sharedEvidence.execute(ctx, filter);
+  }
+
+  @Post('accountant-package/bundle-plan')
+  @HttpCode(200)
+  @RequirePermissions('expense.export')
+  planAccountantBundle(@ReqCtx() ctx: RequestContext, @Body() body: AccountantEvidenceBundleDto) {
+    return this.accountantPackage.planBundle(ctx, body);
+  }
+
+  @Post('accountant-package/bundle/:part')
+  @HttpCode(200)
+  @RequirePermissions('expense.export')
+  async downloadAccountantBundle(@ReqCtx() ctx: RequestContext, @Body() body: AccountantEvidenceBundleDto, @Param('part') part: string, @Res({ passthrough: true }) response: Response) {
+    const result = await this.accountantPackage.downloadBundle(ctx, body, Number(part));
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('Content-Disposition', `attachment; filename="evidence.zip"; filename*=UTF-8''${encodeURIComponent(result.fileName)}`);
+    return new StreamableFile(result.bytes, { type: 'application/zip' });
   }
 
   @Post('accountant-package')
@@ -271,7 +306,25 @@ export class ExpenseController {
     const sourceDraft = await this.get.sourceDraft(ctx, expense);
     // `buyerAsPrinted` is the parsed form of `buyerAsPrintedJson`; the detail carries only that one.
     const { sourceChannelMetadataJson: _metadata, lineMessageId: _message, lineEventId: _event, buyerAsPrintedJson: _buyer, ...detail } = expense;
-    return { ...detail, ...await this.get.correctionHistory(ctx, expense), sourceDraft, correctionCapabilities: await this.get.correctionCapabilities(ctx, expenseId) };
+    return { ...detail, inputVatRight: await this.get.inputVatRight(ctx, expenseId), reviewRequest: await this.get.reviewRequest(ctx, expense), ...await this.get.correctionHistory(ctx, expense), sourceDraft, correctionCapabilities: await this.get.correctionCapabilities(ctx, expenseId) };
+  }
+
+  @Post(':expenseId/payments/slip-upload-intent')
+  @RequirePermissions('expense.payment.record')
+  initPaymentSlip(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UploadIntentDto) {
+    return this.paymentSlip.init(ctx, expenseId, body);
+  }
+
+  @Post(':expenseId/payments/slip-uploads/:attachmentId/complete')
+  @RequirePermissions('expense.payment.record')
+  completePaymentSlip(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('attachmentId') attachmentId: string, @Body() body: UploadCompletionDto) {
+    return this.paymentSlip.complete(ctx, expenseId, attachmentId, body);
+  }
+
+  @Post(':expenseId/input-vat-decision')
+  @RequireAnyPermission('expense.review')
+  decideInputVat(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: DecideExpenseInputVatDto) {
+    return this.decideVat.execute(ctx, expenseId, body);
   }
 
   @Get(':expenseId/payment-voucher.pdf')
@@ -296,8 +349,20 @@ export class ExpenseController {
     return new StreamableFile(data, { type: 'application/pdf' });
   }
 
+  @Post(':expenseId/substitute-receipt/evidence-upload')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read', 'expense.read_related', 'expense.read_own')
+  initPreparationUpload(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: SubstitutePreparationUploadIntentDto) {
+    return this.preparationUploads.init(ctx, expenseId, body);
+  }
+
+  @Post(':expenseId/substitute-receipt/evidence-upload/:attachmentId/complete')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read', 'expense.read_related', 'expense.read_own')
+  completePreparationUpload(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('attachmentId') attachmentId: string, @Body() body: SubstitutePreparationUploadCompletionDto) {
+    return this.preparationUploads.complete(ctx, expenseId, attachmentId, body);
+  }
+
   @Post(':expenseId/substitute-receipt')
-  @RequirePermissions('expense.review')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read', 'expense.read_related', 'expense.read_own')
   prepareSubstitute(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: GenerateSubstituteReceiptInput) {
     return this.prepareSubstituteReceipt.execute(ctx, expenseId, body);
   }
@@ -325,13 +390,13 @@ export class ExpenseController {
   }
 
   @Get(':expenseId/substitute-receipt/payers')
-  @RequirePermissions('expense.review')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read', 'expense.read_related', 'expense.read_own')
   listSubstitutePayers(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
     return this.substituteReceiptPayers.execute(ctx, expenseId);
   }
 
   @Get(':expenseId/substitute-receipt/history')
-  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read_related', 'expense.read_own')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read', 'expense.read_related', 'expense.read_own')
   listSubstituteHistory(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
     return this.substituteReceiptHistory.execute(ctx, expenseId);
   }
@@ -484,6 +549,9 @@ export class ExpenseController {
   @Patch(':expenseId')
   @RequireAnyPermission('expense.update', 'expense.review', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload')
   async updateDraft(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {
+    // Every person who may edit a draft saves through the draft update, which itself decides what
+    // each right may change. The certificate-only rule belongs to `review-fields` below: routing
+    // non-reviewers through it here refused a plain employee's own draft save (2026-10-13).
     const expense = await this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true });
     const { sourceChannelMetadataJson: _metadata, lineMessageId: _message, lineEventId: _event, ...detail } = expense;
     return detail;
@@ -496,9 +564,11 @@ export class ExpenseController {
   }
 
   @Patch(':expenseId/review-fields')
-  @RequirePermissions('expense.review')
+  @RequireAnyPermission('expense.review', 'expense.read', 'expense.read_related', 'expense.read_own', 'expense.confirm')
   async updateReviewFields(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {
-    const expense = await this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true });
+    const expense = ctx.permissions.includes('expense.review')
+      ? await this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true })
+      : await this.ownCertificateReview.execute(ctx, expenseId, body);
     const { sourceChannelMetadataJson: _metadata, lineMessageId: _message, lineEventId: _event, ...detail } = expense;
     return detail;
   }
@@ -551,16 +621,22 @@ export class ExpenseController {
     return this.completeUpload.execute(ctx, { expenseId, attachmentId, ...body });
   }
 
+  @Get(':expenseId/reviewers')
+  @RequireAnyPermission('expense.update', 'expense.review')
+  reviewers(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.ready.reviewers(ctx, expenseId);
+  }
+
   @Post(':expenseId/mark-ready')
   @RequirePermissions('expense.update')
-  markReady(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
-    return this.ready.execute(ctx, expenseId);
+  markReady(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: MarkExpenseReadyDto) {
+    return this.ready.execute(ctx, expenseId, body.requestedReviewerUserId);
   }
 
   @Post(':expenseId/reviewer-mark-ready')
   @RequirePermissions('expense.review')
-  markReadyAsReviewer(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
-    return this.ready.execute(ctx, expenseId);
+  markReadyAsReviewer(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: MarkExpenseReadyDto) {
+    return this.ready.execute(ctx, expenseId, body.requestedReviewerUserId);
   }
 
   @Post(':expenseId/confirm')
@@ -591,6 +667,12 @@ export class ExpenseController {
   @RequirePermissions('expense.payment.record')
   cancelExpensePayment(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('paymentId') paymentId: string, @Body() body: ReasonRequiredDto) {
     return this.cancelPayment.execute(ctx, expenseId, paymentId, body.reason);
+  }
+
+  @Post(':expenseId/payments/:paymentId/confirm-date')
+  @RequirePermissions('expense.payment.record')
+  confirmPaymentDate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('paymentId') paymentId: string, @Body() body: ConfirmExpensePaymentDateDto) {
+    return this.payment.confirmDate(ctx, expenseId, paymentId, body.paidAt);
   }
 
   @Post(':expenseId/payment')
@@ -673,19 +755,25 @@ export class ExpenseCategoryController {
 
 @Controller('companies/:companyId/substitute-receipts')
 export class CompanySubstituteReceiptController {
-  constructor(private readonly listSubstituteReceipts: ListCompanySubstituteReceiptsUseCase) {}
+  constructor(private readonly listSubstituteReceipts: ListCompanySubstituteReceiptsUseCase, private readonly candidates: ListSubstituteReceiptCandidatesUseCase, private readonly history: ListSubstituteReceiptHistoryUseCase) {}
+
+  @Get(':evidenceId/expense')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read', 'expense.read_related', 'expense.read_own')
+  async resolveExpense(@ReqCtx() ctx: RequestContext, @Param('evidenceId') evidenceId: string) {
+    return { expenseId: await this.history.resolveExpenseId(ctx, evidenceId) };
+  }
+
+  @Get('candidates')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read', 'expense.read_related', 'expense.read_own')
+  listCandidates(@ReqCtx() ctx: RequestContext, @Query() query: Record<string, string | undefined>) {
+    return this.candidates.execute(ctx, { branchId: query['branchId'], search: query['search'], includeBlocked: query['includeBlocked'] === 'true',
+      page: query['page'] ? Number(query['page']) : undefined, pageSize: query['pageSize'] ? Number(query['pageSize']) : undefined });
+  }
 
   @Get()
-  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read_related', 'expense.read_own')
-  list(@ReqCtx() ctx: RequestContext, @Query() query: Record<string, string | undefined>) {
-    const filter: SubstituteReceiptListFilter = {
-      ...(query['status'] && { status: query['status'] as SubstituteReceiptEvidenceStatus }),
-      ...(query['yearMonth'] && { yearMonth: query['yearMonth'] }),
-      ...(query['payerUserId'] && { payerUserId: query['payerUserId'] }),
-      ...(query['page'] && { page: parseInt(query['page'], 10) }),
-      ...(query['pageSize'] && { pageSize: parseInt(query['pageSize'], 10) }),
-    };
-    return this.listSubstituteReceipts.execute(ctx, filter);
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read', 'expense.read_related', 'expense.read_own')
+  list(@ReqCtx() ctx: RequestContext, @Query() query: SubstituteReceiptListQueryDto) {
+    return this.listSubstituteReceipts.execute(ctx, query);
   }
 }
 
@@ -703,7 +791,7 @@ export class ExpenseSettingsController {
   }
 
   @Get('substitute-receipt/runtime')
-  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read_related', 'expense.read_own')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read', 'expense.read_related', 'expense.read_own')
   getRuntimePolicy(@ReqCtx() ctx: RequestContext) {
     return this.getSubstitutePolicy.executeRuntime(ctx);
   }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DISBURSEMENT_VOUCHER_STATUSES } from '@watchdog-bms/contracts';
-import { disbursementWithholdingGroups, canPayDisbursementVoucher, disbursementCancelledPaymentLines, disbursementWithholdingLines, initialDisbursementPayment, disbursementPaymentDateError, disbursementPaymentMethodError, disbursementPaymentBody, disbursementVoucherDocumentHref } from './disbursement-voucher-payment.logic';
+import { disbursementPaymentCorrectionHint, disbursementWithholdingGroups, canPayDisbursementVoucher, disbursementCancelledPaymentLines, disbursementWithholdingLines, initialDisbursementPayment, disbursementPaymentDateError, disbursementPaymentMethodError, disbursementPaymentBody, disbursementVoucherDocumentHref } from './disbursement-voucher-payment.logic';
 import { nextDraftCommand } from './disbursement-voucher-form.logic';
 import type { DisbursementVoucherDetail } from './disbursement-vouchers.model';
 
@@ -15,10 +15,11 @@ test('payment defaults use Bangkok today and the planned method', () => {
   for (const [at, day] of [['2026-10-11T16:59:59Z', '2026-10-11'], ['2026-10-11T17:00:00Z', '2026-10-12'], ['2026-10-12T00:00:00Z', '2026-10-12']] as const) {
     assert.deepEqual(initialDisbursementPayment({ plannedMethod: 'BANK_TRANSFER' }, new Date(at)), { paidDate: day, paymentMethod: 'BANK_TRANSFER', paidFromRef: '' });
   }
-  assert.equal(initialDisbursementPayment({ plannedMethod: null }).paymentMethod, '');
+  assert.equal(initialDisbursementPayment({ plannedMethod: null }).paymentMethod, 'BANK_TRANSFER');
+  for (const plannedMethod of ['CASH', 'CARD', 'CHEQUE', 'OTHER'] as const) assert.equal(initialDisbursementPayment({ plannedMethod }).paymentMethod, plannedMethod);
 });
 test('paying requires a method and uses the server sentence locally', () => {
-  assert.equal(disbursementPaymentMethodError(''), 'กรุณาเลือกวิธีจ่ายก่อนบันทึก');
+  assert.equal(disbursementPaymentMethodError(''), 'เลือกวิธีจ่ายก่อนบันทึก');
   assert.equal(disbursementPaymentMethodError('CASH'), undefined);
 });
 test('future payment dates refuse locally using Bangkok days', () => {
@@ -77,3 +78,15 @@ test('payment body adds only the uploaded slip id and removing the selection omi
   assert.deepEqual(disbursementWithholdingGroups(d).map(g => [g.state, g.lines.length]), [['PENDING', 2], ['SYSTEM_ISSUED', 1], ['EXTERNAL_LINKED', 1]]);
   d.header.status = 'APPROVED'; assert.deepEqual(disbursementWithholdingGroups(d), []);
  });
+
+
+test('payment correction advice follows the server withdraw action and names an active author or the owner', () => {
+  const detail = { actions: { withdraw: false }, preparerName: 'มีนา', submittedByName: 'สมใจ', preparerActive: true, senderActive: true } as DisbursementVoucherDetail;
+  assert.equal(disbursementPaymentCorrectionHint(detail), 'ยอดต้องเท่ายอดที่อนุมัติ ถ้าไม่เท่า ให้ มีนา แก้ใบก่อน');
+  assert.match(disbursementPaymentCorrectionHint({ ...detail, preparerActive: false }), /ให้ สมใจ แก้ใบก่อน$/);
+  assert.match(disbursementPaymentCorrectionHint({ ...detail, preparerActive: false, senderActive: false }), /ให้ เจ้าของกิจการ แก้ใบก่อน$/);
+  // The reader who has "กลับไปแก้" is not sent to another person.
+  for (const authorsActive of [true, false]) {
+    assert.equal(disbursementPaymentCorrectionHint({ ...detail, preparerActive: authorsActive, senderActive: authorsActive, actions: { ...detail.actions, withdraw: true } }, true), 'ยอดต้องเท่ายอดที่อนุมัติ ถ้าไม่เท่า กดกลับไปแก้');
+  }
+});

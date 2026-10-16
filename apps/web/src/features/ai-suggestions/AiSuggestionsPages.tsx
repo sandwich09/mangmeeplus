@@ -34,9 +34,13 @@ import {
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useToast } from '@/common/components/toast';
 import { Modal as SharedModal } from '@/common/components/modal';
+import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { Notice } from '@/common/components/notice';
+import { primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
 
-const btnClass = 'mangmee-btn mangmee-btn-primary disabled:opacity-50';
-const ghostClass = 'rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50';
+// The shared looks (one height, one weight); this page used to carry its own two.
+const btnClass = primaryButtonClass;
+const ghostClass = secondaryButtonClass;
 const inputClass = 'mangmee-input';
 
 function err(e: unknown) { return apiErrorMessage(e); }
@@ -53,7 +57,24 @@ function Badge({ text, cls }: { text: string; cls: string }) {
   return <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${cls}`}>{text}</span>;
 }
 function ErrorBanner({ message }: { message: string }) {
-  return <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{message}</div>;
+  return <Notice tone="error">{message}</Notice>;
+}
+
+/** The work this person can do in the app, as rows a thumb can press (they were 20 px text links inside a closed arrow). */
+function TaskLinks({ companyId, items }: { companyId: string; items: ReturnType<typeof permittedUsageGuidance> }) {
+  return (
+    <ul className="divide-y divide-gray-100">
+      {items.map((item) => <li key={item.path}>
+        <Link className="flex min-h-11 items-center justify-between gap-3 py-3" href={`/companies/${companyId}/${item.path}`}>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-brand-700">{item.title}</span>
+            <span className="mt-0.5 block text-sm text-gray-600">{item.help}</span>
+          </span>
+          <span aria-hidden="true" className="shrink-0 text-xl text-gray-400">›</span>
+        </Link>
+      </li>)}
+    </ul>
+  );
 }
 
 const TABS = SUGGESTION_TABS;
@@ -72,6 +93,11 @@ export function AiSuggestionsHubPage({ companyId, permissions = [], canOpenManua
   const [detailId, setDetailId] = useState<string | null>(null);
   const [provider, setProvider] = useState<{ mode: string; available: boolean; reason?: string } | null>(null);
   const [showRequest, setShowRequest] = useState(false);
+  // Read once: whether this shop can ask for anything, and whether anything was ever suggested. With neither there is
+  // no list to show and no request to make (every sold package today), so the page says so instead of offering a
+  // button that opens an empty dialog. `undefined` = still reading; `null` = the read failed, and the page stays as it was.
+  const [askable, setAskable] = useState<boolean | null | undefined>(undefined);
+  const [hasAny, setHasAny] = useState<boolean | null | undefined>(undefined);
 
   const active = TABS.find((t) => t.key === tab)!;
 
@@ -85,33 +111,48 @@ export function AiSuggestionsHubPage({ companyId, permissions = [], canOpenManua
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { getAiProviderStatus(companyId).then(setProvider).catch(() => undefined); }, [companyId]);
+  useEffect(() => {
+    let current = true;
+    listAiTemplates(companyId).then((list) => { if (current) setAskable(list.some((item) => item.enabled)); }).catch(() => { if (current) setAskable(null); });
+    listAiSuggestions(companyId, { scope: 'all', pageSize: 1 }).then((page) => { if (current) setHasAny(page.total > 0 || page.items.length > 0); }).catch(() => { if (current) setHasAny(null); });
+    return () => { current = false; };
+  }, [companyId]);
+
+  // One loading line until the page knows which of its two shapes it has (no flash of seven tabs that then vanish).
+  if (askable === undefined || hasAny === undefined) {
+    return <MangmeePage title="คำแนะนำจาก AI"><p className="text-sm text-gray-500" role="status">กำลังโหลด…</p></MangmeePage>;
+  }
+
+  if (askable === false && hasAny === false) {
+    return (
+      <MangmeePage title="คำแนะนำจาก AI">
+        <p className="text-sm text-gray-600">ยังไม่มีคำแนะนำจาก AI สำหรับร้านนี้</p>
+        {guidance.length > 0 && (
+          <MangmeeCard className="mt-4 p-4">
+            <h2 className="text-base font-bold text-gray-900">งานที่คุณทำได้ในระบบ</h2>
+            <TaskLinks companyId={companyId} items={guidance} />
+          </MangmeeCard>
+        )}
+      </MangmeePage>
+    );
+  }
 
   return (
-    <div className="space-y-5 p-6">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">คำแนะนำจาก AI</h1>
-          <p className="text-sm text-gray-500">เลือกเรื่องที่ต้องการให้ช่วย คุณจะได้ตรวจและยืนยันก่อนสร้างร่างในระบบ</p>
-        </div>
-        <button className={btnClass} disabled={!canRequest} onClick={() => setShowRequest(true)}>ขอคำแนะนำ</button>
-      </div>
-
-      {provider && !provider.available && (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          ผู้ให้บริการ AI ยังไม่พร้อมสร้างคำแนะนำ คุณยังทำรายการและอ่านวิธีใช้งานด้านล่างได้
-        </div>
+    <MangmeePage
+      title="คำแนะนำจาก AI"
+      description={askable ? 'เลือกเรื่องที่ต้องการให้ช่วย คุณจะได้ตรวจและยืนยันก่อนสร้างร่างในระบบ' : undefined}
+      // No button for someone who cannot ask, or when nothing can be asked: a dead button teaches nothing.
+      actions={canRequest && askable !== false ? <button type="button" className={btnClass} onClick={() => setShowRequest(true)}>ขอคำแนะนำ</button> : undefined}
+    >
+      <div className="space-y-5">
+      {provider && !provider.available && askable !== false && (
+        <Notice tone="warning">ตอนนี้ AI ยังสร้างคำแนะนำใหม่ไม่ได้ คำแนะนำเดิมยังเปิดอ่านได้</Notice>
       )}
 
       {guidance.length > 0 && (
-        <details className="rounded-lg border border-gray-200 bg-white p-4">
-          <summary className="min-h-11 cursor-pointer py-2 font-semibold">วิธีใช้งานและงานที่ AI ช่วยได้</summary>
-          <p className="mt-1 text-sm text-gray-500">วิธีใช้งานของระบบสำหรับงานที่คุณทำได้ การเปิดแต่ละหน้าจะตรวจสิทธิ์อีกครั้ง</p>
-          <ul className="mt-3 space-y-3">
-            {guidance.map((item) => <li key={item.path}>
-              <Link className="font-medium text-brand-700 underline" href={`/companies/${companyId}/${item.path}`}>{item.title}</Link>
-              <p className="text-sm text-gray-600">{item.help}</p>
-            </li>)}
-          </ul>
+        <details className="rounded-lg border border-gray-200 bg-white px-4 py-2">
+          <summary className="flex min-h-11 cursor-pointer items-center text-sm font-semibold text-gray-900">งานที่คุณทำได้ในระบบ</summary>
+          <TaskLinks companyId={companyId} items={guidance} />
         </details>
       )}
 
@@ -126,9 +167,9 @@ export function AiSuggestionsHubPage({ companyId, permissions = [], canOpenManua
 
       {error && <ErrorBanner message={error} />}
       {loading ? (
-        <div className="text-sm text-gray-500">กำลังโหลด...</div>
+        <div className="text-sm text-gray-500">กำลังโหลด…</div>
       ) : rows.length === 0 ? (
-        <div className="rounded border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500"><p>ยังไม่มีคำแนะนำในหมวดนี้</p><p className="mt-2 text-base">{canRequest ? 'กด “ขอคำแนะนำ” ด้านบน แล้วเลือกเรื่องที่ต้องการให้ช่วย' : 'คุณยังเปิดอ่านวิธีใช้งานและทำรายการที่มีสิทธิ์ได้'}</p></div>
+        <div className="rounded border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500"><p>ยังไม่มีคำแนะนำในหมวดนี้</p>{canRequest && askable !== false && <p className="mt-2">กด “ขอคำแนะนำ” ด้านบน แล้วเลือกเรื่องที่ต้องการให้ช่วย</p>}</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
@@ -166,7 +207,8 @@ export function AiSuggestionsHubPage({ companyId, permissions = [], canOpenManua
 
       {detailId && <SuggestionDetailModal companyId={companyId} id={detailId} onClose={() => setDetailId(null)} onChanged={load} />}
       {showRequest && <RequestModal companyId={companyId} onClose={() => setShowRequest(false)} onDone={load} />}
-    </div>
+      </div>
+    </MangmeePage>
   );
 }
 
@@ -196,13 +238,16 @@ function RequestModal({ companyId, onClose, onDone }: { companyId: string; onClo
   };
 
   return (
-    <Modal onClose={onClose} title="ขอคำแนะนำจาก AI">
+    <Modal onClose={onClose} title="ขอคำแนะนำจาก AI"
+      footer={done
+        ? <button type="button" className={ghostClass} onClick={onClose}>ปิด</button>
+        : <>
+          <button type="button" className={ghostClass} onClick={onClose} disabled={busy}>ยกเลิก</button>
+          <button type="button" className={btnClass} onClick={submit} disabled={busy || loadingTemplates || !selected?.enabled || (needsCustomer && !sourceRecordId.trim())} aria-busy={Boolean(busy)}>ส่งคำขอ</button>
+        </>}>
       {error && <ErrorBanner message={error} />}
       {done ? (
-        <div className="space-y-3">
-          <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">ส่งคำขอแล้ว ระบบกำลังสร้างคำแนะนำ (รีเฟรชรายการเพื่อดูผล)</div>
-          <div className="flex justify-end"><button className={ghostClass} onClick={onClose}>ปิด</button></div>
-        </div>
+        <Notice tone="success">ส่งคำขอแล้ว คำแนะนำจะขึ้นในรายการเมื่อสร้างเสร็จ</Notice>
       ) : (
         <div className="space-y-3">
           <div>
@@ -216,14 +261,10 @@ function RequestModal({ companyId, onClose, onDone }: { companyId: string; onClo
           </div>
           {needsCustomer && (
             <div>
-              <label className="mb-1 block text-sm text-gray-600">รหัสลูกค้า (customerId)</label>
-              <input className={inputClass} value={sourceRecordId} onChange={(e) => setSourceRecordId(e.target.value)} placeholder="cust_..." />
+              <label className="mb-1 block text-sm text-gray-600" htmlFor="ai-request-customer">รหัสลูกค้า</label>
+              <input id="ai-request-customer" className={inputClass} value={sourceRecordId} onChange={(e) => setSourceRecordId(e.target.value)} />
             </div>
           )}
-          <div className="flex justify-end gap-2">
-            <button className={ghostClass} onClick={onClose} disabled={busy}>ยกเลิก</button>
-            <button className={btnClass} onClick={submit} disabled={busy || loadingTemplates || !selected?.enabled || (needsCustomer && !sourceRecordId.trim())} aria-busy={Boolean(busy)}>ส่งคำขอ</button>
-          </div>
         </div>
       )}
     </Modal>
@@ -355,6 +396,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Modal({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
-  return <SharedModal open title={title} onClose={onClose} size={wide ? 'lg' : 'sm'}>{children}</SharedModal>;
+function Modal({ title, children, onClose, wide, footer }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; footer?: React.ReactNode }) {
+  return <SharedModal open title={title} onClose={onClose} size={wide ? 'lg' : 'sm'} footer={footer}>{children}</SharedModal>;
 }

@@ -60,3 +60,21 @@ test('slip copy overrides show visible change and remove while sharing the phone
   assert.match(html, /สลิป.jpg/); assert.match(html, />เปลี่ยน<\/span>/); assert.match(html, />เอาออก<\/button>/);
   assert.doesNotMatch(html, /capture=/); assert.match(html, /type="file"/);
 });
+
+test('a hint sits under the picker as a line that may wrap, never inside it where a phone cut it', async () => {
+  const { ThemedFile } = await import('./ThemedFile');
+  const plain = renderToStaticMarkup(React.createElement(ThemedFile, { accept: '.pdf' }));
+  assert.match(plain, /^<label /, 'no hint: the picker alone, as before');
+  for (const props of [{ hint: 'รองรับไฟล์รูปภาพและ PDF' }, { placeholder: 'รองรับไฟล์รูปภาพและ PDF' }]) {
+    const html = renderToStaticMarkup(React.createElement(ThemedFile, { ...props, 'aria-describedby': 'own-note' }));
+    // The picker keeps its short empty text; the hint is its own paragraph after the label and is not truncated.
+    assert.match(html, /^<div class="min-w-0"><label [\s\S]*ยังไม่ได้เลือกไฟล์[\s\S]*<\/label><p id="([^"]+)" class="mt-1 text-xs text-gray-500">รองรับไฟล์รูปภาพและ PDF<\/p><\/div>$/);
+    assert.doesNotMatch(html.match(/<label[\s\S]*<\/label>/)![0], /รองรับไฟล์/);
+    // The input is described by the caller's own note and by the hint.
+    const hintId = html.match(/<p id="([^"]+)"/)![1];
+    assert.ok(html.includes(`aria-describedby="own-note ${hintId}"`));
+  }
+  // With a file chosen the hint stays where it is and the picker shows the name.
+  const chosen = renderToStaticMarkup(React.createElement(ThemedFile, { hint: 'รองรับไฟล์รูปภาพและ PDF', file: 'ใบเสร็จ.jpg' }));
+  assert.match(chosen, /ใบเสร็จ\.jpg[\s\S]*<\/label><p[^>]*>รองรับไฟล์รูปภาพและ PDF<\/p>/);
+});

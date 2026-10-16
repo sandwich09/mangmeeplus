@@ -257,7 +257,7 @@ test.describe('P27 — income and expense ledger', () => {
         data: {
           documentType: 'RECEIPT', sourceDocumentId: invoice.id, sourceDocumentType: 'INVOICE',
           documentDate: bangkokToday(), vatMode: 'NO_VAT',
-          lines: [{ lineNumber: 1, description: 'รับชำระใบแจ้งหนี้เดิม', quantity: '1', unitPrice: '510.00' }],
+          lines: [{ lineNumber: 1, description: 'รับจ่ายใบแจ้งหนี้เดิม', quantity: '1', unitPrice: '510.00' }],
         },
       }));
       const receipt = await json<DocumentRecord>(await financeApi.post(

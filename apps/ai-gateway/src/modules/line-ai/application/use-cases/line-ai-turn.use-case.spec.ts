@@ -855,3 +855,22 @@ describe('LineAiTurnUseCase – a runtime that cannot honour the envelope refuse
     assert.equal(result.errorCode, undefined);
   });
 });
+
+
+it('both old and new customer menu names still read the dashboard and answer หน้าแรก', async () => {
+  for (const name of ['แดชบอร์ด', 'หน้าแรก']) {
+    const calls: string[] = [];
+    const tools = { invoke: async (tool: any) => {
+      calls.push(tool.name);
+      return { toolName: tool.name, status: 'ok', data: { widgets: [] }, sourceRefs: [], asOf: '2026-10-13' };
+    } } as any;
+    const useCase = new LineAiTurnUseCase(tools, makeOrchestrator(),
+      { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any, makeAgentcoreRuntime());
+    const response = await useCase.execute({ ...validReq, messageText: `ดู${name}หน่อย`,
+      userContext: { ...validReq.userContext, permissions: ['dashboard.read'] } });
+    assert.equal(response.refused, false);
+    assert.ok(calls.includes('dashboard.get_business_health_summary'));
+    assert.match(response.replyText, /📊 หน้าแรก \(0 ตัวชี้วัด\)/);
+    assert.doesNotMatch(response.replyText, /แดชบอร์ด/);
+  }
+});

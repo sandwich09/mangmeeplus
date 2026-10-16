@@ -69,7 +69,7 @@ export class IssueWhtReplacementCopyUseCase {
     // Same rejection reason/code as correction (plan §3.1 step 1): v1 only touches SYSTEM-issued
     // certificates, never EXTERNAL_LINKED.
     if (row.status !== 'SYSTEM_ISSUED' || !row.certificateId) {
-      throw new ConflictException({ code: 'wht_certificate_not_correctable', message: 'ออกใบแทนไม่ได้ เพราะไม่ใช่เอกสารที่ระบบออกให้', status: row.status });
+      throw new ConflictException({ code: 'wht_certificate_not_correctable', message: 'ออกใบแทนไม่ได้ เพราะรายการนี้ไม่มีหนังสือรับรอง 50 ทวิที่ระบบออกให้และยังใช้งานอยู่ เปิดหน้านี้ใหม่เพื่อตรวจสถานะ', status: row.status });
     }
 
     const current = await this.resolveActiveCertificate(row.certificateId);

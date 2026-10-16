@@ -47,6 +47,7 @@ export class ResolveRequestContextUseCase {
       membershipId: resolved.membershipId,
       roles: resolved.roles,
       permissions: resolved.permissions,
+      availablePermissions: resolved.availablePermissions,
       entitlementDeniedPermissions: resolved.entitlementDeniedPermissions,
       scopes: resolved.scopes,
       authProvider,

@@ -1,3 +1,11 @@
+import type { PrismaService } from '../src/common/database/prisma.service';
+import { SyncTaxEventsUseCase } from '../src/modules/tax/application/use-cases/sync-tax-events.use-case';
+import { PrismaTaxRepository } from '../src/modules/tax/infrastructure/repositories/prisma-tax.repository';
+import { AccountingDocumentSourceAdapter } from '../src/modules/tax/infrastructure/adapters/accounting-document-source.adapter';
+import { ExpenseSourceAdapter } from '../src/modules/tax/infrastructure/adapters/expense-source.adapter';
+import { SupplierPaymentSourceAdapter } from '../src/modules/tax/infrastructure/adapters/supplier-payment-source.adapter';
+import { seedExpenses, seedExpenseRows } from './seed-expenses';
+import { seedPlainShop, UNANSWERED_PLAIN_SHOP, INPUT_VAT_SHOP } from './seed-plain-shop';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { syncPermissions } from './sync-permissions';
@@ -1008,8 +1016,6 @@ async function seedOperationalDemoData(input: {
   const db = prisma as any;
   const { companyId, ownerUserId, branchId, inventoryLocationId, productId } = input;
   const at = (dayOffset: number, hour: number, minute = 0) => dateAt(dayOffset, hour, minute);
-  const today = at(0, 9);
-  const periodKey = today.toISOString().slice(0, 7);
 
   const expenseCategories = [
     { id: 'seed-expense-category-office', name: 'ค่าสำนักงาน', accountHintKey: 'expense.office_supplies', sortOrder: 1 },
@@ -1039,268 +1045,7 @@ async function seedOperationalDemoData(input: {
     });
   }
 
-  const expenseRows = [
-    {
-      id: 'seed-expense-record-studio-supplies',
-      lineId: 'seed-expense-line-studio-supplies',
-      expenseNumber: 'EXP-LOCAL-0001',
-      categoryId: 'seed-expense-category-office',
-      vendor: 'บริษัท สตูดิโอ ซัพพลาย จำกัด',
-      docNo: 'ST-INV-20260709',
-      date: at(-1, 10),
-      description: 'อุปกรณ์ทำความสะอาดสาขา',
-      subtotal: '1850',
-      vat: '129.50',
-      wht: '0',
-      total: '1979.50',
-      netPayable: '1979.50',
-      status: 'CONFIRMED',
-      paymentStatus: 'PAID',
-      paidAmount: '1979.50',
-      vatMode: 'VAT_EXCLUDED',
-      inputVatClaimStatus: 'CLAIMABLE',
-      accountHintKey: 'expense.office_supplies',
-      captureSource: 'WEB_MANUAL',
-      sourceDocumentType: 'TAX_INVOICE',
-      taxEvidenceStatus: 'USABLE_FOR_TAX',
-      duplicateStatus: 'NO_MATCH',
-      note: 'Seed expense for local DB/API verification.',
-    },
-    {
-      id: 'seed-expense-record-ads',
-      lineId: 'seed-expense-line-ads',
-      expenseNumber: 'EXP-LOCAL-0002',
-      categoryId: 'seed-expense-category-marketing',
-      vendor: 'Meta Ads Thailand',
-      docNo: 'ADS-LOCAL-001',
-      date: at(-2, 11),
-      description: 'ค่าโฆษณาแคมเปญจองคิว',
-      subtotal: '3200',
-      vat: '224',
-      wht: '0',
-      total: '3424',
-      netPayable: '3424',
-      status: 'READY_FOR_CONFIRMATION',
-      paymentStatus: 'UNPAID',
-      paidAmount: '0',
-      vatMode: 'VAT_EXCLUDED',
-      inputVatClaimStatus: 'CLAIMABLE',
-      accountHintKey: 'expense.marketing',
-      captureSource: 'WEB_UPLOAD',
-      sourceDocumentType: 'TAX_INVOICE',
-      taxEvidenceStatus: 'NEEDS_REVIEW',
-      duplicateStatus: 'NO_MATCH',
-      note: 'Seed marketing spend waiting for confirmation.',
-    },
-    {
-      id: 'seed-expense-record-rent',
-      lineId: 'seed-expense-line-rent',
-      expenseNumber: 'EXP-LOCAL-0003',
-      categoryId: 'seed-expense-category-rent',
-      vendor: 'บริษัท พื้นที่สวย จำกัด',
-      docNo: 'RENT-202607',
-      date: at(-6, 9),
-      description: 'ค่าเช่าพื้นที่สาขาประจำเดือน',
-      subtotal: '30000',
-      vat: '0',
-      wht: '1500',
-      total: '30000',
-      netPayable: '28500',
-      status: 'CONFIRMED',
-      paymentStatus: 'PAID',
-      paidAmount: '28500',
-      vatMode: 'NO_VAT',
-      inputVatClaimStatus: 'NON_CLAIMABLE',
-      accountHintKey: 'expense.rent',
-      captureSource: 'WEB_MANUAL',
-      sourceDocumentType: 'SUPPLIER_BILL',
-      taxEvidenceStatus: 'SUPPORTING_ONLY',
-      duplicateStatus: 'NO_MATCH',
-      note: 'ค่าเช่าหัก ณ ที่จ่าย 5%: ยอดตั้งหนี้ 30,000 บาท จ่ายสุทธิ 28,500 บาท',
-    },
-    {
-      id: 'seed-expense-record-electricity',
-      lineId: 'seed-expense-line-electricity',
-      expenseNumber: 'EXP-LOCAL-0004',
-      categoryId: 'seed-expense-category-utilities',
-      vendor: 'การไฟฟ้านครหลวง',
-      docNo: 'MEA-LOCAL-0726',
-      date: at(-5, 13),
-      description: 'ค่าไฟฟ้าสาขา',
-      subtotal: '4200',
-      vat: '294',
-      wht: '0',
-      total: '4494',
-      netPayable: '4494',
-      status: 'CONFIRMED',
-      paymentStatus: 'PARTIALLY_PAID',
-      paidAmount: '2000',
-      vatMode: 'VAT_EXCLUDED',
-      inputVatClaimStatus: 'CLAIMABLE',
-      accountHintKey: 'expense.utilities',
-      captureSource: 'LINE_UPLOAD',
-      sourceDocumentType: 'TAX_INVOICE',
-      taxEvidenceStatus: 'USABLE_FOR_TAX',
-      duplicateStatus: 'NO_MATCH',
-      note: 'เคสจ่ายบางส่วน คงค้าง 2,494 บาท',
-    },
-    {
-      id: 'seed-expense-record-team-meal',
-      lineId: 'seed-expense-line-team-meal',
-      expenseNumber: 'EXP-LOCAL-0005',
-      categoryId: 'seed-expense-category-meals',
-      vendor: 'ร้านครัวอารีย์',
-      docNo: 'CASH-0726-018',
-      date: at(-3, 19),
-      description: 'อาหารทีมหลังปิดร้าน',
-      subtotal: '850',
-      vat: '0',
-      wht: '0',
-      total: '850',
-      netPayable: '850',
-      status: 'NEEDS_REVIEW',
-      paymentStatus: 'PAID',
-      paidAmount: '850',
-      vatMode: 'NO_VAT',
-      inputVatClaimStatus: 'NON_CLAIMABLE',
-      accountHintKey: 'expense.meals',
-      captureSource: 'LINE_UPLOAD',
-      sourceDocumentType: 'HANDWRITTEN_CASH_BILL',
-      taxEvidenceStatus: 'SUPPORTING_ONLY',
-      duplicateStatus: 'NO_MATCH',
-      note: 'บิลเงินสดไม่มีใบกำกับภาษี รอตรวจวัตถุประสงค์ทางธุรกิจ',
-    },
-    {
-      id: 'seed-expense-record-ads-duplicate',
-      lineId: 'seed-expense-line-ads-duplicate',
-      expenseNumber: 'EXP-LOCAL-0006',
-      categoryId: 'seed-expense-category-marketing',
-      vendor: 'Meta Ads Thailand',
-      docNo: 'ADS-LOCAL-001',
-      date: at(-2, 11),
-      description: 'ค่าโฆษณาแคมเปญจองคิว (อัปโหลดซ้ำ)',
-      subtotal: '3200',
-      vat: '224',
-      wht: '0',
-      total: '3424',
-      netPayable: '3424',
-      status: 'NEEDS_REVIEW',
-      paymentStatus: 'UNPAID',
-      paidAmount: '0',
-      vatMode: 'VAT_EXCLUDED',
-      inputVatClaimStatus: 'NEEDS_REVIEW',
-      accountHintKey: 'expense.marketing',
-      captureSource: 'WEB_UPLOAD',
-      sourceDocumentType: 'TAX_INVOICE',
-      taxEvidenceStatus: 'NEEDS_REVIEW',
-      duplicateStatus: 'POSSIBLE_DUPLICATE',
-      note: 'เคสเอกสารเลขที่และยอดตรงกัน ต้องไม่ถูกรวมยอดก่อนผู้ใช้ยืนยัน',
-    },
-  ] as const;
-  for (const row of expenseRows) {
-    await db.expenseRecord.upsert({
-      where: { id: row.id },
-      update: {
-        branchId,
-        expenseNumber: row.expenseNumber,
-        status: row.status,
-        captureSource: row.captureSource,
-        vendorNameSnapshot: row.vendor,
-        vendorDocumentNumber: row.docNo,
-        expenseDate: row.date,
-        receivedAt: row.date,
-        vatMode: row.vatMode,
-        inputVatClaimStatus: row.inputVatClaimStatus,
-        subtotalAmount: row.subtotal,
-        taxableAmount: row.subtotal,
-        vatAmount: row.vat,
-        whtAmount: row.wht,
-        grandTotalAmount: row.total,
-        netPayableAmount: row.netPayable,
-        paidAmount: row.paidAmount,
-        outstandingAmount: String(Number(row.netPayable) - Number(row.paidAmount)),
-        paymentStatus: row.paymentStatus,
-        paymentMethod: Number(row.paidAmount) > 0 ? 'BANK_TRANSFER' : null,
-        paidAt: Number(row.paidAmount) > 0 ? row.date : null,
-        expenseCategoryId: row.categoryId,
-        accountHintKey: row.accountHintKey,
-        duplicateStatus: row.duplicateStatus,
-        sourceDocumentType: row.sourceDocumentType,
-        taxEvidenceStatus: row.taxEvidenceStatus,
-        note: row.note,
-        updatedByUserId: ownerUserId,
-      },
-      create: {
-        id: row.id,
-        companyId,
-        branchId,
-        expenseNumber: row.expenseNumber,
-        status: row.status,
-        captureSource: row.captureSource,
-        vendorNameSnapshot: row.vendor,
-        vendorDocumentNumber: row.docNo,
-        expenseDate: row.date,
-        receivedAt: row.date,
-        vatMode: row.vatMode,
-        inputVatClaimStatus: row.inputVatClaimStatus,
-        subtotalAmount: row.subtotal,
-        taxableAmount: row.subtotal,
-        vatAmount: row.vat,
-        whtAmount: row.wht,
-        grandTotalAmount: row.total,
-        netPayableAmount: row.netPayable,
-        paidAmount: row.paidAmount,
-        outstandingAmount: String(Number(row.netPayable) - Number(row.paidAmount)),
-        paymentStatus: row.paymentStatus,
-        paymentMethod: Number(row.paidAmount) > 0 ? 'BANK_TRANSFER' : null,
-        paidAt: Number(row.paidAmount) > 0 ? row.date : null,
-        expenseCategoryId: row.categoryId,
-        accountHintKey: row.accountHintKey,
-        duplicateStatus: row.duplicateStatus,
-        aiVerificationStatus: row.duplicateStatus === 'POSSIBLE_DUPLICATE' ? 'NEEDS_REVIEW' : 'HUMAN_VERIFIED',
-        sourceDocumentType: row.sourceDocumentType,
-        taxEvidenceStatus: row.taxEvidenceStatus,
-        note: row.note,
-        createdByUserId: ownerUserId,
-      },
-    });
-    await db.expenseLine.upsert({
-      where: { id: row.lineId },
-      update: {
-        description: row.description,
-        quantity: '1',
-        unitPrice: row.subtotal,
-        taxableAmount: row.subtotal,
-        vatRate: Number(row.vat) > 0 ? '0.07' : null,
-        vatAmount: row.vat,
-        whtRate: Number(row.wht) > 0 ? '5' : null,
-        whtAmount: row.wht,
-        lineSubtotalAmount: row.subtotal,
-        lineTotalAmount: row.total,
-        expenseCategoryId: row.categoryId,
-        reviewStatus: 'REVIEWED',
-      },
-      create: {
-        id: row.lineId,
-        companyId,
-        expenseId: row.id,
-        lineNumber: 1,
-        description: row.description,
-        quantity: '1',
-        unitPrice: row.subtotal,
-        taxableAmount: row.subtotal,
-        vatRate: Number(row.vat) > 0 ? '0.07' : null,
-        vatAmount: row.vat,
-        whtRate: Number(row.wht) > 0 ? '5' : null,
-        whtAmount: row.wht,
-        lineSubtotalAmount: row.subtotal,
-        lineTotalAmount: row.total,
-        expenseCategoryId: row.categoryId,
-        accountHintKey: row.accountHintKey,
-        reviewStatus: 'REVIEWED',
-      },
-    });
-  }
+  await seedExpenses(prisma, { companyId, ownerUserId, branchId }, seedExpenseRows(at));
 
   const customerCounterparty = await db.accountingCounterparty.upsert({
     where: { id: 'seed-counterparty-customer-joy' },
@@ -2559,86 +2304,12 @@ async function seedOperationalDemoData(input: {
     },
   });
 
-  await db.taxPeriod.upsert({
-    where: { id: 'seed-tax-period-pp30' },
-    update: {
-      taxType: 'VAT',
-      formType: 'PP30',
-      periodKey,
-      status: 'NEEDS_REVIEW',
-      dueDate: at(15, 17),
-      reviewNote: 'Seed VAT period for local tax workspace.',
-    },
-    create: {
-      id: 'seed-tax-period-pp30',
-      companyId,
-      taxType: 'VAT',
-      formType: 'PP30',
-      periodKey,
-      status: 'NEEDS_REVIEW',
-      dueDate: at(15, 17),
-      reviewNote: 'Seed VAT period for local tax workspace.',
-    },
-  });
-  await db.taxEvent.upsert({
-    where: { id: 'seed-tax-event-input-vat' },
-    update: {
-      taxPeriodId: 'seed-tax-period-pp30',
-      eventType: 'VAT_INPUT',
-      status: 'ACTIVE',
-      sourceType: 'expense',
-      sourceId: 'seed-expense-record-studio-supplies',
-      periodKey,
-      eventDate: at(-1, 10),
-      taxableBase: '1850',
-      taxAmount: '129.50',
-      vatMode: 'VAT_EXCLUDED',
-      taxInvoiceNumber: 'ST-INV-20260709',
-    },
-    create: {
-      id: 'seed-tax-event-input-vat',
-      companyId,
-      taxPeriodId: 'seed-tax-period-pp30',
-      idempotencyKey: 'seed-tax-event-input-vat',
-      eventType: 'VAT_INPUT',
-      status: 'ACTIVE',
-      sourceType: 'expense',
-      sourceId: 'seed-expense-record-studio-supplies',
-      sourceEventType: 'expense.confirmed',
-      periodKey,
-      eventDate: at(-1, 10),
-      taxableBase: '1850',
-      taxAmount: '129.50',
-      vatMode: 'VAT_EXCLUDED',
-      taxInvoiceNumber: 'ST-INV-20260709',
-      reviewNote: 'Seed input VAT event.',
-    },
-  });
-  await db.taxReviewIssue.upsert({
-    where: { id: 'seed-tax-review-issue-vat' },
-    update: {
-      taxPeriodId: 'seed-tax-period-pp30',
-      taxEventId: 'seed-tax-event-input-vat',
-      severity: 'INFO',
-      status: 'OPEN',
-      issueCode: 'SEED_VERIFY_TAX_INVOICE',
-      description: 'ตรวจสอบเลขผู้เสียภาษีบนใบกำกับภาษีก่อนยื่นจริง',
-      sourceType: 'expense',
-      sourceId: 'seed-expense-record-studio-supplies',
-    },
-    create: {
-      id: 'seed-tax-review-issue-vat',
-      companyId,
-      taxPeriodId: 'seed-tax-period-pp30',
-      taxEventId: 'seed-tax-event-input-vat',
-      severity: 'INFO',
-      status: 'OPEN',
-      issueCode: 'SEED_VERIFY_TAX_INVOICE',
-      description: 'ตรวจสอบเลขผู้เสียภาษีบนใบกำกับภาษีก่อนยื่นจริง',
-      sourceType: 'expense',
-      sourceId: 'seed-expense-record-studio-supplies',
-    },
-  });
+  // Derive the periods and VAT/WHT events from the same source adapters as the workspace.
+  // A synthetic header-only VAT event used to bypass source identity and correction retirement.
+  const service = { client: prisma } as PrismaService;
+  await new SyncTaxEventsUseCase(new PrismaTaxRepository(service), new AccountingDocumentSourceAdapter(service),
+    new ExpenseSourceAdapter(service), new SupplierPaymentSourceAdapter(service)).execute(companyId);
+
 }
 
 async function main() {
@@ -3262,8 +2933,8 @@ async function main() {
 
   // ── Item 11: Global WHT catalog — owner decision 2026-10-04 ──
   // Source baseline: RD withholding tax page (https://www.rd.go.th/14929.html) checked 2026-06-23.
-  // Open the approved 12; interest/dividend/prize stay DRAFT pending accountant review.
-  // Upsert updates never reset a status saved by the Mangmee team.
+  // Open the approved baseline and the individual prize; other new rates await accountant review.
+  // This slice fixes the status of its route rows; other catalogue statuses stay as saved.
   const WHT_CATEGORIES = [
     { code: 'WHT_SERVICE_3',        nameTh: 'ค่าบริการ (บุคคลธรรมดา)',       nameEn: 'Service fee (individual)',          formType: 'PND3',  defaultRate: '3.0000', status: 'ACTIVE' },
     { code: 'WHT_SERVICE_5',        nameTh: 'ค่าบริการ (นิติบุคคล)',           nameEn: 'Service fee (juristic)',             formType: 'PND53', defaultRate: '3.0000', status: 'ACTIVE' },
@@ -3275,22 +2946,29 @@ async function main() {
     { code: 'WHT_ADVERTISING_JUR',  nameTh: 'ค่าโฆษณา (นิติบุคคล)',           nameEn: 'Advertising fee (juristic)',         formType: 'PND53', defaultRate: '2.0000', status: 'ACTIVE' },
     { code: 'WHT_TRANSPORT_IND',    nameTh: 'ค่าขนส่ง (บุคคลธรรมดา)',         nameEn: 'Transport fee (individual)',         formType: 'PND3',  defaultRate: '1.0000', status: 'ACTIVE' },
     { code: 'WHT_TRANSPORT_JUR',    nameTh: 'ค่าขนส่ง (นิติบุคคล)',            nameEn: 'Transport fee (juristic)',           formType: 'PND53', defaultRate: '1.0000', status: 'ACTIVE' },
-    { code: 'WHT_DIVIDEND',         nameTh: 'เงินปันผล',                       nameEn: 'Dividend',                          formType: 'PND53', defaultRate: '10.0000', status: 'DRAFT' },
-    { code: 'WHT_INTEREST',         nameTh: 'ดอกเบี้ย',                        nameEn: 'Interest',                          formType: 'PND3',  defaultRate: '1.0000', status: 'DRAFT' },
-    { code: 'WHT_PRIZE',            nameTh: 'รางวัล',                          nameEn: 'Prize / award',                     formType: 'PND3',  defaultRate: '5.0000', status: 'DRAFT' },
-    { code: 'WHT_OTHER_IND',        nameTh: 'อื่นๆ (บุคคลธรรมดา)',            nameEn: 'Other (individual)',                 formType: 'PND3',  defaultRate: '3.0000', status: 'ACTIVE' },
-    { code: 'WHT_OTHER_JUR',        nameTh: 'อื่นๆ (นิติบุคคล)',               nameEn: 'Other (juristic)',                   formType: 'PND53', defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_DIVIDEND', nameTh: 'เงินปันผล (นิติบุคคล)', nameEn: 'Dividend', formType: 'PND53', filingRoute: 'ACCOUNTANT_PREPARES', defaultRate: '10.0000', status: 'DRAFT' },
+    { code: 'WHT_INTEREST', nameTh: 'ดอกเบี้ย (บุคคลธรรมดา)', nameEn: 'Interest', formType: 'PND2', filingRoute: 'SEPARATE_PND2', defaultRate: '1.0000', status: 'DRAFT' },
+    { code: 'WHT_PRIZE', nameTh: 'รางวัลจากการประกวด แข่งขัน หรือชิงโชค (บุคคลธรรมดา)', nameEn: 'Prize / award', formType: 'PND3', filingRoute: 'SYSTEM_FILLS', defaultRate: '5.0000', status: 'ACTIVE' },
+    { code: 'WHT_OTHER_IND', nameTh: 'อื่นๆ (บุคคลธรรมดา)', nameEn: 'Other (individual)', formType: 'PND3', filingRoute: 'ACCOUNTANT_PREPARES', defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_OTHER_JUR', nameTh: 'อื่นๆ (นิติบุคคล)', nameEn: 'Other (juristic)', formType: 'PND53', filingRoute: 'ACCOUNTANT_PREPARES', defaultRate: '3.0000', status: 'ACTIVE' },
+
+    { code: 'WHT_PRIZE_JUR', nameTh: 'รางวัลจากการประกวด แข่งขัน หรือชิงโชค (นิติบุคคล)', nameEn: null, formType: 'PND53', filingRoute: 'SYSTEM_FILLS', defaultRate: '0.0000', status: 'DRAFT' },
+
+    { code: 'WHT_INTEREST_JUR', nameTh: 'ดอกเบี้ย (นิติบุคคล)', nameEn: null, formType: 'PND53', filingRoute: 'ACCOUNTANT_PREPARES', defaultRate: '0.0000', status: 'DRAFT' },
+
+    { code: 'WHT_DIVIDEND_IND', nameTh: 'เงินปันผล (บุคคลธรรมดา)', nameEn: null, formType: 'PND2', filingRoute: 'SEPARATE_PND2', defaultRate: '0.0000', status: 'DRAFT' },
   ] as const;
 
   for (const cat of WHT_CATEGORIES) {
     await (prisma as any).whtIncomeCategory.upsert({
       where: { code: cat.code },
-      update: { nameTh: cat.nameTh, nameEn: cat.nameEn, defaultRate: cat.defaultRate },
+      update: { nameTh: cat.nameTh, nameEn: cat.nameEn, formType: cat.formType, ...('filingRoute' in cat ? { filingRoute: cat.filingRoute, status: cat.status, ...(cat.code === 'WHT_PRIZE' ? { defaultRate: cat.defaultRate } : {}) } : {}) },
       create: {
         code: cat.code,
         nameTh: cat.nameTh,
         nameEn: cat.nameEn,
         formType: cat.formType,
+        filingRoute: 'filingRoute' in cat ? cat.filingRoute : 'SYSTEM_FILLS',
         defaultRate: cat.defaultRate,
         status: cat.status,
         conditionNote: cat.status === 'DRAFT' ? 'รอนักบัญชีตรวจสอบก่อนเปิดใช้' : null,
@@ -3419,6 +3097,10 @@ async function main() {
     inventoryLocationId: mainLocation.id,
     productId: demoProduct.id,
   });
+
+  await seedPlainShop(prisma);
+  await seedPlainShop(prisma, UNANSWERED_PLAIN_SHOP);
+  await seedPlainShop(prisma, INPUT_VAT_SHOP);
 
   console.log(`Seed complete: company, owner, ${QA_ROLE_ACCOUNTS.length} QA role accounts, roles, permissions, branch (${branch.id}), Room45 CRM demo workspace, operational menu demo data, location (${mainLocation.id}), product (${demoProduct.id}), document sequences, expense categories, notification rules, WHT categories, company tax profile, procurement sequences, reimbursement sequences/policy, and workflow template catalog (${WORKFLOW_TEMPLATE_CATALOG.length}) upserted.`);
 }

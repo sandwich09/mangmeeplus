@@ -1,3 +1,7 @@
+import { allocateExpenseWithholding } from '../../domain/logic/expense-payment-withholding.logic';
+import { assertPaymentNotCertified, certificatePayment, paymentHandoff } from '../services/wht-certificate-payment';
+import { filedWithholdingPaymentPeriods } from '../services/filed-withholding-payment';
+import { whtCertificateUnsupportedReason } from '@watchdog-bms/contracts';
 import { expenseSourceDescription } from '../../../expenses/domain/logic/expense-source-description';
 import { currentWhtPayerDetails } from '../services/wht-payer-identity';
 import { whtPayerIdentity } from '@watchdog-bms/contracts';
@@ -18,7 +22,7 @@ import type {
   SetWhtHandoffPayeeAddressDto,
   VendorCounterpartyAutoSaveResult,
   WhtCertificateHandoffDto,
-  WhtCertificateHandoffPageDto,
+  WhtCertificateHandoffPageDto, WhtCertificateHandoffListQuery,
   WhtHandoffStatus,
   WhtCertificateHistoryDto,
   WhtCertificateHistoryEventType,
@@ -180,7 +184,7 @@ export class WhtCertificateHandoffUseCase {
   }
 
   /** Existing expense and AP callers retain their array response and 200-row limit. */
-  async list(ctx: RequestContext, filters: { status?: string; branchId?: string; sourcePaymentId?: string } = {}): Promise<WhtCertificateHandoffDto[]> {
+  async list(ctx: RequestContext, filters: { status?: string; branchId?: string; sourcePaymentId?: string; periodKey?: string; formType?: string } = {}): Promise<WhtCertificateHandoffDto[]> {
     const where = this.listWhere(ctx, filters);
     const boundary = await handoffReadBoundary(this.taxRepo.prisma.client, ctx, where);
     const rows = await this.table.findMany({ where: boundary.where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 200 });
@@ -193,9 +197,14 @@ export class WhtCertificateHandoffUseCase {
       ...(readHistory.previous.get(row.sourcePaymentId) && row.status === 'REQUIRED' && !row.certificateId && !row.externalCertificateNumber ? { previousCertificate: readHistory.previous.get(row.sourcePaymentId) } : {}) }));
   }
 
-  private listWhere(ctx: RequestContext, filters: { status?: string; branchId?: string; sourcePaymentId?: string }): Prisma.WhtCertificateHandoffWhereInput {
+  private listWhere(ctx: RequestContext, filters: { status?: string; branchId?: string; sourcePaymentId?: string; periodKey?: string; formType?: string }): Prisma.WhtCertificateHandoffWhereInput {
+    if (filters.periodKey && !/^\d{4}-(0[1-9]|1[0-2])$/.test(filters.periodKey)) throw new BadRequestException('เดือนภาษีไม่ถูกต้อง เลือกเดือนอีกครั้ง');
+    if (filters.formType && !['PND3', 'PND53'].includes(filters.formType)) throw new BadRequestException('ไม่พบแบบภาษีที่เลือก เลือก ภ.ง.ด.3 หรือ ภ.ง.ด.53');
     return {
-      AND: [handoffBranchWhere(ctx)],
+      AND: [handoffBranchWhere(ctx),
+        ...(filters.periodKey ? [{ prefillSnapshotJson: { path: ['paymentDate'], string_starts_with: `${filters.periodKey}-` } }] : []),
+        ...(filters.formType ? [{ prefillSnapshotJson: { path: ['formType'], equals: filters.formType } }] : []),
+      ],
       ...(filters.status ? { status: filters.status as WhtHandoffStatus } : {}),
       ...(filters.branchId ? { sourceBranchId: filters.branchId } : {}),
       ...(filters.sourcePaymentId ? { sourcePaymentId: filters.sourcePaymentId } : {}),
@@ -206,10 +215,10 @@ export class WhtCertificateHandoffUseCase {
     return Promise.all([this.isSystemIssuanceOpen(), this.isSystemCorrectionOpen(), this.isSystemReplacementOpen()]);
   }
 
-  async listPaged(ctx: RequestContext, filters: { status?: string; branchId?: string; sourcePaymentId?: string; search?: string; page?: number; pageSize?: number } = {}): Promise<WhtCertificateHandoffPageDto> {
+  async listPaged(ctx: RequestContext, filters: WhtCertificateHandoffListQuery = {}): Promise<WhtCertificateHandoffPageDto> {
     const statuses: WhtHandoffStatus[] = ['REQUIRED', 'SYSTEM_ISSUED', 'EXTERNAL_LINKED', 'CANCELLED'];
     if (filters.status && !statuses.includes(filters.status as WhtHandoffStatus)) {
-      throw new BadRequestException('ไม่พบสถานะที่เลือก กรุณาเลือกตัวกรองรายการอีกครั้ง');
+      throw new BadRequestException('ไม่พบสถานะที่เลือก เลือกตัวกรองรายการอีกครั้ง');
     }
     const page = Number.isFinite(filters.page) ? Math.max(1, Math.floor(filters.page!)) : 1;
     const pageSize = Number.isFinite(filters.pageSize) ? Math.min(100, Math.max(1, Math.floor(filters.pageSize!))) : 20;
@@ -218,10 +227,10 @@ export class WhtCertificateHandoffUseCase {
     // Counts, source states and rows share a snapshot, including while an expense is reopened.
     return this.taxRepo.prisma.client.$transaction(async (db) => {
       const payer = await currentWhtPayerDetails(db, ctx.companyId);
-      const boundary = await handoffReadBoundary(db, ctx, this.listWhere(ctx, { ...filters, status: undefined }));
+      const boundary = await handoffReadBoundary(db, ctx, this.listWhere(ctx, { ...filters, status: undefined, periodKey: undefined, formType: undefined }));
       // Delivery A clears cancelled pointers; the append-only history retains the paper's identity.
       const scoped = await db.whtCertificateHandoff.findMany({
-        where: boundary.where, select: { id: true },
+        where: boundary.where, select: { id: true, status: true, sourcePaymentType: true, sourcePaymentId: true, prefillSnapshotJson: true },
       });
       const expenseIds = [...boundary.expenses.keys()];
       const history = scoped.length || expenseIds.length ? await db.whtCertificateHistory.findMany({
@@ -241,9 +250,19 @@ export class WhtCertificateHandoffUseCase {
         if (numbers.length) historicalMatches.set(event.handoffId, [...(historicalMatches.get(event.handoffId) ?? []), ...numbers]);
       }
       const confirmed = [...boundary.expenses.values()].filter(expense => expense.status === 'CONFIRMED').map(expense => expense.id);
-      const conditions: Prisma.WhtCertificateHandoffWhereInput[] = [boundary.where, {
+      const confirmedIds = new Set(confirmed);
+      const months = [...new Set(scoped.flatMap(row => {
+        if (row.status === 'REQUIRED' && row.sourcePaymentType === 'expense.record' && !confirmedIds.has(row.sourcePaymentId ?? '')) return [];
+        const date = (row.prefillSnapshotJson as { paymentDate?: string } | null)?.paymentDate;
+        return typeof date === 'string' && /^\d{4}-(0[1-9]|1[0-2])-/.test(date) ? [date.slice(0, 7)] : [];
+      }))].sort().reverse();
+      const paymentRows = await db.expensePayment?.findMany({ where: { companyId: ctx.companyId, expenseId: { in: expenseIds }, status: 'RECORDED' }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }) ?? [];
+      const certifiedPayments = new Set(scoped.filter(r => ['SYSTEM_ISSUED', 'EXTERNAL_LINKED'].includes(r.status)).flatMap(r => { const id = (r.prefillSnapshotJson as { expensePaymentId?: string } | null)?.expensePaymentId; return id ? [id] : []; }));
+      const coveredDraftIds = scoped.filter(r => r.status === 'REQUIRED' && r.sourcePaymentType === 'expense.record' && paymentRows.some(p => p.expenseId === r.sourcePaymentId) && paymentRows.filter(p => p.expenseId === r.sourcePaymentId).every(p => certifiedPayments.has(p.id))).map(r => r.id);
+      const conditions: Prisma.WhtCertificateHandoffWhereInput[] = [boundary.where, this.listWhere(ctx, { periodKey: filters.periodKey, formType: filters.formType }), {
         OR: [{ status: { not: 'REQUIRED' } }, nonExpenseHandoffWhere, { sourcePaymentId: { in: confirmed } }],
       }];
+      if (coveredDraftIds.length) conditions.push({ id: { notIn: coveredDraftIds } });
       if (search) {
         const certificates = await db.whtCertificate.findMany({
           where: { companyId: ctx.companyId, OR: [
@@ -266,19 +285,34 @@ export class WhtCertificateHandoffUseCase {
       const values = await Promise.all(statuses.map(status => db.whtCertificateHandoff.count({ where: { AND: [where, { status }] } })));
       const counts = Object.fromEntries(statuses.map((status, index) => [status, values[index]])) as Record<WhtHandoffStatus, number>;
       const total = filters.status ? counts[filters.status as WhtHandoffStatus] : values.reduce((sum, value) => sum + value, 0);
+      const selectedWhere = { AND: [where, ...(filters.status ? [{ status: filters.status as WhtHandoffStatus }] : [])] };
+      // Reuse the exact list boundary, including historical-number search; sum in SQL, before paging.
+      const selected = await db.whtCertificateHandoff.findMany({ where: selectedWhere, select: { id: true } });
+      const [sums] = await db.$queryRaw<{ withheld: string }[]>`
+        SELECT ROUND(COALESCE(SUM(COALESCE(c."withheldAmount", (h."prefillSnapshotJson"->>'withheldAmount')::numeric, 0)), 0), 2)::text AS withheld
+        FROM "WhtCertificateHandoff" h
+        LEFT JOIN "WhtCertificate" c ON c.id = h."certificateId" AND c."companyId" = h."companyId"
+        WHERE h."companyId" = ${ctx.companyId} AND h.id = ANY(${selected.map(row => row.id)}::text[])
+      `;
       const rows = await db.whtCertificateHandoff.findMany({
-        where: { AND: [where, ...(filters.status ? [{ status: filters.status as WhtHandoffStatus }] : [])] },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize,
+        where: selectedWhere,
+        orderBy: [{ createdAt: filters.order === 'oldest' ? 'asc' : 'desc' }, { id: filters.order === 'oldest' ? 'asc' : 'desc' }], skip: (page - 1) * pageSize, take: pageSize,
       });
       const certificates = await this.loadCertificates(ctx.companyId, rows, db);
+
+
       return { rows: rows.map(row => {
         const dto = toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen, certificates.get(row.certificateId ?? ''), ctx, payer);
         const expense = row.sourcePaymentType === 'expense.record' ? boundary.expenses.get(row.sourcePaymentId ?? '') : undefined;
+        const totals = dto.prefill.expenseTotals ?? dto.prefill;
+        const shares = expense?.netPayableAmount ? allocateExpenseWithholding(paymentRows.filter(p => p.expenseId === row.sourcePaymentId), String(expense.netPayableAmount), totals.grossAmount, totals.withheldAmount) : [];
         const payee = dto.currentCertificate?.payee ?? dto.prefill.payeeSnapshot;
         const cancellation = row.status === 'CANCELLED' ? cancellations.get(row.id) : undefined;
         const currentNumber = row.status === 'SYSTEM_ISSUED' ? dto.certificateNumber : row.status === 'EXTERNAL_LINKED' ? dto.externalCertificateNumber : null;
         return {
           ...dto,
+          ...(row.sourcePaymentType === 'expense.record' ? { payments: paymentRows.filter(p => p.expenseId === row.sourcePaymentId).map(p => ({ id: p.id, paidAt: p.paidAt.toISOString(), paidAtConfirmed: p.paidAtConfirmed, amount: String(p.amount), grossAmount: shares.find(s => s.id === p.id)?.grossAmount, withheldAmount: shares.find(s => s.id === p.id)?.whtAmount })) } : {}),
+          formType: dto.prefill.formType,
           matchedPreviousNumber: historicalMatches.get(row.id)?.find(number => number !== currentNumber) ?? null,
           expenseDescription: expense ? expenseSourceDescription(expense.lines ?? []) || null : null,
           payeeAddressClearedByTaxIdChange: !row.payeeAddress?.trim() && cleared.has(row.id),
@@ -294,7 +328,7 @@ export class WhtCertificateHandoffUseCase {
           ...(row.status === 'REQUIRED' && !row.certificateId && !row.externalCertificateNumber && previous.get(row.sourcePaymentId ?? '')
             ? { previousCertificate: previous.get(row.sourcePaymentId ?? '') } : {}),
         };
-      }), total, page, pageSize, counts };
+      }), total, page, pageSize, counts, months, sums: sums! };
     }, { isolationLevel: 'RepeatableRead' });
   }
 
@@ -386,14 +420,14 @@ export class WhtCertificateHandoffUseCase {
     if (found.id !== handoffId) {
       throw new ConflictException({
         code: 'wht_handoff_link_command_reused',
-        message: 'รหัสคำสั่งนี้ถูกใช้กับรายการอื่นแล้ว',
+        message: 'การแนบหนังสือรับรองครั้งนี้ถูกใช้กับรายการอื่นแล้ว เปิดหน้านี้ใหม่',
         handoffId: found.id,
       });
     }
     if (found.linkPayloadFingerprint === linkFingerprint) return toDto(found, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
     throw new ConflictException({
       code: 'wht_handoff_link_command_reused',
-      message: 'รหัสคำสั่งนี้ถูกใช้กับข้อมูลชุดอื่นแล้ว',
+      message: 'การแนบหนังสือรับรองครั้งนี้ถูกใช้กับข้อมูลชุดอื่นแล้ว เปิดหน้านี้ใหม่',
       handoffId: found.id,
     });
   }
@@ -404,7 +438,11 @@ export class WhtCertificateHandoffUseCase {
     const certificates = await this.loadCertificates(ctx.companyId, [row]);
     const readHistory = await this.loadReadHistory(ctx.companyId, [row]);
     const payer = await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId);
-    return { ...toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen, certificates.get(row.certificateId ?? ''), ctx, payer),
+    const payments = row.sourcePaymentType === 'expense.record' ? await this.taxRepo.prisma.client.expensePayment.findMany({
+      where: { companyId: ctx.companyId, expenseId: row.sourcePaymentId!, status: 'RECORDED' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true, paidAt: true, paidAtConfirmed: true, amount: true },
+    }) : [];
+    return { payments: payments.map(p => ({ id: p.id, paidAt: p.paidAt.toISOString(), paidAtConfirmed: p.paidAtConfirmed, amount: String(p.amount) })), ...toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen, certificates.get(row.certificateId ?? ''), ctx, payer),
       payeeAddressClearedByTaxIdChange: !row.payeeAddress?.trim() && readHistory.cleared.has(row.id),
       ...(readHistory.previous.get(row.sourcePaymentId ?? '') ? { previousCertificate: readHistory.previous.get(row.sourcePaymentId ?? '') } : {}) };
   }
@@ -426,7 +464,7 @@ export class WhtCertificateHandoffUseCase {
   async setPayeeAddress(ctx: RequestContext, handoffId: string, dto: SetWhtHandoffPayeeAddressDto): Promise<WhtCertificateHandoffDto> {
     const payeeAddress = String(dto?.payeeAddress ?? '').trim();
     if (!payeeAddress) {
-      throw new BadRequestException({ code: 'wht_handoff_payee_address_required', message: 'กรุณาพิมพ์ที่อยู่ผู้รับเงินตามที่จะพิมพ์ลงหนังสือรับรอง' });
+      throw new BadRequestException({ code: 'wht_handoff_payee_address_required', message: 'ยังไม่มีที่อยู่ผู้รับเงิน พิมพ์ที่อยู่ตามที่จะพิมพ์ลงหนังสือรับรอง 50 ทวิ' });
     }
     if (payeeAddress.length > WHT_HANDOFF_PAYEE_ADDRESS_MAX) {
       throw new BadRequestException({ code: 'counterparty_address_too_long', message: 'ที่อยู่ยาวเกิน 500 ตัวอักษร ตัดให้สั้นลงแล้วบันทึกอีกครั้ง' });
@@ -547,11 +585,11 @@ export class WhtCertificateHandoffUseCase {
     });
     const parsed = normalizeWhtLinkEvidence(dto as WhtLinkEvidenceInput);
     if (!parsed.ok) throw new BadRequestException({ code: 'wht_handoff_external_record_invalid', message: WHT_EXTERNAL_RECORD_WORDS.invalid });
-    const { commandId, externalCertificateNumber, externalEvidenceRef, issuedDate, note } = parsed.value;
+    const { commandId, externalCertificateNumber, externalEvidenceRef, issuedDate, paymentDate, note } = parsed.value;
     if (issuedDate.toISOString().slice(0, 10) > todayCivilDate('Asia/Bangkok')) throw new BadRequestException({
       code: 'wht_handoff_external_issued_date_future', message: WHT_EXTERNAL_RECORD_WORDS.futureDate,
     });
-    const payloadFingerprint = fingerprint({ handoffId, externalCertificateNumber, externalEvidenceRef, issuedDate: issuedDate.toISOString(), note });
+    const payloadFingerprint = fingerprint({ handoffId, externalCertificateNumber, externalEvidenceRef, issuedDate: issuedDate.toISOString(), ...(paymentDate ? { paymentDate: paymentDate.toISOString() } : {}), note });
     const updated = await this.taxRepo.prisma.client.$transaction(async tx => {
       // The company-wide command lock makes history a durable retry fence, even after later changes.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:${commandId}:wht-external-record-change`}))`;
@@ -584,16 +622,18 @@ export class WhtCertificateHandoffUseCase {
       } else if (formType) {
         const periodKey = formPeriodKey(formType, new Date((row.prefillSnapshotJson as WhtHandoffPrefillDto).paymentDate));
         await tx.$executeRaw`SELECT id FROM "TaxPeriod" WHERE "companyId" = ${ctx.companyId} AND "formType"::text = ${formType} AND "periodKey" = ${periodKey} ORDER BY id FOR UPDATE`;
-        const filed = await tx.taxPeriod.findFirst({ where: { companyId: ctx.companyId, formType, periodKey, status: { in: ['FILED', 'PAID', 'CLOSED'] } }, select: { periodKey: true, formType: true } });
+        const [filed] = await filedWithholdingPaymentPeriods(tx, ctx.companyId, row.sourcePaymentType ?? '', row.sourcePaymentId ?? '', { formType, periodKey });
         if (filed) throw new ConflictException({ code: 'tax_period_filed', message: withholdingPeriodLockedMessage(filed.periodKey, 'แก้ไขเอกสารนี้', filed.formType, 'EXTERNAL') });
       }
       if (row.externalCertificateNumber === externalCertificateNumber && row.externalIssuedDate?.toISOString() === issuedDate.toISOString()
+        && (!paymentDate || (row.prefillSnapshotJson as WhtHandoffPrefillDto)?.externalPaymentDate === paymentDate.toISOString().slice(0, 10))
         && (row.externalEvidenceRef ?? '') === externalEvidenceRef && (row.linkNote ?? null) === note) throw new ConflictException({
         code: 'wht_handoff_external_record_no_changes', message: WHT_EXTERNAL_RECORD_WORDS.noChanges,
       });
-      const previousRecord = { number: row.externalCertificateNumber, issuedDate: row.externalIssuedDate?.toISOString() ?? null, externalEvidenceRef: row.externalEvidenceRef, note: row.linkNote };
+      const previousRecord = { paymentDate: (row.prefillSnapshotJson as WhtHandoffPrefillDto)?.externalPaymentDate ?? null, number: row.externalCertificateNumber, issuedDate: row.externalIssuedDate?.toISOString() ?? null, externalEvidenceRef: row.externalEvidenceRef, note: row.linkNote };
       const result = await tx.whtCertificateHandoff.update({ where: { id: handoffId }, data: {
         externalCertificateNumber, externalIssuedDate: issuedDate, externalEvidenceRef, linkNote: note,
+        ...(paymentDate ? { prefillSnapshotJson: { ...(row.prefillSnapshotJson as WhtHandoffPrefillDto), externalPaymentDate: paymentDate.toISOString().slice(0, 10) } } : {}),
       } });
       await appendWhtCertificateHistory(tx, row, {
         eventType: 'EXTERNAL_RECORD_CHANGED', actorUserId: ctx.userId, isExternal: true,
@@ -657,7 +697,7 @@ export class WhtCertificateHandoffUseCase {
       } else if (formType) {
         const periodKey = formPeriodKey(formType, new Date((row.prefillSnapshotJson as WhtHandoffPrefillDto).paymentDate));
         await tx.$executeRaw`SELECT id FROM "TaxPeriod" WHERE "companyId" = ${ctx.companyId} AND "formType"::text = ${formType} AND "periodKey" = ${periodKey} ORDER BY id FOR UPDATE`;
-        const filed = await tx.taxPeriod.findFirst({ where: { companyId: ctx.companyId, formType, periodKey, status: { in: ['FILED', 'PAID', 'CLOSED'] } }, select: { periodKey: true, formType: true } });
+        const [filed] = await filedWithholdingPaymentPeriods(tx, ctx.companyId, row.sourcePaymentType ?? '', row.sourcePaymentId ?? '', { formType, periodKey });
         if (filed) throw new ConflictException({ code: 'tax_period_filed', message: withholdingPeriodLockedMessage(filed.periodKey, 'แก้ไขเอกสารนี้', filed.formType, 'EXTERNAL') });
       }
       const changed = await tx.whtCertificateHandoff.updateMany({
@@ -689,13 +729,15 @@ export class WhtCertificateHandoffUseCase {
     // record of a legal document, and an internal caller does not pass through the pipe. Both layers
     // run the SAME rules so the boundary cannot be the laxer of the two.
     const parsed = normalizeWhtLinkEvidence(dto as WhtLinkEvidenceInput);
-    if (!parsed.ok) throw new BadRequestException(parsed.error);
-    const { commandId, externalCertificateNumber, externalEvidenceRef, issuedDate, note } = parsed.value;
+    if (!parsed.ok) throw new BadRequestException({ code: 'wht_handoff_external_record_invalid', message: WHT_EXTERNAL_RECORD_WORDS.invalid });
+    const { commandId, externalCertificateNumber, externalEvidenceRef, issuedDate, paymentDate, note } = parsed.value;
+    let row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
+    row = await paymentHandoff(this.taxRepo.prisma.client, ctx.companyId, row, dto.paymentId);
+    handoffId = row.id;
     // The handoff is part of the fingerprint: the same evidence legitimately links to different
     // handoffs, so identity alone must never make one look like a replay of the other.
-    const linkFingerprint = fingerprint({ handoffId, externalCertificateNumber, externalEvidenceRef, issuedDate: issuedDate.toISOString(), note });
+    const linkFingerprint = fingerprint({ handoffId, externalCertificateNumber, externalEvidenceRef, issuedDate: issuedDate.toISOString(), ...(paymentDate ? { paymentDate: paymentDate.toISOString() } : {}), ...(dto.paymentId ? { paymentId: dto.paymentId } : {}), note });
 
-    const row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
 
     // Same-LINK-command replay first, before any state check: a retry after a dropped response must
     // return the stored result rather than collide with itself. Keyed on the link command's own
@@ -711,10 +753,11 @@ export class WhtCertificateHandoffUseCase {
     // what actually happened, instead of silently overwriting the first one's legal evidence.
     let outcome: { count: number };
     try {
-      const write = (table: any) => table.updateMany({
+      const write = (table: any, paymentPrefill: WhtHandoffPrefillDto) => table.updateMany({
         where: { id: handoffId, companyId: ctx.companyId, status: 'REQUIRED', payloadFingerprint: row.payloadFingerprint },
         data: {
           status: 'EXTERNAL_LINKED',
+          prefillSnapshotJson: { ...paymentPrefill, externalPaymentDate: paymentDate?.toISOString().slice(0, 10) ?? paymentPrefill.paymentDate.slice(0, 10) },
           externalCertificateNumber,
           externalEvidenceRef,
           externalIssuedDate: issuedDate,
@@ -731,12 +774,15 @@ export class WhtCertificateHandoffUseCase {
           const expense = await tx.expenseRecord.findFirst({ where: { companyId: ctx.companyId, id: row.sourcePaymentId }, select: { status: true } });
           if (expense?.status !== 'CONFIRMED') throw new ConflictException({ code: 'expense_wht_source_changed', message: expenseCorrectionBlockerMessage('not_confirmed') });
         }
-        const result = await write(tx.whtCertificateHandoff);
+        const paymentPrefill = await certificatePayment(tx, ctx.companyId, row, dto.paymentId);
+        if (paymentDate && paymentDate.toISOString().slice(0, 10) !== paymentPrefill.paymentDate.slice(0, 10)) throw new BadRequestException({ code: 'wht_certificate_payment_date_mismatch', message: 'วันที่จ่ายบนหนังสือรับรองไม่ตรงกับรายการจ่าย ตรวจวันที่ในรายการจ่ายก่อนบันทึก' });
+        await assertPaymentNotCertified(tx, ctx.companyId, row, paymentPrefill);
+        const result = await write(tx.whtCertificateHandoff, paymentPrefill);
         if (result.count === 1) {
           await appendWhtCertificateHistory(tx, row, {
             eventType: 'EXTERNAL_RECORDED', actorUserId: ctx.userId, isExternal: true,
             certificateNumber: externalCertificateNumber, certificateDate: issuedDate,
-            detailsJson: { externalEvidenceRef, linkNote: note },
+            detailsJson: { externalEvidenceRef, linkNote: note, paymentDate: paymentDate?.toISOString() ?? paymentPrefill.paymentDate },
           });
         }
         return result;
@@ -808,7 +854,7 @@ function canonical(value: unknown): string {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
 }
 
-function toDto(row: any, systemIssuanceOpen = false, systemCorrectionOpen = false, systemReplacementOpen = false, certificate?: Pick<WhtCertificate, 'certificateNumber' | 'issuedAt' | 'incomeCategoryCode' | 'incomeCategoryName' | 'whtRate' | 'grossAmount' | 'withheldAmount' | 'paymentDate' | 'payeeSnapshotJson'> & { taxPeriod: { formType: string } }, ctx?: RequestContext, payer = { taxId: null as string | null, address: null as string | null }): WhtCertificateHandoffDto {
+function toDto(row: any, systemIssuanceOpen = false, systemCorrectionOpen = false, systemReplacementOpen = false, certificate?: Pick<WhtCertificate, 'certificateNumber' | 'issuedAt' | 'incomeCategoryCode' | 'incomeCategoryName' | 'whtRate' | 'grossAmount' | 'withheldAmount' | 'paymentDate' | 'payeeSnapshotJson'> & { taxPeriod: { formType: string } }, ctx?: RequestContext, payer = { registeredName: null as string | null, taxId: null as string | null, address: null as string | null }): WhtCertificateHandoffDto {
   const payee = certificate?.payeeSnapshotJson as PayeeSnapshot | undefined;
   return {
     id: row.id,
@@ -828,6 +874,7 @@ function toDto(row: any, systemIssuanceOpen = false, systemCorrectionOpen = fals
     payeeAddressByUserId: row.payeeAddressByUserId ?? null,
     externalCertificateNumber: row.externalCertificateNumber ?? null,
     externalEvidenceRef: row.externalEvidenceRef ?? null,
+    externalPaymentDate: (row.prefillSnapshotJson as WhtHandoffPrefillDto)?.externalPaymentDate ?? null,
     externalIssuedDate: row.externalIssuedDate?.toISOString() ?? null,
     linkNote: row.linkNote ?? null,
     sourceBranchId: row.sourceBranchId ?? null,
@@ -845,7 +892,7 @@ function toDto(row: any, systemIssuanceOpen = false, systemCorrectionOpen = fals
       payee: { name: payee?.name ?? '', taxId: payee?.taxId ?? null, address: payee?.address ?? null, branchCode: payee?.branchCode ?? null },
     } : null,
     payerMissing: whtPayerIdentity((row.prefillSnapshotJson as WhtHandoffPrefillDto).payerSnapshot, payer).missing,
-    systemIssuanceOpen,
+    systemIssuanceOpen: systemIssuanceOpen && !whtCertificateUnsupportedReason(row.prefillSnapshotJson?.incomeCategoryCode, row.prefillSnapshotJson?.formType),
     systemCorrectionOpen,
     systemReplacementOpen,
     canChangeExternalRecord: row.status === 'EXTERNAL_LINKED' && Boolean(ctx?.permissions.includes('wht.external_certificate.link')),

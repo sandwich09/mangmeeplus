@@ -293,3 +293,11 @@ describe('edit command on the locked design (context 4)', () => {
     assert.equal(buildDraftUpdateOutcomeCard('applied', applied, undefined, 'co-1'), undefined);
   });
 });
+
+it('the claim reply calls a rejected claim returned for correction without changing its message shape', async () => {
+  const { buildReimbursementDraftMessages } = await import('./line-reimbursement-draft-card.logic');
+  const messages = buildReimbursementDraftMessages({ status: 'applied', receipt: {
+    requestNo: 'RB-202610-00001', amount: '120.00', currency: 'THB', currentState: 'REJECTED',
+  } } as any, 'https://app.example.com', 'co-1');
+  assert.deepEqual(messages, [{ type: 'text', text: 'บันทึกร่างใบเบิกแล้ว\nเลขที่ใบเบิก: RB-202610-00001\nยอด: 120.00 บาท\nสถานะปัจจุบัน: ถูกส่งกลับให้แก้\nยังไม่ได้ยื่น อนุมัติ หรือจ่ายเงินโดยคำสั่งนี้' }]);
+});

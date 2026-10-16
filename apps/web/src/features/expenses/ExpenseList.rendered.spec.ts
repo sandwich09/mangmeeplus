@@ -1,0 +1,95 @@
+import assert from 'node:assert/strict';
+import { test, mock } from 'node:test';
+import { readFileSync } from 'node:fs';
+import * as React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
+import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime';
+import { ToastContext } from '@/common/components/toast/use-toast';
+import { mutable } from './expense-certificate-test-harness';
+
+require.extensions['.css'] = m => { m.exports = { __esModule: true, default: new Proxy({}, { get: (_, key) => key }) }; };
+const svg = require.extensions['.svg'];
+require.extensions['.svg'] = (module) => { module.exports = () => null; };
+const filters = mutable('../web-core-workspace/MenuFilterScope');
+const capture = mutable('./expense-capture-policy');
+const { ExpenseListPage } = require('./ExpensesPages');
+if (svg) require.extensions['.svg'] = svg; else delete require.extensions['.svg'];
+const runtime = require('react');
+const source = readFileSync(new URL('./ExpensesPages.tsx', import.meta.url), 'utf8');
+const list = source.slice(source.indexOf('function ExpenseListPage('), source.indexOf('// ──', source.indexOf('function ExpenseListPage(')));
+const names = [...list.matchAll(/const \[(\w+),[^\]]+\] = useState/g)].map(match => match[1]!);
+const h = React.createElement;
+const noop = () => {};
+function row(index: number, overrides = {}) {
+  return { id: `e${index}`, status: 'CONFIRMED', paymentStatus: 'UNPAID', expenseNumber: `EXP-${index}`, vendorNameSnapshot: `ร้าน ${index}`,
+    expenseDate: '2026-09-30', uploadedAt: '2026-10-03T01:00:00Z', dueDate: '2020-01-01', dateStatus: 'verified',
+    expenseCategoryId: 'cat', grandTotalAmount: '107', outstandingAmount: '107', vatAmount: '7', captureSource: 'WEB_UPLOAD',
+    inputVatClaimStatus: 'NEEDS_REVIEW', inputVatRightVisible: true, ...overrides };
+}
+function render(rows: ReturnType<typeof row>[], stateOverrides = {}, query = '', navigate: (url: string) => void = noop) {
+  const state: Record<string, unknown> = { rows, catNames: { cat: 'หมวดทดสอบ' }, loading: false, categoryNamesLoading: false, ...stateOverrides };
+  const realState = runtime.useState;
+  let index = 0;
+  const hooks = [
+    mock.method(runtime, 'useState', (init: unknown) => {
+      const pair = realState(init); const name = names[index++];
+      return name && name in state ? [state[name], noop] : pair;
+    }),
+    mock.method(filters, 'useMenuFilterState', (key: string, initial: () => unknown) => [key === 'expenses.list.month' ? '2026-09' : initial(), noop]),
+    mock.method(capture, 'useExpenseCapturePolicy', () => ({ mode: 'FULL', vatStatus: 'UNKNOWN', canAnswerVatStatus: true })),
+  ];
+  try {
+    return renderToStaticMarkup(h(AppRouterContext.Provider, { value: { push: navigate, replace: noop, prefetch: noop } as any },
+      h(SearchParamsContext.Provider, { value: new URLSearchParams(query) },
+        h(ToastContext.Provider, { value: { success: noop, error: noop, warning: noop } },
+          h(ExpenseListPage, { companyId: 'co', caps: { canReview: true, canExportPackage: true, canUploadReceipts: true }, userId: 'owner', onSelect: noop })))));
+  } finally { hooks.forEach(hook => hook.mock.restore()); }
+}
+
+test('LIST-1 renders three metrics, 10 rows newest first, one work status and retained warnings in both layouts', () => {
+  const html = render(Array.from({ length: 21 }, (_, index) => row(index)));
+  assert.equal((html.match(/data-testid="expenses-row"/g) ?? []).length, 10);
+  assert.equal((html.match(/data-testid="expenses-card"/g) ?? []).length, 10);
+  assert.equal((html.match(/>รอจ่าย</g) ?? []).length, 20);
+  assert.equal((html.match(/>ภาษีซื้อรอตรวจสอบ</g) ?? []).length, 20);
+  // Owner 2026-10-15: the seller cell shows the name and the expense number only.
+  assert.ok(!html.includes('หมวดทดสอบ')); assert.ok(html.includes('EXP-0')); assert.ok(html.includes('30 ก.ย. 2569'));
+  assert.ok(html.includes('21 รายการ รวมร่าง')); assert.ok(html.includes('เกินกำหนด ฿2,247.00 · 21 ใบ'));
+  assert.ok(html.includes('หน้า 1 จาก 3')); assert.ok(html.includes('VAT ตามเอกสาร')); assert.ok(html.includes('>ค้างจ่าย<')); assert.ok(html.includes('min-h-11 min-w-0 whitespace-nowrap px-3 sm:min-w-32'));
+  for (const removed of ['ค้างจ่ายที่ยืนยันแล้ว', 'เกินกำหนดจ่าย', 'อัปโหลดเว็บ', 'บันทึกด้วยมือ', 'อัปโหลดใบเสร็จ', 'ร้านยังไม่ตอบเรื่อง VAT', 'วันที่เอกสาร:', 'เลขรายจ่าย', 'แสดง 1-20', '>รายวัน<', '>รายเดือน<', 'aria-label="สิทธิภาษีซื้อ"']) assert.ok(!html.includes(removed), removed);
+  const exportLabel = 'ส่งออก Excel ให้สำนักงานบัญชี';
+  assert.equal(html.split(exportLabel).length - 1, 1);
+  // Owner 2026-10-15: the export sits next to the search, above the numbers.
+  assert.ok(html.indexOf(exportLabel) < html.indexOf('data-testid="expenses-summary"'));
+});
+
+test('LIST-1 shows the usual outstanding note when none is overdue and says ยังไม่ระบุ for an unknown date with no second label', () => {
+  const html = render([row(1, { dueDate: null, dateStatus: 'unverified', status: 'DRAFT', inputVatRightVisible: false })]);
+  assert.ok(html.includes('เฉพาะที่ยืนยันแล้ว')); assert.ok(!html.includes('เกินกำหนด ฿'));
+  assert.ok(html.includes('ยังไม่ระบุ')); assert.ok(!html.includes('ยังไม่ยืนยันวันที่'));
+  assert.equal((html.match(/>รอตรวจ</g) ?? []).length, 2);
+});
+
+
+test('DETAIL-2b a restored list renders its page and each row carries the current allowed query', () => {
+  const opened: string[] = [];
+  const rows = Array.from({ length: 25 }, (_, index) => row(index));
+  const realCreate = runtime.createElement;
+  let openRow: (() => void) | undefined;
+  const create = mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => {
+    if (props?.['data-testid'] === 'expenses-row' && !openRow) openRow = props.onClick;
+    return realCreate(tag, props, ...children);
+  });
+  try {
+    const html = render(rows, {}, 'month=2026-09&chip=confirmed&query=ร้าน&dateOrder=oldest&page=3&foreign=x', url => opened.push(url));
+    assert.ok(html.includes('หน้า 3 จาก 3')); assert.ok(html.includes('EXP-20')); assert.ok(!html.includes('EXP-0<'));
+    assert.ok(html.includes('วันที่ เก่าไปใหม่'));
+    assert.ok(openRow); openRow();
+    const detail = new URL(opened[0]!, 'https://local.test');
+    assert.equal(detail.pathname, '/companies/co/expenses/e20');
+    const back = new URL(detail.searchParams.get('back')!, 'https://local.test');
+    assert.equal(back.pathname, '/companies/co/expenses');
+    assert.deepEqual(Object.fromEntries(back.searchParams), { month: '2026-09', chip: 'confirmed', query: 'ร้าน', dateOrder: 'oldest', page: '3' });
+  } finally { create.mock.restore(); }
+});

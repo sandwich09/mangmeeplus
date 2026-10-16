@@ -93,8 +93,8 @@ describe('authed-fetch', () => {
   // route's own 401 (which deletes the cookies) means the session is really gone.
   it('does not bounce to /login when the refresh failed transiently', async () => {
     for (const [refreshStatus, expectedMessage] of [
-      [502, 'เชื่อมต่อระบบไม่ได้ชั่วคราว กรุณาลองใหม่อีกครั้ง'],
-      [503, 'บริการที่จำเป็นยังไม่พร้อมใช้งาน กรุณาลองใหม่ภายหลัง หากยังพบปัญหาให้ติดต่อทีมงาน'],
+      [502, 'เชื่อมต่อระบบไม่ได้ชั่วคราว ลองอีกครั้ง'],
+      [503, 'บริการที่จำเป็นยังไม่พร้อมใช้งาน ลองอีกครั้งภายหลัง ถ้ายังไม่ได้ ให้ติดต่อทีมงาน'],
     ] as const) {
       const assigned = withStubbedWindow(async () => {
         const calls: Call[] = [];
@@ -124,7 +124,7 @@ describe('authed-fetch', () => {
         (error: Error & { kind?: string; cause?: unknown }) => {
           assert.equal(error.kind, 'network_error');
           assert.equal(error.cause, refreshCause);
-          assert.equal(apiErrorMessage(error), 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
+          assert.equal(apiErrorMessage(error), 'เชื่อมต่อไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองอีกครั้ง');
           return true;
         },
       );
@@ -364,7 +364,7 @@ describe('authed-fetch', () => {
     assert.equal(emittedBeforeCatch, true);
     assert.deepEqual(events, [{
       tone: 'error',
-      message: 'ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง',
+      message: 'ทำรายการต่อไม่ได้ ตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง',
     }]);
   });
 
@@ -389,7 +389,7 @@ describe('authed-fetch', () => {
     }
     assert.deepEqual(events, [{
       tone: 'error',
-      message: 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่',
+      message: 'เชื่อมต่อไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองอีกครั้ง',
     }]);
   });
 
@@ -519,7 +519,7 @@ describe('authed-fetch', () => {
             assert.equal(error.code, 'invalid_response');
             assert.equal(error.statusCode, 200);
             assert.ok(error.cause instanceof SyntaxError);
-            assert.equal(apiErrorMessage(error), 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง');
+            assert.equal(apiErrorMessage(error), 'ระบบขัดข้องชั่วคราว ลองอีกครั้ง');
             return true;
           },
         );
@@ -527,7 +527,7 @@ describe('authed-fetch', () => {
     } finally {
       unsubscribe();
     }
-    assert.deepEqual(events, [{ tone: 'error', message: 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง' }]);
+    assert.deepEqual(events, [{ tone: 'error', message: 'ระบบขัดข้องชั่วคราว ลองอีกครั้ง' }]);
   });
 
   it('reads cookie values from a cookie string', () => {

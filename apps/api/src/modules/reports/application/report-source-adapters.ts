@@ -629,6 +629,9 @@ export class ReportSourceAdapters {
       // (CONFIRMED + TAX_INVOICE + USABLE_FOR_TAX + CLAIMABLE) and checks them against the images.
       expenseStatus: expense.status,
       inputVatClaimStatus: expense.inputVatClaimStatus,
+      inputVatRecordedBeforeReview: expense.inputVatRecordedBeforeReview ?? false,
+      inputVatReason: expense.latestInputVatDecision?.reason ?? null,
+      inputVatDecidedBy: expense.latestInputVatDecision?.decidedByName ?? null,
       category: (expense.expenseCategoryId && categoryNames.get(expense.expenseCategoryId)) || null,
       // An expense may be in a foreign currency; the page and the CSV must not read its amounts as baht.
       currency: expense.currency ?? null,
@@ -642,9 +645,11 @@ export class ReportSourceAdapters {
       { key: 'expenseDate', label: 'วันที่เอกสาร', type: 'date' },
       { key: 'vendorName', label: 'ผู้ขาย', type: 'string' },
       { key: 'sourceDocumentType', label: 'ประเภทเอกสารต้นทาง', type: 'string' },
-      { key: 'taxEvidenceStatus', label: 'สถานะหลักฐานภาษี', type: 'string' },
+      { key: 'taxEvidenceStatus', label: 'หลักฐานรายจ่าย', type: 'string' },
       { key: 'expenseStatus', label: 'สถานะ', type: 'string' },
-      { key: 'inputVatClaimStatus', label: 'สถานะภาษีซื้อ', type: 'string' },
+      { key: 'inputVatClaimStatus', label: 'สิทธิภาษีซื้อ', type: 'string' },
+      { key: 'inputVatReason', label: 'เหตุผลสิทธิภาษีซื้อ', type: 'string' },
+      { key: 'inputVatDecidedBy', label: 'ผู้ตรวจสิทธิภาษีซื้อ', type: 'string' },
       { key: 'category', label: 'หมวดค่าใช้จ่าย', type: 'string' },
       { key: 'currency', label: 'สกุลเงิน', type: 'string' },
       { key: 'grandTotalAmount', label: 'ยอดรวม', type: 'money' },

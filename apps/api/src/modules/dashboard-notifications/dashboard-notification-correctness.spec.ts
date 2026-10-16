@@ -1,3 +1,4 @@
+import { documentStateWords, waitingNoticeKey, finishedNoticeTitle } from './infrastructure/waiting-notification';
 /**
  * Audit "dashboard/noti/reports": four defects that all look like nothing in review and all show up
  * as wrong data, missing data, or no data on the user's screen.
@@ -25,7 +26,7 @@ import {
 } from './infrastructure/prisma-notification.repository';
 import { PrismaDashboardSnapshotRepository } from './infrastructure/prisma-dashboard.repository';
 import { ALWAYS_DELIVERED_TRIGGER_KEYS, IMPLEMENTED_TRIGGER_KEYS, FUTURE_TRIGGER_KEYS } from './domain/models/notification.model';
-import { completedDocumentNotificationIds, DOCUMENT_NOTIFICATION_STATES } from './infrastructure/document-notification-state';
+import { completedDocumentNotificationIds, localizeReimbursementDecision, DOCUMENT_NOTIFICATION_STATES } from './infrastructure/document-notification-state';
 import { WORKFLOW_TEMPLATE_CATALOG } from '../workflow/domain/workflow-template-catalog';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
 import { ALL_FEATURE_ENTITLEMENT_KEYS, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
@@ -134,6 +135,7 @@ function capturingPrisma(captured: Record<string, any>) {
   const model = (name: string) => ({
     findMany: async (args: any) => { captured[name] = args; return []; },
     groupBy: async (args: any) => { captured[`${name}.groupBy`] = args; return []; },
+    updateMany: async (args: any) => { captured[`${name}.updateMany`] = args; return { count: 0 }; },
   });
   return {
     client: {
@@ -225,7 +227,7 @@ describe('unread badge counting', () => {
     assert.deepEqual(result, { total: 7, bySeverity: { critical: 2, action: 0, insight: 0, info: 5 } });
     assert.deepEqual(captured['event.groupBy'].by, ['severity']);
     // Dismissed rows are not unread; keeping both conditions is what makes the badge match the list.
-    assert.deepEqual(captured['event.groupBy'].where.recipients.some, { userId: 'u1', readAt: null, dismissedAt: null });
+    assert.deepEqual(captured['event.groupBy'].where.recipients.some, { userId: 'u1', readAt: null, dismissedAt: null, supersededAt: null, finishedAt: null });
   });
 });
 
@@ -381,6 +383,7 @@ function notificationStore(featureKeys: readonly string[] | null) {
     return true;
   };
   const prisma = { client: {
+    $executeRaw: async () => 1,
     companyFeatureEntitlement: { findMany: async (q: any) => { assert.equal(q.where.companyId, COMPANY); return entitlementRows; } },
     notificationEvent: {
       findFirst: async ({ where }: any) => events.find(row => row.companyId === where.companyId && row.dedupKey === where.dedupKey) ?? null,
@@ -397,6 +400,12 @@ function notificationStore(featureKeys: readonly string[] | null) {
     alertState: { findUnique: async () => null, upsert: async ({ create }: any) => create },
     companyMembership: { findMany: async () => [{ userId: 'u1' }] },
     notificationRecipient: {
+      findFirst: async ({ where }: any) => recipients.find(row => row.id === where.id && row.companyId === where.companyId && row.userId === where.userId),
+      update: async ({ where, data }: any) => Object.assign(recipients.find(row => row.id === where.id), data),
+      updateMany: async ({ where, data }: any) => {
+        const matching = recipients.filter(row => Object.entries(where).every(([key, value]: any) => value === null ? row[key] == null : typeof value === 'object' && value.not !== undefined ? row[key] !== value.not : row[key] === value));
+        matching.forEach(row => Object.assign(row, data)); return { count: matching.length };
+      },
       findUnique: async () => null,
       create: async ({ data }: any) => { const row = { id: `recipient-${recipients.length}`, ...data }; recipients.push(row); return row; },
     },
@@ -624,7 +633,7 @@ it('registers the five disbursement notices for expenses and LINE, with pending 
     assert.ok(IMPLEMENTED_TRIGGER_KEYS.includes(key));
     assert.ok(ALWAYS_DELIVERED_TRIGGER_KEYS.includes(key));
     assert.deepEqual(notificationModel.NOTIFICATION_TRIGGER_FEATURE_KEYS[key], ['expenses']);
-    assert.equal(Boolean(DOCUMENT_NOTIFICATION_STATES[key]), suffix === 'pending_approval' || suffix === 'approved');
+    assert.equal(Boolean(DOCUMENT_NOTIFICATION_STATES[key]), suffix === 'pending_approval' || suffix === 'approved' || suffix === 'returned');
   }
 });
 
@@ -635,6 +644,7 @@ it('creates separate pending task events for a resubmit and each reminder round 
   for (const periodKey of ['1', '2', '2:1', '2:2']) await h.create.execute({ ...input, periodKey });
   assert.equal(h.events.length, 4); assert.equal(new Set(h.events.map(e => e.dedupKey)).size, 4);
   assert.equal(h.recipients.length, 4); assert.equal(h.deliveries.length, 8);
+  assert.equal(h.recipients.filter(row => !row.supersededAt).length, 1, 'one unread web row while LINE delivery history stays intact');
   assert.ok(h.events.every(e => e.severity === 'ACTION' && e.deepLinkHref === input.deepLinkHref));
 });
 
@@ -667,8 +677,8 @@ it('actionable approval notices for payers and eligible preparers close while in
 it('excludes closed disbursement and substitute tasks identically from the bell badge and resolves their list rows', async () => {
   const captured: Record<string, any> = {}, prisma = capturingPrisma(captured);
   const events = [
-    { id: 'dv-task', triggerKey: 'expense.disbursement_pending_approval', sourceType: 'disbursement_voucher', sourceId: 'dv', severity: 'ACTION', status: 'OPEN', recipients: [] },
-    { id: 'sub-task', triggerKey: 'expense.substitute_receipt_approval_pending', sourceType: 'substitute_receipt_evidence', sourceId: 'sub', severity: 'ACTION', status: 'OPEN', recipients: [] },
+    { id: 'dv-task', title: 'รออนุมัติ: ใบเตรียมจ่าย', triggerKey: 'expense.disbursement_pending_approval', sourceType: 'disbursement_voucher', sourceId: 'dv', severity: 'ACTION', status: 'OPEN', recipients: [] },
+    { id: 'sub-task', title: 'รออนุมัติ: ใบแทนใบเสร็จ', triggerKey: 'expense.substitute_receipt_approval_pending', sourceType: 'substitute_receipt_evidence', sourceId: 'sub', severity: 'ACTION', status: 'OPEN', recipients: [] },
   ];
   prisma.client.notificationEvent.findMany = async (q: any) => q.select ? events : events;
   prisma.client.disbursementVoucher = { findMany: async () => [{ id: 'dv', status: 'APPROVED', revision: 1 }] };
@@ -691,4 +701,278 @@ it('replays an approved preparer payment task in the same revision without new r
   assert.equal(h.events.length, 1); assert.equal(h.events[0].severity, 'ACTION');
   assert.equal(h.events[0].title, input.title); assert.equal(h.events[0].body, input.body);
   assert.equal(h.recipients.length, 1); assert.equal(h.deliveries.length, 2);
+});
+
+it('expense review requests remain actionable only for the current waiting request', async () => {
+  const { completedDocumentNotificationIds } = await import('./infrastructure/document-notification-state');
+  const sentAt = new Date('2026-10-13T01:00:00Z');
+  let status = 'READY_FOR_CONFIRMATION';
+  const db: any = { notificationEvent: { findMany: async () => [{ id: 'current', triggerKey: 'expense.review_requested', sourceType: 'expense_record', sourceId: 'expense', sourceRefsJson: { refs: [{ submittedAt: sentAt.toISOString() }] } }] },
+    expenseRecord: { findMany: async (query: any) => { assert.equal(query.where.companyId, 'co'); return [{ id: 'expense', status, submittedAt: sentAt }]; } } };
+  assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'checker'), []);
+  status = 'CONFIRMED'; assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'checker'), ['current']);
+  status = 'NEEDS_REVIEW'; assert.deepEqual(await completedDocumentNotificationIds(db, 'co', 'checker'), ['current']);
+});
+
+it('waiting filter is applied in the query before the page limit and includes already-read work', async () => {
+  const captured: any = {}; const prisma = capturingPrisma(captured);
+  await new PrismaNotificationEventRepository(prisma).list(COMPANY, 'u1', { waiting: true, pageSize: 2 });
+  const waiting = captured.event.where.AND.find((part: any) => part.triggerKey?.in);
+  assert.deepEqual(waiting.severity.in, ['ACTION', 'CRITICAL']);
+  assert.ok(waiting.triggerKey.in.includes('expense.disbursement_pending_approval'));
+  assert.equal(captured.event.where.recipients.some.finishedAt, null);
+  assert.equal(captured.event.where.recipients.some.readAt, undefined);
+  assert.equal(captured.event.where.recipients.some.supersededAt, null);
+  assert.equal(captured.event.take, 3);
+});
+
+// Real database proof; opt in only to a disposable local database with this migration applied.
+describe('waiting notifications on PostgreSQL', { skip: !process.env.NOTIFICATION_TEST_DATABASE_URL }, () => {
+  for (const sourceType of ['disbursement_voucher', 'reimbursement_request'] as const) it(`${sourceType}: replaces concurrent reminders per recipient, preserves read history and finishes at approval before a read`, async () => {
+    const { randomUUID } = await import('node:crypto');
+    const { PrismaPg } = await import('@prisma/adapter-pg');
+    const { PrismaClient } = await import('../../generated/prisma/client');
+    const url = new URL(process.env.NOTIFICATION_TEST_DATABASE_URL!);
+    assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
+    assert.ok(['/watchdog_bms', '/notification_test'].includes(url.pathname));
+    const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url.toString() }) });
+    const companyId = `notice-${randomUUID()}`, userId = `user-${randomUUID()}`;
+    const repo = new PrismaNotificationRecipientRepository({ client: db } as any);
+    try {
+      await db.company.create({ data: { id: companyId, name: 'Notice test' } });
+      await db.user.create({ data: { id: userId, displayName: 'Test' } });
+      const branch = await db.branch.create({ data: { companyId, name: 'Test', code: 'HO', type: 'HEAD_OFFICE', createdByUserId: userId } });
+      const voucher = sourceType === 'reimbursement_request' ? await db.reimbursementRequest.create({ data: { companyId, branchId: branch.id, requesterUserId: userId, requesterDisplayNameSnapshot: 'Test', reason: 'Test', categoryKey: 'general', amount: 1, incurredDate: new Date(), createdByUserId: userId, status: 'PENDING_APPROVAL' } }) : await db.disbursementVoucher.create({ data: { companyId, branchId: branch.id, origin: 'PREPARED', payeeName: 'Test', payeeBasis: 'SAME_NAME', totalAmount: 1, preparedByUserId: userId, status: 'PENDING_APPROVAL', revision: 1 } as any });
+      const send = async (recipientUserId = userId) => {
+        const event = await db.notificationEvent.create({ data: { companyId, triggerKey: sourceType === 'disbursement_voucher' ? 'expense.disbursement_pending_approval' : 'workflow.reimbursement_pending_approval', sourceModule: sourceType === 'disbursement_voucher' ? 'expenses' : 'reimbursements', sourceType, sourceId: voucher.id, title: 'รออนุมัติ: ใบเตรียมจ่ายเลขที่ PV-1', body: 'เดิม', severity: 'ACTION', dedupKey: randomUUID() } });
+        const recipient = await db.notificationRecipient.create({ data: { companyId, eventId: event.id, userId: recipientUserId, recipientReason: 'role' } });
+        await repo.trackWaiting(recipient as any, event as any); return recipient;
+      };
+      await Promise.all([send(), send(), send()]);
+      assert.equal(await db.notificationRecipient.count({ where: { companyId, userId, supersededAt: null } }), 1);
+      const current = await db.notificationRecipient.findFirstOrThrow({ where: { companyId, userId, supersededAt: null } });
+      await repo.update(companyId, current.id, { readAt: new Date() });
+      const reminder = await send(); await send('another-member');
+      assert.equal(await db.notificationRecipient.count({ where: { companyId, userId, supersededAt: null } }), 2);
+      if (sourceType === 'disbursement_voucher') {
+        await db.disbursementVoucher.update({ where: { id: voucher.id }, data: { status: 'APPROVED' } });
+        const notifier = new CreateOrUpdateNotificationEventUseCase({} as any, {} as any, {} as any, {} as any, {} as any, { client: db } as any);
+        await notifier.finishDocumentWaiting(companyId, sourceType, voucher.id);
+      } else {
+        await db.reimbursementRequest.update({ where: { id: voucher.id }, data: { status: 'APPROVED' } });
+        const { PrismaWorkflowRepository } = await import('../workflow/infrastructure/prisma-workflow.repository');
+        await new PrismaWorkflowRepository({ client: db } as any).closeSettledClaimTasks({ companyId, requestId: voucher.id });
+      }
+      // No list call may be responsible for this write. Other recipients finish too.
+      assert.equal(await db.notificationRecipient.count({ where: { companyId, finishedAt: null } }), 0);
+      assert.equal((await repo.countUnread(companyId, userId)).total, 0);
+      const events = new PrismaNotificationEventRepository({ client: db } as any);
+      assert.equal((await events.list(companyId, userId, { waiting: true })).items.length, 0);
+      assert.ok((await db.notificationRecipient.findUniqueOrThrow({ where: { id: reminder.id } })).finishedAt);
+      assert.equal((await events.list(companyId, userId, {})).items.find(row => row.id === reminder.eventId)?.title, 'อนุมัติแล้ว: ใบเตรียมจ่ายเลขที่ PV-1');
+      assert.equal((await db.notificationEvent.findUniqueOrThrow({ where: { id: reminder.eventId } })).title, 'รออนุมัติ: ใบเตรียมจ่ายเลขที่ PV-1');
+    } finally { await db.notificationEvent.deleteMany({ where: { companyId } }); await db.disbursementVoucher.deleteMany({ where: { companyId } }); await db.reimbursementRequest.deleteMany({ where: { companyId } }); await db.branch.deleteMany({ where: { companyId } }); await db.company.deleteMany({ where: { id: companyId } }); await db.user.deleteMany({ where: { id: userId } }); await db.$disconnect(); }
+  });
+});
+
+// Completion is part of the existing post-commit notice path, even with nobody to notify.
+describe('waiting notices finish at the source event', () => {
+  for (const [action, status] of [['approve', 'APPROVED'], ['pay', 'PAID'], ['return', 'DRAFT'], ['withdraw', 'DRAFT'], ['cancel', 'CANCELLED']] as const) {
+    it(`finishes voucher approval on ${action} before any list read or recipient lookup`, async () => {
+      const { DisbursementVoucherNoticeService } = await import('../expenses/application/services/disbursement-voucher-notice.service');
+      const writes: any[] = [];
+      const db: any = {
+        notificationEvent: { findMany: async (q: any) => { assert.equal(q.where.companyId, COMPANY); assert.equal(q.where.sourceId, 'dv'); return [{ id: 'old', triggerKey: 'expense.disbursement_pending_approval', sourceType: 'disbursement_voucher', sourceId: 'dv', severity: 'ACTION' }]; } },
+        notificationRecipient: { updateMany: async (q: any) => { writes.push(q); return { count: 2 }; } },
+        disbursementVoucher: { findMany: async () => [{ id: 'dv', status, revision: 1 }] },
+      };
+      const notify = new CreateOrUpdateNotificationEventUseCase({} as any, {} as any, {} as any, {} as any, {} as any, { client: db } as any);
+      const service = new DisbursementVoucherNoticeService({ memberNames: async () => { assert.equal(writes.length, 1); throw new Error('no recipients'); } } as any, notify);
+      await service.send(ctx as any, { id: 'dv', documentNumber: 'PV-1', status, preparedByUserId: ctx.userId } as any, action);
+      assert.equal(writes.length, 1);
+      assert.equal(writes[0].where.companyId, COMPANY);
+      assert.deepEqual(writes[0].where.eventId, { in: ['old'] });
+      assert.ok(writes[0].data.finishedAt instanceof Date);
+      assert.equal(writes[0].where.userId, undefined, 'every recipient, including one who has never read the list');
+    });
+  }
+  for (const status of ['APPROVED', 'READY_FOR_PAYMENT', 'PAID', 'DRAFT', 'CANCELLED']) {
+    it(`finishes claim approval at the existing workflow event step for ${status}, with no workflow task`, async () => {
+      const { PrismaWorkflowRepository } = await import('../workflow/infrastructure/prisma-workflow.repository');
+      const writes: any[] = [];
+      const db: any = {
+        workflowTask: { findMany: async () => [] },
+        notificationEvent: { findMany: async (q: any) => { assert.equal(q.where.sourceId, 'claim'); return [{ id: 'old', triggerKey: 'workflow.reimbursement_pending_approval', sourceType: 'reimbursement_request', sourceId: 'claim', severity: 'ACTION' }]; } },
+        reimbursementRequest: { findMany: async () => [{ id: 'claim', status, sourceExpenses: [] }] },
+        notificationRecipient: { updateMany: async (q: any) => { writes.push(q); return { count: 1 }; } },
+      };
+      await new PrismaWorkflowRepository({ client: db } as any).closeSettledClaimTasks({ companyId: COMPANY, requestId: 'claim' });
+      assert.equal(writes.length, 1); assert.equal(writes[0].where.companyId, COMPANY);
+      assert.deepEqual(writes[0].where.eventId, { in: ['old'] }); assert.ok(writes[0].data.finishedAt instanceof Date);
+    });
+  }
+});
+
+describe('waiting filter intersections and unread badge', () => {
+  for (const read of [undefined, false, true]) it(`keeps waiting constraints with read=${read} and keyset paging`, async () => {
+    const captured: any = {}; const prisma = capturingPrisma(captured);
+    await new PrismaNotificationEventRepository(prisma).list(COMPANY, 'u1', { waiting: true, read, cursor: 'evt-page', pageSize: 2 });
+    const q = captured.event;
+    assert.equal(q.where.recipients.some.finishedAt, null);
+    assert.equal(q.where.recipients.some.supersededAt, null);
+    assert.deepEqual(q.where.recipients.some.readAt, read === false ? null : read === true ? { not: null } : undefined);
+    assert.deepEqual(q.cursor, { id: 'evt-page' }); assert.equal(q.take, 3); assert.equal(q.skip, 1);
+  });
+  for (const severity of ['action', 'critical', 'info']) it(`intersects waiting with severity ${severity} without replacing the actionable constraint`, async () => {
+    const captured: any = {};
+    await new PrismaNotificationEventRepository(capturingPrisma(captured)).list(COMPANY, 'u1', { waiting: true, severity });
+    assert.equal(captured.event.where.severity, severity.toUpperCase());
+    assert.ok(captured.event.where.AND.some((part: any) => part.severity?.in?.join(',') === 'ACTION,CRITICAL'));
+  });
+  for (const triggerKey of ['expense.disbursement_approved', 'daily_owner_summary']) it(`intersects waiting with kind ${triggerKey}`, async () => {
+    const captured: any = {};
+    await new PrismaNotificationEventRepository(capturingPrisma(captured)).list(COMPANY, 'u1', { waiting: true, triggerKey });
+    assert.equal(captured.event.where.triggerKey, triggerKey);
+    const allowed = captured.event.where.AND.find((part: any) => part.triggerKey?.in)?.triggerKey.in;
+    assert.ok(allowed?.includes('expense.disbursement_approved')); assert.ok(!allowed?.includes('daily_owner_summary'));
+  });
+  it('counts current unread rows by severity without counting read, replaced or finished work', async () => {
+    const captured: any = {}; const prisma = capturingPrisma(captured);
+    prisma.client.notificationEvent.groupBy = async (q: any) => { captured.count = q; return [{ severity: 'ACTION', _count: { _all: 2 } }, { severity: 'CRITICAL', _count: { _all: 1 } }]; };
+    const result = await new PrismaNotificationRecipientRepository(prisma).countUnread(COMPANY, 'u1');
+    assert.deepEqual(captured.count.where.recipients.some, { userId: 'u1', readAt: null, dismissedAt: null, supersededAt: null, finishedAt: null });
+    assert.equal(result.total, 3); assert.equal(result.bySeverity.action, 2); assert.equal(result.bySeverity.critical, 1);
+  });
+  it('an urgent approval reminder shares the approval waiting key', async () => {
+    const { waitingNoticeKey } = await import('./infrastructure/waiting-notification');
+    assert.equal(waitingNoticeKey({ triggerKey: 'workflow.approval_sla_breach', sourceType: 'reimbursement_request', sourceId: 'claim', severity: 'CRITICAL' }), 'reimbursement_request:claim:approve');
+  });
+});
+
+it('a finished waiting task stays resolved when its claim later re-enters the same status', async () => {
+  const captured: any = {};
+  const repo = new PrismaNotificationEventRepository(capturingPrisma(captured));
+  await repo.list(COMPANY, 'u1', { status: 'open' });
+  assert.equal(captured.event.where.recipients.some.finishedAt, null);
+  await repo.list(COMPANY, 'u1', { status: 'resolved' });
+  assert.ok(captured.event.where.OR.some((part: any) => part.recipients?.some?.userId === 'u1' && part.recipients.some.finishedAt?.not === null));
+});
+
+it('waiting keys join approval reminders by document and action, never by recipient or revision', () => {
+  const event = { sourceType: 'disbursement_voucher', sourceId: 'one', triggerKey: 'expense.disbursement_pending_approval', severity: 'ACTION' };
+  assert.equal(waitingNoticeKey(event), 'disbursement_voucher:one:approve');
+  assert.equal(waitingNoticeKey({ ...event, triggerKey: 'expense.disbursement_approved' }), 'disbursement_voucher:one:pay');
+  assert.equal(waitingNoticeKey({ ...event, triggerKey: 'expense.disbursement_approved', severity: 'INFO' }), null);
+  assert.equal(waitingNoticeKey({ ...event, sourceType: 'reimbursement_request', triggerKey: 'workflow.approval_sla_breach' }), waitingNoticeKey({ ...event, sourceType: 'reimbursement_request', triggerKey: 'workflow.reimbursement_pending_approval' }));
+});
+it('finished titles replace waiting words with the document state without changing the remaining sentence', () => {
+  assert.equal(finishedNoticeTitle('รออนุมัติ: ใบเตรียมจ่ายเลขที่ PV-1', 'อนุมัติแล้ว'), 'อนุมัติแล้ว: ใบเตรียมจ่ายเลขที่ PV-1');
+  assert.equal(finishedNoticeTitle('เตือนอีกครั้ง: ใบเตรียมจ่ายเลขที่ PV-1 รออนุมัติ', 'จ่ายแล้ว'), 'เตือนอีกครั้ง: ใบเตรียมจ่ายเลขที่ PV-1 จ่ายแล้ว');
+  assert.equal(finishedNoticeTitle('อนุมัติแล้ว รอจ่าย: ใบเตรียมจ่ายเลขที่ PV-1', 'จ่ายแล้ว'), 'จ่ายแล้ว: ใบเตรียมจ่ายเลขที่ PV-1');
+});
+
+it('finished claim bell rows project returned-for-correction wording without changing the stored title', async () => {
+  const notice = { sourceType: 'reimbursement_request', sourceId: 'claim', title: 'รออนุมัติ: ใบเบิก RB-1' };
+  const db = { reimbursementRequest: { findMany: async () => [{ id: 'claim', status: 'REJECTED' }] } };
+  const words = await documentStateWords(db, 'co', [notice]);
+  assert.equal(words.get('reimbursement_request:claim'), 'ถูกส่งกลับให้แก้');
+  assert.equal(finishedNoticeTitle(notice.title, words.get('reimbursement_request:claim')!), 'ถูกส่งกลับให้แก้: ใบเบิก RB-1');
+  assert.equal(notice.title, 'รออนุมัติ: ใบเบิก RB-1');
+});
+
+it('claim decision notices read as sent back even when stored before the wording change', () => {
+  for (const decision of ['REJECTED', 'ไม่อนุมัติ', 'ส่งกลับให้แก้แล้ว']) {
+    assert.equal(localizeReimbursementDecision(`ผลการพิจารณา: ${decision} · ยอด 120.00 บาท`), 'ผลการพิจารณา: ส่งกลับให้แก้แล้ว · ยอด 120.00 บาท');
+  }
+  assert.equal(localizeReimbursementDecision('เหตุผล: ไม่อนุมัติรายการซ้ำ'), 'เหตุผล: ไม่อนุมัติรายการซ้ำ', 'free-text reasons are not rewritten');
+});
+
+it('finishes old and new payment-document return notices without rewriting their stored words', async () => {
+  for (const prefix of ['ตีกลับ', 'ส่งกลับให้แก้']) {
+    const notice = { id: 'returned', triggerKey: 'expense.disbursement_returned', sourceType: 'disbursement_voucher', sourceId: 'dv',
+      severity: 'ACTION', title: `${prefix}: ใบเตรียมจ่ายเลขที่ PV-1`, sourceRefsJson: { refs: [{ revision: 1 }] } };
+    const writes: any[] = [];
+    const db: any = {
+      notificationEvent: { findMany: async () => [notice] },
+      disbursementVoucher: { findMany: async () => [{ id: 'dv', status: 'PENDING_APPROVAL', revision: 2 }] },
+      notificationRecipient: { updateMany: async (query: any) => { writes.push(query); return { count: 1 }; } },
+    };
+    await new CreateOrUpdateNotificationEventUseCase({} as any, {} as any, {} as any, {} as any, {} as any, { client: db } as any)
+      .finishDocumentWaiting(COMPANY, 'disbursement_voucher', 'dv');
+    assert.equal(writes.length, 1);
+    assert.deepEqual(writes[0].where.eventId, { in: ['returned'] });
+    assert.equal(writes[0].where.companyId, COMPANY);
+    assert.ok(writes[0].data.finishedAt instanceof Date);
+    const states = await documentStateWords(db, COMPANY, [notice]);
+    assert.equal(finishedNoticeTitle(notice.title, states.get('disbursement_voucher:dv')!), 'รออนุมัติ: ใบเตรียมจ่ายเลขที่ PV-1');
+    assert.equal(notice.title, `${prefix}: ใบเตรียมจ่ายเลขที่ PV-1`, 'stored history stays unchanged');
+  }
+});
+
+it('new payment-document return events render the current contract words directly, without stored templates', async () => {
+  const { DisbursementVoucherNoticeService } = await import('../expenses/application/services/disbursement-voucher-notice.service');
+  const events: any[] = [];
+  const service = new DisbursementVoucherNoticeService({
+    memberNames: async () => new Map([['u1', 'สมชาย'], ['preparer', 'สมหญิง']]),
+    activeMemberIds: async () => ['preparer'],
+  } as any, { finishDocumentWaiting: async () => undefined, execute: async (input: any) => events.push(input) } as any);
+  await service.send(ctx, { id: 'dv', documentNumber: 'PV-1', status: 'DRAFT', preparedByUserId: 'preparer',
+    payeeName: 'ร้านทดสอบ', totalAmount: '100', revision: 1 } as any, 'return', { reason: 'แก้ยอด' });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].title, 'ส่งกลับให้แก้: ใบเตรียมจ่ายเลขที่ PV-1');
+  assert.equal(events[0].body, 'สมชาย ส่งกลับให้แก้ เหตุผล: แก้ยอด แก้แล้วส่งใหม่ได้ด้วยเลขที่เดิม');
+  assert.deepEqual(events[0].recipientUserIds, ['preparer']);
+  assert.equal(events[0].severity, 'action');
+});
+
+// HOME-1: same disposable-database opt-in as the notification proofs above.
+describe('expense months on PostgreSQL', { skip: !process.env.NOTIFICATION_TEST_DATABASE_URL }, () => {
+  it('groups confirmed civil dates at Bangkok month boundaries, isolates year and branch, and matches the dashboard total', async () => {
+    const { randomUUID } = await import('node:crypto');
+    const { PrismaPg } = await import('@prisma/adapter-pg');
+    const { PrismaClient } = await import('../../generated/prisma/client');
+    const { coerceCivilDate, civilDateToUtcDate } = await import('@watchdog-bms/contracts');
+    const url = new URL(process.env.NOTIFICATION_TEST_DATABASE_URL!);
+    assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
+    assert.ok(['/watchdog_bms', '/notification_test', '/watchdog_pv_land'].includes(url.pathname));
+    const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url.toString() }) });
+    const companyId = `months-${randomUUID()}`, otherCompanyId = `other-${randomUUID()}`;
+    try {
+      await db.company.createMany({ data: [{ id: companyId, name: 'Monthly expenses' }, { id: otherCompanyId, name: 'Other shop' }] });
+      // Expense dates enter the app as civil days, even when the source supplied a timestamp.
+      const date = (value: string) => civilDateToUtcDate(coerceCivilDate(value, 'Asia/Bangkok'));
+      await db.expenseRecord.createMany({ data: [
+        { companyId, branchId: 'b1', expenseDate: date('2025-12-31T17:00:00Z'), grandTotalAmount: '10.01' }, // 1 Jan in Bangkok
+        { companyId, branchId: 'b1', expenseDate: date('2026-01-31T16:59:59Z'), grandTotalAmount: '20.02' }, // last day of Jan
+        { companyId, branchId: 'b1', expenseDate: date('2026-01-31T17:00:00Z'), grandTotalAmount: '40.04' }, // 1 Feb
+        { companyId, branchId: null, expenseDate: date('2026-01-15'), grandTotalAmount: '30.03' },
+        { companyId, branchId: 'b2', expenseDate: date('2026-01-15'), grandTotalAmount: '50.05' },
+        { companyId, branchId: 'b1', expenseDate: date('2025-12-31'), grandTotalAmount: '900' },
+        { companyId, branchId: 'b1', expenseDate: date('2027-01-01'), grandTotalAmount: '901' },
+        { companyId, branchId: 'b2', expenseDate: date('2024-01-01'), grandTotalAmount: '902' },
+        { companyId, branchId: 'b1', expenseDate: date('2026-01-10'), grandTotalAmount: '903', status: 'DRAFT' as const },
+        { companyId, branchId: 'b1', expenseDate: date('2023-01-10'), grandTotalAmount: '904', status: 'VOIDED' as const },
+        { companyId: otherCompanyId, branchId: null, expenseDate: date('2022-01-10'), grandTotalAmount: '905' },
+      ].map(row => ({ status: 'CONFIRMED' as const, createdByUserId: 'monthly-test', ...row })) });
+      const provider = new ExpenseSummaryProvider({ client: db } as any);
+      const now = new Date('2026-10-14T17:00:00Z');
+      const all = await provider.collectMonths({ companyId, year: 2026 }, now);
+      assert.equal(all.months.length, 12);
+      assert.deepEqual(all.months[0], { month: '2026-01', total: '110.11', count: 4 });
+      assert.deepEqual(all.months[1], { month: '2026-02', total: '40.04', count: 1 });
+      assert.ok(all.months.slice(2).every(row => row.total === '0.00' && row.count === 0));
+      assert.deepEqual(all.years, [2024, 2025, 2026, 2027]);
+      const scoped = await provider.collectMonths({ companyId, year: 2026, branchIds: ['b1'] }, now);
+      assert.deepEqual(scoped.months[0], { month: '2026-01', total: '30.03', count: 2 });
+      assert.deepEqual(scoped.years, [2025, 2026, 2027]);
+      const empty = await provider.collectMonths({ companyId, year: 2026, branchIds: [] }, now);
+      assert.deepEqual(empty.years, [2026]); assert.ok(empty.months.every(row => row.count === 0 && row.total === '0.00'));
+      const [widget] = await provider.collectMetrics({ companyId, branchIds: ['b1'], periodStart: new Date('2025-12-31T17:00:00Z'), periodEnd: new Date('2026-01-31T16:59:59.999Z') });
+      assert.equal(widget.metrics.find(row => row.key === 'expense_total_in_period')?.value, Number(scoped.months[0]!.total));
+    } finally {
+      await db.expenseRecord.deleteMany({ where: { companyId: { in: [companyId, otherCompanyId] } } });
+      await db.company.deleteMany({ where: { id: { in: [companyId, otherCompanyId] } } });
+      await db.$disconnect();
+    }
+  });
 });

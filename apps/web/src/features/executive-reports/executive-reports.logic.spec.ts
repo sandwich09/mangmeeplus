@@ -71,7 +71,7 @@ test('satang, negative amounts, rounded ratios and Buddhist dates have one Thai 
 test('every reason and paid-ever sub-reason has reviewed Thai words, including field-level errors', async () => {
   for (const code of new Set([...EXECUTIVE_REASON_CODES, ...EXECUTIVE_PAID_EVER_REASONS, 'EXECUTIVE_ACCESS_DENIED', 'EXECUTIVE_QUERY_INVALID', 'COMPANY_NOT_FOUND', 'SOURCE_UNAVAILABLE'])) {
     const words = apiErrorMessage({ code });
-    assert.match(words, /[ก-๙]/, code); assert.doesNotMatch(words, /[A-Za-z_]/, code); assert.notEqual(words, 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง', code);
+    assert.match(words, /[ก-๙]/, code); assert.doesNotMatch(words, /[A-Za-z_]/, code); assert.notEqual(words, 'ทำรายการไม่สำเร็จ ลองอีกครั้ง', code);
   }
   const { queryFieldErrors } = await logic();
   const e = { code: 'EXECUTIVE_QUERY_INVALID', details: { fieldErrors: { month: ['secret English'], sideB: ['INVALID'] } } };

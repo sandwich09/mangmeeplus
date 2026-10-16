@@ -1,18 +1,14 @@
+import { Prisma } from '../../../../generated/prisma/client';
 import { Injectable } from '@nestjs/common';
+import { civilDate, civilDateToUtcDate } from '@watchdog-bms/contracts';
+import { allocateExpenseWithholding } from '../../domain/logic/expense-payment-withholding.logic';
 import type { ExpenseWhtCapture } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { counterpartyAddressText } from '../../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
 import type { ExpenseSourceRow, ExpenseWhtSourceRow, TransactionTaxSourceLineRow } from '../../domain/ports/source-reader.port';
 
-/** RA-19: rate and base live on the withholding lines, and the header WHT event can only carry one
- *  of each. Two unit/base translations are mandatory here:
- *  - `ExpenseLine.whtRate` is a fraction (`calcLineTotals` does `taxable * whtRate`) while every tax
- *    consumer means a percent (`WhtIncomeCategory.defaultRate` '3.0000' = 3%, `vendor-bill.use-case`
- *    divides by 100), so the fraction is scaled to percent.
- *  - gross must be the base the rate applies to, so only withholding lines count; the header
- *    `taxableAmount` also sums non-WHT lines and would make gross x rate != withheld on the ใบแนบ.
- *  The ใบแนบ groups by payee + income category + rate, so a document mixing rates has no header rate
- *  to report — leave it null for review instead of picking one line's rate. */
+/** Expense line rates are fractions; reporting rates are percentages. Explicit whole-bill
+ * capture keeps its selected base, including lines whose tax rounds to zero. */
 function whtLineFacts(lines: Array<{ whtRate: unknown; taxableAmount: unknown }> | undefined, headerBase: string, input?: ExpenseWhtCapture | null) {
   // Explicit source is whole-bill even when a small line's WHT rounds to zero and the query
   // excludes that line. Legacy input still uses only the lines the user originally withheld on.
@@ -90,30 +86,63 @@ export class ExpenseSourceAdapter {
         companyId,
         status: 'CONFIRMED',
         whtAmount: { gt: 0 },
-        ...(since ? { updatedAt: { gte: since } } : {}),
+        // Read all payments: a void or late payment can change an older unfiled month.
       },
-      include: { lines: { where: { whtAmount: { gt: 0 } }, select: { whtRate: true, taxableAmount: true } } },
+      include: { payments: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }, lines: { where: { whtAmount: { gt: 0 } }, select: { id: true, whtCategoryCode: true, whtRate: true, taxableAmount: true, whtAmount: true } } },
       orderBy: { expenseDate: 'asc' },
     });
+    if (!rows.length) return [];
     const registryAddresses = await this.resolveVendorAddresses(companyId, rows);
+    // A missing legacy snapshot can be completed in คู่ค้า; explicit foreign/other kinds stay unresolved.
+    const unknownIds = [...new Set(rows.filter(row => row.vendorEntityKindSnapshot == null && row.vendorCounterpartyId)
+      .map(row => row.vendorCounterpartyId!))];
+    const counterparties = unknownIds.length ? await this.prisma.client.accountingCounterparty.findMany({
+      where: { companyId, id: { in: unknownIds } }, select: { id: true, entityKind: true },
+    }) : [];
+    const kinds = new Map(counterparties.map(row => [row.id, row.entityKind]));
 
-    return rows.map(r => ({
+    const filedLines = await this.prisma.client.whtFilingLine.findMany({ where: { sourceType: 'expense.record', sourceId: { in: rows.map(r => r.id) }, filing: { companyId, status: 'FILED' } }, select: { lineJson: true } });
+    const frozen = new Map<string, { grossAmount: string; whtAmount: string }>();
+    for (const line of filedLines) {
+      const facts = (line.lineJson as { payment?: (string | null)[] }).payment;
+      if (facts?.[13]?.startsWith('payment:')) frozen.set(facts[13], { grossAmount: facts[6] ?? '0', whtAmount: facts[7] ?? '0' });
+    }
+    const company = await this.prisma.client.company.findUnique({ where: { id: companyId }, select: { timezone: true } });
+    return rows.flatMap(r => {
+      const facts = whtLineFacts(r.lines, String(r.taxableAmount ?? '0'), r.whtInputJson as ExpenseWhtCapture | null);
+      // Whole-bill capture remains one line. Independently classified/rated legacy lines keep
+      // their own base, rate and satang remainder instead of collapsing to an unknown rate.
+      const split = !r.whtInputJson && (r.lines?.length ?? 0) > 1;
+      const lines = split ? r.lines.map(l => ({ key: l.id, incomeCategoryCode: l.whtCategoryCode ?? r.whtCategoryCode,
+        whtRate: l.whtRate == null ? null : new Prisma.Decimal(l.whtRate).mul(100).toFixed(4),
+        grossAmount: String(l.taxableAmount), whtAmount: String(l.whtAmount) }))
+        : [{ key: null, incomeCategoryCode: r.lines?.[0]?.whtCategoryCode ?? r.whtCategoryCode, ...facts, whtAmount: String(r.whtAmount) }];
+      return lines.flatMap(line => allocateExpenseWithholding(r.payments, String(r.netPayableAmount), line.grossAmount, line.whtAmount,
+        new Map(r.payments.flatMap(p => { const fixed = frozen.get(`payment:${p.id}${line.key ? `:line:${line.key}` : ''}`); return fixed ? [[p.id, fixed] as const] : []; })), new Prisma.Decimal(String(r.netPayableAmount)).add(String(r.whtAmount)).toString())
+        .filter(payment => payment.paidAtConfirmed).map(payment => ({
+      sourceLineKey: `payment:${payment.id}${line.key ? `:line:${line.key}` : ''}`,
       id: r.id,
       companyId: r.companyId,
-      expenseDate: r.expenseDate,
-      whtAmount: String(r.whtAmount ?? '0'),
+      branchId: r.branchId ?? null,
+      paymentId: payment.id,
+      paymentAmount: String(payment.amount),
+      documentDate: r.expenseDate,
+      expenseDate: civilDateToUtcDate(civilDate(payment.paidAt, company?.timezone ?? 'Asia/Bangkok')),
       vendorName: r.vendorNameSnapshot ?? null,
       vendorTaxId: r.vendorTaxIdSnapshot ?? null,
       vendorBranchCode: r.vendorBranchCodeSnapshot ?? null,
       // §10 fallback (Phase 1 gap): the printed snapshot wins; the registry only fills a gap, and
       // is not part of `computeSourceHash` in sync-tax-events — no backfill, new amounts only.
       vendorAddress: r.vendorAddressSnapshot ?? (r.vendorCounterpartyId ? registryAddresses.get(r.vendorCounterpartyId) ?? null : null),
-      payeeEntityKind: r.vendorEntityKindSnapshot ?? null,
-      incomeCategoryCode: r.taxCategory ?? null,
-      ...whtLineFacts(r.lines, String(r.taxableAmount ?? '0'), r.whtInputJson as ExpenseWhtCapture | null),
+      payeeEntityKind: r.vendorEntityKindSnapshot ?? kinds.get(r.vendorCounterpartyId ?? '') ?? null,
+      incomeCategoryCode: line.incomeCategoryCode ?? null,
+      whtRate: line.whtRate,
+      grossAmount: payment.grossAmount,
+      whtAmount: payment.whtAmount,
       currency: r.currency ?? 'THB',
       updatedAt: r.updatedAt, confirmedAt: r.confirmedAt,
-    }));
+    })));
+    });
   }
 
   async findFinalizedTransactionTaxLines(companyId: string, since?: Date): Promise<TransactionTaxSourceLineRow[]> {
@@ -123,7 +152,7 @@ export class ExpenseSourceAdapter {
       db.vendorBill.findMany({ where: { companyId, status: { in: ['APPROVED', 'PARTIALLY_PAID', 'PAID', 'CREDITED'] }, lines: { some: { taxComponentsJson: { not: null } } }, ...(since ? { updatedAt: { gte: since } } : {}) }, include: { lines: { where: { taxComponentsJson: { not: null } }, orderBy: { lineNumber: 'asc' } } } }),
     ]);
     const expand = (rows: any[], sourceType: TransactionTaxSourceLineRow['sourceType'], dateKey: string, numberKey: string): TransactionTaxSourceLineRow[] => rows.flatMap((row: any) => row.lines.map((line: any) => ({
-      sourceType, sourceId: row.id, sourceLineId: line.id, companyId: row.companyId, branchId: row.branchId ?? null,
+      inputVatClaimStatus: row.inputVatClaimStatus, taxEvidenceStatus: row.taxEvidenceStatus, sourceType, sourceId: row.id, sourceLineId: line.id, companyId: row.companyId, branchId: row.branchId ?? null,
       sourceEventType: row.status, eventDate: row[dateKey], currency: row.currency, vatMode: row.vatMode ?? null,
       taxInvoiceNumber: row[numberKey] ?? null, taxComponents: Array.isArray(line.taxComponentsJson) ? line.taxComponentsJson : [], updatedAt: row.updatedAt, confirmedAt: row.confirmedAt,
     })));
@@ -137,7 +166,7 @@ export class ExpenseSourceAdapter {
       db.vendorBill.findMany({ where: { companyId, status: 'VOIDED', lines: { some: { taxComponentsJson: { not: null } } }, ...(since ? { updatedAt: { gte: since } } : {}) }, include: { lines: { where: { taxComponentsJson: { not: null } } } } }),
     ]);
     const expand = (rows: any[], sourceType: TransactionTaxSourceLineRow['sourceType'], dateKey: string): TransactionTaxSourceLineRow[] => rows.flatMap((row: any) => row.lines.map((line: any) => ({
-      sourceType, sourceId: row.id, sourceLineId: line.id, companyId: row.companyId, branchId: row.branchId ?? null, sourceEventType: 'VOIDED',
+      inputVatClaimStatus: row.inputVatClaimStatus, taxEvidenceStatus: row.taxEvidenceStatus, sourceType, sourceId: row.id, sourceLineId: line.id, companyId: row.companyId, branchId: row.branchId ?? null, sourceEventType: 'VOIDED',
       eventDate: row[dateKey], currency: row.currency, vatMode: row.vatMode ?? null, taxInvoiceNumber: row.taxInvoiceNumber ?? null,
       taxComponents: Array.isArray(line.taxComponentsJson) ? line.taxComponentsJson : [], updatedAt: row.updatedAt, confirmedAt: row.confirmedAt,
     })));

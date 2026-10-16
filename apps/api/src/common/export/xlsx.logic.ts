@@ -74,18 +74,19 @@ export function columnName(index: number): string {
 }
 
 // ponytail: stored (uncompressed) entries — Excel accepts them and it keeps this file dependency-free.
-function zipStore(files: Record<string, Buffer>, compress = false): Buffer {
+export function zipStore(files: Record<string, Buffer>, compress = false): Buffer {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
   for (const [name, data] of Object.entries(files)) {
     const nameBuf = Buffer.from(name);
+    const nameFlags = /[^\x00-\x7f]/.test(name) ? 0x800 : 0; // UTF-8 names, including Thai evidence numbers.
     const packed = compress ? deflateRawSync(data) : data;
     const crc = crc32(data);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(nameFlags, 6);
     local.writeUInt16LE(compress ? 8 : 0, 8);
     local.writeUInt32LE(0, 10);
     local.writeUInt32LE(crc, 14);
@@ -98,7 +99,7 @@ function zipStore(files: Record<string, Buffer>, compress = false): Buffer {
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(20, 4);
     central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(nameFlags, 8);
     central.writeUInt16LE(compress ? 8 : 0, 10);
     central.writeUInt32LE(0, 12);
     central.writeUInt32LE(crc, 16);

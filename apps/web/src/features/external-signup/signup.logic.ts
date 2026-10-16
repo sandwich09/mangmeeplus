@@ -28,9 +28,13 @@ export const SIGNUP_SUPPORT_EMAIL = 'contact@mangmeeplus.com';
  */
 export const SIGNUP_TRIAL_HEADLINE = 'เปิดร้านแล้วเลือกแพ็กเกจเพื่อเริ่มใช้งาน';
 
-/** What happens next. Never implies a card, a renewal, or a charge the applicant did not choose. */
+/**
+ * What happens next. Never implies a card, a renewal, or a charge the applicant did not choose, and
+ * names no way of paying: the package page sells by PromptPay QR as well as by card, so "by card"
+ * was not true in every case (thai-ux-standard §1.7).
+ */
 export const SIGNUP_TRIAL_AFTER =
-  'แพ็กเกจเริ่มต้น 249 บาทต่อเดือน ชำระผ่านบัตรออนไลน์ ไม่มีการตัดเงินอัตโนมัติจนกว่าคุณจะเลือก';
+  'แพ็กเกจเริ่มต้น 249 บาทต่อเดือน ไม่มีการตัดเงินอัตโนมัติจนกว่าคุณจะเลือก';
 
 /**
  * Still sent with the form: it is the key the server's allowlist accepts and what the admin queue
@@ -91,18 +95,18 @@ export function clampMobileInput(value: string): string {
 
 export function validateSignupForm(values: SignupFormValues): SignupFieldErrors {
   const errors: SignupFieldErrors = {};
-  if (!values.companyName.trim()) errors.companyName = 'กรุณากรอกชื่อร้านหรือบริษัท';
-  if (!values.ownerFirstName.trim()) errors.ownerFirstName = 'กรุณากรอกชื่อ';
-  if (!values.ownerLastName.trim()) errors.ownerLastName = 'กรุณากรอกนามสกุล';
+  if (!values.companyName.trim()) errors.companyName = 'กรอกชื่อร้าน';
+  if (!values.ownerFirstName.trim()) errors.ownerFirstName = 'กรอกชื่อ';
+  if (!values.ownerLastName.trim()) errors.ownerLastName = 'กรอกนามสกุล';
 
   const email = values.contactEmail.trim();
-  if (!email) errors.contactEmail = 'กรุณากรอกอีเมล';
-  else if (!looksLikeEmail(email)) errors.contactEmail = 'รูปแบบอีเมลไม่ถูกต้อง เช่น somchai@gmail.com';
+  if (!email) errors.contactEmail = 'กรอกอีเมล';
+  else if (!looksLikeEmail(email)) errors.contactEmail = 'อีเมลต้องมี @ และชื่อเว็บ เช่น somchai@gmail.com';
 
   const phone = values.phoneNumber.trim();
   // Required on the form even though the contract allows it to be absent: when the approval email
   // bounces, this number is the only way anyone can reach the applicant (spec §4D).
-  if (!phone) errors.phoneNumber = 'กรุณากรอกเบอร์โทรมือถือ';
+  if (!phone) errors.phoneNumber = 'กรอกเบอร์มือถือ';
   // One wording for one rule, shared with the profile page and the API's invalid_phone_number.
   else if (!isThaiMobile(phone)) errors.phoneNumber = 'เบอร์มือถือต้องมี 10 หลัก เช่น 0812345678';
 
@@ -115,7 +119,7 @@ export function validateSignupForm(values: SignupFormValues): SignupFieldErrors 
   // caught here rather than after a round trip. Whether the code EXISTS is only knowable server-side.
   if (values.discoverySource === 'SALES') {
     const code = clampSalesCodeInput(values.referralSalesCode);
-    if (!code) errors.referralSalesCode = 'กรุณากรอกรหัสเซลล์ที่ได้รับ';
+    if (!code) errors.referralSalesCode = 'กรอกรหัสเซลล์ที่ได้รับ';
     else if (!SALES_CODE_PATTERN.test(code)) errors.referralSalesCode = 'รหัสเซลล์ต้องเป็นตัวอักษรอังกฤษตัวใหญ่หรือตัวเลข 3–6 ตัว';
   }
   if (values.discoverySource === 'OTHER' && values.discoverySourceOther.trim().length > SIGNUP_DISCOVERY_OTHER_MAX) {
@@ -221,7 +225,7 @@ const STATUS_COPY: Record<PublicSignupStatusKey, SignupStatusCopy> = {
   },
   AWAITING_CLAIM: {
     title: 'อนุมัติแล้ว รอตั้งรหัสผ่าน',
-    body: 'เราส่งอีเมลพร้อมลิงก์ตั้งรหัสผ่านไปให้แล้ว กรุณาตรวจกล่องจดหมาย และเมลขยะ',
+    body: 'เราส่งอีเมลพร้อมลิงก์ตั้งรหัสผ่านไปให้แล้ว ถ้าไม่เจอ ดูในอีเมลขยะ',
     tone: 'success',
   },
   // R11: the letter bounced, so the AWAITING_CLAIM sentence ("ไปให้แล้ว") was telling the applicant
@@ -238,7 +242,7 @@ const STATUS_COPY: Record<PublicSignupStatusKey, SignupStatusCopy> = {
   // applicant watching a screen that would never change. The refresh is the honest instruction.
   PREPARING: {
     title: 'กำลังเปิดร้านให้',
-    body: 'ยืนยันอีเมลเรียบร้อยแล้ว ระบบกำลังเปิดร้านให้ อีกสักครู่กดรีเฟรชหน้านี้เพื่อดูสถานะล่าสุด',
+    body: 'ยืนยันอีเมลแล้ว ระบบกำลังเปิดร้านให้ อีกสักครู่กดรีเฟรชหน้านี้เพื่อดูสถานะล่าสุด',
     tone: 'info',
   },
   // R11: nothing retries this by itself, so "ยังไม่ต้องทำอะไรเพิ่ม" pointed at a queue nobody works.
@@ -254,7 +258,7 @@ const STATUS_COPY: Record<PublicSignupStatusKey, SignupStatusCopy> = {
   },
   REJECTED: {
     title: 'คำขอนี้ยังไม่ผ่านการตรวจสอบ',
-    body: `หากต้องการสอบถามเพิ่มเติม โทร ${SIGNUP_SUPPORT_PHONE}`,
+    body: `สอบถามทีมงานมั่งมีได้ที่ ${SIGNUP_SUPPORT_PHONE}`,
     tone: 'error',
   },
   EXPIRED: {
@@ -314,7 +318,7 @@ export const CLAIM_USERNAME_HINT =
 export function validateClaimPassword(username: string, password: string, confirmPassword: string): ClaimPasswordErrors {
   const errors: ClaimPasswordErrors = {};
   const trimmedUsername = username.trim();
-  if (!trimmedUsername) errors.username = 'กรุณากรอกชื่อผู้ใช้';
+  if (!trimmedUsername) errors.username = 'กรอกชื่อผู้ใช้';
   else if (trimmedUsername.length < CLAIM_USERNAME_MIN || trimmedUsername.length > CLAIM_USERNAME_MAX
     || !CLAIM_USERNAME_PATTERN.test(trimmedUsername)) {
     errors.username = `ชื่อผู้ใช้ต้องมี ${CLAIM_USERNAME_HINT}`;
@@ -322,7 +326,7 @@ export function validateClaimPassword(username: string, password: string, confir
   if (password.length < 8 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
     errors.password = 'รหัสผ่านต้องยาวอย่างน้อย 8 ตัว และมีทั้งตัวอักษร และตัวเลข';
   }
-  if (!confirmPassword) errors.confirmPassword = 'กรุณากรอกรหัสผ่านอีกครั้ง';
+  if (!confirmPassword) errors.confirmPassword = 'กรอกรหัสผ่านอีกครั้ง';
   else if (password !== confirmPassword) errors.confirmPassword = 'รหัสผ่านสองช่องไม่ตรงกัน';
   return errors;
 }

@@ -1,3 +1,4 @@
+import type { DashboardExpenseMonthsDto } from '@watchdog-bms/contracts';
 import type {
   DashboardSnapshot,
   NotificationListResult,
@@ -59,6 +60,10 @@ export function getDashboard(companyId: string, periodKind?: DashboardPeriodKind
   return apiFetch(`/v1/companies/${companyId}/dashboard${qs({ periodKind, branchId })}`);
 }
 
+export function getExpenseMonths(companyId: string, year: number, branchId?: string): Promise<DashboardExpenseMonthsDto> {
+  return apiFetch(`/v1/companies/${companyId}/dashboard/expense-months${qs({ year, branchId })}`);
+}
+
 export function generateSnapshot(companyId: string, periodKind?: DashboardPeriodKind, branchId?: string): Promise<DashboardSnapshot> {
   return apiFetch(`/v1/companies/${companyId}/dashboard/snapshots/generate`, {
     method: 'POST',
@@ -70,7 +75,7 @@ export function generateSnapshot(companyId: string, periodKind?: DashboardPeriod
 
 export function listNotifications(
   companyId: string,
-  params?: { status?: string; severity?: string; read?: boolean; cursor?: string; pageSize?: number },
+  params?: { waiting?: boolean; status?: string; severity?: string; read?: boolean; cursor?: string; pageSize?: number },
 ): Promise<NotificationListResult> {
   return apiFetch<{ items: RawNotificationItem[]; nextCursor?: string }>(`/v1/companies/${companyId}/notifications${qs(params)}`)
     .then((res) => {

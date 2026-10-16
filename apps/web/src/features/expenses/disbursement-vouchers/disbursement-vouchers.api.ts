@@ -73,8 +73,8 @@ export async function downloadDisbursementVoucherDocument(companyId: string, id:
   if (!response.ok) throw await responseError(response);
   downloadBlob(await checkedPreviewBlob(response, 'application/pdf'), `${documentNumber}.pdf`);
 }
-export function revealDisbursementVoucherAccount(companyId: string, id: string, signal?: AbortSignal): Promise<{ accountNumber: string }> {
-  return authedApiFetch(`${base(companyId)}/${encodeURIComponent(id)}/payee-account/reveal`, { method: 'POST', signal, suppressErrorToast: true });
+export function revealDisbursementVoucherAccount(companyId: string, id: string, signal?: AbortSignal, purpose?: 'prefill'): Promise<{ accountNumber: string }> {
+  return authedApiFetch(`${base(companyId)}/${encodeURIComponent(id)}/payee-account/reveal${purpose ? '?purpose=prefill' : ''}`, { method: 'POST', signal, suppressErrorToast: true });
 }
 
 export function uploadDisbursementVoucherSlip(companyId: string, id: string, file: File): Promise<string> {
@@ -89,5 +89,27 @@ export function attachDisbursementVoucherSlip(companyId: string, id: string, att
 }
 export async function fetchDisbursementVoucherSlipBlob(companyId: string, id: string): Promise<Blob> {
   const { downloadUrl } = await authedApiFetch<{ downloadUrl: string }>(`${base(companyId)}/${encodeURIComponent(id)}/slip`, { suppressErrorToast: true });
+  return fetchSignedPreviewBlob(downloadUrl);
+}
+
+export function getDisbursementPayeeAccount(companyId: string, payeeKey: string, branchId?: string): Promise<import('@watchdog-bms/contracts').DisbursementPayeeAccount | null> {
+  return authedApiFetch(`${base(companyId)}/payee-account?${sourceQuery({ payeeKey, branchId })}`, { suppressErrorToast: true });
+}
+
+const supportingBase = (companyId: string, id: string) => `${base(companyId)}/${encodeURIComponent(id)}/supporting-files`;
+export function listDisbursementSupportingFiles(companyId: string, id: string): Promise<import('@watchdog-bms/contracts').DisbursementVoucherSupportingFile[]> {
+  return authedApiFetch(supportingBase(companyId, id), { suppressErrorToast: true });
+}
+export function uploadDisbursementSupportingFile(companyId: string, id: string, file: File): Promise<string> {
+  return uploadPaymentSlip(supportingBase(companyId, id), file, { code: 'disbursement_supporting_invalid', message: DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_supporting_invalid }, true);
+}
+export function attachDisbursementSupportingFile(companyId: string, id: string, attachmentId: string): Promise<import('@watchdog-bms/contracts').DisbursementVoucherSupportingFile[]> {
+  return changed(authedApiFetch(supportingBase(companyId, id), { method: 'POST', body: JSON.stringify({ attachmentId }), suppressErrorToast: true }));
+}
+export function removeDisbursementSupportingFile(companyId: string, id: string, attachmentId: string): Promise<import('@watchdog-bms/contracts').DisbursementVoucherSupportingFile[]> {
+  return changed(authedApiFetch(`${supportingBase(companyId, id)}/${encodeURIComponent(attachmentId)}`, { method: 'DELETE', suppressErrorToast: true }));
+}
+export async function fetchDisbursementSupportingBlob(companyId: string, id: string, attachmentId: string): Promise<Blob> {
+  const { downloadUrl } = await authedApiFetch<{ downloadUrl: string }>(`${supportingBase(companyId, id)}/${encodeURIComponent(attachmentId)}`, { suppressErrorToast: true });
   return fetchSignedPreviewBlob(downloadUrl);
 }

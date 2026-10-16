@@ -1,7 +1,7 @@
-import { EXPENSE_CORRECTION_WORDS, normalizeExpensePaymentAmount, thaiTaxIdChecksumValid, todayCivilDate } from '@watchdog-bms/contracts';
+import { TAX_EVIDENCE_REASON_LABELS, EXPENSE_CORRECTION_WORDS, normalizeExpensePaymentAmount, thaiTaxIdChecksumValid, todayCivilDate } from '@watchdog-bms/contracts';
 import { INCOME_POSITIVE_MONEY_PATTERN } from '../accounting-documents/income-record.logic';
 import { JPEG_LABEL, PNG_LABEL } from '@watchdog-bms/contracts';
-import { expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
+import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import type {
   ExpenseStatus, ExpenseVatMode, ExpensePaymentStatus, ExpensePostingStatus, ExpensePostingSourceType,
   AiVerificationStatus, DuplicateStatus, ExpenseCaptureSource, ExpensePaymentMethod,
@@ -26,9 +26,9 @@ import type {
   ExpenseSourceDraftInput,
 } from '@watchdog-bms/contracts';
 import {
-  EXPENSE_STATUS_LABELS as CONTRACT_EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
+  EXPENSE_STATUS_LABELS as CONTRACT_EXPENSE_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS as CONTRACT_SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
-  isExpenseCancelled, isExpenseDeletableState, isExpensePending, isExpensePendingReview, isNonExpenseClassificationBlocking, isCheckBillClassification,
+  expenseOverpaidAmount, expenseReimbursementProgressLabel, isExpenseCancelled, isExpenseDeletableState, isExpensePending, isExpensePendingReview, isNonExpenseClassificationBlocking, isCheckBillClassification,
   effectiveVatRateLabel, vatModeRequiresRate, civilDate, civilDateToUtcDate, civilPeriodKey, isCivilDate,
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS, expenseChargeKindAllowsNegative,
   expenseDocumentDateStatus, expenseDateIsReadable, isCalculatedExpenseRounding, hasCurrentExpenseDocumentReview,
@@ -67,7 +67,8 @@ export function expensePaymentAttempt(
 ): ExpensePaymentAttempt {
   if (previous && previous.companyId === companyId && previous.expenseId === expenseId
     && previous.payload.paidAmount === input.paidAmount && previous.payload.paymentMethod === input.paymentMethod
-    && previous.payload.paidAt === input.paidAt && previous.payload.bankAccountRef === input.bankAccountRef) return previous;
+    && previous.payload.paidAt === input.paidAt && previous.payload.bankAccountRef === input.bankAccountRef
+    && previous.payload.slipAttachmentId === input.slipAttachmentId) return previous;
   return { companyId, expenseId, payload: { ...input, idempotencyKey: createKey() } };
 }
 
@@ -85,7 +86,7 @@ export type {
 };
 
 export {
-  EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
+  EXPENSE_VAT_MODE_LABELS,
   TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
   effectiveVatRateLabel, vatModeRequiresRate,
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS, expenseChargeKindAllowsNegative,
@@ -338,6 +339,10 @@ export type ExpenseSummary = {
   currency: string;
   vatMode: ExpenseVatMode;
   vatAmount: string;
+  /** Whether the right is relevant for this document date and VAT amount; presentation only. */
+  inputVatRightVisible?: boolean;
+  inputVatRecordedBeforeReview?: boolean;
+  inputVatClaimStatus?: InputVatClaimStatus;
   grandTotalAmount: string;
   netPayableAmount: string;
   paidAmount: string;
@@ -369,6 +374,11 @@ export function lateDocumentDays(expense: Pick<ExpenseSummary, 'expenseDate' | '
 }
 
 export type ExpenseDetail = ExpenseSummary & {
+  /** Same resolved evidence facts as the accounting evidence list. */
+  sourceEvidenceUnavailable?: boolean;
+  categoryName?: string | null;
+  inputVatRight?: import('@watchdog-bms/contracts').ExpenseInputVatRightView;
+  reviewRequest?: import('@watchdog-bms/contracts').ExpenseDetail['reviewRequest'];
   correctionOpenedAt?: string | null;
   correctionCapabilities?: import('@watchdog-bms/contracts').ExpenseCorrectionCapabilities;
   /** Vendor-address Slice 2: the printed buyer block and its registry comparison (warn-only). */
@@ -543,7 +553,11 @@ export function mergeExpenseUnsavedFields<T extends object>(previous: T, incomin
   })) as T;
 }
 
-export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
+export function reviewValues(detail: ExpenseDetail, prefillCertificatePayee = false): ExpenseDraftReviewValues {
+  const receiptProblem = expenseEvidenceAssessment(detail)?.receiptProblem;
+  const payee = prefillCertificatePayee && !detail.vendorNameSnapshot?.trim()
+    && (receiptProblem === 'NOT_AVAILABLE' || receiptProblem === 'LOST') && detail.substituteReceiptEvidence?.status !== 'SUPERSEDED'
+    ? detail.substituteReceiptEvidence?.payeeName?.trim() : undefined;
   const source = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) ? detail.sourceDraft : null;
   const storedPurpose = detail.note?.split(' · ').find((part) => part.trim().startsWith('วัตถุประสงค์:'))?.trim().slice('วัตถุประสงค์:'.length).trim();
   const businessPurpose = source ? source.header.businessPurpose ?? ''
@@ -596,7 +610,7 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
     }
   }
   return {
-    vendorNameSnapshot: source?.header.vendorName === null ? '' : (detail.vendorNameSnapshot ?? ''),
+    vendorNameSnapshot: payee || (source?.header.vendorName === null ? '' : (detail.vendorNameSnapshot ?? '')),
     vendorTaxIdSnapshot: detail.vendorTaxIdSnapshot ?? '',
     vendorAddressSnapshot: detail.vendorAddressSnapshot ?? '',
     vendorBranchCodeSnapshot: detail.vendorBranchCodeSnapshot ?? '',
@@ -700,7 +714,7 @@ export function allowsDomesticInputTaxCode(
   sourceDocumentType: SourceDocumentType,
   taxEvidenceStatus: TaxEvidenceStatus,
 ): boolean {
-  return sourceDocumentType === 'TAX_INVOICE' && taxEvidenceStatus !== 'SUPPORTING_ONLY';
+  return ['TAX_INVOICE', 'CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT'].includes(sourceDocumentType) && taxEvidenceStatus !== 'SUPPORTING_ONLY';
 }
 
 // Spec §19c: only the Tax Code selection is claimability-driven — the printed VAT rate stays.
@@ -938,6 +952,9 @@ export function expenseVatSourceValidationMessage(source: ExpenseVatSourceInput,
   return null;
 }
 
+export const EXPENSE_PAYMENT_STATUS_LABELS: Record<ExpensePaymentStatus, string> = {
+  UNPAID: 'ยังไม่จ่าย', PARTIALLY_PAID: 'จ่ายบางส่วน', PAID: 'จ่ายแล้ว', VOIDED: 'ยกเลิก',
+};
 export const EXPENSE_STATUS_LABELS = { ...CONTRACT_EXPENSE_STATUS_LABELS, VOIDED: workspaceDictionary.th['expenses.cancelled_label'] };
 export const SOURCE_DOCUMENT_TYPE_LABELS = { ...CONTRACT_SOURCE_DOCUMENT_TYPE_LABELS, NEEDS_REVIEW: workspaceDictionary.th['expenses.document_type_choose'] };
 
@@ -976,12 +993,12 @@ export const POSTING_STATUS_LABELS: Record<ExpensePostingStatus, string> = {
  * Codes ending in `:<accountId>` name the account that is missing or unusable.
  */
 const POSTING_ERROR_LABELS: Record<string, string> = {
-  posting_rule_missing: 'ยังไม่ได้กำหนดกฎการลงบัญชีสำหรับเอกสารประเภทนี้ กรุณาตั้งค่ากฎการลงบัญชีก่อน',
-  posting_unbalanced: 'รายการบัญชีไม่สมดุล เดบิตและเครดิตไม่เท่ากัน กรุณาตรวจกฎการลงบัญชี',
-  account_not_found: 'ไม่พบรหัสบัญชีที่กฎการลงบัญชีอ้างถึง กรุณาตรวจผังบัญชี',
+  posting_rule_missing: 'ยังไม่ได้กำหนดกฎการลงบัญชีสำหรับเอกสารประเภทนี้ ตั้งค่ากฎการลงบัญชีก่อน',
+  posting_unbalanced: 'รายการบัญชีไม่สมดุล เดบิตและเครดิตไม่เท่ากัน ตรวจกฎการลงบัญชี',
+  account_not_found: 'ไม่พบรหัสบัญชีที่กฎการลงบัญชีอ้างถึง ตรวจผังบัญชี',
   account_not_available: 'บัญชีที่กฎการลงบัญชีอ้างถึงถูกปิดใช้งานหรืออยู่นอกบริษัท',
-  tax_snapshot_missing: 'ไม่พบข้อมูลภาษีของเอกสาร กรุณาตรวจรหัสภาษีของรายการ',
-  tax_snapshot_needs_review: 'ข้อมูลภาษีของเอกสารยังรอตรวจสอบ กรุณายืนยันรหัสภาษีก่อนลงบัญชี',
+  tax_snapshot_missing: 'ไม่พบข้อมูลภาษีของเอกสาร ตรวจรหัสภาษีของรายการ',
+  tax_snapshot_needs_review: 'ข้อมูลภาษีของเอกสารยังรอตรวจสอบ ยืนยันรหัสภาษีก่อนลงบัญชี',
   tax_source_currency_mismatch: 'สกุลเงินของภาษีไม่ตรงกับสกุลเงินของเอกสาร',
   mixed_currency_tax_snapshot: 'เอกสารมีหลายสกุลเงินหรือหลายอัตราแลกเปลี่ยน จึงลงบัญชีภาษีไม่ได้',
   functional_currency_fx_required: 'ต้องระบุอัตราแลกเปลี่ยนก่อนลงบัญชีเอกสารสกุลเงินต่างประเทศ',
@@ -999,21 +1016,7 @@ export function postingErrorText(postingError: string | null | undefined): strin
   return detail ? `${label} (${detail})` : label;
 }
 
-export const TAX_EVIDENCE_REASON_LABELS: Record<TaxEvidenceReasonCode, string> = {
-  VALID_TAX_INVOICE_FIELDS: 'ข้อมูลใบกำกับภาษีครบถ้วน',
-  VALID_RECEIPT_FIELDS: 'ข้อมูลใบเสร็จรับเงินครบถ้วน',
-  PAYMENT_EVIDENCE_ONLY: 'เป็นหลักฐานการจ่ายเงินเท่านั้น',
-  MARKETPLACE_SCREENSHOT_ONLY: 'เป็นภาพคำสั่งซื้อจากมาร์เก็ตเพลสเท่านั้น',
-  HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE: 'หลักฐานประกอบการจ่าย ตรวจข้อมูลและเลือกหลักฐานให้ตรงกับรายการ',
-  HANDWRITTEN_RECEIPT_REVIEW: 'บิลเงินสดเขียนมือ ตรวจข้อมูลและหลักฐานของรายการ',
-  MISSING_VENDOR_TAX_ID: 'ขาดเลขประจำตัวผู้เสียภาษีของผู้ขาย',
-  MISSING_DOCUMENT_NUMBER: 'ขาดเลขที่เอกสาร',
-  MISSING_MONETARY_AMOUNT: 'ขาดยอดเงิน',
-  UNREADABLE_OR_LOW_CONFIDENCE: 'เอกสารอ่านไม่ชัดหรือข้อมูลยังไม่น่าเชื่อถือ',
-  NOT_BUSINESS_EVIDENCE: 'ไม่ใช่หลักฐานทางธุรกิจ',
-  ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE: 'ใบกำกับภาษีอย่างย่อ ใช้เป็นค่าใช้จ่ายได้ แต่ขอคืนภาษีซื้อไม่ได้ — ถ้าต้องการเครดิตภาษีซื้อ ขอใบกำกับภาษีเต็มรูปจากผู้ขาย',
-  MANUAL_OVERRIDE: 'ผู้ตรวจแก้ไขผลด้วยตนเอง',
-};
+export { TAX_EVIDENCE_REASON_LABELS } from '@watchdog-bms/contracts';
 
 export function expenseTaxEvidenceReasonMessage(code?: TaxEvidenceReasonCode | null): string | null {
   return code && ['HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE', 'HANDWRITTEN_RECEIPT_REVIEW', 'ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE'].includes(code)
@@ -1291,15 +1294,28 @@ export const MIME_TYPE_LABELS: Record<string, string> = {
 };
 
 export const SUBSTITUTE_RECEIPT_STATUS_LABELS: Record<string, string> = {
-  PREPARED: 'เตรียมแล้ว รอผู้จ่ายลงนาม',
-  PAYER_CERTIFIED: 'ผู้จ่ายลงนามแล้ว รออนุมัติ',
-  ISSUED: 'ออกเอกสารสมบูรณ์แล้ว',
-  SUPERSEDED: 'ยกเลิกฉบับนี้แล้ว',
+  PREPARED: workspaceDictionary.th['expenses.substitute_hub.status_prepared'],
+  PAYER_CERTIFIED: workspaceDictionary.th['expenses.substitute_hub.status_payer_certified'],
+  ISSUED: workspaceDictionary.th['expenses.substitute_hub.status_issued'],
+  SUPERSEDED: workspaceDictionary.th['expenses.substitute_hub.status_superseded'],
 };
+
+export function expenseSubstituteReceiptStatus(evidence: Pick<SubstituteReceiptEvidenceSummary, 'status'> & Partial<Pick<SubstituteReceiptEvidenceSummary, 'signatureMode' | 'payerUserId' | 'paperSubmission'>>): string {
+  if (evidence.status === 'PREPARED' && evidence.signatureMode === 'PAPER' && !evidence.payerUserId) {
+    return evidence.paperSubmission ? 'รอตรวจรับฉบับกระดาษ' : 'รอฉบับที่เซ็นบนกระดาษ';
+  }
+  return SUBSTITUTE_RECEIPT_STATUS_LABELS[evidence.status];
+}
 
 export function expenseValueLabel(labels: Record<string, string>, value: string | null | undefined, fallback = 'ข้อมูลจากระบบ'): string {
   if (!value) return '-';
   return labels[value] ?? fallback;
+}
+
+export function expenseSourceDocumentLabel(detail: Pick<ExpenseDetail, 'sourceDocumentType' | 'taxEvidenceStatus' | 'aiVerificationSummaryJson'>): string {
+  const problem = expenseEvidenceAssessment(detail)?.receiptProblem;
+  return detail.sourceDocumentType === 'EXPENSE_NOTE_TEXT' && (problem === 'NOT_AVAILABLE' || problem === 'LOST')
+    ? 'ไม่มีใบเสร็จ' : expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, detail.sourceDocumentType, 'เอกสารค่าใช้จ่าย');
 }
 
 // ── accountant-first review checklist (Thai-only labels, same idiom as label maps above) ──
@@ -1309,30 +1325,43 @@ export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
   'sourceDocumentType' | 'vendorTaxIdSnapshot' | 'vendorNameSnapshot' | 'vendorDocumentNumber' | 'expenseDate'
   | 'vatMode' | 'taxableAmount' | 'vatAmount' | 'taxEvidenceStatus' | 'taxEvidenceReasonCode' | 'duplicateStatus'
   | 'aiVerificationSummaryJson'>
-  & { lines: Array<Pick<ExpenseDetail['lines'][number], 'vatRate' | 'taxableAmount'>> }): ExpenseAuditCheck[] {
+  & { inputVatRight?: ExpenseDetail['inputVatRight']; lines: Array<Pick<ExpenseDetail['lines'][number], 'vatRate' | 'taxableAmount'>>;
+    substituteReceiptEvidence?: (Pick<SubstituteReceiptEvidenceSummary, 'status' | 'documentNumber'> & Partial<Pick<SubstituteReceiptEvidenceSummary, 'signatureMode' | 'payerUserId' | 'paperSubmission'>>) | null }): ExpenseAuditCheck[] {
   const checks: ExpenseAuditCheck[] = [];
+  const assessment = expenseEvidenceAssessment(detail);
+  const noReceipt = assessment?.receiptProblem === 'NOT_AVAILABLE' || assessment?.receiptProblem === 'LOST';
+  if (noReceipt) {
+    const certificate = detail.substituteReceiptEvidence;
+    const activeCertificate = certificate && certificate.status !== 'SUPERSEDED';
+    checks.push({ key: 'receipt', status: certificate?.status === 'ISSUED' ? 'pass' : assessment.route === 'SUBSTITUTE_RECEIPT' ? 'warn' : 'info',
+      label: assessment.receiptProblem === 'LOST' ? 'ใบเสร็จหาย' : 'ไม่มีใบเสร็จ',
+      ...(activeCertificate ? { detail: `ใบรับรองแทนใบเสร็จ ${certificate.documentNumber} · ${expenseSubstituteReceiptStatus(certificate)}` }
+        : assessment.route === 'SUBSTITUTE_RECEIPT' ? { detail: 'ยังไม่ได้ทำใบรับรองแทนใบเสร็จ' } : {}) });
+  }
 
-  // OCR/manual entry can keep the dashes as printed on Thai invoices (0-1055-58096-34-8) — compare digits only.
-  const taxIdRaw = (detail.vendorTaxIdSnapshot ?? '').trim();
-  const taxIdDigits = taxIdRaw.replace(/\D/g, '');
-  if (taxIdDigits.length === 13) {
-    const valid = thaiTaxIdChecksumValid(taxIdDigits);
-    checks.push({ key: 'vendor_tax_id', status: valid ? 'pass' : 'warn', label: valid
-      ? 'เลขผู้เสียภาษีผู้ขายครบ 13 หลัก' : 'เลขผู้เสียภาษีผู้ขายครบ 13 หลัก แต่ดูไม่ถูกต้อง' });
-  } else {
-    checks.push({
-      key: 'vendor_tax_id',
-      status: detail.sourceDocumentType === 'TAX_INVOICE' ? 'warn' : 'info',
-      label: taxIdRaw ? 'เลขผู้เสียภาษีผู้ขายไม่ครบ 13 หลัก — ตรวจทานจากเอกสาร' : 'ยังไม่มีเลขผู้เสียภาษีผู้ขาย',
-      detail: 'ใบกำกับภาษีเต็มรูปต้องมีเลข 13 หลัก จึงจะใช้เครดิตภาษีซื้อได้',
-    });
+  if (!noReceipt && ['TAX_INVOICE', 'CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT'].includes(detail.sourceDocumentType) && detail.inputVatRight?.vatStatus !== 'NOT_REGISTERED') {
+    // OCR/manual entry can keep the dashes as printed on Thai invoices (0-1055-58096-34-8) — compare digits only.
+    const taxIdRaw = (detail.vendorTaxIdSnapshot ?? '').trim();
+    const taxIdDigits = taxIdRaw.replace(/\D/g, '');
+    if (taxIdDigits.length === 13) {
+      const valid = thaiTaxIdChecksumValid(taxIdDigits);
+      checks.push({ key: 'vendor_tax_id', status: valid ? 'pass' : 'warn', label: valid
+        ? 'เลขผู้เสียภาษีผู้ขายครบ 13 หลัก' : 'เลขผู้เสียภาษีผู้ขายครบ 13 หลัก แต่ดูไม่ถูกต้อง' });
+    } else {
+      checks.push({
+        key: 'vendor_tax_id',
+        status: detail.sourceDocumentType === 'TAX_INVOICE' ? 'warn' : 'info',
+        label: taxIdRaw ? 'เลขผู้เสียภาษีผู้ขายไม่ครบ 13 หลัก — ตรวจทานจากเอกสาร' : 'ยังไม่มีเลขผู้เสียภาษีผู้ขาย',
+        detail: 'ใบกำกับภาษีเต็มรูปต้องมีเลข 13 หลัก จึงจะใช้เครดิตภาษีซื้อได้',
+      });
+    }
   }
 
   checks.push((detail.vendorNameSnapshot ?? '').trim()
     ? { key: 'vendor_name', status: 'pass', label: 'ระบุชื่อผู้ขาย/ผู้รับเงินแล้ว' }
     : { key: 'vendor_name', status: 'warn', label: 'ยังไม่ระบุชื่อผู้ขาย/ผู้รับเงิน' });
 
-  checks.push((detail.vendorDocumentNumber ?? '').trim()
+  if (!noReceipt) checks.push((detail.vendorDocumentNumber ?? '').trim()
     ? { key: 'document_number', status: 'pass', label: 'มีเลขที่เอกสารอ้างอิง' }
     : { key: 'document_number', status: 'warn', label: 'ยังไม่มีเลขที่เอกสารอ้างอิง' });
 
@@ -1371,23 +1400,14 @@ export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
     }
   }
 
-  if (detail.taxEvidenceStatus === 'USABLE_FOR_TAX') {
-    checks.push({ key: 'tax_evidence', status: 'pass', label: TAX_EVIDENCE_STATUS_LABELS.USABLE_FOR_TAX });
-  } else if (detail.taxEvidenceStatus === 'SUPPORTING_ONLY') {
-    // Spec §19h: an abbreviated invoice is complete, not deficient — say why it cannot be credited
-    // and what to do about it, rather than the generic supporting-only line.
-    checks.push(detail.taxEvidenceReasonCode === 'ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE'
-      ? {
-        key: 'tax_evidence',
-        status: 'info',
-        label: 'ใบกำกับภาษีอย่างย่อ — ลงเป็นค่าใช้จ่ายได้ แต่ขอคืนภาษีซื้อไม่ได้',
-        detail: TAX_EVIDENCE_REASON_LABELS.ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE,
-      }
-      : { key: 'tax_evidence', status: 'info', label: 'เป็นหลักฐานประกอบ ใช้เครดิตภาษีซื้อไม่ได้' });
-  } else {
-    const reason = detail.taxEvidenceReasonCode ? TAX_EVIDENCE_REASON_LABELS[detail.taxEvidenceReasonCode] : undefined;
-    checks.push({ key: 'tax_evidence', status: 'warn', label: 'หลักฐานภาษีรอตรวจสอบ', ...(reason ? { detail: reason } : {}) });
-  }
+  const taxAnswer = TAX_EVIDENCE_STATUS_LABELS[detail.taxEvidenceStatus];
+  const taxReason = detail.taxEvidenceReasonCode ? TAX_EVIDENCE_REASON_LABELS[detail.taxEvidenceReasonCode] : undefined;
+  if (!noReceipt) checks.push({
+    key: 'tax_evidence',
+    status: detail.taxEvidenceStatus === 'USABLE_FOR_TAX' ? 'pass' : taxAnswer && detail.taxEvidenceStatus !== 'NEEDS_REVIEW' ? 'info' : 'warn',
+    label: `หลักฐานรายจ่าย: ${taxAnswer ?? 'รอตรวจ'}`,
+    ...(taxReason ? { detail: taxReason } : {}),
+  });
 
   if (hasUnresolvedDuplicateWarning(detail.duplicateStatus)) {
     checks.push({ key: 'duplicate', status: 'warn', label: detail.duplicateStatus === 'CONFIRMED_DUPLICATE'
@@ -1423,7 +1443,7 @@ export function expenseNeedsReceiptOrSubstitute(detail: Pick<ExpenseDetail, 'mis
  *  that can actually clear it, or the user sees ⚠ with no field to fill. The model emits arbitrary
  *  keys (`buyerName`, `description`, `categorySuggestion`, …); only keys the review form can supply
  *  — the ones the server's review-save clear map recognises — may gate the stepper, so unknown keys
- *  are ignored instead of dead-ending ส่งตรวจสอบ behind a field that does not exist. */
+ *  are ignored instead of dead-ending ส่งให้ตรวจ behind a field that does not exist. */
 const AI_DATA_STEP_FIELDS = ['vendor', 'vendorName', 'vendorTaxId', 'documentNumber', 'expenseDate', 'vatAmount', 'grandTotalAmount', 'amount'];
 const AI_EVIDENCE_STEP_FIELDS = ['category'];
 
@@ -1480,7 +1500,7 @@ export function deriveExpenseReviewSteps(
   const dateReadable = expenseDateIsReadable(detail.aiVerificationSummaryJson);
   const sourceDraftComplete = !detail.sourceDraft || detail.sourceDraft.missingFields.length === 0;
   const dataDone = (detail.vendorNameSnapshot ?? '').trim() !== '' && Boolean(detail.expenseDate) && dateReadable && detail.lines.length > 0 && sourceDraftComplete;
-  const reviewPending = canReview && ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status ?? 'NEEDS_REVIEW')
+  const reviewPending = ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status ?? 'NEEDS_REVIEW')
     && detail.substituteReceiptEvidence?.status !== 'ISSUED' && !hasCurrentExpenseDocumentReview(detail as ExpenseDetail);
   const evidenceState: ExpenseReviewStepState = !reviewPending && detail.taxEvidenceStatus !== 'NEEDS_REVIEW' && !classificationBlocked && !evidenceError && !needsReceiptOrSubstitute && aiMissingEvidence.length === 0
     ? 'done'
@@ -1498,9 +1518,10 @@ export function deriveExpenseReviewSteps(
   ];
 }
 
-/** Guided review always opens on step 1; the stepper chips remain freely clickable so users can still jump manually. */
-export function initialExpenseReviewStep(steps: ExpenseReviewStep[], status?: ExpenseStatus): ExpenseReviewStepKey {
-  return 'data';
+/** A waiting record opens at its first incomplete earlier step before a confirmer sees the summary. */
+export function initialExpenseReviewStep(steps: ExpenseReviewStep[], status?: ExpenseStatus, canConfirm = false): ExpenseReviewStepKey {
+  if (status !== 'READY_FOR_CONFIRMATION' || !canConfirm) return 'data';
+  return steps.find(step => step.key !== 'review' && step.state !== 'done')?.key ?? 'review';
 }
 
 // ── permission capabilities — mirrors the effective backend gates (decorator ∩ use-case) ──
@@ -1565,10 +1586,33 @@ export function expenseCapabilities(permissions: string[]): ExpenseCapabilities 
 export function isClaimExpenseRecord(expense: { sourceReimbursementRequestId?: string | null }): boolean {
   return Boolean(expense.sourceReimbursementRequestId);
 }
-export const CLAIM_EXPENSE_RECORD_NOTE = 'รายการนี้เป็นรายการค่าใช้จ่ายของคำขอเบิก จึงยกเลิก ปฏิเสธ หรือลบจากหน้านี้ไม่ได้ ถ้าต้องการยกเลิก ให้ยกเลิกที่คำขอเบิกในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง';
+export const CLAIM_EXPENSE_RECORD_NOTE = 'รายการนี้เป็นรายการค่าใช้จ่ายของใบเบิก จึงยกเลิก ปฏิเสธ หรือลบจากหน้านี้ไม่ได้ ถ้าต้องการยกเลิก ให้ยกเลิกที่ใบเบิกในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง';
 /** That note, until the record is voided: its claim's cancellation leaves it so, and nothing is left to cancel. */
 export function claimExpenseRecordNote(expense: { status?: string; sourceReimbursementRequestId?: string | null }): string | null {
   return isClaimExpenseRecord(expense) && expense.status !== 'VOIDED' ? CLAIM_EXPENSE_RECORD_NOTE : null;
+}
+
+export type ReceiptDraftMissingFields = { vendor: boolean; date: boolean; amount: boolean };
+
+export function receiptDraftMissingFields(detail: ExpenseDetail, userId: string, caps: Pick<ExpenseCapabilities, 'canUpdate'>): ReceiptDraftMissingFields | null {
+  if (!caps.canUpdate || detail.createdByUserId !== userId || !['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status)) return null;
+  const fields = {
+    vendor: !(detail.vendorNameSnapshot ?? '').trim(),
+    date: !detail.expenseDate || !expenseDateIsReadable(detail.aiVerificationSummaryJson),
+    amount: detail.lines.length === 0,
+  };
+  return Object.values(fields).some(Boolean) ? fields : null;
+}
+
+export function receiptDraftFillPayload(detail: ExpenseDetail, missing: ReceiptDraftMissingFields, values: { vendor: string; date: string; amount: string }): UpdateExpenseDraftInput {
+  return {
+    ...(missing.vendor && values.vendor.trim() && { vendorNameSnapshot: values.vendor.trim() }),
+    ...(missing.date && values.date && { expenseDate: values.date }),
+    ...(missing.amount && values.amount.trim() && { lines: [{
+      lineNumber: 1, description: 'ค่าใช้จ่ายตามใบเสร็จ', chargeKind: null, quantity: '1',
+      unitPrice: values.amount.trim(), discountAmount: '0',
+    }] }),
+  };
 }
 
 export function canDeleteExpense(
@@ -1578,6 +1622,21 @@ export function canDeleteExpense(
 ): boolean {
   return !isClaimExpenseRecord(expense) && isExpenseDeletableState(expense)
     && (caps.canDelete || (caps.canUpdate && expense.createdByUserId === userId));
+}
+
+/** One list badge names the next action; payment details stay on the expense. */
+export function expenseListStatus(row: Pick<ExpenseSummary, 'status' | 'paymentStatus'> & Partial<Pick<ExpenseSummary, 'paidAmount' | 'netPayableAmount' | 'reimbursementProgress'>>): { label: string; tone: 'slate' | 'amber' | 'brand' | 'rose' } {
+  if (row.status === 'VOIDED') return { label: 'ยกเลิก', tone: 'slate' };
+  if (row.status === 'REJECTED') return { label: 'ปฏิเสธ', tone: 'rose' };
+  if (row.reimbursementProgress) return { label: expenseReimbursementProgressLabel(row.reimbursementProgress), tone: 'brand' };
+  if (expenseOverpaidAmount(row)) return { label: 'จ่ายเกินยอดสุทธิ', tone: 'rose' };
+  if (row.status !== 'CONFIRMED') return { label: 'รอตรวจ', tone: 'amber' };
+  if (row.paymentStatus === 'PAID') return { label: 'จ่ายแล้ว', tone: 'brand' };
+  return { label: row.paymentStatus === 'PARTIALLY_PAID' ? 'จ่ายบางส่วน' : 'รอจ่าย', tone: 'amber' };
+}
+
+export function expenseListMonth(day: string | null, fallback: string): string {
+  return isCivilDate(day) ? day.slice(0, 7) : fallback;
 }
 
 export type ExpenseKpis = {
@@ -1633,7 +1692,7 @@ export function expenseDeleteTargetLabel(
 }
 
 const EXPENSE_DELETE_BLOCKER_LABELS: Record<string, Record<SupportedLocale, string>> = {
-  PAYMENT: { th: 'ข้อมูลการชำระเงิน', en: 'recorded payment' },
+  PAYMENT: { th: 'ข้อมูลการจ่ายเงิน', en: 'recorded payment' },
   TAX_EVENT: { th: 'เหตุการณ์ภาษี', en: 'tax event' },
   TAX_REVIEW_ISSUE: { th: 'ประเด็นตรวจสอบภาษี', en: 'tax review issue' },
   TAX_RECONCILIATION_LINE: { th: 'รายการกระทบยอดภาษี', en: 'tax reconciliation line' },
@@ -1658,7 +1717,7 @@ export function expenseDeleteErrorMessage(error: unknown, locale: SupportedLocal
     const label = EXPENSE_DELETE_BLOCKER_LABELS[blocker]?.[locale];
     if (!label) {
       return locale === 'th'
-        ? 'ลบรายการนี้ไม่ได้ เนื่องจากมีข้อมูลอื่นเชื่อมโยงอยู่ กรุณาตรวจสอบรายการที่เกี่ยวข้อง'
+        ? 'ลบรายการนี้ไม่ได้ เนื่องจากมีข้อมูลอื่นเชื่อมโยงอยู่ ตรวจสอบรายการที่เกี่ยวข้อง'
         : 'This expense cannot be deleted because it has linked data. Review the related records.';
     }
     return locale === 'th'
@@ -1667,11 +1726,11 @@ export function expenseDeleteErrorMessage(error: unknown, locale: SupportedLocal
   }
   if (code === 'EXPENSE_CHANGED_DURING_DELETE') {
     return locale === 'th'
-      ? 'รายการถูกแก้ไขระหว่างการลบ กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง'
+      ? apiErrorMessage({ code: 'EXPENSE_CHANGED_DURING_DELETE' })
       : 'The expense changed during deletion. Reload and try again.';
   }
   if (error instanceof Error) return apiErrorMessage(error);
-  return locale === 'th' ? 'เกิดข้อผิดพลาด' : 'An error occurred.';
+  return locale === 'th' ? apiErrorMessage(error) : 'An error occurred.';
 }
 
 export type ExpensesTab = 'list' | 'upload' | 'manual' | 'categories' | 'signatures' | 'evidence';
@@ -1724,7 +1783,8 @@ export type ExpenseConfirmBlocker =
   | 'expenses.duplicate_confirmed_block'
   | 'expenses.price_mismatch_blocks_confirm'
   | 'expenses.zero_amount_warning'
-  | 'expenses.confirm_needs_ready_status';
+  | 'expenses.confirm_needs_ready_status'
+  | 'expenses.confirm_needs_document_review';
 
 export function expenseConfirmBlocker(input: {
   status: string;
@@ -1744,7 +1804,7 @@ export function expenseConfirmBlocker(input: {
   // Attaching the receipt is the one a person can act on immediately, so it is named before the
   // states that need someone else (a signature, a second reviewer).
   if (input.needsReceiptOrSubstitute) return { key: 'expenses.confirm_needs_receipt' };
-  if (input.evidenceError) return { literal: input.evidenceError };
+  if (input.evidenceError) return { key: 'expenses.confirm_needs_document_review' };
   if (input.hasDuplicates) return { key: 'expenses.duplicate_action_required' };
   if (input.ocrTotalUnacknowledged) return { key: 'expenses.price_mismatch_blocks_confirm' };
   if (input.isZeroAmount) return { key: 'expenses.zero_amount_warning' };
@@ -1778,7 +1838,7 @@ export function expenseDataStepBlocker(input: {
  * Owner report 2026-08-29 (UAT, company "test sand"): the button's `disabled` read one flag
  * (`checkBillBlocked`) while `goToStep` refused the move on another the button never saw
  * (`evidenceDirtyRef`), and the AI classification block — the thing the yellow banner and
- * ส่งตรวจสอบ both name — gated neither. So ถัดไป could be pressed and simply not move.
+ * ส่งให้ตรวจ both name — gated neither. So ถัดไป could be pressed and simply not move.
  * The button's enabled state, the reason printed under it, and the navigation guard all read
  * this one function now, so an enabled ถัดไป always moves and a disabled one always says why.
  *
@@ -1787,9 +1847,7 @@ export function expenseDataStepBlocker(input: {
 export type ExpenseEvidenceStepBlocker =
   | 'expenses.check_bill_workflow_blocked'
   | 'expenses.evidence_next_needs_classification'
-  | 'expenses.evidence_next_waiting_finance'
-  | 'expenses.doc_review_unsaved_next'
-  | 'expenses.doc_review_required_next';
+  | 'expenses.evidence_next_waiting_finance';
 
 export function expenseEvidenceStepBlocker(input: {
   checkBillBlocked: boolean;
@@ -1802,8 +1860,6 @@ export function expenseEvidenceStepBlocker(input: {
   if (input.classificationBlocked) {
     return input.canReview ? 'expenses.evidence_next_needs_classification' : 'expenses.evidence_next_waiting_finance';
   }
-  if (input.unsavedReview) return 'expenses.doc_review_unsaved_next';
-  if (input.reviewRequired) return 'expenses.doc_review_required_next';
   return null;
 }
 
@@ -1871,9 +1927,9 @@ export function expensePaymentFormState(outstanding: string, amount: string, pai
   const prefill = Number.isFinite(balance) && balance > 0 ? balance.toFixed(2) : '';
   const value = Number(amount);
   const disabledReason = paidAt > today && isCivilDate(paidAt) ? EXPENSE_CORRECTION_WORDS.futurePaymentDate : retrying ? null : !INCOME_POSITIVE_MONEY_PATTERN.test(normalizeExpensePaymentAmount(amount.trim()))
-    ? 'กรุณากรอกยอดจ่ายมากกว่า 0 และทศนิยมไม่เกิน 2 ตำแหน่ง'
-    : value > Number(prefill) ? 'ยอดจ่ายเกินยอดค้างจ่าย กรุณาตรวจยอดอีกครั้ง'
-    : !isCivilDate(paidAt) ? 'กรุณาเลือกวันที่จ่ายเงินจริงให้ถูกต้อง' : null;
+    ? 'กรอกยอดจ่ายมากกว่า 0 และทศนิยมไม่เกิน 2 ตำแหน่ง'
+    : value > Number(prefill) ? 'ยอดจ่ายเกินยอดค้างจ่าย ตรวจยอดอีกครั้ง'
+    : !isCivilDate(paidAt) ? 'เลือกวันที่จ่ายเงินจริงให้ถูกต้อง' : null;
   const formatted = `฿${(Number.isFinite(value) ? value : 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return { prefill, disabledReason, maxPaidAt: today, label: hasRecordedPayments && value > 0 && value === Number(prefill) ? `บันทึกจ่ายส่วนที่เหลือ ${formatted}` : `บันทึกจ่าย ${formatted}` };
 }
@@ -1886,7 +1942,7 @@ export function canIssueExpenseWhtCertificate(expense: Pick<ExpenseDetail, 'stat
 
 export function expenseWhtCategoriesForPayee<T extends { formType: string }>(categories: T[], payeeType: BuyerEntityKind | '' | undefined): T[] {
   const formType = payeeType === 'INDIVIDUAL' ? 'PND3' : payeeType === 'JURISTIC' ? 'PND53' : null;
-  return categories.filter((category) => category.formType === formType);
+  return categories.filter((category) => category.formType === formType || payeeType === 'INDIVIDUAL' && category.formType === 'PND2');
 }
 
 export function changeExpensePayeeType(values: ExpenseDraftReviewValues, payeeType: BuyerEntityKind | '', categories: Array<{ code: string; formType: string }>): ExpenseDraftReviewValues {

@@ -63,3 +63,12 @@ export type GenerateSnapshotDto = {
   periodStart?: string;
   periodEnd?: string;
 };
+
+
+/** Confirmed expense totals by civil month; money is a two-decimal string. */
+export type DashboardExpenseMonthsDto = {
+  year: number;
+  months: Array<{ month: string; total: string; count: number }>;
+  /** Years visible in the same branch scope, plus the current year, ascending. */
+  years: number[];
+};

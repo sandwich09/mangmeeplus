@@ -86,7 +86,11 @@ describe('auth.logic', () => {
   });
 
   it('names the blocked company without duplicating the Thai company prefix', () => {
-    assert.match(companyAccessDescription('th', 'ปากวาริน ฟิว', 'ป๋อจ้าน Company'), /ซึ่งไม่มีสิทธิ์ในบริษัท ป๋อจ้าน Company/);
+    assert.match(companyAccessDescription('th', 'ปากวาริน ฟิว', 'ป๋อจ้าน Company'), /ซึ่งไม่มีสิทธิ์ในร้าน ป๋อจ้าน Company/);
     assert.match(companyAccessDescription('th', 'ผู้ใช้', 'บริษัท ทดสอบ จำกัด'), /ในบริษัท ทดสอบ จำกัด/);
   });
+});
+
+it('a disabled membership has its own way out regardless of whether account lookup succeeds', () => {
+  for (const name of [null, 'สมใจ']) assert.equal(companyAccessDescription('th', name, 'ร้าน', 'company_membership_disabled'), 'บัญชีของคุณในร้านนี้ถูกปิดใช้งาน ให้เจ้าของกิจการหรือผู้ดูแลร้านเปิดใช้งานให้อีกครั้ง');
 });

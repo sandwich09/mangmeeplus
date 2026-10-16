@@ -1,9 +1,13 @@
+import { assertOpenWithholdingSequence, withholdingPaperPayments } from '../../application/services/withholding-filing-state';
+import { filedWithholdingPaymentPeriods } from '../../application/services/filed-withholding-payment';
+import { loadWithholdingEstablishments, partitionWithholdingPayments, selectWithholdingPaper, rollUpWithholdingPeriod } from '../../application/services/withholding-establishments';
+import { currentWithholdingPayments, isWithholdingDownloadCurrent } from '../../application/services/withholding-filing-state';
 import { BadRequestException, ConflictException, Controller, ForbiddenException, Get, Post, Patch, Param, Body, Query, HttpCode, NotFoundException } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { CorrectWhtCertificateDto, ExportPnd53Dto, LinkExternalWhtCertificateDto, RemoveExternalWhtCertificateDto, MarkPnd53FiledDto, ResolvePnd53IssueDto, SetWhtHandoffPayeeAddressDto, UpdateCompanyTaxSignatureDto } from './tax.dtos';
+import { WhtCertificateHandoffListQueryDto, IssueWhtCertificateDto, ConfirmWhtFilingRowsDto, ExportTaxPackageDto, AnswerWhtPayerModeDto, CorrectWhtCertificateDto, ExportPnd53Dto, LinkExternalWhtCertificateDto, RemoveExternalWhtCertificateDto, MarkPnd53FiledDto, ResolvePnd53IssueDto, SetWhtHandoffPayeeAddressDto, UpdateCompanyTaxSignatureDto } from './tax.dtos';
 import { SyncTaxEventsUseCase } from '../../application/use-cases/sync-tax-events.use-case';
 import { GenerateVatReportUseCase } from '../../application/use-cases/generate-vat-report.use-case';
 import { GenerateWhtReportUseCase } from '../../application/use-cases/generate-wht-report.use-case';
@@ -52,87 +56,141 @@ export class TaxController {
     return profile?.taxReviewerRole?.trim() || 'ACCOUNTANT';
   }
 
-  private async pnd53Period(companyId: string, periodId: string) {
+  @Get('tax/withholding/payer-mode')
+  @RequireAnyPermission('wht.pnd53.read', 'company.legal_identity.manage', 'company.branch.read')
+  async getWhtPayerMode(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Query('periodKey') periodKey?: string) {
+    assertRouteCompany(ctx, companyId);
+    return this.taxRepo.readWhtPayerMode(ctx.companyId, periodKey);
+  }
+
+  @Post('tax/withholding/payer-mode')
+  @HttpCode(200)
+  @RequirePermissions('company.legal_identity.manage')
+  async answerWhtPayerMode(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Body() body: AnswerWhtPayerModeDto) {
+    assertRouteCompany(ctx, companyId);
+    if (!ctx.permissions.includes('company.legal_identity.manage')) throw new ForbiddenException({ code: 'WHT_PAYER_MODE_FORBIDDEN', message: 'ไม่มีสิทธิ์บันทึกวิธีจ่าย ให้ผู้ที่แก้ไขข้อมูลร้านได้เป็นผู้บันทึก' });
+    const result = await this.taxRepo.answerWhtPayerMode(ctx, body);
+    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'tax.wht_payer_mode.answer', targetType: 'company', targetId: ctx.companyId,
+      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { mode: body.mode, effectiveFromPeriodKey: result.periodKey } });
+    return result;
+  }
+
+  @Post('tax/withholding/filings/:filingId/confirm-rows')
+  @RequirePermissions('wht.pnd53.prepare')
+  async confirmWhtFilingRows(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('filingId') filingId: string, @Body() body: ConfirmWhtFilingRowsDto) {
+    assertRouteCompany(ctx, companyId);
+    return this.generateFilingPackage.confirmRows(ctx, filingId);
+  }
+
+  @Get('tax/withholding/months')
+  @RequirePermissions('wht.pnd53.read')
+  async listWithholdingMonths(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string) {
+    assertRouteCompany(ctx, companyId);
+    return this.generateWht.listMonths(ctx);
+  }
+
+  @Get('tax/withholding/months/:periodKey')
+  @RequirePermissions('wht.pnd53.read')
+  async getWithholdingMonth(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodKey') periodKey: string) {
+    assertRouteCompany(ctx, companyId);
+    return this.generateWht.getMonth(ctx, periodKey);
+  }
+
+  private withholdingForm(formType?: string): 'PND3' | 'PND53' {
+    if (formType === undefined) return 'PND53';
+    if (formType !== 'PND3' && formType !== 'PND53') throw new BadRequestException('ไม่พบแบบภาษีที่เลือก เลือก ภ.ง.ด.3 หรือ ภ.ง.ด.53');
+    return formType;
+  }
+
+  private async withholdingPeriod(companyId: string, periodId: string, formType: string) {
     const period = await this.taxRepo.findPeriodById(companyId, periodId);
-    if (!period || period.formType !== 'PND53') throw new NotFoundException('PND53 period not found');
+    if (!period || period.formType !== formType) throw new NotFoundException(`${formType} period not found`);
     return period;
   }
 
-  @Get('tax/pnd53/periods')
+  @Get(['tax/pnd53/periods', 'tax/withholding/:formType/periods'])
   @RequirePermissions('wht.pnd53.read')
-  @ApiOperation({ summary: 'List only PND53 periods' })
-  async listPnd53Periods(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string) {
+  @ApiOperation({ summary: 'List periods of the selected withholding form' })
+  async listPnd53Periods(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('formType') formType?: string) {
     assertRouteCompany(ctx, companyId);
-    return this.taxRepo.findPeriods(ctx.companyId, { taxType: 'WHT', formType: 'PND53', pageSize: 100 });
+    const form = this.withholdingForm(formType);
+    return this.taxRepo.findPeriods(ctx.companyId, { taxType: 'WHT', formType: form, pageSize: 100 });
   }
 
-  @Get('tax/pnd53/periods/:periodId/events')
+  @Get(['tax/pnd53/periods/:periodId/events', 'tax/withholding/:formType/periods/:periodId/events'])
   @RequirePermissions('wht.pnd53.read')
-  @ApiOperation({ summary: 'Read source events for one PND53 period' })
-  async listPnd53Events(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string) {
+  @ApiOperation({ summary: 'Read source events for the selected withholding form' })
+  async listPnd53Events(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string, @Param('formType') formType?: string) {
     assertRouteCompany(ctx, companyId);
-    await this.pnd53Period(ctx.companyId, periodId);
+    const form = this.withholdingForm(formType);
+    await this.withholdingPeriod(ctx.companyId, periodId, form);
     return this.taxRepo.findEventsByPeriod(ctx.companyId, periodId);
   }
 
-  @Post('tax/pnd53/sync')
+  @Post(['tax/pnd53/sync', 'tax/withholding/:formType/sync'])
   @HttpCode(200)
   @RequirePermissions('wht.pnd53.prepare')
-  @ApiOperation({ summary: 'Sync tax source facts before preparing PND53' })
-  async syncPnd53(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string) {
+  @ApiOperation({ summary: 'Sync both withholding forms without VAT' })
+  async syncPnd53(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('formType') formType?: string) {
     assertRouteCompany(ctx, companyId);
-    await this.syncEvents.execute(ctx.companyId, undefined, 'PND53');
+    this.withholdingForm(formType);
+    await this.syncEvents.execute(ctx.companyId, undefined, formType === undefined ? 'PND53' : 'WHT');
     return { synced: true };
   }
 
-  @Post('tax/pnd53/periods/:periodId/report')
+  @Post(['tax/pnd53/periods/:periodId/report', 'tax/withholding/:formType/periods/:periodId/report'])
   @HttpCode(200)
   @RequirePermissions('wht.pnd53.prepare')
-  @ApiOperation({ summary: 'Compute only a PND53 report' })
-  async generatePnd53(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string) {
+  @ApiOperation({ summary: 'Compute the selected withholding report' })
+  async generatePnd53(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string, @Param('formType') formType?: string) {
     assertRouteCompany(ctx, companyId);
-    const period = await this.pnd53Period(ctx.companyId, periodId);
-    return this.generateWht.execute(ctx.companyId, 'PND53', period.periodKey);
+    const form = this.withholdingForm(formType);
+    const period = await this.withholdingPeriod(ctx.companyId, periodId, form);
+    return this.generateWht.execute(ctx.companyId, form, period.periodKey);
   }
 
-  @Post('tax/pnd53/periods/:periodId/export')
+  @Post(['tax/pnd53/periods/:periodId/export', 'tax/withholding/:formType/periods/:periodId/export'])
   @HttpCode(200)
   @RequirePermissions('wht.pnd53.prepare')
-  @ApiOperation({ summary: 'Produce the official printable PND53 form and annexes' })
+  @ApiOperation({ summary: 'Produce the selected official withholding form and annexes' })
   async exportPnd53(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string,
-    @Body() body: ExportPnd53Dto) {
+    @Body() body: ExportPnd53Dto, @Param('formType') formType?: string) {
     assertRouteCompany(ctx, companyId);
-    await this.pnd53Period(ctx.companyId, periodId);
-    if (body?.exportFormat !== 'PDF') throw new BadRequestException('PND53 filing form must be exported as PDF.');
-    return this.generateFilingPackage.execute(ctx, periodId, 'PDF');
+    const form = this.withholdingForm(formType);
+    await this.withholdingPeriod(ctx.companyId, periodId, form);
+    if (!['PDF', 'XLSX'].includes(body?.exportFormat)) throw new BadRequestException('เลือกรูปแบบไฟล์แล้วดาวน์โหลดอีกครั้ง');
+    return this.generateFilingPackage.execute(ctx, periodId, body.exportFormat, body.establishmentCode, body.sequence);
   }
 
-  @Get('tax/pnd53/periods/:periodId/review-issues')
+  @Get(['tax/pnd53/periods/:periodId/review-issues', 'tax/withholding/:formType/periods/:periodId/review-issues'])
   @RequirePermissions('wht.pnd53.read')
-  @ApiOperation({ summary: 'List only review issues for a PND53 period' })
-  async listPnd53Issues(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string) {
+  @ApiOperation({ summary: 'List review issues of the selected withholding form' })
+  async listPnd53Issues(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string, @Param('formType') formType?: string) {
     assertRouteCompany(ctx, companyId);
-    await this.pnd53Period(ctx.companyId, periodId);
+    const form = this.withholdingForm(formType);
+    await this.withholdingPeriod(ctx.companyId, periodId, form);
     return this.taxRepo.findIssuesByPeriod(ctx.companyId, periodId, { status: 'OPEN' });
   }
 
-  @Patch('tax/pnd53/review-issues/:issueId/resolve')
+  @Patch(['tax/pnd53/review-issues/:issueId/resolve', 'tax/withholding/:formType/review-issues/:issueId/resolve'])
   @RequirePermissions('wht.pnd53.prepare')
-  @ApiOperation({ summary: 'Resolve an issue belonging to a PND53 period' })
-  async resolvePnd53Issue(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('issueId') issueId: string, @Body() body: ResolvePnd53IssueDto) {
+  @ApiOperation({ summary: 'Resolve an issue belonging to the selected withholding form' })
+  async resolvePnd53Issue(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('issueId') issueId: string, @Body() body: ResolvePnd53IssueDto, @Param('formType') formType?: string) {
     assertRouteCompany(ctx, companyId);
+    const form = this.withholdingForm(formType);
     const issue = await this.taxRepo.prisma.client.taxReviewIssue.findFirst({ where: { id: issueId, companyId: ctx.companyId } });
     if (!issue) throw new NotFoundException('PND53 review issue not found');
-    await this.pnd53Period(ctx.companyId, issue.taxPeriodId);
+    await this.withholdingPeriod(ctx.companyId, issue.taxPeriodId, form);
     return this.resolveIssue(ctx, companyId, issueId, body);
   }
 
-  @Patch('tax/pnd53/periods/:periodId/mark-filed')
+  @Patch(['tax/pnd53/periods/:periodId/mark-filed', 'tax/withholding/:formType/periods/:periodId/mark-filed'])
   @RequirePermissions('wht.pnd53.prepare')
-  @ApiOperation({ summary: 'Record that an exported PND53 paper form was filed' })
-  async markPnd53Filed(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string, @Body() body: MarkPnd53FiledDto) {
+  @ApiOperation({ summary: 'Record that the selected exported withholding form was filed' })
+  async markPnd53Filed(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string, @Body() body: MarkPnd53FiledDto, @Param('formType') formType?: string) {
     assertRouteCompany(ctx, companyId);
-    await this.pnd53Period(ctx.companyId, periodId);
+    const form = this.withholdingForm(formType);
+    await this.withholdingPeriod(ctx.companyId, periodId, form);
     return this.markFiled(ctx, companyId, periodId, body);
   }
 
@@ -151,11 +209,7 @@ export class TaxController {
   @ApiOperation({ summary: 'Read only the company WHT-certificate signature settings' })
   async getTaxSignature(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string) {
     assertRouteCompany(ctx, companyId);
-    const row = await this.taxRepo.prisma.client.companyTaxProfile.findUnique({
-      where: { companyId: ctx.companyId },
-      select: { signatureMode: true, signatureImageAttachmentId: true },
-    });
-    return row ?? { signatureMode: 'BLANK', signatureImageAttachmentId: null };
+    return this.updateSignature.read(ctx);
   }
 
   // WHT certificate system issuance plan §3.3 (Decision B): OWNER-only, deliberately a DIFFERENT
@@ -247,14 +301,54 @@ export class TaxController {
   @Patch('tax/periods/:periodId/mark-filed')
   @RequirePermissions('tax.filing.mark_filed')
   @ApiOperation({ summary: 'Mark tax period as filed (manual)' })
-  async markFiled(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string, @Body() body: { note?: string }) {
+  async markFiled(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string, @Body() body: MarkPnd53FiledDto) {
     assertRouteCompany(ctx, companyId);
     const reviewerRole = await this.assertTaxReviewerRole(ctx);
     const period = await this.taxRepo.findPeriodById(ctx.companyId, periodId);
     if (!period) throw new NotFoundException('Tax period not found');
+    if (period.formType === 'PND2') throw new ConflictException({ code: 'WHT_PND2_SEPARATE', message: 'ประเภทนี้ต้องยื่น ภ.ง.ด.2 แยก ให้ผู้ทำบัญชีจัดทำแบบให้' });
+    if (['PND3', 'PND53'].includes(period.formType)) {
+      await this.syncEvents.execute(ctx.companyId, undefined, 'WHT');
+      try {
+        await this.taxRepo.prisma.client.$transaction(async tx => {
+          await tx.$queryRaw`SELECT id FROM "TaxPeriod" WHERE id = ${periodId} AND "companyId" = ${ctx.companyId} FOR UPDATE`;
+          if (['FILED', 'PAID', 'CLOSED'].includes(period.status) && (await filedWithholdingPaymentPeriods(tx, ctx.companyId, '', '', { formType: period.formType, periodKey: period.periodKey })).length) throw new ConflictException({ code: 'WHT_FILING_ALREADY_FILED', message: 'แบบนี้ยื่นแล้ว แก้แบบเดิมไม่ได้ ดาวน์โหลดแบบที่ยื่นไว้แทน' });
+          const context = await loadWithholdingEstablishments(tx, ctx.companyId, period.periodKey);
+          const events = await currentWithholdingPayments(tx, ctx.companyId, (await tx.taxEvent.findMany({ where: { companyId: ctx.companyId, taxPeriodId: periodId, status: 'ACTIVE' } })).map(event => ({
+            ...event, payeeSnapshot: event.payeeSnapshotJson as import('@watchdog-bms/contracts').PayeeSnapshot | null,
+            grossAmount: event.grossAmount?.toString() ?? null, withheldAmount: event.withheldAmount?.toString() ?? null, whtRate: event.whtRate?.toString() ?? null,
+          })));
+          const partition = partitionWithholdingPayments(events, context.branches, context.facts, period.periodKey);
+          const selected = selectWithholdingPaper(ctx, partition, body.establishmentCode);
+          const paper = selected ? await tx.whtFiling.findFirst({ where: { companyId: ctx.companyId, taxPeriodId: periodId, establishmentCode: selected.establishment.code, sequence: body.sequence ?? 0 }, include: { latestPackage: true } }) : null;
+          if (selected && (body.sequence ?? 0) > 0) {
+            const papers = await tx.whtFiling.findMany({ where: { companyId: ctx.companyId, taxPeriodId: periodId }, include: { lines: true } });
+            assertOpenWithholdingSequence(papers.filter(p => p.establishmentCode === selected.establishment.code), body.sequence!);
+            selected.events = withholdingPaperPayments(selected.events, papers);
+          }
+          const pkg = paper?.latestPackage;
+          if (!selected || !paper || paper.status !== 'EXPORTED' || !pkg || !await isWithholdingDownloadCurrent(tx, ctx.companyId, periodId, selected.events, pkg, selected.establishment.code, body.sequence)) {
+            throw new ConflictException({ code: 'WHT_FILING_CHANGED_AFTER_DOWNLOAD', message: 'มีรายการเปลี่ยนหลังดาวน์โหลดแบบ ดาวน์โหลดแบบใหม่ก่อนยื่น' });
+          }
+          const issues = await tx.taxReviewIssue.findMany({ where: { companyId: ctx.companyId, taxPeriodId: periodId, status: 'OPEN' } });
+          const blocking = issues.find(issue => issue.severity === 'BLOCKING' && !/^PND(?:3|53)_FILING_/.test(issue.issueCode) && issue.issueCode !== 'WHT_PAYEE_KIND_UNKNOWN'
+            && (!issue.sourceId || selected.events.some(event => event.sourceType === issue.sourceType && event.sourceId === issue.sourceId)));
+          if (blocking) throw new ConflictException({ code: `${period.formType}_FILING_REVIEW`, message: blocking.description });
+          await this.taxRepo.markWithholdingFilingFiled(tx, ctx.companyId, pkg.id, ctx.userId, new Date(), body.note);
+          await tx.taxFilingPackage.update({ where: { id: pkg.id }, data: { status: 'ACCEPTED_MANUAL', filedManuallyAt: new Date(), filedManuallyNote: body.note } });
+          await rollUpWithholdingPeriod(tx, ctx.companyId, periodId, partition.papers.map(p => p.establishment.code));
+        }, { isolationLevel: 'Serializable' });
+      } catch (error) {
+        if ((error as { code?: string }).code === 'P2034') throw new ConflictException({ code: 'WHT_FILING_CHANGED_AFTER_DOWNLOAD', message: 'มีรายการเปลี่ยนหลังดาวน์โหลดแบบ ดาวน์โหลดแบบใหม่ก่อนยื่น' });
+        throw error;
+      }
+      await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'tax.period.mark_filed', targetType: 'tax_period', targetId: periodId,
+        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { establishmentCode: body.establishmentCode, taxReviewerRole: reviewerRole } });
+      return this.taxRepo.findPeriodById(ctx.companyId, periodId);
+    }
     if (period.status !== 'EXPORTED') throw new ConflictException('Tax period must have a current reviewed export package before filing');
     const [filingPackage, openIssues, events, reconciliation] = await Promise.all([
-      this.taxRepo.prisma.client.taxFilingPackage.findFirst({ where: { companyId: ctx.companyId, taxPeriodId: periodId, status: { in: ['GENERATED', 'DOWNLOADED'] } }, orderBy: { generatedAt: 'desc' } }),
+      this.taxRepo.prisma.client.taxFilingPackage.findFirst({ where: { companyId: ctx.companyId, taxPeriodId: periodId, status: { in: ['GENERATED', 'DOWNLOADED'] } }, orderBy: [{ generatedAt: 'desc' }, { id: 'desc' }] }),
       this.taxRepo.findIssuesByPeriod(ctx.companyId, periodId, { status: 'OPEN' }),
       this.taxRepo.findEventsByPeriod(ctx.companyId, periodId, 'ACTIVE'),
       ['PP30', 'PP36'].includes(period.formType) ? (this.taxRepo.prisma.client as any).taxReconciliationRun.findFirst({ where: { companyId: ctx.companyId, branchId: null, formType: period.formType, periodKey: period.periodKey }, orderBy: { createdAt: 'desc' } }) : null,
@@ -293,8 +387,8 @@ export class TaxController {
   @HttpCode(200)
   @RequirePermissions('tax.report.export')
   @ApiOperation({ summary: 'Generate tax review export package artifact' })
-  async generateExportPackage(@ReqCtx() ctx: RequestContext, @Param('periodId') periodId: string, @Body() body: { exportFormat: 'REVIEW_JSON' | 'CSV' | 'XLSX' | 'PDF' }) {
-    return this.generateFilingPackage.execute(ctx, periodId, body.exportFormat);
+  async generateExportPackage(@ReqCtx() ctx: RequestContext, @Param('periodId') periodId: string, @Body() body: ExportTaxPackageDto) {
+    return this.generateFilingPackage.execute(ctx, periodId, body.exportFormat, body.establishmentCode, body.sequence);
   }
 
   // ─── 50 Tawi WHT Certificate ─────────────────────────────────────────────
@@ -319,20 +413,16 @@ export class TaxController {
   async listWhtHandoffs(
     @ReqCtx() ctx: RequestContext,
     @Param('companyId') companyId: string,
-    @Query('status') status?: string,
-    @Query('branchId') branchId?: string,
-    @Query('sourcePaymentId') sourcePaymentId?: string,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-    @Query('search') search?: string,
+    @Query() query: WhtCertificateHandoffListQueryDto = {},
   ) {
+    const { status, branchId, sourcePaymentId, page, pageSize, search, periodKey, formType, order } = query;
     // The auth guard lets an `x-company-id` header set the context company; without this the route
     // param would be decorative and a caller could read another company's URL with their own scope.
     assertRouteCompany(ctx, companyId);
     if (page !== undefined || pageSize !== undefined) {
-      return this.whtHandoffs.listPaged(ctx, { status, branchId, sourcePaymentId, page: Number(page), pageSize: Number(pageSize), search });
+      return this.whtHandoffs.listPaged(ctx, { status, branchId, sourcePaymentId, page: Number(page), pageSize: Number(pageSize), search, ...(order ? { order } : {}), ...(periodKey !== undefined ? { periodKey } : {}), ...(formType !== undefined ? { formType } : {}) });
     }
-    return this.whtHandoffs.list(ctx, { status, branchId, sourcePaymentId });
+    return this.whtHandoffs.list(ctx, { status, branchId, sourcePaymentId, ...(periodKey !== undefined ? { periodKey } : {}), ...(formType !== undefined ? { formType } : {}) });
   }
 
   @Get('wht/payment-handoffs/:handoffId')
@@ -423,9 +513,9 @@ export class TaxController {
   @HttpCode(200)
   @RequirePermissions('wht.certificate.issue')
   @ApiOperation({ summary: 'Issue a 50 Tawi certificate directly from a settlement/expense WHT handoff' })
-  async issueSystemWhtCertificate(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('handoffId') handoffId: string) {
+  async issueSystemWhtCertificate(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('handoffId') handoffId: string, @Body() body: IssueWhtCertificateDto = {}) {
     assertRouteCompany(ctx, companyId);
-    return this.issueFromHandoff.execute(ctx, handoffId);
+    return body.paymentId ? this.issueFromHandoff.execute(ctx, handoffId, body.paymentId) : this.issueFromHandoff.execute(ctx, handoffId);
   }
 
   // Correction & replacement plan §2.3: mints a NEW-numbered certificate with corrected content and

@@ -230,6 +230,8 @@ export type PatchCompanyIdentityRequest = {
   /** CAS. Stale → 409, no dedicated error code. */
   expectedLegalIdentityVersion: number;
   changeKind: UserLegalIdentityChangeKind;
+  /** Shop name on the web; required and trimmed when supplied, same 200-character signup limit. */
+  displayName?: string;
   registeredName?: string;
   taxId?: string;
   addressJson?: CompanyLegalAddress;

@@ -15,6 +15,7 @@ export class DisbursementVoucherNoticeService {
   async send(ctx: RequestContext, header: DisbursementVoucherHeader, action: NoticeAction,
     options: { reason?: string | null; approverUserId?: string; hasRemainingPayments?: boolean; hasEarlierPayment?: boolean } = {}) {
     try {
+      await this.notify.finishDocumentWaiting(ctx.companyId, 'disbursement_voucher', header.id);
       if (!header.documentNumber || action === 'submit' && header.selfApproved) return;
       const names = await this.repo.memberNames(ctx.companyId, [ctx.userId, header.preparedByUserId]);
       const actor = names.get(ctx.userId) ?? 'ผู้ทำรายการ';
@@ -53,7 +54,7 @@ export class DisbursementVoucherNoticeService {
       }
       const active = new Set(await this.repo.activeMemberIds(ctx.companyId, [...recipients, ...payerRecipients]));
       const render = (template: string) => template.replace(/\{(\w+)\}/g, (_, key: string) => facts[key] ?? '');
-      const messages = [{ title, body, recipients, periodKey, severity: suffix === 'pending_approval' || preparerCanPay ? 'action' as const : 'info' as const },
+      const messages = [{ title, body, recipients, periodKey, severity: suffix === 'pending_approval' || suffix === 'returned' || preparerCanPay ? 'action' as const : 'info' as const },
         ...(payerRecipients.length ? [{ title: words.payerTitle, body: words.payerBody, recipients: payerRecipients, periodKey: `${periodKey}:payers`, severity: 'action' as const }] : [])];
       for (const message of messages) {
         const recipientUserIds = [...new Set(message.recipients)].filter(id => id !== ctx.userId && active.has(id));

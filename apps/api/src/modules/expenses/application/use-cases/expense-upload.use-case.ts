@@ -1,3 +1,5 @@
+import { REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES } from '../../../reimbursements/domain/reimbursement.constants';
 import { looksLikeAccountNumber } from '@watchdog-bms/contracts';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException, Optional } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
@@ -433,16 +435,18 @@ export class CompleteReceiptUploadUseCase {
     }
 
     if (!FILE_INTENT_OPEN_STATUSES.has(expense.status)) {
-      throw locked(`รายการนี้อยู่ในสถานะ ${expense.status} จึงเปลี่ยนหรือแนบไฟล์ตรงนี้ไม่ได้ กรุณาเปิดรายการเดิมเพื่อดำเนินการตามขั้นตอนที่รองรับ`);
+      throw locked(expense.status === 'CONFIRMED'
+        ? 'รายจ่ายนี้ยืนยันแล้ว กดแก้ไขเอกสารก่อนแนบหลักฐานเพิ่ม'
+        : 'รายจ่ายนี้ปิดแล้ว แนบหลักฐานให้รายจ่ายที่ยังเปิดตรวจอยู่หรือสร้างรายจ่ายใหม่');
     }
     if (intent === 'replace' && expense.status === 'READY_FOR_CONFIRMATION' && !ctx.permissions.includes('expense.review')) {
-      throw locked('รายการนี้ส่งตรวจสอบแล้ว การเปลี่ยนไฟล์ใบเสร็จต้องให้ผู้มีสิทธิ์ตรวจสอบเป็นผู้ดำเนินการ');
-    }
-    if (expense.paymentStatus !== 'UNPAID' || Number(expense.paidAmount ?? 0) > 0) {
-      throw locked('รายการนี้บันทึกการจ่ายเงินแล้ว จึงเปลี่ยนหรือแนบไฟล์ตรงนี้ไม่ได้ กรุณาแก้ไขผ่านรายการจ่ายเงินเดิม');
+      throw locked('รายจ่ายนี้ส่งให้ตรวจแล้ว ให้คนที่มีสิทธิ์ตรวจรายจ่ายเปลี่ยนไฟล์ใบเสร็จให้');
     }
     if (expense.postingStatus !== 'not_required') {
-      throw locked('รายการนี้บันทึกบัญชีแล้ว จึงเปลี่ยนหรือแนบไฟล์ตรงนี้ไม่ได้ กรุณาใช้ขั้นตอนแก้ไขรายการเดิม');
+      throw locked('รายจ่ายนี้บันทึกบัญชีแล้ว ให้คนที่ดูแลบัญชีแก้รายการบัญชีก่อนแนบหรือเปลี่ยนไฟล์');
+    }
+    if (intent === 'replace' && (expense.paymentStatus !== 'UNPAID' || Number(expense.paidAmount ?? 0) > 0)) {
+      throw locked('รายจ่ายนี้บันทึกจ่ายแล้ว เปลี่ยนใบเสร็จหลักไม่ได้ ให้แนบเป็นหลักฐานเพิ่ม');
     }
 
     const db = this.prisma.client;
@@ -664,5 +668,40 @@ export class ListExpenseCategoriesUseCase {
       throw new ForbiddenException('Missing permission: expense.read');
     }
     return this.repo.listCategories(ctx.companyId);
+  }
+}
+
+@Injectable()
+export class ExpensePaymentSlipUploadUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly prisma: PrismaService,
+    private readonly createUpload: CreateUploadIntentUseCase, private readonly completeUpload: CompleteAttachmentUploadUseCase) {}
+
+  private async payer(ctx: RequestContext, expenseId: string) {
+    if (!ctx.permissions.includes('expense.payment.record')) throw new ForbiddenException('Missing permission: expense.payment.record');
+    const expense = await this.repo.findById(ctx.companyId, expenseId);
+    if (!expense) throw new NotFoundException('Expense not found');
+    if (!isBranchInScope(ctx.scopes ?? {}, expense.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    return expense;
+  }
+
+  async init(ctx: RequestContext, expenseId: string, input: { originalFileName: string; mimeType: string; byteSize: number }) {
+    const expense = await this.payer(ctx, expenseId);
+    if (!REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES.includes(input.mimeType) || !Number.isInteger(input.byteSize)
+      || input.byteSize <= 0 || input.byteSize > REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES) throw new BadRequestException('payment_slip_invalid');
+    return this.createUpload.execute({ ...ctx, permissions: [...ctx.permissions, 'attachment.create'] }, {
+      ...input, visibility: 'INTERNAL', ...(expense.branchId ? { branchId: expense.branchId } : {}),
+      metadataJson: { generatedFor: 'expense.payment.slip', expenseId },
+    });
+  }
+
+  async complete(ctx: RequestContext, expenseId: string, attachmentId: string, input: { checksumSha256?: string; byteSize?: number }) {
+    const expense = await this.payer(ctx, expenseId);
+    const file = await this.prisma.client.attachmentObject.findFirst({ where: {
+      id: attachmentId, companyId: ctx.companyId, branchId: expense.branchId, uploadedByUserId: ctx.userId, status: 'PENDING_UPLOAD',
+      AND: [{ metadataJson: { path: ['generatedFor'], equals: 'expense.payment.slip' } }, { metadataJson: { path: ['expenseId'], equals: expenseId } }],
+    } });
+    if (!file) throw new BadRequestException('payment_slip_invalid');
+    await this.completeUpload.execute({ ...ctx, permissions: [...ctx.permissions, 'attachment.create'] }, { ...input, attachmentId });
+    return { attachmentId };
   }
 }

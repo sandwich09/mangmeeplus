@@ -11,6 +11,8 @@ export type ExpenseReviewTotalsState = {
   withholdingIncomplete?: boolean;
   totals?: ExpenseDraftTotalsPreview;
   message?: string;
+  /** Local validation needs a field edit, never a retry of the same request. */
+  blocked?: boolean;
 };
 
 /** Preview uses ERP's save calculator. Cancelled/older responses cannot replace newer edits. */
@@ -28,15 +30,14 @@ export function useExpenseReviewTotals(companyId: string, detail: ExpenseDetail,
     buildExpenseDraftReviewPayload(disallowsTaxCode ? { ...values, lines: clearExpenseTaxSelections(values.lines) } : values,
       { sourceDraft: detail.sourceDraft, originalLines: detail.lines });
   const payload = JSON.stringify({ expectedUpdatedAt: detail.updatedAt,
-    ...reviewPayload,
-    ...(disallowsTaxCode && { inputVatClaimStatus: 'NON_CLAIMABLE' }) });
+    ...reviewPayload });
   useEffect(() => {
     if (!enabled) { setState(null); onChange?.(null); return; }
     const controller = new AbortController();
     let active = true;
     const publish = (next: ExpenseReviewTotalsState) => { if (active) { setState(next); onChange?.(next); } };
     const common = { revision: `${detail.id}:${detail.updatedAt}`, vatMode: values.vatMode, withholdingIncomplete };
-    publish({ ...common, status: blockingMessage ? 'error' : 'loading', ...(blockingMessage && { message: blockingMessage }) });
+    publish({ ...common, status: blockingMessage ? 'error' : 'loading', blocked: Boolean(blockingMessage), ...(blockingMessage && { message: blockingMessage }) });
     const timer = blockingMessage ? undefined : window.setTimeout(() => {
       void previewExpenseDraftTotals(companyId, detail.id, JSON.parse(payload), controller.signal)
         .then((totals) => publish({ ...common, status: 'ready', totals }))

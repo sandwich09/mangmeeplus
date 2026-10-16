@@ -38,6 +38,8 @@ function harness(options: {
   handoff?: Record<string, unknown>;
   certificate?: Record<string, unknown>;
   period?: Record<string, unknown>;
+  filedPayment?: boolean;
+  legacyFiled?: boolean;
   onReserve?: () => void;
 } = {}) {
   const handoff: any = { id: 'handoff-1', companyId: 'company-1', status: 'SYSTEM_ISSUED', certificateId: 'cert-1', ...options.handoff };
@@ -51,6 +53,7 @@ function harness(options: {
   const reservations: any[] = [], cancellations: any[] = [];
   const periodWrites: any[] = [];
   const client: any = {
+    taxPeriod: { findMany: async ({ where }: any) => options.filedPayment ? [period] : options.legacyFiled && !where.whtFilings ? [{ ...period, whtFilings: [] }] : [] },
     $executeRaw: async () => 0,
     expenseRecord: { findFirst: async () => ({ ...expense }), updateMany: async ({ where }: any) => ({ count: expense.status === where.status ? 1 : 0 }) },
     whtCertificateHistory: { create: async () => { throw new Error('history must use the transaction client'); } },
@@ -78,7 +81,7 @@ function harness(options: {
         return { count: 1 };
       },
     },
-    company: { findUnique: async () => null },
+    company: { findUnique: async () => ({ registeredName: 'บริษัท ผู้จ่าย จำกัด' }) },
     companyTaxProfile: { findUnique: async () => null },
     $transaction: async (work: (tx: unknown) => Promise<unknown>) => work({
       ...client, whtCertificateHistory: { create: async ({ data }: any) => { history.push(data); return data; } },
@@ -161,14 +164,14 @@ describe('CorrectWhtCertificateUseCase', () => {
       assert.equal(error.getStatus(), 409);
       const response = error.getResponse() as { code: string; message: string };
       assert.equal(response.code, 'wht_certificate_correction_no_changes');
-      assert.equal(response.message, 'ข้อมูลตรงกับหนังสือรับรองใบปัจจุบันอยู่แล้ว จึงไม่มีอะไรต้องแก้ไข ถ้าเพิ่งกดแก้ไขไป การแก้ไขครั้งนั้นสำเร็จแล้ว กรุณาเปิดหน้านี้ใหม่'); return true;
+      assert.equal(response.message, 'ข้อมูลตรงกับหนังสือรับรองใบปัจจุบันอยู่แล้ว จึงไม่มีอะไรต้องแก้ไข ถ้าเพิ่งกดแก้ไขไป การแก้ไขครั้งนั้นอาจบันทึกแล้ว เปิดหน้านี้ใหม่'); return true;
     });
     assert.equal(h.reservations.length, 1); assert.equal(h.certificates.length, 2);
     assert.equal(h.handoff.certificateId, certificate.id);
     assert.equal(h.history.length, historyCount); assert.equal(h.audits.length, auditCount);
   });
   it('refuses identical values with equivalent decimals and lowercase timestamp z before the period lock (A7c)', async () => {
-    const h = harness({ period: { status: 'FILED' }, certificate: { paymentDate: new Date('2026-09-12T10:25:00.000Z') } });
+    const h = harness({ filedPayment: true, period: { status: 'FILED' }, certificate: { paymentDate: new Date('2026-09-12T10:25:00.000Z') } });
     const current = h.certificates[0];
     const input = await body({ formType: 'PND53', incomeCategoryCode: current.incomeCategoryCode, incomeCategoryName: current.incomeCategoryName,
       whtRate: '5.0000', grossAmount: '1000', withheldAmount: '50', paymentDate: '2026-09-12T00:00:00.000z',
@@ -194,11 +197,11 @@ describe('CorrectWhtCertificateUseCase', () => {
     assert.ok(Object.hasOwn(name.corrected.payeeSnapshot, 'taxId'), 'the real DTO emits omitted properties');
     const second = await uc.execute(ctx, 'handoff-1', name.corrected, name.reason);
     assert.deepEqual(second.payeeSnapshot, { ...original.payeeSnapshotJson, name: 'ชื่อที่แก้ไข' });
-    assert.deepEqual(second.payerSnapshot, { ...original.payerSnapshotJson, companyName: 'ผู้จ่ายที่แก้ไข' });
+    assert.deepEqual(second.payerSnapshot, { ...original.payerSnapshotJson, companyName: 'บริษัท ผู้จ่าย จำกัด' });
     const address = await body({ payeeSnapshot: { address: 'ที่อยู่ที่แก้ไข' }, payerSnapshot: { address: 'ที่อยู่ผู้จ่าย' } });
     const third = await uc.execute(ctx, 'handoff-1', address.corrected, address.reason);
     assert.deepEqual(third.payeeSnapshot, { ...original.payeeSnapshotJson, name: 'ชื่อที่แก้ไข', address: 'ที่อยู่ที่แก้ไข' });
-    assert.deepEqual(third.payerSnapshot, { ...original.payerSnapshotJson, companyName: 'ผู้จ่ายที่แก้ไข', address: 'ที่อยู่ผู้จ่าย' });
+    assert.deepEqual(third.payerSnapshot, { ...original.payerSnapshotJson, companyName: 'บริษัท ผู้จ่าย จำกัด', address: 'ที่อยู่ผู้จ่าย' });
     for (const key of ['incomeCategoryCode', 'incomeCategoryName', 'whtRate', 'grossAmount', 'withheldAmount']) assert.equal((third as any)[key], original[key]);
     assert.equal(third.paymentDate, original.paymentDate.toISOString());
     assert.deepEqual(h.reservations.map(row => row.documentNumber), ['WT2026090002', 'WT2026090003']);
@@ -209,7 +212,7 @@ describe('CorrectWhtCertificateUseCase', () => {
       assert.ok(error instanceof BadRequestException);
       const response = error.getResponse() as { code: string; message: string };
       assert.equal(response.code, 'wht_certificate_payee_name_required');
-      assert.equal(response.message, 'ชื่อผู้รับเงินบนหนังสือรับรองว่างไม่ได้ กรุณาใส่ชื่อผู้รับเงิน'); return true;
+      assert.equal(response.message, 'ชื่อผู้รับเงินบนหนังสือรับรองว่างไม่ได้ ใส่ชื่อผู้รับเงิน'); return true;
     });
     assert.equal(h.reservations.length, 0); assert.equal(h.certificates.length, 1);
   });
@@ -264,9 +267,20 @@ describe('CorrectWhtCertificateUseCase', () => {
     assert.equal(h.periodWrites.length + h.reservations.length + h.history.length, 0);
   });
 
-  it('blocks a payment-date correction once the tax period is FILED/PAID/CLOSED', async () => {
-    for (const status of ['FILED', 'PAID', 'CLOSED']) {
-      const h = harness({ period: { status } });
+  it('filed amount, rate, income type and taxpayer number corrections direct the person to cancel and re-record', async () => {
+    for (const change of [{ grossAmount: '2000' }, { whtRate: '10' }, { incomeCategoryCode: 'OTHER' }, { payeeSnapshot: { taxId: '9999999999999' } }]) {
+      const h = harness({ filedPayment: true, period: { status: 'EXPORTED' } });
+      await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', change, 'ข้อมูลผิด'), (e: any) => {
+        assert.equal(e.getResponse().code, 'wht_certificate_correction_tax_period_locked');
+        assert.equal(e.getResponse().message, 'รายการนี้ยื่นภาษีแล้ว แก้ข้อเท็จจริงไม่ได้ ให้ยกเลิกเอกสารแล้วบันทึกใหม่ ให้ผู้ทำบัญชีแจ้งกรมสรรพากรเรื่องแบบเดิม');
+        return true;
+      });
+      assert.equal(h.certificates.length, 1);
+    }
+  });
+  it('blocks a payment-date correction when the source has a filed line, regardless of roll-up status', async () => {
+    for (const status of ['EXPORTED', 'FILED', 'PAID', 'CLOSED']) {
+      const h = harness({ filedPayment: true, period: { status } });
       const useCase = h.execute(guard({ state: 'OPEN' }));
       await assert.rejects(() => useCase.execute(ctx, 'handoff-1', { paymentDate: '2026-09-13' }, 'แก้วันที่'),
         (err: any) => err.getResponse().code === 'wht_certificate_correction_tax_period_locked');
@@ -274,8 +288,17 @@ describe('CorrectWhtCertificateUseCase', () => {
     }
   });
 
+  it('legacy filed month locks the certificate date until its paper is backfilled', async () => {
+    for (const formType of ['PND3', 'PND53']) {
+      const h = harness({ legacyFiled: true, period: { status: 'FILED', formType } });
+      await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { paymentDate: '2026-09-13' }, 'แก้วันที่'),
+        (e: any) => e.getResponse().code === 'wht_certificate_correction_tax_period_locked');
+      assert.equal(h.certificates.length, 1);
+    }
+  });
+
   it('does NOT block a nonfinancial correction even when the tax period is locked', async () => {
-    const h = harness({ period: { status: 'FILED' } });
+    const h = harness({ filedPayment: true, period: { status: 'FILED' } });
     const useCase = h.execute(guard({ state: 'OPEN' }));
     const result: any = await useCase.execute(ctx, 'handoff-1', { payeeSnapshot: { address: 'แก้ที่อยู่' } }, 'พิมพ์ผิด');
     assert.equal(result.payeeSnapshot.address, 'แก้ที่อยู่');
@@ -360,7 +383,7 @@ describe('correct-wht-certificate source guards (A3)', () => {
   for (const status of ['NEEDS_REVIEW', 'VOIDED']) it(`refuses an expense source in ${status} without writing`, async () => {
     const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' } });
     h.expense.status = status;
-    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { payeeSnapshot: { address: 'ใหม่' } }, 'แก้ชื่อผู้รับ'), (error: any) => error.getResponse?.().code === 'expense_wht_source_changed' && error.getResponse().message === 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว กรุณาเปิดหน้ารายจ่ายใหม่');
+    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { payeeSnapshot: { address: 'ใหม่' } }, 'แก้ชื่อผู้รับ'), (error: any) => error.getResponse?.().code === 'expense_wht_source_changed' && error.getResponse().message === 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว เปิดหน้ารายจ่ายใหม่');
     assert.equal(h.certificates.length, 1); assert.equal(h.certificates[0].replacementCopyCount, 0);
   });
   it('preserves the expense revision and last editor when issuing a certificate artifact', async () => {
@@ -372,7 +395,7 @@ describe('correct-wht-certificate source guards (A3)', () => {
     const h = harness();
     const transact = h.client.$transaction;
     h.client.$transaction = async (work: any) => { h.certificates[0].status = 'VOIDED'; return transact(work); };
-    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { payeeSnapshot: { address: 'ใหม่' } }, 'แก้ชื่อผู้รับ'), (error: any) => error.getResponse?.().message === 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว กรุณาเปิดหน้ารายจ่ายใหม่');
+    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { payeeSnapshot: { address: 'ใหม่' } }, 'แก้ชื่อผู้รับ'), (error: any) => error.getResponse?.().message === 'รายจ่ายของหนังสือรับรองนี้ถูกแก้ไขหรือยกเลิกไปแล้ว เปิดหน้ารายจ่ายใหม่');
     assert.equal(h.certificates.length, 1); assert.equal(h.certificates[0].replacementCopyCount, 0);
   });
 });
@@ -380,23 +403,23 @@ describe('correct-wht-certificate source guards (A3)', () => {
 
 describe('decimal financial correction classification (E2)', () => {
   it('treats the same civil payment day as nonfinancial despite a stored time part', async () => {
-    const h = harness({ period: { status: 'FILED' }, certificate: { paymentDate: new Date('2026-09-12T10:25:00.000Z') } });
+    const h = harness({ filedPayment: true, period: { status: 'FILED' }, certificate: { paymentDate: new Date('2026-09-12T10:25:00.000Z') } });
     await h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { paymentDate: '2026-09-12T00:00:00.000Z', payeeSnapshot: { address: 'ที่อยู่ใหม่' } }, 'แก้ที่อยู่');
     assert.equal(h.audits.find(row => row.action === 'tax.wht_certificate.correct').metadataJson.financial, false);
   });
   it('still refuses a different civil payment day in a filed period', async () => {
-    const h = harness({ period: { status: 'FILED' }, certificate: { paymentDate: new Date('2026-09-12T10:25:00.000Z') } });
+    const h = harness({ filedPayment: true, period: { status: 'FILED' }, certificate: { paymentDate: new Date('2026-09-12T10:25:00.000Z') } });
     await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { paymentDate: '2026-09-13T00:00:00.000Z' }, 'แก้วันที่'), (error: any) => error.getResponse().code === 'wht_certificate_correction_tax_period_locked');
     assert.equal(h.certificates.length, 1);
   });
   it('treats equivalent decimal strings as nonfinancial in a filed period', async () => {
-    const h = harness({ period: { status: 'FILED' }, certificate: { grossAmount: '1402.0000', withheldAmount: '42.0600', whtRate: '3.0000' } });
+    const h = harness({ filedPayment: true, period: { status: 'FILED' }, certificate: { grossAmount: '1402.0000', withheldAmount: '42.0600', whtRate: '3.0000' } });
     await h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { grossAmount: '1402', withheldAmount: '42.06', whtRate: '3', payeeSnapshot: { address: 'ที่อยู่ใหม่' } }, 'แก้ที่อยู่');
     assert.equal(h.audits.find(row => row.action === 'tax.wht_certificate.correct').metadataJson.financial, false);
   });
   it('still refuses a real amount change in a filed period', async () => {
-    const h = harness({ period: { status: 'FILED' }, certificate: { grossAmount: '1402.0000' } });
-    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { grossAmount: '1402.01' }, 'แก้ยอด'), (error: any) => error.getResponse().code === 'wht_correction_field_locked');
+    const h = harness({ filedPayment: true, period: { status: 'FILED' }, certificate: { grossAmount: '1402.0000' } });
+    await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { grossAmount: '1402.01' }, 'แก้ยอด'), (error: any) => error.getResponse().code === 'wht_certificate_correction_tax_period_locked');
     assert.equal(h.certificates.length, 1);
   });
 });
@@ -426,7 +449,7 @@ it('A9 refuses a duplicate corrected certificate number with a coded Thai answer
     meta: { driverAdapterError: { cause: { constraint: { fields: ['companyId', 'certificateNumber'] } } } } }); };
   await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, h.handoff.id, { payeeSnapshot: { address: 'ใหม่' } }, 'แก้ที่อยู่'), (error: any) => {
     assert.equal(error.getResponse().code, 'wht_certificate_number_duplicate');
-    assert.equal(error.getResponse().message, 'ออกหนังสือรับรองไม่สำเร็จเพราะเลขที่เอกสารซ้ำ กรุณาลองอีกครั้ง ถ้ายังไม่สำเร็จ ให้แจ้งทีมมั่งมีพลัสพร้อมเลขที่เอกสารรายจ่ายนี้'); return true;
+    assert.equal(error.getResponse().message, 'ออกหนังสือรับรองไม่สำเร็จเพราะเลขที่เอกสารซ้ำ ลองอีกครั้ง ถ้ายังไม่สำเร็จ ให้แจ้งทีมงานมั่งมีพร้อมเลขที่เอกสารรายจ่ายนี้'); return true;
   });
   assert.equal(h.cancellations.length, 1); assert.equal(h.history.length, 0);
 });
@@ -439,7 +462,7 @@ describe('C7 corrected certificate address', () => {
       const corrected = legacy ? { payeeSnapshot: { name: 'ชื่อใหม่' } } : { payeeSnapshot: { address } };
       await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', corrected, 'แก้ข้อมูล'), (error: any) => {
         assert.equal(error.getResponse().code, 'wht_certificate_payee_address_required');
-        assert.equal(error.getResponse().message, 'กรุณาพิมพ์ที่อยู่ผู้รับเงินในแบบฟอร์มนี้ก่อนบันทึก'); return true;
+        assert.equal(error.getResponse().message, 'ยังไม่มีที่อยู่ผู้รับเงิน พิมพ์ที่อยู่ในแบบฟอร์มนี้ก่อนบันทึก'); return true;
       });
       assert.equal(h.reservations.length, 0); assert.equal(h.history.length, 0); assert.equal(h.certificates.length, 1); assert.equal(h.renders.length, 0); assert.equal(h.audits.length, 0);
     }
@@ -457,7 +480,23 @@ test('C9 correction cannot end with missing payer identity, but can fill a legac
   const uc = h.execute(guard({ state: 'OPEN' }));
   await assert.rejects(uc.execute(ctx, 'handoff-1', { payeeSnapshot: { name: 'ชื่อใหม่' } }, 'แก้ชื่อ'), (error: any) => error.getStatus() === 409 && error.getResponse().code === 'wht_payer_identity_missing');
   assert.equal(h.reservations.length, 0); assert.equal(h.history.length, 0); assert.equal(h.certificates.length, 1);
-  h.client.company.findUnique = async () => ({ taxId: '1234567890123', addressJson: { line1: 'ที่อยู่ปัจจุบัน' } });
+  h.client.company.findUnique = async () => ({ registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '1234567890123', addressJson: { line1: 'ที่อยู่ปัจจุบัน' } });
   const result = await uc.execute(ctx, 'handoff-1', { payeeSnapshot: { name: 'ชื่อใหม่' } }, 'แก้ชื่อ');
   assert.equal(result.payerSnapshot.taxId, '1234567890123'); assert.equal(result.payerSnapshot.address, 'ที่อยู่ปัจจุบัน');
+});
+
+it('W6 corrections keep the first issue date and record the correction separately', async () => {
+  const h = harness();
+  const original = h.certificates[0].issuedAt.toISOString();
+  await h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { payeeSnapshot: { name: 'แก้ชื่อ' } } as any, 'แก้ชื่อผู้รับเงิน');
+  assert.equal(h.certificates[1].issuedAt.toISOString(), original);
+  assert.equal(h.renders[0].issuedAt, original);
+  assert.ok(h.certificates[0].voidedAt.getTime() > new Date(original).getTime());
+});
+
+it('correction requires the current registered name and leaves the issued certificate unchanged on refusal', async () => {
+  const h = harness(); const original = structuredClone(h.certificates[0]);
+  h.client.company.findUnique = async () => ({ registeredName: null });
+  await assert.rejects(() => h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', { payeeSnapshot: { name: 'ชื่อใหม่' } }, 'แก้ชื่อ'), (error: any) => error.getResponse().code === 'wht_payer_identity_missing' && error.getResponse().payerMissing.includes('REGISTERED_NAME'));
+  assert.deepEqual(h.certificates, [original]); assert.equal(h.reservations.length, 0);
 });

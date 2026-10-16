@@ -1,3 +1,4 @@
+import type { AccountingCounterpartyListCounts } from '@watchdog-bms/contracts';
 import { Injectable, BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaAccountingRepository } from '../../infrastructure/prisma-accounting.repository';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -265,7 +266,7 @@ export class GetCounterpartyUseCase {
 export class ListCounterpartiesUseCase {
   constructor(private readonly repo: PrismaAccountingRepository) {}
 
-  async execute(ctx: RequestContext, page = 1, pageSize = 20, filter: ListCounterpartiesFilter = {}): Promise<{ data: CounterpartyListItem[]; total: number }> {
+  async execute(ctx: RequestContext, page = 1, pageSize = 20, filter: ListCounterpartiesFilter = {}): Promise<{ data: CounterpartyListItem[]; total: number; counts?: AccountingCounterpartyListCounts }> {
     if (!ctx.permissions.includes('accounting.counterparty.read')) throw new ForbiddenException('Missing permission: accounting.counterparty.read');
     return this.repo.listCounterparties(ctx.companyId, page, pageSize, filter);
   }

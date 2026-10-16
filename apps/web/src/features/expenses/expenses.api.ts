@@ -1,3 +1,4 @@
+import { uploadPaymentSlip } from '@/common/files/slip-upload.api';
 import { SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import { removeSubstituteReceiptDisplayMetadata } from '@watchdog-bms/contracts';
 import type {
@@ -6,6 +7,7 @@ import type {
 } from './expenses.model';
 import type { ExpenseReadStatusFile } from './expense-capture-status.logic';
 import type {
+  AccountantEvidenceBundlePlan,
   CompleteExpenseReceiptUploadInput,
   ExpenseCaptureCapabilityDto,
   ApproveSubstituteReceiptInput,
@@ -349,12 +351,12 @@ export async function fetchAttachmentPreviewBlob(
     : blob;
 }
 
-export async function markExpenseReady(companyId: string, expenseId: string): Promise<ExpenseSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/mark-ready`, { method: 'POST', suppressErrorToast: true, body: '{}' });
+export async function markExpenseReady(companyId: string, expenseId: string, requestedReviewerUserId?: string): Promise<ExpenseSummary> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/mark-ready`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ ...(requestedReviewerUserId && { requestedReviewerUserId }) }) });
 }
 
-export async function markExpenseReadyAsReviewer(companyId: string, expenseId: string): Promise<ExpenseSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/reviewer-mark-ready`, { method: 'POST', suppressErrorToast: true, body: '{}' });
+export async function markExpenseReadyAsReviewer(companyId: string, expenseId: string, requestedReviewerUserId?: string): Promise<ExpenseSummary> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/reviewer-mark-ready`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ ...(requestedReviewerUserId && { requestedReviewerUserId }) }) });
 }
 
 /** Plan 13.11.B: `vatSourceOverride` is the reviewer's "ใช้ยอดตามเอกสาร"; omitted, this is the
@@ -407,7 +409,7 @@ export async function listExpenseCategories(companyId: string): Promise<ExpenseC
   return apiFetch(`/v1/companies/${companyId}/expense-categories`);
 }
 
-export type WhtIncomeCategoryOption = { code: string; nameTh: string; formType: string; defaultRate: string };
+export type WhtIncomeCategoryOption = { filingRoute?: import('@watchdog-bms/contracts').WhtFilingRoute; code: string; nameTh: string; formType: string; defaultRate: string };
 
 /**
  * ACTIVE income categories only (WHT certificate system issuance plan §1.2, mirrors
@@ -524,7 +526,7 @@ export async function previewSubstituteReceipt(
   });
 }
 
-export async function listSubstituteReceiptPayers(companyId: string, expenseId: string): Promise<Array<{ userId: string; displayName: string }>> {
+export async function listSubstituteReceiptPayers(companyId: string, expenseId: string): Promise<Array<{ userId: string; displayName: string; isOwner?: boolean }>> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/payers`);
 }
 
@@ -678,6 +680,19 @@ export async function createAccountantPackage(
   return apiFetch(`/v1/companies/${companyId}/expenses/accountant-package`, { method: 'POST', body: JSON.stringify(body) });
 }
 
+export async function planAccountantEvidenceBundle(companyId: string, body: Record<string, unknown>): Promise<AccountantEvidenceBundlePlan> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/accountant-package/bundle-plan`, { method: 'POST', body: JSON.stringify(body), suppressErrorToast: true });
+}
+
+export async function fetchAccountantEvidenceBundle(companyId: string, body: Record<string, unknown>, part: number): Promise<{ blob: Blob; fileName: string }> {
+  const response = await authedFetch(`/v1/companies/${companyId}/expenses/accountant-package/bundle/${part}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!response.ok) throw await responseError(response);
+  const name = /filename\*=UTF-8''([^;]+)/i.exec(response.headers.get('content-disposition') ?? '')?.[1];
+  const blob = await response.blob();
+  if (blob.type.split(';')[0] !== 'application/zip' || blob.size === 0) throw new Error('ดาวน์โหลดไฟล์ไม่สำเร็จ ลองอีกครั้ง');
+  return { blob, fileName: name ? decodeURIComponent(name) : 'หลักฐาน.zip' };
+}
+
 /** Saves the package index as a real .xlsx (headers are Thai labels, amounts are numbers). */
 export function downloadIndexXlsx(result: AccountantPackageResult, fileName: string): void {
   const bytes = Uint8Array.from(atob(result.indexXlsxBase64), (c) => c.charCodeAt(0));
@@ -754,8 +769,8 @@ export function setWhtHandoffPayeeAddress(companyId: string, handoffId: string, 
 }
 
 // A refusal is shown where the person pressed, once; callers may still pass their own options.
-export function issueSystemWhtCertificate(companyId: string, handoffId: string, options?: { suppressErrorToast?: boolean }): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
-  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`, { method: 'POST', suppressErrorToast: true, ...options });
+export function issueSystemWhtCertificate(companyId: string, handoffId: string, options?: { suppressErrorToast?: boolean; paymentId?: string }): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`, { method: 'POST', suppressErrorToast: true, ...options, body: JSON.stringify({ paymentId: options?.paymentId }) });
 }
 
 // Correction & replacement plan §5.2 — same endpoints accounts-payable.api.ts calls.
@@ -782,4 +797,21 @@ export function cancelExpensePayment(companyId: string, expenseId: string, payme
 
 export function downloadSystemWhtCertificate(companyId: string, handoffId: string, options?: { suppressErrorToast?: boolean }): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
   return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`, options);
+}
+
+export async function getExpenseReviewers(companyId: string, expenseId: string): Promise<Array<{ userId: string; displayName: string }>> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/reviewers`, { suppressErrorToast: true });
+}
+
+export async function decideExpenseInputVat(companyId: string, expenseId: string, input: import('@watchdog-bms/contracts').DecideExpenseInputVatInput): Promise<import('@watchdog-bms/contracts').ExpenseInputVatRightView> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/input-vat-decision`, { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function uploadExpensePaymentSlip(companyId: string, expenseId: string, file: File): Promise<string> {
+  return uploadPaymentSlip(`/v1/companies/${companyId}/expenses/${expenseId}/payments`, file,
+    { code: 'payment_slip_invalid', message: 'แนบ PDF หรือรูปภาพ ไม่เกิน 10 เมกะไบต์' }, true);
+}
+
+export function confirmExpensePaymentDate(companyId: string, expenseId: string, paymentId: string, paidAt: string) {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/payments/${paymentId}/confirm-date`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ paidAt }) });
 }

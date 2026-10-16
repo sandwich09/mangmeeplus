@@ -2,10 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { FEATURE_CATALOG, MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contracts';
-import { filterModulesByPermissions, getActiveModuleKey, groupNavItems, buildLockedNavItems, buildNavItems, canAccessWorkspacePath, collectMenuTargets, resolveMenuKey } from './web-core-workspace.logic';
+import { filterModulesByPermissions, getActiveModuleKey, groupNavItems, buildAccountLinks, buildLockedNavItems, buildNavItems, canAccessWorkspacePath, collectMenuTargets, employeePageMenuKey, resolveMenuKey } from './web-core-workspace.logic';
 import { isLockedShellPath } from '@/features/plan-term/plan-term.logic';
-import { WORKSPACE_MODULES, NAV_GROUP_ORDER, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } from './web-core-workspace.constants';
+import { WORKSPACE_MODULES, NAV_GROUP_ORDER, SIDEBAR_GROUP_ORDER, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } from './web-core-workspace.constants';
 import type { NavItem } from './web-core-workspace.model';
+import { isActiveNavSubItem } from '@/common/components/app-shell/app-sidebar.logic';
 import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { canOpenDisbursementVoucherWeb } from '@/features/expenses/disbursement-voucher-entry.logic';
@@ -78,7 +79,7 @@ it('P24-2b keeps all seven scope-control templates touch-sized with forced-color
     assert.match(value, /focus-visible:ring-brand-500/);
   }
   assert.equal([...source.matchAll(/t\('client_notice\.retry', locale\)/g)].length, 2);
-  assert.equal(t('client_notice.retry', 'th'), 'ลองใหม่');
+  assert.equal(t('client_notice.retry', 'th'), 'ลองอีกครั้ง');
   assert.equal(t('client_notice.retry', 'en'), 'Try again');
   for (const locale of ['th', 'en'] as const) {
     assert.ok(t('shell.scope.load_failed', locale).toLowerCase().includes(t('client_notice.retry', locale).toLowerCase()),
@@ -331,14 +332,19 @@ describe('groupNavItems', () => {
 });
 
 describe('buildNavItems', () => {
-  it('omits the AI hub from navigation while retaining authorized contextual review links', () => {
+  it('hides AI entry points without a template source right and keeps authorized review links', () => {
     for (const permission of ['ai.suggestion.read', 'ai.suggestion.read_own']) {
-      const modules = filterModulesByPermissions(WORKSPACE_MODULES, [permission]);
-      assert.ok(modules.some(module => module.key === 'ai-suggestions'));
-      assert.equal(buildNavItems(modules, 'co', 'th', {}, [permission]).some(item => item.key === 'ai-suggestions'), false);
-      assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [permission], 'co', '/companies/co/ai-suggestions/retained-review'), true);
+      assert.equal(filterModulesByPermissions(WORKSPACE_MODULES, [permission]).some(module => module.key === 'ai-suggestions'), false);
+      assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [permission], 'co', '/companies/co/ai-suggestions/retained-review'), false);
+      for (const source of ['bank.cash.read', 'crm.customer.read', 'inventory.report.read', 'tax.review_issue.read', 'workflow.task.read']) {
+        const permissions = [permission, source];
+        const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
+        assert.ok(modules.some(module => module.key === 'ai-suggestions'));
+        assert.ok(buildNavItems(modules, 'co', 'th', {}, permissions).some(item => item.key === 'ai-suggestions'));
+        assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, permissions, 'co', '/companies/co/ai-suggestions/retained-review'), true);
+      }
     }
-    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [], 'co', '/companies/co/ai-suggestions/retained-review'), false);
+    assert.equal(canSeeRoute('/ai-suggestions', ['bank.cash.read']), false);
   });
   it('keeps planned modules clickable for owner workspace access', () => {
     const item = buildNavItems(WORKSPACE_MODULES, 'owner-company', 'en', {}).find((nav) => nav.key === 'booking');
@@ -370,16 +376,17 @@ describe('buildNavItems', () => {
       const rule = ROUTE_PERMISSION_RULES.find((candidate) => candidate.path === path);
       assert.ok(rule, `${path}: missing route rule`);
       for (const permission of rule.anyOf) {
-        const modules = filterModulesByPermissions(WORKSPACE_MODULES, [permission]);
+        const permissions = path === '/ai-suggestions' ? [permission, 'bank.cash.read'] : [permission];
+        const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
         assert.ok(modules.some((module) => module.key === moduleKey), `${path}: module ${permission}`);
-        const item = buildNavItems(modules, 'co', 'th', {}, [permission]).find((nav) => nav.key === moduleKey);
-        if (path === '/ai-suggestions' || (path === '/reports' && permission === 'report.snapshot.read')) {
+        const item = buildNavItems(modules, 'co', 'th', {}, permissions).find((nav) => nav.key === moduleKey);
+        if (path === '/reports' && permission === 'report.snapshot.read') {
           assert.equal(item, undefined, `${path}: retained-only history intentionally has no row`);
         } else {
           assert.equal(item?.href, `/companies/co${path}`, `${path}: nav ${permission}`);
         }
         assert.equal(
-          canAccessWorkspacePath(WORKSPACE_MODULES, [permission], 'co', `/companies/co${path}`),
+          canAccessWorkspacePath(WORKSPACE_MODULES, permissions, 'co', `/companies/co${path}`),
           true,
           `${path}: route ${permission}`,
         );
@@ -404,19 +411,25 @@ describe('buildNavItems', () => {
       filterModulesByPermissions(WORKSPACE_MODULES, creatorPermissions),
       'employee-company', 'th', {}, creatorPermissions,
     );
+    // 2026-10-13: adding a person is the list page's button, not a row; the list is the way in.
     assert.deepEqual(
       creatorItems.find((item) => item.key === 'roles')?.subItems?.map((item) => item.key),
-      ['roles.individual', 'employees'],
+      ['roles.individual'],
     );
+    assert.equal(employeePageMenuKey('employee-company', '/companies/employee-company/settings/employees', creatorItems), 'roles.individual');
+    assert.equal(employeePageMenuKey('employee-company', '/companies/employee-company/settings/employees/emp-1', creatorItems), 'roles.individual');
+    assert.equal(employeePageMenuKey('employee-company', '/companies/employee-company/settings/access-overview', creatorItems), null);
 
     const createOnlyItems = buildNavItems(
       filterModulesByPermissions(WORKSPACE_MODULES, ['access.employee.create']),
       'employee-company', 'th', {}, ['access.employee.create'],
     );
+    // Someone who may add people but may not open the list keeps the row: it is their one way in.
     assert.deepEqual(
       createOnlyItems.find((item) => item.key === 'roles')?.subItems?.map((item) => item.key),
       ['employees'],
     );
+    assert.equal(employeePageMenuKey('employee-company', '/companies/employee-company/settings/employees', createOnlyItems), null);
 
     const editorItems = buildNavItems(
       filterModulesByPermissions(WORKSPACE_MODULES, ['access.employee.read', 'access.employee.update']),
@@ -485,21 +498,41 @@ describe('buildNavItems', () => {
 
     assert.ok(permissionsItem);
     assert.ok(!items.some((nav) => nav.key === 'poapproval'));
-    assert.equal(permissionsItem.href, '/companies/owner-company/settings/permissions');
+    // The list of people first, then the roles (2026-10-13).
+    assert.equal(permissionsItem.href, '/companies/owner-company/settings/access-overview');
     assert.deepEqual(
       permissionsItem.subItems?.map((sub) => sub.key),
-      ['roles.permissions', 'roles.individual', 'employees', 'poapproval', 'discount', 'lineoa'],
+      ['roles.individual', 'roles.permissions', 'poapproval', 'discount', 'lineoa'],
     );
-    assert.equal(permissionsItem.subItems?.[0]?.href, '/companies/owner-company/settings/permissions');
-    assert.equal(permissionsItem.subItems?.[1]?.href, '/companies/owner-company/settings/access-overview');
-    assert.equal(permissionsItem.subItems?.[3]?.href, '/companies/owner-company/settings/po-approval');
-    assert.equal(permissionsItem.subItems?.[5]?.href, '/companies/owner-company/settings/line-oa');
+    assert.equal(permissionsItem.subItems?.[0]?.href, '/companies/owner-company/settings/access-overview');
+    assert.equal(permissionsItem.subItems?.[1]?.href, '/companies/owner-company/settings/permissions');
+    assert.equal(permissionsItem.subItems?.[2]?.href, '/companies/owner-company/settings/po-approval');
+    assert.equal(permissionsItem.subItems?.[4]?.href, '/companies/owner-company/settings/line-oa');
   });
 
   // คู่มือการใช้งานระบบ carries no company data and gates on nothing, so a session holding no
   // permission at all still gets the row — and every listed manual must stay reachable from it.
   // ภาษี/รายงานการเงิน are hidden from the row while their features are unreleased; their routes
   // stay open, which is exactly what the reachability loop below still asserts.
+  // Found 2026-10-13: an employee had no way to their own e-mail or signature; the account page sits behind a company-settings right.
+  it('gives every person a way to their own account and, with a signature right, to their signature', () => {
+    assert.deepEqual(buildAccountLinks('co', ['company.setup.read', 'expense.review']), [
+      { key: 'account', label: 'บัญชีของฉัน', href: '/companies/co/account' },
+      { key: 'signature', label: 'ลายเซ็นของฉัน', href: '/companies/co/expenses/signatures' },
+    ]);
+    // No company-settings right: the account page outside the company. No signature right: no signature row.
+    assert.deepEqual(buildAccountLinks('co', ['expense.read_own']), [{ key: 'account', label: 'บัญชีของฉัน', href: '/companies/co/account' }]);
+    // A locked shop refuses business pages, so the signature row goes and the account row stays.
+    assert.deepEqual(buildAccountLinks('co', ['expense.signature.self_manage'], true).map((link) => link.key), ['account']);
+  });
+
+  it('puts the guide under its own heading, after the settings group', () => {
+    assert.equal(buildNavItems([], 'co', 'th', {}, []).find((nav) => nav.key === 'guide')?.group, 'help');
+    assert.equal(SIDEBAR_GROUP_ORDER.at(-1), 'help');
+    // The module groups stay as contracts know them: the guide is not a module.
+    assert.ok(!(NAV_GROUP_ORDER as string[]).includes('help'));
+  });
+
   it('always offers the user-guide menu with one sub-item per released manual', () => {
     const guide = buildNavItems([], 'guide-company', 'th', {}, []).find((nav) => nav.key === 'guide');
 
@@ -550,24 +583,30 @@ describe('buildNavItems', () => {
     const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
     const expenses = buildNavItems(modules, 'owner-company', 'th', {}, permissions).find((nav) => nav.key === 'expenses');
 
+    // In the order of the work; the policy page is a setting and sits with the settings rows.
     assert.deepEqual(expenses?.subItems?.map((sub) => sub.key), [
       'expenses.list',
       'expenses.upload',
       'expenses.manual',
-      'expenses.categories',
       'expenses.substitute_receipt',
-      'expenses.substitute_receipt_policy',
       'expenses.evidence',
+      'expenses.categories',
     ]);
     assert.deepEqual(expenses?.subItems?.map((sub) => sub.href), [
       '/companies/owner-company/expenses',
       '/companies/owner-company/expenses/upload',
       '/companies/owner-company/expenses/manual',
-      '/companies/owner-company/expenses/categories',
       '/companies/owner-company/expenses/substitute-receipts',
-      '/companies/owner-company/settings/substitute-receipt',
       '/companies/owner-company/expenses/evidence',
+      '/companies/owner-company/expenses/categories',
     ]);
+    const paying = [...permissions, 'expense.disbursement.read', 'wht.certificate.issue'];
+    assert.deepEqual(
+      buildNavItems(filterModulesByPermissions(WORKSPACE_MODULES, paying), 'owner-company', 'th', {}, paying, [], true, true)
+        .find((nav) => nav.key === 'expenses')?.subItems?.map((sub) => sub.key),
+      ['expenses.list', 'expenses.upload', 'expenses.manual', 'expenses.disbursement_vouchers', 'expenses.wht_certificates',
+        'expenses.substitute_receipt', 'expenses.evidence', 'expenses.categories'],
+    );
   });
 
   // manual-expense-web-entry-flag spec §9.1: the sidebar item follows the one predicate
@@ -577,7 +616,7 @@ describe('buildNavItems', () => {
     const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
     const keys = (canOpenManualExpense?: boolean) => buildNavItems(modules, 'owner-company', 'th', {}, permissions, [], canOpenManualExpense)
       .find((nav) => nav.key === 'expenses')?.subItems?.map((sub) => sub.key);
-    const all = ['expenses.list', 'expenses.upload', 'expenses.manual', 'expenses.categories', 'expenses.substitute_receipt', 'expenses.substitute_receipt_policy', 'expenses.evidence'];
+    const all = ['expenses.list', 'expenses.upload', 'expenses.manual', 'expenses.substitute_receipt', 'expenses.evidence', 'expenses.categories'];
 
     assert.deepEqual(keys(true), all);
     assert.deepEqual(keys(false), all.filter((key) => key !== 'expenses.manual'));
@@ -646,24 +685,39 @@ describe('buildNavItems', () => {
     assert.ok(!filterModulesByPermissions(WORKSPACE_MODULES, ['company.setup.manage']).some((module) => module.key === 'expenses'));
   });
 
-  it('requires company.setup.manage for the substitute-receipt policy submenu', () => {
-    const withPermission = buildNavItems(
-      filterModulesByPermissions(WORKSPACE_MODULES, ['expense.read', 'company.setup.manage']),
-      'policy-company',
-      'th',
-      {},
-      ['expense.read', 'company.setup.manage'],
-    ).find((nav) => nav.key === 'expenses');
-    const withoutPermission = buildNavItems(
-      filterModulesByPermissions(WORKSPACE_MODULES, ['expense.read']),
-      'policy-company',
-      'th',
-      {},
-      ['expense.read'],
-    ).find((nav) => nav.key === 'expenses');
+  // The policy page is a setting: since 2026-10-13 its one row is under ตั้งค่าบริษัท (it was also under the daily
+  // expense rows). The permission that shows it is unchanged.
+  it('requires company.setup.manage for the substitute-receipt policy row, which sits with the settings rows', () => {
+    const rows = (permissions: string[]) => buildNavItems(
+      filterModulesByPermissions(WORKSPACE_MODULES, permissions), 'policy-company', 'th', {}, permissions,
+    ).flatMap((nav) => (nav.subItems ?? []).map((sub) => `${nav.key} > ${sub.href}`));
+    const policyRow = 'settings > /companies/policy-company/settings/substitute-receipt';
 
-    assert.ok(withPermission?.subItems?.some((sub) => sub.key === 'expenses.substitute_receipt_policy'));
-    assert.ok(!withoutPermission?.subItems?.some((sub) => sub.key === 'expenses.substitute_receipt_policy'));
+    assert.deepEqual(rows(['expense.read', 'company.setup.manage']).filter((row) => row.endsWith('/settings/substitute-receipt')), [policyRow]);
+    assert.deepEqual(rows(['expense.read']).filter((row) => row.endsWith('/settings/substitute-receipt')), []);
+  });
+
+  it('gives the shop details, the 50 ทวิ signature and the package page a row under ตั้งค่าร้าน, with one name for the package', () => {
+    const permissions = ['company.settings.view', 'company.setup.read', 'company.setup.manage', 'company.branch.read', 'company.tax_signature.manage', 'company.plan.manage'];
+    const settings = buildNavItems(filterModulesByPermissions(WORKSPACE_MODULES, permissions), 'co', 'th', {}, permissions)
+      .find((nav) => nav.key === 'settings');
+    assert.deepEqual(settings?.subItems?.map((sub) => [sub.key, sub.label, sub.href]), [
+      ['settings.overview', 'ภาพรวมการตั้งค่า', '/companies/co/settings'],
+      ['settings.company-profile', 'ข้อมูลร้าน', '/companies/co/settings/profile'],
+      ['settings.branches', 'สาขา', '/companies/co/settings/branches'],
+      ['settings.substitute-receipt', 'ตั้งค่าใบรับรองแทนใบเสร็จ', '/companies/co/settings/substitute-receipt'],
+      ['settings.tax-signature', 'ลายเซ็นบน 50 ทวิ', '/companies/co/settings/tax-signature'],
+      ['settings.billing', 'แพ็กเกจ', '/companies/co/billing'],
+    ]);
+    assert.equal(buildLockedNavItems('co', {}, ['company.plan.manage']).find((item) => item.key === 'billing')?.label, 'แพ็กเกจ');
+    // Each settings page lights its own row and never the overview with it (the sidebar's own rule).
+    const rows = settings!.subItems!;
+    for (const [path, key] of [['/settings', 'settings.overview'], ['/settings/profile', 'settings.company-profile'], ['/settings/branches', 'settings.branches'],
+      ['/settings/substitute-receipt', 'settings.substitute-receipt'], ['/settings/tax-signature', 'settings.tax-signature'], ['/billing', 'settings.billing']] as const) {
+      const pathname = `/companies/co${path}`;
+      const activeKey = getActiveModuleKey(WORKSPACE_MODULES, 'co', pathname) ?? undefined;
+      assert.deepEqual(rows.filter((row) => isActiveNavSubItem(pathname, activeKey, row, rows)).map((row) => row.key), [key], path);
+    }
   });
 
   it('requires expense.evidence.read for the evidence submenu', () => {
@@ -866,9 +920,10 @@ describe('canAccessWorkspacePath', () => {
       assert.equal(canSeeRoute(rule.path, []), false, `${rule.path}: direct empty`);
       assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [], 'abc', path), false, `${rule.path}: path empty`);
       for (const permission of rule.anyOf) {
-        assert.equal(canSeeRoute(rule.path, [permission]), true, `${rule.path}: direct ${permission}`);
+        const permissions = rule.path === '/ai-suggestions' ? [permission, 'bank.cash.read'] : [permission];
+        assert.equal(canSeeRoute(rule.path, permissions), true, `${rule.path}: direct ${permission}`);
         assert.equal(
-          canAccessWorkspacePath(WORKSPACE_MODULES, [permission], 'abc', path),
+          canAccessWorkspacePath(WORKSPACE_MODULES, permissions, 'abc', path),
           true,
           `${rule.path}: path ${permission}`,
         );

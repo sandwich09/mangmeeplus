@@ -21,7 +21,6 @@ const input: CreateExpenseDraftInput = {
   captureSource: 'WEB_MANUAL',
   expenseDate: '2026-08-25',
   vatMode: 'NO_VAT',
-  inputVatClaimStatus: 'NON_CLAIMABLE',
   lines: [],
 };
 
@@ -117,7 +116,7 @@ describe('expenses runoff stays open while the route is closed', () => {
   // gating them would strand half-reviewed drafts the CLOSE was never meant to touch. Constructor
   // arity is the fence: injecting a guard into either one fails here first.
   it('does not wire a launch gate into mark-ready or confirm', () => {
-    assert.equal(MarkExpenseReadyUseCase.length, 1, 'mark-ready takes the repository only');
+    assert.equal(MarkExpenseReadyUseCase.length, 3, 'mark-ready takes repository, eligible people and notices without a launch gate');
     assert.equal(ConfirmExpenseUseCase.length, 4, 'confirm takes repo, audit, tax and VAT registration; numbering is inside the repository transaction');
   });
 

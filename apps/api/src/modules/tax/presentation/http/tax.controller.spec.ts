@@ -1,3 +1,4 @@
+import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { TaxController } from './tax.controller.js';
@@ -181,13 +182,13 @@ describe('C1 handoff list route compatibility', () => {
     const noop = {} as any;
     const value = new TaxController(noop, noop, noop, noop, noop, handoffs as any, noop, noop, noop, noop, noop, noop, noop, noop);
     assert.deepEqual(await value.listWhtHandoffs(ctx, ctx.companyId), []);
-    assert.deepEqual(await value.listWhtHandoffs(ctx, ctx.companyId, undefined, undefined, 'expense-1'), []);
-    const result = await (value.listWhtHandoffs as any)(ctx, ctx.companyId, 'REQUIRED', 'branch-1', undefined, '1', '20', 'ผู้รับ');
+    assert.deepEqual(await value.listWhtHandoffs(ctx, ctx.companyId, { sourcePaymentId: 'expense-1' }), []);
+    const result = await (value.listWhtHandoffs as any)(ctx, ctx.companyId, { status: 'REQUIRED', branchId: 'branch-1', page: '1', pageSize: '20', search: 'ผู้รับ', order: 'oldest' });
     assert.ok(Array.isArray(result.rows));
     assert.deepEqual(calls.map(call => call[0]), ['array', 'array', 'paged']);
     assert.equal(calls[1][1].sourcePaymentId, 'expense-1');
-    assert.deepEqual(calls[2][1], { status: 'REQUIRED', branchId: 'branch-1', sourcePaymentId: undefined, page: 1, pageSize: 20, search: 'ผู้รับ' });
-    await assert.rejects(() => (value.listWhtHandoffs as any)(ctx, 'other-company', undefined, undefined, undefined, '1'), /company/i);
+    assert.deepEqual(calls[2][1], { status: 'REQUIRED', branchId: 'branch-1', sourcePaymentId: undefined, page: 1, pageSize: 20, search: 'ผู้รับ', order: 'oldest' });
+    await assert.rejects(() => (value.listWhtHandoffs as any)(ctx, 'other-company', { page: '1' }), /company/i);
     assert.equal(calls.length, 3);
   });
 });
@@ -236,8 +237,8 @@ describe('C1 by-id controller delegation', () => {
     const handoffs = { list: async () => { calls.push('array'); return []; }, listPaged: async (_ctx: any, filter: any) => { calls.push(filter); return { rows: [] }; } };
     const noop = {} as any;
     const value = new TaxController(noop, noop, noop, noop, noop, handoffs as any, noop, noop, noop, noop, noop, noop, noop, noop);
-    assert.deepEqual(await value.listWhtHandoffs(ctx, ctx.companyId, undefined, undefined, undefined, undefined, undefined, 'payee'), []);
-    await value.listWhtHandoffs(ctx, ctx.companyId, undefined, undefined, undefined, undefined, '100');
+    assert.deepEqual(await value.listWhtHandoffs(ctx, ctx.companyId, { search: 'payee' }), []);
+    await value.listWhtHandoffs(ctx, ctx.companyId, { pageSize: '100' });
     assert.equal(calls[0], 'array'); assert.ok(Number.isNaN(calls[1].page)); assert.equal(calls[1].pageSize, 100);
   });
 });
@@ -274,4 +275,542 @@ describe('C15 self-issued removal route', () => {
     assert.deepEqual(await value.removeExternalWhtCertificate(ctx, 'company-1', 'handoff', body), { status: 'REQUIRED' });
     assert.deepEqual(calls, [[ctx, 'handoff', body]]);
   });
+});
+
+
+describe('form-aware withholding routes', () => {
+  it('shares narrow handlers and permissions with the PND53 alias and validates the path form', async () => {
+    const { REQUIRED_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+    const handler = TaxController.prototype.listPnd53Periods;
+    assert.deepEqual(Reflect.getMetadata('path', handler), ['tax/pnd53/periods', 'tax/withholding/:formType/periods']);
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler), ['wht.pnd53.read']);
+    for (const form of ['PND3', 'PND53']) {
+      const value = controller({ findPeriods: async (_c: string, filter: any) => { assert.equal(filter.formType, form); return []; } });
+      await value.listPnd53Periods(ctx, ctx.companyId, form);
+    }
+    await assert.rejects(controller({}).listPnd53Periods(ctx, ctx.companyId, 'PP30'), (e: any) => e.getStatus() === 400);
+  });
+  it('rejects the other form at every period boundary', async () => {
+    for (const form of ['PND3', 'PND53']) {
+      const value = controller({ findPeriodById: async () => ({ formType: form === 'PND3' ? 'PND53' : 'PND3' }),
+        prisma: { client: { taxReviewIssue: { findFirst: async () => ({ taxPeriodId: 'p' }) } } } });
+      for (const call of [() => value.listPnd53Events(ctx, ctx.companyId, 'p', form),
+        () => value.generatePnd53(ctx, ctx.companyId, 'p', form),
+        () => value.exportPnd53(ctx, ctx.companyId, 'p', { exportFormat: 'PDF' }, form),
+        () => value.listPnd53Issues(ctx, ctx.companyId, 'p', form),
+        () => value.markPnd53Filed(ctx, ctx.companyId, 'p', {}, form),
+        () => value.resolvePnd53Issue(ctx, ctx.companyId, 'i', { note: 'checked' }, form)]) {
+        await assert.rejects(call, (e: any) => e.getStatus() === 404);
+      }
+    }
+  });
+});
+
+describe('withholding month read', () => {
+  it('joins both forms, exact totals, scoped issues and downloadable certificates without creating periods', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-05') });
+    const { GenerateWhtReportUseCase } = await import('../../application/use-cases/generate-wht-report.use-case');
+    const periods = ['PND3', 'PND53'].map(formType => ({ id: formType, formType, status: 'OPEN', periodKey: '2026-09', dueDate: null }));
+    const event = (id: string, form: string, sourceId: string) => ({ id, eventType: `WHT_${form}`, whtFormType: form, taxPeriodId: form, sourceType: 'expense.record', sourceId,
+      eventDate: new Date('2026-09-10'), periodKey: '2026-09', grossAmount: '1000.1000', withheldAmount: '30.0030', whtRate: '3.0000',
+      incomeCategoryCode: form === 'PND3' ? null : 'WHT_SERVICE_5', payeeSnapshotJson: { name: 'ผู้รับเงิน', taxId: '1100700000001', address: '55 ถนนสุขุมวิท กรุงเทพมหานคร' }, currency: 'THB', branchId: null });
+    const issues = [{ id: 'unknown', taxPeriodId: 'PND53', sourceType: 'expense.record', sourceId: 'unknown-expense', issueCode: 'WHT_PAYEE_KIND_UNKNOWN', description: 'ต้องแก้ไข', severity: 'BLOCKING' },
+      { id: 'hidden', taxPeriodId: 'PND53', sourceType: 'expense.record', sourceId: 'outside', issueCode: 'WHT_PAYEE_KIND_UNKNOWN' }];
+    let linked = true;
+    let actor: any = { ...ctx, permissions: ['wht.pnd53.read', 'wht.certificate.read', 'expense.read'], scopes: { branchIds: ['b1'] } };
+    const handoff: any = { id: 'h', companyId: ctx.companyId, status: 'SYSTEM_ISSUED', sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1', sourceBranchId: 'b1', certificateId: 'cert', taxEventIdsJson: ['e1'] };
+    const db: any = {
+      whtFiling: { findFirst: async () => null, findMany: async () => [] },
+      taxPeriod: { findMany: async ({ where }: any) => { assert.equal(where.companyId, ctx.companyId); return periods; } },
+      taxEvent: { findMany: async ({ where, orderBy }: any) => {
+        if (orderBy) assert.deepEqual(orderBy, [{ eventDate: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }]);
+        assert.equal(where.companyId, ctx.companyId); assert.equal(where.status, 'ACTIVE');
+        if (where.OR) assert.deepEqual(where.OR, [{ branchId: { in: ['b1'] } }, { branchId: null }]);
+        return [event('e1', 'PND3', 'expense-1'), event('e2', 'PND53', 'expense-2'), event('e3', 'PND3', 'outside')];
+      } },
+      taxReviewIssue: { findMany: async () => issues },
+      expenseRecord: { findMany: async ({ where }: any) => {
+        if (!where.id) assert.ok(JSON.stringify(where).includes('b1'));
+        else if (where.OR) assert.ok(JSON.stringify(where).includes('b1'));
+        else assert.ok(where.id.in.length > 0);
+        return ['expense-1', 'expense-2', 'unknown-expense'].map(id => ({ id, payments: [{ createdAt: new Date(id === 'expense-1' ? '2026-09-12' : '2026-09-11') }], branchId: 'b1', vendorCounterpartyId: linked ? `cp-${id}` : null, vendorNameSnapshot: 'สมชาย', vendorEntityKindSnapshot: id === 'expense-1' ? 'INDIVIDUAL' : 'JURISTIC', whtCategoryCode: 'WHT_SERVICE_3' }));
+      } },
+      company: { findUnique: async () => ({ registeredName: 'ร้าน', taxId: '1100700000001', addressJson: { line1: '55 ถนน', subdistrict: 'จอมพล', district: 'จตุจักร', province: 'กรุงเทพมหานคร', postalCode: '10900' } }) },
+      companyTaxProfile: { findUnique: async () => null },
+      supplierPayment: { findMany: async () => [] },
+      whtIncomeCategory: { findMany: async () => [{ code: 'WHT_SERVICE_3', nameTh: 'ค่าบริการบุคคล' }, { code: 'WHT_SERVICE_5', nameTh: 'ค่าบริการบริษัท' }] },
+      whtCertificateHandoff: { findMany: async ({ select }: any) => select?.sourcePaymentId ? [{ sourcePaymentId: 'expense-1' }] : [handoff] },
+      whtCertificate: { findMany: async () => [{ id: 'cert', status: 'ISSUED', certificateNumber: 'WT-1' }] },
+    };
+    db.whtFiling ??= { findMany: async () => [] };
+    db.whtPayerModeFact ??= { findMany: async () => [] };
+    db.branch ??= { findMany: async () => [] };
+    db.$transaction = async (work: any) => work(db);
+    const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
+    const result = await reader.getMonth(actor, '2026-09');
+    assert.equal(result.periodKey, '2026-09'); assert.equal(result.payments.length, 2);
+    assert.deepEqual(result.forms.map(f => [f.formType, f.paymentCount, f.totalPaid, f.totalWithheld]), [
+      ['PND3', 1, '1000.1000', '30.0030'], ['PND53', 1, '1000.1000', '30.0030'],
+    ]);
+    assert.equal(result.forms[0].dueDate, '2026-10-07');
+    assert.equal(result.forms[1].issues.length, 1);
+    assert.equal(result.forms[1].issues[0].counterpartyId, 'cp-unknown-expense');
+    assert.equal(result.forms[1].issues[0].sourceId, 'unknown-expense');
+    assert.equal(result.forms[1].issues[0].expenseId, 'unknown-expense');
+    assert.equal(result.forms[1].issues[0].description, 'ยังไม่รู้ว่า สมชาย เป็นบริษัทหรือบุคคล เปิดคู่ค้าแล้วเลือกประเภทก่อน');
+    linked = false;
+    const unlinked = (await reader.getMonth(actor, '2026-09')).forms[1].issues[0];
+    assert.equal(unlinked.counterpartyId, null);
+    assert.equal(unlinked.expenseId, 'unknown-expense');
+    assert.equal(unlinked.description, 'ยังไม่รู้ว่า สมชาย เป็นบริษัทหรือบุคคล เปิดรายจ่ายแล้วเลือกว่าผู้รับเงินเป็นบริษัทหรือบุคคล');
+
+    assert.equal(result.payments[0].incomeCategoryLabel, 'ค่าบริการบุคคล');
+    assert.equal(result.payments[0].certificate?.number, 'WT-1');
+    assert.equal(result.payments[0].certificate?.canDownload, true);
+    handoff.taxEventIdsJson = [];
+    handoff.prefillSnapshotJson = { expensePaymentId: 'another-payment' };
+    assert.equal((await reader.getMonth(actor, '2026-09')).payments[0].certificate, null, 'a different partial payment cannot borrow this certificate');
+    delete handoff.prefillSnapshotJson;
+    actor = { ...actor, permissions: ['wht.pnd53.read'] };
+    assert.equal((await reader.getMonth(actor, '2026-09')).payments[0].certificate?.canDownload, false);
+    await assert.rejects(reader.getMonth(actor, '2026-13'), (e: any) => e.getStatus() === 400);
+  });
+  it('lists months newest first from withholding payments or returns, and returns two empty cards for an empty month', async () => {
+    const { GenerateWhtReportUseCase } = await import('../../application/use-cases/generate-wht-report.use-case');
+    const db: any = {
+      company: { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) },
+      taxPeriod: { findMany: async () => [{ periodKey: '2026-07' }, { periodKey: '2026-09' }] },
+      taxEvent: { findMany: async () => [{ periodKey: '2026-08' }, { periodKey: '2026-09' }] },
+      expenseRecord: { findMany: async () => [] }, supplierPayment: { findMany: async () => [] },
+    };
+    db.whtFiling ??= { findMany: async () => [] };
+    db.whtPayerModeFact ??= { findMany: async () => [] };
+    db.branch ??= { findMany: async () => [] };
+    db.$transaction = async (work: any) => work(db);
+    const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
+    assert.deepEqual(await reader.listMonths(ctx), { months: ['2026-09', '2026-08', '2026-07'] });
+    db.taxPeriod.findMany = async () => []; db.taxEvent.findMany = async () => [];
+    db.taxReviewIssue = { findMany: async () => [] };
+    db.whtIncomeCategory = { findMany: async () => [] };
+    const empty = await reader.getMonth(ctx, '2026-10');
+    assert.equal(empty.forms.length, 2); assert.deepEqual(empty.payments, []);
+    assert.ok(empty.forms.every(f => f.periodId === null && f.status === null && f.paymentCount === 0 && f.totalPaid === '0.0000'));
+  });
+});
+
+
+it('narrow handlers keep the alias, both forms, prepare permissions and reviewer gate', async () => {
+  const { REQUIRED_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+  const calls: any[] = [];
+  const service = { execute: async (...args: any[]) => { calls.push(args); return {}; } } as any;
+  const noop = {} as any;
+  for (const form of ['PND3', 'PND53', undefined]) {
+    const expected = form ?? 'PND53';
+    const repo = withProfile({ findPeriodById: async () => ({ id: 'p', formType: expected, periodKey: '2026-09', status: 'OPEN' }),
+      findEventsByPeriod: async () => [], findIssuesByPeriod: async () => [],
+      prisma: { client: { taxReviewIssue: { findFirst: async () => ({ taxPeriodId: 'p' }) } } } });
+    const value = new TaxController(service, noop, service, service, noop, noop, noop, noop, noop, noop, noop, noop, repo, noop);
+    await value.syncPnd53(ctx, ctx.companyId, form);
+    assert.deepEqual(calls.at(-1), [ctx.companyId, undefined, form === undefined ? 'PND53' : 'WHT']);
+    await value.generatePnd53(ctx, ctx.companyId, 'p', form);
+    assert.deepEqual(calls.at(-1), [ctx.companyId, expected, '2026-09']);
+    await value.exportPnd53(ctx, ctx.companyId, 'p', { exportFormat: 'PDF' }, form);
+    assert.deepEqual(calls.at(-1), [ctx, 'p', 'PDF', undefined, undefined]);
+    await value.exportPnd53(ctx, ctx.companyId, 'p', { exportFormat: 'XLSX', establishmentCode: '00000', sequence: 2 }, form);
+    assert.deepEqual(calls.at(-1), [ctx, 'p', 'XLSX', '00000', 2]);
+    assert.deepEqual(await value.listPnd53Events(ctx, ctx.companyId, 'p', form), []);
+    assert.deepEqual(await value.listPnd53Issues(ctx, ctx.companyId, 'p', form), []);
+    for (const action of [() => value.markPnd53Filed({ ...ctx, roles: ['FINANCE'] }, ctx.companyId, 'p', {}, form),
+      () => value.resolvePnd53Issue({ ...ctx, roles: ['FINANCE'] }, ctx.companyId, 'i', { note: 'ตรวจแล้ว' }, form)]) {
+      await assert.rejects(action, (e: any) => e.getResponse().code === 'tax_reviewer_role_required');
+    }
+  }
+  for (const method of ['syncPnd53', 'generatePnd53', 'exportPnd53', 'resolvePnd53Issue', 'markPnd53Filed'] as const) {
+    const handler = TaxController.prototype[method];
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler), ['wht.pnd53.prepare']);
+    assert.equal(Reflect.getMetadata('path', handler).length, 2);
+  }
+  for (const method of ['listWithholdingMonths', 'getWithholdingMonth'] as const) {
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, TaxController.prototype[method]), ['wht.pnd53.read']);
+  }
+});
+
+it('offers a month with withheld source payments before its first sync', async () => {
+  const { GenerateWhtReportUseCase } = await import('../../application/use-cases/generate-wht-report.use-case');
+  const reader = new GenerateWhtReportUseCase({ prisma: { client: {
+    company: { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) },
+    taxPeriod: { findMany: async () => [] }, taxEvent: { findMany: async () => [] },
+    expenseRecord: { findMany: async ({ where }: any) => { assert.equal(where.status, 'CONFIRMED'); assert.deepEqual(where.whtAmount, { gt: 0 }); return [{ expenseDate: new Date('2026-10-28'), payments: [{ paidAt: new Date('2026-11-04T18:00:00Z') }] }]; } },
+    supplierPayment: { findMany: async ({ where }: any) => { assert.equal(where.status, 'RECORDED'); return [{ paymentDate: new Date('2026-09-20') }]; } },
+  } } } as any);
+  assert.deepEqual(await reader.listMonths(ctx), { months: ['2026-11', '2026-09'] });
+});
+
+
+it('official export refusals return a stable 409 code and every current Thai reason for both forms', async (t) => {
+  const { GenerateTaxFilingPackageUseCase } = await import('../../application/use-cases/generate-tax-filing-package.use-case');
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-05') });
+  for (const formType of ['PND3', 'PND53']) {
+    for (const reason of ['PAYER', 'REVIEW']) {
+      const recorded: any[] = [];
+      const period = { id: 'p', formType, periodKey: '2026-09', status: 'OPEN', dueDate: new Date('2026-10-07') };
+      const repo = withProfile({
+        findPeriodById: async () => period,
+        findEventsByPeriod: async () => [{ id: 'event', eventDate: new Date('2026-09-10'), branchId: null }],
+        findIssuesByPeriod: async () => reason === 'REVIEW' ? [{ id: 'missing', issueCode: 'MISSING_TAX_ID', description: 'ยังไม่มีเลขผู้เสียภาษี', severity: 'BLOCKING', sourceType: null, sourceId: null }] : [],
+        createIssue: async (issue: any) => { recorded.push(issue); },
+        prisma: { client: { whtFiling: { findFirst: async () => null, findMany: async () => [] }, taxReportSnapshot: { findFirst: async () => null }, company: { findUnique: async () => ({}) },
+          branch: { findMany: async () => [] }, whtPayerModeFact: { findMany: async () => [] }, whtIncomeCategory: { findMany: async () => [] } } },
+      });
+      const noop = {} as any;
+      const filing = new GenerateTaxFilingPackageUseCase(repo as any, noop, noop, noop, noop);
+      const value = new TaxController(noop, noop, noop, filing, noop, noop, noop, noop, noop, noop, noop, noop, repo as any, noop);
+      await assert.rejects(value.exportPnd53(ctx, ctx.companyId, 'p', { exportFormat: 'PDF' }, formType), (error: any) => {
+        assert.equal(error.getStatus(), 409);
+        assert.equal(error.getResponse().code, `${formType}_FILING_${reason}`);
+        assert.equal(error.getResponse().message, error.getResponse().issues[0].description);
+        assert.ok(error.getResponse().issues.length > 1, 'one refusal exposes all current faults');
+        assert.equal(recorded.length, 0);
+        assert.match(error.getResponse().message, /[ก-๙]/);
+        return true;
+      });
+    }
+  }
+});
+
+
+it('both narrow filing routes reject changed payments with a Thai 409 and accept a fresh download', async () => {
+  const { withholdingPaymentFacts } = await import('../../application/services/withholding-filing-state');
+  for (const formType of ['PND3', 'PND53']) for (const exportFormat of ['PDF', 'XLSX']) {
+    const first: any = { sourceType: 'expense.record', sourceId: 'expense-1', eventDate: new Date('2026-09-10'), grossAmount: '1000', withheldAmount: '30', whtRate: '3' };
+    let events = [first], frozen = events.map(event => ({ lineJson: { payment: withholdingPaymentFacts(event) } })), updates = 0, syncs = 0;
+    const pkg = { id: 'pkg', exportFormat, generatedAt: new Date() };
+    const db: any = {
+      $queryRaw: async () => [], taxReviewIssue: { findMany: async () => [] }, branch: { findMany: async () => [] }, whtPayerModeFact: { findMany: async () => [] },
+      taxFilingPackage: { findFirst: async ({ where }: any) => { assert.ok(where.exportFormat.in.includes(exportFormat)); return pkg; }, update: async () => { updates++; } },
+      whtFiling: { findMany: async () => [{ id: 'f', status: 'FILED', lines: frozen }], findFirst: async () => ({ id: 'f', establishmentCode: '00000', status: 'EXPORTED', rowsCertain: true, lines: frozen, latestPackage: pkg }), updateMany: async ({ data }: any) => { assert.equal(data.filedByUserId, ctx.userId); assert.ok(data.filedAt instanceof Date); updates++; return { count: 1 }; } },
+      taxPeriod: { findFirst: async () => ({ status: 'EXPORTED' }), update: async () => { updates++; } },
+      expenseRecord: { findMany: async () => events.map(event => ({ id: event.sourceId })) },
+      $transaction: async (operations: any) => typeof operations === 'function' ? operations(db) : Promise.all(operations),
+      taxEvent: { findMany: async () => events.map(event => ({ ...event, payeeSnapshotJson: null })) },
+    };
+    const repo = withProfile({ prisma: { client: db }, findPeriodById: async () => ({ id: 'p', formType, status: 'EXPORTED', periodKey: '2026-09' }),
+      findEventsByPeriod: async () => events, findIssuesByPeriod: async () => [], markWithholdingFilingFiled: PrismaTaxRepository.prototype.markWithholdingFilingFiled });
+    const noop = {} as any;
+    const value = new TaxController({ execute: async () => { syncs++; } } as any, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, repo, { log: async () => {} } as any);
+    for (const changed of [[first, { ...first, sourceId: 'expense-2' }], [], [{ ...first, withheldAmount: '60' }]]) {
+      events = changed;
+      await assert.rejects(value.markPnd53Filed(ctx, ctx.companyId, 'p', {}, formType), (e: any) => {
+        assert.equal(e.getStatus(), 409); assert.equal(e.getResponse().code, 'WHT_FILING_CHANGED_AFTER_DOWNLOAD');
+        assert.equal(e.getResponse().message, 'มีรายการเปลี่ยนหลังดาวน์โหลดแบบ ดาวน์โหลดแบบใหม่ก่อนยื่น'); return true;
+      });
+      assert.equal(updates, 0);
+    }
+    events = [first]; frozen = events.map(event => ({ lineJson: { payment: withholdingPaymentFacts(event) } }));
+    await value.markPnd53Filed(ctx, ctx.companyId, 'p', {}, formType);
+    assert.equal(updates, 3); assert.equal(syncs, 4);
+    updates = 0;
+    repo.prisma.client.$transaction = async (work: any) => {
+      events = [...events, { ...first, sourceId: 'raced-payment' }];
+      return typeof work === 'function' ? work(db) : Promise.all(work);
+    };
+    await assert.rejects(value.markPnd53Filed(ctx, ctx.companyId, 'p', {}, formType), (e: any) => e.getResponse().code === 'WHT_FILING_CHANGED_AFTER_DOWNLOAD');
+    assert.equal(updates, 0, 'recheck the payment set inside the filing transaction');
+  }
+});
+
+
+it('month payments sort by payment date then source recording time with a stable source tie-break', async () => {
+  const { GenerateWhtReportUseCase } = await import('../../application/use-cases/generate-wht-report.use-case');
+  const events = ['older', 'newer', 'same-time', 'next-day'].map((id, i) => ({ id, sourceId: id, sourceType: 'expense.record',
+    eventType: 'WHT_PND3', eventDate: new Date(i === 3 ? '2026-09-11' : '2026-09-10'), createdAt: new Date(2030 - i, 1), grossAmount: '1000', withheldAmount: '30', payeeSnapshotJson: { name: id } }));
+  const db: any = { taxPeriod: { findMany: async () => [] }, taxEvent: { findMany: async () => events }, taxReviewIssue: { findMany: async () => [] },
+    expenseRecord: { findMany: async () => events.map(e => ({ id: e.id, payments: [{ createdAt: new Date(e.id === 'older' ? '2026-09-12T01:00:00Z' : '2026-09-12T02:00:00Z') }] })) },
+    whtIncomeCategory: { findMany: async () => [] }, whtCertificateHandoff: { findMany: async () => [] } };
+  db.whtFiling ??= { findMany: async () => [] };
+    db.whtPayerModeFact ??= { findMany: async () => [] };
+    db.branch ??= { findMany: async () => [] };
+    db.$transaction = async (work: any) => work(db);
+  const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
+  const read = async () => (await reader.getMonth(ctx, '2026-09')).payments.map(p => p.id);
+  assert.deepEqual(await read(), ['next-day', 'same-time', 'newer', 'older']);
+  events.reverse(); assert.deepEqual(await read(), ['next-day', 'same-time', 'newer', 'older']);
+});
+
+
+describe('payer mode foundation routes and additive month fields', () => {
+  it('reads the chosen month, accepts only legal-identity managers, and preserves tenant boundaries', async () => {
+    const { REQUIRED_PERMISSIONS_KEY, REQUIRED_ANY_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, TaxController.prototype.answerWhtPayerMode), ['company.legal_identity.manage']);
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, TaxController.prototype.getWhtPayerMode), ['wht.pnd53.read', 'company.legal_identity.manage', 'company.branch.read']);
+    let saved = 0;
+    const value = controller({
+      readWhtPayerMode: async (companyId: string, month: string) => ({ companyId, periodKey: month, asked: true }),
+      answerWhtPayerMode: async () => { saved++; return { asked: true }; },
+    });
+    assert.equal((await value.getWhtPayerMode(ctx, 'company-1', '2026-09')).periodKey, '2026-09');
+    await assert.rejects(value.answerWhtPayerMode(ctx, 'company-1', { mode: 'EACH_BRANCH_PAYS' }), (e: any) => e.getResponse().code === 'WHT_PAYER_MODE_FORBIDDEN');
+    await assert.rejects(value.answerWhtPayerMode({ ...ctx, permissions: ['company.legal_identity.manage'] }, 'other', { mode: 'EACH_BRANCH_PAYS' }), /company/i);
+    await value.answerWhtPayerMode({ ...ctx, permissions: ['company.legal_identity.manage'] }, 'company-1', { mode: 'EACH_BRANCH_PAYS' });
+    assert.equal(saved, 1);
+  });
+  it('retains every payment and unchanged cards while adding resolved or unanswered establishments', async () => {
+    const { GenerateWhtReportUseCase } = await import('../../application/use-cases/generate-wht-report.use-case');
+    const branches: any[] = [{ id: 'head', name: 'ร้าน', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: null }];
+    const facts: any[] = [];
+    const db: any = {
+      branch: { findMany: async () => branches }, whtPayerModeFact: { findMany: async () => facts },
+      taxPeriod: { findMany: async () => [] }, taxReviewIssue: { findMany: async () => [] },
+      taxEvent: { findMany: async () => [{ id: 'e', branchId: null, sourceType: 'expense.record', sourceId: 'expense', eventType: 'WHT_PND3', eventDate: new Date('2026-09-01'), grossAmount: '1000', withheldAmount: '30' }] },
+      expenseRecord: { findMany: async () => [{ id: 'expense', branchId: 'branch', status: 'CONFIRMED' }] }, supplierPayment: { findMany: async () => [] },
+      whtIncomeCategory: { findMany: async () => [] }, whtCertificateHandoff: { findMany: async () => [] },
+    };
+    db.whtFiling ??= { findMany: async () => [] }; db.$transaction = async (fn: any) => fn(db);
+    const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
+    const one = await reader.getMonth(ctx, '2026-09');
+    assert.deepEqual(one.payments[0].establishment, { kind: 'ESTABLISHMENT', code: '00000', branchId: 'head', name: 'สำนักงานใหญ่' });
+    assert.deepEqual(one.establishments?.map(({ forms, ...e }) => e), [one.payments[0].establishment]);
+    branches.push({ id: 'branch', name: 'สาขา', type: 'BRANCH', status: 'ACTIVE', taxBranchCode: null });
+    const unanswered = await reader.getMonth(ctx, '2026-09');
+    assert.deepEqual(unanswered.payments[0].establishment, { kind: 'SHOP_HAS_NOT_ANSWERED' });
+    facts.push({ id: 'fact', mode: 'EACH_BRANCH_PAYS', effectiveFromPeriodKey: '2026-09', answeredAt: new Date(), supersededAt: null });
+    const missing = await reader.getMonth(ctx, '2026-09');
+    assert.equal(missing.payments.length, 1);
+    assert.deepEqual(missing.payments[0].establishment, { kind: 'BRANCH_HAS_NO_CODE', branchId: 'branch' });
+    assert.deepEqual(missing.establishments, []);
+    assert.equal(missing.establishmentIssues?.[0].issueCode, 'WHT_BRANCH_HAS_NO_CODE'); assert.equal(missing.establishmentIssues?.[0].paymentCount, 1);
+    branches[1].taxBranchCode = '00002';
+    const resolved = await reader.getMonth(ctx, '2026-09');
+    assert.deepEqual(resolved.establishments?.map(({ forms, ...e }) => e), [{ kind: 'ESTABLISHMENT', code: '00002', branchId: 'branch', name: 'สาขา' }]);
+    assert.equal(resolved.forms[0].paymentCount, one.forms[0].paymentCount); assert.equal(resolved.forms[0].establishmentCode, '00002');
+  });
+});
+
+
+it('payer mode body validates the two choices and a monthly boundary', async () => {
+  const { validate } = await import('class-validator');
+  const { AnswerWhtPayerModeDto } = await import('./tax.dtos');
+  for (const body of [{ mode: 'HEAD_OFFICE_PAYS_ALL' }, { mode: 'EACH_BRANCH_PAYS', effectiveFromPeriodKey: '2026-09' }]) {
+    assert.equal((await validate(Object.assign(new AnswerWhtPayerModeDto(), body))).length, 0);
+  }
+  for (const body of [{}, { mode: 'ANY' }, { mode: 'EACH_BRANCH_PAYS', effectiveFromPeriodKey: '2026-13' }]) {
+    assert.ok((await validate(Object.assign(new AnswerWhtPayerModeDto(), body))).length > 0);
+  }
+});
+
+it('month separates both forms by establishment, narrows faults, and keeps missing-code rows off every paper', async () => {
+  const { GenerateWhtReportUseCase } = await import('../../application/use-cases/generate-wht-report.use-case');
+  const address = { line1: '55 ถนนลาดพร้าว', subdistrict: 'จอมพล', district: 'จตุจักร', province: 'กรุงเทพมหานคร', postalCode: '10900' };
+  const branches = [{ id: 'head', type: 'HEAD_OFFICE', status: 'ACTIVE', name: 'ร้าน', taxBranchCode: null },
+    { id: 'b', type: 'BRANCH', status: 'ACTIVE', name: 'สาขาสอง', taxBranchCode: '00002', addressJson: address },
+    { id: 'missing', type: 'BRANCH', status: 'ACTIVE', name: 'สาขายังไม่มีรหัส', taxBranchCode: null }];
+  const events = ['head', 'b', 'missing'].flatMap(branchId => ['PND3', 'PND53'].map(form => ({
+    id: `${branchId}-${form}`, sourceId: `${branchId}-${form}`, sourceType: 'expense.record', branchId, taxPeriodId: form, eventType: `WHT_${form}`, whtFormType: form,
+    eventDate: new Date('2026-09-10'), currency: 'THB', incomeCategoryCode: form, whtRate: '3', grossAmount: '1000', withheldAmount: '30',
+    payeeSnapshotJson: { name: 'ผู้รับเงิน', taxId: branchId === 'b' && form === 'PND3' ? null : '1100700000001', address: '55 กรุงเทพ 10110' },
+  })));
+  const facts: any[] = [{ mode: 'EACH_BRANCH_PAYS', effectiveFromPeriodKey: '2026-01', supersededAt: null }];
+  const db: any = {
+    branch: { findMany: async () => branches, findFirst: async ({ where }: any) => branches.find(b => b.id === where.id) }, whtPayerModeFact: { findMany: async () => facts },
+    taxPeriod: { findMany: async () => ['PND3', 'PND53'].map(formType => ({ id: formType, formType, periodKey: '2026-09', status: 'OPEN', dueDate: new Date('2099-10-07') })) },
+    taxEvent: { findMany: async ({ where }: any) => where.OR ? events.filter(e => where.OR[0].branchId.in.includes(e.branchId)) : events },
+    expenseRecord: { findMany: async () => events.map(e => ({ id: e.id, branchId: e.branchId, status: 'CONFIRMED', vendorEntityKindSnapshot: e.whtFormType === 'PND3' ? 'INDIVIDUAL' : 'JURISTIC' })) },
+    supplierPayment: { findMany: async () => [] }, taxReviewIssue: { findMany: async () => [] }, whtFiling: { findMany: async () => [] },
+    company: { findUnique: async () => ({ registeredName: 'ร้าน', taxId: '0994000163011', addressJson: address }) }, companyTaxProfile: { findUnique: async () => null },
+    whtIncomeCategory: { findMany: async () => ['PND3', 'PND53'].map(code => ({ code, formType: code, nameTh: 'ค่าบริการ' })) },
+    whtCertificateHandoff: { findMany: async () => [] },
+    $transaction: async (fn: any) => fn(db),
+  };
+  const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
+  const month = await reader.getMonth(ctx, '2026-09');
+  assert.equal(month.payments.length, 6);
+  assert.deepEqual(month.establishments?.map(e => [e.code, e.forms.map(f => f.paymentCount)]), [['00000', [1, 1]], ['00002', [1, 1]]]);
+  assert.equal(month.establishments?.[0].forms[0].canDownload, true);
+  assert.equal(month.establishments?.[1].forms[0].canDownload, false);
+  assert.equal(month.establishments?.[1].forms[1].canDownload, true);
+  assert.equal(month.establishmentIssues?.[0].issueCode, 'WHT_BRANCH_HAS_NO_CODE');
+  assert.equal(month.establishmentIssues?.[0].paymentCount, 2);
+  const scoped = await reader.getMonth({ ...ctx, scopes: { branchIds: ['b'] } }, '2026-09');
+  assert.deepEqual(scoped.establishments?.map(e => e.code), ['00002']);
+  assert.equal(scoped.payments.length, 2);
+  const head = events.find(e => e.id === 'head-PND3') ?? events.find(e => e.branchId === 'h' && e.whtFormType === 'PND3') ?? events[0];
+  db.whtFiling.findMany = async () => [{ id: 'filed-head', taxPeriodId: 'PND3', establishmentCode: '00000', establishmentBranchId: head.branchId, status: 'FILED', rowsCertain: true, preparedBy: 'SYSTEM', lines: [{ sourceType: head.sourceType, sourceId: head.sourceId, lineJson: { payment: [null, null, null, null, null, null, '1000', '30'] } }] }];
+  events.push({ ...head, id: 'late-head', sourceId: 'late-head' });
+  const late = await reader.getMonth(ctx, '2026-09');
+  assert.equal(late.establishments?.find(e => e.code === '00000')?.forms[0].unfiledPaymentCount, 1);
+  assert.equal(late.establishments?.find(e => e.code === '00000')?.forms[0].paymentCount, 1, 'filed totals stay frozen');
+  const additionalForm = late.establishments!.find(e => e.code === '00000')!.forms[0];
+  assert.equal(additionalForm.paymentBasisChanged, true, 'old filed document-date rows with no recorded payment require accountant review');
+  assert.deepEqual(additionalForm.papers?.map(p => [p.sequence, p.status, p.paymentCount, p.totalWithheld]), [[0, 'FILED', 1, '30.0000'], [1, 'OPEN', 1, '30.0000']]);
+  assert.deepEqual(additionalForm.monthTotals, { paymentCount: 2, totalPaid: '2000.0000', totalWithheld: '60.0000' });
+  assert.equal(additionalForm.papers?.[1].noticeCode, 'WHT_ADDITIONAL_SURCHARGE_MANUAL');
+  assert.equal(late.payments.find(p => p.sourceId === 'late-head')?.paper?.sequence, 1);
+  assert.equal(late.payments.find(p => p.sourceId === head.sourceId)?.paper?.sequence, 0);
+  assert.equal(additionalForm.papers?.[1].canDownload, true);
+  assert.equal(additionalForm.papers?.[1].canMarkFiled, false);
+  const kept = await db.whtFiling.findMany();
+  kept.push({ ...kept[0], id: 'filed-additional', sequence: 1, lines: [{ sourceType: head.sourceType, sourceId: 'late-head', lineJson: { payment: [null, null, null, null, null, null, '1000', '30'] } }] });
+  db.whtFiling.findMany = async () => kept;
+  const closed = await reader.getMonth(ctx, '2026-09');
+  assert.deepEqual(closed.establishments!.find(e => e.code === '00000')!.forms[0].papers!.map(p => p.sequence), [0, 1], 'no empty next additional paper');
+  events.push({ ...head, id: 'late-head-2', sourceId: 'late-head-2' });
+  const next = await reader.getMonth(ctx, '2026-09');
+  const nextForm = next.establishments!.find(e => e.code === '00000')!.forms[0];
+  assert.deepEqual(nextForm.papers!.map(p => [p.sequence, p.status, p.paymentCount]), [[0, 'FILED', 1], [1, 'FILED', 1], [2, 'OPEN', 1]]);
+  assert.equal(nextForm.monthTotals!.totalWithheld, '90.0000');
+  assert.equal(next.payments.find(p => p.sourceId === 'late-head-2')?.paper?.sequence, 2);
+  assert.equal(next.payments.find(p => p.sourceId === 'late-head')?.paper?.sequence, 1);
+  // Cancellation is read from the source, but totals and rows remain those filed.
+  const originalReader = db.expenseRecord.findMany;
+  kept[0].lines[0].lineJson.payment[9] = 'ผู้รับเงิน';
+  kept[0].lines[0].lineJson.payment[10] = '1100700000001';
+  db.expenseRecord.findMany = async (query: any) => (await originalReader(query)).map((row: any) => row.id === head.sourceId
+    ? { ...row, status: 'VOIDED', voidedAt: new Date('2026-10-12'), voidedByUserId: 'canceller' } : row);
+  const cancelled = await reader.getMonth(ctx, '2026-09');
+  const cancelledForm = cancelled.establishments!.find(e => e.code === '00000')!.forms[0];
+  assert.equal(cancelledForm.papers![0].cancellations![0].cancelledByUserId, 'canceller');
+  assert.equal(cancelledForm.papers![0].totalWithheld, '30.0000');
+  assert.deepEqual(cancelledForm.papers![2].cancelledPayeeNames, ['ผู้รับเงิน']);
+  assert.equal(cancelledForm.papers![2].totalWithheld, '30.0000', 'new payment enters in full, never netted');
+  kept[0].rowsCertain = false;
+  const uncertain = await reader.getMonth({ ...ctx, permissions: ['wht.pnd53.prepare'] }, '2026-09');
+  const uncertainForm = uncertain.establishments!.find(e => e.code === '00000')!.forms[0];
+  assert.equal(uncertainForm.papers![0].canConfirmRows, true);
+  assert.equal(uncertainForm.papers![0].canDownload, false);
+  assert.equal(uncertainForm.papers![0].rowsUncertainNotice, 'รายการของแบบที่ยื่นไว้ตรวจได้ไม่ครบ ให้ผู้ทำบัญชีเทียบกับแบบที่ยื่นจริง');
+  assert.equal(uncertain.payments.find(p => p.sourceId === 'late-head-2')?.paper, null);
+  assert.equal(uncertainForm.papers!.some(p => p.sequence === 2), false);
+  const readOnly = await reader.getMonth(ctx, '2026-09');
+  assert.equal(readOnly.establishments![0].forms[0].papers![0].canConfirmRows, false);
+  kept[0].rowsCertain = true;
+  kept[0].payerSnapshotJson = { rowsConfirmation: { userId: 'accountant', at: '2026-10-14T01:00:00Z' } };
+  db.user = { findMany: async () => [{ id: 'accountant', displayName: 'สมใจ' }] };
+  const confirmed = await reader.getMonth(ctx, '2026-09');
+  assert.equal(confirmed.establishments![0].forms[0].papers![0].rowsConfirmation?.displayName, 'สมใจ');
+  db.expenseRecord.findMany = originalReader;
+  events.pop();
+
+
+  events.pop(); db.whtFiling.findMany = async () => [];
+  facts.length = 0;
+  const unanswered = await reader.getMonth(ctx, '2026-09');
+  assert.equal(unanswered.establishments?.length, 0);
+  assert.equal(unanswered.establishmentIssues?.[0].issueCode, 'WHT_PAYER_MODE_REQUIRED');
+  assert.ok(unanswered.forms.every(f => !f.canDownload));
+  assert.ok(unanswered.forms.every(f => !f.issues.some(i => i.issueCode.endsWith('_FILING_BRANCHES'))), 'only the linked question, not the old branch fault');
+  db.taxFilingPackage = { findFirst: async () => null };
+  for (const blocked of ['PND3', 'PND53']) {
+    const original = [...events];
+    events.splice(0, events.length, ...original.filter(e => e.whtFormType === blocked || e.branchId === 'head'));
+    db.whtFiling.findMany = async () => [{ id: 'downloaded', taxPeriodId: blocked, establishmentCode: '00000', establishmentBranchId: 'head', status: 'EXPORTED', rowsCertain: true, sequence: 0, lines: [] }];
+    const mixed = await reader.getMonth(ctx, '2026-09');
+    const waiting = mixed.forms.find(f => f.formType === blocked)!;
+    assert.equal(waiting.monthTotals?.paymentCount, 3, 'earlier download must not hide the unanswered form’s rows');
+    assert.equal(waiting.canDownload, false);
+    assert.equal(mixed.forms.find(f => f.formType !== blocked)?.canDownload, true, 'the one-branch form stays downloadable');
+    assert.ok(mixed.forms.every(f => !f.issues.some(i => i.issueCode.endsWith('_FILING_EMPTY') || i.issueCode.endsWith('_FILING_BRANCHES'))));
+    events.splice(0, events.length, ...original);
+  }
+  facts.push({ mode: 'EACH_BRANCH_PAYS', effectiveFromPeriodKey: '2026-01', supersededAt: null });
+  db.whtFiling.findMany = async () => [];
+  events.splice(events.findIndex(e => e.id === 'b-PND53'), 1);
+  const empty = (await reader.getMonth(ctx, '2026-09')).establishments!.find(e => e.code === '00002')!.forms[1];
+  assert.equal(empty.paymentCount, 0);
+  assert.deepEqual(empty.issues, [], 'an empty establishment form is a fact, not a sync warning');
+
+});
+
+it('filing one establishment files only its frozen paper and leaves the other payment unlocked', async () => {
+  const { withholdingPaymentFacts } = await import('../../application/services/withholding-filing-state');
+  const { filedWithholdingPaymentPeriods } = await import('../../application/services/filed-withholding-payment');
+  const events: any[] = ['head', 'b'].map((branchId, i) => ({ sourceType: 'expense.record', sourceId: branchId, branchId,
+    eventDate: new Date('2026-09-10'), grossAmount: '1000', withheldAmount: '30', whtRate: '3', payeeSnapshotJson: null }));
+  const currentIssues = [{ issueCode: 'MISSING_TAX_ID', severity: 'BLOCKING', sourceType: 'expense.record', sourceId: 'b', description: 'ผู้รับเงินยังไม่มีเลขผู้เสียภาษี เปิดคู่ค้าแล้วกรอกเลข' }];
+  const papers: any[] = events.map((event, i) => ({ sequence: 0, id: `f${i}`, establishmentCode: i ? '00002' : '00000', filingPackageId: `pkg${i}`, status: 'EXPORTED', rowsCertain: true,
+    latestPackage: { id: `pkg${i}` }, lines: [{ sourceType: event.sourceType, sourceId: event.sourceId, lineJson: { payment: withholdingPaymentFacts(event) } }] }));
+  const period = { id: 'p', formType: 'PND3', periodKey: '2026-09', status: 'EXPORTED' };
+  const db: any = {
+    $queryRaw: async () => [], $transaction: async (fn: any) => fn(db), taxReviewIssue: { findMany: async () => currentIssues },
+    branch: { findMany: async () => [{ id: 'head', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: null }, { id: 'b', type: 'BRANCH', status: 'ACTIVE', taxBranchCode: '00002' }] },
+    whtPayerModeFact: { findMany: async () => [{ mode: 'EACH_BRANCH_PAYS', effectiveFromPeriodKey: '2026-01', supersededAt: null }] },
+    taxEvent: { findMany: async () => events }, expenseRecord: { findMany: async () => events.map(e => ({ id: e.sourceId })) },
+    whtFiling: {
+      findMany: async () => papers,
+      findFirst: async ({ where }: any) => papers.find(p => (!where.establishmentCode || where.establishmentCode === p.establishmentCode) && (!where.filingPackageId || where.filingPackageId === p.filingPackageId) && (where.sequence === undefined || where.sequence === p.sequence)),
+      updateMany: async ({ where, data }: any) => { const p = papers.find(p => p.id === where.id && p.status === where.status)!; Object.assign(p, data); return { count: 1 }; },
+    }, taxFilingPackage: { update: async () => {} },
+    taxPeriod: { update: async ({ data }: any) => Object.assign(period, data), findMany: async ({ where }: any) => papers.some(p => p.status === 'FILED' && p.lines.some((l: any) => l.sourceId === where.whtFilings?.some.lines.some.sourceId)) ? [period] : [] },
+  };
+  const repo = withProfile({ prisma: { client: db }, findPeriodById: async () => period, markWithholdingFilingFiled: PrismaTaxRepository.prototype.markWithholdingFilingFiled });
+  const noop = {} as any;
+  const controller = new TaxController({ execute: async () => {} } as any, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, repo, { log: async () => {} } as any);
+  await controller.markPnd53Filed(ctx, ctx.companyId, 'p', { establishmentCode: '00000' }, 'PND3');
+  assert.deepEqual(papers.map(p => p.status), ['FILED', 'EXPORTED']); assert.equal(period.status, 'EXPORTED');
+  assert.equal((await filedWithholdingPaymentPeriods(db, ctx.companyId, 'expense.record', 'head')).length, 1);
+  assert.equal((await filedWithholdingPaymentPeriods(db, ctx.companyId, 'expense.record', 'b')).length, 0);
+  await assert.rejects(controller.markPnd53Filed(ctx, ctx.companyId, 'p', { establishmentCode: '00002' }, 'PND3'), (e: any) => e.getResponse().code === 'PND3_FILING_REVIEW');
+  currentIssues.length = 0;
+  await controller.markPnd53Filed(ctx, ctx.companyId, 'p', { establishmentCode: '00002' }, 'PND3');
+  assert.equal(period.status, 'FILED');
+  const originals = structuredClone(papers);
+  for (const sequence of [1, 2]) {
+    const late = { ...events[0], sourceId: `late-${sequence}` };
+    events.push(late); period.status = 'EXPORTED';
+    papers.push({ id: `additional-${sequence}`, establishmentCode: '00000', sequence, filingPackageId: `additional-pkg-${sequence}`, status: 'EXPORTED', rowsCertain: true,
+      latestPackage: { id: `additional-pkg-${sequence}` }, lines: [{ sourceType: late.sourceType, sourceId: late.sourceId, lineJson: { payment: withholdingPaymentFacts(late) } }] });
+    await controller.markPnd53Filed(ctx, ctx.companyId, 'p', { establishmentCode: '00000', sequence }, 'PND3');
+    assert.equal(papers.at(-1).status, 'FILED');
+    assert.equal(period.status, 'FILED');
+    assert.deepEqual(papers.slice(0, 2), originals);
+  }
+});
+
+it('legacy filed forms cannot be filed again or replaced without a preserved paper', async () => {
+  for (const formType of ['PND3', 'PND53']) {
+    const period = { id: 'old', formType, periodKey: '2026-09', status: 'FILED', whtFilings: [] };
+    const db: any = { $queryRaw: async () => [], $transaction: async (fn: any) => fn(db),
+      taxPeriod: { findMany: async ({ where }: any) => where.whtFilings ? [] : [period] } };
+    const repo = withProfile({ prisma: { client: db }, findPeriodById: async () => period });
+    const noop = {} as any;
+    const value = new TaxController({ execute: async () => {} } as any, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, repo, { log: async () => {} } as any);
+    await assert.rejects(value.markFiled(ctx, ctx.companyId, 'old', {}), (e: any) => e.getResponse?.().code === 'WHT_FILING_ALREADY_FILED');
+  }
+});
+
+
+it('export and filing bodies accept only non-negative integer paper sequences', async () => {
+  const { validate } = await import('class-validator');
+  const { ExportPnd53Dto, ExportTaxPackageDto, MarkPnd53FiledDto } = await import('./tax.dtos');
+  for (const Dto of [ExportPnd53Dto, ExportTaxPackageDto, MarkPnd53FiledDto]) {
+    for (const sequence of [undefined, 0, 1, 2]) assert.equal((await validate(Object.assign(new Dto(), { exportFormat: 'PDF', sequence }))).length, 0);
+    for (const sequence of [-1, 1.5, '1', NaN]) assert.ok((await validate(Object.assign(new Dto(), { exportFormat: 'PDF', sequence }))).length > 0);
+  }
+});
+
+it('confirmation is a validated prepare-only command scoped to the route company', async () => {
+  const { validate } = await import('class-validator');
+  const { ConfirmWhtFilingRowsDto } = await import('./tax.dtos');
+  assert.equal((await validate(Object.assign(new ConfirmWhtFilingRowsDto(), { confirmed: true }))).length, 0);
+  assert.ok((await validate(Object.assign(new ConfirmWhtFilingRowsDto(), { confirmed: false }))).length > 0);
+  assert.ok((await validate(new ConfirmWhtFilingRowsDto())).length > 0);
+  const value = controller({}); let called = 0;
+  (value as any).generateFilingPackage = { confirmRows: async (_ctx: any, id: string) => { called++; assert.equal(id, 'f'); return { confirmed: true }; } };
+  const permissions = Reflect.getMetadata('watchdog:requiredPermissions', TaxController.prototype.confirmWhtFilingRows);
+  assert.ok(JSON.stringify(permissions).includes('wht.pnd53.prepare'));
+  await assert.rejects(value.confirmWhtFilingRows(ctx, 'other', 'f', { confirmed: true }));
+  assert.equal(called, 0);
+  assert.deepEqual(await value.confirmWhtFilingRows(ctx, ctx.companyId, 'f', { confirmed: true }), { confirmed: true });
+});
+
+it('W4 month read exposes undated payments without assigning a month or creating a paper', async () => {
+  const { GenerateWhtReportUseCase } = await import('../../application/use-cases/generate-wht-report.use-case');
+  const db: any = { taxPeriod: { findMany: async () => [] }, taxEvent: { findMany: async () => [] },
+    whtIncomeCategory: { findMany: async () => [] }, branch: { findMany: async () => [] }, whtPayerModeFact: { findMany: async () => [] },
+    whtFiling: { findMany: async () => [] }, whtCertificateHandoff: { findMany: async () => [] },
+    expenseRecord: { findMany: async ({ where }: any) => { assert.equal(where.status, 'CONFIRMED'); assert.equal(where.whtAmount.gt, 0); return [{ id: 'e', vendorNameSnapshot: 'สมชาย', payments: [{ id: 'p', paidAtConfirmed: false, amount: '97', createdAt: new Date('2026-11-09'), createdByUserId: 'u' }] }]; } },
+    $transaction: async (fn: any) => fn(db) };
+  const month = await new GenerateWhtReportUseCase({ prisma: { client: db } } as any).getMonth(ctx, '2026-10');
+  assert.deepEqual(month.payments, []);
+  assert.deepEqual(month.undatedPayments, [{ paymentId: 'p', expenseId: 'e', payeeName: 'สมชาย', amount: '97', recordedAt: '2026-11-09T00:00:00.000Z', recordedByUserId: 'u' }]);
+  assert.equal(month.forms.every(f => f.paymentCount === 0), true);
 });

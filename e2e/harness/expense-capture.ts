@@ -57,10 +57,10 @@ export async function openUploadPanel(page: Page, api: APIRequestContext, compan
   const { items: branches } = await response.json() as { items: Array<{ id: string; name: string; type: string }> };
   await chooseThemedOption(
     page,
-    page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }),
+    page.getByRole('combobox', { name: 'สาขา', exact: true }),
     branchOptionName(branches[0]!),
   );
-  await expect(page.getByRole('button', { name: 'ให้ AI อ่านใบเสร็จ', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: /^ส่งใบเสร็จ(?: \d+ ใบ)?$/ })).toBeEnabled();
 }
 
 /**

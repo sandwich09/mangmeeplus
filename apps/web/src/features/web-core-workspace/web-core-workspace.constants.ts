@@ -1,4 +1,4 @@
-import type { WorkspaceModule, NavGroup } from './web-core-workspace.model';
+import type { WorkspaceModule, NavGroup, NavItemGroup } from './web-core-workspace.model';
 
 /**
  * Accounting screens are not open to users in this launch (owner decision 2026-08-09; audit CR-2,
@@ -241,12 +241,12 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
   {
     key: 'pnd53',
     labelKey: 'module.pnd53',
-    buildHref: (companyId) => `/companies/${companyId}/tax/pnd53`,
+    buildHref: (companyId) => `/companies/${companyId}/tax/withholding`,
     iconKey: 'DocsIcon',
     navGroup: 'finance',
     requiredAnyPermissions: ['wht.pnd53.read', 'wht.pnd53.prepare'],
     status: 'ready',
-    deepLinkTargets: ['pnd53'],
+    deepLinkTargets: ['withholding', 'pnd53'],
   },
   {
     key: 'accounts-payable',
@@ -423,3 +423,5 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
 ];
 
 export const NAV_GROUP_ORDER: NavGroup[] = ['main', 'operate', 'finance', 'growth', 'admin'];
+/** The sidebar's headings: the module groups, then the guide's own. */
+export const SIDEBAR_GROUP_ORDER: NavItemGroup[] = [...NAV_GROUP_ORDER, 'help'];

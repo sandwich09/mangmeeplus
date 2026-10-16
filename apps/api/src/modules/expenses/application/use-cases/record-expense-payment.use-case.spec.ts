@@ -281,3 +281,49 @@ describe('reopen certificate cancellation notices (A5)', () => {
     assert.equal(h.notices[0].deepLinkHref, '/companies/co-1/expenses/exp-1#wht-certificate');
   });
 });
+
+import { ExpensePaymentSlipUploadUseCase } from './expense-upload.use-case';
+describe('expense payment slip upload authority', () => {
+  const file = { originalFileName: 'slip.png', mimeType: 'image/png', byteSize: 100 };
+  function uploader() {
+    const calls: any[] = [];
+    const service = new ExpensePaymentSlipUploadUseCase({ findById: async () => ({ branchId: 'branch-1' }) } as any,
+      { client: { attachmentObject: { findFirst: async ({ where }: any) => {
+        assert.equal(where.companyId, 'co-1'); assert.equal(where.uploadedByUserId, 'finance-1'); assert.equal(where.branchId, 'branch-1');
+        assert.deepEqual(where.AND[1], { metadataJson: { path: ['expenseId'], equals: 'exp-1' } });
+        return where.id === 'owned' ? { id: 'owned' } : null;
+      } } } } as any,
+      { execute: async (context: any, input: any) => { calls.push({ context, input }); return { attachmentId: 'owned' }; } } as any,
+      { execute: async (context: any, input: any) => { calls.push({ context, input }); } } as any);
+    return { service, calls };
+  }
+  it('the payer may upload and complete without a receipt-upload permission', async () => {
+    const h = uploader(); await h.service.init(ctx(), 'exp-1', file);
+    assert.deepEqual(h.calls[0].input.metadataJson, { generatedFor: 'expense.payment.slip', expenseId: 'exp-1' });
+    assert.equal(h.calls[0].input.branchId, 'branch-1');
+    assert.ok(h.calls[0].context.permissions.includes('attachment.create'));
+    await h.service.complete(ctx(), 'exp-1', 'owned', { byteSize: 100 }); assert.equal(h.calls.length, 2);
+  });
+  it('refuses another file, a non-payer, an inaccessible branch and files outside the claim limits', async () => {
+    const h = uploader();
+    await assert.rejects(h.service.complete(ctx(), 'exp-1', 'foreign', {}), /payment_slip_invalid/);
+    await assert.rejects(h.service.init({ ...ctx(), permissions: ['expense.receipt.upload'] }, 'exp-1', file), ForbiddenException);
+    await assert.rejects(h.service.init({ ...ctx(), scopes: { branchIds: ['elsewhere'] } }, 'exp-1', file), ForbiddenException);
+    for (const patch of [{ byteSize: 0 }, { byteSize: 10 * 1024 * 1024 + 1 }, { mimeType: 'text/plain' }]) {
+      await assert.rejects(h.service.init(ctx(), 'exp-1', { ...file, ...patch }), /payment_slip_invalid/);
+    }
+    assert.equal(h.calls.length, 0);
+  });
+});
+
+test('W4 only a payment recorder in branch scope confirms a real date, with an audit', async () => {
+  const writes: any[] = [], audits: any[] = [];
+  const repo: any = { findById: async () => ({ branchId: 'branch-1' }), confirmPaymentDateAtomic: async (input: any, audit: any) => { writes.push(input); await audit({}); return {}; } };
+  const useCase = new RecordExpensePaymentUseCase(repo, { log: async (entry: any) => audits.push(entry) } as any);
+  await assert.rejects(() => useCase.confirmDate({ ...ctx(), permissions: [] }, 'exp-1', 'p1', '2026-10-01'), ForbiddenException);
+  await assert.rejects(() => useCase.confirmDate({ ...ctx(), scopes: { branchIds: ['other'] } }, 'exp-1', 'p1', '2026-10-01'), ForbiddenException);
+  await assert.rejects(() => useCase.confirmDate(ctx(), 'exp-1', 'p1', '2026-02-31'), BadRequestException);
+  await useCase.confirmDate(ctx(), 'exp-1', 'p1', '2026-10-01');
+  assert.equal(writes.length, 1); assert.equal(writes[0].paidAt, '2026-10-01');
+  assert.equal(audits[0].action, 'expense.payment_date_confirmed');
+});

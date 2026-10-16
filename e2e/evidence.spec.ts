@@ -71,6 +71,10 @@ test.describe('INV-11 evidence', () => {
     test(`${route} — INV-11 controls reachable`, async ({ authedPage, companyId }, testInfo) => {
       await gotoAndSettle(authedPage, companyId, route);
       const row = await captureEvidence(authedPage, testInfo, `route${route}`);
+      if (route === '/expenses/substitute-receipts' && [1280, 1556, 1680].includes(authedPage.viewportSize()?.width ?? 0)) {
+        const overflowing = await authedPage.locator('main table td').evaluateAll(cells => cells.filter(cell => cell.scrollWidth > cell.clientWidth).map(cell => cell.textContent));
+        expect(overflowing, 'substitute receipt cells fit their columns').toEqual([]);
+      }
 
       // Desktop is measured, not enforced (D11): record the finding, keep the run green.
       if (row.desktopFinding) {
@@ -185,18 +189,24 @@ test.describe('INV-11 evidence', () => {
       await gotoAndSettle(authedPage, companyId, cardList.route);
 
       const list = authedPage.getByTestId(cardList.listTestId);
-      // Card lists are md:hidden — on a desktop width their absence is correct, not missing
+      // Card lists hide when the content fits a table — on a desktop width their absence is correct, not missing
       // evidence. Presence is checked with count() rather than isVisible(): an empty list still
       // exists in the DOM but has no height, and "the queue is empty" is a different fact from
       // "the mobile view is missing". Conflating them hid a fixture gap behind a layout message.
       if ((await list.count()) === 0 || !isMobile) {
-        const reason = isMobile ? 'card list is not in the DOM at a mobile width' : 'card list is md:hidden at this width — desktop shows the table instead';
+        const reason = isMobile ? 'card list is not in the DOM at a mobile width' : 'card list is hidden at this width — desktop shows the table instead';
         await captureEvidence(authedPage, testInfo, `cards${cardList.route}`, { noEvidence: reason });
         expect(isMobile, `NO EVIDENCE: ${cardList.route} ${reason}`).toBeFalsy();
         return;
       }
 
       const cards = authedPage.getByTestId(cardList.cardTestId);
+      if (cardList.route === '/expenses/substitute-receipts') {
+        await expect(list.getByRole('button', { name: /^ดูเอกสาร/ })).toHaveCount(0);
+        await expect(list.locator('a')).toHaveCount(0);
+        await expect(list.getByRole('link').first()).toHaveAttribute('tabindex', '0');
+        await expect(list.getByRole('link').first()).not.toContainText('฿');
+      }
       const count = await cards.count();
       if (count === 0) {
         await captureEvidence(authedPage, testInfo, `cards${cardList.route}`, { noEvidence: 'list rendered 0 cards' });

@@ -1,3 +1,5 @@
+import { certificateEventPaymentDate } from '../services/wht-certificate-payment';
+import { whtCertificateUnsupportedReason } from '@watchdog-bms/contracts';
 import { whtPayerIdentity, whtPayerIdentityMissingMessage } from '@watchdog-bms/contracts';
 import { throwIfWhtCertificateNumberCollision } from '../services/wht-certificate-number-error';
 import { lockExpenseCorrection } from '../../../expenses/infrastructure/expense-void-blocker';
@@ -76,8 +78,12 @@ export class CreateWhtCertificateUseCase {
     const systemIssuanceOpen = await this.isSystemIssuanceOpen();
     const period = await this.taxRepo.findPeriodById(ctx.companyId, input.taxPeriodId);
     if (!period) throw new NotFoundException('Tax period not found.');
+    const unsupportedForm = whtCertificateUnsupportedReason(input.incomeCategoryCode, period.formType);
+    if (systemIssuanceOpen && unsupportedForm) throw new ConflictException({ code: 'wht_certificate_income_unsupported', message: unsupportedForm });
     const events = (await this.taxRepo.findEventsByPeriod(ctx.companyId, period.id, 'ACTIVE'))
       .filter((event) => input.taxEventIds.includes(event.id));
+    const unsupportedPayment = events.map(event => whtCertificateUnsupportedReason(event.incomeCategoryCode, event.whtFormType)).find(Boolean);
+    if (systemIssuanceOpen && unsupportedPayment) throw new ConflictException({ code: 'wht_certificate_income_unsupported', message: unsupportedPayment });
     if (events.length !== input.taxEventIds.length) throw new BadRequestException('Some WHT tax events were not found.');
     if (events.some((event) => event.eventType !== 'WHT_PND3' && event.eventType !== 'WHT_PND53')) {
       throw new BadRequestException('50 Tawi certificate can include WHT events only.');
@@ -87,11 +93,15 @@ export class CreateWhtCertificateUseCase {
     const errors = validateCertificateTotals(input.grossAmount, input.withheldAmount, eventGross, eventWithheld);
     if (errors.length) throw new BadRequestException(errors.join('; '));
 
+    const paymentDate = await certificateEventPaymentDate(this.taxRepo.prisma.client, ctx.companyId, events);
+    input = { ...input, paymentDate };
     const [company, profile, category] = await Promise.all([
       this.taxRepo.prisma.client.company.findUnique({ where: { id: ctx.companyId } }),
       this.taxRepo.prisma.client.companyTaxProfile.findUnique({ where: { companyId: ctx.companyId } }),
       this.taxRepo.prisma.client.whtIncomeCategory.findUnique({ where: { code: input.incomeCategoryCode } }),
     ]);
+    const unsupported = whtCertificateUnsupportedReason(input.incomeCategoryCode, category?.formType);
+    if (systemIssuanceOpen && unsupported) throw new ConflictException({ code: 'wht_certificate_income_unsupported', message: unsupported });
     const payerSnapshot = {
       companyName: company?.registeredName ?? company?.name ?? 'Unknown company',
       taxId: profile?.taxId ?? company?.taxId ?? null,
@@ -112,6 +122,7 @@ export class CreateWhtCertificateUseCase {
       if (current.length !== events.length || current.some((event: any) => event.status !== 'ACTIVE' || event.sourceHash !== events.find((old) => old.id === event.id)?.sourceHash)) {
         throw new ConflictException({ code: 'expense_wht_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
       }
+      if (await certificateEventPaymentDate(tx, ctx.companyId, current) !== paymentDate) throw new ConflictException({ code: 'expense_wht_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
       return write(tx);
     }, { isolationLevel: 'ReadCommitted' }) : await write(this.taxRepo.prisma.client);
     if (!systemIssuanceOpen) {
@@ -148,7 +159,7 @@ export class CreateWhtCertificateUseCase {
       });
     }
 
-    const payer = whtPayerIdentity(payerSnapshot, payerSnapshot);
+    const payer = whtPayerIdentity(payerSnapshot, { ...payerSnapshot, registeredName: company?.registeredName ?? null });
     if (payer.missing.length) throw new ConflictException({ code: 'wht_payer_identity_missing', message: whtPayerIdentityMissingMessage(payer.missing), payerMissing: payer.missing });
 
     if (!whtPayeeAddress(undefined, input.payeeSnapshot.address)) throw new ConflictException({
@@ -179,7 +190,7 @@ export class CreateWhtCertificateUseCase {
       withheldAmount: input.withheldAmount,
       paymentDate: input.paymentDate,
       issuedAt: new Date().toISOString(),
-    }, payerSnapshot, input.payeeSnapshot, signature);
+    }, payer.payer, input.payeeSnapshot, signature);
     const writeCertificate = (db: any) => db.whtCertificate.create({
       data: {
         companyId: ctx.companyId,
@@ -188,7 +199,7 @@ export class CreateWhtCertificateUseCase {
         taxPeriodId: period.id,
         periodKey: period.periodKey,
         payeeSnapshotJson: input.payeeSnapshot as any,
-        payerSnapshotJson: payerSnapshot as any,
+        payerSnapshotJson: payer.payer as any,
         incomeCategoryCode: input.incomeCategoryCode,
         incomeCategoryName: category?.nameTh ?? input.incomeCategoryCode,
         whtRate: input.whtRate,

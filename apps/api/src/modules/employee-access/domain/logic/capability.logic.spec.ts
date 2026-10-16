@@ -59,18 +59,18 @@ describe('capability-pack registry integrity', () => {
   it('registers the five disbursement packs with their exact permissions and Thai copy', () => {
     const expected = {
       'pack.expense.disbursement.view': {
-        nameTh: 'ดูใบเตรียมจ่าย/ใบสำคัญจ่าย',
-        description: 'เปิดดูใบเตรียมจ่ายและใบสำคัญจ่ายของรายจ่ายที่ตำแหน่งนี้ดูได้อยู่แล้ว',
+        nameTh: 'ดูใบเตรียมจ่ายและใบสำคัญจ่าย',
+        description: 'ดูใบเตรียมจ่ายและใบสำคัญจ่ายเฉพาะรายจ่ายที่บทบาทนี้ดูได้',
         permissionKeys: ['expense.disbursement.read'],
       },
       'pack.expense.disbursement.prepare': {
         nameTh: 'จัดทำใบเตรียมจ่าย',
-        description: 'รวมรายจ่ายที่จะจ่ายให้ผู้รับเงินรายเดียวเป็นหนึ่งใบ แล้วส่งให้ผู้มีอำนาจอนุมัติ',
+        description: 'รวมรายจ่ายที่จะจ่ายให้ผู้รับเงินรายเดียวเป็นหนึ่งใบ แล้วส่งอนุมัติ',
         permissionKeys: ['expense.disbursement.read', 'expense.disbursement.prepare'],
       },
       'pack.expense.disbursement.approve': {
         nameTh: 'อนุมัติใบเตรียมจ่าย',
-        description: 'อนุมัติหรือตีกลับใบเตรียมจ่ายก่อนจ่ายเงิน',
+        description: 'อนุมัติหรือส่งกลับให้แก้ใบเตรียมจ่ายก่อนจ่ายเงิน',
         permissionKeys: ['expense.disbursement.read', 'expense.disbursement.approve'],
       },
       'pack.expense.disbursement.pay': {
@@ -137,7 +137,7 @@ describe('capability-pack registry integrity', () => {
   // took payments back, and the two finance choices said nothing of acting on other people's claims.
   it('says in plain Thai everything a claim pack lets its holder do, and nothing it does not', () => {
     const says: Array<[string, RegExp]> = [
-      ['reimbursement.approve', /อนุมัติ/], ['reimbursement.reject', /ปฏิเสธ/],
+      ['reimbursement.approve', /(?<!ส่ง)อนุมัติ/], ['reimbursement.reject', /ปฏิเสธ/],
       ['reimbursement.payment.record', /บันทึกจ่าย/], ['reimbursement.payment.void', /ยกเลิกการจ่าย/],
       ['reimbursement.finance_review', /ตรวจการเงิน/], ['reimbursement.duplicate.resolve', /ปลดรายการซ้ำ/],
       ['reimbursement.export', /ส่งออก/], ['reimbursement.policy.manage', /ตั้งนโยบาย/],
@@ -159,7 +159,7 @@ describe('capability-pack registry integrity', () => {
       assert.deepEqual(CAPABILITY_PACKS.filter((other) => other.key !== pack.key && `${other.nameTh} ${other.description}`.includes(pack.nameTh)).map((other) => other.key), [], pack.nameTh);
     }
     const approve = CAPABILITY_PACK_BY_KEY.get('pack.reimbursement.approve')!;
-    assert.equal(approve.description, 'ดู อนุมัติ และปฏิเสธคำขอเบิก รวมทั้งบันทึกจ่ายเงินคืนและยกเลิกการจ่าย');
+    assert.equal(approve.description, 'ดู อนุมัติ และปฏิเสธใบเบิก รวมทั้งบันทึกจ่ายเงินคืนและยกเลิกการจ่าย');
   });
 
   // Owner report 2026-10-02: the role page printed "audit", "dead letter" and "webhook". Every choice and

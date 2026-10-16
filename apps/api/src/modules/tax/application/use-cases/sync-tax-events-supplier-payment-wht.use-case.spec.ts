@@ -40,7 +40,9 @@ function harness(rows: Array<Record<string, unknown>>, taxRepoOverrides: Record<
     findActiveEventBySourceComponent: async () => null,
     supersedeEvent: async (id: string) => { superseded.push(id); },
     upsertEvent: async (input: any) => { events.push(input); },
-    createIssue: async (input: any) => { issues.push(input); },
+    createIssue: async (input: any) => { if (!issues.some(i => i.status === 'OPEN' && i.sourceId === input.sourceId && i.issueCode === input.issueCode)) issues.push({ ...input, status: 'OPEN' }); },
+    supersedeUnclassifiedWithholding: async () => undefined,
+    resolveSourceIssues: async (_company: string, code: string, _source: string, id: string) => { for (const issue of issues) if (issue.sourceId === id && issue.issueCode === code) issue.status = 'RESOLVED'; },
     ...taxRepoOverrides,
   } as any;
   const docSource = { findIssuedWithVatByCompany: async () => [] } as any;
@@ -86,13 +88,19 @@ describe('SyncTaxEventsUseCase supplier-payment withholding', () => {
     assert.equal(h.periods.at(-1).formType, 'PND3');
   });
 
-  it('keeps ภ.ง.ด.53 as the documented fallback for a payee class it cannot map', async () => {
-    // FOREIGN is genuinely ภ.ง.ด.54 territory, which is out of scope — it surfaces on 53 for an
-    // accountant to catch rather than being silently dropped from every report.
+  it('holds unknown supplier kinds as review issues without an event', async () => {
+    // Unsupported taxpayer classes wait as issues; no form is inferred from a tax number.
     for (const supplierType of ['FOREIGN', 'GOVERNMENT', 'OTHER', null]) {
-      const h = harness([whtPayment({ supplierType })]);
+      const payment = whtPayment({ supplierType });
+      const h = harness([payment]);
+      await h.run(); await h.run();
+      assert.equal(h.events.length, 0);
+      assert.equal(h.issues[0].issueCode, 'WHT_PAYEE_KIND_UNKNOWN');
+      assert.equal(h.issues.length, 1);
+      payment.supplierType = 'INDIVIDUAL';
       await h.run();
-      assert.equal(h.events[0].eventType, 'WHT_PND53', `expected PND53 fallback for ${supplierType}`);
+      assert.equal(h.issues[0].status, 'RESOLVED');
+      assert.equal(h.events[0].whtFormType, 'PND3');
     }
   });
 
@@ -113,9 +121,10 @@ describe('SyncTaxEventsUseCase supplier-payment withholding', () => {
     assert.equal(h.issues[0].issueCode, 'FUNCTIONAL_CURRENCY_FX_MISSING');
   });
 
-  it('skips a payment whose ภ.ง.ด. period is already filed', async () => {
+  it('skips a payment whose legacy ภ.ง.ด. month has no frozen lines', async () => {
     const h = harness([whtPayment()], {
       upsertPeriod: async (input: any) => ({ id: `period-${input.formType}`, status: 'FILED' }),
+      isWithholdingPaymentFiled: async (_c: string, _t: string, _id: string, period?: any) => period?.formType === 'PND53',
     });
     const result = await h.run();
     assert.equal(result.skippedLocked, 1);
@@ -151,4 +160,40 @@ describe('SyncTaxEventsUseCase supplier-payment withholding', () => {
     assert.equal(h.events[0].grossAmount, '30.0000');
     assert.equal(h.events[0].whtRate, null);
   });
+});
+
+it('unknown-kind issue names the supplier payee with the same unnamed fallback', async () => {
+  for (const payeeName of ['สมชาย ใจดี', null]) {
+    const h = harness([whtPayment({ supplierType: null, payeeName })]);
+    await h.run();
+    assert.equal(h.issues[0].description, payeeName
+      ? 'ยังไม่รู้ว่า สมชาย ใจดี เป็นบริษัทหรือบุคคล เปิดคู่ค้าแล้วเลือกประเภทก่อน'
+      : 'ยังไม่รู้ว่าผู้รับเงินเป็นบริษัทหรือบุคคล เปิดคู่ค้าแล้วเลือกประเภทก่อน');
+    assert.equal(h.events.length, 0);
+  }
+});
+
+it('sync skips only the supplier payment with a filed line in a partially filed month', async () => {
+  const h = harness([whtPayment({ id: 'filed' }), whtPayment({ id: 'open' })], {
+    isWithholdingPaymentFiled: async (company: string, type: string, id: string) => {
+      assert.equal(company, 'company-1'); assert.equal(type, 'procurement.supplier_payment'); return id === 'filed';
+    },
+  });
+  const result = await h.run(); assert.equal(result.skippedLocked, 1);
+  assert.deepEqual(h.events.map(e => e.sourceId), ['open']);
+});
+
+it('supplier sync admits a new payment into a new-style filed month but never a legacy form', async () => {
+  const { filedWithholdingPaymentPeriods } = await import('../services/filed-withholding-payment');
+  const db: any = { taxPeriod: { findMany: async ({ where }: any) => {
+    const candidate = where.OR?.[1];
+    if (!candidate) return [];
+    return [{ ...candidate, status: 'FILED', whtFilings: candidate.formType === 'PND3' ? [] : [{ id: 'frozen' }] }];
+  } } };
+  const h = harness([whtPayment({ id: 'legacy-person', supplierType: 'INDIVIDUAL' }), whtPayment({ id: 'new-company' })], {
+    upsertPeriod: async (input: any) => ({ id: `p-${input.formType}`, status: 'FILED' }),
+    isWithholdingPaymentFiled: async (...args: any[]) => (await (filedWithholdingPaymentPeriods as any)(db, ...args)).length > 0,
+  });
+  assert.equal((await h.run()).skippedLocked, 1);
+  assert.deepEqual(h.events.map(e => e.sourceId), ['new-company']);
 });

@@ -14,11 +14,14 @@ for (const width of [390, 1280]) {
     expect(metric).toBeTruthy();
     await gotoCompany(page, companyId, '/dashboard');
     await expect(page.getByRole('heading', { name: 'ถามน้องมั่งมี', exact: true })).toHaveCount(0);
-    await page.getByRole('link', { name: /ใบเสร็จรอตรวจ \(ทุกช่วงเวลา\)/ }).click();
-    await expect(page).toHaveURL(/view=pending/);
+    // Owner 2026-10-15: the home page shows the number without a button or link (the menu leads to the list).
+    await expect(page.getByText('ใบเสร็จรอตรวจ', { exact: true })).toBeVisible();
+    await expect(page.getByRole('main').getByRole('link', { name: /^รอตรวจ|ตรวจใบเสร็จ/ })).toHaveCount(0);
+    await gotoCompany(page, companyId, '/expenses?view=pending');
     await expect(page.getByRole('button', { name: `ทั้งหมด ${metric.value}`, exact: true })).toBeVisible();
-    await expect(page.getByRole('main').getByRole('link', { name: 'อัปโหลดใบเสร็จ', exact: true })).toBeVisible();
-    await expect(page.getByText('ใบเสร็จรอตรวจ · ทุกช่วงเวลา รวมฉบับร่าง', { exact: false })).toBeVisible();
+    await expect(page.getByRole('main').getByRole('link', { name: 'อัปโหลดใบเสร็จ', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('main').getByRole('link', { name: 'บันทึกด้วยมือ', exact: true })).toHaveCount(0);
+    await expect(page).toHaveURL(/view=pending/);
     if (width === 390 && metric.value > 0) {
       const first = page.getByTestId('expenses-card').first();
       await expect(first).toBeVisible();
@@ -26,8 +29,10 @@ for (const width of [390, 1280]) {
     }
     await page.screenshot({ path: info.outputPath(`pending-${width}.png`), fullPage: true });
     await gotoCompany(page, companyId, '/expenses');
-    if (width === 390) await page.getByText(/ดูสรุปยอด/).click();
-    await expect(page.getByText('VAT ตามเอกสาร', { exact: true }).filter({ visible: true })).toBeVisible();
+    // Owner 2026-10-15: the numbers sit in one card above the list at every width (no phone fold-out).
+    await expect(page.getByText('VAT ตามเอกสาร', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('ยอดค่าใช้จ่ายตามวันที่เอกสาร', { exact: true })).toBeVisible();
+    await expect(page.getByText('ค้างจ่าย', { exact: true })).toBeVisible();
     await expect(page.getByText('เครดิตภาษีที่ขอคืนได้', { exact: true })).toHaveCount(0);
     await page.screenshot({ path: info.outputPath(`list-${width}.png`), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -70,16 +75,13 @@ for (const width of [390, 1280]) {
     await page.getByRole('textbox', { name: 'ชื่อผู้ใช้ *', exact: true }).fill('regression.no.save');
     await page.getByRole('textbox', { name: 'วันเดือนปีเกิด (ค.ศ.) *', exact: true }).fill('01/01/1980');
     await page.getByRole('textbox', { name: 'เลขบัตรประชาชน *', exact: true }).fill('0000000000000');
-    await page.getByRole('button', { name: 'ถัดไป ›', exact: true }).click();
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await page.getByRole('textbox', { name: 'อีเมล (ใช้เข้าสู่ระบบ) *', exact: true }).fill('regression@example.test');
     await page.getByRole('textbox', { name: 'เบอร์โทรศัพท์ *', exact: true }).fill('0800000000');
-    await page.getByRole('button', { name: 'ถัดไป ›', exact: true }).click();
-    // A person holds one role, so the buttons show the bare role name ("✓ " only once chosen) and none is chosen yet.
-    await expect(page.getByRole('button', { name: 'ฝ่ายบัญชี', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    // A person holds one role, so the roles are one group of radio choices and none is chosen yet.
+    await expect(page.getByRole('radio', { name: 'ฝ่ายบัญชี', exact: true })).not.toBeChecked();
     await expect(page.locator('#employee-default-branch')).toHaveText(branch.name);
-    const emailSummary = page.getByText('regression@example.test', { exact: true });
-    await expect(emailSummary).toBeVisible();
-    expect((await emailSummary.boundingBox())!.height).toBeLessThan(48);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.getByRole('heading', { name: 'เพิ่มพนักงาน', exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: info.outputPath(`employee-choice-${width}.png`), fullPage: true });
@@ -91,15 +93,15 @@ test('mobile save refusal focuses a readable error and keeps typed data (control
   const { items } = await json<{ items: Branch[] }>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
   await gotoCompany(page, companyId, '/expenses/manual');
   // Source branch is a ThemedSelect now, not a native <select> — open, then click the option.
-  await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }), branchOptionName(items[0]!));
+  await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขา', exact: true }), branchOptionName(items[0]!));
   const description = page.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true });
   await description.fill('ทดสอบรักษาข้อมูลเมื่อบันทึกไม่สำเร็จ');
   await page.getByRole('spinbutton', { name: 'ราคาต่อหน่วย', exact: true }).fill('1');
   await page.route(`**/companies/${companyId}/expenses`, (route) => route.request().method() === 'POST'
     ? route.fulfill({ status: 422, contentType: 'application/json', body: JSON.stringify({ code: 'TRANSACTION_BRANCH_INVALID', message: 'Branch no longer active' }) })
     : route.continue());
-  await page.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
-  const error = page.getByRole('main').getByRole('alert').filter({ hasText: 'ไม่พบสาขาที่ใช้งานได้ในบริษัทนี้ กรุณาเลือกสาขาอีกครั้ง' });
+  await page.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
+  const error = page.getByRole('main').getByRole('alert').filter({ hasText: 'ไม่พบสาขาที่ใช้งานได้ในร้านนี้ เลือกสาขาอีกครั้ง' });
   await expect(error).toBeFocused();
   const bounds = (await error.boundingBox())!;
   expect(bounds.y).toBeGreaterThanOrEqual(0);

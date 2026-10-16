@@ -14,9 +14,9 @@ import { test, expect } from './harness/fixtures';
 import { expectNoClientError } from './harness/auth';
 
 test.describe('@smoke reference — ready modules render under real auth', () => {
-  test('SMOKE-01 dashboard loads with generate action', async ({ authedPage, companyId }) => {
+  test('SMOKE-01 dashboard loads with its numbers', async ({ authedPage, companyId }) => {
     await authedPage.goto(`/companies/${companyId}/dashboard`);
-    await expect(authedPage.getByRole('button', { name: /รีเฟรช|สร้างใหม่|refresh|generate/i })).toBeVisible();
+    await expect(authedPage.getByText(/อัปเดตล่าสุด/).first()).toBeVisible();
     await expectNoClientError(authedPage);
   });
 

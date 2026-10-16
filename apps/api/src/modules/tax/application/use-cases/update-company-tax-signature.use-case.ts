@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
+import { CreateDownloadUrlUseCase } from '../../../data-model-core/application/use-cases/create-download-url.use-case';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
 
 export type UpdateCompanyTaxSignatureInput = {
@@ -28,14 +29,27 @@ export class UpdateCompanyTaxSignatureUseCase {
     private readonly taxRepo: PrismaTaxRepository,
     private readonly attachments: PrismaAttachmentRepository,
     private readonly audit: AuditService,
+    private readonly downloads: CreateDownloadUrlUseCase,
   ) {}
+
+  async read(ctx: RequestContext): Promise<CompanyTaxSignatureSetting & { signatureImageUrl: string | null; signatureStoredAt: string | null }> {
+    if (!ctx.permissions.includes('company.tax_signature.manage')) throw new ForbiddenException();
+    const profile = await this.taxRepo.prisma.client.companyTaxProfile.findUnique({
+      where: { companyId: ctx.companyId }, select: { signatureMode: true, signatureImageAttachmentId: true },
+    });
+    const setting: CompanyTaxSignatureSetting = { signatureMode: profile?.signatureMode as 'BLANK' | 'AUTO_STAMP' ?? 'BLANK', signatureImageAttachmentId: profile?.signatureImageAttachmentId ?? null };
+    const attachment = setting.signatureImageAttachmentId ? await this.attachments.findById({ id: setting.signatureImageAttachmentId, companyId: ctx.companyId }) : null;
+    if (!attachment || attachment.status !== 'ACTIVE' || !['image/png', 'image/jpeg'].includes(attachment.mimeType)) return { ...setting, signatureImageUrl: null, signatureStoredAt: null };
+    const download = await this.downloads.execute(ctx, { attachmentId: attachment.id, disposition: 'inline' });
+    return { ...setting, signatureImageUrl: download.downloadUrl, signatureStoredAt: (attachment.uploadedAt ?? attachment.createdAt).toISOString() };
+  }
 
   async execute(ctx: RequestContext, input: UpdateCompanyTaxSignatureInput): Promise<CompanyTaxSignatureSetting> {
     if (input.signatureMode !== 'BLANK' && input.signatureMode !== 'AUTO_STAMP') {
       throw new BadRequestException('signatureMode must be BLANK or AUTO_STAMP.');
     }
     if (input.signatureMode === 'AUTO_STAMP' && !input.signatureAttachmentId) {
-      throw new BadRequestException({ code: 'wht_signature_attachment_required', message: 'กรุณาอัปโหลดรูปลายเซ็นก่อนเปิดใช้การประทับอัตโนมัติ' });
+      throw new BadRequestException({ code: 'wht_signature_attachment_required', message: 'ยังไม่มีรูปลายเซ็น อัปโหลดรูปลายเซ็นก่อนเปิดใช้การประทับอัตโนมัติ' });
     }
 
     // BLANK always clears the reference — never a stale image a later re-enable would silently

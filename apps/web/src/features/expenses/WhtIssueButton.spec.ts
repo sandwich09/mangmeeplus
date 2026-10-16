@@ -26,8 +26,8 @@ test('issue opens one confirmation with the frozen print facts, the typed addres
     const frozen = JSON.stringify(view.row.prefill);
     assert.ok(view.render().includes('ออกหนังสือรับรอง 50 ทวิ')); assert.doesNotMatch(view.render(), /<h2/);
     view.find('button').onClick(); const html = view.render(true);
-    for (const words of ['ออกหนังสือรับรอง 50 ทวิ ให้ผู้รับเงิน', 'บริษัท ผู้รับเงิน จำกัด', '1-2345-67890-12-3', 'บ้านเลขที่ 99\nถนนใหม่', 'ค่าบริการ', '฿10,000.00', '฿300.00', 'ออกแล้วได้เลขที่ทันที ถ้าผิดต้องยกเลิกแล้วออกใหม่']) assert.ok(html.includes(words), words);
-    assert.ok(!html.includes('ที่อยู่ในใบเสร็จ')); assert.equal((html.match(/<p /g) ?? []).length, 1); assert.equal(issued, 0);
+    for (const words of ['ออกหนังสือรับรอง 50 ทวิ ให้ผู้รับเงิน', 'บริษัท ผู้รับเงิน จำกัด', '1-2345-67890-12-3', 'บ้านเลขที่ 99\nถนนใหม่', 'ค่าบริการ', '10,000.00 บาท', '300.00 บาท', 'ออกแล้วได้เลขที่ทันที ถ้าผิดต้องยกเลิกแล้วออกใหม่']) assert.ok(html.includes(words), words);
+    assert.ok(!html.includes('฿')); assert.ok(!html.includes('ที่อยู่ในใบเสร็จ')); assert.equal((html.match(/<p /g) ?? []).length, 1); assert.equal(issued, 0);
     assert.equal(view.find('Button', p => p.variant === 'primary').disabled, true);
     view.find('Button', p => p.variant === 'secondary').onClick(); assert.doesNotMatch(view.render(), /<h2/); assert.equal(issued, 0);
     assert.equal(JSON.stringify(view.row.prefill), frozen);
@@ -59,11 +59,11 @@ test('the unpaid tag is only shown for a known unpaid expense; an absent typed a
   }
 });
 
-test('expense, list and accounts-payable issue actions all use the same confirmation and only the expense supplies payment state', () => {
+test('expense and accounts-payable issue actions keep confirmation; the list delegates to the expense', () => {
   const expense = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
   const list = readFileSync(new URL('./WhtCertificatesPage.tsx', import.meta.url), 'utf8');
   const ap = readFileSync(new URL('../accounts-payable/AccountsPayablePages.tsx', import.meta.url), 'utf8');
-  for (const source of [expense, list, ap]) assert.match(source, /<WhtIssueButton/);
+  for (const source of [expense, ap]) assert.match(source, /<WhtIssueButton/);
   assert.match(expense, /unpaid=\{detail\.paymentStatus !== 'PAID'\}/);
-  assert.doesNotMatch(list, /<WhtIssueButton[^>]*unpaid=/); assert.doesNotMatch(ap, /<WhtIssueButton[^>]*unpaid=/);
+  assert.doesNotMatch(list, /<WhtIssueButton|issueSystemWhtCertificate/); assert.doesNotMatch(ap, /<WhtIssueButton[^>]*unpaid=/);
 });

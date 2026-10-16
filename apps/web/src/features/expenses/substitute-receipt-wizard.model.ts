@@ -182,23 +182,50 @@ export function substituteReceiptRenderabilityIssue(
   return null;
 }
 
-/** Base business eligibility is exported so the picker can keep an otherwise-valid over-limit
- * expense visible with an actionable warning instead of making it disappear without explanation. */
-export function isSubstituteReceiptCandidateOtherwiseEligible(input: SubstituteReceiptCandidateInput): boolean {
+/** Why the prepare endpoint would refuse this expense, in the order the checks run; null when it would not.
+ * One cause at a time, so the screen can name the one thing to put right instead of listing every suspect. */
+export type SubstituteReceiptIneligibleCause =
+  | 'status' | 'documentType' | 'currency' | 'amount' | 'taxEvidence' | 'lines' | 'category' | 'classification';
+
+export function substituteReceiptIneligibleCause(input: SubstituteReceiptCandidateInput): SubstituteReceiptIneligibleCause | null {
   const checkBill = isCheckBillClassification(input.aiVerificationSummaryJson);
-  if (input.status && !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(input.status)) return false;
-  if (input.sourceDocumentType === 'SUBSTITUTE_RECEIPT') return false;
-  if (input.currency !== 'THB' || !(Number(input.grandTotalAmount) > 0)) return false;
-  if (input.taxEvidenceStatus === 'USABLE_FOR_TAX' && !checkBill) return false;
-  if (!input.lines.length || input.lines.some((line) => !line.description.trim())) return false;
+  if (input.status && !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(input.status)) return 'status';
+  if (input.sourceDocumentType === 'SUBSTITUTE_RECEIPT') return 'documentType';
+  if (input.currency !== 'THB') return 'currency';
+  if (!(Number(input.grandTotalAmount) > 0)) return 'amount';
+  if (input.taxEvidenceStatus === 'USABLE_FOR_TAX' && !checkBill) return 'taxEvidence';
+  if (!input.lines.length || input.lines.some((line) => !line.description.trim())) return 'lines';
   const hasReviewedCategory = Boolean(input.expenseCategoryId || input.accountHintKey)
     || input.lines.every((line) => Boolean(line.expenseCategoryId || line.accountHintKey));
-  if (!hasReviewedCategory || (!checkBill && isNonExpenseClassificationBlocking(input.aiVerificationSummaryJson))) return false;
+  if (!hasReviewedCategory) return 'category';
+  if (!checkBill && isNonExpenseClassificationBlocking(input.aiVerificationSummaryJson)) return 'classification';
   const classification = input.aiVerificationSummaryJson?.['classification'];
   const rawKind = classification && typeof classification === 'object' && !Array.isArray(classification)
     ? (classification as Record<string, unknown>)['documentKind']
     : null;
-  return checkBill || typeof rawKind !== 'string' || !INELIGIBLE_CLASSIFICATION_KINDS.has(rawKind);
+  return checkBill || typeof rawKind !== 'string' || !INELIGIBLE_CLASSIFICATION_KINDS.has(rawKind) ? null : 'classification';
+}
+
+/** Base business eligibility is exported so the picker can keep an otherwise-valid over-limit
+ * expense visible with an actionable warning instead of making it disappear without explanation. */
+export function isSubstituteReceiptCandidateOtherwiseEligible(input: SubstituteReceiptCandidateInput): boolean {
+  return substituteReceiptIneligibleCause(input) === null;
+}
+
+/**
+ * An expense the person has already told this wizard about and that has no live certificate: the
+ * saved answer says "make a certificate", and the last one (if any) was cancelled. The list of
+ * step 1 keeps it, so a reload or a cancelled certificate does not make the expense vanish. One
+ * whose only obstacle is the document type chosen on step 1 stays too: step 1 is where that is put right.
+ */
+export function isSubstituteReceiptWizardResumable(
+  input: SubstituteReceiptCandidateInput & { substituteReceiptEvidence?: { status: string } | null },
+  savedRoute: string | null | undefined,
+): boolean {
+  const liveCertificate = Boolean(input.substituteReceiptEvidence && input.substituteReceiptEvidence.status !== 'SUPERSEDED');
+  if (liveCertificate || savedRoute !== 'SUBSTITUTE_RECEIPT') return false;
+  const cause = substituteReceiptIneligibleCause(input);
+  return cause === null || cause === 'documentType';
 }
 
 export function isSubstituteReceiptCandidateEligible(input: SubstituteReceiptCandidateInput): boolean {
@@ -362,6 +389,20 @@ export function mayApproveSubstituteReceipt(input: {
       || (input.approvalMode === 'OWNER_SELF' && input.canSelfApprove));
 }
 
+/**
+ * Who is preset as the person certifying the payment. Under "the owner signs and approves alone" an
+ * owner who is making the certificate signs it herself; anyone else gets the shop's first owner.
+ */
+export function defaultCertifierId(
+  payers: ReadonlyArray<{ userId: string; isOwner?: boolean }>,
+  userId: string,
+  approvalMode: SubstituteReceiptApprovalMode | null | undefined,
+): string {
+  const self = payers.find((payer) => payer.userId === userId);
+  if (approvalMode !== 'OWNER_SELF') return self?.userId ?? '';
+  return (self?.isOwner ? self : payers.find((payer) => payer.isOwner))?.userId ?? '';
+}
+
 export function resolveWizardStep(
   evidence: { status: SubstituteReceiptEvidenceStatus } | null,
 ): WizardStep {
@@ -428,12 +469,13 @@ export function evaluateExpensePrerequisites(expense: {
 
 export const SUBSTITUTE_WIZARD_DRAFT_VERSION = 1;
 
-export type SubstituteWizardDraftStep = Extract<WizardStep, 'expense' | 'details' | 'evidence'>;
+export type SubstituteWizardDraftStep = Extract<WizardStep, 'expense' | 'details' | 'evidence' | 'method'>;
 
 export type SubstituteWizardDraft = {
   fundingSource?: 'COMPANY' | 'PERSONAL_ADVANCE' | '';
   paidInFullAcknowledged?: boolean;
   step: SubstituteWizardDraftStep;
+  signingMethod?: '' | 'DIGITAL' | 'PAPER';
   consent: boolean;
   reasonCode: SubstituteReceiptReasonCode;
   missingReason: string;
@@ -454,7 +496,7 @@ type DraftStorage = {
   removeItem(key: string): void;
 };
 
-const DRAFT_STEPS: readonly SubstituteWizardDraftStep[] = ['expense', 'details', 'evidence'];
+const DRAFT_STEPS: readonly SubstituteWizardDraftStep[] = ['expense', 'details', 'evidence', 'method'];
 const DRAFT_REASON_CODES: readonly SubstituteReceiptReasonCode[] = [
   'PAYEE_CANNOT_ISSUE', 'RECEIPT_UNAVAILABLE', 'RECEIPT_MATERIALLY_INCOMPLETE', 'OTHER',
 ];
@@ -501,6 +543,7 @@ export function parseSubstituteWizardDraft(
   if (!step) return null;
   return {
     step,
+    ...(values['signingMethod'] === 'DIGITAL' || values['signingMethod'] === 'PAPER' ? { signingMethod: values['signingMethod'] } : {}),
     consent: values['consent'] === true,
     reasonCode: DRAFT_REASON_CODES.find((code) => code === values['reasonCode']) ?? 'PAYEE_CANNOT_ISSUE',
     missingReason: textField(values['missingReason']),
@@ -585,7 +628,7 @@ export function paymentMonthChanged(before: string, after: string) {
 }
 
 /**
- * Spec §10/AC08/AC09: the "สร้างคำขอเบิกจากใบนี้" entry point on the wizard's done step and the
+ * Spec §10/AC08/AC09: the "สร้างใบเบิกจากใบนี้" entry point on the wizard's done step and the
  * hub's rows. An already-claimed source still passes (AC08's edge-case row) — the create page's
  * `?expenseId=` flow states `expense_already_claimed` rather than this helper hiding the button.
  */

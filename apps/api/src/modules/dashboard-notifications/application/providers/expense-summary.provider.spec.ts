@@ -107,3 +107,46 @@ describe('ExpenseSummaryProvider', () => {
     assert.deepEqual(calls.map((where) => (where as any).branchId), [undefined, undefined, undefined]);
   });
 });
+
+describe('HOME-1 expense months', () => {
+  it('uses one confirmed month aggregation, preserves decimal money and fills twelve months', async () => {
+    const queries: any[] = [];
+    const provider = new ExpenseSummaryProvider({ client: { $queryRaw: async (query: any) => {
+      queries.push(query);
+      return [{ month: '2025-12', total: '99.00', count: 1n }, { month: '2026-01', total: '32000.12', count: 5n }, { month: '2026-12', total: '90071992547409.99', count: 2n }, { month: '2027-01', total: '11.00', count: 1n }];
+    } } } as any);
+    const result = await provider.collectMonths({ companyId: 'c1', year: 2026 }, new Date('2027-12-31T17:00:00Z'));
+    assert.equal(queries.length, 1);
+    assert.match(queries[0].text, /GROUP BY/);
+    assert.match(queries[0].text, /"status" = 'CONFIRMED'/);
+    assert.match(queries[0].text, /SUM\("grandTotalAmount"\)/);
+    assert.match(queries[0].text, /to_char\("expenseDate", 'YYYY-MM'\)/);
+    assert.deepEqual(queries[0].values, ['c1']);
+    assert.equal(result.year, 2026);
+    assert.equal(result.months.length, 12);
+    assert.deepEqual(result.months[0], { month: '2026-01', total: '32000.12', count: 5 });
+    assert.deepEqual(result.months[1], { month: '2026-02', total: '0.00', count: 0 });
+    assert.deepEqual(result.months[11], { month: '2026-12', total: '90071992547409.99', count: 2 });
+    assert.deepEqual(result.years, [2025, 2026, 2027, 2028], 'current Bangkok year, not UTC year');
+  });
+  it('keeps company-central rows only in the unrestricted view, and an empty scope reads nothing', async () => {
+    for (const branchIds of [undefined, ['b1', 'b2'], []]) {
+      let query: any;
+      const provider = new ExpenseSummaryProvider({ client: { $queryRaw: async (q: any) => { query = q; return []; } } } as any);
+      const result = await provider.collectMonths({ companyId: 'c1', year: 2026, branchIds }, new Date('2026-06-01'));
+      assert.equal(result.months.length, 12);
+      assert.ok(result.months.every(row => row.total === '0.00' && row.count === 0));
+      assert.deepEqual(result.years, [2026]);
+      if (!branchIds) assert.doesNotMatch(query.text, /"branchId"/);
+      else if (branchIds.length) { assert.match(query.text, /"branchId" IN/); assert.deepEqual(query.values, ['c1', 'b1', 'b2']); assert.doesNotMatch(query.text, /IS NULL/); }
+      else assert.match(query.text, /AND FALSE/);
+    }
+  });
+});
+
+
+it('HOME-1 takes the current year from the shop timezone without shifting stored expense dates', async () => {
+  const provider = new ExpenseSummaryProvider({ client: { $queryRaw: async () => [] } } as any);
+  const result = await provider.collectMonths({ companyId: 'c1', year: 2026, timezone: 'America/Los_Angeles' }, new Date('2027-01-01T01:00:00Z'));
+  assert.deepEqual(result.years, [2026]);
+});

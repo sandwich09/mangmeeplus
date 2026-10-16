@@ -58,17 +58,17 @@ test.describe('harness: access matrix', () => {
     }
   });
 
-  // ตั้งค่าบริษัท is gated on the hub's own key list (company settings + ledger/tax read keys),
+  // ตั้งค่าร้าน is gated on the hub's own key list (company settings + ledger/tax read keys),
   // not the union of every card — so MANAGER/FINANCE/ACCOUNTANT (tax.config.read) see it, while
   // roles holding only account.password.change / company.branch.read do not.
-  test('ตั้งค่าบริษัท shows only for roles holding a hub key @smoke', async ({ pageAs, companyId }) => {
+  test('ตั้งค่าร้าน shows only for roles holding a hub key @smoke', async ({ pageAs, companyId }) => {
     for (const role of ALL_ROLES) {
       const page = await pageAs(role);
       await page.goto(href(companyId, 'dashboard'));
       const shouldSee = ['OWNER', 'COMPANY_VIEW', 'ADMIN', 'MANAGER', 'FINANCE', 'ACCOUNTANT'].includes(role);
       await expect(
-        page.locator('aside nav').getByText('ตั้งค่าบริษัท', { exact: true }),
-        `${role} ${shouldSee ? 'should see' : 'must NOT see'} ตั้งค่าบริษัท`,
+        page.locator('aside nav').getByText('ตั้งค่าร้าน', { exact: true }),
+        `${role} ${shouldSee ? 'should see' : 'must NOT see'} ตั้งค่าร้าน`,
       ).toHaveCount(shouldSee ? 1 : 0);
       // Everyone keeps their own account-security page — it hangs off the header user menu.
       await expectRouteAccess(page, companyId, 'settings', role);

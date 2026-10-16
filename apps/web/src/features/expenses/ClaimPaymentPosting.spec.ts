@@ -129,7 +129,7 @@ test('nothing waiting is one line of the same size as the loading line, so the p
 });
 
 test('a failed first load shows the reason and a way to try again, never an empty list or a zero', async () => {
-  const html = await render({ rows: null, error: 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่' });
+  const html = await render({ rows: null, error: 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง' });
   assert.match(html, /role="alert"[^>]*>⚠ เชื่อมต่อระบบไม่ได้/);
   assert.match(html, /<button type="button" class="[^"]*mangmee-btn[^"]*w-full sm:w-auto"[^>]*>โหลดอีกครั้ง<\/button>/);
   assert.doesNotMatch(visibleText(html), /0 รายการ|รายการ\)|ไม่มีรายการค้าง|กำลังโหลด/, 'an unread list is not an empty one');

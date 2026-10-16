@@ -5,7 +5,7 @@ import type {
 import { extractValueCandidates } from '@watchdog-bms/contracts';
 
 const SOURCE_DOCUMENT_TYPES: SourceDocumentType[] = [
-  'RECEIPT', 'TAX_INVOICE', 'ABBREVIATED_TAX_INVOICE', 'TRANSFER_SLIP', 'HANDWRITTEN_CASH_BILL', 'SUPPLIER_BILL',
+  'RECEIPT', 'TAX_INVOICE', 'CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT', 'ABBREVIATED_TAX_INVOICE', 'TRANSFER_SLIP', 'HANDWRITTEN_CASH_BILL', 'SUPPLIER_BILL',
   'MARKETPLACE_ORDER_SCREENSHOT', 'EXPENSE_NOTE_TEXT', 'SUBSTITUTE_RECEIPT', 'OTHER_EXPENSE_DOCUMENT', 'NEEDS_REVIEW',
 ];
 
@@ -58,13 +58,12 @@ export function deriveTaxEvidence(input: TaxEvidenceInput): TaxEvidenceResult {
       if (!input.vendorTaxId) return { taxEvidenceStatus: 'NEEDS_REVIEW', taxEvidenceReasonCode: 'MISSING_VENDOR_TAX_ID' };
       if (!input.documentNumber) return { taxEvidenceStatus: 'NEEDS_REVIEW', taxEvidenceReasonCode: 'MISSING_DOCUMENT_NUMBER' };
       return { taxEvidenceStatus: 'USABLE_FOR_TAX', taxEvidenceReasonCode: 'VALID_TAX_INVOICE_FIELDS' };
-    // Spec §19h: ใบกำกับภาษีอย่างย่อ (s.86/6) is complete, valid expense evidence — nothing is
-    // missing from it — but s.82/5 bars its input VAT from credit, so it can never be
-    // USABLE_FOR_TAX no matter how many fields it carries. Upgrading requires the seller to issue
-    // a full-form invoice, which is a different document and therefore a different type.
     case 'ABBREVIATED_TAX_INVOICE':
       if (!toPositiveNumber(input.grandTotalAmount ?? undefined)) return { taxEvidenceStatus: 'NEEDS_REVIEW', taxEvidenceReasonCode: 'MISSING_MONETARY_AMOUNT' };
-      return { taxEvidenceStatus: 'SUPPORTING_ONLY', taxEvidenceReasonCode: 'ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE' };
+      return { taxEvidenceStatus: 'USABLE_FOR_TAX', taxEvidenceReasonCode: 'VALID_RECEIPT_FIELDS' };
+    case 'CUSTOMS_VAT_RECEIPT':
+    case 'PP36_RECEIPT':
+      return { taxEvidenceStatus: 'USABLE_FOR_TAX', taxEvidenceReasonCode: 'VALID_TAX_INVOICE_FIELDS' };
     case 'RECEIPT':
     case 'SUPPLIER_BILL':
       if (!toPositiveNumber(input.grandTotalAmount ?? undefined)) return { taxEvidenceStatus: 'NEEDS_REVIEW', taxEvidenceReasonCode: 'MISSING_MONETARY_AMOUNT' };
@@ -404,4 +403,18 @@ export function isSuccessfulNonReceiptClassification(classification: BusinessDoc
     || classification.businessDirection === 'CUSTOMER_INBOUND'
     || (classification.documentFamily !== 'EXPENSE_EVIDENCE'
       && !EXPENSE_EXTRACTION_KINDS.has(classification.documentKind));
+}
+
+
+export const CLAIMABLE_INPUT_VAT_DOCUMENT_TYPES: readonly string[] = ['TAX_INVOICE', 'CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT'];
+
+/** Evidence describes the paper; it never decides the right to input VAT. */
+export function deriveInputVatPreset(input: {
+  sourceDocumentType?: string | null; vatMode?: string; vatAmount?: string | number | null;
+  vatStatus: 'REGISTERED' | 'NOT_REGISTERED' | 'UNKNOWN';
+}): { inputVatClaimStatus: 'NON_CLAIMABLE' | 'NEEDS_REVIEW'; reasonCode: string } {
+  if (input.vatStatus === 'NOT_REGISTERED') return { inputVatClaimStatus: 'NON_CLAIMABLE', reasonCode: 'COMPANY_NOT_VAT_REGISTERED_ON_DOCUMENT_DATE' };
+  if (input.vatMode === 'NO_VAT' || Number(input.vatAmount ?? 0) === 0) return { inputVatClaimStatus: 'NON_CLAIMABLE', reasonCode: 'NO_INPUT_VAT' };
+  if (CLAIMABLE_INPUT_VAT_DOCUMENT_TYPES.includes(input.sourceDocumentType ?? '')) return { inputVatClaimStatus: 'NEEDS_REVIEW', reasonCode: 'INPUT_VAT_REVIEW_REQUIRED' };
+  return { inputVatClaimStatus: 'NON_CLAIMABLE', reasonCode: input.sourceDocumentType === 'ABBREVIATED_TAX_INVOICE' ? 'ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE' : 'DOCUMENT_NOT_INPUT_VAT_CLAIMABLE' };
 }

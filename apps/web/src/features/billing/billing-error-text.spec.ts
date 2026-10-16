@@ -66,7 +66,7 @@ describe('package page error text', () => {
     assert.match(outage, /ยังไม่พร้อมใช้งาน/);
     assert.match(errorText({ status: 500, message: 'Internal server error' }), /ระบบขัดข้องชั่วคราว/);
     assert.match(errorText({ status: 502 }), /เชื่อมต่อระบบไม่ได้ชั่วคราว/);
-    assert.match(errorText({ kind: 'network_error', message: 'Network request failed.' }), /ตรวจสอบอินเทอร์เน็ต/);
+    assert.match(errorText({ kind: 'network_error', message: 'Network request failed.' }), /ตรวจอินเทอร์เน็ต/);
     for (const text of [outage, errorText({ status: 500 }), errorText({ kind: 'network_error' })]) {
       assert.notEqual(text, BILLING_GENERIC_ERROR);
       assert.doesNotMatch(text, /เลขอ้างอิง/);

@@ -17,14 +17,15 @@ type FieldFrameProps = {
 };
 
 function FieldFrame({ id, label, showRequiredMark, error, hint, hintClassName, frameClassName, children }: FieldFrameProps) {
-  const hintId = hint ? `${id}-hint` : undefined;
+  const hintId = hint && !error ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
 
   return (
     <label htmlFor={id} className={`flex flex-col gap-1.5 text-sm font-medium text-gray-700 ${frameClassName ?? ''}`}>
       <span>{label}{showRequiredMark && <span className="text-red-600" aria-hidden="true"> *</span>}</span>
       {children}
-      {hint && <span id={hintId} title={hintClassName ? hint : undefined} className={`text-xs font-normal ${hintClassName ?? 'text-gray-400'}`}>{hint}</span>}
+      {/* One line under the field: the error when there is one, else the hint. Both at once printed the same rule twice, grey then red. */}
+      {hint && !error && <span id={hintId} title={hintClassName ? hint : undefined} className={`text-xs font-normal ${hintClassName ?? 'text-gray-500'}`}>{hint}</span>}
       {error && <FieldError id={errorId}>{error}</FieldError>}
     </label>
   );
@@ -33,11 +34,17 @@ function FieldFrame({ id, label, showRequiredMark, error, hint, hintClassName, f
 const inputClass =
   'h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-base text-gray-700 outline-none transition-colors placeholder:text-gray-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400 sm:h-10 sm:text-sm';
 
+/** The id of the one line shown under a field, for `aria-describedby`: the error when there is one, else the hint. */
+function shownLineId(fieldId: string, hint: string | undefined, error: string | undefined) {
+  return error ? `${fieldId}-error` : hint ? `${fieldId}-hint` : '';
+}
+
 function getFieldId(id: string | undefined, name: string | undefined, label: string) {
   return id ?? name ?? label.toLowerCase().trim().replace(/\s+/g, '-');
 }
 
 export interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
+  endAdornment?: ReactNode;
   label: string;
   showRequiredMark?: boolean;
   error?: string;
@@ -46,13 +53,11 @@ export interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   frameClassName?: string;
 }
 
-export function TextField({ id, label, showRequiredMark, error, hint, hintClassName, frameClassName, className, ...rest }: TextFieldProps) {
+export function TextField({ endAdornment, id, label, showRequiredMark, error, hint, hintClassName, frameClassName, className, ...rest }: TextFieldProps) {
   const [locale] = useLocale();
   const [revealed, setRevealed] = useState(false);
   const fieldId = getFieldId(id, rest.name, label);
-  const describedBy = [hint ? `${fieldId}-hint` : undefined, error ? `${fieldId}-error` : undefined]
-    .filter(Boolean)
-    .join(' ');
+  const describedBy = shownLineId(fieldId, hint, error);
   const isPassword = rest.type === 'password';
 
   const input = (
@@ -62,7 +67,7 @@ export function TextField({ id, label, showRequiredMark, error, hint, hintClassN
       aria-describedby={describedBy || undefined}
       {...rest}
       type={isPassword && revealed ? 'text' : rest.type}
-      className={`${inputClass} ${isPassword ? 'pr-11 sm:pr-10' : ''} ${className ?? ''}`}
+      className={`${inputClass} ${isPassword ? 'pr-11 sm:pr-10' : endAdornment ? 'pr-11' : ''} ${className ?? ''}`}
     />
   );
 
@@ -85,7 +90,7 @@ export function TextField({ id, label, showRequiredMark, error, hint, hintClassN
             )}
           </button>
         </span>
-      ) : (
+      ) : endAdornment ? <span className="relative block">{input}{endAdornment}</span> : (
         input
       )}
     </FieldFrame>
@@ -102,9 +107,7 @@ export interface SelectFieldProps extends ThemedSelectProps {
 
 export function SelectField({ id, label, showRequiredMark, error, hint, frameClassName, className, children, ...rest }: SelectFieldProps) {
   const fieldId = getFieldId(id, rest.name, label);
-  const describedBy = [hint ? `${fieldId}-hint` : undefined, error ? `${fieldId}-error` : undefined]
-    .filter(Boolean)
-    .join(' ');
+  const describedBy = shownLineId(fieldId, hint, error);
 
   return (
     <FieldFrame id={fieldId} label={label} showRequiredMark={showRequiredMark} error={error} hint={hint} frameClassName={frameClassName}>
@@ -130,9 +133,7 @@ export interface TextareaFieldProps extends TextareaHTMLAttributes<HTMLTextAreaE
 
 export function TextareaField({ id, label, error, hint, className, ...rest }: TextareaFieldProps) {
   const fieldId = getFieldId(id, rest.name, label);
-  const describedBy = [hint ? `${fieldId}-hint` : undefined, error ? `${fieldId}-error` : undefined]
-    .filter(Boolean)
-    .join(' ');
+  const describedBy = shownLineId(fieldId, hint, error);
 
   return (
     <FieldFrame id={fieldId} label={label} error={error} hint={hint}>
@@ -155,9 +156,7 @@ export interface SwitchFieldProps extends Omit<InputHTMLAttributes<HTMLInputElem
 
 export function SwitchField({ id, label, error, hint, className, ...rest }: SwitchFieldProps) {
   const fieldId = getFieldId(id, rest.name, label);
-  const describedBy = [hint ? `${fieldId}-hint` : undefined, error ? `${fieldId}-error` : undefined]
-    .filter(Boolean)
-    .join(' ');
+  const describedBy = shownLineId(fieldId, hint, error);
 
   return (
     <label htmlFor={fieldId} className="flex items-start gap-3 text-sm font-medium text-gray-700">
@@ -173,7 +172,7 @@ export function SwitchField({ id, label, error, hint, className, ...rest }: Swit
       </span>
       <span className="flex flex-col gap-1">
         {label}
-        {hint && <span id={`${fieldId}-hint`} className="text-xs font-normal text-gray-400">{hint}</span>}
+        {hint && !error && <span id={`${fieldId}-hint`} className="text-xs font-normal text-gray-500">{hint}</span>}
         {error && <FieldError id={`${fieldId}-error`}>{error}</FieldError>}
       </span>
     </label>
@@ -182,7 +181,7 @@ export function SwitchField({ id, label, error, hint, className, ...rest }: Swit
 
 export function FieldError({ id, children }: { id?: string; children: ReactNode }) {
   return (
-    <span id={id} role="alert" className="text-xs font-normal text-red-600">
+    <span id={id} role="alert" className="text-sm font-normal text-red-600">
       {children}
     </span>
   );

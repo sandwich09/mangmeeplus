@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { PublicSignupStatusDto } from '@watchdog-bms/contracts';
-import { Button } from '@/common/components/button';
+import { Button, primaryButtonClass, secondaryButtonClass } from '@/common/components/button';
+import { Notice } from '@/common/components/notice';
 import { getSignupStatus, resendSignupClaimEmail } from './external-signup.api';
 import { SignupBrandHeader } from './SignupChrome';
 import {
@@ -17,12 +18,23 @@ import {
   signupSubmitErrorMessage,
 } from './signup.logic';
 
+/** Said from constants so the two can never be mixed up: only a definite answer may call the link wrong. */
+// The button under it says what to do; the sentence does not say it a second time.
+const LOAD_OUTAGE = 'ตอนนี้ตรวจสถานะไม่ได้ชั่วคราว คำขอของคุณยังอยู่';
+const LOAD_NOT_FOUND = 'ไม่พบคำขอนี้ ลิงก์อาจไม่ครบ เปิดลิงก์ที่เก็บไว้อีกครั้ง';
+
 const TONE_CLASS = {
   info: 'border-gray-200 bg-gray-50 text-gray-700',
   success: 'border-[#B6E0C4] bg-[#F2F9F4] text-[#046B29]',
   warning: 'border-amber-200 bg-amber-50 text-amber-900',
   error: 'border-red-200 bg-red-50 text-red-700',
 } as const;
+
+/** The link is worth keeping only while the request is still going somewhere the applicant can follow from this page. */
+function keepsLink(status: PublicSignupStatusDto): boolean {
+  if (status.status === 'READY' || status.status === 'REJECTED') return false;
+  return status.status !== 'EXPIRED' || status.canResendClaim;
+}
 
 export default function SignupStatusPage({ requestId }: { requestId: string }) {
   const [status, setStatus] = useState<PublicSignupStatusDto | null>(null);
@@ -87,27 +99,23 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
       <SignupBrandHeader />
       <main className="mx-auto w-full max-w-md px-4 py-6 sm:max-w-lg sm:py-10">
         <div className="space-y-5 rounded-2xl border border-gray-200 bg-white p-5 sm:p-8">
-          <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">สถานะคำขอสมัคร</h1>
+          <h1 className="text-[22px] font-bold leading-9 text-gray-900">สถานะคำขอสมัคร</h1>
 
           {loadError ? (
+            // One sentence, ours. The API's own sentence is written for other screens (the staff
+            // queue among them) and is not repeated under it.
             <div role="alert" className="space-y-3">
-              <p className="text-[15px] leading-7 text-gray-600">
-                {loadError.transient
-                  ? 'ตอนนี้ตรวจสถานะไม่ได้ชั่วคราว คำขอของคุณยังอยู่ กดลองใหม่อีกครั้งได้เลย'
-                  : 'ไม่พบคำขอนี้ หรือลิงก์ไม่ถูกต้อง กรุณาตรวจลิงก์ที่บันทึกไว้อีกครั้ง'}
-              </p>
-              <p className="text-[13.5px] text-gray-500">{loadError.message}</p>
+              <p className="text-[15px] leading-7 text-gray-600">{loadError.transient ? LOAD_OUTAGE : LOAD_NOT_FOUND}</p>
               {loadError.transient ? (
-                <Button
-                  type="button"
-                  size="lg"
-                  variant="secondary"
-                  className="w-full !rounded-xl"
-                  onClick={() => setAttempt((count) => count + 1)}
-                >
-                  ลองใหม่อีกครั้ง
+                <Button type="button" variant="secondary" className="w-full" onClick={() => setAttempt((count) => count + 1)}>
+                  ลองอีกครั้ง
                 </Button>
-              ) : null}
+              ) : (
+                // A link that names no request cannot be mended here: the one move this page can offer.
+                <Link href="/signup" className={`${secondaryButtonClass} w-full`}>
+                  สมัครใหม่
+                </Link>
+              )}
             </div>
           ) : !copy ? (
             <p className="text-[15px] text-gray-500">กำลังโหลด…</p>
@@ -119,10 +127,7 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
               </div>
 
               {status?.status === 'READY' ? (
-                <Link
-                  href="/login"
-                  className="flex h-12 w-full items-center justify-center rounded-xl bg-[#046B29] text-[15.5px] font-semibold text-white"
-                >
+                <Link href="/login" className={`${primaryButtonClass} w-full`}>
                   เข้าสู่ระบบ
                 </Link>
               ) : null}
@@ -132,29 +137,26 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
                   F8: hidden where no shop is coming — beside a rejection, a stalled build or an
                   expired request it is an advert on a dead end. */}
               {status && showsTrialNotice(status.status) ? (
-                <section className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] p-3.5">
-                  <p className="text-[14.5px] font-bold text-[#046B29]">{SIGNUP_TRIAL_HEADLINE}</p>
-                  <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_AFTER}</p>
-                </section>
+                <p className="text-sm leading-6 text-gray-600">
+                  <span className="font-semibold text-gray-800">{SIGNUP_TRIAL_HEADLINE}</span> {SIGNUP_TRIAL_AFTER}
+                </p>
               ) : null}
 
               {/* R12: this URL is the applicant's only way back. Copy, then paste it into their
                   own chat — a bookmark on a phone browser is the thing they lose first. */}
-              <div className="space-y-1.5">
-                <Button
-                  type="button"
-                  size="lg"
-                  variant="secondary"
-                  className="w-full !rounded-xl"
-                  onClick={() => void copyLink()}
-                  loading={copying}
-                >
-                  {linkCopied ? 'คัดลอกลิงก์แล้ว' : 'คัดลอกลิงก์หน้านี้'}
-                </Button>
-                <p className="text-[13px] leading-6 text-gray-500">
-                  เก็บลิงก์นี้ไว้ กลับมาดูสถานะได้ตลอด แนะนำให้ส่งเข้าแชตของตัวเอง
-                </p>
-              </div>
+              {/* Only while there is something left to come back for: a shop that is open, a
+                  request that was turned down or one that only the team can revive has nothing
+                  more to show on this page. */}
+              {status && keepsLink(status) ? (
+                <div className="space-y-1.5">
+                  <Button type="button" variant="secondary" className="w-full" onClick={() => void copyLink()} loading={copying}>
+                    {linkCopied ? 'คัดลอกลิงก์แล้ว' : 'คัดลอกลิงก์หน้านี้'}
+                  </Button>
+                  <p className="text-[13px] leading-6 text-gray-500">
+                    เก็บลิงก์นี้ไว้ กลับมาดูสถานะได้ตลอด แนะนำให้ส่งเข้าแชตของตัวเอง
+                  </p>
+                </div>
+              ) : null}
 
               {status?.canResendClaim ? (
                 <div className="space-y-2.5 border-t border-gray-100 pt-5">
@@ -165,25 +167,14 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
                     // R11: the API answers once the outbox row exists. A worker, SES and the
                     // applicant's own provider all stand between that and a mailbox, so this says
                     // what actually happened — the delivered claim belongs to whoever can see it.
-                    <p role="status" className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] px-4 py-3 text-[14.5px] leading-7 text-[#046B29]">
-                      รับคำขอส่งอีเมลใหม่แล้ว อีเมลจะถึงภายในไม่กี่นาที กรุณาตรวจกล่องจดหมาย และเมลขยะ
-                    </p>
+                    <Notice tone="success">รับคำขอส่งอีเมลใหม่แล้ว อีเมลจะถึงภายในไม่กี่นาที ถ้าไม่เจอ ดูในอีเมลขยะ</Notice>
                   ) : (
-                    <Button
-                      type="button"
-                      size="lg"
-                      variant="secondary"
-                      className="w-full !rounded-xl"
-                      loading={resendState === 'sending'}
-                      onClick={handleResend}
-                    >
+                    <Button type="button" variant="secondary" className="w-full" loading={resendState === 'sending'} onClick={handleResend}>
                       ขอลิงก์ตั้งรหัสผ่านใหม่
                     </Button>
                   )}
                   {resendError ? (
-                    <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[14.5px] leading-7 text-amber-900">
-                      {resendError}
-                    </p>
+                    <Notice tone="warning">{resendError}</Notice>
                   ) : null}
                 </div>
               ) : null}
@@ -193,7 +184,7 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
           {/* Owner UAT 2026-08-31: a phone number alone strands anyone who cannot call — the same
               mailbox the expired-request copy already points at is offered here too. */}
           <p className="border-t border-gray-100 pt-4 text-[13.5px] leading-6 text-gray-500">
-            ต้องการความช่วยเหลือ โทร{' '}
+            ติดปัญหา ติดต่อทีมงานมั่งมี{' '}
             <a href={`tel:${SIGNUP_SUPPORT_PHONE.replace(/-/g, '')}`} className="font-semibold text-[#046B29] underline">
               {SIGNUP_SUPPORT_PHONE}
             </a>

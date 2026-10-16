@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { reimbursementPayoutRoundStatus, THAI_SYSTEM_ROLE_NAMES, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT } from '@watchdog-bms/contracts';
+import { CLAIM_SIGN_LABEL, CLAIM_RESIGN_LABEL, SELF_APPROVAL_POLICY_NOTE, reimbursementSubmitReadiness } from '../reimbursements/reimbursements.model';
 import { buildReimbursementGuide } from './reimbursement-guide.content';
 import { buildSubstituteReceiptGuide } from './substitute-receipt-guide.content';
 import { buildExpensesGuide } from './expenses-guide.content';
@@ -96,6 +97,16 @@ describe('user guide shortcuts', () => {
     assert.equal(buildExpensesGuide('co', []).sections.length, 10);
   });
 
+  it('offers related-expense readers the same list and certificate shortcuts as the sidebar', () => {
+    const permissions = ['expense.read_related'];
+    assert.ok(links(buildExpensesGuide('co', permissions)).includes('/companies/co/expenses'));
+    const certificate = links(buildSubstituteReceiptGuide('co', permissions));
+    assert.ok(certificate.includes('/companies/co/expenses/substitute-receipts'));
+    assert.ok(certificate.includes('/companies/co/expenses'));
+    assert.ok(links(buildReimbursementGuide('co', permissions)).includes('/companies/co/expenses'));
+    assert.ok(!certificate.some(href => href.includes('/settings/')));
+  });
+
   it('drops the tax and reports shortcuts for a session without those permissions', () => {
     assert.ok(links(buildTaxGuide('co', OWNER)).includes('/companies/co/tax'));
     assert.deepEqual(links(buildTaxGuide('co', [])), []);
@@ -124,12 +135,14 @@ describe('the reimbursement guide reads as the product does', () => {
   const guide = buildReimbursementGuide('co', OWNER, ['OWNER']);
   const read = sentences(guide);
 
-  it('Round 4: explains the duplicate card and chip and payable-only waiting figures', () => {
+  it('G1: explains the nonempty status chooser and queue metrics including duplicate holds', () => {
     const list = sentences({ ...guide, sections: guide.sections.filter((section) => section.id === 'list') }).join(' ');
     assert.match(list, /ติดรายการซ้ำ/u);
     assert.match(list, /จ่ายได้/u);
-    assert.match(list, /ตัวกรอง 7 ปุ่ม/u);
-    assert.match(list, /ยอดคงค้างรวม/u);
+    assert.match(list, /ช่อง “สถานะ” แสดงทั้งหมดและเฉพาะกลุ่มที่มีใบเบิก/u);
+    assert.doesNotMatch(list, /ตัวกรอง 8 แท็บ|ตัวกรองแสดงเสมอ/u);
+    assert.match(list, /จำนวนรออนุมัติและรอจ่ายพร้อมยอดเงิน รวมใบที่กฎรายการซ้ำห้ามจ่ายด้วย/u);
+    for (const gone of ['ร่างรอส่ง', 'รอจ่ายเงินคืน', 'ยอดรวมที่ขอเบิก', 'การ์ดสรุป', 'draftRowSubmitLabel']) assert.ok(!list.includes(gone), gone);
   });
 
   // approved-product-help.ts (ai-gateway) links the LINE assistant's two claim cards to these sections.
@@ -145,7 +158,8 @@ describe('the reimbursement guide reads as the product does', () => {
     const source = (file: string) => readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const claimScreens = readdirSync(feature).filter((name) => /\.tsx?$/.test(name) && !name.includes('.spec.'))
       .map((name) => source(join(feature, name))).join('\n');
-    const shown = [claimScreens, ...Object.values(REIMBURSEMENT_PAYMENT_REFERENCE_TEXT), ...[
+    const receiptExample = { status: 'DRAFT', receiptRequirementStatus: 'REQUIRED', lines: [{ lineNo: 1, incurredDate: '2026-01-01' }] };
+    const shown = [claimScreens, reimbursementSubmitReadiness(receiptExample).message, reimbursementSubmitReadiness({ ...receiptExample, allowMissingReceiptWithReason: true }).message, ...Object.values(REIMBURSEMENT_PAYMENT_REFERENCE_TEXT), ...[
       join(__dirname, '../../common/api/api-error-message.ts'),
       join(__dirname, '../../common/i18n/workspace-dictionary.ts'),
       join(__dirname, '../web-core-workspace/web-core-workspace.logic.ts'),
@@ -183,7 +197,7 @@ describe('the reimbursement guide reads as the product does', () => {
       assert.ok(quotes.includes(label), label);
     }
     // A payment by another method is said of what the claim states, as the screens say it: nobody is named as having asked.
-    for (const label of ['เหตุผลที่จ่ายต่างจากที่ระบุในใบ', 'จ่ายต่างจากที่ระบุในใบ', 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล']) assert.ok(quotes.includes(label), label);
+    for (const label of ['เหตุผลที่จ่ายต่างจากที่ระบุในใบ', 'จ่ายต่างจากที่ระบุในใบ', 'วิธีจ่ายต่างจากที่ระบุในใบ ระบุเหตุผล']) assert.ok(quotes.includes(label), label);
     for (const text of read) assert.doesNotMatch(text, /ที่ผู้เบิกขอ|ผู้เบิกขอรับ/u, text);
   });
 
@@ -220,13 +234,13 @@ describe('the reimbursement guide reads as the product does', () => {
     let html: string;
     try { html = page(); } finally { Reflect.set(reactRuntime, 'useState', realUseState); }
     const texts = html.replace(/<[^>]*>/gu, '\n').split('\n').map((text) => text.replace(/&quot;/gu, '"').replace(/&amp;/gu, '&').trim()).filter(Boolean);
-    const ANSWERED_FOR_YOU = 'หัวข้อบอกชื่อคนที่ทำและสิ่งที่ทำ เช่น “แก้บัญชีรับเงิน” “ยืนยันบัญชีเดิม” หรือ “เปลี่ยนวิธีรับเงินคืน” ตามด้วย “ในใบเบิกของคุณ” และเลขที่คำขอ เนื้อความบอกธนาคารและ 4 ตัวท้ายของบัญชี หรือบอกว่ารับเป็นเงินสด และให้เปิดคำขอเพื่อตรวจ';
+    const ANSWERED_FOR_YOU = 'หัวข้อบอกชื่อคนที่ทำและสิ่งที่ทำ เช่น “แก้บัญชีรับเงิน” “ยืนยันบัญชีเดิม” หรือ “เปลี่ยนวิธีรับเงินคืน” ตามด้วย “ในใบเบิกของคุณ” และเลขที่ใบเบิก เนื้อความบอกธนาคารและ 4 ตัวท้ายของบัญชี หรือบอกว่ารับเป็นเงินสด และให้เปิดใบเบิกเพื่อตรวจ';
     // Once in the phone's card and once in the table from sm up: the same sentence.
     assert.equal(texts.filter((text) => text === ANSWERED_FOR_YOU).length, 2);
     // On a phone the sentence is in a card that wraps: no table, no horizontal scroll.
     assert.match(html, new RegExp(`<ul class="flex flex-col gap-2 sm:hidden">[\\s\\S]*?<p class="text-sm leading-6 break-words text-gray-600">${ANSWERED_FOR_YOU}</p>`, 'u'));
     for (const said of ['กด “แสดงเลขบัญชี” หรือ “แสดงเบอร์พร้อมเพย์” เพื่อดูเลขเต็ม', 'ปุ่มคือ “แสดงเบอร์พร้อมเพย์” กับ “คัดลอกเบอร์พร้อมเพย์”', 'บัญชีพร้อมเพย์ใช้ปุ่ม “แสดงเบอร์พร้อมเพย์” และ “ซ่อนเบอร์พร้อมเพย์”',
-      'ข้อแรกคือเบอร์พร้อมเพย์ไม่ถูกต้อง', 'ประวัติการจ่ายจะขึ้นป้าย “จ่ายต่างจากที่ระบุในใบ”', 'เมื่อเลือกวิธีรับเงินคืนแล้ว คำขอกลับไปพร้อมจ่ายทันที', 'จะไม่มีแจ้งเตือนถึงผู้เบิก']) {
+      'ข้อแรกคือเบอร์พร้อมเพย์ไม่ถูกต้อง', 'ประวัติการจ่ายจะขึ้นป้าย “จ่ายต่างจากที่ระบุในใบ”', 'เมื่อเลือกวิธีรับเงินคืนแล้ว ใบเบิกกลับไปพร้อมจ่ายทันที', 'จะไม่มีแจ้งเตือนถึงผู้เบิก']) {
       assert.ok(texts.some((text) => text.includes(said)), said);
     }
     // Folded, the page shows none of it: a reader opens the section they need.
@@ -258,15 +272,15 @@ it('the claim guide names every standard role as the role picker does', () => {
   const read = sentences(guide);
   const rows = (id: string) => guide.sections.find((section) => section.id === id)!.blocks.flatMap((block) => (block.kind === 'table' ? block.rows : []));
   const holders = (item: string) => rows('permissions').find((row) => row[1] === item)?.[2];
-  assert.equal(holders('อนุมัติการเบิก'), `${roles.OWNER} ${roles.ADMIN} ${roles.MANAGER}`);
-  assert.equal(holders('ตรวจสอบการเบิก'), `${roles.OWNER} ${roles.ACCOUNTANT}`);
-  assert.equal(holders('ตรวจ/จ่ายการเบิก'), `${roles.OWNER} ${roles.FINANCE}`);
-  assert.equal(holders('ตั้งนโยบายการเบิก'), `${roles.OWNER} ${roles.ADMIN}`);
+  assert.equal(holders('อนุมัติและจ่ายใบเบิก'), `${roles.OWNER} ${roles.ADMIN} ${roles.MANAGER}`);
+  assert.equal(holders('ตรวจใบเบิก'), `${roles.OWNER} ${roles.ACCOUNTANT}`);
+  assert.equal(holders('ตรวจและจ่ายใบเบิก'), `${roles.OWNER} ${roles.FINANCE}`);
+  assert.equal(holders('ตั้งนโยบายใบเบิก'), `${roles.OWNER} ${roles.ADMIN}`);
   assert.equal(holders('สิทธิ์แก้ไขข้อมูลพนักงาน'), `${roles.OWNER} ${roles.ADMIN} และ${roles.MANAGER}กับ${roles.HR}ในสาขาที่ตนดูแล`);
-  assert.equal(rows('tabs').find((row) => row[0] === 'ตั้งค่านโยบาย')?.[1], `${roles.OWNER} และ${roles.ADMIN}`);
-  // Default roles can record payment; self-approval is governed by the company switch for all roles.
+  assert.equal(rows('tabs').find((row) => row[0] === 'เพิ่มเติม → ตั้งค่านโยบาย')?.[1], `${roles.OWNER} และ${roles.ADMIN}`);
+  // Default roles can record payment; the guide explains the owner and sole-approver exceptions to the switch.
   const approvers = `${roles.OWNER} ${roles.ADMIN} และ${roles.MANAGER}`;
-  for (const part of ['ทำได้อยู่แล้ว บทบาทที่บริษัทสร้างเอง']) {
+  for (const part of ['ทำได้อยู่แล้ว บทบาทที่ร้านสร้างเอง']) {
     assert.ok(read.find((sentence) => sentence.includes(part))?.includes(approvers), part);
   }
   // A role is never called by a word outside the one list ("เจ้าของบัญชี" is the account's owner, not a role).
@@ -279,15 +293,57 @@ it('the claim guide never says the owner alone changes the claim policy', () => 
   const guide = buildReimbursementGuide('co');
   const read = sentences(guide);
   for (const text of read) assert.doesNotMatch(text, new RegExp(`${roles.OWNER}เปิด`, 'u'), text);
-  assert.equal(guide.sections.find((section) => section.id === 'policy')!.title, `ตั้งค่านโยบายของบริษัท (สำหรับ${roles.OWNER}และ${roles.ADMIN})`);
-  assert.equal(guide.sections.find((section) => section.id === 'finance')!.summary, 'มีเมื่อบริษัทเปิด “ตรวจการเงินก่อนจ่าย” เท่านั้น');
+  assert.equal(guide.sections.find((section) => section.id === 'policy')!.title, `ตั้งค่านโยบายของร้าน (สำหรับ${roles.OWNER}และ${roles.ADMIN})`);
+  assert.equal(guide.sections.find((section) => section.id === 'finance')!.summary, 'มีเมื่อร้านเปิด “ตรวจการเงินก่อนจ่าย” เท่านั้น');
   // What a switch does is said of the company; whom to ask names both holders.
   for (const said of [
-    'งานตรวจการเงินมีต่อเมื่อบริษัทเปิด “ตรวจการเงินก่อนจ่าย” ในหน้าตั้งค่านโยบาย',
+    'งานตรวจการเงินมีต่อเมื่อร้านเปิด “ตรวจการเงินก่อนจ่าย” ในหน้าตั้งค่านโยบาย',
     `${roles.OWNER}หรือ${roles.ADMIN}เปิด “ตรวจการเงินก่อนจ่าย” ได้ที่หน้าตั้งค่านโยบาย`,
-    'เมื่อปิด ไม่มีใครอนุมัติใบเบิกของตัวเองได้ไม่ว่าบทบาทใด',
+    `เมื่อปิด อนุมัติเองได้เฉพาะ${roles.OWNER} หรือเมื่อผู้เบิกเป็นคนเดียวที่อนุมัติใบนั้นได้`,
     'ขอให้ผู้มีสิทธิ์ตั้งค่านโยบายเปิดสวิตช์',
   ]) assert.ok(read.some((text) => text.includes(said)), said);
+});
+
+it('G1: the claim guide pins current form, cancellation, comparison and policy wording', () => {
+  const guide = buildReimbursementGuide('co');
+  const text = sentences(guide).join(' ');
+  for (const label of ['+ สร้างใบเบิก', 'ใบเบิกทั้งหมด', 'รอการเงิน', 'รอจ่าย', 'แก้ไขใบเบิก', 'ยกเลิกใบเบิกนี้', 'ไม่ยกเลิก', 'ยกเลิกใบเบิก',
+    'ยกเลิกรายการจ่ายนี้', 'เลือกจากค่าใช้จ่ายที่บันทึกไว้', 'ค่าใช้จ่ายที่บันทึกไว้', 'ใบเบิกถูกแก้หลังส่งอนุมัติ', 'เดิม', 'ใหม่',
+    'บันทึกร่าง', 'ทำต่อ', 'ทำต่อเพื่อยกเลิก', 'หลักฐานการจ่าย', 'แนบสำเนาที่เซ็นครบ', 'แนบเป็นไฟล์แนบทั่วไป', 'ไปบันทึกลายเซ็น', 'ใบเบิกจะเดินตามนี้', 'บันทึกการตั้งค่า',
+    'ส่งใบเบิกให้ใครอนุมัติ', 'ไม่มีใบเสร็จได้ถ้ากรอกเหตุผล', 'ถ้าใบเสร็จอาจซ้ำกับใบอื่น', 'เตือนอย่างเดียว', 'ห้ามส่งอนุมัติ', 'ห้ามจ่ายจนกว่าจะตรวจ']) {
+    assert.ok(text.includes(label), label);
+  }
+  const fields = guide.sections.find(section => section.id === 'create')!.blocks.flatMap(block => block.kind === 'table' ? block.rows : []);
+  assert.ok(fields.some(row => row[0] === 'หมวด' && row[2]!.includes('ยังไม่มีหมวดเลือกไว้ให้')));
+  assert.ok(fields.some(row => row[0] === 'ผู้เบิก' && row[1] === 'แสดงเฉพาะผู้ที่ทำใบเบิกแทนคนอื่นได้'));
+  assert.ok(fields.some(row => row[0] === 'เหตุผลที่ไม่มีใบเสร็จ' && row[1] === 'แสดงเมื่อรายการที่กรอกเองยังไม่มีใบเสร็จ'));
+  assert.ok(!fields.some(row => row[0] === 'สกุลเงิน'));
+  assert.match(text, /ไม่มีช่องแก้จำนวนเงิน/u);
+  assert.match(text, /ยกเลิกแล้ว/u);
+  assert.doesNotMatch(text, /ข้อมูลคำขอ|สรุปคำขอ|ดูรายละเอียด”|อนุมัติด้วยข้อมูลล่าสุด|แก้ยอดให้เท่ากับ/u);
+});
+
+it('G1: the substitute guide quotes current screens and follows their four stages', () => {
+  const guide = buildSubstituteReceiptGuide('co');
+  const read = sentences(guide);
+  const feature = join(__dirname, '../expenses');
+  const source = (file: string) => readFileSync(file, 'utf8').replace(/\$\{THAI_SYSTEM_ROLE_NAMES\.([A-Z_]+)\}/g, (_, role: keyof typeof THAI_SYSTEM_ROLE_NAMES) => THAI_SYSTEM_ROLE_NAMES[role]).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const shown = [
+    ...readdirSync(feature).filter(name => /^(?:Substitute|substitute-receipt).*\.tsx?$/.test(name) && !name.includes('.spec.')).map(name => source(join(feature, name))),
+    source(join(__dirname, '../../common/i18n/workspace-dictionary.ts')),
+  ].join('\n');
+  const quotes = [...new Set(read.flatMap(text => [...text.matchAll(/“([^”]+)”/g)].map(match => match[1]!)))];
+  assert.ok(quotes.length >= 25, 'the guide names the controls a reader needs');
+  assert.deepEqual(quotes.filter(quote => !shown.includes(quote)), []);
+  const stages = guide.sections.find(section => section.id === 'steps')!.blocks.flatMap(block => block.kind === 'steps' ? block.steps.map(step => step.title) : []);
+  assert.deepEqual(stages, ['ค่าใช้จ่าย', 'รายละเอียด', 'เซ็น', 'เสร็จ']);
+  const statuses = guide.sections.find(section => section.id === 'list')!.blocks.flatMap(block => block.kind === 'table' ? block.rows.map(row => row[0]) : []);
+  assert.deepEqual(statuses, ['รอเซ็น', 'รออนุมัติ', 'ออกแล้ว', 'ยกเลิกแล้ว']);
+  const text = read.join(' ');
+  for (const label of ['ซื้อไปใช้ทำอะไร', 'ผู้รับรองการจ่าย', 'ใช้เงินของใครจ่าย', 'วิธีจ่าย', 'วันที่จ่าย', 'ใช้ลายเซ็นนี้', 'พิมพ์ใบสำคัญรับเงิน', 'อนุมัติและออกใบรับรอง', 'เดือนที่จ่าย']) assert.ok(text.includes(label), label);
+  assert.doesNotMatch(text, /งานที่รอดำเนินการ|ตัวเลขสรุป 4 ช่อง|ดำเนินการ|ลงนาม|ลายมือชื่อ|กรุณา/u);
+  assert.match(text, /ใบที่เซ็นบนกระดาษใช้สร้างใบเบิกในระบบไม่ได้/u);
+  assert.match(text, /เงินส่วนตัวของพนักงานยังไม่ถือว่าร้านจ่ายคืน/u);
 });
 
 it('the substitute-receipt guide calls the owner by the one name', () => {
@@ -295,7 +351,7 @@ it('the substitute-receipt guide calls the owner by the one name', () => {
   const read = sentences(buildSubstituteReceiptGuide('co'));
   // "กิจการเจ้าของคนเดียว" is a kind of business (a sole proprietorship), not a role.
   for (const text of read) assert.doesNotMatch(text, /เจ้าของ(?!กิจการ|คนเดียว)/u, text);
-  const said = `${roles.OWNER}ลงนามได้ทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ`;
+  const said = `${roles.OWNER}เซ็นได้ทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ`;
   assert.ok(read.some((text) => text.includes(said)), said);
 });
 
@@ -305,14 +361,14 @@ it('the substitute-receipt guide describes paper signing as the screens do', () 
   const text = sentences({ ...guide, sections: guide.sections.filter((section) => section.id === 'sign') }).join('\n');
   const screens = ['SubstituteReceiptWizardPage.tsx', 'SubstitutePaperSigningPanel.tsx']
     .map((name) => readFileSync(join(__dirname, '../expenses', name), 'utf8')).join('\n');
-  for (const quote of ['เลือกวิธีลงนาม', 'ลงนามออนไลน์', 'พิมพ์และเซ็นบนกระดาษ', 'ผู้ลงนามทั้งสองส่วนเป็นคนเดียวกัน (ต้องผ่านนโยบายบริษัท)', 'ยื่นฉบับลงนามเพื่อตรวจรับ',
-    'ตรวจสอบเอกสารฉบับเต็มและข้อมูลที่ถอดจากกระดาษ', 'หน้าถัดไป', 'อ่านครบทุกหน้าและตรวจเทียบข้อมูลแล้ว', 'ตรวจรับและจัดเก็บฉบับสมบูรณ์']) {
+  for (const quote of ['เลือกวิธีเซ็น', 'เซ็นออนไลน์', 'พิมพ์แล้วเซ็นบนกระดาษ', 'คนเดียวกันเซ็นทั้งสองช่อง', 'ส่งฉบับที่เซ็นแล้ว',
+    'เปิดเอกสารที่ส่งมา', 'หน้าถัดไป', 'อ่านครบทุกหน้าและตรวจเทียบข้อมูลแล้ว', 'ตรวจรับและจัดเก็บฉบับสมบูรณ์']) {
     assert.ok(text.includes(`“${quote}”`), quote);
     assert.ok(screens.includes(quote), `${quote} is on a screen`);
   }
   // In the owner-self mode one person may sign both lines; the certificate says who, not always the owner.
-  assert.doesNotMatch(text, /ว่าเจ้าของ(กิจการ)?ลงนามทั้งสองฐานะ/u);
-  assert.ok(text.includes('ถ้าคนเดียวลงนามทั้งสองฐานะ ระบบจะระบุไว้ในเอกสาร'), 'one person signing both is noted, whoever it is');
+  assert.doesNotMatch(text, /ว่าเจ้าของ(กิจการ)?เซ็นทั้งสองฐานะ/u);
+  assert.ok(text.includes('คนเดียวเซ็นทั้งสองฐานะได้ตามสิทธิ์ และระบบระบุไว้ในเอกสาร'), 'one person signing both is noted, whoever it is');
 });
 
 describe('shop guides name the company admin for the business permissions it holds', () => {
@@ -325,9 +381,9 @@ describe('shop guides name the company admin for the business permissions it hol
   it('names ADMIN throughout substitute-receipt setup and preparation', () => {
     const read = sentences(buildSubstituteReceiptGuide('co'));
     for (const expected of [
-      `ไปที่ ค่าใช้จ่ายและใบเสร็จ แล้วเลือก ตั้งค่าใบรับรองแทนใบเสร็จ เปิดได้เฉพาะผู้ที่มีสิทธิ์ตั้งค่าบริษัท เช่น ${roles.OWNER}และ${roles.ADMIN}`,
+      `ไปที่ ค่าใช้จ่ายและใบเสร็จ แล้วเลือก ตั้งค่าใบรับรองแทนใบเสร็จ เปิดได้เฉพาะผู้ที่มีสิทธิ์ตั้งค่าร้าน เช่น ${roles.OWNER}และ${roles.ADMIN}`,
       `ตั้งค่า (สำหรับ${roles.OWNER}และ${roles.ADMIN})`,
-      `${roles.OWNER}, ${roles.ADMIN}, ${roles.MANAGER}และ${roles.FINANCE}`,
+      'คนบันทึกรายการ หรือมีสิทธิ์ตรวจสอบค่าใช้จ่าย',
       `${roles.OWNER}, ${roles.ADMIN}`,
     ]) assert.ok(read.includes(expected), expected);
   });
@@ -343,18 +399,63 @@ describe('shop guides name the company admin for the business permissions it hol
     assert.equal(holders(rows(expenses, 'overview'), 'รอตรวจสอบ'), `ผู้มีสิทธิ์ตรวจสอบค่าใช้จ่าย เช่น ${reviewers}`);
     assert.equal(holders(rows(expenses, 'overview'), 'พร้อมยืนยัน'), `ผู้มีสิทธิ์ยืนยันค่าใช้จ่าย เช่น ${confirmers}`);
     assert.equal(holders(rows(expenses, 'submenus'), 'หมวดหมู่'), confirmers);
-    assert.equal(holders(rows(expenses, 'submenus'), 'ใบรับรองแทนใบเสร็จ'), reviewers);
+    assert.equal(holders(rows(expenses, 'submenus'), 'ใบรับรองแทนใบเสร็จ'), 'คนบันทึกรายการ หรือผู้มีสิทธิ์ตรวจสอบค่าใช้จ่าย');
     assert.equal(holders(rows(expenses, 'permissions'), 'ตรวจความครบถ้วนและยืนยันเอกสาร'), confirmers);
     assert.equal(holders(rows(expenses, 'permissions'), 'เพิ่มหรือแก้ไขหมวดหมู่'), confirmers);
     const categories = sentences({ ...expenses, sections: expenses.sections.filter((section) => section.id === 'categories') });
     for (const text of categories) assert.ok(!text.includes(roles.ACCOUNTANT), text);
-    assert.ok(categories.some((text) => text.includes(`ผู้มีสิทธิ์จัดการหมวดหมู่เสมอ เช่น ${roles.OWNER} ${roles.ADMIN} และ${roles.FINANCE}`)));
+    assert.ok(categories.some((text) => text.includes(`ผู้มีสิทธิ์จัดการหมวดหมู่ เช่น ${roles.OWNER} ${roles.ADMIN} และ${roles.FINANCE}`)));
     // In the designated-approver mode only the listed approvers may approve, the owner included.
-    assert.equal(holders(rows(buildSubstituteReceiptGuide('co'), 'permissions'), 'อนุมัติและออกเอกสาร'), `${confirmers} ถ้าบริษัทกำหนดรายชื่อผู้อนุมัติ ต้องเป็นคนในรายชื่อนั้น`);
+    assert.equal(holders(rows(buildSubstituteReceiptGuide('co'), 'permissions'), 'อนุมัติและออกใบรับรอง'), `${confirmers} ถ้าร้านกำหนดรายชื่อผู้อนุมัติ ต้องเป็นคนในรายชื่อนั้น`);
   });
 });
 
 // The guide cannot import API code, so it copies the report words; these checks read the sources and fail on any drift.
+it('G2: expenses and sold tax instructions quote current screen words', () => {
+  const root = join(__dirname, '../../../../..');
+  const source = (file: string) => readFileSync(file, 'utf8').replace(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\/\*[\s\S]*?\*\//g, (_match, literal: string | undefined) => literal ?? '').replace(/^\s*\/\/.*$/gm, '');
+  const sources = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const path = join(directory, entry.name);
+    return entry.isDirectory() ? sources(path) : /\.tsx?$/.test(entry.name) && !entry.name.includes('.spec.') ? [source(path)] : [];
+  });
+  const shown = [...sources(join(__dirname, '../expenses')), ...sources(join(__dirname, '../tax')), ...sources(join(__dirname, '../counterparties')),
+    ...['expenses.ts', 'tax.ts', 'disbursement-vouchers.ts'].map(name => source(join(root, 'packages/contracts/src', name))), source(join(__dirname, '../../common/i18n/workspace-dictionary.ts'))].join('\n');
+  const expense = buildExpensesGuide('co');
+  const tax = buildTaxGuide('co');
+  const sold = tax.sections.find(section => section.id === 'wht')!.blocks[0]!;
+  const quotes = [...new Set([...sentences(expense), ...sentences({ ...tax, sections: [{ ...tax.sections.find(section => section.id === 'wht')!, blocks: [sold] }] })]
+    .flatMap(text => [...text.matchAll(/“([^”]+)”/g)].map(match => match[1]!)))];
+  assert.ok(quotes.length >= 35, 'guides name the controls people need');
+  const thai = /[฀-๿]/;
+  const isShown = (quote: string) => {
+    for (let at = shown.indexOf(quote); at !== -1; at = shown.indexOf(quote, at + 1)) {
+      if (!thai.test(shown[at - 1] ?? '') && !thai.test(shown[at + quote.length] ?? '')) return true;
+    }
+    return false;
+  };
+  assert.deepEqual(quotes.filter(quote => !isShown(quote)), []);
+});
+
+it('G2: expenses guide names the current list, check steps and evidence controls', () => {
+  const guide = buildExpensesGuide('co');
+  const text = sentences(guide).join(' ');
+  for (const label of ['ส่งออก Excel ให้สำนักงานบัญชี', 'ยังไม่ยืนยัน', 'ยกเลิก/ปฏิเสธ', 'ส่งใบเสร็จ', 'ตรวจข้อมูล', 'ภาษีและเอกสาร', 'ตรวจสรุป',
+    'ประเภทเอกสาร', 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', 'มีใบเสร็จของรายการนี้ไหม', 'จะใช้อะไรแทน', 'เหตุผลที่ใช้หลักฐานนี้',
+    'บันทึกร่าง', 'เพิ่มหมวดหมู่', 'แก้ชื่อหมวดหมู่', 'เดือน', 'นับเดือนตาม', 'วันที่ส่งเข้า', 'วันที่เอกสาร']) assert.ok(text.includes(label), label);
+  assert.doesNotMatch(text, /ปุ่มกรอง 5 ปุ่ม|แท็บ 5 แท็บ|ให้ AI อ่านใบเสร็จ”|เพิ่มหมวดหมู่ใหม่|ปุ่มรูปตา|แถบหัวเอกสารและแท็บ/u);
+  const manual = sentences({ ...guide, sections: guide.sections.filter(section => section.id === 'manual') }).join(' ');
+  assert.doesNotMatch(manual, /กรอกฐาน อัตรา/u);
+});
+
+it('G2: sold tax instructions name certificate, signature and PND53 controls', () => {
+  const guide = buildTaxGuide('co', ['wht.certificate.issue', 'wht.pnd53.read', 'company.tax_signature.manage']);
+  const text = sentences(guide).join(' ');
+  for (const label of ['หนังสือรับรอง 50 ทวิ', 'ยังไม่ออก', 'ร้านออกเอง', 'ดาวน์โหลดหนังสือรับรอง', 'ลายเซ็นบน 50 ทวิ',
+    'พิมพ์แล้วเซ็นเอง', 'ใส่รูปลายเซ็นให้อัตโนมัติ', 'ดึงรายการล่าสุด', 'ดาวน์โหลดแบบ ภ.ง.ด.3', 'ดาวน์โหลดแบบ ภ.ง.ด.53', 'บันทึกว่ายื่นแล้ว', '10 รายการ', 'ดาวน์โหลดรายการให้ผู้ทำบัญชี', 'ต้องจัดทำ ภ.ง.ด.2 แยก']) assert.ok(text.includes(label), label);
+  for (const href of ['/companies/co/expenses/wht-certificates', '/companies/co/settings/tax-signature', '/companies/co/tax/withholding']) assert.ok(links(guide).includes(href), href);
+  assert.deepEqual(links(buildTaxGuide('co', [])), []);
+});
+
 describe('the reports guide uses the words the reports page shows', () => {
   const guide = buildReportsGuide('co');
   const root = join(__dirname, '../../../../..');
@@ -435,7 +536,7 @@ describe('shop guide permission help names business roles and separates package 
   it('keeps platform roles out of the substitute guide and describes settings access by permission', () => {
     const guide = buildSubstituteReceiptGuide('co', ['company.setup.manage']);
     check(guide);
-    const instructions = sentences(guide).find((sentence) => sentence.includes('เปิดได้เฉพาะผู้ที่มีสิทธิ์ตั้งค่าบริษัท'))!;
+    const instructions = sentences(guide).find((sentence) => sentence.includes('เปิดได้เฉพาะผู้ที่มีสิทธิ์ตั้งค่าร้าน'))!;
     assert.ok(instructions, 'a custom role holding company.setup.manage can open settings too');
     assert.ok(links(guide).includes('/companies/co/settings/substitute-receipt'));
   });
@@ -471,7 +572,7 @@ describe('shop guide permission help names business roles and separates package 
     for (const [part, ask] of [
       ['แสดงว่าบัญชีของคุณยังไม่มีสิทธิ์ใช้งาน', `ให้แจ้ง${roles.OWNER} โดยบอกสิ่งที่ต้องการทำ`],
       ['ถ้าไม่พบแท็บหรือปุ่มที่ต้องใช้', `ให้แจ้ง${roles.OWNER}ตรวจสิทธิ์ของคุณ`],
-      ['ข้อความคือ “บัญชีนี้ยังไม่มีสิทธิ์ใช้งานหน้าการเบิกจ่าย”', `ให้ติดต่อ${roles.OWNER} โดยอ้างตาราง`],
+      ['ข้อความคือ “บัญชีนี้ยังใช้การเบิกจ่ายไม่ได้”', `ให้ติดต่อ${roles.OWNER} โดยอ้างตาราง`],
     ]) assert.ok(said(part).includes(ask), said(part));
     // Rights come with a role: a role that has the item, or the item added to the role, for everyone in it.
     const howToAsk = said('อ้างข้อในคอลัมน์กลางของตารางนี้');
@@ -504,25 +605,30 @@ describe('claim notification gaps in the guide', () => {
   });
 });
 
-it('the claim guide names the receiving-method choice when a draft states none', () => {
-  const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create'], ['STAFF']));
-  assert.ok(text.includes('เลือกวิธีรับเงินคืนและส่งอนุมัติ'));
-  assert.ok(text.includes('คำขอโอนเงินกด'));
-  assert.equal(text.includes('คำขออื่นปุ่มจะเป็น'), false);
+it('the claim guide offers sending from the form and keeping a draft without receipts', () => {
+  const guide = buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create'], ['STAFF']);
+  const list = sentences({ ...guide, sections: guide.sections.filter(section => section.id === 'list') }).join(' ');
+  const text = sentences(guide).join(' ');
+  assert.ok(text.includes('“เลือกวิธีรับเงินคืนในใบนี้”'));
+  assert.ok(text.includes('“ส่งอนุมัติ” ในฟอร์มได้เลย'));
+  assert.ok(text.includes('“บันทึกร่าง” ไว้ก่อนแม้ยังไม่มีใบเสร็จ'));
+  assert.ok(text.includes('กด “ส่งอนุมัติ” เมื่อตรวจครบ'));
+  assert.ok(text.includes('ใบเสร็จตามกติกาของร้าน'));
+  assert.doesNotMatch(list, /ปุ่มบน.*ร่าง|เลือกวิธีรับเงินคืนและส่งอนุมัติ|ตรวจวิธีรับเงินคืนและส่งอนุมัติ/u);
 });
 
 it('the claim guide applies self-approval to every role and keeps solo and frozen routes in the explanations and policy table', () => {
   const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create'], ['STAFF']));
-  assert.equal((text.match(/เมื่อปิด ไม่มีใครอนุมัติใบเบิกของตัวเองได้ไม่ว่าบทบาทใด/g) ?? []).length, 3);
-  assert.ok(text.includes('ผู้เบิกเป็นคนเดียวที่อนุมัติใบนี้ได้'));
+  assert.equal(text.split(SELF_APPROVAL_POLICY_NOTE).length - 1, 3);
+  assert.ok(text.includes('ผู้เบิกเป็นคนเดียวที่อนุมัติใบนั้นได้'));
   assert.ok(text.includes('ใบที่ส่งไปแล้วใช้ผู้อนุมัติตามที่กำหนดไว้ตอนส่ง'));
   assert.equal(text.includes('บทบาทอื่นทำได้เมื่อบริษัทเปิด'), false);
 });
 
 it('the claim guide names first signing and replacement as the buttons do', () => {
   const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create'], ['STAFF']));
-  assert.ok(text.includes('กด “ลงนามในใบเบิก”'));
-  assert.ok(text.includes('ถ้าเคยลงนามแล้ว ปุ่มอ่าน “ลงนามใหม่”'));
+  assert.ok(text.includes(`กด “${CLAIM_SIGN_LABEL}”`));
+  assert.ok(text.includes(`ถ้าเคยเซ็นแล้ว ปุ่มอ่าน “${CLAIM_RESIGN_LABEL}”`));
 });
 
 
@@ -533,9 +639,87 @@ it('duplicate guide covers company-wide evidence and the expense-document paymen
   assert.match(text, /ยืนยันเอกสารก่อน/);
 });
 
+describe('guides after the sold-screen changes', () => {
+  it('distinguishes an immediate camera upload from chosen files and the sender-only result', () => {
+    const guide = buildExpensesGuide('co');
+    const upload = sentences({ ...guide, sections: guide.sections.filter(section => section.id === 'upload') }).join(' ');
+    for (const phrase of ['รูปแรกจากกล้องส่งทันทีเมื่อเลือกสาขาแล้ว', 'ระบบเก็บรูปไว้', 'เลือกสาขาและกด “ส่งใบเสร็จ”',
+      '“ถ่ายเพิ่ม” / “เลือกเพิ่ม”', '“หมายเหตุ (ไม่บังคับ)”', 'ดูรายการที่ส่ง', 'ส่งอีกใบ', 'เติมข้อมูลใบเสร็จ', 'บันทึกแล้วกลับมาที่ผลส่ง', 'ลบร่างใบเสร็จ', 'เมนู “ใบรับรองแทนใบเสร็จ”']) assert.ok(upload.includes(phrase), phrase);
+    assert.doesNotMatch(upload, /\+ หมายเหตุ|ไม่มีใบเสร็จ ทำใบรับรองแทนใบเสร็จ/);
+  });
+
+  it('explains review defaults, saving with Next, missing-receipt answers and a named checker', () => {
+    const text = sentences(buildExpensesGuide('co')).join(' ');
+    for (const phrase of ['ขั้นแรกที่ยังขาดข้อมูล', 'ถ้าครบแล้วเปิดขั้นสุดท้าย', 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', 'สิทธิภาษีซื้อ',
+      'ใช้ได้ตามเงื่อนไข', 'ตรวจเงื่อนไขและติ๊กให้ครบ', '“ถัดไป” เพื่อบันทึก', '“ไม่มีใบเสร็จ” หรือ “ใบเสร็จหาย”',
+      'ไม่ต้องเลือกประเภทเอกสารหรือตอบเรื่องภาษี', '“ส่งให้ตรวจ” เลือกหนึ่งคนใน “ส่งให้ใครตรวจ”', 'ชื่อผู้ขาย', 'เลือกจากคู่ค้าหรือพิมพ์ชื่อใหม่ได้',
+      'วิธีจ่ายเริ่มที่ “โอนเงิน”', 'เปิดร่าง']) assert.ok(text.includes(phrase), phrase);
+    assert.doesNotMatch(text, /บันทึกการตรวจ|ตรวจครบทุกข้อแล้ว รอกดยืนยัน|ส่งตรวจสอบ|ส่งให้คนอื่นตรวจ/u);
+  });
+
+  it('uses document-date months and explains that spreadsheet links open a protected expense page', () => {
+    const guide = buildExpensesGuide('co');
+    const text = (id: string) => sentences({ ...guide, sections: guide.sections.filter(section => section.id === id) }).join(' ');
+    assert.match(text('list'), /นับตามวันที่เอกสาร ถ้ายังไม่มีวันที่เอกสารจะนับตามวันที่ส่งเข้า/u);
+    assert.match(text('evidence'), /ค่าเริ่มต้นเป็นรายการยืนยันแล้วตาม “วันที่เอกสาร”/u);
+    assert.match(text('evidence'), /ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี/u);
+    assert.match(text('evidence'), /เลือก “เพิ่มเติม” แล้วกด “ส่งออก Excel ให้สำนักงานบัญชี”/u);
+    assert.doesNotMatch(text('evidence'), /evidence_manifest|ลิงก์หลักฐานที่คุณเปิดได้/u);
+  });
+
+  it('covers claim correction, draft deletion, payment and completion after signing', () => {
+    const text = sentences(buildReimbursementGuide('co')).join(' ');
+    for (const phrase of ['ต้องแก้ไข', 'แท็บที่มีงานรอคุณ', 'ขั้นที่ต้องทำก่อน', 'คอลัมน์เดียว', 'ร่างที่ไม่เคยส่ง', '“ลบร่าง” ไม่ต้องให้เหตุผล',
+      '“จ่ายเงิน” เปิดฟอร์ม', 'ปุ่มบันทึกจ่ายที่แสดงยอด', 'หลักฐานการจ่าย', 'เอกสารที่อาจซ้ำ',
+      'เมื่อปิด อนุมัติเองได้เฉพาะเจ้าของกิจการ', 'จ่ายครบแล้ว ถ้าเอกสารยังไม่ครบจะแสดง “ยังไม่ได้เซ็นใบเบิก”', 'ขั้นเอกสารจบเมื่อเซ็นครบหรือแนบสำเนาที่เซ็นครบ', 'ถูกส่งกลับให้แก้', 'ส่งกลับให้แก้']) assert.ok(text.includes(phrase), phrase);
+    assert.doesNotMatch(text, /กด “บันทึกร่าง” แล้วกด “ส่งอนุมัติ” ในหน้าใบเบิก/u);
+  });
+
+  it('lets recorders prepare certificates and explains candidate search and the preset single signing route', () => {
+    const text = sentences(buildSubstituteReceiptGuide('co')).join(' ');
+    for (const phrase of ['คนบันทึกทำใบรับรองของรายการตนเองได้', 'แม้ยังไม่ตอบขั้นตรวจหลักฐาน', 'รายการบันทึกด้วยมือที่ไม่มีไฟล์แสดงได้',
+      'รูปใบเสร็จที่ยังไม่ได้อ่านไม่แสดง', 'เปิดค่าใช้จ่าย', 'ค้นเลขที่ ชื่อผู้ขายหรือรายละเอียดจากรายการทั้งหมด', 'หน้าละ 5 รายการ',
+      'ระบบบันทึกคำตอบว่าไม่มีใบเสร็จให้', 'ระบบเลือกเจ้าของกิจการ', 'เลือกผู้จัดทำเมื่อรับรองได้', 'เซ็นและออกใบรับรอง', 'จบในขั้นเดียว']) assert.ok(text.includes(phrase), phrase);
+    assert.doesNotMatch(text, /เรียงลำดับได้ 4 แบบ|แสดงเฉพาะรายการล่าสุด|บันทึกการตรวจ”|ผู้จัดทำซึ่งมีสิทธิ์ตรวจสอบค่าใช้จ่าย/u);
+  });
+
+  it('covers the sold withholding pages and the consequence of clearing the stored signature', () => {
+    const text = sentences(buildTaxGuide('co')).join(' ');
+    for (const phrase of ['เลือกเดือนที่จ่ายและแบบภาษี', 'ภ.ง.ด.3 (จ่ายให้บุคคล)', 'ภ.ง.ด.53 (จ่ายให้บริษัท)',
+      'เปิดลิงก์แก้ข้อมูลที่ขาด', 'ดึงรายการล่าสุด', 'ดาวน์โหลดแบบ ภ.ง.ด.3', 'ดาวน์โหลดแบบ ภ.ง.ด.53', 'บันทึกว่ายื่นแล้ว',
+      'ดูรูปที่เก็บไว้', '“พิมพ์แล้วเซ็นเอง” แล้วกด “บันทึก” รูปที่เก็บไว้จะถูกลบ']) assert.ok(text.includes(phrase), phrase);
+  });
+
+  it('keeps the reader-facing text within the pre-round length of each guide', () => {
+    for (const [guide, limit] of [[buildExpensesGuide('co'), 11243], [buildReimbursementGuide('co'), 43225],
+      [buildSubstituteReceiptGuide('co'), 10777], [buildTaxGuide('co'), 5671]] as const) {
+      assert.ok(sentences(guide).join('').length <= limit, `${guide.key}: ${sentences(guide).join('').length} > ${limit}`);
+    }
+  });
+});
+
 it('D3: guide tells who gets confirmed-duplicate notices and one reminder per blocked period', () => {
   const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create']));
   assert.match(text, /ใบเสร็จของใบเบิกยืนยันว่าซ้ำ/);
   assert.match(text, /ผู้เบิกยกเลิกเองไม่ได้/);
   assert.match(text, /เตือนครั้งเดียวในช่วงที่ติดรายการซ้ำ/);
+});
+
+it('CLAIM-DETAIL guide names the merged signature card, payment menu and missing-field navigation', () => {
+  const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create', 'reimbursement.payment.record'], ['STAFF']));
+  assert.ok(text.includes('ลายเซ็นและใบเบิกที่เซ็นแล้ว'));
+  assert.ok(text.includes('กด “เพิ่มเติม” แล้วเลือก “ยกเลิกรายการจ่ายนี้”'));
+  assert.ok(text.includes('ปุ่มจะพาไปยังจุดที่ต้องเติม'));
+  assert.doesNotMatch(text, /กล่อง “ลายเซ็นในใบเบิก”|กล่อง “ใบเบิกที่เซ็นแล้ว”/);
+});
+
+
+it('CLAIM-STEPS guide keeps signing after payment and offers either system or paper in the document step', () => {
+  const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create', 'reimbursement.payment.record'], ['STAFF']));
+  assert.match(text, /ส่ง → อนุมัติ → จ่ายเงินคืน → เซ็น/);
+  assert.match(text, /หลังจ่ายครบ/);
+  assert.match(text, /เลือก “เซ็นในระบบ” หรือ “เซ็นบนกระดาษ”/);
+  assert.match(text, /แนบใบที่เซ็นแล้ว/);
+  assert.match(text, /กด “เพิ่มเติม” ของรายการจ่าย แล้วเลือก “แนบหลักฐานการจ่ายเพิ่ม”/);
+  assert.doesNotMatch(text, /พร้อมจ่าย ให้เซ็น|กลับมาพร้อมจ่ายก่อน/);
 });

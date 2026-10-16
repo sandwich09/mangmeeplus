@@ -559,8 +559,8 @@ describe('DeleteExpenseUseCase', () => {
           const response = exceptionResponse(error) as { code: string; message: string; reimbursementRequestId: string; requestNo: string };
           assert.deepEqual([response.code, response.reimbursementRequestId, response.requestNo], ['expense_belongs_to_reimbursement', 'claim-1', 'RB-202610-00007'], status);
           // Plain Thai that names the claim and where to go.
-          assert.match(response.message, /คำขอเบิก RB-202610-00007/u);
-          assert.match(response.message, /ให้ยกเลิกที่คำขอเบิกนั้นในเมนูการเบิกจ่าย/u);
+          assert.match(response.message, /ใบเบิก RB-202610-00007/u);
+          assert.match(response.message, /ให้ยกเลิกที่ใบเบิกนั้นในเมนูการเบิกจ่าย/u);
           return true;
         },
       );

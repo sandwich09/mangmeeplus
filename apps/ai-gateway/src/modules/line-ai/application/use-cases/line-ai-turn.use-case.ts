@@ -57,7 +57,7 @@ function buildReplyFromToolResults(results: ToolResult[]): string {
       lines.push(`🏢 บริษัท: ${data['name'] ?? '-'}`);
     } else if (r.toolName === 'dashboard.get_business_health_summary') {
       const widgets = (data['widgets'] as any[]) ?? [];
-      lines.push(`📊 แดชบอร์ด (${widgets.length} ตัวชี้วัด) – ข้อมูล ณ ${r.asOf}`);
+      lines.push(`📊 หน้าแรก (${widgets.length} ตัวชี้วัด) – ข้อมูล ณ ${r.asOf}`);
     } else if (r.toolName === 'notifications.list_open_alerts') {
       const count = (data['count'] as number) ?? 0;
       lines.push(`🔔 การแจ้งเตือน: ${count} รายการ`);

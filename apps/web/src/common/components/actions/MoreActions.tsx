@@ -1,14 +1,52 @@
-import type { ReactNode } from 'react';
+'use client';
+
+import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
+import { MoreDotIcon } from '@/common/icons';
+import { quietButtonClass, secondaryButtonClass } from '../button/button-classes';
 import styles from './MoreActions.module.css';
 
+export interface MoreActionsProps {
+  label: string;
+  children: ReactNode;
+  variant?: 'text' | 'icon';
+  busy?: boolean;
+  /** `end` hangs the list from the button's right edge from 640 px (for a button at the right of a header). Text menus hang from the left on a phone; icon menus keep the chosen edge. */
+  align?: 'start' | 'end';
+  /** `up` opens the list above the button, for a menu that sits in a bar at the bottom of the screen. Default `down`. */
+  opens?: 'down' | 'up';
+  /** Close the list when one of its buttons or links is pressed. Off by default: an entry that shows its own "working" state stays in view. */
+  closeOnPress?: boolean;
+}
+
 /**
- * Secondary actions behind one compact button. A native disclosure keeps it keyboard accessible;
- * the open list floats over the page like a menu, and a press anywhere else closes it.
- * `align="end"` hangs the list from the button's right edge (for a button at the right of a header).
+ * Two or more rare actions behind one compact button (thai-ux-standard §2.7). A native disclosure
+ * keeps it keyboard accessible; the open list floats over the page like a menu, a press anywhere
+ * else closes it, and Escape closes it and returns to the button.
+ *
+ * ```tsx
+ * <MoreActions label="เพิ่มเติม" opens="up" closeOnPress>
+ *   <button type="button" className={secondaryButtonClass} onClick={voidDocument}>ยกเลิกเอกสาร</button>
+ *   <button type="button" className={secondaryButtonClass} onClick={reject}>ปฏิเสธ</button>
+ * </MoreActions>
+ * ```
  */
-export function MoreActions({ label, children, align = 'start' }: { label: string; children: ReactNode; align?: 'start' | 'end' }) {
-  return <details className={align === 'end' ? `${styles.menu} ${styles.end}` : styles.menu}>
-    <summary>{label}</summary>
+export function MoreActions({ label, children, align = 'start', opens = 'down', closeOnPress = false, variant = 'text', busy }: MoreActionsProps) {
+  const pressed = (event: MouseEvent<HTMLDetailsElement>) => {
+    if (!closeOnPress) return;
+    const entry = (event.target as Element).closest('a, button');
+    if (entry && entry.closest(`.${styles.panel}`)) {
+      event.currentTarget.open = false;
+      if (variant === 'icon') event.currentTarget.querySelector('summary')?.focus();
+    }
+  };
+  const keyed = (event: KeyboardEvent<HTMLDetailsElement>) => {
+    if (event.key !== 'Escape' || !event.currentTarget.open) return;
+    event.stopPropagation(); // the menu closes; a dialog around it stays
+    event.currentTarget.open = false;
+    event.currentTarget.querySelector('summary')?.focus();
+  };
+  return <details className={[styles.menu, variant === 'icon' ? styles.icon : '', align === 'end' ? styles.end : '', opens === 'up' ? styles.up : ''].filter(Boolean).join(' ')} onClick={pressed} onKeyDown={keyed}>
+    <summary className={variant === 'icon' ? quietButtonClass : secondaryButtonClass} aria-label={variant === 'icon' ? label : undefined} aria-busy={busy}>{variant === 'icon' ? <MoreDotIcon aria-hidden="true" className="h-5 w-5" /> : label}</summary>
     <div className={styles.panel}>{children}</div>
   </details>;
 }

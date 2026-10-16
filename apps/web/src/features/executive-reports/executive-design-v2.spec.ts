@@ -134,7 +134,7 @@ test('v2 filter panel is a labelled responsive native popover in the time row, a
 
 test('v2 nested select/date portals stay inside a native popover and ordinary fields still portal to body', () => {
   const popover = {}, body = {};
-  const Panel = componentFunction('../../common/components/field/PopoverPanel.tsx', 'PopoverPanel', { React, document: { body }, UNPLACED: {}, useEffect: () => {}, useState: () => [null, () => {}], createPortal: (_: unknown, target: unknown) => target });
+  const Panel = componentFunction('../../common/components/field/PopoverPanel.tsx', 'PopoverPanel', { React, document: { body }, UNPLACED: {}, useEffect: () => {}, useRef: (current: unknown) => ({ current }), useState: () => [null, () => {}], createPortal: (_: unknown, target: unknown) => target });
   for (const host of [popover, null]) assert.equal(Panel({ open: true, anchorRef: { current: { closest: () => host } }, panelRef: {}, height: 240, className: '', children: null }), host ?? body);
   assert.equal(Panel({ open: false, anchorRef: {}, panelRef: {}, height: 240, className: '', children: null }), null);
 });

@@ -104,7 +104,7 @@ export class DashboardGetHealthSummaryTool implements ErpReadToolPort {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const dto = await this.snapshot.execute(toCtx(ctx), ctx.companyId, { periodKind: 'today' });
-    const sourceRefs: SourceRef[] = [{ label: 'แดชบอร์ดสุขภาพธุรกิจ', module: 'dashboard-notifications', entityType: 'dashboard_snapshot', entityId: dto.id, asOf: dto.generatedAt, permissionChecked: true, webPath: `/companies/${ctx.companyId}/dashboard` }];
+    const sourceRefs: SourceRef[] = [{ label: 'หน้าแรก (สุขภาพธุรกิจ)', module: 'dashboard-notifications', entityType: 'dashboard_snapshot', entityId: dto.id, asOf: dto.generatedAt, permissionChecked: true, webPath: `/companies/${ctx.companyId}/dashboard` }];
     return { toolName: this.toolName, status: 'ok', data: { widgets: dto.widgets, freshnessStatus: dto.freshnessStatus, generatedAt: dto.generatedAt }, sourceRefs, asOf, stale: dto.freshnessStatus !== 'fresh' };
   }
 }

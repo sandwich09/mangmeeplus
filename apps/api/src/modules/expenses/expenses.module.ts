@@ -1,3 +1,4 @@
+import { ExpensePaymentSlipUploadUseCase } from './application/use-cases/expense-upload.use-case';
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
@@ -8,6 +9,7 @@ import {
   GetExpenseUseCase,
   ListExpensesUseCase,
   UpdateExpenseDraftUseCase,
+  DecideExpenseInputVatUseCase,
   ConfirmExpenseUseCase,
   RejectExpenseUseCase,
   VoidExpenseUseCase,
@@ -41,6 +43,9 @@ import {
   DownloadSubstituteReceiptPdfUseCase,
   InitSubstituteSignatureUploadUseCase,
   ListCompanySubstituteReceiptsUseCase,
+  ListSubstituteReceiptCandidatesUseCase,
+  SaveOwnSubstituteReceiptReviewUseCase,
+  SubstituteReceiptEvidenceUploadUseCase,
   ListMySubstituteReceiptSignaturesUseCase,
   ListSubstituteReceiptHistoryUseCase,
   ListSubstituteReceiptPayersUseCase,
@@ -133,6 +138,7 @@ import { ProcurementModule } from '../procurement/procurement.module';
   // read as an expense id.
   controllers: [ExpenseCaptureController, ExpenseCaptureReadInternalController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController, DisbursementVoucherController],
   providers: [
+    ExpensePaymentSlipUploadUseCase,
     ReadDisbursementVoucherSourcesUseCase,
     DisbursementVoucherUseCase,
     DisbursementVoucherNoticeService,
@@ -169,6 +175,7 @@ import { ProcurementModule } from '../procurement/procurement.module';
     GetExpenseUseCase,
     ListExpensesUseCase,
     UpdateExpenseDraftUseCase,
+    DecideExpenseInputVatUseCase,
     ConfirmExpenseUseCase,
     RejectExpenseUseCase,
     VoidExpenseUseCase,
@@ -192,6 +199,9 @@ import { ProcurementModule } from '../procurement/procurement.module';
     LineSubstituteReceiptContinuationUseCase,
     LineExpenseDraftConversationUseCase,
     ListCompanySubstituteReceiptsUseCase,
+    ListSubstituteReceiptCandidatesUseCase,
+  SaveOwnSubstituteReceiptReviewUseCase,
+  SubstituteReceiptEvidenceUploadUseCase,
     ListMySubstituteReceiptSignaturesUseCase,
     PrepareSubstituteReceiptUseCase,
     PreviewSubstituteReceiptUseCase,

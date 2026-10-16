@@ -21,6 +21,7 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-mo
 import {
   expenseDecimalToString,
   PrismaExpenseRepository,
+  expenseReadScopeWhere,
   SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON,
   toSubstituteEvidenceSummary,
 } from '../../infrastructure/prisma-expense.repository';
@@ -44,7 +45,9 @@ import { renderSubstitutePaperPreviewPages, renderSubstituteReceiptPaperArtifact
 import { renderPaymentVoucherSvg } from '../../domain/logic/payment-voucher.logic';
 import { SIGNATURE_MAX_BYTES } from '../../domain/logic/signature-image.logic';
 import type { ExpenseRecordWithRelations, SubstituteReceiptEvidenceRecord } from '../../domain/models/expense.model';
-import { GetExpenseUseCase } from './expense-draft.use-case';
+import { GetExpenseUseCase, UpdateExpenseDraftUseCase } from './expense-draft.use-case';
+import { expenseListReadScope } from '../expense-list-read-scope';
+import { assertFullSubstitutePayment } from '../../domain/logic/substitute-funding.logic';
 import { SELF_APPROVAL_EXEMPT_ROLES } from '../../../procurement/domain/logic/procurement.logic';
 
 // Owner decision 2026-08-10: the OWNER/ADMIN/MANAGER self-approval exemption applies to every
@@ -68,6 +71,8 @@ import type {
   SubstituteReceiptEvidenceStatus,
   SubstituteReceiptListFilter,
   SubstituteReceiptListResult,
+  SubstituteReceiptCandidateFilter,
+  SubstituteReceiptCandidatePage,
   SupersedeSubstituteReceiptInput,
 } from '@watchdog-bms/contracts';
 
@@ -87,6 +92,20 @@ const SUBSTITUTE_RECEIPT_STATUSES = new Set<SubstituteReceiptEvidenceStatus>([
 
 function assertWeb(ctx: RequestContext): void {
   if (ctx.authProvider === 'line') throw new ForbiddenException('Substitute receipt certification is available on the authenticated web only.');
+}
+
+/** The creator predicate comes from the expense list; preparation adds no company-wide review right. */
+export function substituteReceiptPreparationScope(ctx: RequestContext, branchId?: string) {
+  if (!expenseListReadScope(ctx) && !ctx.permissions.includes('expense.confirm')) throw new ForbiddenException('Missing permission: expense.review');
+  if (branchId) assertBranch(ctx, branchId);
+  return expenseReadScopeWhere({ companyId: ctx.companyId, branchId,
+    ...(!ctx.permissions.includes('expense.review') && { createdByUserId: ctx.userId }) }, ctx.scopes ?? {});
+}
+
+function assertSubstitutePreparationAccess(ctx: RequestContext, expense: Pick<ExpenseRecordWithRelations, 'createdByUserId' | 'branchId'>): void {
+  const scope = substituteReceiptPreparationScope(ctx);
+  assertBranch(ctx, expense.branchId);
+  if (scope.createdByUserId && expense.createdByUserId !== scope.createdByUserId) throw new ForbiddenException('Missing permission: expense.review');
 }
 
 function assertBranch(ctx: RequestContext, branchId: string | null): void {
@@ -296,7 +315,7 @@ async function buildSnapshot(
     if (company.taxId !== original.company.taxId) throw new ConflictException('substitute_correction_company_identity_changed');
     return { ...original, schemaVersion: 2, documentNumber: evidence.documentNumber, version: evidence.version,
       company: { ...original.company, name: company.name, nameSource: company.nameSource },
-      ...(original.paymentStatement && original.fundingSource === 'COMPANY' ? { paymentStatement: `ชำระด้วยเงินของ${company.name.startsWith('บริษัท') ? '' : 'บริษัท '}${company.name} เต็มจำนวน` } : {}),
+      ...(original.paymentStatement && original.fundingSource === 'COMPANY' ? { paymentStatement: `ชำระด้วยเงินของกิจการ ${company.name} เต็มจำนวน` } : {}),
       payer: { ...original.payer, position: payerPosition, certifiedAt },
       certificationText: buildSubstituteCertificationText(original.payer.name, payerPosition, true),
       correction: { evidenceId: evidence.correctionOfEvidenceId, reason: evidence.correctionReason ?? '' } };
@@ -310,7 +329,7 @@ async function buildSnapshot(
     schemaVersion: 2,
     ...(captureAllocation ? { captureAllocation } : {}),
     fundingSource: evidence.fundingSource ?? null,
-    paymentStatement: evidence.fundingSource === 'COMPANY' ? `ชำระด้วยเงินของ${company.name.startsWith('บริษัท') ? '' : 'บริษัท '}${company.name} เต็มจำนวน` : 'พนักงานสำรองจ่ายด้วยเงินส่วนตัวเต็มจำนวน',
+    paymentStatement: evidence.fundingSource === 'COMPANY' ? `ชำระด้วยเงินของกิจการ ${company.name} เต็มจำนวน` : 'พนักงานสำรองจ่ายด้วยเงินส่วนตัวเต็มจำนวน',
     documentNumber: evidence.documentNumber,
     version: evidence.version,
     company,
@@ -422,6 +441,64 @@ async function notifySignaturePending(
 }
 
 @Injectable()
+export class SaveOwnSubstituteReceiptReviewUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly update: UpdateExpenseDraftUseCase) {}
+
+  async execute(ctx: RequestContext, expenseId: string, input: import('@watchdog-bms/contracts').UpdateExpenseDraftInput) {
+    assertWeb(ctx);
+    substituteReceiptPreparationScope(ctx);
+    const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
+    if (!expense) throw new NotFoundException('Expense not found.');
+    assertSubstitutePreparationAccess(ctx, expense);
+    const prior = expenseEvidenceAssessment(expense);
+    if (prior?.route === 'SOURCE_DOCUMENT' && prior.receiptProblem === 'NONE') throw new BadRequestException('Expense already has a usable receipt.');
+    if (expense.substituteReceiptEvidence && expense.substituteReceiptEvidence.status !== 'SUPERSEDED') throw new ForbiddenException('Cannot review an existing certificate.');
+    const fields = ['expectedUpdatedAt', 'sourceDocumentType', 'taxEvidenceStatus', 'inputVatClaimStatus', 'documentReviewAcknowledged', 'evidenceAssessment'];
+    const assessment = input.evidenceAssessment;
+    if (Object.keys(input).some(key => !fields.includes(key)) || !input.expectedUpdatedAt
+      || input.sourceDocumentType !== 'EXPENSE_NOTE_TEXT' || input.taxEvidenceStatus !== 'SUPPORTING_ONLY'
+      || input.inputVatClaimStatus !== 'NON_CLAIMABLE' || input.documentReviewAcknowledged !== true
+      || !assessment || assessment.route !== 'SUBSTITUTE_RECEIPT' || assessment.receiptProblem !== 'NOT_AVAILABLE'
+      || assessment.reason !== '' || !Array.isArray(assessment.attachmentIds) || assessment.attachmentIds.length
+      || Object.keys(assessment).some(key => !['route', 'receiptProblem', 'reason', 'attachmentIds'].includes(key))) throw new ForbiddenException('Only the no-receipt certificate review may be saved.');
+    // This saves the no-receipt answer only; preparation validates the remaining facts later.
+    const { inputVatClaimStatus: _systemRight, ...reviewInput } = input;
+    return this.update.execute(ctx, expenseId, reviewInput, { requireExpectedUpdatedAt: true, ownSubstituteReceiptReview: true });
+  }
+}
+
+@Injectable()
+export class ListSubstituteReceiptCandidatesUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository) {}
+
+  async execute(ctx: RequestContext, filter: SubstituteReceiptCandidateFilter): Promise<SubstituteReceiptCandidatePage> {
+    assertWeb(ctx);
+    const scope = substituteReceiptPreparationScope(ctx, filter.branchId);
+    const page = Number.isFinite(filter.page) ? Math.max(1, Math.floor(filter.page!)) : 1;
+    const pageSize = Number.isFinite(filter.pageSize) ? Math.min(100, Math.max(1, Math.floor(filter.pageSize!))) : 5;
+    const search = filter.search?.trim().slice(0, 100) ?? '';
+    const sources = await this.repo.listSubstituteReceiptCandidateSources({ ...scope, search }, ctx.scopes ?? {});
+    const eligible = sources.filter((expense) => {
+      // Missing preparation facts can be filled in the wizard; these refusals cannot.
+      if (collectSubstituteReceiptEligibilityIssues(expense, undefined, { routeCheckBill: isCheckBillClassification(expense.aiVerificationSummaryJson) })
+        .some(issue => ['expense_status_ineligible', 'currency_not_supported', 'classification_ineligible', 'document_kind_ineligible'].includes(issue.code))) return false;
+      if (expense.substituteReceiptEvidence && expense.substituteReceiptEvidence.status !== 'SUPERSEDED') return false;
+      if (search && ![expense.expenseNumber, expense.vendorNameSnapshot, ...expense.lines.map((line) => line.description)]
+        .some((value) => value?.toLocaleLowerCase().includes(search.toLocaleLowerCase()))) return false;
+      const assessment = expenseEvidenceAssessment(expense);
+      if (assessment?.route === 'SOURCE_DOCUMENT' && assessment.receiptProblem === 'NONE') return false;
+      if (!assessment && expense.attachments.some(file => ['expense.receipt.primary', 'expense.receipt.supporting'].includes(file.purpose) && (!file.status || file.status === 'ACTIVE'))) return false;
+      return true;
+    }).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id));
+    return { items: eligible.slice((page - 1) * pageSize, page * pageSize).map((expense) => ({
+      id: expense.id, expenseNumber: expense.expenseNumber, expenseDate: expense.expenseDate.toISOString(),
+      vendorNameSnapshot: expense.vendorNameSnapshot, grandTotalAmount: expense.grandTotalAmount.toString(), currency: expense.currency,
+      lines: expense.lines.map((line) => ({ description: line.description })),
+    })), total: eligible.length, page, pageSize };
+  }
+}
+
+@Injectable()
 export class ListCompanySubstituteReceiptsUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
 
@@ -429,7 +506,7 @@ export class ListCompanySubstituteReceiptsUseCase {
     assertWeb(ctx);
     const canSeeAll = ctx.permissions.includes('expense.review') || ctx.permissions.includes('expense.confirm');
     const canSeeRelated = ctx.permissions.includes('expense.read_related');
-    if (!canSeeAll && !canSeeRelated && !ctx.permissions.includes('expense.read_own')) {
+    if (!canSeeAll && !canSeeRelated && !ctx.permissions.includes('expense.read_own') && !ctx.permissions.includes('expense.read')) {
       throw new ForbiddenException('Missing permission to read substitute receipts');
     }
     if (filter.status && !SUBSTITUTE_RECEIPT_STATUSES.has(filter.status)) {
@@ -438,15 +515,20 @@ export class ListCompanySubstituteReceiptsUseCase {
     if (filter.yearMonth && !/^\d{4}-(0[1-9]|1[0-2])$/.test(filter.yearMonth)) {
       throw new BadRequestException('yearMonth must use YYYY-MM.');
     }
+    if (filter.order && !['newest', 'oldest'].includes(filter.order)) throw new BadRequestException('Invalid date order');
     const page = Number.isFinite(filter.page) ? Math.max(1, Math.floor(filter.page!)) : 1;
     const pageSize = Number.isFinite(filter.pageSize)
       ? Math.min(200, Math.max(1, Math.floor(filter.pageSize!)))
       : 50;
-    const onlyPayerUserId = canSeeAll || canSeeRelated ? null : ctx.userId;
-    const { rows, total } = await this.repo.listCompanySubstituteReceipts(
+    const preparationScope = substituteReceiptPreparationScope(ctx);
+    const onlyPayerUserId = null;
+    const canApprove = ctx.permissions.includes('expense.confirm');
+    const policy = canApprove ? await this.repo.getSubstituteReceiptPolicy(ctx.companyId) : null;
+    const { rows, total, counts, sums, attention } = await this.repo.listCompanySubstituteReceipts(
       ctx.companyId,
       { ...filter, page, pageSize },
-      { branchIds: ctx.scopes?.branchIds, onlyPayerUserId, relatedUserId: !canSeeAll && canSeeRelated ? ctx.userId : null },
+      { branchIds: ctx.scopes?.branchIds, onlyPayerUserId, createdByUserId: canSeeAll ? undefined : preparationScope.createdByUserId as string | undefined,
+        userId: ctx.userId, canApprove, canSelfApprove: selfApprovalPermitted(policy?.approvalMode ?? 'OWNER_SELF', ctx.roles) },
     );
     return {
       items: rows.map((row) => ({
@@ -477,7 +559,7 @@ export class ListCompanySubstituteReceiptsUseCase {
         certifiedArtifactAttachmentId: row.certifiedArtifactAttachmentId,
         updatedAt: row.updatedAt.toISOString(),
       })),
-      total,
+      total, counts, sums, attention,
       page,
       pageSize,
     };
@@ -602,13 +684,13 @@ export class PrepareSubstituteReceiptUseCase {
   async executeAmendment(ctx: RequestContext, expenseId: string, evidenceId: string, input: AmendSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
     assertWeb(ctx);
     if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
-    if (!EXPENSE_PAYMENT_METHODS.includes(input.paymentMethod)) throw new BadRequestException('กรุณาระบุวิธีชำระเงินที่ถูกต้อง');
-    if (!isCivilDate(input.paymentDate)) throw new BadRequestException('กรุณาระบุวันที่จ่ายเงินที่ถูกต้อง');
+    if (!EXPENSE_PAYMENT_METHODS.includes(input.paymentMethod)) throw new BadRequestException('วิธีจ่ายไม่ถูกต้อง เลือกวิธีจ่ายจากตัวเลือกที่แสดง');
+    if (!isCivilDate(input.paymentDate)) throw new BadRequestException('วันที่จ่ายเงินไม่ถูกต้อง เลือกวันที่จ่ายเงินอีกครั้ง');
     const current = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidenceId);
     if (!current) throw new NotFoundException('Substitute evidence not found.');
     if (!['PREPARED', 'PAYER_CERTIFIED'].includes(current.status) || current.correctionOfEvidenceId
       || current.updatedAt.getTime() !== parseExpectedDate(input.expectedEvidenceUpdatedAt, 'expectedEvidenceUpdatedAt').getTime()) {
-      throw new ConflictException('เอกสารเปลี่ยนแปลงหรือออกสมบูรณ์แล้ว กรุณาโหลดข้อมูลล่าสุดก่อนแก้ไข');
+      throw new ConflictException('เอกสารเปลี่ยนแปลงหรือออกสมบูรณ์แล้ว เปิดหน้านี้ใหม่ก่อนแก้ไข');
     }
     return this.prepare(ctx, expenseId, {
       reasonCode: input.reasonCode, missingReceiptReason: input.missingReceiptReason, businessPurpose: input.businessPurpose,
@@ -630,11 +712,11 @@ export class PrepareSubstituteReceiptUseCase {
     amendment?: { evidenceId: string; expectedUpdatedAt: Date; keepDocumentNumberConfirmed?: boolean; previousPaymentDate?: string }): Promise<SubstituteReceiptEvidenceSummary> {
     // R7: preparing is the one substitute-receipt step LINE may take. It writes staged facts and
     // reserves a document number; it embeds no signature and grants no approval. The three gates
-    // the spec names — `expense.review` below, `assertBranch`, and the payer resolving to an active
-    // in-scope member — already run for every channel, so the channel decides only what the audit
-    // trail records. Preview/certify/approve/download keep `assertWeb` (§16 last bullet).
+    // keep their existing review and branch checks on LINE. Web also permits the readable creator
+    // to prepare; payer identity and signature authority are unchanged. Preview/certify/approve/download keep `assertWeb` (§16 last bullet).
     const preparedFromChannel = ctx.authProvider === 'line' ? 'LINE' : 'WEB';
-    if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
+    if (ctx.authProvider === 'line' && !ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
+    substituteReceiptPreparationScope(ctx);
     if (!['COMPANY', 'PERSONAL_ADVANCE'].includes(input.fundingSource)) throw new BadRequestException({ code: 'substitute_funding_source_required', message: 'เลือกบริษัทจ่ายเต็มจำนวนหรือพนักงานสำรองจ่ายเต็มจำนวน' });
     if (input.paidInFullAcknowledged !== true) throw new BadRequestException({ code: 'substitute_full_payment_required', message: 'ยืนยันว่าจ่ายเต็มจำนวนจากแหล่งเงินเดียวแล้ว' });
     if (!REASON_CODES.has(input.reasonCode)) throw new BadRequestException('Invalid substitute receipt reasonCode.');
@@ -651,10 +733,10 @@ export class PrepareSubstituteReceiptUseCase {
     const note = input.note === undefined ? null : requiredText(input.note, 'note', 500);
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
-    assertBranch(ctx, expense.branchId);
+    assertSubstitutePreparationAccess(ctx, expense);
     validateEligibility(expense, input.reasonCode, { routeCheckBill: input.routeCheckBill === true });
     await assertCaptureSourceEligible(this.repo, ctx.companyId, expense, input.fundingSource);
-    if (!amendment && (!hasCurrentExpenseEvidenceReview(expense) || expenseEvidenceAssessment(expense)?.route !== 'SUBSTITUTE_RECEIPT')) {
+    if (!amendment && ctx.permissions.includes('expense.review') && (!hasCurrentExpenseEvidenceReview(expense) || expenseEvidenceAssessment(expense)?.route !== 'SUBSTITUTE_RECEIPT')) {
       throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: 'ระบุปัญหาเอกสารและบันทึกการตรวจล่าสุดก่อนจัดทำใบรับรอง' });
     }
     const payeeName = optionalText(input.payeeName, 'payeeName', 200)
@@ -960,7 +1042,7 @@ export class DownloadSubstituteReceiptPdfUseCase {
     if (evidence.artifactAttachmentId && ['ISSUED', 'SUPERSEDED'].includes(evidence.status)) {
       return composeIssuedSubstituteReceiptPdf(this.repo, this.storage, companyId, expenseId, evidence);
     }
-    if (evidence.status === 'ISSUED') throw new ConflictException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบไฟล์ฉบับสมบูรณ์ กรุณาลองโหลดเอกสารอีกครั้ง' });
+    if (evidence.status === 'ISSUED') throw new ConflictException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบไฟล์ฉบับสมบูรณ์ ลองดาวน์โหลดเอกสารอีกครั้ง' });
     const historical = evidence.status === 'SUPERSEDED';
     const stateStamp = historical
       ? evidence.supersedeReason === SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON ? 'VOID' : 'SUPERSEDED'
@@ -969,16 +1051,16 @@ export class DownloadSubstituteReceiptPdfUseCase {
     const printOptions = { stateStamp, cancellationReason: historical ? cancellationPrintReason(evidence) : null, omitPageFooter: true } as const;
     if (evidence.wetSignedScanAttachmentId) {
       const scan = await this.repo.findSubstituteArtifactAttachment(companyId, expenseId, evidence.wetSignedScanAttachmentId, ['image/jpeg', 'image/png', 'application/pdf']);
-      if (!scan) throw new NotFoundException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบไฟล์ฉบับลงนามที่เก็บไว้' });
+      if (!scan) throw new NotFoundException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบไฟล์ฉบับที่เซ็นที่เก็บไว้ เปิดหน้านี้ใหม่แล้วลองดาวน์โหลดอีกครั้ง' });
       const object = await this.storage.getObject({ bucket: scan.bucket, objectKey: scan.objectKey, ...(scan.objectVersionId ? { objectVersionId: scan.objectVersionId } : {}) });
-      if (sha256(object.bytes) !== evidence.wetSignedScanChecksumSha256) throw new ConflictException({ code: 'substitute_wet_signed_scan_checksum_mismatch', message: 'ไฟล์ฉบับลงนามไม่ตรงกับข้อมูลที่ยื่น' });
+      if (sha256(object.bytes) !== evidence.wetSignedScanChecksumSha256) throw new ConflictException({ code: 'substitute_wet_signed_scan_checksum_mismatch', message: 'ไฟล์ฉบับที่เซ็นไม่ตรงกับข้อมูลที่ยื่น แจ้งทีมงานมั่งมีให้ตรวจไฟล์ก่อนใช้เอกสาร' });
       return { data: await renderSubstituteReceiptPaperArtifactPdf({ bytes: object.bytes, mimeType: scan.mimeType }, null, evidence.documentNumber, printOptions), fileName, stateStamp, scanLinked: true };
     }
     if (evidence.certifiedArtifactAttachmentId) {
       const artifact = await this.repo.findSubstituteArtifactAttachment(companyId, expenseId, evidence.certifiedArtifactAttachmentId);
-      if (!artifact) throw new NotFoundException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบฉบับที่ผู้รับรองลงนามไว้' });
+      if (!artifact) throw new NotFoundException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบฉบับที่ผู้รับรองเซ็นไว้ เปิดหน้านี้ใหม่แล้วลองดาวน์โหลดอีกครั้ง' });
       const object = await this.storage.getObject({ bucket: artifact.bucket, objectKey: artifact.objectKey, ...(artifact.objectVersionId ? { objectVersionId: artifact.objectVersionId } : {}) });
-      if (sha256(object.bytes) !== evidence.certifiedArtifactChecksumSha256) throw new ConflictException({ code: 'substitute_certified_artifact_checksum_mismatch', message: 'ไฟล์ฉบับลงนามไม่ตรงกับข้อมูลที่รับรองไว้' });
+      if (sha256(object.bytes) !== evidence.certifiedArtifactChecksumSha256) throw new ConflictException({ code: 'substitute_certified_artifact_checksum_mismatch', message: 'ไฟล์ฉบับที่เซ็นไม่ตรงกับข้อมูลที่รับรองไว้ แจ้งทีมงานมั่งมีให้ตรวจไฟล์ก่อนใช้เอกสาร' });
       return { data: await renderSubstituteReceiptPdf(withoutSubstituteReceiptPrintMetadata(object.bytes), evidence.documentNumber, printOptions), fileName, stateStamp, scanLinked: false };
     }
     if (evidence.status === 'PREPARED' && !evidence.paperSubmissionJson) {
@@ -993,7 +1075,7 @@ export class DownloadSubstituteReceiptPdfUseCase {
       const svg = renderSubstituteReceiptSvg(snapshot as unknown as SubstituteReceiptSnapshot, undefined, undefined, undefined, { paperForm: evidence.signatureMode === 'PAPER', unsignedForm: evidence.signatureMode !== 'PAPER' });
       return { data: await renderSubstituteReceiptPdf(svg, evidence.documentNumber, printOptions), fileName, stateStamp, scanLinked: false };
     }
-    throw new ConflictException({ code: 'substitute_print_history_unavailable', message: 'ไม่มีไฟล์หรือข้อมูลฉบับเดิมเพียงพอสำหรับพิมพ์เอกสาร กรุณาดูประวัติรายการ' });
+    throw new ConflictException({ code: 'substitute_print_history_unavailable', message: 'ไม่มีไฟล์หรือข้อมูลฉบับเดิมเพียงพอสำหรับพิมพ์เอกสาร ดูประวัติรายการ' });
   }
 }
 
@@ -1092,6 +1174,47 @@ export class DownloadPaymentVoucherPdfUseCase {
   }
 }
 
+async function assertSubstituteApprovalAuthority(repo: PrismaExpenseRepository, ctx: RequestContext, expense: ExpenseRecordWithRelations, evidence: SubstituteReceiptEvidenceRecord) {
+    if (evidence.correctionOfEvidenceId) {
+      const original = await repo.findSubstituteEvidence(ctx.companyId, expense.id, evidence.correctionOfEvidenceId);
+      if (original?.approverUserId !== ctx.userId) throw new ForbiddenException('การแก้เฉพาะเอกสารต้องให้ผู้อนุมัติเดิมเซ็น ให้ผู้อนุมัติเดิมเปิดใบนี้แล้วเซ็น');
+    } else {
+      // The last gate before the document becomes real (W07-int): an allocation superseded between
+      // prepare and approval refuses here rather than issuing a certificate that states a division
+      // the group no longer records.
+      await assertCaptureSourceEligible(repo, ctx.companyId, expense, evidence.fundingSource ?? null);
+    }
+    const policy = await repo.getSubstituteReceiptPolicy(ctx.companyId);
+    const approvalMode = policy?.approvalMode ?? 'OWNER_SELF';
+    const selfApproved = evidence.payerUserId === ctx.userId;
+    if (selfApproved && !selfApprovalPermitted(approvalMode, ctx.roles)) {
+      throw new ForbiddenException('Self-approval of a substitute receipt requires the owner-self policy and an owner, admin, or manager role.');
+    }
+    const eligibleApproverIds = new Set((await repo.listEligibleSubstituteReceiptApprovers(ctx.companyId, expense.branchId))
+      .map((candidate) => candidate.userId));
+    const eligibleApprover = isEligibleSubstituteReceiptApprover(
+      ctx.userId,
+      approvalMode,
+      policy?.approverUserIds,
+      eligibleApproverIds,
+    );
+    if (approvalMode === 'DESIGNATED_APPROVERS'
+      && !eligibleApprover) {
+      throw new ForbiddenException('You are not a currently configured substitute-receipt approver for this branch.');
+    }
+    if (approvalMode === 'OWNER_SELF' && !eligibleApprover) {
+      throw new ForbiddenException('You do not have expense.confirm for this branch.');
+    }
+    if (evidence.paymentMethod === 'CASH'
+      && (policy?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY') === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE'
+      && evidence.paymentEvidenceAttachmentIds.length === 0) {
+      throw new ConflictException('Current company policy requires separate payment evidence for cash expenses. Supersede and prepare a new version.');
+    }
+    const approver = await repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, expense.branchId);
+    if (!approver) throw new ForbiddenException('Approver is not an active company member in this branch.');
+  return { approvalMode, approver };
+}
+
 @Injectable()
 export class CertifySubstituteReceiptUseCase {
   private readonly logger = new Logger(CertifySubstituteReceiptUseCase.name);
@@ -1104,7 +1227,7 @@ export class CertifySubstituteReceiptUseCase {
     private readonly objectVersionCleanup: ObjectVersionCleanupService,
   ) {}
 
-  async execute(ctx: RequestContext, expenseId: string, evidenceId: string, input: CertifySubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
+  async execute(ctx: RequestContext, expenseId: string, evidenceId: string, input: CertifySubstituteReceiptInput & { approvalAcknowledged?: boolean }): Promise<SubstituteReceiptEvidenceSummary> {
     assertWeb(ctx);
     if (input.certificationAcknowledged !== true) throw new BadRequestException('The payer must acknowledge the certification statement.');
     const payerPosition = optionalText(input.payerPosition, 'payerPosition', 120) ?? '';
@@ -1125,6 +1248,17 @@ export class CertifySubstituteReceiptUseCase {
     if (canonicalSnapshotHash(previewSnapshot) !== input.previewChecksumSha256) {
       throw new ConflictException('The reviewed preview no longer matches. Generate and review a new preview before signing.');
     }
+    const combined = input.approvalAcknowledged !== undefined;
+    let approver: { displayName: string } | undefined;
+    if (combined) {
+      if (!ctx.permissions.includes('expense.confirm')) throw new ForbiddenException('Missing permission: expense.confirm');
+      const policy = await this.repo.getSubstituteReceiptPolicy(ctx.companyId);
+      if (input.approvalAcknowledged !== true || (policy?.approvalMode ?? 'OWNER_SELF') !== 'OWNER_SELF'
+        || !ctx.roles.includes('OWNER') || evidence.signatureMode !== 'DIGITAL') {
+        throw new ForbiddenException('substitute_combined_signing_denied');
+      }
+      ({ approver } = await assertSubstituteApprovalAuthority(this.repo, ctx, expense, evidence));
+    }
     // R10/R11: on the paper route the ink is on the scan, so no signature image is resolved and none
     // is drawn. The acknowledgement below is still the payer's own, and still its own audit row.
     const scanChecksum = paperRouteScanChecksum(evidence);
@@ -1141,7 +1275,7 @@ export class CertifySubstituteReceiptUseCase {
     const objectKey = `${ctx.companyId}/generated/expense-substitute/${expenseId}/v${evidence.version}-certified-${checksumSha256}-${randomUUID()}.svg`;
     const stored = await this.storage.putObject({ objectKey, mimeType: 'image/svg+xml', bytes });
     try {
-      const updated = await this.repo.markSubstituteEvidenceCertified({
+      const certification = {
         companyId: ctx.companyId,
         expenseId,
         evidenceId,
@@ -1159,17 +1293,46 @@ export class CertifySubstituteReceiptUseCase {
         expectedVersion: input.expectedVersion,
         expectedEvidenceUpdatedAt,
         artifact: { ...stored, checksumSha256, originalFileName: `${evidence.documentNumber}-certified.svg` },
-      });
-      void this.audit.log({
+      };
+      const certificationAudit = {
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.certify',
         targetType: 'expense_substitute_receipt', targetId: evidenceId, requestId: ctx.requestId,
-        result: 'SUCCESS', riskLevel: 'HIGH',
+        result: 'SUCCESS' as const, riskLevel: 'HIGH' as const,
         metadataJson: {
           expenseId, version: evidence.version, snapshotChecksumSha256,
           signatureSource: signature?.source ?? 'wet_signed_scan',
           signatureMode: evidence.signatureMode,
         },
-      });
+      };
+      if (combined) {
+        const approverDetails = { userId: ctx.userId, name: approver!.displayName, position: payerPosition, approvedAt: certifiedAt.toISOString() };
+        const issuedBytes = renderSubstituteReceiptSvg(snapshot, signature!.dataUrl, approverDetails, signature!.dataUrl, { approverIsOwner: true });
+        const issuedChecksum = sha256(issuedBytes);
+        const issued = await this.storage.putObject({ objectKey: `${ctx.companyId}/generated/expense-substitute/${expenseId}/v${evidence.version}-issued-${issuedChecksum}-${randomUUID()}.svg`, mimeType: 'image/svg+xml', bytes: issuedBytes });
+        try {
+          const updated = await this.repo.certifyAndIssueSubstituteEvidence({
+            certification,
+            issuance: { companyId: ctx.companyId, expenseId, evidenceId, approverUserId: ctx.userId, approverName: approver!.displayName,
+              approverPosition: payerPosition, allowSelfApproval: true, approverSignatureAttachmentId: signature!.id, approvedAt: certifiedAt,
+              expectedExpenseUpdatedAt: evidence.expenseUpdatedAtAtPreparation, referencedAttachmentIds: certification.referencedAttachmentIds,
+              expectedVersion: input.expectedVersion, expectedEvidenceUpdatedAt,
+              artifact: { ...issued, checksumSha256: issuedChecksum, originalFileName: `${evidence.documentNumber}.svg` } },
+            actorRoles: ctx.roles,
+            auditEntries: [certificationAudit, { companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.approve',
+              targetType: 'expense_substitute_receipt', targetId: evidenceId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'CRITICAL',
+              metadataJson: { expenseId, version: evidence.version, checksumSha256: issuedChecksum, selfApproved: true,
+                signatureSource: signature!.source, signatureMode: evidence.signatureMode, certificationAcknowledged: true, approvalAcknowledged: true,
+                previewChecksumSha256: input.previewChecksumSha256 } }],
+          });
+          return toSubstituteEvidenceSummary(updated);
+        } catch (error) {
+          await this.objectVersionCleanup.enqueue({ companyId: ctx.companyId, bucket: issued.bucket, objectPath: issued.objectKey,
+            expectedVersion: issued.objectVersionId, source: 'SUBSTITUTE_RECEIPT_ISSUED' });
+          throw error;
+        }
+      }
+      const updated = await this.repo.markSubstituteEvidenceCertified(certification);
+      void this.audit.log(certificationAudit);
       try {
         const policy = await this.repo.getSubstituteReceiptPolicy(ctx.companyId);
         const approvalMode = policy?.approvalMode ?? 'OWNER_SELF';
@@ -1235,43 +1398,8 @@ export class ApproveSubstituteReceiptUseCase {
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
     assertBranch(ctx, expense.branchId);
     assertPreparedExpenseUnchanged(expense, evidence);
-    if (evidence.correctionOfEvidenceId) {
-      const original = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidence.correctionOfEvidenceId);
-      if (original?.approverUserId !== ctx.userId) throw new ForbiddenException('การแก้เฉพาะเอกสารต้องให้ผู้อนุมัติเดิมลงนาม');
-    } else {
-      // The last gate before the document becomes real (W07-int): an allocation superseded between
-      // prepare and approval refuses here rather than issuing a certificate that states a division
-      // the group no longer records.
-      await assertCaptureSourceEligible(this.repo, ctx.companyId, expense, evidence.fundingSource ?? null);
-    }
-    const policy = await this.repo.getSubstituteReceiptPolicy(ctx.companyId);
-    const approvalMode = policy?.approvalMode ?? 'OWNER_SELF';
     const selfApproved = evidence.payerUserId === ctx.userId;
-    if (selfApproved && !selfApprovalPermitted(approvalMode, ctx.roles)) {
-      throw new ForbiddenException('Self-approval of a substitute receipt requires the owner-self policy and an owner, admin, or manager role.');
-    }
-    const eligibleApproverIds = new Set((await this.repo.listEligibleSubstituteReceiptApprovers(ctx.companyId, expense.branchId))
-      .map((candidate) => candidate.userId));
-    const eligibleApprover = isEligibleSubstituteReceiptApprover(
-      ctx.userId,
-      approvalMode,
-      policy?.approverUserIds,
-      eligibleApproverIds,
-    );
-    if (approvalMode === 'DESIGNATED_APPROVERS'
-      && !eligibleApprover) {
-      throw new ForbiddenException('You are not a currently configured substitute-receipt approver for this branch.');
-    }
-    if (approvalMode === 'OWNER_SELF' && !eligibleApprover) {
-      throw new ForbiddenException('You do not have expense.confirm for this branch.');
-    }
-    if (evidence.paymentMethod === 'CASH'
-      && (policy?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY') === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE'
-      && evidence.paymentEvidenceAttachmentIds.length === 0) {
-      throw new ConflictException('Current company policy requires separate payment evidence for cash expenses. Supersede and prepare a new version.');
-    }
-    const approver = await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, expense.branchId);
-    if (!approver) throw new ForbiddenException('Approver is not an active company member in this branch.');
+    const { approvalMode, approver } = await assertSubstituteApprovalAuthority(this.repo, ctx, expense, evidence);
     const expectedEvidenceUpdatedAt = parseExpectedDate(input.expectedEvidenceUpdatedAt, 'expectedEvidenceUpdatedAt');
     const snapshot = evidence.snapshotJson as unknown as SubstituteReceiptSnapshot;
     if (canonicalSnapshotHash(snapshot) !== evidence.snapshotChecksumSha256) throw new ConflictException('Certified snapshot checksum is invalid.');
@@ -1357,6 +1485,15 @@ export class ApproveSubstituteReceiptUseCase {
 export class ListSubstituteReceiptHistoryUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
 
+  async resolveExpenseId(ctx: RequestContext, evidenceId: string): Promise<string> {
+    assertWeb(ctx);
+    substituteReceiptPreparationScope(ctx);
+    const expenseId = await this.repo.findExpenseIdForSubstituteReceipt(ctx.companyId, evidenceId);
+    if (!expenseId) throw new NotFoundException('Substitute evidence not found.');
+    await this.execute(ctx, expenseId);
+    return expenseId;
+  }
+
   async execute(ctx: RequestContext, expenseId: string): Promise<SubstituteReceiptEvidenceSummary[]> {
     assertWeb(ctx);
     const expense = await this.repo.findById(ctx.companyId, expenseId);
@@ -1372,8 +1509,9 @@ export class ListSubstituteReceiptHistoryUseCase {
     // waiting on: the payer is deliberately not the reviewer, and is usually not the creator
     // either — that separation is the control this feature exists to produce. Any version counts,
     // matching expenseRelatedToUserWhere, so the read_own and read_related paths agree.
-    const canReadOwn = ctx.permissions.includes('expense.read_own')
-      && (expense.createdByUserId === ctx.userId || history.some((item) => item.payerUserId === ctx.userId));
+    const preparationScope = substituteReceiptPreparationScope(ctx);
+    const canReadOwn = expense.createdByUserId === preparationScope.createdByUserId
+      || (ctx.permissions.includes('expense.read_own') && history.some((item) => item.payerUserId === ctx.userId));
     const canReadRelated = ctx.permissions.includes('expense.read_related')
       && await this.repo.isUserRelatedToExpense(ctx.companyId, expenseId, ctx.userId, ctx.scopes ?? {});
     if (!canReadAll && !canReadOwn && !canReadRelated) throw new ForbiddenException('Cannot read this substitute-receipt history.');
@@ -1414,13 +1552,52 @@ export class SupersedeSubstituteReceiptUseCase {
 export class ListSubstituteReceiptPayersUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
 
-  async execute(ctx: RequestContext, expenseId: string): Promise<Array<{ userId: string; displayName: string }>> {
+  async execute(ctx: RequestContext, expenseId: string): Promise<Array<{ userId: string; displayName: string; isOwner: boolean }>> {
     assertWeb(ctx);
-    if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
+    substituteReceiptPreparationScope(ctx);
     const expense = await this.repo.findById(ctx.companyId, expenseId);
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
-    assertBranch(ctx, expense.branchId);
+    assertSubstitutePreparationAccess(ctx, expense);
     return this.repo.listActiveMemberIdentities(ctx.companyId, expense.branchId);
+  }
+}
+
+type PreparationUploadInput = { originalFileName: string; mimeType: string; byteSize: number; purpose: 'expense.receipt.supporting' | 'expense.payment.evidence' };
+
+@Injectable()
+export class SubstituteReceiptEvidenceUploadUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly createUpload: CreateUploadIntentUseCase, private readonly completeUpload: CompleteAttachmentUploadUseCase) {}
+
+  private async load(ctx: RequestContext, expenseId: string, purpose: string) {
+    assertWeb(ctx);
+    substituteReceiptPreparationScope(ctx);
+    if (!['expense.receipt.supporting', 'expense.payment.evidence'].includes(purpose)) throw new BadRequestException('Invalid certificate evidence purpose.');
+    const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
+    if (!expense) throw new NotFoundException('Expense not found.');
+    assertSubstitutePreparationAccess(ctx, expense);
+    if (!['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status) || (expense.substituteReceiptEvidence && expense.substituteReceiptEvidence.status !== 'SUPERSEDED')) throw new ConflictException('Expense already has a certificate or cannot be prepared.');
+    return expense;
+  }
+
+  async init(ctx: RequestContext, expenseId: string, input: PreparationUploadInput) {
+    const expense = await this.load(ctx, expenseId, input.purpose);
+    if (ctx.permissions.includes('expense.review') && !ctx.permissions.includes('attachment.create')) throw new ForbiddenException('Missing permission: attachment.create');
+    return this.createUpload.execute(withAttachmentCreate(ctx), { originalFileName: input.originalFileName, mimeType: input.mimeType, byteSize: input.byteSize,
+      visibility: 'INTERNAL', ...(expense.branchId ? { branchId: expense.branchId } : {}),
+      metadataJson: { generatedFor: 'substitute_receipt_preparation', expenseId, purpose: input.purpose } });
+  }
+
+  async complete(ctx: RequestContext, expenseId: string, attachmentId: string, input: { byteSize?: number; checksumSha256?: string; purpose: PreparationUploadInput['purpose'] }) {
+    const expense = await this.load(ctx, expenseId, input.purpose);
+    if (ctx.permissions.includes('expense.review') && !ctx.permissions.includes('attachment.create')) throw new ForbiddenException('Missing permission: attachment.create');
+    const attachment = await this.repo.findSubstitutePreparationUpload(ctx.companyId, expenseId, attachmentId, ctx.userId, input.purpose);
+    if (!attachment || !['PENDING_UPLOAD', 'ACTIVE'].includes(attachment.status)) throw new BadRequestException('Certificate evidence upload not found.');
+    if (attachment.status === 'PENDING_UPLOAD') await this.completeUpload.execute(withAttachmentCreate(ctx), { attachmentId, byteSize: input.byteSize, checksumSha256: input.checksumSha256 });
+    await this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId, expectedUpdatedAt: expense.updatedAt }, async (tx) => {
+      if (await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId: ctx.companyId, expenseId, status: { not: 'SUPERSEDED' } }, select: { id: true } })) throw new ConflictException('Expense already has a certificate.');
+      await this.repo.linkAttachment(expenseId, attachmentId, input.purpose, ctx.companyId, ctx.userId, tx);
+    });
+    return { attachmentId };
   }
 }
 
@@ -1594,7 +1771,7 @@ function paperSigner(value: SubmitSubstituteReceiptPaperInput['payer'] | undefin
   if (!/^\d{4}-\d{2}-\d{2}$/.test(signedOn) || !Number.isFinite(Date.parse(signedOn))
     || new Date(signedOn).toISOString().slice(0, 10) !== signedOn
     || signedOn > new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
-    || signedOn < '1900-01-01') throw new BadRequestException('วันที่ลงนามต้องเป็นวันที่จริงและไม่อยู่ในอนาคต');
+    || signedOn < '1900-01-01') throw new BadRequestException('วันที่เซ็นไม่ถูกต้อง เลือกวันที่จริงที่ไม่อยู่ในอนาคต');
   return { name, position, signedOn };
 }
 
@@ -1612,18 +1789,18 @@ export class PaperSubstituteReceiptUseCase {
 
   private async load(ctx: RequestContext, expenseId: string, evidenceId: string, permission: 'expense.review' | 'expense.confirm' | 'read') {
     assertWeb(ctx);
-    if (permission === 'read' ? !ctx.permissions.some((item) => ['expense.review', 'expense.confirm'].includes(item)) : !ctx.permissions.includes(permission)) throw new ForbiddenException('ไม่มีสิทธิ์ดำเนินการกับฉบับกระดาษ');
+    if (permission === 'read' ? !ctx.permissions.some((item) => ['expense.review', 'expense.confirm'].includes(item)) : !ctx.permissions.includes(permission)) throw new ForbiddenException('คุณไม่มีสิทธิ์ทำรายการกับฉบับกระดาษ ให้ผู้ที่มีสิทธิ์ตรวจหรือยืนยันเอกสารทำให้');
     const evidence = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidenceId);
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
-    if (!evidence || !expense) throw new NotFoundException('ไม่พบเอกสาร');
+    if (!evidence || !expense) throw new NotFoundException('ไม่พบเอกสาร เปิดหน้านี้ใหม่แล้วเลือกใบรับรองอีกครั้ง');
     assertBranch(ctx, expense.branchId);
-    if (evidence.signatureMode !== 'PAPER' || evidence.payerUserId !== null || evidence.status !== 'PREPARED') throw new ConflictException('เอกสารไม่อยู่ในขั้นตอนรับฉบับกระดาษ กรุณาโหลดใหม่');
+    if (evidence.signatureMode !== 'PAPER' || evidence.payerUserId !== null || evidence.status !== 'PREPARED') throw new ConflictException('เอกสารไม่อยู่ในขั้นตอนรับฉบับกระดาษ เปิดหน้านี้ใหม่');
     assertPreparedExpenseUnchanged(expense, evidence);
     const refs = await this.repo.findSubstituteEvidenceAttachments(ctx.companyId, expenseId, [...new Set([...evidence.paymentEvidenceAttachmentIds, ...evidence.supportingAttachmentIds])]);
-    if (refs.length !== new Set([...evidence.paymentEvidenceAttachmentIds, ...evidence.supportingAttachmentIds]).size) throw new ConflictException('หลักฐานประกอบเปลี่ยนไป กรุณาจัดทำเวอร์ชันใหม่');
+    if (refs.length !== new Set([...evidence.paymentEvidenceAttachmentIds, ...evidence.supportingAttachmentIds]).size) throw new ConflictException('หลักฐานประกอบเปลี่ยนไป จัดทำเวอร์ชันใหม่');
     if (evidence.paperFormSnapshotJson) {
       const form = evidence.paperFormSnapshotJson as unknown as SubstituteReceiptSnapshot;
-      if (form.evidence.some((item) => !refs.some((ref) => ref.id === item.id && ref.checksumSha256 === item.checksumSha256))) throw new ConflictException('หลักฐานไม่ตรงกับแบบฟอร์มที่พิมพ์');
+      if (form.evidence.some((item) => !refs.some((ref) => ref.id === item.id && ref.checksumSha256 === item.checksumSha256))) throw new ConflictException('หลักฐานไม่ตรงกับแบบฟอร์มที่พิมพ์ จัดทำใบรับรองใหม่ให้ตรงกับหลักฐาน');
     }
     return { evidence, expense };
   }
@@ -1631,20 +1808,20 @@ export class PaperSubstituteReceiptUseCase {
   async initUpload(ctx: RequestContext, expenseId: string, evidenceId: string, input: { originalFileName: string; mimeType: string; byteSize: number }) {
     const { evidence } = await this.load(ctx, expenseId, evidenceId, 'expense.review');
     if (!evidence.paperFormSnapshotJson || evidence.paperSubmissionJson) throw new ConflictException('ดาวน์โหลดแบบฟอร์มก่อนอัปโหลด หรือจัดทำเวอร์ชันใหม่หากยื่นแล้ว');
-    if (!['application/pdf', 'image/png', 'image/jpeg'].includes(input.mimeType) || !Number.isInteger(input.byteSize) || input.byteSize <= 0 || input.byteSize > 10_000_000) throw new BadRequestException('ใช้ PDF, PNG หรือ JPEG ขนาดไม่เกิน 10 MB');
+    if (!['application/pdf', 'image/png', 'image/jpeg'].includes(input.mimeType) || !Number.isInteger(input.byteSize) || input.byteSize <= 0 || input.byteSize > 10_000_000) throw new BadRequestException('ไฟล์นี้ใช้ไม่ได้ เลือก PDF, PNG หรือ JPEG ขนาดไม่เกิน 10 เมกะไบต์');
     return this.createUpload.execute(withAttachmentCreate(ctx), { ...input, originalFileName: requiredText(input.originalFileName, 'originalFileName', 255), visibility: 'INTERNAL',
       ...(evidence.branchId ? { branchId: evidence.branchId } : {}), metadataJson: { generatedFor: 'substitute_receipt_paper', evidenceId, formChecksumSha256: canonicalSnapshotHash(evidence.paperFormSnapshotJson as unknown as SubstituteReceiptSnapshot) } });
   }
 
   async submit(ctx: RequestContext, expenseId: string, evidenceId: string, input: SubmitSubstituteReceiptPaperInput) {
     const { evidence } = await this.load(ctx, expenseId, evidenceId, 'expense.review');
-    if (input.formMatchesAcknowledged !== true || typeof input.samePerson !== 'boolean') throw new BadRequestException('ยืนยันฉบับลงนามและระบุว่าผู้ลงนามทั้งสองเป็นคนเดียวกันหรือไม่');
+    if (input.formMatchesAcknowledged !== true || typeof input.samePerson !== 'boolean') throw new BadRequestException('ยังยืนยันฉบับที่เซ็นไม่ครบ ติ๊กยืนยันฉบับนี้และเลือกว่าคนเดียวกันเซ็นทั้งสองช่องหรือคนละคน');
     const payer = paperSigner(input.payer, 'payer');
     const approver = paperSigner(input.approver, 'approver');
-    if (payer.name.replace(/\s/g, '') === approver.name.replace(/\s/g, '') && !input.samePerson) throw new BadRequestException('ชื่อผู้ลงนามตรงกัน กรุณาระบุว่าลงนามสองฐานะโดยคนเดียว');
+    if (payer.name.replace(/\s/g, '') === approver.name.replace(/\s/g, '') && !input.samePerson) throw new BadRequestException('ชื่อผู้เซ็นตรงกัน เลือก “คนเดียวกันเซ็นทั้งสองช่อง”');
     if (evidence.correctionOfEvidenceId) {
       const original = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidence.correctionOfEvidenceId);
-      if (!original?.paperSubmissionJson || original.paperSubmissionJson.payer.name !== payer.name || original.paperSubmissionJson.approver.name !== approver.name) throw new ConflictException('การแก้เอกสารต้องเป็นผู้ลงนามเดิม');
+      if (!original?.paperSubmissionJson || original.paperSubmissionJson.payer.name !== payer.name || original.paperSubmissionJson.approver.name !== approver.name) throw new ConflictException('การแก้เอกสารต้องใช้ผู้เซ็นเดิม ระบุชื่อผู้เซ็นให้ตรงกับใบเดิม');
     }
     // An exact retry after successful submission returns the existing immutable submission.
     if (evidence.paperSubmissionJson) {
@@ -1653,22 +1830,22 @@ export class PaperSubstituteReceiptUseCase {
         && prior.uploadedByUserId === ctx.userId && JSON.stringify(prior.payer) === JSON.stringify(payer) && JSON.stringify(prior.approver) === JSON.stringify(approver) && prior.samePerson === input.samePerson) return toSubstituteEvidenceSummary(evidence);
       throw new ConflictException('ยื่นฉบับนี้แล้ว หากต้องแก้ไขให้ยกเลิกและจัดทำเวอร์ชันใหม่');
     }
-    if (evidence.updatedAt.getTime() !== parseExpectedDate(input.expectedEvidenceUpdatedAt, 'expectedEvidenceUpdatedAt').getTime()) throw new ConflictException('ข้อมูลเปลี่ยนแล้ว กรุณาโหลดใหม่');
+    if (evidence.updatedAt.getTime() !== parseExpectedDate(input.expectedEvidenceUpdatedAt, 'expectedEvidenceUpdatedAt').getTime()) throw new ConflictException('ข้อมูลเปลี่ยนแล้ว เปิดหน้านี้ใหม่');
     let attachment = await this.repo.findSubstitutePaperUpload(ctx.companyId, evidenceId, input.attachmentId, ctx.userId);
-    if (!attachment || attachment.branchId !== evidence.branchId) throw new BadRequestException('ไม่พบไฟล์ที่อัปโหลดสำหรับเอกสารนี้');
-    if (!evidence.paperFormSnapshotJson || (attachment.metadataJson as Record<string, unknown> | null)?.formChecksumSha256 !== canonicalSnapshotHash(evidence.paperFormSnapshotJson as unknown as SubstituteReceiptSnapshot)) throw new ConflictException('ข้อมูลค่าใช้จ่ายเปลี่ยนแล้ว กรุณาดาวน์โหลดแบบฟอร์มล่าสุดไปลงนามและอัปโหลดใหม่');
+    if (!attachment || attachment.branchId !== evidence.branchId) throw new BadRequestException('ไม่พบไฟล์ที่อัปโหลดสำหรับเอกสารนี้ เลือกไฟล์ที่อัปโหลดให้ใบนี้หรืออัปโหลดอีกครั้ง');
+    if (!evidence.paperFormSnapshotJson || (attachment.metadataJson as Record<string, unknown> | null)?.formChecksumSha256 !== canonicalSnapshotHash(evidence.paperFormSnapshotJson as unknown as SubstituteReceiptSnapshot)) throw new ConflictException('ข้อมูลค่าใช้จ่ายเปลี่ยนแล้ว ดาวน์โหลดแบบฟอร์มล่าสุดไปเซ็นและอัปโหลดใหม่');
     if (attachment.status === 'PENDING_UPLOAD') {
       await this.completeUpload.execute(withAttachmentCreate(ctx), { attachmentId: attachment.id, checksumSha256: input.checksumSha256, byteSize: input.byteSize });
       attachment = await this.repo.findSubstitutePaperUpload(ctx.companyId, evidenceId, input.attachmentId, ctx.userId);
     }
-    if (!attachment || attachment.status !== 'ACTIVE' || attachment.checksumSha256 !== input.checksumSha256 || Number(attachment.byteSize) !== input.byteSize) throw new BadRequestException('ไฟล์หรือ checksum ไม่ตรงกัน');
+    if (!attachment || attachment.status !== 'ACTIVE' || attachment.checksumSha256 !== input.checksumSha256 || Number(attachment.byteSize) !== input.byteSize) throw new BadRequestException('ไฟล์หรือข้อมูลตรวจสอบไฟล์ไม่ตรงกัน เปิดหน้านี้ใหม่แล้วอัปโหลดไฟล์อีกครั้ง');
     const scan = await this.storage.getObject({ bucket: attachment.bucket, objectKey: attachment.objectKey, ...(attachment.objectVersionId ? { objectVersionId: attachment.objectVersionId } : {}) });
-    if (sha256(scan.bytes) !== input.checksumSha256) throw new ConflictException('ไฟล์ในที่เก็บเปลี่ยนไป');
+    if (sha256(scan.bytes) !== input.checksumSha256) throw new ConflictException('ไฟล์ในที่เก็บเปลี่ยนไป แจ้งทีมงานมั่งมีให้ตรวจไฟล์ก่อนส่งฉบับที่เซ็น');
     // Parsing the real bytes also enforces page/pixel limits before this becomes linked evidence.
     const form = evidence.paperFormSnapshotJson as unknown as SubstituteReceiptSnapshot;
-    if (!form) throw new ConflictException('ยังไม่ได้เตรียมแบบฟอร์ม');
+    if (!form) throw new ConflictException('ยังไม่ได้เตรียมแบบฟอร์ม ดาวน์โหลดแบบฟอร์มก่อนอัปโหลดฉบับที่เซ็น');
     try { await renderSubstituteReceiptPaperArtifactPdf({ bytes: scan.bytes, mimeType: attachment.mimeType }, renderSubstituteReceiptAttestationSvg(form, { snapshotChecksumSha256: canonicalSnapshotHash(form), wetSignedScanChecksumSha256: input.checksumSha256 }), evidence.documentNumber); }
-    catch { throw new BadRequestException('เปิดอ่านไฟล์ไม่ได้ หรือเกินจำนวนหน้าที่รองรับ (PDF ต้นฉบับไม่เกิน 5 หน้า)'); }
+    catch { throw new BadRequestException('เปิดอ่านไฟล์ไม่ได้หรือเกินจำนวนหน้าที่รองรับ เลือกรูปหรือ PDF ที่เปิดอ่านได้ โดย PDF ต้นฉบับไม่เกิน 5 หน้า'); }
     const uploadedByName = await this.repo.findMemberDisplayName(ctx.companyId, ctx.userId) ?? '-';
     const updated = await this.repo.submitSubstitutePaper({ companyId: ctx.companyId, expenseId, evidenceId, expectedUpdatedAt: evidence.updatedAt,
       attachmentId: attachment.id, checksumSha256: input.checksumSha256,
@@ -1680,13 +1857,13 @@ export class PaperSubstituteReceiptUseCase {
   private async review(ctx: RequestContext, expenseId: string, evidenceId: string, permission: 'read' | 'expense.confirm') {
     const { evidence, expense } = await this.load(ctx, expenseId, evidenceId, permission);
     const submission = evidence.paperSubmissionJson;
-    if (!submission || !evidence.paperFormSnapshotJson || !evidence.wetSignedScanAttachmentId) throw new ConflictException('รอฉบับลงนามบนกระดาษ');
+    if (!submission || !evidence.paperFormSnapshotJson || !evidence.wetSignedScanAttachmentId) throw new ConflictException('ยังไม่ได้รับฉบับที่เซ็นบนกระดาษ ให้ผู้จัดทำส่งฉบับที่เซ็นแล้วก่อนตรวจรับ');
     const reviewer = await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, expense.branchId);
-    if (!reviewer) throw new ForbiddenException('ผู้ตรวจต้องเป็นสมาชิกที่ใช้งานอยู่');
+    if (!reviewer) throw new ForbiddenException('ผู้ตรวจต้องเป็นสมาชิกที่ใช้งานอยู่ ให้ผู้ที่มีสิทธิ์ตรวจสาขาและสถานะสมาชิกก่อนตรวจรับ');
     const scan = await this.repo.findSubstituteArtifactAttachment(ctx.companyId, expenseId, evidence.wetSignedScanAttachmentId, ['image/png', 'image/jpeg', 'application/pdf']);
-    if (!scan) throw new ConflictException('ไม่พบฉบับลงนาม');
+    if (!scan) throw new ConflictException('ไม่พบฉบับที่เซ็น เปิดหน้านี้ใหม่แล้วตรวจไฟล์ที่แนบ');
     const object = await this.storage.getObject({ bucket: scan.bucket, objectKey: scan.objectKey, ...(scan.objectVersionId ? { objectVersionId: scan.objectVersionId } : {}) });
-    if (sha256(object.bytes) !== evidence.wetSignedScanChecksumSha256) throw new ConflictException('ไฟล์ฉบับลงนามไม่ตรงกับข้อมูลที่ยื่น');
+    if (sha256(object.bytes) !== evidence.wetSignedScanChecksumSha256) throw new ConflictException('ไฟล์ฉบับที่เซ็นไม่ตรงกับข้อมูลที่ยื่น แจ้งทีมงานมั่งมีให้ตรวจไฟล์ก่อนตรวจรับ');
     const snapshot: SubstituteReceiptSnapshot = { ...evidence.paperFormSnapshotJson as unknown as SubstituteReceiptSnapshot,
       payer: { userId: null, name: submission.payer.name, position: submission.payer.position, certifiedAt: submission.payer.signedOn, roleLabel: 'ผู้รับรองการจ่าย' },
       certificationText: buildSubstituteCertificationText(submission.payer.name, submission.payer.position, true),
@@ -1706,17 +1883,17 @@ export class PaperSubstituteReceiptUseCase {
   }
 
   async accept(ctx: RequestContext, expenseId: string, evidenceId: string, input: AcceptSubstituteReceiptPaperInput) {
-    if (input.factsAndSignaturesAcknowledged !== true || input.approverAuthorityAcknowledged !== true || input.originalRetainedAcknowledged !== true) throw new BadRequestException('ตรวจฉบับลงนามและยืนยันครบทุกข้อก่อนรับเอกสาร');
+    if (input.factsAndSignaturesAcknowledged !== true || input.approverAuthorityAcknowledged !== true || input.originalRetainedAcknowledged !== true) throw new BadRequestException('ตรวจฉบับเซ็นและยืนยันครบทุกข้อก่อนรับเอกสาร');
     const result = await this.review(ctx, expenseId, evidenceId, 'expense.confirm');
     const { evidence, expense } = result;
     const company = await this.repo.getSubstituteCompanyContext(ctx.companyId, expense.branchId);
-    if (company.taxId !== result.snapshot.company.taxId) throw new ConflictException('เลขผู้เสียภาษีบริษัทเปลี่ยนไป กรุณาจัดทำเวอร์ชันใหม่');
-    if (result.previewChecksumSha256 !== input.previewChecksumSha256 || evidence.updatedAt.getTime() !== parseExpectedDate(input.expectedEvidenceUpdatedAt, 'expectedEvidenceUpdatedAt').getTime()) throw new ConflictException('เอกสารเปลี่ยนไป กรุณาเปิดตรวจฉบับเต็มอีกครั้ง');
+    if (company.taxId !== result.snapshot.company.taxId) throw new ConflictException('เลขผู้เสียภาษีร้านเปลี่ยนไป จัดทำเวอร์ชันใหม่');
+    if (result.previewChecksumSha256 !== input.previewChecksumSha256 || evidence.updatedAt.getTime() !== parseExpectedDate(input.expectedEvidenceUpdatedAt, 'expectedEvidenceUpdatedAt').getTime()) throw new ConflictException('เอกสารเปลี่ยนไป เปิดตรวจฉบับเต็มอีกครั้ง');
     const policy = await this.repo.getSubstituteReceiptPolicy(ctx.companyId);
     const mode = policy?.approvalMode ?? 'OWNER_SELF';
     const eligible = await this.repo.listEligibleSubstituteReceiptApprovers(ctx.companyId, expense.branchId);
-    if (!isEligibleSubstituteReceiptApprover(ctx.userId, mode, policy?.approverUserIds, new Set(eligible.map((item) => item.userId)))) throw new ForbiddenException('คุณไม่มีสิทธิ์ตรวจรับตามนโยบายผู้อนุมัติของบริษัท');
-    if (evidence.paperSubmissionJson!.samePerson && !selfApprovalPermitted(mode, ctx.roles)) throw new ForbiddenException('นโยบายบริษัทไม่อนุญาตให้ลงนามทั้งสองฐานะโดยคนเดียว');
+    if (!isEligibleSubstituteReceiptApprover(ctx.userId, mode, policy?.approverUserIds, new Set(eligible.map((item) => item.userId)))) throw new ForbiddenException('คุณไม่มีสิทธิ์ตรวจรับตามนโยบายผู้อนุมัติของร้าน ให้ผู้อนุมัติที่มีสิทธิ์ตรวจรับใบนี้');
+    if (evidence.paperSubmissionJson!.samePerson && !selfApprovalPermitted(mode, ctx.roles)) throw new ForbiddenException('นโยบายร้านไม่อนุญาตให้คนเดียวเซ็นทั้งสองฐานะ ให้ผู้ที่มีสิทธิ์ตรวจนโยบายก่อนตรวจรับ');
     if (evidence.paymentEvidenceAttachmentIds.length === 0 && substituteReceiptRequiresPaymentEvidence(expense.aiVerificationSummaryJson, evidence.paymentMethod, policy?.cashEvidencePolicy)) throw new ConflictException('ต้องมีหลักฐานการจ่ายตามนโยบายปัจจุบัน');
     const stored = await this.storage.putObject({ objectKey: `${ctx.companyId}/substitute-receipts/${evidenceId}/issued-${randomUUID()}.svg`, mimeType: 'image/svg+xml', bytes: result.svg });
     let updated: SubstituteReceiptEvidenceRecord;

@@ -563,6 +563,7 @@ model Company {
   vatRegistrationState              CompanyVatRegistrationState?
   vatRegistrationCommands           CompanyVatRegistrationCommand[]
   vatRegistrationFacts              CompanyVatRegistrationFact[]
+  whtPayerModeFacts                  WhtPayerModeFact[]
   vatRegistrationPrompts            VatRegistrationPrompt[]
   identityReconciliationItems       CompanyIdentityReconciliationItem[]
   documentIssueCommands             AccountingDocumentIssueCommand[]
@@ -1577,6 +1578,10 @@ model NotificationRecipient {
   recipientReason String
   readAt          DateTime?
   dismissedAt     DateTime?
+  // Nullable for legacy rows; partial unique waiting key is enforced by the additive migration.
+  waitingKey      String?
+  supersededAt    DateTime?
+  finishedAt      DateTime?
   snoozedUntil    DateTime?
   createdAt       DateTime               @default(now())
   event           NotificationEvent      @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -2446,6 +2451,8 @@ enum DuplicateCandidateStatus {
 enum SourceDocumentType {
   RECEIPT
   TAX_INVOICE
+  CUSTOMS_VAT_RECEIPT
+  PP36_RECEIPT
   // ใบกำกับภาษีอย่างย่อ (Revenue Code s.86/6). A distinct document type, not a variant of
   // TAX_INVOICE: its input VAT is non-creditable under s.82/5, so it must never reach the
   // claimable path. Spec §19h.
@@ -2602,6 +2609,7 @@ model ExpenseCategory {
 }
 
 model ExpenseRecord {
+  inputVatDecisions ExpenseInputVatDecision[]
   id                                 String                             @id @default(cuid())
   companyId                          String
   branchId                           String?
@@ -2616,6 +2624,9 @@ model ExpenseRecord {
   sourceReimbursementLineId          String?
   status                             ExpenseStatus                      @default(DRAFT)
   captureSource                      ExpenseCaptureSource               @default(WEB_MANUAL)
+  requestedReviewerUserId             String?
+  submittedByUserId                   String?
+  submittedAt                         DateTime?
   vendorCounterpartyId               String?
   vendorSnapshotJson                 Json?
   vendorNameSnapshot                 String?
@@ -2789,6 +2800,9 @@ model DisbursementVoucher {
   note                        String?
   totalAmount                 Decimal @db.Decimal(18, 4)
   currency                    String @default("THB")
+  preparerSignatureJson       Json?
+  approverSignatureJson       Json?
+  payerSignatureJson          Json?
   preparedByUserId            String
   requestedApproverUserId     String?
   lastReminderToUserId        String?
@@ -2893,6 +2907,7 @@ model ExpensePayment {
   amount             Decimal                    @db.Decimal(18, 4)
   currency           String                     @default("THB")
   paymentMethod      ExpensePaymentMethod?
+  paidAtConfirmed Boolean @default(false)
   paidAt             DateTime
   bankAccountRef     String?
   status             ExpensePaymentRecordStatus @default(RECORDED)
@@ -2934,6 +2949,7 @@ model ExpenseLine {
   // ZERO_RATED / EXEMPT / NON_VAT; null means no explicit zero-treatment evidence.
   vatTreatment               String?
   vatAmount                  Decimal                  @default(0) @db.Decimal(18, 4)
+  whtCategoryCode String?
   whtRate                    Decimal?                 @db.Decimal(8, 4)
   whtAmount                  Decimal                  @default(0) @db.Decimal(18, 4)
   lineSubtotalAmount         Decimal                  @default(0) @db.Decimal(18, 4)
@@ -4976,6 +4992,7 @@ enum TaxType {
 }
 
 enum TaxFormType {
+  PND2
   PP30
   PP36
   PND3
@@ -5004,6 +5021,7 @@ enum TaxPeriodStatus {
 }
 
 enum TaxEventType {
+  WHT_PND2
   VAT_OUTPUT
   VAT_INPUT
   VAT_EXEMPT
@@ -5570,6 +5588,7 @@ model TaxRateConfig {
 
 // WHT income categories (service, rent, etc.) — seeded DRAFT/NEEDS_REVIEW
 model WhtIncomeCategory {
+  filingRoute     String        @default("SYSTEM_FILLS")
   id              String        @id @default(cuid())
   code            String
   nameTh          String
@@ -5628,6 +5647,7 @@ model TaxPeriod {
   taxEvents       TaxEvent[]
   reportSnapshots TaxReportSnapshot[]
   filingPackages  TaxFilingPackage[]
+  whtFilings      WhtFiling[]
   reviewIssues    TaxReviewIssue[]
   whtCertificates WhtCertificate[]
   adjustments     TaxAdjustment[]
@@ -5761,6 +5781,52 @@ model TaxReportSnapshot {
 }
 
 // Filing export package: one per form/period/format export action
+model WhtFiling {
+  id                    String          @id @default(cuid())
+  companyId             String
+  taxPeriodId           String
+  formType              TaxFormType
+  periodKey             String
+  establishmentCode     String
+  establishmentBranchId String?
+  sequence              Int             @default(0)
+  status                TaxPeriodStatus @default(OPEN)
+  preparedBy            String
+  payerSnapshotJson     Json
+  rowsChecksum          String
+  filingPackageId       String?         @unique
+  downloadedAt          DateTime?
+  filedAt               DateTime?
+  filedByUserId         String?
+  filedNote             String?
+  rowsCertain           Boolean         @default(true)
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  taxPeriod TaxPeriod          @relation(fields: [taxPeriodId], references: [id], onDelete: Restrict)
+  lines     WhtFilingLine[]
+  packages  TaxFilingPackage[]  @relation("WhtFilingPackages")
+  latestPackage TaxFilingPackage? @relation("WhtLatestPackage", fields: [filingPackageId], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, formType, periodKey, establishmentCode, sequence], map: "WhtFiling_paper_key")
+  @@index([companyId, taxPeriodId])
+}
+
+model WhtFilingLine {
+  id          String @id @default(cuid())
+  whtFilingId String
+  rowNumber   Int
+  taxEventId  String
+  sourceType  String
+  sourceId    String
+  lineJson    Json
+  filing WhtFiling @relation(fields: [whtFilingId], references: [id], onDelete: Restrict)
+
+  @@unique([whtFilingId, rowNumber])
+  @@index([sourceType, sourceId])
+  @@index([taxEventId])
+}
+
 model TaxFilingPackage {
   id                String              @id @default(cuid())
   companyId         String
@@ -5768,6 +5834,7 @@ model TaxFilingPackage {
   formType          TaxFormType
   periodKey         String
   exportNumber      String
+  whtFilingId       String?
   status            FilingPackageStatus @default(GENERATED)
   exportFormat      String
   attachmentId      String?
@@ -5784,6 +5851,10 @@ model TaxFilingPackage {
   company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   taxPeriod TaxPeriod @relation(fields: [taxPeriodId], references: [id])
 
+  whtFiling WhtFiling? @relation("WhtFilingPackages", fields: [whtFilingId], references: [id], onDelete: Restrict)
+  latestOfWhtFiling WhtFiling? @relation("WhtLatestPackage")
+
+  @@index([whtFilingId])
   @@index([companyId, taxPeriodId])
   @@index([companyId, formType, periodKey, status])
 }
@@ -10916,4 +10987,33 @@ model CompanyTeamNote {
   updatedByUserId String
   updatedAt       DateTime @updatedAt
   company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+// One live answer per starting month; historical answers are retained by supersession.
+model WhtPayerModeFact {
+  id                     String   @id @default(cuid())
+  companyId              String
+  mode                   String
+  effectiveFromPeriodKey String
+  answeredByUserId       String
+  answeredAt             DateTime @default(now())
+  supersededAt           DateTime?
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, supersededAt, effectiveFromPeriodKey])
+}
+
+model ExpenseInputVatDecision {
+  id String @id @default(uuid())
+  companyId String
+  expenseId String
+  expense ExpenseRecord @relation(fields: [companyId, expenseId], references: [companyId, id], onDelete: Cascade)
+  fromStatus InputVatClaimStatus
+  toStatus InputVatClaimStatus
+  reason String?
+  conditionsJson Json
+  evidenceAttachmentIds String[]
+  decidedByUserId String
+  decidedAt DateTime @default(now())
+  @@index([companyId, expenseId, decidedAt])
 }

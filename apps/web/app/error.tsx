@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { BrandedState } from '@/common/components/state';
-import { Button } from '@/common/components/button';
+import { Button, secondaryButtonClass } from '@/common/components/button';
 import { logoutCurrentSession } from '@/common/auth/session';
 import { useLocale } from '@/common/i18n/use-locale';
 
@@ -28,28 +28,24 @@ export default function ErrorPage({ error }: { error: Error & { digest?: string 
 
   return (
     <BrandedState
-      eyebrow={th ? 'ระบบขัดข้องชั่วคราว' : 'Temporary problem'}
-      title={th ? 'ไม่สามารถเปิดหน้านี้ได้' : 'We could not open this page'}
-      description={th ? 'ระบบหรือการเชื่อมต่ออาจขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง' : 'The service or connection may be temporarily unavailable. Please try again.'}
+      eyebrow=""
+      title={th ? 'เปิดหน้านี้ไม่ได้' : 'We could not open this page'}
+      description={th ? 'ระบบขัดข้องชั่วคราว ปัญหาอยู่ที่ระบบของเรา' : 'A temporary problem on our side.'}
+      // One group, three weights: the way out of the account first, the way that fixes it last.
+      actions={<>
+        <Button variant="quiet" type="button" loading={signingOut} onClick={handleSignOut}>{th ? 'ออกจากระบบ' : 'Sign out'}</Button>
+        {/* A plain anchor, not <Link>: a soft navigation re-renders inside the tree that just threw,
+            and a full load also drops any stale client chunks left by a redeploy. `home=reset` skips a
+            remembered landing that may itself be the page that failed. */}
+        <a href="/login?home=reset" className={secondaryButtonClass}>{th ? 'กลับไปหน้าแรก' : 'Back to home'}</a>
+        {/* Refetch the server page as well; resetting only the boundary can replay its cached failure. */}
+        <Button type="button" onClick={() => window.location.reload()}>{th ? 'ลองอีกครั้ง' : 'Try again'}</Button>
+      </>}
     >
-      {/* Refetch the server page as well; resetting only the boundary can replay its cached failure. */}
-      <Button type="button" onClick={() => window.location.reload()}>{th ? 'ลองอีกครั้ง' : 'Try again'}</Button>
-      {/* A plain anchor, not <Link>: a soft navigation re-renders inside the tree that just threw,
-          and a full load also drops any stale client chunks left by a redeploy. `home=reset` skips a
-          remembered landing that may itself be the page that failed. */}
-      <a
-        href="/login?home=reset"
-        className="inline-flex h-11 items-center justify-center sm:h-10 rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
-      >
-        {th ? 'กลับหน้าหลัก' : 'Back to home'}
-      </a>
-      <Button variant="secondary" type="button" onClick={handleSignOut} disabled={signingOut}>
-        {signingOut ? (th ? 'กำลังออกจากระบบ…' : 'Signing out…') : th ? 'ออกจากระบบ' : 'Sign out'}
-      </Button>
       {signOutFailed && (
-        <p className="mt-3 w-full text-sm text-red-600">
+        <p role="alert" className="w-full text-sm text-red-600">
           {th
-            ? 'ออกจากระบบไม่สำเร็จ คุณยังอยู่ในระบบ กรุณาตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง'
+            ? 'ออกจากระบบไม่สำเร็จ คุณยังอยู่ในระบบ ตรวจการเชื่อมต่อแล้วลองอีกครั้ง'
             : 'Sign-out failed and you are still signed in. Check your connection and try again.'}
         </p>
       )}

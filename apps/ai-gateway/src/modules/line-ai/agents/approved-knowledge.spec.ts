@@ -29,14 +29,14 @@ describe('approved product knowledge eligibility, source integrity and rendering
   it('validates bounded curated bodies against the exact checked-in manual source hashes', () => {
     validateKnowledgePack(PRODUCT_HELP_PACK);
     assert.equal(PRODUCT_HELP_PACK.status, 'APPROVED');
-    assert.deepEqual(PRODUCT_HELP_PACK.reviewers, ['repository-ai-source-code-review:codex-gpt-6:2026-10-05']);
-    assert.equal(PRODUCT_HELP_PACK.version, 3);
+    assert.deepEqual(PRODUCT_HELP_PACK.reviewers, ['repository-ai-source-code-review:claude-opus-5-5:2026-10-13']);
+    assert.equal(PRODUCT_HELP_PACK.version, 4);
     assert.equal(PRODUCT_HELP_PACK.cards.length, 12, 'refresh the existing pack without adding cards');
     assert.equal(PRODUCT_HELP_PACK.effectiveTo, '2026-12-27T00:00:00+07:00');
     assert.equal(PRODUCT_HELP_PACK.reviewDueAt, PRODUCT_HELP_PACK.effectiveTo);
     const root = resolve(__dirname, '../../../../../..');
     for (const card of PRODUCT_HELP_PACK.cards) {
-      assert.equal(card.version, /\/reimbursement-guide\.content\.ts$/.test(card.sourceFile) ? 3 : /\/expenses-guide\.content\.ts$/.test(card.sourceFile) ? 2 : 1, card.id);
+      assert.equal(card.version, /\/reimbursement-guide\.content\.ts$/.test(card.sourceFile) ? 4 : /\/expenses-guide\.content\.ts$/.test(card.sourceFile) ? 3 : /\/substitute-receipt-guide\.content\.ts$/.test(card.sourceFile) ? 2 : 1, card.id);
       assert.equal(createHash('sha256').update(readFileSync(resolve(root, card.sourceFile))).digest('hex'), card.sourceHash, card.sourceFile);
       const guide = card.sourceURL.split('/user-guide/')[1]!.split('#')[0]!;
       assert.ok(readFileSync(resolve(root, `apps/web/app/(workspace)/companies/[companyId]/user-guide/${guide}/page.tsx`)), 'citation page exists');

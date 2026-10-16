@@ -1,3 +1,6 @@
+import type { ExpenseDb } from '../../infrastructure/prisma-expense.repository';
+import { PrismaDisbursementVoucherRepository } from '../../infrastructure/prisma-disbursement-voucher.repository';
+import { EXPENSE_REVIEW_REQUEST_WORDS } from '@watchdog-bms/contracts';
 import { DisbursementVoucherNoticeService } from '../services/disbursement-voucher-notice.service';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { EXPENSE_VOID_CERTIFICATE_WORDS } from '@watchdog-bms/contracts';
@@ -44,10 +47,10 @@ import {
   hasAiGrandTotalMismatch,
   hasAcknowledgedAiTotalMismatch,
   hasSelectedTaxCode,
+  hasMissingClaimableVatTaxSnapshot,
   isDomesticInputTaxLine,
   validateDomesticInputVatEvidence,
   expenseTaxSourceChecksum,
-  hasMissingClaimableVatTaxSnapshot,
   firstUnknownVatRateLineNumber,
   readAiCategorySuggestion,
 } from '../../domain/logic/expense-status.logic';
@@ -123,8 +126,12 @@ export class CreateExpenseDraftUseCase {
     // One of the two roots of the expenses journey — the manual draft. Guarded here rather than in
     // the controller so every caller of the use case is covered, LINE note capture included.
     await assertExpenseRootOpen(this.launchGate, this.audit, ctx, 'expense.create');
+    if (input.inputVatClaimStatus !== undefined) throw new ForbiddenException({ code: 'expense_input_vat_decision_required', message: 'สิทธิภาษีซื้อกำหนดโดยระบบ บันทึกข้อมูลรายจ่ายได้โดยไม่ต้องส่งสิทธิภาษีซื้อ' });
     assertBranchInScope(ctx, input.branchId);
     const branchId = await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, input.branchId);
+
+    const vendorIdentity = expenseVendorIdentityFields(input);
+    if (vendorIdentity.error) throw new BadRequestException(vendorIdentity.error);
 
     // Compute totals from lines
     const lines = input.lines ?? [];
@@ -157,13 +164,14 @@ export class CreateExpenseDraftUseCase {
       expenseDate: civilDateToUtcDate(coerceCivilDate(input.expenseDate)),
       currency: input.currency ?? 'THB',
       vatMode: input.vatMode,
-      inputVatClaimStatus: input.inputVatClaimStatus,
+      inputVatClaimStatus: 'NON_CLAIMABLE',
       expenseCategoryId: input.expenseCategoryId,
       accountHintKey: input.accountHintKey,
       note: input.note,
       missingReceiptReason: input.missingReceiptReason,
       createdByUserId: ctx.userId,
       vendorCounterpartyId: input.vendorCounterpartyId,
+      ...(vendorIdentity.fields.vendorNameSnapshot && { vendorNameSnapshot: vendorIdentity.fields.vendorNameSnapshot }),
       // An upload draft is created before OCR. Persisting a REVIEWER/NONE source here would make
       // the later OCR result incorrectly lose to a reviewer decision that never happened.
       ...(input.vatSource !== undefined && { vatCaptureSnapshotJson: vat.snapshot }),
@@ -180,7 +188,7 @@ export class CreateExpenseDraftUseCase {
             description: l.description, chargeKind: l.chargeKind ?? null, quantity: l.quantity, unitPrice: l.unitPrice,
             discountAmount: t.discountAmount, taxableAmount: t.taxableAmount,
             vatRate: reconciled.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: t.vatAmount,
-            whtRate: expenseWhtLineRate(input.whtInput, l.whtRate), whtAmount: t.whtAmount,
+            whtCategoryCode: l.whtCategoryCode, whtRate: expenseWhtLineRate(input.whtInput, l.whtRate), whtAmount: t.whtAmount,
             lineSubtotalAmount: t.lineSubtotalAmount, lineTotalAmount: t.lineTotalAmount,
             expenseCategoryId: l.expenseCategoryId ?? null, accountHintKey: l.accountHintKey ?? null, taxCategory: l.taxCategory ?? null,
             ...taxSelection(l),
@@ -201,7 +209,16 @@ export class CreateExpenseDraftUseCase {
 
 @Injectable()
 export class GetExpenseUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository) {}
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly people?: PrismaDisbursementVoucherRepository) {}
+
+  inputVatRight(ctx: RequestContext, expenseId: string) { return this.repo.inputVatRight(ctx.companyId, expenseId); }
+
+  async reviewRequest(ctx: RequestContext, expense: ExpenseRecord) {
+    if (!expense.requestedReviewerUserId || !expense.submittedByUserId || !expense.submittedAt || !this.people) return null;
+    const names = await this.people.memberNames(ctx.companyId, [expense.requestedReviewerUserId, expense.submittedByUserId]);
+    return { requestedReviewerUserId: expense.requestedReviewerUserId, requestedReviewerName: names.get(expense.requestedReviewerUserId) ?? 'ผู้ตรวจ',
+      submittedByUserId: expense.submittedByUserId, submittedByName: names.get(expense.submittedByUserId) ?? 'ผู้ส่ง', submittedAt: expense.submittedAt.toISOString() };
+  }
 
   async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseRecordWithRelations> {
     const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review') || hasPerm(ctx, 'expense.confirm');
@@ -353,6 +370,8 @@ type UpdateExpenseDraftOptions = {
       db?: any;
       suppressGenericAudit?: boolean;
       requireExpectedUpdatedAt?: boolean;
+      /** Internal authority, after the certificate use case checks creator and exact review-only payload. */
+      ownSubstituteReceiptReview?: boolean;
       /** Internal-only authority for the originating LINE user to fill source facts on their own
        * LINE draft. HTTP callers cannot set this option; final/reviewer-only mutations stay closed. */
       lineDraftCollection?: {
@@ -402,7 +421,7 @@ export class UpdateExpenseDraftUseCase {
     assertBranchInScope(ctx, r.branchId);
     if (input.branchId !== undefined) assertBranchInScope(ctx, input.branchId);
 
-    const canReview = hasPerm(ctx, 'expense.review');
+    const canReview = hasPerm(ctx, 'expense.review') || options.ownSubstituteReceiptReview === true;
     const isOwner = r.createdByUserId === ctx.userId;
     let combinedReviewSourceState: ReturnType<typeof sourceDraftState> = null;
     let combinedReviewSourceExpense: ExpenseRecordWithRelations | undefined;
@@ -486,12 +505,25 @@ export class UpdateExpenseDraftUseCase {
       const forbidden = (Object.keys(input) as Array<keyof UpdateExpenseDraftInput>).find((field) => !allowed.has(field));
       if (forbidden) throw new ForbiddenException(`LINE draft collection cannot update ${String(forbidden)}.`);
     }
+    // The LINE certificate continuation supplies this fixed value itself, never from chat input.
+    // Discard it: the evidence route below and repository own this system answer.
+    if (ctx.authProvider === 'line' && input.evidenceAssessment?.route === 'SUBSTITUTE_RECEIPT'
+      && input.inputVatClaimStatus === 'NON_CLAIMABLE') {
+      const { inputVatClaimStatus: _systemRight, ...reviewInput } = input;
+      input = reviewInput;
+    }
     const financeOnlyFields: Array<keyof UpdateExpenseDraftInput> = [
-      'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode',
+      'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'inputVatClaimStatus',
       'expenseCategoryId', 'accountHintKey', 'taxCategory', 'nonExpenseClassificationOverride', 'documentReviewAcknowledged', 'evidenceAssessment',
     ];
     if (!canReview && !canCollectOwnLineDraft && financeOnlyFields.some((field) => input[field] !== undefined)) {
       throw new ForbiddenException('Missing permission: expense.review for document, tax, or accounting classification fields.');
+    }
+    if (input.inputVatClaimStatus !== undefined) {
+      const buyer = readBuyerAsPrinted(r.buyerAsPrintedJson);
+      const isMark = input.inputVatClaimStatus === 'NON_CLAIMABLE' && buyer?.matchStatus === 'MISMATCH';
+      const isUndo = buyer?.claimStatusBeforeMark === input.inputVatClaimStatus;
+      if (!canReview || (!isMark && !isUndo)) throw new ForbiddenException({ code: 'expense_input_vat_decision_required', message: 'สิทธิภาษีซื้อกำหนดโดยระบบ บันทึกข้อมูลรายจ่ายได้โดยไม่ต้องส่งสิทธิภาษีซื้อ' });
     }
     if (!['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(r.status)) {
       throw new BadRequestException(`Cannot update expense in status ${r.status}`);
@@ -500,6 +532,7 @@ export class UpdateExpenseDraftUseCase {
     // material-field funding lock as the other vendor columns — no rule of its own.
     const vendorIdentity = expenseVendorIdentityFields(input);
     if (vendorIdentity.error) throw new BadRequestException(vendorIdentity.error);
+    if (vendorIdentity.fields.vendorNameSnapshot !== undefined) input = { ...input, vendorNameSnapshot: vendorIdentity.fields.vendorNameSnapshot };
     if (options.requireExpectedUpdatedAt && !input.expectedUpdatedAt) {
       throw new BadRequestException({
         code: 'EXPENSE_UPDATE_VERSION_REQUIRED',
@@ -586,14 +619,20 @@ export class UpdateExpenseDraftUseCase {
     if (whtInputError) throw new BadRequestException(whtInputError);
     const whtInput = input.whtInput ?? r.whtInputJson;
     let resolvedLines: ExpenseLineInput[] | undefined;
-    const nextSourceDocumentType = input.sourceDocumentType ?? r.sourceDocumentType;
-    const nextTaxEvidenceStatus = input.taxEvidenceStatus ?? r.taxEvidenceStatus;
+    let nextSourceDocumentType = input.sourceDocumentType ?? r.sourceDocumentType;
+    let nextTaxEvidenceStatus = input.taxEvidenceStatus ?? r.taxEvidenceStatus;
     if (input.evidenceAssessment !== undefined || input.documentReviewAcknowledged) {
       const source = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, options.db, ctx.scopes ?? {});
       if (!source) throw new NotFoundException();
       const assessment = input.evidenceAssessment ?? expenseEvidenceAssessment(source);
+      if ((assessment?.receiptProblem === 'NOT_AVAILABLE' || assessment?.receiptProblem === 'LOST')
+        && !(ctx.authProvider === 'line' && assessment.route === 'SUBSTITUTE_RECEIPT' && nextSourceDocumentType !== 'NEEDS_REVIEW')) {
+        nextSourceDocumentType = 'EXPENSE_NOTE_TEXT';
+        nextTaxEvidenceStatus = 'SUPPORTING_ONLY';
+        input = { ...input, sourceDocumentType: nextSourceDocumentType, taxEvidenceStatus: nextTaxEvidenceStatus };
+      }
       const error = expenseEvidenceInputError(assessment, { ...source, sourceDocumentType: nextSourceDocumentType,
-        taxEvidenceStatus: nextTaxEvidenceStatus, inputVatClaimStatus: input.inputVatClaimStatus ?? source.inputVatClaimStatus }, Boolean(input.documentReviewAcknowledged));
+        taxEvidenceStatus: nextTaxEvidenceStatus, inputVatClaimStatus: assessment?.route === 'SUBSTITUTE_RECEIPT' || assessment?.route === 'ALTERNATIVE_EVIDENCE' ? 'NON_CLAIMABLE' : input.inputVatClaimStatus ?? source.inputVatClaimStatus }, Boolean(input.documentReviewAcknowledged));
       if (error) throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: error });
     }
     if (input.documentReviewAcknowledged !== undefined) {
@@ -709,7 +748,7 @@ export class UpdateExpenseDraftUseCase {
           expenseId, companyId: ctx.companyId, lineNumber: l.lineNumber, description: l.description,
           chargeKind: l.chargeKind ?? null, quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: t.discountAmount,
           taxableAmount: t.taxableAmount, vatRate: reconciled.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: t.vatAmount,
-          whtRate: expenseWhtLineRate(whtInput, l.whtRate), whtAmount: t.whtAmount, lineSubtotalAmount: t.lineSubtotalAmount,
+          whtCategoryCode: l.whtCategoryCode ?? stored?.whtCategoryCode, whtRate: expenseWhtLineRate(whtInput, l.whtRate), whtAmount: t.whtAmount, lineSubtotalAmount: t.lineSubtotalAmount,
           lineTotalAmount: t.lineTotalAmount, expenseCategoryId: l.expenseCategoryId ?? null,
           accountHintKey: l.accountHintKey ?? null, taxCategory: l.taxCategory ?? null,
           ...taxSelection(l),
@@ -935,8 +974,7 @@ export class UpdateExpenseDraftUseCase {
      * column existed still carries the block in `aiVerifiedFieldsJson`, which is how it gets checked
      * without a backfill script. Never touches claimability (E11) — the column is all this writes.
      */
-    const claimStatusWrite = !options.lineDraftCollection && (disallowsTaxCode || input.inputVatClaimStatus)
-      ? (disallowsTaxCode ? 'NON_CLAIMABLE' as const : input.inputVatClaimStatus) : undefined;
+    const claimStatusWrite = !options.lineDraftCollection ? input.inputVatClaimStatus : undefined;
     const buyerSource = r.buyerAsPrintedJson ?? r.aiVerifiedFieldsJson?.['buyerAsPrinted'];
     const buyerAsPrintedJson = buyerSource ? stampClaimStatusBeforeMark(await recheckBuyerAsPrinted({
       printed: buyerSource,
@@ -1206,10 +1244,12 @@ export class ConfirmExpenseUseCase {
       reimbursementLineId: string;
       branchId?: string;
       allowMissingReceiptWithReason: boolean;
+      receiptWaivedByPolicy?: boolean;
       systemReconcile?: boolean;
     },
+    db?: ExpenseDb,
   ): Promise<ExpenseRecord> {
-    return this.confirm(ctx, expenseId, authority);
+    return this.confirm(ctx, expenseId, authority, undefined, db);
   }
 
   private async confirm(
@@ -1220,9 +1260,11 @@ export class ConfirmExpenseUseCase {
       reimbursementLineId: string;
       branchId?: string;
       allowMissingReceiptWithReason: boolean;
+      receiptWaivedByPolicy?: boolean;
       systemReconcile?: boolean;
     },
     vatSourceOverride?: ExpenseVatSourceOverrideInput,
+    db?: ExpenseDb,
   ): Promise<ExpenseRecord> {
     return observeCustomerJourney(
       this.audit,
@@ -1230,7 +1272,7 @@ export class ConfirmExpenseUseCase {
         key: 'expense-confirmation', requestId: ctx.requestId ?? `expense:${expenseId}:confirm`,
         targetType: 'expense_record', targetId: expenseId, companyId: ctx.companyId, actorUserId: ctx.userId,
       },
-      () => this.confirmMutation(ctx, expenseId, authority, vatSourceOverride),
+      () => this.confirmMutation(ctx, expenseId, authority, vatSourceOverride, db),
       () => ({ outcome: 'confirmed' }),
     );
   }
@@ -1243,15 +1285,17 @@ export class ConfirmExpenseUseCase {
       reimbursementLineId: string;
       branchId?: string;
       allowMissingReceiptWithReason: boolean;
+      receiptWaivedByPolicy?: boolean;
       systemReconcile?: boolean;
     },
     vatSourceOverride?: ExpenseVatSourceOverrideInput,
+    db?: ExpenseDb,
   ): Promise<ExpenseRecord> {
     if (!authority) {
       requirePerm(ctx, 'expense.confirm', 'confirm expense');
       if (ctx.authProvider === 'line') throw new ForbiddenException('Expense confirmation is available on the authenticated web only.');
     }
-    const r = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
+    const r = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, db);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     if (authority) {
       if (r.sourceReimbursementRequestId !== authority.reimbursementRequestId
@@ -1325,7 +1369,7 @@ export class ConfirmExpenseUseCase {
     const reviewedEvidence = hasCurrentExpenseEvidenceReview(r);
     const reviewedAttachmentId = reviewedEvidence ? expenseEvidenceAssessment(r)?.attachmentIds[0] ?? r.primaryAttachmentId : r.primaryAttachmentId;
     if (r.substituteReceiptEvidence?.status === 'ISSUED'
-      && (r.taxEvidenceStatus !== 'SUPPORTING_ONLY' || r.inputVatClaimStatus !== 'NON_CLAIMABLE')) {
+      && (r.taxEvidenceStatus !== 'SUPPORTING_ONLY' || r.inputVatClaimStatus === 'CLAIMABLE')) {
       throw new BadRequestException('Internal substitute evidence must remain supporting-only and non-claimable for input VAT.');
     }
 
@@ -1345,27 +1389,17 @@ export class ConfirmExpenseUseCase {
       inputVatClaimStatus: r.inputVatClaimStatus,
       hasMissingReceiptPermission: authority?.allowMissingReceiptWithReason ?? hasPerm(ctx, 'expense.review'),
       hasReviewedEvidence: reviewedEvidence,
-      hasLinkedClaimEvidence: Boolean(authority && r.sourceChannelMetadataJson?.reimbursementSource),
+      hasLinkedClaimEvidence: Boolean(authority && (authority.receiptWaivedByPolicy || r.sourceChannelMetadataJson?.reimbursementSource)),
       aiVerifiedFieldsJson: r.aiVerifiedFieldsJson,
       aiVerificationSummaryJson: r.aiVerificationSummaryJson,
     });
     if (validationErr) throw new BadRequestException(validationErr);
 
-    const taxEvidenceErr = validateDomesticInputVatEvidence({
-      sourceDocumentType: r.sourceDocumentType,
-      taxEvidenceStatus: r.taxEvidenceStatus,
-      inputVatClaimStatus: r.inputVatClaimStatus,
-      primaryAttachmentId: reviewedAttachmentId,
-      vendorTaxIdSnapshot: r.vendorTaxIdSnapshot,
-      vendorDocumentNumber: r.vendorDocumentNumber,
-      lines: r.lines ?? [],
-      // Read on the expense's own date: a company registered mid-year could not claim on a
-      // document dated before it registered. `validateConfirm` above already required the date.
-      // Only asked for when a claim is actually at stake, so the ordinary path adds no query.
-      ...(r.inputVatClaimStatus === 'CLAIMABLE' && r.expenseDate && {
-        vatStatus: (await this.vatRegistration.get(ctx.companyId, utcDateToCivilDate(r.expenseDate))).status,
-      }),
-    });
+    const taxEvidenceErr = validateDomesticInputVatEvidence({ sourceDocumentType: r.sourceDocumentType,
+      taxEvidenceStatus: r.taxEvidenceStatus, inputVatClaimStatus: r.inputVatClaimStatus,
+      ...(r.inputVatClaimStatus === 'CLAIMABLE' && { vatStatus: r.expenseDate ? (await this.vatRegistration.get(ctx.companyId, utcDateToCivilDate(r.expenseDate))).status : 'UNKNOWN' as const }),
+      primaryAttachmentId: reviewedAttachmentId, vendorTaxIdSnapshot: r.vendorTaxIdSnapshot,
+      vendorDocumentNumber: r.vendorDocumentNumber, lines: r.lines ?? [] });
     if (taxEvidenceErr) throw new BadRequestException(taxEvidenceErr);
 
     if (hasMissingClaimableVatTaxSnapshot(r.inputVatClaimStatus, r.lines ?? [])) {
@@ -1392,7 +1426,7 @@ export class ConfirmExpenseUseCase {
     ({ expense: updated, finalized } = await this.repo.finalizeAndConfirmExpenseCas({
       id: expenseId, companyId: ctx.companyId, expectedUpdatedAt: r.updatedAt, actorUserId: ctx.userId,
       expectedSourceChecksum: expenseTaxSourceChecksum(r),
-      substituteCoveredByClaimForm: Boolean(authority?.allowMissingReceiptWithReason) && evidenceCoveredByClaimForm,
+      substituteCoveredByClaimForm: Boolean(authority?.allowMissingReceiptWithReason || authority?.receiptWaivedByPolicy) && evidenceCoveredByClaimForm,
       reimbursementReview: authority ? { requestId: authority.reimbursementRequestId, lineId: authority.reimbursementLineId } : undefined,
       vatSourceOverride,
       postingStatus, vendorSnapshotJson,
@@ -1412,7 +1446,7 @@ export class ConfirmExpenseUseCase {
         expenseId: current.id, companyId: ctx.companyId, lineNumber: line.lineNumber, sourceLineId: line.id,
         description: line.description, quantity: line.quantity, unitPrice: line.unitPrice,
         discountAmount: line.discountAmount, taxableAmount: line.taxableAmount,
-        vatRate: line.vatRate, vatTreatment: line.vatTreatment ?? null, vatAmount: line.vatAmount, whtRate: line.whtRate, whtAmount: line.whtAmount,
+        vatRate: line.vatRate, vatTreatment: line.vatTreatment ?? null, vatAmount: line.vatAmount, whtCategoryCode: line.whtCategoryCode, whtRate: line.whtRate, whtAmount: line.whtAmount,
         lineSubtotalAmount: line.lineSubtotalAmount, lineTotalAmount: line.lineTotalAmount,
         expenseCategoryId: line.expenseCategoryId, accountHintKey: line.accountHintKey, taxCategory: line.taxCategory,
         taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? undefined,
@@ -1440,7 +1474,7 @@ export class ConfirmExpenseUseCase {
         }, db);
       }
       return lines;
-    }));
+    }, db));
     // Spec S1-R5: the reviewer confirmed a category that is not the AI's. `fromSuggested` says
     // whether AI had a usable suggestion at all, so override rate = these events with
     // `fromSuggested: true` over `expense_category_suggested`. Ids and booleans only — no category
@@ -1753,21 +1787,34 @@ export class VoidExpenseUseCase {
 
 @Injectable()
 export class MarkExpenseReadyUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository) {}
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly people?: PrismaDisbursementVoucherRepository, private readonly notify?: CreateOrUpdateNotificationEventUseCase) {}
 
-  async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseRecord> {
+  async reviewers(ctx: RequestContext, expenseId: string) {
+    const r = await this.repo.findById(ctx.companyId, expenseId);
+    if (!r) throw new NotFoundException();
+    assertBranchInScope(ctx, r.branchId);
+    if (!hasPerm(ctx, 'expense.review') && !(hasPerm(ctx, 'expense.update') && r.createdByUserId === ctx.userId)) throw new ForbiddenException('Missing permission');
+    if (!r.branchId || !this.people) return [];
+    return (await this.people.membersWithPermission(ctx.companyId, r.branchId, 'expense.confirm')).filter(person => person.userId !== ctx.userId);
+  }
+
+  async execute(ctx: RequestContext, expenseId: string, requestedReviewerUserId?: string): Promise<ExpenseRecord> {
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException();
     assertBranchInScope(ctx, r.branchId);
     const canReview = hasPerm(ctx, 'expense.review');
     const canUpdateOwn = hasPerm(ctx, 'expense.update') && r.createdByUserId === ctx.userId;
     if (!canReview && !canUpdateOwn) throw new ForbiddenException('Missing permission');
+    if (requestedReviewerUserId) {
+      if (!(await this.reviewers(ctx, expenseId)).some(person => person.userId === requestedReviewerUserId)) throw new BadRequestException({ code: 'expense_reviewer_ineligible', message: 'คนนี้ยืนยันรายจ่ายของสาขานี้ไม่ได้ เลือกคนอื่น' });
+      if (r.status === 'READY_FOR_CONFIRMATION' && r.requestedReviewerUserId === requestedReviewerUserId && r.submittedByUserId === ctx.userId) return r;
+    }
     if (hasBlockingNonExpenseClassification(r.aiVerificationSummaryJson)) {
       throw new BadRequestException(NON_EXPENSE_CLASSIFICATION_REVIEW_REQUIRED);
     }
     // Same endpoint serves the web "เริ่มตรวจใหม่" action on a rejected record: reopening puts it back
     // in NEEDS_REVIEW to be corrected and re-submitted, never straight into the confirmable state.
-    const target = r.status === 'REJECTED' ? 'NEEDS_REVIEW' : 'READY_FOR_CONFIRMATION';
+    const target = !requestedReviewerUserId && r.status === 'REJECTED' ? 'NEEDS_REVIEW' : 'READY_FOR_CONFIRMATION';
     if (target === 'READY_FOR_CONFIRMATION') {
       const source = r.captureSource === 'LINE_UPLOAD' && !r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]
         ? await this.repo.findByIdWithRelations(ctx.companyId, expenseId) : undefined;
@@ -1775,12 +1822,20 @@ export class MarkExpenseReadyUseCase {
     }
     const err = validateStatusTransition(r.status, target);
     if (err) throw new BadRequestException(err);
-    return this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId, status: target, expectedUpdatedAt: r.updatedAt });
+    const submittedAt = new Date();
+    const names = requestedReviewerUserId && this.people ? await this.people.memberNames(ctx.companyId, [ctx.userId]) : null;
+    return this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId, status: target, expectedUpdatedAt: r.updatedAt,
+      ...(requestedReviewerUserId && { requestedReviewerUserId, submittedByUserId: ctx.userId, submittedAt }) }, requestedReviewerUserId && this.notify ? async tx => {
+        await this.notify!.executeInTransaction({ companyId: ctx.companyId, triggerKey: 'expense.review_requested', sourceModule: 'expenses', sourceType: 'expense_record', sourceId: expenseId,
+          severity: 'action', title: EXPENSE_REVIEW_REQUEST_WORDS.title,
+          body: EXPENSE_REVIEW_REQUEST_WORDS.body.replace('{sender}', names?.get(ctx.userId) ?? 'ผู้ส่ง').replace('{number}', r.expenseNumber ?? 'ที่ยังไม่มีเลขที่'),
+          deepLinkHref: `/companies/${ctx.companyId}/expenses/${expenseId}`, recipientUserIds: [requestedReviewerUserId], webOnlyRecipientUserIds: [requestedReviewerUserId], periodKey: submittedAt.toISOString(), sourceRefs: [{ submittedAt: submittedAt.toISOString() }], supersedeEarlier: true }, tx);
+      } : undefined);
   }
 }
 
 export async function recordExpensePaymentEffects(audit: AuditService, ctx: RequestContext, expenseId: string, tx: Prisma.TransactionClient, created: ExpensePaymentResult) {
-  const data = { expenseId, paymentId: created.payment.id, paidAmount: created.payment.amount, cumulativePaidAmount: created.expense.paidAmount, paymentStatus: created.expense.paymentStatus };
+  const data = { ...(created.payment.slipAttachmentId ? { slipAttachmentId: created.payment.slipAttachmentId } : {}), expenseId, paymentId: created.payment.id, paidAmount: created.payment.amount, cumulativePaidAmount: created.expense.paidAmount, paymentStatus: created.expense.paymentStatus };
   await audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.payment.record', targetType: 'expense_payment', targetId: created.payment.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: data }, tx);
   await tx.outboxEvent.create({ data: {
     companyId: ctx.companyId, eventType: 'expense.payment_recorded', aggregateType: 'expense_payment', aggregateId: created.payment.id,
@@ -1802,6 +1857,19 @@ function reservationViewerScope(repo: PrismaExpenseRepository, ctx: RequestConte
 @Injectable()
 export class RecordExpensePaymentUseCase {
   constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
+
+  async confirmDate(ctx: RequestContext, expenseId: string, paymentId: string, paidAt: string) {
+    requirePerm(ctx, 'expense.payment.record', 'confirm expense payment date');
+    const expense = await this.repo.findById(ctx.companyId, expenseId);
+    if (!expense) throw new NotFoundException();
+    assertBranchInScope(ctx, expense.branchId);
+    if (!isCivilDate(paidAt)) throw new BadRequestException({ code: 'expense_payment_invalid_date', message: 'ระบุวันที่จ่ายเงินจริงจากหลักฐาน' });
+    assertExpensePaymentSource(expense, paidAt);
+    return this.repo.confirmPaymentDateAtomic({ companyId: ctx.companyId, expenseId, paymentId, paidAt, actorUserId: ctx.userId, scopes: ctx.scopes ?? {} },
+      tx => this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.payment_date_confirmed', targetType: 'expense_payment', targetId: paymentId,
+        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { paidAt } }, tx));
+  }
+
 
   async execute(
     ctx: RequestContext,
@@ -1832,6 +1900,7 @@ export class RecordExpensePaymentUseCase {
       paymentMethod: input.paymentMethod,
       paidAt: input.paidAt,
       bankAccountRef: input.bankAccountRef,
+      slipAttachmentId: input.slipAttachmentId,
     }, (tx, created) => recordExpensePaymentEffects(this.audit, ctx, expenseId, tx, created));
     if (result.replayed && result.payment?.status === 'VOIDED') throw new ConflictException({ code: 'expense_payment_cancelled_replay', message: EXPENSE_CORRECTION_WORDS.paymentReplayCancelled });
     return result.expense;
@@ -1915,5 +1984,15 @@ export class CancelExpensePaymentUseCase {
       });
     await this.disbursementNotices?.cancelled(ctx, cancelledIds);
     return result;
+  }
+}
+
+
+@Injectable()
+export class DecideExpenseInputVatUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository) {}
+  async execute(ctx: RequestContext, expenseId: string, input: import('@watchdog-bms/contracts').DecideExpenseInputVatInput) {
+    requirePerm(ctx, 'expense.review', 'decide input VAT');
+    return this.repo.decideInputVat(ctx, expenseId, input);
   }
 }

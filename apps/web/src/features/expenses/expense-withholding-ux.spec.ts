@@ -217,10 +217,9 @@ test('income categories match the payee form and changing type clears an incompa
 
 test('the last step names the button actually shown and carries the amounts it asks the reviewer to check', () => {
   const review = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
-  // A person who may confirm sees the confirm button from the first pass, so the sentence follows the right, not the status.
-  assert.match(review, /step === 'review' && canConfirm \? EXPENSE_REVIEW_STEP_WORDS\.thenConfirm\s*: step === 'review' && detail\.status === 'READY_FOR_CONFIRMATION' \? EXPENSE_REVIEW_STEP_WORDS\.sentAwaitingConfirm\s*: t\(STEP_HELPER_KEYS\[step\], locale\)/);
+  assert.doesNotMatch(review, /t\(STEP_HELPER_KEYS\[step\]/, 'DETAIL-1 keeps step names and removes the instruction box');
   assert.equal(EXPENSE_REVIEW_STEP_WORDS.thenConfirm, 'ดูสรุปอีกครั้ง แล้วยืนยัน');
-  assert.doesNotMatch(EXPENSE_REVIEW_STEP_WORDS.sentAwaitingConfirm, /ส่งให้ผู้อนุมัติ/, 'already sent: it must not ask to send again');
+  assert.equal(words['expenses.sent_awaiting_confirm'], 'ดูสรุปทั้งหมดอีกครั้ง เอกสารนี้ส่งให้ตรวจแล้ว รอผู้มีสิทธิ์ยืนยัน');
   assert.match(review, /\{step === 'data' && moneyCard\}/);
   assert.match(review, /\{step === 'review' && moneyCard\}/, 'total, VAT, withholding and the amount to pay are on the last screen');
 });
@@ -234,4 +233,16 @@ test('incomplete withholding answers show a neutral prompt and keep saved amount
   assert.match(page, /currentPreview\?\.status === 'error' && !currentPreview\.withholdingIncomplete/);
   assert.match(page, /\(calculationPending \|\| calculationError\) && <p className="mt-2 text-xs text-gray-500">ยอดที่บันทึกไว้<\/p>/);
   assert.match(page, /setTotalsRetry\(\(n\) => n \+ 1\)/, 'complete answers still allow retry after a real calculation failure');
+});
+
+test('income routes explain the accountant hand-off and keep PND2 choices with individuals', async () => {
+  const { whtFilingRouteHint } = await import('@watchdog-bms/contracts');
+  const personal = { code: 'WHT_INTEREST', formType: 'PND2', filingRoute: 'SEPARATE_PND2' };
+  assert.deepEqual(model.expenseWhtCategoriesForPayee([personal], 'INDIVIDUAL'), [personal]);
+  assert.deepEqual(model.expenseWhtCategoriesForPayee([personal], 'JURISTIC'), []);
+  assert.equal(whtFilingRouteHint(personal), 'ประเภทนี้ยื่น ภ.ง.ด.2 แยก ไม่อยู่ใน ภ.ง.ด.3');
+  assert.equal(whtFilingRouteHint({ code: 'WHT_OTHER_JUR', formType: 'PND53', filingRoute: 'ACCOUNTANT_PREPARES' }), 'บอกผู้ทำบัญชีว่าเป็นเงินได้อะไร ผู้ทำบัญชีต้องจัดทำแบบของเดือนนี้เอง');
+  assert.match(whtFilingRouteHint({ code: 'WHT_INTEREST_JUR', formType: 'PND53', filingRoute: 'ACCOUNTANT_PREPARES' })!, /ภ.ง.ด.53/);
+  assert.equal(whtFilingRouteHint({ code: 'WHT_PRIZE', formType: 'PND3', filingRoute: 'SYSTEM_FILLS' }), null);
+  assert.match(block, /whtFilingRouteHint/);
 });

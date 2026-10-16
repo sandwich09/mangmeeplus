@@ -775,7 +775,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     it('says every decision a shipped claim notice can carry in Thai', async () => {
       for (const [templateKey, decision, words] of [
         ['reimbursement_decision_requester', 'APPROVED', 'อนุมัติ'],
-        ['reimbursement_decision_requester', 'REJECTED', 'ไม่อนุมัติ'],
+        ['reimbursement_decision_requester', 'REJECTED', 'ส่งกลับให้แก้แล้ว'],
         ['reimbursement_decision_requester', 'BELOW_APPROVAL_THRESHOLD', 'ไม่ต้องอนุมัติตามนโยบาย'],
         ['reimbursement_finance_review', 'BLOCKED', 'ระงับ'],
       ] as const) {

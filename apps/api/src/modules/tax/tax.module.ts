@@ -65,6 +65,6 @@ import { TaxCodeImportUseCase } from './application/use-cases/tax-code-import.us
     TransactionTaxReconciliationUseCase,
     TaxCodeImportUseCase,
   ],
-  exports: [PrismaTaxRepository, WhtCertificateHandoffUseCase, GetTaxSummaryUseCase, TransactionTaxConfigUseCase, GetCompanyTaxCodeProfileUseCase, GetTransactionTaxAgentSummaryUseCase],
+  exports: [IssueWhtCertificateFromHandoffUseCase, PrismaTaxRepository, WhtCertificateHandoffUseCase, GetTaxSummaryUseCase, TransactionTaxConfigUseCase, GetCompanyTaxCodeProfileUseCase, GetTransactionTaxAgentSummaryUseCase],
 })
 export class TaxModule {}

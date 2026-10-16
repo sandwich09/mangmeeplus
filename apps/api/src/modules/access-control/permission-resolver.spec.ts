@@ -1,6 +1,7 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { ForbiddenException } from '@nestjs/common';
+import { TIER_FEATURE_PRESETS, hasAiSuggestionSourceAccess } from '@watchdog-bms/contracts';
 import { PermissionSet } from './domain/models/resolved-access.model';
 import { PermissionResolverService } from './application/permission-resolver.service';
 import { PrismaPermissionResolverRepository } from './infrastructure/prisma-permission-resolver.repository';
@@ -97,6 +98,35 @@ function makePrismaResolver(
 }
 
 describe('PrismaPermissionResolverRepository branch scopes', () => {
+  it('every sold tier reports no askable AI source while a CRM-enabled package can offer one', async () => {
+    for (const [tier, features] of Object.entries(TIER_FEATURE_PRESETS)) {
+      const { resolver } = makePrismaResolver(makeMembership(), [], features.map(featureKey => ({ featureKey, enabled: true })));
+      const result = await resolver.resolveForUser({ userId: 'u', companyId: 'co' });
+      assert.equal(hasAiSuggestionSourceAccess(result.availablePermissions ?? []), false, tier);
+    }
+    const { resolver } = makePrismaResolver(makeMembership(), [], [{ featureKey: 'crm', enabled: true }]);
+    assert.equal(hasAiSuggestionSourceAccess((await resolver.resolveForUser({ userId: 'u', companyId: 'co' })).availablePermissions ?? []), true);
+  });
+
+  it('exposes package-available permissions independently of the reader role for refusal explanations', async () => {
+    const { resolver } = makePrismaResolver(makeMembership(), [], [{ featureKey: 'expenses', enabled: true }]);
+    const result = await resolver.resolveForUser({ userId: 'u', companyId: 'co' });
+    assert.ok(result.availablePermissions?.includes('expense.read'));
+    assert.ok(!result.permissions.includes('expense.read'));
+    for (const key of ['bank.cash.read', 'crm.customer.read', 'inventory.report.read', 'tax.review_issue.read', 'workflow.task.read']) assert.ok(!result.availablePermissions?.includes(key), key);
+  });
+
+  it('distinguishes a disabled or suspended shop membership from missing access', async () => {
+    for (const status of ['DISABLED', 'SUSPENDED']) {
+      const prisma = { client: { companyMembership: { findFirst: async ({ where }: any) => {
+        assert.equal(where.userId, 'u'); assert.equal(where.companyId, 'co');
+        return where.status?.in?.includes(status) ? { id: 'm', status } : null;
+      } } } } as any;
+      await assert.rejects(() => new PrismaPermissionResolverRepository(prisma).resolveForUser({ userId: 'u', companyId: 'co' }),
+        (error: any) => error.getResponse().code === 'company_membership_disabled');
+    }
+  });
+
   it('does not turn a platform role or an inactive/missing company membership into company access', async () => {
     const { resolver, prisma } = makePrismaResolver(null as any);
     await assert.rejects(() => resolver.resolveForUser({ userId: 'platform-user', companyId: 'other-company' }), /No active company membership/);

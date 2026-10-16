@@ -11,8 +11,11 @@ export function isActiveNavSubItem(
   sub: SidebarSubItemRef,
   candidates: ReadonlyArray<SidebarSubItemRef>,
 ): boolean {
+  // The route names a row outright (its own module, or the row a page without one is opened from): only that row.
+  // Without this the settings overview, whose address is a prefix of every settings page, lit up beside it.
+  if (candidates.some((candidate) => candidate.key === activeKey)) return sub.key === activeKey;
   const isPathMatch = (path: string) => pathname === path || pathname.startsWith(path + '/');
-  return sub.key === activeKey || (isPathMatch(sub.href) && !candidates.some((candidate) => candidate.href.length > sub.href.length && isPathMatch(candidate.href)));
+  return isPathMatch(sub.href) && !candidates.some((candidate) => candidate.href.length > sub.href.length && isPathMatch(candidate.href));
 }
 
 /** Smallest scroll needed to reveal an item; 0 keeps an already-visible menu perfectly still. */

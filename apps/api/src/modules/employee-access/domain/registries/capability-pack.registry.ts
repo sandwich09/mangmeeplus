@@ -24,8 +24,8 @@ const RAW_PACKS: RawPack[] = [
   // ---- Foundation ----
   {
     key: 'pack.core.basics', module: 'foundation', isCore: true,
-    nameTh: 'พื้นฐาน (ทุกคน)', nameEn: 'Core basics',
-    description: 'บัญชีผู้ใช้ แจ้งเตือน แดชบอร์ด และผู้ช่วย AI พื้นฐาน — ทุกคนได้รับอัตโนมัติ',
+    nameTh: 'ใช้บัญชีและผู้ช่วย AI', nameEn: 'Core basics',
+    description: 'จัดการบัญชีผู้ใช้ ดูการแจ้งเตือนและหน้าแรก และใช้ผู้ช่วย AI พื้นฐาน ทุกบทบาทได้รับอัตโนมัติ',
     permissionKeys: [
       'account.session.read', 'account.password.change', 'account.identity.link', 'account.identity.unlink',
       'notification.read', 'notification.preference.manage', 'dashboard.read', 'attachment.read',
@@ -52,20 +52,20 @@ const RAW_PACKS: RawPack[] = [
   // none of which belong to สาขา or ความปลอดภัยบัญชี.
   {
     key: 'pack.company.settings.view', module: 'company',
-    nameTh: 'ดูตั้งค่าบริษัท', nameEn: 'View company setup',
-    description: 'ดูข้อมูลบริษัท สาขา และเลขที่เอกสาร',
+    nameTh: 'ดูตั้งค่าร้าน', nameEn: 'View company setup',
+    description: 'ดูข้อมูลร้าน สาขา และเลขที่เอกสาร',
     permissionKeys: ['company.setup.read', 'company.branch.read', 'document.sequence.read'],
   },
   {
     key: 'pack.company.settings.manage', module: 'company',
-    nameTh: 'จัดการตั้งค่าบริษัท', nameEn: 'Manage company setup',
-    description: 'แก้ข้อมูลบริษัท สาขา เลขที่เอกสาร และไฟล์แนบ',
+    nameTh: 'จัดการตั้งค่าร้าน', nameEn: 'Manage company setup',
+    description: 'แก้ไขข้อมูลร้าน สาขา เลขที่เอกสาร และไฟล์แนบ',
     permissionKeys: ['company.setup.manage', 'company.branch.manage', 'document.sequence.manage', 'attachment.create', 'attachment.delete', 'outbox.event.read'],
   },
   {
     key: 'pack.company.plan.manage', module: 'company',
-    nameTh: 'จัดการแพ็กเกจและการชำระเงิน', nameEn: 'Manage company package and billing',
-    description: 'เลือกหรือเปลี่ยนแพ็กเกจ ซื้อบริการ และดูหรือชำระเงินของบริษัท',
+    nameTh: 'จัดการแพ็กเกจและจ่ายเงิน', nameEn: 'Manage company package and billing',
+    description: 'เลือกหรือเปลี่ยนแพ็กเกจ ซื้อบริการ และดูหรือจ่ายเงินของร้าน',
     permissionKeys: ['company.plan.manage'],
   },
   // Deliberately NO featureEntitlementKey, both of them. A company that never bought `thai_tax`
@@ -75,16 +75,16 @@ const RAW_PACKS: RawPack[] = [
   // keeps these keys alive when the tax entitlement is off.
   {
     key: 'pack.company.legal_identity.manage', module: 'company',
-    nameTh: 'จัดการตัวตนภาษีบริษัท', nameEn: 'Manage company tax identity',
-    description: 'ดูและแก้เลขผู้เสียภาษี ชื่อจดทะเบียน และที่อยู่จดทะเบียนของบริษัท',
+    nameTh: 'แก้ไขข้อมูลภาษีร้าน', nameEn: 'Manage company tax identity',
+    description: 'ดูและแก้ไขเลขผู้เสียภาษี ชื่อจดทะเบียน และที่อยู่จดทะเบียนของร้าน',
     // Read ships with manage on purpose: this is one editing screen, and an editor who cannot
     // read the current value can only overwrite it blind.
     permissionKeys: ['company.legal_identity.read', 'company.legal_identity.manage'],
   },
   {
     key: 'pack.company.vat_registration.manage', module: 'company',
-    nameTh: 'ตอบสถานะจด VAT', nameEn: 'Answer VAT registration',
-    description: 'ดูและตอบสถานะการจดทะเบียนภาษีมูลค่าเพิ่มพร้อมวันที่มีผล',
+    nameTh: 'ตั้งสถานะจด VAT', nameEn: 'Answer VAT registration',
+    description: 'ดูและตั้งสถานะจด VAT พร้อมวันที่มีผล',
     permissionKeys: ['company.vat_registration.read', 'company.vat_registration.manage'],
   },
   {
@@ -99,7 +99,7 @@ const RAW_PACKS: RawPack[] = [
   {
     key: 'pack.people.manage', module: 'people',
     nameTh: 'จัดการพนักงานและสิทธิ์', nameEn: 'Manage people & roles',
-    description: 'สร้าง/ปิดพนักงาน ออกรหัสผ่าน ผูก LINE และจัดการบทบาท/ชุดสิทธิ์',
+    description: 'เพิ่มและปิดสิทธิ์พนักงาน ออกรหัสผ่าน เชื่อม LINE และจัดการบทบาทกับชุดสิทธิ์',
     permissionKeys: [
       'access.employee.create', 'access.employee.update', 'access.employee.disable',
       'access.employee.credential.issue', 'access.employee.line_link.issue', 'access.employee.line_link.revoke',
@@ -114,14 +114,14 @@ const RAW_PACKS: RawPack[] = [
   },
   {
     key: 'pack.dashboard.manage', module: 'company', featureEntitlementKey: 'dashboard_notifications',
-    nameTh: 'ปรับแต่งแดชบอร์ด', nameEn: 'Configure dashboard',
-    description: 'ปรับการ์ดบนแดชบอร์ด และสั่งให้แดชบอร์ดคำนวณตัวเลขใหม่ทันที',
+    nameTh: 'ปรับแต่งหน้าแรก', nameEn: 'Configure dashboard',
+    description: 'ปรับการ์ดบนหน้าแรก และสั่งให้หน้าแรกคำนวณตัวเลขใหม่ทันที',
     permissionKeys: ['dashboard.configure', 'dashboard.snapshot.generate'],
   },
   {
     key: 'pack.notification.admin', module: 'company', featureEntitlementKey: 'dashboard_notifications',
     nameTh: 'จัดการกฎแจ้งเตือน', nameEn: 'Notification admin',
-    description: 'ตั้งกฎการแจ้งเตือนของบริษัท ดูประวัติการส่ง และสั่งส่งใหม่เมื่อส่งไม่สำเร็จ',
+    description: 'ตั้งกฎการแจ้งเตือนของร้าน ดูประวัติการส่ง และส่งอีกครั้งเมื่อส่งไม่สำเร็จ',
     permissionKeys: ['notification.rule.manage', 'notification.delivery.read', 'notification.delivery.retry'],
   },
   {
@@ -264,20 +264,20 @@ const RAW_PACKS: RawPack[] = [
   {
     key: 'pack.expense.view', module: 'expense', featureEntitlementKey: 'expenses',
     nameTh: 'ดูค่าใช้จ่าย', nameEn: 'View expenses',
-    description: 'ดูและส่งออกค่าใช้จ่ายทั้งบริษัท (อ่านอย่างเดียว)',
+    description: 'ดูและส่งออกค่าใช้จ่ายทั้งร้าน อ่านอย่างเดียว',
     // expense.read_own rides along: the expense screens gate on it as the entry permission.
     permissionKeys: ['expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.export'],
   },
   {
     key: 'pack.expense.self', module: 'expense', featureEntitlementKey: 'expenses',
     nameTh: 'บันทึกค่าใช้จ่ายของฉัน', nameEn: 'Capture own expenses',
-    description: 'สร้างและอัปโหลดใบเสร็จค่าใช้จ่ายของตัวเอง',
+    description: 'บันทึกค่าใช้จ่ายและอัปโหลดใบเสร็จเฉพาะของตัวเอง',
     permissionKeys: ['expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.ocr.request', 'expense.signature.self_manage', 'attachment.create'],
   },
   {
     key: 'pack.expense.review', module: 'expense', featureEntitlementKey: 'expenses',
     nameTh: 'ตรวจค่าใช้จ่าย', nameEn: 'Review expenses',
-    description: 'ดู/ตรวจค่าใช้จ่ายทั้งบริษัท ตรวจ AI จัดหมวด และแก้รายการซ้ำ',
+    description: 'ดูและตรวจค่าใช้จ่ายทั้งร้าน ตรวจผลจาก AI จัดหมวด และแก้รายการซ้ำ',
     // `accounting.counterparty.read` (vendor-address CON-2): the reviewer is who sees the
     // "เพิ่ม [ร้าน] ลงทะเบียนคู่ค้าแล้ว · ดู" toast, so they must be able to open what it points at.
     // Read only — changing a primary address by hand still needs `accounting.counterparty.manage`,
@@ -286,26 +286,26 @@ const RAW_PACKS: RawPack[] = [
   },
   {
     key: 'pack.expense.finance', module: 'expense', featureEntitlementKey: 'expenses',
-    nameTh: 'อนุมัติ/จ่ายค่าใช้จ่าย', nameEn: 'Confirm & pay expenses',
-    description: 'ยืนยัน/ปฏิเสธ/ยกเลิก บันทึกการจ่าย และส่งออกค่าใช้จ่าย',
+    nameTh: 'ยืนยันและจ่ายค่าใช้จ่าย', nameEn: 'Confirm & pay expenses',
+    description: 'ยืนยัน ปฏิเสธ หรือยกเลิกเอกสาร บันทึกจ่าย และส่งออกค่าใช้จ่าย',
     permissionKeys: ['expense.confirm', 'expense.reject', 'expense.void', 'expense.delete', 'expense.payment.record', 'expense.export'],
   },
   {
     key: 'pack.expense.disbursement.view', module: 'expense', featureEntitlementKey: 'expenses',
-    nameTh: 'ดูใบเตรียมจ่าย/ใบสำคัญจ่าย', nameEn: 'View disbursement vouchers',
-    description: 'เปิดดูใบเตรียมจ่ายและใบสำคัญจ่ายของรายจ่ายที่ตำแหน่งนี้ดูได้อยู่แล้ว',
+    nameTh: 'ดูใบเตรียมจ่ายและใบสำคัญจ่าย', nameEn: 'View disbursement vouchers',
+    description: 'ดูใบเตรียมจ่ายและใบสำคัญจ่ายเฉพาะรายจ่ายที่บทบาทนี้ดูได้',
     permissionKeys: ['expense.disbursement.read'],
   },
   {
     key: 'pack.expense.disbursement.prepare', module: 'expense', featureEntitlementKey: 'expenses',
     nameTh: 'จัดทำใบเตรียมจ่าย', nameEn: 'Prepare disbursement vouchers',
-    description: 'รวมรายจ่ายที่จะจ่ายให้ผู้รับเงินรายเดียวเป็นหนึ่งใบ แล้วส่งให้ผู้มีอำนาจอนุมัติ',
+    description: 'รวมรายจ่ายที่จะจ่ายให้ผู้รับเงินรายเดียวเป็นหนึ่งใบ แล้วส่งอนุมัติ',
     permissionKeys: ['expense.disbursement.read', 'expense.disbursement.prepare'],
   },
   {
     key: 'pack.expense.disbursement.approve', module: 'expense', featureEntitlementKey: 'expenses',
     nameTh: 'อนุมัติใบเตรียมจ่าย', nameEn: 'Approve disbursement vouchers',
-    description: 'อนุมัติหรือตีกลับใบเตรียมจ่ายก่อนจ่ายเงิน',
+    description: 'อนุมัติหรือส่งกลับให้แก้ใบเตรียมจ่ายก่อนจ่ายเงิน',
     permissionKeys: ['expense.disbursement.read', 'expense.disbursement.approve'],
   },
   {
@@ -324,16 +324,16 @@ const RAW_PACKS: RawPack[] = [
   // ---- Reimbursement (no dedicated feature entitlement key in 10A) ----
   {
     key: 'pack.reimbursement.self', module: 'reimbursement', isCore: true,
-    nameTh: 'ขอเบิกของฉัน (ทุกคน)', nameEn: 'Request own reimbursement (everyone)',
-    description: 'ทุกบทบาทได้รับอัตโนมัติ: สร้าง แนบใบเสร็จ แก้ ส่ง และยกเลิกคำขอของตัวเอง เมื่อบริษัทเปิดการเบิกจ่าย',
+    nameTh: 'สร้างใบเบิกของตัวเอง', nameEn: 'Request own reimbursement (everyone)',
+    description: 'ทุกบทบาทสร้างใบเบิก แนบใบเสร็จ แก้ไข ส่งอนุมัติ และยกเลิกได้เฉพาะของตัวเอง เมื่อร้านเปิดการเบิกจ่าย',
     permissionKeys: REIMBURSEMENT_SELF_SERVICE_PERMISSIONS,
   },
   {
     key: 'pack.reimbursement.approve', module: 'reimbursement',
-    nameTh: 'อนุมัติการเบิก', nameEn: 'Approve reimbursement',
+    nameTh: 'อนุมัติและจ่ายใบเบิก', nameEn: 'Approve reimbursement',
     // The role page prints this under the choice, so it names everything the choice gives: paying and
     // taking a payment back too, which "อนุมัติ" alone does not say.
-    description: 'ดู อนุมัติ และปฏิเสธคำขอเบิก รวมทั้งบันทึกจ่ายเงินคืนและยกเลิกการจ่าย',
+    description: 'ดู อนุมัติ และปฏิเสธใบเบิก รวมทั้งบันทึกจ่ายเงินคืนและยกเลิกการจ่าย',
     // Owner decision 2026-09-19 (D1/A2, supersedes team decision 2026-07-28 "paying stays
     // FINANCE-only"): an approver can record payment directly, so a custom role built from this
     // pack gets the same payment.record/payment.void the ADMIN/MANAGER system roles now hold.
@@ -344,20 +344,20 @@ const RAW_PACKS: RawPack[] = [
   },
   {
     key: 'pack.reimbursement.review', module: 'reimbursement',
-    nameTh: 'ตรวจสอบการเบิก', nameEn: 'Review reimbursement',
+    nameTh: 'ตรวจใบเบิก', nameEn: 'Review reimbursement',
     // The finance-review right also reaches other people's claims: preparing, editing, sending and cancelling one for its requester.
-    description: 'ดูและส่งออกคำขอเบิก ตรวจการเงิน และสร้าง แก้ ส่ง หรือยกเลิกคำขอแทนผู้เบิก แต่บันทึกจ่ายและยกเลิกการจ่ายไม่ได้',
+    description: 'ดูและส่งออกใบเบิก ตรวจการเงิน และสร้าง แก้ไข ส่งอนุมัติ หรือยกเลิกใบเบิกแทนผู้เบิก แต่บันทึกจ่ายและยกเลิกการจ่ายไม่ได้',
     permissionKeys: ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.read_related', 'reimbursement.finance_review', 'reimbursement.export'],
   },
   {
     key: 'pack.reimbursement.finance', module: 'reimbursement',
-    nameTh: 'ตรวจ/จ่ายการเบิก', nameEn: 'Finance review & pay',
-    description: 'ดูและส่งออกคำขอเบิก ตรวจการเงิน บันทึกจ่าย ยกเลิกการจ่าย ปลดรายการซ้ำ และสร้าง แก้ ส่ง หรือยกเลิกคำขอแทนผู้เบิก',
+    nameTh: 'ตรวจและจ่ายใบเบิก', nameEn: 'Finance review & pay',
+    description: 'ดูและส่งออกใบเบิก ตรวจการเงิน บันทึกจ่าย ยกเลิกการจ่าย ปลดรายการซ้ำ และสร้าง แก้ไข ส่งอนุมัติ หรือยกเลิกใบเบิกแทนผู้เบิก',
     permissionKeys: ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.finance_review', 'reimbursement.payment.record', 'reimbursement.payment.void', 'reimbursement.duplicate.resolve', 'reimbursement.export'],
   },
   {
     key: 'pack.reimbursement.policy', module: 'reimbursement',
-    nameTh: 'ตั้งนโยบายการเบิก', nameEn: 'Manage reimbursement policy',
+    nameTh: 'ตั้งนโยบายใบเบิก', nameEn: 'Manage reimbursement policy',
     description: 'ดูและตั้งนโยบายการเบิกจ่าย',
     permissionKeys: ['reimbursement.policy.read', 'reimbursement.policy.manage'],
   },
@@ -468,8 +468,8 @@ const RAW_PACKS: RawPack[] = [
   // ---- Tax ----
   {
     key: 'pack.wht.pnd53', module: 'tax', featureEntitlementKey: 'wht_pnd53',
-    nameTh: 'จัดทำ ภ.ง.ด.53', nameEn: 'Prepare PND53',
-    description: 'ดูงวดและรายการ ภ.ง.ด.53 คำนวณรายงาน และส่งออกเอกสารเฉพาะแบบนี้',
+    nameTh: 'จัดทำ ภ.ง.ด.3 และ ภ.ง.ด.53', nameEn: 'Prepare PND53',
+    description: 'ดูรายการภาษีหัก ณ ที่จ่ายแยกตามเดือน คำนวณยอด และดาวน์โหลดแบบ ภ.ง.ด.3 และ ภ.ง.ด.53',
     permissionKeys: ['wht.pnd53.read', 'wht.pnd53.prepare'],
   },
   {
@@ -496,8 +496,8 @@ const RAW_PACKS: RawPack[] = [
     // and still owes its payee a certificate. An ungated pack wins over a gated one in
     // filterPermissionsByEntitlement, and no PREFIX_FEATURE_RULES entry starts with `wht.`.
     key: 'pack.wht.certificate.manage', module: 'tax',
-    nameTh: 'หนังสือรับรองหัก ณ ที่จ่าย (แนบภายนอก)', nameEn: 'WHT certificate handoff',
-    description: 'ดูงานที่ต้องออก 50 ทวิ ภายนอก และแนบหนังสือรับรองที่ออกแล้วกลับเข้าระบบ',
+    nameTh: 'แนบหนังสือรับรอง 50 ทวิที่ออกเอง', nameEn: 'WHT certificate handoff',
+    description: 'ดูรายการที่ต้องออกหนังสือรับรอง 50 ทวินอกระบบ และแนบหนังสือรับรองที่ออกแล้ว',
     // Correction & replacement plan §2.1: owner confirmed 2026-09-23 this stays ungated — fixing/
     // reissuing a certificate the company already issued is an ongoing compliance obligation, not a
     // new commercial feature (unlike wht.certificate.issue's own dedicated ENTERPRISE-gated pack
@@ -511,8 +511,8 @@ const RAW_PACKS: RawPack[] = [
   // adding the key to `pack.wht.certificate.manage` above would wrongly gate read/link too.
   {
     key: 'pack.wht.certificate.issue', module: 'tax', featureEntitlementKey: 'wht_50bis',
-    nameTh: 'ออกหนังสือรับรองหัก ณ ที่จ่ายในระบบ', nameEn: 'System-issue WHT certificate',
-    description: 'ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) เป็น PDF ในระบบทันทีที่ยืนยันจ่าย/ยืนยันเอกสาร',
+    nameTh: 'ออกหนังสือรับรอง 50 ทวิในระบบ', nameEn: 'System-issue WHT certificate',
+    description: 'ออกหนังสือรับรอง 50 ทวิเป็น PDF จากรายการที่ยืนยันจ่ายหรือยืนยันเอกสารแล้ว',
     permissionKeys: ['wht.certificate.issue'],
   },
   // Pre-change paid full-Tax terms and immutable deal snapshots keep the issuance right they bought.
@@ -528,8 +528,8 @@ const RAW_PACKS: RawPack[] = [
   // setting is meaningless without the WHT-certificate feature at all.
   {
     key: 'pack.company.tax_signature.manage', module: 'tax', featureEntitlementKey: 'wht_50bis',
-    nameTh: 'จัดการลายเซ็นผู้จ่ายเงินสำหรับ 50 ทวิ', nameEn: 'Manage WHT certificate signature',
-    description: 'อัปโหลด/จัดการรูปลายเซ็นผู้มีอำนาจลงนามที่จะประทับลงหนังสือรับรองหัก ณ ที่จ่ายที่ระบบออกให้',
+    nameTh: 'จัดการลายเซ็นบน 50 ทวิ', nameEn: 'Manage WHT certificate signature',
+    description: 'อัปโหลดและจัดการรูปลายเซ็นผู้มีอำนาจเซ็นที่จะประทับบนหนังสือรับรอง 50 ทวิที่ระบบออกให้',
     permissionKeys: ['company.tax_signature.manage'],
   },
   {

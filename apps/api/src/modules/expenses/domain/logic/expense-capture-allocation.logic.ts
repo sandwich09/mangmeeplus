@@ -351,7 +351,7 @@ function buildScope(
   }
 
   const claimReady = input.fundingRoute === 'EMPLOYEE'
-    && inputVatClaimStatus === 'NON_CLAIMABLE' && vatMode !== 'NEEDS_REVIEW' && taxEvidenceStatus !== 'NEEDS_REVIEW';
+    && vatMode !== 'NEEDS_REVIEW' && taxEvidenceStatus !== 'NEEDS_REVIEW';
   if (input.fundingRoute === 'EMPLOYEE' && !claimReady) {
     blockers.push(blocker(EXPENSE_CAPTURE_BLOCKERS.TAX_REVIEW_PENDING, 'รอตรวจภาษีก่อน จึงจะนำไปทำใบเบิกได้'));
   }

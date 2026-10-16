@@ -53,7 +53,7 @@ export type CounterpartyRecord = {
 /** §12 detail extras. Counted from documents, because `type` is no longer a usage label (A5). */
 export type CounterpartyUsage = {
   usageCounts: { bought: number; sold: number };
-  recentExpenses: Array<{ id: string; expenseDate: string; vendorDocumentNumber?: string; grandTotalAmount: string }>;
+  recentExpenses: Array<{ id: string; expenseNumber?: string; expenseDate: string; vendorDocumentNumber?: string; grandTotalAmount: string }>;
 };
 
 /** §11.1: what a list row needs for its usage badges — the same counts as `CounterpartyUsage`, minus the detail page's `recentExpenses`. */

@@ -14,13 +14,15 @@ for (const width of [390, 1280]) {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto('/forgot-password');
     await expect(page.getByRole('heading', { name: 'ลืมรหัสผ่าน', exact: true })).toBeVisible();
-    await expect(page.getByText(/หากไม่ได้รับข้อความหรือยังไม่ได้ผูก LINE/)).toBeVisible();
-    await page.getByRole('textbox', { name: 'ชื่อผู้ใช้', exact: true }).fill(`missing.${randomUUID()}`);
+    await page.getByRole('textbox', { name: 'ชื่อผู้ใช้หรืออีเมล', exact: true }).fill(`missing.${randomUUID()}`);
+    // The page sends to e-mail unless LINE is chosen; this journey is the LINE one.
+    await page.getByRole('radio', { name: 'LINE ที่เชื่อมไว้กับบัญชีนี้', exact: true }).check();
     const response = page.waitForResponse((response) => response.url().endsWith('/auth/password/reset-request'));
-    await page.getByRole('button', { name: 'ขอรหัสผ่านชั่วคราว', exact: true }).click();
+    await page.getByRole('button', { name: 'ส่งรหัสผ่านชั่วคราว', exact: true }).click();
     expect((await response).status()).toBe(200);
-    await expect(page.getByRole('heading', { name: 'ตรวจสอบ LINE ของคุณ', exact: true })).toBeVisible();
-    await expect(page.getByText(/หากไม่ได้รับข้อความหรือยังไม่ได้ผูก LINE/)).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'ส่งแล้ว ดูที่ LINE', exact: true })).toBeVisible();
+    // The fallback for someone whose LINE never gets the message is said once, after sending.
+    await expect(page.getByText(/ไม่ได้รับ ให้ผู้ดูแลร้านตั้งรหัสผ่านให้ใหม่/)).toBeVisible();
     await page.screenshot({ path: info.outputPath(`forgot-${width}.png`), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.getByRole('link', { name: 'กลับไปหน้าเข้าสู่ระบบ', exact: true }).click();
@@ -70,8 +72,8 @@ for (const width of [390, 1280]) {
         await page.getByRole('button', { name: 'สลับเมนู', exact: true }).click();
       }
       await page.getByRole('button', { name: /เมนูผู้ใช้|User Menu/ }).click();
+      // No question before signing out since 2026-10-13: the menu row signs out at once.
       await page.getByRole('button', { name: /ออกจากระบบ|Sign out/ }).click();
-      await page.getByRole('dialog').getByRole('button', { name: /ออกจากระบบ|Sign out/ }).click();
       await expect(page).toHaveURL(/\/login/);
 
       await login(rawRecovery);

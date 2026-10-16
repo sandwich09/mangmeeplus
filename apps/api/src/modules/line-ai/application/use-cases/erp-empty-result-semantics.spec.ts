@@ -6,7 +6,7 @@ import {
   InventoryListLowStockTool,
   InventorySearchProductsTool,
 } from './erp-tools.use-case';
-import { claimOfApprovalNotice, NotificationsListOpenAlertsTool } from './erp-dashboard-tools.use-case';
+import { DashboardGetHealthSummaryTool, claimOfApprovalNotice, NotificationsListOpenAlertsTool } from './erp-dashboard-tools.use-case';
 import { REIMBURSEMENT_REQUEST_LINK, WORKFLOW_TEMPLATE_CATALOG } from '../../../workflow/domain/workflow-template-catalog';
 import {
   WorkflowExplainRunTool,
@@ -183,4 +183,13 @@ describe('notifications.list_open_alerts – the claim a pending-approval notice
     assert.equal(result.data, undefined);
     assert.deepEqual(result.sourceRefs, []);
   });
+});
+
+
+it('dashboard source links use the web menu name while keeping the snapshot identity', async () => {
+  const tool = new DashboardGetHealthSummaryTool({ execute: async () => ({ id: 'snapshot-1', widgets: [], freshnessStatus: 'fresh', generatedAt: '2026-10-13' }) } as any);
+  const result = await tool.execute({ ...base, permissions: ['dashboard.read'] } as any);
+  assert.equal(result.sourceRefs[0]?.label, 'หน้าแรก (สุขภาพธุรกิจ)');
+  assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/dashboard');
+  assert.equal(result.sourceRefs[0]?.entityType, 'dashboard_snapshot');
 });

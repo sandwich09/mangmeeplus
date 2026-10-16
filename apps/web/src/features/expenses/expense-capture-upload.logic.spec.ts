@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { workspaceDictionary } from '../../common/i18n/workspace-dictionary';
 import {
+  appendReceiptFiles,
   captureFileRejection,
   captureMegabytes,
   entryForFile,
@@ -118,4 +119,23 @@ describe('capture size and type gate', () => {
     // `capturePausedReasonTh('ai_credit')` answers this exact sentence on the LINE side.
     assert.equal(workspaceDictionary.th['expenses.capture.paused_ai_credit'], 'เครดิตสำหรับการอ่านเอกสารไม่พอ');
   });
+});
+
+it('appends receipts and deduplicates only the same name, size and lastModified', () => {
+  const a = new File(['a'], 'a.jpg', { lastModified: 10 });
+  const same = new File(['a'], 'a.jpg', { lastModified: 10 });
+  const newer = new File(['a'], 'a.jpg', { lastModified: 11 });
+  const larger = new File(['ab'], 'a.jpg', { lastModified: 10 });
+  assert.deepEqual(appendReceiptFiles([a], [same, newer, larger]), [a, newer, larger]);
+});
+it('a row retry sends only that failed file and keeps the other failure and stored receipt', async () => {
+  const files = [file('a.jpg'), file('b.jpg'), file('c.jpg')];
+  const entries: CaptureUploadEntry[] = files.map(entryForFile);
+  entries[0]!.state = entries[1]!.state = 'FAILED';
+  entries[2] = { ...entries[2]!, state: 'STORED', expenseId: 'saved' };
+  const sent: string[] = [];
+  const result = await runSingleFileUploads({ entries: entries.map((entry, i) => ({ entry, file: files[i]! })), retryIndex: 1,
+    upload: async f => { sent.push(f.name); return { expenseId: 'retry' }; } });
+  assert.deepEqual(sent, ['b.jpg']);
+  assert.deepEqual(result.entries.map(e => e.state), ['FAILED', 'STORED', 'STORED']);
 });

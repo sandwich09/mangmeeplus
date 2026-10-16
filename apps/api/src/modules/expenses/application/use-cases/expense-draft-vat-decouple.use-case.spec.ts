@@ -151,7 +151,7 @@ describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
     await useCase.execute(ctx, 'exp-1', { vatMode: 'VAT_EXCLUDED', lines: [receiptLine] } as any);
 
     assert.equal(updates[0].vatMode, 'VAT_EXCLUDED');
-    assert.equal(updates[0].inputVatClaimStatus, 'NON_CLAIMABLE');
+    assert.equal(updates[0].inputVatClaimStatus, undefined, 'repository derives the right; evidence does not write it');
     assert.ok(Math.abs(Number(updates[0].grandTotalAmount) - 580) < 0.01, `expected ~580, got ${updates[0].grandTotalAmount}`);
     assert.ok(Math.abs(Number(updates[0].netPayableAmount) - 580) < 0.01);
     assert.equal(upserted[0].vatRate, '0.07');
@@ -187,7 +187,7 @@ describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
     const { useCase } = makeUseCase();
     await assert.rejects(
       () => useCase.execute(ctx, 'exp-1', { inputVatClaimStatus: 'CLAIMABLE' } as any),
-      /cannot claim input VAT/,
+      /สิทธิภาษีซื้อกำหนดโดยระบบ/,
     );
   });
 
@@ -238,7 +238,7 @@ describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
     const claim = makeUseCase({ sourceDocumentType: 'ABBREVIATED_TAX_INVOICE', taxEvidenceStatus: 'SUPPORTING_ONLY' });
     await assert.rejects(
       () => claim.useCase.execute(ctx, 'exp-1', { inputVatClaimStatus: 'CLAIMABLE' } as any),
-      /cannot claim input VAT/,
+      /สิทธิภาษีซื้อกำหนดโดยระบบ/,
     );
 
     const taxCode = makeUseCase({ sourceDocumentType: 'ABBREVIATED_TAX_INVOICE', taxEvidenceStatus: 'SUPPORTING_ONLY' });
@@ -257,7 +257,7 @@ describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
 
     assert.equal(upserted[0].vatRate, '0.07');
     assert.ok(Math.abs(Number(upserted[0].vatAmount) - 37.94) < 0.01, `expected ~37.94, got ${upserted[0].vatAmount}`);
-    assert.equal(updates[0].inputVatClaimStatus, 'NON_CLAIMABLE');
+    assert.equal(updates[0].inputVatClaimStatus, undefined, 'repository derives the right; evidence does not write it');
   });
 
   it('still rejects a Tax Code selection on a receipt', async () => {
@@ -320,7 +320,7 @@ describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
     await useCase.execute(ctx, 'exp-1', { lines: [receiptLine] } as any);
 
     assert.equal('vatMode' in updates[0], false, 'no vatMode write means the stored VAT_EXCLUDED survives');
-    assert.equal(updates[0].inputVatClaimStatus, 'NON_CLAIMABLE');
+    assert.equal(updates[0].inputVatClaimStatus, undefined, 'repository derives the right; evidence does not write it');
     assert.ok(Math.abs(Number(upserted[0].vatAmount) - 37.94) < 0.01, 'totals still use the stored VAT_EXCLUDED mode');
   });
 });

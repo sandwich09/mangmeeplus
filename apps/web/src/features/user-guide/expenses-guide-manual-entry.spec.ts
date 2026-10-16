@@ -14,7 +14,7 @@ function linkHrefs(guide: ReturnType<typeof buildExpensesGuide>): string[] {
 }
 
 // manual-expense-web-entry-flag spec §9.3. `expenses-guide.content.ts` is pinned by hash for the
-// LINE answer pack, so the guide is changed here, on its result, and the pinned file stays as it is.
+// LINE answer pack, so menu hiding is applied here to the built guide; its wording is maintained separately.
 describe('expenses guide when the company does not show the manual-entry menu', () => {
   it('takes the shortcut to the manual page away and says why at the top of that section', () => {
     const source = buildExpensesGuide('co', OWNER);
@@ -26,7 +26,7 @@ describe('expenses guide when the company does not show the manual-entry menu', 
     assert.deepEqual(manual.blocks[0], { kind: 'note', tone: 'info', ...MANUAL_ENTRY_NOT_ENABLED_GUIDE_NOTE });
     // The spec's sentence, read top to bottom: the heading of the note, then its line.
     assert.equal(`${MANUAL_ENTRY_NOT_ENABLED_GUIDE_NOTE.title} ${MANUAL_ENTRY_NOT_ENABLED_GUIDE_NOTE.detail}`,
-      'เมนูนี้ไม่ได้เปิดใช้สำหรับร้านของคุณ ขั้นตอนในหัวข้อนี้จึงยังใช้ไม่ได้ในขณะนี้');
+      'เมนูนี้ไม่ได้เปิดใช้สำหรับร้านของคุณ ขั้นตอนในหัวข้อนี้ยังใช้ไม่ได้');
     assert.notEqual(MANUAL_ENTRY_NOT_ENABLED_GUIDE_NOTE.title, manual.title, 'the note does not repeat the heading it sits under');
   });
 
@@ -87,7 +87,7 @@ describe('expenses guide sentences about manual entry, for a shop that shows the
   /** Sentences that name manual entry and are true either way without the condition, and why. */
   const TRUE_EITHER_WAY: Record<string, string> = {
     'submenus:บันทึกด้วยมือ': 'names the submenu and what it does; the section summary says when it shows',
-    'list:วันที่ / ช่องทาง': 'the channel label of records already saved, which they keep',
+    'list:วันที่': 'the channel label of records already saved, which they keep',
     'manual:#title': 'the section heading; while the menu is not shown the note sits right under it',
     'permissions:บันทึกค่าใช้จ่ายด้วยมือ': 'the right it takes, which the menu setting does not change',
   };

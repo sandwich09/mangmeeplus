@@ -33,6 +33,7 @@ export class NotificationController {
   async list(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Query() q: any) {
     assertRouteCompany(ctx, companyId);
     return this.listNotifications.execute(ctx, companyId, {
+      waiting: q['waiting'] === 'true',
       status: q['status'],
       severity: q['severity'],
       triggerKey: q['triggerKey'],

@@ -1,15 +1,15 @@
-import { translateApiError } from '../api/api-error-message';
+import { apiErrorMessage, translateApiError } from '../api/api-error-message';
 import { ATTACHMENT_SOURCE_TYPES_LABEL, IMAGE_SOURCE_TYPES_LABEL, SIGNATURE_FILE_TYPES_LABEL, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE, UPLOAD_HEIC_CONVERSION_MESSAGE } from '@watchdog-bms/contracts';
 
 export const ATTACHMENT_UPLOAD_ACCEPT =
   '.pdf,.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,application/pdf,image/png,image/jpeg,image/jpg,image/heic,image/heif,image/heic-sequence,image/heif-sequence,image/gif';
 export const IMAGE_UPLOAD_ACCEPT =
   '.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,image/png,image/jpeg,image/jpg,image/heic,image/heif,image/heic-sequence,image/heif-sequence,image/gif';
-export const GENERIC_UPLOAD_ERROR_MESSAGE = 'ระบบขัดข้อง กรุณาลองใหม่อีกครั้ง';
+export const GENERIC_UPLOAD_ERROR_MESSAGE = 'ระบบขัดข้อง ลองอีกครั้ง';
 export const UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE =
   UPLOAD_FILE_TYPE_MISMATCH_MESSAGE;
 export const UPLOAD_IMAGE_READ_ERROR_MESSAGE =
-  `ระบบอ่านรูปนี้ไม่ได้ กรุณาเลือกรูปใหม่ หรือบันทึกเป็น${SIGNATURE_FILE_TYPES_LABEL} แล้วลองอีกครั้ง`;
+  `ระบบอ่านรูปนี้ไม่ได้ เลือกรูปใหม่ หรือบันทึกเป็น${SIGNATURE_FILE_TYPES_LABEL} แล้วลองอีกครั้ง`;
 export const UPLOAD_HEIC_CONVERSION_ERROR_MESSAGE =
   UPLOAD_HEIC_CONVERSION_MESSAGE;
 export const UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE =
@@ -87,6 +87,8 @@ export function assertAllowedUploadFile(
 
 export function uploadErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) return GENERIC_UPLOAD_ERROR_MESSAGE;
+  // This refusal names the allowed next step; keep it through completion's nested upload wrappers.
+  if ((error as { code?: unknown }).code === 'expense_receipt_replace_locked') return apiErrorMessage(error);
   if (
     error.message === GENERIC_UPLOAD_ERROR_MESSAGE
     || error.message === UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE

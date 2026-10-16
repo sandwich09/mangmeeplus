@@ -24,12 +24,12 @@ test('numbered manual draft recovers a lost response with the same command', asy
   const description = page.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true });
   await description.fill('Local lost-response original');
   await page.getByRole('spinbutton', { name: 'ราคาต่อหน่วย', exact: true }).fill('100');
-  await page.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
+  await page.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'ยังยืนยันผลการบันทึกไม่ได้' })).toBeVisible();
   expect(saved.expenseNumber).toMatch(/^EXP-\d{6}-\d+$/);
   // Clearing a required field must not prevent recovery of the already committed command.
   await description.fill('');
-  await page.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
+  await page.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/expenses/${saved.id}`));
   expect(commands).toHaveLength(2);
   expect(commands[1]).toEqual(commands[0]);

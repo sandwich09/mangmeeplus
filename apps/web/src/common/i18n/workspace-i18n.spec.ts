@@ -11,22 +11,23 @@ describe('workspace-i18n', () => {
     assert.match(t('expenses.check_bill_description', 'th'), /เอกสารนี้ใช้เป็นหลักฐานยืนยันค่าใช้จ่ายโดยลำพังไม่ได้/);
     assert.doesNotMatch(t('expenses.check_bill_description', 'th'), /ส่งตรวจหรือบันทึกบัญชีไม่ได้/);
     assert.match(t('expenses.check_bill_description', 'en'), /document alone cannot substantiate/);
-    assert.match(t('expenses.check_bill_new_draft_note', 'th'), /รายการเดิม.*ไม่สร้างรายการซ้ำ.*หลักฐานการชำระเงินจริง.*เงินสด/);
+    assert.match(t('expenses.check_bill_new_draft_note', 'th'), /รายการเดิม.*ไม่สร้างรายการซ้ำ.*หลักฐานการจ่ายเงินจริง.*เงินสด/);
     assert.match(t('expenses.check_bill_new_draft_note', 'en'), /same expense.*No duplicate.*actual payment.*cash/);
-    assert.match(t('expenses.substitute_wizard.payment_evidence_required', 'th'), /เช็กบิล.*ทุกวิธีชำระ.*เงินสด.*รายการทั่วไป/);
+    // The wizard shows this line only when proof of payment is required, so it says only what to attach.
+    assert.match(t('expenses.substitute_wizard.payment_evidence_required', 'th'), /ต้องแนบอย่างน้อย 1 ไฟล์.*สลิป.*ผู้รับเงินเซ็น/);
     assert.match(t('expenses.substitute_wizard.payment_evidence_required', 'en'), /Check bills.*every payment method.*cash.*Ordinary expenses/);
   });
   // P10: the same box has always accepted the email as well, and an owner arriving from the claim
   // email has only ever been told their email. The label and the required-field message name both.
   it('names both accepted identifiers in the login label and required-field message, in both locales', () => {
     assert.equal(t('auth.login.identifier', 'th'), 'ชื่อผู้ใช้ หรือ อีเมล');
-    assert.equal(t('auth.login.error.identifier_required', 'th'), 'กรุณากรอกชื่อผู้ใช้ หรืออีเมล');
+    assert.equal(t('auth.login.error.identifier_required', 'th'), 'กรอกชื่อผู้ใช้หรืออีเมล');
     assert.equal(t('auth.login.identifier', 'en'), 'Username or email');
     assert.equal(t('auth.login.error.identifier_required', 'en'), 'Enter your username or email.');
   });
 
   it('returns Thai string for th locale', () => {
-    assert.strictEqual(t('dashboard.title', 'th'), 'แดชบอร์ด');
+    assert.strictEqual(t('dashboard.title', 'th'), 'หน้าแรก');
   });
 
   it('returns English string for en locale', () => {

@@ -1431,6 +1431,8 @@ function computeValueCandidates(normalizedText: string): LineAiValueCandidates |
 
 const SOURCE_DOC_TYPE_REPLY_LABELS: Record<string, string> = {
   RECEIPT: 'ใบเสร็จรับเงิน',
+  CUSTOMS_VAT_RECEIPT: 'ใบเสร็จรับเงินกรมศุลกากร (VAT นำเข้า)',
+  PP36_RECEIPT: 'ใบเสร็จรับเงิน ภ.พ.36',
   TAX_INVOICE: 'ใบกำกับภาษี',
   TRANSFER_SLIP: 'สลิปโอนเงิน',
   HANDWRITTEN_CASH_BILL: 'บิลเงินสดเขียนมือ',
@@ -9337,10 +9339,10 @@ export class ProcessLineWebhookUseCase {
     // web review form already reads (`expenseAiMissingFields`), so no second mechanism is invented.
     if (!dateVerified) missingFields.add('expenseDate');
 
-    await this.prisma.client.expenseRecord.update({
-      where: { id: intent.expenseId, companyId, updatedAt: sourceUpdatedAt },
-      data: {
-        captureSource: 'LINE_UPLOAD',
+    // The type arrives after OCR: use the normal expense write so its preset and reason
+    // follow that final type under the VAT-registration lock and the same revision fence.
+    await this.expenseRepo!.updateExpense({
+      id: intent.expenseId, companyId, expectedUpdatedAt: sourceUpdatedAt, updatedByUserId: ctx.userId,
         ...(expenseDraftConversationEnabled ? { status: 'DRAFT' } : {}),
         lineMessageId: event.lineMessageId,
         lineEventId: event.webhookEventId,
@@ -9388,7 +9390,6 @@ export class ProcessLineWebhookUseCase {
           duplicateWarning: hasDuplicate,
           nextAction: 'review_in_web',
         },
-      },
     });
     await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.receive', targetType: 'expense_record', targetId: intent.expenseId, requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { lineMessageId: '[REDACTED]', mimeType: media.mimeType, byteSize: media.byteSize, sourceDocumentType: hintedDocType } });
     const purposeHint = routePlan.captureHints?.businessPurpose?.trim();

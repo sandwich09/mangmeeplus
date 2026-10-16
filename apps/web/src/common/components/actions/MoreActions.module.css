@@ -1,16 +1,29 @@
 .menu { position: relative; display: inline-block; max-width: 100%; }
-.menu > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 44px; padding-inline: 1rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); font-weight: 600; white-space: nowrap; cursor: pointer; }
+/* The button itself is the shared secondary button (`.mangmee-btn`, set in MoreActions.tsx): same height, radius, weight and states as its neighbours. */
+.menu > summary { list-style: none; white-space: nowrap; }
 .menu > summary::-webkit-details-marker { display: none; }
 /* A drawn chevron instead of a text triangle; it turns over while the list is open. */
 .menu > summary::after { content: ''; width: .45rem; height: .45rem; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; opacity: .55; transform: translateY(-.15rem) rotate(45deg); }
 .menu[open] > summary::after { transform: translateY(.1rem) rotate(-135deg); }
-.menu > summary:focus-visible { outline: 2px solid var(--color-brand-500); outline-offset: 2px; }
 /* While the list is open this layer covers the window and belongs to the button, so a press anywhere else closes the list. */
 .menu[open] > summary::before { content: ''; position: fixed; inset: 0; z-index: 40; cursor: default; }
-.panel { position: absolute; z-index: 41; top: calc(100% + .375rem); inset-inline-start: 0; display: grid; min-width: 13rem; max-width: min(20rem, calc(100vw - 2rem)); padding: .25rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); box-shadow: 0 12px 32px rgb(16 24 40 / .16); }
+.panel { position: absolute; z-index: 41; top: calc(100% + .375rem); inset-inline-start: 0; display: grid; min-width: 13rem; max-width: min(20rem, calc(100vw - 2rem)); padding: .25rem; border: 0; border-radius: var(--radius-md); background: var(--color-surface); box-shadow: 0 12px 32px rgb(16 24 40 / .16); }
 /* `align="end"` is for a button at the right of a header row; on a phone that header stacks and the button sits at the left, so the list hangs from the left there. */
 @media (min-width: 40rem) { .end > .panel { inset-inline-start: auto; inset-inline-end: 0; } }
+/* `opens="up"` is for a button in a bar at the bottom of the screen: the list rises above it, scrolls inside itself on a short screen, and the chevron points the way it opens. */
+.up > .panel { top: auto; bottom: calc(100% + .375rem); max-height: calc(100dvh - 9rem); overflow-y: auto; box-shadow: 0 -8px 32px rgb(16 24 40 / .16); }
+.up > summary::after { transform: translateY(.1rem) rotate(-135deg); }
+.up[open] > summary::after { transform: translateY(-.15rem) rotate(45deg); }
 .panel > span { display: block; }
 /* Entries read as a list: left-aligned rows without their own frames. */
-.panel a, .panel button { display: flex; width: 100%; min-width: 0; min-height: 44px; align-items: center; justify-content: flex-start; padding-inline: .75rem; border: 0; border-radius: calc(var(--radius-md) - .25rem); background: transparent; box-shadow: none; font-weight: 500; text-align: start; white-space: nowrap; }
-.panel a:hover, .panel button:hover:not(:disabled), .panel a:focus-visible, .panel button:focus-visible { background: var(--color-neutral-surface, rgb(16 24 40 / .05)); }
+.menu .panel :is(a, button) { display: flex; width: 100%; min-width: 0; min-height: 44px; align-items: center; justify-content: flex-start; padding-inline: .75rem; border: 0; border-radius: calc(var(--radius-md) - .25rem); background: transparent; box-shadow: none; font-weight: 500; text-align: start; white-space: nowrap; }
+.menu .panel a:hover, .menu .panel button:hover:not(:disabled), .menu .panel a:focus-visible, .menu .panel button:focus-visible { background: var(--color-neutral-surface, rgb(16 24 40 / .05)); }
+
+.menu[open] > summary, .menu[open] > summary:hover:not(:disabled, [aria-disabled='true']) { background: var(--color-surface); color: var(--color-text-primary); }
+.menu .panel :global(.mangmee-btn-danger) { color: var(--color-error-700, #b42318); }
+.menu .panel hr { margin: .25rem 0; border: 0; border-top: 1px solid var(--color-border); }
+
+/* Row menus stay at the right edge on phones too; text callers retain their placement. */
+.icon > summary { width: 40px; height: 40px; min-width: 40px; min-height: 40px; padding: 0; box-shadow: none; }
+.icon > summary::after { display: none; }
+.icon.end > .panel { inset-inline-start: auto; inset-inline-end: 0; }

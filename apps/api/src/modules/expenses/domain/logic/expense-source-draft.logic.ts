@@ -264,6 +264,6 @@ export function assertExpenseSourceDraftComplete(metadata: Record<string, unknow
     });
   }
   if (expense && !expenseDateIsReadable(expense.aiVerificationSummaryJson)) throw new BadRequestException({
-    code: 'EXPENSE_DOCUMENT_DATE_REVIEW_REQUIRED', message: 'ตรวจวันที่ในใบเสร็จที่ขั้นตรวจข้อมูล แล้วบันทึกก่อนส่งตรวจหรือยืนยันค่ะ',
+    code: 'EXPENSE_DOCUMENT_DATE_REVIEW_REQUIRED', message: 'ตรวจวันที่ในใบเสร็จที่ขั้นตรวจข้อมูล แล้วบันทึกก่อนส่งให้ตรวจหรือยืนยันค่ะ',
   });
 }

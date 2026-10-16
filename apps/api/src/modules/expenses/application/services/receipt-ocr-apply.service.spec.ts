@@ -44,7 +44,8 @@ function makeApplyPrisma(tx: any) {
   return { client: { $transaction: async (fn: any) => fn({
     $executeRaw: async () => 0,
     ...tx,
-    expenseRecord: { findFirstOrThrow: async () => ({ updatedAt: new Date('2026-09-15T00:00:00.001Z') }), ...tx.expenseRecord },
+    companyVatRegistrationFact: { findMany: async () => [] },
+      expenseRecord: { findFirstOrThrow: async () => ({ updatedAt: new Date('2026-09-15T00:00:00.001Z') }), ...tx.expenseRecord },
   }) } };
 }
 
@@ -226,7 +227,8 @@ async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, exis
   const updates: any[] = [];
   const lines: any[] = [];
   const tx = {
-    expenseRecord: {
+    companyVatRegistrationFact: { findMany: async () => [] },
+      expenseRecord: {
       findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null, vatCaptureSnapshotJson, ...existing }),
       update: async (args: any) => { updates.push(args); },
     },
@@ -272,6 +274,7 @@ describe('ReceiptOcrApplyService.apply staleness guard', () => {
     const steps: string[] = [];
     const tx = {
       $executeRaw: async () => { steps.push('lock'); },
+      companyVatRegistrationFact: { findMany: async () => [] },
       expenseRecord: {
         findFirst: async () => ({ updatedAt: before, expenseCategoryId: null, expenseCategory: null, lines: [] }),
         update: async () => { steps.push('apply'); return { updatedAt: new Date(before.getTime() + 1) }; },
@@ -297,6 +300,7 @@ describe('ReceiptOcrApplyService.apply staleness guard', () => {
   function harness(currentUpdatedAt: Date) {
     const writes: any[] = [];
     const tx = {
+      companyVatRegistrationFact: { findMany: async () => [] },
       expenseRecord: {
         findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null, updatedAt: currentUpdatedAt }),
         update: async (args: any) => { writes.push(args); },
@@ -344,6 +348,7 @@ describe('ReceiptOcrApplyService.apply — the replaced-file warning (§16.4, W0
   function harness(summary: Record<string, unknown> | null, primaryAttachmentId: string | null) {
     const writes: any[] = [];
     const tx = {
+      companyVatRegistrationFact: { findMany: async () => [] },
       expenseRecord: {
         findFirst: async () => ({
           expenseCategoryId: null, expenseCategory: null, lines: [],
@@ -429,6 +434,7 @@ describe('ReceiptOcrApplyService.apply', () => {
     const updates: any[] = [];
     const lines: any[] = [];
     const tx = {
+      companyVatRegistrationFact: { findMany: async () => [] },
       expenseRecord: {
         findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null }),
         update: async (args: any) => { updates.push(args); },
@@ -927,6 +933,7 @@ describe('ReceiptOcrApplyService.apply', () => {
     const lines: any[] = [];
     const categoryQueries: any[] = [];
     const tx = {
+      companyVatRegistrationFact: { findMany: async () => [] },
       expenseRecord: {
         findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null }),
         update: async (args: any) => { updates.push(args); },
@@ -990,7 +997,8 @@ describe('ReceiptOcrApplyService.apply', () => {
       const lines: any[] = [];
       let categoryQueries = 0;
       const tx = {
-        expenseRecord: {
+        companyVatRegistrationFact: { findMany: async () => [] },
+      expenseRecord: {
           findFirst: async () => current,
           update: async (args: any) => { updates.push(args); },
         },
@@ -1054,7 +1062,8 @@ describe('ReceiptOcrApplyService.apply', () => {
       const updates: any[] = [];
       const categoryQueries: any[] = [];
       const tx = {
-        expenseRecord: {
+        companyVatRegistrationFact: { findMany: async () => [] },
+      expenseRecord: {
           findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null }),
           update: async (args: any) => { updates.push(args); },
         },
@@ -1120,6 +1129,7 @@ describe('ReceiptOcrApplyService.apply', () => {
     const candidates: any[] = [];
     const statusUpdates: any[] = [];
     const tx = {
+      companyVatRegistrationFact: { findMany: async () => [] },
       expenseRecord: {
         findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null }),
         update: async () => undefined,
@@ -1172,6 +1182,7 @@ describe('ReceiptOcrApplyService.apply', () => {
     const candidates: any[] = [];
     const statusUpdates: any[] = [];
     const tx = {
+      companyVatRegistrationFact: { findMany: async () => [] },
       expenseRecord: {
         findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null }),
         update: async () => undefined,
@@ -1841,6 +1852,7 @@ describe('apply: outcomes that write no lines still report the charges the recor
 
   it('returns the persisted charge rows when the apply is skipped as stale', async () => {
     const tx = {
+      companyVatRegistrationFact: { findMany: async () => [] },
       expenseRecord: {
         findFirst: async () => ({
           expenseCategoryId: null, expenseCategory: null, vatCaptureSnapshotJson: null,
@@ -1988,7 +2000,7 @@ describe('receipt tax integrity regressions', () => {
     assert.equal(stored.addressText, buyerAsPrinted.addressText);
     assert.ok(!Number.isNaN(Date.parse(stored.checkedAt)));
     assert.equal('taxEvidenceStatus' in result.record, false);
-    assert.equal('inputVatClaimStatus' in result.record, false);
+    assert.equal(result.record.inputVatClaimStatus, 'NON_CLAIMABLE', 'the server preset owns the right, not the buyer comparison');
   });
 
   it('keeps a confirmed override across a re-read of the same page and drops it when the page changed', async () => {
@@ -2034,7 +2046,8 @@ describe('receipt tax integrity regressions', () => {
 describe('OCR preserves an explicitly entered receipt date', () => {
   for (const ocrDate of [undefined, '2026-09-13']) it(`retains user date when OCR returns ${ocrDate ?? 'no date'}`, async () => {
     let written: any;
-    const tx = { expenseRecord: {
+    const tx = { companyVatRegistrationFact: { findMany: async () => [] },
+      expenseRecord: {
       findFirst: async () => ({ expenseDate: new Date('2026-09-12T00:00:00Z'),
         aiVerificationSummaryJson: { dateStatus: 'verified', dateResolution: { expenseDate: '2026-09-12', resolvedByUserId: 'user-1' } }, lines: [] }),
       update: async ({ data }: any) => { written = data; return {}; },

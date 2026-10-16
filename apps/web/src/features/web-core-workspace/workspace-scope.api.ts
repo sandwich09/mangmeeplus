@@ -52,3 +52,9 @@ export async function fetchActiveBranches(companyId: string): Promise<BranchOpti
   );
   return body.items;
 }
+
+/** Refresh the shop chooser after the profile command changes its display name. */
+export const COMPANY_PROFILE_CHANGED_EVENT = 'mangmee:company-profile-changed';
+export function notifyCompanyProfileChanged(): void {
+  window.dispatchEvent(new Event(COMPANY_PROFILE_CHANGED_EVENT));
+}

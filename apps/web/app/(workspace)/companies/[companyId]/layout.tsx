@@ -38,6 +38,7 @@ export default async function CompanyWorkspaceLayout({
       <CompanyAccessUnavailable
         displayName={current?.displayName ?? null}
         companyName={sessionResult.companyName ?? null}
+        code={sessionResult.code}
       />
     );
   }

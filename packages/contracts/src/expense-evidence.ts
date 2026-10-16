@@ -53,7 +53,7 @@ export function expenseEvidenceInputError(value: unknown, source: ExpenseEvidenc
   const input = value;
   if (input.attachmentIds.some(id => !source.attachments?.some(file => file.id === id && isExpenseEvidenceFile(file)))) return 'หลักฐานที่เลือกใช้ไม่ได้ กรุณาเลือกไฟล์ของรายการนี้อีกครั้ง';
   if (!complete) return null;
-  if (source.sourceDocumentType === 'NEEDS_REVIEW' || source.taxEvidenceStatus === 'NEEDS_REVIEW') return 'เลือกประเภทเอกสารและสถานะหลักฐานภาษีก่อนบันทึกการตรวจ';
+  if (source.sourceDocumentType === 'NEEDS_REVIEW' || source.taxEvidenceStatus === 'NEEDS_REVIEW') return 'เลือกประเภทเอกสารและตอบ “ใช้เป็นหลักฐานรายจ่ายได้ไหม” ก่อนกด “ถัดไป”';
   if (input.route === 'SOURCE_DOCUMENT') {
     if (input.receiptProblem !== 'NONE' || !input.attachmentIds.length) return 'เลือกเอกสารที่ใช้ประกอบรายการ หรือระบุปัญหาของเอกสาร';
     if (['TRANSFER_SLIP', 'EXPENSE_NOTE_TEXT', 'SUBSTITUTE_RECEIPT', 'MARKETPLACE_ORDER_SCREENSHOT'].includes(source.sourceDocumentType)) return 'เอกสารนี้เป็นหลักฐานอื่น กรุณาเลือกทางใช้หลักฐานให้ตรงกับเอกสาร';
@@ -92,7 +92,7 @@ function canonicalAssessment(value: ExpenseEvidenceAssessment) {
 export function expenseEvidenceFingerprint(source: ExpenseEvidenceSource, assessment: ExpenseEvidenceAssessment): string {
   const values = source as unknown as Record<string, unknown>;
   const fields = ['sourceDocumentType', 'taxEvidenceStatus', 'expenseCategoryId', 'extractionId', 'vendorNameSnapshot', 'vendorTaxIdSnapshot',
-    'vendorBranchCodeSnapshot', 'vendorEntityKindSnapshot', 'vendorDocumentNumber', 'currency', 'vatMode', 'inputVatClaimStatus'];
+    'vendorBranchCodeSnapshot', 'vendorEntityKindSnapshot', 'vendorDocumentNumber', 'currency', 'vatMode'];
   const lineFields = ['description', 'expenseCategoryId', 'chargeKind', 'vatTreatment', 'accountHintKey', 'taxCategory', 'taxCodeDefinitionId', 'externalTaxCode'];
   const lineAmounts = ['quantity', 'unitPrice', 'discountAmount', 'lineSubtotalAmount', 'vatRate', 'vatAmount', 'whtRate', 'whtAmount', 'lineTotalAmount'];
   return JSON.stringify({
@@ -116,6 +116,19 @@ export function expenseEvidenceFingerprint(source: ExpenseEvidenceSource, assess
   });
 }
 
+/** The former v2 fingerprint ended its header fields with the VAT right. A separate decision
+ * changes no document evidence; accept that saved shape without rewriting a confirmed record. */
+function evidenceFingerprintMatches(stored: string, current: string): boolean {
+  if (stored === current) return true;
+  try {
+    const previous = JSON.parse(stored);
+    const next = JSON.parse(current);
+    if (Array.isArray(previous.fields) && previous.fields.length === next.fields.length + 1
+      && ['CLAIMABLE', 'NON_CLAIMABLE', 'NEEDS_REVIEW', null].includes(previous.fields.at(-1))) previous.fields.pop();
+    return JSON.stringify(previous) === current;
+  } catch { return false; }
+}
+
 export function hasCurrentExpenseEvidenceReview(source: ExpenseEvidenceSource): boolean {
   const raw = source.aiVerificationSummaryJson?.documentReview;
   if (!raw || typeof raw !== 'object') return false;
@@ -125,7 +138,7 @@ export function hasCurrentExpenseEvidenceReview(source: ExpenseEvidenceSource): 
     && Boolean(assessment) && !expenseEvidenceInputError(assessment, source, true)
     && !expenseEvidenceInputError(review.assessment, source, true)
     && JSON.stringify(canonicalAssessment(assessment!)) === JSON.stringify(canonicalAssessment(review.assessment as ExpenseEvidenceAssessment))
-    && review.fingerprint === expenseEvidenceFingerprint(source, assessment!);
+    && typeof review.fingerprint === 'string' && evidenceFingerprintMatches(review.fingerprint, expenseEvidenceFingerprint(source, assessment!));
 }
 
 /** Shared preflight and in-transaction evidence requirement; it never decides payment or VAT entitlement. */

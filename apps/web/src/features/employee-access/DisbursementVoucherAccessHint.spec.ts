@@ -5,7 +5,7 @@ import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { DisbursementVoucherAccessHint } from './DisbursementVoucherAccessHint';
 (globalThis as any).React = React;
-const text = 'ชุดสิทธิ์ของใบเตรียมจ่าย/ใบสำคัญจ่ายใช้ได้กับรายจ่ายที่ตำแหน่งนั้นดูได้อยู่แล้วเท่านั้น';
+const text = 'สิทธิ์ใบเตรียมจ่าย/ใบสำคัญจ่ายใช้ได้กับค่าใช้จ่ายที่บทบาทนั้นดูได้อยู่แล้วเท่านั้น';
 test('the role hint renders the exact sentence only when the session entry is open', () => {
   assert.equal(renderToStaticMarkup(React.createElement(DisbursementVoucherAccessHint, { entryOpen: false })), '');
   assert.ok(renderToStaticMarkup(React.createElement(DisbursementVoucherAccessHint, { entryOpen: true })).includes(text));
@@ -26,7 +26,7 @@ test('both role builders pass the gate, expense packs keep names, descriptions, 
   const overview = readFileSync(new URL('./IndividualPermissionsPrototypePage.tsx', import.meta.url), 'utf8');
   assert.match(overview, /group === 'fin' && <DisbursementVoucherAccessHint entryOpen=\{disbursementEntryOpen\}/);
   const registry = readFileSync('../../apps/api/src/modules/employee-access/domain/registries/capability-pack.registry.ts', 'utf8');
-  const names = ['ดูใบเตรียมจ่าย/ใบสำคัญจ่าย', 'จัดทำใบเตรียมจ่าย', 'อนุมัติใบเตรียมจ่าย', 'บันทึกจ่ายตามใบเตรียมจ่าย', 'ออกใบสำคัญจ่ายจากการจ่ายตรง'];
+  const names = ['ดูใบเตรียมจ่ายและใบสำคัญจ่าย', 'จัดทำใบเตรียมจ่าย', 'อนุมัติใบเตรียมจ่าย', 'บันทึกจ่ายตามใบเตรียมจ่าย', 'ออกใบสำคัญจ่ายจากการจ่ายตรง'];
   for (const [index, key] of ['view', 'prepare', 'approve', 'pay', 'issue'].entries()) {
     const pack = registry.slice(registry.indexOf(`key: 'pack.expense.disbursement.${key}'`)).split('\n  },')[0]!;
     assert.ok(pack.includes("module: 'expense'"));

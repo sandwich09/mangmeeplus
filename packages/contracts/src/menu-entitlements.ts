@@ -18,7 +18,7 @@ export type MenuEntitlementBinding = {
 export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
   {
     navKey: 'dashboard',
-    labelTh: 'แดชบอร์ด',
+    labelTh: 'หน้าแรก',
     group: 'main',
     iconKey: 'GridIcon',
     parentFeatureKey: 'dashboard_notifications',
@@ -258,7 +258,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
   },
   {
     navKey: 'pnd53',
-    labelTh: 'ภ.ง.ด.53',
+    labelTh: 'ภาษีหัก ณ ที่จ่าย',
     group: 'finance',
     iconKey: 'DocsIcon',
     parentFeatureKey: 'wht_pnd53',
@@ -358,7 +358,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
   },
   {
     navKey: 'settings',
-    labelTh: 'ตั้งค่าบริษัท',
+    labelTh: 'ตั้งค่าร้าน',
     group: 'admin',
     iconKey: 'HorizontalDotsIcon',
     parentFeatureKey: 'company_settings',
@@ -508,7 +508,7 @@ export const SALES_DEAL_ALLOWED_FEATURE_KEYS: readonly string[] = [
 ];
 
 /** The dedicated PND53 route is sold separately from the full Tax workspace. */
-const PACKAGE_MENU_LABELS: Record<string, string> = { pnd53: 'ออก ภ.ง.ด.53 ในระบบ' };
+const PACKAGE_MENU_LABELS: Record<string, string> = { pnd53: 'ออก ภ.ง.ด.3 และ ภ.ง.ด.53 ในระบบ' };
 /** The LINE assistant is the headline of the whole product and has no menu of its own — its only
  *  binding is the contextual AI แนะนำ, which is a sub-item, not the feature. Named from the feature
  *  catalog so the card, the console and the workspace all say the same Thai. */

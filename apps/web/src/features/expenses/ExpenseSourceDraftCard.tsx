@@ -5,6 +5,7 @@ import type { ExpenseCategorySummary, ExpenseSourceDraft } from '@watchdog-bms/c
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { getExpense, listExpenseCategories, updateExpenseSourceDraft } from './expenses.api';
 import type { ExpenseDetail } from './expenses.model';
@@ -130,17 +131,19 @@ export function ExpenseSourceDraftCard({ companyId, expenseId, expectedUpdatedAt
 
       <fieldset disabled={!sourceDraft.canEdit || saving} className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block text-sm font-medium text-gray-700">
-            {t('expenses.expense_date', locale)}
-            <input
-              type="date"
+          <div className="block text-sm font-medium text-gray-700">
+            <label htmlFor="source-draft-expense-date">{t('expenses.expense_date', locale)}</label>
+            {/* The shared Thai date box (Buddhist year, Thai months), like every other date in the product. */}
+            <ThemedDate
+              id="source-draft-expense-date"
               aria-label={t('expenses.expense_date', locale)}
               value={values.expenseDate ?? ''}
+              disabled={!sourceDraft.canEdit || saving}
               onChange={(event) => edit((current) => ({ ...current, expenseDate: event.target.value || null }))}
               className={classes(inputClass, 'mt-1')}
             />
             {missingNote('expenseDate')}
-          </label>
+          </div>
           <label className="block text-sm font-medium text-gray-700">
             {t('expenses.vendor_name', locale)}
             <input

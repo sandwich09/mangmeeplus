@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { PrismaProcurementRepository } from './prisma-procurement.repository.js';
 
-function fixture(options: { claimReleased?: boolean; taxPeriodStatus?: string; certificateLinked?: boolean; handoffStatus?: string; whtPeriodStatus?: string; withheld?: boolean } = {}) {
+function fixture(options: { claimReleased?: boolean; taxPeriodStatus?: string; certificateLinked?: boolean; handoffStatus?: string; whtPeriodStatus?: string; filedSource?: boolean; legacyFiled?: boolean; withheld?: boolean } = {}) {
   const whtEvents = options.withheld
     ? [{ id: 'wht-event-1', taxPeriodId: 'wht-period-1', taxPeriod: { status: options.whtPeriodStatus ?? 'OPEN' } }]
     : [];
@@ -36,6 +36,7 @@ function fixture(options: { claimReleased?: boolean; taxPeriodStatus?: string; c
   let billUpdate: any;
   let paymentUpdate: any;
   const client: any = {
+    taxPeriod: { findMany: async ({ where }: any) => { if (!where.whtFilings) return options.legacyFiled ? [{ formType: 'PND53', periodKey: '2026-08', status: 'FILED', whtFilings: [] }] : []; assert.equal(where.whtFilings.some.lines.some.sourceId, 'payment-1'); return options.filedSource ? [{ formType: 'PND53', periodKey: '2026-08' }] : []; } },
     $transaction: async (fn: (tx: any) => unknown) => fn(client),
     supplierPayment: {
       findFirst: async () => payment,
@@ -164,7 +165,7 @@ describe('withholding on supplier-payment reversal', () => {
   });
 
   it('refuses the void once the withholding has been filed', async () => {
-    await assert.rejects(() => voidIt(fixture({ withheld: true, whtPeriodStatus: 'FILED' })),
+    await assert.rejects(() => voidIt(fixture({ withheld: true, whtPeriodStatus: 'EXPORTED', filedSource: true })),
       /wht_tax_period_locked_requires_amendment/);
   });
 
@@ -176,4 +177,13 @@ describe('withholding on supplier-payment reversal', () => {
     // A payment that withheld nothing can have no handoff, so the cancel statement never runs.
     assert.equal(f.handoffUpdate, undefined);
   });
+});
+
+it('a filed month does not lock a supplier payment absent from every filed line', async () => {
+  const f = fixture({ withheld: true, whtPeriodStatus: 'FILED', filedSource: false });
+  await f.repo.voidSupplierPayment('company-1', 'payment-1', 'voider-1', 'cancel', { 'journal-ap': 'JV-R-1', 'journal-pp36': 'JV-R-2' });
+});
+
+it('supplier void preserves the legacy filed month lock until frozen lines exist', async () => {
+  await assert.rejects(() => fixture({ withheld: true, whtPeriodStatus: 'FILED', legacyFiled: true }).repo.voidSupplierPayment('company-1', 'payment-1', 'voider-1', 'cancel', { 'journal-ap': 'JV-R-1', 'journal-pp36': 'JV-R-2' }), /wht_tax_period_locked_requires_amendment/);
 });

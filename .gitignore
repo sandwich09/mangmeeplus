@@ -41,3 +41,7 @@ outputs/mobile-evidence/**/*.png
 
 # Python bytecode from the infra/* release tooling tests.
 __pycache__/
+
+# Portable local proof toolkit: machine settings and generated proof artifacts.
+/scripts/local-proof/settings.local.sh
+/.local-proof/

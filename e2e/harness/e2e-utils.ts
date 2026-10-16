@@ -67,9 +67,12 @@ export async function firstActiveBranch(api: APIRequestContext, companyId: strin
  * returning user has. Register it before the page navigates.
  */
 export async function useWorkspaceBranch(page: Page, companyId: string, branchId: string) {
+  const { userId } = await json<{ userId: string }>(await page.request.get('/api/v1/auth/me', {
+    headers: { 'X-Company-Id': companyId },
+  }));
   await page.context().addInitScript(
     ([key, id]) => window.localStorage.setItem(key!, id!),
-    [`watchdog.branchFilter.${companyId}`, branchId],
+    [`watchdog.branchFilter.${companyId}.${userId}`, branchId],
   );
 }
 

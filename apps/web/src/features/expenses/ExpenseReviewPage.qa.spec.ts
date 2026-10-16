@@ -8,7 +8,7 @@ import { CLAIM_EXPENSE_RECORD_NOTE, canDeleteExpense, claimExpenseRecordNote, is
 const source = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
 
 test('expense confirmation toast does not promise ledger posting', () => {
-  assert.match(source, /ยืนยันเอกสารเรียบร้อยแล้ว/);
+  assert.match(source, /ยืนยันเอกสารแล้ว/);
   assert.doesNotMatch(source, /ยืนยันและลงบัญชีเรียบร้อยแล้ว/);
   assert.doesNotMatch(workspaceDictionary.th['expenses.no_receipt_banner'], /ลงบัญชี/);
   for (const key of ['expenses.substitute_wizard.done_next_confirm', 'expenses.substitute_wizard.back_to_expense'] as const) {
@@ -38,7 +38,7 @@ test('confirmed duplicate copy distinguishes the final decision from an unresolv
   assert.match(source, /isConfirmedDuplicate \? 'expenses\.duplicate_confirmed_block' : 'expenses\.duplicate_action_required'/);
   assert.match(source, /hasDuplicates, isConfirmedDuplicate, needsReceiptOrSubstitute/);
   assert.equal((source.match(/title=\{confirmBlockedText \?\? undefined\}/g) ?? []).length, 2);
-  assert.equal((source.match(/\{confirmBlockedNotice\}/g) ?? []).length, 2);
+  assert.equal((source.match(/\{confirmBlockedNotice\}/g) ?? []).length, 1);
   assert.match(source, /\{duplicateBlockMessage\}<\/p>/);
   assert.match(workspaceDictionary.th['expenses.duplicate_confirmed_block'], /ไม่สามารถยืนยันค่าใช้จ่ายซ้ำได้/);
   assert.match(workspaceDictionary.en['expenses.duplicate_confirmed_block'], /cannot be confirmed again/);
@@ -115,19 +115,14 @@ test('more than one document in a file says what was created, not where to go (a
   assert.equal(source.includes('/expenses/capture/'), false);
 });
 
-/**
- * Spec §5.1: the goods subtotal stops including the additional charges, so the money card only adds
- * up if it shows them — between the discount and the tax base, in the order the arithmetic runs.
- * Dropping the row would leave a card whose numbers silently disagree with themselves.
- */
-test('the money card shows the additional charges between the discount and the tax base', () => {
-  const rows = [...source.matchAll(/<MoneyRow label=\{t\('(expenses\.[a-z_]+)'/g)].map((match) => match[1]);
-  assert.deepEqual(rows.slice(0, 4), [
-    'expenses.subtotal', 'expenses.discount', 'expenses.charges_section', 'expenses.taxable_base_ex_vat',
-  ]);
-  assert.match(source, /calculatedAdjustmentAmount/);
-  assert.match(source, /printedRounding !== 0 && <MoneyRow/);
-  assert.match(source, /chargesTotal !== 0 && <MoneyRow/);
+// DETAIL-2a: this card shows the total, not a second arithmetic breakdown; the form keeps the lines.
+test('the review metrics use the live total including charges and rounding, plus applicable tax amounts', () => {
+  const card = source.slice(source.indexOf('const moneyCard ='), source.indexOf('const vendorCard ='));
+  assert.match(card, /<MetricGrid columns=\{2\}/);
+  assert.match(card, /label: 'ยอดรวม', value: amountText\(money.grandTotalAmount\), unit: 'บาท'/);
+  assert.match(card, /moneyHasVat[\s\S]*amountText\(money.vatAmount\)/);
+  assert.match(card, /moneyHasWht[\s\S]*amountText\(money.whtAmount\)[\s\S]*amountText\(money.netPayableAmount\)/);
+  assert.doesNotMatch(card, /<MoneyRow|<StatusBadge|bg-brand-50/);
   for (const locale of ['th', 'en'] as const) {
     assert.ok(workspaceDictionary[locale]['expenses.charges_total'].trim().length > 0);
   }
@@ -167,7 +162,7 @@ test('the persistent WHT action uses the same server capability after confirmati
 });
 
 test('issuing from the persistent action downloads the PDF immediately and reloads the expense blockers', () => {
-  assert.match(source, /await issueSystemWhtCertificate\(companyId, whtHandoff\.id\)/);
+  assert.match(source, /await issueSystemWhtCertificate\(companyId, whtHandoff\.id, \{ paymentId \}\)/);
   assert.match(source, /downloadArtifact\(result\.pdfArtifact\)/);
   assert.match(source, /setWhtHandoff\(\{ \.\.\.whtHandoff, status: 'SYSTEM_ISSUED'/);
 });
@@ -216,14 +211,14 @@ test('a claim\'s expense record offers no void, reject or delete here, and says 
   // And it says where to go, with a link to the claim.
   assert.match(source, /const claimNote = claimExpenseRecordNote\(detail\);/);
   assert.match(source, /\{claimNote && <span[^>]*>\{claimNote\}<\/span>\}/);
-  assert.match(source, /\{claimRecord && <Link[^>]*href=\{`\/companies\/\$\{companyId\}\/reimbursements\/\$\{detail\.sourceReimbursementRequestId\}`\}>เปิดคำขอเบิก<\/Link>\}/);
+  assert.match(source, /\{claimRecord && <Link[^>]*href=\{`\/companies\/\$\{companyId\}\/reimbursements\/\$\{detail\.sourceReimbursementRequestId\}`\}>เปิดใบเบิก<\/Link>\}/);
   // The note is for a record that can still be ended. Cancelling the claim leaves its records voided: there
   // the link stays and the note goes, because nothing is left to cancel, here or at the claim.
   for (const status of ['READY_FOR_CONFIRMATION', 'CONFIRMED', 'REJECTED']) assert.equal(claimExpenseRecordNote({ ...claimRecord, status }), CLAIM_EXPENSE_RECORD_NOTE, status);
   assert.equal(claimExpenseRecordNote({ ...claimRecord, status: 'VOIDED' }), null);
   assert.equal(claimExpenseRecordNote({ ...claimRecord, sourceReimbursementRequestId: null }), null);
   for (const text of [CLAIM_EXPENSE_RECORD_NOTE, translateApiError('expense_belongs_to_reimbursement')!]) {
-    assert.match(text, /ให้ยกเลิกที่คำขอเบิกในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง/u);
+    assert.match(text, /ให้ยกเลิกที่ใบเบิกในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง/u);
     assert.doesNotMatch(text, /[A-Za-z_]{3,}/u, 'plain Thai: no code or key');
   }
 });

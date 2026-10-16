@@ -21,14 +21,14 @@ test('primary and header obey status and server rights including self-approval a
   for (const submit of [false, true]) for (const submitAndApprove of [false, true]) {
     const d = detail('DRAFT', { submit, submitAndApprove });
     assert.equal(disbursementVoucherPrimary(d), submitAndApprove ? 'selfApprove' : submit ? 'submit' : null);
-    assert.equal(disbursementVoucherNextSentence(d), submitAndApprove ? 'ตรวจรายการ แล้วกดส่งและอนุมัติได้เลย' : submit ? 'ตรวจรายการ แล้วส่งให้ผู้มีอำนาจอนุมัติ' : 'ฉบับร่าง ยังไม่ได้ส่งอนุมัติ รอ ผู้จัดทำ ส่งอนุมัติ');
+    assert.equal(disbursementVoucherNextSentence(d), submitAndApprove ? 'ตรวจรายการ แล้วกดส่งและอนุมัติได้เลย' : submit ? 'ตรวจรายการ แล้วส่งให้ผู้อนุมัติ' : 'ร่าง ยังไม่ได้ส่งอนุมัติ รอ ผู้จัดทำ ส่งอนุมัติ');
   }
   for (const approve of [false, true]) {
-    const d = detail('PENDING_APPROVAL', { approve });
+    const d = detail('PENDING_APPROVAL', { approve, return: approve });
     assert.equal(disbursementVoucherPrimary(d), approve ? 'approve' : null);
-    assert.equal(disbursementVoucherNextSentence(d), approve ? 'ตรวจรายการ แล้วอนุมัติหรือตีกลับ' : 'รอผู้มีสิทธิ์อนุมัติ');
+    assert.equal(disbursementVoucherNextSentence(d), approve ? 'ตรวจรายการ แล้วอนุมัติหรือส่งกลับให้แก้' : 'รอผู้มีสิทธิ์อนุมัติ');
     d.requestedApproverName = 'คุณสมใจ';
-    assert.equal(disbursementVoucherNextSentence(d), approve ? 'ตรวจรายการ แล้วอนุมัติหรือตีกลับ' : 'รอ คุณสมใจ อนุมัติ');
+    assert.equal(disbursementVoucherNextSentence(d), approve ? 'ตรวจรายการ แล้วอนุมัติหรือส่งกลับให้แก้' : 'รอ คุณสมใจ อนุมัติ');
   }
   for (const status of ['APPROVED', 'PAID', 'CANCELLED'] as const) assert.equal(disbursementVoucherPrimary(detail(status, { pay: true, approve: true, submit: true })), null);
 });
@@ -57,7 +57,8 @@ test('all command bodies contain version and command id; self-approval uses subm
   assert.deepEqual(disbursementCommandBody('submit', base, 'approver', 'ignored'), { ...base, requestedApproverUserId: 'approver' });
   assert.deepEqual(disbursementCommandBody('selfApprove', base, '', ''), { ...base, approveNow: true });
   assert.deepEqual(disbursementCommandBody('approve', base, '', 'ignored'), base);
-  for (const kind of ['return', 'withdraw', 'cancel'] as const) assert.deepEqual(disbursementCommandBody(kind, base, '', ' เพราะรายการซ้ำ '), { ...base, reason: 'เพราะรายการซ้ำ' });
+  for (const kind of ['return', 'cancel'] as const) assert.deepEqual(disbursementCommandBody(kind, base, '', ' เพราะรายการซ้ำ '), { ...base, reason: 'เพราะรายการซ้ำ' });
+  assert.deepEqual(disbursementCommandBody('withdraw', base, '', ' เพราะรายการซ้ำ '), base);
   assert.deepEqual(disbursementCommandBody('withdraw', base, '', ''), base);
 });
 test('same attempt reuses command id after a lost reply; edits renew it', () => {
@@ -88,7 +89,7 @@ test('history records return and cancel reasons without duplicating header cance
   ] as DisbursementVoucherDetail['revisions'];
   const events = disbursementVoucherHistory(d).flatMap(g => g.events);
   assert.equal(events.filter(e => e.label === 'ยกเลิกใบ').length, 1);
-  assert.equal(events.find(e => e.label === 'ตีกลับ')?.reason, 'แก้ยอด');
+  assert.equal(events.find(e => e.label === 'ส่งกลับให้แก้แล้ว')?.reason, 'แก้ยอด');
 });
 
 test('payee basis wording uses contracts and a removed confirmer has a name sentence', () => {
@@ -125,7 +126,7 @@ test('draft cancellation names its actor when the existing reader already expose
 test('cancellation copy never promises to undo partial payments or change an already released draft', () => {
   const d = detail('PENDING_APPROVAL');
   d.lines = [{ outstandingAmount: '10400.0000', netPayableAmount: '10400.0000' }] as DisbursementVoucherDetail['lines'];
-  const released = 'รายจ่ายในใบนี้จะไม่ถูกจองไว้กับใบนี้อีก นำไปทำใบใหม่หรือบันทึกจ่ายตรงได้ เลขที่ใบนี้จะไม่ถูกใช้ซ้ำ';
+  const released = 'รายจ่ายในใบกลับไปรอจ่ายตามเดิม เลขที่นี้ไม่ใช้ซ้ำ';
   assert.equal(disbursementCancellationSentence(d), released);
   d.lines[0]!.outstandingAmount = '5200.0000';
   assert.equal(disbursementCancellationSentence(d), released);
@@ -134,7 +135,7 @@ test('cancellation copy never promises to undo partial payments or change an alr
   d.lines[0]!.outstandingAmount = '10400.0000'; d.header.status = 'DRAFT';
   assert.equal(disbursementCancellationSentence(d), null);
   d.header.documentNumber = 'DV-1';
-  assert.equal(disbursementCancellationSentence(d), 'ใบนี้จะถูกยกเลิกและแก้ไขต่อไม่ได้ เลขที่ใบนี้จะไม่ถูกใช้ซ้ำ รายจ่ายในใบยังนำไปทำใบใหม่หรือบันทึกจ่ายตรงได้');
+  assert.equal(disbursementCancellationSentence(d), 'ยกเลิกแล้วรายจ่ายในใบกลับไปรอจ่ายตามเดิม');
 });
 
 test('creation history stays truthful for an issued direct-payment document that never had a draft', () => {
@@ -154,7 +155,7 @@ test('payment history uses the recording time and payer name', () => {
 
 test('history uses each requested approver and the current return/cancel names without guessing ids', () => {
   const d = detail('CANCELLED'); d.header.revision = 2;
-  d.header.returnedAt = '2026-10-11T01:00:00Z'; d.header.returnedByName = 'คนตีกลับ'; d.header.returnReason = 'แก้รายการ';
+  d.header.returnedAt = '2026-10-11T01:00:00Z'; d.header.returnedByName = 'คนส่งกลับให้แก้'; d.header.returnReason = 'แก้รายการ';
   d.header.cancelledAt = '2026-10-11T03:00:00Z'; d.header.cancelledByName = 'คนยกเลิก'; d.header.cancelledByUserId = 'removed';
   d.revisions = [1, 2].map(revision => ({ revision, submittedAt: `2026-10-1${revision - 1}T00:00:00Z`,
     submittedByUserId: 'maker', submittedByName: 'ผู้จัดทำ', requestedApproverUserId: `approver-${revision}`,
@@ -163,7 +164,7 @@ test('history uses each requested approver and the current return/cancel names w
   const events = disbursementVoucherHistory(d).flatMap(group => group.events);
   assert.equal(events.find(event => event.key === 'sent-1')!.recipient, 'คน ก');
   assert.equal(events.find(event => event.key === 'sent-2')!.recipient, 'คน ข');
-  assert.equal(events.find(event => event.key === 'returned')!.actor, 'คนตีกลับ');
+  assert.equal(events.find(event => event.key === 'returned')!.actor, 'คนส่งกลับให้แก้');
   assert.equal(events.find(event => event.key === 'cancelled')!.actor, 'คนยกเลิก');
   d.header.cancelledByName = null;
   assert.equal(disbursementVoucherHistory(d).flatMap(group => group.events).find(event => event.key === 'cancelled')!.actor, 'ผู้ใช้ที่ไม่อยู่ในร้านแล้ว');
@@ -194,7 +195,7 @@ test('send toasts name the notified approver only for another chosen person and 
 });
 test('approve and return toasts promise a preparer notice only for another person and respect self-approved notice suppression', () => {
   const header = { ...detail('APPROVED').header, selfApproved: false };
-  for (const [kind, plain, notified] of [['approve', 'อนุมัติแล้ว', 'อนุมัติแล้ว ระบบแจ้งผู้จัดทำแล้ว'], ['return', 'ตีกลับแล้ว', 'ตีกลับแล้ว ระบบแจ้งผู้จัดทำแล้ว']] as const) {
+  for (const [kind, plain, notified] of [['approve', 'อนุมัติแล้ว', 'อนุมัติแล้ว ระบบแจ้งผู้จัดทำแล้ว'], ['return', 'ส่งกลับให้แก้แล้ว', 'ส่งกลับให้แก้แล้ว ระบบแจ้งผู้จัดทำแล้ว']] as const) {
     assert.equal(disbursementCommandToast(kind, header, 'reviewer', []), notified);
     assert.equal(disbursementCommandToast(kind, header, 'maker', []), plain);
     assert.equal(disbursementCommandToast(kind, header, null, []), plain);
@@ -234,7 +235,7 @@ test('a draft whose latest sending was sent back says who, when and why; a later
   const d = detail('DRAFT');
   assert.equal(disbursementVoucherReturnNotice(d), null);
   d.revisions = [{ revision: 1, decision: 'RETURNED', decidedByName: 'คุณสมใจ', decidedAt: '2026-10-11T17:10:00Z', decisionReason: 'ยอดไม่ตรง' }] as DisbursementVoucherDetail['revisions'];
-  assert.deepEqual(disbursementVoucherReturnNotice(d), { title: 'คุณสมใจ ตีกลับให้แก้ไขเมื่อ 12 ต.ค. 2569 00:10 น.', reason: 'เหตุผล: ยอดไม่ตรง' });
+  assert.deepEqual(disbursementVoucherReturnNotice(d), { title: 'ถูกส่งกลับให้แก้โดย คุณสมใจ เมื่อ 12 ต.ค. 2569 00:10 น.', reason: 'เหตุผล: ยอดไม่ตรง' });
   d.revisions = [...d.revisions, { revision: 2, decision: 'WITHDRAWN', decidedAt: '2026-10-11T18:00:00Z' }] as DisbursementVoucherDetail['revisions'];
   assert.equal(disbursementVoucherReturnNotice(d), null);
   d.revisions = d.revisions.slice(0, 1); d.header.status = 'PENDING_APPROVAL';
@@ -243,7 +244,7 @@ test('a draft whose latest sending was sent back says who, when and why; a later
 
 test('take-back and cancellation toast name what succeeded', () => {
   const header = { ...detail('DRAFT').header, documentNumber: 'DV-1' };
-  assert.equal(disbursementCommandToast('withdraw', header, 'maker', []), 'นำใบกลับมาแก้ไขแล้ว');
+  assert.equal(disbursementCommandToast('withdraw', header, 'maker', []), 'กลับไปแก้แล้ว');
   assert.equal(disbursementCommandToast('cancel', header, 'maker', []), 'ยกเลิกใบเลขที่ DV-1 แล้ว');
 });
 
@@ -258,19 +259,25 @@ test('the last reminder line belongs to the current sending, never to an earlier
 });
 
  test('another eligible approver sees who was asked; the requested viewer keeps the review sentence', () => {
-  const d = detail('PENDING_APPROVAL', { approve: true });
+  const d = detail('PENDING_APPROVAL', { approve: true, return: true });
   d.header.requestedApproverUserId = 'a'; d.requestedApproverName = 'ศิริพร';
-  assert.equal(disbursementVoucherNextSentence(d, 'maker'), 'รอ ศิริพร อนุมัติ คุณมีสิทธิ์อนุมัติด้วย จะอนุมัติหรือตีกลับเองก็ได้');
-  assert.equal(disbursementVoucherNextSentence(d, 'a'), 'ตรวจรายการ แล้วอนุมัติหรือตีกลับ');
+  assert.equal(disbursementVoucherNextSentence(d, 'other-approver'), 'รอ ศิริพร อนุมัติ คุณมีสิทธิ์อนุมัติด้วย จะอนุมัติหรือส่งกลับให้แก้เองก็ได้');
+  assert.equal(disbursementVoucherNextSentence(d, 'a'), 'ตรวจรายการ แล้วอนุมัติหรือส่งกลับให้แก้');
   d.header.requestedApproverUserId = null;
-  assert.equal(disbursementVoucherNextSentence(d, 'maker'), 'ตรวจรายการ แล้วอนุมัติหรือตีกลับ');
+  assert.equal(disbursementVoucherNextSentence(d, 'other-approver'), 'ตรวจรายการ แล้วอนุมัติหรือส่งกลับให้แก้');
+  // A reader who may approve but not send back (their own document, or its authors are switched off) is not told to.
+  const own = detail('PENDING_APPROVAL', { approve: true, return: false });
+  own.header.requestedApproverUserId = 'a'; own.requestedApproverName = 'ศิริพร';
+  assert.equal(disbursementVoucherNextSentence(own, 'maker'), 'รอ ศิริพร อนุมัติ คุณมีสิทธิ์อนุมัติด้วย จะอนุมัติเองก็ได้');
+  own.header.requestedApproverUserId = null;
+  assert.equal(disbursementVoucherNextSentence(own, 'maker'), 'ตรวจรายการ แล้วอนุมัติ');
  });
- test('a draft returned by someone else sends to that person before offering self approval', () => {
+ test('a returned draft keeps self approval primary and prefers its reviewer when sending to another', () => {
   const d = detail('DRAFT', { submit: true, submitAndApprove: true });
   d.revisions = [{ revision: 1, decision: 'RETURNED', decidedByUserId: 'reviewer' }] as any;
   assert.equal(disbursementReturnedApprover(d, 'maker'), 'reviewer');
-  assert.equal(disbursementVoucherPrimary(d, 'maker'), 'submit');
-  assert.equal(disbursementVoucherNextSentence(d, 'maker'), 'ตรวจรายการ แล้วส่งให้ผู้มีอำนาจอนุมัติ');
+  assert.equal(disbursementVoucherPrimary(d, 'maker'), 'selfApprove');
+  assert.equal(disbursementVoucherNextSentence(d, 'maker'), 'ตรวจรายการ แล้วส่งให้ผู้อนุมัติ');
   assert.equal(initialApprover([{ userId: 'reviewer' }, { userId: 'other' }] as any, disbursementReturnedApprover(d, 'maker')), 'reviewer');
   assert.equal(disbursementReturnedApprover(d, 'reviewer'), null);
   d.revisions[0]!.decidedByUserId = 'maker'; assert.equal(disbursementVoucherPrimary(d, 'maker'), 'selfApprove');
@@ -303,4 +310,18 @@ test('the pending sender gets a sent-time sentence and visible-action state, whi
   assert.equal(disbursementVoucherIsSender(d, 'reviewer'), false);
   d.header.requestedApproverUserId = null; d.requestedApproverName = null;
   assert.equal(disbursementVoucherSenderSentence(d), 'ส่งแล้ว เมื่อ 12 ต.ค. 2569 05:10 น. รอผู้มีสิทธิ์อนุมัติ');
+});
+
+test('VOUCH-DOC3 history retains header-only send and approval facts without duplicating revision events', () => {
+  const d = detail('PAID');
+  d.header.submittedAt = '2026-10-15T01:00:00Z'; d.header.approvedAt = '2026-10-15T02:00:00Z';
+  d.submittedByName = 'ผู้ส่ง'; d.approvedByName = 'ผู้อนุมัติ'; d.preparerActive = false; d.senderActive = false;
+  const events = disbursementVoucherHistory(d).flatMap(group => group.events);
+  assert.match(events.find(event => event.key === 'created')!.actor!, /ปิดใช้งานแล้ว/);
+  assert.equal(events.find(event => event.key === 'submitted')!.actor, 'ผู้ส่ง (ปิดใช้งานแล้ว)');
+  assert.equal(events.find(event => event.key === 'approved')!.actor, 'ผู้อนุมัติ');
+  d.revisions = [{ revision: 1, submittedAt: d.header.submittedAt, submittedByUserId: d.header.submittedByUserId, submittedByName: 'ผู้ส่ง', decision: 'APPROVED', decidedAt: d.header.approvedAt, decidedByName: 'ผู้อนุมัติ' }] as any;
+  const revised = disbursementVoucherHistory(d).flatMap(group => group.events);
+  assert.equal(revised.filter(event => event.at === d.header.submittedAt).length, 1);
+  assert.equal(revised.filter(event => event.at === d.header.approvedAt).length, 1);
 });

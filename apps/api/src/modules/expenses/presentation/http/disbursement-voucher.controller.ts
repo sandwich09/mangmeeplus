@@ -1,12 +1,12 @@
 import { ArgumentsHost, Body, Catch, Controller, Delete, ExceptionFilter, ForbiddenException, Get, HttpCode, Param, Post, Put, Query, Res, StreamableFile, UseFilters } from '@nestjs/common';
 import type { Response } from 'express';
-import type { DisbursementVoucherStatus, RequestContext } from '@watchdog-bms/contracts';
+import type { RequestContext } from '@watchdog-bms/contracts';
 import { disbursementVoucherError } from '@watchdog-bms/contracts';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import { ReadDisbursementVoucherSourcesUseCase } from '../../application/use-cases/disbursement-voucher-read.use-case';
 import { DisbursementVoucherUseCase } from '../../application/use-cases/disbursement-voucher.use-case';
-import { CreateDisbursementVoucherDraftDto, UpdateDisbursementVoucherDraftDto, DisbursementVoucherCommandDto, SubmitDisbursementVoucherDto, EndDisbursementVoucherDto, PayDisbursementVoucherDto, IssueDisbursementVoucherDto, ReissueDisbursementVoucherDto,
+import { RevealDisbursementVoucherAccountQueryDto, DisbursementVoucherListQueryDto, CreateDisbursementVoucherDraftDto, UpdateDisbursementVoucherDraftDto, DisbursementVoucherCommandDto, SubmitDisbursementVoucherDto, EndDisbursementVoucherDto, PayDisbursementVoucherDto, IssueDisbursementVoucherDto, ReissueDisbursementVoucherDto,
   RemindDisbursementVoucherDto, InitDisbursementVoucherSlipUploadDto, CompleteDisbursementVoucherSlipUploadDto, AttachDisbursementVoucherSlipDto } from './disbursement-voucher.dtos';
 
 /** The global permission guard runs before the document visibility check. Files conceal both. */
@@ -22,6 +22,12 @@ export class DisbursementVoucherPdfReadFilter implements ExceptionFilter {
 @Controller('companies/:companyId/disbursement-vouchers')
 export class DisbursementVoucherController {
   constructor(private readonly read: ReadDisbursementVoucherSourcesUseCase, private readonly vouchers: DisbursementVoucherUseCase) {}
+
+  @Get('payee-account')
+  @RequirePermissions('expense.disbursement.prepare')
+  payeeAccount(@ReqCtx() ctx: RequestContext, @Query('payeeKey') payeeKey: string, @Query('branchId') branchId?: string) {
+    return this.vouchers.payeeAccount(ctx, payeeKey, branchId);
+  }
 
   @Get('payees')
   @RequirePermissions('expense.disbursement.prepare')
@@ -70,8 +76,8 @@ export class DisbursementVoucherController {
 
   @Get()
   @RequirePermissions('expense.disbursement.read')
-  list(@ReqCtx() ctx: RequestContext, @Query() query: Record<string, string | undefined>) {
-    return this.vouchers.list(ctx, { ...(query.q !== undefined ? { q: query.q } : {}), status: query.status as DisbursementVoucherStatus | undefined, branchId: query.branchId,
+  list(@ReqCtx() ctx: RequestContext, @Query() query: DisbursementVoucherListQueryDto) {
+    return this.vouchers.list(ctx, { ...(query.q !== undefined ? { q: query.q } : {}), status: query.status, branchId: query.branchId, order: query.order ?? 'newest',
       page: query.page ? Number(query.page) : undefined, pageSize: query.pageSize ? Number(query.pageSize) : undefined });
   }
 
@@ -106,8 +112,8 @@ export class DisbursementVoucherController {
   cancel(@ReqCtx() ctx: RequestContext, @Param('id') id: string, @Body() body: EndDisbursementVoucherDto) { return this.vouchers.cancel(ctx, id, body); }
 
   @Post(':id/payee-account/reveal')
-  @RequireAnyPermission('expense.disbursement.approve', 'expense.disbursement.pay')
-  revealAccount(@ReqCtx() ctx: RequestContext, @Param('id') id: string) { return this.vouchers.revealAccount(ctx, id); }
+  @RequireAnyPermission('expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.disbursement.pay')
+  revealAccount(@ReqCtx() ctx: RequestContext, @Param('id') id: string, @Query() query: RevealDisbursementVoucherAccountQueryDto) { return this.vouchers.revealAccount(ctx, id, query.purpose); }
 
   @Get(':id/document.pdf')
   @RequirePermissions('expense.disbursement.read')
@@ -121,6 +127,32 @@ export class DisbursementVoucherController {
   @Post(':id/pay')
   @RequirePermissions('expense.disbursement.pay')
   pay(@ReqCtx() ctx: RequestContext, @Param('id') id: string, @Body() body: PayDisbursementVoucherDto) { return this.vouchers.pay(ctx, id, body); }
+
+  @Get(':id/supporting-files')
+  @RequirePermissions('expense.disbursement.read')
+  @UseFilters(new DisbursementVoucherPdfReadFilter())
+  supportingFiles(@ReqCtx() ctx: RequestContext, @Param('id') id: string) { return this.vouchers.supportingFiles(ctx, id); }
+
+  @Post(':id/supporting-files/slip-upload-intent')
+  @RequirePermissions('expense.disbursement.prepare')
+  startSupportingUpload(@ReqCtx() ctx: RequestContext, @Param('id') id: string, @Body() body: InitDisbursementVoucherSlipUploadDto) { return this.vouchers.startSupportingUpload(ctx, id, body); }
+
+  @Post(':id/supporting-files/slip-uploads/:attachmentId/complete')
+  @RequirePermissions('expense.disbursement.prepare')
+  completeSupportingUpload(@ReqCtx() ctx: RequestContext, @Param('id') id: string, @Param('attachmentId') attachmentId: string, @Body() body: CompleteDisbursementVoucherSlipUploadDto) { return this.vouchers.completeSupportingUpload(ctx, id, attachmentId, body); }
+
+  @Post(':id/supporting-files')
+  @RequirePermissions('expense.disbursement.prepare')
+  attachSupportingFile(@ReqCtx() ctx: RequestContext, @Param('id') id: string, @Body() body: AttachDisbursementVoucherSlipDto) { return this.vouchers.changeSupportingFile(ctx, id, body.attachmentId, false); }
+
+  @Delete(':id/supporting-files/:attachmentId')
+  @RequirePermissions('expense.disbursement.prepare')
+  removeSupportingFile(@ReqCtx() ctx: RequestContext, @Param('id') id: string, @Param('attachmentId') attachmentId: string) { return this.vouchers.changeSupportingFile(ctx, id, attachmentId, true); }
+
+  @Get(':id/supporting-files/:attachmentId')
+  @RequirePermissions('expense.disbursement.read')
+  @UseFilters(new DisbursementVoucherPdfReadFilter())
+  openSupportingFile(@ReqCtx() ctx: RequestContext, @Param('id') id: string, @Param('attachmentId') attachmentId: string) { return this.vouchers.openSupportingFile(ctx, id, attachmentId); }
 
   @Post(':id/slip-upload-intent')
   @RequirePermissions('expense.disbursement.pay')
