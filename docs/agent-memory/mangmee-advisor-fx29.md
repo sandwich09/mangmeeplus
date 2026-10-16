@@ -1,0 +1,32 @@
+# Agent Memory: mangmee-advisor-fx29
+
+Status: implemented and verified; only mechanically baseline-matched sandbox socket limitations remain; no commit.
+Owner: Codex, 2026-10-17.
+Scope: G1 permission replies, G2 unrestricted knowledge, G3 expense filters/ranking/daily counts, G4 typed ordinal references; starting HEAD 0824736e5bdd609616911ba664fe196c6307d556.
+Decisions:
+- Product goal: restore baseline LINE Q&A for STAFF, ACCOUNTANT, MANAGER and OWNER. A denied action names who can help; knowledge is independent of the shop package; read answers retain the requested scope and figures; an ordinal resolves the kind of item actually shown.
+- Follow AGENTS.md and repository ponytail full mode; existing expense-advisor spec and fix-up 17A remain the product/architecture basis. No new major feature or new architectural layer.
+- Preserve signed human action cards, substitute web-only certify/approve/preview boundaries, how-to bridge, permission/tenant/branch/use-case guards, AI budget contract and final-mutation gates. No package.json, dependencies, flags, cloud, deploy, commit or network changes.
+- G1: landing restricted the whole action boundary to substitutes, bypassing denied roles. Restore denied-role answers for every action rule while permitted supported actions continue to signed cards. Forbidden results (including a write's initial lookup) and TOOL_INPUT_NOT_AUTHORIZED have permission-owner replies; typed approval/package denials retain their specific answers.
+- G2: the new WHT gate preceded the existing general exemption. Exempt general knowledge before it; retain operational package gates and existing document/how-to bridge behavior.
+- G3: T-100 changed NEEDS_REVIEW to READY_FOR_CONFIRMATION/DRAFT. Normalize only the ambiguous expense status, retaining explicit drafts/confirmed records and other tools' enums. T-111 landing/baseline already fetch filtered and unfiltered breakdowns; add grounded ranks and retain the named vendor's amount/share/rank when composition omits them. T-158 still returns submittedToday.count=32; reuse the full closing formatter after the existing model call, without adding overlapping buckets or changing the model budget/route.
+- G4/T-012: resolve only API-owned typed shown items, inherit the group's scope, and re-read through existing tools. Vendor/category/branch groups are filters, never expenseId. Both semantic and classic/prepared input guards require actual expense references. A top-N breakdown stays a breakdown; its list-only limit cannot invalidate that read.
+- Two detail-formatting fixtures now supply the same proven read memory the real API supplies; existing permission expectations now assert the requested early role denial. No tests were removed or skipped.
+Open questions: no product/implementation ambiguity; live sockets and a real-provider reevaluation remain unavailable in this sandbox.
+Artifacts:
+- .live/eval stays untracked. docs/evidence/mangmee-advisor-fx29-router-replays.json contains 12 exact landing/rerun routes, source SHA-256, recorded tool results/history and baseline comparison inputs.
+- The registered webhook spec verifies signed admission, the real OrchestratorAgent in a separate gateway process, recorded ERP responses and actual LINE adapter payload delivery. stdin/stdout replaces socket transport only; the provider is controlled. Replays include deliberately omitted ranking/daily figures to exercise the grounded backstops.
+- /private/tmp/fx29-baseline is git archive 0824736e5, with unchanged shared dependency/generated-client links. Only current replay tests/fixture were copied onto it for the negative check; all seven production sources are checked byte-for-byte against the commit. Its independent empty Git metadata supports the catalog's git grep; no commit was made.
+- /private/tmp/fx29-packages.py reads unchanged pretest/test scripts and runs every original file via pnpm --filter <package> exec node --import tsx --test. Exact argv is saved in fx29-<package>-<script>.command.json; only the reporter changes to TAP for counts.
+- /private/tmp/fx29-node-tests.cjs adapts only tsx invocation in the unchanged official acceptance runner; /private/tmp/fx29-suites.mjs runs every inventory suite independently so pre-existing socket failures do not conceal later suites or their exit status.
+- /private/tmp/fx29-baseline-comparison.json compares failure names/types/errors/codes; /private/tmp/fx29-source-hashes.json freezes final and baseline source hashes. Final <=40-line report: /private/tmp/fixup-29-last-message.md.
+Verification:
+- Exact replay negative check on original 0824736e5: 0 passed / 12 failed for the intended regressions. Corrected signed-webhook/orchestrator replays: 12/12 passed; also included in the full API test list.
+- Contracts build and full contracts test script: passed, 449 tests. Final API and gateway typecheck scripts passed (exit 0).
+- Focused final registered orchestrator spec: 395 passed. Real-module DI and full table-driven delivery-plan specs: 34 passed. Grounding/detail fixture check: 31 passed.
+- Final full gateway: 2,023 passed / 0 failed / 46 runtime cancellations. Runtime cancellations match the original starting commit.
+- Final full API: pretest 16 passed / 131 skipped; main 11,932 passed / 198 skipped / 2 localhost EPERM failures, both identical on the starting commit. /private/tmp/fx29-api-summary.log.
+- Whole-chain final inventory: reliability gateway 570 passed / 12 localhost EPERM failures / 46 cancellations; reliability API 466 passed; web 8 passed; contracts/evaluation 231 passed; API behavior 2,362 passed; gateway behavior 888 passed; all four shell policies exit 0. /private/tmp/fx29-all-acceptance-final-summary.log. All 58 gateway environment outcomes mechanically match the original commit.
+- Literal node scripts/run-line-ai-whole-chain-acceptance.mjs reaches tsx IPC EPERM on both original and corrected trees. With only the documented command-loader adaptation, the official runner reaches the same 12/46 reliability gateway environment failures; no failure is bypassed or reported green.
+- All registered API direct importers of changed source are included in the full API script (inventory /private/tmp/fx29-api-importers.json); mandatory DI/delivery specs additionally ran separately.
+Next: review/integrate the uncommitted diff; a socket-enabled runner is required for all-green physical HTTP acceptance. No further code work remains in this task.

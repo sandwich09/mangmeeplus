@@ -2559,3 +2559,58 @@ it('Fix-up 21A E03: split descriptions retain exact ordered source spans and inv
     assert.equal(parseLineReimbursementDraftProposalV1(complete(description).proposal, { evidence }), undefined);
   }
 });
+
+describe('Fix-up 29: forbidden tools always name the permission owner without leaking results', () => {
+  it('also handles an authoritative approval denial during the lookup phase of a permitted write', async () => {
+    const req = { ...makeReq('ช่วยอนุมัติใบเบิกใบนี้ค่ะ'), userContext: { ...makeReq('').userContext, permissions: ['reimbursement.approve'] },
+      semanticSubrequests: [{ index: 0, kind: 'write' as const, goal: 'อนุมัติใบเบิก', requestedFilters: {}, requiredEvidence: [], dependsOn: [], evidenceRefs: [] }] };
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async input => {
+        assert.equal(input.usageTag, 'line.loop');
+        return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'reimbursement.list_pending_approvals', input: {} }] }) };
+      } }, invoke: async meta => ({ toolName: meta.name, status: 'forbidden', errorCode: 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED',
+        sourceRefs: [], asOf: new Date().toISOString() }) });
+    assert.equal(result.semanticCoverage?.[0]?.status, 'denied');
+    assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ.*ผู้มีสิทธิ์อนุมัติ/u);
+    assert.doesNotMatch(result.replyText, /ดึงข้อมูลส่วนนี้ไม่ได้/u);
+  });
+  it('repairs only the ambiguous expense status and keeps explicit drafts, confirmed records and other tool enums', async () => {
+    const { canonicalizeReadToolEnums } = await import('./read-tool-input');
+    const expense = LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.list_recent')!;
+    assert.equal(canonicalizeReadToolEnums(expense, { documentStatus: 'DRAFT' }, 'มีรายการที่ยังไม่ยืนยันบ้างป่าวครับ')?.documentStatus, 'NEEDS_REVIEW');
+    assert.equal(canonicalizeReadToolEnums(expense, { documentStatus: 'CONFIRMED' }, 'ไม่เอาที่ยังไม่ยืนยัน เอาเฉพาะยืนยันแล้วค่ะ')?.documentStatus, 'CONFIRMED');
+    assert.equal(canonicalizeReadToolEnums(expense, { documentStatus: 'DRAFT' }, 'มีร่างที่ยังไม่ยืนยันไหมคะ')?.documentStatus, 'DRAFT');
+    assert.equal(canonicalizeReadToolEnums({ inputEnumValues: { documentStatus: ['DRAFT', 'SUBMITTED'] } }, { documentStatus: 'DRAFT' }, 'ยังไม่ยืนยัน')?.documentStatus, 'DRAFT');
+  });
+  for (const [status, errorCode] of [['forbidden', undefined], ['forbidden', 'FORBIDDEN'], ['error', 'TOOL_INPUT_NOT_AUTHORIZED']] as const) {
+    it(`${status}/${errorCode ?? 'no code'} in semantic and prepared reads`, async () => {
+      const question = 'ดูค่าใช้จ่ายเดือนนี้ค่ะ';
+      const req = { ...makeReq(question), semanticSubrequests: [{ index: 0, kind: 'read' as const, goal: question,
+        requestedFilters: {}, requiredEvidence: [], dependsOn: [], evidenceRefs: [], toolHint: 'expense.list_recent' }],
+        userContext: { ...makeReq(question).userContext, permissions: ['expense.read'] } };
+      const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        provider: { generateText: async () => assert.fail('a forbidden read cannot be composed into a business answer') },
+        invoke: async meta => ({ toolName: meta.name, status, errorCode, asOf: new Date().toISOString(), sourceRefs: [], data: { private: 'secret-record', total: 987654321 } }) });
+      assert.equal(result.semanticCoverage?.[0]?.status, 'denied');
+      assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ.*ผู้มีสิทธิ์/u);
+      assert.doesNotMatch(result.replyText, /ดึงข้อมูลไม่ได้|secret-record|987654321/u);
+      assert.deepEqual(result.sourceRefs, []);
+      const { preparedTerminalReply } = await import('./prepared-simple-read-formatter');
+      const prepared = preparedTerminalReply({ agent: 'accounting', status: status === 'forbidden' ? 'PERMISSION_DENIED' : 'FAILED',
+        facts: [], suggestions: [], requiresHumanReview: false, summary: '', toolCalls: [{ name: 'expense.list_recent', status, errorCode, durationMs: 0 }] },
+        { messageText: question, language: 'th', locale: 'th-TH' });
+      assert.match(prepared, /ไม่มีสิทธิ์.*เจ้าของกิจการ/u);
+    });
+  }
+  it('never sends a breakdown counterparty id to expense.get_detail, even when the planner repeats it', async () => {
+    const req = { ...makeReq('ดูรายละเอียดค่ะ'), userContext: { ...makeReq('').userContext, permissions: ['expense.read'] },
+      semanticSubrequests: [{ index: 0, kind: 'read' as const, goal: 'รายละเอียด', requestedFilters: {}, requiredEvidence: [], dependsOn: [], evidenceRefs: [] }],
+      conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: [{ tool: 'expense.get_breakdown', answerShape: 'list' as const,
+        asOf: new Date().toISOString(), shownItems: [{ ordinal: 1, id: 'counterparty-id', label: 'ร้านสมใจ', kind: 'vendor' as const }] }] } };
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'expense.get_detail', input: { expenseId: 'counterparty-id' } }] }) }) },
+      invoke: async () => assert.fail('a group id is not an expense reference') });
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+    assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ/u);
+  });
+});

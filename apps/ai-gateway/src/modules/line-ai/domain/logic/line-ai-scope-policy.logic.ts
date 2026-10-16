@@ -194,17 +194,24 @@ export function lineActionRuleFor(text: string): LineActionRule | undefined {
  *  READ_UNAVAILABLE_TEXT convention of naming the page in words, not embedding a URL). */
 export function lineActionBoundaryReplyText(text: string, permissions: readonly string[], language: ScopePolicyLanguage): string | undefined {
   const rule = lineActionRuleFor(text);
-  if (!rule || rule.page !== 'substitute-receipts') return undefined;
+  if (!rule) return undefined;
   const pageLabelTh = { reimbursements: 'ใบเบิก', expenses: 'รายจ่าย', 'substitute-receipts': 'ใบรับรองแทนใบเสร็จ' }[rule.page];
   const substitute = rule.page === 'substitute-receipts';
   if (permissions.includes(rule.permission)) {
+    if (!substitute) return undefined;
     return language === 'en'
       ? `This action can't be completed on LINE. Please go to the ${substitute ? 'substitute receipts' : rule.page} page on the web to do it.`
       : `การ${rule.actionLabelTh}ทำผ่าน LINE ไม่ได้ค่ะ ${substitute ? 'ต้องเปิดอ่านเอกสารฉบับเต็มบนเว็บก่อนเซ็น ' : ''}ไปที่หน้า${pageLabelTh}บนเว็บได้เลยค่ะ`;
   }
   return language === 'en'
-    ? 'Your role does not have permission to do this yet.'
-    : `บทบาทของคุณยังไม่มีสิทธิ์${rule.actionLabelTh}ค่ะ`;
+    ? 'Your role does not have permission to do this; ask the company owner or an authorized person.'
+    : `บทบาทของคุณยังไม่มีสิทธิ์${rule.actionLabelTh}ค่ะ ให้เจ้าของกิจการหรือผู้มีสิทธิ์${rule.actionLabelTh}ช่วยได้ค่ะ`;
+}
+
+export function toolPermissionReplyText(language: ScopePolicyLanguage): string {
+  return language === 'en'
+    ? '🔒 You do not have permission to view this information; ask the company owner or an authorized person.'
+    : '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ ให้เจ้าของกิจการหรือผู้มีสิทธิ์ดูข้อมูลช่วยตรวจสอบได้ค่ะ';
 }
 
 // ---- Item 3: a read-only role asking to record, upload, or capture -----------------------------
@@ -290,7 +297,7 @@ export function scopePolicyOverride(
   }
   const readOnly = readOnlyCaptureReplyText(text, permissions, language);
   if (readOnly) return { reasonCode: 'READONLY_ROLE_CANNOT_CREATE', text: readOnly };
-  if (kind !== 'write' && documentExplanationTopic(text)) return undefined;
+  if (kind === 'general' || kind !== 'write' && documentExplanationTopic(text)) return undefined;
   const whtKeys = /50\s*ทวิ|50\s*bis/iu.test(text) ? ['wht_50bis']
     : /ภ\.?\s*ง\.?\s*ด\.?\s*53|pnd\s*53/iu.test(text) ? ['wht_pnd53']
       : /หัก\s*ณ\s*ที่จ่าย|withholding|\bwht\b/iu.test(text) || toolHint?.startsWith('wht.') ? ['wht_50bis', 'wht_pnd53'] : undefined;
@@ -300,7 +307,7 @@ export function scopePolicyOverride(
       : 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องนี้ค่ะ 50 ทวิและ ภงด.53 อยู่ในแพ็กธุรกิจค่ะ',
   };
   const packageQuestion = toolHint !== undefined && PACKAGE_TOOL_HINTS.has(toolHint) && PACKAGE_WORD.test(text);
-  if (kind !== 'help' && kind !== 'general' && !packageQuestion && !whtKeys) {
+  if (kind !== 'help' && !packageQuestion && !whtKeys) {
     const topic = unsoldModuleTopicFor(text);
     if (topic && !moduleFeatureEnabled(topic.featureKey, entitledFeatureKeys)) {
       return { reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED', text: unsoldModuleReplyText(topic, language) };

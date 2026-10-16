@@ -11776,3 +11776,106 @@ for (const canReopen of [false, true]) for (const blocker of [null, 'tax_period_
   assert.equal(preflights, 1); assert.equal(record.grandTotalAmount, '500.8000'); assert.equal(record.status, 'CONFIRMED'); assert.equal(record.paymentStatus, 'PAID');
   assert.equal(h.intakeRequests.length, 1);
 });
+
+const FX29_QA = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx29-router-replays.json'), 'utf8')) as any[];
+// Separate process matches the deployed gateway boundary and loads its own decorator tsconfig;
+// stdin/stdout replaces only transport, since this sandbox cannot bind an HTTP socket.
+const FX29_GATEWAY_REPLAY = String.raw`
+const { OrchestratorAgent } = require('./src/modules/line-ai/agents/orchestrator.agent.ts');
+const assert = require('node:assert/strict');
+const { request, replay } = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+require('node:test').mock.timers.enable({ apis: ['Date'], now: replay.acceptedAtMs });
+const providerRequests = [], calls = [];
+globalThis.fetch = async (_url, init) => {
+  const body = JSON.parse(init.body); providerRequests.push(body);
+  const payload = JSON.parse(body.input[0].content[0].text);
+  let response;
+  if (String(body.instructions).startsWith('You plan one complete LINE request.')) {
+    response = { calls: [{ index: 0, toolName: 'reimbursement.list_pending_approvals', input: {} }] };
+  } else {
+    assert.ok(String(body.instructions).startsWith('Answer each semanticSubrequest exactly once.'));
+    response = { answers: replay.route.semanticSubrequests.map(item => {
+      const sources = (payload.toolResults ?? []).filter(entry => entry.index === item.index && entry.result.status === 'ok')
+        .flatMap(entry => entry.sources.map(ref => ref.id));
+      const text = replay.id.includes('T-111') ? 'หมวดค่าน้ำมัน 2,355 บาท ค่าบริการ 1,396.50 บาท และค่าออฟฟิศ 437 บาทค่ะ'
+        : replay.id.includes('T-158') ? item.index === 0 ? 'มีงานรอตรวจสอบ 12 รายการค่ะ' : 'มีใบเบิกรออนุมัติ 2 รายการ รวม 2,066 บาทค่ะ'
+          : replay.id.includes('T-122') ? 'หัก ณ ที่จ่ายคือภาษีที่ผู้จ่ายหักจากเงินที่จ่ายให้ผู้รับแล้วนำส่งกรมสรรพากรค่ะ'
+            : replay.id.includes('T-012') ? 'รายการแรกคือร้านสมใจการค้า ยอด 2,355 บาท ยังไม่จ่ายค่ะ' : replay.baselineReply;
+      return { index: item.index, status: 'handled', topic: 'business', text, sourceRefIds: sources };
+    }) };
+  }
+  return Response.json({ status: 'completed', output_text: JSON.stringify(response) });
+};
+const gateway = new OrchestratorAgent({ invoke: async (meta, ctx, args) => {
+  assert.equal(ctx.companyId, request.userContext.companyId); assert.equal(ctx.userId, request.userContext.internalUserId);
+  assert.deepEqual(ctx.permissions, replay.fixture.permissions);
+  calls.push({ tool: meta.name, input: args });
+  assert.ok(!(meta.name === 'expense.get_detail' && String(args.expenseId).startsWith('counterparty-')));
+  const recorded = replay.reads.find(row => row.tool === meta.name && Object.keys(row.input).length === Object.keys(args).length
+    && Object.entries(row.input).every(([key, value]) => args[key] === value));
+  assert.ok(recorded, 'unexpected tool/input ' + JSON.stringify(calls));
+  return structuredClone(recorded.result);
+} }, { modelProvider: 'openai', openAiApiKey: 'synthetic', openAiModel: 'gpt-test', aiToolTimeoutMs: 10000,
+  aiMaxToolCalls: 8, lineAiPreparedSimpleReadEnabled: true });
+gateway.run(request).then(result => process.stdout.write('\nFX29_RESULT:' + JSON.stringify({ result, calls, providerRequests }) + '\n'))
+  .catch(error => { console.error(error); process.exitCode = 1; });
+`;
+for (const replay of FX29_QA) it(`Fix-up 29: exact eval route through OrchestratorAgent and signed webhook delivery: ${replay.id}`, async t => {
+  const { readMemoryEvidence } = await import('../line-read-evidence.service');
+  t.mock.timers.enable({ apis: ['Date'], now: replay.acceptedAtMs });
+  const h = await fx21bBoundWebhook(t, { ...replay, source: replay.id.replace(/[^a-zA-Z0-9-]/gu, '-') }, replay.fixture.permissions);
+  h.prisma.client.companyFeatureEntitlement.findMany = async () => replay.fixture.enabledFeatures.map((featureKey: string) => ({ featureKey, enabled: true }));
+  Object.assign(h.flow.config, { lineAiPreparedSimpleReadEnabled: true });
+  const context = { windowMinutes: 15, maxTurns: 15, recentTurns: [],
+    recentReads: [...replay.previousTools].reverse().map((row: any) => readMemoryEvidence(row.result)).filter(Boolean) };
+  h.flow.loadConversationContext = async () => context;
+  let executed: any, gatewayError: unknown;
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    try {
+    assert.deepEqual(request.semanticSubrequests, replay.route.semanticSubrequests, 'exact router JSON enters the gateway before repair');
+    assert.ok(replay.fixture.enabledFeatures.every((key: string) => request.entitledFeatureKeys.includes(key)));
+    for (const key of ['wht_50bis', 'wht_pnd53']) assert.equal(request.entitledFeatureKeys.includes(key), replay.fixture.enabledFeatures.includes(key));
+    const child = require('node:child_process').spawnSync(process.execPath, ['--import', 'tsx', '-e', FX29_GATEWAY_REPLAY], {
+      cwd: require('node:path').dirname(require.resolve('../../../../../../ai-gateway/tsconfig.json')),
+      input: JSON.stringify({ request, replay }), encoding: 'utf8', timeout: 30_000, maxBuffer: 4 * 1024 * 1024,
+    });
+    assert.equal(child.status, 0, child.stderr + child.stdout);
+    executed = JSON.parse(child.stdout.split('\nFX29_RESULT:')[1].trim());
+    const { result, calls } = executed;
+    return { ...result, requestId: request.requestId, intent: 'business_read', agent: 'accounting', refused: false,
+      toolsInvoked: calls.map((call: any) => call.tool), sourceLabels: [...new Set(result.sourceRefs.map((ref: any) => ref.label))] };
+    } catch (error) { gatewayError = error; throw error; }
+  };
+  await h.execute();
+  assert.ifError(gatewayError);
+  assert.ok(executed, 'the signed webhook reaches the real gateway orchestrator');
+  assert.ok(h.delivered.length > 0, 'the API delivers through the LINE adapter');
+  const { result: response, calls, providerRequests } = executed, text = response.replyText;
+  assert.doesNotMatch(text, /ดึงข้อมูลส่วนนี้ไม่ได้|counterparty-company|expense-company|READY_FOR_CONFIRMATION|NEEDS_REVIEW/u);
+  if (/T-144|T-147|outofperm/.test(replay.id)) {
+    assert.deepEqual(calls, []); assert.match(text, /ไม่มีสิทธิ์.*(?:เจ้าของกิจการ|ผู้มีสิทธิ์อนุมัติ)/u);
+    assert.equal(providerRequests.length, replay.id.includes('outofperm') ? 1 : 0);
+  } else {
+    assert.deepEqual(calls, replay.reads.map((row: any) => ({ tool: row.tool, input: row.input })));
+    assert.ok(response.semanticCoverage.every((item: any) => item.status === 'handled'));
+    if (replay.id.includes('T-122')) { assert.match(text, /ภาษี.*กรมสรรพากร/u); assert.doesNotMatch(text, /แพ็กเกจ|แพ็กธุรกิจ/u); assert.equal(providerRequests.length, 1); }
+    if (replay.id.includes('T-100')) assert.equal(calls[0].input.documentStatus, 'NEEDS_REVIEW');
+    if (replay.id.includes('T-111')) {
+      assert.match(text, /4,188\.50.*23\.6%.*อันดับ 1/u);
+      const compose = JSON.parse(providerRequests[0].input[0].content[0].text);
+      assert.match(JSON.stringify(compose.derivedFacts), /23\.6% อันดับ 1/u);
+    }
+    if (replay.id.includes('T-158')) assert.match(text, /ส่งเข้ามาวันนี้[^\n]*32 รายการ/u);
+    if (replay.id.includes('T-012')) assert.equal(calls[0].input.expenseId, 'expense-company-b-15');
+    if (replay.id.includes('ordinal#3')) { assert.equal(calls[0].tool, 'expense.list_recent'); assert.equal(calls[0].input.vendorId, 'counterparty-company-b-0'); }
+  }
+  const visible: string[] = [];
+  const collect = (value: any): void => {
+    if (Array.isArray(value)) { value.forEach(collect); return; }
+    if (!value || typeof value !== 'object') return;
+    for (const [key, child] of Object.entries(value)) if (typeof child === 'string' && ['text', 'altText'].includes(key)) visible.push(child); else collect(child);
+  };
+  collect(h.delivered);
+  assert.doesNotMatch(visible.join('\n'), /ดึงข้อมูลส่วนนี้ไม่ได้|counterparty-company|expense-company|TOOL_INPUT_NOT_AUTHORIZED/u);
+  if (replay.id.includes('T-158')) assert.match(visible.join('\n'), /32 รายการ/u);
+});
